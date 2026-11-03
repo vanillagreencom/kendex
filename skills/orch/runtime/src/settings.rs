@@ -173,13 +173,13 @@ pub const PR_WATCH_CLI_KEY: &str = "OVERSEE_WATCH_PR_WATCH";
 /// The github package's reducer under the project's install.
 pub const PR_WATCH_CLI_DEFAULT: &str = ".agents/skills/github/scripts/pr-watch.sh";
 /// Whether the GitHub duty reads each repository's open security alerts:
-/// `on`, the default, or `off` (`lib/security-alerts.sh`).
+/// `on`, the default, or `off`.
 pub const SECURITY_ALERTS_KEY: &str = "ORCH_SECURITY_ALERTS";
 /// The file holding the installation token the alert reads run under; no
 /// default, and an unset file reads the alerts with no token.
 pub const SECURITY_ALERT_TOKEN_FILE_KEY: &str = "ORCH_SECURITY_ALERT_TOKEN_FILE";
 /// Whether the GitHub duty reports outside contributions: `on`, the
-/// default, or `off` (`lib/outside-contribution.sh`).
+/// default, or `off`.
 pub const EXTERNAL_TRIAGE_KEY: &str = "ORCH_EXTERNAL_TRIAGE";
 /// Further `owner/repo` names the GitHub duty reads beside the fleet's,
 /// separated by whitespace, lowercased and deduplicated as the legacy
@@ -232,18 +232,39 @@ pub const LANE_MAX_PCT_KEY: &str = "ORCH_LANE_MAX_PCT";
 /// Points of the 5-hour session window one live lane is expected to spend
 /// an hour where its account measured no rate.
 pub const LANE_BURN_PCT_KEY: &str = "ORCH_LANE_BURN_PCT_PER_HOUR";
-/// The room kept in each plan window for the overseer's own seat.
-pub const OVERSEER_SEAT_RESERVE_PCT_KEY: &str = "ORCH_OVERSEER_SEAT_RESERVE_PCT";
+/// The account headroom the overseer hands off at, and so the room a seat
+/// keeps for it: a worker's pick holds a seat to `min(ORCH_LANE_MAX_PCT,
+/// 100 - this)` (U8d, KEN-4416).
+pub const OVERSEER_HEADROOM_PCT_KEY: &str = "ORCH_OVERSEER_HEADROOM_PCT";
 /// The Codex credit balance a window wall is lifted above (`lanes`'
 /// `ORCH_LANE_CODEX_CREDIT_FLOOR`).
 pub const CODEX_CREDIT_FLOOR_KEY: &str = "ORCH_LANE_CODEX_CREDIT_FLOOR";
+/// The dollars a cloud or API credit grant must exceed to be picked
+/// (`lanes`' `ORCH_LANE_CLOUD_CREDIT_FLOOR`).
+pub const CLOUD_CREDIT_FLOOR_KEY: &str = "ORCH_LANE_CLOUD_CREDIT_FLOOR";
+/// `<name>=<owner>/<repo>` pairs: the repository each account was given
+/// access to, which a `cloud-session` pick admits an account on.
+pub const LANE_CLOUD_REPOS_KEY: &str = "ORCH_LANE_CLOUD_REPOS";
+/// `<pi root>=<used>/<granted>` pairs: the Copilot pool each Pi root
+/// spends, as the owner states it, judged where no provider row reads it
+/// (`lanes`' own setting; U8d3).
+pub const LANE_COPILOT_POOL_KEY: &str = "ORCH_LANE_COPILOT_POOL";
+/// The lane names the reader never reads (`lanes`' own setting), read here
+/// for the stated Pi roots alone, which no reader lists.
+pub const LANE_EXCLUDE_KEY: &str = "ORCH_LANE_EXCLUDE";
+/// `<discovered name>=<alias>` pairs, the owner's names over the discovered
+/// ones (`lanes`' own setting), read here for the stated Pi roots alone:
+/// the reader names every row it lists through it and matches an
+/// exclusion or a retirement through that name.
+pub const LANE_ALIASES_KEY: &str = "ORCH_LANE_ALIASES";
 /// The lane host a pick runs under; `local` or unset is this machine's
 /// own reading.
 pub const LANE_HOST_KEY: &str = "ORCH_LANE_HOST";
 const DEFAULT_LANE_MAX_PCT: u32 = 95;
 const DEFAULT_LANE_BURN_PCT: u32 = 5;
-const DEFAULT_SEAT_RESERVE_PCT: u32 = 50;
+const DEFAULT_OVERSEER_HEADROOM_PCT: u32 = 5;
 const DEFAULT_CODEX_CREDIT_FLOOR: u64 = 5000;
+const DEFAULT_CLOUD_CREDIT_FLOOR: u64 = 10;
 
 const DEFAULT_STATE_DIR: &str = "tmp";
 const DEFAULT_VERIFY_SECS: u64 = 15;
@@ -476,10 +497,47 @@ pub struct AccountSettings {
     pub retire: Vec<Retirement>,
     pub max_pct: u32,
     pub burn_pct_per_hour: u32,
-    pub seat_reserve_pct: u32,
+    pub overseer_headroom_pct: u32,
     pub codex_credit_floor: u64,
+    pub cloud_credit_floor: u64,
+    pub cloud_repos: Vec<CloudRepo>,
+    /// `ORCH_LANE_COPILOT_POOL`: the Copilot pool each Pi root spends, as
+    /// the owner states it (U8d3).
+    pub copilot_pool: Vec<CopilotPool>,
+    /// `ORCH_LANE_EXCLUDE`'s names, applied to the stated Pi roots alone:
+    /// the reader applies the setting to every row it lists.
+    pub exclude: Vec<String>,
+    /// `ORCH_LANE_ALIASES`, read for the stated Pi roots alone: the reader
+    /// names every row it lists through it.
+    pub aliases: Vec<Alias>,
     /// The provider a pick runs under, `None` for this machine's own read.
     pub host: Option<String>,
+}
+
+/// U8d: one `ORCH_LANE_CLOUD_REPOS` entry, `<name>=<owner>/<repo>`: the
+/// account whose alias or directory name is `name` has access to `repo`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CloudRepo {
+    pub name: String,
+    pub repo: String,
+}
+
+/// U8d3: one `ORCH_LANE_COPILOT_POOL` entry, `<pi root>=<used>/<granted>`:
+/// the Copilot pool the Pi root at `dir` spends, `used` of `granted`
+/// credits spent, as the owner states it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CopilotPool {
+    pub dir: String,
+    pub used: u64,
+    pub granted: u64,
+}
+
+/// U8d4: one `ORCH_LANE_ALIASES` entry, `<name>=<alias>`: the lane whose
+/// directory name is `name`, with or without its dot, is called `alias`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Alias {
+    pub name: String,
+    pub alias: String,
 }
 
 /// The settings the runtime acts on, resolved once per process.
@@ -878,11 +936,7 @@ pub fn load(
     if let Some(text) = get(LANE_RETIRE_KEY) {
         for item in text.split(',').map(str::trim).filter(|i| !i.is_empty()) {
             let valid = item.split_once('=').filter(|(name, date)| {
-                let name = name.trim();
-                !name.is_empty()
-                    && !name.contains('/')
-                    && !name.contains('~')
-                    && calendar_date_valid(date.trim())
+                lane_key_valid(name.trim()) && calendar_date_valid(date.trim())
             });
             let Some((name, date)) = valid else {
                 return Err(value_refusal(LANE_RETIRE_KEY, item));
@@ -906,19 +960,112 @@ pub fn load(
             },
         }
     };
-    let codex_credit_floor = match get(CODEX_CREDIT_FLOOR_KEY) {
-        None => DEFAULT_CODEX_CREDIT_FLOOR,
-        Some(text) => match text.parse::<u64>() {
-            Ok(n) if text.bytes().all(|b| b.is_ascii_digit()) => n,
-            Ok(_) | Err(_) => return Err(value_refusal(CODEX_CREDIT_FLOOR_KEY, text)),
-        },
+    let whole = |key: &str, default: u64| -> Result<u64> {
+        match get(key) {
+            None => Ok(default),
+            Some(text) => match text.parse::<u64>() {
+                Ok(n) if text.bytes().all(|b| b.is_ascii_digit()) => Ok(n),
+                Ok(_) | Err(_) => Err(value_refusal(key, text)),
+            },
+        }
     };
+    // U8d: a cloud repository entry names a lane (as a retirement does) and
+    // an `owner/repo` in GitHub's own alphabet; one nobody can read is
+    // refused, never dropped, since a dropped entry would hand a cloud
+    // session an account with no access to the repository.
+    let mut cloud_repos = Vec::new();
+    if let Some(text) = get(LANE_CLOUD_REPOS_KEY) {
+        for item in text.split(',').map(str::trim).filter(|i| !i.is_empty()) {
+            let valid = item.split_once('=').filter(|(name, repo)| {
+                let name = name.trim();
+                let repo = repo.trim();
+                let (owner, project) = repo.split_once('/').unwrap_or(("", ""));
+                lane_key_valid(name)
+                    && !owner.is_empty()
+                    && owner
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                    && !project.is_empty()
+                    && project
+                        .bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+            });
+            let Some((name, repo)) = valid else {
+                return Err(value_refusal(LANE_CLOUD_REPOS_KEY, item));
+            };
+            cloud_repos.push(CloudRepo {
+                name: name.trim().to_owned(),
+                repo: repo.trim().to_owned(),
+            });
+        }
+    }
+    // U8d3: the stated Copilot pool, `lanes`' `copilot_pool_entries` rule:
+    // an absolute Pi root, the credits used and granted as whole numbers of
+    // at most twelve digits, the grant above zero, one entry per root; an
+    // entry nobody can read is refused, never dropped, since a reading
+    // nobody can parse is not judged as room.
+    let mut copilot_pool: Vec<CopilotPool> = Vec::new();
+    if let Some(text) = get(LANE_COPILOT_POOL_KEY) {
+        for item in text.split(',').map(str::trim).filter(|i| !i.is_empty()) {
+            let whole =
+                |s: &str| (1..=12).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_digit());
+            let entry = item.rsplit_once('=').and_then(|(dir, value)| {
+                let dir = dir.trim().trim_end_matches('/');
+                let (used, granted) = value.trim().split_once('/')?;
+                (dir.starts_with('/') && whole(used) && whole(granted)).then(|| CopilotPool {
+                    dir: dir.to_owned(),
+                    used: used.parse().unwrap_or(0),
+                    granted: granted.parse().unwrap_or(0),
+                })
+            });
+            let Some(entry) = entry.filter(|e| e.granted > 0) else {
+                return Err(value_refusal(LANE_COPILOT_POOL_KEY, item));
+            };
+            if copilot_pool.iter().any(|e| e.dir == entry.dir) {
+                return Err(value_refusal(LANE_COPILOT_POOL_KEY, item));
+            }
+            copilot_pool.push(entry);
+        }
+    }
+    // `ORCH_LANE_EXCLUDE` names lanes, never paths (`lanes`' `lane_key_valid`).
+    let mut exclude = Vec::new();
+    if let Some(text) = get(LANE_EXCLUDE_KEY) {
+        for item in text.split(',').map(str::trim).filter(|i| !i.is_empty()) {
+            if !lane_key_valid(item) {
+                return Err(value_refusal(LANE_EXCLUDE_KEY, item));
+            }
+            exclude.push(item.to_owned());
+        }
+    }
+    // U8d4: `ORCH_LANE_ALIASES` as `lanes` reads it (`validate_lane_settings`):
+    // an item without `=` or with an empty side is passed over, never refused.
+    let mut aliases = Vec::new();
+    if let Some(text) = get(LANE_ALIASES_KEY) {
+        for item in text.split(',').map(str::trim).filter(|i| !i.is_empty()) {
+            let Some((name, alias)) = item.split_once('=') else {
+                continue;
+            };
+            let (name, alias) = (name.trim(), alias.trim());
+            if name.is_empty() || alias.is_empty() {
+                continue;
+            }
+            aliases.push(Alias {
+                name: name.to_owned(),
+                alias: alias.to_owned(),
+            });
+        }
+    }
     let accounts = AccountSettings {
         retire,
         max_pct: pct(LANE_MAX_PCT_KEY, DEFAULT_LANE_MAX_PCT)?,
         burn_pct_per_hour: pct(LANE_BURN_PCT_KEY, DEFAULT_LANE_BURN_PCT)?,
-        seat_reserve_pct: pct(OVERSEER_SEAT_RESERVE_PCT_KEY, DEFAULT_SEAT_RESERVE_PCT)?,
-        codex_credit_floor,
+        overseer_headroom_pct: pct(OVERSEER_HEADROOM_PCT_KEY, DEFAULT_OVERSEER_HEADROOM_PCT)?,
+        codex_credit_floor: whole(CODEX_CREDIT_FLOOR_KEY, DEFAULT_CODEX_CREDIT_FLOOR)?,
+        cloud_credit_floor: whole(CLOUD_CREDIT_FLOOR_KEY, DEFAULT_CLOUD_CREDIT_FLOOR)?,
+        cloud_repos,
+        copilot_pool,
+        exclude,
+        aliases,
         host: get(LANE_HOST_KEY)
             .filter(|h| *h != "local")
             .map(str::to_owned),
@@ -988,6 +1135,15 @@ pub fn load(
         lanes_cli,
         accounts, // U6h
     })
+}
+
+/// U8d4: `lanes`' `lane_key_valid`, the one grammar of a name that stands
+/// for a lane in a setting (`ORCH_LANE_EXCLUDE`, `ORCH_LANE_RETIRE`,
+/// `ORCH_LANE_CLOUD_REPOS`): a directory name or an alias, never empty;
+/// a `/` or a `~` makes it a path, which names no lane, so a statement
+/// written that way would cover nothing.
+fn lane_key_valid(name: &str) -> bool {
+    !name.is_empty() && !name.contains('/') && !name.contains('~')
 }
 
 /// U6h: whether `text` is a `YYYY-MM-DD` naming a real calendar day

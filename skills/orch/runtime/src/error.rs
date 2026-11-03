@@ -549,16 +549,6 @@ pub enum WatchError {
     /// claim within the bound; it may still be finishing a duty.
     #[error("the watch (pid {pid}, start {start}) did not release its claim within the bound")]
     StopTimeout { pid: u32, start: String },
-    /// A live legacy `oversee-watch` holds the claim: its record carries no
-    /// start, and it reads no stop request. Nothing is written; the legacy
-    /// watch is stopped by its pid, by the `oversee-watch` entry at a start
-    /// (TERM to the loop's trap, else its process group) or by hand with
-    /// `job-unit.sh kill-group PID '*oversee-watch*'`; no stop reads its
-    /// launcher's `oversee-watch.runner`, which names the newest start.
-    #[error(
-        "{path}: a legacy oversee-watch holds the claim (pid {pid}); start the watch through oversee-watch, which stops it by its pid, or run job-unit.sh kill-group {pid} '*oversee-watch*'"
-    )]
-    LegacyLive { path: PathBuf, pid: u32 },
     /// The claim no longer names the running runner: another start wrote
     /// the record. The run ends and the record stands as its holder wrote it.
     #[error("{path}: the claim no longer names this runner (pid {pid}, start {start})")]
@@ -580,7 +570,6 @@ impl WatchError {
             WatchError::ClaimUnreadable { .. } => "watch-claim-unreadable",
             WatchError::Record { .. } => "watch-record",
             WatchError::StopTimeout { .. } => "watch-stop-timeout",
-            WatchError::LegacyLive { .. } => "watch-legacy-live",
             WatchError::ClaimMoved { .. } => "watch-claim-moved",
             WatchError::IdentityUnreadable => "watch-identity-unreadable",
         }
@@ -605,10 +594,6 @@ impl WatchError {
             WatchError::StopTimeout { pid, start } => {
                 vec![pair("pid", pid.to_string()), pair("start", start.clone())]
             }
-            WatchError::LegacyLive { path, pid } => vec![
-                pair("path", path.display().to_string()),
-                pair("pid", pid.to_string()),
-            ],
             WatchError::ClaimMoved { path, pid, start } => vec![
                 pair("path", path.display().to_string()),
                 pair("pid", pid.to_string()),

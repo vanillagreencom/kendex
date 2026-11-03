@@ -3244,10 +3244,7 @@ fn start_controller_launches_the_fleet_watch_and_a_refused_launch_is_unconfirmed
     let claim = orch_runtime::watch::claim::read(&paths)
         .unwrap()
         .expect("the runtime claimed the fleet state");
-    assert!(
-        claim.start.is_some() && live(claim.pid),
-        "a live runtime claim: {claim:?}"
-    );
+    assert!(live(claim.pid), "a live runtime claim: {claim:?}");
     let intent = runner.fleet()["intents"][0].clone();
     assert_eq!(
         discharged_by(&intent, "watch-claimed").len(),
@@ -3530,8 +3527,10 @@ fn shipped_scripts() -> std::path::PathBuf {
 /// state directory: `skills/orch/scripts` links every shipped script but
 /// the three this world answers for (`orch-runtime` is the wrapper
 /// `watch_world` wrote around the test binary, `lanes` the listing fixture
-/// whose `pick.json` names `account` on `harness` as the one lane with room,
-/// `lane-host` the host fixture answering the local capabilities), and the
+/// whose `lanes.json` lists `account` on `harness` as the one measured
+/// account, with room, so the launcher's pick through the runtime's judge
+/// names it, `lane-host` the host fixture answering the local
+/// capabilities), and the
 /// sibling skills the scripts source are linked beside `orch`. The walk's
 /// `kendex tier-model` finds the `kendex-launch` fixture in `bin`, the
 /// watch world's directory first on the rows' `PATH`, never the operator's
@@ -3587,14 +3586,25 @@ fn launcher_checkout(
     )
     .unwrap();
     std::fs::write(
-        scripts.join("pick.json"),
-        json!({"body": {
+        scripts.join("lanes.json"),
+        json!([{
             "config_dir": account.display().to_string(),
             "harness": harness,
             "alias": "fixture",
-            "status": "active",
+            "measured_through": "local",
+            "status": "ok",
             "verdict": "room",
-        }})
+            "headroom_pct": 80,
+            "wall": 20,
+            "binding_bucket": "weekly",
+            "binding_resets_at": "2027-01-01T00:00:00Z",
+            "session_5h_pct": 5,
+            "weekly_pct": 20,
+            "monthly_pct": null,
+            "model_buckets": [],
+            "resets": {"session": "2027-01-01T00:00:00Z", "weekly": "2027-01-01T00:00:00Z"},
+            "pool": "plan",
+        }])
         .to_string(),
     )
     .unwrap();

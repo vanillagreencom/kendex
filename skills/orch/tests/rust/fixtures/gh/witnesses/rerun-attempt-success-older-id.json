@@ -1,0 +1,201 @@
+{
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/check-runs?filter=all&per_page=100&page=1": {
+    "body": {
+      "total_count": 1,
+      "check_runs": [
+        {
+          "id": 1001,
+          "node_id": "CR_1001",
+          "name": "request",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 10002
+          },
+          "started_at": null,
+          "completed_at": null,
+          "html_url": null,
+          "details_url": null
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/check-suites?per_page=100&page=1": {
+    "body": {
+      "total_count": 3,
+      "check_suites": [
+        {
+          "id": 10002
+        },
+        {
+          "id": 29667588017
+        },
+        {
+          "id": 29667812172
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/status?per_page=100&page=1": {
+    "body": {
+      "state": "pending",
+      "total_count": 0,
+      "statuses": [],
+      "sha": "737bce791577e140436490e0fed5751bb5144a61"
+    }
+  },
+  "repos/owner/repo/actions/runs?head_sha=737bce791577e140436490e0fed5751bb5144a61&per_page=100&page=1": {
+    "body": {
+      "total_count": 2,
+      "workflow_runs": [
+        {
+          "id": 29662812172,
+          "name": "wf-245303662",
+          "path": ".github/workflows/wf-245303662.yml",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "event": "pull_request_review",
+          "workflow_id": 245303662,
+          "updated_at": "2026-07-18T22:05:57Z",
+          "repository": {
+            "id": 1296269,
+            "full_name": "owner/repo"
+          },
+          "check_suite_id": 29667812172,
+          "check_suite_node_id": "CS_29667812172",
+          "run_attempt": 1
+        },
+        {
+          "id": 29662588017,
+          "name": "wf-245303662",
+          "path": ".github/workflows/wf-245303662.yml",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "status": "completed",
+          "conclusion": "success",
+          "event": "pull_request",
+          "workflow_id": 245303662,
+          "updated_at": "2026-07-18T22:20:25Z",
+          "repository": {
+            "id": 1296269,
+            "full_name": "owner/repo"
+          },
+          "check_suite_id": 29667588017,
+          "check_suite_node_id": "CS_29667588017",
+          "run_attempt": 2
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/actions/workflows?per_page=100&page=1": {
+    "body": {
+      "total_count": 1,
+      "workflows": [
+        {
+          "id": 245303662,
+          "node_id": "W_245303662",
+          "name": "wf-245303662",
+          "path": ".github/workflows/wf-245303662.yml",
+          "state": "active"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/rules/branches/main?per_page=100&page=1": {
+    "body": []
+  },
+  "repos/owner/repo/branches/main": {
+    "body": {
+      "name": "main",
+      "protected": false,
+      "protection": {
+        "enabled": false,
+        "required_status_checks": {
+          "contexts": [],
+          "checks": []
+        }
+      }
+    }
+  },
+  "graphql": {
+    "body": {
+      "nodes": {
+        "CS_29667812172": {
+          "id": "CS_29667812172",
+          "databaseId": 29667812172,
+          "workflowRun": {
+            "databaseId": 29662812172,
+            "runAttempt": 1,
+            "file": {
+              "path": ".github/workflows/wf-245303662.yml",
+              "repositoryName": "owner/repo",
+              "repositoryFileUrl": "https://github.com/owner/repo/blob/737bce791577e140436490e0fed5751bb5144a61/.github/workflows/wf-245303662.yml",
+              "viewerCanReadRepository": true
+            }
+          }
+        },
+        "CS_29667588017": {
+          "id": "CS_29667588017",
+          "databaseId": 29667588017,
+          "workflowRun": {
+            "databaseId": 29662588017,
+            "runAttempt": 2,
+            "file": {
+              "path": ".github/workflows/wf-245303662.yml",
+              "repositoryName": "owner/repo",
+              "repositoryFileUrl": "https://github.com/owner/repo/blob/737bce791577e140436490e0fed5751bb5144a61/.github/workflows/wf-245303662.yml",
+              "viewerCanReadRepository": true
+            }
+          }
+        },
+        "CR_1001": {
+          "id": "CR_1001",
+          "checkSuite": {
+            "databaseId": 10002,
+            "workflowRun": null
+          }
+        }
+      }
+    }
+  },
+  "repos/owner/repo/actions/workflows/245303662": {
+    "body": {
+      "id": 245303662,
+      "node_id": "W_245303662",
+      "name": "wf-245303662",
+      "path": ".github/workflows/wf-245303662.yml",
+      "state": "active"
+    }
+  },
+  "repos/owner/repo/check-suites/29667812172/check-runs?per_page=100&page=1": {
+    "body": {
+      "total_count": 0,
+      "check_runs": []
+    }
+  },
+  "repos/owner/repo/check-suites/29667588017/check-runs?per_page=100&page=1": {
+    "body": {
+      "total_count": 0,
+      "check_runs": []
+    }
+  },
+  "repos/owner/repo": {
+    "body": {
+      "id": 1296269,
+      "full_name": "owner/repo"
+    }
+  },
+  "repos/owner/source": {
+    "body": {
+      "id": 7,
+      "full_name": "owner/source"
+    }
+  },
+  "repos/owner/fork": {
+    "body": {
+      "id": 9,
+      "full_name": "owner/fork"
+    }
+  }
+}

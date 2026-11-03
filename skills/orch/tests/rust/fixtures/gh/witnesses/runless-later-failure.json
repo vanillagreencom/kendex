@@ -1,0 +1,126 @@
+{
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/check-runs?filter=all&per_page=100&page=1": {
+    "body": {
+      "total_count": 2,
+      "check_runs": [
+        {
+          "id": 1001,
+          "node_id": "CR_1001",
+          "name": "external",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 10002
+          },
+          "started_at": "2026-07-26T10:00:00Z",
+          "completed_at": "2026-07-26T10:00:00Z",
+          "html_url": null,
+          "details_url": null
+        },
+        {
+          "id": 1002,
+          "node_id": "CR_1002",
+          "name": "external",
+          "status": "completed",
+          "conclusion": "failure",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 10003
+          },
+          "started_at": "2026-07-26T10:09:00Z",
+          "completed_at": "2026-07-26T10:09:00Z",
+          "html_url": null,
+          "details_url": null
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/check-suites?per_page=100&page=1": {
+    "body": {
+      "total_count": 2,
+      "check_suites": [
+        {
+          "id": 10002
+        },
+        {
+          "id": 10003
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/status?per_page=100&page=1": {
+    "body": {
+      "state": "pending",
+      "total_count": 0,
+      "statuses": [],
+      "sha": "737bce791577e140436490e0fed5751bb5144a61"
+    }
+  },
+  "repos/owner/repo/actions/runs?head_sha=737bce791577e140436490e0fed5751bb5144a61&per_page=100&page=1": {
+    "body": {
+      "total_count": 0,
+      "workflow_runs": []
+    }
+  },
+  "repos/owner/repo/actions/workflows?per_page=100&page=1": {
+    "body": {
+      "total_count": 0,
+      "workflows": []
+    }
+  },
+  "repos/owner/repo/rules/branches/main?per_page=100&page=1": {
+    "body": []
+  },
+  "repos/owner/repo/branches/main": {
+    "body": {
+      "name": "main",
+      "protected": false,
+      "protection": {
+        "enabled": false,
+        "required_status_checks": {
+          "contexts": [],
+          "checks": []
+        }
+      }
+    }
+  },
+  "graphql": {
+    "body": {
+      "nodes": {
+        "CR_1001": {
+          "id": "CR_1001",
+          "checkSuite": {
+            "databaseId": 10002,
+            "workflowRun": null
+          }
+        },
+        "CR_1002": {
+          "id": "CR_1002",
+          "checkSuite": {
+            "databaseId": 10003,
+            "workflowRun": null
+          }
+        }
+      }
+    }
+  },
+  "repos/owner/repo": {
+    "body": {
+      "id": 1296269,
+      "full_name": "owner/repo"
+    }
+  },
+  "repos/owner/source": {
+    "body": {
+      "id": 7,
+      "full_name": "owner/source"
+    }
+  },
+  "repos/owner/fork": {
+    "body": {
+      "id": 9,
+      "full_name": "owner/fork"
+    }
+  }
+}

@@ -91,10 +91,6 @@ name = "watch_report"
 path = "../tests/rust/watch_report.rs"
 
 [[test]]
-name = "watch_cost"
-path = "../tests/rust/watch_cost.rs"
-
-[[test]]
 name = "validate"
 path = "../tests/rust/validate.rs"
 

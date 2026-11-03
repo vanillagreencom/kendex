@@ -137,6 +137,19 @@ pub struct Capabilities {
     pub files: Files,
     pub status: Status,
     pub pane: PaneKind,
+    /// How the kind launches a lane (`launch=`); `None` where the line
+    /// names none. The accounts judge admits a `cloud-session` host's
+    /// account only with repository access (U8d).
+    pub launch: Option<Launch>,
+}
+
+/// How a kind launches a lane (`launch=`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Launch {
+    Window,
+    Ssh,
+    CloudSession,
+    CloudTask,
 }
 
 impl Capabilities {
@@ -146,6 +159,7 @@ impl Capabilities {
         files: Files::Local,
         status: Status::Pane,
         pane: PaneKind::Local,
+        launch: Some(Launch::Window),
     };
 
     /// One tab-separated `key=value` line; `pane` absent reads `local`, an
@@ -156,6 +170,7 @@ impl Capabilities {
         let mut files = None;
         let mut status = None;
         let mut pane = PaneKind::Local;
+        let mut launch = None;
         for field in line.trim_end_matches('\n').split('\t') {
             let Some((key, value)) = field.split_once('=') else {
                 return Err(format!("capability-invalid field={field}"));
@@ -186,6 +201,15 @@ impl Capabilities {
                         _ => return Err(invalid()),
                     };
                 }
+                "launch" => {
+                    launch = Some(match value {
+                        "window" => Launch::Window,
+                        "ssh" => Launch::Ssh,
+                        "cloud-session" => Launch::CloudSession,
+                        "cloud-task" => Launch::CloudTask,
+                        _ => return Err(invalid()),
+                    });
+                }
                 _ => {}
             }
         }
@@ -194,6 +218,7 @@ impl Capabilities {
                 files,
                 status,
                 pane,
+                launch,
             }),
             (None, _) => Err("capability-invalid key=files value=missing".to_owned()),
             (_, None) => Err("capability-invalid key=status value=missing".to_owned()),
@@ -1517,7 +1542,8 @@ mod tests {
             Capabilities {
                 files: Files::Verb,
                 status: Status::Verb,
-                pane: PaneKind::Local
+                pane: PaneKind::Local,
+                launch: Some(Launch::Ssh),
             }
         );
         let cloud =

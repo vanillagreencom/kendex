@@ -1,4 +1,4 @@
-//! The security-alert pass of the GitHub duty (`lib/security-alerts.sh`):
+//! The security-alert pass of the GitHub duty:
 //! every open Dependabot, code scanning and secret scanning alert in each
 //! repository, reported until the fleet state's `alerts_triaged` records
 //! its verdict, repeated with `report=repeat` on every pass while its row
@@ -6,13 +6,12 @@
 //! in `ORCH_SECURITY_ALERT_TOKEN_FILE` and no other call. A read that
 //! cannot be judged keeps every row of its source and joins the pass's one
 //! `security-alerts-unread reads=` line, printed only when the set of
-//! failed reads changes (`:290`); a refused token, an unreadable verdict
-//! record and a list the pass cannot read are each such a source, never
-//! an empty list (`:153`, `:171`, `:194`).
+//! failed reads changes; a refused token, an unreadable verdict record
+//! and a list the pass cannot read are each such a source, never an empty
+//! list.
 //!
 //! The lines are protocol the overseer reads under
-//! `references/security-alerts.md`; their bytes are `security-alerts.sh:235-
-//! 245` and `:298`, rendered by `Event::SecurityAlert` and
+//! `references/security-alerts.md`, rendered by `Event::SecurityAlert` and
 //! `Event::SecurityAlertsUnread`.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -31,7 +30,7 @@ use crate::watch::{Baseline, Change, Event, Produced};
 
 use super::github::{Gh, paged};
 
-/// Baseline row kinds (`security-alerts.sh:123-131`).
+/// Baseline row kinds.
 pub const ALERT_ROW: &str = "security-alert";
 pub const BOT_FIX_ROW: &str = "bot-fix";
 pub const UNREAD_ROW: &str = "security-alerts-unread";
@@ -180,7 +179,7 @@ fn present(value: &Nullable<String>) -> Option<String> {
 }
 
 /// The manifest's repository path with each `%` and white space character
-/// percent-encoded (`security-alerts.sh:52`), so a directory name with a
+/// percent-encoded, so a directory name with a
 /// space stays one word.
 fn encoded_manifest(path: &str) -> String {
     let mut out = String::new();
@@ -386,7 +385,7 @@ fn standing_bot_fix(baseline: &Baseline) -> BTreeMap<String, String> {
         .collect()
 }
 
-/// The verdicts `alerts_triaged` records (`security-alerts.sh:160-184`),
+/// The verdicts `alerts_triaged` records,
 /// each `<repo>#<kind>/<number>` lowercased; a row naming no repository,
 /// no alert kind or no whole number is the record's `invalid`.
 fn recorded(verdicts: &[Value]) -> Option<BTreeSet<String>> {
@@ -511,7 +510,7 @@ fn alert_rows(kind: &str, members: Value) -> Option<Vec<AlertRow>> {
 
 /// The Dependabot alerts in any state that carry an open pull request,
 /// `(alert, alert state, pr)` each, through the GraphQL record paged by
-/// gh (`security-alerts.sh:198`).
+/// gh.
 fn dependabot_prs(gh: &Gh, repo: &str, token: &str) -> Result<ReadEnd<Vec<(u64, String, u64)>>> {
     let env = [("GH_TOKEN", OsStr::new(token))];
     let (owner, name) = repo.split_once('/').unwrap_or((repo, ""));
@@ -671,7 +670,7 @@ pub(super) fn pass(
                 }
             };
             // The open pull requests the alerts link, each to its open
-            // alerts, in alert order (`security-alerts.sh:221-229`).
+            // alerts, in alert order.
             let mut linked: Vec<(u64, Vec<u64>)> = Vec::new();
             let mut sorted = prs.clone();
             sorted.sort_by_key(|(alert, _, _)| *alert);
@@ -774,8 +773,7 @@ pub(super) fn pass(
             value: "reported".to_owned(),
         });
     }
-    // The repeats ride the pass's output ahead of the first reports
-    // (`security-alerts.sh:261-265`).
+    // The repeats ride the pass's output ahead of the first reports.
     produced.events.extend(repeats);
     produced.events.extend(events);
     commit_unread(&unread, baseline, produced);
@@ -849,7 +847,7 @@ mod tests {
         assert!(!row_valid("code-scanning", &row(Some("error"), "r x")));
     }
 
-    /// The verdict record's reading (`security-alerts.sh:176-184`): the
+    /// The verdict record's reading: the
     /// repository case folded, a row naming no alert kind refused.
     #[test]
     fn the_verdict_record_folds_case_and_refuses_an_unknown_kind() {

@@ -23,9 +23,9 @@
 //!
 //! The verdict is the legacy `ci-wait`'s, with the recorded corrections: a
 //! pushed base is judged (107), `startup_failure` fails (113), a tie of
-//! equal starts follows the port's listing order (117, 122). The oracle is
-//! frozen: no new dimension, count or correction machinery; a verdict change
-//! waits for the differential's retirement or is one named correction.
+//! equal starts follows the port's listing order (117, 122). The legacy's
+//! witnesses are recorded rows (`tests/rust/verify.rs`); a verdict change
+//! is one named correction (decision 135a).
 //!
 //! No polling loop runs here. One call is one read set; the caller repeats
 //! on `pending` under its own budget, so the budget and the retry stay with
@@ -36,12 +36,6 @@
 //! and state through `gh pr view`, by number, and [`run`] then judges that
 //! head exactly as above, recording under its own `source`.
 
-#[cfg(test)]
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the differential runs the legacy ci-wait oracle as a process"
-)]
-mod differential;
 mod evidence;
 mod judge;
 mod selection;
@@ -489,10 +483,8 @@ impl Answer {
 /// One `gh` call: the arguments after the program, as `gh api PATH`, the
 /// GraphQL form `gh api graphql -f query=… -f ids[]=…` or `gh pr view N`
 /// ([`pull_request`]), answered with what it printed and whether it exited
-/// zero (`Answer`). Production is `Gh`;
-/// the differential test answers from a rendered case
-/// (`differential::FakeGh`), so `evidence::read` is the one constructor of
-/// an `Evidence` in both.
+/// zero (`Answer`). `Gh` is its one implementation, so `evidence::read`
+/// is the one constructor of an `Evidence`.
 trait Transport {
     fn call(&self, endpoint: Endpoint, args: &[&str]) -> Read<Answer>;
 }

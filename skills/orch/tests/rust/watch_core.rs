@@ -1,9 +1,8 @@
 //! The scheduler core (decision 121; step5-map § A0, § A1, § B rows 5 and
-//! 6, § D; decision 148): the identity-bound claim and its legacy form, the
-//! duty threads on one fake clock, the event line durable before its
-//! baseline row, the failure policy, the per-duty stamps, the `EVENT`
-//! grammar and the legacy `watch-pid.sh` reading the runner's record. Each
-//! row names the defect it catches at its doc comment.
+//! 6, § D; decision 148): the identity-bound claim, the duty threads on one
+//! fake clock, the event line durable before its baseline row, the failure
+//! policy, the per-duty stamps and the `EVENT` grammar. Each row names the
+//! defect it catches at its doc comment.
 #![allow(
     clippy::disallowed_methods,
     reason = "the rows hold owned children, write the records they plant and drive the one fake clock"
@@ -12,7 +11,6 @@
 #[path = "support.rs"]
 mod support;
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -140,92 +138,6 @@ fn watch_status_carries_the_claims_cwd_origin_and_the_log_for_the_hook() {
     assert_eq!(status["log"], paths.log.display().to_string(), "{status}");
 }
 
-/// Plant the record a legacy `oversee-watch` writes (`watch_pid_write`):
-/// the six legacy fields and no `start=`.
-fn plant_legacy_claim(paths: &Paths, pid: u32) {
-    std::fs::write(
-        &paths.pid,
-        format!(
-            "pid={pid}\nstate={}\npane=none\norigin=hand\nscript=/x/oversee-watch\ncwd=/x\n",
-            paths.state.display()
-        ),
-    )
-    .unwrap();
-}
-
-/// How a planted legacy holder stands to the entry's stop.
-#[derive(Clone, Copy)]
-enum Holder {
-    /// A session leader that answers TERM, as a launcher-started legacy
-    /// watch stood (`job-unit.sh launch` under setsid or a unit's main
-    /// process): the TERM route stops it.
-    Leader,
-    /// A leader that ignores TERM (`trap '' TERM` kept across its exec), as
-    /// a launcher-started watch wedged in a pass stands: the TERM route
-    /// runs out its bound and the group route ends it.
-    DeafLeader,
-    /// A process in its parent's group that ignores TERM, as a watch a shell
-    /// started with `&` and wedged stands: it owns no group, so no route
-    /// stops it.
-    DeafMember,
-}
-
-/// A process whose command line names `oversee-watch`, shaped by `holder`:
-/// started through a shell that disowns it, so init reaps it, its pid read
-/// from the file it writes before it execs. Its pid. The script runs under
-/// the interpreter, not by exec: a sibling row's fork can hold the
-/// just-written file open and exec refuses it as busy.
-fn daemon_legacy_holder(dir: &Path, holder: Holder) -> u32 {
-    let inner = dir.join("holder-inner.sh");
-    std::fs::write(
-        &inner,
-        "[ -z \"$DEAF\" ] || trap '' TERM\necho $$ > \"$1\"\nexec -a oversee-watch sleep 60\n",
-    )
-    .unwrap();
-    let script = dir.join("holder.sh");
-    let pidfile = dir.join("holder.pid");
-    let (prefix, deaf) = match holder {
-        Holder::Leader => ("setsid ", ""),
-        Holder::DeafLeader => ("setsid ", "1"),
-        Holder::DeafMember => ("", "1"),
-    };
-    std::fs::write(
-        &script,
-        format!(
-            "DEAF={deaf} {prefix}bash '{}' \"$1\" >/dev/null 2>&1 &\ndisown\n",
-            inner.display()
-        ),
-    )
-    .unwrap();
-    let out = Command::new("bash")
-        .arg(&script)
-        .arg(&pidfile)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "{}", stderr(&out));
-    let deadline = Instant::now() + secs(5);
-    loop {
-        if let Ok(text) = std::fs::read_to_string(&pidfile)
-            && let Ok(pid) = text.trim().parse::<u32>()
-        {
-            return pid;
-        }
-        assert!(Instant::now() < deadline, "the holder never wrote its pid");
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
-/// A held child whose command line names `oversee-watch`, as the legacy
-/// watch's does and as `watch_pid_runs` reads it.
-fn legacy_holder() -> Owned {
-    Owned(
-        Command::new("bash")
-            .args(["-c", "exec -a oversee-watch sleep 30"])
-            .spawn()
-            .expect("oversee-watch holder"),
-    )
-}
-
 /// Row (a). Defect: a claim judged by its pid alone, which a reused pid
 /// would read live (refusing forever) or a live runner's pid read gone
 /// (two runners on one fleet). A claim whose identity reads live is
@@ -299,102 +211,56 @@ fn a_live_claim_is_refused_and_a_gone_one_is_taken_over_with_an_event_line() {
     assert!(live(sleeper.pid()), "the sleeper was never touched");
 }
 
-/// Decision 148 (1), R-U5a F1 and follow-up 2. Defect: a start-less legacy
-/// record (the one `watch_pid_write` writes on every fleet today) read as
-/// released by `stop`, which answered `released` for a watch it never
-/// stopped, and overwritten by `--replace`, which ran a second watch beside
-/// the live legacy one; and, the other way, a start-less record whose pid a
-/// later process reused read live forever; and (decisions 150 (4), 156
-/// (3)) a live legacy watch read gone because a wall-clock step moved its
-/// `btime`-derived start past the record's time. A live legacy holder, one
-/// whose command line names `oversee-watch`, refuses `stop` and `--replace`
-/// as `watch-legacy-live` with nothing written, and still reads live when
-/// its record's time is set before its start; a start-less record whose
-/// pid runs something else, started after the record was written, reads
-/// gone and is taken over with its line.
+/// R-U8-1 F1. Defect: the claim record `watch_pid_write` writes
+/// (`lib/watch-pid.sh`: `pid`, `state`, `pane`, `origin`, `script`, `cwd`,
+/// no `start=`), left with a dead pid by a loop that ended without its
+/// trap, refused `watch-claim-unreadable` on every start until a person
+/// removes the file, and `watch status` failing as a verb on it, so the
+/// turn-end hook reads `unanswered` and the fleet stands unwatched. A
+/// start-less record is read by its pid alone: while the pid runs, `status`
+/// answers `unreadable` with cause `start-missing` and a start refuses with
+/// nothing written; once no process holds it, the record reads `gone` and
+/// is taken over with `start=none` on the line.
 #[test]
-fn a_live_legacy_claim_refuses_stop_and_replace_and_a_reused_pid_is_taken_over() {
+fn a_start_less_record_is_unreadable_while_its_pid_runs_and_taken_over_once_it_is_dead() {
     let dir = tempfile::tempdir().unwrap();
     let paths = paths_in(dir.path());
     let settings = settings_in(dir.path(), 20);
     let clock = FakeClock::new();
-    // Live: the holder started, then the record was written, as the legacy
-    // watch writes its own.
-    let holder = legacy_holder();
-    plant_legacy_claim(&paths, holder.pid());
+    let plant = |pid: u32| {
+        std::fs::write(
+            &paths.pid,
+            format!(
+                "pid={pid}\nstate={}\npane=%1\norigin=hand\nscript=/x/oversee-watch\ncwd=/x\n",
+                paths.state.display()
+            ),
+        )
+        .unwrap();
+    };
+    let holder = Owned::sleep();
+    plant(holder.pid());
     let before = std::fs::read_to_string(&paths.pid).unwrap();
-    let stopped = watch::claim::stop(&paths, &clock);
-    assert!(
-        matches!(&stopped, Err(e) if e.key() == "watch-legacy-live"),
-        "{stopped:?}"
+    let standing = watch::status(&paths).unwrap().claim.expect("the claim");
+    assert_eq!(
+        (standing.standing, standing.cause.as_deref(), standing.start),
+        ("unreadable", Some("start-missing"), None)
     );
+    let refused = runner(dir.path(), &clock, &settings, me()).run();
     assert!(
-        std::fs::metadata(&paths.stop).is_err(),
-        "no stop request is written for a legacy watch"
-    );
-    let replacing = Runner::new(
-        paths_in(dir.path()),
-        &clock,
-        &settings,
-        Flags {
-            replace: Some(holder.pid()),
-            ..flags()
-        },
-        me(),
-        recorded(),
-    );
-    let replaced = replacing.run();
-    assert!(
-        matches!(&replaced, Err(e) if e.key() == "watch-legacy-live"),
-        "{replaced:?}"
+        matches!(&refused, Err(e) if e.key() == "watch-claim-unreadable"),
+        "{refused:?}"
     );
     assert_eq!(
         std::fs::read_to_string(&paths.pid).unwrap(),
         before,
-        "the legacy record is unchanged"
+        "a refused start writes nothing"
     );
-    assert!(log_lines(&paths).is_empty(), "nothing was logged");
-    assert!(live(holder.pid()), "the legacy holder lives");
-    // The record's time moved before the holder's start, as a forward
-    // step of the wall clock moves the `btime`-derived start past it: the
-    // command line still names the watch, so it still reads live.
-    std::fs::File::options()
-        .write(true)
-        .open(&paths.pid)
-        .unwrap()
-        .set_modified(SystemTime::now() - secs(120))
-        .unwrap();
-    assert_eq!(
-        watch::status(&paths).unwrap().claim.unwrap().standing,
-        "live",
-        "a live legacy watch is read by its command line, not the record's time"
-    );
-    let stepped = runner(dir.path(), &clock, &settings, me()).run();
-    assert!(
-        matches!(&stepped, Err(e) if e.key() == "watch-running"),
-        "{stepped:?}"
-    );
-    assert_eq!(
-        std::fs::read_to_string(&paths.pid).unwrap(),
-        before,
-        "the legacy record is unchanged"
-    );
+    assert!(log_lines(&paths).is_empty(), "a refused start logs nothing");
+    assert!(live(holder.pid()), "the holder was never touched");
     drop(holder);
-    // Reused: the record was written before the process holding its pid
-    // started, and that process runs something else, so the pid is another
-    // process's.
-    let later = Owned::sleep();
-    plant_legacy_claim(&paths, later.pid());
-    std::fs::File::options()
-        .write(true)
-        .open(&paths.pid)
-        .unwrap()
-        .set_modified(SystemTime::now() - secs(120))
-        .unwrap();
-    assert_eq!(
-        watch::status(&paths).unwrap().claim.unwrap().standing,
-        "gone"
-    );
+    plant(GONE_PID as u32);
+    let dead = watch::status(&paths).unwrap().claim.expect("the claim");
+    assert_eq!((dead.standing, dead.start), ("gone", None));
     let identity = me();
     let ended = run_driven(
         runner(dir.path(), &clock, &settings, identity.clone()),
@@ -407,11 +273,14 @@ fn a_live_legacy_claim_refuses_stop_and_replace_and_a_reused_pid_is_taken_over()
     assert_eq!(
         log_lines(&paths),
         vec![format!(
-            "EVENT watch-taken-over pid={} start=none reason=gone",
-            later.pid()
+            "EVENT watch-taken-over pid={GONE_PID} start=none reason=gone"
         )]
     );
-    assert!(live(later.pid()), "the later process was never touched");
+    assert_eq!(
+        watch::claim::read(&paths).unwrap(),
+        None,
+        "the taker released its claim"
+    );
 }
 
 /// Decision 148 (7). Defect: a check-then-write claim, under which two
@@ -1179,14 +1048,6 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT watch-taken-over pid=4242 start=ticks:9 reason=replace",
         ),
-        (
-            Event::WatchTakenOver {
-                pid: 4242,
-                start: None,
-                reason: watch::Takeover::Gone,
-            },
-            "EVENT watch-taken-over pid=4242 start=none reason=gone",
-        ),
         // U5g: the wake duty's own lines.
         (
             Event::WakeDelivered { target: s("KEN-1") },
@@ -1622,9 +1483,9 @@ fn every_event_renders_to_the_legacy_bytes() {
             "EVENT lane-long issue-3 age=12600 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=parked",
         ),
         // U5e2: the GitHub duty's readings' lines (decision 152).
-        // lib/pr-watch-pass.sh:191, the bytes 744fd5727:skills/orch/tests/oversee_watch.sh § 1 pins
+        // The bytes 744fd5727:skills/orch/tests/oversee_watch.sh § 1 pins
         (Event::PrWatch { rc: 1 }, "EVENT pr-watch rc=1"),
-        // lib/security-alerts.sh:235-245, the bytes 744fd5727:skills/orch/tests/oversee_watch_security.sh
+        // The bytes 744fd5727:skills/orch/tests/oversee_watch_security.sh
         // pins (LINE_DEPENDABOT with pr=12, LINE_SECRET, a repeat)
         (
             Event::SecurityAlert {
@@ -1662,14 +1523,14 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT security-alert owner/repo kind=secret-scanning number=3 rule=github_personal_access_token validity=active url=https://github.com/owner/repo/security/secret-scanning/3 report=repeat",
         ),
-        // lib/security-alerts.sh:298
+        // The unread set's line.
         (
             Event::SecurityAlertsUnread {
                 reads: s("owner/repo/dependabot:permission,owner/repo/code-scanning:http-502"),
             },
             "EVENT security-alerts-unread reads=owner/repo/dependabot:permission,owner/repo/code-scanning:http-502",
         ),
-        // lib/outside-contribution.sh:116-117, the bytes 744fd5727:skills/orch/tests/oversee_watch_outside.sh pins
+        // The bytes 744fd5727:skills/orch/tests/oversee_watch_outside.sh pins
         (
             Event::OutsideContribution {
                 key: s("owner/repo#3100"),
@@ -2056,14 +1917,6 @@ fn workflow_launch(dir: &Path, words: &[&str]) -> Command {
     launch
 }
 
-/// The legacy record library a faithful copy of the commit-11 loop sources.
-fn watch_pid_lib() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("scripts/lib/watch-pid.sh")
-}
-
 /// The runtime's claim on `paths`, once a record carrying a start names a
 /// live pid, within `bound`: its pid, or none. For a runner no child handle
 /// holds (a detached start).
@@ -2071,27 +1924,9 @@ fn await_runtime_claim(paths: &Paths, bound: Duration) -> Option<u32> {
     let deadline = Instant::now() + bound;
     loop {
         if let Ok(Some(claim)) = watch::claim::read(paths)
-            && claim.start.is_some()
             && live(claim.pid)
         {
             return Some(claim.pid);
-        }
-        if Instant::now() >= deadline {
-            return None;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-}
-
-/// `child` ended within `bound`: its status, or none while it still runs.
-fn ended_within(
-    child: &mut std::process::Child,
-    bound: Duration,
-) -> Option<std::process::ExitStatus> {
-    let deadline = Instant::now() + bound;
-    loop {
-        if let Ok(Some(status)) = child.try_wait() {
-            return Some(status);
         }
         if Instant::now() >= deadline {
             return None;
@@ -2126,53 +1961,6 @@ fn spawn_watch_run(dir: &Path, flags: &[&str]) -> std::process::Child {
     entry_command(dir, flags).spawn().expect("spawn the entry")
 }
 
-/// Wait until the entry's runtime has claimed `paths`, bounded; a child
-/// that ends first or never claims fails the row with its stderr, the
-/// entry's own lines among them.
-fn await_entry_claim(child: &mut std::process::Child, paths: &Paths) {
-    // Past the TERM route's bound (10 s plus its one-second slack) and the
-    // group teardown's kill grace (10 s) after it, so a stop that ran both
-    // out reports its own line rather than this bound.
-    let deadline = Instant::now() + secs(30);
-    loop {
-        if let Ok(Some(claim)) = watch::claim::read(paths)
-            && claim.pid == child.id()
-        {
-            return;
-        }
-        let ended = child.try_wait().ok().flatten();
-        if ended.is_some() || Instant::now() >= deadline {
-            if ended.is_none() {
-                let _ = child.kill();
-            }
-            let status = child.wait().ok();
-            let mut err = String::new();
-            if let Some(stderr) = child.stderr.as_mut() {
-                let _ = std::io::Read::read_to_string(stderr, &mut err);
-            }
-            panic!(
-                "the entry {} before its runtime claimed: {err}",
-                match ended {
-                    Some(status) => format!("ended {status}"),
-                    None => format!("never claimed ({status:?})"),
-                }
-            );
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
-/// The retained command the claim's `.argv` record holds, as
-/// `watch_argv_read` splits it.
-fn argv_words(paths: &Paths) -> Vec<String> {
-    std::fs::read(&paths.argv)
-        .unwrap()
-        .split(|b| *b == 0)
-        .filter(|w| !w.is_empty())
-        .map(|w| String::from_utf8_lossy(w).into_owned())
-        .collect()
-}
-
 /// Wait until the runner `child` has claimed `paths`, bounded; a child
 /// that ends first fails the row with its stderr.
 fn await_claim(child: &mut std::process::Child, paths: &Paths) {
@@ -2193,159 +1981,6 @@ fn await_claim(child: &mut std::process::Child, paths: &Paths) {
         assert!(Instant::now() < deadline, "the runner never claimed");
         std::thread::sleep(Duration::from_millis(20));
     }
-}
-
-/// `watch_pid_live` from the legacy library, run against `state` under
-/// `env -i`: its exit status and the pid it read.
-fn watch_pid_live(state: &Path) -> (i32, String) {
-    let lib = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("scripts/lib/watch-pid.sh");
-    let script = format!(
-        "source '{}'; watch_pid_live \"$1\"; rc=$?; printf '%s\\n' \"$WATCH_PID\"; exit $rc",
-        lib.display()
-    );
-    let out = Command::new("env")
-        .args([
-            "-i",
-            "PATH=/usr/bin:/bin",
-            "LANG=C.UTF-8",
-            "bash",
-            "-c",
-            &script,
-            "_",
-        ])
-        .arg(state)
-        .output()
-        .expect("env -i bash");
-    (
-        out.status.code().unwrap_or(-1),
-        String::from_utf8_lossy(&out.stdout).trim().to_owned(),
-    )
-}
-
-/// Row (f), step5-map F10 and decision 121 Q7/Q12. Defect: a claim record
-/// the hook's liveness check cannot read as a live watch, under which the
-/// hook and the runner both read the overseer box; or an entry that maps
-/// a legacy flag wrong, dropping one the runtime takes or handing it one it
-/// does not. The thin entry, started with the retired loop's whole flag
-/// set, execs the runtime under its own name: `watch_pid_live` reads the
-/// claim live with the child's pid, the retained command carries the five
-/// mapped flags and none of the rest, and the claim reads gone after
-/// `watch stop`.
-#[test]
-fn the_legacy_watch_pid_library_reads_the_runner_live_and_gone_after_stop() {
-    let dir = tempfile::tempdir().unwrap();
-    let state_dir = std::fs::canonicalize(dir.path()).unwrap();
-    let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
-    assert!(init.status.success(), "init: {}", stderr(&init));
-    let state = state_dir.join(FLEET_FILE_NAME);
-    assert_eq!(watch_pid_live(&state).0, 1, "no record yet");
-    let mut child = spawn_watch_run(
-        &state_dir,
-        &[
-            "--interval",
-            "240",
-            "--max-loops",
-            "25",
-            "--since",
-            "2026-01-01T00:00:00Z",
-            "--item",
-            "KEN-1",
-            "--root",
-            "KEN-1=/x",
-            "--hosted",
-            "KEN-2=/h",
-            "--skip-lane",
-            "gh-9",
-            "--handoff",
-            "tmp/h.md",
-            "--harness",
-            "claude",
-            "gh-1",
-            "--",
-            "--model",
-            "opus",
-        ],
-    );
-    let paths = Paths::of(&state).unwrap();
-    await_claim(&mut child, &paths);
-    assert_eq!(
-        watch_pid_live(&state),
-        (0, child.id().to_string()),
-        "the legacy library reads the runner live by its record"
-    );
-    let words = argv_words(&paths);
-    // The record holds the runtime's own arguments after the program and
-    // the directory; the test wrapper's `--no-private-env` precedes the
-    // verb, so the comparison starts at it.
-    let verb = words
-        .iter()
-        .position(|w| w == "watch")
-        .unwrap_or_else(|| panic!("{words:?}"));
-    assert_eq!(
-        &words[verb..],
-        &[
-            "watch",
-            "run",
-            "--file",
-            &state.display().to_string(),
-            "--interval",
-            "240",
-            "--max-loops",
-            "25",
-            "--since",
-            "2026-01-01T00:00:00Z",
-        ],
-        "the retained command is the runtime's, the five flags mapped and the rest dropped: {words:?}"
-    );
-    let status = watch_cmd(&state_dir, &["watch", "status", "--fleet"]);
-    let answer = reply(&status);
-    assert_eq!(answer["result"]["claim"]["standing"], "live", "{answer}");
-    assert_eq!(answer["result"]["claim"]["pid"], child.id(), "{answer}");
-    let stop = watch_cmd(&state_dir, &["watch", "stop", "--fleet"]);
-    let answer = reply(&stop);
-    assert!(answer["ok"].as_bool().unwrap_or(false), "{}", stderr(&stop));
-    assert_eq!(answer["result"]["claim"], "released", "{answer}");
-    let out = child.wait_with_output().unwrap();
-    assert!(
-        out.status.success(),
-        "the runner ended on the stop: {}",
-        stderr(&out)
-    );
-    let ended = reply(&out);
-    assert_eq!(ended["result"]["stopped"], "requested", "{ended}");
-    assert_eq!(watch_pid_live(&state).0, 1, "gone after the stop");
-    let status = watch_cmd(&state_dir, &["watch", "status", "--fleet"]);
-    let answer = reply(&status);
-    assert_eq!(answer["result"]["claim"], Value::Null, "{answer}");
-    // The reconcile duty ran at start on the empty fleet and emitted no
-    // line; its stamp and the heartbeat's are the due times reported.
-    assert_eq!(answer["result"]["events"], 0, "{answer}");
-    let due: BTreeMap<String, u64> = serde_json::from_value(answer["result"]["due"].clone())
-        .unwrap_or_else(|e| panic!("{e}: {answer}"));
-    // Every other duty ran at start too, on an empty fleet with no unread
-    // row, no controller record, no team and no repository, and emitted no
-    // line; their stamps are the other due times reported. The heartbeat
-    // alone is not stamped before its period.
-    let mut expected: Vec<String> = Duty::ALL
-        .iter()
-        .filter(|d| **d != Duty::Heartbeat)
-        .map(|d| d.word().to_owned())
-        .collect();
-    expected.sort();
-    assert_eq!(
-        due.keys().cloned().collect::<Vec<_>>(),
-        expected,
-        "{answer}"
-    );
-    // The credential ladder ran before the claim, one probe of the fixture.
-    assert_eq!(
-        std::fs::read_to_string(state_dir.join("bin/gh.log")).unwrap_or_default(),
-        "auth status\n",
-        "the ladder's one probe before the claim"
-    );
 }
 
 /// Decision 178. Defect: an entry that starts the runtime with no GitHub
@@ -2647,434 +2282,6 @@ fn a_claim_landing_after_the_tmux_bound_and_before_the_claim_bound_is_accepted()
     assert_eq!(clock.elapsed(), Duration::from_millis(8200));
 }
 
-/// Work item 1 of the cutover (decisions 121 Q7/Q12, 148 (1), 150 (4),
-/// 156 (3)). Defect: a cutover that starts the runtime beside a live watch
-/// of the retired loop, which reads no stop request, so two readers hold
-/// one overseer box; or an entry that stops the live runtime it should
-/// defer to. The entry stops a live legacy watch by its pid, TERM to the
-/// loop's trap first and its process group only where the record is held
-/// past that route's bound (R-U5h2 F2), never through the runner record
-/// beside the claim, waits it out and execs the runtime, which takes the
-/// gone record over with its line; a second entry start beside the live
-/// runtime refuses `watch-running` and the claim stands.
-#[test]
-fn the_entry_stops_a_live_legacy_watch_first_and_refuses_a_second_runner() {
-    for (route, holder) in [("term", Holder::Leader), ("kill-group", Holder::DeafLeader)] {
-        let dir = tempfile::tempdir().unwrap();
-        let state_dir = std::fs::canonicalize(dir.path()).unwrap();
-        let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
-        assert!(init.status.success(), "{route}: {}", stderr(&init));
-        let paths = Paths::of(&state_dir.join(FLEET_FILE_NAME)).unwrap();
-        // No caller holds the watch, so init reaps it once it is stopped, as
-        // a launcher-started watch stood; a held child would stand as a
-        // zombie, which the teardown keeps counting and `watch_stop` keeps
-        // reading live, each to its bound. The routes differ by whether the
-        // holder answers TERM; a runner record beside the claim is read by
-        // neither.
-        let holder_pid = daemon_legacy_holder(&state_dir, holder);
-        plant_legacy_claim(&paths, holder_pid);
-        std::fs::write(
-            paths.dir.join("oversee-watch.runner"),
-            "runner=setsid\nline=runner=setsid reason=fixture\n",
-        )
-        .unwrap();
-        let mut child = spawn_watch_run(&state_dir, &[]);
-        await_entry_claim(&mut child, &paths);
-        assert!(!live(holder_pid), "{route}: the legacy watch was stopped");
-        // The takeover line lands once the runtime opens its log, after
-        // the claim.
-        let deadline = Instant::now() + secs(10);
-        while watch::events::line_count(&paths.log).unwrap() == 0 {
-            assert!(
-                Instant::now() < deadline,
-                "{route}: the takeover was never logged"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        assert_eq!(
-            log_lines(&paths),
-            vec![format!(
-                "EVENT watch-taken-over pid={holder_pid} start=none reason=gone"
-            )],
-            "{route}"
-        );
-        let second = bounded_output(
-            entry_command(&state_dir, &[]).spawn().unwrap(),
-            secs(10),
-            &format!("{route}: a second runner ran on beside the live claim"),
-        );
-        assert_eq!(
-            second.status.code(),
-            Some(1),
-            "{route}: {}",
-            stderr(&second)
-        );
-        assert!(
-            stderr(&second).contains("watch-running"),
-            "{route}: the second start is refused by the one claim: {}",
-            stderr(&second)
-        );
-        assert_eq!(
-            watch::claim::read(&paths).unwrap().unwrap().pid,
-            child.id(),
-            "{route}: the claim stands"
-        );
-        let stop = watch_cmd(&state_dir, &["watch", "stop", "--fleet"]);
-        assert!(
-            reply(&stop)["ok"].as_bool().unwrap_or(false),
-            "{route}: {}",
-            stderr(&stop)
-        );
-        let out = child.wait_with_output().unwrap();
-        assert!(out.status.success(), "{route}: {}", stderr(&out));
-        let line = stderr(&out)
-            .lines()
-            .find(|l| l.starts_with("oversee-watch: watch-taken-over "))
-            .map(str::to_owned)
-            .unwrap_or_default();
-        assert!(
-            line.contains(&format!("pid={holder_pid} "))
-                && line.ends_with(&format!("route={route}")),
-            "{route}: the entry names the watch it stopped and the route: {line:?}"
-        );
-    }
-}
-
-/// R-U5h F7, Copilot F1 (decision 179 (1)). Defect: a legacy stop that
-/// fails read as a takeover, the entry then waiting on the pid with no
-/// bound and no refusal. A holder that ignores TERM and owns no group
-/// still holds its record at `watch_stop`'s bound, and the group route
-/// leaves it alone: the entry refuses `watch-stop-failed` naming the TERM
-/// route, exit 1, starts no runtime and claims nothing, and the holder runs
-/// on.
-#[test]
-fn a_legacy_watch_that_holds_its_record_past_the_bound_is_a_refusal_not_a_takeover() {
-    let dir = tempfile::tempdir().unwrap();
-    let state_dir = std::fs::canonicalize(dir.path()).unwrap();
-    let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
-    assert!(init.status.success(), "{}", stderr(&init));
-    let paths = Paths::of(&state_dir.join(FLEET_FILE_NAME)).unwrap();
-    let holder = daemon_legacy_holder(&state_dir, Holder::DeafMember);
-    plant_legacy_claim(&paths, holder);
-    let record = std::fs::read_to_string(&paths.pid).unwrap();
-    // Past the library's stop bound (10 s plus its one-second slack), so
-    // a refusal arrives before the overrun does.
-    let out = bounded_output(
-        entry_command(&state_dir, &[]).spawn().unwrap(),
-        secs(20),
-        "the entry waited past the stop bound on a watch it could not stop",
-    );
-    let holder_live = live(holder);
-    let _ = program("kill")
-        .args(["-KILL", &holder.to_string()])
-        .output();
-    let err = stderr(&out);
-    assert_eq!(out.status.code(), Some(1), "{err}");
-    assert!(
-        err.lines()
-            .any(|l| l
-                == format!("oversee-watch: watch-stop-failed pid={holder} route=term secs=10")),
-        "the refusal names the watch and the route: {err:?}"
-    );
-    assert!(
-        !err.contains("watch-taken-over"),
-        "no takeover is said for a watch not taken over: {err:?}"
-    );
-    assert!(holder_live, "the watch ran on");
-    assert_eq!(
-        std::fs::read_to_string(&paths.pid).unwrap(),
-        record,
-        "the claim stands as the watch wrote it"
-    );
-    assert!(!paths.argv.exists(), "no runtime started");
-}
-
-/// Decision 179 (1), R-U5h F1 site a. Defect: the entry stopping a legacy
-/// watch by the launcher's runner record, which the workflow's own launch
-/// line writes for the entry's unit before the entry runs, so the entry
-/// stops itself and the legacy watch runs on. The workflow's launch line
-/// through the real `job-unit.sh launch` under a lingering user manager
-/// (faked), beside a live start-less record whose holder stands as a unit
-/// of its own: the holder ends, the runtime claims under the launched
-/// unit, and `oversee-watch.err` carries the entry's takeover line with the
-/// pid route it took.
-#[test]
-fn the_workflow_launch_cuts_over_a_live_legacy_unit_by_its_pid() {
-    let dir = tempfile::tempdir().unwrap();
-    let state_dir = std::fs::canonicalize(dir.path()).unwrap();
-    let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
-    assert!(init.status.success(), "{}", stderr(&init));
-    let state = state_dir.join(FLEET_FILE_NAME);
-    let paths = Paths::of(&state).unwrap();
-    install_manager_fakes(&state_dir);
-    let holder = daemon_legacy_holder(&state_dir, Holder::Leader);
-    plant_legacy_claim(&paths, holder);
-    let units = state_dir.join("bin/units");
-    std::fs::create_dir_all(&units).unwrap();
-    std::fs::write(units.join("orch-watch-OLD-1"), format!("{holder}\n")).unwrap();
-    let record = paths.dir.join("oversee-watch.runner");
-    std::fs::write(
-        &record,
-        "runner=systemd\nunit=orch-watch-OLD-1\nline=runner=systemd unit=orch-watch-OLD-1\n",
-    )
-    .unwrap();
-    let err = paths.dir.join("oversee-watch.err");
-    let out = workflow_launch(&state_dir, &["--interval", "240"])
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "the launch: {}", stderr(&out));
-    let launched = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-    // Past the group teardown's kill grace (10 s), so a stop that ran it
-    // out is read as its own line rather than the bound.
-    let claimed = await_runtime_claim(&paths, secs(25));
-    let holder_live = live(holder);
-    let err_text = std::fs::read_to_string(&err).unwrap_or_default();
-    let record_after = std::fs::read_to_string(&record).unwrap_or_default();
-    // The detached runner is nobody's child: stopped before the asserts,
-    // whatever they say.
-    if claimed.is_some() {
-        let stop = watch_cmd(&state_dir, &["watch", "stop", "--fleet"]);
-        assert!(
-            reply(&stop)["ok"].as_bool().unwrap_or(false),
-            "{}",
-            stderr(&stop)
-        );
-    }
-    if holder_live {
-        let _ = program("kill").arg(holder.to_string()).output();
-    }
-    assert!(
-        launched.starts_with("runner=systemd unit=orch-watch-R-"),
-        "the launch ran as a unit: {launched}"
-    );
-    assert_eq!(
-        record_after,
-        format!(
-            "runner=systemd\nunit={}\nline={launched}\n",
-            &launched["runner=systemd unit=".len()..]
-        ),
-        "the launch wrote the entry's own unit over the holder's record"
-    );
-    assert!(!holder_live, "the legacy holder was stopped: {err_text}");
-    let claimed = claimed
-        .unwrap_or_else(|| panic!("the runtime claimed under the launched unit: {err_text}"));
-    assert_ne!(claimed, holder);
-    assert!(
-        err_text.lines().any(|l| l
-            == format!(
-                "oversee-watch: watch-taken-over pid={holder} pane=none reason=legacy route=term"
-            )),
-        "the entry's takeover line names the holder and the pid route: {err_text:?}"
-    );
-}
-
-/// R-U5h2 F2 (decision 180). Defect: a cutover stop that signals the loop's
-/// whole process group, which ends a `lane-close` the loop's pass is part
-/// way through (`lane-close` traps no TERM), where the loop's own TERM
-/// route reaches its trap alone and the pass keeps the close to its row.
-/// The commit-11 loop's claim, traps and pass (`fixtures/cutover-fakes/
-/// legacy-close-loop`) leading its group as a launcher started it, its pass
-/// inside a close that takes seconds (`lane-close-slow`), and the entry
-/// started beside it: the entry stops the loop on the TERM route, waits it
-/// out, and the close's end is in the log before the runtime claims.
-#[test]
-fn a_cutover_stop_beside_a_lane_close_in_flight_lets_the_close_finish() {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = tempfile::tempdir().unwrap();
-    let state_dir = std::fs::canonicalize(dir.path()).unwrap();
-    let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
-    assert!(init.status.success(), "{}", stderr(&init));
-    let state = state_dir.join(FLEET_FILE_NAME);
-    let paths = Paths::of(&state).unwrap();
-    // Installed under the loop's own name, so its command line names
-    // oversee-watch as `watch_pid_runs` reads it; the close beside it is
-    // run by path, so it carries the fixture's mode.
-    let legacy_dir = state_dir.join("legacy");
-    std::fs::create_dir_all(&legacy_dir).unwrap();
-    let legacy_script = legacy_dir.join("oversee-watch");
-    std::fs::copy(
-        fixtures().join("cutover-fakes/legacy-close-loop"),
-        &legacy_script,
-    )
-    .unwrap();
-    let close = legacy_dir.join("lane-close");
-    std::fs::copy(fixtures().join("cutover-fakes/lane-close-slow"), &close).unwrap();
-    std::fs::set_permissions(&close, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let log = state_dir.join("legacy.log");
-    // Started through a shell that disowns it, so init reaps it once it is
-    // stopped, as `daemon_legacy_holder` starts its holders; under setsid
-    // it leads its group, as a launcher-started loop did.
-    let starter = state_dir.join("start-loop.sh");
-    std::fs::write(
-        &starter,
-        format!(
-            "setsid bash '{}' \"$1\" \"$2\" \"$3\" >/dev/null 2>&1 </dev/null &\ndisown\n",
-            legacy_script.display()
-        ),
-    )
-    .unwrap();
-    let out = program("bash")
-        .arg(&starter)
-        .arg(&state)
-        .arg(&log)
-        .arg(&close)
-        .env("WATCH_PID_LIB", watch_pid_lib())
-        .env("CLOSE_LOG", &log)
-        // Longer than the entry takes to reach its stop, so the stop meets
-        // the close in flight.
-        .env("CLOSE_SECS", "5")
-        .current_dir(&state_dir)
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "{}", stderr(&out));
-    let deadline = Instant::now() + secs(10);
-    while !std::fs::read_to_string(&log)
-        .unwrap_or_default()
-        .contains("close: started")
-    {
-        assert!(
-            Instant::now() < deadline,
-            "the close never started: {}",
-            std::fs::read_to_string(&log).unwrap_or_default()
-        );
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    let loop_pid = watch::claim::read(&paths)
-        .unwrap()
-        .expect("the loop's claim")
-        .pid;
-    let mut child = spawn_watch_run(&state_dir, &[]);
-    await_entry_claim(&mut child, &paths);
-    let at_claim = std::fs::read_to_string(&log).unwrap_or_default();
-    let stop = watch_cmd(&state_dir, &["watch", "stop", "--fleet"]);
-    assert!(
-        reply(&stop)["ok"].as_bool().unwrap_or(false),
-        "{}",
-        stderr(&stop)
-    );
-    let out = child.wait_with_output().unwrap();
-    assert!(out.status.success(), "{}", stderr(&out));
-    let err = stderr(&out);
-    assert!(
-        at_claim.contains("close: done\n"),
-        "the close ran to its end before the runtime claimed: {at_claim}{err}"
-    );
-    assert!(
-        err.lines().any(|l| l
-            == format!(
-                "oversee-watch: watch-taken-over pid={loop_pid} pane=none reason=legacy route=term"
-            )),
-        "the loop was stopped on its own TERM route: {err:?}"
-    );
-}
-
-/// Decision 179 (1), R-U5h F1 site b. Defect: the loop's own pass, which is
-/// the entry once this tree is installed over the loop's script, stopping
-/// its parent, whose trap ends the pass with it: the loop exits 143 and no
-/// watch stands. A faithful copy of the commit-11 loop's claim, traps and
-/// pass spawn (`fixtures/cutover-fakes/legacy-oversee-watch`) runs the real
-/// entry as its pass under the faked lingering manager: the pass starts one
-/// entry detached through the workflow's launch line, says so and exits 4;
-/// the loop reads that status and ends releasing its record (0 on its own,
-/// 143 where the detached entry's stop reached it first, both the release);
-/// the detached entry claims as the one runner. The stop can reach the loop
-/// before the pass's launch returns, which ends the pass with nothing said
-/// (R-U5h2 Copilot S1): the pass's words are owed only where the loop read
-/// its status.
-#[test]
-fn the_loops_own_pass_relaunches_the_entry_detached_and_the_loop_ends() {
-    let dir = tempfile::tempdir().unwrap();
-    let state_dir = std::fs::canonicalize(dir.path()).unwrap();
-    let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
-    assert!(init.status.success(), "{}", stderr(&init));
-    let state = state_dir.join(FLEET_FILE_NAME);
-    let paths = Paths::of(&state).unwrap();
-    install_manager_fakes(&state_dir);
-    // Installed under the loop's own name, so its command line names
-    // oversee-watch as `watch_pid_runs` reads it.
-    let legacy_dir = state_dir.join("legacy");
-    std::fs::create_dir_all(&legacy_dir).unwrap();
-    let legacy_script = legacy_dir.join("oversee-watch");
-    std::fs::copy(
-        fixtures().join("cutover-fakes/legacy-oversee-watch"),
-        &legacy_script,
-    )
-    .unwrap();
-    let log = state_dir.join("legacy.log");
-    let mut command = Command::new("setsid");
-    entry_env(&mut command, &state_dir);
-    command
-        .arg("bash")
-        .arg(&legacy_script)
-        .arg(&state)
-        .arg(entry())
-        .arg(&log)
-        .env("WATCH_PID_LIB", watch_pid_lib())
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let mut legacy = command.spawn().unwrap();
-    let claimed = await_runtime_claim(&paths, secs(25));
-    let ended = ended_within(&mut legacy, secs(10));
-    let legacy_log = std::fs::read_to_string(&log).unwrap_or_default();
-    let pass_err =
-        std::fs::read_to_string(state_dir.join("legacy.log.pass-err")).unwrap_or_default();
-    let record =
-        std::fs::read_to_string(paths.dir.join("oversee-watch.runner")).unwrap_or_default();
-    if claimed.is_some() {
-        let stop = watch_cmd(&state_dir, &["watch", "stop", "--fleet"]);
-        assert!(
-            reply(&stop)["ok"].as_bool().unwrap_or(false),
-            "{}",
-            stderr(&stop)
-        );
-    }
-    if ended.is_none() {
-        let _ = legacy.kill();
-        let _ = legacy.wait();
-    }
-    let claimed = claimed.unwrap_or_else(|| {
-        panic!("one runner claimed after the loop's pass: {legacy_log}{pass_err}")
-    });
-    assert_ne!(
-        claimed,
-        legacy.id(),
-        "the runner is the detached entry's, not the loop"
-    );
-    let code = ended.and_then(|s| s.code());
-    assert!(
-        matches!(code, Some(0) | Some(143)),
-        "the loop ended releasing its record: {code:?} {legacy_log}"
-    );
-    // The race between the pass's exit and the detached entry's stop: a
-    // loop that read its pass's status read 4, and the pass said what it
-    // started; one the stop reached while the pass was still inside its
-    // launch ended the pass with itself and said nothing.
-    if legacy_log.contains("legacy: pass rc=") {
-        assert!(
-            legacy_log.contains("legacy: pass rc=4\n"),
-            "the loop read the pass as its stop status: {legacy_log}"
-        );
-        assert!(
-            pass_err.lines().any(|l| l.starts_with(&format!(
-                "oversee-watch: watch-relaunched pid={} unit=runner=systemd unit=orch-watch-",
-                legacy.id()
-            ))),
-            "the pass says what it started and for which loop: {pass_err:?}"
-        );
-    } else {
-        assert_eq!(
-            code,
-            Some(143),
-            "the loop ended by the detached entry's stop before its pass returned: {legacy_log}"
-        );
-    }
-    assert!(
-        record.starts_with("runner=systemd\nunit=orch-watch-"),
-        "the detached entry's unit stands as the one runner: {record:?}"
-    );
-}
-
 /// Decision 179 (2), R-U5h F2, R-U5h2 F1. Defect: a watch start that drops
 /// `--harness` and `-- FLAGS`, so a hand-opened overseer's record holds no
 /// launch line and its death has no successor to replay (`held_successor`),
@@ -3175,14 +2382,14 @@ fn a_registered_sessions_record_holds_the_line_the_entry_hands_on() {
     );
 }
 
-/// Work item 2 of the cutover (decisions 121 Q3/Q15, 176 (2)): the handover
-/// layer is gone. Defect: a succession that stops, replaces or restarts the
-/// fleet watch, so the successor reads a log a restart truncated or a
-/// claim another runner holds. A real transfer through the runtime, beside
-/// the entry's live runner whose log holds one line (the takeover of a gone
-/// legacy record, planted): the claim names the same runner before and
-/// after, that line stands, and the successor's `watch log --since` from
-/// the handoff's last line returns it at its number with what followed.
+/// Decisions 121 Q3/Q15, 176 (2). Defect: a succession that stops, replaces
+/// or restarts the fleet watch, so the successor reads a log a restart
+/// truncated or a claim another runner holds. A real transfer through the
+/// runtime, beside the entry's live runner whose log holds one line (the
+/// takeover of a gone record, planted): the claim names the same runner
+/// before and after, that line stands, and the successor's `watch log
+/// --since` from the handoff's last line returns it at its number with what
+/// followed.
 #[test]
 fn a_succession_under_a_live_scheduler_leaves_its_claim_and_log_and_the_successor_reads_on() {
     let dir = tempfile::tempdir().unwrap();
@@ -3191,7 +2398,7 @@ fn a_succession_under_a_live_scheduler_leaves_its_claim_and_log_and_the_successo
     runner.init_fleet();
     let state_dir = std::fs::canonicalize(runner.state_dir()).unwrap();
     let paths = Paths::of(&state_dir.join(FLEET_FILE_NAME)).unwrap();
-    plant_legacy_claim(&paths, GONE_PID as u32);
+    plant_claim(&paths, GONE_PID as u32, "ticks:1");
     let mut child = spawn_watch_run(&state_dir, &[]);
     await_claim(&mut child, &paths);
     let predecessor = Owned::sleep();
@@ -3217,9 +2424,10 @@ fn a_succession_under_a_live_scheduler_leaves_its_claim_and_log_and_the_successo
         claim_before,
         "the succession left the claim as it stood"
     );
+    let standing = watch::status(&paths).unwrap().claim.expect("the claim");
     assert_eq!(
-        watch_pid_live(&paths.state),
-        (0, child.id().to_string()),
+        (standing.pid, standing.standing),
+        (child.id(), "live"),
         "the runner lives through the succession"
     );
     let after = log_lines(&paths);

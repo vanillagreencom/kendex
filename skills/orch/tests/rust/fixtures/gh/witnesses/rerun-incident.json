@@ -1,0 +1,357 @@
+{
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/check-runs?filter=all&per_page=100&page=1": {
+    "body": {
+      "total_count": 4,
+      "check_runs": [
+        {
+          "id": 1,
+          "node_id": "CR_1",
+          "name": "build",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 30206726860
+          },
+          "started_at": "2026-07-26T12:22:11Z",
+          "completed_at": "2026-07-26T12:22:11Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/30201726860/job/1",
+          "details_url": "https://github.com/owner/repo/actions/runs/30201726860/job/1"
+        },
+        {
+          "id": 2,
+          "node_id": "CR_2",
+          "name": "CI Gate Publisher",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 30206726860
+          },
+          "started_at": "2026-07-26T12:23:26Z",
+          "completed_at": "2026-07-26T12:23:26Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/30201726860/job/2",
+          "details_url": "https://github.com/owner/repo/actions/runs/30201726860/job/2"
+        },
+        {
+          "id": 9,
+          "node_id": "CR_9",
+          "name": "CI Gate Publisher",
+          "status": "completed",
+          "conclusion": "failure",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 30206902682
+          },
+          "started_at": "2026-07-26T12:21:56Z",
+          "completed_at": "2026-07-26T12:21:56Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/30201902682/job/9",
+          "details_url": "https://github.com/owner/repo/actions/runs/30201902682/job/9"
+        },
+        {
+          "id": 10,
+          "node_id": "CR_10",
+          "name": "build",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 30206902682
+          },
+          "started_at": "2026-07-26T12:21:45Z",
+          "completed_at": "2026-07-26T12:21:45Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/30201902682/job/10",
+          "details_url": "https://github.com/owner/repo/actions/runs/30201902682/job/10"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/check-suites?per_page=100&page=1": {
+    "body": {
+      "total_count": 2,
+      "check_suites": [
+        {
+          "id": 30206726860
+        },
+        {
+          "id": 30206902682
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/status?per_page=100&page=1": {
+    "body": {
+      "state": "pending",
+      "total_count": 1,
+      "statuses": [
+        {
+          "context": "CI Required",
+          "state": "success",
+          "description": null,
+          "target_url": "https://github.com/owner/repo/actions/runs/30201726860"
+        }
+      ],
+      "sha": "737bce791577e140436490e0fed5751bb5144a61"
+    }
+  },
+  "repos/owner/repo/actions/runs?head_sha=737bce791577e140436490e0fed5751bb5144a61&per_page=100&page=1": {
+    "body": {
+      "total_count": 2,
+      "workflow_runs": [
+        {
+          "id": 30201726860,
+          "name": "CI",
+          "path": ".github/workflows/ci.yml",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "status": "completed",
+          "conclusion": "success",
+          "event": "pull_request",
+          "workflow_id": 1,
+          "updated_at": "2026-07-26T12:23:26Z",
+          "repository": {
+            "id": 1296269,
+            "full_name": "owner/repo"
+          },
+          "check_suite_id": 30206726860,
+          "check_suite_node_id": "CS_30206726860",
+          "run_started_at": "2026-07-26T12:22:11Z"
+        },
+        {
+          "id": 30201902682,
+          "name": "CI",
+          "path": ".github/workflows/ci.yml",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "status": "completed",
+          "conclusion": "failure",
+          "event": "pull_request",
+          "workflow_id": 1,
+          "updated_at": "2026-07-26T12:21:56Z",
+          "repository": {
+            "id": 1296269,
+            "full_name": "owner/repo"
+          },
+          "check_suite_id": 30206902682,
+          "check_suite_node_id": "CS_30206902682",
+          "run_started_at": "2026-07-26T12:21:45Z"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/actions/workflows?per_page=100&page=1": {
+    "body": {
+      "total_count": 1,
+      "workflows": [
+        {
+          "id": 1,
+          "node_id": "W_1",
+          "name": "CI",
+          "path": ".github/workflows/ci.yml",
+          "state": "active"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/rules/branches/main?per_page=100&page=1": {
+    "body": []
+  },
+  "repos/owner/repo/branches/main": {
+    "body": {
+      "name": "main",
+      "protected": false,
+      "protection": {
+        "enabled": false,
+        "required_status_checks": {
+          "contexts": [],
+          "checks": []
+        }
+      }
+    }
+  },
+  "graphql": {
+    "body": {
+      "nodes": {
+        "CS_30206726860": {
+          "id": "CS_30206726860",
+          "databaseId": 30206726860,
+          "workflowRun": {
+            "databaseId": 30201726860,
+            "runAttempt": 1,
+            "file": {
+              "path": ".github/workflows/ci.yml",
+              "repositoryName": "owner/repo",
+              "repositoryFileUrl": "https://github.com/owner/repo/blob/737bce791577e140436490e0fed5751bb5144a61/.github/workflows/ci.yml",
+              "viewerCanReadRepository": true
+            }
+          }
+        },
+        "CS_30206902682": {
+          "id": "CS_30206902682",
+          "databaseId": 30206902682,
+          "workflowRun": {
+            "databaseId": 30201902682,
+            "runAttempt": 1,
+            "file": {
+              "path": ".github/workflows/ci.yml",
+              "repositoryName": "owner/repo",
+              "repositoryFileUrl": "https://github.com/owner/repo/blob/737bce791577e140436490e0fed5751bb5144a61/.github/workflows/ci.yml",
+              "viewerCanReadRepository": true
+            }
+          }
+        },
+        "CR_1": {
+          "id": "CR_1",
+          "checkSuite": {
+            "databaseId": 30206726860,
+            "workflowRun": {
+              "databaseId": 30201726860,
+              "event": "pull_request",
+              "workflow": {
+                "name": "CI"
+              }
+            }
+          }
+        },
+        "CR_2": {
+          "id": "CR_2",
+          "checkSuite": {
+            "databaseId": 30206726860,
+            "workflowRun": {
+              "databaseId": 30201726860,
+              "event": "pull_request",
+              "workflow": {
+                "name": "CI"
+              }
+            }
+          }
+        },
+        "CR_9": {
+          "id": "CR_9",
+          "checkSuite": {
+            "databaseId": 30206902682,
+            "workflowRun": {
+              "databaseId": 30201902682,
+              "event": "pull_request",
+              "workflow": {
+                "name": "CI"
+              }
+            }
+          }
+        },
+        "CR_10": {
+          "id": "CR_10",
+          "checkSuite": {
+            "databaseId": 30206902682,
+            "workflowRun": {
+              "databaseId": 30201902682,
+              "event": "pull_request",
+              "workflow": {
+                "name": "CI"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "repos/owner/repo/actions/workflows/1": {
+    "body": {
+      "id": 1,
+      "node_id": "W_1",
+      "name": "CI",
+      "path": ".github/workflows/ci.yml",
+      "state": "active"
+    }
+  },
+  "repos/owner/repo/check-suites/30206726860/check-runs?per_page=100&page=1": {
+    "body": {
+      "total_count": 2,
+      "check_runs": [
+        {
+          "id": 1,
+          "node_id": "CR_1",
+          "name": "build",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 30206726860
+          },
+          "started_at": "2026-07-26T12:22:11Z",
+          "completed_at": "2026-07-26T12:22:11Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/30201726860/job/1",
+          "details_url": "https://github.com/owner/repo/actions/runs/30201726860/job/1"
+        },
+        {
+          "id": 2,
+          "node_id": "CR_2",
+          "name": "CI Gate Publisher",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 30206726860
+          },
+          "started_at": "2026-07-26T12:23:26Z",
+          "completed_at": "2026-07-26T12:23:26Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/30201726860/job/2",
+          "details_url": "https://github.com/owner/repo/actions/runs/30201726860/job/2"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/check-suites/30206902682/check-runs?per_page=100&page=1": {
+    "body": {
+      "total_count": 2,
+      "check_runs": [
+        {
+          "id": 9,
+          "node_id": "CR_9",
+          "name": "CI Gate Publisher",
+          "status": "completed",
+          "conclusion": "failure",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 30206902682
+          },
+          "started_at": "2026-07-26T12:21:56Z",
+          "completed_at": "2026-07-26T12:21:56Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/30201902682/job/9",
+          "details_url": "https://github.com/owner/repo/actions/runs/30201902682/job/9"
+        },
+        {
+          "id": 10,
+          "node_id": "CR_10",
+          "name": "build",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 30206902682
+          },
+          "started_at": "2026-07-26T12:21:45Z",
+          "completed_at": "2026-07-26T12:21:45Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/30201902682/job/10",
+          "details_url": "https://github.com/owner/repo/actions/runs/30201902682/job/10"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo": {
+    "body": {
+      "id": 1296269,
+      "full_name": "owner/repo"
+    }
+  },
+  "repos/owner/source": {
+    "body": {
+      "id": 7,
+      "full_name": "owner/source"
+    }
+  },
+  "repos/owner/fork": {
+    "body": {
+      "id": 9,
+      "full_name": "owner/fork"
+    }
+  }
+}

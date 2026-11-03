@@ -8,8 +8,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 
-# shellcheck source=lib/md.sh
-source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
+# shellcheck source=lib/assertions.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/assertions.sh"
 
 echo "=== Codex spawn identity ==="
 

@@ -74,8 +74,10 @@ fn agent_runtime() -> &'static Path {
 }
 
 /// The settings a wake in `dir` runs under: the agent-runtime command
-/// `agent_runtime`, the two stub harnesses, a short paste bound and the
-/// legacy mail interval; nothing is read from the test's own tree.
+/// `agent_runtime`, the two stub harnesses, the mailbox fixture the owner
+/// is alerted through (`lane-mail` in `dir`, which logs beside itself), a
+/// short paste bound and the legacy mail interval; nothing is read from
+/// the test's own tree.
 fn settings_in(dir: &Path, agent_runtime: &Path) -> Settings {
     let roots = Roots {
         project: dir.to_path_buf(),
@@ -94,6 +96,10 @@ fn settings_in(dir: &Path, agent_runtime: &Path) -> Settings {
                 agent_runtime.as_os_str().into(),
             ),
             ("ORCH_HARNESS_BINARIES".into(), binaries.into()),
+            (
+                "LANE_MAIL_CLI".into(),
+                dir.join("lane-mail").as_os_str().into(),
+            ),
             (
                 "ORCH_TMUX_VERIFY_SECS".into(),
                 BOUND_SECS.to_string().into(),
@@ -163,6 +169,14 @@ impl Fleet {
         let cwd = root.join("work");
         std::fs::create_dir_all(&home).unwrap();
         std::fs::create_dir_all(&cwd).unwrap();
+        // The mailbox fixture under the name the duty runs, logging each
+        // call beside that name: no wrapper is written at test time, which
+        // another row's child between fork and exec would hold open.
+        std::os::unix::fs::symlink(
+            fixtures().join("lane-mail-owner/lane-mail"),
+            root.join("lane-mail"),
+        )
+        .unwrap();
         let init = isolated()
             .args(["--state-dir", &root.display().to_string()])
             .args(["state", "init", "--fleet"])
@@ -372,6 +386,16 @@ impl Fleet {
             .unwrap_or_default()
             .lines()
             .map(str::to_owned)
+            .collect()
+    }
+
+    /// Every notice the mailbox fixture was asked to send, `to=<to>` and
+    /// the notice's words as they stood at the call.
+    fn notices(&self) -> Vec<String> {
+        std::fs::read_to_string(self.root.join("lane-mail.log"))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| l.strip_prefix("notice to=").map(|l| format!("to={l}")))
             .collect()
     }
 }
@@ -916,5 +940,89 @@ fn a_gone_or_unreadable_pane_is_never_typed_into_and_leaves_no_mark() {
     assert!(
         std::fs::symlink_metadata(fleet.record_file()).is_err(),
         "a pass that marked nothing wrote no record"
+    );
+}
+
+/// Round 11 (decisions 130, 223 A.6). Defect: an idle overseer holding
+/// the owner's unread note that no wake reaches (a Codex overseer's limit
+/// here; an unconfirmed paste is the same class) and nobody told, since
+/// the idle overseer is the one reader of the log: the owner learned of it
+/// 3.5 hours later from a human reading the pane; or the owner told on
+/// every pass, or again after a runner restart. A Codex overseer with
+/// unread mail: pass one says `idle-unread` and `wake-limit`; pass two
+/// sends the owner one notice through the overseer mailbox naming the
+/// unread envelope and the cause; pass three sends nothing; a restarted
+/// runner (a fresh body, holding nothing in memory) sends nothing for the
+/// same state; a later unread state is said and alerted once more. Nothing
+/// is typed into the pane at any pass.
+#[test]
+fn an_overseer_the_wake_cannot_wake_is_told_to_the_owner_once_per_unread_state() {
+    let fleet = Fleet::new();
+    let typed = fleet.root.join("typed.lines");
+    let pane = fleet.open(
+        "overseer",
+        "codex",
+        "lead-c",
+        &[("STUB_TURNS_LINES", &typed.display().to_string())],
+    );
+    fleet.set_overseer(fleet.overseer("codex", &pane));
+    let clock = FakeClock::new();
+    let mut body = fleet.body();
+    let first = unread(&[(OVERSEER_TARGET, "m-1")]);
+    let told = run_once(&mut body, &first, &clock).unwrap();
+    assert_eq!(
+        rendered(&told),
+        vec![
+            "EVENT idle-unread overseer",
+            "EVENT wake-limit overseer harness=codex cause=process-running",
+        ]
+    );
+    assert_eq!(
+        fleet.notices(),
+        Vec::<String>::new(),
+        "the owner is told on the pass after the log"
+    );
+    let alerted = run_once(&mut body, &first, &clock).unwrap();
+    assert_eq!(rendered(&alerted), Vec::<String>::new());
+    let notices = fleet.notices();
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert!(notices[0].starts_with("to=owner "), "{notices:?}");
+    assert!(
+        notices[0].contains("wake-limit overseer harness=codex cause=process-running")
+            && notices[0].contains("unread=m-1")
+            && notices[0].contains(&format!("pane {}", pane.id)),
+        "{notices:?}"
+    );
+    let quiet = run_once(&mut body, &first, &clock).unwrap();
+    assert_eq!(rendered(&quiet), Vec::<String>::new());
+    assert_eq!(
+        fleet.notices().len(),
+        1,
+        "a second notice for the same unread state: {:?}",
+        fleet.notices()
+    );
+    let mut restarted = fleet.body();
+    let again = run_once(&mut restarted, &first, &clock).unwrap();
+    assert_eq!(rendered(&again), Vec::<String>::new());
+    assert_eq!(fleet.notices().len(), 1, "alerted again after a restart");
+    let later = unread(&[(OVERSEER_TARGET, "m-2")]);
+    let said = run_once(&mut restarted, &later, &clock).unwrap();
+    assert_eq!(
+        rendered(&said),
+        vec![
+            "EVENT idle-unread overseer",
+            "EVENT wake-limit overseer harness=codex cause=process-running",
+        ]
+    );
+    assert_eq!(fleet.notices().len(), 1);
+    let alerted_again = run_once(&mut restarted, &later, &clock).unwrap();
+    assert_eq!(rendered(&alerted_again), Vec::<String>::new());
+    let notices = fleet.notices();
+    assert_eq!(notices.len(), 2, "{notices:?}");
+    assert!(notices[1].contains("unread=m-2"), "{notices:?}");
+    assert!(
+        !typed.exists(),
+        "typed into the Codex pane: {:?}",
+        std::fs::read_to_string(&typed)
     );
 }

@@ -1,0 +1,194 @@
+{
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/check-runs?filter=all&per_page=100&page=1": {
+    "body": {
+      "total_count": 1,
+      "check_runs": [
+        {
+          "id": 3001,
+          "node_id": "CR_3001",
+          "name": "request",
+          "status": "completed",
+          "conclusion": "failure",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 5000300
+          },
+          "started_at": "2026-07-26T10:00:00Z",
+          "completed_at": "2026-07-26T10:00:00Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/300/job/3001",
+          "details_url": "https://github.com/owner/repo/actions/runs/300/job/3001"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/check-suites?per_page=100&page=1": {
+    "body": {
+      "total_count": 1,
+      "check_suites": [
+        {
+          "id": 5000300
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/status?per_page=100&page=1": {
+    "body": {
+      "state": "pending",
+      "total_count": 0,
+      "statuses": [],
+      "sha": "737bce791577e140436490e0fed5751bb5144a61"
+    }
+  },
+  "repos/owner/repo/actions/runs?head_sha=737bce791577e140436490e0fed5751bb5144a61&per_page=100&page=1": {
+    "body": {
+      "total_count": 1,
+      "workflow_runs": [
+        {
+          "id": 300,
+          "name": "Required",
+          "path": ".github/workflows/required.yml",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "status": "completed",
+          "conclusion": "success",
+          "event": "push",
+          "workflow_id": 3,
+          "updated_at": "2026-07-26T10:00:00Z",
+          "repository": {
+            "id": 1296269,
+            "full_name": "owner/repo"
+          },
+          "check_suite_id": 5000300,
+          "check_suite_node_id": "CS_5000300",
+          "run_attempt": 1,
+          "run_started_at": "2026-07-26T10:00:00Z"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/actions/workflows?per_page=100&page=1": {
+    "body": {
+      "total_count": 1,
+      "workflows": [
+        {
+          "id": 3,
+          "node_id": "W_3",
+          "name": "Required",
+          "path": ".github/workflows/required.yml",
+          "state": "active"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/rules/branches/main?per_page=100&page=1": {
+    "body": [
+      {
+        "type": "workflows",
+        "parameters": {
+          "workflows": [
+            {
+              "path": ".github/workflows/required.yml",
+              "repository_id": 7,
+              "sha": "0123456789abcdef0123456789abcdef01234567",
+              "ref": "refs/heads/main"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "repos/owner/repo/branches/main": {
+    "body": {
+      "name": "main",
+      "protected": false,
+      "protection": {
+        "enabled": false,
+        "required_status_checks": {
+          "contexts": [],
+          "checks": []
+        }
+      }
+    }
+  },
+  "graphql": {
+    "body": {
+      "nodes": {
+        "CS_5000300": {
+          "id": "CS_5000300",
+          "databaseId": 5000300,
+          "workflowRun": {
+            "databaseId": 300,
+            "runAttempt": 1,
+            "file": {
+              "path": ".github/workflows/required.yml",
+              "repositoryName": "owner/source",
+              "repositoryFileUrl": "https://github.com/owner/source/blob/0123456789abcdef0123456789abcdef01234567/.github/workflows/required.yml",
+              "viewerCanReadRepository": true
+            }
+          }
+        },
+        "CR_3001": {
+          "id": "CR_3001",
+          "checkSuite": {
+            "databaseId": 5000300,
+            "workflowRun": {
+              "databaseId": 300,
+              "event": "push",
+              "workflow": {
+                "name": "Required"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "repos/owner/repo/actions/workflows/3": {
+    "body": {
+      "id": 3,
+      "node_id": "W_3",
+      "name": "Required",
+      "path": ".github/workflows/required.yml",
+      "state": "active"
+    }
+  },
+  "repos/owner/repo/check-suites/5000300/check-runs?per_page=100&page=1": {
+    "body": {
+      "total_count": 1,
+      "check_runs": [
+        {
+          "id": 3001,
+          "node_id": "CR_3001",
+          "name": "request",
+          "status": "completed",
+          "conclusion": "failure",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 5000300
+          },
+          "started_at": "2026-07-26T10:00:00Z",
+          "completed_at": "2026-07-26T10:00:00Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/300/job/3001",
+          "details_url": "https://github.com/owner/repo/actions/runs/300/job/3001"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo": {
+    "body": {
+      "id": 1296269,
+      "full_name": "owner/repo"
+    }
+  },
+  "repos/owner/source": {
+    "body": {
+      "id": 7,
+      "full_name": "owner/source"
+    }
+  },
+  "repos/owner/fork": {
+    "body": {
+      "id": 9,
+      "full_name": "owner/fork"
+    }
+  }
+}

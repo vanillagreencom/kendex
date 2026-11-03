@@ -989,14 +989,25 @@ fn the_jobs_close_records_the_sentinels_time_and_reports_the_runs_seconds() {
 /// `lib` linked to the real one but `orch-runtime`, which runs the binary
 /// under test with the row's state directory: the real `dev-validate-run
 /// --stop` entry then hands a run the runtime started to that binary's
-/// `validate stop`.
+/// `validate stop`. The tree keeps the install's layout: the mailbox
+/// skill's `scripts/lib` two directories from orch's `scripts`, where the
+/// script sources its lock library.
 fn scripts_tree(w: &World) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let real = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../scripts")
         .canonicalize()
         .unwrap();
-    let tree = w.root.join("scripts");
+    let mailbox = w.root.join("mailbox").join("scripts");
+    fs::create_dir_all(&mailbox).unwrap();
+    std::os::unix::fs::symlink(
+        real.join("../../mailbox/scripts/lib")
+            .canonicalize()
+            .unwrap(),
+        mailbox.join("lib"),
+    )
+    .unwrap();
+    let tree = w.root.join("orch").join("scripts");
     fs::create_dir_all(&tree).unwrap();
     for entry in fs::read_dir(&real).unwrap() {
         let entry = entry.unwrap();

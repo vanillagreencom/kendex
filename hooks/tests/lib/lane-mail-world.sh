@@ -24,8 +24,9 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/lane-mail-check.sh}"
 REPO_ROOT="$(cd "$TEST_DIR/../.." && pwd -P)"
 LANE_MAIL="$REPO_ROOT/skills/mailbox/scripts/lane-mail"
-# The hook's `lanes pick --model` has kendex classify the model; the orch
-# fixture answers that read whether or not a kendex is installed.
+# The overseer's `oversee-succeed --check-marks` has kendex classify its
+# entries' models; the orch fixture answers that read whether or not a kendex
+# is installed.
 # shellcheck source=../../../skills/orch/tests/lib/tier-model-path.sh
 . "$REPO_ROOT/skills/orch/tests/lib/tier-model-path.sh"
 # Canonical from the start: the hook resolves its own directory with pwd -P,
@@ -115,12 +116,21 @@ new_worktree_lane() { # NAME BRANCH
   lay_out_lane "$2"
 }
 
-# The install and the launch record, on the repository LANE names.
+# The install and the launch record, on the repository LANE names. The orch
+# scripts directory is a link, as a case that replaces it expects, to a
+# directory beside it holding the scripts one link each (plant_siblings)
+# with the runtime stand-in beside them: every world answers the hook's
+# account mark and watch read from that stand-in, never from the shipped
+# wrapper, which resolves a built binary no world has. The directory sits
+# under the same `orch`, so a script's `../../mailbox` resolves as the
+# install's does.
 lay_out_lane() { # BRANCH
-  mkdir -p "$LANE/.agents/skills/orch" "$LANE/.claude/hooks" "$LANE/.claude/skills"
-  ln -s -f -n "$REPO_ROOT/skills/orch/scripts" "$LANE/.agents/skills/orch/scripts"
+  local scripts="$LANE/.agents/skills/orch/.scripts"
+  mkdir -p "$LANE/.agents/skills/orch" "$LANE/.claude/hooks" "$LANE/.claude/skills" "$scripts"
   mkdir -p "$LANE/.agents/skills/mailbox"
   ln -s -f -n "$REPO_ROOT/skills/mailbox/scripts" "$LANE/.agents/skills/mailbox/scripts"
+  plant_siblings "$scripts"
+  ln -s -f -n "$scripts" "$LANE/.agents/skills/orch/scripts"
   ln -s -f -n ../../.agents/skills/orch "$LANE/.claude/skills/orch"
   ln -s -f -n ../../.agents/skills/mailbox "$LANE/.claude/skills/mailbox"
   install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
@@ -302,7 +312,7 @@ append_transcript() { # PATH TOKENS
 # its own reader plants the whole neighbourhood the way an install has it. The
 # reader is the caller's to plant, and SKIP is the one script a case holes.
 plant_siblings() { # SCRIPTS_DIR [SKIP]
-  local mailbox="${1%/orch/scripts}/mailbox/scripts"
+  local mailbox="${1%/orch/*}/mailbox/scripts"
   mkdir -p "$mailbox"
   [ -e "$mailbox/lib" ] || ln -s "$REPO_ROOT/skills/mailbox/scripts/lib" "$mailbox/lib"
   [ -e "$mailbox/lane-mail" ] || ln -s "$REPO_ROOT/skills/mailbox/scripts/lane-mail" "$mailbox/lane-mail"
@@ -332,7 +342,14 @@ plant_siblings() { # SCRIPTS_DIR [SKIP]
 #                     `setup-required` line naming the install's scripts/setup
 #                     on stderr, exit 69, as skills/orch/scripts/orch-runtime
 #                     answers it
-# Every other verb is refused, so a case reads only this one answer.
+# The account judge the hook asks at a lane's turn end, `accounts pick`
+# (U8d), is answered in every mode but `fails` and `unbuilt`: the reply
+# planted at SCRIPTS_DIR/orch-runtime.pick where a case plants one, else the
+# legacy judge beside the stub, SCRIPTS_DIR/lanes, asked the same question
+# through its `pick` and its answer wrapped as the verb's reply, the exit by
+# number and the record (the launch suites' stub wraps it the same,
+# skills/orch/tests/lib/open-terminal-stubs.sh), its stderr passed through.
+# Every other verb is refused, so a case reads only these answers.
 runtime_stub() { # SCRIPTS_DIR MODE [CWD] [ORIGIN]
   local scripts="$1" mode="$2" state claim reply
   state=$(cd -- "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" path oversee) || return 1
@@ -357,8 +374,26 @@ runtime_stub() { # SCRIPTS_DIR MODE [CWD] [ORIGIN]
     reply=$(jq -nc --argjson claim "$claim" --arg log "${state%/*}/oversee-watch.log" \
       '{ok:true,result:{claim:$claim,due:{},events:0,log:$log}}') || return 1
     printf '%s\n' "$reply" > "$scripts/orch-runtime.reply"
-    printf '#!/bin/sh\n[ "$1 $2" = "watch status" ] || { echo "orch-runtime: fixture-verb verb=$*" >&2; exit 2; }\ncat -- %s\n' \
-      "'$scripts/orch-runtime.reply'" > "$scripts/orch-runtime"
+    rm -f -- "$scripts/orch-runtime.pick"
+    cat > "$scripts/orch-runtime" <<STUB
+#!/usr/bin/env bash
+case "\$1 \$2" in
+  "watch status") cat -- '$scripts/orch-runtime.reply' ;;
+  "accounts pick")
+    if [ -f '$scripts/orch-runtime.pick' ]; then cat -- '$scripts/orch-runtime.pick'; exit 0; fi
+    shift 2
+    args=()
+    for arg in "\$@"; do
+      [ "\$arg" = --fleet ] || args+=("\$arg")
+    done
+    rc=0
+    out=\$('$scripts/lanes' pick \${args[@]+"\${args[@]}"} --json) || rc=\$?
+    jq -cn --argjson rc "\$rc" --arg out "\$out" '{protocol: "orch-runtime-v1", ok: true, result: {
+      answer: ({"0": "lane", "3": "walled", "4": "no-record", "5": "unmeasured", "7": "cloud-repo-unset"}[\$rc | tostring] // "unjudged"),
+      exit: \$rc, record: (try (\$out | fromjson) catch null)}}' ;;
+  *) echo "orch-runtime: fixture-verb verb=\$*" >&2; exit 2 ;;
+esac
+STUB
   fi
   chmod +x "$scripts/orch-runtime"
 }
@@ -421,6 +456,9 @@ wrap_reader() { # LINE
   mkdir -p "$LANE/.agents/skills/mailbox/scripts"
   printf '#!/usr/bin/env bash\n%s\nexec %q "$@"\n' "$1" "$LANE_MAIL" > "$LANE/.agents/skills/mailbox/scripts/lane-mail"
   chmod +x "$LANE/.agents/skills/mailbox/scripts/lane-mail"
+  # The orch scripts beside the reader source the mailbox library through
+  # `../../mailbox/scripts/lib`, as an install lays it out.
+  ln -s "$REPO_ROOT/skills/mailbox/scripts/lib" "$LANE/.agents/skills/mailbox/scripts/lib"
 }
 
 send() { # ITEM TEXT [--re MSGID]

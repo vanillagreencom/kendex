@@ -34,7 +34,7 @@ Accepted rationale can appear in settings comments, engine comments, or `skills/
 
 Thread resolution is not rechecked by GitHub after queue admission. `skills/orch/scripts/queue-wait` dequeues or disarms a PR when it observes late findings. Findings inside its probe gap can merge. `skills/orch/workflows/merge-pr.md` reads and answers unresolved threads once after merge. A thread arriving after that read remains unhandled.
 
-Do not request test coverage for instruction markdown or for a `tools/guard` change that adds no guard test lane. Structural markdown checks establish syntax elements, not the truth of prose. `skills/orch/tests/lib/md.sh` defines that check boundary.
+Do not request test coverage for instruction markdown or for a `tools/guard` change that adds no guard test lane. Structural markdown checks establish syntax elements, not the truth of prose.
 
 `hooks/pre-commit-check.sh` reads Git words, not shell expansion. Quoted flags, assignments, aliases, and expanded spellings are outside its contract. The installed Git hook provides the commit check in an armed repository.
 

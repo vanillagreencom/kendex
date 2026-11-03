@@ -20,7 +20,7 @@ mkdir -p "$H/work/tmp"
 export HOME="$H" LANES_HOME="$H" XDG_STATE_HOME="$H/state" ORCH_STATE_DIR="$H/work/tmp"
 export OVERSEE_WATCH_STATE_DIR="$H/claims" ORCH_LANES_USAGE_TTL=0 ORCH_LANE_HOST=local
 export ORCH_LANE_EXCLUDE= ORCH_LANE_RETIRE= ORCH_LANE_ALIASES= ORCH_LANE_COPILOT_POOL=
-export ORCH_LANE_BURN_PCT_PER_HOUR=0 ORCH_OVERSEER_SEAT_RESERVE_PCT=50
+export ORCH_LANE_BURN_PCT_PER_HOUR=0 ORCH_OVERSEER_HEADROOM_PCT=50
 unset CODEX_HOME CLAUDE_CONFIG_DIR TMUX TMUX_PANE
 cd -- "$H/work"
 make_lane "$H" claude
@@ -40,6 +40,13 @@ SCRIPT_DIR="$SKILLS/orch/scripts" DEP_ERR="$TMP_ROOT/dependency.err"
 source "$SCRIPT_DIR/lib/lane-launch.sh"
 source "$SCRIPT_DIR/lib/lane-context.sh"
 source "$SCRIPT_DIR/lib/overseer-launch.sh"
+# The walk asks the runtime's account judge (U8d); this world has no built
+# runtime, so the stand-in answers `accounts pick` through the real `lanes`
+# over the usage fixture (lib/runtime-stub.sh), named by ORCH_RUNTIME_CLI.
+source "$TEST_DIR/lib/runtime-stub.sh"
+mkdir -p "$TMP_ROOT/runtime"
+fixture_runtime_stub "$TMP_ROOT/runtime" "$TMP_ROOT/runtime" || exit 1
+export ORCH_RUNTIME_CLI="$TMP_ROOT/runtime/orch-runtime"
 
 selection() {
   local rc=0 result row role flag expected_rc expected_account

@@ -112,35 +112,12 @@ pub(super) struct Member {
     pub(super) association: Association,
     /// The run the member's link names, held or not (the legacy `runid`).
     pub(super) linked: Option<u64>,
-    /// What the member is, for the differential's selection projection.
-    #[cfg(test)]
-    pub(super) identity: Identity,
 }
 
 impl Member {
     pub(super) fn bucket(&self) -> Bucket {
         self.report.bucket
     }
-}
-
-/// A member's identity beyond its name and state: the check run with its
-/// link, the status with its target, the failed required run, or the
-/// requirement nothing reports yet.
-#[cfg(test)]
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum Identity {
-    CheckRun {
-        check: u64,
-        link: Option<String>,
-    },
-    Status {
-        target: Option<String>,
-    },
-    Run(u64),
-    /// A required context or bound job no scoped member reports.
-    Expected,
-    /// The first unresolved required definition.
-    ExpectedWorkflow,
 }
 
 /// Which checks decide: the base's required set alone, or every check on
@@ -173,16 +150,6 @@ pub(super) struct Selection<'a> {
     pub(super) required_only: bool,
     /// The absence probe's facts, present under `required_only`.
     pub(super) absence: Option<AbsenceFacts>,
-    /// The required workflows' bound runs, failed runs included, for the
-    /// differential's selection projection.
-    #[cfg(test)]
-    pub(super) bound: Vec<u64>,
-    /// The whole scoped rollup before the required set narrows it (the
-    /// legacy `scope_current_run` output; the scoped placeholders when
-    /// the failed runs replaced it), for the differential's selection
-    /// projection.
-    #[cfg(test)]
-    pub(super) scoped: Vec<Member>,
 }
 
 /// The current execution among one workflow's runs: the legacy
@@ -241,8 +208,6 @@ struct Entry<'a> {
     /// target, matched by equality against a bound job's `html_url`.
     link: Option<&'a str>,
     association: Association,
-    #[cfg(test)]
-    identity: Identity,
 }
 
 impl Entry<'_> {
@@ -263,8 +228,6 @@ impl Entry<'_> {
             },
             association: self.association,
             linked: self.linked(),
-            #[cfg(test)]
-            identity: self.identity.clone(),
         }
     }
 }
@@ -430,13 +393,11 @@ impl Context<'_> {
 /// started alike was whatever its input order and its sort left: not a
 /// rule the legacy stated. The port's order among them is `Context::order`
 /// over each member's position in the port's evidence listing (the module
-/// header's correction, decisions 117 (3) and 122 (1)); the differential's
-/// adapter renders the legacy's input in that order and counts the cases
-/// whose legacy answer another order changes. The key is gh's slash-joined
-/// string, so `build/CI` under workflow `tests` and `build` under `CI/tests`
-/// collide here as in gh (decision 117 (2)). A status's `Context` is its
-/// context; the combined status is already one per context (`evidence`),
-/// so that branch drops nothing.
+/// header's correction, decisions 117 (3) and 122 (1)). The key is gh's
+/// slash-joined string, so `build/CI` under workflow `tests` and `build`
+/// under `CI/tests` collide here as in gh (decision 117 (2)). A status's
+/// `Context` is its context; the combined status is already one per
+/// context (`evidence`), so that branch drops nothing.
 fn eliminate_duplicates(evidence: &Evidence) -> Vec<Context<'_>> {
     let mut contexts: Vec<(usize, Context<'_>)> = evidence
         .check_runs()
@@ -592,11 +553,6 @@ pub(super) fn select(evidence: &Evidence) -> Selection<'_> {
                 place: place(check.linked(), check.workflow(), check.run_level()),
                 link: check.link(),
                 association: check.association(),
-                #[cfg(test)]
-                identity: Identity::CheckRun {
-                    check: check.id(),
-                    link: check.link().map(str::to_owned),
-                },
             },
             Context::Status(status) => Entry {
                 name: status.context(),
@@ -607,10 +563,6 @@ pub(super) fn select(evidence: &Evidence) -> Selection<'_> {
                 place: place(status.linked(), "", status.run_level()),
                 link: status.target(),
                 association: status.association(),
-                #[cfg(test)]
-                identity: Identity::Status {
-                    target: status.target().map(str::to_owned),
-                },
             },
         });
     }
@@ -785,15 +737,11 @@ pub(super) fn select(evidence: &Evidence) -> Selection<'_> {
         report: expected(name),
         association: Association::None,
         linked: None,
-        #[cfg(test)]
-        identity: Identity::Expected,
     };
     let expected_workflow = |name: &str| Member {
         report: expected(name),
         association: Association::None,
         linked: None,
-        #[cfg(test)]
-        identity: Identity::ExpectedWorkflow,
     };
     let run_member = |run: &RunEvidence| Member {
         report: CheckReport {
@@ -804,8 +752,6 @@ pub(super) fn select(evidence: &Evidence) -> Selection<'_> {
         },
         association: Association::Run(run.id()),
         linked: Some(run.id()),
-        #[cfg(test)]
-        identity: Identity::Run(run.id()),
     };
     let absence = |req: &RequiredEvidence| {
         Some(AbsenceFacts {
@@ -825,10 +771,6 @@ pub(super) fn select(evidence: &Evidence) -> Selection<'_> {
             scope: Scope::RequiredSet,
             required_only: true,
             absence: absence(req),
-            #[cfg(test)]
-            bound: bound_ids.iter().copied().collect(),
-            #[cfg(test)]
-            scoped: Vec::new(),
         },
         Some(req) if !failed_runs.is_empty() => {
             // The placeholders are run statuses named alike; the scoping
@@ -841,15 +783,11 @@ pub(super) fn select(evidence: &Evidence) -> Selection<'_> {
                 .into_iter()
                 .collect::<Vec<_>>();
             Selection {
-                members: kept.clone(),
-                #[cfg(test)]
-                scoped: kept,
+                members: kept,
                 runs: failed_runs,
                 scope: Scope::RequiredSet,
                 required_only: true,
                 absence: absence(req),
-                #[cfg(test)]
-                bound: bound_ids.iter().copied().collect(),
             }
         }
         Some(req) if req.names_anything() => {
@@ -898,10 +836,6 @@ pub(super) fn select(evidence: &Evidence) -> Selection<'_> {
                 scope: Scope::RequiredSet,
                 required_only: true,
                 absence: absence(req),
-                #[cfg(test)]
-                bound: bound_ids.iter().copied().collect(),
-                #[cfg(test)]
-                scoped: scoped.iter().map(Entry::member).collect(),
             }
         }
         Some(req) => Selection {
@@ -910,10 +844,6 @@ pub(super) fn select(evidence: &Evidence) -> Selection<'_> {
             scope: Scope::AllChecks,
             required_only: true,
             absence: absence(req),
-            #[cfg(test)]
-            bound: bound_ids.iter().copied().collect(),
-            #[cfg(test)]
-            scoped: scoped.iter().map(Entry::member).collect(),
         },
         None => Selection {
             members: scoped.iter().map(Entry::member).collect(),
@@ -921,10 +851,6 @@ pub(super) fn select(evidence: &Evidence) -> Selection<'_> {
             scope: Scope::AllChecks,
             required_only: false,
             absence: None,
-            #[cfg(test)]
-            bound: Vec::new(),
-            #[cfg(test)]
-            scoped: scoped.iter().map(Entry::member).collect(),
         },
     }
 }

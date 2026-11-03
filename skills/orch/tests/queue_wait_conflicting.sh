@@ -161,8 +161,6 @@ assert_eq "$(sed -n '1p' <<<"$out")" \
   "queue-wait: result status=complete verdict=conflicting pr=1 repo=owner/repo cause=base_conflict polls=2 progressing=null" \
   "the plain result carries the confirmed verdict and cause" "$err"
 
-# queue-verdict-routing-lint.test.sh checks the help enum against emitted verdicts.
-
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

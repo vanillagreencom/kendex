@@ -1361,7 +1361,7 @@ named_lane_judge() { # [REPLACES]
       # changed in one place. Pi is not asked: the judge above already read
       # the provider's harness=pi row for a Pi root on the Copilot pool, so a
       # pool neither that row nor the override measured is refused below
-      # rather than relaunched unjudged, the fix= line `lanes` printed above
+      # rather than relaunched unjudged, the record's status and detail
       # naming the read that failed, and a Pi launch on a Claude seat or on a
       # provider nothing measures is refused below on every host.
       [[ "$LANE_HOST" == local || "$LAUNCH_HARNESS" == pi ]] || host_account_read "${LANE_ENV#*=}" "$LAUNCH_HARNESS"
@@ -1446,9 +1446,9 @@ if [[ -n "$LANE" ]]; then
   # claude, codex and copilot on their own accounts' windows, and Pi on the
   # account its model's provider bills, a `pi-claude/` model on the Claude seat
   # and a `github-copilot/` one on the Copilot pool. A Pi launch on any other
-  # provider is asked too, and `lanes` refuses it as unmeasured. A launch of a
-  # harness it names nothing for has no window `lanes` reads and keeps
-  # launching as it did.
+  # provider is asked too, and the judge refuses it as unmeasured before it
+  # reads any account. A launch of a harness it names nothing for has no
+  # window the judge reads and keeps launching as it did.
   #
   # EVERY named lane is judged here, hosted relaunch included. A usage window
   # belongs to the account, not to the copy of the credential that reads it, so a

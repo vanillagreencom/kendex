@@ -79,7 +79,7 @@ class LaneHostTests(unittest.TestCase):
         shutil.copy2(PACKAGE / "tests/fixtures/lane-host", self.stub)
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(("ORCH_", "KENDEX_", "LANE_HOST_"))}
         # The slot directory is per home, so a case gets a home of its own.
-        self.env.update(HOME=str(self.root / "home"), LANE_HOST_STUB_LOG=str(self.root / "calls"), LANE_HOST_STUB_FILE=str(self.root / "bytes"), LANE_HOST_STUB_LIB=str(self.script.parent / "lib"))
+        self.env.update(HOME=str(self.root / "home"), LANE_HOST_STUB_LOG=str(self.root / "calls"), LANE_HOST_STUB_FILE=str(self.root / "bytes"), LANE_HOST_STUB_LIB=str(self.root / "mailbox/scripts/lib"))
     def run_host(self, *args, **env):
         return subprocess.run([str(self.script), *args], cwd=self.root, env={**self.env, **env}, input=b"seed\x00data\n", capture_output=True)
     def start_host(self, *args, **env):

@@ -3756,109 +3756,85 @@ fn a_replacement_foreground_whose_pane_is_gone_is_read_by_its_own_key() {
 
 // ---------------------------------------------------------------------------
 // Decision 124b (2): the moved lane. A close acts only on its own recorded
-// set, never the session a relaunch moved the lane under. R-U4g4 probes P1
-// and P2, as fixed rows with 124b's expectations, plus the refusal before any
-// signal.
+// set, never the session a relaunch moved the lane under; each row names the
+// probe it answers.
 // ---------------------------------------------------------------------------
 
-/// A close intent left open after a signal (its recorded wake timed out)
-/// while a relaunch moved the lane under it: a new `session_since` and a new
-/// launch. The repeated close reconciles the old intent and must not stop the
-/// new session's harness or close its window, neither in the close's set.
-#[test]
-fn a_repeated_close_over_a_moved_lane_leaves_the_new_session() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
-    runner.init_fleet();
-    let old_wake = Owned::sleep();
-    let new_harness = Owned::sleep();
-    let new_pane = server.open_idle("KEN-M", runner.state_dir());
-    let mut fleet = runner.fleet();
-    let mut row = lane(
-        "KEN-M",
-        "running",
-        &runner,
-        json!({
-            "pane": new_pane, "server": server.pid, "server_start": server.start,
-            "pid": new_harness.pid(), "start": new_harness.start(),
-        }),
-    );
-    row["session_since"] = json!("2026-01-29T16:00:00Z");
-    fleet["lanes"] = json!([row]);
-    fleet["intents"] = json!([{
-        "id": "close-owned-resources:KEN-M:1-1", "op": "close-owned-resources", "target": "KEN-M", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
-        "lane_since": "2026-01-29T15:20:00Z",
-        "observation": {"identity": "stopped", "wake": "live", "cause": "wake-timeout"},
-        "obligations": {"standing": [
-            {"kind": "process", "pid": old_wake.pid(), "start": old_wake.start(), "role": "wake"},
-        ], "discharged": [{"obligation": {"kind": "validation"}, "by": "validation-stopped", "role": "validation"}],
-        "signalled": true},
-    }]);
-    runner.write_fleet(&fleet);
-    let report = effect_report(&runner.op_fleet(&terminal_close("KEN-M")));
-    assert_ne!(
-        report["intent"]["observation"]["stop"], "pending",
-        "the moved close holds no stop on the new session: {report}"
-    );
-    assert!(
-        live(new_harness.pid()),
-        "the new session's harness was stopped: {report}"
-    );
-    assert!(
-        server.panes().contains(&new_pane),
-        "the new session's window was closed: {report}"
-    );
-    assert_eq!(runner.fleet()["lanes"][0]["status"], "running");
-}
-
-/// The same moved lane, read by the reconcile alone after the recorded wake
-/// ended: the close's recorded set is all discharged, so the reconcile
-/// settles by that set and never holds `stop: pending` on the new session's
-/// live harness.
+/// Decisions 124b (2) and 124d (14) (R-U4g5 Codex
+/// `rg5_same_stamp_moved_keys_do_not_close_the_new_lane`): the store judges a
+/// moved lane by the intent's recorded keys, never the stamp alone. The same
+/// moved lane under a later `session_since` and under the close's own (the
+/// legacy launcher writes whole seconds, so a relaunch can carry the intent's
+/// stamp with new launch keys), read by the reconcile alone after the
+/// recorded wake ended: the close's recorded set is all discharged, so the
+/// reconcile settles by that set, closes `intent-stale`, never holds
+/// `stop: pending` on the new session's live harness, and the new lane stays
+/// `running` with its replacement launch.
 #[test]
 fn a_moved_lane_close_settles_by_its_recorded_set() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
-    runner.init_fleet();
-    let old_wake = Owned::sleep();
-    let new_harness = Owned::sleep();
-    let new_pane = server.open_idle("KEN-M", runner.state_dir());
-    let mut fleet = runner.fleet();
-    let mut row = lane(
-        "KEN-M",
-        "running",
-        &runner,
-        json!({
-            "pane": new_pane, "server": server.pid, "server_start": server.start,
-            "pid": new_harness.pid(), "start": new_harness.start(),
-        }),
-    );
-    row["session_since"] = json!("2026-01-29T16:00:00Z");
-    fleet["lanes"] = json!([row]);
-    fleet["intents"] = json!([{
-        "id": "close-owned-resources:KEN-M:1-1", "op": "close-owned-resources", "target": "KEN-M", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
-        "lane_since": "2026-01-29T15:20:00Z",
-        "observation": {"identity": "stopped", "wake": "live", "cause": "wake-timeout"},
-        "obligations": {"standing": [
-            {"kind": "process", "pid": old_wake.pid(), "start": old_wake.start(), "role": "wake"},
-        ], "discharged": [{"obligation": {"kind": "validation"}, "by": "validation-stopped", "role": "validation"}],
-        "signalled": true},
-    }]);
-    runner.write_fleet(&fleet);
-    let old_pid = old_wake.pid();
-    reap(old_pid);
-    let report = runner.reconcile_one();
-    assert_ne!(
-        report["intent"]["observation"]["stop"], "pending",
-        "the reconcile held the old close on the new session's live harness: {report}"
-    );
-    assert_eq!(
-        report["intent"]["outcome"], "confirmed",
-        "the recorded set is gone, so the moved close settles: {report}"
-    );
-    assert!(live(new_harness.pid()), "the new session's harness stands");
+    for (session_since, stamp) in [
+        ("2026-01-29T16:00:00Z", "a later stamp"),
+        ("2026-01-29T15:20:00Z", "the close's own stamp"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let runner = Runner::new(&server, "stub-confirm");
+        runner.init_fleet();
+        let old_wake = Owned::sleep();
+        let new_harness = Owned::sleep();
+        let new_pane = server.open_idle("KEN-M", runner.state_dir());
+        let mut fleet = runner.fleet();
+        let mut row = lane(
+            "KEN-M",
+            "running",
+            &runner,
+            json!({
+                "pane": new_pane, "server": server.pid, "server_start": server.start,
+                "pid": new_harness.pid(), "start": new_harness.start(),
+            }),
+        );
+        row["session_since"] = json!(session_since);
+        fleet["lanes"] = json!([row]);
+        fleet["intents"] = json!([{
+            "id": "close-owned-resources:KEN-M:1-1", "op": "close-owned-resources", "target": "KEN-M", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
+            "lane_since": "2026-01-29T15:20:00Z",
+            "observation": {"identity": "stopped", "wake": "live", "cause": "wake-timeout"},
+            "obligations": {"standing": [
+                {"kind": "process", "pid": old_wake.pid(), "start": old_wake.start(), "role": "wake"},
+            ], "discharged": [{"obligation": {"kind": "validation"}, "by": "validation-stopped", "role": "validation"}],
+            "signalled": true},
+        }]);
+        runner.write_fleet(&fleet);
+        let old_pid = old_wake.pid();
+        reap(old_pid);
+        let report = runner.reconcile_one();
+        assert_ne!(
+            report["intent"]["observation"]["stop"], "pending",
+            "{stamp}: the reconcile held the old close on the new session's live harness: {report}"
+        );
+        assert_eq!(
+            report["intent"]["outcome"], "confirmed",
+            "{stamp}: the recorded set is gone, so the moved close settles for its own set: {report}"
+        );
+        assert_eq!(
+            report["intent"]["reconciled"], "intent-stale",
+            "{stamp}: the store judged the lane moved by its keys: {report}"
+        );
+        assert!(
+            live(new_harness.pid()),
+            "{stamp}: the new session's harness stands"
+        );
+        let after = runner.fleet();
+        assert_eq!(
+            after["lanes"][0]["status"], "running",
+            "{stamp}: the new lane is live and outside the close set: {report}"
+        );
+        assert_eq!(
+            after["lanes"][0]["launch"]["pid"],
+            new_harness.pid(),
+            "{stamp}: the lane keeps its replacement launch"
+        );
+    }
 }
 
 /// A running lane whose harness is `harness`, an open, signalled close of
@@ -3989,71 +3965,6 @@ fn a_moved_lane_close_before_any_signal_refuses_with_no_effect() {
         "nothing of the new session was signalled"
     );
     assert!(server.panes().contains(&new_pane), "the new window stands");
-}
-
-/// Decision 124d (14), R-U4g5 Codex `rg5_same_stamp_moved_keys_do_not_close_the_new_lane`:
-/// the store judges a moved lane by the intent's recorded keys, never the
-/// stamp alone. The legacy launcher writes whole seconds, so a relaunch can
-/// carry the close intent's own `session_since` with new launch keys; the old
-/// close settles for its own set, closes `intent-stale`, and the new lane
-/// stays `running` with its replacement launch.
-#[test]
-fn a_moved_lane_under_the_same_stamp_is_not_closed_by_the_old_close() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
-    runner.init_fleet();
-    let old_wake = Owned::sleep();
-    let new_harness = Owned::sleep();
-    let new_pane = server.open_idle("KEN-M", runner.state_dir());
-    let mut fleet = runner.fleet();
-    let mut row = lane(
-        "KEN-M",
-        "running",
-        &runner,
-        json!({
-            "pane": new_pane, "server": server.pid, "server_start": server.start,
-            "pid": new_harness.pid(), "start": new_harness.start(),
-        }),
-    );
-    row["session_since"] = json!("2026-01-29T15:20:00Z");
-    fleet["lanes"] = json!([row]);
-    fleet["intents"] = json!([{
-        "id": "close-owned-resources:KEN-M:1-1", "op": "close-owned-resources", "target": "KEN-M", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
-        "lane_since": "2026-01-29T15:20:00Z",
-        "observation": {"identity": "stopped", "wake": "live", "cause": "wake-timeout"},
-        "obligations": {"standing": [
-            {"kind": "process", "pid": old_wake.pid(), "start": old_wake.start(), "role": "wake"},
-        ], "discharged": [{"obligation": {"kind": "validation"}, "by": "validation-stopped", "role": "validation"}],
-        "signalled": true},
-    }]);
-    runner.write_fleet(&fleet);
-    let old_pid = old_wake.pid();
-    reap(old_pid);
-    let report = runner.reconcile_one();
-    assert_ne!(
-        report["intent"]["observation"]["stop"], "pending",
-        "the reconcile held the old close on the new session's live harness: {report}"
-    );
-    assert_eq!(
-        report["intent"]["outcome"], "confirmed",
-        "the recorded set is gone, so the moved close settles for its own set: {report}"
-    );
-    assert_eq!(
-        report["intent"]["reconciled"], "intent-stale",
-        "the store judged the lane moved by its keys under the same stamp: {report}"
-    );
-    assert!(live(new_harness.pid()), "the new session's harness stands");
-    let after = runner.fleet();
-    assert_eq!(
-        after["lanes"][0]["status"], "running",
-        "the new lane is live and outside the close set: {report}"
-    );
-    assert_eq!(
-        after["lanes"][0]["launch"]["pid"],
-        new_harness.pid(),
-        "the lane keeps its replacement launch"
-    );
 }
 
 /// Decision 124d (20), R-U4g5 Codex `probe-moved.rs`: a moved lane's

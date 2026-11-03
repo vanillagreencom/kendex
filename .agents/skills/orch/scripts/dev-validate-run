@@ -420,8 +420,8 @@ source "$SCRIPT_DIR/lib/change-class.sh"
 source "$SCRIPT_DIR/lib/job-unit.sh"
 # shellcheck source=lib/gh-auth.sh
 source "$SCRIPT_DIR/lib/gh-auth.sh"
-# shellcheck source=lib/file-lock.sh
-source "$SCRIPT_DIR/lib/file-lock.sh"
+# shellcheck source=../../mailbox/scripts/lib/file-lock.sh
+source "$SCRIPT_DIR/../../mailbox/scripts/lib/file-lock.sh"
 # shellcheck source=lib/validation-verdict.sh
 source "$SCRIPT_DIR/lib/validation-verdict.sh"
 # shellcheck source=lib/rebase-map.sh

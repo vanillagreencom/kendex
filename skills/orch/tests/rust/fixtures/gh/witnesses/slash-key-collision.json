@@ -1,0 +1,282 @@
+{
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/check-runs?filter=all&per_page=100&page=1": {
+    "body": {
+      "total_count": 2,
+      "check_runs": [
+        {
+          "id": 7001,
+          "node_id": "CR_7001",
+          "name": "build/CI",
+          "status": "completed",
+          "conclusion": "failure",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 5000700
+          },
+          "started_at": "2026-07-26T10:00:00Z",
+          "completed_at": "2026-07-26T10:00:00Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/700/job/7001",
+          "details_url": "https://github.com/owner/repo/actions/runs/700/job/7001"
+        },
+        {
+          "id": 6001,
+          "node_id": "CR_6001",
+          "name": "build",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 5000600
+          },
+          "started_at": "2026-07-26T10:30:00Z",
+          "completed_at": "2026-07-26T10:30:00Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/600/job/6001",
+          "details_url": "https://github.com/owner/repo/actions/runs/600/job/6001"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/check-suites?per_page=100&page=1": {
+    "body": {
+      "total_count": 2,
+      "check_suites": [
+        {
+          "id": 5000600
+        },
+        {
+          "id": 5000700
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/status?per_page=100&page=1": {
+    "body": {
+      "state": "pending",
+      "total_count": 0,
+      "statuses": [],
+      "sha": "737bce791577e140436490e0fed5751bb5144a61"
+    }
+  },
+  "repos/owner/repo/actions/runs?head_sha=737bce791577e140436490e0fed5751bb5144a61&per_page=100&page=1": {
+    "body": {
+      "total_count": 2,
+      "workflow_runs": [
+        {
+          "id": 600,
+          "name": "CI/tests",
+          "path": ".github/workflows/ci-tests.yml",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "status": "completed",
+          "conclusion": "success",
+          "event": "push",
+          "workflow_id": 6,
+          "updated_at": "2026-07-26T10:00:00Z",
+          "repository": {
+            "id": 1296269,
+            "full_name": "owner/repo"
+          },
+          "check_suite_id": 5000600,
+          "check_suite_node_id": "CS_5000600",
+          "run_attempt": 1,
+          "run_started_at": "2026-07-26T10:00:00Z"
+        },
+        {
+          "id": 700,
+          "name": "tests",
+          "path": ".github/workflows/tests.yml",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "status": "completed",
+          "conclusion": "success",
+          "event": "push",
+          "workflow_id": 7,
+          "updated_at": "2026-07-26T10:00:00Z",
+          "repository": {
+            "id": 1296269,
+            "full_name": "owner/repo"
+          },
+          "check_suite_id": 5000700,
+          "check_suite_node_id": "CS_5000700",
+          "run_attempt": 1,
+          "run_started_at": "2026-07-26T10:00:00Z"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/actions/workflows?per_page=100&page=1": {
+    "body": {
+      "total_count": 2,
+      "workflows": [
+        {
+          "id": 6,
+          "node_id": "W_6",
+          "name": "CI/tests",
+          "path": ".github/workflows/ci-tests.yml",
+          "state": "active"
+        },
+        {
+          "id": 7,
+          "node_id": "W_7",
+          "name": "tests",
+          "path": ".github/workflows/tests.yml",
+          "state": "active"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/rules/branches/main?per_page=100&page=1": {
+    "body": []
+  },
+  "repos/owner/repo/branches/main": {
+    "body": {
+      "name": "main",
+      "protected": false,
+      "protection": {
+        "enabled": false,
+        "required_status_checks": {
+          "contexts": [],
+          "checks": []
+        }
+      }
+    }
+  },
+  "graphql": {
+    "body": {
+      "nodes": {
+        "CS_5000600": {
+          "id": "CS_5000600",
+          "databaseId": 5000600,
+          "workflowRun": {
+            "databaseId": 600,
+            "runAttempt": 1,
+            "file": {
+              "path": ".github/workflows/ci-tests.yml",
+              "repositoryName": "owner/repo",
+              "repositoryFileUrl": "https://github.com/owner/repo/blob/737bce791577e140436490e0fed5751bb5144a61/.github/workflows/ci-tests.yml",
+              "viewerCanReadRepository": true
+            }
+          }
+        },
+        "CS_5000700": {
+          "id": "CS_5000700",
+          "databaseId": 5000700,
+          "workflowRun": {
+            "databaseId": 700,
+            "runAttempt": 1,
+            "file": {
+              "path": ".github/workflows/tests.yml",
+              "repositoryName": "owner/repo",
+              "repositoryFileUrl": "https://github.com/owner/repo/blob/737bce791577e140436490e0fed5751bb5144a61/.github/workflows/tests.yml",
+              "viewerCanReadRepository": true
+            }
+          }
+        },
+        "CR_7001": {
+          "id": "CR_7001",
+          "checkSuite": {
+            "databaseId": 5000700,
+            "workflowRun": {
+              "databaseId": 700,
+              "event": "push",
+              "workflow": {
+                "name": "tests"
+              }
+            }
+          }
+        },
+        "CR_6001": {
+          "id": "CR_6001",
+          "checkSuite": {
+            "databaseId": 5000600,
+            "workflowRun": {
+              "databaseId": 600,
+              "event": "push",
+              "workflow": {
+                "name": "CI/tests"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "repos/owner/repo/actions/workflows/6": {
+    "body": {
+      "id": 6,
+      "node_id": "W_6",
+      "name": "CI/tests",
+      "path": ".github/workflows/ci-tests.yml",
+      "state": "active"
+    }
+  },
+  "repos/owner/repo/actions/workflows/7": {
+    "body": {
+      "id": 7,
+      "node_id": "W_7",
+      "name": "tests",
+      "path": ".github/workflows/tests.yml",
+      "state": "active"
+    }
+  },
+  "repos/owner/repo/check-suites/5000600/check-runs?per_page=100&page=1": {
+    "body": {
+      "total_count": 1,
+      "check_runs": [
+        {
+          "id": 6001,
+          "node_id": "CR_6001",
+          "name": "build",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 5000600
+          },
+          "started_at": "2026-07-26T10:30:00Z",
+          "completed_at": "2026-07-26T10:30:00Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/600/job/6001",
+          "details_url": "https://github.com/owner/repo/actions/runs/600/job/6001"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/check-suites/5000700/check-runs?per_page=100&page=1": {
+    "body": {
+      "total_count": 1,
+      "check_runs": [
+        {
+          "id": 7001,
+          "node_id": "CR_7001",
+          "name": "build/CI",
+          "status": "completed",
+          "conclusion": "failure",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 5000700
+          },
+          "started_at": "2026-07-26T10:00:00Z",
+          "completed_at": "2026-07-26T10:00:00Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/700/job/7001",
+          "details_url": "https://github.com/owner/repo/actions/runs/700/job/7001"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo": {
+    "body": {
+      "id": 1296269,
+      "full_name": "owner/repo"
+    }
+  },
+  "repos/owner/source": {
+    "body": {
+      "id": 7,
+      "full_name": "owner/source"
+    }
+  },
+  "repos/owner/fork": {
+    "body": {
+      "id": 9,
+      "full_name": "owner/fork"
+    }
+  }
+}

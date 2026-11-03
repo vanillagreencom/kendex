@@ -49,6 +49,7 @@ use super::baseline::{Baseline, Change};
 use super::context::{self, Owned, Times};
 use super::events::{Event, OverseerCase};
 use super::lanes::{Readers as LaneReaders, Relaunch, WallRoute, banner_payload, watch_state_dir};
+use super::owner_alert::{self, Word};
 use super::{Body, Produced, Runner, Tick};
 use crate::ops::accounts::{self, PickAnswer, PickRequest};
 use crate::ops::{OverseerExpected, RequestTransfer};
@@ -58,6 +59,8 @@ use crate::state::{FleetState, Pending, TransferCause};
 /// The bound on the legacy judge and the account walk, each one process:
 /// the judge waits on a credentials lock and a usage endpoint per account.
 const LEGACY_BOUND: Duration = Duration::from_secs(120);
+/// The gap alert's notice file under the state directory.
+const GAP_ALERT_FILE: &str = "overseer-context-gap.txt";
 
 /// Where the verdict was read, the `source=` word of the line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -379,10 +382,14 @@ pub fn picked_by_judge(answer: PickAnswer) -> Pick {
         PickAnswer::Lane(judged) => Pick::Lane(judged.row.config_dir),
         PickAnswer::None { .. } => Pick::None,
         PickAnswer::Unjudged { cause } => Pick::Unjudged { cause },
+        PickAnswer::ProviderUnmeasured { .. } => Pick::None,
         PickAnswer::Walled(_)
         | PickAnswer::Reserved(_)
         | PickAnswer::Retired { .. }
+        | PickAnswer::Excluded(_)
         | PickAnswer::Unmeasured(_)
+        | PickAnswer::CloudRepoUnset(_)
+        | PickAnswer::Unbilled { .. }
         | PickAnswer::NoRecord => Pick::Unjudged {
             cause: "named-lane-answer".to_owned(),
         },
@@ -1045,40 +1052,39 @@ fn context_check(
     }
 }
 
-/// One standing gap's turn (`overseer_context_gap`): the event on its
-/// first pass, the owner's alert on its second, nothing after. The row is
-/// the owed mark: `<gap>|told` is written before the alert is owed, and
-/// advanced to `<gap>|alerted` only once the owner holds the words, so an
-/// alert the owner did not get is sent again on the next pass. A
-/// different gap starts the turn again.
+/// One standing gap's turn (`overseer_context_gap`; the owner's turn of
+/// `super::owner_alert`): the event on its first pass, the owner's alert
+/// on its second, nothing after. The row is the owed mark: `<gap>|told` is
+/// written before the alert is owed, and advanced to `<gap>|alerted` only
+/// once the owner holds the words, so an alert the owner did not get is
+/// sent again on the next pass. A different gap starts the turn again.
 fn gap_turn(record: &Record, key: &str, gap: &str, pass: &Pass, out: &mut Produced) {
     let prior = pass.baseline.get(context::GAP_ROW, key).unwrap_or("");
-    if prior == format!("{gap}|alerted") {
-        return;
-    }
-    if prior == format!("{gap}|told") {
-        match (pass.alert)(&context::alert_text(&record.pane, gap)) {
+    match Word::of_row(prior, gap) {
+        Some(Word::Alerted) => {}
+        Some(Word::Told) => match (pass.alert)(&context::alert_text(&record.pane, gap)) {
             Ok(()) => {
                 context::note(
                     "overseer-context-alerted",
                     &format!("pane={} gap={gap}", record.pane),
                 );
                 out.changes
-                    .push(set(context::GAP_ROW, key, format!("{gap}|alerted")));
+                    .push(set(context::GAP_ROW, key, Word::Alerted.row(gap)));
             }
             Err(cause) => context::note(
                 "overseer-notice-failed",
                 &format!("channel=owner cause={cause}"),
             ),
+        },
+        None => {
+            out.events.push(Event::OverseerContextUnmeasured {
+                pane: record.pane.clone(),
+                gap: gap.to_owned(),
+            });
+            out.changes
+                .push(set(context::GAP_ROW, key, Word::Told.row(gap)));
         }
-        return;
     }
-    out.events.push(Event::OverseerContextUnmeasured {
-        pane: record.pane.clone(),
-        gap: gap.to_owned(),
-    });
-    out.changes
-        .push(set(context::GAP_ROW, key, format!("{gap}|told")));
 }
 
 /// The instant the announced request is made at: the duty's next slice.
@@ -1528,7 +1534,7 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
             .common
             .join("tmp/lane-mail/overseer")
             .join("context.json");
-        let alert = |text: &str| owner_alert(&ctx.settings, text);
+        let alert = |text: &str| owner_alert::send(&ctx.settings, GAP_ALERT_FILE, text);
         let env = crate::ops::Env {
             now_secs: tick.wall,
             now_nanos: u128::from(tick.wall) * 1_000_000_000,
@@ -1624,47 +1630,6 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
         }
         Ok(produced)
     })
-}
-
-/// The owner's alert through the overseer mailbox (`overseer_owner_notice`):
-/// the words written to the watch's own file under the state directory and
-/// sent as `lane-mail notice --item overseer --to owner --file` through the
-/// one runner. `lane-mail` refusing the text as `owner-notice-repeated` is
-/// the owner already holding those words, which counts as sent.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the gap alert's notice file, the watch's own under its state directory, and the one send through the mailbox program via the one runner (decision 94 (b))"
-)]
-fn owner_alert(settings: &Settings, text: &str) -> Result<(), String> {
-    let notice = settings.state_dir.join("overseer-context-gap.txt");
-    if let Some(dir) = notice.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| format!("channel=file {e}"))?;
-    }
-    std::fs::write(&notice, text).map_err(|e| format!("channel=file {e}"))?;
-    let path = notice.display().to_string();
-    let out = host::run_tagged(
-        "overseer-alert",
-        "lane-mail",
-        &settings.lane_mail_cli,
-        "notice",
-        &[
-            "notice", "--item", "overseer", "--to", "owner", "--file", &path,
-        ],
-        LEGACY_BOUND,
-    )
-    .map_err(|e| e.to_string())?;
-    if out.status.success() {
-        return Ok(());
-    }
-    let refusal = host::stderr_text(&out);
-    if refusal
-        .lines()
-        .next()
-        .is_some_and(|l| l.starts_with("lane-mail: owner-notice-repeated="))
-    {
-        return Ok(());
-    }
-    Err(format!("channel=owner {}", refusal.trim()))
 }
 
 /// Fold a later reading's lines, rows and failure into the pass's; the

@@ -47,6 +47,8 @@ pub mod hosted;
 pub mod lanes;
 pub mod mail;
 pub mod overseer;
+// U8e: the owner's alert through the overseer mailbox, the overseer and wake duties' one route.
+pub mod owner_alert;
 // U5e2: the GitHub duty's readings (decision 162 (2)).
 pub mod outside;
 pub mod pr_watch;
@@ -289,12 +291,11 @@ impl<'a> Runner<'a> {
         for _ in 0..CLAIM_TRIES {
             let mut takeover = None;
             if let Some(standing) = claim::read(&self.paths)? {
-                match claim::read_live(&self.paths, &standing) {
+                match claim::read_live(&standing) {
                     Reading::Live(live) => {
                         if self.flags.replace == Some(live.pid) {
                             // Released within the bound, or gone meanwhile:
-                            // either leaves the claim free to take. A legacy
-                            // watch is refused there, nothing written.
+                            // either leaves the claim free to take.
                             claim::stop(&self.paths, self.clock)?;
                             takeover = Some(Event::WatchTakenOver {
                                 pid: live.pid,
@@ -609,6 +610,7 @@ pub struct Status {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ClaimStatus {
     pub pid: u32,
+    /// `None` on a record that carries no start.
     pub start: Option<String>,
     pub pane: String,
     /// `hand` or `succession`, as the claim records it.
@@ -625,7 +627,7 @@ pub fn status(paths: &Paths) -> Result<Status> {
     let claim = match claim::read(paths)? {
         None => None,
         Some(claim) => {
-            let (standing, cause) = match claim::read_live(paths, &claim) {
+            let (standing, cause) = match claim::read_live(&claim) {
                 Reading::Live(_) => ("live", None),
                 Reading::Gone => ("gone", None),
                 Reading::Unreadable { cause } => ("unreadable", Some(cause.to_owned())),

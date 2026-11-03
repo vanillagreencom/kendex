@@ -1,0 +1,186 @@
+{
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/check-runs?filter=all&per_page=100&page=1": {
+    "body": {
+      "total_count": 1,
+      "check_runs": [
+        {
+          "id": 1001,
+          "node_id": "CR_1001",
+          "name": "request",
+          "status": "completed",
+          "conclusion": "startup_failure",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 5000100
+          },
+          "started_at": "2026-07-26T10:30:00Z",
+          "completed_at": "2026-07-26T10:30:00Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/100/job/1001",
+          "details_url": "https://github.com/owner/repo/actions/runs/100/job/1001"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/check-suites?per_page=100&page=1": {
+    "body": {
+      "total_count": 1,
+      "check_suites": [
+        {
+          "id": 5000100
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/status?per_page=100&page=1": {
+    "body": {
+      "state": "pending",
+      "total_count": 1,
+      "statuses": [
+        {
+          "context": "CI Required",
+          "state": "failure",
+          "description": null,
+          "target_url": "https://github.com/owner/repo/actions/runs/999"
+        }
+      ],
+      "sha": "737bce791577e140436490e0fed5751bb5144a61"
+    }
+  },
+  "repos/owner/repo/actions/runs?head_sha=737bce791577e140436490e0fed5751bb5144a61&per_page=100&page=1": {
+    "body": {
+      "total_count": 1,
+      "workflow_runs": [
+        {
+          "id": 100,
+          "name": "Deploy #182",
+          "path": ".github/workflows/ci.yml",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "status": "completed",
+          "conclusion": "success",
+          "event": "merge_group",
+          "workflow_id": 1,
+          "updated_at": "2026-07-26T10:00:00Z",
+          "repository": {
+            "id": 1296269,
+            "full_name": "owner/repo"
+          },
+          "check_suite_id": 5000100,
+          "check_suite_node_id": "CS_5000100",
+          "run_attempt": 2
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/actions/workflows?per_page=100&page=1": {
+    "body": {
+      "total_count": 1,
+      "workflows": [
+        {
+          "id": 1,
+          "node_id": "W_1",
+          "name": "CI",
+          "path": ".github/workflows/ci.yml",
+          "state": "active"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/rules/branches/main?per_page=100&page=1": {
+    "body": []
+  },
+  "repos/owner/repo/branches/main": {
+    "body": {
+      "name": "main",
+      "protected": false,
+      "protection": {
+        "enabled": false,
+        "required_status_checks": {
+          "contexts": [],
+          "checks": []
+        }
+      }
+    }
+  },
+  "graphql": {
+    "body": {
+      "nodes": {
+        "CS_5000100": {
+          "id": "CS_5000100",
+          "databaseId": 5000100,
+          "workflowRun": {
+            "databaseId": 100,
+            "runAttempt": 2,
+            "file": {
+              "path": ".github/workflows/ci.yml",
+              "repositoryName": "owner/repo",
+              "repositoryFileUrl": "https://github.com/owner/repo/blob/737bce791577e140436490e0fed5751bb5144a61/.github/workflows/ci.yml",
+              "viewerCanReadRepository": true
+            }
+          }
+        },
+        "CR_1001": {
+          "id": "CR_1001",
+          "checkSuite": {
+            "databaseId": 5000100,
+            "workflowRun": {
+              "databaseId": 100,
+              "event": "merge_group",
+              "workflow": {
+                "name": "CI"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "repos/owner/repo/actions/workflows/1": {
+    "body": {
+      "id": 1,
+      "node_id": "W_1",
+      "name": "CI",
+      "path": ".github/workflows/ci.yml",
+      "state": "active"
+    }
+  },
+  "repos/owner/repo/check-suites/5000100/check-runs?per_page=100&page=1": {
+    "body": {
+      "total_count": 1,
+      "check_runs": [
+        {
+          "id": 1001,
+          "node_id": "CR_1001",
+          "name": "request",
+          "status": "completed",
+          "conclusion": "startup_failure",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 5000100
+          },
+          "started_at": "2026-07-26T10:30:00Z",
+          "completed_at": "2026-07-26T10:30:00Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/100/job/1001",
+          "details_url": "https://github.com/owner/repo/actions/runs/100/job/1001"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo": {
+    "body": {
+      "id": 1296269,
+      "full_name": "owner/repo"
+    }
+  },
+  "repos/owner/source": {
+    "body": {
+      "id": 7,
+      "full_name": "owner/source"
+    }
+  },
+  "repos/owner/fork": {
+    "body": {
+      "id": 9,
+      "full_name": "owner/fork"
+    }
+  }
+}

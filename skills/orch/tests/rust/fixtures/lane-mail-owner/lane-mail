@@ -13,6 +13,11 @@
 #                                  delivery id sent before is refused as the
 #                                  real program refuses it, exit 2 with
 #                                  `lane-mail: delivery-repeated=K id=<id>`
+#   notice --item I --to T --file F
+#                                  prints the sent receipt and appends
+#                                  `notice to=T <first line of F>` to the
+#                                  log, the file's words as they stood at
+#                                  the call (the sender rewrites its file)
 # A `pending` with `pending.fail` beside exits 2 with a keyed line, so a
 # row proves a refused read is never an empty one.
 set -u
@@ -20,7 +25,7 @@ here="$(dirname "${BASH_SOURCE[0]}")"
 log="$here/lane-mail.log"
 printf '%s\n' "$*" >> "$log"
 verb="${1:-}"
-due=0 id="" delivery="" file="" ask=""
+due=0 id="" delivery="" file="" ask="" to=""
 prev=""
 for arg in "$@"; do
   case "$prev" in
@@ -28,6 +33,7 @@ for arg in "$@"; do
     --delivery-id) delivery="$arg" ;;
     --file) file="$arg" ;;
     --re) ask="$arg" ;;
+    --to) to="$arg" ;;
   esac
   [ "$arg" != --due ] || due=1
   prev="$arg"
@@ -53,6 +59,9 @@ case "$verb" in
     printf '%s\n' "$delivery" >> "$here/sent.ids"
     printf 'sent %s %s re=%s\n' "$delivery" "$(sed -n 1p -- "$file")" "$ask" >> "$log"
     printf 'lane-mail: sent item=overseer id=answer-1 bytes=1 to=overseer ref=%s\n' "$ask" ;;
+  notice)
+    printf 'notice to=%s %s\n' "$to" "$(sed -n 1p -- "$file")" >> "$log"
+    printf 'lane-mail: sent item=overseer id=notice-1 bytes=1 to=%s\n' "$to" ;;
   *) echo "lane-mail-owner: verb=$verb" >&2; exit 2 ;;
 esac
 exit 0

@@ -102,7 +102,7 @@ When a behaviour cannot be exercised inside Pi, the record says so; it never ass
 
 ## 7. Notify and publish
 
-- Write the result to `tmp/pi-update/result.md`, naming the Pi release, the verdict and the tested extension commit. From a lane, send it to your own overseer with `.agents/skills/orch/scripts/lane-mail notice --item <ITEM> --file tmp/pi-update/result.md`, the text opening with `For the fleet overseer:`; the overseer relays it with `lane-mail peer send --repo fleet --file <PATH>`. From a session on the control VM's kendex checkout, `.agents/skills/orch/scripts/lane-mail peer send --repo fleet --file tmp/pi-update/result.md` reaches the fleet overseer directly.
+- Write the result to `tmp/pi-update/result.md`, naming the Pi release, the verdict and the tested extension commit. From a lane, send it to your own overseer with `.agents/skills/mailbox/scripts/lane-mail notice --item <ITEM> --file tmp/pi-update/result.md`, the text opening with `For the fleet overseer:`; the overseer relays it with `lane-mail peer send --repo fleet --file <PATH>`. From a session on the control VM's kendex checkout, `.agents/skills/mailbox/scripts/lane-mail peer send --repo fleet --file tmp/pi-update/result.md` reaches the fleet overseer directly.
 
 - Publication is the `npm-deploy` skill, run as linked work: a Linear item related to this one. A failed publish leaves that item open. It does not block fleet rollout, and it does not block the next compatibility run. Add no publication recovery step.
 

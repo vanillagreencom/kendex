@@ -98,7 +98,7 @@ fn login_of(user: &Nullable<User>) -> String {
     }
 }
 
-/// The legacy's line validation (`outside-contribution.sh:105`): a word
+/// A listed item's line validation: a word
 /// login, a 40-hex head on a pull request, `-` on an issue.
 fn valid(item: &Listed) -> bool {
     let login_ok = !item.login.is_empty()

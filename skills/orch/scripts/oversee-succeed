@@ -50,7 +50,7 @@
 #   in place of a mark:
 #   no mark is judged, the preference is walked as step 3 walks it, ending in
 #   the caller entry, which keeps this session's own harness, model, effort
-#   and permission flags, and `lanes pick` names the account, never the one
+#   and permission flags, and the account judge names the account, never the one
 #   the current pane is spending. `--dead-pane` cannot serve it, because that mode deliberately
 #   picks no lane: the recorded line IS its choice, and here that line names
 #   the account the successor must leave.
@@ -84,8 +84,8 @@
 #        refuses `invalid-succession`. Under --check-marks `off` is reported on
 #        the line instead and the judgement below still runs.
 #     2. Judge the context mark and the account triggers. Any one fires the succession.
-#        The ACCOUNT mark is this overseer's own account, judged by `lanes
-#        pick --lane` at ORCH_OVERSEER_HEADROOM_PCT, which is also the floor
+#        The ACCOUNT mark is this overseer's own account, judged by the
+#        runtime's account judge at ORCH_OVERSEER_HEADROOM_PCT, which is also the floor
 #        the successor's own account must clear; a Codex account room on its
 #        credits clears it, by the rule `lanes --help` states under pick, and takes no rate trigger. One number for both jobs buys
 #        a wider successor pool at the price of the warning this mark gives: at
@@ -109,7 +109,7 @@
 #        (step 3).
 #        The QUALIFYING mark (ORCH_OVERSEER_SUCCESSOR_ACCOUNTS, 0 turns it
 #        off) counts the accounts of this overseer's harness above
-#        ORCH_OVERSEER_HEADROOM_PCT, by the `lanes pick` judgement a successor
+#        ORCH_OVERSEER_HEADROOM_PCT, by the account judge's judgement a successor
 #        pick takes, credit room included, this overseer's own among them
 #        where the account mark found room on it. Counted whole, the figure reads the same
 #        from every account it covers; a count without this account would read
@@ -168,8 +168,8 @@
 #        `invalid-preference`. The walk tries the entries in
 #        the setting's order and holds no model list or order of its own. A
 #        pi session spends a claude account on the pi-claude provider and the
-#        Copilot pool on a github-copilot model, which `lanes pick --harness
-#        pi` judges from the lane host's harness=pi accounts row for the Pi
+#        Copilot pool on a github-copilot model, which the account judge
+#        judges from the lane host's harness=pi accounts row for the Pi
 #        root, with ORCH_LANE_COPILOT_POOL as the override, and whose lane
 #        variable is PI_CODING_AGENT_DIR
 #        (lib/lane-launch.sh § lane_pick_harness). On any other provider it spends one no lane measures, so that entry takes
@@ -188,10 +188,10 @@
 #        class runs claude's family alias for it and codex's or copilot's
 #        native default, and a model kendex cannot classify refuses
 #        `preference-class-unread`. Every launch on a measured account but one goes
-#        through `lanes pick
-#        --harness --model --min-headroom-pct`, the headroom trigger itself,
+#        through the account judge (`orch-runtime accounts pick --harness
+#        --native-model --min-headroom-pct`), the headroom trigger itself,
 #        so every successor's account clears it by step 2's rule, and among
-#        the accounts with room it is `lanes pick`'s own order that puts one
+#        the accounts with room it is the judge's own order that puts one
 #        carrying live lane claims behind an empty one. The
 #        bound is judged on the bucket that walls the model that entry passes,
 #        and the pick is held to the reading the SUCCESSOR will take of itself
@@ -340,11 +340,9 @@
 #   --check-marks    Judge supplied context before pane or harness discovery.
 #                    A due reading returns its keyed result; otherwise judge
 #                    this overseer's account triggers. No window is opened and
-#                    nothing is launched.
-#                    The caller judgement memo in the overseer box checks the
-#                    account, model, headroom policy, usage record, wall and
-#                    claims, in a separate file per caller freshness bound.
-#                    Its absolute wall_at counts down on every judgement.
+#                    nothing is launched. The account judge is asked once
+#                    per judgement; its reader serves the usage figure from
+#                    its own cache under ORCH_LANES_USAGE_TTL.
 #                    Lanes are picked only to judge
 #                    whether a qualifying mark has a successor that settles
 #                    it, and that judgement can refuse at exit 1 as the walk
@@ -428,7 +426,7 @@
 # only headroom carries the account and reset. Check and print write neither.
 #
 # Every REFUSAL is on stderr and ends the run at exit 1, with ONE exception:
-# `no-lane-qualifies` ends it at exit 3, which is the status `lanes pick`
+# `no-lane-qualifies` ends it at exit 3, which is the exit the account judge
 # itself answers "no lane clears the bound" with. One number, one meaning:
 # every other refusal is this run failing, and 3 is the fleet having no room,
 # which a caller recovering an overseer acts on differently from a launch that
@@ -627,7 +625,7 @@ esac
 # settings load keeps it.
 DEP_ERR="$(mktemp)" || die launch-failed step=mktemp
 export DEP_ERR
-trap 'rm -f -- "$DEP_ERR" "${memo_tmp:-}"' EXIT
+trap 'rm -f -- "$DEP_ERR"' EXIT
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 export PROJECT_ROOT
@@ -1134,13 +1132,15 @@ if [[ "$MODE" != dead ]]; then
 fi
 
 # The account mark, judged on the account THIS session is spending and on the
-# buckets it actually spends. `lanes pick --lane` is the judge: the one reader
-# of a single named account, the same one the lane turn-end hook asks about a
-# lane. Asking it with `--model` leaves out every model-scoped weekly window
-# whose label that model does not name, through lib/lane-model.sh and not a
-# second rule here — a window scoped to a model this overseer will never launch
-# walls nothing it does, and marking the session on it costs a window swap and
-# a handoff for a bucket nobody here spends. The model is the one this pane's
+# buckets it actually spends. The runtime's account judge, `accounts pick
+# --lane` (lib/overseer-launch.sh ol_runtime_pick), is the judge: the one
+# reader of a single named account, the same one the lane turn-end hook asks
+# about a lane. Asking it with `--native-model` leaves out every model-scoped
+# weekly window whose label that model does not name, through the judge's
+# model window and not a second rule here — a window scoped to a model this
+# overseer will never launch walls nothing it does, and marking the session on
+# it costs a window swap and a handoff for a bucket nobody here spends. The
+# model is the one this pane's
 # own recorded reading named, read above; a session whose reading names none,
 # or whose harness is judged on its binding bucket, passes the empty string,
 # which that file judges on the account binding bucket instead.
@@ -1154,10 +1154,10 @@ fi
 # model, which that report can only take off a pane whose foreground process
 # is still a harness.
 #
-# The bound is the trigger itself, so `lanes pick --lane` returns the verdict
-# rather than this script comparing a percentage: MORE than the trigger, or
-# Codex credit room (lanes --help, pick), is room, and a lane exactly at it
-# otherwise is refused, the documented `at or below` rule.
+# The bound is the trigger itself, so the judge returns the verdict rather
+# than this script comparing a percentage: MORE than the trigger, or Codex
+# credit room, is room, and a lane exactly at it otherwise is refused, the
+# documented `at or below` rule.
 #
 # The caller account is ONE named state, established here and matched by name
 # at every site after: `unreadable` where the judge itself failed, `unmeasured`
@@ -1206,65 +1206,22 @@ CALLER_HEADROOM="" CALLER_ACCOUNT="" CALLER_RESETS="" CALLER_STATUS="" CALLER_DE
 CALLER_RESERVE_ONLY=false CALLER_ENDED=false
 RATE_STATE=unreadable WALL_PROJECTED="" QUALIFYING_STATE=unreadable QUALIFYING_COUNT="" QUALIFYING_HEADROOM=""
 if (( JUDGES )); then
-  # This local memo reuses the single-account judge; lanes owns serve age and
-  # discovery spelling, so neither rule is reconstructed here.
-  [[ -n "$OVERSEER_BOX" ]] || OVERSEER_BOX="$(lane_context_overseer_box "$PROJECT_ROOT")"
   caller_now="$(date +%s)" || die launch-failed step=clock
-  caller_memo="" caller_hit=0 caller_wall_at=""
-  if [[ -z "${ORCH_LANES_USAGE_MAX_AGE:-}" || "${ORCH_LANES_USAGE_MAX_AGE:-}" =~ ^[0-9]+$ ]]; then
-    caller_memo="$OVERSEER_BOX/account-mark-${ORCH_LANES_USAGE_MAX_AGE:-}.memo"
-    if [[ -f "$caller_memo" ]] && {
-      IFS= read -r memo_cfg && IFS= read -r memo_harness && IFS= read -r memo_model &&
-      IFS= read -r memo_trigger && IFS= read -r memo_until && IFS= read -r memo_cache &&
-      IFS= read -r memo_wall && IFS= read -r memo_claims && IFS= read -r caller_wall_at &&
-      IFS= read -r caller_rc && IFS= read -r caller_record && IFS= read -r memo_ttl
-    } < "$caller_memo" && [[ "$memo_cfg" == "$CALLER_CFG" && "$memo_harness" == "$CALLER_ACCOUNT_HARNESS"
-      && "$memo_model" == "$CALLER_ACCOUNT_MODEL" && "$memo_trigger" == "$HEADROOM_TRIGGER"
-      && "$memo_ttl" == "${ORCH_LANES_USAGE_TTL:-}"
-      && "$memo_until" =~ ^[0-9]+$ && "$caller_now" -lt "$memo_until"
-      && -f "$memo_cache" && "$caller_memo" -nt "$memo_cache"
-      && ( ! -e "$memo_wall" || "$caller_memo" -nt "$memo_wall" )
-      && ( ! -e "$memo_claims" || "$caller_memo" -nt "$memo_claims" ) ]]; then
-      caller_hit=1
-    fi
-  fi
+  caller_wall_at=""
   # An account `lanes` does not measure is one nothing measured, its exit 4.
-  if (( ! caller_hit )); then
-    caller_rc=4 caller_record="" caller_wall_at=""
-    if ol_account_measured "$CALLER_ACCOUNT_HARNESS"; then
-      caller_rc=0
-      caller_record="$(ol_lanes "$CALLER_ACCOUNT_HARNESS" pick --lane "$CALLER_CFG" --harness "$CALLER_ACCOUNT_HARNESS" --for-overseer \
-        --min-headroom-pct "$HEADROOM_TRIGGER" ${CALLER_ACCOUNT_MODEL:+--native-model "$CALLER_ACCOUNT_MODEL"} \
-        --json)" || caller_rc=$?
-    fi
-    memo_fields=""
-    if [[ "$caller_rc" == 0 || "$caller_rc" == 3 ]]; then
-      memo_fields="$(jq -r --argjson now "$caller_now" '
-        (if .usage_rate_state == "measured" and (.usage_age_s | type) == "number"
-          and (.projected_wall_minutes | type) == "number"
-          then $now - .usage_age_s + .projected_wall_minutes * 60 else "" end),
-        (.usage_cache.path // ""), (.usage_cache.served_until // ""),
-        ($now | strftime("%Y%m%d%H%M.%S"))' <<<"$caller_record" 2>"$DEP_ERR")" || memo_fields=""
-    fi
-    { IFS= read -r caller_wall_at; IFS= read -r memo_cache; IFS= read -r memo_until;
-      IFS= read -r memo_stamp; } <<<"$memo_fields" || true
-    if [[ -n "$caller_memo" ]]; then
-      if [[ -n "$memo_cache" && "$memo_until" =~ ^[0-9]+$ ]] \
-        && account_wall_file "$PROJECT_ROOT" "$CALLER_CFG" \
-        && memo_claims="$(lane_claims_dir "$PROJECT_ROOT")" && mkdir -p -- "$OVERSEER_BOX"; then
-        memo_tmp="$(mktemp "$OVERSEER_BOX/.account-mark.XXXXXX")" || die launch-failed step=mktemp
-        # Whole-second precision makes every input in this second a miss,
-        # including on hosts whose -nt compares fractional timestamps.
-        if ! { printf '%s\n' "$CALLER_CFG" "$CALLER_ACCOUNT_HARNESS" "$CALLER_ACCOUNT_MODEL" \
-          "$HEADROOM_TRIGGER" "$memo_until" "$memo_cache" "$ACCOUNT_WALL_FILE" "$memo_claims" \
-          "$caller_wall_at" "$caller_rc" "$caller_record" "${ORCH_LANES_USAGE_TTL:-}" > "$memo_tmp" \
-          && TZ=UTC touch -t "$memo_stamp" -- "$memo_tmp" && mv -- "$memo_tmp" "$caller_memo"; }; then
-          rm -f -- "$memo_tmp" "$caller_memo"
-        fi
-      else
-        rm -f -- "$caller_memo"
-      fi
-    fi
+  caller_rc=4 caller_record=""
+  if ol_account_measured "$CALLER_ACCOUNT_HARNESS"; then
+    caller_rc=0
+    caller_record="$(ol_runtime_pick "$CALLER_ACCOUNT_HARNESS" --lane "$CALLER_CFG" --harness "$CALLER_ACCOUNT_HARNESS" --for-overseer \
+      --min-headroom-pct "$HEADROOM_TRIGGER" ${CALLER_ACCOUNT_MODEL:+--native-model "$CALLER_ACCOUNT_MODEL"})" || caller_rc=$?
+  fi
+  # The instant the measured rate reaches the wall, for the rate mark below:
+  # the sample's instant plus the minutes the reader projected.
+  if [[ "$caller_rc" == 0 || "$caller_rc" == 3 ]]; then
+    caller_wall_at="$(jq -r --argjson now "$caller_now" '
+      if .usage_rate_state == "measured" and (.usage_age_s | type) == "number"
+        and (.projected_wall_minutes | type) == "number"
+        then $now - .usage_age_s + .projected_wall_minutes * 60 else "" end' <<<"$caller_record" 2>"$DEP_ERR")" || caller_wall_at=""
   fi
   case "$caller_rc" in
     0|3)
@@ -1408,7 +1365,7 @@ build_entries() {
 # The caller's own lane is KEPT, unpicked, on `has-room` alone and never at a
 # rate or qualifying mark, whose successor must move. At the trigger it is
 # the account that ran out; unmeasured or unreadable, nothing established that
-# it has room. Every other state goes through `lanes pick`, the one judge of
+# it has room. Every other state goes through the account judge, the one judge of
 # account room for every entry alike, so its exit 3 skips this entry exactly
 # as it skips another harness's, but for one state at one mark: `unmeasured`
 # at the context mark keeps the caller's account where the pick of an entry

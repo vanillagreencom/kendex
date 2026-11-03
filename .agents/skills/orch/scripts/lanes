@@ -189,7 +189,9 @@
 #         because claims omit models. So an
 #         account whose room the lanes already on it will spend is dropped the
 #         way a walled one is. An OVERSEER SEAT is returned last, only while
-#         its projected room exceeds ORCH_OVERSEER_SEAT_RESERVE_PCT (default 50).
+#         its projected room exceeds the room the seat keeps for the overseer,
+#         max(100 - the bound, ORCH_OVERSEER_HEADROOM_PCT), the runtime judge's
+#         own rule (ops/accounts.rs).
 #         A seat is an account `.overseer.account` names in this checkout's fleet
 #         state, and every fleet state a live claim in the store names, which
 #         is each fleet sharing OVERSEE_WATCH_STATE_DIR that runs a lane. The
@@ -224,8 +226,9 @@
 #         `projected_headroom_pct`, and it comes back as those lanes end, not
 #         at a reset. And `seats=N` counts accounts judged `seat-reserve`,
 #         each named on a `lanes: pick-seat-omitted lane=DIR projected-headroom=N
-#         reserve=N` line. They return when their projected room exceeds the
-#         reserve. Copilot pool picks, through Copilot or Pi, keep seats and
+#         bound=N reserve=N` line. They return when their projected room
+#         exceeds both the bound's share, `100 - bound`, and the reserve,
+#         ORCH_OVERSEER_HEADROOM_PCT. Copilot pool picks, through Copilot or Pi, keep seats and
 #         charge their pool claims at the monthly burn; they read no fleet state or provider seat marks. Under --json that exit
 #         also prints `{"walled":N,"unmeasured":N,"seats":N,"qualifying_count":0,
 #         "walled_resets_at":T,"refusals":[{config_dir:D,refusal:R}],
@@ -348,7 +351,8 @@
 #         `required` when lib/lane-context.sh's shared context rule requires
 #         handoff, the judge the hook uses, or at a HEADROOM at or
 #         below ORCH_HANDOFF_HEADROOM_PCT (default 3), or on a seat at or below
-#         ORCH_OVERSEER_SEAT_RESERVE_PCT. The caller's own row uses the ordinary
+#         the room the seat keeps for the overseer, under pick. The caller's
+#         own row uses the ordinary
 #         mark. A Codex account room on its credits (see pick) is never
 #         marked by headroom; its HEADROOM is its balance. A lane on a grant,
 #         a Pi lane on an anthropic/ model's API grant or a Claude lane on a
@@ -644,14 +648,14 @@
 #                      walls that model, and never compared with
 #                      ORCH_HANDOFF_HEADROOM_PCT. Refused, before any lane is
 #                      measured, when it is not an integer 0-100.
-#   ORCH_OVERSEER_SEAT_RESERVE_PCT  Room kept in each plan window for the
-#                      overseer (default 50, provisional). A seat is admitted
-#                      only above this reserve, ranked last. Running lanes on
-#                      it hand off at or below it. 100 admits no seat and marks
-#                      every lane on one; 0 uses --max-pct alone, still last.
-#                      Keep it above ORCH_OVERSEER_HEADROOM_PCT. Credits do not
-#                      spend plan windows. Refused before any measurement when
-#                      it is not an integer 0-100.
+#   ORCH_OVERSEER_HEADROOM_PCT  The account headroom the overseer hands off
+#                      at (default 5), and so the room each plan window keeps
+#                      for it on a seat: a seat is admitted only while its
+#                      projected room exceeds max(100 - the bound, this),
+#                      ranked last, and running lanes on it hand off at or
+#                      below that room. Credits do not spend plan windows.
+#                      Refused before any measurement when it is not an
+#                      integer 0-100.
 #   ORCH_LANE_BURN_PCT_PER_HOUR  Percentage points of the 5-hour session window
 #                      one live lane is expected to spend in an hour: the
 #                      fallback burn under the PROJECTED wall rule in `pick`
@@ -1122,7 +1126,7 @@ message() {
       printf '%s\n' "the host-wide usage refresh lock file could not be opened, so this run measured without it and the usage endpoint may see two refreshes of the same accounts; check the usage cache directory, or set OVERSEE_WATCH_STATE_DIR"
       ;;
     invalid-handoff-headroom) printf 'lanes: invalid-handoff-headroom value=%s\nORCH_HANDOFF_HEADROOM_PCT must be an integer 0-100\n' "$1" ;;
-    invalid-overseer-seat-reserve) printf 'lanes: invalid-overseer-seat-reserve value=%s\nORCH_OVERSEER_SEAT_RESERVE_PCT must be an integer 0-100\n' "$1" ;;
+    invalid-overseer-headroom) printf 'lanes: invalid-overseer-headroom value=%s\nORCH_OVERSEER_HEADROOM_PCT must be an integer 0-100\n' "$1" ;;
     invalid-lane-max-pct) printf 'lanes: invalid-lane-max-pct value=%s\nORCH_LANE_MAX_PCT must be an integer 0-100\n' "$1" ;;
     invalid-lane-burn) printf 'lanes: invalid-lane-burn value=%s\nORCH_LANE_BURN_PCT_PER_HOUR must be an integer 0-100\n' "$1" ;;
     invalid-lane-codex-credit-floor) printf 'lanes: invalid-lane-codex-credit-floor value=%s\nORCH_LANE_CODEX_CREDIT_FLOOR must be an integer 0 or more\n' "$1" ;;
@@ -1156,8 +1160,8 @@ message() {
       printf '%s\n' "the overseer seats could not be read; the lane was judged on its wall reading alone, with no seat reserve"
       ;;
     pick-seat-omitted)
-      printf 'lanes: pick-seat-omitted lane=%s projected-headroom=%s reserve=%s\n' "$1" "$2" "$3"
-      printf '%s\n' "the account does not have room above the overseer's reserve"
+      printf 'lanes: pick-seat-omitted lane=%s projected-headroom=%s bound=%s reserve=%s\n' "$1" "$2" "$3" "$4"
+      printf '%s\n' "a seat keeps its projected room above the bound's share, 100 - bound, and above the overseer's reserve; this account's room is not above both"
       ;;
     time-failed)
       printf 'lanes: time-failed clock=%s\n' "UTC"
@@ -3784,7 +3788,7 @@ cmd_pick_lane() {
 			;;
 		seat-reserve)
 			projected="$(jq -r --argjson p "$projected_verdict" 'if $p then .projected_headroom_pct else 100 - .wall end' <<<"$record")" || return 1
-			message pick-seat-omitted "$dir" "$projected" "$SEAT_RESERVE" >&2
+			message pick-seat-omitted "$dir" "$projected" "$max_pct" "$SEAT_RESERVE" >&2
 			[[ "$as_json" != true ]] || printf '%s\n' "$record"
 			return 3
 			;;
@@ -3968,7 +3972,7 @@ cmd_pick() {
 				[[ -z "$dir" ]] || message pick-account-excluded "$dir" "$reason"
 			done <<<"$exclusion_lines"
 			while IFS=$'\t' read -r seat room; do
-				[[ -z "$seat" ]] || message pick-seat-omitted "$seat" "$room" "$SEAT_RESERVE"
+				[[ -z "$seat" ]] || message pick-seat-omitted "$seat" "$room" "$max_pct" "$SEAT_RESERVE"
 			done <<<"$omitted"
 			while IFS= read -r dir; do
 				[[ -z "$dir" ]] || message cloud-repo-unset "$dir" "${TIER_REPO:-none}"
@@ -4133,9 +4137,14 @@ parse_argv() {
 		pct_valid "$MAX_PCT" || die invalid-lane-max-pct "$MAX_PCT"
 		MAX_PCT=$((10#$MAX_PCT))
 	fi
-	SEAT_RESERVE="${ORCH_OVERSEER_SEAT_RESERVE_PCT:-50}"
-	pct_valid "$SEAT_RESERVE" || die invalid-overseer-seat-reserve "$SEAT_RESERVE"
-	SEAT_RESERVE=$((10#$SEAT_RESERVE))
+	# The room a seat keeps is the runtime judge's one rule (ops/accounts.rs
+	# `judge`: a seat is held to min(bound, 100 - ORCH_OVERSEER_HEADROOM_PCT)),
+	# spelled here as the reserve lib/lane-model.sh takes beside each arm's
+	# own bound: the headroom the overseer hands off at, and nothing of
+	# MAX_PCT, which is the pick's bound and not the context arm's.
+	OVERSEER_HEADROOM="${ORCH_OVERSEER_HEADROOM_PCT:-5}"
+	pct_valid "$OVERSEER_HEADROOM" || die invalid-overseer-headroom "$OVERSEER_HEADROOM"
+	SEAT_RESERVE=$((10#$OVERSEER_HEADROOM))
 	# The expected burn of one live lane where its account measured no rate,
 	# read here for the reason MAX_PCT is and refused on the same terms: a
 	# figure nobody can read must not become one of this script's own.

@@ -170,8 +170,8 @@ impl World {
     /// The settings a duty in this world runs under: the fixtures as the
     /// tracker and the close's mailbox and validation programs, the team,
     /// and the alert pass off (its token file is a row's own plant; with
-    /// none the pass prints its credential-unread line, as the legacy did,
-    /// `security-alerts.sh:153`). A later `extra` entry overrides.
+    /// none the pass prints its credential-unread line). A later `extra`
+    /// entry overrides.
     fn settings(&self, extra: &[(&str, &str)]) -> Settings {
         let dir = self.dir.path();
         let roots = Roots {
@@ -1387,8 +1387,8 @@ fn plant_token(world: &World, token: &str) -> PathBuf {
     path
 }
 
-/// The legacy reducer pass (`lib/pr-watch-pass.sh`, the bytes
-/// `744fd5727:skills/orch/tests/oversee_watch.sh` § 1 pins). Defect: the reducer run without
+/// The reducer pass (the bytes `744fd5727:skills/orch/tests/oversee_watch.sh`
+/// § 1 pins). Defect: the reducer run without
 /// `GH_REPO` or with a flag, a repository's standing attention on the first
 /// pass of a run reported as news (the legacy baselined it with one stderr
 /// note), a new key not reported, a standing key reported again, an error
@@ -1523,7 +1523,7 @@ fn the_reducer_runs_per_repository_with_gh_repo_and_a_rising_edge_is_news_once()
     assert_eq!(baseline, Baseline::default());
 }
 
-/// `pr-watch-pass.sh:195-222`, the bytes `744fd5727:skills/orch/tests/oversee_watch.sh`
+/// The bytes `744fd5727:skills/orch/tests/oversee_watch.sh`
 /// `refresh_merge_replay` pins: a rolling refresh has no item, so its
 /// `refresh-ready` identity is kept by number once the reducer's line
 /// clears, until the pull request merges (one `EVENT merged 1144
@@ -1601,7 +1601,7 @@ fn a_refresh_identity_is_kept_until_its_pull_request_merges_once() {
     );
 }
 
-/// `lib/security-alerts.sh`, the bytes `744fd5727:skills/orch/tests/oversee_watch_security.sh`
+/// The alert pass, the bytes `744fd5727:skills/orch/tests/oversee_watch_security.sh`
 /// pins (`LINE_DEPENDABOT pr=12`, `LINE_CODE`, `LINE_SECRET`, the repeats,
 /// the unread line). Defect: an alert read without the installation token
 /// or every other read with it, an alert reported once and then forgotten
@@ -1817,7 +1817,7 @@ fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_ale
     );
 }
 
-/// `lib/outside-contribution.sh`, the bytes `744fd5727:skills/orch/tests/oversee_watch_outside.sh`
+/// The contribution pass, the bytes `744fd5727:skills/orch/tests/oversee_watch_outside.sh`
 /// pins. Defect: a fleet author (a bot, an owner, a member, a collaborator,
 /// a private member whose permission is admin) reported, an outside pull
 /// request or issue reported on every pass, a pushed head not reported
@@ -1888,9 +1888,9 @@ fn outside_contributions_are_reported_once_and_a_pull_request_again_on_a_new_hea
             .filter(|c| c.contains("collaborators/"))
             .count()
     };
-    // Every author outside by its own fields is asked once per pass
-    // (`outside-contribution.sh:108`, `:57-75`): the visitor once for its
-    // two items, the private member, the deleted account.
+    // Every author outside by its own fields is asked once per pass: the
+    // visitor once for its two items, the private member, the deleted
+    // account.
     assert_eq!(
         permission_reads(&world),
         3,

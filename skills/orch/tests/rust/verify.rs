@@ -5,15 +5,15 @@
 //! page, and the record written on `complete`. The fake answers from a
 //! JSON map the row builds, starting from the documented replies beside
 //! it, and logs every call, so a row can assert what was read and what
-//! never was. The differential against the legacy's own functions over a
-//! corpus (decision 107 (3)) is the crate's `verify::differential` test,
-//! which builds its evidence through the same reads over a fake transport.
+//! never was. The legacy `ci-wait`'s verdict is the correctness floor
+//! (decision 135): its witnesses are recorded answer sets under
+//! `fixtures/gh/witnesses/`, one table row each
+//! (`the_recorded_witnesses_keep_the_legacy_verdict`).
 //!
 //! The `verify-pr` operation (U6g) is the same verification over the head
 //! one `gh pr view` answers for a pull request; its rows at the end pin the
 //! read of the pull request, the refusal of one that is not open, and the
-//! head re-read on every call. The legacy `ci-wait`'s verdict stays the
-//! correctness floor through the crate's differential (decision 135 (4)).
+//! head re-read on every call.
 #![allow(
     clippy::disallowed_methods,
     reason = "the process tests run the built binary against a fake gh on PATH"
@@ -491,6 +491,17 @@ impl Github {
         gh
     }
 
+    /// A recorded witness's replies (`fixtures/gh/witnesses/<name>.json`):
+    /// the whole map the fake answers from, as one head's reads answered.
+    fn recorded(name: &str) -> Self {
+        let mut gh = Github::empty();
+        gh.replies = fixture(&format!("witnesses/{name}.json"))
+            .as_object()
+            .unwrap()
+            .clone();
+        gh
+    }
+
     fn answer(&mut self, path: &str, body: Value) -> &mut Self {
         self.replies.insert(path.to_owned(), json!({"body": body}));
         self
@@ -709,8 +720,45 @@ struct Verdict {
     checks: Vec<Reported>,
 }
 
-/// Run one verdict row against the green world and assert its answer, the
-/// record's presence following the verdict, and every read pinned.
+/// What a row expects of one call's answer: the status, the verdict, the
+/// pending cause key and the reported members, with the record written
+/// exactly when the verdict is final and every read pinned.
+struct Answer {
+    name: &'static str,
+    status: &'static str,
+    verdict: Option<&'static str>,
+    cause: Option<&'static str>,
+    checks: Vec<Reported>,
+}
+
+fn assert_answer(gh: &Github, result: &Value, a: &Answer) {
+    assert_eq!(result["status"], a.status, "{}: {result}", a.name);
+    assert_eq!(
+        result["verdict"].as_str(),
+        a.verdict,
+        "{}: {result}",
+        a.name
+    );
+    if let Some(cause) = a.cause {
+        assert_eq!(key(result), cause, "{}: {result}", a.name);
+    }
+    assert_eq!(checks(result), a.checks, "{}: {result}", a.name);
+    assert_eq!(
+        result.get("recorded").is_some(),
+        a.verdict.is_some(),
+        "{}",
+        a.name
+    );
+    assert_eq!(
+        gh.state().get("verification").is_some(),
+        a.verdict.is_some(),
+        "{}",
+        a.name
+    );
+    assert_pinned(&gh.log(), HEAD);
+}
+
+/// Run one verdict row against the green world and assert its answer.
 fn assert_verdict(r: Verdict) {
     let mut gh = Github::green();
     let total = r.check_runs.len();
@@ -725,30 +773,17 @@ fn assert_verdict(r: Verdict) {
         .answer(&runs(HEAD, 1), runs_page(r.runs))
         .answer(&rules(1), Value::Array(rule_set));
     let result = ok_result(&gh.verify(required_only));
-    assert_eq!(result["status"], r.status, "{}: {result}", r.name);
-    assert_eq!(
-        result["verdict"].as_str(),
-        r.verdict,
-        "{}: {result}",
-        r.name
+    assert_answer(
+        &gh,
+        &result,
+        &Answer {
+            name: r.name,
+            status: r.status,
+            verdict: r.verdict,
+            cause: r.cause,
+            checks: r.checks,
+        },
     );
-    if let Some(cause) = r.cause {
-        assert_eq!(key(&result), cause, "{}: {result}", r.name);
-    }
-    assert_eq!(checks(&result), r.checks, "{}: {result}", r.name);
-    assert_eq!(
-        result.get("recorded").is_some(),
-        r.verdict.is_some(),
-        "{}",
-        r.name
-    );
-    assert_eq!(
-        gh.state().get("verification").is_some(),
-        r.verdict.is_some(),
-        "{}",
-        r.name
-    );
-    assert_pinned(&gh.log(), HEAD);
 }
 
 /// Decision 93: a final verdict is recorded through `record-verification`
@@ -802,11 +837,11 @@ fn a_passing_head_is_complete_pass_and_recorded() {
     assert_eq!(again["recorded"]["report"]["replaced"], true);
 }
 
-/// The decisions the verdict pins beyond what the oracle corpus holds:
-/// decision 113's taxonomy, the wire's nullable run status, the empty head,
-/// the skipped-check flag (R-U4e6 H2), the substantive events (decision
-/// 107 (4)) and the held failure's relabel. Every other state combination
-/// is the corpus's (`the_operation_and_the_legacy_oracle_agree_over_the_corpus`).
+/// The decisions the verdict pins beyond the legacy's witnesses: decision
+/// 113's taxonomy, the wire's nullable run status, the empty head, the
+/// skipped-check flag (R-U4e6 H2), the substantive events (decision 107
+/// (4)) and the held failure's relabel. The legacy's own answers are the
+/// witness rows (`the_recorded_witnesses_keep_the_legacy_verdict`).
 #[test]
 fn verdicts_follow_the_check_and_run_states() {
     let aggregate = |context: &str, state: &str, run_id: u64| {
@@ -1009,6 +1044,500 @@ fn verdicts_follow_the_check_and_run_states() {
     ];
     for r in rows {
         assert_verdict(r);
+    }
+}
+
+/// One recorded witness of the legacy `ci-wait`'s verdict: the answers one
+/// head's reads gave, as one reply map under `fixtures/gh/witnesses/`, and
+/// what the legacy's own functions concluded from them under the recorded
+/// corrections. The row is named for the defect it catches.
+struct Witness {
+    defect: &'static str,
+    /// The reply map's name under `fixtures/gh/witnesses/`.
+    fixture: &'static str,
+    required_only: bool,
+    status: &'static str,
+    verdict: Option<&'static str>,
+    /// The reason's stable key on `pending`.
+    cause: Option<&'static str>,
+    checks: Vec<Reported>,
+}
+
+/// Decision 135: the legacy `ci-wait`'s verdict is the correctness floor.
+/// Each row is a recorded witness: the legacy's fixtures and incidents
+/// (`ci-wait`'s and the correlation library's heads: superseded runs,
+/// stale pre-approval failures, request-only rollups, rerun attempts and
+/// newer siblings, required sets and bound workflows) or a reviewer's
+/// counterexample (the suite join's omissions, the `latest` listing, gh's
+/// slash-joined key, the order among equal or absent starts, the run-less
+/// pick, the graph's null nodes and the startup-failure correction), with
+/// the status, verdict, cause key and reported members the legacy's own
+/// functions agreed with over the same answers, under the recorded
+/// corrections (decisions 107 (4), 113, 117, 119 (2), 122), run once at the
+/// oracle's retirement. A verdict that changes here is one named
+/// correction (decision 135a).
+#[test]
+fn the_recorded_witnesses_keep_the_legacy_verdict() {
+    let rows = [
+        Witness {
+            defect: "the cancelled jobs of a superseded run counted as failures",
+            fixture: "superseded-run-cancelled-jobs",
+            required_only: false,
+            status: "pending",
+            verdict: None,
+            cause: Some("checks-pending"),
+            checks: vec![
+                row("License Key Guard", "check-run", "success", "pass"),
+                row("Changes", "check-run", "in_progress", "pending"),
+            ],
+        },
+        Witness {
+            defect: "a stale pre-approval failure read as terminal while the approved run is active",
+            fixture: "stale-preapproval-active-approved",
+            required_only: false,
+            status: "pending",
+            verdict: None,
+            cause: Some("checks-pending"),
+            checks: vec![
+                row("Build", "check-run", "in_progress", "pending"),
+                row("CI Required", "commit-status", "failure", "fail"),
+            ],
+        },
+        Witness {
+            defect: "a pre-approval failure with no fresh substantive run left pending",
+            fixture: "stale-preapproval-no-fresh-run",
+            required_only: false,
+            status: "complete",
+            verdict: Some("fail"),
+            cause: None,
+            checks: vec![
+                row("CI Gate Publisher", "check-run", "skipped", "skipping"),
+                row("Changes", "check-run", "skipped", "skipping"),
+                row("CI Required", "commit-status", "failure", "fail"),
+            ],
+        },
+        Witness {
+            defect: "a failed approved run left pending beside its stale failure",
+            fixture: "stale-preapproval-fresh-failed",
+            required_only: false,
+            status: "complete",
+            verdict: Some("fail"),
+            cause: None,
+            checks: vec![
+                row("Build", "check-run", "failure", "fail"),
+                row("CI Required", "commit-status", "failure", "fail"),
+            ],
+        },
+        Witness {
+            defect: "a lagging aggregate judged settled on the approved run's green jobs alone",
+            fixture: "stale-preapproval-status-lag",
+            required_only: false,
+            status: "pending",
+            verdict: None,
+            cause: Some("checks-pending"),
+            checks: vec![
+                row("Build", "check-run", "success", "pass"),
+                row("CI Required", "commit-status", "expected", "pending"),
+            ],
+        },
+        Witness {
+            defect: "the replacement status published against the approved run read as stale",
+            fixture: "approved-status-replaced",
+            required_only: false,
+            status: "complete",
+            verdict: Some("pass"),
+            cause: None,
+            checks: vec![
+                row("CI Gate Publisher", "check-run", "success", "pass"),
+                row("Build", "check-run", "success", "pass"),
+                row("CI Required", "commit-status", "success", "pass"),
+            ],
+        },
+        Witness {
+            defect: "a request-only rollup judged final while a substantive run is active",
+            fixture: "request-only-run-active",
+            required_only: false,
+            status: "pending",
+            verdict: None,
+            cause: Some("actions-run-active"),
+            checks: vec![row("request", "check-run", "success", "pass")],
+        },
+        Witness {
+            defect: "a request-only rollup held after its substantive run completed",
+            fixture: "request-only-run-completed",
+            required_only: false,
+            status: "complete",
+            verdict: Some("pass"),
+            cause: None,
+            checks: vec![row("request", "check-run", "success", "pass")],
+        },
+        Witness {
+            defect: "an active optional check holding a satisfied required set",
+            fixture: "required-build-optional-docs-active",
+            required_only: true,
+            status: "complete",
+            verdict: Some("pass"),
+            cause: None,
+            checks: vec![row("build", "check-run", "success", "pass")],
+        },
+        Witness {
+            defect: "a required context nothing reports yet read as satisfied",
+            fixture: "required-build-missing",
+            required_only: true,
+            status: "pending",
+            verdict: None,
+            cause: Some("checks-pending"),
+            checks: vec![row("build", "required", "expected", "pending")],
+        },
+        Witness {
+            defect: "a failed latest run hidden behind a request-only rollup",
+            fixture: "failed-run-behind-request-only",
+            required_only: false,
+            status: "complete",
+            verdict: Some("fail"),
+            cause: None,
+            checks: vec![
+                row("request", "check-run", "success", "pass"),
+                row(
+                    ".github/workflows/wf-245303662.yml",
+                    "workflow-run",
+                    "failure",
+                    "fail",
+                ),
+            ],
+        },
+        Witness {
+            defect: "another workflow's newer success erasing a failure",
+            fixture: "other-workflow-success-beside-failure",
+            required_only: false,
+            status: "complete",
+            verdict: Some("fail"),
+            cause: None,
+            checks: vec![
+                row("request", "check-run", "success", "pass"),
+                row(
+                    ".github/workflows/wf-245303662.yml",
+                    "workflow-run",
+                    "failure",
+                    "fail",
+                ),
+            ],
+        },
+        Witness {
+            defect: "a later skipped dispatch erasing a substantive failure",
+            fixture: "skipped-dispatch-after-failure",
+            required_only: false,
+            status: "complete",
+            verdict: Some("fail"),
+            cause: None,
+            checks: vec![
+                row("request", "check-run", "success", "pass"),
+                row(
+                    ".github/workflows/wf-245303662.yml",
+                    "workflow-run",
+                    "failure",
+                    "fail",
+                ),
+            ],
+        },
+        Witness {
+            defect: "a successful rerun attempt of an older run id read as superseded by the failed newer dispatch",
+            fixture: "rerun-attempt-success-older-id",
+            required_only: false,
+            status: "complete",
+            verdict: Some("pass"),
+            cause: None,
+            checks: vec![row("request", "check-run", "success", "pass")],
+        },
+        Witness {
+            defect: "a cancelled run's failure read as terminal while a newer sibling is active",
+            fixture: "newer-sibling-active",
+            required_only: false,
+            status: "pending",
+            verdict: None,
+            cause: Some("failed-run-active"),
+            checks: vec![
+                row("CI Gate Publisher", "check-run", "expected", "pending"),
+                row("Lint", "check-run", "expected", "pending"),
+                row("Changes", "check-run", "expected", "pending"),
+                row("CI Required", "commit-status", "expected", "pending"),
+            ],
+        },
+        Witness {
+            defect: "a cancelled run's frozen failures kept beside the newer sibling's success",
+            fixture: "newer-sibling-success",
+            required_only: false,
+            status: "complete",
+            verdict: Some("pass"),
+            cause: None,
+            checks: vec![row("CI Required", "commit-status", "success", "pass")],
+        },
+        Witness {
+            defect: "a cancelled run with no newer sibling left pending",
+            fixture: "cancelled-run-alone",
+            required_only: false,
+            status: "complete",
+            verdict: Some("fail"),
+            cause: None,
+            checks: vec![
+                row("CI Gate Publisher", "check-run", "failure", "fail"),
+                row("Lint", "check-run", "cancelled", "fail"),
+                row("Changes", "check-run", "cancelled", "fail"),
+                row("CI Required", "commit-status", "failure", "fail"),
+            ],
+        },
+        Witness {
+            defect: "an in-flight attempt of an older run id not read as the current run",
+            fixture: "rerun-attempt-active",
+            required_only: false,
+            status: "pending",
+            verdict: None,
+            cause: Some("failed-run-active"),
+            checks: vec![
+                row("CI Gate Publisher", "check-run", "expected", "pending"),
+                row("Lint", "check-run", "expected", "pending"),
+                row("Changes", "check-run", "expected", "pending"),
+                row("CI Required", "commit-status", "expected", "pending"),
+            ],
+        },
+        Witness {
+            defect: "a later skipped job of one name read past for its earlier success",
+            fixture: "later-skipped-job",
+            required_only: false,
+            status: "pending",
+            verdict: None,
+            cause: Some("skipped-only"),
+            checks: vec![row("build", "check-run", "skipped", "skipping")],
+        },
+        Witness {
+            defect: "a run-less check's later failure hidden by its earlier success",
+            fixture: "runless-later-failure",
+            required_only: false,
+            status: "complete",
+            verdict: Some("fail"),
+            cause: None,
+            checks: vec![row("external", "check-run", "failure", "fail")],
+        },
+        Witness {
+            defect: "a failed newer run hidden by the older run's green jobs and aggregate",
+            fixture: "rerun-incident",
+            required_only: false,
+            status: "complete",
+            verdict: Some("fail"),
+            cause: None,
+            checks: vec![
+                row("CI Gate Publisher", "check-run", "success", "pass"),
+                row("build", "check-run", "success", "pass"),
+                row("CI Required", "commit-status", "success", "pass"),
+                row(
+                    ".github/workflows/ci.yml",
+                    "workflow-run",
+                    "failure",
+                    "fail",
+                ),
+            ],
+        },
+        Witness {
+            defect: "a job's later failure hidden by its earlier success",
+            fixture: "later-failed-job",
+            required_only: false,
+            status: "complete",
+            verdict: Some("fail"),
+            cause: None,
+            checks: vec![row("build", "check-run", "failure", "fail")],
+        },
+        Witness {
+            defect: "an older run's aggregate status scoped out with that run's job",
+            fixture: "stale-aggregate-status",
+            required_only: false,
+            status: "complete",
+            verdict: Some("pass"),
+            cause: None,
+            checks: vec![
+                row("build", "check-run", "success", "pass"),
+                row("CI Required", "commit-status", "success", "pass"),
+            ],
+        },
+        Witness {
+            defect: "a failed aggregate status targeting a job-less run dropped as stale",
+            fixture: "failed-run-status-no-jobs",
+            required_only: false,
+            status: "complete",
+            verdict: Some("fail"),
+            cause: None,
+            checks: vec![
+                row("build", "check-run", "success", "pass"),
+                row("CI Required", "commit-status", "failure", "fail"),
+            ],
+        },
+        Witness {
+            defect: "a bound job scoped out by a later-started execution read as satisfied",
+            fixture: "required-two-runs-bound-dropped",
+            required_only: true,
+            status: "pending",
+            verdict: None,
+            cause: Some("checks-pending"),
+            checks: vec![row("request", "required", "expected", "pending")],
+        },
+        Witness {
+            defect: "a required context's older-run aggregate scoped out as stale",
+            fixture: "required-stale-aggregate",
+            required_only: true,
+            status: "complete",
+            verdict: Some("pass"),
+            cause: None,
+            checks: vec![row("CI Required", "commit-status", "success", "pass")],
+        },
+        Witness {
+            defect: "a bound successful run passing over its failed own check",
+            fixture: "bound-run-failed-own-check",
+            required_only: true,
+            status: "complete",
+            verdict: Some("fail"),
+            cause: None,
+            checks: vec![row("request", "check-run", "failure", "fail")],
+        },
+        Witness {
+            defect: "an external failed check whose details URL names an active run read as terminal",
+            fixture: "external-check-linking-active-run",
+            required_only: false,
+            status: "pending",
+            verdict: None,
+            cause: Some("failed-run-active"),
+            checks: vec![row("build", "check-run", "expected", "pending")],
+        },
+        Witness {
+            defect: "a bound job whose details URL is not its page matched by id",
+            fixture: "bound-job-details-url-apart",
+            required_only: true,
+            status: "pending",
+            verdict: None,
+            cause: Some("checks-pending"),
+            checks: vec![row("request", "required", "expected", "pending")],
+        },
+        Witness {
+            defect: "a startup-failed job bucketed pending beside a failed status targeting an unheld run",
+            fixture: "startup-failure-beside-unheld-status",
+            required_only: false,
+            status: "complete",
+            verdict: Some("fail"),
+            cause: None,
+            checks: vec![
+                row("request", "check-run", "startup_failure", "fail"),
+                row("CI Required", "commit-status", "failure", "fail"),
+            ],
+        },
+        Witness {
+            defect: "two workflow ids sharing a display name grouped apart",
+            fixture: "two-workflow-ids-one-name",
+            required_only: false,
+            status: "complete",
+            verdict: Some("pass"),
+            cause: None,
+            checks: vec![row("build", "check-run", "success", "pass")],
+        },
+        Witness {
+            defect: "null REST run names breaking the grouping of a later rerun",
+            fixture: "rerun-null-run-names",
+            required_only: false,
+            status: "complete",
+            verdict: Some("pass"),
+            cause: None,
+            checks: vec![row("build", "check-run", "success", "pass")],
+        },
+        Witness {
+            defect: "a bound suite's in-progress rerun read as its completed predecessor",
+            fixture: "bound-suite-rerun-in-progress",
+            required_only: true,
+            status: "pending",
+            verdict: None,
+            cause: Some("checks-pending"),
+            checks: vec![row("request", "check-run", "in_progress", "pending")],
+        },
+        Witness {
+            defect: "gh's slash-joined key not colliding `build/CI` under `tests` with `build` under `CI/tests`",
+            fixture: "slash-key-collision",
+            required_only: false,
+            status: "complete",
+            verdict: Some("pass"),
+            cause: None,
+            checks: vec![row("build", "check-run", "success", "pass")],
+        },
+        Witness {
+            defect: "two undated check runs of one name ordered by id before listing position",
+            fixture: "undated-pair-listing-order",
+            required_only: false,
+            status: "complete",
+            verdict: Some("fail"),
+            cause: None,
+            checks: vec![row("build", "check-run", "failure", "fail")],
+        },
+        Witness {
+            defect: "a run-less status outranking the queued check sharing its name",
+            fixture: "runless-status-beside-queued-check",
+            required_only: false,
+            status: "pending",
+            verdict: None,
+            cause: Some("checks-pending"),
+            checks: vec![row("build", "check-run", "queued", "pending")],
+        },
+        Witness {
+            defect: "a null node read by the detail while an unjoined sibling's node identifies the held run",
+            fixture: "unjoined-sibling-node-names-run",
+            required_only: false,
+            status: "complete",
+            verdict: Some("pass"),
+            cause: None,
+            checks: vec![
+                row("test", "check-run", "success", "pass"),
+                row("build", "check-run", "success", "pass"),
+            ],
+        },
+        Witness {
+            defect: "a run-less failed status outranking the successful check sharing its name",
+            fixture: "runless-status-beside-success-check",
+            required_only: false,
+            status: "complete",
+            verdict: Some("pass"),
+            cause: None,
+            checks: vec![row("build", "check-run", "success", "pass")],
+        },
+        Witness {
+            defect: "two check runs of one name started alike ordered by id before listing position",
+            fixture: "dated-pair-listing-order",
+            required_only: false,
+            status: "complete",
+            verdict: Some("pass"),
+            cause: None,
+            checks: vec![row("build", "check-run", "success", "pass")],
+        },
+        Witness {
+            defect: "the older run's build selected in place of the newer run's build and skipped docs",
+            fixture: "newer-run-build-and-skipped-docs",
+            required_only: false,
+            status: "complete",
+            verdict: Some("pass"),
+            cause: None,
+            checks: vec![
+                row("docs", "check-run", "skipped", "skipping"),
+                row("build", "check-run", "success", "pass"),
+            ],
+        },
+    ];
+    for w in rows {
+        let gh = Github::recorded(w.fixture);
+        let result = ok_result(&gh.verify(w.required_only));
+        assert_answer(
+            &gh,
+            &result,
+            &Answer {
+                name: w.defect,
+                status: w.status,
+                verdict: w.verdict,
+                cause: w.cause,
+                checks: w.checks,
+            },
+        );
     }
 }
 

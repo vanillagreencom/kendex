@@ -78,8 +78,8 @@ pub const MAIN_PUSH_ROW: &str = "main-push-failing";
 pub const MAIN_SCHEDULE_ROW: &str = "main-schedule-failing";
 pub const MAIN_ABSENT_ROW: &str = "main-workflow-absent";
 
-/// The repository the refresh pull request's merged line names
-/// (`lib/pr-watch-pass.sh`); its row is kept through the prune.
+/// The repository the refresh pull request's merged line names; its row
+/// is kept through the prune.
 pub(super) const REFRESH_ITEM: &str = "kendex/refresh";
 
 /// The workflow whose completed runs carry the budget annotations
@@ -305,7 +305,7 @@ impl Gh<'_> {
 /// Found (HTTP 404)`, `skills/github/scripts/lib/github-api.sh:232`) and
 /// the client's `HTTP <status>: <message> (<url>)` (the legacy read it as
 /// `^HTTP 404: workflow … not found on the default branch (`,
-/// `oversee-watch:2191`; `outside-contribution.sh:64` read `(HTTP 404)`);
+/// `oversee-watch:2191`, and the contribution pass as `(HTTP 404)`);
 /// either names the status on its own line.
 fn not_found(stderr: &str) -> bool {
     stderr.lines().any(|line| {

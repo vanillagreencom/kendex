@@ -252,7 +252,7 @@ fi
 # library reaches the source line without reaching the check. Neither library
 # defines `lib` or `library`. A library without the repeat guard still delivers;
 # the warning names the missing check without duplicating the library's rule.
-APPEND_LIBRARIES = '''lib="$3/.agents/skills/orch/scripts/lib"
+APPEND_LIBRARIES = '''lib="$3/.agents/skills/mailbox/scripts/lib"
 for library in file-lock.sh mailbox-append.sh; do
   if [ ! -r "$lib/$library" ]; then
     printf 'lane-host-ssh: append-library-missing path=%s\\n' "$lib/$library" >&2

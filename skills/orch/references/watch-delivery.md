@@ -26,7 +26,7 @@ A claim whose `standing` reads `live` is the watch. `gone` is no live watch, as 
 
 A session `oversee register` recorded, with no live watch claim, starts the watch once with the launch line [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) states, from the overseer's own pane, and follows `oversee-watch.log` beside the fleet state as the steps above specify; the launch's `oversee-watch.runner` and `oversee-watch.err` land beside it. A session `oversee launch` opened has its watch from the start.
 
-To stop the watch, run `.agents/skills/orch/scripts/orch-runtime watch stop --fleet` from the overseer's checkout: it asks the claimed runner to stop and waits for its claim's release, answering `released` naming the runner, or `none` where no live claim stands. Report a refusal (`watch-stop-timeout`, `watch-claim-unreadable`, `watch-legacy-live`) with its keyed line.
+To stop the watch, run `.agents/skills/orch/scripts/orch-runtime watch stop --fleet` from the overseer's checkout: it asks the claimed runner to stop and waits for its claim's release, answering `released` naming the runner, or `none` where no live claim stands. Report a refusal (`watch-stop-timeout`, `watch-claim-unreadable`) with its keyed line.
 
 | Harness | Wake mechanism | Re-arm |
 |---------|----------------|--------|

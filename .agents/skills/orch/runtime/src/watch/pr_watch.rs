@@ -13,7 +13,7 @@
 //! prefix, one per line, the bytes the legacy's per-repository state file
 //! held for those rows. A reducer that exits nonzero with no line is its
 //! global failure: the pass is refused as `reducer-failed`, never read as
-//! no attention (`pr-watch-pass.sh:137`).
+//! no attention.
 
 use std::ffi::OsStr;
 use std::path::Path;
@@ -37,7 +37,7 @@ const TAG: &str = "github";
 const REDUCER_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// The reducer's standing attention, printed at the heartbeat by
-/// `pr_watch_context` (`pr-watch-pass.sh:96`) when `rc` is nonzero: every
+/// `pr_watch_context` when `rc` is nonzero: every
 /// repository's lines, each ahead of its repository, and the pass's
 /// stderr the same way.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -54,7 +54,7 @@ fn prefixed(repo: &str, text: &str) -> String {
         .collect()
 }
 
-/// The key of one reducer line (`pr-watch-pass.sh:140`): `<pr>\t<kind>`,
+/// The key of one reducer line: `<pr>\t<kind>`,
 /// the head appended to a `refresh-ready` or `ci-failed` kind, since each
 /// head needs its own report; a line of fewer than three columns has none.
 fn key_of(line: &str) -> Option<String> {
@@ -69,9 +69,8 @@ fn key_of(line: &str) -> Option<String> {
     }
 }
 
-/// Whether a new key preempts a repository's opening baseline
-/// (`pr-watch-pass.sh:170`): an error, a ready refresh or failed CI is
-/// news on any pass.
+/// Whether a new key preempts a repository's opening baseline: an error,
+/// a ready refresh or failed CI is news on any pass.
 fn preempts(key: &str) -> bool {
     let kind = key.split_once('\t').map_or("", |(_, kind)| kind);
     kind == "error" || kind.starts_with("refresh-ready:") || kind.starts_with("ci-failed:")
@@ -159,8 +158,8 @@ pub(super) fn pass(
         out: out_all.trim_end_matches('\n').to_owned(),
         err: err_all.trim_end_matches('\n').to_owned(),
     });
-    // The event prints ahead of every row (`pr-watch-pass.sh:183`): the
-    // runner appends the lines before it writes the rows.
+    // The event prints ahead of every row: the runner appends the lines
+    // before it writes the rows.
     if event {
         produced.events.push(Event::PrWatch { rc: rc_max });
         for line in event_out.lines() {
@@ -172,7 +171,7 @@ pub(super) fn pass(
             }
         }
     }
-    // A rolling refresh has no item (`pr-watch-pass.sh:195`): a
+    // A rolling refresh has no item: a
     // `refresh-ready` head that left the reducer's lines is read by number
     // until it closes, and a merged one is the fleet's `merged` line once.
     let mut refresh_merged: Vec<String> = baseline
@@ -198,8 +197,7 @@ pub(super) fn pass(
             {
                 continue;
             }
-            // The read's failure is the pass's, under the legacy's key
-            // (`pr-watch-pass.sh:205`), a 404 among them.
+            // The read's failure is the pass's, a 404 among them.
             let path = format!("repos/{repo}/pulls/{pr}");
             let pull = match gh.object::<Pull>("pr-list", &path) {
                 Ok(Some(pull)) => pull,
@@ -257,7 +255,7 @@ pub(super) fn pass(
     Ok(context)
 }
 
-/// One reducer run for `repo` (`pr-watch-pass.sh:120`): `GH_REPO` names
+/// One reducer run for `repo`: `GH_REPO` names
 /// the repository in the child's environment, the reducer takes no flag;
 /// its exit, stdout and stderr. A reducer that could not run is refused.
 #[allow(
@@ -295,9 +293,9 @@ fn reduce(reducer: &Path, repo: &str) -> crate::error::Result<(i32, String, Stri
 mod tests {
     use super::*;
 
-    /// The key of a reducer line (`pr-watch-pass.sh:140`): the number and
-    /// the kind, the head joined to a head-sensitive kind alone; a line
-    /// of two columns has none. The preempting kinds (`:170`).
+    /// The key of a reducer line: the number and the kind, the head joined
+    /// to a head-sensitive kind alone; a line of two columns has none. The
+    /// preempting kinds.
     #[test]
     fn a_reducer_line_keys_on_its_number_and_kind_with_the_head_where_it_matters() {
         assert_eq!(

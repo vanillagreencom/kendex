@@ -258,8 +258,22 @@ enum AccountsOp {
         #[arg(long)]
         projected: bool,
         /// The bound in percent used; `ORCH_LANE_MAX_PCT` where unset.
-        #[arg(long, value_parser = clap::value_parser!(u32).range(0..=100))]
+        #[arg(long, value_parser = clap::value_parser!(u32).range(0..=100), conflicts_with = "min_headroom_pct")]
         max_pct: Option<u32>,
+        /// The headroom the caller's own judgement triggers at: the same
+        /// bound as `--max-pct 100-T`, the succession walk's and the
+        /// turn-end hook's mark (U8d).
+        #[arg(long, value_parser = clap::value_parser!(u32).range(0..=100))]
+        min_headroom_pct: Option<u32>,
+        /// Hold the account's own binding bucket to the bound beside the
+        /// model's window (U8d).
+        #[arg(long)]
+        binding_floor: bool,
+        /// Print the lane's launch prefix, `VAR=<config dir>`, and exit by
+        /// the answer's exit in place of the reply: the room check a
+        /// consumer's `SECOND_OPINION_<NAME>_ROOM_CMD` runs (U8d).
+        #[arg(long)]
+        env: bool,
     },
     /// The listing under the judge's statement: each row with its status
     /// word, and the roster lines the heartbeat prints.
@@ -847,6 +861,9 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
             lane,
             projected,
             max_pct,
+            min_headroom_pct,
+            binding_floor,
+            env,
         } => {
             let path = target_path(&target, &settings);
             let host = ops::Host::kernel(settings.lane_cap, Some(settings.claim_store.clone()));
@@ -859,9 +876,38 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
                 lane,
                 projected,
                 max_pct,
+                min_headroom_pct,
+                binding_floor,
                 host: None,
             };
-            Ok(ops::accounts::pick_fleet(&settings, &path, &host, &request, now).reply())
+            let answer = ops::accounts::pick_fleet(&settings, &path, &host, &request, now);
+            if env {
+                // The text form a consumer's room check reads: the account
+                // variable the harness launches under (agent-runtime's
+                // table) and the directory, on stdout at exit 0; any other
+                // answer is its keyed line on stderr at the answer's exit.
+                if let ops::accounts::PickAnswer::Lane(judged) = &answer {
+                    let harness = agent_runtime::harness::Harness::parse(&request.harness)
+                        .map(|h| h.account_var(request.model.as_deref()))
+                        .unwrap_or("CLAUDE_CONFIG_DIR");
+                    let _ = writeln!(
+                        std::io::stdout().lock(),
+                        "{harness}={}",
+                        judged.row.config_dir
+                    );
+                } else {
+                    let reply = answer.reply();
+                    let _ = writeln!(
+                        std::io::stderr().lock(),
+                        "orch-runtime: account-{} harness={} exit={}",
+                        reply["answer"].as_str().unwrap_or("unjudged"),
+                        request.harness,
+                        answer.exit()
+                    );
+                }
+                std::process::exit(answer.exit());
+            }
+            Ok(answer.reply())
         }
         AccountsOp::Roster { host } => {
             let today = ops::accounts::today(now);

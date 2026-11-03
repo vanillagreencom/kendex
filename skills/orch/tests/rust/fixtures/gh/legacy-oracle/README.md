@@ -1,3 +1,0 @@
-# legacy-oracle
-
-The legacy verdict, as the oracle of the verify differential test (the runtime crate's `verify::differential`, decisions 107 (3) and 110). `ci-run-correlation.sh` is `skills/github/scripts/lib/ci-run-correlation.sh` and `ci-wait` is `skills/orch/scripts/ci-wait`, both copied byte for byte from commit `d7df37b4163d5147e03f5890a4316f47008d451e`; `oracle.sh` runs their functions over one rendered case, as its header says. The copies are a test oracle, never a workflow, and retire with the shell core at step 8, when the corpus freezes as rows. The library copy is sourced, never run, and still carries mode 755: `tools/exec-bits` judges every `skills/*/tests/*.sh` outside a `lib/` or `controls/` directory by its index mode.

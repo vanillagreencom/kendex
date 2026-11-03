@@ -1,0 +1,522 @@
+{
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/check-runs?filter=all&per_page=100&page=1": {
+    "body": {
+      "total_count": 8,
+      "check_runs": [
+        {
+          "id": 101,
+          "node_id": "CR_101",
+          "name": "Lint",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 29103545030
+          },
+          "started_at": "2026-07-10T10:00:00Z",
+          "completed_at": "2026-07-10T10:00:00Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/29098545030/job/101",
+          "details_url": "https://github.com/owner/repo/actions/runs/29098545030/job/101"
+        },
+        {
+          "id": 102,
+          "node_id": "CR_102",
+          "name": "Linux Integration",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 29103545030
+          },
+          "started_at": "2026-07-10T10:00:01Z",
+          "completed_at": "2026-07-10T10:00:01Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/29098545030/job/102",
+          "details_url": "https://github.com/owner/repo/actions/runs/29098545030/job/102"
+        },
+        {
+          "id": 103,
+          "node_id": "CR_103",
+          "name": "macOS",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 29103545030
+          },
+          "started_at": "2026-07-10T10:00:02Z",
+          "completed_at": "2026-07-10T10:00:02Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/29098545030/job/103",
+          "details_url": "https://github.com/owner/repo/actions/runs/29098545030/job/103"
+        },
+        {
+          "id": 104,
+          "node_id": "CR_104",
+          "name": "Windows",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 29103545030
+          },
+          "started_at": "2026-07-10T10:00:03Z",
+          "completed_at": "2026-07-10T10:00:03Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/29098545030/job/104",
+          "details_url": "https://github.com/owner/repo/actions/runs/29098545030/job/104"
+        },
+        {
+          "id": 105,
+          "node_id": "CR_105",
+          "name": "Loom",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 29103545030
+          },
+          "started_at": "2026-07-10T10:00:04Z",
+          "completed_at": "2026-07-10T10:00:04Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/29098545030/job/105",
+          "details_url": "https://github.com/owner/repo/actions/runs/29098545030/job/105"
+        },
+        {
+          "id": 106,
+          "node_id": "CR_106",
+          "name": "Bench (iai-callgrind)",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 29103545030
+          },
+          "started_at": "2026-07-10T10:00:05Z",
+          "completed_at": "2026-07-10T10:00:05Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/29098545030/job/106",
+          "details_url": "https://github.com/owner/repo/actions/runs/29098545030/job/106"
+        },
+        {
+          "id": 201,
+          "node_id": "CR_201",
+          "name": "Changes",
+          "status": "in_progress",
+          "conclusion": null,
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 29104680623
+          },
+          "started_at": "2026-07-10T11:00:00Z",
+          "completed_at": null,
+          "html_url": "https://github.com/owner/repo/actions/runs/29099680623/job/201",
+          "details_url": "https://github.com/owner/repo/actions/runs/29099680623/job/201"
+        },
+        {
+          "id": 202,
+          "node_id": "CR_202",
+          "name": "License Key Guard",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 29104680623
+          },
+          "started_at": "2026-07-10T11:00:01Z",
+          "completed_at": "2026-07-10T11:00:01Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/29099680623/job/202",
+          "details_url": "https://github.com/owner/repo/actions/runs/29099680623/job/202"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/check-suites?per_page=100&page=1": {
+    "body": {
+      "total_count": 2,
+      "check_suites": [
+        {
+          "id": 29103545030
+        },
+        {
+          "id": 29104680623
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/status?per_page=100&page=1": {
+    "body": {
+      "state": "pending",
+      "total_count": 0,
+      "statuses": [],
+      "sha": "737bce791577e140436490e0fed5751bb5144a61"
+    }
+  },
+  "repos/owner/repo/actions/runs?head_sha=737bce791577e140436490e0fed5751bb5144a61&per_page=100&page=1": {
+    "body": {
+      "total_count": 2,
+      "workflow_runs": [
+        {
+          "id": 29098545030,
+          "name": "CI",
+          "path": ".github/workflows/ci.yml",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "status": "completed",
+          "conclusion": "failure",
+          "event": "pull_request",
+          "workflow_id": 1,
+          "updated_at": "2026-07-10T10:00:05Z",
+          "repository": {
+            "id": 1296269,
+            "full_name": "owner/repo"
+          },
+          "check_suite_id": 29103545030,
+          "check_suite_node_id": "CS_29103545030",
+          "run_started_at": "2026-07-10T10:00:00Z"
+        },
+        {
+          "id": 29099680623,
+          "name": "CI",
+          "path": ".github/workflows/ci.yml",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "status": "in_progress",
+          "conclusion": null,
+          "event": "pull_request",
+          "workflow_id": 1,
+          "updated_at": "2026-07-10T11:00:01Z",
+          "repository": {
+            "id": 1296269,
+            "full_name": "owner/repo"
+          },
+          "check_suite_id": 29104680623,
+          "check_suite_node_id": "CS_29104680623",
+          "run_started_at": "2026-07-10T11:00:00Z"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/actions/workflows?per_page=100&page=1": {
+    "body": {
+      "total_count": 1,
+      "workflows": [
+        {
+          "id": 1,
+          "node_id": "W_1",
+          "name": "CI",
+          "path": ".github/workflows/ci.yml",
+          "state": "active"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/rules/branches/main?per_page=100&page=1": {
+    "body": []
+  },
+  "repos/owner/repo/branches/main": {
+    "body": {
+      "name": "main",
+      "protected": false,
+      "protection": {
+        "enabled": false,
+        "required_status_checks": {
+          "contexts": [],
+          "checks": []
+        }
+      }
+    }
+  },
+  "graphql": {
+    "body": {
+      "nodes": {
+        "CS_29103545030": {
+          "id": "CS_29103545030",
+          "databaseId": 29103545030,
+          "workflowRun": {
+            "databaseId": 29098545030,
+            "runAttempt": 1,
+            "file": {
+              "path": ".github/workflows/ci.yml",
+              "repositoryName": "owner/repo",
+              "repositoryFileUrl": "https://github.com/owner/repo/blob/737bce791577e140436490e0fed5751bb5144a61/.github/workflows/ci.yml",
+              "viewerCanReadRepository": true
+            }
+          }
+        },
+        "CS_29104680623": {
+          "id": "CS_29104680623",
+          "databaseId": 29104680623,
+          "workflowRun": {
+            "databaseId": 29099680623,
+            "runAttempt": 1,
+            "file": {
+              "path": ".github/workflows/ci.yml",
+              "repositoryName": "owner/repo",
+              "repositoryFileUrl": "https://github.com/owner/repo/blob/737bce791577e140436490e0fed5751bb5144a61/.github/workflows/ci.yml",
+              "viewerCanReadRepository": true
+            }
+          }
+        },
+        "CR_101": {
+          "id": "CR_101",
+          "checkSuite": {
+            "databaseId": 29103545030,
+            "workflowRun": {
+              "databaseId": 29098545030,
+              "event": "pull_request",
+              "workflow": {
+                "name": "CI"
+              }
+            }
+          }
+        },
+        "CR_102": {
+          "id": "CR_102",
+          "checkSuite": {
+            "databaseId": 29103545030,
+            "workflowRun": {
+              "databaseId": 29098545030,
+              "event": "pull_request",
+              "workflow": {
+                "name": "CI"
+              }
+            }
+          }
+        },
+        "CR_103": {
+          "id": "CR_103",
+          "checkSuite": {
+            "databaseId": 29103545030,
+            "workflowRun": {
+              "databaseId": 29098545030,
+              "event": "pull_request",
+              "workflow": {
+                "name": "CI"
+              }
+            }
+          }
+        },
+        "CR_104": {
+          "id": "CR_104",
+          "checkSuite": {
+            "databaseId": 29103545030,
+            "workflowRun": {
+              "databaseId": 29098545030,
+              "event": "pull_request",
+              "workflow": {
+                "name": "CI"
+              }
+            }
+          }
+        },
+        "CR_105": {
+          "id": "CR_105",
+          "checkSuite": {
+            "databaseId": 29103545030,
+            "workflowRun": {
+              "databaseId": 29098545030,
+              "event": "pull_request",
+              "workflow": {
+                "name": "CI"
+              }
+            }
+          }
+        },
+        "CR_106": {
+          "id": "CR_106",
+          "checkSuite": {
+            "databaseId": 29103545030,
+            "workflowRun": {
+              "databaseId": 29098545030,
+              "event": "pull_request",
+              "workflow": {
+                "name": "CI"
+              }
+            }
+          }
+        },
+        "CR_201": {
+          "id": "CR_201",
+          "checkSuite": {
+            "databaseId": 29104680623,
+            "workflowRun": {
+              "databaseId": 29099680623,
+              "event": "pull_request",
+              "workflow": {
+                "name": "CI"
+              }
+            }
+          }
+        },
+        "CR_202": {
+          "id": "CR_202",
+          "checkSuite": {
+            "databaseId": 29104680623,
+            "workflowRun": {
+              "databaseId": 29099680623,
+              "event": "pull_request",
+              "workflow": {
+                "name": "CI"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "repos/owner/repo/actions/workflows/1": {
+    "body": {
+      "id": 1,
+      "node_id": "W_1",
+      "name": "CI",
+      "path": ".github/workflows/ci.yml",
+      "state": "active"
+    }
+  },
+  "repos/owner/repo/check-suites/29103545030/check-runs?per_page=100&page=1": {
+    "body": {
+      "total_count": 6,
+      "check_runs": [
+        {
+          "id": 101,
+          "node_id": "CR_101",
+          "name": "Lint",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 29103545030
+          },
+          "started_at": "2026-07-10T10:00:00Z",
+          "completed_at": "2026-07-10T10:00:00Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/29098545030/job/101",
+          "details_url": "https://github.com/owner/repo/actions/runs/29098545030/job/101"
+        },
+        {
+          "id": 102,
+          "node_id": "CR_102",
+          "name": "Linux Integration",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 29103545030
+          },
+          "started_at": "2026-07-10T10:00:01Z",
+          "completed_at": "2026-07-10T10:00:01Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/29098545030/job/102",
+          "details_url": "https://github.com/owner/repo/actions/runs/29098545030/job/102"
+        },
+        {
+          "id": 103,
+          "node_id": "CR_103",
+          "name": "macOS",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 29103545030
+          },
+          "started_at": "2026-07-10T10:00:02Z",
+          "completed_at": "2026-07-10T10:00:02Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/29098545030/job/103",
+          "details_url": "https://github.com/owner/repo/actions/runs/29098545030/job/103"
+        },
+        {
+          "id": 104,
+          "node_id": "CR_104",
+          "name": "Windows",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 29103545030
+          },
+          "started_at": "2026-07-10T10:00:03Z",
+          "completed_at": "2026-07-10T10:00:03Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/29098545030/job/104",
+          "details_url": "https://github.com/owner/repo/actions/runs/29098545030/job/104"
+        },
+        {
+          "id": 105,
+          "node_id": "CR_105",
+          "name": "Loom",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 29103545030
+          },
+          "started_at": "2026-07-10T10:00:04Z",
+          "completed_at": "2026-07-10T10:00:04Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/29098545030/job/105",
+          "details_url": "https://github.com/owner/repo/actions/runs/29098545030/job/105"
+        },
+        {
+          "id": 106,
+          "node_id": "CR_106",
+          "name": "Bench (iai-callgrind)",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 29103545030
+          },
+          "started_at": "2026-07-10T10:00:05Z",
+          "completed_at": "2026-07-10T10:00:05Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/29098545030/job/106",
+          "details_url": "https://github.com/owner/repo/actions/runs/29098545030/job/106"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/check-suites/29104680623/check-runs?per_page=100&page=1": {
+    "body": {
+      "total_count": 2,
+      "check_runs": [
+        {
+          "id": 201,
+          "node_id": "CR_201",
+          "name": "Changes",
+          "status": "in_progress",
+          "conclusion": null,
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 29104680623
+          },
+          "started_at": "2026-07-10T11:00:00Z",
+          "completed_at": null,
+          "html_url": "https://github.com/owner/repo/actions/runs/29099680623/job/201",
+          "details_url": "https://github.com/owner/repo/actions/runs/29099680623/job/201"
+        },
+        {
+          "id": 202,
+          "node_id": "CR_202",
+          "name": "License Key Guard",
+          "status": "completed",
+          "conclusion": "success",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 29104680623
+          },
+          "started_at": "2026-07-10T11:00:01Z",
+          "completed_at": "2026-07-10T11:00:01Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/29099680623/job/202",
+          "details_url": "https://github.com/owner/repo/actions/runs/29099680623/job/202"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo": {
+    "body": {
+      "id": 1296269,
+      "full_name": "owner/repo"
+    }
+  },
+  "repos/owner/source": {
+    "body": {
+      "id": 7,
+      "full_name": "owner/source"
+    }
+  },
+  "repos/owner/fork": {
+    "body": {
+      "id": 9,
+      "full_name": "owner/fork"
+    }
+  }
+}

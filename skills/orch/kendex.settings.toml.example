@@ -308,13 +308,6 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # offered past it.
 # ORCH_LANE_MAX_PCT = "95"
 
-# Room kept in each plan window for the overseer. A seat is returned last
-# while its projected room exceeds this reserve; running lanes on it hand off
-# at or below it. Keep this above ORCH_OVERSEER_HEADROOM_PCT. 100 admits no
-# seat and marks every lane on one; 0 uses ORCH_LANE_MAX_PCT alone, still last.
-# 50 is provisional and keeps half of each window for the overseer.
-# ORCH_OVERSEER_SEAT_RESERVE_PCT = "50"
-
 # How much of an account's 5-hour allowance one running lane is expected to
 # use in an hour, charged for each running lane wherever no rate is measured;
 # `lanes --help` (pick, ORCH_LANE_BURN_PCT_PER_HOUR) states which windows and
@@ -444,7 +437,7 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # Lane defaults use harness[@host]:model:effort. @host names a host kind or
 # provider executable path for that entry; without it, the caller's --host or
 # resolved ORCH_LANE_HOST applies. Overseer preferences keep the grammar above.
-# open-terminal walks lanes pick only when --cmd and --launch-flags name no model.
+# open-terminal walks the account judge only when --cmd and --launch-flags name no model.
 # The first eligible entry with room supplies the harness, host, model and effort.
 # Eligibility follows references/lane-directive.md § Lane preference. Explicit
 # models keep the caller's route. Unset or empty leaves that route unchanged.
@@ -471,8 +464,11 @@ ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 # ORCH_OVERSEER_DEAD_PASSES = "2"
 
 # The allowance left on an account at which the overseer hands over. No
-# replacement is started on an account at or below it. `lanes --help` (pick)
-# states which credit is never at it.
+# replacement is started on an account at or below it. An overseer's seat
+# keeps this room for it: a worker's pick holds a seat to
+# min(ORCH_LANE_MAX_PCT, 100 - ORCH_OVERSEER_HEADROOM_PCT), returns it last,
+# and a lane on a seat hands off at that line. A Codex account's credits are
+# never at it, on a seat as on any account.
 # ORCH_OVERSEER_HEADROOM_PCT = "5"
 
 # How many checks pass before a warning nobody has acted on is reported

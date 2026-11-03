@@ -325,11 +325,16 @@ fn wall_verdict(
             );
             unjudged
         }
-        // A named-lane answer never reaches a chooser's request.
-        PickAnswer::Walled(_)
+        // A grant pool nobody measured is no verdict; a named-lane answer
+        // never reaches a chooser's request.
+        PickAnswer::ProviderUnmeasured { .. }
+        | PickAnswer::Unbilled { .. }
+        | PickAnswer::Walled(_)
         | PickAnswer::Reserved(_)
         | PickAnswer::Retired { .. }
+        | PickAnswer::Excluded(_)
         | PickAnswer::Unmeasured(_)
+        | PickAnswer::CloudRepoUnset(_)
         | PickAnswer::NoRecord => unjudged,
     }
 }
@@ -450,8 +455,8 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
     if let Some(quota) = quota {
         body(quota);
     }
-    // `pr_watch_context` (`lib/pr-watch-pass.sh:96`): the reducer's standing
-    // attention, as the GitHub duty's last pass left it.
+    // `pr_watch_context`: the reducer's standing attention, as the GitHub
+    // duty's last pass left it.
     if let Some(context) = github.as_ref().and_then(|g| g.pr_watch.as_ref()) {
         body(format!("pr-watch rc={}", context.rc));
         for line in context.out.lines().chain(context.err.lines()) {

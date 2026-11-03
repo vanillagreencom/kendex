@@ -288,6 +288,24 @@ if [[ -n "${OL_RUNTIME_SETUP_REQUIRED:-}" ]]; then
   printf 'orch-runtime: setup-required key=fixture run=%s/setup\n' "${SCRIPT_DIR:-.}" >&2
   exit 69
 fi
+# The account judge the walk asks (U8d): the reply planted at
+# OL_RUNTIME_PICK where a row plants one (the verb's real output on a
+# fixture, never one written by hand), else the legacy judge beside the
+# launcher under test asked the same question, its answer wrapped as the
+# verb's reply, as lib/runtime-stub.sh's stand-in wraps it.
+if [[ "${1:-} ${2:-}" == "accounts pick" ]]; then
+  if [[ -n "${OL_RUNTIME_PICK:-}" ]]; then cat -- "$OL_RUNTIME_PICK"; exit 0; fi
+  args=()
+  for arg in "$@"; do
+    case "$arg" in accounts | pick | --fleet) ;; *) args+=("$arg") ;; esac
+  done
+  rc=0
+  out="$("${SCRIPT_DIR:?}/lanes" pick ${args[@]+"${args[@]}"} --json)" || rc=$?
+  jq -cn --argjson rc "$rc" --arg out "$out" '{protocol: "orch-runtime-v1", ok: true, result: {
+    answer: ({"0": "lane", "3": "walled", "4": "no-record", "5": "unmeasured", "7": "cloud-repo-unset"}[$rc | tostring] // "unjudged"),
+    exit: $rc, record: (try ($out | fromjson) catch null)}}'
+  exit 0
+fi
 if [[ -n "${OL_RUNTIME_REPLY:-}" ]]; then cat -- "$OL_RUNTIME_REPLY"; exit 0; fi
 [[ -n "$request" && "$(jq -r '.op' "$request")" == start-controller ]] \
   || { printf 'orch-runtime: fixture-unexpected argv=%s\n' "$*" >&2; exit 2; }
@@ -611,12 +629,29 @@ assert_eq "$RC|$(field "$(keyed overseer-launched "$OUT" | sed -n 1p)" generatio
   "a launch after the recorded overseer's session is gone opens the next generation"
 tm kill-window -t "$(recorded window)"
 
+# The runtime's own record (R-U8-1d, the Anthropic lane's H1): the chooser's
+# reply the verb printed on a fixture (`tests/rust/accounts.rs`'s world, the
+# account's path the one difference), planted in place of the legacy wrap,
+# so the launch is proven on the record's own spelling: the walk reads its
+# `config_dir` and opens the overseer on it.
+jq -c --arg dir "$H/.eclaude" '.result.record.config_dir = $dir' > "$TMP_ROOT/pick-reply.json" <<'REPLY'
+{"protocol":"orch-runtime-v1","ok":true,"result":{"answer":"lane","exit":0,"record":{"alias":"eclaude","harness":"claude","config_dir":"/home/me/.eclaude","retire_date":null,"measured_through":"local","status":"ok","refreshable":false,"plan":"max","session_5h_pct":50,"weekly_pct":20,"model_pct":5,"model_label":"Opus","model_buckets":[{"label":"Opus","pct":5,"resets_at":"2026-11-05T04:04:03Z"}],"monthly_pct":null,"credits":null,"unlimited":false,"claims":0,"headroom_pct":50,"binding_bucket":"session","binding_resets_at":"2026-11-02T17:04:03Z","usage_age_s":0,"resets":{"session":"2026-11-02T17:04:03Z","weekly":"2026-11-05T04:04:03Z","model":"2026-11-05T04:04:03Z","monthly":null},"detail":null,"wall":50,"usage_rate_state":"one-sample","usage_rate_pct_per_min":null,"projected_wall_minutes":null,"burn_pct_per_lane_hour":5,"binding_projected_headroom_pct":50,"session_projected_headroom_pct":50,"session_burn_pct_per_lane_hour":5,"session_charge_hours":1,"projected_headroom_pct":45,"projected_window":{"bucket":"session","pct":50,"resets_at":"2026-11-02T17:04:03Z"},"verdict":"room","word":"pick","selection_score":67.5,"effective_headroom_pct":50,"qualifying_count":2,"seat":false}}}
+REPLY
+cp -- "$FLEET_STATE" "$TMP_ROOT/state.before-record"
+run_oversee OL_RUNTIME_PICK="$TMP_ROOT/pick-reply.json" -- launch --wait-secs 20
+assert_eq "$RC|$(recorded account)|$(recorded generation)|$(overseers)" \
+  "0|$H/.eclaude|3|1" \
+  "a launch on the runtime's own chooser record opens the overseer on the account the record names"
+tm kill-window -t "$(recorded window)"
+mv -- "$TMP_ROOT/state.before-record" "$FLEET_STATE"
+
 # A runtime that is not set up refuses the launch with the wrapper's own line
 # under the keyed one, and nothing is opened in its place: no window, the
-# record as it stood.
+# record as it stood. The walk's pick meets the wrapper first (U8d: the
+# account judge is the runtime's), so no start request is composed.
 run_oversee OL_RUNTIME_SETUP_REQUIRED=1 -- launch --wait-secs 5
 assert_eq "$RC|$(first_line)|$(grep -c '^orch-runtime: setup-required key=fixture run=' <<<"$OUT")|$(overseers)|$(recorded generation)|$(requested '.op')" \
-  "1|oversee: start-refused key=setup-required exit=69|1|0|2|start-controller" \
+  "1|oversee: start-refused key=setup-required exit=69|1|0|2|none" \
   "a runtime not set up refuses the launch with its setup-required line and opens no session"
 # A start the runtime recorded and could not confirm is reported with the
 # note and cause the effect holds it under, at the refusal's exit.

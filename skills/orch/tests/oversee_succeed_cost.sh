@@ -88,6 +88,22 @@ printf '%s\\n' "$FIXTURE_RECORD"
 '''
 (scripts / 'lanes').write_text(stub)
 (scripts / 'lanes').chmod(0o755)
+# The current script asks the runtime's account judge, `orch-runtime accounts
+# pick --lane`, where the baseline asked `lanes pick --lane`: its stand-in
+# beside the stub answers the same named question with the verb's real reply
+# (`tests/rust/accounts.rs`'s world through the executable, the account's
+# path the one substitution), never a reply written by hand, so the mark
+# judge is proven on the record's own spelling (U8d3).
+REAL_REPLY = '{"protocol":"orch-runtime-v1","ok":true,"result":{"answer":"lane","exit":0,"record":{"alias":"caller","harness":"claude","config_dir":"/home/me/.claude","retire_date":null,"measured_through":"local","status":"ok","refreshable":false,"plan":"max","session_5h_pct":10,"weekly_pct":0,"model_pct":0,"model_label":"Opus","model_buckets":[{"label":"Opus","pct":0,"resets_at":"2026-11-05T06:03:00Z"}],"monthly_pct":null,"credits":null,"unlimited":false,"claims":0,"headroom_pct":90,"binding_bucket":"session","binding_resets_at":"2026-11-02T19:03:00Z","usage_age_s":0,"resets":{"session":"2026-11-02T19:03:00Z","weekly":"2026-11-05T06:03:00Z","model":"2026-11-05T06:03:00Z","monthly":null},"detail":null,"wall":10,"usage_rate_state":"one-sample","usage_rate_pct_per_min":null,"projected_wall_minutes":null,"burn_pct_per_lane_hour":5,"binding_projected_headroom_pct":90,"session_projected_headroom_pct":90,"session_burn_pct_per_lane_hour":5,"session_charge_hours":1,"projected_headroom_pct":90,"projected_window":{"bucket":"session","pct":10,"resets_at":"2026-11-02T19:03:00Z"},"verdict":"room","word":"pick","selection_score":135,"effective_headroom_pct":90,"seat":false}}}'
+runtime_stub = '#!' + bash + '''
+set -euo pipefail
+[[ "$1" == accounts && "$2" == pick ]] || exit 2
+case " $* " in *" --lane $FIXTURE_ACCOUNT "*) ;; *) exit 2 ;; esac
+[[ -z "${FIXTURE_MODEL:-}" || " $* " == *" --native-model $FIXTURE_MODEL "* ]] || exit 2
+printf '%s\\n' "$FIXTURE_REPLY"
+'''
+(scripts / 'orch-runtime').write_text(runtime_stub)
+(scripts / 'orch-runtime').chmod(0o755)
 if baseline:
     baseline = Path(baseline)
     for skill in ('orch', 'mailbox', 'github'):
@@ -151,8 +167,11 @@ account = str(root / 'home/.claude')
 identity = {'runtime': 'tmux', 'pane': '%1', 'server': '123', 'server_start': 456,
             'harness': 'claude', 'account': account, 'model': 'fable', 'cwd': str(root / 'work')}
 pick = json.dumps({'wall': 10, 'alias': 'caller', 'usage_rate_state': 'one-sample'})
+reply = json.loads(REAL_REPLY)
+reply['result']['record']['config_dir'] = account
 env = {'PATH': str(count_dir / 'bin'), 'HOME': str(root / 'home'), 'TMUX': '/fixture,123,0', 'TMUX_PANE': '%1',
        'FIXTURE_WORK': str(root / 'work'), 'FIXTURE_ACCOUNT': account, 'FIXTURE_RECORD': pick,
+       'FIXTURE_REPLY': json.dumps(reply, separators=(',', ':')),
        'ORCH_OVERSEER_SUCCESSOR_ACCOUNTS': '0', 'CLAUDE_CONFIG_DIR': account,
        'BASH_ENV': str(count_dir / 'bash-env'), 'TMPDIR': str(root), 'GIT_CEILING_DIRECTORIES': str(root), 'FIXTURE_LIST_COUNT': str(root / 'list-count')}
 

@@ -7,8 +7,7 @@
 # dev agent cannot write a truthful completion artifact, and
 # dev-artifact-check --expect-items-from-round has no on-disk source of truth.
 # The checker's additions classifier and its round-mode wait are
-# dev-artifact-check-additions.sh; the workflow documents that carry the
-# writer's command are dev-round-write-wiring.test.sh.
+# dev-artifact-check-additions.sh.
 #
 # One case per behaviour surface; shaped input is one table per case, one
 # asserted row per shape. A row's `expect` names the fields it pins and

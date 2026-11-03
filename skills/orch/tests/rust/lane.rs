@@ -1,5 +1,5 @@
 //! Process tests of the lane cap and the close guard through the
-//! `orch-runtime` executable (decisions 83, 97, 98, 105): the identities the
+//! `orch-runtime` executable: the identities the
 //! fleet records are processes this test starts and holds, so the kernel
 //! table answers for them as it would for a harness, and no model or
 //! mailbox takes part. The admission rows run with no tmux server at all: a
@@ -10,7 +10,7 @@
 //! takes the shared private server.
 //!
 //! The whole suite reads the kernel's `/proc` process table for the
-//! identities it holds (R-U4b3 N1), so it runs on Linux alone.
+//! identities it holds, so it runs on Linux alone.
 #![cfg(target_os = "linux")]
 #![allow(
     clippy::disallowed_methods,
@@ -175,10 +175,12 @@ fn epoch_now() -> u64 {
 /// [`ACCOUNT`]'s row of `lanes list --json`: a measured Claude account with
 /// its weekly window (the binding) at 20 percent and its session window at
 /// `session` percent, read this instant with three hours to its reset, so
-/// the window opened two hours ago and the judge charges each live lane on
-/// it half the window's use for each of the three hours left (the session
-/// projection, `ops/accounts.rs` `projection`): at 60 percent no lane
-/// leaves 40 points of room and one lane projects 50 past it.
+/// the window opened two hours ago and the judge charges each lane on it,
+/// the live ones and the candidate, the live lane's observed
+/// half of the window's use for each of the three hours left (the session
+/// projection, `ops/accounts.rs` `projection`): at 60 percent one live
+/// lane and the candidate project 140 past the room, and the candidate
+/// alone, at the setting's burn, leaves 25.
 fn listing_row(session: u64, now: u64) -> Value {
     let weekly = clock::iso_utc(now + 3 * 86_400);
     json!({
@@ -246,16 +248,15 @@ fn refusal_fields(answer: &Value) -> HashMap<String, String> {
         .collect()
 }
 
-/// Step6-map A5 row (1) (decision 168 (3), round 8 item 3). Defect: a
-/// relaunch refused for room on its own lane's charge, the symptom that
-/// held a context relaunch 1 h 37 min at its handoff; or a relaunch
-/// admitted onto an account another lane has filled. The account's
-/// session window leaves room for no second lane. KEN-1's record stands
-/// stopped with a reservation (a charge, decision 97) and KEN-2 runs live
+/// Defect: a relaunch refused for room on its own lane's charge, or a
+/// relaunch admitted onto an account another lane has filled. The
+/// account's session window leaves room for no second lane. KEN-1's
+/// record stands stopped with a reservation (a charge) and KEN-2 runs live
 /// on the account: KEN-1's relaunch is refused `account-walled` on KEN-2's
-/// charge alone (one lane's projection, not two) and moves nothing; with
-/// KEN-2 ended it is admitted, its own reservation left out of the
-/// judgement as the relaunch drops it, and its record carries none after.
+/// charge and its own as the candidate (two lanes' projection, not three)
+/// and moves nothing; with KEN-2 ended it is admitted, its own reservation
+/// left out of the judgement as the relaunch drops it, and its record
+/// carries none after.
 #[test]
 fn a_relaunch_is_judged_with_its_own_lanes_charge_left_out() {
     let mut fleet = Fleet::new(4);
@@ -285,8 +286,8 @@ fn a_relaunch_is_judged_with_its_own_lanes_charge_left_out() {
     assert_eq!(fields["pct"], "60");
     let headroom: f64 = fields["projected-headroom"].parse().unwrap();
     assert!(
-        (-51.0..-49.0).contains(&headroom),
-        "one lane's charge, KEN-2's, not KEN-1's own: {headroom}"
+        (-141.0..-139.0).contains(&headroom),
+        "KEN-2's charge and the candidate's, not KEN-1's own reservation: {headroom}"
     );
     assert!(
         stderr(&out).starts_with(&format!(
@@ -317,10 +318,10 @@ fn a_relaunch_is_judged_with_its_own_lanes_charge_left_out() {
     );
 }
 
-/// Step6-map A5 row (2). Defect: a launch with no record judged as if it
+/// Defect: a launch with no record judged as if it
 /// replaced a lane, a standing charge dropped for a stranger; a launch
-/// admitted on a listing nobody could read (decision 99); a launch onto an
-/// account the listing has no row for refused where the legacy launcher
+/// admitted on a listing nobody could read; a launch onto an
+/// account the listing has no row for refused where the shell launcher
 /// proceeded as given. KEN-1's reservation on the account counts against a
 /// fresh launch of KEN-3, refused `account-walled` on that one charge with
 /// no record written; the listing made unreadable refuses it
@@ -352,8 +353,8 @@ fn a_launch_with_no_record_is_judged_fresh_and_an_unread_listing_admits_nothing(
         .parse()
         .unwrap();
     assert!(
-        (-51.0..-49.0).contains(&headroom),
-        "KEN-1's reservation charges a launch that replaces nothing: {headroom}"
+        (-141.0..-139.0).contains(&headroom),
+        "KEN-1's reservation and the candidate charge a launch that replaces nothing: {headroom}"
     );
     assert_eq!(
         fleet.fleet()["lanes"].as_array().unwrap().len(),
@@ -381,7 +382,7 @@ fn a_launch_with_no_record_is_judged_fresh_and_an_unread_listing_admits_nothing(
     assert_eq!(fleet.lane("KEN-3")["account"], "/home/me/.other");
 }
 
-/// Decision 188 (b) (R-U6-2 L4). Defect: a launch onto an account the
+/// Defect: a launch onto an account the
 /// word refuses, reserved or retired from its day, refused `account-walled`
 /// with the wall's figures for an account that has room, sending the
 /// operator to a usage wall that is not there. The refusal is the word's
@@ -445,6 +446,43 @@ fn a_named_reserved_or_retired_account_is_refused_by_its_word_and_writes_nothing
     );
 }
 
+/// The shell launcher reads `account-unmeasured` with
+/// `status=provider-unmeasured` as `lane-provider-unmeasured`.
+#[test]
+fn a_pi_launch_on_a_provider_nothing_bills_is_refused_as_provider_unmeasured() {
+    let mut fleet = Fleet::new(4);
+    fleet.init_fleet();
+    fleet.plant_listing(&[listing_row(0, epoch_now())]);
+    let mut request = launch_on("KEN-1", fleet.state_dir());
+    request["harness"] = json!("pi");
+    request["model"] = json!("sonnet:high");
+    let out = fleet.op(&request);
+    let answer = reply(&out);
+    assert_eq!(
+        answer["refusal"]["key"],
+        "account-unmeasured",
+        "{}",
+        stderr(&out)
+    );
+    let fields = refusal_fields(&answer);
+    assert_eq!(fields["status"], "provider-unmeasured");
+    assert_eq!(fields["detail"], "none");
+    assert!(
+        stderr(&out).starts_with(&format!(
+            "orch-runtime: account-unmeasured item=KEN-1 account={ACCOUNT} model=sonnet:high status=provider-unmeasured detail=none"
+        )),
+        "{}",
+        stderr(&out)
+    );
+    assert!(
+        fleet.fleet()["lanes"]
+            .as_array()
+            .is_none_or(|lanes| lanes.is_empty()),
+        "a refused launch writes no record: {}",
+        fleet.fleet()
+    );
+}
+
 /// A lane record as a confirmed launch leaves it, its harness `process`,
 /// with a pending return, a recovery route and a counter retained.
 fn record(item: &str, status: &str, process: Option<&Owned>, mail_root: &Path) -> Value {
@@ -484,7 +522,7 @@ fn terminal_close(item: &str) -> Value {
     })
 }
 
-/// Decision 97 through the executable: a lane whose recorded harness is a
+/// Through the executable: a lane whose recorded harness is a
 /// live process this test holds charges the cap and refuses the next lane
 /// at a cap of one with the stable key and its values; the same lane ended
 /// charges nothing though its status, pane and pending return still stand,
@@ -570,8 +608,8 @@ fn the_cap_charges_a_live_harness_and_releases_an_ended_one() {
     assert_eq!(answer["refusal"]["fields"][0], json!(["occupancy", "1"]));
 }
 
-/// The legacy claim store, read beside the records and never written
-/// (decisions 108 (1), 111 (B)): a claim row at the server pid and pane id
+/// The shell claim store, read beside the records and never written: a
+/// claim row at the server pid and pane id
 /// of a lane whose launch identity reads live is read in that pane, and with
 /// no server answering at the socket the pane cannot be read, so the row
 /// protects a slot as unknown (the suppression itself is
@@ -580,7 +618,7 @@ fn the_cap_charges_a_live_harness_and_releases_an_ended_one() {
 /// a slot; an unaccounted row protects a slot; a reservation row protects as
 /// unknown while it stands, whether its launcher pid is live or gone, since
 /// a pid alone is no identity; every row's bytes are as they were after the
-/// count, and only the legacy launcher (here, the test in its place) removes
+/// count, and only the shell launcher (here, the test in its place) removes
 /// a row.
 #[test]
 fn legacy_claim_rows_count_by_provenance_and_are_never_pruned() {
@@ -661,7 +699,7 @@ fn legacy_claim_rows_count_by_provenance_and_are_never_pruned() {
         std::fs::read_to_string(store.join("claim.r1.reserve")).unwrap(),
         reserve
     );
-    // The legacy launcher removes its rows (the test here, in its place);
+    // The shell launcher removes its rows (the test here, in its place);
     // the lane is then admitted, and an unaccounted claim protects a slot
     // the next launch meets.
     std::fs::remove_file(store.join("claim.a1.claim")).unwrap();
@@ -700,7 +738,7 @@ fn legacy_claim_rows_count_by_provenance_and_are_never_pruned() {
     assert_eq!(answer["refusal"]["fields"][0], json!(["source", "claims"]));
 }
 
-/// Decision 83 through the executable: a bare close on a lane whose harness
+/// Through the executable: a bare close on a lane whose harness
 /// runs refuses `lane-live` and signals nothing; with the tracker's terminal
 /// verdict the close asks the mailbox for unanswered asks first and refuses
 /// `ask-unanswered` while one stands, the harness still live; with none it
@@ -776,7 +814,7 @@ fn a_close_needs_a_ground_asks_the_mailbox_and_then_ends_the_harness() {
     assert_eq!(row["source"], "linear");
 }
 
-/// Decision 98 through the executable: a `no-landing` disposition on a lane
+/// Through the executable: a `no-landing` disposition on a lane
 /// whose recorded harness is gone retires the attempt and keeps the item's
 /// work: the lane reads stopped with its pending return, launch, recovery
 /// route and counter, the log row carries the disposition, and the retired
@@ -825,7 +863,7 @@ fn a_no_landing_disposition_retires_the_attempt_and_keeps_the_work() {
     );
 }
 
-/// Decision 105 (3) with decision 68: a recorded identity live under another
+/// A recorded identity live under another
 /// start is a reused pid. With a recorded pane on a server the host does not
 /// answer for (the server process lives, its socket does not), the close is
 /// `unconfirmed` on every reading, counts none, and the lane stands with its
@@ -873,7 +911,7 @@ fn a_recorded_pane_the_host_does_not_answer_for_never_confirms_a_stale_close() {
         assert_eq!(fleet.lane("KEN-S")["status"], "running");
         assert!(live(reused.pid()), "the reused pid is never signalled");
     }
-    // The same identity with no pane recorded: decision 68's second
+    // The same identity with no pane recorded: the second
     // reading confirms.
     fleet.write_lanes(vec![with_pane(Value::Null, Value::Null)]);
     let first = reply(&fleet.op(&terminal_close("KEN-S")));
@@ -889,7 +927,7 @@ fn a_recorded_pane_the_host_does_not_answer_for_never_confirms_a_stale_close() {
     assert!(live(reused.pid()), "the reused pid is never signalled");
 }
 
-/// Decision 105 (2): a launch whose window opened but whose line could not
+/// A launch whose window opened but whose line could not
 /// be typed closes its one pane by exact id; when that close does not
 /// confirm either, the launch stays `unconfirmed` at `opening` with the pane
 /// recorded and the intent open, the lane `preparing`, and the pane still
@@ -964,7 +1002,7 @@ fn a_launch_whose_line_and_cleanup_both_fail_keeps_its_intent_and_pane() {
     assert_eq!(runner.fleet()["lanes"][0]["status"], "stopped");
 }
 
-/// Decision 105 and R-U4a5 L1: a lane whose recorded harness is gone and
+/// A lane whose recorded harness is gone and
 /// whose record names no pane holds nothing to close. The close confirms on
 /// the first request and the lane reads done; no second reading is asked
 /// for, since no handle was recorded, which is not a recorded handle the
@@ -990,7 +1028,7 @@ fn a_close_of_a_gone_identity_with_no_pane_recorded_confirms_on_the_first_reques
     assert_eq!(fleet.lane("KEN-G")["status"], "done");
 }
 
-/// Decision 105 (2) on a lane close: the recorded harness is stopped
+/// On a lane close: the recorded harness is stopped
 /// exactly, then the close of its recorded window is refused by the host.
 /// The close stays `unconfirmed` with the recorded pane on the outcome and
 /// the lane not done, nothing claimed past the close that did not answer;
@@ -1063,8 +1101,8 @@ fn a_close_whose_window_close_is_refused_stays_unconfirmed_until_the_host_answer
     );
 }
 
-/// Decision 111 (A) (1), R-U4a6b C1 (2): a pane recorded with no server
-/// (the legacy launch object admits a null server, decision 35) is a handle
+/// A pane recorded with no server
+/// (the launch object admits a null server) is a handle
 /// this host cannot address, not an absent one. With the recorded identity
 /// gone, the close discharges that identity by its own read and holds the
 /// pane unaddressed as the remaining obligation: `unconfirmed`, the lane
@@ -1109,7 +1147,7 @@ fn a_pane_recorded_without_its_server_is_never_read_as_absent() {
     }
 }
 
-/// The legacy fleet launch lock as the test holds it: `flock(1)` on
+/// The fleet launch lock as the test holds it: `flock(1)` on
 /// `<fleet>.launch.lock`, the lock `lane-cap.sh`'s `cap_take` holds around
 /// its count and its reservation write, kept by a child the test owns until
 /// the child is ended (`-o`: the held descriptor is the holder's alone, so
@@ -1219,9 +1257,9 @@ fn await_at_lock(lock: &Path, child: &mut std::process::Child) {
     }
 }
 
-/// Decision 108 (3): the admission takes the legacy fleet launch lock. While
+/// The admission takes the fleet launch lock. While
 /// a process this test owns holds `<fleet>.launch.lock` with `flock(1)`,
-/// as the legacy launcher does around its count, the runtime's admission
+/// as the shell launcher does around its count, the runtime's admission
 /// reaches the lock and waits there with nothing written; once the holder
 /// ends it admits, once.
 #[test]
@@ -1242,12 +1280,12 @@ fn admission_waits_on_the_held_legacy_launch_lock_and_then_admits_once() {
     assert_eq!(fleet.fleet()["lanes"].as_array().unwrap().len(), 1);
     assert!(
         lock.is_file(),
-        "the lock file is the legacy's: {}",
+        "the lock file is the shell launcher's: {}",
         lock.display()
     );
 }
 
-/// Decision 108 (3) with two runtime contenders at cap minus one: both reach
+/// Two runtime contenders at cap minus one: both reach
 /// the launch lock the test holds and wait there; released together, exactly
 /// one is admitted and the other, counting the winner's committed preparing
 /// row under the same lock, refuses `cap-reached`, not `record-changed`. The
@@ -1317,7 +1355,7 @@ fn two_contenders_at_cap_minus_one_admit_exactly_one_under_the_launch_lock() {
     assert_eq!(fleet.fleet()["lanes"].as_array().unwrap().len(), 1);
 }
 
-/// A claim store beside the fleet, as the legacy launcher keeps it, with the
+/// A claim store beside the fleet, as the shell launcher keeps it, with the
 /// fleet spelled the way its rows spell it: the store, and the one-row writer
 /// returning the bytes written.
 fn claim_store(fleet: &Fleet) -> (PathBuf, impl Fn(&str, &str, &str) -> String + use<>) {
@@ -1339,7 +1377,7 @@ fn claim_store(fleet: &Fleet) -> (PathBuf, impl Fn(&str, &str, &str) -> String +
     (watch, row)
 }
 
-/// R-U4b2 C1, decision 111 (B): a live detached wake proves execution
+/// A live detached wake proves execution
 /// outside any pane, and the launch coordinates a stopped lane keeps name a
 /// server pid and a pane id a later server and another attempt's window may
 /// hold. Another attempt's claim at those numbers is therefore protected:
@@ -1435,7 +1473,7 @@ fn a_live_wake_at_stale_launch_coordinates_never_suppresses_another_attempts_cla
     assert!(live(launched.pid()) && live(wake.pid()));
 }
 
-/// Decision 111 (B), the suppression itself, on a private server: the lane's
+/// The suppression itself, on a private server: the lane's
 /// launch identity is the process holding the terminal of the pane its
 /// launch records, so the claim at that server pid and pane id doubles it
 /// and adds nothing, one slot at a cap of one. The same claim with the

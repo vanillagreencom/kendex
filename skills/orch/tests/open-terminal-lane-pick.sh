@@ -270,7 +270,13 @@ echo "=== a Pi launch on a Copilot model qualifies on the stated Copilot pool ==
 # named alike. A named Pi lane on the pool is judged by the same `lanes pick
 # --lane` a claude lane is, its model read with the provider Pi's own flag
 # names; a Pi lane on a provider nothing measures is refused as unmeasured.
+# Row KEN-1668 is judged on the runtime's own reply for a model naming no
+# provider (the named form's exit 5 with a record carrying no refusal, as
+# `orch-runtime accounts pick --fleet --harness pi --native-model sonnet:high
+# --lane DIR --projected` prints it through the Rust rows' producer world);
+# every other row answers through the stand-in's `lanes pick` wrap.
 mkdir -p "$H/.pi1"
+printf '%s\n' '{"protocol":"orch-runtime-v1","ok":true,"result":{"answer":"unmeasured","exit":5,"record":{"harness":"pi","model":"sonnet:high"}}}' > "$TMP_ROOT/runtime-unbilled.json"
 PI_POOL="ORCH_LANE_COPILOT_POOL=$H/.pi1"
 PI_COPILOT='cmd=true --model github-copilot/claude-sonnet-5:high'
 PI_PROVIDER='cmd=true --provider github-copilot --model claude-sonnet-5 --thinking high'
@@ -282,7 +288,7 @@ table \
   "a named account whose pool is spent is refused on the monthly bucket|$PI_POOL=1000000/1000000;$PI_COPILOT|--harness pi --lane $H/.pi1 KEN-1663|rc=1 launched=nolog walled=lane=$H/.pi1,model=github-copilot/claude-sonnet-5:high,pct=100,bucket=monthly,projected-headroom=0" \
   "a named account whose pool has room launches under Pi's root variable while every Claude seat is walled|$PI_POOL=100000/1000000;$PI_COPILOT|--harness pi --lane $H/.pi1 --lane-max-pct 15 KEN-1664|rc=0 launched=1 pi_root=pi1 cmd_lane=none walled=none unreadable=none poolfix=none" \
   "the provider on Pi's own flag is the Copilot pool too, judged on the named account|$PI_POOL=100000/1000000;$PI_PROVIDER|--harness pi --lane $H/.eclaude KEN-1667|rc=1 launched=nolog unreadable=lane=$H/.eclaude,model=github-copilot/claude-sonnet-5,step=windows" \
-  "a named Pi lane on a model naming no provider is refused by that cause, never launched|cmd=true --model sonnet:high|--harness pi --lane $H/.eclaude KEN-1668|rc=1 launched=nolog unreadable=none pickrefusal=lane-provider-unmeasured,harness=pi,model=sonnet:high"
+  "a named Pi lane on a model naming no provider is refused by that cause, never launched|OT_RUNTIME_PICK=$TMP_ROOT/runtime-unbilled.json;cmd=true --model sonnet:high|--harness pi --lane $H/.eclaude KEN-1668|rc=1 launched=nolog unreadable=none pickrefusal=lane-provider-unmeasured,harness=pi,model=sonnet:high"
 # Controls, one per rule: the named gate back on claude and codex alone
 # launches the unmeasured account unjudged; the prefix back on the Claude
 # variable for the pool starts Pi on a root nobody picked; and the provider

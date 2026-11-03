@@ -85,6 +85,7 @@ impl World {
             ("linear", "linear-fixture/linear.sh"),
             ("gh", "gh/gh"),
             ("lanes", "lanes-listing/lanes"),
+            ("lane-host", "lane-host/lane-host"),
             ("oversee-report", "oversee-report-fixture/oversee-report"),
             ("github.sh", "github-fixture/github.sh"),
         ] {
@@ -684,8 +685,10 @@ fn owed((id, state, priority, lane, host, harness, model, delivery): OwedRow<'_>
 /// Opus windows of both claude accounts walled until 2026-10-04 and their
 /// shared windows with room, so an Opus launch is `dated` there and a
 /// Sonnet one `queue`; every codex window walled, codex2 resetting first;
-/// the hosted codex record judged by the delegated `lanes pick` under its
-/// host, the one call the reader takes.
+/// the hosted codex record judged on the provider's own listing under its
+/// host (U8d: the judge reads the provider's rows and asks the reader for
+/// no pick), where the one codex account has room, and the host's
+/// capability line read for the repository rule.
 #[test]
 fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
     let world = World::new();
@@ -740,14 +743,24 @@ fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
             ),
         ]),
     );
-    // The hosted record's pick is delegated to the reader under its host,
-    // whose answer is the row it chose as `lanes pick --json` prints it.
+    // The hosted record is judged on the provider's listing, read under
+    // its host: one codex account with room, so the verdict is `queue`
+    // where the local codex accounts are walled.
     world.plant(
-        "pick.json",
-        &json!({"exit": 0, "body": {
-            "alias": "codex", "harness": "codex", "config_dir": "/home/u/.codex",
-            "measured_through": "provider-x", "status": "ok", "verdict": "room", "headroom_pct": 60,
-            "binding_bucket": "weekly", "binding_resets_at": "2026-10-05T00:00:00Z", "claims": 0}}),
+        "lanes-provider-x.json",
+        &json!([account(
+            "codex",
+            "codex",
+            "room",
+            "2026-10-05T00:00:00Z",
+            json!({"headroom_pct": 60, "session_5h_pct": 10, "weekly_pct": 40,
+                   "resets": {"session": "2026-10-01T04:00:00Z", "weekly": "2026-10-05T00:00:00Z"},
+                   "model_buckets": []})
+        )]),
+    );
+    world.plant(
+        "lane-host.json",
+        &json!({"provider-x capabilities": {"stdout": "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\tpool=plan\n"}}),
     );
     world.plant(
         "gh.json",
@@ -951,9 +964,8 @@ fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
         "mail ran on both sides of the heartbeat"
     );
     // What the judge asked the reader: the listing under no host and under
-    // the hosted record's host, and one `pick`, the hosted record's, under
-    // its host; a local record's verdict is judged here and reaches the
-    // reader as no pick.
+    // the hosted record's host, and no pick under either: every record's
+    // verdict is judged here.
     let calls = lines(&world.path().join("lanes.log"));
     let hosts_listed: std::collections::BTreeSet<&str> = calls
         .iter()
@@ -967,12 +979,15 @@ fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
             .collect(),
         "{calls:?}"
     );
-    let picks: Vec<&String> = calls.iter().filter(|c| c.contains(" pick ")).collect();
-    assert_eq!(picks.len(), 1, "{calls:?}");
     assert!(
-        picks[0].starts_with("ORCH_LANE_HOST=provider-x ")
-            && picks[0].ends_with(" pick --harness codex --json"),
-        "{calls:?}"
+        calls.iter().all(|c| c.ends_with(" list --json")),
+        "the reader is asked for listings alone: {calls:?}"
+    );
+    let hosts = lines(&world.path().join("lane-host.log"));
+    assert_eq!(
+        hosts,
+        vec!["ORCH_LANE_HOST=provider-x capabilities"],
+        "the hosted pick reads the host's capability line once for the repository rule"
     );
 }
 

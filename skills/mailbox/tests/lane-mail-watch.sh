@@ -1,0 +1,551 @@
+#!/usr/bin/env bash
+# lane-mail watch: the lane's standing mailbox monitor. A harness background
+# wake (Claude Code Monitor, Pi bg_task on a pi-hooks without the lane mail
+# wake) runs it and starts a turn for each
+# announcement it prints, or, under --once, a Copilot background command whose
+# exit at its first announcement is the wake; that turn runs the `inbox`
+# command the announcement names. Each case starts the real script in the background over a
+# lane worktree under TMP_ROOT, appends with the real `send`, and reads what the
+# watch printed. Polls are counted from the liveness record the watch rewrites,
+# so a row asserting silence waits for polls that ran rather than for a fixed
+# time. A tmux on PATH records every call, so a directive that reaches an idle
+# lane with no pane write is observed, not assumed. The must-fail controls close
+# the file, one per surface: the watch verb, and the send receipt's reading of
+# the liveness record the watch writes.
+set -euo pipefail
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
+# shellcheck source=../../orch/tests/lib/git-env.sh
+source "$REPO_ROOT/skills/orch/tests/lib/git-env.sh"
+
+LANE_MAIL="$REPO_ROOT/skills/mailbox/scripts/lane-mail"
+TMP_ROOT="$(mktemp -d)"
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)"
+# mutant_scripts and mutate_file, the two halves of the controls at the end.
+# shellcheck source=../../orch/tests/lib/growth-state.sh
+source "$REPO_ROOT/skills/orch/tests/lib/growth-state.sh"
+WATCH_PID=""
+stop_watch() {
+  [ -n "$WATCH_PID" ] || return 0
+  kill -TERM "$WATCH_PID" 2>/dev/null || :
+  wait "$WATCH_PID" 2>/dev/null || :
+  WATCH_PID=""
+}
+trap 'stop_watch; rm -rf -- "$TMP_ROOT"' EXIT
+
+# shellcheck source=../../orch/tests/lib/assertions.sh
+source "$REPO_ROOT/skills/orch/tests/lib/assertions.sh"
+
+# Any tmux call a case makes lands in this log, so an empty log is a case that
+# wrote to no pane.
+STUB_BIN="$TMP_ROOT/stub-bin"
+TMUX_LOG="$TMP_ROOT/tmux.log"
+mkdir -p "$STUB_BIN"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >>"%s"\n' "$TMUX_LOG" >"$STUB_BIN/tmux"
+chmod +x "$STUB_BIN/tmux"
+: >"$TMUX_LOG"
+
+# A lane worktree with the mailbox its launch creates.
+LANE=""
+BOX=""
+new_lane() { # NAME
+  LANE="$TMP_ROOT/$1"
+  BOX="$LANE/tmp/lane-mail/KEN-1"
+  mkdir -p "$BOX"
+  git -C "$LANE" init -q
+  git -C "$LANE" config gc.auto 0
+  git -C "$LANE" config maintenance.auto false
+}
+
+text() { # NAME CONTENT
+  printf '%s\n' "$2" >"$TMP_ROOT/$1.txt"
+  printf '%s' "$TMP_ROOT/$1.txt"
+}
+
+# The overseer's side, and the lane's own reads, each run from the lane.
+lm() { # ARGS...
+  (cd "$LANE" && PATH="$STUB_BIN:$PATH" "$LANE_MAIL" "$@")
+}
+SENT=""
+send_directive() { # TEXT — SENT holds the receipt
+  SENT="$(lm send --item KEN-1 --root "$LANE" --directive --file "$(text d "$1")")"
+}
+
+WATCH_OUT="$TMP_ROOT/watch.out"
+WATCH_ERR="$TMP_ROOT/watch.err"
+start_watch() { # [BIN] [ARGS...] — from the lane, or with the ARGS given
+  local bin="${1:-$LANE_MAIL}"
+  [ "$#" -eq 0 ] || shift
+  stop_watch
+  : >"$WATCH_OUT"
+  rm -f -- "$BOX/to-lane.watch"
+  if [ "$#" -eq 0 ]; then set -- --item KEN-1; fi
+  (cd "$LANE" && PATH="$STUB_BIN:$PATH" exec "$bin" watch --interval 1 "$@") \
+    >"$WATCH_OUT" 2>"$WATCH_ERR" &
+  WATCH_PID=$!
+}
+
+# The announcements the watch has printed: their keyed lines, one per line.
+mail_lines() {
+  grep '^lane-mail: mail=' "$WATCH_OUT" || :
+}
+announced() {
+  mail_lines | awk 'END { print NR + 0 }'
+}
+
+# Waits, up to a deadline, for the Nth announcement.
+await_announced() { # N
+  local tries=0
+  while [ "$(announced)" -lt "$1" ] && [ "$tries" -lt 50 ]; do
+    sleep 0.2
+    tries=$((tries + 1))
+  done
+}
+
+# Waits, up to a deadline, for N more polls: each rewrites the liveness record
+# with the second it ran, and polls sit a whole interval apart.
+watch_at() {
+  sed -n 's/^at=\([0-9]*\) .*/\1/p' "$BOX/to-lane.watch" 2>/dev/null || :
+}
+await_polls() { # N
+  local tries=0 seen=0 last now
+  last="$(watch_at)"
+  while [ "$seen" -lt "$1" ] && [ "$tries" -lt 75 ]; do
+    sleep 0.2
+    tries=$((tries + 1))
+    now="$(watch_at)"
+    if [ -n "$now" ] && [ "$now" != "$last" ]; then
+      seen=$((seen + 1))
+      last="$now"
+    fi
+  done
+}
+
+# A long interval makes a delayed TERM observable. Keep the child unreaped
+# until cleanup: its process-group identity then cannot be reused while a
+# no-exec forwarder leaves its watch child alive. A PATH stub acknowledges
+# entry before holding a loop step, so TERM reaches that step deterministically.
+TERM_RUN=0
+TERM_STEPS="jq sleep date mv python3"
+term_row() { # BIN [STEP] — TERMED records process exit and liveness withdrawal
+  local bin_path="$STUB_BIN:$PATH" entered="" step="${2:-}" interval=30 real command phase
+  TERM_RUN=$((TERM_RUN + 1))
+  new_lane "term-$TERM_RUN"
+  phase="$TMP_ROOT/term-$TERM_RUN.phase"
+  [ -z "$step" ] || entered="$TMP_ROOT/term-$TERM_RUN.$step-entered"
+  mkdir -p "$TMP_ROOT/term-$TERM_RUN.bin"
+  case "$step" in date | mv) interval=1 ;; esac
+  # The snapshot runs while lm_locked holds the mailbox mutex. An empty
+  # mailbox reaches that real read without needing a sender in the fixture.
+  [ "$step" != python3 ] || : >"$BOX/to-lane.jsonl"
+  for command in $TERM_STEPS; do
+    real="$(command -v "$command")"
+    printf '#!/bin/sh\nprintf "%%s\\n" %q >%q\nif [ %q = %q ] && [ -e %q ] && { [ %q != python3 ] || [ "${2:-}" = snapshot ]; }; then : >%q; exec %q 30; fi\nexec %q "$@"\n' \
+      "$command" "$phase" "$command" "$step" "$BOX/to-lane.watch" "$command" \
+      "$entered" "$(command -v sleep)" "$real" >"$TMP_ROOT/term-$TERM_RUN.bin/$command"
+    chmod +x "$TMP_ROOT/term-$TERM_RUN.bin/$command"
+  done
+  bin_path="$TMP_ROOT/term-$TERM_RUN.bin:$bin_path"
+  TERMED="$(python3 - "$BASH" "$1" "$LANE" "$BOX" "$bin_path" "$WATCH_OUT" "$WATCH_ERR" "$entered" "$interval" "$phase" "$step" <<'PY_TERM'
+import os
+from pathlib import Path
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+bash, script, lane, box, path, stdout, stderr, entered, interval, phase, step = sys.argv[1:]
+env = {key: os.environ[key] for key in ("HOME", "LANG", "LC_ALL", "TMPDIR") if key in os.environ}
+env["PATH"] = path
+ps = shutil.which("ps", path=path)
+assert ps is not None, "watch process reader is absent"
+marker = Path(box) / "to-lane.watch"
+mutex = Path(box) / "to-lane.jsonl.d"
+if step == "python3":
+    # Resolve tools from the inherited PATH in order, excluding flock so Linux
+    # exercises the mkdir lock that stock macOS uses.
+    noflock = Path(box).parent / "path-without-flock"
+    noflock.mkdir()
+    for directory in os.get_exec_path(env):
+        root = Path(directory)
+        if not root.is_dir():
+            continue
+        for command in root.iterdir():
+            target = noflock / command.name
+            if command.name != "flock" and command.is_file() and os.access(command, os.X_OK) and not target.is_symlink():
+                target.symlink_to(command.absolute())
+    env["PATH"] = str(noflock)
+    assert shutil.which("flock", path=env["PATH"]) is None, "mutex fixture still resolves flock"
+with open(stdout, "wb") as out, open(stderr, "wb") as err:
+    child = subprocess.Popen([bash, script, "watch", "--item", "KEN-1", "--interval", interval],
+                             cwd=lane, env=env, stdout=out, stderr=err, start_new_session=True)
+    try:
+        deadline = time.monotonic() + 5
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert marker.exists(), "watch did not publish its liveness record"
+        while entered and not Path(entered).exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        assert not entered or Path(entered).exists(), "the held loop step never started"
+        assert step != "python3" or mutex.is_dir(), "snapshot entered without holding the mkdir mutex"
+        os.kill(child.pid, signal.SIGTERM)
+        deadline = time.monotonic() + 3
+        state = "running"
+        while time.monotonic() < deadline:
+            probe = subprocess.run([ps, "-o", "stat=", "-p", str(child.pid)], env=env,
+                                   capture_output=True, check=True, timeout=5)
+            status = probe.stdout.strip()
+            assert status, "owned watch has no process state"
+            if status.startswith(b"Z"):
+                state = "exited"
+                if step != "python3" or not mutex.exists():
+                    break
+            time.sleep(.02)
+        record = "record-kept" if marker.exists() else "record-withdrawn"
+        if (state, record) != ("exited", "record-withdrawn") or (step == "python3" and mutex.exists()):
+            sys.stderr.write("term-row: phase=%s held=%s\n" %
+                             (Path(phase).read_text().strip(), bool(entered and Path(entered).exists())))
+            # The processes of the group name the step that held the exit.
+            probe = subprocess.run([ps, "-A", "-o", "pid=,ppid=,pgid=,stat=,command="], env=env,
+                                   capture_output=True, check=True, timeout=5)
+            sys.stderr.write("term-row: watch group pid ppid pgid stat command\n")
+            for row in probe.stdout.decode(errors="replace").splitlines():
+                fields = row.split(None, 4)
+                if len(fields) > 2 and fields[2] == str(child.pid):
+                    sys.stderr.write("  " + row.strip() + "\n")
+            sys.stderr.write("term-row: record=%s %s\n" % (record,
+                             marker.read_text().strip() if marker.exists() else "-"))
+        print(state + ":" + record + ":" + ("held" if mutex.exists() else "released"))
+    finally:
+        try:
+            os.killpg(child.pid, signal.SIGKILL)
+        except PermissionError:
+            # macOS refuses group signals when only zombies remain. Keep the
+            # child unreaped and prove no live descendant needs the signal.
+            probe = subprocess.run([ps, "-ax", "-o", "pgid=,stat="], env=env,
+                                   capture_output=True, check=True, timeout=5)
+            group_states = [status for pgid, status in
+                            (row.split() for row in probe.stdout.splitlines())
+                            if pgid == str(child.pid).encode()]
+            if not group_states or any(not status.startswith(b"Z") for status in group_states):
+                raise
+        finally:
+            child.wait(timeout=5)
+PY_TERM
+)"
+  TERM_MUTEX="${TERMED##*:}"
+  TERMED="${TERMED%:*}"
+}
+term_assertion() {
+  assert_eq "$TERMED" "exited:record-withdrawn" \
+    "a TERM ends a watch mid-wait within three seconds and withdraws its liveness record"
+}
+term_steps() { # BIN EXPECTED
+  local step expected_mutex
+  # sleep acknowledges entry after the first completed poll. date and mv
+  # hold the next heartbeat, after a record already exists.
+  for step in $TERM_STEPS; do
+    term_row "$1" "$step"
+    assert_eq "$TERMED" "$2" "TERM in held $step: process exit and record withdrawal"
+    if [ "$step" = python3 ]; then
+      expected_mutex=held
+      [ "$2" != exited:record-withdrawn ] || expected_mutex=released
+      assert_eq "$TERM_MUTEX" "$expected_mutex" "TERM in held snapshot: mkdir mutex cleanup"
+    fi
+  done
+}
+
+echo "=== lane-mail watch ==="
+
+new_lane standing
+send_directive 'Rebase onto main.'
+send_directive 'Then rerun the checks.'
+start_watch
+await_announced 1
+assert_eq "$(sed -n 1p "$WATCH_OUT")" "lane-mail: mail=KEN-1 new=2" \
+  "a watch announces every directive already unread when it starts, counting them"
+assert_eq "$(sed -n 2p "$WATCH_OUT")" \
+  "Overseer mail landed in this lane mailbox. Run the command below and act on every envelope it prints, answers and directives alike, as its text directs." \
+  "the announcement tells the woken lane to run the command under it"
+assert_eq "$(sed -n 3p "$WATCH_OUT")" "$(printf '%q inbox --item KEN-1 --root %q' "$LANE_MAIL" "$LANE")" \
+  "the command is the literal inbox read of this lane's mailbox, naming the root the watch resolved"
+send_directive 'Then merge.'
+assert_eq "${SENT##* }" "monitor=live" "a send to a mailbox under a running watch reads its monitor as live"
+await_announced 2
+await_polls 2
+assert_eq "$(mail_lines | tr '\n' '|')" "lane-mail: mail=KEN-1 new=2|lane-mail: mail=KEN-1 new=1|" \
+  "each arrival is announced once, however many polls pass"
+assert_eq "$([ -e "$BOX/to-lane.cursor" ] && cat "$BOX/to-lane.cursor" || echo none)" \
+  "none" "the watch moves no cursor"
+stop_watch
+assert_eq "$([ -e "$BOX/to-lane.watch" ] && echo kept || echo withdrawn)" "withdrawn" \
+  "a stopped watch withdraws its liveness record"
+send_directive 'After the stop.'
+assert_eq "${SENT##* }" "monitor=none" "so a send after the stop reads no monitor, and the lane is woken"
+
+# The row the delivery claim stands on: the lane is idle, with nothing running
+# but its watch; a directive lands; the command the announcement names, run as
+# the woken turn runs it, hands the directive over; and nothing wrote to a pane.
+# The woken turn runs it from another checkout, where a read that resolved its
+# own root would open that checkout's mailbox and leave the lane's unread.
+new_lane idle
+OTHER="$TMP_ROOT/other-checkout"
+mkdir -p "$OTHER"
+git -C "$OTHER" init -q
+git -C "$OTHER" config gc.auto 0
+git -C "$OTHER" config maintenance.auto false
+start_watch
+await_polls 1
+send_directive 'Hold the PR.'
+await_announced 1
+READ=""
+if [ "$(announced)" -ge 1 ]; then
+  READ="$(cd "$OTHER" && PATH="$STUB_BIN:$PATH" eval "$(sed -n 3p "$WATCH_OUT")")"
+fi
+assert_eq "$(jq -r '.kind + " " + .text' <<<"${READ:-null}" 2>/dev/null)" "directive Hold the PR." \
+  "a directive sent to an idle lane is read by the command its watch's announcement names, from any checkout"
+assert_eq "$(cat "$BOX/to-lane.cursor")=$([ -e "$OTHER/tmp" ] && echo stray || echo clean)" "1=clean" \
+  "that inbox read advances the lane's cursor and opens no mailbox in the checkout it ran from"
+assert_eq "$(wc -l <"$TMUX_LOG" | tr -d ' ')" "0" "the directive reached the idle lane with no pane write"
+send_directive 'Then merge.'
+await_announced 2
+await_polls 2
+assert_eq "$(mail_lines | tr '\n' '|')" "lane-mail: mail=KEN-1 new=1|lane-mail: mail=KEN-1 new=1|" \
+  "an empty mailbox wakes nobody, and mail the lane has read is not announced again"
+stop_watch
+
+# An answer a wait returned is read; a later directive still wakes the watch.
+new_lane answer
+ASK="$(lm ask --item KEN-1 --file "$(text q 'Merge now?')")"
+ASK="${ASK#id=}"
+lm send --item KEN-1 --root "$LANE" --re "$ASK" --file "$(text a 'Merge it.')" >/dev/null
+assert_eq "$(lm wait --item KEN-1 --id "$ASK" --timeout 5 --interval 1)" "Merge it." \
+  "the ask's wait receives its answer"
+assert_eq "$(lm inbox --item KEN-1)" "" "inbox does not repeat an answer a wait returned"
+start_watch
+await_polls 1
+send_directive 'Also tag it.'
+await_announced 1
+await_polls 2
+assert_eq "$(mail_lines | tr '\n' '|')" "lane-mail: mail=KEN-1 new=1|" "a waited answer does not wake the watch again"
+stop_watch
+
+# A watch started over a cursor the lane already moved: what it read is never
+# announced, by a re-armed watch or after a hook read it between two polls.
+new_lane read_first
+send_directive 'Already read.'
+lm inbox --item KEN-1 >/dev/null
+start_watch
+await_polls 1
+send_directive 'Not yet read.'
+await_announced 1
+await_polls 2
+assert_eq "$(mail_lines | tr '\n' '|')" "lane-mail: mail=KEN-1 new=1|" \
+  "a watch announces nothing the cursor already passed"
+stop_watch
+
+# A watch run from another checkout names the lane with --root, and so does the
+# command its announcement hands the woken turn.
+new_lane rooted
+mkdir -p "$TMP_ROOT/elsewhere"
+send_directive 'From afar.'
+stop_watch
+: >"$WATCH_OUT"
+(cd "$TMP_ROOT/elsewhere" && exec "$LANE_MAIL" watch --item KEN-1 --root "$LANE" --interval 1) \
+  >"$WATCH_OUT" 2>"$WATCH_ERR" &
+WATCH_PID=$!
+await_announced 1
+assert_eq "$(sed -n 3p "$WATCH_OUT")" "$(printf '%q inbox --item KEN-1 --root %q' "$LANE_MAIL" "$LANE")" \
+  "a watch given --root hands over the inbox command with that root"
+stop_watch
+
+# The liveness record the receipt reads, judged on its age alone. At interval
+# 5 the window is fifteen seconds: rows sit either side of it, and a record
+# stamped ahead of the sender's clock is no evidence of a poll.
+liveness_rows() { # [BIN] — with BIN, only collects LIVENESS
+  local row age rest
+  new_lane "liveness${1:+-mutant}"
+  for row in "17|none|a record just past twice its interval plus five seconds reads as no monitor" \
+    "12|live|a record just inside that window reads as a live monitor" \
+    "-60|none|a record stamped ahead of the sender's clock reads as no monitor"; do
+    age="${row%%|*}"
+    printf 'at=%s interval=5\n' "$(( $(date -u +%s) - age ))" >"$BOX/to-lane.watch"
+    rest="${row#*|}"
+    SENT="$(cd "$LANE" && "${1:-$LANE_MAIL}" send --item KEN-1 --root "$LANE" --directive \
+      --file "$(text d "Liveness $age.")")"
+    LIVENESS="$LIVENESS${SENT##* }|"
+    [ -n "${1:-}" ] || assert_eq "${SENT##* }" "monitor=${rest%%|*}" "${rest#*|}"
+  done
+}
+LIVENESS=""
+liveness_rows
+
+# --once, for a harness whose only wake is a background command's exit: the
+# watch exits 0 at its first announcement, which is the wake, and the exit
+# withdraws its liveness record, so a send meanwhile reads no monitor until the
+# lane re-arms. The re-armed watch announces what still stands unread.
+# The watch's exit is awaited up to TRIES polls of 0.2 s: 75 on the path that
+# expects it, so a loaded runner is not read as a watch that kept running,
+# and 15 for the control that expects it still running, which waits the
+# whole bound.
+ONCE_RUN=0
+once_row() { # TRIES [BIN] [notice] — ONCE holds how the watch ended
+  local tries=0 rc=0 bound="$1" mode="${3:-directive}" notice_id=""
+  shift
+  ONCE_RUN=$((ONCE_RUN + 1))
+  new_lane "once-$mode-$ONCE_RUN"
+  if [ "$mode" = notice ]; then
+    lm notice --item KEN-1 --file "$(text n 'Ready.')" >/dev/null
+    notice_id="$(jq -r '.id' <"$BOX/to-overseer.jsonl")"
+  fi
+  start_watch "${1:-$LANE_MAIL}" --item KEN-1 --once
+  await_polls 1
+  if [ "$mode" = notice ]; then
+    lm send --item KEN-1 --root "$LANE" --re "$notice_id" --file "$(text a 'GO.')" >/dev/null
+  else
+    send_directive 'Wake up.'
+  fi
+  await_announced 1
+  while kill -0 "$WATCH_PID" 2>/dev/null && [ "$tries" -lt "$bound" ]; do sleep 0.2; tries=$((tries + 1)); done
+  if kill -0 "$WATCH_PID" 2>/dev/null; then
+    ONCE=running
+    stop_watch
+  else
+    wait "$WATCH_PID" || rc=$?
+    WATCH_PID=""
+    ONCE="exit=$rc"
+  fi
+}
+once_row 75
+assert_eq "$ONCE $(mail_lines | tr '\n' '|')" "exit=0 lane-mail: mail=KEN-1 new=1|" \
+  "a --once watch exits 0 at its first announcement"
+assert_eq "$([ -e "$BOX/to-lane.watch" ] && echo kept || echo withdrawn)" "withdrawn" \
+  "its exit withdraws the liveness record"
+send_directive 'While it is down.'
+assert_eq "${SENT##* }" "monitor=none" "a send before the lane re-arms reads no monitor"
+start_watch "$LANE_MAIL" --item KEN-1 --once
+await_announced 1
+assert_eq "$(sed -n 1p "$WATCH_OUT")" "lane-mail: mail=KEN-1 new=2" \
+  "the re-armed watch announces at once every directive still unread"
+stop_watch
+
+once_row 75 "$LANE_MAIL" notice
+assert_eq "$ONCE $(mail_lines | tr '\n' '|')" "exit=0 lane-mail: mail=KEN-1 new=1|" \
+  "an answer to a notice wakes a --once watch"
+assert_eq "$(lm inbox --item KEN-1 | jq -r '.kind + " " + .text')" "answer GO." \
+  "inbox delivers the notice's answer after the watch wakes"
+assert_eq "$(lm inbox --item KEN-1)" "" "inbox delivers the notice's answer once"
+
+# Refusals, keyed on their first line.
+new_lane refusals
+RC=0
+lm inbox --item KEN-1 --once >/dev/null 2>"$TMP_ROOT/err" || RC=$?
+assert_eq "$RC=$(head -n 1 "$TMP_ROOT/err")" "2=lane-mail: option-unknown=--once" \
+  "--once on a verb other than watch is refused rather than dropped"
+RC=0
+lm watch --item KEN-1 --interval soon >/dev/null 2>"$TMP_ROOT/err" || RC=$?
+assert_eq "$RC=$(head -n 1 "$TMP_ROOT/err")" "2=lane-mail: seconds-invalid=--interval" \
+  "an interval that is not a number of seconds is refused"
+RC=0
+lm watch --item KEN-9 --interval 1 >/dev/null 2>"$TMP_ROOT/err" || RC=$?
+assert_eq "$RC=$(head -n 1 "$TMP_ROOT/err")" "2=lane-mail: mailbox-missing=$LANE/tmp/lane-mail/KEN-9" \
+  "a watch of a mailbox no launch created is refused rather than polling nothing"
+printf 'two\n' >"$BOX/to-lane.cursor"
+RC=0
+lm watch --item KEN-1 --interval 1 >/dev/null 2>"$TMP_ROOT/err" || RC=$?
+assert_eq "$RC=$(head -n 1 "$TMP_ROOT/err")" "2=lane-mail: cursor-invalid=$BOX/to-lane.cursor" \
+  "a cursor that holds no count stops the watch rather than announcing from zero"
+
+new_lane removed
+start_watch
+await_polls 1
+rm -rf -- "${LANE:?}/tmp"
+TRIES=0
+while kill -0 "$WATCH_PID" 2>/dev/null && [ "$TRIES" -lt 10 ]; do
+  sleep 0.2
+  TRIES=$((TRIES + 1))
+done
+RC=0
+if kill -0 "$WATCH_PID" 2>/dev/null; then RC=running; else wait "$WATCH_PID" || RC=$?; fi
+WATCH_PID=""
+assert_eq "$RC=$(head -n 1 "$WATCH_ERR")" "2=lane-mail: mailbox-missing=$BOX" \
+  "a watch whose mailbox is removed exits within two intervals"
+
+term_row "$LANE_MAIL"
+term_assertion
+term_steps "$LANE_MAIL" exited:record-withdrawn
+
+# A KILL runs no trap, so what the lane's messages leave behind is what the
+# poll removed before its wait: no copy of the mailbox under the watch's TMPDIR.
+# The work directory itself stays, and counting it is what makes the copy count
+# a reading of the watch's own files rather than of an empty directory.
+kill_row() { # sets KILLED to the mailbox copies left behind, WORK_DIRS to the work directories there
+  local tries=0 dir="$TMP_ROOT/kill-tmp"
+  new_lane kill
+  send_directive 'A message worth keeping private.'
+  mkdir -p "$dir"
+  TMPDIR="$dir" start_watch "$LANE_MAIL" --item KEN-1 --interval 30
+  await_announced 1
+  while [ -n "$(find "$dir" \( -name lane.raw -o -name lane.jsonl -o -name unread \) -print)" ] && [ "$tries" -lt 25 ]; do
+    sleep 0.2
+    tries=$((tries + 1))
+  done
+  kill -KILL "$WATCH_PID"
+  wait "$WATCH_PID" 2>/dev/null || :
+  WATCH_PID=""
+  KILLED="$(find "$dir" \( -name lane.raw -o -name lane.jsonl -o -name unread \) -print | awk 'END { print NR + 0 }')"
+  WORK_DIRS="$(find "$dir" -mindepth 1 -maxdepth 1 -type d -name 'lane-mail.*' -print | awk 'END { print NR + 0 }')"
+}
+kill_row
+assert_eq "$KILLED/$WORK_DIRS" "0/1" \
+  "a watch killed in its wait leaves no copy of the lane's mailbox in the work directory it made under TMPDIR"
+
+# The controls, each a private copy of lane-mail beside links to the shipped
+# libraries and siblings it sources, with the behavior under test changed.
+mutant() { # NAME OLD NEW — MUTANT holds the copy
+  local dir
+  dir="$(mutant_scripts "mutant-$1" lane-mail)" || exit 1
+  mutate_file "$dir/lane-mail" "$2" "$3"
+  MUTANT="$dir/lane-mail"
+}
+
+mutant announces-again '        ANNOUNCED="$(lm_count "$WORK_DIR/lane.jsonl")"' '        :'
+new_lane control_again
+send_directive 'Once.'
+start_watch "$MUTANT"
+await_announced 1
+await_polls 2
+assert_eq "$([ "$(announced)" -gt 1 ] && echo repeated || echo once)" "repeated" \
+  "control: without the announced count the same directive is announced at every poll"
+stop_watch
+
+mutant once-keeps-running '      [ "$ONCE" -eq 0 ] || [ "$NEW" -eq 0 ] || exit 0' '      :'
+once_row 15 "$MUTANT"
+assert_eq "$ONCE" "running" \
+  "control: without its exit a --once watch keeps polling after its announcement, and wakes nobody"
+
+mutant drops-answers '  lm_objects "$1"' '  lm_objects "$1" | jq -c '\''select(.kind != "answer")'\'''
+once_row 15 "$MUTANT" notice
+assert_eq "$ONCE $(announced)" "running 0" \
+  "control: excluding answers leaves the watch asleep after a reply to a notice"
+
+mutant foreground-loop '      } &' '      }'
+mutate_file "$MUTANT" '      wait "$!"' '      :'
+# Bypassing the iteration owner returns each held step to the supervisor's
+# foreground, including the poll's jq and the interval's sleep.
+term_steps "$MUTANT" running:record-kept
+
+mutant kill-iteration '      kill -TERM %+ 2>/dev/null || :' '      kill -KILL %+ 2>/dev/null || :'
+term_row "$MUTANT" python3
+term_assertion
+assert_eq "$TERM_MUTEX" held \
+  "control: SIGKILL stops the iteration but leaves its mkdir mutex held"
+
+mutant wider-window 'now - at <= 2 * interval + 5' 'now - at <= 4 * interval + 5'
+LIVENESS=""
+liveness_rows "$MUTANT"
+assert_eq "${LIVENESS%%|*}" "monitor=live" \
+  "control: with the window widened a record just past the bound reads as live"
+
+printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
+[[ "$FAIL" -eq 0 ]]

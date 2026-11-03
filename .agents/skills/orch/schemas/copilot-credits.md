@@ -4,7 +4,7 @@ The record `lanes` produces for one Copilot account's monthly AI credit pool, re
 
 ## Where it is
 
-- `lanes list --harness copilot --json` prints one record per account; `lanes pick --harness copilot --json` and `lanes pick --lane <dir> --harness copilot --json` print the judged one, with `wall` and the pick fields beside it.
+- `lanes list --harness copilot --json` prints one record per account; `orch-runtime accounts pick --fleet --harness copilot` and `orch-runtime accounts pick --fleet --lane <dir> --harness copilot` reply with the judged one, with `wall` and the pick fields beside it.
 - The raw answer and normalized reading share `usage/copilot-<cksum of the account dir>.json` under `$OVERSEE_WATCH_STATE_DIR`, else `<project root>/tmp/oversee-watch/usage`. Fresh normal reads reuse the parsed buckets after age, consumed-reset, stored login-expiry and credentials-file modification checks. A stale, changed or legacy record uses the cold login and raw-response parsers. Parser changes reach an existing reading when its record is refreshed or normalized from a legacy raw record.
 
 ## Fields

@@ -813,7 +813,7 @@ if [[ "$id" == oversee ]]; then
   # One call at a time from copy-in to copy-back: the real CLI's own lock
   # covers only its run, and a long pass reads the fleet state while a mail
   # pass runs, so an unguarded copy hands one of them a half-written file.
-  # shellcheck source=../../scripts/lib/file-lock.sh
+  # shellcheck source=../../../mailbox/scripts/lib/file-lock.sh
   source "$FILE_LOCK_LIB" || exit 2
   exec 9>"$STUB_DIR/oversee-state.lock" || exit 2
   orch_take_lock 9 "$STUB_DIR/oversee-state.lock" 30 || exit 2

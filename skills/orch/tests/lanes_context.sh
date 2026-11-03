@@ -18,7 +18,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # repository of its own, so neither the environment nor kendex.settings.toml
 # supplies one: the rows asserting a mark assert the script default, and the
 # row that wants a setting passes it.
-unset ORCH_OVERSEER_SEAT_RESERVE_PCT ORCH_HANDOFF_HEADROOM_PCT ORCH_HANDOFF_CONTEXT_PCT ORCH_LANE_HOST ORCH_STATE_DIR
+unset ORCH_OVERSEER_HEADROOM_PCT ORCH_HANDOFF_HEADROOM_PCT ORCH_HANDOFF_CONTEXT_PCT ORCH_LANE_MAX_PCT ORCH_LANE_HOST ORCH_STATE_DIR
 # shellcheck source=lib/lanes-fixture.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/lanes-fixture.sh"
 # mutant_scripts and mutate_file, the two halves of the must-fail controls below.
@@ -581,7 +581,7 @@ for pool_harness in copilot pi; do
   if [[ "$pool_harness" == copilot ]]; then
     lanes_table "$(CTX_FLEET="$COP_FLEET" CTX_DIRS="$POOL_DIRS" CTX_POOL="$pool_account=60/100" run_ctx --json)" \
       "Copilot context agrees with its named check|ken-108|headroom_pct=40 binding_bucket=monthly context_handoff_due=false handoff_required=false"
-    lanes_table "$(CTX_LANES="$POOL_CTRL/lanes" CTX_FLEET="$COP_FLEET" CTX_DIRS="$POOL_DIRS" CTX_POOL="$pool_account=60/100" run_ctx --json)" \
+    lanes_table "$(CTX_LANES="$POOL_CTRL/lanes" ORCH_OVERSEER_HEADROOM_PCT=50 CTX_FLEET="$COP_FLEET" CTX_DIRS="$POOL_DIRS" CTX_POOL="$pool_account=60/100" run_ctx --json)" \
       "control: a window reserve incorrectly marks the Copilot pool|ken-108|context_handoff_due=false handoff_required=true"
   fi
 done
@@ -661,10 +661,10 @@ mutate_file "$FULL_SEAT_CTRL/lib/lane-model.sh" '(._seat == 0 or $reserve < 100)
 while IFS='|' read -r label used reserve bucket room handoff; do
   jq --argjson used "$used" '.rate_limit.primary_window.used_percent=$used' "$FIXTURE_DIR/.codex.json" > "$FIXTURE_DIR/.codex.next"
   mv -- "$FIXTURE_DIR/.codex.next" "$FIXTURE_DIR/.codex.json"
-  lanes_table "$(ORCH_OVERSEER_SEAT_RESERVE_PCT="$reserve" ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
+  lanes_table "$(ORCH_OVERSEER_HEADROOM_PCT="$reserve" ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
     "$label|ken-102|binding_bucket=$bucket headroom_pct=$room context_handoff_due=false handoff_required=$handoff"
   if [[ "$reserve" == 100 ]]; then
-    lanes_table "$(CTX_LANES="$FULL_SEAT_CTRL/lanes" ORCH_OVERSEER_SEAT_RESERVE_PCT=100 ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
+    lanes_table "$(CTX_LANES="$FULL_SEAT_CTRL/lanes" ORCH_OVERSEER_HEADROOM_PCT=100 ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
       "control: ignoring full reserve hides the excluded credit seat from context|ken-102|binding_bucket=credits headroom_pct=0 context_handoff_due=false handoff_required=false"
   fi
 done <<'SEAT_CREDIT_READINGS'
@@ -676,45 +676,64 @@ SEAT_CREDIT_READINGS
 SEAT_CREDIT_CTRL="$(mutant_scripts mutant-context-seat-credit lib/lane-model.sh)" || exit 1
 mutate_file "$SEAT_CREDIT_CTRL/lib/lane-model.sh" '($wall | wall_verdict($max)) as $ordinary' \
   '(if ._seat == 1 then [$max, 100 - $reserve] | min else $max end) as $credit_limit | ($wall | wall_verdict($credit_limit)) as $ordinary'
-lanes_table "$(CTX_LANES="$SEAT_CREDIT_CTRL/lanes" ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
+lanes_table "$(CTX_LANES="$SEAT_CREDIT_CTRL/lanes" ORCH_OVERSEER_HEADROOM_PCT=50 ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
   "control: a lowered credit threshold hides the seat reserve from context|ken-102|binding_bucket=credits headroom_pct=40 handoff_required=false"
 "$SCRIPTS_DIR/workflow-state" --state-dir "$FLEET" set oversee overseer '{}' >/dev/null
 printf '%s\n' "$CODEX_PLAN" > "$FIXTURE_DIR/.codex.json"
 ORCH_LANES_USAGE_TTL=0 run_ctx --json >/dev/null
 
-echo "=== a lane on the overseer seat hands off at its reserve ==="
+echo "=== a lane on the overseer seat hands off at the room the seat keeps ==="
+# The room a seat keeps is the runtime judge's rule, max(100 - the bound,
+# ORCH_OVERSEER_HEADROOM_PCT): the headroom here is 50, so a seat lane at 50
+# percent room is marked.
 CLAUDE_PLAN="$(cat "$FIXTURE_DIR/.claude.json")"
 claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 "$SCRIPTS_DIR/workflow-state" --state-dir "$FLEET" set oversee overseer "$(jq -nc --arg a "$H/claude-link" '{account:$a}')" >/dev/null
-lanes_table "$(ORCH_LANES_USAGE_TTL=0 CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=overseer run_ctx --json)" \
-  "a seat lane at the reserve is marked|ken-104|headroom_pct=50 handoff_required=true" \
+lanes_table "$(ORCH_OVERSEER_HEADROOM_PCT=50 ORCH_LANES_USAGE_TTL=0 CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=overseer run_ctx --json)" \
+  "a seat lane at the room the seat keeps is marked|ken-104|headroom_pct=50 handoff_required=true" \
   "the caller on the same account keeps the ordinary mark|overseer|caller=true headroom_pct=50 handoff_required=false"
-lanes_table "$(ORCH_OVERSEER_SEAT_RESERVE_PCT=100 ORCH_LANES_USAGE_TTL=0 CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=overseer run_ctx --json)" \
+lanes_table "$(ORCH_OVERSEER_HEADROOM_PCT=100 ORCH_LANES_USAGE_TTL=0 CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=overseer run_ctx --json)" \
   "a full reserve marks the window lane|ken-104|headroom_pct=50 handoff_required=true" \
   "the full reserve keeps the caller judgment exempt|overseer|caller=true headroom_pct=50 handoff_required=false"
 SEAT_CTRL="$(mutant_scripts mutant-context-seat lib/lane-model.sh)" || exit 1
 # shellcheck disable=SC2016
 mutate_file "$SEAT_CTRL/lib/lane-model.sh" '[$max, 100 - $reserve] | min' '$max'
-lanes_table "$(CTX_LANES="$SEAT_CTRL/lanes" ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
+lanes_table "$(CTX_LANES="$SEAT_CTRL/lanes" ORCH_OVERSEER_HEADROOM_PCT=50 ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
   "control: without the reserve the seat lane is not marked|ken-104|headroom_pct=50 handoff_required=false"
 CALLER_SEAT_CTRL="$(mutant_scripts mutant-context-caller-seat lanes)" || exit 1
 # shellcheck disable=SC2016
 mutate_file "$CALLER_SEAT_CTRL/lanes" \
   '[[ "$role" != overseer && "$role" != context-overseer && "$caller" != true ]] || for_overseer=true' \
   '[[ "$role" != overseer && "$role" != context-overseer && "$caller" != true ]] || for_overseer=false'
-lanes_table "$(CTX_LANES="$CALLER_SEAT_CTRL/lanes" ORCH_LANES_USAGE_TTL=0 CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=overseer run_ctx --json)" \
+lanes_table "$(CTX_LANES="$CALLER_SEAT_CTRL/lanes" ORCH_OVERSEER_HEADROOM_PCT=50 ORCH_LANES_USAGE_TTL=0 CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=overseer run_ctx --json)" \
   "control: without the caller exemption its row is marked|overseer|caller=true handoff_required=true"
 "$SCRIPTS_DIR/workflow-state" --state-dir "$FLEET" set oversee overseer '{}' >/dev/null
 printf 'account=%s\tharness=claude\tseat=1\n' "$H/.claude" > "$TMP_ROOT/provider-seats"
 : > "$TMP_ROOT/provider.log"
-lanes_table "$(ORCH_LANES_USAGE_TTL=0 CTX_AMBIENT_HOST="$TEST_DIR/fixtures/lane-host" CTX_PROVIDER_ACCOUNTS="$TMP_ROOT/provider-seats" run_ctx --json)" \
-  "provider-only seat marks its running lane at reserve|ken-104|headroom_pct=50 handoff_required=true"
+lanes_table "$(ORCH_OVERSEER_HEADROOM_PCT=50 ORCH_LANES_USAGE_TTL=0 CTX_AMBIENT_HOST="$TEST_DIR/fixtures/lane-host" CTX_PROVIDER_ACCOUNTS="$TMP_ROOT/provider-seats" run_ctx --json)" \
+  "provider-only seat marks its running lane at the room it keeps|ken-104|headroom_pct=50 handoff_required=true"
 assert_eq "$(awk '$1 == "accounts" { n++ } END { print n+0 }' "$TMP_ROOT/provider.log")" 1 'context reads provider seats in one accounts call'
 PROVIDER_SEAT_CTRL="$(mutant_scripts mutant-context-provider-seat lanes)" || exit 1
 # shellcheck disable=SC2016
 mutate_file "$PROVIDER_SEAT_CTRL/lanes" 'host_account_rows "$HOST_ACCOUNTS_ROWS" all seats' 'host_account_rows "" all seats'
-lanes_table "$(ORCH_LANES_USAGE_TTL=0 CTX_AMBIENT_HOST="$TEST_DIR/fixtures/lane-host" CTX_PROVIDER_ACCOUNTS="$TMP_ROOT/provider-seats" CTX_LANES="$PROVIDER_SEAT_CTRL/lanes" run_ctx --json)" \
+lanes_table "$(ORCH_OVERSEER_HEADROOM_PCT=50 ORCH_LANES_USAGE_TTL=0 CTX_AMBIENT_HOST="$TEST_DIR/fixtures/lane-host" CTX_PROVIDER_ACCOUNTS="$TMP_ROOT/provider-seats" CTX_LANES="$PROVIDER_SEAT_CTRL/lanes" run_ctx --json)" \
   "control: dropping provider seats leaves its running lane unmarked|ken-104|headroom_pct=50 handoff_required=false"
+# The seat keeps ORCH_OVERSEER_HEADROOM_PCT beside this arm's own bound,
+# 100 - ORCH_HANDOFF_HEADROOM_PCT, never ORCH_LANE_MAX_PCT, the pick's bound
+# (R-U8-2 M2): under a lowered lane bound a seat lane at 15 percent room is not
+# marked, as the hook's runtime read admits it; a reserve taken from the lane
+# bound would mark it every sweep while the hook passes its turn ends.
+claude_usage 85 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+"$SCRIPTS_DIR/workflow-state" --state-dir "$FLEET" set oversee overseer "$(jq -nc --arg a "$H/claude-link" '{account:$a}')" >/dev/null
+lanes_table "$(ORCH_LANE_MAX_PCT=80 ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
+  "under a lowered lane bound a seat lane keeps the overseer's headroom alone|ken-104|headroom_pct=15 handoff_required=false"
+BOUND_SEAT_CTRL="$(mutant_scripts mutant-context-bound-seat lanes)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$BOUND_SEAT_CTRL/lanes" 'SEAT_RESERVE=$((10#$OVERSEER_HEADROOM))' \
+  'SEAT_RESERVE=$((100 - MAX_PCT)); (( SEAT_RESERVE >= 10#$OVERSEER_HEADROOM )) || SEAT_RESERVE=$((10#$OVERSEER_HEADROOM))'
+lanes_table "$(CTX_LANES="$BOUND_SEAT_CTRL/lanes" ORCH_LANE_MAX_PCT=80 ORCH_LANES_USAGE_TTL=0 run_ctx --json)" \
+  "control: the reserve taken from the lane bound marks the seat lane|ken-104|headroom_pct=15 handoff_required=true"
+"$SCRIPTS_DIR/workflow-state" --state-dir "$FLEET" set oversee overseer '{}' >/dev/null
 printf '%s\n' "$CLAUDE_PLAN" > "$FIXTURE_DIR/.claude.json"
 ORCH_LANES_USAGE_TTL=0 run_ctx --json >/dev/null
 

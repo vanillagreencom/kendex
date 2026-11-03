@@ -78,12 +78,24 @@ EOF
 # line on stderr with a refused reply and exits 1. `state inspect --fleet`
 # answers with the open intents in RECORD_DIR/runtime.open-intents (`[]`
 # when absent), or exits with the status RECORD_DIR/runtime.inspect-rc
-# holds, printing one keyed line.
+# holds, printing one keyed line. `accounts pick`, the account judge the
+# succession walk and the mark judge ask (U8d), answers the reply planted
+# at RECORD_DIR/runtime.pick-lane for a named pick (`--lane`) and at
+# RECORD_DIR/runtime.pick for the chooser where a row plants one (a reply
+# the verb printed on a fixture, never one written by hand: the record's
+# spelling is what the caller's reading is proven on), else the legacy
+# judge beside the stub (DIR/lanes, else the shipped `lanes`) asked the
+# same question through its `pick`, its answer wrapped as the verb's reply,
+# the exit by number and the record, as the launch suites' stub wraps it
+# (lib/open-terminal-stubs.sh); `--fleet` and `--replaces` are the verb's
+# words alone and are dropped.
 fixture_runtime_stub() { # DIR [RECORD_DIR]
-  local dir="$1" record="${2:-}"
+  local dir="$1" record="${2:-}" lanes
   [[ "$dir" == "$TMP_ROOT/"* ]] || { echo 'runtime-stub: dir=not-private' >&2; return 1; }
   [[ ! -L "$dir/orch-runtime" ]] || rm -- "${dir:?}/orch-runtime"
   fixture_runtime_start_perform "$dir" || return 1
+  lanes="$dir/lanes"
+  [[ -e "$lanes" ]] || lanes="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts" && pwd)/lanes"
   cat > "$dir/orch-runtime" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -92,6 +104,24 @@ record='$record'
 mkdir -p -- "\$record"
 printf '%s\\n' "\$*" >> "\$record/runtime.args"
 case "\${1:-} \${2:-}" in
+  "accounts pick")
+    planted="\$record/runtime.pick"
+    case " \$* " in *" --lane "*) planted="\$record/runtime.pick-lane" ;; esac
+    if [[ -f "\$planted" ]]; then cat -- "\$planted"; exit 0; fi
+    args=() skip=""
+    for arg in "\$@"; do
+      if [[ -n "\$skip" ]]; then skip=""; continue; fi
+      case "\$arg" in
+        --replaces) skip="\$arg" ;;
+        accounts | pick | --fleet) ;;
+        *) args+=("\$arg") ;;
+      esac
+    done
+    rc=0
+    out="\$('$lanes' pick \${args[@]+"\${args[@]}"} --json)" || rc=\$?
+    jq -cn --argjson rc "\$rc" --arg out "\$out" '{protocol: "orch-runtime-v1", ok: true, result: {
+      answer: ({"0": "lane", "3": "walled", "4": "no-record", "5": "unmeasured", "7": "cloud-repo-unset"}[\$rc | tostring] // "unjudged"),
+      exit: \$rc, record: (try (\$out | fromjson) catch null)}}' ;;
   "op --fleet")
     [[ "\${3:-}" == --request && -n "\${4:-}" ]] || { echo 'orch-runtime: usage' >&2; exit 2; }
     # A first launch's start is performed, never recorded: runtime.request is

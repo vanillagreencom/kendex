@@ -1,0 +1,271 @@
+{
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/check-runs?filter=all&per_page=100&page=1": {
+    "body": {
+      "total_count": 3,
+      "check_runs": [
+        {
+          "id": 88057237002,
+          "node_id": "CR_88057237002",
+          "name": "Changes",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 29639837074
+          },
+          "started_at": "2026-07-18T06:55:24Z",
+          "completed_at": "2026-07-18T06:55:24Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237002",
+          "details_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237002"
+        },
+        {
+          "id": 88057237008,
+          "node_id": "CR_88057237008",
+          "name": "Lint",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 29639837074
+          },
+          "started_at": "2026-07-18T06:55:25Z",
+          "completed_at": "2026-07-18T06:55:25Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237008",
+          "details_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237008"
+        },
+        {
+          "id": 88057237015,
+          "node_id": "CR_88057237015",
+          "name": "CI Gate Publisher",
+          "status": "completed",
+          "conclusion": "failure",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 29639837074
+          },
+          "started_at": "2026-07-18T06:55:27Z",
+          "completed_at": "2026-07-18T06:55:27Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237015",
+          "details_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237015"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/check-suites?per_page=100&page=1": {
+    "body": {
+      "total_count": 1,
+      "check_suites": [
+        {
+          "id": 29639837074
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/commits/737bce791577e140436490e0fed5751bb5144a61/status?per_page=100&page=1": {
+    "body": {
+      "state": "pending",
+      "total_count": 1,
+      "statuses": [
+        {
+          "context": "CI Required",
+          "state": "failure",
+          "description": null,
+          "target_url": "https://github.com/owner/repo/actions/runs/29634837074"
+        }
+      ],
+      "sha": "737bce791577e140436490e0fed5751bb5144a61"
+    }
+  },
+  "repos/owner/repo/actions/runs?head_sha=737bce791577e140436490e0fed5751bb5144a61&per_page=100&page=1": {
+    "body": {
+      "total_count": 1,
+      "workflow_runs": [
+        {
+          "id": 29634837074,
+          "name": "wf-245303662",
+          "path": ".github/workflows/wf-245303662.yml",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "event": "pull_request_review",
+          "workflow_id": 245303662,
+          "updated_at": "2026-07-18T06:55:23Z",
+          "repository": {
+            "id": 1296269,
+            "full_name": "owner/repo"
+          },
+          "check_suite_id": 29639837074,
+          "check_suite_node_id": "CS_29639837074"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/actions/workflows?per_page=100&page=1": {
+    "body": {
+      "total_count": 1,
+      "workflows": [
+        {
+          "id": 245303662,
+          "node_id": "W_245303662",
+          "name": "wf-245303662",
+          "path": ".github/workflows/wf-245303662.yml",
+          "state": "active"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo/rules/branches/main?per_page=100&page=1": {
+    "body": []
+  },
+  "repos/owner/repo/branches/main": {
+    "body": {
+      "name": "main",
+      "protected": false,
+      "protection": {
+        "enabled": false,
+        "required_status_checks": {
+          "contexts": [],
+          "checks": []
+        }
+      }
+    }
+  },
+  "graphql": {
+    "body": {
+      "nodes": {
+        "CS_29639837074": {
+          "id": "CS_29639837074",
+          "databaseId": 29639837074,
+          "workflowRun": {
+            "databaseId": 29634837074,
+            "runAttempt": 1,
+            "file": {
+              "path": ".github/workflows/wf-245303662.yml",
+              "repositoryName": "owner/repo",
+              "repositoryFileUrl": "https://github.com/owner/repo/blob/737bce791577e140436490e0fed5751bb5144a61/.github/workflows/wf-245303662.yml",
+              "viewerCanReadRepository": true
+            }
+          }
+        },
+        "CR_88057237002": {
+          "id": "CR_88057237002",
+          "checkSuite": {
+            "databaseId": 29639837074,
+            "workflowRun": {
+              "databaseId": 29634837074,
+              "event": "pull_request_review",
+              "workflow": {
+                "name": "wf-245303662"
+              }
+            }
+          }
+        },
+        "CR_88057237008": {
+          "id": "CR_88057237008",
+          "checkSuite": {
+            "databaseId": 29639837074,
+            "workflowRun": {
+              "databaseId": 29634837074,
+              "event": "pull_request_review",
+              "workflow": {
+                "name": "wf-245303662"
+              }
+            }
+          }
+        },
+        "CR_88057237015": {
+          "id": "CR_88057237015",
+          "checkSuite": {
+            "databaseId": 29639837074,
+            "workflowRun": {
+              "databaseId": 29634837074,
+              "event": "pull_request_review",
+              "workflow": {
+                "name": "wf-245303662"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "repos/owner/repo/actions/workflows/245303662": {
+    "body": {
+      "id": 245303662,
+      "node_id": "W_245303662",
+      "name": "wf-245303662",
+      "path": ".github/workflows/wf-245303662.yml",
+      "state": "active"
+    }
+  },
+  "repos/owner/repo/check-suites/29639837074/check-runs?per_page=100&page=1": {
+    "body": {
+      "total_count": 3,
+      "check_runs": [
+        {
+          "id": 88057237002,
+          "node_id": "CR_88057237002",
+          "name": "Changes",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 29639837074
+          },
+          "started_at": "2026-07-18T06:55:24Z",
+          "completed_at": "2026-07-18T06:55:24Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237002",
+          "details_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237002"
+        },
+        {
+          "id": 88057237008,
+          "node_id": "CR_88057237008",
+          "name": "Lint",
+          "status": "completed",
+          "conclusion": "cancelled",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 29639837074
+          },
+          "started_at": "2026-07-18T06:55:25Z",
+          "completed_at": "2026-07-18T06:55:25Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237008",
+          "details_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237008"
+        },
+        {
+          "id": 88057237015,
+          "node_id": "CR_88057237015",
+          "name": "CI Gate Publisher",
+          "status": "completed",
+          "conclusion": "failure",
+          "head_sha": "737bce791577e140436490e0fed5751bb5144a61",
+          "check_suite": {
+            "id": 29639837074
+          },
+          "started_at": "2026-07-18T06:55:27Z",
+          "completed_at": "2026-07-18T06:55:27Z",
+          "html_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237015",
+          "details_url": "https://github.com/owner/repo/actions/runs/29634837074/job/88057237015"
+        }
+      ]
+    }
+  },
+  "repos/owner/repo": {
+    "body": {
+      "id": 1296269,
+      "full_name": "owner/repo"
+    }
+  },
+  "repos/owner/source": {
+    "body": {
+      "id": 7,
+      "full_name": "owner/source"
+    }
+  },
+  "repos/owner/fork": {
+    "body": {
+      "id": 9,
+      "full_name": "owner/fork"
+    }
+  }
+}

@@ -607,7 +607,7 @@ impl Operation<'_> {
             Ok(None) => return Ok(Reading::Gone),
             Err(e) => return Ok(Reading::Unreadable { cause: e.key() }),
         };
-        let identity = match claim::read_live(paths, &claimed) {
+        let identity = match claim::read_live(&claimed) {
             Reading::Live(identity) => identity,
             Reading::Gone => return Ok(Reading::Gone),
             Reading::Unreadable { cause } => return Ok(Reading::Unreadable { cause }),

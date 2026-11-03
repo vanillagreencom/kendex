@@ -968,7 +968,7 @@ fn checked_slug(text: &str) -> Option<String> {
 /// hostname sits, after an optional scheme and userinfo holding no `/`,
 /// then the two segments less a trailing `.git`; a URL mentioning
 /// github.com on another host names none.
-fn origin_slug(url: &str) -> Option<String> {
+pub(crate) fn origin_slug(url: &str) -> Option<String> {
     let mut rest = url.trim();
     if let Some((scheme, after)) = rest.split_once("://") {
         let mut chars = scheme.chars();

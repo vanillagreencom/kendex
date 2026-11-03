@@ -709,8 +709,8 @@ hook_suite alpha ': ../alpha.sh'
 hook_suite alpha-copilot ':'
 hook_suite via-world '. "$(dirname "$0")/lib/world.sh"'
 hook_suite beta 'cat "$(dirname "$0")/../README.md"; : ../beta.sh'
-# Shipped directory reads: workflow_helpers.sh's quoted find operands,
-# workflow-state-init-guard-lint's W assignment and iced-rs's SOURCES array.
+# Shipped directory reads: a suite's quoted find operands, an assigned
+# directory variable and iced-rs's SOURCES array.
 # second-opinion reads each assigned schema_file through sed. Keep these
 # apart from the other mapping rows so a reader case changes no older set.
 D="$R/skills/doc-readers"

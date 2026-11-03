@@ -24,9 +24,9 @@
 #   ol_entry_model         one entry's harness, model, class and effort, a
 #                          class resolved to its model
 #   ol_lanes               `lanes` through the overseer's account reader
-#   ol_pick_record         one `lanes pick --json` record, for a caller's
+#   ol_pick_record         one record of the runtime's account judge, for a caller's
 #                          own counts
-#   ol_pick_lane           one `lanes pick` for one entry, with the counts a
+#   ol_pick_lane           one pick for one entry, with the counts a
 #                          refusal reports
 #   ol_account_id          an account directory as its comparable identity
 #   ol_walk                the account walk: the entries in order, the first
@@ -302,11 +302,11 @@ ol_model_line() { # WARNING
 }
 
 # ol_account HARNESS MODEL — the account a session of HARNESS on MODEL spends,
-# as `lanes` measures it: OL_ACCOUNT_HARNESS the harness `lanes pick` judges it
-# under, OL_ACCOUNT_MODEL the model it judges it on. lib/lane-launch.sh §
+# as `lanes` measures it: OL_ACCOUNT_HARNESS the harness the account judge
+# judges it under, OL_ACCOUNT_MODEL the model it judges it on. lib/lane-launch.sh §
 # lane_pick_harness alone maps a provider to its account: claude, codex and
 # copilot spend their own accounts, a pi session on a `github-copilot/` model
-# spends the Copilot pool `lanes pick --harness pi` reads, and one on a
+# spends the Copilot pool a `pi` pick reads, and one on a
 # `pi-claude/` model spends a claude account. This function only normalizes
 # that answer for a pi session: a claude account is judged on the claude model
 # after `pi-claude/` (pi-extensions/pi-claude-bridge), and `unmeasured` splits
@@ -429,39 +429,71 @@ ol_class_unread() { # ENTRY
   printf '%s\n' "$OL_CLASS_ERR" >"$DEP_ERR"
 }
 
-# SSH providers can measure Claude tokens without a local credentials file.
-# Their plan pool also applies to the local overseer. Cloud-session policy
-# instead governs remote launches, so it cannot judge this local seat.
+# ol_lane_host ACCOUNT_HARNESS — the host an account of ACCOUNT_HARNESS is
+# read under, into OL_LANE_HOST. SSH providers can measure Claude tokens
+# without a local credentials file. Their plan pool also applies to the
+# local overseer. Cloud-session policy instead governs remote launches, so
+# it cannot judge this local seat.
+OL_LANE_HOST=local
+ol_lane_host() { # ACCOUNT_HARNESS
+  local launch pool
+  OL_LANE_HOST=local
+  [[ "$1" == claude ]] || return 0
+  # shellcheck source=lane-capabilities.sh
+  source "$SCRIPT_DIR/lib/lane-capabilities.sh" || return 1
+  lane_capabilities_read "$SCRIPT_DIR/lane-host" "${ORCH_LANE_HOST:-local}" || return 1
+  lane_capability launch launch
+  lane_capability pool pool
+  [[ "$launch:$pool" != ssh:plan ]] || OL_LANE_HOST="${ORCH_LANE_HOST:-local}"
+}
+
 ol_lanes() { # ACCOUNT_HARNESS ARGS...
-  local harness="$1" host=local launch pool rc=0
+  local harness="$1" rc=0
   shift
-  if [[ "$harness" == claude ]]; then
-    # shellcheck source=lane-capabilities.sh
-    source "$SCRIPT_DIR/lib/lane-capabilities.sh" || return 1
-    lane_capabilities_read "$SCRIPT_DIR/lane-host" "${ORCH_LANE_HOST:-local}" || return 1
-    lane_capability launch launch
-    lane_capability pool pool
-    [[ "$launch:$pool" != ssh:plan ]] || host="${ORCH_LANE_HOST:-local}"
-  fi
+  ol_lane_host "$harness" || return 1
   # The child owns descriptor 3 for this invocation. Provider notices go to
   # the caller before record parsing can replace DEP_ERR; ordinary refusal
   # details stay there for the caller's keyed refusal.
-  ORCH_LANE_HOST="$host" "$SCRIPT_DIR/lanes" "$@" --provider-notices-fd3 3>&2 2>"$DEP_ERR" || rc=$?
+  ORCH_LANE_HOST="$OL_LANE_HOST" "$SCRIPT_DIR/lanes" "$@" --provider-notices-fd3 3>&2 2>"$DEP_ERR" || rc=$?
   if [[ "$rc" -eq 0 ]]; then
     [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2; : > "$DEP_ERR"
   fi
   return "$rc"
 }
 
-# ol_pick_record HARNESS MODEL TRIGGER [EXCLUDE_DIR] [LANE]: the one `lanes pick
-# --json` over HARNESS at TRIGGER, its record into OL_PICK_RECORD on every
-# exit, since exit 3 prints its counts too, and `lanes pick`'s own status
-# returned. The pick ol_pick_lane makes and every count a caller holds a
-# launch to ask this one question, so no two of them judge an account two
-# ways. HARNESS and MODEL are the launch's, and `lanes` is asked about the
-# account they spend (ol_account); a launch
-# spending none `lanes` measures, or one nothing can name, returns 4 with no
-# record and asks nothing.
+# ol_runtime_pick ACCOUNT_HARNESS ARGS... — the one account judge, the
+# runtime's `accounts pick --fleet` over ARGS (the verb's own words:
+# --harness, --lane, --min-headroom-pct, --binding-floor, --exclude-lane,
+# --native-model, --for-overseer), under the host ol_lane_host names for
+# ACCOUNT_HARNESS; the runtime named by ORCH_RUNTIME_CLI, else the wrapper
+# beside this library's scripts, its reader the `lanes` beside them, the one
+# this library's own reads run. The reply's record is printed as the judge
+# records it, and the answer's exit returned by number (decision 188 (b)):
+# 0 a lane, 3 none or walled, 4 no record, 5 unmeasured, 7 no repository
+# access, 1 unjudged. A runtime the install has not built answers 69,
+# `setup-required`, and any other failure its own status, the runtime's
+# line left in DEP_ERR for the caller's keyed refusal.
+ol_runtime_pick() { # ACCOUNT_HARNESS ARGS...
+  local harness="$1" rc=0 reply exit
+  shift
+  ol_lane_host "$harness" || return 1
+  reply="$(ORCH_LANE_HOST="$OL_LANE_HOST" OVERSEE_WATCH_LANES="$SCRIPT_DIR/lanes" \
+    "${ORCH_RUNTIME_CLI:-$SCRIPT_DIR/orch-runtime}" accounts pick --fleet "$@" 2>"$DEP_ERR")" || rc=$?
+  (( rc == 0 )) || return "$rc"
+  exit="$(jq -r 'if .ok == true and (.result.exit | type) == "number" then .result.exit else error("no judgement in the reply") end' <<<"$reply" 2>"$DEP_ERR")" || return 1
+  jq -c '.result.record // empty' <<<"$reply" 2>"$DEP_ERR" || return 1
+  return "$exit"
+}
+
+# ol_pick_record HARNESS MODEL TRIGGER [EXCLUDE_DIR] [LANE]: the one pick
+# (ol_runtime_pick) over HARNESS at TRIGGER, its record into OL_PICK_RECORD
+# on every exit, since a `none` answer carries its counts too, and the
+# judge's own status returned. The pick ol_pick_lane makes and every count
+# a caller holds a launch to ask this one question, so no two of them judge
+# an account two ways. HARNESS and MODEL are the launch's, and the judge is
+# asked about the account they spend (ol_account); a launch spending none
+# the judge measures, or one nothing can name, returns 4 with no record and
+# asks nothing.
 # It passes --for-overseer for a fleet sweep, so recorded overseer accounts
 # stay candidates. LANE asks the same judge about one account instead.
 OL_PICK_RECORD=""
@@ -474,13 +506,13 @@ ol_pick_record() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR] [LANE]
   [[ -n "$(lane_context_mark_model "$harness" "$model")" ]] || floor=(--binding-floor)
   [[ -z "${4:-}" ]] || exclude=(--exclude-lane "$4")
   [[ -z "${5:-}" ]] || scope=(--lane "$5")
-  OL_PICK_RECORD="$(ol_lanes "$harness" pick --harness "$harness" --min-headroom-pct "$3" "${scope[@]}" \
-    ${floor[@]+"${floor[@]}"} ${exclude[@]+"${exclude[@]}"} ${model:+--native-model "$model"} --json)" || rc=$?
+  OL_PICK_RECORD="$(ol_runtime_pick "$harness" --harness "$harness" --min-headroom-pct "$3" "${scope[@]}" \
+    ${floor[@]+"${floor[@]}"} ${exclude[@]+"${exclude[@]}"} ${model:+--native-model "$model"})" || rc=$?
   return "$rc"
 }
 
-# ol_pick_lane HARNESS MODEL TRIGGER [EXCLUDE_DIR] — the config dir `lanes
-# pick` names for HARNESS, into OL_PICKED_DIR. MODEL is the one the launched
+# ol_pick_lane HARNESS MODEL TRIGGER [EXCLUDE_DIR] — the config dir the
+# judge names for HARNESS, into OL_PICKED_DIR. MODEL is the one the launched
 # session will run, empty where nothing names one: the bound is judged on the
 # bucket that walls THAT model. The pick is held to the reading the SESSION
 # will take of itself at its own account mark, so it is never opened onto an
@@ -488,7 +520,7 @@ ol_pick_record() { # HARNESS MODEL TRIGGER [EXCLUDE_DIR] [LANE]
 # reading, a claude line naming its model and a codex line none, and the pick
 # adds `--binding-floor` where the line names none.
 #
-# Returns `lanes pick`'s own status: 0 with a lane, 3 where none of that
+# Returns the judge's own status: 0 with a lane, 3 where none of that
 # harness clears TRIGGER, which a caller skips the entry on, and anything
 # else as the judge failing. On 3 the `walled` and `unmeasured` counts join
 # OL_WALKED_WALLED and OL_WALKED_UNMEASURED for the refusal a caller prints
@@ -684,6 +716,10 @@ ol_walk() { # TRIGGER EXCLUDE_DIR ENTRY...
         esac
         OL_PICKED_DIR="$OL_WALK_CALLER_LANE" kept=1
         ;;
+      # The runtime the install has not built answers the wrapper's
+      # `setup-required` (exit 69) to the pick as it would to the start:
+      # one refusal, the start's own key, the wrapper's line under it.
+      69) OL_REASON=start-refused OL_FIELDS=(key=setup-required exit=69); return 1 ;;
       *) OL_REASON=lanes-failed OL_FIELDS=("entry=$entry" "exit=$rc"); return 1 ;;
     esac
     if [[ -n "$OL_WALK_REFUSE_ID" && "$(ol_account_id "$OL_PICKED_DIR")" == "$OL_WALK_REFUSE_ID" ]]; then

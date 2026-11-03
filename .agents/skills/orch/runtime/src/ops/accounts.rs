@@ -1,41 +1,59 @@
-//! The accounts judge (step6-map § A10; decisions 75, 97, 99, 105, 141 (5),
-//! 182 Q12, Q13, 183 Q10, Q11; round 8 items 5-7): one view of each
-//! account the legacy reader lists, [`AccountRow`], read per call and
-//! stored nowhere, and the two reads over it, [`roster`] for the heartbeat
-//! and [`pick`] for every launch that asks which account to spend.
+//! The accounts judge: one view of each account the reader lists,
+//! [`AccountRow`], read per call and stored nowhere, and the two reads over
+//! it, [`roster`] for the heartbeat and [`pick`] for every pick, handoff
+//! mark and overseer mark: the launcher's, the succession walk's, the
+//! turn-end hook's, the mark judge's and the close's. One judge and one
+//! limit ([`judge`]) answer them all; no shell judges an account.
 //!
-//! The measurement stays `lanes`' (decision 130): its usage endpoints,
+//! The measurement stays `lanes`': its usage endpoints,
 //! token renewals and caches answer `lanes list --json`, read through the
-//! one runner. What this module owns is the judgement over those rows: the
-//! status words, the window a lane on a model is judged on, the projection
-//! of the lanes already on an account, and the choice.
+//! one runner, under a provider where the pick names one. What this module
+//! owns is the judgement over those rows: the status words, the window a
+//! lane on a model is judged on, the projection of the lanes already on an
+//! account with the candidate among them, the seats, the grant tier and
+//! the choice.
 //!
-//! The status words (round 8 item 7), one per account: `pick`; `reserve`,
+//! The status words, one per account: `pick`; `reserve`,
 //! never picked and still measured, the provider's `reserved=1`; `retired
 //! <date>`, picked until that UTC day and measured after it, from the
-//! machine's own `ORCH_LANE_RETIRE` (decision 183 Q11) or the provider's
-//! `plan-ends`. The legacy reader is run with `ORCH_LANE_RETIRE` emptied,
+//! machine's own `ORCH_LANE_RETIRE` or the provider's `plan-ends`. The
+//! reader is run with `ORCH_LANE_RETIRE` emptied,
 //! so a retired account's credential is still read: a stated end that a
 //! live reading contradicts (a credential that answers after its end) is a
-//! reported line (round 8 item 6), never a silent absence. `ORCH_LANE_
-//! EXCLUDE` stays the reader's own rule: an excluded directory is never
-//! read, so no row of it reaches this judge.
+//! reported line, never a silent absence. The listing applies
+//! `ORCH_LANE_EXCLUDE` itself: an excluded local account is never read,
+//! so no row of it reaches this judge. The provider's Pi rows, read with
+//! the exclusion emptied ([`lanes`]), and a stated Pi root, which no
+//! reader lists, do reach it: the judge matches the exclusion and the
+//! retirement onto them as the reader does, through the effective alias
+//! ([`effective_alias`]), and refuses them by name.
 //!
-//! A listing that could not be read whole admits nothing (decision 99): no
+//! A listing that could not be read whole admits nothing: no
 //! pick, and a roster line saying `unread`. A provider's `plan-ends` that
 //! names no calendar day is an end nobody can read: the row keeps its
 //! figures, is never picked, and is one `account-plan-end-invalid` line
 //! under the roster. The projection charges each account the lanes of
 //! this fleet the runtime proves live on it, through the occupancy
-//! reader's identities (decision 97: no legacy claim count); a relaunch
-//! names the lane it replaces, whose charge is left out, so a replacement
-//! adds no lane (step6-map § A5).
+//! reader's identities, never a claim count, and the
+//! candidate lane beside them; a relaunch names the lane it replaces, whose
+//! charge is left out, so a replacement adds no lane.
 //!
-//! A pick the legacy reader still judges (a provider's fleet, an API
-//! grant) is handed the words first: the roster is read with the host, a
-//! named account the word refuses is answered here, and every other such
-//! account is handed to `lanes pick` as an exclusion, since that reader
-//! judges none of the provider's words (decision 188 (b)).
+//! A pick under a provider reads the provider's rows, its seats (`seat=1`)
+//! and its words (`reserved`, `plan-ends`) from the roster read with the
+//! host. The listing carries this machine's reading of an account and the
+//! provider's beside it; a pick judges one reading per billed account,
+//! the provider's eligible one over the discovered local copy
+//! ([`resolve`]), while the roster keeps both. A pick on a grant pool, the
+//! cloud credit of a `cloud-credit` host or a Pi `anthropic/` model's API
+//! credit, is judged on the grant alone (`lanes --help` § pick, tier 0:
+//! the allowance that expires first is spent first), and a
+//! `cloud-session` host admits an account only where
+//! `ORCH_LANE_CLOUD_REPOS` gives it this checkout's repository. A Pi
+//! launch on a `github-copilot/` model spends a Copilot pool the listing
+//! never lists: the judge reads it beside the listing, from the
+//! provider's `harness=pi` rows (`lanes host-accounts --harness pi`) and
+//! from the owner's stated `ORCH_LANE_COPILOT_POOL` for a root no provider
+//! row reads ([`pool_rows`]).
 
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -51,9 +69,8 @@ use super::occupancy::{self, ChargeSource, Host};
 use super::wall;
 use crate::settings::{AccountSettings, Settings};
 use crate::state::{FleetState, Record};
+use crate::watch::hosted::{self, Launch};
 
-/// The bound on one `lanes` call, the legacy `READ_CEILING`
-/// (`oversee-watch:275`).
 const BOUND: Duration = Duration::from_secs(60);
 
 /// The start-counter tag every read of this judge is counted under.
@@ -174,6 +191,9 @@ pub struct AccountRow {
     pub usage_rate_pct_per_min: Option<f64>,
     pub usage_age_s: Option<f64>,
     pub credits: Option<Value>,
+    /// The pool the row spends (`with_lane_tier`'s `pool`): `plan` where the
+    /// reader named none, `api-credit` or `cloud-credit` for a grant.
+    pub pool: String,
     pub plan_ends: PlanEnd,
     pub reserved: bool,
     pub seat: bool,
@@ -222,15 +242,25 @@ fn flag(record: &Value, key: &str) -> bool {
     }
 }
 
-/// `lane_named` and the alias match (`lanes`' `lane_matches`): a stated
-/// name is the account's alias, its directory name, or that name without
-/// its leading dot.
-fn names(alias: &str, config_dir: &str, name: &str) -> bool {
-    let base = Path::new(config_dir)
+/// The directory's own name (`lane_base`).
+fn base(config_dir: &str) -> String {
+    Path::new(config_dir)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    name == alias || name == base || Some(name) == base.strip_prefix('.')
+        .unwrap_or_default()
+}
+
+/// `lanes`' `lane_named`: a setting key names the directory by its name,
+/// with or without the leading dot.
+fn lane_named(config_dir: &str, name: &str) -> bool {
+    let base = base(config_dir);
+    name == base || Some(name) == base.strip_prefix('.')
+}
+
+/// `lanes`' `lane_matches`: a stated name is the account's alias or names
+/// its directory.
+fn names(alias: &str, config_dir: &str, name: &str) -> bool {
+    name == alias || lane_named(config_dir, name)
 }
 
 impl AccountRow {
@@ -288,6 +318,7 @@ impl AccountRow {
             .flatten(),
             usage_age_s: number(raw, "usage_age_s"),
             credits: raw.get("credits").filter(|c| c.is_object()).cloned(),
+            pool: string(raw, "pool").unwrap_or_else(|| "plan".to_owned()),
             plan_ends: match string(raw, "plan_ends").or_else(|| string(raw, "plan-ends")) {
                 None => PlanEnd::None,
                 Some(day) if crate::settings::calendar_date_valid(&day) => PlanEnd::Day(day),
@@ -340,7 +371,7 @@ impl AccountRow {
         matches!(self.word(), Word::Retired { date, .. } if date.as_str() <= today)
     }
 
-    /// The word's own verdict on a pick today (round 8 item 7): the one
+    /// The word's own verdict on a pick today: the one
     /// rule the judge, a named pick's answer and the delegated pick's
     /// exclusions read.
     pub fn standing(&self, today: &str) -> Standing {
@@ -372,8 +403,24 @@ impl AccountRow {
         self.status == "ok" || self.status == "rate_limited"
     }
 
-    /// The field text both the roster line and the `account` event print
-    /// (`account_roster_read`'s third column, `oversee-watch:5157`).
+    /// The label of the window the reader rated, its binding bucket's: where
+    /// that bucket is `model`, the label of the last of its model windows
+    /// at the greatest rounded percentage (`lane-model.sh`'s
+    /// `binding_bucket`: `max_by(.pct)` over `model_buckets`, the last of a
+    /// tie), never the reader's `model_label`, which is the greatest RAW
+    /// percentage and can name the other window of a tie; none otherwise
+    /// (`same_window`: a shared window carries no label).
+    fn rated_label(&self) -> Option<&str> {
+        if self.binding_bucket.as_deref() != Some("model") {
+            return None;
+        }
+        self.model_buckets
+            .iter()
+            .max_by(|a, b| a.pct.total_cmp(&b.pct))
+            .and_then(|bucket| bucket.label.as_deref())
+    }
+
+    /// The field text both the roster line and the `account` event print.
     pub fn fields(&self) -> String {
         format!(
             "{} config_dir={} harness={} through={} status={} verdict={} headroom_pct={} binding_bucket={} binding_resets_at={}",
@@ -389,7 +436,7 @@ impl AccountRow {
         )
     }
 
-    /// The row's identity, the legacy's first column (`oversee-watch:5155`):
+    /// The row's identity:
     /// two accounts sharing an alias are told apart by `config_dir`.
     pub fn key(&self) -> String {
         format!(
@@ -424,13 +471,12 @@ impl Roster {
         Some(Roster { rows })
     }
 
-    /// The `account <fields>` line of each record (`oversee-watch:5155-
-    /// 5157`), with the status word after the legacy's fields where it is
-    /// not `pick`, and under the roster one `account-end-contradicted`
-    /// line per account whose stated end has come while its credential
-    /// still answers (round 8 item 6) and one `account-plan-end-invalid`
-    /// line per account whose provider end names no calendar day: the
-    /// lines the legacy never had.
+    /// The `account <fields>` line of each record, with the status word
+    /// after the fields where it is not `pick`, and under the roster one
+    /// `account-end-contradicted` line per account whose stated end has
+    /// come while its credential still answers and one
+    /// `account-plan-end-invalid` line per account whose provider end
+    /// names no calendar day.
     pub fn lines(&self, today: &str) -> Vec<String> {
         let mut lines: Vec<String> = self
             .rows
@@ -464,33 +510,33 @@ impl Roster {
     /// Whether an account bills the harness and pool a pick would judge
     /// (`owed_wall`'s roster check).
     pub fn bills(&self, billed: &str, pool: &str) -> bool {
-        self.rows.iter().any(|r| {
-            r.harness == billed
-                && ((r.raw.get("pool").and_then(Value::as_str) == Some("api-credit"))
-                    == (pool == "api-credit"))
-        })
+        self.rows
+            .iter()
+            .any(|r| r.harness == billed && ((r.pool == "api-credit") == (pool == "api-credit")))
     }
 }
 
-/// `lanes` through the one runner: `ORCH_LANE_RETIRE` emptied, so the
+/// One `lanes` read through the one runner, `list --json` or
+/// `host-accounts --harness pi --json`: `ORCH_LANE_RETIRE` emptied, so the
 /// reader measures an account the machine retired instead of listing it
-/// unread, and `ORCH_LANE_HOST=<host>` where a host is named, as the
-/// legacy `bounded_account_read` ran it. The answer, or the call's own
-/// failure.
+/// unread; for the provider's rows `ORCH_LANE_EXCLUDE` emptied too, so the
+/// judge sees the row of a root the owner excluded and leaves it out by
+/// name ([`pool_rows`]) instead of reading a pool with no row; and
+/// `ORCH_LANE_HOST=<host>` where a host is named. The answer, or the
+/// call's own failure.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the accounts judge's legacy reads, `lanes list --json` and the delegated `lanes pick` (decision 121 Q9), through the one runner under its tag"
+    reason = "the accounts judge's reads of the reader, `lanes list --json` and `lanes host-accounts --json`, through the one runner under its tag"
 )]
 fn lanes(
     settings: &Settings,
     host: Option<&str>,
-    verb: &'static str,
+    operation: &'static str,
     args: &[&str],
-    retire_read: bool,
 ) -> std::result::Result<std::process::Output, String> {
-    let mut env: Vec<(&str, &OsStr)> = Vec::new();
-    if !retire_read {
-        env.push(("ORCH_LANE_RETIRE", OsStr::new("")));
+    let mut env: Vec<(&str, &OsStr)> = vec![("ORCH_LANE_RETIRE", OsStr::new(""))];
+    if operation == "host-accounts" {
+        env.push(("ORCH_LANE_EXCLUDE", OsStr::new("")));
     }
     if let Some(h) = host {
         env.push(("ORCH_LANE_HOST", OsStr::new(h)));
@@ -499,7 +545,7 @@ fn lanes(
         TAG,
         "lanes",
         &settings.lanes_cli,
-        verb,
+        operation,
         args,
         Place {
             cwd: None,
@@ -512,10 +558,10 @@ fn lanes(
 
 /// `lanes list --json`, for `host` where one is named: the roster, or the
 /// cause where the call failed or its answer did not read, for the caller
-/// to say in its place (`account-unread`'s fields, `oversee-watch:5165`).
+/// to say in its place (`account-unread`'s fields).
 pub fn roster(settings: &Settings, host: Option<&str>) -> std::result::Result<Roster, String> {
     let host_word = host.unwrap_or(LOCAL);
-    let out = lanes(settings, host, "list", &["list", "--json"], false)
+    let out = lanes(settings, host, "list", &["list", "--json"])
         .map_err(|cause| format!("host={host_word} {cause}"))?;
     if !out.status.success() {
         return Err(format!(
@@ -528,10 +574,327 @@ pub fn roster(settings: &Settings, host: Option<&str>) -> std::result::Result<Ro
         .ok_or_else(|| format!("host={host_word} parse=failed"))
 }
 
+/// Whether a row is a provider's reading (`measured_through` `host`, or a
+/// provider's name), as against this machine's own (`local`) or the
+/// owner's stated one (`stated`).
+fn provider_reading(row: &AccountRow) -> bool {
+    !matches!(row.measured_through.as_str(), "local" | "stated")
+}
+
+/// One reading per billed account for a pick of `billed` on `model`, the
+/// deleted `lanes pick`'s merge (`collect_lanes`, `host_row_or_local`): the
+/// listing carries this machine's reading of an account and the provider's
+/// beside it, local first, and a pick judges one of them. The provider's
+/// reading stands, except: a provider row that read nothing (`unreachable`,
+/// or a holding with no figure and no refusal) leaves this machine's
+/// measured reading in place; a Pi root's provider row stands only where it
+/// read the pool, else the stated reading stands where one is stated; a
+/// Claude row the provider measured with no window scoped to `model` is
+/// judged on this machine's fresh reading of that window where it has one,
+/// and is unmeasured where it has none (the shared windows are not that
+/// model's wall). An account with one reading keeps it. The roster is never
+/// resolved: it reports both readings.
+fn resolve(rows: &[AccountRow], billed: &str, model: &str) -> Vec<AccountRow> {
+    let mut out: Vec<AccountRow> = Vec::new();
+    for row in rows {
+        let other = out.iter().position(|r| {
+            r.harness == row.harness
+                && r.canon == row.canon
+                && provider_reading(r) != provider_reading(row)
+        });
+        match other {
+            Some(i) => {
+                let (own, provider) = if provider_reading(row) {
+                    (out[i].clone(), row.clone())
+                } else {
+                    (row.clone(), out[i].clone())
+                };
+                out[i] = prefer(own, provider, billed, model);
+            }
+            None => out.push(row.clone()),
+        }
+    }
+    out
+}
+
+/// `host_row_or_local` over one account's two readings.
+fn prefer(own: AccountRow, provider: AccountRow, billed: &str, model: &str) -> AccountRow {
+    let scoped = billed == "claude" && !model.is_empty();
+    let unread = provider.harness == "pi" && provider.headroom_pct.is_none()
+        || provider.status == "unreachable"
+        || (provider.status == "no_usage_data" && provider.headroom_pct.is_none());
+    let unscoped = scoped
+        && (provider.measured() || provider.status == "no_usage_data")
+        && model_buckets(&provider, model).is_empty();
+    if !unread && !unscoped {
+        return provider;
+    }
+    let own_figure = own.headroom_pct.is_some()
+        && (own.harness == "pi" || own.status == "ok")
+        && !(scoped && own.model_buckets.is_empty());
+    if own_figure {
+        return own;
+    }
+    if !unscoped {
+        return provider;
+    }
+    // This machine's reading carries no fresh window scoped to the model:
+    // the account is unmeasured for it, with the cause in its detail.
+    let mut unmeasured = own;
+    if unmeasured.measured() {
+        unmeasured.status = "no_usage_data".to_owned();
+    }
+    unmeasured.headroom_pct = None;
+    if unmeasured.detail.is_none() {
+        unmeasured.detail = Some(format!("no fresh local model window for {model}"));
+    }
+    if let Value::Object(raw) = &mut unmeasured.raw {
+        raw.insert("status".to_owned(), Value::from(unmeasured.status.as_str()));
+        raw.insert("headroom_pct".to_owned(), Value::Null);
+        raw.insert(
+            "detail".to_owned(),
+            unmeasured
+                .detail
+                .as_deref()
+                .map_or(Value::Null, Value::from),
+        );
+    }
+    unmeasured
+}
+
+/// `lane_alias_for`: the directory's own name without its leading dot,
+/// overlaid by the owner's `ORCH_LANE_ALIASES` entry whose key names the
+/// directory. The reader gives every row it lists this alias and matches
+/// `ORCH_LANE_EXCLUDE` and `ORCH_LANE_RETIRE` through it (`lane_matches`),
+/// so a stated root the reader never lists gets the same name here, and
+/// one exclusion drops its provider row and its stated row alike.
+fn effective_alias(config_dir: &str, settings: &AccountSettings) -> String {
+    settings
+        .aliases
+        .iter()
+        .find(|a| lane_named(config_dir, &a.name))
+        .map(|a| a.alias.clone())
+        .unwrap_or_else(|| base(config_dir).trim_start_matches('.').to_owned())
+}
+
+/// The owner's stated Copilot pool for one Pi root as a listing row
+/// (`measure_copilot_pool`): the share used rounded up, so a pool one
+/// credit short of its grant never reads as having more, and 100 at or
+/// past the grant; a `monthly` window with no reset, its counts as
+/// `credits`, measured through `stated`.
+fn stated_row(
+    entry: &crate::settings::CopilotPool,
+    settings: &AccountSettings,
+) -> Option<AccountRow> {
+    let pct = if entry.used >= entry.granted {
+        100
+    } else {
+        (entry.used * 100).div_ceil(entry.granted)
+    };
+    let raw = json!({
+        "alias": effective_alias(&entry.dir, settings),
+        "harness": "pi",
+        "config_dir": entry.dir,
+        "retire_date": Value::Null,
+        "measured_through": "stated",
+        "status": "ok",
+        "refreshable": false,
+        "plan": Value::Null,
+        "session_5h_pct": Value::Null,
+        "weekly_pct": Value::Null,
+        "model_pct": Value::Null,
+        "model_label": Value::Null,
+        "model_buckets": [],
+        "monthly_pct": pct,
+        "credits": {
+            "unit": "AIC",
+            "unlimited": false,
+            "used": entry.used,
+            "granted": entry.granted,
+            "remaining": entry.granted.saturating_sub(entry.used),
+        },
+        "unlimited": false,
+        "claims": 0,
+        "headroom_pct": 100 - pct,
+        "binding_bucket": "monthly",
+        "binding_resets_at": Value::Null,
+        "usage_age_s": Value::Null,
+        "resets": {"session": Value::Null, "weekly": Value::Null, "model": Value::Null, "monthly": Value::Null},
+        "detail": format!(
+            "Copilot pool: {} of {} credits used, as ORCH_LANE_COPILOT_POOL states; no Copilot login is read for a Pi root",
+            entry.used, entry.granted
+        ),
+        "wall": pct,
+        "usage_rate_state": "one-sample",
+        "usage_rate_pct_per_min": Value::Null,
+        "projected_wall_minutes": Value::Null,
+        "pool": "copilot",
+        "verdict": wall_verdict(Some(pct as f64), f64::from(settings.max_pct)),
+    });
+    AccountRow::parse(&raw, settings)
+}
+
+/// The row a named Pi root on a grant pool that no reading covers is judged
+/// on: nothing measured, so the judge answers `unmeasured`, exit 5, the
+/// read to repair in `status`
+/// and `detail`, and for the API grant the grant's own refusal
+/// (`refusal.cause=api-credit`), the record `open-terminal`'s named arm
+/// reads. Never `no-record`: a Pi root is a directory the listing never
+/// holds, so no row is no reading, not no account, and a launch onto a
+/// pool nobody measured is a read to repair, never one made unjudged.
+fn unmeasured_row(dir: &str, pool: &str, settings: &AccountSettings) -> AccountRow {
+    let (through, detail) = if pool == "api-credit" {
+        ("local", "no provider API-credit row")
+    } else {
+        (
+            "stated",
+            "no lane host row and no ORCH_LANE_COPILOT_POOL entry reads a Copilot pool for this account",
+        )
+    };
+    let raw = json!({
+        "alias": effective_alias(dir, settings),
+        "harness": "pi",
+        "config_dir": dir,
+        "retire_date": Value::Null,
+        "measured_through": through,
+        "status": "no_usage_data",
+        "detail": detail,
+        "refreshable": false,
+        "plan": Value::Null,
+        "session_5h_pct": Value::Null,
+        "weekly_pct": Value::Null,
+        "model_pct": Value::Null,
+        "model_label": Value::Null,
+        "model_buckets": [],
+        "monthly_pct": Value::Null,
+        "credits": Value::Null,
+        "unlimited": false,
+        "claims": 0,
+        "headroom_pct": Value::Null,
+        "binding_bucket": Value::Null,
+        "binding_resets_at": Value::Null,
+        "usage_age_s": Value::Null,
+        "resets": {"session": Value::Null, "weekly": Value::Null, "model": Value::Null, "monthly": Value::Null},
+        "wall": Value::Null,
+        "usage_rate_state": "one-sample",
+        "usage_rate_pct_per_min": Value::Null,
+        "projected_wall_minutes": Value::Null,
+        "pool": pool,
+        "verdict": "unmeasured",
+    });
+    AccountRow::parse(&raw, settings).expect("a row with a status and a verdict parses")
+}
+
+/// The grant-pool rows a Pi launch is judged on, read beside the listing:
+/// the provider's `harness=pi` rows through `lanes host-accounts --harness
+/// pi --json` under the host. For the Copilot pool (`github-copilot/`), the
+/// rows that spend the pool (an API grant row, `credits` or an
+/// `api-credit-` detail, is the listing's, not the pool's) and the owner's
+/// stated `ORCH_LANE_COPILOT_POOL` for every root that is no Copilot CLI
+/// home the listing names; a provider row with a reading replaces the
+/// stated one for its root ([`resolve`]). For the API grant (`anthropic/`),
+/// the grant rows whose root `ORCH_LANE_EXCLUDE` names: the listing holds
+/// every other grant row already and drops an excluded account before the
+/// judge sees it, while the exclusion is the judge's to apply ([`pick`],
+/// as it applies `--exclude-lane`), so an excluded root is a candidate
+/// left out by name, never a pool nobody measured (the read is made with
+/// the exclusion emptied, [`lanes`]). A provider without the
+/// verb (exit 2) reads no row. A provider whose read failed is unjudged,
+/// `copilot-pool-unread` or `api-grant-unread` with the read's own cause (a
+/// stated Copilot root stands in for the pool's read, nothing for the
+/// grant's): a failed read is never cached, so asking again can answer it,
+/// where a missing row is a read to repair.
+fn pool_rows(
+    settings: &Settings,
+    host: Option<&str>,
+    listing: &[AccountRow],
+    pool: &str,
+) -> std::result::Result<Vec<AccountRow>, String> {
+    let api_credit = pool == "api-credit";
+    let unread_word = if api_credit {
+        "api-grant-unread"
+    } else {
+        "copilot-pool-unread"
+    };
+    let mut rows = Vec::new();
+    let mut unread = None;
+    if let Some(host) = host {
+        let answer = lanes(
+            settings,
+            Some(host),
+            "host-accounts",
+            &["host-accounts", "--harness", "pi", "--json"],
+        );
+        match answer {
+            Ok(out) if out.status.success() => {
+                let read: Option<Vec<Value>> = serde_json::from_str(&host::stdout_text(&out)).ok();
+                let Some(read) = read else {
+                    return Err(format!("{unread_word} host={host} parse=failed"));
+                };
+                for mut raw in read {
+                    let grant = raw.get("credits").is_some_and(|c| !c.is_null())
+                        || string(&raw, "detail").is_some_and(|d| d.starts_with("api-credit-"));
+                    if grant != api_credit || text(&raw, "harness") != "pi" {
+                        continue;
+                    }
+                    if let Value::Object(m) = &mut raw {
+                        // The provider's row is a reading, not a judged
+                        // record: the judge's verdict replaces this one
+                        // in every record it prints.
+                        m.entry("verdict")
+                            .or_insert_with(|| Value::from("unjudged"));
+                        m.insert("pool".to_owned(), Value::from(pool));
+                    }
+                    let Some(row) = AccountRow::parse(&raw, &settings.accounts) else {
+                        continue;
+                    };
+                    let excluded = settings
+                        .accounts
+                        .exclude
+                        .iter()
+                        .any(|name| names(&row.alias, &row.config_dir, name));
+                    if !api_credit || excluded {
+                        rows.push(row);
+                    }
+                }
+            }
+            Ok(out) if out.status.code() == Some(2) => {}
+            Ok(out) => {
+                unread = Some(format!(
+                    "{unread_word} host={host} exit={} {}",
+                    out.status.code().unwrap_or(-1),
+                    host::stderr_text(&out).trim()
+                ));
+            }
+            Err(cause) => unread = Some(format!("{unread_word} host={host} {cause}")),
+        }
+    }
+    if api_credit {
+        return unread.map_or(Ok(rows), Err);
+    }
+    let homes: Vec<&str> = listing
+        .iter()
+        .filter(|r| r.harness == "copilot")
+        .map(|r| r.canon.as_str())
+        .collect();
+    let stated: Vec<AccountRow> = settings
+        .accounts
+        .copilot_pool
+        .iter()
+        .filter(|e| !homes.contains(&wall::canon(&e.dir).as_str()))
+        .filter_map(|e| stated_row(e, &settings.accounts))
+        .collect();
+    if let Some(cause) = unread
+        && stated.is_empty()
+    {
+        return Err(cause);
+    }
+    rows.extend(stated);
+    Ok(rows)
+}
+
 // --- the pick ---------------------------------------------------------------------------------
 
-/// `lane_pick_harness` (`lib/lane-launch.sh:128`): the harness an account
-/// is billed under for a launch of `harness` on `model`.
 pub fn pick_harness(harness: &str, model: &str) -> &'static str {
     match harness {
         "claude" => "claude",
@@ -550,8 +913,26 @@ pub fn pick_harness(harness: &str, model: &str) -> &'static str {
     }
 }
 
-/// `lane_pick_pool` (`lib/lane-launch.sh:143`) with the plan pool: the
-/// spending pool a launch of `harness` on `model` names.
+/// A launch whose model's provider nothing bills ([`pick_harness`]'s
+/// `unmeasured`: a Pi model naming no provider, or one other than
+/// `pi-claude/`, `github-copilot/` and `anthropic/`) is refused at exit 5
+/// in both forms before any row is read, since nothing measures what it
+/// spends and an unmeasured pool is never room. The chooser's answer
+/// carries the chooser's refusal; the named answer carries none
+/// ([`PickAnswer::Unbilled`]).
+fn unbilled(req: &PickRequest) -> Option<PickAnswer> {
+    let model = req.model.as_deref().unwrap_or("");
+    if pick_harness(&req.harness, model) != "unmeasured" {
+        return None;
+    }
+    let (harness, model) = (req.harness.clone(), model.to_owned());
+    Some(if req.lane.is_some() {
+        PickAnswer::Unbilled { harness, model }
+    } else {
+        PickAnswer::ProviderUnmeasured { harness, model }
+    })
+}
+
 pub fn pick_pool(harness: &str, model: &str) -> &'static str {
     match harness {
         "pi" if model.starts_with("anthropic/") => "api-credit",
@@ -579,16 +960,47 @@ pub struct PickRequest {
     pub projected: bool,
     /// The bound in percent used; the setting where unset (`--max-pct`).
     pub max_pct: Option<u32>,
+    /// The headroom a caller's own judgement triggers at, the succession
+    /// walk's and the turn-end hook's mark (`--min-headroom-pct T`): the
+    /// same bound in the record's own unit, `100 - T` percent used, so a
+    /// pick admits only an account the caller would not hand off on.
+    pub min_headroom_pct: Option<u32>,
+    /// Hold the account's own binding bucket to the bound beside the
+    /// model's window (`--binding-floor`): the overseer's next judgement
+    /// reads that bucket, so a successor opened on an account whose
+    /// binding bucket is a model it never launches would meet its mark at
+    /// once.
+    pub binding_floor: bool,
     /// The provider named (`ORCH_LANE_HOST`), `None` for the local read.
     pub host: Option<String>,
 }
 
-/// The window a lane is judged on, `lane-model.sh`'s `model_binding`.
+impl PickRequest {
+    /// The bound in percent used a request names, where it names one.
+    fn bound(&self) -> Option<u32> {
+        self.max_pct.or(self.min_headroom_pct.map(|t| 100 - t))
+    }
+
+    /// Whether the request is the launch question: the lane the caller is
+    /// about to add is charged and the projected wall judged (the chooser,
+    /// and a named account under `--projected`). The plain named reading is
+    /// the question whether an account is out of room now: a running
+    /// lane's own charge is among the live ones, so no candidate is added.
+    fn launch(&self) -> bool {
+        self.projected || self.lane.is_none()
+    }
+}
+
+/// The window a lane is judged on, `lane-model.sh`'s `model_binding`: its
+/// bucket, its percentage used, its reset and, for a model-scoped window,
+/// its label, the identity that tells two model windows at one reset
+/// apart.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Binding {
     pub bucket: String,
     pub pct: f64,
     pub resets_at: Option<String>,
+    pub label: Option<String>,
 }
 
 /// `lane_norm`: case-folded, every character that is not a letter or a
@@ -627,12 +1039,13 @@ fn max_binding(bindings: Vec<Binding>) -> Option<Binding> {
 /// trailing `[1m]` dropped, the normalized spellings contained either
 /// way; a window with no label counts for every model); with none, the
 /// reader's own binding bucket.
-fn lane_binding(row: &AccountRow, model: Option<&str>) -> Option<Binding> {
+fn model_binding(row: &AccountRow, model: Option<&str>) -> Option<Binding> {
     if row.plan_ended() {
         return Some(Binding {
             bucket: "plan".to_owned(),
             pct: 100.0,
             resets_at: None,
+            label: None,
         });
     }
     if !row.measured() {
@@ -646,14 +1059,9 @@ fn lane_binding(row: &AccountRow, model: Option<&str>) -> Option<Binding> {
                 bucket,
                 pct: 100.0 - headroom,
                 resets_at: row.binding_resets_at.clone(),
+                label: row.rated_label().map(str::to_owned),
             });
     };
-    let m = norm(
-        model
-            .strip_suffix("[1m]")
-            .or_else(|| model.strip_suffix("[1M]"))
-            .unwrap_or(model),
-    );
     let resets = |key: &str| row.raw.get("resets").and_then(|r| string(r, key));
     let mut bindings = Vec::new();
     for (bucket, pct) in [
@@ -666,24 +1074,50 @@ fn lane_binding(row: &AccountRow, model: Option<&str>) -> Option<Binding> {
                 bucket: bucket.to_owned(),
                 pct,
                 resets_at: resets(bucket),
+                label: None,
             });
         }
     }
-    for bucket in &row.model_buckets {
-        let l = bucket.label.as_deref().map(norm);
-        let matches = match &l {
-            None => true,
-            Some(l) => !l.is_empty() && !m.is_empty() && (l.contains(&m) || m.contains(l)),
-        };
-        if matches {
-            bindings.push(Binding {
-                bucket: "model".to_owned(),
-                pct: bucket.pct,
-                resets_at: bucket.resets_at.clone(),
-            });
-        }
-    }
+    bindings.extend(model_buckets(row, model));
     max_binding(bindings)
+}
+
+/// `model_bindings($model)`: the model-scoped windows whose label names
+/// the model (a trailing `[1m]` dropped, the normalized spellings contained
+/// either way; a window with no label counts for every model).
+fn model_buckets(row: &AccountRow, model: &str) -> Vec<Binding> {
+    let m = norm(
+        model
+            .strip_suffix("[1m]")
+            .or_else(|| model.strip_suffix("[1M]"))
+            .unwrap_or(model),
+    );
+    row.model_buckets
+        .iter()
+        .filter(|bucket| match bucket.label.as_deref().map(norm) {
+            None => true,
+            Some(l) => !l.is_empty() && !m.is_empty() && (l.contains(&m) || m.contains(&l)),
+        })
+        .map(|bucket| Binding {
+            bucket: "model".to_owned(),
+            pct: bucket.pct,
+            resets_at: bucket.resets_at.clone(),
+            label: bucket.label.clone(),
+        })
+        .collect()
+}
+
+/// `lane_binding($model; $binding_floor)`: the model's window, and under
+/// the floor the account's own binding bucket held to the same bound
+/// beside it, the fuller of the two deciding; an unmeasured bucket on
+/// either side is a window nobody read, never room.
+fn lane_binding(row: &AccountRow, model: Option<&str>, floor: bool) -> Option<Binding> {
+    let window = model_binding(row, model)?;
+    if !floor || model.is_none_or(str::is_empty) {
+        return Some(window);
+    }
+    let account = model_binding(row, None)?;
+    max_binding(vec![window, account])
 }
 
 /// `reset_epoch`: a stamp as an epoch second, `None` where it is none.
@@ -691,12 +1125,46 @@ fn reset_epoch(stamp: Option<&str>) -> Option<u64> {
     clock::epoch_secs(stamp?)
 }
 
-/// The projected rooms of one account (`with_lane_projection`): the window
-/// that binds charged, per live lane, one hour of its burn (the measured
-/// rate where the reader measured one on that same window, else the
-/// setting scaled to the window's length), and the 5-hour session window
-/// charged beside it, per live lane, its session burn for each hour left
-/// to its reset. The smaller room decides.
+/// The length in hours of the window a bucket names, the most a charge to
+/// its reset can run for.
+fn window_hours(bucket: &str) -> f64 {
+    match bucket {
+        "session" => 5.0,
+        "monthly" => 720.0,
+        _ => 168.0,
+    }
+}
+
+/// The projected rooms of one account: seat sessions charged to their
+/// reset, the candidate lane charged. Each projected window is
+/// charged `S × burn_w × hours_to_reset_w`: `S` the lanes that will spend
+/// it, the fleet's live lanes on the account and, for the launch question,
+/// the candidate about to join them; `burn_w` the window's burn per lane
+/// hour: where the reader measured a rate on that same window, the
+/// account's measured rate, the whole account's delta, shared among the
+/// lanes live at the sample (`sampled`; a model window's rate is one
+/// lane's, since no lane on another model spends it); on the session
+/// window the usage so far over the window's elapsed hours, shared among
+/// the lanes live at the sample (with none live now that usage is no
+/// lane's rate, and the setting stands); else the setting scaled to the
+/// window's length (5/168 for a week, 5/720 for a month). The divisor is
+/// the sample's own occupancy, never the lanes live now: the charged lanes
+/// whose current session on the account began at or before the sample
+/// (`session_since`, which every launch and relaunch rewrites), so a lane
+/// launched or relaunched onto the account after the sample, which spent
+/// none of it, cannot dilute the per-lane burn the sample measured
+/// (`lane-model.sh`'s fixed sample divisor).
+/// `hours_to_reset_w` is the hours left to the window's reset, at least
+/// one and at most the window's length, one where no reset is known. The
+/// window that binds and the 5-hour session window are both projected,
+/// since the session window walls every model, and the smaller room
+/// decides.
+///
+/// The selection score (`with_lane_selection_score`, `lanes --help`
+/// § pick) is no charge: it is the projected room weighted by the reset
+/// bonus `1 + 1 / (1 + hours to the binding reset)`, bounded to twice the
+/// room, so among accounts with room the sooner reset is tried first and
+/// no reset time buys a launch past the bound (step8-map § E Q10).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Projection {
     pub headroom: f64,
@@ -704,41 +1172,61 @@ pub struct Projection {
     pub burn: f64,
 }
 
+/// Whether the window a lane is judged on is the one the reader rated
+/// (`lane-model.sh`'s `same_window`): the reader's binding bucket, at its
+/// reset, under its label, compared in the normalized spelling; a window
+/// with no label matches only a window with none. Two model windows at
+/// one reset are two windows, and the reader's measured rate is the one
+/// the label names.
+fn same_window(row: &AccountRow, binding: &Binding) -> bool {
+    row.binding_bucket.as_deref() == Some(binding.bucket.as_str())
+        && row.binding_resets_at == binding.resets_at
+        && row.rated_label().map(norm) == binding.label.as_deref().map(norm)
+}
+
 fn projection(
     row: &AccountRow,
     binding: &Binding,
     claims: u32,
+    sampled: u32,
+    candidate: bool,
     burn_default: f64,
     now: u64,
 ) -> Projection {
-    let same_window = row.binding_bucket.as_deref() == Some(binding.bucket.as_str());
+    let share = if binding.bucket == "model" {
+        1.0
+    } else {
+        f64::from(sampled.max(1))
+    };
     let burn = match row.usage_rate_pct_per_min {
-        Some(rate) if claims > 0 && same_window => rate * 60.0,
+        Some(rate) if claims > 0 && same_window(row, binding) => rate * 60.0 / share,
         _ => match binding.bucket.as_str() {
             "session" => burn_default,
             "monthly" => burn_default * 5.0 / 720.0,
             _ => burn_default * 5.0 / 168.0,
         },
     };
-    let claims = f64::from(claims);
-    let binding_room = 100.0 - binding.pct - claims * burn;
-    let session_reset = reset_epoch(row.session_resets_at.as_deref());
-    let session_hours = match session_reset {
+    let lanes = f64::from(claims) + if candidate { 1.0 } else { 0.0 };
+    let hours_to = |reset: Option<u64>, bucket: &str| match reset {
         None => 1.0,
-        Some(reset) => ((reset as f64 - now as f64) / 3600.0).clamp(1.0, 5.0),
+        Some(reset) => ((reset as f64 - now as f64) / 3600.0).clamp(1.0, window_hours(bucket)),
     };
+    let binding_hours = hours_to(reset_epoch(binding.resets_at.as_deref()), &binding.bucket);
+    let binding_room = 100.0 - binding.pct - lanes * burn * binding_hours;
+    let session_reset = reset_epoch(row.session_resets_at.as_deref());
+    let session_hours = hours_to(session_reset, "session");
     let session_burn = match (row.session_5h_pct, session_reset) {
         _ if binding.bucket == "session" && row.usage_rate_pct_per_min.is_some() => burn,
-        (Some(pct), Some(reset)) => {
+        (Some(pct), Some(reset)) if claims > 0 => {
             let sample_at = now as f64 - row.usage_age_s.unwrap_or(0.0);
             let hours = ((sample_at - (reset as f64 - 18000.0)) / 3600.0).max(1.0 / 60.0);
-            pct / hours
+            pct / hours / f64::from(sampled.max(1))
         }
-        (None, _) | (_, None) => burn_default,
+        _ => burn_default,
     };
     let session_room = row
         .session_5h_pct
-        .map(|pct| 100.0 - pct - claims * session_burn * session_hours);
+        .map(|pct| 100.0 - pct - lanes * session_burn * session_hours);
     match session_room {
         Some(room) if room < binding_room => Projection {
             headroom: room,
@@ -746,6 +1234,7 @@ fn projection(
                 bucket: "session".to_owned(),
                 pct: row.session_5h_pct.unwrap_or(0.0),
                 resets_at: row.session_resets_at.clone(),
+                label: None,
             },
             burn,
         },
@@ -768,7 +1257,9 @@ fn wall_verdict(wall: Option<f64>, max: f64) -> &'static str {
 
 /// `credit_room($credit_floor)`: a Codex account whose credit balance
 /// OpenAI spends once the plan windows are reached, strictly above the
-/// floor, with the three flags as the reader printed them.
+/// floor, with the three flags as the reader printed them. The credits
+/// count as room on a seat as on any account: they spend no
+/// plan window the overseer needs.
 fn credit_room(row: &AccountRow, floor: f64) -> bool {
     let Some(credits) = &row.credits else {
         return false;
@@ -783,12 +1274,94 @@ fn credit_room(row: &AccountRow, floor: f64) -> bool {
             .is_some_and(|b| b > floor)
 }
 
+/// The reset bonus (`with_lane_selection_score`): a sooner reset ranks a
+/// room ahead, at most twofold; an unknown reset earns none.
+fn reset_bonus(hours: Option<f64>) -> f64 {
+    hours.map_or(1.0, |h| 1.0 + 1.0 / (1.0 + h))
+}
+
+/// A grant judged (`with_lane_tier`, `lanes --help` § pick tier 0): the
+/// cloud credit of a `cloud-credit` host or a Pi `anthropic/` model's API
+/// credit, an allowance that expires and does not refill. Read where the
+/// row's `credits` carry a dollar limit and remainder and an end `E` (the
+/// credit's own reset, for cloud credit the earlier of that and the
+/// account's stated retirement); `room` while the remainder is above the
+/// floor, the grant unlocked and `E` ahead; `walled` where the grant is
+/// read and spent, locked or expired (an API grant whose row reads
+/// `expired` too); `unmeasured` otherwise. Its share left is the
+/// `headroom_pct` a caller reads, its score the share weighted by the
+/// reset bonus of its hours to `E`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Grant {
+    pub verdict: &'static str,
+    pub expires: Option<u64>,
+    pub share: Option<f64>,
+    pub score: f64,
+}
+
+fn grant(row: &AccountRow, floor: f64, now: u64) -> Option<Grant> {
+    let api = match row.pool.as_str() {
+        "api-credit" => true,
+        "cloud-credit" => false,
+        _ => return None,
+    };
+    let credits = row.credits.clone().unwrap_or_default();
+    let remaining = number(&credits, "remaining_dollars");
+    let limit = number(&credits, "limit_dollars");
+    let retire = (!api)
+        .then_some(row.retire.as_deref())
+        .flatten()
+        .and_then(|day| clock::epoch_secs(&format!("{day}T00:00:00Z")));
+    let expires = [
+        reset_epoch(string(&credits, "resets_at").as_deref()),
+        retire,
+    ]
+    .into_iter()
+    .flatten()
+    .min();
+    let read = string(&credits, "unit").as_deref() == Some("usd")
+        && remaining.is_some()
+        && limit.is_some()
+        && expires.is_some();
+    let measured = !api || row.measured();
+    let ahead = expires.is_some_and(|e| e > now);
+    let share = match (read && measured, remaining, limit) {
+        (true, Some(remaining), Some(limit)) if limit > 0.0 => Some(if ahead {
+            (100.0 * remaining / limit).floor()
+        } else {
+            0.0
+        }),
+        _ => None,
+    };
+    let locked = credits.get("locked_reason").is_some_and(|l| !l.is_null());
+    let verdict = if read
+        && measured
+        && remaining.is_some_and(|r| r > floor)
+        && !locked
+        && limit.is_some_and(|l| l > 0.0)
+        && ahead
+    {
+        "room"
+    } else if (api && row.status == "expired") || (read && measured) {
+        "walled"
+    } else {
+        "unmeasured"
+    };
+    let hours = expires.map(|e| (e as f64 - now as f64).max(0.0) / 3600.0);
+    Some(Grant {
+        verdict,
+        expires,
+        share,
+        score: share.unwrap_or(0.0) * reset_bonus(hours),
+    })
+}
+
 /// One account judged for one launch.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Judged {
     pub row: AccountRow,
-    /// `room`, `walled`, `unmeasured`, `seat-reserve`, `reserved`,
-    /// `retired` or `plan-end-invalid`.
+    /// `room`, `walled`, `unmeasured`, `seat-reserve`, `cloud-repo-unset`,
+    /// `reserved`, `retired` or `plan-end-invalid`.
     pub verdict: String,
     /// The reading's wall: the binding window's percentage used.
     pub wall: Option<f64>,
@@ -796,19 +1369,47 @@ pub struct Judged {
     pub claims: u32,
     pub projection: Option<Projection>,
     pub seat: bool,
+    /// The bound in percent used this account was held to: the request's,
+    /// and on a seat the overseer's headroom kept beside it.
+    pub limit: f64,
     pub credits: bool,
+    pub grant: Option<Grant>,
     pub score: Option<f64>,
+    /// On the chooser's answer, the room rows the choice was made among
+    /// (`lanes pick --json`'s `qualifying_count`), the figure the succession
+    /// walk's successor bound and the mark judge's capacity row read; a
+    /// named account's judgement counts none.
+    pub qualifying: Option<u32>,
+}
+
+/// A figure as the record spells it: an integral value as an integer, a
+/// fraction as it is. The shell callers read the record's `wall`,
+/// `effective_headroom_pct` and `need` by the pattern `^[0-9]{1,3}$`
+/// (`oversee-succeed`'s mark judge, the hook's seat line), the spelling
+/// `lanes pick --json` gave an integer percentage; `60.0` is unreadable
+/// to them.
+fn figure(n: f64) -> Value {
+    if n.fract() == 0.0 && n.abs() < 9.0e15 {
+        Value::from(n as i64)
+    } else {
+        Value::from(n)
+    }
 }
 
 impl Judged {
     /// The record a caller reads: the reader's row with the judgement's
-    /// fields over it, as `lanes pick --json` printed them.
+    /// fields over it, as `lanes pick --json` printed them, every integral
+    /// figure spelled as an integer ([`figure`]); the rate fields of the
+    /// window `wall` names, which are the reader's where that window is
+    /// its binding and `one-sample` otherwise (the reader rated no other
+    /// window); and on a seat `need`, the room the seat keeps, the figure
+    /// `pick-seat-omitted` names.
     pub fn record(&self) -> Value {
         let mut record = match &self.row.raw {
             Value::Object(m) => m.clone(),
             _ => Map::new(),
         };
-        let number = Value::from;
+        let number = figure;
         record.insert("word".to_owned(), Value::from(self.row.word().text()));
         if let Some(retire) = &self.row.retire {
             record.insert("retire_date".to_owned(), Value::from(retire.as_str()));
@@ -828,9 +1429,31 @@ impl Judged {
                     .map_or(Value::Null, Value::from),
             );
             record.insert("headroom_pct".to_owned(), number(100.0 - binding.pct));
+            if !same_window(&self.row, binding) {
+                record.insert("usage_rate_state".to_owned(), Value::from("one-sample"));
+                record.insert("usage_rate_pct_per_min".to_owned(), Value::Null);
+                record.insert("projected_wall_minutes".to_owned(), Value::Null);
+            }
         }
         if self.credits {
             record.insert("binding_bucket".to_owned(), Value::from("credits"));
+            record.insert("usage_rate_state".to_owned(), Value::from("credits"));
+            record.insert("usage_rate_pct_per_min".to_owned(), Value::Null);
+            record.insert("projected_wall_minutes".to_owned(), Value::Null);
+        }
+        if let Some(grant) = &self.grant {
+            record.insert(
+                "headroom_pct".to_owned(),
+                grant.share.map_or(Value::Null, number),
+            );
+            record.insert("binding_bucket".to_owned(), Value::from("credits"));
+            record.insert("binding_resets_at".to_owned(), Value::Null);
+            if grant.verdict != "room" {
+                record.insert(
+                    "refusal".to_owned(),
+                    json!({"cause": self.row.pool, "retry_at": Value::Null}),
+                );
+            }
         }
         match &self.projection {
             Some(p) => {
@@ -840,7 +1463,7 @@ impl Judged {
                     "projected_window".to_owned(),
                     json!({
                         "bucket": p.window.bucket,
-                        "pct": p.window.pct,
+                        "pct": number(p.window.pct),
                         "resets_at": p.window.resets_at,
                     }),
                 );
@@ -855,17 +1478,51 @@ impl Judged {
             self.score.map_or(Value::Null, number),
         );
         record.insert("verdict".to_owned(), Value::from(self.verdict.as_str()));
+        record.insert(
+            "effective_headroom_pct".to_owned(),
+            self.wall.map_or(Value::Null, |w| number(100.0 - w)),
+        );
+        if let Some(qualifying) = self.qualifying {
+            record.insert("qualifying_count".to_owned(), Value::from(qualifying));
+        }
         record.insert("seat".to_owned(), Value::from(self.seat));
+        if self.seat {
+            record.insert("need".to_owned(), number(self.need()));
+        }
         Value::Object(record)
     }
 
-    /// The earliest moment this walled account could have room: the
-    /// projected window's reset where one was projected, else the
-    /// binding's.
+    /// The room a seat keeps for the overseer: the headroom its limit
+    /// leaves, in percent of the window.
+    fn need(&self) -> f64 {
+        100.0 - self.limit
+    }
+
+    /// The earliest moment this walled account could have room: a grant
+    /// states none; the projected window's reset where one was projected,
+    /// else the binding's.
     fn retry_at(&self) -> Option<String> {
+        if self.grant.is_some() {
+            return None;
+        }
         match &self.projection {
             Some(p) => p.window.resets_at.clone(),
             None => self.binding.as_ref().and_then(|b| b.resets_at.clone()),
+        }
+    }
+
+    /// The order key of a room row (`lane_selection`, `lanes --help`
+    /// § pick): a seat last; then the tier, a grant first (the allowance
+    /// that expires first), plan windows, Codex credits last; then the
+    /// grant's end, the higher score, fewer claims, more projected room,
+    /// the lower wall.
+    fn tier(&self) -> u8 {
+        if self.grant.is_some() {
+            0
+        } else if self.credits {
+            2
+        } else {
+            1
         }
     }
 }
@@ -886,8 +1543,8 @@ pub enum PickAnswer {
     /// Exit 3 of `--lane`: the named account is walled or on its seat's
     /// reserve.
     Walled(Judged),
-    /// Exit 3 of `--lane`: the provider reserved the named account (round
-    /// 8 item 7). Its word refuses it, whatever its room; a caller prints
+    /// Exit 3 of `--lane`: the provider reserved the named account. Its
+    /// word refuses it, whatever its room; a caller prints
     /// the word, never the wall's figures.
     Reserved(Judged),
     /// Exit 3 of `--lane`: the named account's stated end has come. The
@@ -897,12 +1554,32 @@ pub enum PickAnswer {
         ends: String,
         source: EndSource,
     },
-    /// Exit 5 of `--lane`: nothing measured the named account.
+    /// Exit 3 of `--lane`: `ORCH_LANE_EXCLUDE` or `--exclude-lane` names
+    /// the account. Its word refuses it, whatever its room, as a retired
+    /// one is refused; the record's `verdict` is `excluded`.
+    Excluded(Judged),
+    /// Exit 5 of `--lane`: nothing measured the named account, a grant pool
+    /// no reading covers among them ([`unmeasured_row`]).
     Unmeasured(Judged),
+    /// Exit 5 of the chooser on a grant pool: no grant row measured the
+    /// launch (`pick-provider-unmeasured`), a read to repair, never a
+    /// window to wait out; and the chooser's answer to a launch whose
+    /// model's provider nothing bills ([`unbilled`]).
+    ProviderUnmeasured { harness: String, model: String },
+    /// Exit 5 of `--lane`: the launch names a model whose provider nothing
+    /// bills ([`unbilled`]), refused before any row is read. The record
+    /// names the harness and the model and carries no `refusal`: the
+    /// launcher's named arm reads a refusal it does not know as its judge
+    /// failing, and a record with none as `lane-provider-unmeasured`.
+    Unbilled { harness: String, model: String },
     /// Exit 4 of `--lane`: no row names the directory.
     NoRecord,
-    /// The judge could not judge: the listing or the occupancy unread, or
-    /// a delegated read that failed. Never a verdict.
+    /// Exit 7 of `--lane`: a `cloud-session` host's account that
+    /// `ORCH_LANE_CLOUD_REPOS` gives no access to this checkout's
+    /// repository.
+    CloudRepoUnset(Judged),
+    /// The judge could not judge: the listing, the fleet or the host's
+    /// capabilities unread. Never a verdict.
     Unjudged { cause: String },
 }
 
@@ -914,9 +1591,13 @@ impl PickAnswer {
             PickAnswer::None { .. }
             | PickAnswer::Walled(_)
             | PickAnswer::Reserved(_)
-            | PickAnswer::Retired { .. } => 3,
+            | PickAnswer::Retired { .. }
+            | PickAnswer::Excluded(_) => 3,
             PickAnswer::NoRecord => 4,
-            PickAnswer::Unmeasured(_) => 5,
+            PickAnswer::Unmeasured(_)
+            | PickAnswer::ProviderUnmeasured { .. }
+            | PickAnswer::Unbilled { .. } => 5,
+            PickAnswer::CloudRepoUnset(_) => 7,
             PickAnswer::Unjudged { .. } => 1,
         }
     }
@@ -939,7 +1620,8 @@ impl PickAnswer {
                     "unmeasured": unmeasured,
                     "seats": seats.iter().map(|s| json!({
                         "config_dir": s.row.config_dir,
-                        "projected_headroom_pct": s.projection.as_ref().map(|p| p.headroom),
+                        "projected_headroom_pct": s.projection.as_ref().map_or(Value::Null, |p| figure(p.headroom)),
+                        "need": figure(s.need()),
                     })).collect::<Vec<Value>>(),
                     "qualifying_count": 0,
                     "walled_resets_at": walled_resets_at,
@@ -950,8 +1632,17 @@ impl PickAnswer {
             PickAnswer::Walled(j) => ("walled", j.record()),
             PickAnswer::Reserved(j) => ("reserved", j.record()),
             PickAnswer::Retired { judged, .. } => ("retired", judged.record()),
+            PickAnswer::Excluded(j) => ("excluded", j.record()),
             PickAnswer::Unmeasured(j) => ("unmeasured", j.record()),
+            PickAnswer::ProviderUnmeasured { harness, model } => (
+                "unmeasured",
+                json!({"harness": harness, "model": model, "refusal": {"cause": "provider-unmeasured", "retry_at": Value::Null}}),
+            ),
+            PickAnswer::Unbilled { harness, model } => {
+                ("unmeasured", json!({"harness": harness, "model": model}))
+            }
             PickAnswer::NoRecord => ("no-record", Value::Null),
+            PickAnswer::CloudRepoUnset(j) => ("cloud-repo-unset", j.record()),
             PickAnswer::Unjudged { cause } => ("unjudged", json!({"cause": cause})),
         };
         json!({"answer": answer, "exit": self.exit(), "record": record})
@@ -959,17 +1650,30 @@ impl PickAnswer {
 }
 
 /// What the judge reads beside the rows: the seats and the fleet's live
-/// charges per account, each from this fleet's own records.
+/// charges per account, each from this fleet's own records, and the
+/// accounts a `cloud-session` host may launch on.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FleetFacts {
     /// Canonical config dirs the fleet's overseer and the provider's
     /// `seat=1` rows hold.
     pub seats: Vec<String>,
-    /// Live charges per canonical config dir (decision 97).
     pub charges: BTreeMap<String, u32>,
+    /// The instant, as epoch seconds, each charged lane began spending on
+    /// its account, per canonical config dir, where its record names one:
+    /// the lanes live at a usage sample are the charged lanes whose instant
+    /// is at or before it.
+    pub started: BTreeMap<String, Vec<u64>>,
+    /// On a `cloud-session` host, the config dirs `ORCH_LANE_CLOUD_REPOS`
+    /// gives this checkout's repository; `None` for every other launch.
+    pub cloud_repo: Option<Vec<String>>,
 }
 
-/// Judge one row for `req`.
+/// Judge one row for `req`: the one limit every pick, handoff mark and
+/// overseer mark is held to. The bound is the request's, or the
+/// setting; a seat, an account the fleet's overseer or a provider's
+/// `seat=1` row holds, is held to `min(bound, 100 - ORCH_OVERSEER_HEADROOM_PCT)`
+/// so a worker never spends the room the overseer hands off at, unless
+/// the overseer itself asks (`for_overseer`).
 fn judge(
     row: &AccountRow,
     req: &PickRequest,
@@ -978,14 +1682,34 @@ fn judge(
     today: &str,
     now: u64,
 ) -> Judged {
-    let max = f64::from(req.max_pct.unwrap_or(settings.max_pct));
+    let max = f64::from(req.bound().unwrap_or(settings.max_pct));
     let claims = facts.charges.get(&row.canon).copied().unwrap_or(0);
-    let binding = lane_binding(row, req.model.as_deref());
+    // The lanes live at the reading's sample: the charged lanes that began
+    // spending on the account at or before it. A reading with no sample
+    // age (a provider's row) is one lane's.
+    let sampled = match row.usage_age_s {
+        None => 1,
+        Some(age) => {
+            let sample_at = now as f64 - age;
+            facts.started.get(&row.canon).map_or(0, |starts| {
+                starts.iter().filter(|s| **s as f64 <= sample_at).count()
+            }) as u32
+        }
+    };
+    let binding = lane_binding(row, req.model.as_deref(), req.binding_floor);
     let wall = binding.as_ref().map(|b| b.pct);
-    let projection = binding
-        .as_ref()
-        .map(|b| projection(row, b, claims, f64::from(settings.burn_pct_per_hour), now));
-    let judged_wall = if req.projected || req.lane.is_none() {
+    let projection = binding.as_ref().map(|b| {
+        projection(
+            row,
+            b,
+            claims,
+            sampled,
+            req.launch(),
+            f64::from(settings.burn_pct_per_hour),
+            now,
+        )
+    });
+    let judged_wall = if req.launch() {
         projection.as_ref().map(|p| 100.0 - p.headroom)
     } else {
         wall
@@ -994,14 +1718,14 @@ fn judge(
         && row.harness != "copilot"
         && row.harness != "pi"
         && facts.seats.contains(&row.canon);
-    let reserve = if req.for_overseer {
-        0.0
+    let limit = if seat {
+        max.min(100.0 - f64::from(settings.overseer_headroom_pct))
     } else {
-        f64::from(settings.seat_reserve_pct)
+        max
     };
     let ordinary = wall_verdict(judged_wall, max);
-    let limit = if seat { max.min(100.0 - reserve) } else { max };
     let plan = wall_verdict(judged_wall, limit);
+    let grant = grant(row, settings.cloud_credit_floor as f64, now);
     let mut credits = false;
     let verdict = match row.standing(today) {
         Standing::Reserved => "reserved",
@@ -1010,10 +1734,9 @@ fn judge(
         Standing::Open => {
             if row.plan_ended() {
                 "walled"
-            } else if ordinary == "walled"
-                && credit_room(row, settings.codex_credit_floor as f64)
-                && (!seat || reserve < 100.0)
-            {
+            } else if let Some(grant) = &grant {
+                grant.verdict
+            } else if ordinary == "walled" && credit_room(row, settings.codex_credit_floor as f64) {
                 credits = true;
                 "room"
             } else if seat && plan == "walled" {
@@ -1023,7 +1746,13 @@ fn judge(
             }
         }
     };
-    let score = if credits {
+    let verdict = match &facts.cloud_repo {
+        Some(admitted) if !admitted.contains(&row.config_dir) => "cloud-repo-unset",
+        Some(_) | None => verdict,
+    };
+    let score = if let Some(grant) = &grant {
+        Some(grant.score)
+    } else if credits {
         row.credits
             .as_ref()
             .and_then(|c| c.get("balance"))
@@ -1034,7 +1763,7 @@ fn judge(
                 .as_ref()
                 .and_then(|b| reset_epoch(b.resets_at.as_deref()))
                 .map(|reset| (reset as f64 - now as f64).max(0.0) / 3600.0);
-            p.headroom * hours.map_or(1.0, |h| 1.0 + 1.0 / (1.0 + h))
+            p.headroom * reset_bonus(hours)
         })
     };
     Judged {
@@ -1045,17 +1774,30 @@ fn judge(
         claims,
         projection,
         seat,
+        limit,
         credits,
+        grant,
         score,
+        qualifying: None,
     }
 }
 
 /// The pick over `rows` (`lane_selection`, `lanes --help` § pick): the
-/// candidates are the rows billed under the launch's harness, the excluded
-/// directories left out; each is judged on its projected wall; the room
-/// rows are ordered a seat last, then credits after plan windows, then by
+/// candidates are the rows billed under the launch's harness and spending
+/// its pool, the directories `--exclude-lane` names and the lanes
+/// `ORCH_LANE_EXCLUDE` names left out (the latter matched through the
+/// alias as the reader matches it, `lane_matches`: the reader lists no
+/// such row, so a stated Pi root and a provider's Pi row ([`pool_rows`])
+/// are the rows it can name); each is judged on its
+/// projected wall; the room rows are ordered a seat last, then by tier (a
+/// grant first, plan windows, Codex credits last), the grant's end, the
 /// score, fewer claims, more projected room and the lower wall; the first
-/// is the lane. With `lane` named, that one row is judged alone.
+/// is the lane. With `lane` named, that one row is judged alone: one the
+/// exclusion covers is refused by its word, `excluded`, as a retired one
+/// is; a Pi root on a grant pool that no row holds is judged on the row
+/// nothing measured ([`unmeasured_row`]), `unmeasured`; any other
+/// directory no row holds is no record, a local account kind the listing
+/// would hold and does not.
 pub fn pick(
     rows: &[AccountRow],
     req: &PickRequest,
@@ -1064,30 +1806,60 @@ pub fn pick(
     now: u64,
 ) -> PickAnswer {
     let today = today(now);
-    let billed = pick_harness(&req.harness, req.model.as_deref().unwrap_or(""));
+    let model = req.model.as_deref().unwrap_or("");
+    let billed = pick_harness(&req.harness, model);
+    let pool = pick_pool(&req.harness, model);
+    let api_credit = pool == "api-credit";
+    // A pool nobody measured is a read to repair, never a window to wait
+    // out: the API grant's and the Pi Copilot pool's answer alike. A pool
+    // whose every row was left out by name is a pool with no candidate.
+    let grant_pool = api_credit || (req.harness == "pi" && pool == "copilot");
+    let rows = &resolve(rows, billed, model);
+    let candidate =
+        |r: &AccountRow| r.harness == billed && ((r.pool == "api-credit") == api_credit);
+    let excluded_dirs: Vec<String> = req.exclude.iter().map(|d| wall::canon(d)).collect();
+    let excluded = |r: &AccountRow| {
+        excluded_dirs.contains(&r.canon)
+            || settings
+                .exclude
+                .iter()
+                .any(|name| names(&r.alias, &r.config_dir, name))
+    };
     if let Some(lane) = &req.lane {
         let canon = wall::canon(lane);
-        let Some(row) = rows
-            .iter()
-            .find(|r| r.canon == canon && r.harness == billed)
-        else {
-            return PickAnswer::NoRecord;
+        let judged = match rows.iter().find(|r| r.canon == canon && candidate(r)) {
+            Some(row) if excluded(row) => {
+                let mut judged = judge(row, req, facts, settings, &today, now);
+                judged.verdict = "excluded".to_owned();
+                return PickAnswer::Excluded(judged);
+            }
+            Some(row) => judge(row, req, facts, settings, &today, now),
+            None if grant_pool => judge(
+                &unmeasured_row(lane, pool, settings),
+                req,
+                facts,
+                settings,
+                &today,
+                now,
+            ),
+            None => return PickAnswer::NoRecord,
         };
-        return named_answer(judge(row, req, facts, settings, &today, now), &today);
+        return named_answer(judged, &today);
     }
-    let excluded: Vec<String> = req.exclude.iter().map(|d| wall::canon(d)).collect();
+    let candidates = rows.iter().filter(|r| candidate(r)).count();
     let judged: Vec<Judged> = rows
         .iter()
-        .filter(|r| r.harness == billed && !excluded.contains(&r.canon))
+        .filter(|r| candidate(r) && !excluded(r))
         .map(|r| judge(r, req, facts, settings, &today, now))
         .collect();
     let mut room: Vec<&Judged> = judged.iter().filter(|j| j.verdict == "room").collect();
     room.sort_by(|a, b| {
-        let tier = |j: &Judged| u8::from(j.credits);
         let neg = |v: Option<f64>| v.map(|n| -n);
+        let expires = |j: &Judged| j.grant.as_ref().and_then(|g| g.expires).unwrap_or(0);
         a.seat
             .cmp(&b.seat)
-            .then(tier(a).cmp(&tier(b)))
+            .then(a.tier().cmp(&b.tier()))
+            .then(expires(a).cmp(&expires(b)))
             .then(
                 neg(a.score)
                     .unwrap_or(f64::INFINITY)
@@ -1108,12 +1880,21 @@ pub fn pick(
             )
     });
     if let Some(chosen) = room.first() {
-        return PickAnswer::Lane((*chosen).clone());
+        let mut chosen = (*chosen).clone();
+        chosen.qualifying = Some(room.len() as u32);
+        return PickAnswer::Lane(chosen);
     }
     let walled: Vec<&Judged> = judged.iter().filter(|j| j.verdict == "walled").collect();
+    let unmeasured = judged.iter().filter(|j| j.verdict == "unmeasured").count() as u32;
+    if grant_pool && walled.is_empty() && (candidates == 0 || unmeasured > 0) {
+        return PickAnswer::ProviderUnmeasured {
+            harness: req.harness.clone(),
+            model: model.to_owned(),
+        };
+    }
     PickAnswer::None {
         walled: walled.len() as u32,
-        unmeasured: judged.iter().filter(|j| j.verdict == "unmeasured").count() as u32,
+        unmeasured,
         seats: judged
             .iter()
             .filter(|j| j.verdict == "seat-reserve")
@@ -1130,7 +1911,7 @@ pub fn pick(
 
 /// A `--lane` pick's answer from its one judgement: the word's refusal
 /// where the word refused it (an end nobody can read is no verdict, so it
-/// is unjudged with the cause, decision 99), else the windows' answer by
+/// is unjudged with the cause), else the windows' answer by
 /// `lanes pick --lane`'s exits.
 fn named_answer(judged: Judged, today: &str) -> PickAnswer {
     match judged.row.standing(today) {
@@ -1146,17 +1927,24 @@ fn named_answer(judged: Judged, today: &str) -> PickAnswer {
         Standing::Open => match judged.verdict.as_str() {
             "room" => PickAnswer::Lane(judged),
             "unmeasured" => PickAnswer::Unmeasured(judged),
+            "cloud-repo-unset" => PickAnswer::CloudRepoUnset(judged),
             _ => PickAnswer::Walled(judged),
         },
     }
 }
 
-/// The fleet's seats and live charges per account from its state file
-/// (decision 97): the overseer's account is a seat; every lane record
+/// The fleet's seats and live charges per account from its state file:
+/// the overseer's account is a seat; every lane record
 /// charges its account while the occupancy reader proves its identity
-/// live, protects it unknown, or holds it preparing or reserved; the lane
-/// `replaces` names is left out. The provider's `seat=1` rows join the
-/// seats from the listing.
+/// live, protects it unknown, or holds it preparing or reserved, and
+/// names the instant it began spending on that account where its record
+/// carries one: `session_since`, which every launch and relaunch rewrites
+/// and a wake keeps, else `running_at`, else `launched_at`, which a
+/// relaunch keeps from the first launch, so a lane relaunched onto the
+/// account after a usage sample is counted after it; the lane `replaces`
+/// names is left out. The provider's `seat=1` rows join the
+/// seats from the listing, read before the readings are resolved, so a
+/// seat the provider holds is a seat whichever reading is judged.
 #[allow(
     clippy::disallowed_methods,
     reason = "the accounts judge's one read of the fleet state, a snapshot it judges room on; it acts on nothing"
@@ -1193,188 +1981,93 @@ pub fn fleet_facts(
         if replaces == Some(item.as_str()) {
             continue;
         }
-        let Some(account) = fleet
+        let Some(lane) = fleet
             .lanes
             .iter()
             .find(|l| l.item == item)
-            .and_then(|l| l.account.as_deref())
-            .filter(|a| !a.is_empty())
+            .filter(|l| l.account.as_deref().is_some_and(|a| !a.is_empty()))
         else {
             continue;
         };
-        *facts.charges.entry(wall::canon(account)).or_insert(0) += 1;
+        let canon = wall::canon(lane.account.as_deref().unwrap_or_default());
+        *facts.charges.entry(canon.clone()).or_insert(0) += 1;
+        if let Some(start) = lane
+            .session_since
+            .as_deref()
+            .or(lane.running_at.as_deref())
+            .or(lane.launched_at.as_deref())
+            .and_then(clock::epoch_secs)
+        {
+            facts.started.entry(canon).or_default().push(start);
+        }
     }
     Ok(facts)
 }
 
-/// Whether `req`'s windows are judged here or by the legacy reader: a pick
-/// under a provider (its rows standing in for this machine's, its seats
-/// and its cloud credit) and a pick on an API grant (`api-credit`, tier
-/// 0's expires-first rule) stay `lanes pick`'s until those rules are
-/// ported. The words are this judge's on either path ([`delegated_pick`]).
-pub fn delegated(req: &PickRequest) -> bool {
-    req.host
-        .as_deref()
-        .is_some_and(|h| h != LOCAL && !h.is_empty())
-        || pick_pool(&req.harness, req.model.as_deref().unwrap_or("")) == "api-credit"
-}
-
-/// The legacy `lanes pick` for `req`, its answer read as the legacy
-/// callers read it: the record at exit 0, the counts at exit 3 (the
-/// chooser) or the record (a named lane), the record at 5, nothing at 4;
-/// any other exit, a signal or an unreadable answer is unjudged with the
-/// cause.
-fn legacy_pick(settings: &Settings, req: &PickRequest) -> PickAnswer {
-    let mut args: Vec<String> = vec![
-        "pick".to_owned(),
-        "--harness".to_owned(),
-        req.harness.clone(),
-    ];
-    if let Some(model) = &req.model {
-        args.push("--native-model".to_owned());
-        args.push(model.clone());
+/// The accounts a `cloud-session` host may launch on (`lane_tier_inputs`,
+/// `lib/lane-usage.sh`): where `host`'s capability line declares
+/// `launch=cloud-session`, the rows whose `ORCH_LANE_CLOUD_REPOS` entry
+/// names the `owner/repo` of this checkout's github.com origin, compared
+/// as GitHub reads names, without case; an origin nobody can read admits
+/// none. `None` for any other host: the rule does not apply. A capability
+/// line that cannot be read is the cause, never a judgement off the local
+/// kind.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the accounts judge's read of this checkout's origin, `git remote get-url origin`, through the one runner under its tag; it acts on nothing"
+)]
+fn cloud_repo(
+    settings: &Settings,
+    host: &str,
+    rows: &[AccountRow],
+) -> std::result::Result<Option<Vec<String>>, String> {
+    let scripts = settings
+        .lanes_cli
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
+    if hosted::capabilities(&scripts, host)?.launch != Some(Launch::CloudSession) {
+        return Ok(None);
     }
-    for dir in &req.exclude {
-        args.push("--exclude-lane".to_owned());
-        args.push(dir.clone());
-    }
-    if let Some(lane) = &req.lane {
-        args.push("--lane".to_owned());
-        args.push(lane.clone());
-    }
-    if req.projected {
-        args.push("--projected".to_owned());
-    }
-    if req.for_overseer {
-        args.push("--for-overseer".to_owned());
-    }
-    if let Some(max) = req.max_pct {
-        args.push("--max-pct".to_owned());
-        args.push(max.to_string());
-    }
-    args.push("--json".to_owned());
-    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
-    let out = match lanes(settings, req.host.as_deref(), "pick", &arg_refs, true) {
-        Ok(out) => out,
-        Err(cause) => return PickAnswer::Unjudged { cause },
-    };
-    let record = |out: &std::process::Output| -> Option<Judged> {
-        let value: Value = serde_json::from_str(&host::stdout_text(out)).ok()?;
-        let row = AccountRow::parse(&value, &settings.accounts)?;
-        let verdict = string(&value, "verdict").unwrap_or_default();
-        Some(Judged {
-            wall: number(&value, "wall"),
-            binding: None,
-            claims: value.get("claims").and_then(Value::as_u64).unwrap_or(0) as u32,
-            projection: None,
-            seat: false,
-            credits: string(&value, "binding_bucket").as_deref() == Some("credits"),
-            score: number(&value, "selection_score"),
-            verdict,
-            row,
-        })
-    };
-    let unparsed = || PickAnswer::Unjudged {
-        cause: "pick-unparsed".to_owned(),
-    };
-    match out.status.code() {
-        Some(0) => record(&out).map_or_else(unparsed, PickAnswer::Lane),
-        Some(3) if req.lane.is_some() => record(&out).map_or_else(unparsed, PickAnswer::Walled),
-        Some(3) => {
-            let Ok(counts) = serde_json::from_str::<Value>(&host::stdout_text(&out)) else {
-                return unparsed();
-            };
-            PickAnswer::None {
-                walled: counts.get("walled").and_then(Value::as_u64).unwrap_or(0) as u32,
-                unmeasured: counts
-                    .get("unmeasured")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0) as u32,
-                seats: Vec::new(),
-                walled_resets_at: string(&counts, "walled_resets_at"),
-                exclusions: counts
-                    .get("exclusions")
-                    .and_then(Value::as_array)
-                    .map(|rows| {
-                        rows.iter()
-                            .map(|e| (text(e, "config_dir"), text(e, "reason")))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-            }
-        }
-        Some(4) => PickAnswer::NoRecord,
-        Some(5) => record(&out).map_or_else(unparsed, PickAnswer::Unmeasured),
-        Some(code) => PickAnswer::Unjudged {
-            cause: format!("exit={code} {}", host::stderr_text(&out).trim()),
+    let project = settings.roots.project.display().to_string();
+    let origin = host::run_tagged_in(
+        TAG,
+        "git",
+        Path::new("git"),
+        "origin-url",
+        &["-C", &project, "remote", "get-url", "origin"],
+        Place {
+            cwd: None,
+            env: &[],
         },
-        None => PickAnswer::Unjudged {
-            cause: "signalled".to_owned(),
-        },
-    }
-}
-
-/// The [`delegated`] pick (decision 188 (b)): the legacy reader judges
-/// none of the provider's words, so the roster is read with the host
-/// first and the words applied here. A `--lane` pick naming an account
-/// the word refuses is answered without asking; a chooser's pick hands
-/// every such account of the billed harness to `lanes pick` as an
-/// exclusion beside the request's own (`pick --lane` takes none, and
-/// judges its one row). A roster that cannot be read is unjudged with the
-/// cause (decision 99): never a pick that ignores the word.
-fn delegated_pick(settings: &Settings, req: &PickRequest, now: u64) -> PickAnswer {
-    let roster = match roster(settings, req.host.as_deref()) {
-        Ok(roster) => roster,
-        Err(cause) => {
-            return PickAnswer::Unjudged {
-                cause: format!("listing-unread {cause}"),
-            };
-        }
+        BOUND,
+    )
+    .ok()
+    .filter(|out| out.status.success())
+    .and_then(|out| super::admission::origin_slug(&host::stdout_text(&out)));
+    let Some(origin) = origin else {
+        return Ok(Some(Vec::new()));
     };
-    let today = today(now);
-    let billed = pick_harness(&req.harness, req.model.as_deref().unwrap_or(""));
-    let refused: Vec<&AccountRow> = roster
-        .rows
+    let admitted = rows
         .iter()
-        .filter(|r| r.harness == billed && r.standing(&today) != Standing::Open)
+        .filter(|row| {
+            settings.accounts.cloud_repos.iter().any(|entry| {
+                names(&row.alias, &row.config_dir, &entry.name)
+                    && entry.repo.eq_ignore_ascii_case(&origin)
+            })
+        })
+        .map(|row| row.config_dir.clone())
         .collect();
-    let Some(lane) = &req.lane else {
-        let exclude = req
-            .exclude
-            .iter()
-            .cloned()
-            .chain(refused.iter().map(|r| r.config_dir.clone()))
-            .collect();
-        return legacy_pick(
-            settings,
-            &PickRequest {
-                exclude,
-                ..req.clone()
-            },
-        );
-    };
-    let canon = wall::canon(lane);
-    match refused.iter().find(|r| r.canon == canon) {
-        Some(row) => named_answer(
-            judge(
-                row,
-                req,
-                &FleetFacts::default(),
-                &settings.accounts,
-                &today,
-                now,
-            ),
-            &today,
-        ),
-        None => legacy_pick(settings, req),
-    }
+    Ok(Some(admitted))
 }
 
-/// The pick a caller receives (decision 94 (b)): the listing read through
-/// the reader, the fleet's seats and charges read from its state, the
-/// judgement over them; or, where [`delegated`], the words applied here
-/// and the windows the legacy reader's own judgement. An unread listing or
-/// fleet is unjudged, never a verdict.
+/// The pick a caller receives: a launch whose model's provider nothing
+/// bills refused before any read ([`unbilled`]); else the listing read
+/// through the reader under the request's host, for a Pi launch on a grant
+/// pool the provider's rows read beside it ([`pool_rows`]), the fleet's
+/// seats and charges read from its state, the host's repository rule where
+/// one applies, and the judgement over them. An unread listing, pool,
+/// fleet or capability line is unjudged, never a verdict.
 pub fn pick_fleet(
     settings: &Settings,
     fleet_path: &Path,
@@ -1382,14 +2075,15 @@ pub fn pick_fleet(
     req: &PickRequest,
     now: u64,
 ) -> PickAnswer {
+    if let Some(answer) = unbilled(req) {
+        return answer;
+    }
     let req = &PickRequest {
         host: req.host.clone().or_else(|| settings.accounts.host.clone()),
         ..req.clone()
     };
-    if delegated(req) {
-        return delegated_pick(settings, req, now);
-    }
-    let rows = match roster(settings, None) {
+    let lane_host = req.host.as_deref().filter(|h| *h != LOCAL && !h.is_empty());
+    let mut rows = match roster(settings, lane_host) {
         Ok(roster) => roster.rows,
         Err(cause) => {
             return PickAnswer::Unjudged {
@@ -1397,7 +2091,15 @@ pub fn pick_fleet(
             };
         }
     };
-    let facts = match fleet_facts(fleet_path, &rows, req.replaces.as_deref(), host, now) {
+    let model = req.model.as_deref().unwrap_or("");
+    let pool = pick_pool(&req.harness, model);
+    if req.harness == "pi" && (pool == "copilot" || pool == "api-credit") {
+        match pool_rows(settings, lane_host, &rows, pool) {
+            Ok(pool) => rows.extend(pool),
+            Err(cause) => return PickAnswer::Unjudged { cause },
+        }
+    }
+    let mut facts = match fleet_facts(fleet_path, &rows, req.replaces.as_deref(), host, now) {
         Ok(facts) => facts,
         Err(cause) => {
             return PickAnswer::Unjudged {
@@ -1405,6 +2107,12 @@ pub fn pick_fleet(
             };
         }
     };
+    if let Some(lane_host) = lane_host {
+        facts.cloud_repo = match cloud_repo(settings, lane_host, &rows) {
+            Ok(admitted) => admitted,
+            Err(cause) => return PickAnswer::Unjudged { cause },
+        };
+    }
     pick(&rows, req, &facts, &settings.accounts, now)
 }
 
@@ -1421,8 +2129,13 @@ mod tests {
             }],
             max_pct: 95,
             burn_pct_per_hour: 5,
-            seat_reserve_pct: 50,
+            overseer_headroom_pct: 5,
             codex_credit_floor: 5000,
+            cloud_credit_floor: 10,
+            cloud_repos: Vec::new(),
+            copilot_pool: Vec::new(),
+            exclude: Vec::new(),
+            aliases: Vec::new(),
             host: None,
         }
     }
@@ -1431,8 +2144,6 @@ mod tests {
         AccountRow::parse(&json, &settings()).expect("a row")
     }
 
-    /// `lane_pick_harness` and `lane_pick_pool` on the launcher's own
-    /// cases (`lib/lane-launch.sh:128-150`).
     #[test]
     fn the_billed_harness_and_pool_follow_the_launchers_tables() {
         let rows = [
@@ -1528,7 +2239,8 @@ mod tests {
                 {"label": null, "pct": 35, "resets_at": null}
             ]
         }));
-        let binding = |model: Option<&str>| lane_binding(&r, model).map(|b| (b.bucket, b.pct));
+        let binding =
+            |model: Option<&str>| lane_binding(&r, model, false).map(|b| (b.bucket, b.pct));
         assert_eq!(
             binding(Some("claude-sonnet-5-5")),
             Some(("model".to_owned(), 35.0))
@@ -1546,20 +2258,20 @@ mod tests {
             "session_5h_pct": 20, "weekly_pct": 30, "model_buckets": [], "resets": {}
         }));
         assert_eq!(
-            lane_binding(&shared_only, Some("sonnet")).map(|b| (b.bucket, b.pct)),
+            lane_binding(&shared_only, Some("sonnet"), false).map(|b| (b.bucket, b.pct)),
             Some(("weekly".to_owned(), 30.0))
         );
         let unmeasured = row(json!({
             "alias": "c", "harness": "claude", "config_dir": "/h/.c", "measured_through": "local",
             "status": "unreachable", "verdict": "unmeasured", "headroom_pct": null
         }));
-        assert_eq!(lane_binding(&unmeasured, Some("sonnet")), None);
+        assert_eq!(lane_binding(&unmeasured, Some("sonnet"), false), None);
         let ended = row(json!({
             "alias": "d", "harness": "claude", "config_dir": "/h/.d", "measured_through": "local",
             "status": "plan_ended", "verdict": "walled", "headroom_pct": 0
         }));
         assert_eq!(
-            lane_binding(&ended, Some("sonnet")).map(|b| (b.bucket, b.pct)),
+            lane_binding(&ended, Some("sonnet"), false).map(|b| (b.bucket, b.pct)),
             Some(("plan".to_owned(), 100.0))
         );
     }

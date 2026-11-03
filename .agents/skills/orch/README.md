@@ -76,7 +76,7 @@ Set defaults in `kendex.settings.toml` `[env]` and secrets in `.env.local`; inst
 | Owner-ask settings | `ORCH_QUESTION_TOOL`, `ORCH_ASK_WAIT_MINUTES`, `ORCH_OWNER_EMAIL` (defaults to `KENDEX_USER_EMAIL`), `ORCH_OWNER_ASK_LABEL` (unset by default): [guide](kendex.settings.toml.example) § Talking to you | |
 | `ORCH_OVERSEER_SUCCESSION` | `on` lets `oversee-succeed` launch the successor overseer; `off` launches none and turns off the account-mark turn-end refusals, not the context one: [guide](kendex.settings.toml.example) | `on` |
 | `ORCH_OVERSEER_DEAD_PASSES` | Watch passes that read the overseer exited or walled before it is reported: [guide](kendex.settings.toml.example) | `2` |
-| `ORCH_OVERSEER_HEADROOM_PCT` | Account headroom at or below which the overseer succeeds onto an account above it and `lane-mail-check` refuses its turn end; which credit is exempt: `lanes --help` (pick) | `5` |
+| `ORCH_OVERSEER_HEADROOM_PCT` | Account headroom at or below which the overseer succeeds onto an account above it and `lane-mail-check` refuses its turn end. An overseer's seat keeps this room for it: a worker's pick holds a seat to `min(ORCH_LANE_MAX_PCT, 100 - ORCH_OVERSEER_HEADROOM_PCT)` and returns it last, and a lane on a seat hands off at `max(ORCH_HANDOFF_HEADROOM_PCT, ORCH_OVERSEER_HEADROOM_PCT)` room. Codex credits count as room on a seat as on any account | `5` |
 | `ORCH_OVERSEER_WALL_MINUTES` | Projected wall minutes that fire overseer succession. `0` disables it | `20` |
 | `ORCH_OVERSEER_SUCCESSOR_ACCOUNTS` | Qualifying-account count that fires succession: `oversee-succeed --help`. `0` disables it | `1` |
 | `ORCH_OVERSEER_MARK_REPEAT` | Watch passes a standing `overseer-mark` waits before it repeats | `5` |
@@ -97,9 +97,8 @@ Set defaults in `kendex.settings.toml` `[env]` and secrets in `.env.local`; inst
 | `RECONCILE_STALE_HOURS` | Hours before an In Progress or In Review item counts as started-stale in `reconcile-work-items` sweeps | `24` |
 | `WORKTREE_CLI` | Path to the worktree CLI `open-terminal` drives; empty resolves the installed worktree skill's script | resolved |
 | Reviewer-gate settings | `PR_REVIEW_WAIT_SECS`, `PR_COPILOT_REQUESTS`: [references/gates.md](references/gates.md) | |
-| `ORCH_LANE_MAX_PCT` | Usage share at or above which the orch runtime's account judge and `lanes pick` refuse an account; credit exemptions, bucket, overrides, other lane settings: `lanes --help`, `open-terminal --help` | `95` |
+| `ORCH_LANE_MAX_PCT` | Usage share at or above which the orch runtime's account judge, `orch-runtime accounts pick`, refuses an account for every launch, turn-end mark and succession pick; credit exemptions, bucket, overrides, other lane settings: `lanes --help`, `open-terminal --help` | `95` |
 | `ORCH_LANE_RETIRE` | Comma-separated `name=YYYY-MM-DD` pairs naming the day an account ends. The orch runtime's account judge picks the account until that UTC day and refuses it after; `lanes` lists it retired and never looks inside its directory: [guide](kendex.settings.toml.example) | empty |
-| `ORCH_OVERSEER_SEAT_RESERVE_PCT` | Plan room kept for the overseer. Seats return last above it; lanes on seats hand off at it. Keep above `ORCH_OVERSEER_HEADROOM_PCT`; 100 admits no seat, 0 uses the lane limit alone | `50` |
 | `ORCH_LANE_CLOUD_CREDIT_FLOOR` | Dollars a Claude cloud or Pi Anthropic API grant must exceed to stay pickable; tier and refusal: `lanes --help` | `10` |
 | `ORCH_LANE_CODEX_CREDIT_FLOOR` | Credits a spent Codex account must exceed to stay pickable, after plan room, since credits never reset. Provisional; lane-day arithmetic: [guide](kendex.settings.toml.example) | `5000` |
 | `ORCH_SIZE_RENDER_ROOTS` | Render-mirror roots excluded from production and test counts when their source changes in the same branch | `.agents .claude .codex .pi` |

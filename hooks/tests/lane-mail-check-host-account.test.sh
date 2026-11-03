@@ -10,7 +10,8 @@ case "$(uname -s)" in MINGW*|MSYS*) export MSYS=winsymlinks:nativestrict ;; esac
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/lane-mail-world.sh"
 
 # The Pi rows run on a Pi root no provider row names, so a sandbox account
-# lookup reaches `lanes pick --lane` and is refused there as unmeasured.
+# lookup reaches the account judge, `accounts pick --lane`, and is refused
+# there as unmeasured.
 UNLISTED_PI_ROOT="$TMP_ROOT/unlisted-pi-root"
 mkdir -p "$UNLISTED_PI_ROOT"
 printf '%s\n' '{"compaction":{"enabled":false}}' > "$UNLISTED_PI_ROOT/settings.json"
@@ -65,7 +66,7 @@ host_account_rows() { # HOOK [ROWS]
     fi
     if [ "$name" = local-pi ]; then
       assert_eq "$(grep -c '^lanes: cloud-credit-refused .*cause=api-credit' "$ERR_FILE" || true)" 1 \
-        "a Pi lane with no native identity is judged by lanes pick --lane"
+        "a Pi lane with no native identity is judged by the account judge on its API grant"
     fi
     if [ "$status" = 2 ]; then
       assert_eq "$(grep -cF ' set KEN-4296 handoff ' "$ERR_FILE" || true)" 1 \

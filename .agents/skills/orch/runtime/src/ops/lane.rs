@@ -380,8 +380,8 @@ fn no_live_harness(lane: &Lane, ids: &Identities) -> Result<()> {
 /// launcher's (`open-terminal`, `named_lane_judge`): room, or no row to
 /// judge, proceeds; walled, unmeasured and unjudged refuse with their
 /// cause, an unread window being no empty one (decision 99); an account
-/// the word refuses, reserved or retired, refuses by its word with no
-/// window's figure. The walled line's figures are the record's as that
+/// the word refuses, reserved, retired or excluded, refuses by its word
+/// with no window's figure. The walled line's figures are the record's as that
 /// launcher read them: the projected window where one was projected, else
 /// the reading's wall and binding bucket.
 fn room(path: &Path, r: &LaunchLane, replaces: Option<&str>, env: &Env, host: &Host) -> Result<()> {
@@ -394,18 +394,6 @@ fn room(path: &Path, r: &LaunchLane, replaces: Option<&str>, env: &Env, host: &H
         account: account.clone(),
         cause: cause.to_owned(),
     };
-    match accounts::pick_harness(&r.harness, &model) {
-        "claude" | "codex" | "copilot" | "pi" => {}
-        _ => {
-            return Err(Error::AccountUnmeasured {
-                item: r.item.clone(),
-                account: account.clone(),
-                model,
-                status: "provider-unmeasured".to_owned(),
-                detail: "none".to_owned(),
-            });
-        }
-    }
     let request = PickRequest {
         harness: r.harness.clone(),
         model: r.model.clone(),
@@ -471,9 +459,26 @@ fn room(path: &Path, r: &LaunchLane, replaces: Option<&str>, env: &Env, host: &H
                 .clone()
                 .unwrap_or_else(|| "none".to_owned()),
         }),
+        PickAnswer::Excluded(judged) => Err(refused(&format!(
+            "account-excluded account={}",
+            judged.row.config_dir
+        ))),
         PickAnswer::Unjudged { cause } => Err(refused(&cause)),
-        // The chooser's answer to a named account: no judge gives one.
-        PickAnswer::None { .. } => Err(refused("answer-unnamed")),
+        PickAnswer::CloudRepoUnset(judged) => Err(refused(&format!(
+            "cloud-repo-unset account={}",
+            judged.row.config_dir
+        ))),
+        PickAnswer::Unbilled { .. } => Err(Error::AccountUnmeasured {
+            item: r.item.clone(),
+            account: account.clone(),
+            model,
+            status: "provider-unmeasured".to_owned(),
+            detail: "none".to_owned(),
+        }),
+        // The chooser's answers to a named account: no judge gives one.
+        PickAnswer::None { .. } | PickAnswer::ProviderUnmeasured { .. } => {
+            Err(refused("answer-unnamed"))
+        }
     }
 }
 

@@ -640,11 +640,11 @@ while IFS='|' read -r model account status first; do
   expect "$status" "$first" "Claude model [$model] reads $account through its own windows"
 done <<< "$CLAUDE_ACCOUNT_ROWS"
 
-# Keep --model in the copy while removing its assignment. The Opus row then
-# fails: a full Fable window forces a handoff on a model with room.
+# Keep --native-model in the copy while removing its assignment. The Opus
+# row then fails: a full Fable window forces a handoff on a model with room.
 wake_mutant claude-model-unassigned \
-  '    PICK_MODEL=(--model "$(lane_context_mark_model claude "$MODEL")")' \
-  '    : # PICK_MODEL=(--model "$(lane_context_mark_model claude "$MODEL")")'
+  '    PICK_MODEL=(--native-model "$(lane_context_mark_model claude "$MODEL")")' \
+  '    : # PICK_MODEL=(--native-model "$(lane_context_mark_model claude "$MODEL")")'
 new_handoff_lane control_claude_model KEN-54
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 write_transcript "$TRANSCRIPT" 1000
@@ -696,31 +696,38 @@ record_handoff KEN-54
 stop_at "$TRANSCRIPT" false $(account_env .neutralclaude)
 expect 0 - "a lane whose handoff record stands ends its turn at its account's mark"
 
-# The real pick returns exit 3 for both account walls and overseer reserves.
-# The fleet record below makes the account a seat without changing its usage.
-# NAME|USED|SEAT RESERVE (empty for an ordinary account)|RC|FIRST LINE
+# The judge answers exit 3 for both account walls and overseer seats: its
+# record's verdict names which, and on a seat its `need` the room the seat
+# keeps for the overseer (KEN-4416). A seat row plants the judge's reply, the
+# record the runtime printed for a seat at 55 used held under a headroom of 50
+# and of 60 (`tests/rust/accounts.rs`'s world; the account's path and `need`
+# are the two rows' differences), so the seat line is proven on the record's
+# own spelling: `need=50`, an integer, never `50.0`. The other rows read the
+# usage fixture through the judge.
+# NAME|USED|SEAT NEED (empty for an ordinary account)|RC|FIRST LINE
 HEADROOM_VERDICT_ROWS='room|55||0|-
-seat|55|50|2|lane-mail-check: seat-reserve=45 bucket=session reserve=50
-custom|55|60|2|lane-mail-check: seat-reserve=45 bucket=session reserve=60
+seat|55|50|2|lane-mail-check: seat-reserve=45 bucket=session need=50
+custom|55|60|2|lane-mail-check: seat-reserve=45 bucket=session need=60
 at|97||2|lane-mail-check: headroom=3 bucket=session mark=3
 below|98||2|lane-mail-check: headroom=2 bucket=session mark=3'
 headroom_verdict_rows() { # HOOK
-  local name used reserve status first account
-  while IFS='|' read -r name used reserve status first; do
+  local name used need status first account
+  while IFS='|' read -r name used need status first; do
     account="headroom${name}claude"
     make_lane "$H" "$account" 3600
     claude_usage "$used" 0 0 Opus > "$FIXTURE_DIR/.$account.json"
     new_handoff_lane "handoff_verdict_${name}_${1##*/}" KEN-54
     install_hook "$1" "$LANE/.claude/hooks/lane-mail-check.sh"
-    if [ -n "$reserve" ]; then
-      (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
-      (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" set oversee overseer \
-        "$(jq -nc --arg a "$H/.$account" '{account:$a}')" >/dev/null)
+    if [ -n "$need" ]; then
+      jq -c --arg dir "$H/.$account" --arg alias "$account" --argjson need "$need" \
+        '.result.record.config_dir = $dir | .result.record.alias = $alias | .result.record.need = $need' \
+        > "$LANE/.claude/skills/orch/scripts/orch-runtime.pick" <<'REPLY'
+{"protocol":"orch-runtime-v1","ok":true,"result":{"answer":"walled","exit":3,"record":{"alias":"headroomseatclaude","harness":"claude","config_dir":"/home/me/.headroomseatclaude","retire_date":null,"measured_through":"local","status":"ok","refreshable":false,"plan":"max","session_5h_pct":55,"weekly_pct":0,"model_pct":0,"model_label":"Opus","model_buckets":[{"label":"Opus","pct":0,"resets_at":"2026-11-05T04:04:03Z"}],"monthly_pct":null,"credits":null,"unlimited":false,"claims":0,"headroom_pct":45,"binding_bucket":"session","binding_resets_at":"2026-11-02T17:04:03Z","usage_age_s":0,"resets":{"session":"2026-11-02T17:04:03Z","weekly":"2026-11-05T04:04:03Z","model":"2026-11-05T04:04:03Z","monthly":null},"detail":null,"wall":55,"usage_rate_state":"one-sample","usage_rate_pct_per_min":null,"projected_wall_minutes":null,"burn_pct_per_lane_hour":5,"binding_projected_headroom_pct":45,"session_projected_headroom_pct":45,"session_burn_pct_per_lane_hour":5,"session_charge_hours":1,"projected_headroom_pct":45,"projected_window":{"bucket":"session","pct":55,"resets_at":"2026-11-02T17:04:03Z"},"verdict":"seat-reserve","word":"pick","selection_score":67.5,"effective_headroom_pct":45,"seat":true,"need":50}}}
+REPLY
     fi
     write_transcript "$TRANSCRIPT" 1000
     # shellcheck disable=SC2046
-    stop_at "$TRANSCRIPT" false $(account_env ".$account") \
-      ORCH_HANDOFF_HEADROOM_PCT=3 "ORCH_OVERSEER_SEAT_RESERVE_PCT=${reserve:-50}"
+    stop_at "$TRANSCRIPT" false $(account_env ".$account") ORCH_HANDOFF_HEADROOM_PCT=3
     expect "$status" "$first" "account verdict $name names its own mark"
   done <<< "$HEADROOM_VERDICT_ROWS"
 }
@@ -728,7 +735,8 @@ headroom_verdict_rows "$HOOK"
 
 # Keep the verdict read while disabling its seat arm. The same rows must fail
 # when the hook treats that answer as the ordinary headroom wall again.
-wake_mutant seat-verdict-unread '        seat-reserve)' '        unobserved-seat-reserve)'
+wake_mutant seat-verdict-unread '        seat-reserve) refuse_handoff seat-reserve "$HEADROOM" ;;' \
+  '        unobserved-seat-reserve) refuse_handoff seat-reserve "$HEADROOM" ;;'
 control_status=0
 (
   FAIL=0
@@ -737,9 +745,11 @@ control_status=0
 ) > "$TMP_ROOT/seat-verdict.control.log" || control_status=$?
 assert_eq "$control_status" 1 "control: the verdict rows reject an unread seat verdict"
 
-# lanes pick publishes wall as used percent for binding_bucket. Its exit-3
+# The judge publishes wall as used percent for binding_bucket. Its exit-3
 # record can carry a different account-wide headroom. The same assertion
-# rejects a copy that restores the account field read.
+# rejects a copy that restores the account field read. The record is the
+# planted `lanes` reader's, which the world's runtime stand-in wraps as the
+# judge's reply.
 new_handoff_lane handoff_binding KEN-54
 write_transcript "$TRANSCRIPT" 1000
 plant_install lanes
@@ -756,8 +766,8 @@ binding_refusal() {
 stop_at "$TRANSCRIPT" false ORCH_HANDOFF_HEADROOM_PCT=3
 binding_refusal
 wake_mutant account-headroom \
-  '        (if .wall == null then "unknown" else 100 - .wall end)] | @tsv'\'' <<<"$PICK" 2>/dev/null) ||' \
-  '        (.headroom_pct // "unknown")] | @tsv'\'' <<<"$PICK" 2>/dev/null) ||'
+  '        (if .wall == null then "unknown" else 100 - .wall end), (.need // "unknown")] | @tsv'\'' <<<"$PICK" 2>/dev/null) ||' \
+  '        (.headroom_pct // "unknown"), (.need // "unknown")] | @tsv'\'' <<<"$PICK" 2>/dev/null) ||'
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 stop_at "$TRANSCRIPT" false ORCH_HANDOFF_HEADROOM_PCT=3
 expect 2 "lane-mail-check: headroom=50 bucket=five_hour mark=3" \
@@ -772,11 +782,9 @@ assert_eq "$control_status" 1 "control: the binding-headroom assertion rejects t
 
 # An account nothing could measure is a gap the lane cannot act on: it is
 # reported and the turn ends, never refused, so a setup with no usage endpoint
-# is not stopped by a mark it can never reach.
-# The cause it relays is `lanes`' own words, with no preference-deprecated or
-# model-resolution line beside them: a lane's launch prints those only where
-# its preference walk classified the entry, and none where it named its model.
-# The control drops the hook's hold.
+# is not stopped by a mark it can never reach. The cause it relays is the
+# judge's own words, with no model line beside them: the judge is handed the
+# model the session names and classifies nothing.
 new_handoff_lane handoff_unmeasured KEN-55
 write_transcript "$TRANSCRIPT" 1000
 # model_lines — the hook's first line, then the model lines ERR_FILE carries.
@@ -785,18 +793,34 @@ model_lines() { printf '%s|%s' "$(first_line)" "$(grep -c -e '^preference-deprec
 stop_at "$TRANSCRIPT" false $(account_env .openclaude)
 assert_eq "RC=$RC $(model_lines)" "RC=0 lane-mail-check: account=unmeasured|0" \
   "an account with an inventory entry and no usable credential is reported, never read as room, with no model line in its cause"
-variant unheld -e 's/^export ORCH_MODEL_LINES_HELD=1$/:/'
-install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+
+# A runtime the install has not built for its sources (the wrapper's
+# `setup-required`, exit 69; decision 184 (8)) answers no judgement: the
+# turn end passes with the notice naming the install's setup, the account
+# neither read as room nor held, and no judge is asked. The control is the
+# hook's `69)` arm dropped: the answer then falls to the unmeasured arm, a
+# gap reported under the wrong key with no repair named.
+new_handoff_lane handoff_unbuilt KEN-56
+write_transcript "$TRANSCRIPT" 1000
+runtime_stub "$LANE/.claude/skills/orch/scripts" unbuilt
 # shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(account_env .openclaude)
-assert_eq "$(model_lines)" "lane-mail-check: account=unmeasured|1" \
-  "control: without the hook's hold the cause carries the model's preference-deprecated line"
+stop_at "$TRANSCRIPT" false $(account_env .neutralclaude)
+assert_eq "RC=$RC first=$(first_line) names=$(grep -c "run $LANE/.claude/skills/orch/scripts/setup" "$ERR_FILE" || true)" \
+  "RC=0 first=lane-mail-check: setup-required=$LANE/.claude/skills/orch/scripts/setup names=1" \
+  "an unbuilt runtime passes the turn end of a lane at its account mark, with the notice naming the install's setup"
+wake_mutant unbuilt-arm-dropped '    69)' '    999)'
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(account_env .neutralclaude)
+assert_eq "RC=$RC first=$(first_line)" "RC=0 first=lane-mail-check: account=unmeasured" \
+  "control: without the arm the unbuilt runtime is reported as an account nothing measured"
 install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 
-# `lanes pick --lane` keeps a status-only contract where `handoff-standing`
+# The judge's reply keeps a status-only contract where `handoff-standing`
 # could not, and one reservation is what makes that safe: every status with an
-# arm of its own is one no death before the verb can produce. `lanes` loads the
-# same `.env.local` through the same loader, and a file bash cannot parse kills
+# arm of its own is one no death before the verb can produce. The reader the
+# judge measures through loads the same `.env.local` through the same loader,
+# and a file bash cannot parse kills
 # it with 1 or 2 — the two rows below — while the arms that refuse a lane, name
 # its harness and report an abandoned read take 3, 4 and 124. An arm that
 # starts acting on 1 or 2 reds here.
@@ -947,7 +971,7 @@ if command -v timeout >/dev/null 2>&1; then
   # decides whether bash reaches its trap, so a stub that blocked in a bare
   # foreground command would measure a shape `lanes` never has.
   printf '#!/usr/bin/env bash\nset -uo pipefail\n. "%s/lib/file-lock.sh"\nrefresh() {\n  PATH="%s"\n  exec 9>"%s"\n  orch_take_lock 9 "%s" 30 || exit 1\n  post=$(sleep 30)\n  printf %%s "$post"\n}\nmeasure() {\n  local out\n  out=$(refresh) || return 1\n  printf %%s "$out"\n}\nrecord=$(measure)\n' \
-    "$REPO_ROOT/skills/orch/scripts" "$LOCK_BIN" "$LANE_LOCK" "$LANE_LOCK" \
+    "$REPO_ROOT/skills/mailbox/scripts" "$LOCK_BIN" "$LANE_LOCK" "$LANE_LOCK" \
     > "$LANE/.claude/skills/orch/scripts/lanes"
   chmod +x "$LANE/.claude/skills/orch/scripts/lanes"
   write_transcript "$TRANSCRIPT" 1000
@@ -976,11 +1000,11 @@ expect 0 - "a standing record ends the turn although lanes is missing from the i
 # The same install with no record: the script the marks need is named, and so
 # is the record that ends the refusal.
 new_handoff_lane handoff_script KEN-67
-plant_install lanes
+plant_install orch-runtime
 write_transcript "$TRANSCRIPT" 1000
 stop_at "$TRANSCRIPT" false
 assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- " set KEN-67 handoff " "$ERR_FILE")" \
-  "RC=2 first=lane-mail-check: script=$LANE/.claude/skills/orch/scripts/lanes named=1" \
+  "RC=2 first=lane-mail-check: script=$LANE/.claude/skills/orch/scripts/orch-runtime named=1" \
   "a script the marks need and the install has not got is refused, with the record that clears it"
 
 # The one command that records a handoff, missing: a refusal naming it could

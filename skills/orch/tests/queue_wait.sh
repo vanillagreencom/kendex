@@ -822,8 +822,7 @@ EOF
 chmod +x "$TMP_ROOT/argbin/gh"
 # --help is routed: merge-pr.md and the github skill's pr-merge send an agent
 # to its Verdicts, Exit codes and Environment sections. Exit codes and
-# Environment are pinned here; the Verdicts vocabulary is the routing lint's
-# (queue-verdict-routing-lint.test.sh).
+# Environment are pinned here.
 arg_rows=(
   'poll_interval past max_wait is a usage error|1 1800 600 --json --no-check-probe|rc=2 stdout=empty gh_calls=0'
   'a non-numeric poll_interval is a usage error|1 abc 600 --json --no-check-probe|rc=2 stdout=empty gh_calls=0'

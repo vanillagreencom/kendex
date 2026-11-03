@@ -159,8 +159,8 @@ pub(super) enum SuiteRun {
 pub(super) struct CheckRunEvidence {
     /// The check run's id: the second key among check runs started alike
     /// in the rollup, after the listing position
-    /// (`selection::eliminate_duplicates`), and the differential's
-    /// selection projection; the judgement names a check by its link.
+    /// (`selection::eliminate_duplicates`); the judgement names a check by
+    /// its link.
     id: u64,
     name: String,
     outcome: Outcome,

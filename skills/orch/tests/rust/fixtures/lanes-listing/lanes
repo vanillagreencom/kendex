@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
-# The fake `lanes` for the accounts rows (U6h): `list --json` prints
-# `lanes.json` beside the path this was invoked as (the rows symlink the
-# fixture into their world as `lanes`); `pick ... --json` answers from
-# `pick.json` there, `{exit?, body?}`, the delegated read's planted answer,
-# and refuses with a keyed line where none is planted. Every call appends
+# The fake `lanes` for the accounts rows (U6h, U8d, U8d3): `list --json`
+# prints the planted listing beside the path this was invoked as (the rows
+# symlink the fixture into their world as `lanes`): `lanes-<host>.json`
+# where the call named ORCH_LANE_HOST and that file exists, as the real
+# reader's rows differ by provider, else `lanes.json`. `host-accounts
+# --harness pi --json`, the judge's read of a provider's Copilot pool rows,
+# prints `host-accounts-<host>.json` where planted, else `[]`; `host-
+# accounts.rc` beside is that read's exit status (2 is a provider without
+# the verb, as the real reader answers it). Every call appends
 # `ORCH_LANE_HOST=<value|unset> ORCH_LANE_RETIRE=<emptied|unset|set> <argv>`
 # to `lanes.log` there, so a row proves what the judge handed the reader:
 # the retirement statement emptied, the host named. The statement's value
@@ -11,19 +15,34 @@
 # environment, which can carry the operator's own statement, and a row
 # asserts only whether the judge emptied it. `lanes.rc` beside, when
 # present, is the listing's exit status, `lanes.text` its raw answer in
-# place of the JSON file.
+# place of the JSON file. The judge asks nothing else of the reader: a
+# `pick` is refused with a keyed line, as a row that reached one must red.
 set -u
 here="$(dirname "${BASH_SOURCE[0]}")"
+host="${ORCH_LANE_HOST-unset}"
 if [ -z "${ORCH_LANE_RETIRE+x}" ]; then retire=unset; elif [ -z "$ORCH_LANE_RETIRE" ]; then retire=emptied; else retire=set; fi
-printf 'ORCH_LANE_HOST=%s ORCH_LANE_RETIRE=%s %s\n' "${ORCH_LANE_HOST-unset}" "$retire" "$*" >> "$here/lanes.log"
-if [ "${1:-}" = pick ]; then
-  if [ ! -f "$here/pick.json" ]; then
-    printf 'lanes: no-pick-planted\n' >&2
-    exit 1
-  fi
-  jq -c '.body // {}' -- "$here/pick.json"
-  exit "$(jq -r '.exit // 0' -- "$here/pick.json")"
-fi
+printf 'ORCH_LANE_HOST=%s ORCH_LANE_RETIRE=%s %s\n' "$host" "$retire" "$*" >> "$here/lanes.log"
+case "${1:-}" in
+  list) ;;
+  host-accounts)
+    rc=0
+    [ ! -f "$here/host-accounts.rc" ] || rc="$(cat "$here/host-accounts.rc")"
+    if [ "$rc" -ne 0 ]; then
+      printf 'lanes: stub-refused verb=host-accounts rc=%s\n' "$rc" >&2
+      exit "$rc"
+    fi
+    if [ "$host" != unset ] && [ -f "$here/host-accounts-$host.json" ]; then
+      cat "$here/host-accounts-$host.json"
+    else
+      printf '[]\n'
+    fi
+    exit 0
+    ;;
+  *)
+    printf 'lanes: fixture-verb-refused verb=%s\n' "${1:-}" >&2
+    exit 64
+    ;;
+esac
 rc=0
 [ ! -f "$here/lanes.rc" ] || rc="$(cat "$here/lanes.rc")"
 if [ "$rc" -ne 0 ]; then
@@ -32,6 +51,8 @@ if [ "$rc" -ne 0 ]; then
 fi
 if [ -f "$here/lanes.text" ]; then
   cat "$here/lanes.text"
+elif [ "$host" != unset ] && [ -f "$here/lanes-$host.json" ]; then
+  cat "$here/lanes-$host.json"
 elif [ -f "$here/lanes.json" ]; then
   cat "$here/lanes.json"
 else

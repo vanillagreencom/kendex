@@ -21,6 +21,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::watch::owner_alert::Word;
+
 /// The target word of the controller's own record.
 pub const OVERSEER_TARGET: &str = "overseer";
 
@@ -40,8 +42,11 @@ pub enum WakeOutcome {
 /// The mark a wake writes before it types: the pane it types into by its
 /// exact key on its server (decision 99), the unread state the wake is for
 /// (the mail duty's row value), the bound file's user-turn count the
-/// delivery is confirmed against, the epoch second of the mark, and the
-/// outcome once known.
+/// delivery is confirmed against, the epoch second of the mark, the
+/// outcome once known, and, for the overseer alone, where the owner's turn
+/// stands for an outcome that left the mail unread (`watch::owner_alert`):
+/// `told` once the outcome is on the log, `alerted` once the owner holds
+/// the words, none where nothing is owed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WakeMark {
     pub pane: String,
@@ -53,6 +58,8 @@ pub struct WakeMark {
     pub at: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outcome: Option<WakeOutcome>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner: Option<Word>,
 }
 
 impl WakeMark {
@@ -102,6 +109,7 @@ mod tests {
             turns_before: 2,
             at: 1_769_700_000,
             outcome,
+            owner: None,
         }
     }
 

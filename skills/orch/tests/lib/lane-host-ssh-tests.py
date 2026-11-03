@@ -1159,7 +1159,7 @@ rc=0
     def test_append_waits_on_the_lock_the_mailbox_owns(self):
         """A second writer of one mailbox waits for it."""
         self.assertEqual(self.create().returncode, 0)
-        library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib"
+        library = Path(self.row["clone"]) / ".agents/skills/mailbox/scripts/lib"
         target = self.root / "lane/tmp/lane-mail/TEST-1/to-lane.jsonl"
         target.parent.mkdir(parents=True)
         taken, release = self.root / "lock-taken", self.root / "lock-release"
@@ -1250,7 +1250,7 @@ rc=0
         target.write_bytes(b"")
         result = self.call("append", "--item", "TEST-1", "--", str(target), data=(json.dumps(envelope) + "\n").encode())
         self.assertEqual(result.returncode, 0, result.stderr)
-        remote_library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/mailbox-append.sh"
+        remote_library = Path(self.row["clone"]) / ".agents/skills/mailbox/scripts/lib/mailbox-append.sh"
         self.assertEqual(result.stderr, f"lane-host-ssh: append-library-outdated path={remote_library} repeat-check=skipped\n".encode())
 
     def test_append_names_its_failure_in_a_word(self):
@@ -1330,7 +1330,7 @@ exec "$REAL_CAT" "$@"
     def test_append_names_a_clone_that_predates_the_verb(self):
         """The control machine and the host's clone update apart."""
         self.assertEqual(self.create().returncode, 0)
-        library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/mailbox-append.sh"
+        library = Path(self.row["clone"]) / ".agents/skills/mailbox/scripts/lib/mailbox-append.sh"
         target = self.root / "lane/tmp/lane-mail/TEST-1/to-lane.jsonl"
         target.parent.mkdir(parents=True)
         kept = library.read_bytes()
@@ -1360,7 +1360,7 @@ exec "$REAL_CAT" "$@"
         result = self.call("append", "--item", "TEST-1", "--", str(target), data=b'{"id":"nowhere"}\n')
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(target.read_bytes(), b'{"id":"nowhere"}\n')
-        remote_library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/mailbox-append.sh"
+        remote_library = Path(self.row["clone"]) / ".agents/skills/mailbox/scripts/lib/mailbox-append.sh"
         self.assertEqual(result.stderr, f"lane-host-ssh: append-library-outdated path={remote_library} repeat-check=skipped\n".encode())
         self.assertEqual(list(target.parent.glob("*.kendex-append.*")), [])
         # Restoring the refusal loses delivery to the old host clone.

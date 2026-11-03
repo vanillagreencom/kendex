@@ -161,7 +161,7 @@ if [[ -z "${MODEL_CONTROL:-}" ]]; then
   model_world fleet-lock claude-fable-5-1
   mkfifo "$LANE/tmp/release-lock"
   "$BASH" -euo pipefail -c '
-    . "$1/lib/file-lock.sh"
+    . "$1/../../mailbox/scripts/lib/file-lock.sh"
     orch_take_lock 200 "$2.lock" 10
     printf held > "$3"
     read -r release < "$4"

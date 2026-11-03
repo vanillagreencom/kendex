@@ -78,7 +78,7 @@ pub enum Event {
         since: Option<String>,
     },
     /// This runtime's own: a claim taken over, naming the identity it read;
-    /// `start` is `None` on a legacy record, which carries no start.
+    /// `start` is `None` on a record that carries no start, rendered `none`.
     WatchTakenOver {
         pid: u32,
         start: Option<String>,
@@ -329,13 +329,13 @@ pub enum Event {
         stage: String,
     },
     // U5e2: the GitHub duty's readings' lines (decision 152).
-    /// `lib/pr-watch-pass.sh:191`: the reducer pass found a new attention
-    /// key; `rc` the highest status any repository's reducer returned. The
-    /// reducer lines and the pass's stderr follow as `Tail` lines.
+    /// The reducer pass found a new attention key; `rc` the highest status
+    /// any repository's reducer returned. The reducer lines and the pass's
+    /// stderr follow as `Tail` lines.
     PrWatch { rc: i32 },
-    /// `lib/security-alerts.sh:235-245`: one open alert, its optional
-    /// fields in the legacy's order, `report=repeat` on a pass that lists
-    /// an alert already reported with no verdict recorded.
+    /// One open alert, its optional fields in the line's fixed order,
+    /// `report=repeat` on a pass that lists an alert already reported with
+    /// no verdict recorded.
     SecurityAlert {
         repo: String,
         kind: String,
@@ -352,11 +352,10 @@ pub enum Event {
         pr: Option<u64>,
         repeat: bool,
     },
-    /// `lib/security-alerts.sh:298`: `reads` the comma-joined
-    /// `<source>:<cause>` set, printed when the set changes.
+    /// `reads` the comma-joined `<source>:<cause>` set, printed when the
+    /// set changes.
     SecurityAlertsUnread { reads: String },
-    /// `lib/outside-contribution.sh:116-117`: `key` is `<repo>#<number>`,
-    /// `head` present on a pull request alone.
+    /// `key` is `<repo>#<number>`, `head` present on a pull request alone.
     OutsideContribution {
         key: String,
         kind: String,

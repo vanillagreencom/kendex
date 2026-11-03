@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Reusable provider stub. Credential bytes stay in the put file, never the log.
 #
-# LANE_HOST_STUB_LIB names the orch script library `append` runs, the way the
-# real provider takes the remote clone's path as an argument; a copy of this
-# file installed beside a `scripts/lib` needs no such variable.
+# LANE_HOST_STUB_LIB names the mailbox skill's script library `append` runs, the
+# way the real provider takes the remote clone's path as an argument; a copy of
+# this file under a tests directory of a skill installed beside the mailbox
+# skill needs no such variable.
 set -euo pipefail
 STUB_LIB="${LANE_HOST_STUB_LIB:-}"
 if [ -z "$STUB_LIB" ]; then
-  STUB_LIB="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../scripts/lib" 2>/dev/null && pwd -P)" || STUB_LIB=""
+  STUB_LIB="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../../mailbox/scripts/lib" 2>/dev/null && pwd -P)" || STUB_LIB=""
 fi
 # The kind's declaration, answered ahead of the call log and the failure
 # switches below, so the log and every staged failure stay the provider verbs
