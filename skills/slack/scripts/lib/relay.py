@@ -12,7 +12,7 @@ queues acknowledged envelopes. The worker owns journal, API and mailbox
 calls, so their waits cannot block acknowledgements or pong replies.
 
 The worker also answers the optional slash commands, through the one
-COMMANDS table, and the Home tab: /status and /asks with the output of the
+COMMANDS table, and the Home tab: /lanes and /asks with the output of the
 command line their setting names, /report with one directive to
 SLACK_REPORT_ROOT's mailbox, each as one ephemeral reply to the payload's
 response_url; an app_home_opened event publishes SLACK_HOME_COMMAND's
@@ -144,6 +144,11 @@ from store import (
     write_status,
 )
 from websocket import Closed, WebSocket
+
+# Reload keeps the process alive; internal warning state must not reach
+# configured commands or the root settings reader.
+STATUS_RENAMED = os.environ.pop("_KENDEX_SLACK_RENAMED_STATUS", "0") == "1"
+CALLER_ENV.pop("_KENDEX_SLACK_RENAMED_STATUS", None)
 
 ROUTED_SUBTYPES = {None, "file_share", "thread_broadcast"}
 # The package's code: the launcher and the modules it loads.
@@ -1337,6 +1342,7 @@ class Relay:
         # SLACK_OWNERS as Slack ids for commands and the Home tab, resolved
         # on first use; a root's binding can hold an owner since removed.
         self.owner_set: Optional[Set[str]] = None
+        self.status_renamed = STATUS_RENAMED
         self.home_off = False
         self.roots: List[RootRelay] = []
         self.by_channel: Dict[str, RootRelay] = {}
@@ -1503,6 +1509,7 @@ class Relay:
         try:
             os.execve(str(LAUNCHER), [str(LAUNCHER), *sys.argv[1:]], {
                 **CALLER_ENV, "_KENDEX_SLACK_RENAMED_SETTINGS": json.dumps(sorted(RENAMED_SETTINGS)),
+                "_KENDEX_SLACK_RENAMED_STATUS": "1" if self.status_renamed else "0",
             })
         except OSError as err:
             raise Refusal("reexec-failed", f"{LAUNCHER} ({err.strerror})") from err
@@ -1735,6 +1742,9 @@ class Relay:
         try:
             if str(payload.get("user_id") or "") not in self.owner_ids():
                 return NOT_OWNER_COMMAND
+            if name == "/status" and not self.status_renamed:
+                notice("command-renamed", "/status fix=/lanes remove-in=2.0.0", file=sys.stderr)
+                self.status_renamed = True
             return handler(self, payload)
         except Refusal as err:
             if err.key == "slack-auth-failed":
@@ -1839,7 +1849,9 @@ class Relay:
 # The one command dispatch table: each slash command the relay answers and
 # the reply its worker builds.
 COMMANDS: Dict[str, Callable[[Relay, Dict], str]] = {
-    "/status": lambda relay, payload: relay.answer_with("/status", "SLACK_STATUS_COMMAND", relay.settings.status_command),
+    "/lanes": lambda relay, payload: relay.answer_with("/lanes", "SLACK_STATUS_COMMAND", relay.settings.status_command),
     "/asks": lambda relay, payload: relay.answer_with("/asks", "SLACK_ASKS_COMMAND", relay.settings.asks_command),
     "/report": lambda relay, payload: relay.report(payload),
 }
+# Retired consumer name remains readable until kendex 2.0.0.
+COMMANDS["/status"] = COMMANDS["/lanes"]

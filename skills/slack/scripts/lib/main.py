@@ -109,7 +109,7 @@ files, with caller exports taking precedence: SLACK_BOT_TOKEN, SLACK_APP_TOKEN (
 channel name; default KENDEX_USER_EMAIL's local part), SLACK_POLL_SECONDS (15),
 SLACK_THREAD_DAYS (7) and SLACK_API_URL (default https://slack.com/api).
 The optional slash commands and Home tab, each off while empty:
-SLACK_STATUS_COMMAND and SLACK_ASKS_COMMAND, the command lines /status and
+SLACK_STATUS_COMMAND and SLACK_ASKS_COMMAND, the command lines /lanes and
 /asks reply with the output of; SLACK_REPORT_ROOT, the --root checkout whose
 overseer mailbox /report writes one directive to; SLACK_HOME_COMMAND, the
 command line whose output the Home tab shows. A command line runs with no

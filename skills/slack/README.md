@@ -13,7 +13,7 @@ A relay between an overseer's mailbox and one private Slack channel. Session own
 - Post an alert or a file to any channel from a script, with `--mention` for the owners. While the root's Jarvis session hold stands, including a presence-file rename, `--mention` posts with no mention and prints one `mention-held` line on stderr.
 - Send text as standard Markdown and file comments as Slack's mrkdwn markup. [Message standard](SKILL.md#message-standard) defines the difference.
 - Refuse any text or file that matches the secret-value pattern.
-- Optionally answer `/status`, `/asks` and `/report` with no agent turn, and draw the app's Home tab: [Slash commands and the Home tab](#slash-commands-and-the-home-tab).
+- Optionally answer `/lanes`, `/asks` and `/report` with no agent turn, and draw the app's Home tab: [Slash commands and the Home tab](#slash-commands-and-the-home-tab).
 
 ## Install
 
@@ -74,7 +74,7 @@ The app must be a member of every channel it posts to. `setup` creates or adopts
 
 Both are optional. A command whose setting is empty runs nothing and replies that it is off, and with `SLACK_HOME_COMMAND` empty the relay draws no Home tab. Both arrive on the relay's one Socket Mode connection, and the package uses the standard library alone, no Slack SDK or Bolt.
 
-- `/status` and `/asks` reply with the output of the command lines `SLACK_STATUS_COMMAND` and `SLACK_ASKS_COMMAND` name. The reply is ephemeral: only the owner who typed the command sees it, in the channel it was typed in. No mailbox is written and no agent takes a turn.
+- `/lanes` and `/asks` reply with the output of the command lines `SLACK_STATUS_COMMAND` and `SLACK_ASKS_COMMAND` name. The reply is ephemeral: only the owner who typed the command sees it, in the channel it was typed in. No mailbox is written and no agent takes a turn.
 - `/report` writes one directive to the overseer mailbox of `SLACK_REPORT_ROOT`, asking for a progress report now. The reply names that checkout and the directive's id. Where no overseer is recorded there, it says so, and nothing is written. A notice that names the directive, sent with `lane-mail notice --ref`, is a reply: it reaches that root's channel as a new message, even while a Jarvis session hold stands. The report notice `oversee-report write` sends names no directive, so it is an ordinary owner notice: held while a Jarvis session hold stands, skipped on resume once the session read it, and not sent at all during `ORCH_REPORT_QUIET_HOURS`.
 - An unknown command replies that the relay does not answer it.
 - The relay acknowledges each envelope as it reads it, inside Slack's 3 seconds, and answers on its worker through the command's `response_url`. A command line still running after 10 seconds is stopped, TERM and then KILL to its process group, and its reply names `timeout`. The stop holds the worker for up to 15 seconds more. A reply is cut at 4,000 characters, with a marker.
@@ -87,11 +87,13 @@ Only the settings choose a command line. No field of a Slack payload reaches its
 To register them on an app:
 
 1. Under OAuth & Permissions, add the bot scope `commands`.
-2. Under Slash Commands, create each command you enable: `/status`, `/asks`, `/report`. Socket Mode needs no request URL.
+2. Under Slash Commands, create each command you enable: `/lanes`, `/asks`, `/report`. Socket Mode needs no request URL.
 3. For the Home tab, turn on the Home tab under App Home and subscribe to the `app_home_opened` bot event under Event Subscriptions.
 4. Reinstall the app to the workspace.
 
-Slack sends a command name that two apps of one workspace register to the app installed most recently. Which app registers which command is the deployment's choice; the package needs one app. For example:
+Slack reserves `/status` for its built-in command. The relay keeps that retired name readable until kendex 2.0.0 and prints one `command-renamed` warning per process naming `/lanes` as its replacement. Register `/lanes` for configured status output.
+
+Slack sends a command name that two apps of one workspace register to the app installed most recently. The relay answers the names in `scripts/lib/relay.py`'s `COMMANDS` table; the package needs one app. For example:
 
 ```toml
 [env]
@@ -157,7 +159,7 @@ Other Slack settings are process-wide and use the launch checkout, the first `--
 | `SLACK_THREAD_DAYS` | Journal retention and reconnect lookback in days; live replies have no age limit | `7` |
 | `SLACK_JARVIS_SESSION_FILE` | Per root: the Jarvis session's presence file; while fresh it holds mailbox posts except replies to messages the owner typed in the channel, which still post in their threads, and a notice that names a `/report` directive | empty: no hold |
 | `SLACK_JARVIS_SESSION_MAX_AGE` | Per root: seconds after the file's last touch that it still holds posts | `600` |
-| `SLACK_STATUS_COMMAND` | The command line `/status` replies with the output of | empty: off |
+| `SLACK_STATUS_COMMAND` | The command line `/lanes` replies with the output of | empty: off |
 | `SLACK_ASKS_COMMAND` | The command line `/asks` replies with the output of | empty: off |
 | `SLACK_REPORT_ROOT` | The `--root` checkout whose overseer mailbox `/report` writes to; another path refuses the relay's start with `setting-invalid` | empty: off |
 | `SLACK_HOME_COMMAND` | The command line whose output the Home tab shows | empty: off |
