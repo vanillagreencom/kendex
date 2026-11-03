@@ -6,7 +6,7 @@ A dependency review workflow for repository maintainers. It checks pinned packag
 
 - Maintain an inventory of pinned dependencies and update procedures.
 - Check upstream releases and read their release notes.
-- Create a separate PR for each dependency update and its required fixes.
+- Create a separate PR for each dependency surface and its required fixes.
 - Write a report of applied updates and unresolved decisions.
 
 ## Install

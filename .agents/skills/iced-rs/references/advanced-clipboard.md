@@ -1,73 +1,32 @@
-# Clipboard
+# Widget clipboard access
 
-> `iced::advanced::Clipboard` · iced 0.14.0
+Read when handling text copy/paste in an Iced 0.14.0 custom widget. The pinned [Clipboard contract](https://github.com/iced-rs/iced/blob/0.14.0/core/src/clipboard.rs) owns read/write and clipboard kinds. The [winit backend](https://github.com/iced-rs/iced/blob/0.14.0/winit/src/clipboard.rs) owns connection and native forwarding.
 
-System clipboard trait. Read/write text via `&mut dyn Clipboard` in `Widget::update()`. `Kind::Standard` for Ctrl+C/V, `Kind::Primary` for X11/Wayland middle-click selection.
+## Copy and paste
 
-## API
+Widgets receive a clipboard trait object during update. Read accepts a shared reference and returns optional text; write needs a mutable reference and accepts owned text. This trait carries text, not image/file/custom MIME payloads.
 
-### Trait definition
+Inside the appropriate shortcut handler, write the selected text or publish a paste message when text is available:
 
 ```rust
-pub trait Clipboard {
-    fn read(&self, kind: Kind) -> Option<String>;
-    fn write(&mut self, kind: Kind, contents: String);
+use iced::advanced::clipboard::Kind;
+
+clipboard.write(Kind::Standard, selected_text);
+
+if let Some(text) = clipboard.read(Kind::Standard) {
+    shell.publish(Message::Paste(text));
 }
 ```
 
-- **`read(kind)`** — Reads the current content of the clipboard as text. Returns `None` if the clipboard is empty or the operation fails.
-- **`write(kind, contents)`** — Writes the given text contents to the clipboard.
+Keep copy and paste in their separate event branches. Handle a missing read without substituting empty text as proof of a successful paste.
 
-### `Kind` enum
+## Availability
 
-```rust
-pub enum Kind {
-    Standard,
-    Primary,
-}
-```
+Use Standard for normal copy/paste. Primary is the selection clipboard, documented as normally present on X11/Wayland. If an application requires both standard copy/paste and primary-selection behavior, write the intended text to both kinds and check the supported backends.
 
-- **`Standard`** — The standard clipboard (Ctrl+C / Ctrl+V on most systems).
-- **`Primary`** — The primary selection clipboard. Normally only present on X11 and Wayland; middle-click paste.
+The backend can be connected to a window or unavailable. An unavailable read returns no text; an unavailable write has no effect. A missing result alone does not establish which permission, connection or platform condition caused it. Verify foreground/background access and primary behavior on each target rather than assuming identical support or a universal Windows/macOS outcome.
 
-## Patterns
-
-```rust
-fn update(
-    &mut self,
-    _tree: &mut Tree,
-    event: &Event,
-    _layout: Layout<'_>,
-    _cursor: Cursor,
-    _renderer: &Renderer,
-    clipboard: &mut dyn Clipboard,
-    shell: &mut Shell<'_, Message>,
-    _viewport: &Rectangle,
-) {
-    // Copy
-    if is_copy_shortcut(event) {
-        clipboard.write(Kind::Standard, self.selected_text());
-    }
-
-    // Paste
-    if is_paste_shortcut(event) {
-        if let Some(text) = clipboard.read(Kind::Standard) {
-            shell.publish((self.on_paste)(text));
-        }
-    }
-}
-```
-
-
-## Gotchas
-
-- The trait takes `&self` for `read` but `&mut self` for `write`. You can call `read` from any context that holds a shared reference to the clipboard.
-- Most platforms restrict clipboard access to foreground windows; a `read()` from a background window may silently return `None`.
-- `Kind::Primary` is a no-op on Windows/macOS; both reads return `None` and writes are dropped. Write to both for cross-platform drag-like flows.
-- The trait is **dyn-compatible** — widgets receive it as `&mut dyn Clipboard` through `update()`.
-- Only text MIME type supported -- no images, files, or custom types.
-
-## See also
+## Related references
 
 - `advanced-widget.md`
 - `advanced-shell.md`

@@ -2,18 +2,6 @@
 
 Run when adding a repository to bot-instructions. Before the first pass, read [references/checklist.md § Before the first pass](../references/checklist.md#before-the-first-pass).
 
-Two passes. The order is not a preference — three rules fix it, and a sequence that ignores them writes a TOML that does not validate or a render that stops.
-
-**What those rules require, since everything below follows from them.**
-
-*From `toml-schema`'s cross-flag clauses.* A `[[bot-instructions.surface]]` set needs at least one of `copilot`, `coderabbit`, `macroscope` or `qodo_best_practices` on, because those four are every route surface text has. `copilot` or `coderabbit` needs `codex`, because that flag writes the pointed `code-review.md` both of them read. `qodo_best_practices` and `qodo_review_md` need `qodo`.
-
-*From `adopt`'s own rule.* It takes a file or region over only for a capability that is on.
-
-Those two give **capability-dependent content lands with its capability**, and nothing that depends on a flag is written before the flag.
-
-*From `agents-section`'s nested-`AGENTS.md` clause.* It rejects a nested `AGENTS.md` carrying a `## Code Review Rules` section, it is the one clause no flag gates, and it runs against the repo before every write. So it is invisible to the flag reasoning above and constrains the sequence anyway: a repo holding such a section cannot complete **any** render, including a pass-one render with every flag off. Clearing it is therefore a pass-one prerequisite rather than part of the `codex` capability's own pass.
-
 **Pass one, the repo-wide TOML.** `[bot-instructions.repo]`, `[bot-instructions.exclusions]`, `[bot-instructions.cadence]`, `[bot-instructions.tone]`, `[bot-instructions.budgets]` and any `[bot-instructions.doctrine.*]` overrides, with every `[bot-instructions.bots]` flag false and no `[[bot-instructions.surface]]` entries.
 
 1. Read the repo's existing hand-written bot files now and plan where their claims go: which become `[[bot-instructions.surface]]` entries, which become `[bot-instructions.doctrine.append]`, which will not fold and stay hand-written. Write the repo-wide tables; leave the surfaces for the pass that turns on a bot able to read them.
@@ -29,8 +17,6 @@ Those two give **capability-dependent content lands with its capability**, and n
 8. Run `adopt`. It can now take over that capability's generated paths, the `AGENTS.md` region the heading opened included, and it names every file and region it takes plus every repo-root or `.github/` markdown file those files point at. That second list is where a repo-wide hand-written reviewer file shows up. Read both against the TOML: a claim in one of those files that the TOML does not carry is about to be deleted, or to go on steering reviews from outside the package. Adopting a hand-written region also reports it under `agents-region` and exits 1, because the managed region is one directive line; the marker is written either way, and step 9's render is the migration.
 9. Run `render`, then read the diff. Doctrine text appearing for the first time is expected; a repo-specific claim disappearing means it never made it into the TOML.
 10. Run `check`. Then repeat from step 5 for the next capability.
-
-**Walked end to end, for a repo that arrives with hand-written bot files.** Pass one clears any nested `## Code Review Rules` section into the TOML, then commits a TOML that validates and a render that writes nothing, leaving those files untouched and still authoritative. The first capability's pass sets `codex`, opens the `AGENTS.md` region, adopts it, and renders the section. The next sets `copilot`, adds the surfaces, and adopts `.github/copilot-instructions.md` and the `.instructions.md` names those surfaces produce — a hand-written file in that directory under a name no surface produces is left alone, which is correct and stays the repo's own. Each later capability adopts and renders only its own paths. The install is finished when every capability the repo wants is on, `check` is clean, and the smoke test in § After the checklist has seen each enabled bot comment. A repo that stops after pass one has staged the work, not done it.
 
 ## After the checklist
 

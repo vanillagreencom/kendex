@@ -33,8 +33,6 @@ Open `/extensions:settings`; settings appear under the **Nested AGENTS.md** tab.
 
 - `enabled`: package toggle.
 
-Maintainer notes are in [DEVELOPMENT.md](DEVELOPMENT.md).
-
 ## Licence
 
 [MIT](https://github.com/vanillagreencom/kendex/blob/main/LICENSE)

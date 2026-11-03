@@ -21,6 +21,7 @@ Desktop app and thin CLI (Rust + Tauri + React) for managing AI coding-harness c
 - Review bots follow `.github/instructions/code-review.md`, which Code Review Rules below points them at, and `.github/instructions/*.instructions.md`; engineering rules are the code-quality skill, round scope the dev skill, finding dispositions `skills/reviewer/references/finding-disposition.md`.
 - A doc under `docs/architecture/` is one principle; update it when a change makes a claim in it false, never beside a code change that falsifies nothing. A decision record exists only under the decider skill's bar.
 - `docs/legal/` (`privacy.md`, `terms.md`) is product content shipped to users: the Terms of Service and Privacy Policy the first-run accept step records. It takes no "Read when" line.
+- `docs/app-settings.md` is the user reference for shared personal preferences and machine state. The root README links it; it takes no agent "Read when" line.
 
 ## Read when
 

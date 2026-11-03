@@ -1,120 +1,56 @@
-# Subscription Recipe (advanced)
+# Subscription Recipe
 
-> `iced::advanced::subscription::Recipe` · iced 0.14.0
+Read when ordinary subscription builders or event helpers cannot express the required identity or runtime-input processing. The pinned [Recipe declaration](https://github.com/iced-rs/iced/blob/0.14.0/futures/src/subscription.rs) owns `Hasher`, `EventStream` and stream signatures. The `iced::advanced::subscription` route requires `advanced`.
 
-The `Recipe` trait is the internal definition of a `Subscription`. It is used by the iced runtime to run and identify subscriptions. Most code should use `Subscription::run_with` instead; implement `Recipe` directly only when you need full control over the subscription lifecycle or must process the runtime event stream.
+## Identity
 
-## API
+A recipe defines its output type, writes identity through `hash`, and consumes its boxed configuration in `stream`. Include a type discriminator and every input that distinguishes independent workers. Keep the hash stable while the same worker should continue.
 
-### `Recipe` trait
-
-```rust
-pub trait Recipe {
-    type Output;
-
-    fn hash(&self, state: &mut FxHasher);
-
-    fn stream(
-        self: Box<Self>,
-        input: Pin<Box<dyn Stream<Item = Event> + Send>>,
-    ) -> Pin<Box<dyn Stream<Item = Self::Output> + Send>>;
-}
-```
-
-- **`Output`** -- the message type emitted by this subscription.
-- **`hash(&self, state)`** -- write identity bytes into `state`. The runtime uses this hash to decide whether two recipes represent the same subscription. If the hash changes between frames, the old subscription is dropped and a new one starts.
-- **`stream(self, input)`** -- consume the recipe and produce an output stream. The `input` stream carries runtime `Event`s (keyboard, mouse, window, etc.) that the subscription can filter and transform. Return a `Pin<Box<dyn Stream>>` of `Self::Output`.
-
-### Runtime `Event` (input stream)
-
-The `input` parameter provides the full runtime event stream. The recipe can use `StreamExt::filter_map` to select relevant events. Recipes that don't need runtime events can ignore `input` entirely and produce their own stream.
-
-## Patterns
-
-### Minimal custom recipe
+For a recipe with an `id` and `interval`, its hash method can use:
 
 ```rust
-use iced::advanced::subscription::Recipe;
-use iced::event::Event;
-use futures::stream::{self, Stream, StreamExt};
-use rustc_hash::FxHasher;
+use iced::advanced::subscription::Hasher;
+use std::any::TypeId;
 use std::hash::Hash;
-use std::pin::Pin;
 
-struct Heartbeat {
-    interval: std::time::Duration,
-    id: u64,
-}
-
-impl Recipe for Heartbeat {
-    type Output = std::time::Instant;
-
-    fn hash(&self, state: &mut FxHasher) {
-        self.id.hash(state);
-        self.interval.hash(state);
-    }
-
-    fn stream(
-        self: Box<Self>,
-        _input: Pin<Box<dyn Stream<Item = Event> + Send>>,
-    ) -> Pin<Box<dyn Stream<Item = Self::Output> + Send>> {
-        Box::pin(
-            futures::stream::unfold(self.interval, |interval| async move {
-                tokio::time::sleep(interval).await;
-                Some((std::time::Instant::now(), interval))
-            })
-        )
-    }
+fn hash(&self, state: &mut Hasher) {
+    TypeId::of::<Self>().hash(state);
+    self.id.hash(state);
+    self.interval.hash(state);
 }
 ```
 
-### Recipe that filters runtime events
+This is a method excerpt for the recipe implementation. The runtime's hasher is an identity mechanism, not a cryptographic boundary. Prefer `Subscription::run_with` when hashable configuration and a stream builder are sufficient; use [time](time.md) for ordinary ticks.
+
+## Runtime input
+
+`EventStream` contains subscription events. An `Interaction` wraps the core event, window identity and capture status; `SystemThemeChanged` is a separate case. Do not use a stream of `iced::event::Event` as a replacement for this input type.
+
+For example, inside a native recipe's stream body, this selects ignored keyboard events:
 
 ```rust
-struct KeyLogger;
+use iced::advanced::subscription::Event;
+use iced::event::{self, Status};
+use iced::futures::StreamExt;
 
-impl Recipe for KeyLogger {
-    type Output = String;
-
-    fn hash(&self, state: &mut FxHasher) {
-        "key-logger".hash(state);
+input.filter_map(|event| async move {
+    match event {
+        Event::Interaction {
+            event: event::Event::Keyboard(key),
+            status: Status::Ignored,
+            ..
+        } => Some(key),
+        _ => None,
     }
-
-    fn stream(
-        self: Box<Self>,
-        input: Pin<Box<dyn Stream<Item = Event> + Send>>,
-    ) -> Pin<Box<dyn Stream<Item = String> + Send>> {
-        Box::pin(input.filter_map(|event| async move {
-            match event {
-                Event::Keyboard(kb) => Some(format!("{kb:?}")),
-                _ => None,
-            }
-        }))
-    }
-}
+}).boxed()
 ```
 
-### Prefer `Subscription::run_with` for simple cases
+The excerpt assumes a recipe whose output is `iced::keyboard::Event`. Use the declared target-dependent boxed-stream type: the [futures owner](https://github.com/iced-rs/iced/blob/0.14.0/futures/src/lib.rs) requires `Send` on native targets and uses a local boxed stream on Wasm. On Wasm the corresponding boxing method is `boxed_local()`.
 
-```rust
-// This is simpler and covers most use cases:
-Subscription::run_with(feed_id, |id| build_feed_stream(*id))
-```
+A recipe can ignore runtime input and return its own stream. Filtering is the recipe's responsibility. Prefer [event helpers](events.md) when they already supply the needed filter.
 
-Only reach for `Recipe` when you need access to the runtime event stream or need custom identity hashing logic.
+## Lifetime
 
-## Gotchas
+The [tracker](https://github.com/iced-rs/iced/blob/0.14.0/futures/src/subscription/tracker.rs) keeps an execution while its identity is requested. Removing that identity cancels the execution. Stream completion ends polling normally; it is not a fatal error. The identity remains registered until removed, so a completed worker needs an explicit restart design. See [subscription lifetime](subscription.md#identity-and-lifetime).
 
-- `Recipe` requires the `advanced` feature flag.
-- The hash **must be stable** across frames for the subscription to stay alive. If any hashed field changes, the runtime treats it as a new subscription and restarts the stream.
-- `FxHasher` is a non-cryptographic hasher from `rustc-hash`. Use `std::hash::Hash` to write fields into it.
-- The output stream must not terminate on its own. If it does, iced treats that as a fatal error. Design streams to loop forever or use `stream::pending()` after completion.
-- `stream()` takes `self: Box<Self>` -- the recipe is consumed. All configuration must be captured in the struct before the stream starts.
-- The `input` event stream is shared across all recipes; filtering is your responsibility.
-
-## See also
-
-- `subscription.md` -- high-level `Subscription` API (`run_with`, `batch`, `map`)
-- `events.md` -- `event::listen`, `event::listen_with` (simpler event filtering)
-- `stream.md` -- `stream::channel`, `stream::try_channel` (async-to-stream bridge)
-- `task.md` -- `Task` for one-shot async work (vs `Subscription` for long-lived)
+Keep a continuing listener active until removal, and capture configuration before the recipe is consumed. Check worker shutdown and reconnection in the target runtime. No native stream or timer result is established here.

@@ -22,13 +22,11 @@ The primary agent assigns an issue and a worktree. The implementation agent read
 
 kendex installs the required skills beside dev. Add linear for Linear issues. The orch skill assigns implementation and review-fix work.
 
-Set `DEV_VALIDATE_CMD` in `kendex.settings.toml` under `[env]` to the project's full test, lint and typecheck command. The agent refuses to validate while it is empty and reports the setting to set. The command receives `DEV_VALIDATE_CLASS`, `DEV_VALIDATE_DOCS_ONLY` and `DEV_VALIDATE_PATHS`; `dev-validate-run --help` describes each. Make the command read `DEV_VALIDATE_CLASS`, as [workflows/dev-implement.md](workflows/dev-implement.md) § 5 requires.
+Set `DEV_VALIDATE_CMD` in `kendex.settings.toml` under `[env]` to the project's full test, lint and typecheck command. An empty value refuses validation. The command must use the supplied change class to select the checks the change needs, as [workflows/dev-implement.md](workflows/dev-implement.md) § 5 requires.
 
-Set `DEV_VALIDATE_RANGE_CMD` to a command that validates only the changes since the commit in `DEV_VALIDATE_BASE`. Review-fix rounds and orch restacks use it when they need local validation. Orch's merge-pr-restack.md defines the restack route.
+Set `DEV_VALIDATE_RANGE_CMD` when fixes need a command that checks changes since `DEV_VALIDATE_BASE`. Set `DEV_VALIDATE_CI_CONTEXT` when a required CI check covers the full command. A round that leaves proof to CI records it as pending. Set `DEV_VALIDATE_TIMEOUT_SECS` to change the local run's bound.
 
-Set `DEV_VALIDATE_CI_CONTEXT` to the required status check whose run covers the full command: the merge-group run for a queue-only change, the pull request run otherwise. Covered fix rounds on an open pull request can leave validation to that check. Explicit `ORCH_PR_ORDER=push-first` also lets covered implementation and internal-fix rounds defer validation before publication. The round accepts local edits with CI pending. Submit reuses a pending receipt for the current commit. The merge-group run proves a queue-only change's head before merge, and a red one returns the change to its lane. Uncovered work keeps local validation. `dev-validate-run --help` defines coverage and local fallback.
-
-`DEV_VALIDATE_TIMEOUT_SECS` bounds either local run, one hour by default. The agent's wait ends when the run does. It cannot exceed that bound plus the kill grace and one poll interval.
+Read [SKILL.md](SKILL.md) § Configuration for these settings. Orch's `dev-validate-run --help` owns command inputs, defaults, CI coverage and local fallback; its merge-pr-restack.md owns the restack route.
 
 Set project instructions in `kendex.toml` under `[skill-instructions]`. The agent and commit format are described in [SKILL.md](SKILL.md) § Configuration.
 

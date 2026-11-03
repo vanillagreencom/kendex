@@ -1,182 +1,48 @@
 # Task
 
-> `iced::Task` · iced 0.14.0
+Read when starting or composing effects in iced 0.14.0. The pinned [Task implementation](https://github.com/iced-rs/iced/blob/0.14.0/runtime/src/task.rs) owns constructors, bounds and cancellation handles. Return the task from boot or update for the runtime to execute it.
 
-Async effect type returned from `update()`. Wraps futures, streams, or immediate values. Composed via `batch`, `chain`, `map`, `then`. Cancellable via `Handle`.
+## Choosing and composing effects
 
-## API
+Use `Task::none()` when an update has no effect or output. Use `Task::done(value)` when an immediate value should enter the application's message loop. `perform` runs a future and maps its result; `run` maps stream items. `future` and `stream` preserve their output types.
 
-### Creation
-
-```rust
-impl<T> Task<T> {
-    pub fn none() -> Task<T>;
-
-    pub fn done(value: T) -> Task<T>
-    where
-        T: MaybeSend + 'static;
-
-    pub fn batch(tasks: impl IntoIterator<Item = Task<T>>) -> Task<T>;
-}
-
-impl<T> Task<T>
-where
-    T: MaybeSend + 'static,
-{
-    pub fn perform<A>(
-        future: impl Future<Output = A> + MaybeSend + 'static,
-        f: impl FnOnce(A) -> T + MaybeSend + 'static,
-    ) -> Task<T>;
-
-    pub fn run<A>(
-        stream: impl Stream<Item = A> + MaybeSend + 'static,
-        f: impl Fn(A) -> T + MaybeSend + 'static,
-    ) -> Task<T>;
-
-    pub fn future(future: impl Future<Output = T> + MaybeSend + 'static) -> Task<T>
-    where
-        T: 'static;
-
-    pub fn stream(stream: impl Stream<Item = T> + MaybeSend + 'static) -> Task<T>
-    where
-        T: 'static;
-}
-```
-
-- **`none()`** — A no-op task. Use in `update()` when you have nothing to return.
-- **`done(value)`** — A task that instantly produces `value` and completes.
-- **`batch(tasks)`** — Combines multiple tasks into a single task running concurrently.
-- **`perform(future, f)`** — Runs a `Future<Output = A>` to completion and maps the result to `Task<T>` via `f`.
-- **`run(stream, f)`** — Runs a `Stream<Item = A>` and maps each item with `f` to produce a stream of `T`.
-- **`future(future)`** — Wraps a `Future<Output = T>` directly (no mapping).
-- **`stream(stream)`** — Wraps a `Stream<Item = T>` directly.
-
-### Transformation & chaining
+For an application-provided async loader:
 
 ```rust
-impl<T> Task<T>
-where
-    T: MaybeSend + 'static,
-{
-    pub fn map<O>(
-        self,
-        f: impl FnMut(T) -> O + MaybeSend + 'static,
-    ) -> Task<O>
-    where
-        O: MaybeSend + 'static;
-
-    pub fn then<O>(
-        self,
-        f: impl FnMut(T) -> Task<O> + MaybeSend + 'static,
-    ) -> Task<O>
-    where
-        O: MaybeSend + 'static;
-
-    pub fn chain(self, task: Task<T>) -> Task<T>
-    where
-        T: 'static;
-
-    pub fn collect(self) -> Task<Vec<T>>;
-
-    pub fn discard<O>(self) -> Task<O>
-    where
-        O: MaybeSend + 'static;
-}
+Task::perform(load_data(), Message::DataLoaded)
 ```
 
-- **`map(f)`** — Transforms each output value with `f`.
-- **`then(f)`** — Chains another task that depends on the output of this one — the FnMut is called on each emitted value and returns a follow-up task.
-- **`chain(task)`** — Appends a task that runs after this one completes, without depending on its output.
-- **`collect()`** — Collects all output values into a single `Vec<T>`, emitting a single message at the end.
-- **`discard()`** — Drops all output values, returning a task of a new type `O` that never emits.
-
-### `Handle`
-
-```rust
-impl Handle {
-    pub fn abort(&self);
-    pub fn abort_on_drop(self) -> Handle;
-    pub fn is_aborted(&self) -> bool;
-}
-```
-
-A `Handle` can be obtained alongside a task (e.g. via `Task::abortable`) and used to cancel the task before it finishes. `abort_on_drop` produces a handle that auto-aborts when all its clones are dropped.
-
-### Widget operations as tasks
-
-```rust
-pub fn iced::advanced::widget::operate<T>(
-    operation: impl Operation<T> + 'static,
-) -> Task<T>
-where
-    T: Send + 'static,
-```
-
-Builds a task that runs a widget `Operation` and produces its outcome. Requires the `advanced` feature.
-
-## Patterns
-
-### No-op return from update
-
-```rust
-fn update(state: &mut State, message: Message) -> Task<Message> {
-    match message {
-        Message::Incremented => {
-            state.count += 1;
-            Task::none()
-        }
-    }
-}
-```
-
-### Kick off an async call
-
-```rust
-Task::perform(
-    async { reqwest::get("https://example.com/data").await },
-    Message::DataLoaded,
-)
-```
-
-### Combine several tasks
+Use `batch` for concurrent effects. Use `chain` when the second task must wait until the first task's stream finishes, regardless of what values it emitted. Use `then` to start a follow-up for each output. These are execution relationships; a `Result::Err` output does not make a plain `chain` conditional on success.
 
 ```rust
 Task::batch([
     Task::perform(load_config(), Message::ConfigLoaded),
-    Task::perform(load_user(),   Message::UserLoaded),
+    Task::perform(load_user(), Message::UserLoaded),
 ])
 ```
 
-### Chain tasks sequentially
+`collect` accumulates all outputs and emits once at completion. It does not provide partial results and cannot finish on an infinite stream. `discard` keeps effects while removing their outputs and can change the task's message type.
+
+Futures and streams must satisfy the constructor's lifetime and [MaybeSend](futures.md) bounds. Move owned input into async work when required. Keep blocking work off the async executor through the consuming runtime's supported blocking route.
+
+## Cancellation
+
+`abortable` returns a task and a `Handle`. Store the handle when the application must cancel later. `abort()` requests cancellation of that stream. `abort_on_drop()` makes the last such handle clone abort when dropped; `is_aborted()` reports the request.
+
+Stopping stream polling does not undo side effects or prove that separately spawned work stopped. Do not rely on it to interrupt synchronous work that never yields. Check cancellation behavior at the worker that owns those resources.
+
+## Widget operations
+
+Built-in [widget operations](https://github.com/iced-rs/iced/blob/0.14.0/runtime/src/widget/operation.rs) already return tasks. For example, with a matching widget identifier:
 
 ```rust
-Task::perform(step_one(), Message::One)
-    .chain(Task::perform(step_two(), Message::Two))
+use iced::widget::{operation, Id};
+
+operation::focus::<Message>(Id::new("search"))
 ```
 
-### Fire widget operation
+For a custom `Operation`, the advanced `operate` bridge turns its output into a task. Follow the [operation contract](advanced-operation.md) instead of wrapping a built-in task as though it were a core operation.
 
-```rust
-use iced::advanced::widget::operate;
-use iced::widget::operation::focusable::focus;
+Check ordering, failures, cancellation and target-executor compatibility in the consuming app. No async execution or local compile result is established here.
 
-operate(focus::<Message>(Id::new("search")))
-```
-
-
-## Gotchas
-
-- `Task::none()` vs `Task::done(())`: use `none()` when you have nothing to emit, `done(())` when you explicitly want to trigger an `update(())` call.
-- `then` vs `chain`: `then` depends on the previous task's output (receives `T`), `chain` runs the follow-up regardless of what the previous task emitted.
-- `Task::perform` expects the `Future<Output = A>` to be `MaybeSend` and `'static`. Async blocks capturing non-`Send` types will fail to compile on desktop targets.
-- `batch` runs tasks concurrently — if you need strict ordering, use `chain` (one after another) or `then` (dependent).
-- `collect()` waits for the underlying stream to complete — it never emits partial results. Don't call it on infinite streams.
-- `discard()` changes the output type — useful when composing with another task of a different message type.
-- `Handle::abort()` is best-effort -- pure-sync work that never yields cannot be cancelled.
-
-## See also
-
-- `subscription.md`
-- `application.md`
-- `stream.md`
-- `futures.md`
+See [subscriptions](subscription.md), [streams](stream.md) and [application startup](application.md).

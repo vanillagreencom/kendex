@@ -40,19 +40,13 @@ In Pi with the `web_research` tool active, use that tool, passing `outputPath` w
 .agents/skills/deep-research/scripts/deep-research doctor
 ```
 
-`deep-research help` lists every flag. Exa `/search` caps the settings behind them: `numResults` 1-100, `text.maxCharacters` 1-10000, `additionalQueries` at most 10.
+Run `deep-research help` for the flags and exact mode presets. `scripts/deep-research` owns the presets in `modeDefaults` and accepted limits in `applyMode`.
 
-| Mode | Exa type | Results | Text cap | Timeout | Synthesis |
-|---|---|---:|---:|---:|---|
-| `lite` | `deep-lite` | 15 | 10k chars/result | 5 min | Not requested, evidence brief only |
-| `standard` | `deep-reasoning` | 50 | 10k chars/result | 10 min | Requested via `outputSchema` |
-| `full` | `deep-reasoning` | 100 | 10k chars/result | 30 min | Requested, per query |
-
-`standard` is the default; `lite` for fast spikes, `full` for strategic or high-risk decisions. `--type`, `--num-results`, and `--text-max-characters` override a mode's defaults.
+Use `lite` for a fast evidence brief; it requests no synthesis. `standard` is the default and requests a synthesized answer. Use `full` for strategic or high-risk decisions; it requests synthesis for each query. The type, result count, text cap and timeout flags override the preset values.
 
 `--additional-query` (repeatable) reaches Exa as `additionalQueries` within the single request under `lite` and `standard`, and as one request per query with URLs deduped across responses under `full`.
 
-`--include-domain` is a hard host filter, not a quality filter: `--include-domain github.com` admits every repo on it and excludes everything else. Name authoritative projects and organizations in the query text for quality; audit the returned source list either way.
+`--include-domain` restricts results to matching domains or paths, as [Exa Search](https://exa.ai/docs/reference/search) defines. A domain such as `github.com` does not select authoritative repositories. Name authoritative projects and organizations in the query, and audit the returned source list.
 
 ## Validation
 
@@ -60,7 +54,7 @@ In Pi with the `web_research` tool active, use that tool, passing `outputPath` w
 .agents/skills/deep-research/scripts/deep-research validate path/to/findings.md path/to/findings.raw.json
 ```
 
-Prints `{ok, errors, warnings, mode, synthesis, queryCount}`; exits 0 when there are no errors. Checks structure only: required sections present, sidecar parses, query-expansion metadata self-consistent, synthesized answer present for modes that requested one.
+`validate` exits 0 when it finds no errors. It checks report structure, sidecar parsing, query-expansion metadata and synthesis for modes that request it. Its result does not verify the claims against the sources. The output contract is in `deep-research help`; `scripts/deep-research::validateCommand` owns the checks.
 
 Read for these yourself:
 
@@ -71,4 +65,4 @@ Read for these yourself:
 
 ## Findings format
 
-`templates/findings.md` carries exactly the sections `validate` requires, in order. `Key Findings` holds distinct claims, not a restatement of the summary.
+Read `templates/findings.md` when writing a report. It gives the required sections in report order. `Key Findings` holds distinct claims, not a restatement of the summary.

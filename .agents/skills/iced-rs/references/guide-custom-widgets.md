@@ -225,7 +225,7 @@ SVG tint alpha may diverge from text/container/canvas alpha. Before relying on S
 
 1. Verify actual rendered alpha at near-zero opacity values
 2. Compare SVG fade appearance with text fade at the same alpha
-3. If they diverge, use `renderer.with_layer()` with an opacity-controlled clipping region, or a composition path that guarantees uniform opacity
+3. If they diverge, inspect the rendering path before relying on its fade. `Renderer::with_layer(bounds, closure)` clips the closure's output to bounds; its interface has no opacity parameter. Source inspection supplies no native SVG-fade proof. Verify the chosen path's rendered alpha before relying on it.
 
 ### 5. Handle events in `update`
 
@@ -308,10 +308,10 @@ shell.request_redraw_at(
 
 ### 7. Hit-testing
 
-Use `Cursor::is_over(bounds)` or `Cursor::position_over(bounds)` (returns `Option<Point>`):
+Use `Cursor::is_over(bounds)` to test bounds or `Cursor::position_in(bounds)` for widget-relative coordinates:
 
 ```rust
-if let Some(local) = cursor.position_over(layout.bounds()) {
+if let Some(local) = cursor.position_in(layout.bounds()) {
     // local.x and local.y are relative to widget origin
 }
 ```
@@ -403,7 +403,7 @@ Used in `view()` as `my_widget(self.value).width(300).on_press(Message::Tick).in
 | Layering looks inverted | Wrong draw order in composite widget | Last drawn = on top; reorder draw calls |
 | Hover flickers during animation | Hover sensor on animated bounds | Use stable outer hitbox; see § "Stable hover hit regions" |
 | Near-transparent remnants after fade | Partial fade contract | Audit all rendering paths for opacity; see § "Opacity and fade" |
-| SVG doesn't fade with rest of component | SVG tint alpha diverges from container alpha | Verify renderer behavior; use `with_layer` if needed |
+| SVG doesn't fade with rest of component | SVG tint alpha diverges from container alpha | Compare rendered alpha; see § "SVG alpha caveat" |
 | Animation frozen / doesn't advance | Motion state in widget fields, not Tree | Move to `tree.state`; see § "Redraw vs rebuild invariant" |
 
 ## Constraints from the wider framework

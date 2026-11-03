@@ -4,24 +4,24 @@ Read before removing or replacing files kendex wrote, or changing the trash or i
 
 ## The approach
 
-Every removed or replaced installation moves to the trash under `<data>/kendex/trash`, through one writer, `move_to_trash` in `crates/core/src/trash.rs`, under a name that opens with the moment it moved. A pass at the end of every writing verb brings the trash within two bounds, age and size, and never takes what that verb itself moved. `kendex trash` lists and empties by hand.
+Every removed or replaced installation goes through `crates/core/src/trash.rs::move_to_trash`. The person can recover its bytes from `<data>/kendex/trash`. Retention limits the trash by age and size after a completed writing verb, while protecting everything that invocation moved. `kendex trash` provides manual listing and emptying.
 
 ## Why
 
-A person who removes a package, or whose package kendex replaced, can get the bytes back without kendex having to be right about what they wanted. A bound is what keeps a host that replaces Pi extensions daily from filling with `node_modules` trees. The bounds and the unbounded mirrors are [D004](../decisions/D004-trash-retention.md); measuring each entry once is [D005](../decisions/D005-trash-size-record.md).
+A removal can be a mistake. One trash writer gives every removal the same recovery route. [D004](../decisions/D004-trash-retention.md) governs retention and the unbounded source mirrors. [D005](../decisions/D005-trash-size-record.md) governs measuring entries once.
 
 ## Rules
 
-- Do move through `move_to_trash`; a second writer is a removal nobody can undo, and a name without the stamp is not kendex's and is neither listed nor removed.
-- Do run the pass only at the end of a completed `apply`, `refresh`, `remove` or `update-pi`, and the desktop's equivalent after its plan is on disk; a plan-only run and every other verb leave the trash alone.
-- Do keep every entry the invocation wrote, then every entry within `KENDEX_TRASH_KEEP_DAYS` while the running total stays within `KENDEX_TRASH_KEEP_MB`, newest first; the entry that crosses the size bound goes with everything older. The defaults are the constants in `crates/core/src/trash.rs`.
-- Do measure an entry once in its lifetime, in `sizes.json` inside the trash; `kendex trash list` measures fresh because it is the person's own request.
-- Do fail the pass closed: a bound that is not a count, a trash or record that will not read, or an entry that will not measure or remove stops it with what is left intact, reported as a warning, never as a failure of the verb.
+- Do move through `move_to_trash`. Its timestamped name identifies a kendex entry; never list or remove a name without that stamp.
+- Do run retention only after a completed `apply`, `refresh`, `remove` or `update-pi`, and the desktop equivalent after its plan is on disk. A plan-only run and every other verb leave the trash alone.
+- Do protect every entry the invocation wrote. Count its bytes toward the size bound. Keep the other entries newest first while they meet both bounds; remove the entry that crosses the size bound and everything older. `trash.rs` declares the environment settings, defaults and size-record format.
+- Do measure a retained entry once in its lifetime. `kendex trash list` measures fresh because the person asked for a current listing.
+- Do stop retention on an invalid bound, unreadable trash or record, or failed measurement, removal or record write. Leave the remaining entries intact and report the stop as a warning. Never turn a retention stop into failure of the completed writing verb.
 - Never bound the source-cache mirrors: a mirror is kept for the life of the install and removed by hand.
 
 ## The canonical example
 
-`crates/core/src/trash.rs`: `move_to_trash` is the writer and `retain` the pass, and `crates/core/src/trash/tests.rs` plants each bound and each failure. A verb that removes something calls the writer and closes on the pass as `tidy_trash` in `crates/cli/src/commands/engine_common.rs` does.
+`crates/cli/src/commands/engine_common.rs::tidy_trash` reports the result of `crates/core/src/trash.rs::retain` as notices and warnings after the verb's writes. The desktop uses `crates/app/src/trash.rs::tidy` under the same rule.
 
 ## Revisit when
 

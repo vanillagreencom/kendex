@@ -1,173 +1,38 @@
-# Renderer
+# Custom-widget rendering
 
-> `iced::advanced::Renderer` · iced 0.14.0
+Read when drawing custom-widget primitives in Iced 0.14.0. The pinned [Renderer, Quad and Style declarations](https://github.com/iced-rs/iced/blob/0.14.0/core/src/renderer.rs) own the core interface. Specialized [image rendering](https://github.com/iced-rs/iced/blob/0.14.0/core/src/image.rs) and `advanced-text.md` supply their own contracts.
 
-Drawing trait for widgets. Fill quads, clip layers, apply transformations, draw text and images. Not dyn-compatible -- widgets are monomorphised over a concrete `Renderer` type. Sub-traits: `text::Renderer`, `image::Renderer`.
+## Quads and groups
 
-## API
+Set a quad's bounds explicitly; the default has no visible area. Supply border, shadow and snapping for the intended appearance, then fill it with a color or gradient background. The background carries gradient information; `fill_quad` has no separate gradient-angle argument. The border lies inside the quad's bounds.
 
-### `Renderer` trait (core)
-
-```rust
-pub trait Renderer {
-    // Required methods
-    fn start_layer(&mut self, bounds: Rectangle);
-    fn end_layer(&mut self);
-
-    fn start_transformation(&mut self, transformation: Transformation);
-    fn end_transformation(&mut self);
-
-    fn fill_quad(&mut self, quad: Quad, background: impl Into<Background>);
-
-    fn reset(&mut self, new_bounds: Rectangle);
-
-    fn allocate_image(
-        &mut self,
-        handle: &Handle,
-        callback: impl FnOnce(Result<Allocation, Error>) + Send + 'static,
-    );
-
-    // Provided methods
-    fn with_layer(&mut self, bounds: Rectangle, f: impl FnOnce(&mut Self));
-    fn with_transformation(
-        &mut self,
-        transformation: Transformation,
-        f: impl FnOnce(&mut Self),
-    );
-    fn with_translation(
-        &mut self,
-        translation: Vector,
-        f: impl FnOnce(&mut Self),
-    );
-}
-```
-
-- **`start_layer(bounds)` / `end_layer()`** — Begin/end a clipped drawing layer. Everything drawn between the two calls is clipped to `bounds` and painted on a dedicated compositor layer (useful for masks, opacity, and scrollable clipping).
-- **`start_transformation(t)` / `end_transformation()`** — Push/pop a 2D transformation (rotation, scale, translate) applied to subsequent draws.
-- **`fill_quad(quad, background)`** — Fills a quadrilateral (rectangle with border + shadow + optional corner radius) with the supplied background. The workhorse for most widgets.
-- **`reset(new_bounds)`** — Resets the renderer to start drawing in new bounds. Used by the runtime between frames.
-- **`allocate_image(handle, callback)`** — Asynchronously allocates a GPU image for the given handle; the callback fires when the allocation is ready.
-- **`with_layer(bounds, f)`** — RAII version of `start_layer/end_layer` — runs `f` inside the layer and ends it automatically.
-- **`with_transformation(t, f)`** — RAII version of `start_transformation/ end_transformation`.
-- **`with_translation(v, f)`** — Convenience for translating by `v` only. Internally `with_transformation(Transformation::translate(v), f)`.
-
-### `renderer::Quad` struct
-
-```rust
-pub struct Quad {
-    pub bounds: Rectangle,
-    pub border: Border,
-    pub shadow: Shadow,
-    pub snap: bool,
-}
-```
-
-- **`bounds`** — The position and size of the quad.
-- **`border`** — The `Border` (color + width + `Radius`). A `Border` has fields `color: Color`, `width: f32`, and `radius: Radius` (rounded corners).
-- **`shadow`** — The drop `Shadow`.
-- **`snap`** — Whether to snap the quad to the pixel grid. Set `true` for crisp 1px lines, false for sub-pixel placement.
-
-`fill_quad` accepts any `impl Into<Background>`, where `Background` can be a `Color` or a `Gradient`.
-
-### `renderer::Style` struct
-
-```rust
-pub struct Style {
-    pub text_color: Color,
-}
-```
-
-The default style passed to `Widget::draw()` — currently just the inherited text color. Widgets that render text should use `style.text_color` as their default.
-
-### `text::Renderer` sub-trait
-
-See `advanced-text.md` for details. In short: associated types `Font`, `Paragraph`, `Editor`; methods `fill_paragraph`, `fill_editor`, `fill_text` for drawing text; and a bundle of icon constants (`CHECKMARK_ICON`, etc.).
-
-### `image::Renderer` sub-trait
-
-```rust
-trait image::Renderer {
-    type Handle: Clone;
-
-    fn load_image(&self, handle: &Self::Handle) -> Result<Allocation, Error>;
-    fn measure_image(&self, handle: &Self::Handle) -> Option<Size<u32>>;
-    fn draw_image(
-        &mut self,
-        image: Image<Self::Handle>,
-        bounds: Rectangle,
-        clip_bounds: Rectangle,
-    );
-}
-```
-
-The raster image sub-trait. Not dyn-compatible. `load_image` may block if the image is not already loaded. `measure_image` returns `None` and triggers a background load if necessary.
-
-## Patterns
-
-### Filling a background rectangle
-
-```rust
-use iced::advanced::renderer::Quad;
-use iced::{Background, Border, Color, Rectangle, Shadow};
-
-fn draw(&self, ..., renderer: &mut Renderer, layout: Layout<'_>, ...) {
-    renderer.fill_quad(
-        Quad {
-            bounds: layout.bounds(),
-            border: Border {
-                color: Color::BLACK,
-                width: 1.0,
-                radius: 4.0.into(),
-            },
-            shadow: Shadow::default(),
-            snap: true,
-        },
-        Background::Color(Color::from_rgb(0.95, 0.95, 0.95)),
-    );
-}
-```
-
-### Clipping children inside a scrollable content area
+Use a layer to clip a group of child draws, and a translation or transformation to move their drawing coordinates. These affect recorded primitives; they do not change widget layout or input coordinates.
 
 ```rust
 renderer.with_layer(layout.bounds(), |renderer| {
-    // anything drawn here is clipped to `layout.bounds()`
-    for child in layout.children() {
-        // draw children
-    }
+    // Draw the children within these clipping bounds.
 });
-```
 
-### Translating for a scroll offset
-
-```rust
 renderer.with_translation(Vector::new(0.0, -scroll_y), |renderer| {
-    // children drawn shifted up by `scroll_y`
+    // Draw content at the translated position.
 });
 ```
 
-```rust
-fn draw_custom_widget<R: Renderer>(renderer: &mut R, bounds: Rectangle) {
-    renderer.start_layer(bounds);
-    renderer.fill_quad(Quad::default(), Color::BLACK);
-    renderer.end_layer();
-}
-```
+Keep start/end layer and transformation calls balanced. The closure helpers pair them on normal return; they do not install an unwind cleanup guard. Reset belongs to the runtime's frame boundary, not a nested widget draw call.
 
-## Gotchas
+Use a shared clipping boundary when it holds the required child bounds. The interface does not promise a render target or fixed GPU cost per layer. Check actual backend cost before adding layers for performance. For animated fractional positions, check pixel snapping in rendered output to avoid visible jitter.
 
-- `start_layer`/`end_layer` (and the transformation variants) **must be balanced**. Prefer the `with_*` RAII helpers whenever possible — they make imbalance impossible.
-- Layers are not free. Each one allocates a scissor rect (or a dedicated render target, depending on backend). Don't wrap every widget in its own layer; push one layer at the scroll boundary and draw children unclipped inside.
-- `snap: true` only makes sense for integer-aligned rectangles. For sub-pixel-positioned geometry (e.g. animated panels mid-tween), leave it `false` to avoid wobble.
-- `fill_quad` does not take a gradient angle — the `Background::Gradient` variant carries that information itself.
-- The `Renderer` trait is **not dyn-compatible**; widgets that want to be object-safe must work around this (iced provides `Element` as the usual escape hatch).
-- `reset(new_bounds)` is called by the runtime -- don't call it from inside widget `draw`.
-- `allocate_image` is asynchronous; skip drawing and request a redraw if `measure_image` returns `None`.
+## Images and text
 
-## See also
+Use the specialized renderer trait for image measurement and drawing. `load_image` can block when content is not loaded, so keep it out of frame drawing when that would stall the UI. `measure_image` may return no dimensions while the backend loads and relayouts; drawing can similarly wait for readiness. Handle unavailable content and allocation errors explicitly.
+
+The core allocation API reports through a callback. A cached wgpu allocation can invoke it immediately; do not assume every callback is deferred or every allocation is GPU work. The bundled `iced_wgpu/src/image/cache.rs` owns that behavior.
+
+Use `advanced-text.md` for paragraph/editor/raw text choices and clipping. Keep renderer types generic where the trait requires it; `Element` erases widget types, not the renderer's generic drawing methods. Native alpha, clipping and performance still need the target renderer's evidence. The SVG fade audit remains in `guide-custom-widgets.md`.
+
+## Related references
 
 - `advanced-widget.md`
 - `advanced-text.md`
 - `canvas.md`
-- `shader.md`
-- `guide-custom-widgets.md` — draw order, opacity/fade completeness, SVG alpha caveat
+- `guide-custom-widgets.md`

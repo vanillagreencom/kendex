@@ -1,132 +1,46 @@
 # PaneGrid
 
-> `iced::widget::pane_grid` · iced 0.14.0
+Read when building a split, resizable pane workspace in iced 0.14.0. The pinned [PaneGrid](https://github.com/iced-rs/iced/blob/0.14.0/widget/src/pane_grid.rs), [State](https://github.com/iced-rs/iced/blob/0.14.0/widget/src/pane_grid/state.rs) and [Configuration](https://github.com/iced-rs/iced/blob/0.14.0/widget/src/pane_grid/configuration.rs) declarations own the full API. The [bundled example](../examples/pane_grid/src/main.rs) shows state, view and interaction handling together.
 
-Dynamic tiling layout. Users split, resize, drag, and reorganize panes. `State<T>` manages the pane tree; `Configuration<T>` describes the initial arrangement. Supports maximize/restore, programmatic split/swap/close.
+## State
 
-## API
+Keep each pane's mutable contents in `pane_grid::State<T>`. `State::new` returns both the grid state and the first pane identifier. Retain identifiers the application uses for selection or later operations. Use `Configuration` for an initial split tree.
 
-### Key types
+Splitting returns optional identifiers for the new pane and divider. Closing returns the removed contents and a closest sibling when removal succeeds. Update application selection or focus explicitly from that result; returning a sibling does not focus a widget.
 
-- `State<T>` -- Pane tree state. Public fields: `panes: BTreeMap<Pane, T>`, `internal: Internal`.
-- `Configuration<T>` -- `Split { axis, ratio, a, b }` or `Pane(T)`.
-- `Pane` / `Split` -- Opaque identifiers (`Copy`, `Hash`, `Eq`, `Ord`).
-- `Axis` -- `Horizontal` or `Vertical`.
-- `Direction` -- `Up`, `Down`, `Left`, `Right`.
-- `DragEvent` -- `Picked { pane }`, `Dropped { pane, target }`, `Canceled { pane }`.
-- `ResizeEvent` -- `{ split: Split, ratio: f32 }`.
-- `Content` / `TitleBar` / `Controls` -- Pane content wrappers.
+`maximize` renders only the selected pane until `restore`. Drag and resize callbacks are disabled while the state is maximized. Keep changes to the pane tree in application updates rather than reconstructing it in `view`.
 
-### `State<T>` methods
+## Interactions
 
-```rust
-impl<T> State<T> {
-    pub fn new(first_pane_state: T) -> (State<T>, Pane);
-    pub fn with_configuration(config: impl Into<Configuration<T>>) -> State<T>;
-    pub fn len(&self) -> usize;
-    pub fn get(&self, pane: Pane) -> Option<&T>;
-    pub fn get_mut(&mut self, pane: Pane) -> Option<&mut T>;
-    pub fn iter(&self) -> impl Iterator<Item = (&Pane, &T)>;
-    pub fn adjacent(&self, pane: Pane, direction: Direction) -> Option<Pane>;
-    pub fn split(&mut self, axis: Axis, pane: Pane, state: T) -> Option<(Pane, Split)>;
-    pub fn split_with(&mut self, target: Pane, pane: Pane, region: Region);
-    pub fn drop(&mut self, pane: Pane, target: Target);
-    pub fn swap(&mut self, a: Pane, b: Pane);
-    pub fn resize(&mut self, split: Split, ratio: f32);
-    pub fn close(&mut self, pane: Pane) -> Option<(T, Pane)>;
-    pub fn maximize(&mut self, pane: Pane);
-    pub fn restore(&mut self);
-    pub fn maximized(&self) -> Option<Pane>;
-}
-```
-
-### `Configuration<T>` enum
-
-```rust
-pub enum Configuration<T> {
-    Split {
-        axis: Axis,
-        ratio: f32,
-        a: Box<Configuration<T>>,
-        b: Box<Configuration<T>>,
-    },
-    Pane(T),
-}
-```
-
-## Patterns
-
-### Basic pane grid
+Build pane content from the grid's pane/state/maximized callback. Register messages for the interactions the application supports:
 
 ```rust
 use iced::widget::{pane_grid, text};
 
-struct State {
-    panes: pane_grid::State<Pane>,
-}
-
-enum Pane {
-    SomePane,
-    AnotherKindOfPane,
-}
-
-enum Message {
-    PaneDragged(pane_grid::DragEvent),
-    PaneResized(pane_grid::ResizeEvent),
-}
-
-fn view(state: &State) -> Element<'_, Message> {
-    pane_grid(&state.panes, |pane, state, is_maximized| {
-        pane_grid::Content::new(match state {
-            Pane::SomePane => text("This is some pane"),
-            Pane::AnotherKindOfPane => text("This is another kind of pane"),
-        })
-    })
-    .on_drag(Message::PaneDragged)
-    .on_resize(10, Message::PaneResized)
-    .into()
-}
+let grid = pane_grid(&state.panes, |_pane, pane_state, _maximized| {
+    pane_grid::Content::new(text(&pane_state.title))
+})
+.on_drag(Message::PaneDragged)
+.on_resize(10, Message::PaneResized);
 ```
 
-### Handle drag events
+This excerpt assumes pane state with a `title` and matching application message variants. Add a title bar when panes need a drag pick area. Follow the framework's [pane-grid rules](../SKILL.md#pane_grid) for tab capture, drag feedback and state ordering.
+
+The callbacks report requests; the application's update applies them:
 
 ```rust
 Message::PaneDragged(pane_grid::DragEvent::Dropped { pane, target }) => {
     state.panes.drop(pane, target);
 }
-```
-
-### Handle resize events
-
-```rust
 Message::PaneResized(pane_grid::ResizeEvent { split, ratio }) => {
     state.panes.resize(split, ratio);
 }
 ```
 
-### Split a pane
+Handle picked/canceled drag messages as required by application feedback. `drop` uses the target region to swap or relocate panes. To create a new pane, call `split(axis, existing_pane, new_contents)` and handle `None`.
 
-```rust
-if let Some((new_pane, _split)) = state.panes.split(
-    pane_grid::Axis::Horizontal,
-    existing_pane,
-    MyPaneState::default(),
-) {
-    // new_pane is the identifier for the new pane
-}
-```
+Resize ratios express divider position in the range `[0, 1]`, not pixels. `on_resize` takes extra grab leeway; the grabbable width includes both spacing and leeway. [Axis](https://github.com/iced-rs/iced/blob/0.14.0/widget/src/pane_grid/axis.rs) names the dividing line: Horizontal separates top/bottom and Vertical separates left/right.
 
-## Gotchas
+Keep title content narrow enough to leave a pick area; [TitleBar::is_over_pick_area](https://github.com/iced-rs/iced/blob/0.14.0/widget/src/pane_grid/title_bar.rs) excludes title content and controls. Check narrow panes, tab interaction, dragging, resizing and focus in the target application. This source reference supplies no native layout or input result.
 
-- `State::new(state)` returns `(State<T>, Pane)` -- store the initial `Pane` identifier.
-- `resize` takes a ratio in `[0.0, 1.0]`, not pixel values.
-- `close` returns `Option<(T, Pane)>` -- the `Pane` is the closest sibling that should receive focus.
-- `maximize` hides all other panes until `restore` is called.
-- `on_resize(spacing, msg)` -- the first argument is the drag handle spacing in pixels, not the ratio.
-
-## See also
-
-- `widget-container.md`
-- `widget-column-row.md`
-- `catalog.md`
-- `advanced-widget.md`
+See [shell layout](shell-chrome.md), [containers](widget-container.md), [rows and columns](widget-column-row.md) and [catalogs](catalog.md).

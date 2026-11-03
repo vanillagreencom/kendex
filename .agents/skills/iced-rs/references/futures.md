@@ -1,102 +1,28 @@
-# Futures
+# Futures and streams
 
-> `iced::futures` · iced 0.14.0
+Read when composing asynchronous work for Iced 0.14.0. The [root exports](https://github.com/iced-rs/iced/blob/0.14.0/src/lib.rs) expose the upstream `futures` crate as `iced::futures`. Iced-specific [async types](https://github.com/iced-rs/iced/blob/0.14.0/futures/src/lib.rs), [target bounds](https://github.com/iced-rs/iced/blob/0.14.0/futures/src/maybe.rs) and [channel streams](https://github.com/iced-rs/iced/blob/0.14.0/futures/src/stream.rs) have separate owners.
 
-Re-exports from the `futures` crate and iced-specific async utilities. Provides the `MaybeSend` trait, stream combinators, and subscription builders used throughout the iced runtime.
+## Composition
 
-## API
-
-### Key re-exports
-
-```rust
-// From the `futures` crate
-pub use futures::Stream;
-pub use futures::StreamExt;
-pub use futures::Sink;
-pub use futures::SinkExt;
-pub use futures::Future;
-pub use futures::FutureExt;
-
-// iced-specific
-pub use iced_futures::MaybeSend;
-pub use iced_futures::subscription;
-```
-
-### `MaybeSend` trait
-
-```rust
-/// A trait that is `Send` on native platforms and relaxed on wasm32.
-/// All async closures and futures passed to iced must be `MaybeSend`.
-pub trait MaybeSend {}
-
-// On native: MaybeSend = Send
-// On wasm32: MaybeSend = (no Send requirement)
-```
-
-### `subscription` module
-
-```rust
-pub mod subscription {
-    /// A channel type for sending messages from a subscription back
-    /// to the runtime.
-    pub struct Channel<Message> { /* private */ }
-
-    impl<Message> Channel<Message> {
-        pub async fn send(&mut self, message: Message);
-    }
-}
-```
-
-## Patterns
-
-### Use Stream combinators
+Import the upstream extension traits for stream, sink and future combinators. Map asynchronous results into the application's messages before handing them to a task or subscription.
 
 ```rust
 use iced::futures::StreamExt;
 
-let filtered = my_stream
-    .filter(|item| futures::future::ready(item.is_valid()))
-    .map(Message::DataReceived);
+let messages = data_stream.map(Message::DataReceived);
 ```
 
-### MaybeSend in Task::future
+Use `task.md` for finite work and effects, `subscription.md` for the identity and lifetime of a continuing data source, and `stream.md` when a worker sends values through a bounded channel. Keep the actual producer and cancellation/error behavior with that worker. The bundled `examples/websocket/` shows a continuing connection and `examples/download_progress/` shows task-based progress.
 
-```rust
-use iced::Task;
+## Target requirements
 
-// The future must be MaybeSend (Send on native, relaxed on wasm)
-Task::future(async {
-    let data = fetch_data().await;
-    Message::DataLoaded(data)
-})
-```
+Iced's `MaybeSend` requires `Send` on native targets and relaxes it on wasm32. That trait belongs to `iced_futures`; it is not added to the upstream crate by the `iced::futures` re-export. Follow the exact bounds on the task/subscription API being called. Do not move native non-Send state into a future on the assumption that a web-compatible form also works on native.
 
-### Subscription with channel
+The pinned stream helpers provide channel-based streams. There is no `iced::futures::subscription::Channel` contract in these exports. Use `iced::stream` and its declared sender type when a producer needs to send messages, with the appropriate sink extension trait and explicit handling when the receiver closes. `stream.md` owns those patterns.
 
-```rust
-use iced::Subscription;
+## Related references
 
-Subscription::run(|| {
-    iced::stream::channel(10, async move |mut sender| {
-        loop {
-            let event = wait_for_event().await;
-            sender.send(event).await.ok();
-        }
-    })
-})
-.map(Message::ExternalEvent)
-```
-
-## Gotchas
-
-- `MaybeSend` is the key portability trait. On native targets it requires `Send`; on wasm32 it does not. Always use `MaybeSend` bounds (not `Send`) for futures and streams passed to iced APIs.
-- `iced::futures` is a convenience re-export. You can also depend on `futures` directly, but use iced's `MaybeSend` for cross-platform compatibility.
-- Stream combinators from `futures::StreamExt` (`.filter()`, `.map()`, `.take()`) work with iced subscriptions and tasks.
-- The `subscription` module provides channel-based communication. For simpler cases, use `iced::stream::channel` directly.
-
-## See also
-
-- `stream.md` -- `stream::channel`, `stream::try_channel`
-- `subscription.md` -- `Subscription::run`, `Subscription::run_with`
-- `task.md` -- `Task::future`, `Task::stream`
-- `time.md` -- time-based subscriptions
+- `stream.md`
+- `subscription.md`
+- `task.md`
+- `time.md`

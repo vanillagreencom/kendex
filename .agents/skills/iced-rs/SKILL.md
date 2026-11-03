@@ -56,7 +56,7 @@ Full list in `references/INDEX.md`; load on demand.
 | Arc/ring animation | `examples/loading_spinners`, `examples/arc` |
 | Modal dialog | `examples/modal/src/main.rs` (stack + opaque) |
 | Toast/notification overlay | `examples/toast/src/main.rs` |
-| Tooltip / zoom-on-hover | `examples/loupe/src/main.rs` |
+| Zoom-on-hover | `examples/loupe/src/main.rs` |
 | Styled components | `examples/styling/` |
 | pane_grid layout | `examples/pane_grid/` |
 | Multi-window | `examples/multi_window/` |
@@ -67,7 +67,7 @@ Full list in `references/INDEX.md`; load on demand.
 
 Renderer source for shader work: `iced_wgpu/src/` (`engine.rs`, `layer.rs`, `quad.rs`, `quad/solid.rs`, `quad/gradient.rs`, `triangle.rs`, `triangle/msaa.rs`, `primitive.rs`, `buffer.rs`, `settings.rs`, `shader/quad.wgsl`).
 
-Snapshot: tag `0.14.0` of `https://github.com/iced-rs/iced`, commit `3997291f318a8bc06fa522f5579836fb3feb94df`. Upstream `wgpu/` is `iced_wgpu/` and upstream `examples/` is `examples/`, each copied whole. Only the bundled READMEs differ: links out of the copy point at the tag, and run steps name the upstream workspace. This copy has no workspace `Cargo.toml` and does not build.
+Snapshot: tag `0.14.0` of `https://github.com/iced-rs/iced`, commit `3997291f318a8bc06fa522f5579836fb3feb94df`. Upstream `wgpu/` is `iced_wgpu/` and upstream `examples/` is `examples/`, each copied whole. Local Markdown edits cover README navigation, descriptions and upstream run steps, the Markdown demo's versioned links and `iced::run` example, and reference corrections against the pinned API owners. This copy has no workspace `Cargo.toml` and does not build.
 
 The snapshot's signatures are the authority. For discovery beyond it, run `ctx7 docs /websites/iced_rs "<query>"`, then check each signature against `https://docs.rs/iced/0.14.0/iced/` or the tag's source, since lookups can return master APIs. Never copy code from upstream `master`.
 

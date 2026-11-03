@@ -1,161 +1,42 @@
 # Subscription
 
-> `iced::Subscription` · iced 0.14.0
+Read when declaring a passive event source in iced 0.14.0. The pinned [Subscription implementation](https://github.com/iced-rs/iced/blob/0.14.0/futures/src/subscription.rs) owns constructors and transformations. A subscription takes effect when returned to the application or daemon runtime.
 
-Declarative long-lived event source. Kept alive as long as `subscription(&State)` returns it. Use for ticks, keyboard/mouse listeners, network streams, and window events. Streams must not end on their own -- remove the subscription to stop it.
+## Identity and lifetime
 
-## API
+Return the same identity while a listener should stay alive. Return `Subscription::none()` when it is no longer needed. The [tracker](https://github.com/iced-rs/iced/blob/0.14.0/futures/src/subscription/tracker.rs) starts unseen identities and drops executions no longer requested.
 
-### Constructors
+`run` identifies a stream by its builder function. `run_with` includes both hashable data and the builder function pointer. Changing those inputs replaces the execution. The builder cannot capture application state; pass the required configuration as data and return a stream that owns what it needs.
 
-```rust
-impl<T> Subscription<T> {
-    pub fn none() -> Subscription<T>;
+For a continuing listener, keep producing until the application removes it. If a stream completes, this tracker ends its execution normally; completion is not a fatal runtime error. The identity remains registered while requested, so returning it again does not automatically restart the completed stream. Make reconnection part of the worker or explicitly change the subscription lifecycle.
 
-    pub fn batch(
-        subscriptions: impl IntoIterator<Item = Subscription<T>>,
-    ) -> Subscription<T>;
-
-    pub fn run_with<D, S>(
-        data: D,
-        builder: fn(&D) -> S,
-    ) -> Subscription<T>
-    where
-        D: Hash + 'static,
-        S: Stream<Item = T> + MaybeSend + 'static,
-        T: 'static;
-}
-```
-
-- **`none()`** — Empty subscription. Use when the current state has no passive work.
-- **`batch(iter)`** — Combines several subscriptions into one.
-- **`run_with(data, builder)`** — The lowest-level constructor: produce a stream identified by `data` (which is hashed to deduplicate active subscriptions) and a `builder` that constructs the `Stream`. Both the data and the function pointer form the identity — if they change between frames, the old stream is dropped and a new one is started.
-
-### Transformation
-
-```rust
-impl<T> Subscription<T> {
-    pub fn map<O>(
-        self,
-        f: impl Fn(T) -> O + MaybeSend + 'static,
-    ) -> Subscription<O>;
-
-    pub fn with<A>(self, data: A) -> Subscription<(A, T)>
-    where
-        A: MaybeSend + Clone + 'static;
-}
-```
-
-- **`map(f)`** — Transform each emitted value via `f`.
-- **`with(data)`** — Pair each emission with the given data, so downstream handlers know which instance of a subscription produced it.
-
-### Helper functions
-
-From `iced::event`:
-
-```rust
-pub fn iced::event::listen() -> Subscription<Event>;
-pub fn iced::event::listen_with<Message>(
-    f: fn(Event, Status, Id) -> Option<Message>,
-) -> Subscription<Message>;
-```
-
-- **`event::listen()`** — Subscribe to every runtime `Event` for every window.
-- **`event::listen_with(f)`** — Filter: `f` runs for every event; `None` skips, `Some(message)` forwards. `f` receives `Event`, `Status` (whether the event was captured already) and `Id` (the window the event belongs to).
-
-From `iced::keyboard`:
-
-```rust
-pub fn iced::keyboard::listen() -> Subscription<Event>;
-```
-
-From `iced::time`:
-
-```rust
-pub fn iced::time::every(duration: Duration) -> Subscription<Instant>;
-```
-
-Fires every `duration`, emitting the current `Instant`. Requires either the `tokio` or `smol` feature, or a `wasm32` target.
-
-From `iced::window`:
-
-```rust
-pub fn window::resize_events() -> Subscription<(Id, Size)>;
-pub fn window::open_events()   -> Subscription<Id>;
-pub fn window::close_events()  -> Subscription<Id>;
-```
+The [winit update loop](https://github.com/iced-rs/iced/blob/0.14.0/winit/src/lib.rs) evaluates subscriptions after processing a batch of application messages. Do not rely on a new execution after every message or view call.
 
 ## Patterns
 
-### 1 Hz tick
+Enable a timer from application state. This assumes a configured timer backend and an application's `Message::Tick` variant:
 
 ```rust
-use iced::time;
+use iced::{time, Subscription};
 use std::time::Duration;
 
-fn subscription(_state: &State) -> Subscription<Message> {
-    time::every(Duration::from_secs(1)).map(Message::Tick)
+fn subscription(state: &State) -> Subscription<Message> {
+    if state.running {
+        time::every(Duration::from_secs(1)).map(Message::Tick)
+    } else {
+        Subscription::none()
+    }
 }
 ```
 
-### Filter keyboard shortcuts globally
+For a configured feed, use `Subscription::run_with(state.feed_id, |id| build_feed_stream(*id))`. The application's builder supplies the stream; its data must distinguish independent feeds. Combine sources with `Subscription::batch` rather than creating a separate runtime.
 
-```rust
-use iced::event::{self, Event, Status};
-use iced::keyboard;
+`map` transforms outputs. `filter_map` can skip them. Their closures must not capture values. Use `with` when emitted messages need instance context; that context also contributes to identity. Handle resulting messages in the normal application update.
 
-fn subscription(_: &State) -> Subscription<Message> {
-    event::listen_with(|event, status, _window_id| {
-        if status != Status::Ignored {
-            return None;
-        }
-        if let Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = event {
-            map_global_shortcut(key)
-        } else {
-            None
-        }
-    })
-}
-```
+## Event sources
 
-### Combine multiple
+Use [event subscriptions](events.md) for status/window selection, [keyboard input](keyboard.md) for ignored-key shortcuts, [window events](window.md) for window lifecycle and [time](time.md) for timer features. `event::listen` receives ignored non-redraw events, while `listen_with` can inspect captured events too; it still excludes redraws. Use the raw listener only deliberately.
 
-```rust
-Subscription::batch([
-    time::every(Duration::from_millis(16)).map(Message::Tick),
-    keyboard::listen().map(Message::Keyboard),
-    window::close_events().map(Message::WindowClosed),
-])
-```
+Use [Recipe](advanced-subscription-recipe.md) for custom hashing or runtime-input processing that these helpers cannot express. [Stream](stream.md) adapts an async producer; [Task](task.md) handles effects started on demand.
 
-### Custom stream via `run_with`
-
-```rust
-use iced::Subscription;
-use futures_util::stream::Stream;
-
-fn subscribe_to_feed(state: &State) -> Subscription<Message> {
-    Subscription::run_with(state.feed_id, |id| {
-        // Return a Stream<Item = Message>:
-        build_feed_stream(*id)
-    })
-}
-```
-
-
-## Gotchas
-
-- Subscriptions are **re-queried after every `update`**. If `subscription(&state)` returns a different set, the old subscriptions are dropped and new ones started. This is how you "enable" and "disable" subscriptions reactively.
-- `Subscription::run_with` uses `data` **and the function pointer** as the identity. Two closures that capture different state are different subscriptions.
-- A `Subscription` is "not allowed to end on its own" — if your `Stream` completes, iced treats that as a fatal error. Use `run_with` streams that loop forever, or terminate by removing the subscription from `subscription(&State)`.
-- `time::every` requires a runtime — if you disable both `tokio` and `smol` features, you must provide your own executor.
-- `event::listen_with` receives **every** event, including those already handled by a widget. Check the `Status` argument to decide whether to produce a message.
-- Messages emitted by subscriptions go through the normal `update` loop — don't forget to handle them in your match.
-- Map closures run outside the `update` context and cannot touch application state.
-
-## See also
-
-- `task.md`
-- `time.md`
-- `events.md`
-- `advanced-subscription-recipe.md`
+Check source identity, reconnect/removal behavior and target executor in the consuming app. This reference establishes source semantics, not a native subscription or timing result.

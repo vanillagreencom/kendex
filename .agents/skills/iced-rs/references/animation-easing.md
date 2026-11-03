@@ -1,229 +1,39 @@
-# Animation & Easing
+# Animation and easing
 
-> `iced::Animation<T>` + `iced::animation::Easing` · iced 0.14.0
+Read when choosing interpolation or transition controls for Iced 0.14.0. The pinned [animation declaration](https://github.com/iced-rs/iced/blob/0.14.0/core/src/animation.rs) owns the signatures, duration presets, trait bounds and re-exported `Easing`. Use `animation.md` for state ownership, invalidation and redraw scheduling.
 
-Complete API reference for `Animation<T>` and `Easing` — every method and variant.
+## Transitions
 
-## API
+Create an `Animation` with its initial state. Set its easing, explicit duration or duration preset, and optional delay. Retarget it with consuming `go` or mutable `go_mut`. Check that interrupted transitions remain continuous under rapid toggles.
 
-### `Animation<T>` struct
-
-```rust
-pub struct Animation<T>
-where
-    T: Clone + Copy + PartialEq + FloatRepresentable,
-{ /* private fields */ }
-```
-
-### Constructors and builders
-
-```rust
-impl<T: Clone + Copy + PartialEq + FloatRepresentable> Animation<T> {
-    pub fn new(state: T) -> Animation<T>;
-
-    // Easing curve
-    pub fn easing(self, easing: Easing) -> Animation<T>;
-
-    // Preset durations
-    pub fn very_quick(self) -> Animation<T>;  // ~100ms
-    pub fn quick(self) -> Animation<T>;       // ~200ms
-    pub fn slow(self) -> Animation<T>;        // ~400ms
-    pub fn very_slow(self) -> Animation<T>;   // ~600ms
-
-    // Explicit duration
-    pub fn duration(self, duration: Duration) -> Animation<T>;
-
-    // Start delay
-    pub fn delay(self, duration: Duration) -> Animation<T>;
-
-    // Repetition
-    pub fn repeat(self, repetitions: u32) -> Animation<T>;
-    pub fn repeat_forever(self) -> Animation<T>;
-    pub fn auto_reverse(self) -> Animation<T>;
-}
-```
-
-### Transition methods
-
-```rust
-impl<T: Clone + Copy + PartialEq + FloatRepresentable> Animation<T> {
-    // Consume and return new animation transitioning to new_state
-    pub fn go(self, new_state: T, at: Instant) -> Animation<T>;
-
-    // Mutate in-place to transition to new_state
-    pub fn go_mut(&mut self, new_state: T, at: Instant);
-
-    // Is the animation currently in progress?
-    pub fn is_animating(&self, at: Instant) -> bool;
-
-    // Current target state (not interpolated)
-    pub fn value(&self) -> T;
-}
-```
-
-### Interpolation methods
-
-```rust
-impl<T: Clone + Copy + PartialEq + FloatRepresentable> Animation<T> {
-    // Project into an interpolated value via closure
-    pub fn interpolate_with<I>(
-        &self,
-        f: impl Fn(T) -> I,
-        at: Instant,
-    ) -> I;
-}
-
-impl Animation<bool> {
-    // Convenience: interpolate between start (false) and end (true) values
-    pub fn interpolate<I>(
-        &self,
-        start: I,
-        end: I,
-        at: Instant,
-    ) -> I;
-
-    // Remaining duration of the animation
-    pub fn remaining(&self, at: Instant) -> Duration;
-}
-```
-
-### `Easing` enum (complete -- 32 variants)
-
-```rust
-pub enum Easing {
-    // Linear
-    Linear,
-
-    // CSS standard curves
-    EaseIn,
-    EaseOut,
-    EaseInOut,
-
-    // Quadratic
-    EaseInQuad,
-    EaseOutQuad,
-    EaseInOutQuad,
-
-    // Cubic
-    EaseInCubic,
-    EaseOutCubic,
-    EaseInOutCubic,
-
-    // Quartic
-    EaseInQuart,
-    EaseOutQuart,
-    EaseInOutQuart,
-
-    // Quintic
-    EaseInQuint,
-    EaseOutQuint,
-    EaseInOutQuint,
-
-    // Exponential
-    EaseInExpo,
-    EaseOutExpo,
-    EaseInOutExpo,
-
-    // Circular
-    EaseInCirc,
-    EaseOutCirc,
-    EaseInOutCirc,
-
-    // Back (overshoot)
-    EaseInBack,
-    EaseOutBack,
-    EaseInOutBack,
-
-    // Elastic (spring-like)
-    EaseInElastic,
-    EaseOutElastic,
-    EaseInOutElastic,
-
-    // Bounce
-    EaseInBounce,
-    EaseOutBounce,
-    EaseInOutBounce,
-
-    // Custom function
-    Custom(fn(f32) -> f32),
-}
-
-impl Easing {
-    pub fn value(self, x: f32) -> f32;
-}
-```
-
-### `FloatRepresentable` trait bound
-
-`Animation<T>` requires `T: FloatRepresentable`. Implemented for `bool`, `f32`, and other numeric types. For custom types, implement this trait to enable animation.
-
-## Patterns
-
-### Animate a bool toggle (expand/collapse)
+`value()` returns the target state. Use interpolation to obtain the visual value at an instant. Generic `interpolate_with` takes its state by value and projects keyframes into an interpolable result. `Animation<bool>::interpolate` supplies false/true endpoints directly; its `remaining` method reports the remaining duration.
 
 ```rust
 use iced::{Animation, animation::Easing};
-use std::time::{Duration, Instant};
+use iced::time::{Duration, Instant};
 
-let mut anim = Animation::new(false)
+let mut fade = Animation::new(false)
     .duration(Duration::from_millis(250))
-    .easing(Easing::EaseInOutCubic);
+    .easing(Easing::EaseIn);
 
-// Toggle
-anim.go_mut(true, Instant::now());
-
-// In draw: interpolate to get 0.0..1.0 progress
-let t = anim.interpolate(0.0_f32, 1.0_f32, now);
+let now = Instant::now();
+fade.go_mut(true, now);
+let opacity = fade.interpolate(0.0_f32, 1.0_f32, now);
 ```
 
-### Animate an f32 value
+The bundled `examples/gallery/src/main.rs` demonstrates bool transitions and visual interpolation. For a numeric state, project the value with `interpolate_with(|value| value, now)`. Custom states must satisfy the exported `Float` bound and the result must satisfy `Interpolable`; inspect those traits before implementing them.
 
-```rust
-let mut anim = Animation::new(0.0_f32)
-    .duration(Duration::from_millis(300))
-    .easing(Easing::EaseOutCubic);
+## Repetition and curves
 
-anim.go_mut(100.0, now);
+`repeat` adds repetitions after the initial play, so one repetition plays twice. `repeat_forever` removes the finite end, and `auto_reverse` reverses repeated transitions. Start a transition toward a different state before expecting motion; constructing an animation alone supplies its initial value.
 
-let current = anim.interpolate_with(|v| v, now);
-```
+Use the re-exported `Easing` for standard curves or a custom `fn(f32) -> f32`; evaluate a curve with `value`. The declaration's upstream re-export owns the variant inventory. Do not infer a complete list from these examples.
 
-### Retarget mid-animation
+Keep custom-widget animation state in `Tree::state`, as `animation.md` requires. The redraw loop advances the visible result; builders alone do not schedule frames. The package's trading UI easing guidance also stays in that reference.
 
-```rust
-// go_mut retargets from the current interpolated position, no snap
-anim.go_mut(new_target, Instant::now());
-```
+## Related references
 
-### Repeating animation (loading spinner)
-
-```rust
-let spinner = Animation::new(0.0_f32)
-    .duration(Duration::from_secs(1))
-    .easing(Easing::Linear)
-    .repeat_forever()
-    .auto_reverse();
-```
-
-### Custom easing function
-
-```rust
-let anim = Animation::new(false)
-    .easing(Easing::Custom(|t| t * t * (3.0 - 2.0 * t))); // smoothstep
-```
-
-## Gotchas
-
-- `go_mut` is interrupt-safe: mid-transition retargeting keeps the current eased value. Rapid toggles don't snap.
-- `value()` returns the **target** state, not the interpolated value. Use `interpolate_with` for the current visual value.
-- `interpolate` (bool-specific) and `interpolate_with` (generic) are different methods. Don't confuse them.
-- `Animation` state must live in `widget::Tree::state` for custom widgets.
-- No `Spring` or `Tween` types in iced 0.14 -- only `Animation<T>` and `Easing`.
-- Trading UI easing recommendations: see `animation.md` § Easing.
-
-## See also
-
-- `animation.md` -- framework-level animation rules, redraw scheduling, invalidation modes
-- `advanced-shell.md` -- `Shell::request_redraw`, `request_redraw_at`
-- `advanced-widget.md` -- widget lifecycle where animations are driven
-- `advanced-tree.md` -- `Tree::state` where animation state is stored
+- `animation.md`
+- `advanced-shell.md`
+- `advanced-widget.md`
+- `advanced-tree.md`

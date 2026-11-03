@@ -1,184 +1,47 @@
 # Shader
 
-> `iced::widget::shader` · iced 0.14.0
+Read when a custom GPU pipeline is needed in iced 0.14.0. The pinned [Shader widget](https://github.com/iced-rs/iced/blob/0.14.0/widget/src/shader.rs) and [Program contract](https://github.com/iced-rs/iced/blob/0.14.0/widget/src/shader/program.rs) own the API. The widget requires the `wgpu` feature and a renderer implementing the primitive-rendering contract. Check [surface selection](guide-surface-selection.md) before choosing it over Canvas or ordinary widgets.
 
-Custom GPU pipeline widget. Implement `shader::Program<Message>` to produce a `Primitive`, then implement `shader::Primitive` to prepare and render in a wgpu render pass. Requires the `wgpu` feature. Use for 3D rendering, particle systems, or GPU-based data visualization.
+## Program
 
-## API
+Keep transient widget state in `Program::State`. `update` can return an action that publishes a message, requests redraw or captures the event. `draw` produces a primitive from the current state, bounds and cursor. It does not directly issue GPU commands.
 
-### `Shader` struct
-
-```rust
-pub struct Shader<'a, Message, P: Program<Message>> { /* ... */ }
-
-impl<'a, Message, P: Program<Message>> Shader<'a, Message, P> {
-    pub fn new(program: P) -> Self;
-    pub fn width(self, width: impl Into<Length>) -> Self;
-    pub fn height(self, height: impl Into<Length>) -> Self;
-}
-```
-
-### `Program` trait
+The [bundled Scene](../examples/custom_shader/src/scene.rs) demonstrates the separation:
 
 ```rust
-pub trait Program<Message> {
-    type State: Default + 'static;
-    type Primitive: Primitive + 'static;
-
-    // Required
-    fn draw(
-        &self,
-        state: &Self::State,
-        cursor: Cursor,
-        bounds: Rectangle,
-    ) -> Self::Primitive;
-
-    // Provided
-    fn update(
-        &self,
-        _state: &mut Self::State,
-        _event: &Event,
-        _bounds: Rectangle,
-        _cursor: Cursor,
-    ) -> Option<Action<Message>> { ... }
-
-    fn mouse_interaction(
-        &self,
-        _state: &Self::State,
-        _bounds: Rectangle,
-        _cursor: Cursor,
-    ) -> Interaction { ... }
-}
-```
-
-### `Primitive` trait
-
-```rust
-pub trait Primitive:
-    Debug
-    + MaybeSend
-    + MaybeSync
-    + 'static
-{
-    type Pipeline: Pipeline + MaybeSend + MaybeSync;
-
-    // Required
-    fn prepare(
-        &self,
-        pipeline: &mut Self::Pipeline,
-        device: &Device,
-        queue: &Queue,
-        bounds: &Rectangle,
-        viewport: &Viewport,
-    );
-
-    // Provided
-    fn draw(
-        &self,
-        _pipeline: &Self::Pipeline,
-        _render_pass: &mut RenderPass<'_>,
-    ) -> bool { ... }
-
-    fn render(
-        &self,
-        _pipeline: &Self::Pipeline,
-        _encoder: &mut CommandEncoder,
-        _target: &TextureView,
-        _clip_bounds: &Rectangle<u32>,
-    ) { ... }
-}
-```
-
-### `Storage`
-
-```rust
-pub struct Storage { /* private */ }
-
-impl Storage {
-    pub fn has<T>(&self) -> bool;
-    pub fn store<T, P>(&mut self, pipeline: P)
-    where
-        P: Pipeline;
-    pub fn get<T>(&self) -> Option<&(dyn Any + 'static)>;
-    pub fn get_mut<T>(&mut self) -> Option<&mut (dyn Any + 'static)>;
-    pub fn trim(&mut self);
-}
-```
-
-Type-keyed storage for pipelines (`wgpu` feature only).
-
-## Patterns
-
-### Minimal shader program skeleton
-
-```rust
-use iced::widget::shader;
-use iced::{Rectangle, mouse::Cursor};
-
-#[derive(Debug)]
-struct MyProgram;
-
-impl shader::Program<Message> for MyProgram {
+impl<Message> shader::Program<Message> for Scene {
     type State = ();
-    type Primitive = MyPrimitive;
+    type Primitive = Primitive;
 
     fn draw(
         &self,
         _state: &Self::State,
-        _cursor: Cursor,
+        _cursor: mouse::Cursor,
         bounds: Rectangle,
-    ) -> MyPrimitive {
-        MyPrimitive { bounds }
-    }
-}
-
-#[derive(Debug)]
-struct MyPrimitive {
-    bounds: Rectangle,
-}
-
-impl shader::Primitive for MyPrimitive {
-    type Pipeline = MyPipeline;
-
-    fn prepare(
-        &self,
-        pipeline: &mut Self::Pipeline,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        bounds: &Rectangle,
-        viewport: &shader::Viewport,
-    ) {
-        pipeline.upload_uniforms(queue, bounds);
-    }
-
-    fn draw(
-        &self,
-        pipeline: &Self::Pipeline,
-        render_pass: &mut wgpu::RenderPass<'_>,
-    ) -> bool {
-        pipeline.render_in_pass(render_pass);
-        true
+    ) -> Self::Primitive {
+        Primitive::new(
+            &self.cubes,
+            &self.camera,
+            bounds,
+            self.show_depth_buffer,
+            self.light_color,
+        )
     }
 }
 ```
 
-### Pipeline lifecycle via `Storage`
+Read that module's imports and primitive implementation with this excerpt. Its [pipeline](../examples/custom_shader/src/scene/pipeline.rs) supplies resource creation and rendering. `mouse_interaction` can affect the cursor outside the shader's bounds; check the cursor against bounds when that is not intended.
 
-1. First frame: `storage.has::<MyPipeline>()` -- if false, build and `storage.store(pipeline)`.
-2. Every frame: `storage.get_mut::<MyPipeline>()` to update buffers and render.
+## GPU resources
 
-## Gotchas
+The bundled [Primitive and Pipeline contracts](../iced_wgpu/src/primitive.rs) define resource creation, preparation and rendering. `Pipeline::new` creates reusable GPU resources. `Primitive::prepare` updates them for an instance and receives its logical bounds and viewport. Keep expensive resource work out of repeated preparation where the pipeline can retain it; measure the consuming workload before claiming a performance result.
 
-- The `wgpu` feature is required, and `Shader` is only meaningful in renderers that speak `wgpu` (e.g. `iced_wgpu`). Software backends ignore it.
-- `Primitive::draw` returns `bool`. Return `true` if you've done the drawing inside the supplied render pass. Return `false` if you couldn't and want iced to invoke `render()` with a fresh encoder — that path is slower because it needs its own command encoder and render target.
-- `prepare()` is called every frame and is the only place where you can touch the `Device` / `Queue` (for uploading buffers). It must be fast and must not do heavy GPU work.
-- `Pipeline` objects live as long as the shared `Storage`. If you store too many pipelines, call `Storage::trim()` to drop unused ones.
-- `Primitive` types are compared by `TypeId` for pipeline sharing — two different primitive structs cannot share a pipeline even if their behaviour is identical.
-- Follow iced's coordinate conventions: the `bounds` and `viewport` passed to `prepare` are in logical pixels; multiply by the viewport's scale factor when uploading physical pixel data.
-- The iced repository's `custom_shader` example is the canonical full reference.
+Implement `Primitive::draw` to reuse the supplied render pass when it suits the composition. Return `true` after drawing. Returning `false` selects `render`, which receives an encoder, target and physical clip bounds. The existing pass has its viewport/scissor set for the primitive. The [renderer](../iced_wgpu/src/lib.rs) owns pass transitions; do not assume the fallback creates a new encoder or target.
 
-## See also
+Renderer storage shares one pipeline per primitive type. Different primitive types receive separate entries even if they name the same pipeline type. Ordinary shader programs let the renderer manage that storage. `Storage::trim` calls each pipeline's trim method; it does not evict the pipeline entries. Release a pipeline's unused cached resources in its own trim implementation when needed.
 
-- `canvas.md`
-- `advanced-renderer.md`
-- `guide-surface-selection.md`
+[`Viewport`](https://github.com/iced-rs/iced/blob/0.14.0/graphics/src/viewport.rs) exposes both logical and physical sizes plus the scale factor. Convert the quantities your GPU data needs explicitly. Do not treat every viewport quantity as logical pixels.
+
+Check clipping, scaling, composition, resource lifetime and backend availability in the target. No local shader build, GPU output or performance measurement is established by this reference.
+
+See [Canvas](canvas.md) and [renderer primitives](advanced-renderer.md).
