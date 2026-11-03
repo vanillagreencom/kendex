@@ -1167,7 +1167,7 @@ fi
 echo
 # Base transport never changes the already-validated head. The remote base
 # can advance before the final fetch or during pre-push hook execution.
-for race in before-fetch during-push message-control; do
+for race in success before-fetch during-push message-control; do
   build "base-$race" pair fix
   fold_expected_message="$(git -C "$WT" show -s --format=%B HEAD)"
   commit_wt second.txt second
@@ -1206,6 +1206,13 @@ for race in before-fetch during-push message-control; do
     continue
   fi
   assert_eq "$(git -C "$WT" show -s --format=%B HEAD)" "$fold_expected_message" "$race: the selected message and trailers reach the prepared commit"
+  if [[ "$race" == success ]]; then
+    (cd "$MAIN" && "$WORKTREE_SCRIPT" push "$WT" --to-base "$prepared_before" >"$ROOT/out" 2>"$ROOT/err")
+    assert_eq "$(git --git-dir="$ROOT/origin.git" rev-parse main)" "$prepared_head" "linear publication lands the prepared commit"
+    assert_eq "$(git -C "$WT" rev-parse HEAD)" "$prepared_head" "linear publication keeps the validated head"
+    assert_eq "$(git -C "$WT" show -s --format=%P HEAD)" "$BASE" "linear publication retains the expected base parent"
+    continue
+  fi
   if [[ "$race" == before-fetch ]]; then
     commit_main advanced.txt advanced
     want_key=worktree-push-base-conflict
