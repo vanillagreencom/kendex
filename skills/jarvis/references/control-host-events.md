@@ -2,6 +2,8 @@
 
 Read when starting, recovering or extending the event producer in the [session workflow](../workflows/session.md#control-host-events).
 
+The [producer](../scripts/lib/watch.py) declares the event encoding, pass cursor and batch state.
+
 ## Input log
 
 `watch-loop` appends changed local and declared-host passes to `events.log` under `JARVIS_LOG_DIR`. Unchanged cursor-only results add no log entry. Its `batch.json` retains logical read progress, deferred block spans, an immutable current send and a cursor checkpoint. Restart recovers later cursors from the log after that checkpoint. Keep both files across restart. Each simultaneous Jarvis home needs a separate log directory.
@@ -18,7 +20,7 @@ TEXT
 cursor: {"side":"consumer","roots":{}}
 ```
 
-Every new root-specific block, including unread, unreachable and presence blocks, adds `destination=KEY root=FULL_PATH` to its header. The same destination key and full root path identify its cursor and footer origin. Keys are `local` or `ssh:ALIAS`, never a display basename. These fields survive batching into the actual home mailbox directive. Existing consumer blocks and saved pending bytes are unchanged.
+Every new root-specific block, including unread, unreachable and presence blocks, adds `destination=KEY root=FULL_PATH` to its header. Keys are `local` or `ssh:ALIAS`, never a display basename. The cursor and footer origin retain the acquisition root and transport side. An `owner-unread` header names the shared mailbox root; its cursor and footer origin identify the registered Jarvis home. These paths can differ for a linked worktree. Header fields survive batching into the actual home mailbox directive. Existing consumer blocks and saved pending bytes are unchanged.
 
 Mail text keeps ordinary quotes, backslashes, Unicode and LF line breaks. Other control characters use visible escapes. A space protects text lines that begin with `EVENT ` or `cursor:`. The final text holds at most 4000 characters, including complete escapes and protective spaces. Metadata and diagnostic values encode whitespace and control characters to remain single tokens on one physical line. Consumer checks use the same rule for their text. Other supported headers are `EVENT forward-failed`, `EVENT overseer-unread`, `EVENT owner-unread`, `EVENT owner-unanswered`, `EVENT owner-unanswered-failed`, `EVENT root-unreachable`, `EVENT presence-renew-failed` and `EVENT timeout`. `EVENT owner-unread id=ID at=AT` has no text line. `EVENT owner-unanswered id=ID at=AT kind=KIND` carries the message text. `EVENT forward-failed request=REF key=KEY cause=CAUSE` has no text line and may add `detail=`; `KEY` is the forward's delivery key, so a reused request reference's later forward is another event. Timeout blocks are skipped. The pass cursor is a public protocol record. Its byte length and relative block spans retain the full root path and transport side for root-specific mail and presence blocks. Whole-side failures and consumer blocks have no root origin. Consumers do not edit that bookkeeping or its root positions.
 
@@ -28,7 +30,7 @@ The loop polls `jarvis-session report-due` every 30 seconds independently of mai
 
 Each destination has one independently scheduled mail job and presence job in the existing executor. A completed healthy pass is accepted without waiting for another host. A failed pass retains only its destination's progress and cause. Declaration reordering cannot move read positions. Host changes take effect after the existing stop/restart route.
 
-The first complete pending block starts one fixed settle. Later events do not move the deadline. At the deadline, local home-root blocks come first. Full path and transport side identify the home. Display names do not identify roots. Each priority group keeps log order. The serialized batch holds at most 60 KB and never cuts a block. Deferred blocks stay pending. A single consumer block larger than the cap reports `event-too-large`; split that check's output into complete smaller blocks.
+The first complete pending block starts one fixed settle. Later events do not move the deadline. At the deadline, blocks acquired from the local home come first. The acquisition root's full path and transport side identify the home, not the header's mailbox path. Display names do not identify roots. Each priority group keeps log order. The batch's event body holds at most 60 KiB and never cuts a block. Deferred blocks stay pending. A single consumer block larger than the cap reports `event-too-large`; split that check's output into complete smaller blocks.
 
 The home mailbox writer receives one directive with a retained delivery key. A restart retries the saved bytes with that key. Only a normal send receipt or the exact key's repeated-delivery receipt commits progress. The mailbox remains the delivery ledger. The loop prints one batch pointer without its body. Read the body through the installed deliver hook or `lane-mail inbox --item overseer` from the home.
 
