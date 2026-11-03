@@ -1233,6 +1233,44 @@ SH
   assert_eq "$(grep -c -- '--force' "$ROOT/trace" || true)" 0 "$race: no force argument reaches Git"
 done
 
+for merge_base in contained advanced control; do
+  build "prepare-merge-$merge_base" pair fix
+  git -C "$MAIN" switch -q -c release "$BASE"
+  git -C "$MAIN" commit -q --allow-empty -m release
+  merge_side="$(git -C "$MAIN" rev-parse HEAD)"
+  git -C "$MAIN" switch -q main
+  git -C "$WT" merge -q -s ours --no-ff release -m 'retain release ancestry'
+  merge_head="$(git -C "$WT" rev-parse HEAD)"
+  commit_wt docs.txt docs
+  merge_before="$(git -C "$WT" rev-parse HEAD)"
+  merge_script="$WORKTREE_SCRIPT"
+  if [[ "$merge_base" == advanced ]]; then
+    commit_main advanced.txt advanced
+  elif [[ "$merge_base" == control ]]; then
+    mkdir -p "$TMP_ROOT/merge-control"
+    cp -R "$PACKAGE_DIR" "$TMP_ROOT/merge-control/worktree"
+    cp -R "$PACKAGE_DIR/../github" "$TMP_ROOT/merge-control/github"
+    merge_script="$TMP_ROOT/merge-control/worktree/scripts/worktree"
+    assert_eq "$(grep -cF 'if [[ "$BASE_PREPARE_MERGES" != 0 ]]; then' "$merge_script")" 1 "control: one merge-range refusal"
+    sed -i.bak 's/if \[\[ "$BASE_PREPARE_MERGES" != 0 \]\]; then/if false; then/' "$merge_script"
+    assert_eq "$(cmp -s "$merge_script.bak" "$merge_script" && printf unchanged || printf changed)" changed "control: the merge-range refusal changed"
+  fi
+  merge_rc=0
+  (cd "$MAIN" && "$merge_script" push "$WT" --prepare-base >"$ROOT/out" 2>"$ROOT/err") || merge_rc=$?
+  if [[ "$merge_base" == control ]]; then
+    assert_eq "$merge_rc:$(git -C "$WT" show -s --format=%P HEAD)" "0:$BASE" \
+      "must-fail: without refusal preparation replaces the merge range with one parent"
+    continue
+  fi
+  assert_eq "$merge_rc" 1 "$merge_base: preparation refuses a merge-containing range"
+  assert_eq "$(git -C "$WT" rev-parse HEAD)" "$merge_before" "$merge_base: refusal preserves the item head"
+  assert_eq "$(git -C "$WT" show -s --format=%P HEAD)" "$merge_head" "$merge_base: the docs commit still follows the merge"
+  assert_eq "$(git -C "$WT" show -s --format=%P "$merge_head")" "$END $merge_side" "$merge_base: both expected merge parents remain"
+  assert_eq "$(git -C "$WT" status --porcelain)" "" "$merge_base: refusal leaves the tree and index clean"
+  assert_eq "$(remote_oid origin)" "" "$merge_base: refusal publishes no item branch"
+  assert_eq "$(git --git-dir="$ROOT/origin.git" rev-parse main)" "$(git -C "$MAIN" rev-parse HEAD)" "$merge_base: refusal preserves the remote base"
+done
+
 for fold_history in unpublished published authorized unread; do
   build "fold-refused-$fold_history" pair fix
   commit_wt second.txt second
