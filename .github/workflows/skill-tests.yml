@@ -25,8 +25,9 @@ name: Skill Tests
 # Markdown alone narrows further: the changes job publishes the suites that
 # read it as `suites`, each shell suite step and the catalog job's
 # package-suite step run only those among their own, the node and
-# pi-claude-bridge shards run whole, and a narrowed shard leg says so in
-# its name, so the main push runs that shard whole. The selected
+# pi-claude-bridge shards run whole, and a leg whose list left out one of
+# its own suites runs its `narrowed by the suite list` step, so the main
+# push runs that shard whole. The selected
 # macOS cargo and shell legs run in the group. The two diff checks,
 # preflight and Markdown, run on every group against its base.
 # `tools/ci-job-set --event-parity` holds the pull-request selection, which
@@ -493,11 +494,7 @@ jobs:
   # container-close's suite — reds on a host without it rather than skipping
   # into a green.
   skill-suites-shard:
-    # A leg that runs only the suites the changes job's `suites` list names
-    # carries `narrowed` in its name, so the main push's proof read, which
-    # matches the whole leg's name, counts it unproved and runs that shard
-    # whole. CI reads this job by its id.
-    name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }}${{ matrix.scope == 'narrowed' && ', narrowed' || '' }})
+    name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
     # Merge groups run Linux shards when classification is missing or
     # selects shell work with a remaining Linux runner; main pushes run the
@@ -517,9 +514,6 @@ jobs:
         # expands.
         shard: &skill-suite-shards ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "guards-scans", "guards-commit", "guards-commit-tail", "guards-hooks", "guards-hooks-tail", "guards-tools", "guards-tools-tail", "linear", "linear-controls", "worktree", "worktree-restack", "rest", "jarvis", "slack", "mailbox", "node", "pi-claude-bridge"]' || needs.changes.outputs.shards) }}
         os: [ubuntu-latest]
-        # `narrowed` where the changes job published a suite list, which
-        # SHARD_SUITES below hands each suite step.
-        scope: &skill-suite-scope ${{ fromJSON(needs.changes.result == 'success' && needs.changes.outputs.suites != '' && needs.changes.outputs.suites != 'all' && '["narrowed"]' || '["whole"]') }}
     runs-on: ${{ matrix.os }}
     # The macOS legs on the same suites, first green run: guards 9m09s
     # against 3m13s on Linux, rest 7m39s against
@@ -559,11 +553,11 @@ jobs:
       # This workflow owns the temporary roster; evidence tables are never inputs.
       TEMPORARY_SUITE: ${{ matrix.suite || '' }}
       MAIN_ONLY_FILTERS: ${{ !matrix.suite && (github.event_name == 'merge_group' || github.event_name == 'push') && '!=critical-path-deny.test !=orch-shard-partition.test !=adopt-refresh.test' || '' }}
-      # The suites a narrowed leg runs, which each shell suite step hands
+      # The changes job's suite list, which each shell suite step hands
       # `tools/ci-job-set --suite-list` as SUITE_SELECTION with its
-      # candidates, running the ones it prints; `all` on every other leg,
-      # the nightly and main-only legs among them.
-      SHARD_SUITES: ${{ matrix.scope == 'narrowed' && needs.changes.outputs.suites || 'all' }}
+      # candidates, running the ones it prints; `all` where that job did not
+      # succeed or does not run, the nightly and main-only legs among them.
+      SHARD_SUITES: ${{ needs.changes.result == 'success' && needs.changes.outputs.suites || 'all' }}
     steps: &skill-suite-steps
       # run-all.sh stops every suite still running at this Unix time and names
       # each in the log, so a hang fails by name before the job ceiling cancels
@@ -767,7 +761,7 @@ jobs:
           set -u
           fail=0
           review=()
-          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list skills/review-gate/tests/*.test.sh)"
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/review-gate/tests/*.test.sh)"
           for t in $kept; do
             base="${t##*/}"
             review+=("=${base%.sh}")
@@ -784,7 +778,7 @@ jobs:
           set -u
           fail=0
           refresh=()
-          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list refresh/tests/*.test.sh)"
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list refresh/tests/*.test.sh)"
           for t in $kept; do
             base="${t##*/}"
             refresh+=("=${base%.sh}")
@@ -908,7 +902,7 @@ jobs:
           wf=.github/workflows/skill-tests.yml
           claims="$(grep -v '^[[:space:]]*#' "$wf")"
           set --
-          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list skills/commit-guards/tests/*.sh)"
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/commit-guards/tests/*.sh)"
           for t in $kept; do
             if printf '%s\n' "$claims" | grep -qF "$t"; then
               continue
@@ -940,7 +934,7 @@ jobs:
           # The rejectors keep the claimed suites out; these selectors name
           # the suites this leg's list keeps.
           selected=0
-          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list tools/tests/*.test.sh)"
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list tools/tests/*.test.sh)"
           for t in $kept; do
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
@@ -956,7 +950,7 @@ jobs:
           tools/rust-reads --cli-smoke . >/dev/null || exit $?
           fail=0
           failed=""
-          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list tools/tests/harness-smoke.test.sh \
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list tools/tests/harness-smoke.test.sh \
             tools/tests/orch-shard-partition.test.sh)"
           for t in $kept; do
             base="${t##*/}"
@@ -997,7 +991,7 @@ jobs:
           md_refs=skills/commit-guards/tests/md-refs
           hooks=()
           guards=()
-          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list hooks/tests/*.sh \
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list hooks/tests/*.sh \
             skills/commit-guards/tests/install-git-hooks.test.sh \
             "$md_refs.test.sh")"
           for t in $kept; do
@@ -1036,7 +1030,7 @@ jobs:
         run: |
           set -u
           hooks=()
-          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list hooks/tests/lane-mail-*.test.sh \
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list hooks/tests/lane-mail-*.test.sh \
             hooks/tests/reviewer-*.test.sh)"
           for t in $kept; do
             base="${t##*/}"
@@ -1057,7 +1051,7 @@ jobs:
         run: |
           set -u
           set --
-          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list skills/commit-guards/tests/pre-push.test.sh \
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/commit-guards/tests/pre-push.test.sh \
             skills/commit-guards/tests/md-refs.test.sh)"
           for t in $kept; do
             base="${t##*/}"
@@ -1079,7 +1073,7 @@ jobs:
           linear=()
           bot=()
           preflight=()
-          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list "$@" skills/bot-instructions/tests/*.sh skills/preflight/tests/*.sh)"
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list "$@" skills/bot-instructions/tests/*.sh skills/preflight/tests/*.sh)"
           for t in $kept; do
             case "$t" in skills/linear/tests/must-fail-controls.sh) continue ;; esac
             base="${t##*/}"
@@ -1103,7 +1097,7 @@ jobs:
       - name: linear must-fail controls
         if: matrix.shard == 'linear-controls'
         run: |
-          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list skills/linear/tests/must-fail-controls.sh)"
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/linear/tests/must-fail-controls.sh)"
           for t in $kept; do
             echo "=== $t"
             bash "$t"
@@ -1123,7 +1117,7 @@ jobs:
         run: |
           set -u
           set --
-          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list skills/worktree/tests/*.sh)"
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/worktree/tests/*.sh)"
           for t in $kept; do
             base="${t##*/}"
             case "$base" in *restack*) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || continue ;; esac
@@ -1141,7 +1135,7 @@ jobs:
         if: matrix.shard == 'worktree-restack'
         run: |
           set --
-          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list skills/worktree/tests/*restack*.sh)"
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/worktree/tests/*restack*.sh)"
           for t in $kept; do
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
@@ -1154,7 +1148,7 @@ jobs:
         if: matrix.shard == 'mailbox'
         run: |
           set --
-          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list skills/mailbox/tests/*.sh)"
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/mailbox/tests/*.sh)"
           for t in $kept; do
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
@@ -1166,7 +1160,7 @@ jobs:
         if: matrix.shard == 'slack'
         run: |
           set --
-          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list skills/slack/tests/*.sh)"
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/slack/tests/*.sh)"
           for t in $kept; do
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
@@ -1183,7 +1177,7 @@ jobs:
         if: matrix.shard == 'jarvis'
         run: |
           set --
-          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list skills/jarvis/tests/*.sh)"
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/jarvis/tests/*.sh)"
           for t in $kept; do
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
@@ -1306,7 +1300,7 @@ jobs:
           # The selectors apply across the pool by base name, so a kept suite
           # can bring a same-named one of another battery, never drop one.
           set --
-          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" tools/ci-job-set --suite-list ${candidates[@]+"${candidates[@]}"})"
+          kept="$(SUITE_SELECTION="${SHARD_SUITES-}" SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list ${candidates[@]+"${candidates[@]}"})"
           for t in $kept; do
             base="${t##*/}"
             set -- "$@" "=${base%.sh}"
@@ -1542,9 +1536,18 @@ jobs:
         working-directory: pi-extensions/pi-claude-bridge
         run: git diff --exit-code -- bundle/
 
+      # A suite list that left out one of this leg's suites arms this step,
+      # so its success tells the main push's proof read (tools/ci-job-set,
+      # NARROWED_STEP) that the leg ran part of its shard; a leg that kept
+      # every suite skips it and proves its shard.
+      - name: narrowed by the suite list
+        if: env.SUITE_LIST_DROPPED == 'true'
+        run: echo "this leg ran the suites its list kept, not its whole shard"
+
       - name: Report final job budget
         if: success()
         run: bash skills/orch/tests/run-all.sh --report-job
+
 
   # The full nightly macOS roster. changes is skipped there, so the shared
   # matrix expression uses its full-roster fallback. The suite steps and
@@ -1593,7 +1596,7 @@ jobs:
   # this job to the same list on a merge group, so a failed or cancelled leg
   # ejects the entry and an unselected one does not.
   skill-suites-macos-queue:
-    name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }}${{ matrix.scope == 'narrowed' && ', narrowed' || '' }})
+    name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
     if: ${{ !cancelled() && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && (needs.changes.result != 'success' || needs.changes.outputs.queue_macos_shards != '[]') }}
     strategy:
@@ -1601,7 +1604,6 @@ jobs:
       matrix:
         shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "linear", "worktree", "rest", "slack", "mailbox"]' || needs.changes.outputs.queue_macos_shards) }}
         os: [macos-latest]
-        scope: *skill-suite-scope
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout
     env: *skill-suite-env

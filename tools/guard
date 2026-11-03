@@ -1546,43 +1546,44 @@ pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
 # run-all.sh, any other file under tests/<dir>/, tests/*.py outside a scoped
 # run, a file of hooks/ that is no hook, and anything else. mapped_suites'
 # header says what a scoped run reads for a test module or such a path.
-path_role() { # DIR REL
+path_role() { # DIR REL — sets ROLE; status 1 where the path has none
+  ROLE=""
   # The CI reach asks of every skill Markdown file as a document.
   if [ "$ci_reach" -eq 1 ]; then
-    case "$2" in *.md | *.markdown) echo doc; return 0 ;; esac
+    case "$2" in *.md | *.markdown) ROLE=doc; return 0 ;; esac
   fi
   case "$1:$2" in
     skills/*:kendex.settings.toml.example)
       [[ ${example_areas-} == *" $1"$'\n'* ]] || return 1
-      echo settings-example
+      ROLE=settings-example
       ;;
     *:tests/run-all.sh) return 1 ;;
-    *:scripts/*/*.sh | *:scripts/*/*.bash) echo lib ;;
-    *:tests/lib/*.sh | *:tests/lib/*.bash) echo helper ;;
-    *:scripts/*/*) echo module ;;
-    *:tests/lib/*) echo test-module ;;
+    *:scripts/*/*.sh | *:scripts/*/*.bash) ROLE=lib ;;
+    *:tests/lib/*.sh | *:tests/lib/*.bash) ROLE=helper ;;
+    *:scripts/*/*) ROLE=module ;;
+    *:tests/lib/*) ROLE=test-module ;;
     *:tests/*/*.sh | *:tests/*/*.bash | *:tests/*/*.py | *:tests/*/*.mjs | *:tests/*/*.js | *:tests/*/*.ts)
       [ "$ci_reach" -eq 1 ] || return 1
-      echo test-module
+      ROLE=test-module
       ;;
     *:tests/*/*) return 1 ;;
     *:tests/*.py)
       [ "$scoped_only" -eq 1 ] || [ "$ci_reach" -eq 1 ] || return 1
-      echo test-program
+      ROLE=test-program
       ;;
-    *:tests/*.sh) echo suite ;;
+    *:tests/*.sh) ROLE=suite ;;
     *:tests/*.test.mjs)
       if [ -f "$1/tests/run-all.sh" ]; then return 1; fi
-      echo suite
+      ROLE=suite
       ;;
-    hooks:*.md) echo doc ;;
+    hooks:*.md) ROLE=doc ;;
     hooks:*/*) return 1 ;;
-    hooks:*.sh) echo script ;;
+    hooks:*.sh) ROLE=script ;;
     hooks:*) return 1 ;;
-    tools:*.md) echo doc ;;
-    tools:*) echo script ;;
-    *:scripts/*) echo script ;;
-    *:references/* | *.md) echo doc ;;
+    tools:*.md) ROLE=doc ;;
+    tools:*) ROLE=script ;;
+    *:scripts/*) ROLE=script ;;
+    *:references/* | *.md) ROLE=doc ;;
     *) return 1 ;;
   esac
 }
@@ -1592,7 +1593,7 @@ skill_suites() { # DIR [shell]
   local t
   for t in "$1"/tests/*.sh "$1"/tests/*.test.mjs; do
     [ -f "$t" ] || continue
-    [ "$(path_role "$1" "${t#"$1"/}")" = suite ] || continue
+    path_role "$1" "${t#"$1"/}" && [ "$ROLE" = suite ] || continue
     if [ "${2:-}" = shell ]; then
       case "$t" in *.sh) ;; *) continue ;; esac
     fi
@@ -1611,7 +1612,8 @@ skill_files() { # DIR
   fi
   for f in "$1"/* "$1"/scripts/* "$1"/scripts/*/* "$1"/tests/lib/* "$1"/tests/*.sh "$1"/tests/*.test.mjs "$1"/tests/*.py $deep; do
     [ -f "$f" ] || continue
-    role=$(path_role "$1" "${f#"$1"/}") || continue
+    path_role "$1" "${f#"$1"/}" || continue
+    role=$ROLE
     case "$role" in
       script | lib | helper | module | test-module | test-program | suite) printf '%s %s\n' "$role" "$f" ;;
     esac
@@ -1742,8 +1744,8 @@ scan_load() { # DIR
     case "$rel" in
       ../*) ;;
       *)
-        role=$(path_role "$1" "$rel") || continue
-        case "$role" in
+        path_role "$1" "$rel" || continue
+        case "$ROLE" in
           doc) ;;
           settings-example)
             while read -r key key_tree; do
@@ -1885,7 +1887,10 @@ scan_load() { # DIR
         if (text ~ /^[[:space:]]*#/) continue
         code[++count] = text
         if (ci) {
-          if (calls) all_lines[reader, ++all_counts[reader]] = text
+          if (calls) {
+            if (text ~ named_any) all_lines[reader, ++all_counts[reader]] = text
+            if (index(text, "gg_resolve_sibling")) sibling_lines[reader, ++sibling_counts[reader]] = text
+          }
           scope = walks(text)
           if (scope != "" && !walk_seen[reader, scope]++)
             print "W\t" reader "\t" scope
@@ -1945,6 +1950,13 @@ scan_load() { # DIR
         if (getline <= 0) { failed = 1; exit 2 }
         query_patterns[q, p] = $0
       }
+      # Every call names its script by a fixed string; a line spelling
+      # none of them is no call, so only lines matching one are kept.
+      if (query_kinds[q] == "call") {
+        named = query_patterns[q, 0]
+        gsub(/[][\\.*^$+?(){}|]/, "\\\\&", named)
+        named_any = named_any (named_any == "" ? "" : "|") named
+      }
       next
     }
     NF == 0 { next }
@@ -1958,15 +1970,24 @@ scan_load() { # DIR
         for (q in queries) {
           pattern = query_patterns[q, reader_phase]
           if (pattern == "-") continue
-          # A call is any code line naming the script, not a read alone.
+          # A call is any code line naming the script, not a read alone. Its
+          # second pattern spells gg_resolve_sibling, so only lines holding
+          # that word are matched against it.
           if (query_kinds[q] == "call") {
-            for (reader in all_counts) {
-              for (line = 1; line <= all_counts[reader]; line++) {
-                if (reader_phase == 0 ? index(all_lines[reader, line], pattern) : all_lines[reader, line] ~ pattern) {
-                  print "R\t" q "\t" reader
-                  break
-                }
-              }
+            if (reader_phase == 0) {
+              for (reader in all_counts)
+                for (line = 1; line <= all_counts[reader]; line++)
+                  if (index(all_lines[reader, line], pattern)) {
+                    print "R\t" q "\t" reader
+                    break
+                  }
+            } else {
+              for (reader in sibling_counts)
+                for (line = 1; line <= sibling_counts[reader]; line++)
+                  if (sibling_lines[reader, line] ~ pattern) {
+                    print "R\t" q "\t" reader
+                    break
+                  }
             }
             continue
           }
@@ -2012,6 +2033,21 @@ scan_load() { # DIR
   done <<<"$cache"
   SCAN_DIR=$1
 }
+# Sets ESCAPED to TEXT with each ERE metacharacter backslashed, in the
+# shell: the reach builds patterns for every carried path of every tree,
+# where a command substitution per pattern was most of its time.
+ere_escape() { # TEXT
+  local text=$1 c
+  ESCAPED=""
+  while [ -n "$text" ]; do
+    c=${text:0:1}
+    text=${text:1}
+    case "$c" in
+      '[' | ']' | '\' | . | '*' | '^' | '$' | + | '?' | '(' | ')' | '{' | '}' | '|') ESCAPED+="\\$c" ;;
+      *) ESCAPED+=$c ;;
+    esac
+  done
+}
 # The comparison patterns for scanned files that read the doc REL, cached
 # by scan_load as reader indexes for all requested inputs in the tree:
 # each whose code, its comment lines dropped, names
@@ -2055,8 +2091,8 @@ doc_readers() { # REL [KEY] [TREE]
   skill_root='\$\{?[A-Z_]*SKILL[A-Z_]*\}?'
   catalog_root='[^[:space:]"]*/skills'
   case "$rel" in ../*) external=1; rel=${rel#../} ;; esac
-  token=$(sed 's/[][\\.*^$+?(){}|]/\\&/g' <<<"$rel") || return 2
-  token="(^|[^[:alnum:]._/-])$token([^[:alnum:]_/-]|\$)"
+  ere_escape "$rel"
+  token="(^|[^[:alnum:]._/-])$ESCAPED([^[:alnum:]_/-]|\$)"
   case "$rel" in
     */*)
       dir="/${rel%%/*}(/?\$|/[^[:alnum:]._-]|[\"}]*[[:space:]]*/?[*\$])|[\"'](\\\$|[./])[^\"']*/${rel%%/*}[\"']([[:space:]]|\\)|\$)"
@@ -2073,7 +2109,7 @@ doc_readers() { # REL [KEY] [TREE]
         source_rel=${rel#skills/}
         source_tree=skills/${source_rel%%/*}
         source_rel=${source_rel#*/}
-        if [ "$(path_role "$source_tree" "$source_rel")" = doc ]; then
+        if path_role "$source_tree" "$source_rel" && [ "$ROLE" = doc ]; then
           walk_root=$catalog_root
         fi
         ;;
@@ -2093,13 +2129,15 @@ doc_readers() { # REL [KEY] [TREE]
     # upper-case root variable.
     whole=$rel
     [ "$external" -eq 1 ] || whole=${3-}/$rel
-    whole=$(sed 's/[][\\.*^$+?(){}|]/\\&/g' <<<"$whole") || return 2
+    ere_escape "$whole"
+    whole=$ESCAPED
     check="(^|[^s])/$whole([^[:alnum:]_/-]|\$)"
     case "$whole" in
       skills/*) check="$check|\\.\\./${whole#skills/}([^[:alnum:]_/-]|\$)" ;;
     esac
     if [ "$external" -eq 0 ]; then
-      check="$check|\\\$\\{?[A-Z_]*(ROOT|DIR|SKILL|HERE|PACKAGE|PKG)[A-Z_]*\\}?[\"']?/$(sed 's/[][\\.*^$+?(){}|]/\\&/g' <<<"$rel")([^[:alnum:]_/-]|\$)" || return 2
+      ere_escape "$rel"
+      check="$check|\\\$\\{?[A-Z_]*(ROOT|DIR|SKILL|HERE|PACKAGE|PKG)[A-Z_]*\\}?[\"']?/$ESCAPED([^[:alnum:]_/-]|\$)"
     fi
     if [ "$external" -eq 1 ] && [ -n "$named" ] && [ "$walk_root" != "$catalog_root" ]; then
       # A script of another package: every line that names it calls it,
@@ -2306,7 +2344,9 @@ mapped_suites() { # DIR REL
   case "$rel" in
     ../*) role=doc ;;
     *)
-      if ! role=$(path_role "$dir" "$rel"); then
+      if path_role "$dir" "$rel"; then
+        role=$ROLE
+      else
         [ "$scoped_only" -eq 1 ] || return 1
         role=none
       fi
@@ -2316,6 +2356,7 @@ mapped_suites() { # DIR REL
   [ "${SCAN_DIR-}" = "$dir" ] || scan_load "$dir" || return 2
   for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
     [ "${SCAN_PATH[i]}" != "$dir/$rel" ] || reached[i]=1
+    [ -n "${SCAN_INPUTS[i]}" ] || continue
     input_path="$dir/$rel"
     [[ $rel != ../* ]] || input_path=${rel#../}
     while IFS= read -r input; do
@@ -2959,7 +3000,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
                 fi
                 [ "$tree_ci" -ne 0 ] || continue
               fi
-              if [[ $rel != ../* ]] && [ "$(path_role "$d" "$rel")" = doc ]; then continue; fi
+              if [[ $rel != ../* ]] && path_role "$d" "$rel" && [ "$ROLE" = doc ]; then continue; fi
             fi
             map_status=0
             mapped_suites "$d" "$rel" || map_status=$?

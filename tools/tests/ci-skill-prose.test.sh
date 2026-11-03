@@ -8,8 +8,7 @@
 # tools/macos-test-contracts, tools/macos-test-contracts.json,
 # .github/workflows/skill-tests.yml, skills/jarvis/SKILL.md,
 # skills/jarvis/references/decisions.md, skills/jarvis/tests/,
-# skills/jarvis/scripts/, skills/docs-writing/SKILL.md,
-# skills/commit-guards/scripts/, skills/deep-research/SKILL.md,
+# skills/jarvis/scripts/, skills/deep-research/SKILL.md,
 # pi-extensions/pi-claude-bridge/tests/
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -146,43 +145,51 @@ skills/caller/tests/scratch.test.sh|skipped
 ROWS
 
 # THE LIST: the candidates a selection keeps, by whole path, in argument
-# order; every candidate for an empty selection or `all`.
+# order; every candidate for an empty selection or `all`. Leaving one out
+# records SUITE_LIST_DROPPED=true in the SUITE_LIST_DROPS file, which arms
+# the leg's narrowed step; keeping every one records nothing.
 CANDIDATES="skills/a/tests/x.test.sh skills/b/tests/x.test.sh skills/c/tests/y.test.sh"
-list_of() { # SELECTION — the kept candidates on one line, or `exit=N CAUSE`
+list_of() { # SELECTION — the kept candidates on one line and what was recorded, or `exit=N CAUSE`
   local status=0 got
+  : >"$TMP/list-drops"
   # shellcheck disable=SC2086 # one candidate per word
-  got="$(SUITE_SELECTION="$1" "$JOB_SET" --suite-list $CANDIDATES 2>"$TMP/list-err")" || status=$?
+  got="$(SUITE_SELECTION="$1" SUITE_LIST_DROPS="$TMP/list-drops" "$JOB_SET" --suite-list $CANDIDATES 2>"$TMP/list-err")" || status=$?
   [ "$status" -eq 0 ] || { printf 'exit=%s %s' "$status" "$(sed -n 's/^ci-job-set: cause=//p' "$TMP/list-err")"; return 0; }
-  printf "'%s'" "$(printf '%s' "$got" | tr '\n' ' ')"
+  printf "'%s' recorded='%s'" "$(printf '%s' "$got" | tr '\n' ' ')" "$(tr '\n' ' ' <"$TMP/list-drops")"
 }
 while IFS='|' read -r selection expected; do
   check "list: '$selection'" "$expected" "$(list_of "$selection")"
 done <<'ROWS'
-["skills/b/tests/x.test.sh"]|'skills/b/tests/x.test.sh'
-["skills/c/tests/y.test.sh","skills/a/tests/x.test.sh"]|'skills/a/tests/x.test.sh skills/c/tests/y.test.sh'
-["skills/d/tests/x.test.sh"]|''
-[]|''
-all|'skills/a/tests/x.test.sh skills/b/tests/x.test.sh skills/c/tests/y.test.sh'
-|'skills/a/tests/x.test.sh skills/b/tests/x.test.sh skills/c/tests/y.test.sh'
+["skills/b/tests/x.test.sh"]|'skills/b/tests/x.test.sh' recorded='SUITE_LIST_DROPPED=true '
+["skills/c/tests/y.test.sh","skills/a/tests/x.test.sh"]|'skills/a/tests/x.test.sh skills/c/tests/y.test.sh' recorded='SUITE_LIST_DROPPED=true '
+["skills/a/tests/x.test.sh","skills/b/tests/x.test.sh","skills/c/tests/y.test.sh","skills/d/tests/z.test.sh"]|'skills/a/tests/x.test.sh skills/b/tests/x.test.sh skills/c/tests/y.test.sh' recorded=''
+["skills/d/tests/x.test.sh"]|'' recorded='SUITE_LIST_DROPPED=true '
+[]|'' recorded='SUITE_LIST_DROPPED=true '
+all|'skills/a/tests/x.test.sh skills/b/tests/x.test.sh skills/c/tests/y.test.sh' recorded=''
+|'skills/a/tests/x.test.sh skills/b/tests/x.test.sh skills/c/tests/y.test.sh' recorded=''
 ["a b"]|exit=2 suite-selection-unreadable
 skills/a/tests/x.test.sh|exit=2 suite-selection-unreadable
 ROWS
+check "list: a record that cannot be written fails the call" "exit=2 suite-list-unrecorded" \
+  "$(status=0; SUITE_SELECTION='[]' SUITE_LIST_DROPS="$TMP/no-such-dir/env" "$JOB_SET" --suite-list skills/a/tests/x.test.sh 2>"$TMP/list-err" || status=$?; printf 'exit=%s %s' "$status" "$(sed -n 's/^ci-job-set: cause=//p' "$TMP/list-err")")"
 
 # THE STEPS: each shell suite step is the workflow's own text, run against
 # stub runners in an empty tree. A step whose candidates the list leaves out
 # runs no battery and passes; one it keeps runs that suite alone, and a
 # same-named suite of another tree is no stand-in.
 WF="$ROOT/.github/workflows/skill-tests.yml"
-step_run() { # STEP-NAME SELECTION — the runners' arguments, or `none`, and the exit
+step_run() { # STEP-NAME SELECTION — the runners' arguments, or `none`, the exit and whether the narrowed step is armed
   local dir="$TMP/step" status=0
   rm -rf -- "${dir:?}"
-  mkdir -p "$dir/tools/tests" "$dir/skills/review-gate/tests" "$dir/skills/orch/tests" "$dir/.github/workflows"
+  mkdir -p "$dir/tools/tests" "$dir/skills/review-gate/tests" "$dir/skills/pooled/tests" "$dir/skills/orch/tests" "$dir/.github/workflows"
   cp "$JOB_SET" "$dir/tools/ci-job-set"
   cp "$WF" "$dir/.github/workflows/skill-tests.yml"
   printf '#!/usr/bin/env bash\nexit 0\n' >"$dir/tools/rust-reads"
   chmod +x "$dir/tools/rust-reads"
   : >"$dir/skills/review-gate/tests/a.test.sh"
   : >"$dir/skills/review-gate/tests/b.test.sh"
+  # A package no shard claims, which the pooled step takes as a candidate.
+  : >"$dir/skills/pooled/tests/c.test.sh"
   printf '#!/usr/bin/env bash\nprintf "%%s " "$@" >>"$CALLS"\n' | tee "$dir/skills/orch/tests/run-all.sh" >"$dir/tools/tests/run-all.sh"
   awk -v name="$1" '
     $0 == "      - name: " name { found = 1; next }
@@ -192,19 +199,22 @@ step_run() { # STEP-NAME SELECTION — the runners' arguments, or `none`, and th
     body { exit }
   ' "$WF" >"$dir/step.sh"
   [ -s "$dir/step.sh" ] || { printf 'no-step'; return 0; }
-  (cd "$dir" && CALLS="$dir/calls" SHARD_SUITES="$2" bash -e -o pipefail step.sh >/dev/null 2>&1) || status=$?
-  printf '%s exit=%s' "$( [ -f "$dir/calls" ] && sed 's/ $//' "$dir/calls" || echo none)" "$status"
+  : >"$dir/env"
+  (cd "$dir" && CALLS="$dir/calls" SHARD_SUITES="$2" GITHUB_ENV="$dir/env" bash -e -o pipefail step.sh >/dev/null 2>&1) || status=$?
+  printf '%s exit=%s narrowed=%s' "$( [ -f "$dir/calls" ] && sed 's/ $//' "$dir/calls" || echo none)" "$status" \
+    "$(grep -qx 'SUITE_LIST_DROPPED=true' "$dir/env" && echo yes || echo no)"
 }
 while IFS='|' read -r selection expected; do
   check "review-gate step: '$selection'" "$expected" "$(step_run 'review-gate suites' "$selection")"
 done <<'ROWS'
-["tools/tests/guide.test.sh"]|none exit=0
-["skills/other/tests/b.test.sh"]|none exit=0
-["skills/review-gate/tests/b.test.sh"]|--battery skills/review-gate/tests =b.test exit=0
-all|--battery skills/review-gate/tests =a.test =b.test exit=0
+["tools/tests/guide.test.sh"]|none exit=0 narrowed=yes
+["skills/other/tests/b.test.sh"]|none exit=0 narrowed=yes
+["skills/review-gate/tests/b.test.sh"]|--battery skills/review-gate/tests =b.test exit=0 narrowed=yes
+["skills/review-gate/tests/a.test.sh","skills/review-gate/tests/b.test.sh"]|--battery skills/review-gate/tests =a.test =b.test exit=0 narrowed=no
+all|--battery skills/review-gate/tests =a.test =b.test exit=0 narrowed=no
 ROWS
 # Every shard step that runs a suite, read from the workflow, runs none for
-# a list that names none of its candidates.
+# a list that names none of its candidates, and arms the narrowed step.
 steps="$(awk '
   /^      - name: / { name = substr($0, 15); shard = 0; next }
   /^        if: matrix\.shard == / { shard = 1; next }
@@ -214,16 +224,14 @@ for required in 'review-gate suites' 'tools suites' 'the two slowest tools suite
   grep -qxF "$required" <<<"$steps" || bad "step discovery found no '$required'"
 done
 while IFS= read -r step; do
-  check "step: '$step' runs no suite for a list naming none of its own" "none exit=0" \
+  check "step: '$step' runs no suite for a list naming none of its own" "none exit=0 narrowed=yes" \
     "$(step_run "$step" '["skills/none/tests/x.test.sh"]')"
 done <<<"$steps"
 
 # THE REAL TREE. KEN-4773's one line in Jarvis's decisions reference runs
-# none of the long Jarvis suites, whose notes leave that reference out;
+# none of the long Jarvis suites, whose notes leave that reference out; and
 # SKILL.md, which command-declarations declares, runs that suite and the
-# Jarvis shard; and docs-writing's SKILL.md, which md-type reads below a
-# resolved sibling directory and docs-audit runs md-type over, runs the
-# docs-audit suite. Each first holds the row to a narrowed list.
+# Jarvis shard. Each first holds the row to a narrowed list.
 narrowed() { # ROW — `narrowed`, or what the row holds instead
   case "$1" in exit=*) printf '%s' "$1"; return 0 ;; esac
   field suites <<<"$1" | jq -e 'type == "array"' >/dev/null 2>&1 && printf narrowed || printf 'suites=%s' "$(field suites <<<"$1")"
@@ -237,10 +245,6 @@ check "real: SKILL.md takes the narrowed row" narrowed "$(narrowed "$real")"
 check "real: and selects command-declarations" "true" \
   "$(field suites <<<"$real" | jq 'index("skills/jarvis/tests/command-declarations.test.sh") != null')"
 check "real: and the Jarvis shard that runs it" "" "$(shards_miss +jarvis "$(field shards <<<"$real")")"
-real="$(selection micro false skills/docs-writing/SKILL.md)"
-check "real: docs-writing's SKILL.md takes the narrowed row" narrowed "$(narrowed "$real")"
-check "real: and selects the docs-audit suite" "true" \
-  "$(field suites <<<"$real" | jq 'index("skills/jarvis/tests/docs-audit.test.sh") != null')"
 # deep-research's SKILL.md, which a pi-claude-bridge unit file names, runs
 # that package's own shard.
 real="$(selection micro false skills/deep-research/SKILL.md)"

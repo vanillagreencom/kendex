@@ -57,12 +57,12 @@
 # nothing either: the step warns, emits the whole rosters and exits 0, since
 # a red step on main would report a push failure for an API outage while the
 # whole roster is the safe answer. Its one diagnostic line starts
-# `ci-job-set: main-proof=read|none|unread`. A merge-group shard job that ran
-# a narrowed row's `suites=` list alone is named
-# `Skill suites shard (<shard>, <runner>, narrowed)`, so no job of that name
-# exists and the push runs the shard whole. The push emits `suites=all`.
-# CI's required context reads the shard jobs by job id, through
-# tools/ci-aggregate, so the narrowed name leaves no required check unmet.
+# `ci-job-set: main-proof=read|none|unread`. A merge-group shard job whose
+# suite list left out one of its own candidates ran a step named
+# NARROWED_STEP, which --suite-list arms, and proves nothing: the push runs
+# that shard whole. A job whose steps the read does not hold, or whose
+# NARROWED_STEP did anything but skip, proves nothing either. A leg that
+# kept every candidate is proved as any other. The push emits `suites=all`.
 #
 # THE INVARIANT, stated once, with no list of what any lane reads:
 #
@@ -204,7 +204,10 @@ set -euo pipefail
 # prints, and a step it leaves with none runs no suite. A pooled step turns
 # the kept paths into base-name selectors, which can run a same-named suite
 # of another battery beside a kept one but never drop one. A selection of
-# any other shape is refused.
+# any other shape is refused. Where SUITE_LIST_DROPS names a file, a shard
+# step's GITHUB_ENV, leaving a candidate out appends
+# `SUITE_LIST_DROPPED=true` to it, which runs the leg's NARROWED_STEP; a
+# failed append fails the call, so no leg passes for whole unmarked.
 if [ "${1-}" = --suite-list ]; then
   shift
   selection="${SUITE_SELECTION-}"
@@ -213,7 +216,7 @@ if [ "${1-}" = --suite-list ]; then
       [ "$#" -eq 0 ] || printf '%s\n' "$@"
       exit 0
       ;;
-    '[]') exit 0 ;;
+    '[]') ;;
     '["'*'"]')
       grep -Eqx '\[("[^",[:space:]]+")(,"[^",[:space:]]+")*\]' <<<"$selection" || {
         printf 'ci-job-set: cause=suite-selection-unreadable\n' >&2
@@ -226,9 +229,19 @@ if [ "${1-}" = --suite-list ]; then
       ;;
   esac
   listed=" $(printf '%s' "$selection" | sed 's/[][]//g; s/"//g; s/,/ /g') "
+  dropped=0
   for candidate in "$@"; do
-    case "$listed" in *" $candidate "*) printf '%s\n' "$candidate" ;; esac
+    case "$listed" in
+      *" $candidate "*) printf '%s\n' "$candidate" ;;
+      *) dropped=1 ;;
+    esac
   done
+  if [ "$dropped" -eq 1 ] && [ -n "${SUITE_LIST_DROPS-}" ]; then
+    printf 'SUITE_LIST_DROPPED=true\n' >>"$SUITE_LIST_DROPS" || {
+      printf 'ci-job-set: cause=suite-list-unrecorded\n' >&2
+      exit 2
+    }
+  fi
   exit 0
 fi
 
@@ -312,6 +325,9 @@ emit() { # SHARDS QUEUE SUITES [JOB=VALUE ...]
 # The push route, as the header states it. A read that fails proves nothing,
 # so the rosters it emits are whole.
 PROOF_WORKFLOW=.github/workflows/skill-tests.yml
+# The shard step that runs where a suite list left out a candidate of its
+# leg; skill-tests.yml declares it under this name.
+NARROWED_STEP="narrowed by the suite list"
 main_proof() {
   local sha="$GITHUB_SHA" api="repos/$GITHUB_REPOSITORY/actions" state=read cause=""
   local runs ids="" id page jobs="" owed linux macos linux_n macos_n
@@ -330,7 +346,7 @@ main_proof() {
       break
     fi
     if ! page="$(jq -cs --arg sha "$sha" --argjson id "$id" '
-        [.[].jobs[] | select(.head_sha == $sha and .run_id == $id) | {name, status, conclusion}]' <<<"$page")"; then
+        [.[].jobs[] | select(.head_sha == $sha and .run_id == $id) | {name, status, conclusion, steps}]' <<<"$page")"; then
       state=unread cause="jobs-unparseable run=$id"
       break
     fi
@@ -339,12 +355,13 @@ main_proof() {
   [ "$state" = read ] || jobs=""
   # Each roster less the shards proved on its runner, with the proved
   # counts: `<linux> <macos> <linux proved> <macos proved>`.
-  owed="$(jq -rs --arg linux "$SHARDS" --arg macos "$MACOS_SHARDS" '
+  owed="$(jq -rs --arg linux "$SHARDS" --arg macos "$MACOS_SHARDS" --arg narrowed "$NARROWED_STEP" '
     (add // []) as $jobs
     | def owed($roster; $os):
         [$roster | split(" ")[] | select(. as $shard
           | [$jobs[] | select(.name == "Skill suites shard (\($shard), \($os))")]
-          | length == 0 or any(.[]; .status != "completed" or .conclusion != "success"))];
+          | length == 0 or any(.[]; .status != "completed" or .conclusion != "success"
+              or (.steps | type) != "array" or any(.steps[]; .name == $narrowed and .conclusion != "skipped")))];
     owed($linux; "ubuntu-latest") as $l | owed($macos; "macos-latest") as $m
     | "\($l | tojson) \($m | tojson) \(($linux | split(" ") | length) - ($l | length)) \(($macos | split(" ") | length) - ($m | length))"' <<<"$jobs")" ||
     die main-proof-unevaluated "jq could not subtract the proved shards from the rosters"

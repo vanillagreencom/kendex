@@ -93,6 +93,11 @@ done
 # latest jobs, on the head main pushed next. Each world varies them as one
 # GitHub state would.
 DATA="$TEST_DIR/data"
+# The step skill-tests.yml runs where a suite list left out a leg's suite,
+# read from the workflow, so the proof read and the step share one name.
+NARROWED_STEP="$(awk '/^      - name: / { name = substr($0, 15) } /^        if: env\.SUITE_LIST_DROPPED == .true.$/ { print name }' \
+  "$ROOT/.github/workflows/skill-tests.yml")"
+[ "$(grep -c . <<<"$NARROWED_STEP")" -eq 1 ] || { echo "the workflow declares no single narrowed step" >&2; exit 1; }
 PUSH_SHA="$(jq -er '.workflow_runs[0].head_sha' "$DATA/main-proof-runs.json")"
 PUSH_RUN="$(jq -er '.workflow_runs[0].id' "$DATA/main-proof-runs.json")"
 mkdir -p "$TMP/gh-stub"
@@ -129,7 +134,7 @@ push_world() { # NAME
   mkdir -p "$dir"
   cp "$runs" "$dir/runs.json"
   cp "$jobs" "$dir/jobs-$PUSH_RUN.json"
-  edit_jobs() { jq "$1" "$jobs" >"$dir/jobs-$PUSH_RUN.json"; }
+  edit_jobs() { jq --arg narrowed "$NARROWED_STEP" "$1" "$jobs" >"$dir/jobs-$PUSH_RUN.json"; }
   case "$1" in
     all-proved) ;;
     subset)
@@ -151,9 +156,15 @@ push_world() { # NAME
     foreign-run-job)
       edit_jobs '.jobs |= map(if .name == "Skill suites shard (slack, ubuntu-latest)" then .run_id = 1 else . end)' ;;
     foreign-head-run) jq '.workflow_runs[0].head_sha = "0000000000000000000000000000000000000000"' "$runs" >"$dir/runs.json" ;;
-    # A narrowed leg ran the group's suite list alone, so it proves nothing.
+    # A leg whose suite list left out one of its suites ran the workflow's
+    # narrowed step, so it proves nothing; one that skipped it ran whole, and
+    # a job whose steps the read does not hold shows neither.
     narrowed-leg)
-      edit_jobs '.jobs |= map(if .name == "Skill suites shard (jarvis, ubuntu-latest)" then .name = "Skill suites shard (jarvis, ubuntu-latest, narrowed)" else . end)' ;;
+      edit_jobs '.jobs |= map(if .name == "Skill suites shard (jarvis, ubuntu-latest)" then .steps += [{name: $narrowed, status: "completed", conclusion: "success"}] else . end)' ;;
+    whole-leg)
+      edit_jobs '.jobs |= map(if .name == "Skill suites shard (jarvis, ubuntu-latest)" then .steps += [{name: $narrowed, status: "completed", conclusion: "skipped"}] else . end)' ;;
+    stepless-leg)
+      edit_jobs '.jobs |= map(if .name == "Skill suites shard (jarvis, ubuntu-latest)" then del(.steps) else . end)' ;;
     push-event-run) jq '.workflow_runs[0].event = "push"' "$runs" >"$dir/runs.json" ;;
     other-workflow-run) jq '.workflow_runs[0].path = ".github/workflows/lock-record.yml"' "$runs" >"$dir/runs.json" ;;
     *) echo "no push world named $1" >&2; exit 1 ;;
@@ -194,6 +205,8 @@ in-progress|shell_shards=true shell_os=["ubuntu-latest"] shards=["guards-scans"]
 failed-second-run|shell_shards=true shell_os=["ubuntu-latest"] shards=["worktree"] queue_macos_shards=[] suites=all main-proof=read proved-linux=$((ROSTER_N - 1)) proved-macos=$QUEUE_N warned=no
 foreign-head-job|shell_shards=true shell_os=["macos-latest"] shards=[] queue_macos_shards=["mailbox"] suites=all main-proof=read proved-linux=$ROSTER_N proved-macos=$((QUEUE_N - 1)) warned=no
 narrowed-leg|shell_shards=true shell_os=["ubuntu-latest"] shards=["jarvis"] queue_macos_shards=[] suites=all main-proof=read proved-linux=$((ROSTER_N - 1)) proved-macos=$QUEUE_N warned=no
+whole-leg|$NO_SHARDS main-proof=read proved-linux=$ROSTER_N proved-macos=$QUEUE_N warned=no
+stepless-leg|shell_shards=true shell_os=["ubuntu-latest"] shards=["jarvis"] queue_macos_shards=[] suites=all main-proof=read proved-linux=$((ROSTER_N - 1)) proved-macos=$QUEUE_N warned=no
 foreign-run-job|shell_shards=true shell_os=["ubuntu-latest"] shards=["slack"] queue_macos_shards=[] suites=all main-proof=read proved-linux=$((ROSTER_N - 1)) proved-macos=$QUEUE_N warned=no
 no-run|$ALL_SHARDS $NO_RUN
 foreign-head-run|$ALL_SHARDS $NO_RUN
@@ -203,7 +216,7 @@ outage|$ALL_SHARDS $UNREAD
 unparseable|$ALL_SHARDS $UNREAD
 jobs-missing|$ALL_SHARDS $UNREAD
 ROWS
-[ "$push_rows" -eq 16 ] || { echo "the push table read $push_rows rows" >&2; exit 1; }
+[ "$push_rows" -eq 18 ] || { echo "the push table read $push_rows rows" >&2; exit 1; }
 
 # Control: a selector that trusts each job's head without checking it counts
 # a foreign head's success as proof, so the foreign-head-job row fails.

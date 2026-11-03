@@ -251,6 +251,9 @@ done
 # its real runner selects over immutable stub batteries.
 SHIM="$TMP/shim"
 mkdir -p "$SHIM"
+# GitHub hands every run step a GITHUB_ENV file, where a suite step records
+# that its suite list left a candidate out; the steps run here get one too.
+STEP_ENV="$TMP/step-env"
 printf '#!%s\n' "$BASH" > "$SHIM/bash"
 cat >> "$SHIM/bash" <<'SH'
 set -euo pipefail
@@ -348,7 +351,7 @@ claims_of() { # claims_of <workflow> ; every path its roster steps claim
   split_run_blocks "$wf" "$dir"
   for f in "$dir"/*.sh; do
     roster_block "$f" || continue
-    ( cd "$PART" && PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
+    ( cd "$PART" && GITHUB_ENV="$STEP_ENV" PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
       sed -n 's/^suite-invoked: //p'
   done
   direct_claims "$wf"
@@ -370,7 +373,7 @@ shell_partition_args() { # <workflow> ; actual arguments from the shell roster i
   split_run_blocks "$wf" "$dir"
   for f in "$dir"/*.sh; do
     grep -qF "$ROSTER_MARK" "$f" || continue
-    ( cd "$PART" && PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
+    ( cd "$PART" && GITHUB_ENV="$STEP_ENV" PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
       sed -n 's/^partition-arguments: //p'
   done
 }
@@ -596,7 +599,7 @@ for block in "$TMP/preparation-blocks"/*.sh; do
       for result in 0 2; do
         : > "$TMP/preparation-record"
         rc=0
-        (cd "$PART" && env -i "PATH=$SHIM:$PATH" "HOME=$HOME" \
+        (cd "$PART" && env -i "PATH=$SHIM:$PATH" "HOME=$HOME" "GITHUB_ENV=$STEP_ENV" \
           "RUNNER_OS=$platform" "TOOLS_PREP_RESULT=$result" "TOOLS_PREP_RECORD=$TMP/preparation-record" \
           "PARTITION_POOL=$POOL" "PARTITION_POOL_CLAIMS=$TMP/pool-claims" "PARTITION_HOST_PATH=$PATH" \
           "$BASH" --noprofile --norc -e -o pipefail "$TMP/preparation-step") \
@@ -668,7 +671,7 @@ shard_claims() { # WORKFLOW SHARD ; sorted suite files that shard runs
   for f in "$dir"/*.sh; do
     [[ "$(one_shard "$(cat "${f%.sh}.cond")")" == "$shard" ]] || continue
     roster_block "$f" || continue
-    ( cd "$PART" && PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
+    ( cd "$PART" && GITHUB_ENV="$STEP_ENV" PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
       sed -n 's/^suite-invoked: //p'
   done | sort
 }
@@ -990,7 +993,7 @@ suite_owners() { # <workflow> [files [bash-major]] ; `shard<tab>path`, by direct
       shard="$(one_shard "$(cat "${f%.sh}.cond")")"
       [[ -n "$shard" ]] || continue
       [[ -z "${PARTITION_ONLY_SHARD:-}" || "$shard" == "$PARTITION_ONLY_SHARD" ]] || continue
-      ( cd "$PART" && RUN_ALL_NATIVE_CONTRACTS="$native" PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
+      ( cd "$PART" && RUN_ALL_NATIVE_CONTRACTS="$native" GITHUB_ENV="$STEP_ENV" PATH="$SHIM:$PATH" "$BASH" "$f" ) 2>/dev/null |
         sed -n "s%^suite-invoked: %$shard	%p"
     done
     # One-line steps: the package a node step works in, or the first word of
@@ -1046,7 +1049,7 @@ while IFS='|' read -r shard step battery stem; do
     fi
     rc=0
     (cd "$PART" && PARTITION_POOL="$bad_pool" PARTITION_POOL_CLAIMS="$bad_cache" \
-      PATH="$SHIM:$PATH" "$BASH" "$block") > "$TMP/assertion-step.log" 2>&1 || rc=$?
+      GITHUB_ENV="$STEP_ENV" PATH="$SHIM:$PATH" "$BASH" "$block") > "$TMP/assertion-step.log" 2>&1 || rc=$?
     tree="${battery%/tests}"; tree="${tree##*/}"
     if [[ "$rc" -ne 0 ]] && grep -qxF -e "  - $stem" -e "  - $tree--$stem" -- "$bad_cache"/*.out; then
       result=failed
