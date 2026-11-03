@@ -4218,6 +4218,14 @@ case "${1:-}" in
           [[ -z "$BASE_FETCH_ERR" ]] || sed 's/^/  /' <<<"$BASE_FETCH_ERR" >&2
           exit 1
         fi
+        if [[ "$PUSH_PREPARE_BASE" == true ]]; then
+          # Neither the rebase nor the fold can preserve required merge parents.
+          BASE_PREPARE_MERGES="$(git -C "$WT_PATH" rev-list --merges --count "origin/$DEFAULT_BRANCH..HEAD")" || exit 1
+          if [[ "$BASE_PREPARE_MERGES" != 0 ]]; then
+            worktree_message push-base-merges "$CURRENT_BRANCH" "Base preparation cannot preserve merge ancestry. Reconcile the merge before preparing this item." >&2
+            exit 1
+          fi
+        fi
         base_reading "$WT_PATH" "$DEFAULT_BRANCH" "origin/$DEFAULT_BRANCH"
         if [[ -n "$PUSH_TO_BASE" ]]; then
           PUSH_BASE_NOW="$(git -C "$WT_PATH" rev-parse "origin/$DEFAULT_BRANCH")" || exit 1
