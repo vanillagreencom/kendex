@@ -38,11 +38,15 @@ class Producer(unittest.TestCase):
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.packages = self.root / "producer"
-        for name in ("jarvis", "mailbox"):
+        for name in ("jarvis", "mailbox", "slack"):
             shutil.copytree(REPO / "skills" / name / "scripts", self.packages / name / "scripts")
-        for name in ("orch", "slack", "github"):
+        for name in ("orch", "github"):
             self.packages.joinpath(name).symlink_to(REPO / "skills" / name, target_is_directory=True)
         self.scripts = self.packages / "jarvis/scripts"
+        # The public status dependency starts healthy; cases supply recorded
+        # CLI results without credentials or the relay's private files.
+        self.slack_command = self.packages / "slack/scripts/slack"
+        self.slack_command.write_text('#!/bin/sh\nprintf "slack: slack-relay=%s state=ok\\n" "$4"\n')
         self.mail_command = self.packages / "mailbox/scripts/lane-mail"
         self.home = self.project("home")
         self.peer = self.project("peer")
@@ -743,6 +747,97 @@ class Producer(unittest.TestCase):
             finally:
                 os.close(read_fd)
 
+    def test_relay_transitions_and_restart(self):
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
+        # States and reconnect fields are the public main.py HELP/status
+        # contract. Only Slack decides whether a reconnect is sustained.
+        rows = (
+            ("ok connection=reconnecting", []),
+            ("failing connection=reconnecting", ["relay-down"]),
+            ("failing connection=reconnecting", []),
+            ("stale connection=disconnected", []),
+            ("never fix=start", []),
+            (None, ["relay-unavailable"]),
+            (None, []),
+            ("ok connection=connected", ["relay-up"]),
+            ("ok connection=reconnecting", []),
+            ("failing cause=binding-missing", ["relay-down"]),
+            ("unrecognized", ["relay-unavailable"]),
+            ("ok connection=connected", ["relay-up"]),
+        )
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.watch()
+            expected = []
+            for at, (reading, emitted) in enumerate(rows):
+                with self.subTest(reading=reading, at=at):
+                    public = "slack: slack-relay=" + str(self.home) + " state=" + (reading or "") + "\n"
+                    self.slack_command.write_text('#!/bin/sh\n' +
+                        ("echo unavailable >&2\nexit 2\n" if reading is None else
+                         "printf %s " + shlex.quote(public) + "\n"))
+                    before = watch.path.read_bytes()
+                    watch.accept_relay(watch.relay_status())
+                    if at == 1:
+                        # Crash after durable event/footer append, before the
+                        # batch checkpoint: the successor must recover it once.
+                        watch.path.write_bytes(before)
+                    watch = self.watch()
+                    watch.batch(at)
+                    expected.extend(emitted)
+                    bodies = [row["text"] for row in self.inbox()]
+                    headers = [line.split()[1] for body in bodies for line in body.splitlines()]
+                    self.assertEqual(headers, expected)
+                    self.assertTrue(all(" home=" + str(self.home) + " " in body for body in bodies))
+            self.assertEqual(watch.cursors["relay"], {"state": "ok"})
+            # The real supported CLI reports an unbound home explicitly.
+            shutil.copyfile(REPO / "skills/slack/scripts/slack", self.slack_command)
+            reading = watch.relay_status()
+            self.assertNotIsInstance(reading, self.module.Failure)
+            self.assertEqual(reading[0], "failing")
+            self.assertIn("cause=binding-missing", reading[1])
+
+    def test_relay_wait_keeps_mail_acquisition_and_pending_delivery(self):
+        import threading
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
+        self.mail(self.peer, "notice", "healthy acquisition during relay wait", "--to", "owner")
+        self.slack_command.write_text('#!/bin/sh\nprintf "slack: slack-relay=%s state=stale\\n" "$4"\n')
+        ready, release = threading.Event(), threading.Event()
+        original = self.module.run
+        calls = []
+        def transport(args, *positional, **keywords):
+            if len(args) > 1 and Path(args[1]) == self.slack_command:
+                calls.append(list(map(str, args)))
+                ready.set()
+                if not release.wait(30):
+                    raise AssertionError("relay status barrier not released")
+            return original(args, *positional, **keywords)
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()), \
+                patch.object(self.module, "run", side_effect=transport), ThreadPoolExecutor(max_workers=4) as passes:
+            watch = self.watch()
+            watch.next_report = watch.next_presence["local"] = 10 ** 9
+            self.append(watch, "EVENT mail repo=peer file=to-lane\npending before relay wait\n")
+            self.intercept_mail("exit 1")
+            watch.batch(0)
+            saved = dict(watch.state["pending"])
+            shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
+            pending = passes.submit(watch.acquire, 0)
+            try:
+                pending = watch._poll(passes, pending, 1)
+                self.assertTrue(ready.wait(30))
+                pending.result(timeout=30)
+                pending = watch._poll(passes, pending, 2)
+                watch.batch(2)
+                delivered = self.inbox()
+                self.assertEqual(delivered[0]["delivery_id"], saved["key"])
+                self.assertEqual(delivered[0]["text"], saved["body"].rstrip("\n"))
+                self.assertIn("healthy acquisition during relay wait", "\n".join(row["text"] for row in delivered))
+                self.assertFalse(watch.relay_pending.done())
+                self.assertEqual(calls, [[BASH, str(self.slack_command), "listen", "--status", "--root", str(self.home)]])
+            finally:
+                release.set()
+            watch.relay_pending.result(timeout=30)
+            watch._poll(passes, pending, 3)
+            self.assertIn("EVENT relay-down ", self.inbox()[-1]["text"])
+
     def test_settings_precedence_and_transport(self):
         shared = self.home / "kendex.settings.toml"
         private = self.home / ".env.local"
@@ -1047,7 +1142,7 @@ class Producer(unittest.TestCase):
         self.assertTrue((self.home / "tmp/lane-mail/overseer/to-overseer.seen").exists())
         self.assertFalse((self.peer / "tmp/lane-mail/overseer/to-overseer.seen").exists())
         self.assertFalse(ssh_log.exists())
-        self.assertEqual(passes.names, ["forward"])
+        self.assertEqual(passes.names, ["relay_status", "forward"])
         self.assertEqual([line for line in log.splitlines() if line.startswith("EVENT forward-failed")],
                          [block.split("\n")[0]])
 
@@ -1192,6 +1287,8 @@ class Producer(unittest.TestCase):
         unlisted = 'alone = side == "local" and home not in roots'
         satellite = "roots = [home] if satellite else project_roots()"
         for name, old, new in (
+                ("test_relay_transitions_and_restart", 'if current != "ok" and (previous is None or previous == "ok"):',
+                 'if current != "ok":'),
                 ("test_legacy_host_migration", 'spans=[self.canonical_span(span) for span in pending["retained"]]',
                  'spans=pending["retained"]'),
                 ("test_remote_identity_restart", 'self.cursors[self.destination_key(record["side"])] = record["roots"]',
