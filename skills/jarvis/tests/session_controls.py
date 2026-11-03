@@ -30,6 +30,9 @@ CONTROLS = (
     # xdg-terminal-exec takes its command bare, not after -e.
     ("desktop terminal", BACKEND, 'launch=(xdg-terminal-exec bash -lc "$line")',
      'launch=(xdg-terminal-exec -e bash -lc "$line")', "test_attach_opens_a_terminal_window"),
+    # A $TERMINAL naming nothing is replaced by xdg-terminal-exec in silence.
+    ("fallback notice", BACKEND, '[[ -z "${TERMINAL:-}" || "${launch[0]}" == "$TERMINAL" ]] ||', 'true ||',
+     "test_attach_opens_a_terminal_window"),
     # No terminal at all reads as a refusal instead of the nested attach.
     ("no terminal", BACKEND, 'else\n      exit 3\n', 'else\n      exit 4\n', "test_attach_nests_without_a_terminal"),
     # A terminal that failed to open falls back to the nested attach.
