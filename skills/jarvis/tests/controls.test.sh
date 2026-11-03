@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Surface: jarvis-session's must-fail control.
+# Surface: jarvis-session's must-fail controls.
 # Inputs: skills/jarvis/scripts/, skills/orch/scripts/, skills/mailbox/scripts/,
 # skills/jarvis/tests/.
 set -euo pipefail

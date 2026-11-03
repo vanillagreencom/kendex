@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout, redirect_stderr
 import io
 import errno
+import fcntl
 import runpy
 from unittest.mock import patch
 import hashlib
@@ -13,6 +14,9 @@ from pathlib import Path
 import shutil
 import signal
 import socket
+import struct
+import termios
+import threading
 from fixtures.harness import AUTH_MESSAGES, launch_prompt, main as harness_main, native_header, native_launcher
 import shlex
 import subprocess
@@ -1633,6 +1637,142 @@ class SessionContract(unittest.TestCase):
                 self.call("stop")
                 self.wait("off")
                 self.assertEqual(json.loads(self.record.read_text())["generation"], record["generation"] + 1)
+
+    # Attach rows drive real tmux clients on pseudo-terminals. A client
+    # outside tmux carries no TMUX; one the command runs inside sets both.
+    def outside_env(self):
+        return {key: value for key, value in self.env.items() if key not in ("TMUX", "TMUX_PANE")} | {"TERM": "xterm-256color"}
+
+    def tmux_read(self, socket, *args):
+        return subprocess.run(["tmux", "-S", socket, *args], env=self.outside_env(), capture_output=True, text=True, timeout=10)
+
+    def stand_in(self, *sessions):
+        # The owner's default server, played by a server of this fixture's own.
+        label = self.label + "-owner"
+        tmux = ["tmux", "-L", label, "-f", os.devnull]
+        for name in sessions:
+            subprocess.run([*tmux, "new-session", "-d", "-s", name, os.environ["JARVIS_TEST_BASH"], "--noprofile", "--norc"],
+                           check=True, env=self.outside_env())
+        self.addCleanup(subprocess.run, ["tmux", "-L", label, "kill-server"], capture_output=True, env=self.outside_env())
+        return subprocess.run([*tmux, "display-message", "-p", "#{socket_path}"], check=True, env=self.outside_env(),
+                              capture_output=True, text=True).stdout.strip()
+
+    def pane_of(self, socket, session):
+        return self.tmux_read(socket, "display-message", "-p", "-t", "=" + session + ":", "#{pane_id}").stdout.strip()
+
+    def inside_env(self, socket, session):
+        line = self.tmux_read(socket, "display-message", "-p", "-t", "=" + session + ":", "#{socket_path},#{pid},#{session_id}")
+        return self.outside_env() | {"TMUX": line.stdout.strip(), "TMUX_PANE": self.pane_of(socket, session)}
+
+    def pty_client(self, argv, sockets):
+        # The drain keeps the client's terminal writes from filling the pty.
+        # Cleanup detaches the client from whichever server holds it, before
+        # tearDown or a stand-in cleanup kills a server, then reaps it.
+        primary, secondary = os.openpty()
+        fcntl.ioctl(secondary, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+        client = subprocess.Popen(argv, stdin=secondary, stdout=secondary, stderr=secondary, env=self.outside_env(),
+                                  start_new_session=True)
+        os.close(secondary)
+        drain = threading.Thread(target=lambda: self.drain(primary), daemon=True)
+        drain.start()
+
+        def release():
+            for socket in sockets:
+                for line in self.tmux_read(socket, "list-clients", "-F", "#{client_pid} #{client_name}").stdout.splitlines():
+                    pid, name = line.split(" ", 1)
+                    if int(pid) == client.pid:
+                        self.tmux_read(socket, "detach-client", "-t", name)
+            try:
+                client.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                client.kill()
+                client.wait(timeout=5)
+            drain.join(timeout=5)
+            os.close(primary)
+        self.addCleanup(release)
+        return client
+
+    @staticmethod
+    def drain(fd):
+        try:
+            while os.read(fd, 4096):
+                pass
+        except OSError:
+            pass
+
+    def clients(self, socket, deadline=10, until=None):
+        # The client rows of one server, once they satisfy until.
+        limit = time.monotonic() + deadline
+        while True:
+            listed = self.tmux_read(socket, "list-clients", "-F", "#{client_pid} #{session_name}")
+            rows = listed.stdout.splitlines() if listed.returncode == 0 else []
+            if until is None or until(rows) or time.monotonic() >= limit:
+                return rows
+            time.sleep(0.05)
+
+    def attach(self, env):
+        return subprocess.run([str(SCRIPT), "attach", "--home", str(self.home)], env=env, capture_output=True, text=True, timeout=60)
+
+    def test_attach_outside_tmux(self):
+        self.call("start")
+        terminal = self.wait()["terminal"]
+        self.assertIn("jarvis-session: attach=jarvis-session attach --home " + shlex.quote(str(self.home)), self.stderr.splitlines())
+        client = self.pty_client([str(SCRIPT), "attach", "--home", str(self.home)], [terminal["server"]])
+        # The command execs the client: the attached client is its process.
+        rows = self.clients(terminal["server"], until=bool)
+        self.assertEqual(rows, [str(client.pid) + " jarvis"])
+        self.call("stop")
+        self.wait("stopped")
+        self.assertFalse([line for line in self.stderr.splitlines() if line.startswith("jarvis-session: attach=")])
+
+    def test_attach_inside_tmux(self):
+        self.call("start")
+        home = self.wait()["terminal"]["server"]
+        owner = self.stand_in("owner")
+        for label, socket, session in (("owner server", owner, "owner"), ("home server", home, "side")):
+            with self.subTest(label):
+                if socket == home:
+                    self.tmux_read(home, "-f", os.devnull, "new-session", "-d", "-s", session,
+                                   os.environ["JARVIS_TEST_BASH"], "--noprofile", "--norc")
+                client = self.pty_client(["tmux", "-S", socket, "attach-session", "-t", "=" + session], [owner, home])
+                self.assertEqual(self.clients(socket, until=bool), [str(client.pid) + " " + session])
+                result = self.attach(self.inside_env(socket, session))
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
+                # No client nests in a pane: the home's one client is the
+                # caller's own client process, moved off the session it ran in.
+                expected = [str(client.pid) + " jarvis"]
+                self.assertEqual(self.clients(home, until=lambda rows: rows == expected), expected)
+                self.assertEqual(self.tmux_read(socket, "has-session", "-t", "=" + session).returncode, 0)
+                if socket == owner:
+                    self.assertEqual(self.clients(owner), [])
+                self.tmux_read(home, "detach-client", "-s", "=jarvis")
+                client.wait(timeout=10)
+
+    def test_attach_moves_only_the_pane_client(self):
+        self.call("start")
+        home = self.wait()["terminal"]["server"]
+        owner = self.stand_in("owner", "other")
+        other = self.pty_client(["tmux", "-S", owner, "attach-session", "-t", "=other"], [owner, home])
+        expected = [str(other.pid) + " other"]
+        self.assertEqual(self.clients(owner, until=bool), expected)
+        # The pane's session has no client while another terminal's is attached.
+        result = self.attach(self.inside_env(owner, "owner"))
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, "", "jarvis-session: attach=refused cause=no-client\n"))
+        self.assertEqual(self.clients(owner), expected)
+        self.assertEqual(self.clients(home), [])
+
+    def test_attach_refuses_without_a_controller(self):
+        for label in ("never started", "stopped"):
+            with self.subTest(label):
+                if label == "stopped":
+                    self.call("stop")
+                saved = self.record.read_bytes() if self.record.exists() else None
+                result = self.attach(self.outside_env())
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (1, "", "jarvis-session: attach=refused cause=no-controller\n"))
+                self.assertEqual(self.record.read_bytes() if self.record.exists() else None, saved)
+                self.assertNotEqual(subprocess.run(["tmux", "-L", self.label, "list-sessions"], capture_output=True,
+                                                   env=self.outside_env()).returncode, 0)
 
 
 if __name__ == "__main__":

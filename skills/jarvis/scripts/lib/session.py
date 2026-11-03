@@ -134,7 +134,8 @@ class Session:
         self.emitted = False
 
     def run(self, argv, *, input=None, check=True, env=None):
-        self.operation = argv[5] if argv[0] == "tmux" else argv[2] if argv[0] == BASH else Path(argv[0]).name
+        tmux = argv[0] == "tmux"
+        self.operation = (argv[5] if argv[1] in ("-L", "-S") else argv[1]) if tmux else argv[2] if argv[0] == BASH else Path(argv[0]).name
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             raise subprocess.TimeoutExpired(argv, CALL_SECONDS)
@@ -317,6 +318,50 @@ os.execvpe(argv[0],argv,env)
                 **{key: view.get(key) if view else None for key in ("home", "harness", "account", "origin")},
                 "boot": record.get("boot") if record else None,
                 "terminal": terminal, "detail": detail}
+
+    def attach(self):
+        # Lock-free, as status reads: the answer names the live controller,
+        # a predecessor's during succession included.
+        try:
+            terminal = self.answer(self.read())["terminal"]
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            raise Refusal("record-unreadable")
+        if not terminal:
+            raise Refusal("no-controller")
+        socket, target = terminal["server"], "=" + terminal["session"]
+        if not os.environ.get("TMUX"):
+            sys.stderr.flush()
+            os.execvp("tmux", ["tmux", "-S", socket, "attach-session", "-t", target])
+        # Inside a tmux client, a second client would nest in its pane: the
+        # caller's own client is replaced instead. $TMUX routes these calls to
+        # the caller's server, the home's own included, with no -L, -S or -f.
+        pane = os.environ.get("TMUX_PANE")
+        if not pane:
+            raise Refusal("no-pane")
+        caller = dict(self.env, TMUX=os.environ["TMUX"])
+        # list-clients names only clients on the pane's own session, where
+        # display-message falls back to another terminal's client. A picker
+        # starts the command before it moves its client onto that session.
+        until = time.monotonic() + 2
+        while True:
+            listed = self.run(["tmux", "list-clients", "-t", pane, "-F", "#{client_name}"], check=False, env=caller)
+            if listed.returncode:
+                raise Refusal("client-failed", listed.stderr.strip())
+            clients = listed.stdout.splitlines()
+            if clients or time.monotonic() >= until:
+                break
+            time.sleep(0.05)
+        if len(clients) != 1:
+            raise Refusal("client-ambiguous" if clients else "no-client")
+        if self.tmux("has-session", "-t", target, check=False, socket=socket).returncode:
+            raise Refusal("no-controller")
+        # The client process execs this line through its default shell, so
+        # the client keeps its process and its terminal. Joined to -t, the
+        # target cannot start a word with =, which zsh would expand.
+        line = "exec tmux -S " + shlex.quote(socket) + " attach-session -t" + shlex.quote(target)
+        moved = self.run(["tmux", "detach-client", "-t", clients[0], "-E", line], check=False, env=caller)
+        if moved.returncode:
+            raise Refusal("client-failed", moved.stderr.strip())
 
     def _emit(self, answer):
         print(json.dumps(answer, separators=(",", ":")), flush=True)
@@ -1016,7 +1061,7 @@ exec "$3" -c 'import json, os, sys; print(json.dumps([sys.argv[1], os.environ["J
 def main():
     parser = Arguments()
     verbs = parser.add_subparsers(dest="verb", required=True, parser_class=Arguments)
-    for verb in ("start", "status", "stop", "succeed", "report-due", "forward", "forward-drain", "main-host"):
+    for verb in ("start", "status", "stop", "succeed", "report-due", "attach", "forward", "forward-drain", "main-host"):
         command = verbs.add_parser(verb)
         command.add_argument("--home", required=True)
         if verb == "status":
@@ -1067,6 +1112,16 @@ def main():
         session = Session(args.home)
     except OSError:
         parser.error("home")
+    if args.verb == "attach":
+        # Attach answers on stderr only: stdout is the terminal it hands over.
+        try:
+            session.attach()
+        except Refusal as failure:
+            print("jarvis-session: attach=refused cause=" + failure.reason, file=sys.stderr)
+            if failure.detail:
+                print(failure.detail, file=sys.stderr)
+            return 1
+        return 0
     try:
         if args.verb == "start":
             answer, code = session.start(args)
@@ -1078,6 +1133,8 @@ def main():
             answer, code = session.report_due()
         else:
             answer, code = session.answer(session.read()), 0
+            if answer["terminal"]:
+                print("jarvis-session: attach=jarvis-session attach --home " + shlex.quote(session.home), file=sys.stderr)
     except Refusal as failure:
         try:
             record = session.read()
