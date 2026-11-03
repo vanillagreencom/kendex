@@ -24,6 +24,7 @@ from settings import load
 from store import read_status
 
 root, mode, producer = Path(sys.argv[2]), sys.argv[3], Path(sys.argv[4])
+home = root
 spec = importlib.util.spec_from_file_location("watch", producer)
 watch = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(watch)
@@ -36,7 +37,7 @@ script = root / ".agents/skills/mailbox/scripts/lane-mail"
 
 
 def command(*args, env=None):
-    return subprocess.run([str(script), *args], cwd=root, capture_output=True,
+    return subprocess.run([str(script), *args], cwd=home, capture_output=True,
                           text=True, check=True, timeout=30, env=env).stdout
 
 
@@ -73,10 +74,36 @@ try:
         rows[-1]["at"] = datetime.fromtimestamp(now - 6 * 86400, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         path.write_text("".join(json.dumps(row) + "\n" for row in rows))
     original = next(row for row in bound.mail.events() if row.get("delivery_id") == "page-original")
-    blocks = []
-    watch.owner_unread(shutil.which("bash"), root, 0, original["count"], now, set(), blocks)
-    assert len(blocks) == 1
-    body = watch.pass_output("local", [str(root)], [(str(root), blocks[0])]).split("cursor:", 1)[0]
+    if mode == "linked-home":
+        git_env = dict(os.environ, GIT_AUTHOR_NAME="Fixture", GIT_AUTHOR_EMAIL="fixture@example.test",
+                       GIT_COMMITTER_NAME="Fixture", GIT_COMMITTER_EMAIL="fixture@example.test")
+        subprocess.run(["git", "-C", str(root), "commit", "--allow-empty", "-qm", "fixture"],
+                       env=git_env, check=True, capture_output=True, timeout=30)
+        home = root.parent / (root.name + " linked")
+        subprocess.run(["git", "-C", str(root), "worktree", "add", "--detach", str(home)],
+                       env=git_env, check=True, capture_output=True, timeout=30)
+        home = watch.home_root(home)
+        assert home != root
+        watch.epoch = lambda: int(now)
+        selected = watch.role({"JARVIS_MAIN_HOST": "main:/home"})
+        delivered = []
+        output = watch.mail_pass(shutil.which("bash"), home, "local", {}, delivered,
+                                 satellite=selected.kind == "satellite")
+        body, footer = output.split("cursor:", 1)
+        record = json.loads(footer)
+        assert set(record["roots"]) == {str(home)}, record
+        assert {origin[2] for origin in record["origins"]} == {str(home)}, record
+        assert delivered == [{"id": original["id"], "at": original["at"]}], delivered
+        headers = body.splitlines()
+        assert len(headers) == 2 and headers[0].startswith("EVENT owner-unread "), body
+        assert headers[1].startswith("EVENT overseer-unread "), body
+        assert headers[1].endswith(" root=" + watch.line_value(home, True)), body
+        assert original["id"] in record["roots"][str(home)]["owner_unread"], record
+    else:
+        blocks = []
+        watch.owner_unread(shutil.which("bash"), root, 0, original["count"], now, set(), blocks)
+        assert len(blocks) == 1
+        body = watch.pass_output("local", [str(root)], [(str(root), blocks[0])]).split("cursor:", 1)[0]
     if mode == "foreign":
         body = body.replace("destination=local", "destination=ssh:other")
     elif mode == "same-basename":
@@ -169,9 +196,11 @@ try:
             bound.mail.reader = reader
         poll(count=1)
     else:
-        expected = 1 if mode in ("accepted", "hold-release") else 0
+        expected = 1 if mode in ("accepted", "hold-release", "linked-home") else 0
         poll(count=expected)
-    expected = 1 if mode in ("accepted", "hold-release", "missed", "invalid", "capability", "refusal-accepted", "unknown") else 0
+        if mode == "linked-home":
+            assert not bound.state.held
+    expected = 1 if mode in ("accepted", "hold-release", "linked-home", "missed", "invalid", "capability", "refusal-accepted", "unknown") else 0
     if expected:
         page = "owner-unread:" + original["id"]
         assert page in bound.state.carried

@@ -12,7 +12,7 @@ set -e
 sk_fake_start
 # Jarvis produces the deadline event; the real mailbox and relay judge each
 # candidate with fake time. Shared send recovery remains in recovery.test.sh.
-for page_case in accepted read no-event unanswered ordinary foreign same-basename legacy seed horizon hold-read hold-release read-during-prepare compacted-read missed invalid capability refusal-accepted refusal-read unknown; do
+for page_case in accepted linked-home read no-event unanswered ordinary foreign same-basename legacy seed horizon hold-read hold-release read-during-prepare compacted-read missed invalid capability refusal-accepted refusal-read unknown; do
   ROOT="$(sk_new_root "page $page_case")"
   sk_bind "$ROOT"
   PAGE_RC=0
@@ -25,6 +25,36 @@ for page_case in accepted read no-event unanswered ordinary foreign same-basenam
   assert_eq "$PAGE_RC" 0 "$page_case: canonical unread page admission and root status"
   [ "$PAGE_RC" -eq 0 ] || cat "$SK_TMP/page-$page_case.log"
 done
+
+sk_copy page-binding-control
+mkdir -p "${SK_BIN%/slack/scripts/slack}/jarvis"
+cp -R "$SK_ROOT/skills/jarvis/scripts" "${SK_BIN%/slack/scripts/slack}/jarvis/scripts"
+PAGE_PRODUCER="${SK_BIN%/slack/scripts/slack}/jarvis/scripts/lib/watch.py"
+python3 - "$PAGE_PRODUCER" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+text = path.read_text()
+before = 'root_events.extend((common, block) for block in unread_events)'
+after = 'root_events.extend((root, block) for block in unread_events)'
+assert text.count(before) == 1
+changed = text.replace(before, after)
+assert changed != text
+path.write_text(changed)
+PY
+ROOT="$(sk_new_root page-binding-control)"
+sk_bind "$ROOT"
+PAGE_RC=0
+env -i PATH="$PATH" HOME="$SK_TMP/home" LANG=C PYTHONDONTWRITEBYTECODE=1 \
+  GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" \
+  SLACK_ORCH_DIR="$SK_ROOT/skills/orch" SLACK_BOT_TOKEN="$SK_TOKEN" \
+  SLACK_OWNERS="$OWNERS" SLACK_API_URL="$SK_URL" SLACK_JARVIS_SESSION_FILE=tmp/page-presence \
+  python3 "$SK_ROOT/skills/slack/tests/lib/owner_unread_probe.py" "${SK_BIN%/*}/lib" "$ROOT" linked-home \
+  "$PAGE_PRODUCER" >"$SK_TMP/page-binding-control.log" 2>&1 || PAGE_RC=$?
+sk_assert_red "$PAGE_RC" 0 'control: a worktree-valued page binding fails accepted delivery'
+assert_has "$(cat "$SK_TMP/page-binding-control.log")" "AssertionError: ('page-count', 'linked-home', 0, 1)" \
+  'control fails specifically because the linked-home page did not land'
+sk_bin_reset
 
 sk_mutant unread-action relay.py '            self.post_owner_unread\(events\)' '            pass # self.post_owner_unread(events)'
 ROOT="$(sk_new_root page-control)"

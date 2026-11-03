@@ -302,10 +302,10 @@ def presence_roots(permitted):
 
 def pass_output(side, roots, events):
     body, origins, size = [], [], 0
-    for root, block in events:
+    for root, block, *binding in events:
         if root is not None:
             header, separator, tail = block.partition("\n")
-            block = header + " destination=" + line_value(side, True) + " root=" + line_value(root, True) + separator + tail
+            block = header + " destination=" + line_value(side, True) + " root=" + line_value(binding[0] if binding else root, True) + separator + tail
         end = size + len(block.encode())
         origins.append([size, end, str(root)] if root is not None else [size, end, None])
         body.append(block)
@@ -436,7 +436,7 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False):
                             envelope["id"], envelope["kind"], envelope.get("ref") or "",
                             ",".join(envelope.get("options") or []), envelope.get("recommend") or "", envelope.get("deadline") or ""))
                     text = line_value(envelope.get("text", ""), limit=4000)
-                    root_events.append(event("mail", repo=root.name, file=box) + metadata + "\n" + text + "\n")
+                    root_events.append((root, event("mail", repo=root.name, file=box) + metadata + "\n" + text + "\n"))
             if len(boxes) > 1:
                 receipts = checked([bash, lane_mail(), "drain", "--item", "overseer", "--after", "0", "--receipts"], root, operation="mailbox-receipts").split("\n")
                 _, cursor_read, lane_count, listed = mailbox_receipts(receipts)
@@ -445,8 +445,12 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False):
                 unread = [row for row in listed if row[2] is not None and row[0] > cursor_read]
                 if side == "local" and root == home:
                     # Only the home inbox's receipts say whether owner mail was read.
+                    unread_events = []
                     owned = owner_unread(bash, root, cursor_read, lane_count, now,
-                                         prior.get("owner_unread", []), root_events)
+                                         prior.get("owner_unread", []), unread_events)
+                    # Page admission binds the shared mailbox; batch origins
+                    # and acquisition cursors still belong to this home.
+                    root_events.extend((common, block) for block in unread_events)
                     if owned:
                         next_root["owner_unread"] = owned
                     else:
@@ -454,8 +458,8 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False):
                 if unread and now - int(unread[0][2]) >= 900:
                     oldest = unread[0][1]
                     if prior.get("unread") != oldest:
-                        root_events.append(event("overseer-unread", repo=root.name, unread=len(unread),
-                                                 oldest=oldest, age=str((now-int(unread[0][2]))//60) + "min"))
+                        root_events.append((root, event("overseer-unread", repo=root.name, unread=len(unread),
+                                                       oldest=oldest, age=str((now-int(unread[0][2]))//60) + "min")))
                     next_root["unread"] = oldest
                 else:
                     next_root.pop("unread", None)
@@ -470,7 +474,7 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False):
             # A failed root read commits neither of its box cursors.
         else:
             next_root.pop("cause", None)
-            events.extend((root, block) for block in root_events)
+            events.extend((root, block, binding) for binding, block in root_events)
             if delivered is not None:
                 delivered.extend(root_delivered)
         state[key] = next_root
