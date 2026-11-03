@@ -561,6 +561,8 @@ class Watch:
         self.unanswered_pending = None
         self.report_pending = None
         self.next_report = 0
+        self.relay_pending = None
+        self.next_relay = 0
         self.satellite = role(settings).kind != "main"
         self.forward_pending = None
         self.next_forward = 0
@@ -817,6 +819,39 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
             if result and report_key(result) != self.cursors.get("report", {}).get("event"):
                 self.append(pass_output("report", {"event": report_key(result)}, [(None, result)]))
 
+    def relay_status(self):
+        try:
+            output = checked([self.bash, LIB.parents[2] / "slack/scripts/slack", "listen",
+                              "--status", "--root", self.home], self.home, operation="relay-status")
+            # Slack's public state owns freshness and the reconnect bound.
+            match = re.fullmatch(re.escape("slack: slack-relay=" + str(self.home.resolve())) +
+                                 r" state=(ok|failing|stale|never)(?: [^\n]*)?\n", output)
+            if not match:
+                raise Failure("relay-status", "protocol", "status-unread", output)
+            return match[1], output.rstrip("\n")
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            return failure("relay-status", error)
+
+    def accept_relay(self, result):
+        prior = self.cursors.get("relay", {})
+        state = dict(prior)
+        blocks = []
+        if isinstance(result, Failure):
+            if prior.get("unavailable") != result.record["key"]:
+                blocks.append((None, event("relay-unavailable", home=self.home, cause=result.record["detail"])))
+            state["unavailable"] = result.record["key"]
+        else:
+            current, detail = result
+            previous = prior.get("state")
+            if current != "ok" and (previous is None or previous == "ok"):
+                blocks.append((None, event("relay-down", home=self.home, state=current, detail=detail)))
+            elif current == "ok" and previous is not None and previous != "ok":
+                blocks.append((None, event("relay-up", home=self.home, state=current)))
+            state = {"state": current}
+        # The log footer checkpoints transitions even across an interrupted
+        # state write; an unreadable status never replaces the last reading.
+        self.append(pass_output("relay", state, blocks))
+
     def forward(self):
         try:
             return checked([self.bash, LIB.parent / "jarvis-session", "forward-drain", "--home", self.home],
@@ -908,6 +943,13 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
         self.save()
 
     def _poll(self, passes, pending, now):
+        relay = self.relay_pending
+        if relay is not None and relay.done():
+            self.accept_relay(relay.result())
+            self.relay_pending = None
+        if self.relay_pending is None and now >= self.next_relay:
+            self.next_relay = now + 30
+            self.relay_pending = passes.submit(self.relay_status)
         work = self.unanswered_pending
         if work is not None and work.done():
             self.accept_unanswered(*work.result())
@@ -1025,7 +1067,7 @@ def main():
             watch = Watch(home, args.bash, settings)
             # Slow SSH and mailbox reads cannot extend an already-started
             # settle. Only this thread appends results or commits batch state.
-            with ThreadPoolExecutor(max_workers=2 * len(watch.destinations) + 2) as passes:
+            with ThreadPoolExecutor(max_workers=2 * len(watch.destinations) + 3) as passes:
                 pending = passes.submit(watch.acquire, epoch())
                 while True:
                     pending = watch._poll(passes, pending, epoch())
