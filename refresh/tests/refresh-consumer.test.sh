@@ -439,6 +439,98 @@ printf '{"data":{"repository":{"ref":{"target":{"oid":"abc"}},"pullRequest":{"st
 cp "$TMP/state/push-state.json" "$TMP/state/start-state.json"
 runner="$repo/refresh/refresh-consumer.sh"
 
+# Publication examines the whole index, excluding only enumerated project locks.
+# The same lock-only assertion rejects the old publication rule on a source copy.
+lock_saved_repo="$repo"
+lock_saved_runner="$runner"
+git clone -q --branch main "$repo" "$TMP/lock-consumer"
+repo="$TMP/lock-consumer"
+git -C "$repo" config user.name fixture
+git -C "$repo" config user.email fixture@example.invalid
+git -C "$repo" config gc.auto 0
+git -C "$repo" config maintenance.auto false
+lock_base="$(git -C "$repo" rev-parse main)"
+git init -q --bare "$TMP/lock-remote"
+git --git-dir="$TMP/lock-remote" config gc.auto 0
+git --git-dir="$TMP/lock-remote" config maintenance.auto false
+git -C "$repo" remote set-url origin "$TMP/lock-remote"
+LEASE_REMOTE="$TMP/lock-remote"
+mkdir -p "$TMP/lock-control"
+cp -RL "$repo/refresh" "$repo/skills" "$TMP/lock-control/"
+file_edit "$TMP/lock-control" refresh/refresh-consumer.sh 1 'publication_paths\+=' '/publication_paths+=/s/^/  : # /'
+while IFS='|' read -r lock_name lock_project lock_add; do
+  reset_default
+  git -C "$repo" checkout -q -B main "$lock_base"
+  runner="$repo/refresh/refresh-consumer.sh"
+  [ "$lock_name" != control ] || runner="$TMP/lock-control/refresh/refresh-consumer.sh"
+  printf 'schema = 7\n' >"$repo/kendex.toml"
+  printf 'previous lock\n' >"$repo/.kendex-lock.json"
+  if [ -n "$lock_project" ]; then
+    mkdir -p "$repo/$lock_project"
+    printf 'schema = 7\n' >"$repo/$lock_project/kendex.toml"
+    printf 'current\n' >"$repo/$lock_project/rendered.txt"
+    printf 'previous nested lock\n' >"$repo/$lock_project/.kendex-lock.json"
+  fi
+  printf '[env]\nKENDEX_REFRESH_PROJECTS = "%s"\nPR_REVIEW_GATE = "on"\n' "$lock_project" >"$repo/kendex.settings.toml"
+  commit "$repo"
+  git -C "$repo" push -q --force origin main
+  git --git-dir="$LEASE_REMOTE" update-ref -d refs/heads/kendex/refresh
+  : >"$TMP/state/pr"
+  : >"$TMP/state/calls"
+  : >"$TMP/state/project-calls"
+  REFRESH_ADDS="$lock_add"
+  run_refresh current pass render
+  lock_suppressed=false
+  if [ "$RC" -eq 0 ] && [ "$(git -C "$repo" rev-parse HEAD)" = "$(git -C "$repo" rev-parse main)" ] &&
+      ! git --git-dir="$LEASE_REMOTE" show-ref --verify --quiet refs/heads/kendex/refresh &&
+      ! grep -qE '^git push$|^api --method (POST|PATCH)|^pr merge ' "$TMP/state/calls" &&
+      grep -qxF 'refresh-state=current pr=none class=none' <<<"$OUT" &&
+      grep -qxF 'state=current' "$TMP/state/outputs" &&
+      grep -qxF 'sources=covered' "$TMP/state/outputs" &&
+      grep -qF 'PR_REVIEW_GATE' "$TMP/state/summary"; then lock_suppressed=true; fi
+  case "$lock_name" in
+    control|unselected)
+      if [ "$lock_suppressed" = false ] && [ "$RC" -eq 0 ] &&
+          grep -qxF 'refresh-state=pushed pr=1 class=render' <<<"$OUT" &&
+          git --git-dir="$LEASE_REMOTE" show-ref --verify --quiet refs/heads/kendex/refresh; then
+        ok "lock publication $lock_name rejects suppression"
+      else bad "lock publication $lock_name" "$OUT"; fi ;;
+    *)
+      if [ "$lock_suppressed" = true ]; then ok "lock-only $lock_name publishes nothing and reports settings and sources"
+      else bad "lock-only $lock_name" "$OUT"; fi
+      reset_default
+      : >"$TMP/state/calls"
+      run_refresh content-update pass render
+      lock_head="$(git --git-dir="$LEASE_REMOTE" rev-parse refs/heads/kendex/refresh)"
+      lock_published=true
+      for lock_scope in "$repo" ${lock_project:+"$repo/$lock_project"}; do
+        lock_relative="${lock_scope#"$repo"}"
+        lock_relative="${lock_relative#/}"
+        lock_prefix="${lock_relative:+$lock_relative/}"
+        grep -qxF "$lock_scope|verify --scope project|v1.7.0" "$TMP/state/project-calls" || lock_published=false
+        [ "$(git --git-dir="$LEASE_REMOTE" show "$lock_head:${lock_prefix}.kendex-lock.json")" = 'added by the refresh' ] || lock_published=false
+        [ "$(git --git-dir="$LEASE_REMOTE" show "$lock_head:${lock_prefix}rendered.txt")" = content-update ] || lock_published=false
+      done
+      if [ "$RC" -eq 0 ] && [ "$lock_published" = true ] &&
+          grep -qxF 'refresh-state=pushed pr=1 class=render' <<<"$OUT" &&
+          grep -qxF 'git push' "$TMP/state/calls" &&
+          [ -e "$TMP/state/armed" ]; then ok "content-changing $lock_name publishes the current locks with content"
+      else bad "content-changing $lock_name" "$OUT"; fi ;;
+  esac
+done <<'LOCK_PUBLICATION_ROWS'
+root||.kendex-lock.json
+nested|packaging/jarvis [home]|.kendex-lock.json
+unselected||unselected/.kendex-lock.json
+control||.kendex-lock.json
+LOCK_PUBLICATION_ROWS
+unset REFRESH_ADDS LEASE_REMOTE
+reset_default
+repo="$lock_saved_repo"
+runner="$lock_saved_runner"
+: >"$TMP/state/pr"
+: >"$TMP/state/calls"
+: >"$TMP/state/creates"
+
 # The same assertions reject the runner on the implementation's main base.
 run_project_rows
 
