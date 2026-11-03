@@ -63,11 +63,12 @@ Follow the [home layout reference](references/home-layout.md) for file paths, Gi
 
 ## Control-host events
 
-Start the event source through the [session workflow](workflows/session.md#control-host-events). It reads mail on this machine and, when configured, on an SSH control host. A fixed settle combines a burst into one session mailbox directive. The session's existing mailbox route supplies the body.
+Start the event source through the [session workflow](workflows/session.md#control-host-events). It reads mail on this machine and on declared SSH hosts, including control and satellite machines. A fixed settle combines a burst into one session mailbox directive. The session's existing mailbox route supplies the body.
 
 Set the keys shown in [kendex.settings.toml.example](kendex.settings.toml.example) under `[env]` in the assistant home's `kendex.settings.toml`. The process environment takes precedence over the private env file, which takes precedence over shared settings.
 
-- `JARVIS_CONTROL_HOST` selects the SSH destination. Empty runs local mail only.
+- `JARVIS_CONTROL_HOST` keeps the existing control-host route. Empty leaves it off.
+- `JARVIS_REMOTE_HOSTS` adds whitespace-separated SSH aliases. With an additional alias, a bare note must name a unique registered root across all machines; select a duplicate with `--host ALIAS` or `--local`. Use one stable alias per machine and restart the event source after changing hosts.
 - `JARVIS_MAIN_HOST` makes this machine a satellite of the main Jarvis at `DEST:/abs/main/home`. Empty makes it the main. Set it in the machine's private env file, never in shared settings; see [Agent reach: Main and satellites](references/agent-reach.md#main-and-satellites).
 - `JARVIS_LOG_DIR` selects durable logs and batch state. The default is `${XDG_STATE_HOME:-$HOME/.local/state}/jarvis`. Give simultaneous homes separate directories.
 - `JARVIS_WAKE_SETTLE_SECS` defaults to 15 seconds. Zero sends immediately.
@@ -79,11 +80,13 @@ Three scripts in `.agents/skills/jarvis/scripts/` serve the session. Each reads 
 |---|---|
 | `owner-unanswered` | Lists your messages that no reply, later reply in their Slack thread, closed question or progress record covers, one JSON line each. A file you send as its own message within 30 seconds of its text, in the same thread or both at the top of the channel, counts as that message. It reads the records in `state/handoff.md` and the archive beside it; `--handoff PATH` selects another handoff as `progress-log` does. It lists the last 24 hours; `--since TIME` replaces that window and `--older MINUTES` narrows the list. |
 | `progress-log` | Adds one progress record to `state/handoff.md`, or to the handoff `--handoff PATH` selects. The clock supplies its id and time. An id is `P-` and the UTC time as `YYYYMMDDTHHMMSSZ`, with `-2`, `-3` added for later records in the same second. `--archived FILE` instead adds an archived handoff's dated line to the archive's `INDEX.md`. `--check-state` lists the State lines to correct: those whose tracker items are all Done or Canceled, and those naming no tracker, mailbox or Slack id. |
-| `owner-note` | Sends a note file as your directive to a repository's agent, on the control host first, then on this machine. The note ends with a request to check its facts and approach. |
+| `owner-note` | Sends a note file as your directive to a repository's agent on a declared machine. With no additional alias, it keeps control-host-first routing and local fallback. The note ends with a request to check its facts and approach. |
 
 The loop adds `EVENT owner-unread` once when a message from you stays unread in the home inbox for 10 minutes. Key a page on that event. When a message from you arrives, the loop checks it every 5 minutes until a reply, a later reply in its thread, a closed question or a progress record covers it, and adds `EVENT owner-unanswered` once if it is still uncovered after 10 minutes. With no message waiting, it runs no check. Each check reads the records in `state/handoff.md` and its archive, from the oldest waiting message on. That event reminds the session; it never means the message is unread.
 
 Claude Code runs the loop through Monitor and receives a pointer for each batch. Pi uses its installed mailbox wake. Copilot receives mail through its installed hooks; idle delivery depends on its native extension.
+
+Run one Slack app and local-root relay on each machine under [Slack setup](../slack/README.md#slack-app). The existing relay owns delivery keys and bounded history catch-up; a lost outbound response stays unknown and is not repeated. Consumer installation and live acceptance belong in the consumer tracker.
 
 Consumer checks can append complete events under the [log contract](references/control-host-events.md#input-log). That reference also defines recovery and session-bound presence.
 
