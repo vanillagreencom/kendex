@@ -37,6 +37,11 @@ class TaskContract(unittest.TestCase):
         self.account.mkdir()
         self.bin = self.root / "bin"
         self.bin.mkdir()
+        # Managed-session recovery reads the platform manager; this task
+        # fixture publishes no launch policy and never reads the host's.
+        for tool in ("systemctl", "launchctl"):
+            self.bin.joinpath(tool).write_text("#!" + os.environ["JARVIS_TEST_BASH"] + "\nexit 0\n")
+            self.bin.joinpath(tool).chmod(0o755)
         # Exercise the production picker; only its external host meter is a
         # fixture. No account credentials or live quota endpoints are read.
         meter = self.bin / "meter"
