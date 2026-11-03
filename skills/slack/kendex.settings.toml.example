@@ -43,7 +43,7 @@ SLACK_JARVIS_SESSION_MAX_AGE = "600"
 # Slack reaches it, and only its stdout is sent, after the secret-value
 # check.
 
-# The command line whose output /status replies with, for example
+# The command line whose output /lanes replies with, for example
 # "scripts/fleet-status --slack".
 SLACK_STATUS_COMMAND = ""
 

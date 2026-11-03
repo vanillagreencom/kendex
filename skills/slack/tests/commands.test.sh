@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The optional slash commands and Home tab on the relay's Socket Mode
-# connection, against the fake and the real lane-mail. The rows: /status and
+# connection, against the fake and the real lane-mail. The rows: /lanes and
 # /asks replying ephemerally with their configured command's output and
 # writing no mailbox, output that is not UTF-8 replied with its bad byte
 # replaced, a payload's text reaching no argument or stdin of the
@@ -132,6 +132,40 @@ ALPHA_CH="$(sk_channel "$ALPHA")"
 
 CONFIGURED=("SLACK_STATUS_COMMAND=$CMD/status" "SLACK_ASKS_COMMAND=$CMD/asks" "SLACK_HOME_COMMAND=$CMD/home")
 
+# Both status names share the current owner gate. Keep this scenario usable
+# by the dispatch and repeated-warning controls below.
+status_commands() {
+  local name user before number response text alpha_before beta_before
+  STATUS_RESULT=""
+  alpha_before="$(directives "$ALPHA")"
+  beta_before="$(directives "$BETA")"
+  relay "$ALPHA" --root "$BETA" "${CONFIGURED[@]}"
+  for name in /lanes /status; do
+    for user in U001 U999 U009 U001; do
+      before="$(runs)"
+      number="$(slash "$name" "$user" "" "; touch $SK_TMP/pwned")"
+      reply "$number" >/dev/null
+      response="$(sk_state ".responses[\"$number\"][0].response_type")"
+      text="$(sk_state ".responses[\"$number\"][0].text")"
+      # Configured stdout is the product result; refusal wording is not.
+      [ "$user" = U001 ] || text="withheld"
+      STATUS_RESULT="$STATUS_RESULT$name:$user:$response:$(($(runs) - before)):$text;"
+    done
+  done
+  STATUS_RESULT="$STATUS_RESULT$(($(directives "$ALPHA") - alpha_before))|$(($(directives "$BETA") - beta_before))|$([ -e "$SK_TMP/pwned" ] && echo ran || echo none)"
+  STATUS_WARNINGS="$(sed -n 's/^slack: command-renamed=\([^ ]*\) fix=\([^ ]*\) remove-in=\([^ ]*\)$/\1|\2|\3/p' "$SK_TMP/relay.err")"
+  sk_relay_stop
+}
+STATUS_EXPECTED=""
+for name in /lanes /status; do
+  STATUS_EXPECTED="$STATUS_EXPECTED$name:U001:ephemeral:1:status-fixture argc=0 stdin=0;"
+  STATUS_EXPECTED="$STATUS_EXPECTED$name:U999:ephemeral:0:withheld;$name:U009:ephemeral:0:withheld;"
+  STATUS_EXPECTED="$STATUS_EXPECTED$name:U001:ephemeral:1:status-fixture argc=0 stdin=0;"
+done
+STATUS_EXPECTED="${STATUS_EXPECTED}0|0|none"
+status_commands
+assert_eq "$STATUS_RESULT" "$STATUS_EXPECTED" "both status names return configured output only to current owners, without payload execution or mailbox writes"
+assert_eq "$STATUS_WARNINGS" "/status|/lanes|2.0.0" "the retired command warns once with its replacement and removal version"
 # --- settings refused at start -------------------------------------------------
 sk_run "SLACK_REPORT_ROOT=$GAMMA" -- listen --root "$ALPHA" --root "$BETA" --once
 assert_eq "$RC=$ERR1" "2=slack: setting-invalid=SLACK_REPORT_ROOT=$GAMMA fix=name a checkout this relay's --root serves" \
@@ -140,8 +174,8 @@ sk_run "SLACK_REPORT_ROOT=gamma" -- listen --root "$GAMMA" --once
 assert_eq "$RC=$ERR1" "2=slack: setting-invalid=SLACK_REPORT_ROOT=gamma" "a relative SLACK_REPORT_ROOT is refused"
 
 # --- configured commands, the owner gate and /report to alpha ----------------------
-# stale_gate: /status from the id alpha's stale binding names; prints its reply.
-stale_gate() { reply "$(slash /status U009)"; }
+# stale_gate: /lanes from the id alpha's stale binding names; prints its reply.
+stale_gate() { reply "$(slash /lanes U009)"; }
 # Each scenario below starts and stops its own relay in this shell, so the
 # stop reaches it, and leaves its answer in RESULT.
 # second_report: /report with beta as the destination over alpha and beta;
@@ -194,14 +228,10 @@ held_report() {
 }
 
 relay "$ALPHA" --root "$BETA" "SLACK_REPORT_ROOT=$ALPHA" "${CONFIGURED[@]}"
-assert_eq "$(reply "$(slash /status U001 "" "; touch $SK_TMP/pwned")")" "ephemeral|status-fixture argc=0 stdin=0" \
-  "/status replies ephemerally with its command's output, the payload's text reaching no argument or stdin"
-assert_eq "$([ -e "$SK_TMP/pwned" ] && echo ran || echo none)|$(runs)" "none|1" "the payload's text runs nothing, and the command runs once"
+reply "$(slash /lanes U001)" >/dev/null
 assert_has "$(cat "$SK_TMP/relay.err")" "stderr-fixture" "the command's stderr goes to the relay's stderr"
 assert_eq "$(reply "$(slash /asks U002)")" "ephemeral|asks-fixture" "/asks replies with its command's output"
-assert_eq "$(directives "$ALPHA")|$(directives "$BETA")" "0|0" "/status and /asks write no mailbox"
-assert_eq "$(reply "$(slash /status U999)")|$(runs)" "$NOT_OWNER_REPLY|1" "a non-owner is refused and nothing runs"
-assert_eq "$(stale_gate)|$(runs)" "$NOT_OWNER_REPLY|1" "an owner id only a stale root binding names is refused and nothing runs"
+assert_eq "$(directives "$ALPHA")|$(directives "$BETA")" "0|0" "/lanes and /asks write no mailbox"
 assert_eq "$(reply "$(slash /deploy U001)")" "ephemeral|/deploy is not a command this relay answers." "an unknown command is answered"
 
 REPORT_REPLY="$(reply "$(slash /report U001 T-alpha-1)")"
@@ -241,7 +271,7 @@ assert_eq "$RESULT" "jarvis|1|" "while a Jarvis session hold stands, a notice na
 relay "$GAMMA" "SLACK_REPORT_ROOT=$GAMMA" "SLACK_ASKS_COMMAND=$CMD/secret"
 assert_eq "$(reply "$(slash /report U001 T-gamma-1)")|$(directives "$GAMMA")" \
   "ephemeral|No overseer is recorded at $GAMMA; nothing was sent.|0" "a root with no recorded overseer is answered unavailable and nothing is written"
-assert_eq "$(reply "$(slash /status U001)")" "ephemeral|/status is not enabled on this relay; SLACK_STATUS_COMMAND turns it on." \
+assert_eq "$(reply "$(slash /lanes U001)")" "ephemeral|/lanes is not enabled on this relay; SLACK_STATUS_COMMAND turns it on." \
   "an off command says so"
 home_open U001
 home_open U001
@@ -269,14 +299,14 @@ home_refused() {
 }
 home_refused
 assert_eq "$RESULT" "1|0|After Home off" "Slack's not_enabled prints home-not-enabled once, a later open publishes nothing, and the relay still routes messages"
-FAILED="$(reply "$(slash /status U001)")"
-assert_eq "$FAILED" "ephemeral|/status failed (exit-3); its output is not shown." "a failed command's reply names the cause"
+FAILED="$(reply "$(slash /lanes U001)")"
+assert_eq "$FAILED" "ephemeral|/lanes failed (exit-3); its output is not shown." "a failed command's reply names the cause"
 assert_lacks "$FAILED" "leaked-output" "a failed command's reply carries none of its output"
 assert_has "$(cat "$SK_TMP/relay.err")" "slack: command-failed=SLACK_STATUS_COMMAND cause=exit-3" "the failure is one keyed line on stderr"
 sk_relay_stop
 
 # --- withheld output: a bad byte, a failed or secret Home command, a missing command ---
-# withheld: over beta, /status whose command prints a byte that is not
+# withheld: over beta, /lanes whose command prints a byte that is not
 # UTF-8, three owner Home opens of home-seq, each followed, once a later
 # reply shows the worker handled it, by the views this relay has published
 # and the last one, and last /asks naming a missing command, whose failure a
@@ -285,7 +315,7 @@ withheld() {
   local i before
   rm -f -- "${CMD:?}/home-seq.n"
   relay "$BETA" "SLACK_HOME_COMMAND=$CMD/home-seq" "SLACK_STATUS_COMMAND=$CMD/latin1" "SLACK_ASKS_COMMAND=$CMD/missing"
-  BAD_BYTE="$(reply "$(slash /status U001)")"
+  BAD_BYTE="$(reply "$(slash /lanes U001)")"
   before="$(views)"
   VIEWS=()
   for i in 1 2 3; do
@@ -309,21 +339,27 @@ assert_has "$(cat "$SK_TMP/relay.err")" "slack: secret-value=command=SLACK_HOME_
 assert_eq "$MISSING" "$MISSING_REPLY" "a command line that cannot start replies with the cause"
 
 # --- a timed-out command ------------------------------------------------------------
-# timed_out: /status whose command outlasts the bound; its reply, and how many
+# timed_out: /lanes whose command outlasts the bound; its reply, and how many
 # of the relay's stderr lines carry each of the command's two stderr lines and
 # the timeout's keyed line.
 timed_out() {
   relay "$ALPHA" "SLACK_STATUS_COMMAND=$CMD/hang"
-  RESULT="$(reply "$(slash /status U001)")"
+  RESULT="$(reply "$(slash /lanes U001)")"
   RESULT="$RESULT|$(grep -c '^hang-before$' "$SK_TMP/relay.err")|$(grep -c '^hang-on-term$' "$SK_TMP/relay.err")"
   RESULT="$RESULT|$(grep -c '^slack: command-failed=SLACK_STATUS_COMMAND cause=timeout$' "$SK_TMP/relay.err")"
   sk_relay_stop
 }
-TIMED_OUT="ephemeral|/status failed (timeout); its output is not shown.|1|1|1"
+TIMED_OUT="ephemeral|/lanes failed (timeout); its output is not shown.|1|1|1"
 timed_out
 assert_eq "$RESULT" "$TIMED_OUT" "a timed-out command replies timeout, and its stderr before the bound and on TERM reaches the relay's stderr"
 
 # --- controls ----------------------------------------------------------------------
+sk_mutant status-dispatch relay.py 'COMMANDS\["/status"\] = COMMANDS\["/lanes"\]' 'COMMANDS["/status"] = COMMANDS.pop("/lanes")'
+status_commands
+sk_assert_red "$STATUS_RESULT" "$STATUS_EXPECTED" "control: the previous dispatch without /lanes fails the configured status scenario"
+sk_mutant status-warning relay.py 'name == "/status" and not self.status_renamed' 'name == "/status"'
+status_commands
+sk_assert_red "$STATUS_WARNINGS" "/status|/lanes|2.0.0" "control: repeated retired-command warnings fail the one-warning contract"
 sk_mutant owner-gate relay.py 'self\.owner_set = set\(resolve_owner_ids\(self\.api, self\.settings\.owners\)\.values\(\)\)' \
   'self.owner_set = set().union(*(set(r.binding.owner_ids.values()) for r in self.roots))'
 relay "$ALPHA" "${CONFIGURED[@]}"
