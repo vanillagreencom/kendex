@@ -1,91 +1,12 @@
 # ComboBox
 
-> `iced::widget::combo_box` · iced 0.14.0
+Read when users need to search a list before selecting an option in Iced 0.14.0.
 
-A searchable dropdown: a text input with an overlay list that filters options by what the user types. Use when the option list is long enough that `pick_list` becomes unwieldy.
+`combo_box` combines a text input with a filtered menu. The [pinned implementation](https://raw.githubusercontent.com/iced-rs/iced/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/combo_box.rs) owns `ComboBox`, its persistent `State`, callbacks, input/menu styling and catalog defaults. The [widget helpers](https://raw.githubusercontent.com/iced-rs/iced/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/helpers.rs) own the constructor.
 
-## API
+## Keep the options and selection
 
-### `ComboBox` struct
-
-```rust
-pub struct ComboBox<'a, T, Message, Theme = Theme, Renderer = Renderer<Renderer, Renderer>>
-where
-    Theme: Catalog,
-    Renderer: Renderer,
-{ /* private fields */ }
-
-impl<'a, T, Message, Theme, Renderer> ComboBox<'a, T, Message, Theme, Renderer>
-where
-    T: Display + Clone,
-    Theme: Catalog,
-    Renderer: Renderer,
-{
-    pub fn new(
-        state: &'a State<T>,
-        placeholder: &str,
-        selection: Option<&T>,
-        on_selected: impl Fn(T) -> Message + 'static,
-    ) -> Self;
-
-    pub fn on_input(self, on_input: impl Fn(String) -> Message + 'static) -> Self;
-    pub fn on_option_hovered(self, on_option_hovered: impl Fn(T) -> Message + 'static) -> Self;
-    pub fn on_open(self, message: Message) -> Self;
-    pub fn on_close(self, message: Message) -> Self;
-
-    pub fn padding(self, padding: impl Into<Padding>) -> Self;
-    pub fn font(self, font: <Renderer as Renderer>::Font) -> Self;
-    pub fn icon(self, icon: text_input::Icon<<Renderer as Renderer>::Font>) -> Self;
-    pub fn size(self, size: impl Into<Pixels>) -> Self;
-    pub fn line_height(self, line_height: impl Into<LineHeight>) -> Self;
-    pub fn width(self, width: impl Into<Length>) -> Self;
-    pub fn menu_height(self, menu_height: impl Into<Length>) -> Self;
-    pub fn text_shaping(self, shaping: Shaping) -> Self;
-
-    pub fn input_style(self, style: impl Fn(&Theme, text_input::Status) -> text_input::Style + 'a) -> Self;
-    pub fn menu_style(self, style: impl Fn(&Theme) -> menu::Style + 'a) -> Self;
-    pub fn input_class(self, class: /* ... */) -> Self;
-    pub fn menu_class(self, class: /* ... */) -> Self;
-}
-```
-
-### `State<T>` struct
-
-```rust
-pub struct State<T> { /* private */ }
-
-impl<T: Display + Clone> State<T> {
-    pub fn new(options: Vec<T>) -> State<T>;
-    pub fn with_selection(options: Vec<T>, selection: Option<&T>) -> State<T>;
-
-    pub fn options(&self) -> &[T];
-    pub fn push(&mut self, new_option: T);
-    pub fn into_options(self) -> Vec<T>;
-}
-```
-
-### `Catalog` trait
-
-```rust
-pub trait Catalog: text_input::Catalog + menu::Catalog {}
-```
-
-Combo box styling delegates to both `text_input::Catalog` (for the input) and `menu::Catalog` (for the dropdown).
-
-### Function
-
-```rust
-pub fn combo_box<'a, T, Message, Theme, Renderer>(
-    state: &'a State<T>,
-    placeholder: &str,
-    selection: Option<&T>,
-    on_selected: impl Fn(T) -> Message + 'static,
-) -> ComboBox<'a, T, Message, Theme, Renderer>;
-```
-
-## Patterns
-
-### Basic searchable dropdown
+Keep `combo_box::State<T>` in application state. It retains the query, matchers and filtered options between interactions. Keep the selected value separately and pass a reference to it:
 
 ```rust
 use iced::widget::combo_box;
@@ -95,53 +16,41 @@ struct State {
     favorite: Option<Fruit>,
 }
 
-impl State {
-    fn new() -> Self {
-        Self {
-            fruits: combo_box::State::new(vec![
-                Fruit::Apple, Fruit::Orange, Fruit::Strawberry,
-            ]),
-            favorite: None,
-        }
-    }
-}
+// Initialize once with the available options:
+let fruits = combo_box::State::new(vec![
+    Fruit::Apple,
+    Fruit::Orange,
+    Fruit::Strawberry,
+]);
 
-fn view(state: &State) -> Element<'_, Message> {
-    combo_box(
-        &state.fruits,
-        "Search fruits...",
-        state.favorite.as_ref(),
-        Message::FruitSelected,
-    ).into()
-}
+// In view:
+combo_box(
+    &state.fruits,
+    "Search fruits...",
+    state.favorite.as_ref(),
+    Message::FruitSelected,
+)
 ```
 
-### Handle hover / live search
+Options implement `Display + Clone`. Display supplies labels and search text. Converting the widget to an Element also requires `T: 'static` and a cloneable message. Selection callbacks receive an owned option; store it in `update`. Use `State::with_selection` when initializing the search state from a selection. Add an option in `update` with `state.fruits.push(fruit)`; this also updates the retained search results.
+
+## Observe input and selection
 
 ```rust
 combo_box(&state.items, "Search", state.selected.as_ref(), Message::Selected)
-    .on_option_hovered(Message::HoverPreview) // Preview as user arrow-keys through
-    .on_input(Message::QueryChanged)          // Observe current search text
+    .on_option_hovered(Message::HoverPreview)
+    .on_input(Message::QueryChanged)
 ```
 
-### Appending options dynamically
+`on_input` observes text changes emitted by the input. It is not a callback for every physical key. `on_option_hovered` reports keyboard navigation and can also report an available initial option when the input gains focus. The user can select with Enter or through the menu.
 
-```rust
-// In update, on Message::AddItem(item):
-state.items.push(item);
-```
+`on_open` and `on_close` report focus transitions when that update has not already published a selection or hover notification. Do not rely on a separate close message after every selection or outside press.
 
-## Gotchas
+## Style
 
-- `State<T>` must live in your application state (not inside `view()`). This is because combo_box caches filter results between frames — rebuilding `State` every frame would lose the cached state.
-- `T` must implement `Display + Clone`. The `Display` impl provides both the option label and the search match string.
-- Unlike `pick_list`, **`combo_box` requires `&State<T>`** passed as the first argument, not a raw slice.
-- `on_selected` receives `T` by value (requires `Clone`); it's called when the user explicitly picks an option from the menu. `on_input` fires on every keystroke.
-- `on_close` fires when the user clicks outside the combo box — useful for "discard unsaved query" flows.
-- Styling uses two separate style functions: `input_style(...)` for the text input and `menu_style(...)` for the dropdown menu.
+Use `input_style` for the text input and `menu_style` for the dropdown. Their closures have different contracts: the input receives a theme and text-input status; the menu receives a theme. The catalog combines the input and menu catalogs and supplies their defaults. `input_class` and `menu_class` require `advanced`; see [Catalog](catalog.md).
 
-## See also
+## Related references
 
-- `widget-pick-list.md` — non-searchable variant (static options)
-- `widget-text-input.md` — the underlying input component
-- `catalog.md` — styling pattern
+- [Pick list](widget-pick-list.md): selection without searching, using options directly.
+- [Text input](widget-text-input.md): the underlying input component.
