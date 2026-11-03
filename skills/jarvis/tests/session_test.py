@@ -84,6 +84,140 @@ class BootReceiptScenario:
     applicable = Path("/proc/sys/kernel/random/boot_id").is_file()
 
 
+class MainHostContract(unittest.TestCase):
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch.cleanup)
+        self.root = Path(self.scratch.name).resolve()
+        self.home = self.root / "home"
+        self.home.mkdir()
+        # This settings-only consumer inherits transport lookup, not the
+        # calling session's credentials, role or selected private path.
+        self.env = {"PATH": os.environ["PATH"], "HOME": str(self.root),
+                    "XDG_STATE_HOME": str(self.root / "state")}
+
+    def command(self, *words, code=0):
+        result = subprocess.run([str(SCRIPT), *words, "--home", str(self.home)],
+                                env=self.env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, code, result.stderr)
+        return result
+
+    def value(self, *words):
+        # Consumer apps parse only this named setting, never the secret file.
+        answer = json.loads(self.command("main-host", *words).stdout)
+        self.assertEqual(set(answer), {"JARVIS_MAIN_HOST"})
+        return answer["JARVIS_MAIN_HOST"]
+
+    def test_main_host_private_file_contract(self):
+        original = (b"# fixture private settings\r\nSECRET='first line\n"
+                    b"JARVIS_MAIN_HOST=literal-secret-text\nlast line'\n"
+                    b"export OTHER_SECRET='keep these bytes'\nJARVIS_MAIN_HOST='old:/home/old'")
+        rows = (("default", None, None), ("configured", "private/role.env", None),
+                ("override", "unused.env", "nested/selected.env"), ("linked", None, None))
+        for name, configured, inherited in rows:
+            with self.subTest(name=name):
+                self.home = self.root / name
+                self.home.mkdir()
+                if configured:
+                    (self.home / "kendex.settings.toml").write_text('[env]\nKENDEX_ENV_FILE = "' + configured + '"\n')
+                self.env.pop("KENDEX_ENV_FILE", None)
+                if inherited:
+                    self.env["KENDEX_ENV_FILE"] = inherited
+                private = self.home / (inherited or configured or ".env.local")
+                private.parent.mkdir(parents=True, exist_ok=True)
+                if name == "linked":
+                    target = self.root / "shared-private.env"
+                    private.symlink_to(target)
+                private.write_bytes(original)
+                private.chmod(0o640)
+                self.assertEqual(self.value("--get"), "old:/home/old")
+                sentinel = self.root / "evaluated"
+                literal = "host:/home/O'Neil $USER `id` $(touch " + str(sentinel) + ")"
+                for words, expected in ((("--set", literal), literal), (("--set", "next:/main"), "next:/main"),
+                                        (("--clear",), ""), (("--clear",), "")):
+                    self.assertEqual(self.value(*words), expected)
+                    self.assertEqual(self.value("--get"), expected)
+                    # Independently compare the complete pre-existing bytes
+                    # and mode; a multiline secret is not an assignment list.
+                    self.assertEqual(private.read_bytes()[:len(original)], original)
+                    self.assertEqual(private.stat().st_mode & 0o777, 0o640)
+                    status = json.loads(self.command("status", "--main").stdout)
+                    self.assertEqual(status["role"], "satellite" if expected else "main")
+                    if expected:
+                        self.assertEqual(status["main"], expected.partition(":")[0])
+                    self.assertFalse(sentinel.exists())
+                self.assertEqual(private.is_symlink(), name == "linked")
+                if inherited:
+                    self.assertFalse((self.home / configured).exists())
+
+    def test_main_host_preservation_control(self):
+        skills = self.root / "control/skills"
+        scripts = skills / "jarvis/scripts"
+        shutil.copytree(SKILLS / "jarvis/scripts", scripts)
+        for dependency in ("mailbox", "orch"):
+            (skills / dependency).symlink_to(SKILLS / dependency, target_is_directory=True)
+        source = scripts / "lib/session.py"
+        self.assertFalse(source.is_symlink())
+        before = source.read_text()
+        match = "os.O_WRONLY | os.O_APPEND | os.O_CREAT"
+        self.assertEqual(before.count(match), 1)
+        after = before.replace(match, "os.O_WRONLY | os.O_TRUNC | os.O_CREAT")
+        self.assertNotEqual(after, before)
+        source.write_text(after)
+        # The nested suite retains its installed compiler environment; its
+        # settings cases select only their own fixture homes and environment.
+        result = subprocess.run([str(ROOT / "skills/jarvis/tests/session.test.sh"),
+                                 "MainHostContract.test_main_host_private_file_contract", "-v"],
+                                env=os.environ | {"JARVIS_TEST_SCRIPT": str(scripts / "jarvis-session")},
+                                capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("self.assertEqual(private.read_bytes()[:len(original)], original)", result.stderr)
+
+    def test_main_host_initialization_and_precedence(self):
+        self.env["KENDEX_ENV_FILE"] = "private/new.env"
+        private = self.home / "private/new.env"
+        self.assertEqual(self.value("--get"), "")
+        self.assertFalse(private.exists())
+        self.assertEqual(self.value("--set", "saved:/main"), "saved:/main")
+        self.assertEqual(private.stat().st_mode & 0o777, 0o600)
+        self.env["JARVIS_MAIN_HOST"] = "caller:/main"
+        self.assertEqual(self.value("--get"), "caller:/main")
+        self.assertEqual(self.value("--clear"), "")
+        self.assertEqual(self.value("--get"), "caller:/main")
+        self.env.pop("JARVIS_MAIN_HOST")
+        self.assertEqual(self.value("--get"), "")
+        (self.home / "kendex.settings.toml").write_text('[env]\nJARVIS_MAIN_HOST = "shared:/main"\n')
+        self.assertEqual(self.value("--get"), "")
+
+    def test_main_host_refusals_do_not_mutate(self):
+        private = self.home / ".env.local"
+        original = b"SECRET='keep me'\n"
+        private.write_bytes(original)
+        private.chmod(0o640)
+        for value in ("host", "-host:/main", "host:relative", "host name:/main", "host:/main\nother"):
+            with self.subTest(value=value):
+                result = self.command("main-host", "--set=" + value, code=2)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("main-host=refused cause=setting-invalid", result.stderr)
+                self.assertEqual(private.read_bytes(), original)
+                self.assertEqual(private.stat().st_mode & 0o777, 0o640)
+        for words in ((), ("--get", "--clear"), ("--set", "host:/main", "--clear")):
+            with self.subTest(words=words):
+                self.assertEqual(self.command("main-host", *words, code=2).stdout, "")
+                self.assertEqual(private.read_bytes(), original)
+        # The shared resolver, rather than a parallel path validator, refuses
+        # paths outside the selected home. Loader output may contain secrets.
+        self.env["KENDEX_ENV_FILE"] = "../outside.env"
+        result = self.command("main-host", "--set", "host:/main", code=2)
+        self.assertIn("main-host=refused cause=settings-unreadable", result.stderr)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(private.read_bytes(), original)
+        self.env.pop("KENDEX_ENV_FILE")
+        private.write_bytes(original + b"echo private-secret >&2\nreturn 1\n")
+        result = self.command("main-host", "--get", code=2)
+        self.assertNotIn("private-secret", result.stderr + result.stdout)
+
+
 class SessionContract(unittest.TestCase):
     def setUp(self):
         self.owned_workers = []
