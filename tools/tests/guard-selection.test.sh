@@ -175,6 +175,7 @@ git -C "$R" commit -q -m reader
 BASE="$(git -C "$R" rev-parse HEAD)"
 git -C "$R" update-ref refs/remotes/origin/main "$BASE"
 READER_GREP="$(command -v grep)"
+READER_SED="$(command -v sed)"
 READER_AWK="$(command -v awk)"
 mkdir -p "$TMP/reader-bin"
 cat > "$TMP/reader-bin/grep" <<'SH'
@@ -206,7 +207,14 @@ case "$program:$READER_FAILURE" in
 esac
 exec "$READER_AWK" "$program" "$@"
 SH
-chmod +x "$TMP/reader-bin/grep" "$TMP/reader-bin/awk"
+cat > "$TMP/reader-bin/sed" <<'SH'
+#!/usr/bin/env bash
+case "${1:-}" in
+  's/[]['*) [ "$READER_FAILURE" != sed ] || { printf 'sed\n' > "$READER_CALLS"; exit 2; } ;;
+esac
+exec "$READER_SED" "$@"
+SH
+chmod +x "$TMP/reader-bin/grep" "$TMP/reader-bin/sed" "$TMP/reader-bin/awk"
 reader_failure() { # INPUT SCOPED FAILURE GUARD
   git -C "$R" reset -q --hard "$BASE"
   printf '# changed\n' >> "$R/$1"
@@ -214,12 +222,12 @@ reader_failure() { # INPUT SCOPED FAILURE GUARD
   rm -f -- "$TMP/reader-calls"
   RC=0
   OUT="$(cd "$R" && env -u DEV_VALIDATE_CLASS -u DEV_VALIDATE_DOCS_ONLY -u DEV_VALIDATE_PATHS \
-    PATH="$TMP/reader-bin:$PATH" READER_GREP="$READER_GREP" READER_AWK="$READER_AWK" \
+    PATH="$TMP/reader-bin:$PATH" READER_GREP="$READER_GREP" READER_SED="$READER_SED" READER_AWK="$READER_AWK" \
     READER_CALLS="$TMP/reader-calls" READER_FAILURE="$3" DEV_VALIDATE_SCOPED="$2" SUITE_LOG="$SUITE_LOG" \
     "$4" --selection --range "$BASE" 2>&1)" || RC=$?
 }
 
-for failure in 1 2 3 4; do
+for failure in 1 2 3 4 sed; do
   for row in 'tools/README.md|false' '.github/workflows/skill-tests.yml|false' '.github/workflows/skill-tests.yml|true'; do
     IFS='|' read -r input scoped <<<"$row"
     reader_failure "$input" "$scoped" "$failure" "$GUARD"

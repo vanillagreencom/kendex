@@ -84,32 +84,6 @@ for path in skills/demo/scripts/demo.sh skills/demo/README.md .agents/skills/dem
   git -C "$R" clean -qfd
 done
 
-# The catalog job's suite list filters each package's suites before the part
-# split, so every part splits one list: a listed suite runs alone, a part
-# the list leaves empty passes, and a list of no suite runs none. A list the
-# filter cannot apply runs the package whole unsplit and fails a part.
-printf '\n' >> "$R/skills/demo/README.md"
-filter_rows=0
-while IFS='|' read -r selection part expected; do
-  filter_rows=$((filter_rows + 1))
-  export SUITE_SELECTION="$selection"
-  run_release "$TMP/released/kendex" "" "$part"
-  unset SUITE_SELECTION
-  [ "$RC:$RAN" = "$expected" ] && ok "suite list $selection part ${part:-whole}" ||
-    bad "suite list $selection part ${part:-whole}" "$RC $RAN $OUT"
-done <<'ROWS'
-["skills/demo/tests/demo.test.sh"]||0:demo 
-["skills/demo/tests/demo.test.sh"]|1/2|0:demo 
-["skills/demo/tests/demo.test.sh"]|2/2|0:
-[]||0:
-all|2/2|0:demo 
-skills/demo/tests/demo.test.sh||0:companion demo 
-skills/demo/tests/demo.test.sh|1/2|1:
-ROWS
-[ "$filter_rows" -eq 7 ] || { echo "the suite-list table read $filter_rows rows" >&2; exit 1; }
-git -C "$R" reset -q --hard "$BASE"
-git -C "$R" clean -qfd
-
 # The package rows use whole shipped noncallers, including Node comments and
 # shell strings. Positive rows retain actual caller source with short suites
 # to observe dispatch. The prose rows cover comments and quoted separators.

@@ -184,8 +184,6 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       printf '%s has no node_modules; install its peers as its step in .github/workflows/skill-tests.yml does.\n' "$2" ;;
     suite)
       echo "that suite failed; its own output above names the case." ;;
-    suite-selection)
-      echo "tools/ci-job-set --suite-list could not read the catalog job's SUITE_SELECTION. The parts of a --part run split one list, so this part ran none of that package's suites; its cause is above." ;;
     kendex-unread)
       echo "run-all.sh --checkout-kendex could not say which of that package's suites a Linux CI leg gives a kendex. The parts of a --part run split one list, so this part ran none of that package's suites; its cause is above." ;;
     mapped-suites)
@@ -195,9 +193,8 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
         *" reason=unmapped "*) echo "that changed path maps to no suite by the rule in mapped_suites' header comment, so its tree's whole suite set ran." ;;
         *" reason=unidentified "*) echo "a scoped run could not identify which files read that changed path, so its tree's whole suite set ran." ;;
         *" reason=unreadable "*) echo "a file the reach scan for that changed path reads could not be read, so its tree's whole suite set ran; the failed scan operation is above." ;;
-        *" reason=selection-unread "*) echo "tools/ci-job-set --suite-list could not read the catalog job's SUITE_SELECTION, so this unsplit run ran the package's suites unfiltered; its cause is above." ;;
         *" reason=kendex-unread "*) echo "run-all.sh --checkout-kendex could not say which of that package's suites a Linux CI leg gives a kendex, so this unsplit run ran every shell suite of the package; its cause is above." ;;
-        *" reason=mapped "*) echo "this run ran that many of the tree's suites: those the reach scan over its changed files reaches. The scan misses a caller that runs a script through a variable path, or through another script that only runs it, so the count is not proof that every affected suite ran. The merge group runs the rest, save on a diff of skill Markdown alone, which it narrows by the CI reach in mapped_suites' header." ;;
+        *" reason=mapped "*) echo "this run ran that many of the tree's suites: those the reach scan over its changed files reaches. The scan misses a caller that runs a script through a variable path, or through another script that only runs it, so the count is not proof that every affected suite ran; CI's full run owns completeness." ;;
         *) echo "no explanation is defined for this value: tools/guard is broken." ;;
       esac
       ;;
@@ -244,8 +241,6 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       echo "that --range base names no commit in this repository." ;;
     inputs-undeclared)
       echo "that suite's own code names that skill document, and its # Inputs: note does not cover it; the note is what the merge group trusts, so add the document, or a directory holding it, to the note." ;;
-    reach-unread)
-      echo "mapped_suites could not read or compare the files the reach for that document scans, so no reader set is known and the caller runs every reader; the failed scan operation is above." ;;
     *)
       echo "no explanation is defined for this key: tools/guard is broken." ;;
   esac
@@ -318,9 +313,6 @@ if [ "${1:-}" = --released-packages ]; then
   export PATH="$release_dir:$PATH"
   # The harness-ci render suite otherwise replaces PATH with its own build.
   export KENDEX_RELEASE_TEST=1 HARNESS_CI_REQUIRE_KENDEX=1 ORCH_REQUIRE_KENDEX=1 REVIEW_GATE_REQUIRE_KENDEX=1
-  # The catalog job's suite list, read here and kept from the suites it runs.
-  release_selection=${SUITE_SELECTION-}
-  unset SUITE_SELECTION
   # Reuse the shell text reader for comments and quoted spans. Only candidate
   # command lines reach it: whole-file recovery is too broad for this selection.
   source "$TOOLS_DIR/../skills/commit-guards/scripts/lib/command-position.sh" || exit 1
@@ -338,29 +330,8 @@ if [ "${1:-}" = --released-packages ]; then
     shift 2
   fi
 fi
-# --doc-reach is the merge group's reader query for a diff of skill Markdown
-# alone; tools/ci-job-set is its one caller. The paths arrive on stdin, each a
-# .md file of a skill package, and the reach below answers the suites that
-# read any of them under its CI rules (ci_reach), without running anything.
-ci_reach=0
-reach_inputs=""
-if [ "${1:-}" = --doc-reach ]; then
-  [ "$#" -eq 1 ] || refuse argument "$2"
-  MODE=reach
-  selection_only=1
-  ci_reach=1
-  while IFS= read -r reach_path; do
-    [ -n "$reach_path" ] || continue
-    case "$reach_path" in
-      skills/*/*.md | .agents/skills/*/*.md | skills/*/*.markdown | .agents/skills/*/*.markdown) ;;
-      *) refuse argument "--doc-reach=$reach_path" ;;
-    esac
-    # A render is the same text as its source, so its source path answers.
-    reach_path=${reach_path#.agents/}
-    case $'\n'"$reach_inputs" in *$'\n'"$reach_path"$'\n'*) continue ;; esac
-    reach_inputs+="$reach_path"$'\n'
-  done
-  [ -n "$reach_inputs" ] || refuse argument --doc-reach-without-paths
+if [ "${1:-}" = --note-skips ]; then
+  MODE=note-skips
   shift
 fi
 if [ "${1:-}" = --selection ]; then
@@ -422,10 +393,9 @@ case "${1:-}" in
       '        a skill package'"'"'s Markdown, source or render, selects no suite there,' \
       '        nor does a .kendex-generated.json change only to their rows, save' \
       '        in a tree whose suites tools/ci-job-set runs in no shard.' \
-      '--doc-reach: read skill Markdown paths on stdin and print every suite that' \
-      '        reads one, by the CI reach in mapped_suites'"'"' header; run nothing.' \
-      '        Exit 1: a suite'"'"'s code names a path its # Inputs: note leaves out.' \
-      '        Exit 2: a file of the reach could not be read.'
+      '--note-skips: read skill Markdown paths on stdin and print every shell suite' \
+      '        whose # Inputs: note covers none of them; run nothing.' \
+      '        Exit 1: such a suite'"'"'s own code names one of the paths.'
     exit 0
     ;;
 esac
@@ -437,6 +407,164 @@ if [ "$MODE" = range ]; then
   # name moves while the run is going.
   range_sha=$(git rev-parse --verify -q "$range_base^{commit}") || refuse range-base "$range_base"
   range_base=$range_sha
+fi
+
+# The one reading of a file's input notes, for scan_load and --note-skips:
+# every item of a `# Inputs:` line, items separated by spaces, commas or
+# both, a line ending in a comma going on into the next comment line, and a
+# trailing period dropped from an item. note_line prints `I<tab>KEY<tab>ITEM`
+# for each item and answers whether TEXT belongs to KEY's note.
+INPUTS_NOTE_AWK='
+  function note_line(key, text, items, count, j) {
+    if (text !~ /^# Inputs: / && !(noting[key] && text ~ /^#/)) {
+      noting[key] = 0
+      return 0
+    }
+    count = split(substr(text, (text ~ /^# Inputs: / ? 11 : 2)), items, /[ ,]+/)
+    for (j = 1; j <= count; j++) {
+      sub(/\.$/, "", items[j])
+      if (items[j] != "") print "I\t" key "\t" items[j]
+    }
+    noting[key] = text ~ /,[[:space:]]*$/
+    return 1
+  }
+'
+
+# --note-skips is the merge group's suite query for a diff of skill Markdown
+# alone; tools/ci-job-set is its one caller. The paths arrive on stdin, each
+# a Markdown file of a skill package or its render, and it prints, one per
+# line, each shell suite whose input note covers none of them, running
+# nothing. An item covers a path, its source or its .agents/ render, as a
+# case pattern, or as a directory holding it: one spelled with a trailing
+# slash or a directory of the checkout. A suite with no note is never
+# printed, nor one with a note this cannot take: every item must be a
+# repository path whose fixed part exists, with no brace list, so a note in
+# prose or relative to its own tree reads as none.
+# Exit 1 is the consistency check: a suite it would print whose own code
+# names one of the paths as a read of the checkout, `/skills/<name>/<file>`
+# not after .agents/, `../<name>/<file>`, or inside its own package
+# `/<file>` after an upper-case root variable; a bare relative path is a
+# fixture's. Exit 2 is a suite it could not read.
+note_covers() { # ITEM PATH
+  # shellcheck disable=SC2254 # the item is a case pattern
+  case "$2" in $1) return 0 ;; esac
+  case "$1" in
+    */) case "$2" in "$1"*) return 0 ;; esac ;;
+    *[*?[]*) ;;
+    *) if [ -d "$1" ]; then case "$2" in "$1"/*) return 0 ;; esac; fi ;;
+  esac
+  return 1
+}
+# Prints SUITE where its note ITEMS, one per line, can be taken and covers
+# none of note_docs; status 1 where it would print SUITE and NAMED, the
+# paths its code names, holds one.
+note_skip() { # SUITE ITEMS NAMED
+  local item fixed doc covered=1
+  while IFS= read -r item; do
+    [ -n "$item" ] || continue
+    case "$item" in *[{}]*) return 0 ;; */* | *.*) ;; *) return 0 ;; esac
+    fixed=${item%%[*?[]*}
+    case "$fixed" in
+      "") return 0 ;;
+      */) [ -d "$fixed" ] || return 0 ;;
+      *)
+        if [ "$fixed" = "$item" ]; then
+          [ -e "$fixed" ] || return 0
+        else
+          case "$fixed" in */*) [ -d "${fixed%/*}" ] || return 0 ;; esac
+        fi
+        ;;
+    esac
+    while IFS= read -r doc; do
+      [ -n "$doc" ] || continue
+      if note_covers "$item" "$doc" || note_covers "$item" ".agents/$doc"; then covered=0; fi
+    done <<<"$note_docs"
+  done <<<"$2"
+  [ "$covered" -eq 1 ] || return 0
+  if [ -n "$3" ]; then
+    say inputs-undeclared "$1 path=${3%%$'\n'*}" >&2
+    return 1
+  fi
+  printf '%s\n' "$1"
+}
+if [ "$MODE" = note-skips ]; then
+  note_docs=""
+  while IFS= read -r doc; do
+    [ -n "$doc" ] || continue
+    case "$doc" in
+      skills/*/*.md | .agents/skills/*/*.md | skills/*/*.markdown | .agents/skills/*/*.markdown) ;;
+      *) refuse argument "--note-skips=$doc" ;;
+    esac
+    # A render is the same text as its source, so its source path answers.
+    doc=${doc#.agents/}
+    case $'\n'"$note_docs" in *$'\n'"$doc"$'\n'*) continue ;; esac
+    note_docs+="$doc"$'\n'
+  done
+  [ -n "$note_docs" ] || refuse argument --note-skips-without-paths
+  note_suites=()
+  for t in tools/tests/*.sh hooks/tests/*.sh refresh/tests/*.sh skills/*/tests/*.sh; do
+    [ ! -f "$t" ] || note_suites+=("$t")
+  done
+  noted_status=0
+  noted=$(grep -l -e '^# Inputs: ' -- "${note_suites[@]}") || noted_status=$?
+  case "$noted_status" in 0) ;; 1) exit 0 ;; *) exit 2 ;; esac
+  # Per suite, its note items (I), each path its code names (C), then its
+  # end (E). The patterns are those the header above names.
+  # shellcheck disable=SC2086 # one suite path per word, none with a space
+  note_records=$(GUARD_NOTE_DOCS=$note_docs awk "$INPUTS_NOTE_AWK"'
+    function escape(text) {
+      gsub(/[][\\.*^$+?(){}|]/, "\\\\&", text)
+      return text
+    }
+    BEGIN {
+      end = "([^[:alnum:]_/-]|$)"
+      count = split(ENVIRON["GUARD_NOTE_DOCS"], list, "\n")
+      for (i = 1; i <= count; i++) {
+        if (list[i] == "") continue
+        n++
+        doc[n] = list[i]
+        rel = substr(list[i], 8)
+        file = rel
+        sub(/^[^\/]*\//, "", file)
+        package[n] = "skills/" substr(rel, 1, length(rel) - length(file))
+        base[n] = file
+        sub(/.*\//, "", base[n])
+        named[n] = "(^|[^s])/" escape(list[i]) end "|\\.\\./" escape(rel) end
+        own[n] = "\\$\\{?[A-Z_]*(ROOT|DIR|SKILL|HERE|PACKAGE|PKG)[A-Z_]*\\}?[\"'"'"']?/" escape(file) end
+      }
+    }
+    FNR == 1 {
+      if (NR > 1) print "E\t" suite
+      suite = FILENAME
+      split("", hit)
+    }
+    note_line(suite, $0) { next }
+    /^[[:space:]]*#/ { next }
+    {
+      # Every pattern spells the file name, so a line without it is passed
+      # over before any is matched.
+      for (k = 1; k <= n; k++)
+        if (!hit[k] && index($0, base[k]) && ($0 ~ named[k] || (index(suite, package[k]) == 1 && $0 ~ own[k]))) {
+          hit[k] = 1
+          print "C\t" suite "\t" doc[k]
+        }
+    }
+    END { if (NR > 0) print "E\t" suite }
+  ' $noted) || exit 2
+  note_items=""
+  note_named=""
+  while IFS=$'\t' read -r kind t value; do
+    case "$kind" in
+      I) note_items+="$value"$'\n' ;;
+      C) note_named+="$value"$'\n' ;;
+      E)
+        note_skip "$t" "$note_items" "$note_named" || exit 1
+        note_items=""
+        note_named=""
+        ;;
+    esac
+  done <<<"$note_records"
+  exit 0
 fi
 
 # The lanes --full runs. dev-validate-run hands over what the classifier and
@@ -501,7 +629,7 @@ fi
 touched=""
 untracked_touched=""
 base_resolved=0
-if [ "$MODE" = range ] || [ "$MODE" = full ]; then
+if [ "$MODE" != default ]; then
   if [ "$MODE" = range ]; then
     suites_base=$range_base
     base_resolved=1
@@ -1546,44 +1674,35 @@ pi_suite_failed() { # DIR OUTPUT: classify each Bun failure before the suite
 # run-all.sh, any other file under tests/<dir>/, tests/*.py outside a scoped
 # run, a file of hooks/ that is no hook, and anything else. mapped_suites'
 # header says what a scoped run reads for a test module or such a path.
-path_role() { # DIR REL — sets ROLE; status 1 where the path has none
-  ROLE=""
-  # The CI reach asks of every skill Markdown file as a document.
-  if [ "$ci_reach" -eq 1 ]; then
-    case "$2" in *.md | *.markdown) ROLE=doc; return 0 ;; esac
-  fi
+path_role() { # DIR REL
   case "$1:$2" in
     skills/*:kendex.settings.toml.example)
       [[ ${example_areas-} == *" $1"$'\n'* ]] || return 1
-      ROLE=settings-example
+      echo settings-example
       ;;
     *:tests/run-all.sh) return 1 ;;
-    *:scripts/*/*.sh | *:scripts/*/*.bash) ROLE=lib ;;
-    *:tests/lib/*.sh | *:tests/lib/*.bash) ROLE=helper ;;
-    *:scripts/*/*) ROLE=module ;;
-    *:tests/lib/*) ROLE=test-module ;;
-    *:tests/*/*.sh | *:tests/*/*.bash | *:tests/*/*.py | *:tests/*/*.mjs | *:tests/*/*.js | *:tests/*/*.ts)
-      [ "$ci_reach" -eq 1 ] || return 1
-      ROLE=test-module
-      ;;
+    *:scripts/*/*.sh | *:scripts/*/*.bash) echo lib ;;
+    *:tests/lib/*.sh | *:tests/lib/*.bash) echo helper ;;
+    *:scripts/*/*) echo module ;;
+    *:tests/lib/*) echo test-module ;;
     *:tests/*/*) return 1 ;;
     *:tests/*.py)
-      [ "$scoped_only" -eq 1 ] || [ "$ci_reach" -eq 1 ] || return 1
-      ROLE=test-program
+      [ "$scoped_only" -eq 1 ] || return 1
+      echo test-program
       ;;
-    *:tests/*.sh) ROLE=suite ;;
+    *:tests/*.sh) echo suite ;;
     *:tests/*.test.mjs)
       if [ -f "$1/tests/run-all.sh" ]; then return 1; fi
-      ROLE=suite
+      echo suite
       ;;
-    hooks:*.md) ROLE=doc ;;
+    hooks:*.md) echo doc ;;
     hooks:*/*) return 1 ;;
-    hooks:*.sh) ROLE=script ;;
+    hooks:*.sh) echo script ;;
     hooks:*) return 1 ;;
-    tools:*.md) ROLE=doc ;;
-    tools:*) ROLE=script ;;
-    *:scripts/*) ROLE=script ;;
-    *:references/* | *.md) ROLE=doc ;;
+    tools:*.md) echo doc ;;
+    tools:*) echo script ;;
+    *:scripts/*) echo script ;;
+    *:references/* | *.md) echo doc ;;
     *) return 1 ;;
   esac
 }
@@ -1593,7 +1712,7 @@ skill_suites() { # DIR [shell]
   local t
   for t in "$1"/tests/*.sh "$1"/tests/*.test.mjs; do
     [ -f "$t" ] || continue
-    path_role "$1" "${t#"$1"/}" && [ "$ROLE" = suite ] || continue
+    [ "$(path_role "$1" "${t#"$1"/}")" = suite ] || continue
     if [ "${2:-}" = shell ]; then
       case "$t" in *.sh) ;; *) continue ;; esac
     fi
@@ -1604,16 +1723,9 @@ skill_suites() { # DIR [shell]
 # file path_role gives a role other than doc.
 skill_files() { # DIR
   local f role
-  local deep=""
-  # The CI reach also reads the code below tests/<dir>/, which a suite can
-  # run by a path the name scan does not follow.
-  if [ "$ci_reach" -eq 1 ] && [ -d "$1/tests" ]; then
-    deep=$(find "$1/tests" -mindepth 2 -type f ! \( -path "$1/tests/lib/*" ! -path "$1/tests/lib/*/*" \)) || return 2
-  fi
-  for f in "$1"/* "$1"/scripts/* "$1"/scripts/*/* "$1"/tests/lib/* "$1"/tests/*.sh "$1"/tests/*.test.mjs "$1"/tests/*.py $deep; do
+  for f in "$1"/* "$1"/scripts/* "$1"/scripts/*/* "$1"/tests/lib/* "$1"/tests/*.sh "$1"/tests/*.test.mjs "$1"/tests/*.py; do
     [ -f "$f" ] || continue
-    path_role "$1" "${f#"$1"/}" || continue
-    role=$ROLE
+    role=$(path_role "$1" "${f#"$1"/}") || continue
     case "$role" in
       script | lib | helper | module | test-module | test-program | suite) printf '%s %s\n' "$role" "$f" ;;
     esac
@@ -1694,14 +1806,8 @@ PY
 # SCAN_PATH, SCAN_ROLE, SCAN_NAMES, each `/<name>` that non-comment code
 # spells and each `/<module>.py` a test program imports, and SCAN_SOURCED, each
 # `/<name>` its `source` and `.` lines spell, one per line between newlines,
-# and SCAN_INPUTS, the repository path patterns in its input notes: every item
-# of a `# Inputs:` line, items separated by spaces, commas or both, a line
-# ending in a comma going on into the next comment line, and a trailing
-# period dropped from an item. Under the CI reach it also holds
-# SCAN_WALKS, the packages each file's run-time reads reach, as
-# mapped_suites' header lists them, and SCAN_CHECKS and SCAN_KINDS per query:
-# the suites whose own code names the document as the consistency check
-# reads it, and `call` for a script of another package.
+# and SCAN_INPUTS, the repository path patterns in its input notes, as
+# INPUTS_NOTE_AWK reads them.
 # SCAN_RELS and SCAN_READERS cache the reader indexes for every requested doc
 # or repository input in this tree, one per changed [env] key of a narrowed
 # kendex.settings.toml (settings_change) or per example_areas key of a
@@ -1723,9 +1829,6 @@ scan_load() { # DIR
   SCAN_RELS=()
   SCAN_KEYS=()
   SCAN_READERS=()
-  SCAN_CHECKS=()
-  SCAN_KINDS=()
-  SCAN_WALKS=()
   files=$(skill_files "$1") || return 2
   while IFS=' ' read -r role f; do
     [ -n "$f" ] || continue
@@ -1735,7 +1838,6 @@ scan_load() { # DIR
     SCAN_NAMES+=("")
     SCAN_SOURCED+=("")
     SCAN_INPUTS+=("")
-    SCAN_WALKS+=("")
     scan_input="${scan_input}F $i $role $f$nl"
   done <<<"$files"
   while IFS=$'\t' read -r tree rel path; do
@@ -1744,8 +1846,8 @@ scan_load() { # DIR
     case "$rel" in
       ../*) ;;
       *)
-        path_role "$1" "$rel" || continue
-        case "$ROLE" in
+        role=$(path_role "$1" "$rel") || continue
+        case "$role" in
           doc) ;;
           settings-example)
             while read -r key key_tree; do
@@ -1762,83 +1864,12 @@ scan_load() { # DIR
       SCAN_RELS+=("$rel")
       SCAN_KEYS+=("$key")
       SCAN_READERS+=("")
-      SCAN_CHECKS+=("")
-      doc_readers "$rel" "$key" "$1" || return 2
-      SCAN_KINDS+=("$reader_kind")
-      scan_input="${scan_input}Q $q $reader_kind$nl${reader_patterns[0]}$nl${reader_patterns[1]}$nl${reader_patterns[2]}$nl${reader_patterns[3]}$nl${reader_patterns[4]}$nl"
+      doc_readers "$rel" "$key" || return 2
+      scan_input="${scan_input}Q $q$nl${reader_patterns[0]}$nl${reader_patterns[1]}$nl${reader_patterns[2]}$nl${reader_patterns[3]}$nl"
     done
   done <<<"$tree_paths"
   # File text stays inside the batch. Bash receives only reach metadata.
-  cache=$(GUARD_CI_REACH=$ci_reach awk '
-    # The packages one run-time read can reach, or "": the packages it
-    # names, `own` for its own package'"'"'s root, `*` for the checkout root.
-    # mapped_suites'"'"' header lists the shapes.
-    # Whether TEXT reads a literal Markdown path below a variable no rule
-    # names (`"$DW/SKILL.md"`): a root, own, temporary or fixture variable
-    # there leaves the path to the name scan or to no package.
-    function joined(text, rest, var) {
-      rest = text
-      while (match(rest, /\$\{?[[:alpha:]_][[:alnum:]_]*\}?\/[^[:space:]"'"'"'$]*\.(md|markdown)([^[:alnum:]_]|$)/)) {
-        var = substr(rest, RSTART, RLENGTH)
-        rest = substr(rest, RSTART + RLENGTH)
-        sub(/\/.*/, "", var)
-        var = toupper(var)
-        if (var !~ /TMP|TEMP|SANDBOX|SCRATCH|HOME|FAKE|FIXTURE|WORLD|STATE|OUT|ROOT|REPO|CHECKOUT|SKILL|PACKAGE|PKG|SELF|HERE|TEST_DIR|TESTS_DIR|SCRIPT_DIR|SCRIPTS_DIR/)
-          return 1
-      }
-      return 0
-    }
-    function walks(text, low, rest, name, scope, var, bounded, unbounded) {
-      # Each shape below spells one of these, so a line holding none is
-      # passed over before any expression is matched.
-      if (!index(text, ".md") && !index(text, ".markdown") && !index(text, "kendex") && !index(text, "cp ") &&
-          !index(text, "copytree") && !index(text, "rglob") && !index(text, "grep ") && !index(text, "find ") &&
-          !index(text, "resolve_sibling"))
-        return ""
-      low = tolower(text)
-      if (text !~ /\$\{?[[:alnum:]_]+\}?["'"'"']?\.(md|markdown)([^[:alnum:]_]|$)|\}\.(md|markdown)([^[:alnum:]_]|$)|\+[[:space:]]*["'"'"']\.(md|markdown)["'"'"']|\*\.(md|markdown)/ &&
-          !joined(text) &&
-          !(low ~ /(^|[^[:alnum:]_.\/-])kendex["'"'"']?([[:space:],)]|$)/ && low ~ /skill/) &&
-          text !~ /(^|[^[:alnum:]_-])cp[[:space:]]+(-[[:alnum:]]*[rRa]|--recursive|--archive)|copytree|rglob\(|(^|[^[:alnum:]_-])grep[[:space:]]+(-[[:alnum:]]*[rR]|--recursive)|(^|[^[:alnum:]_-])find[[:space:]]+(-[HLP][[:space:]]+)?["'"'"']?\$/)
-        if (text !~ /(^|[^[:alnum:]_])gg_resolve_sibling[[:space:]]/)
-          return ""
-      # The sibling resolver reaches the package it names, or any package
-      # where a variable names it.
-      if (match(text, /(^|[^[:alnum:]_])gg_resolve_sibling[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:])]+/)) {
-        name = substr(text, RSTART, RLENGTH)
-        sub(/.*[[:space:]]/, "", name)
-        gsub(/["'"'"']/, "", name)
-        if (name !~ /^[[:alnum:]][[:alnum:]_-]*$/) return "*"
-        return name
-      }
-      if (text ~ /\.\.\/["'"'"']?\$/) return "*"
-      rest = text
-      while (match(rest, /(skills\/|\.\.\/)[[:alnum:]][[:alnum:]_-]*/)) {
-        name = substr(rest, RSTART, RLENGTH)
-        sub(/^(skills\/|\.\.\/)/, "", name)
-        scope = scope " " name
-        rest = substr(rest, RSTART + RLENGTH)
-      }
-      if (scope != "") return substr(scope, 2)
-      if (joined(text)) return "*"
-      rest = text
-      while (match(rest, /\$\{?[[:alpha:]_][[:alnum:]_]*/)) {
-        var = toupper(substr(rest, RSTART, RLENGTH))
-        rest = substr(rest, RSTART + RLENGTH)
-        if (var ~ /TMP|TEMP|SANDBOX|SCRATCH|HOME|FAKE|FIXTURE|WORLD|STATE|OUT/) { bounded = 1; continue }
-        if (var ~ /ROOT|REPO|CHECKOUT/) return "*"
-        if (var ~ /SKILL|PACKAGE|PKG|SELF|HERE|TEST_DIR|TESTS_DIR|SCRIPT_DIR|SCRIPTS_DIR/) scope = "own"
-        else unbounded = 1
-      }
-      if (scope != "") return scope
-      if (low ~ /(^|[^[:alnum:]_])(repo|root|checkout)([^[:alnum:]_]|$)|__file__|parents\[/ || text ~ /(^|[^[:alnum:]_.-])skills\/?([^[:alnum:]_\/-]|$)/) return "*"
-      if (text ~ /(^|[^[:alnum:]_.])\.\.\//) return "own"
-      # A read whose root no rule above bounds can reach any package; a line
-      # whose every variable names a temporary, fixture or state directory
-      # reaches none.
-      if (bounded && !unbounded) return ""
-      return "*"
-    }
+  cache=$(awk "$INPUTS_NOTE_AWK"'
     function scan_names(reader, text, kind, rest, name) {
       rest = text
       while (match(rest, /\/[[:alnum:]._-]*[[:alnum:]_-]/)) {
@@ -1869,32 +1900,12 @@ scan_load() { # DIR
           print "N\t" reader "\t" name
       }
     }
-    function scan_file(reader, path, role, text, status, closed, count, code, keep, read_names, assignment_names, assignment_lines, assignments, rest, name, i, j, notes, note_count, noting, scope) {
+    function scan_file(reader, path, role, text, status, closed, count, code, keep, read_names, assignment_names, assignment_lines, assignments, rest, name, i) {
       path = scan_paths[reader]; role = scan_roles[reader]
       while ((status = (getline text < path)) > 0) {
-        # A note whose line ends in a comma goes on into the next comment
-        # line; a trailing period ends an item.
-        if (text ~ /^# Inputs: / || (noting && text ~ /^#/)) {
-          note_count = split(substr(text, (text ~ /^# Inputs: / ? 11 : 2)), notes, /[ ,]+/)
-          for (j = 1; j <= note_count; j++) {
-            sub(/\.$/, "", notes[j])
-            if (notes[j] != "") print "I\t" reader "\t" notes[j]
-          }
-          noting = text ~ /,[[:space:]]*$/
-          continue
-        }
-        noting = 0
+        if (note_line(reader, text)) continue
         if (text ~ /^[[:space:]]*#/) continue
         code[++count] = text
-        if (ci) {
-          if (calls) {
-            if (text ~ named_any) all_lines[reader, ++all_counts[reader]] = text
-            if (index(text, "gg_resolve_sibling")) sibling_lines[reader, ++sibling_counts[reader]] = text
-          }
-          scope = walks(text)
-          if (scope != "" && !walk_seen[reader, scope]++)
-            print "W\t" reader "\t" scope
-        }
         scan_names(reader, text, "N")
         if (role == "test-program") scan_imports(reader, text)
         if (text ~ /(^|[;&|({[:space:]])(source|\.)[[:space:]]/)
@@ -1934,7 +1945,6 @@ scan_load() { # DIR
         if (keep[i]) reader_lines[reader, ++reader_counts[reader]] = code[i]
       return 1
     }
-    BEGIN { ci = ENVIRON["GUARD_CI_REACH"] == "1" }
     $1 == "F" {
       i = $2; scan_roles[i] = $3
       path = $0
@@ -1944,18 +1954,10 @@ scan_load() { # DIR
       next
     }
     $1 == "Q" {
-      q = $2; queries[q] = 1; query_kinds[q] = $3
-      if ($3 == "call") calls = 1
-      for (p = 0; p < 5; p++) {
+      q = $2; queries[q] = 1
+      for (p = 0; p < 4; p++) {
         if (getline <= 0) { failed = 1; exit 2 }
         query_patterns[q, p] = $0
-      }
-      # Every call names its script by a fixed string; a line spelling
-      # none of them is no call, so only lines matching one are kept.
-      if (query_kinds[q] == "call") {
-        named = query_patterns[q, 0]
-        gsub(/[][\\.*^$+?(){}|]/, "\\\\&", named)
-        named_any = named_any (named_any == "" ? "" : "|") named
       }
       next
     }
@@ -1970,47 +1972,12 @@ scan_load() { # DIR
         for (q in queries) {
           pattern = query_patterns[q, reader_phase]
           if (pattern == "-") continue
-          # A call is any code line naming the script, not a read alone. Its
-          # second pattern spells gg_resolve_sibling, so only lines holding
-          # that word are matched against it.
-          if (query_kinds[q] == "call") {
-            if (reader_phase == 0) {
-              for (reader in all_counts)
-                for (line = 1; line <= all_counts[reader]; line++)
-                  if (index(all_lines[reader, line], pattern)) {
-                    print "R\t" q "\t" reader
-                    break
-                  }
-            } else {
-              for (reader in sibling_counts)
-                for (line = 1; line <= sibling_counts[reader]; line++)
-                  if (sibling_lines[reader, line] ~ pattern) {
-                    print "R\t" q "\t" reader
-                    break
-                  }
-            }
-            continue
-          }
           for (reader in reader_counts) {
             for (line = 1; line <= reader_counts[reader]; line++) {
               if (reader_phase == 0 ? index(reader_lines[reader, line], pattern) : reader_lines[reader, line] ~ pattern) {
                 print "R\t" q "\t" reader
                 break
               }
-            }
-          }
-        }
-      }
-      # The consistency names, read from each suite'"'"'s own code.
-      for (q in queries) {
-        pattern = query_patterns[q, 4]
-        if (pattern == "-") continue
-        for (reader in reader_counts) {
-          if (scan_roles[reader] != "suite") continue
-          for (line = 1; line <= reader_counts[reader]; line++) {
-            if (reader_lines[reader, line] ~ pattern) {
-              print "C\t" q "\t" reader
-              break
             }
           }
         }
@@ -2026,27 +1993,10 @@ scan_load() { # DIR
       S) SCAN_SOURCED[i]+="$nl$value$nl" ;;
       I) SCAN_INPUTS[i]+="$value$nl" ;;
       R) [[ ${SCAN_READERS[i]} == *"$nl$value$nl"* ]] || SCAN_READERS[i]+="$nl$value$nl" ;;
-      C) SCAN_CHECKS[i]+="$nl$value$nl" ;;
-      W) SCAN_WALKS[i]+=" $value " ;;
       *) return 2 ;;
     esac
   done <<<"$cache"
   SCAN_DIR=$1
-}
-# Sets ESCAPED to TEXT with each ERE metacharacter backslashed, in the
-# shell: the reach builds patterns for every carried path of every tree,
-# where a command substitution per pattern was most of its time.
-ere_escape() { # TEXT
-  local text=$1 c
-  ESCAPED=""
-  while [ -n "$text" ]; do
-    c=${text:0:1}
-    text=${text:1}
-    case "$c" in
-      '[' | ']' | '\' | . | '*' | '^' | '$' | + | '?' | '(' | ')' | '{' | '}' | '|') ESCAPED+="\\$c" ;;
-      *) ESCAPED+=$c ;;
-    esac
-  done
 }
 # The comparison patterns for scanned files that read the doc REL, cached
 # by scan_load as reader indexes for all requested inputs in the tree:
@@ -2076,23 +2026,22 @@ ere_escape() { # TEXT
 # whole word, and a change to comments alone has no reader here. A suite
 # that only writes a settings file of its own names no changed key; a file
 # that reads the repository's whole file declares it in an input note.
-doc_readers() { # REL [KEY] [TREE]
+doc_readers() { # REL [KEY]
   local rel="$1" dir token external=0 source_rel source_tree
-  local skill_root catalog_root walk_root walk named="" whole check='-'
-  reader_kind=doc
+  local skill_root catalog_root walk_root walk
   if [ -n "${2-}" ]; then
-    reader_patterns=(- "(^|[^[:alnum:]_])$2([^[:alnum:]_]|\$)" - - -)
+    reader_patterns=(- "(^|[^[:alnum:]_])$2([^[:alnum:]_]|\$)" - -)
     return 0
   fi
   if [ "$rel:$settings_scope" = ../kendex.settings.toml:inert ]; then
-    reader_patterns=(- - - - -)
+    reader_patterns=(- - - -)
     return 0
   fi
   skill_root='\$\{?[A-Z_]*SKILL[A-Z_]*\}?'
   catalog_root='[^[:space:]"]*/skills'
   case "$rel" in ../*) external=1; rel=${rel#../} ;; esac
-  ere_escape "$rel"
-  token="(^|[^[:alnum:]._/-])$ESCAPED([^[:alnum:]_/-]|\$)"
+  token=$(sed 's/[][\\.*^$+?(){}|]/\\&/g' <<<"$rel") || return 2
+  token="(^|[^[:alnum:]._/-])$token([^[:alnum:]_/-]|\$)"
   case "$rel" in
     */*)
       dir="/${rel%%/*}(/?\$|/[^[:alnum:]._-]|[\"}]*[[:space:]]*/?[*\$])|[\"'](\\\$|[./])[^\"']*/${rel%%/*}[\"']([[:space:]]|\\)|\$)"
@@ -2109,7 +2058,7 @@ doc_readers() { # REL [KEY] [TREE]
         source_rel=${rel#skills/}
         source_tree=skills/${source_rel%%/*}
         source_rel=${source_rel#*/}
-        if path_role "$source_tree" "$source_rel" && [ "$ROLE" = doc ]; then
+        if [ "$(path_role "$source_tree" "$source_rel")" = doc ]; then
           walk_root=$catalog_root
         fi
         ;;
@@ -2119,38 +2068,7 @@ doc_readers() { # REL [KEY] [TREE]
   if [ -n "$walk_root" ]; then
     walk='(^|[^[:alnum:]_-])find[[:space:]]+(-[HLP][[:space:]]+)?([^-[:space:]][^[:space:]]*[[:space:]]+)*"?('"$walk_root"')"?([[:space:]]|\)|$)'
   fi
-  if [ "$ci_reach" -eq 1 ]; then
-    # A package's path from inside another, `../<name>/...`, and its render
-    # under .agents/ both name it after `/<name>/`.
-    case "$rel:$external" in skills/*/*:1) named=/${rel#skills/} ;; esac
-    # The consistency name is a read of the checkout, never a sandbox path a
-    # fixture writes: `/skills/<name>/<file>` joined to a root but not to
-    # .agents/, `../<name>/<file>`, or inside the package `/<file>` after an
-    # upper-case root variable.
-    whole=$rel
-    [ "$external" -eq 1 ] || whole=${3-}/$rel
-    ere_escape "$whole"
-    whole=$ESCAPED
-    check="(^|[^s])/$whole([^[:alnum:]_/-]|\$)"
-    case "$whole" in
-      skills/*) check="$check|\\.\\./${whole#skills/}([^[:alnum:]_/-]|\$)" ;;
-    esac
-    if [ "$external" -eq 0 ]; then
-      ere_escape "$rel"
-      check="$check|\\\$\\{?[A-Z_]*(ROOT|DIR|SKILL|HERE|PACKAGE|PKG)[A-Z_]*\\}?[\"']?/$ESCAPED([^[:alnum:]_/-]|\$)"
-    fi
-    if [ "$external" -eq 1 ] && [ -n "$named" ] && [ "$walk_root" != "$catalog_root" ]; then
-      # A script of another package: every line that names it calls it,
-      # and so does a sibling resolution of its package, or of a package a
-      # variable names, since the call through it spells no path.
-      reader_kind=call
-      token=${rel#skills/}
-      token=${token%%/*}
-      reader_patterns=("$named" "(^|[^[:alnum:]_])gg_resolve_sibling[[:space:]]+[^[:space:]]+[[:space:]]+[\"']?(${token}[\"']?([[:space:])]|\$)|\\\$)" - - -)
-      return 0
-    fi
-  fi
-  reader_patterns=("${named:-/$rel}" "$token" "$dir" "$walk" "$check")
+  reader_patterns=("/$rel" "$token" "$dir" "$walk")
 }
 # A file in the reach adds its name as a needle by its role, into the
 # caller's next_any, next_script and reach_scripts.
@@ -2167,47 +2085,6 @@ reach_join() { # ROLE PATH [changed]
     suite) ;;
     *) return 3 ;;
   esac
-}
-# Whether one input-note item covers the repository path PATH: as a case
-# pattern does, and under the CI reach also as a directory that holds PATH,
-# spelled with a trailing slash or naming a directory of the checkout.
-note_covers() { # ITEM PATH
-  case "$2" in $1) return 0 ;; esac
-  [ "$ci_reach" -eq 1 ] || return 1
-  case "$1" in
-    */) case "$2" in "$1"*) return 0 ;; esac ;;
-    *[*?[]*) ;;
-    *) if [ -d "$1" ]; then case "$2" in "$1"/*) return 0 ;; esac; fi ;;
-  esac
-  return 1
-}
-# Whether file I's input note covers the skill path PATH, its source or its
-# render: status 0 where it does, 1 where it does not, and 2 where the file
-# has no note the CI reach can take. A note is taken only when every item is
-# a repository path whose fixed part exists in the checkout, and holds no
-# brace list; a note in prose, or with paths relative to its own tree, is
-# read as no note, so its file's reach is the scan's.
-inputs_cover() { # I PATH
-  local item fixed covered=1
-  [ -n "${SCAN_INPUTS[$1]}" ] || return 2
-  while IFS= read -r item; do
-    [ -n "$item" ] || continue
-    case "$item" in *[{}]*) return 2 ;; */* | *.*) ;; *) return 2 ;; esac
-    fixed=${item%%[*?[]*}
-    case "$fixed" in
-      "") return 2 ;;
-      */) [ -d "$fixed" ] || return 2 ;;
-      *)
-        if [ "$fixed" = "$item" ]; then
-          [ -e "$fixed" ] || return 2
-        else
-          case "$fixed" in */*) [ -d "${fixed%/*}" ] || return 2 ;; esac
-        fi
-        ;;
-    esac
-    if note_covers "$item" "$2" || note_covers "$item" ".agents/$2"; then covered=0; fi
-  done <<<"${SCAN_INPUTS[$1]}"
-  return "$covered"
 }
 # The suites run for one changed repository path in a skill, hooks/, refresh/
 # or tools/: REL is inside the tree, or ../ followed by a repository input.
@@ -2287,47 +2164,7 @@ inputs_cover() { # I PATH
 # outside a skill package.
 # The reach is what the scan can see, not every caller: a script run through
 # a variable path is missed, and so is a suite that runs a changed script
-# only through another script that runs it. A scoped run leaves completeness
-# to the merge group's run, which narrows only under the CI reach below.
-# THE CI REACH, --doc-reach, the merge group's narrowed row, asks each skill
-# document of every tree and fails closed where the text cannot say:
-#   - Test programs, and code files below tests/<dir>/, are scanned too.
-#   - A run-time read is a reader of the documents it can reach, whatever
-#     its role: a directory copy or walk (`cp -R`, `cp -r`, `cp -a`,
-#     `shutil.copytree`, `rglob(`, `grep -r`, `find "$d"`), a Markdown path
-#     assembled at run time (`"${x}.md"`, `$x.md`, `{x}.md`, `x + ".md"`,
-#     `*.md`), a literal Markdown path below a variable no rule here names
-#     (`"$DW/SKILL.md"`), a sibling package resolved by
-#     `gg_resolve_sibling`, and kendex given a skill directory (a kendex
-#     command on a line naming a skill).
-#     A line names the packages it reaches as `skills/<name>`, `../<name>`
-#     or the package gg_resolve_sibling names; `../$x`, a variable sibling
-#     or a literal path below an unnamed variable reaches every package.
-#     With none of these, an upper-case variable holding SKILL, PACKAGE,
-#     SELF, HERE or a tests or scripts directory reaches its own package,
-#     and one holding ROOT, REPO or CHECKOUT, or a lower-case repo, root or
-#     checkout, `__file__`, `parents[` or a bare `skills/`, reaches every
-#     package. A line whose every variable names a temporary, fixture or
-#     state directory reaches none, and any other read whose root these
-#     rules do not bound reaches every package.
-#   - A document is named by its package-relative path after a slash, so
-#     `../<name>/<file>` and the .agents/ render read it as the source does.
-#   - A script or library of a package in the reach is then asked of every
-#     tree outside its package; any line naming `/<name>/<path>` calls it,
-#     and so does a gg_resolve_sibling line naming its package or a
-#     variable.
-#   - Readers that reach no suite of a tree run its whole set.
-#   - A script run through any other variable path is still missed: the
-#     main push's whole shard run, not the merge group, then meets it.
-#   - A suite whose input note the CI reach can take, every item a
-#     repository path whose fixed part exists and no brace list, reads a
-#     document only where an item covers it: as a case pattern, or as a
-#     directory holding it. Every other suite is selected by the reach.
-#   - A suite with such a note whose own code names a document the note
-#     does not cover fails: `/skills/<name>/<file>` not after .agents/,
-#     `../<name>/<file>`, or in its own package `/<file>` after an
-#     upper-case root variable; a bare relative path is a fixture's.
-#   - Status 5 is that failure, its suite and document in INPUTS_UNDECLARED.
+# only through another script that runs it. CI's full run owns completeness.
 # The suites land in MAPPED, one per line, rather than on stdout, so the
 # scan stays loaded for the tree's next path. None with status 0 is a
 # deleted suite or test program, a module no suite names or a doc no file
@@ -2337,16 +2174,12 @@ inputs_cover() { # I PATH
 # whose readers are unidentified, which runs the tree's whole set.
 mapped_suites() { # DIR REL
   local dir="$1" rel="$2" role="" i n q hit names readers f t name base input input_path noted="" out="" folder="" tested nl=$'\n'
-  local call=0 checks="" kept="" cover
   MAPPED=""
-  INPUTS_UNDECLARED=""
   local reached=() next_any=() next_script=() any=() scripts=() reach_scripts=()
   case "$rel" in
     ../*) role=doc ;;
     *)
-      if path_role "$dir" "$rel"; then
-        role=$ROLE
-      else
+      if ! role=$(path_role "$dir" "$rel"); then
         [ "$scoped_only" -eq 1 ] || return 1
         role=none
       fi
@@ -2356,17 +2189,16 @@ mapped_suites() { # DIR REL
   [ "${SCAN_DIR-}" = "$dir" ] || scan_load "$dir" || return 2
   for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
     [ "${SCAN_PATH[i]}" != "$dir/$rel" ] || reached[i]=1
-    [ -n "${SCAN_INPUTS[i]}" ] || continue
     input_path="$dir/$rel"
     [[ $rel != ../* ]] || input_path=${rel#../}
     while IFS= read -r input; do
       [ -n "$input" ] || continue
-      if note_covers "$input" "$input_path"; then
+      case "$input_path" in $input)
         reached[i]=1
         noted="$noted$i"$'\n'
         reach_join "${SCAN_ROLE[i]}" "${SCAN_PATH[i]}" || return 3
-        break
-      fi
+        ;;
+      esac
     done <<<"${SCAN_INPUTS[i]}"
   done
   if [ "$role" = none ] || [ "$role" = test-module ]; then
@@ -2386,23 +2218,7 @@ mapped_suites() { # DIR REL
         [ "$tested" -eq 1 ] || return 4
       fi
       readers+=${SCAN_READERS[q]}
-      checks+=${SCAN_CHECKS[q]}
-      [ "${SCAN_KINDS[q]}" != call ] || call=1
     done
-    # Under the CI reach every file holding a run-time read is a reader of
-    # each skill document, since its target cannot be read from the text.
-    if [ "$ci_reach" -eq 1 ] && [ "$call" -eq 0 ]; then
-      input_path=${rel#../}
-      [[ $rel == ../* ]] || input_path="$dir/$rel"
-      name=${input_path#skills/}
-      name=${name%%/*}
-      for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
-        case "${SCAN_WALKS[i]}" in
-          *" * "* | *" $name "*) readers+="$nl$i$nl" ;;
-          *" own "*) [ "$dir" != "skills/$name" ] || readers+="$nl$i$nl" ;;
-        esac
-      done
-    fi
     readers="$noted$readers"
     [ -n "$readers" ] || return 0
     while IFS= read -r i; do
@@ -2476,45 +2292,6 @@ mapped_suites() { # DIR REL
 " ;; esac
     done
   done
-  if [ "$ci_reach" -eq 1 ]; then
-    # A script or library of a package in the reach carries the document on
-    # to the trees that call it (REACH_CARRY).
-    for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
-      [ -n "${reached[i]-}" ] || continue
-      case "${SCAN_ROLE[i]}:${SCAN_PATH[i]}" in
-        script:skills/*/scripts/* | lib:skills/*/scripts/* | module:skills/*/scripts/*)
-          REACH_CARRY+="${SCAN_PATH[i]}$nl" ;;
-      esac
-    done
-    # Readers that reach no suite leave the tree's suites unidentified, which
-    # runs its whole set, as an unmapped path does below.
-    [ -n "$out" ] || [ "$call" -eq 1 ] || [ -z "$readers" ] || out=$(skill_suites "$dir")$nl || return 2
-    input_path=${rel#../}
-    [[ $rel == ../* ]] || input_path="$dir/$rel"
-    # A suite with an input note reads what the note declares and nothing
-    # else; a suite whose own code names the document outside its note fails.
-    for ((i = 0; i < ${#SCAN_PATH[@]}; i++)); do
-      [ "${SCAN_ROLE[i]}" = suite ] || continue
-      cover=0
-      inputs_cover "$i" "$input_path" || cover=$?
-      # A note is judged against the document alone, which every tree is
-      # asked about; a script carried from another package selects only
-      # suites without one.
-      [ "$call" -eq 0 ] || [ "$cover" -eq 2 ] || continue
-      case "$cover" in
-        0) kept+="${SCAN_PATH[i]}$nl" ;;
-        1)
-          if [[ $checks == *"$nl$i$nl"* ]]; then
-            INPUTS_UNDECLARED="${SCAN_PATH[i]} path=$input_path"
-            return 5
-          fi
-          ;;
-        *) [[ $nl$out == *"$nl${SCAN_PATH[i]}$nl"* ]] && kept+="${SCAN_PATH[i]}$nl" ;;
-      esac
-    done
-    MAPPED=$kept
-    return 0
-  fi
   if [ -z "$out" ]; then
     case "$role" in none | test-module) return 4 ;; module) return 0 ;; esac
     case "$rel" in
@@ -2709,72 +2486,6 @@ settings_change() { # REV
   done <<<"$changed"
   printf 'keys\n%s' "$areas"
 }
-# The merge group's reader query: every suite that reads one of the skill
-# documents on stdin, by mapped_suites under the CI reach, one per line.
-# Each document is asked of its own tree and, as a ../ repository input, of
-# tools/ and every other tree with suites; each script or library of a
-# package the reach meets is then asked of the trees outside its package,
-# until no new one is met. Exit 1 is a suite whose code names a document its
-# input note leaves out, and exit 2 a reach some file of which could not be
-# read, where the caller runs every reader.
-if [ "$MODE" = reach ]; then
-  settings_scope=""
-  settings_keys=()
-  settings_areas=""
-  reach_trees=(tools)
-  for consumer in skills/* hooks refresh; do
-    [ -d "$consumer/tests" ] || continue
-    [ -n "$(skill_suites "$consumer")" ] || continue
-    reach_trees+=("$consumer")
-  done
-  reach_out=""
-  reach_asked=""
-  reach_pending=$reach_inputs
-  while [ -n "$reach_pending" ]; do
-    tree_paths=""
-    while IFS= read -r f; do
-      [ -n "$f" ] || continue
-      x=${f#skills/}
-      tree=skills/${x%%/*}
-      case "$f" in *.md | *.markdown) tree_paths+="$tree"$'\t'"${x#*/}"$'\t'"$f"$'\n' ;; esac
-      for consumer in "${reach_trees[@]}"; do
-        [ "$consumer" != "$tree" ] || continue
-        tree_paths+="$consumer"$'\t'"../$f"$'\t'"$f"$'\n'
-      done
-    done <<<"$reach_pending"
-    reach_asked+=$reach_pending
-    REACH_CARRY=""
-    for d in $(cut -f1 <<<"$tree_paths" | sort -u); do
-      SCAN_DIR=""
-      while IFS=$'\t' read -r tree rel f; do
-        [ "$tree" = "$d" ] || continue
-        map_status=0
-        mapped_suites "$d" "$rel" || map_status=$?
-        case "$map_status" in
-          0) reach_out+=$MAPPED ;;
-          5)
-            printf 'guard: inputs-undeclared=%s\n' "$INPUTS_UNDECLARED" >&2
-            finding_text inputs-undeclared "$INPUTS_UNDECLARED" >&2
-            exit 1
-            ;;
-          *)
-            printf 'guard: reach-unread=%s path=%s\n' "$map_status" "$f" >&2
-            finding_text reach-unread "$map_status" >&2
-            exit 2
-            ;;
-        esac
-      done <<<"$tree_paths"
-    done
-    reach_pending=""
-    while IFS= read -r f; do
-      [ -n "$f" ] || continue
-      case $'\n'"$reach_asked$reach_pending" in *$'\n'"$f"$'\n'*) continue ;; esac
-      reach_pending+="$f"$'\n'
-    done <<<"$REACH_CARRY"
-  done
-  [ -z "$reach_out" ] || sort -u <<<"$reach_out" | grep .
-  exit 0
-fi
 # The final report uses the runner's subset vocabulary only for a smaller
 # mapped set. Empty means no tree was selected; any whole set makes it all.
 suite_selection=""
@@ -2932,26 +2643,6 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
       else
         note suites "all reason=kendex-unread tree=$d"
       fi
-      # Every part filters the same list before the split, so the shares
-      # stay one partition; a part left with no suite passes. A list that
-      # cannot be applied fails a part, as an unread kendex selection does.
-      case "$release_selection" in
-        "" | all) ;;
-        *)
-          release_candidates=()
-          while IFS= read -r t; do
-            [ -z "$t" ] || release_candidates+=("$t")
-          done <<<"$release_suites"
-          if release_keep=$(SUITE_SELECTION=$release_selection "$TOOLS_DIR/ci-job-set" --suite-list ${release_candidates[@]+"${release_candidates[@]}"}); then
-            release_suites=$release_keep
-          elif [ "$release_parts" -gt 1 ]; then
-            say suite-selection "$d"
-            continue
-          else
-            note suites "all reason=selection-unread tree=$d"
-          fi
-          ;;
-      esac
       release_share=""
       while IFS= read -r t; do
         [ -n "$t" ] || continue
@@ -3000,7 +2691,7 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
                 fi
                 [ "$tree_ci" -ne 0 ] || continue
               fi
-              if [[ $rel != ../* ]] && path_role "$d" "$rel" && [ "$ROLE" = doc ]; then continue; fi
+              if [[ $rel != ../* ]] && [ "$(path_role "$d" "$rel")" = doc ]; then continue; fi
             fi
             map_status=0
             mapped_suites "$d" "$rel" || map_status=$?

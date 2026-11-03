@@ -1,15 +1,14 @@
 #!/usr/bin/env bash
 # Tests for the merge group's narrowed row: a diff of skill Markdown alone
-# runs only the suites that read it. tools/guard --doc-reach answers the
-# readers, tools/ci-job-set publishes them as `suites=` with the shards that
-# run them, and each shell suite step of skill-tests.yml runs the candidates
-# `tools/ci-job-set --suite-list` keeps.
+# keeps the row its paths select and skips, inside its shards, each suite
+# whose own `# Inputs:` note covers no changed document. tools/guard
+# --note-skips names those suites, tools/ci-job-set publishes them as
+# `skipped_suites=`, and each shell suite step of skill-tests.yml runs the
+# candidates `tools/ci-job-set --suite-list` keeps.
 # Inputs: tools/guard, tools/ci-job-set, tools/lib/*, tools/rust-reads,
 # tools/macos-test-contracts, tools/macos-test-contracts.json,
 # .github/workflows/skill-tests.yml, skills/jarvis/SKILL.md,
-# skills/jarvis/references/decisions.md, skills/jarvis/tests/,
-# skills/jarvis/scripts/, skills/deep-research/SKILL.md,
-# pi-extensions/pi-claude-bridge/tests/
+# skills/jarvis/references/decisions.md, skills/jarvis/tests/
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
@@ -19,168 +18,147 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/ci-job-set-case.sh
 . "$TEST_DIR/lib/ci-job-set-case.sh"
 GUARD="$ROOT/tools/guard"
+# A copy of ci-job-set with no guard beside it, whose --note-skips query
+# fails: the row the paths select with no suite skipped.
+cp "$JOB_SET" "$TMP/rule/tools/ci-job-set"
+WHOLE="$TMP/rule/tools/ci-job-set"
 
-# The readers of PATHS in DIR, one line, or `exit=N` where the reach refused.
-reach() { # DIR PATHS
+# The suites --note-skips names for PATHS in DIR, on one line, or `exit=N`.
+skips() { # DIR PATHS
   local status=0 got
-  got="$(cd "$1" && printf '%s\n' $2 | "$GUARD" --doc-reach 2>"$TMP/reach-err")" || status=$?
+  got="$(cd "$1" && printf '%s\n' $2 | "$GUARD" --note-skips 2>"$TMP/skips-err")" || status=$?
   [ "$status" -eq 0 ] || { printf 'exit=%s' "$status"; return 0; }
-  printf '%s' "$got" | tr '\n' ' ' | sed 's/ $//'
+  printf '%s' "$got" | LC_ALL=C sort | tr '\n' ' ' | sed 's/ $//'
 }
 
 # THE WORLD: the selection fixture's crates and skills, plus a package whose
-# guide each kind of reader reads or does not.
+# guide each kind of note covers or does not.
 W="$TMP/prose-world"
 cp -R "$SEL_WORLD" "$W"
-mkdir -p "$W/skills/demo/references" "$W/skills/demo/tests" "$W/skills/copier/tests" "$W/skills/copier/scripts"
+mkdir -p "$W/skills/demo/references" "$W/skills/demo/tests" "$W/.agents/skills/demo/references"
 printf -- '---\nname: demo\n---\n' >"$W/skills/demo/SKILL.md"
-printf '# Guide\n' >"$W/skills/demo/references/guide.md"
-mkdir -p "$W/.agents/skills/demo/references"
-cp "$W/skills/demo/references/guide.md" "$W/.agents/skills/demo/references/guide.md"
-# A suite whose note declares SKILL.md alone, and whose code names no guide.
-printf '#!/usr/bin/env bash\n# Inputs: skills/demo/SKILL.md\nhead -1 "$ROOT/SKILL.md"\n' \
-  >"$W/skills/demo/tests/declared.test.sh"
-# A suite with no note whose code names the guide.
-printf '#!/usr/bin/env bash\ngrep -q Guide "$ROOT/references/guide.md"\n' >"$W/skills/demo/tests/named.test.sh"
-# A tools suite naming the guide by its repository path.
-printf '#!/usr/bin/env bash\ngrep -q Guide "$ROOT/skills/demo/references/guide.md"\n' >"$W/tools/tests/guide.test.sh"
-# A suite copying the package that holds the guide, and one copying only its
-# own scripts.
-printf '#!/usr/bin/env bash\ncp -R "$ROOT/skills/demo" "$sandbox/demo"\n' >"$W/skills/copier/tests/copy.test.sh"
-printf '#!/usr/bin/env bash\ncp -R "$ROOT/skills/copier/scripts" "$sandbox/s"\n' >"$W/skills/copier/tests/quiet.test.sh"
-# Suites whose notes cover the guide: on a continuation line ending in a
-# period, as a directory with a trailing slash, and as a directory without.
-printf '#!/usr/bin/env bash\n# Inputs: skills/demo/SKILL.md,\n# skills/demo/references/guide.md.\ntrue\n' >"$W/skills/demo/tests/continued.test.sh"
-printf '#!/usr/bin/env bash\n# Inputs: skills/demo/references/\ntrue\n' >"$W/skills/demo/tests/slashed.test.sh"
-printf '#!/usr/bin/env bash\n# Inputs: skills/demo/references\ntrue\n' >"$W/skills/demo/tests/folder.test.sh"
+printf '# Guide\n' | tee "$W/skills/demo/references/guide.md" >"$W/.agents/skills/demo/references/guide.md"
+note_suite() { # PATH NOTE-LINES — a suite whose header holds NOTE-LINES and whose code reads nothing
+  printf '#!/usr/bin/env bash\n%s\ntrue\n' "$2" >"$W/$1"
+}
+note_suite skills/demo/tests/declared.test.sh '# Inputs: skills/demo/SKILL.md'
+note_suite skills/demo/tests/continued.test.sh $'# Inputs: skills/demo/SKILL.md,\n# skills/demo/references/guide.md.'
+note_suite skills/demo/tests/slashed.test.sh '# Inputs: skills/demo/references/'
+note_suite skills/demo/tests/folder.test.sh '# Inputs: skills/demo/references'
+note_suite skills/demo/tests/globbed.test.sh '# Inputs: skills/demo/*'
+note_suite skills/demo/tests/prose.test.sh '# Inputs: the demo scripts and this suite.'
+note_suite skills/demo/tests/relative.test.sh '# Inputs: references/guide.md'
+note_suite skills/demo/tests/braced.test.sh '# Inputs: skills/demo/{SKILL,README}.md'
+note_suite skills/demo/tests/plain.test.sh '# no note'
+note_suite tools/tests/tool.test.sh '# Inputs: tools/tests/'
 git -C "$W" add -A
 GUIDE="skills/demo/references/guide.md .agents/skills/demo/references/guide.md"
-GUIDE_READERS="skills/copier/tests/copy.test.sh skills/demo/tests/continued.test.sh skills/demo/tests/folder.test.sh skills/demo/tests/named.test.sh skills/demo/tests/slashed.test.sh tools/tests/guide.test.sh"
 
-# PATHS|EXPECTED readers. Each reader kind selects its suite; a suite whose
-# note leaves the document out, and a copy of another package's directory,
-# do not. A copy names the package it reaches, not the directory below it.
-reach_rows=0
+# PATHS|EXPECTED skips. A suite runs where its note covers a path, as a case
+# pattern, a directory or a continuation line, and where it has no note it
+# can take: none, prose, a path relative to its tree or a brace list.
+skip_rows=0
 while IFS='|' read -r paths expected; do
-  reach_rows=$((reach_rows + 1))
-  check "reach: $paths" "$expected" "$(reach "$W" "$paths")"
+  skip_rows=$((skip_rows + 1))
+  check "skips: $paths" "$expected" "$(skips "$W" "$paths")"
 done <<ROWS
-$GUIDE|$GUIDE_READERS
-skills/demo/SKILL.md|skills/copier/tests/copy.test.sh skills/demo/tests/continued.test.sh skills/demo/tests/declared.test.sh
-skills/copier/README.md|skills/copier/tests/quiet.test.sh
+$GUIDE|skills/demo/tests/declared.test.sh tools/tests/tool.test.sh
+.agents/skills/demo/references/guide.md|skills/demo/tests/declared.test.sh tools/tests/tool.test.sh
+skills/demo/SKILL.md|skills/demo/tests/folder.test.sh skills/demo/tests/slashed.test.sh tools/tests/tool.test.sh
+skills/demo/SKILL.md $GUIDE|tools/tests/tool.test.sh
 skills/demo/scripts/x|exit=2
 ROWS
-[ "$reach_rows" -eq 4 ] || { echo "the reach table read $reach_rows rows" >&2; exit 1; }
+[ "$skip_rows" -eq 5 ] || { echo "the skips table read $skip_rows rows" >&2; exit 1; }
 
-# THE NARROWED ROW over the world: the readers as `suites=`, the shards that
-# run their packages, the lanes of any measured prose row. A path that is
-# not skill Markdown takes the row its paths select.
-row() { # PATHS — the shards and suites words, or the refusal key
-  local got
-  got="$(SELECT_IN="$1" selection micro false "$(printf '%s\n' $2)")"
-  case "$got" in exit=*) printf '%s' "$got" ;; *) printf '%s %s' "${got% shards=*}" "shards=$(field shards <<<"$got") suites=$(field suites <<<"$got")" ;; esac
-}
-suites_json() { printf '%s\n' "$@" | jq -Rsc 'split("\n") | map(select(. != ""))'; }
-check "row: the guide's readers and their shards" \
-  "$(lanes linux false false false true) shards=[\"guards-tools\",\"guards-tools-tail\",\"rest\"] suites=$(suites_json $GUIDE_READERS)" \
-  "$(row "$W" "$GUIDE")"
-check "row: a path outside skill Markdown takes the measured row" "suites=all" \
-  "$(row "$W" "skills/demo/references/guide.md skills/demo/scripts/x" | sed 's/.* //')"
-check "row: render is unchanged by a narrowed selection" "suites=all" \
-  "$(SELECT_IN="$W" selection render false skills/demo/references/guide.md | sed 's/.* //')"
-
-# A diff of more documents than the reach's bound, renders counted with
-# their sources, takes the row its paths select.
-many="$(for n in $(seq 1 21); do printf 'skills/demo/references/d%s.md .agents/skills/demo/references/d%s.md ' "$n" "$n"; done)"
-check "row: past the document bound the paths' row runs" "suites=all" "$(row "$W" "$many" | sed 's/.* //')"
-few="$(for n in $(seq 1 20); do printf 'skills/demo/references/d%s.md .agents/skills/demo/references/d%s.md ' "$n" "$n"; done)"
-check "row: at the bound the reach answers" 'suites=["skills/copier/tests/copy.test.sh","skills/demo/tests/folder.test.sh","skills/demo/tests/slashed.test.sh"]' "$(row "$W" "$few" | sed 's/.* //')"
-
-# A reach a file of which cannot be read keeps every reader running: the row
-# the paths select.
-cp -R "$W" "$TMP/unread-world"
-chmod 000 "$TMP/unread-world/skills/copier/tests/quiet.test.sh"
-check "an unreadable reader leaves the reach unread" "exit=2" "$(reach "$TMP/unread-world" "$GUIDE")"
-check "and the row it would narrow runs every suite" "suites=all" \
-  "$(row "$TMP/unread-world" "$GUIDE" | sed 's/.* //')"
-chmod 644 "$TMP/unread-world/skills/copier/tests/quiet.test.sh"
-
-# A suite whose own code names the document outside its note fails the
-# check, and the selection is refused. A fixture's bare relative path is no
-# read of the checkout and passes.
-cp -R "$W" "$TMP/liar-world"
-printf '#!/usr/bin/env bash\n# Inputs: skills/demo/SKILL.md\ncat "$ROOT/skills/demo/references/guide.md"\n' \
-  >"$TMP/liar-world/skills/demo/tests/declared.test.sh"
-check "a note leaving out a document its suite names fails the reach" "exit=1" "$(reach "$TMP/liar-world" "$GUIDE")"
-check "and the selection is refused" "exit=2 inputs-undeclared" "$(row "$TMP/liar-world" "$GUIDE")"
-printf '#!/usr/bin/env bash\n# Inputs: skills/demo/SKILL.md\nwrite "$repo" skills/demo/references/guide.md\n' \
-  >"$TMP/liar-world/skills/demo/tests/declared.test.sh"
-check "a fixture path the suite writes is no read" "$GUIDE_READERS" "$(reach "$TMP/liar-world" "$GUIDE")"
-
-# A read whose root the text cannot bound reaches every package: a Python
-# directory copy from a root bound on another line, and a script reading a
-# document below a variable directory, which carries the document on to the
-# suites of a third tree that run the script by its path or through a
-# resolved sibling. A copy into a temporary directory alone reaches none.
-U="$TMP/unbound-world"
-cp -R "$W" "$U"
-mkdir -p "$U/skills/pycopy/tests" "$U/skills/lint/scripts" "$U/skills/lint/tests" "$U/skills/caller/tests"
-printf '#!/usr/bin/env bash\npython3 "$TEST_DIR/copy_test.py"\n' >"$U/skills/pycopy/tests/pycopy.test.sh"
-printf 'CATALOG = Path(__file__).resolve().parents[2]\nshutil.copytree(CATALOG / sibling, sandbox / sibling)\n' >"$U/skills/pycopy/tests/copy_test.py"
-printf '#!/usr/bin/env bash\nDW="$(cd "$1" && pwd)"\ngrep -q Guide "$DW/references/guide.md"\n' >"$U/skills/lint/scripts/check"
-printf '#!/usr/bin/env bash\ntrue\n' >"$U/skills/lint/tests/own.test.sh"
-printf '#!/usr/bin/env bash\n"$ROOT/skills/lint/scripts/check" "$target"\n' >"$U/skills/caller/tests/call.test.sh"
-printf '#!/usr/bin/env bash\nL="$(gg_resolve_sibling "$SCRIPT_DIR" lint)"\n"$L/scripts/check" "$target"\n' >"$U/skills/caller/tests/sibling.test.sh"
-printf '#!/usr/bin/env bash\ncp -R "$TMP/a" "$TMP/b"\n' >"$U/skills/caller/tests/scratch.test.sh"
-git -C "$U" add -A
-unbound="$(reach "$U" "$GUIDE")"
-while IFS='|' read -r suite expected; do
-  case " $unbound " in *" $suite "*) got=selected ;; *) got=skipped ;; esac
-  check "unbound reach: $suite" "$expected" "$got"
+# A suite whose own code names a document its note leaves out fails the
+# check, as a checkout path, from a sibling package or below its own root.
+# A path a fixture writes, bare or under .agents/, is no read and passes.
+# SOURCE|EXPECTED
+while IFS='|' read -r source expected; do
+  printf '#!/usr/bin/env bash\n# Inputs: skills/demo/SKILL.md\n%s\n' "$source" >"$W/skills/demo/tests/declared.test.sh"
+  check "consistency: $source" "$expected" "$(skips "$W" "$GUIDE" | sed 's/ .*//')"
 done <<'ROWS'
-skills/pycopy/tests/pycopy.test.sh|selected
-skills/caller/tests/call.test.sh|selected
-skills/caller/tests/sibling.test.sh|selected
-skills/caller/tests/scratch.test.sh|skipped
+cat "$ROOT/skills/demo/references/guide.md"|exit=1
+cat "$TEST_DIR/../../demo/references/guide.md"|exit=1
+cat "$SKILL_DIR/references/guide.md"|exit=1
+write "$repo" skills/demo/references/guide.md|skills/demo/tests/declared.test.sh
+cp guide "$sandbox/.agents/skills/demo/references/guide.md"|skills/demo/tests/declared.test.sh
 ROWS
+LIAR="$TMP/liar-world"
+cp -R "$W" "$LIAR"
+printf '#!/usr/bin/env bash\n# Inputs: skills/demo/SKILL.md\ncat "$ROOT/skills/demo/references/guide.md"\n' >"$LIAR/skills/demo/tests/declared.test.sh"
+skips "$LIAR" "$GUIDE" >/dev/null
+check "consistency: the refusal names the suite and the document" \
+  "guard: inputs-undeclared=skills/demo/tests/declared.test.sh path=skills/demo/references/guide.md" \
+  "$(grep '^guard: ' "$TMP/skips-err")"
+note_suite skills/demo/tests/declared.test.sh '# Inputs: skills/demo/SKILL.md'
 
-# THE LIST: the candidates a selection keeps, by whole path, in argument
-# order; every candidate for an empty selection or `all`. Leaving one out
-# records SUITE_LIST_DROPPED=true in the SUITE_LIST_DROPS file, which arms
-# the leg's narrowed step; keeping every one records nothing.
+# THE NARROWED ROW: every word of the row the paths select, the shards among
+# them, with the skips added; the row skips none where the paths are not all
+# skill Markdown, where the class is not measured, or where --note-skips
+# refuses.
+row() { # DIR PATHS [JOB-SET] — the selection with its skips cut, and the skips
+  local got
+  got="$(SELECT_IN="$1" SELECT_WITH="${3:-$JOB_SET}" selection micro false "$(printf '%s\n' $2)")"
+  printf '%s|%s' "${got% skipped_suites=*}" "$(field skipped_suites <<<"$got")"
+}
+whole="$(row "$W" "$GUIDE" "$WHOLE")"
+check "row: the copy without a guard skips nothing" "[]" "${whole#*|}"
+check "row: the guide keeps the row its paths select" "${whole%|*}" "$(row "$W" "$GUIDE" | sed 's/|.*//')"
+check "row: and skips the suites whose notes leave it out" \
+  '["skills/demo/tests/declared.test.sh","tools/tests/tool.test.sh"]' "$(row "$W" "$GUIDE" | sed 's/.*|//')"
+check "row: a path outside skill Markdown skips none" "[]" \
+  "$(row "$W" "skills/demo/references/guide.md skills/demo/scripts/x" | sed 's/.*|//')"
+check "row: render skips none" "[]" \
+  "$(SELECT_IN="$W" selection render false skills/demo/references/guide.md | field skipped_suites)"
+check "row: a refused note skips none" "[]" "$(row "$LIAR" "$GUIDE" | sed 's/.*|//')"
+UNREAD="$TMP/unread-world"
+cp -R "$W" "$UNREAD"
+chmod 000 "$UNREAD/skills/demo/tests/prose.test.sh"
+if [ -r "$UNREAD/skills/demo/tests/prose.test.sh" ]; then
+  ok "unread: skipped, a file mode 000 stays readable to this user"
+else
+  check "unread: a suite that cannot be read fails the query" "exit=2" "$(skips "$UNREAD" "$GUIDE")"
+  check "unread: and the row skips none" "[]" "$(row "$UNREAD" "$GUIDE" | sed 's/.*|//')"
+fi
+chmod 644 "$UNREAD/skills/demo/tests/prose.test.sh"
+
+# THE LIST: the candidates a step runs, by whole path, in argument order:
+# each one the skips do not name. Leaving one out records
+# SUITE_LIST_DROPPED=true in the SUITE_LIST_DROPS file, which arms the leg's
+# narrowed step; keeping every one records nothing.
 CANDIDATES="skills/a/tests/x.test.sh skills/b/tests/x.test.sh skills/c/tests/y.test.sh"
-list_of() { # SELECTION — the kept candidates on one line and what was recorded, or `exit=N CAUSE`
+list_of() { # SKIPPED — the kept candidates on one line and what was recorded, or `exit=N CAUSE`
   local status=0 got
   : >"$TMP/list-drops"
   # shellcheck disable=SC2086 # one candidate per word
-  got="$(SUITE_SELECTION="$1" SUITE_LIST_DROPS="$TMP/list-drops" "$JOB_SET" --suite-list $CANDIDATES 2>"$TMP/list-err")" || status=$?
+  got="$(SKIPPED_SUITES="$1" SUITE_LIST_DROPS="$TMP/list-drops" "$JOB_SET" --suite-list $CANDIDATES 2>"$TMP/list-err")" || status=$?
   [ "$status" -eq 0 ] || { printf 'exit=%s %s' "$status" "$(sed -n 's/^ci-job-set: cause=//p' "$TMP/list-err")"; return 0; }
   printf "'%s' recorded='%s'" "$(printf '%s' "$got" | tr '\n' ' ')" "$(tr '\n' ' ' <"$TMP/list-drops")"
 }
-while IFS='|' read -r selection expected; do
-  check "list: '$selection'" "$expected" "$(list_of "$selection")"
+while IFS='|' read -r skipped expected; do
+  check "list: '$skipped'" "$expected" "$(list_of "$skipped")"
 done <<'ROWS'
-["skills/b/tests/x.test.sh"]|'skills/b/tests/x.test.sh' recorded='SUITE_LIST_DROPPED=true '
-["skills/c/tests/y.test.sh","skills/a/tests/x.test.sh"]|'skills/a/tests/x.test.sh skills/c/tests/y.test.sh' recorded='SUITE_LIST_DROPPED=true '
-["skills/a/tests/x.test.sh","skills/b/tests/x.test.sh","skills/c/tests/y.test.sh","skills/d/tests/z.test.sh"]|'skills/a/tests/x.test.sh skills/b/tests/x.test.sh skills/c/tests/y.test.sh' recorded=''
-["skills/d/tests/x.test.sh"]|'' recorded='SUITE_LIST_DROPPED=true '
-[]|'' recorded='SUITE_LIST_DROPPED=true '
-all|'skills/a/tests/x.test.sh skills/b/tests/x.test.sh skills/c/tests/y.test.sh' recorded=''
+["skills/b/tests/x.test.sh"]|'skills/a/tests/x.test.sh skills/c/tests/y.test.sh' recorded='SUITE_LIST_DROPPED=true '
+["skills/c/tests/y.test.sh","skills/a/tests/x.test.sh"]|'skills/b/tests/x.test.sh' recorded='SUITE_LIST_DROPPED=true '
+["skills/a/tests/x.test.sh","skills/b/tests/x.test.sh","skills/c/tests/y.test.sh"]|'' recorded='SUITE_LIST_DROPPED=true '
+["skills/d/tests/x.test.sh"]|'skills/a/tests/x.test.sh skills/b/tests/x.test.sh skills/c/tests/y.test.sh' recorded=''
+[]|'skills/a/tests/x.test.sh skills/b/tests/x.test.sh skills/c/tests/y.test.sh' recorded=''
 |'skills/a/tests/x.test.sh skills/b/tests/x.test.sh skills/c/tests/y.test.sh' recorded=''
-["a b"]|exit=2 suite-selection-unreadable
-skills/a/tests/x.test.sh|exit=2 suite-selection-unreadable
+["a b"]|exit=2 suite-skips-unreadable
+all|exit=2 suite-skips-unreadable
 ROWS
 check "list: a record that cannot be written fails the call" "exit=2 suite-list-unrecorded" \
-  "$(status=0; SUITE_SELECTION='[]' SUITE_LIST_DROPS="$TMP/no-such-dir/env" "$JOB_SET" --suite-list skills/a/tests/x.test.sh 2>"$TMP/list-err" || status=$?; printf 'exit=%s %s' "$status" "$(sed -n 's/^ci-job-set: cause=//p' "$TMP/list-err")")"
+  "$(status=0; SKIPPED_SUITES='["skills/a/tests/x.test.sh"]' SUITE_LIST_DROPS="$TMP/no-such-dir/env" "$JOB_SET" --suite-list skills/a/tests/x.test.sh 2>"$TMP/list-err" || status=$?; printf 'exit=%s %s' "$status" "$(sed -n 's/^ci-job-set: cause=//p' "$TMP/list-err")")"
 
 # THE STEPS: each shell suite step is the workflow's own text, run against
-# stub runners in an empty tree. A step whose candidates the list leaves out
-# runs no battery and passes; one it keeps runs that suite alone, and a
-# same-named suite of another tree is no stand-in.
+# stub runners in an empty tree. A step whose every candidate is skipped
+# runs no battery and passes; one that keeps a suite runs it, and a
+# same-named suite of another tree is no stand-in for a skipped one.
 WF="$ROOT/.github/workflows/skill-tests.yml"
-step_run() { # STEP-NAME SELECTION — the runners' arguments, or `none`, the exit and whether the narrowed step is armed
-  local dir="$TMP/step" status=0
-  rm -rf -- "${dir:?}"
+step_dir() { # STEP-NAME — the stub tree, its step.sh, or `no-step`
+  local dir="$TMP/step"
+  rm -rf -- "${TMP:?}/step"
   mkdir -p "$dir/tools/tests" "$dir/skills/review-gate/tests" "$dir/skills/pooled/tests" "$dir/skills/orch/tests" "$dir/.github/workflows"
   cp "$JOB_SET" "$dir/tools/ci-job-set"
   cp "$WF" "$dir/.github/workflows/skill-tests.yml"
@@ -198,23 +176,27 @@ step_run() { # STEP-NAME SELECTION — the runners' arguments, or `none`, the ex
     body && /^$/ { print; next }
     body { exit }
   ' "$WF" >"$dir/step.sh"
+}
+step_run() { # STEP-NAME SKIPPED — the runners' arguments, or `none`, the exit and whether the narrowed step is armed
+  local dir="$TMP/step" status=0
+  step_dir "$1"
   [ -s "$dir/step.sh" ] || { printf 'no-step'; return 0; }
   : >"$dir/env"
-  (cd "$dir" && CALLS="$dir/calls" SHARD_SUITES="$2" GITHUB_ENV="$dir/env" bash -e -o pipefail step.sh >/dev/null 2>&1) || status=$?
+  (cd "$dir" && CALLS="$dir/calls" SKIPPED_SUITES="$2" GITHUB_ENV="$dir/env" bash -e -o pipefail step.sh >/dev/null 2>&1) || status=$?
   printf '%s exit=%s narrowed=%s' "$( [ -f "$dir/calls" ] && sed 's/ $//' "$dir/calls" || echo none)" "$status" \
     "$(grep -qx 'SUITE_LIST_DROPPED=true' "$dir/env" && echo yes || echo no)"
 }
-while IFS='|' read -r selection expected; do
-  check "review-gate step: '$selection'" "$expected" "$(step_run 'review-gate suites' "$selection")"
+while IFS='|' read -r skipped expected; do
+  check "review-gate step: '$skipped'" "$expected" "$(step_run 'review-gate suites' "$skipped")"
 done <<'ROWS'
-["tools/tests/guide.test.sh"]|none exit=0 narrowed=yes
-["skills/other/tests/b.test.sh"]|none exit=0 narrowed=yes
-["skills/review-gate/tests/b.test.sh"]|--battery skills/review-gate/tests =b.test exit=0 narrowed=yes
-["skills/review-gate/tests/a.test.sh","skills/review-gate/tests/b.test.sh"]|--battery skills/review-gate/tests =a.test =b.test exit=0 narrowed=no
-all|--battery skills/review-gate/tests =a.test =b.test exit=0 narrowed=no
+[]|--battery skills/review-gate/tests =a.test =b.test exit=0 narrowed=no
+["skills/other/tests/b.test.sh"]|--battery skills/review-gate/tests =a.test =b.test exit=0 narrowed=no
+["skills/review-gate/tests/b.test.sh"]|--battery skills/review-gate/tests =a.test exit=0 narrowed=yes
+["skills/review-gate/tests/a.test.sh","skills/review-gate/tests/b.test.sh"]|none exit=0 narrowed=yes
 ROWS
-# Every shard step that runs a suite, read from the workflow, runs none for
-# a list that names none of its candidates, and arms the narrowed step.
+# Every shard step that runs a suite, read from the workflow, runs none
+# where the skips name each of its candidates, and arms the narrowed step.
+# The candidates are what the step hands --suite-list in the stub tree.
 steps="$(awk '
   /^      - name: / { name = substr($0, 15); shard = 0; next }
   /^        if: matrix\.shard == / { shard = 1; next }
@@ -224,32 +206,34 @@ for required in 'review-gate suites' 'tools suites' 'the two slowest tools suite
   grep -qxF "$required" <<<"$steps" || bad "step discovery found no '$required'"
 done
 while IFS= read -r step; do
-  check "step: '$step' runs no suite for a list naming none of its own" "none exit=0 narrowed=yes" \
-    "$(step_run "$step" '["skills/none/tests/x.test.sh"]')"
+  step_dir "$step"
+  printf '#!/usr/bin/env bash\nshift\nprintf "%%s\\n" "$@" | tee -a "$CANDIDATES_OUT"\n' >"$TMP/step/tools/ci-job-set"
+  : >"$TMP/candidates"
+  (cd "$TMP/step" && CALLS=/dev/null CANDIDATES_OUT="$TMP/candidates" GITHUB_ENV=/dev/null bash -e -o pipefail step.sh >/dev/null 2>&1) || true
+  every="$(grep . "$TMP/candidates" | jq -Rsc 'split("\n") | map(select(. != ""))')"
+  check "step: '$step' runs no suite where every candidate is skipped" "none exit=0 narrowed=yes" \
+    "$(step_run "$step" "$every")"
 done <<<"$steps"
 
-# THE REAL TREE. KEN-4773's one line in Jarvis's decisions reference runs
-# none of the long Jarvis suites, whose notes leave that reference out; and
-# SKILL.md, which command-declarations declares, runs that suite and the
-# Jarvis shard. Each first holds the row to a narrowed list.
-narrowed() { # ROW — `narrowed`, or what the row holds instead
-  case "$1" in exit=*) printf '%s' "$1"; return 0 ;; esac
-  field suites <<<"$1" | jq -e 'type == "array"' >/dev/null 2>&1 && printf narrowed || printf 'suites=%s' "$(field suites <<<"$1")"
+# THE REAL TREE. KEN-4773's one line in Jarvis's decisions reference keeps
+# the row its paths select and skips the long Jarvis suites, whose notes
+# leave that reference out; SKILL.md, which command-declarations declares,
+# keeps that suite.
+real() { # PATHS — the selection with its skips cut, and the skips
+  local got
+  got="$(SELECT_WITH="${2:-$JOB_SET}" selection micro false "$(printf '%s\n' $1)")"
+  printf '%s|%s' "${got% skipped_suites=*}" "$(field skipped_suites <<<"$got")"
 }
-real="$(selection micro false "$(printf '%s\n' skills/jarvis/references/decisions.md .agents/skills/jarvis/references/decisions.md)")"
-check "real: the decisions reference takes the narrowed row" narrowed "$(narrowed "$real")"
-check "real: and selects no long Jarvis suite" "" \
-  "$(field suites <<<"$real" | jq -r '.[] | select(test("^skills/jarvis/tests/(controls|succession|session|task)\\.test\\.sh$"))' 2>&1)"
-real="$(selection micro false skills/jarvis/SKILL.md)"
-check "real: SKILL.md takes the narrowed row" narrowed "$(narrowed "$real")"
-check "real: and selects command-declarations" "true" \
-  "$(field suites <<<"$real" | jq 'index("skills/jarvis/tests/command-declarations.test.sh") != null')"
-check "real: and the Jarvis shard that runs it" "" "$(shards_miss +jarvis "$(field shards <<<"$real")")"
-# deep-research's SKILL.md, which a pi-claude-bridge unit file names, runs
-# that package's own shard.
-real="$(selection micro false skills/deep-research/SKILL.md)"
-check "real: deep-research's SKILL.md takes the narrowed row" narrowed "$(narrowed "$real")"
-check "real: and the pi-claude-bridge shard" "" "$(shards_miss +pi-claude-bridge "$(field shards <<<"$real")")"
+DECISIONS="skills/jarvis/references/decisions.md .agents/skills/jarvis/references/decisions.md"
+narrow="$(real "$DECISIONS")"
+check "real: the decisions reference keeps the row its paths select" "$(real "$DECISIONS" "$WHOLE" | sed 's/|.*//')" "${narrow%|*}"
+check "real: and that row runs the Jarvis shard" "" "$(shards_miss +jarvis "$(field shards <<<"${narrow%|*}")")"
+for long in controls succession session task; do
+  check "real: and skips the long $long suite" true \
+    "$(jq --arg t "skills/jarvis/tests/$long.test.sh" 'index($t) != null' <<<"${narrow#*|}")"
+done
+check "real: SKILL.md runs command-declarations" false \
+  "$(real skills/jarvis/SKILL.md | sed 's/.*|//' | jq 'index("skills/jarvis/tests/command-declarations.test.sh") != null')"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
