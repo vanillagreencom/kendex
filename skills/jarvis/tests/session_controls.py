@@ -13,6 +13,13 @@ ROOT = Path(__file__).resolve().parents[3]
 CONTROLS = (("name ownership", "jarvis/scripts/lib/session.py", 'if existing.returncode == 0:', 'if False:',
              "test_unrelated_session_conflicts"),
             ("manager policy", "jarvis/scripts/lib/session.py", 'if policy:', 'if policy and False:',
+             "test_manager_policy_reaches_native_and_source_failure_keeps_owner"),
+            ("private pane transport", "jarvis/scripts/lib/session.py",
+             'yield shlex.join([sys.executable, "-B", "-X", "utf8", "-c", receiver, address])',
+             'yield shlex.join([sys.executable, "-B", "-X", "utf8", "-c", receiver, address]) + " " + shlex.quote(self.env.get("HTTPS_PROXY", ""))',
+             "test_manager_policy_reaches_native_and_source_failure_keeps_owner"),
+            ("native pane terminal", "jarvis/scripts/lib/session.py",
+             "('TERM', 'TMUX', 'TMUX_PANE')", "('TMUX', 'TMUX_PANE')",
              "test_manager_policy_reaches_native_and_source_failure_keeps_owner"))
 
 

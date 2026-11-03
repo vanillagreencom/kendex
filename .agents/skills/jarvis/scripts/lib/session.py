@@ -12,6 +12,7 @@ import re
 import select
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -159,11 +160,33 @@ class Session:
         target = ["-S", socket] if socket else ["-L", self.label]
         return self.run(["tmux", *target, "-f", os.devnull, *map(str, args)], check=check)
 
+    @contextmanager
     def pane_command(self, argv):
-        # An existing tmux server supplies its own environment. Replace it at
-        # execution, retaining only the new pane's native identity binding.
-        return (shlex.join(["exec", "env", "-i", *[key + "=" + value for key, value in self.env.items()]])
-                + ' TMUX="$TMUX" TMUX_PANE="$TMUX_PANE" ' + shlex.join(argv))
+        # Socket values never enter process arguments or diagnostic command
+        # text. A private short directory fits AF_UNIX on Linux and macOS,
+        # even when the home/state path exceeds their socket pathname limit.
+        receiver = '''import json,os,socket,sys
+with socket.socket(socket.AF_UNIX) as channel:
+    channel.settimeout(10)
+    channel.connect(sys.argv[1])
+    with channel.makefile('r') as stream: argv,env=json.loads(stream.readline())
+    env.update({key:os.environ[key] for key in ('TERM', 'TMUX', 'TMUX_PANE')})
+    channel.sendall(b'1')
+os.execvpe(argv[0],argv,env)
+'''
+        # tempfile's private directory and socket's context own this one-use
+        # channel, including a refused tmux call or failed pane connection.
+        with tempfile.TemporaryDirectory(prefix="jarvis-pane-", dir="/tmp") as directory, socket.socket(socket.AF_UNIX) as listener:
+            address = str(Path(directory) / "channel")
+            listener.bind(address)
+            listener.listen(1)
+            yield shlex.join([sys.executable, "-B", "-X", "utf8", "-c", receiver, address])
+            listener.settimeout(max(0.001, self.deadline - time.monotonic()))
+            with listener.accept()[0] as channel:
+                channel.settimeout(max(0.001, self.deadline - time.monotonic()))
+                channel.sendall((json.dumps([argv, self.env]) + "\n").encode("utf-8"))
+                if channel.recv(1) != b"1":
+                    raise Refusal("launch-failed", "The pane could not receive its launch environment.", "failed")
 
     def read(self):
         try:
@@ -785,16 +808,17 @@ class Session:
                 # A prompt-free shell keeps the pane alive before SessionStart.
                 creation = ["new-window", "-d", "-t", "=jarvis"] if succeeding and existing.returncode == 0 else ["new-session", "-d", "-s", "jarvis"]
                 runner = [sys.executable, "-B", "-c", "import os,runpy,sys; sys.exit(runpy.run_path(sys.argv[1],run_name='jarvis_runner')['Session'](sys.argv[2], dict(os.environ)).successor(int(sys.argv[3])))", str(Path(__file__).resolve()), self.home, str(generation)] if succeeding else [BASH, "--noprofile", "--norc"]
-                created = self.tmux(*creation, "-c", self.home,
-                                    "-P", "-F", "#{socket_path}\t#{pid}\t#{start_time}\t#{window_id}\t#{pane_id}", self.pane_command(runner))
-                socket, server, started, window, pane = created.stdout.strip().split("\t")
-                record.update(terminal={"server": socket, "session": "jarvis", "window": window, "pane": pane},
-                              server_pid=int(server), server_started_at=int(started), effective_home=prepared["effective_home"], account_var=prepared["var"],
-                              pending={"generation": generation, "server": int(server), "pane": pane,
-                                       "native_session_id": launch["id"] if record["harness"] != "codex" or launch["file"] else None})
-                # The acquisition remains locally owned until saved, including
-                # failures of the first ownership write or later setup writes.
-                acquired = record
+                with self.pane_command(runner) as command:
+                    created = self.tmux(*creation, "-c", self.home,
+                                        "-P", "-F", "#{socket_path}\t#{pid}\t#{start_time}\t#{window_id}\t#{pane_id}", command)
+                    socket, server, started, window, pane = created.stdout.strip().split("\t")
+                    record.update(terminal={"server": socket, "session": "jarvis", "window": window, "pane": pane},
+                                  server_pid=int(server), server_started_at=int(started), effective_home=prepared["effective_home"], account_var=prepared["var"],
+                                  pending={"generation": generation, "server": int(server), "pane": pane,
+                                           "native_session_id": launch["id"] if record["harness"] != "codex" or launch["file"] else None})
+                    # Own the pane before delivery can fail. The first record
+                    # write and later setup remain locally owned until saved.
+                    acquired = record
                 if succeeding:
                     process = self.tmux("display-message", "-p", "-t", pane, "#{pane_pid}").stdout.strip()
                     record["process"] = json.loads(self.backend("process", process).stdout)
@@ -812,8 +836,8 @@ class Session:
                     command = prepared["line"]
                     # The account observer reads descendants of the pane shell.
                     # A tail keeps that shell from exec-replacing itself.
-                    self.tmux("respawn-pane", "-k", "-t", pane, "-c", self.home,
-                              self.pane_command([BASH, "--noprofile", "--norc", "-c", command + '; result=$?; exit "$result"']))
+                    with self.pane_command([BASH, "--noprofile", "--norc", "-c", command + '; result=$?; exit "$result"']) as command:
+                        self.tmux("respawn-pane", "-k", "-t", pane, "-c", self.home, command)
                     process = self.tmux("display-message", "-p", "-t", pane, "#{pane_pid}").stdout.strip()
                     record["process"] = json.loads(self.backend("process", process).stdout)
                     self.write(record)

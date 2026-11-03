@@ -12,12 +12,14 @@ import re
 from pathlib import Path
 import shutil
 import signal
+import socket
 from fixtures.harness import AUTH_MESSAGES, launch_prompt, main as harness_main, native_header, native_launcher
 import shlex
 import subprocess
 import sys
 import tempfile
 import time
+import traceback
 import unittest
 
 
@@ -448,8 +450,12 @@ class SessionContract(unittest.TestCase):
                   "ORCH_LANE_ALIASES": "work=2claude", "FLEET_USER": "user 'quoted' $literal\\slash\tline\nend\r\n",
                   "AGENT_TMPDIR": str(self.root / "agent tmp"), "CLAUDE_CODE_TMPDIR": str(self.root / "agent tmp")}
         config = self.home / ".fixture.json"
-        config.write_text(json.dumps(json.loads(config.read_text()) | {"selected_env": list(policy)}))
+        proxy = "https://fixture-user:fixture-private-value@proxy.invalid:8443"
+        transport = {"HTTPS_PROXY": proxy, "TERM": "screen-256color"}
+        config.write_text(json.dumps(json.loads(config.read_text()) | {"selected_env": [*policy, *transport]}))
         self.env.update({name: "stale-caller" for name in policy})
+        # Authenticated proxies and TERM=dumb are supported caller inputs.
+        self.env.update(HTTPS_PROXY=proxy, TERM="dumb")
         self.env["DATABASE_URL"] = "fixture-caller-credential"
         source = policy | {"DATABASE_URL": "fixture-manager-credential"}
         self.manager.write_text(json.dumps(source))
@@ -458,13 +464,21 @@ class SessionContract(unittest.TestCase):
         # arbitrary name the harness scrub table cannot recognize.
         tmux = ["tmux", "-L", self.label, "-f", os.devnull]
         subprocess.run([*tmux, "new-session", "-d", "-s", "keeper"], env=self.env, check=True)
+        subprocess.run([*tmux, "set-option", "-g", "default-terminal", transport["TERM"]], env=self.env, check=True)
+        commands = self.root / "tmux-commands.jsonl"
+        real_tmux = shutil.which("tmux")
+        wrapper = self.root / "bin/tmux"
+        wrapper.write_text("#!" + sys.executable + "\nimport json,os,sys\nfrom pathlib import Path\n"
+            + "with Path(" + repr(str(commands)) + ").open('a') as stream: stream.write(json.dumps(sys.argv[1:])+'\\n')\n"
+            + "os.execv(" + repr(real_tmux) + ", ['tmux', *sys.argv[1:]])\n")
+        wrapper.chmod(0o755)
         for key, value in {"FLEET_USER": "stale-server", "DATABASE_URL": "fixture-credential"}.items():
             subprocess.run([*tmux, "set-environment", "-g", key, value], env=self.env, check=True)
         config.write_text(json.dumps(json.loads(config.read_text()) | {"excluded_env": ["DATABASE_URL"]}))
         for mode in ("new", "resume"):
             self.call("start", mode=mode)
             self.wait(reason="new-no-record" if mode == "new" else "resumed")
-            self.assertEqual(self.started()[-1]["selected_env"], policy)
+            self.assertEqual(self.started()[-1]["selected_env"], policy | transport)
             self.assertEqual(self.started()[-1]["excluded_env"], [])
             # Each succession gets fresh policy, then its worker and native
             # process must succeed after that source disappears.
@@ -474,7 +488,7 @@ class SessionContract(unittest.TestCase):
                 self.manager.write_text(json.dumps(source | {"FLEET_USER": str(successor)}))
                 self.call("succeed")
                 self.wait()
-                self.assertEqual(self.started()[-1]["selected_env"], policy | {"FLEET_USER": str(successor)})
+                self.assertEqual(self.started()[-1]["selected_env"], policy | transport | {"FLEET_USER": str(successor)})
                 self.assertEqual(self.started()[-1]["excluded_env"], [])
             predecessor = self.record.read_bytes()
             for verb in ("start", "succeed"):
@@ -494,7 +508,49 @@ class SessionContract(unittest.TestCase):
         self.manager.write_text("{}")
         self.call("start")
         self.wait()
-        self.assertEqual(self.started()[-1]["selected_env"], dict.fromkeys(policy))
+        self.assertEqual(self.started()[-1]["selected_env"], dict.fromkeys(policy) | transport)
+        argv = commands.read_text()
+        self.assertFalse(proxy in argv, "private transport entered tmux arguments")
+        observed = {word for row in argv.splitlines() for word in json.loads(row)}
+        self.assertTrue({"new-session", "new-window", "respawn-pane"} <= observed)
+        pane = json.loads(self.record.read_text())["terminal"]["pane"]
+        command = subprocess.run([*tmux, "display-message", "-p", "-t", pane, "#{pane_start_command}"],
+                                 env=self.env, capture_output=True, text=True, check=True).stdout
+        self.assertFalse(proxy in command, "private transport entered pane command text")
+
+    def test_pane_channel_keeps_timeouts_private_and_releases_ownership(self):
+        proxy = "https://fixture-user:fixture-private-value@proxy.invalid:8443"
+        with patch.dict(os.environ, self.env | {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}, clear=True):
+            runtime = runpy.run_path(str(SKILLS / "jarvis/scripts/lib/session.py"))
+        session = runtime["Session"](self.home, self.env | {"HTTPS_PROXY": proxy})
+        for verb in ("new-session", "new-window", "respawn-pane"):
+            with self.subTest(verb=verb):
+                errors = io.StringIO()
+                captured = []
+                def timeout(argv, **kwargs):
+                    captured.extend(argv)
+                    raise subprocess.TimeoutExpired(argv, 1)
+                with patch.object(subprocess, "run", side_effect=timeout), redirect_stderr(errors):
+                    try:
+                        with session.pane_command([sys.executable, "-c", "pass"]) as command:
+                            channel = Path(shlex.split(command)[-1])
+                            self.assertEqual(channel.parent.stat().st_mode & 0o777, 0o700)
+                            session.tmux(verb, command)
+                    except subprocess.TimeoutExpired as failure:
+                        session.failure_log("worker-failed", failure)
+                        propagated = "".join(traceback.format_exception(type(failure), failure, failure.__traceback__))
+                    else:
+                        self.fail("tmux timeout was swallowed")
+                for evidence in (captured, errors.getvalue(), propagated):
+                    self.assertFalse(proxy in str(evidence), "private transport entered diagnostic or argv")
+                self.assertFalse(channel.parent.exists(), "failed launch retained its channel")
+        # A pane process killed before receipt can close a queued connection.
+        with self.assertRaises((OSError, runtime["Refusal"])):
+            with session.pane_command([sys.executable, "-c", "pass"]) as command:
+                channel = Path(shlex.split(command)[-1])
+                with socket.socket(socket.AF_UNIX) as peer:
+                    peer.connect(str(channel))
+        self.assertFalse(channel.parent.exists(), "closed receiver retained its channel")
 
     def test_manager_policy_excludes_reserved_account_through_selector(self):
         # Succession's subclass replaces lanes; this row needs its real owner.
