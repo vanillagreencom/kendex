@@ -206,7 +206,7 @@ while IFS='|' read -r mode want; do
   sk_lm "$R" notice --item overseer --to owner --file "$(sk_text "legacy-read-$mode" 'Legacy read notice.')" >/dev/null
   case "$mode" in
     line-guard) sk_mutant legacy-line-guard relay.py '\be\["line"\] is not None and ' '' ;;
-    receipts) sk_mutant legacy-receipts relay.py 'read \|= \{e\["id"\]' 'read = {e["id"]' ;;
+    receipts) sk_mutant legacy-receipts relay.py 'return read \| \{e\["id"\]' 'return {e["id"]' ;;
   esac
   sk_poll "$R"
   assert_eq "$RC=$SEEN=$(sk_reactions "$CH" "$DIRECTIVE")=$(asks "$CH" 'Legacy read notice.')" "$want" \

@@ -25,6 +25,10 @@ A relay whose `SLACK_OWNERS` differs from `owners` re-resolves the ids and rewri
 
 ## Journal lines
 
+Jarvis's delivered `owner-unread` event produces a top-level notice under `owner-unread:<original mailbox id>`. The notice keeps the original message's `at`, seed boundary and posting horizon. Duplicate batches share that notice id. The event must carry `destination=local` and the encoded full bound mailbox root; older events without that binding are not rebound. Only `owner-unread` supplies the deadline decision. `owner-unanswered` does not page.
+
+The page uses the ordinary `out` outcomes below. Its final dispatch admission rechecks the original read receipt and the session hold after text preparation; Slack's internal 429 retries remain part of that dispatch. A later mailbox read is not atomic with the send. The installed mailbox reader must support strict receipts. A missing capability or unavailable canonical receipt retains the candidate and fails that root's poll/status until recovery. Other roots and inbound delivery continue. Reaction-only receipt reads retain their existing compatibility behavior.
+
 Every line carries `t`, its kind. The relay replays the file at start; a line of another shape is refused `journal-invalid` with its line number.
 
 | `t` | Fields | Meaning |

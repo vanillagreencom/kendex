@@ -570,6 +570,7 @@ class RootRelay:
                 self.resume(events)
             else:
                 self.post_events(self.routes(events))
+            self.post_owner_unread(events)
         if self.post_failed is not None:
             raise self.post_failed
         self.last_ok = self.clock()
@@ -850,17 +851,74 @@ class RootRelay:
         if not seen:
             return
         try:
-            cursor, read = self.mail.read_receipts()
-            events = self.mail.events()
+            read = self.read_membership()
         except Refusal as err:
             print_refusal(err)
             return
-        read |= {e["id"] for e in events if e["box"] == "to-lane" and e["line"] is not None and e["line"] <= cursor}
         for ts in seen:
             if self.state.delivered.get(ts) not in read:
                 continue
             if self.react("reactions.remove", ts, SEEN) and self.react("reactions.add", ts, READ):
                 self.journal.append(t="mark", ts=ts, name=READ)
+
+    def read_membership(self, strict: bool = False, references: Iterable[Dict] = ()) -> Set[str]:
+        cursor, read = self.mail.read_receipts(strict=True) if strict else self.mail.read_receipts()
+        # Compaction can remove a read original while its unread batch remains.
+        # Its snapshot's logical position still belongs to this read cursor.
+        return read | {e["id"] for e in [*self.mail.events(), *references]
+                       if e["box"] == "to-lane" and e["line"] is not None and e["line"] <= cursor}
+
+    def post_owner_unread(self, events: List[Dict]) -> None:
+        """Consume Jarvis's delivered deadline decision; receipts only veto it.
+        The mailbox remains the retained candidate store, including on refusal.
+        """
+        originals = {e["id"]: e for e in events if e.get("box") == "to-lane"
+                     and e.get("mail_class") in ("owner-note", "resolution")}
+        for batch in events:
+            if (batch.get("box") != "to-lane" or batch.get("kind") != "directive"
+                    or not re.fullmatch(r"jarvis-[0-9a-f]{64}", batch.get("delivery_id", ""))):
+                continue
+            # watch.py::line_value defines the producer's token encoding. Match
+            # the serialized bound root without decoding literal escapes. Only
+            # a page batch needs this metadata; idle and reaction reads do not.
+            root = "".join({"\n": r"\n", "\r": r"\r", "\t": r"\t"}.get(char, "\\u%04x" % ord(char))
+                           if ord(char) < 32 or 127 <= ord(char) < 160 or char.isspace() else char
+                           for char in str(self.mail.box.parent.parent.parent))
+            for line in batch["text"].split("\n"):
+                if not line.startswith("EVENT owner-unread "):
+                    continue
+                fields = re.fullmatch(r"EVENT owner-unread id=(\S+) at=(\S+) destination=local root=(\S+)", line)
+                if fields is None or fields[3] != root:
+                    notice("owner-unread-unadmitted", f"batch={batch['id']} reason=event-binding")
+                    continue
+                original = originals.get(fields[1])
+                if original is None or original["at"] != fields[2]:
+                    notice("owner-unread-unadmitted", f"batch={batch['id']} reason=original-missing")
+                    continue
+                page = dict(original, id="owner-unread:" + original["id"])
+                if (page["id"] in self.state.carried or page["id"] in self.state.unknown
+                        or at_epoch(original["at"]) < self.settings.horizon(self.clock())
+                        or before(self.state.start_at, self.state.start_ids, at_epoch(original["at"]), original["id"])):
+                    continue
+                if original.get("line") is None:
+                    self.post_failed = Refusal("lane-mail-failed", f"id={original['id']} field=line unavailable")
+                    continue
+
+                def admit() -> bool:
+                    read = self.read_membership(strict=True, references=(original,))
+                    touched = self.refresh_hold()
+                    return (original["id"] not in read
+                            and at_epoch(original["at"]) >= self.settings.horizon(self.clock())
+                            and not presence_fresh(touched, self.presence, self.clock()))
+
+                text = f"{mention(self.binding)} Owner message `{original['id']}` at `{original['at']}` remains unread."
+                try:
+                    landed = self._send(page, "notice", text, None, admission=admit)
+                except Refusal as err:
+                    self.post_failed = err
+                    continue
+                if landed is not None:
+                    self._out(page, "notice", "resolved", thread=landed)
 
     def user_name(self, user_id: str) -> str:
         """The name Slack shows for a user a message mentions, asked once
@@ -1089,7 +1147,7 @@ class RootRelay:
             self.post_failed = Refusal(err.key, f"{err.value} id={envelope['id']}")
 
     def _send(self, envelope: Dict, kind: str, text: Union[str, List[Union[str, Verbatim]]], thread_ts: Optional[str],
-              attach: str = "") -> Optional[str]:
+              attach: str = "", admission: Optional[Callable[[], bool]] = None) -> Optional[str]:
         """The one outbound rule: the text and any attached file pass the
         secret-value check, a refusal there journaled refused and printed;
         then an in-flight line is synced before the file is uploaded with
@@ -1118,6 +1176,8 @@ class RootRelay:
             notice("continuation-changed", f"id={env_id} reason=hash-mismatch")
             return None
         if env_id in self.state.unknown:
+            return None
+        if admission is not None and not admission():
             return None
         try:
             if data is not None:
