@@ -134,8 +134,7 @@ class Session:
         self.emitted = False
 
     def run(self, argv, *, input=None, check=True, env=None):
-        tmux = argv[0] == "tmux"
-        self.operation = (argv[5] if argv[1] in ("-L", "-S") else argv[1]) if tmux else argv[2] if argv[0] == BASH else Path(argv[0]).name
+        self.operation = argv[5] if argv[0] == "tmux" else argv[2] if argv[0] == BASH else Path(argv[0]).name
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             raise subprocess.TimeoutExpired(argv, CALL_SECONDS)
@@ -328,40 +327,33 @@ os.execvpe(argv[0],argv,env)
             raise Refusal("record-unreadable")
         if not terminal:
             raise Refusal("no-controller")
-        socket, target = terminal["server"], "=" + terminal["session"]
-        if not os.environ.get("TMUX"):
-            sys.stderr.flush()
-            os.execvp("tmux", ["tmux", "-S", socket, "attach-session", "-t", target])
-        # Inside a tmux client, a second client would nest in its pane: the
-        # caller's own client is replaced instead. $TMUX routes these calls to
-        # the caller's server, the home's own included, with no -L, -S or -f.
-        pane = os.environ.get("TMUX_PANE")
-        if not pane:
-            raise Refusal("no-pane")
-        caller = dict(self.env, TMUX=os.environ["TMUX"])
-        # list-clients names only clients on the pane's own session, where
-        # display-message falls back to another terminal's client. A picker
-        # starts the command before it moves its client onto that session.
-        until = time.monotonic() + 2
-        while True:
-            listed = self.run(["tmux", "list-clients", "-t", pane, "-F", "#{client_name}"], check=False, env=caller)
-            if listed.returncode:
-                raise Refusal("client-failed", listed.stderr.strip())
-            clients = listed.stdout.splitlines()
-            if clients or time.monotonic() >= until:
-                break
-            time.sleep(0.05)
-        if len(clients) != 1:
-            raise Refusal("client-ambiguous" if clients else "no-client")
-        if self.tmux("has-session", "-t", target, check=False, socket=socket).returncode:
-            raise Refusal("no-controller")
-        # The client process execs this line through its default shell, so
-        # the client keeps its process and its terminal. Joined to -t, the
-        # target cannot start a word with =, which zsh would expand.
-        line = "exec tmux -S " + shlex.quote(socket) + " attach-session -t" + shlex.quote(target)
-        moved = self.run(["tmux", "detach-client", "-t", clients[0], "-E", line], check=False, env=caller)
-        if moved.returncode:
-            raise Refusal("client-failed", moved.stderr.strip())
+        argv = ["tmux", "-S", terminal["server"], "attach-session", "-t", "=" + terminal["session"]]
+        # The caller's own environment holds its live desktop and its
+        # $TERMINAL. A window holding its TMUX or TMUX_PANE reads as a pane of
+        # the caller's server, so the terminal starts without them.
+        own = {key: value for key, value in os.environ.items() if key not in ("TMUX", "TMUX_PANE")}
+        if os.environ.get("TMUX"):
+            # A client inside the caller's pane would nest, so the user's
+            # terminal opens one in a window of its own and the caller's
+            # client stays where it is.
+            try:
+                opened = self.backend("open-window", self.home, terminal["server"], terminal["session"], check=False, env=own)
+            except (OSError, subprocess.TimeoutExpired) as failure:
+                raise Refusal("terminal-launch-failed", str(failure))
+            if opened.returncode == 4:
+                raise Refusal("terminal-unresolved", opened.stderr.strip())
+            if opened.returncode not in (0, 3):
+                raise Refusal("terminal-launch-failed", opened.stderr.strip())
+            print(opened.stderr, end="", file=sys.stderr)
+            if opened.returncode == 0:
+                return
+            print("No terminal is set in TERMINAL or found on PATH, so Jarvis opens inside this tmux pane.", file=sys.stderr)
+        # tmux refuses a client only from a pane of the server it attaches to
+        # (server_client_check_nested), so the caller's TMUX stays: the nested
+        # client crosses servers, and a pane on the home's own server is
+        # refused rather than shown inside itself.
+        sys.stderr.flush()
+        os.execvp("tmux", argv)
 
     def _emit(self, answer):
         print(json.dumps(answer, separators=(",", ":")), flush=True)

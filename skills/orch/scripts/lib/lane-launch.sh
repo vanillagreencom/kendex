@@ -1918,6 +1918,31 @@ lane_account_equivalent() { # OBSERVED PICKED
      == "$(lane_claims_canon "$(lane_launch_home_account "$2")")" ]]
 }
 
+# The user's own terminal for a new window: $TERMINAL is the explicit choice,
+# xdg-terminal-exec the desktop's, and ghostty only where a desktop names
+# neither. Nothing is hardcoded ahead of what the user set. Sets LANE_TERMINAL
+# to the chosen name and LANE_TERMINAL_ARGV to the launcher that runs
+# SHELL_CMD under `bash -lc`; only ghostty takes DIR and TITLE as flags.
+# Returns 1 when no candidate is on PATH. A $TERMINAL naming nothing on PATH
+# falls through to the next candidate, and the caller reports that
+# substitution: LANE_TERMINAL then differs from $TERMINAL.
+lane_terminal_pick() { # DIR TITLE SHELL_CMD
+  LANE_TERMINAL=""
+  LANE_TERMINAL_ARGV=()
+  if [[ -n "${TERMINAL:-}" ]] && command -v "$TERMINAL" >/dev/null 2>&1; then
+    LANE_TERMINAL="$TERMINAL"
+    LANE_TERMINAL_ARGV=("$TERMINAL" -e bash -lc "$3")
+  elif command -v xdg-terminal-exec >/dev/null 2>&1; then
+    LANE_TERMINAL=xdg-terminal-exec
+    LANE_TERMINAL_ARGV=(xdg-terminal-exec bash -lc "$3")
+  elif command -v ghostty >/dev/null 2>&1; then
+    LANE_TERMINAL=ghostty
+    LANE_TERMINAL_ARGV=(ghostty --working-directory="$1" --title="$2" -e bash -lc "$3")
+  else
+    return 1
+  fi
+}
+
 # Recovery must survive a stop of its predecessor's process group. On macOS,
 # the shared GitHub prefix makes a separate group without Bash job control's
 # parent-side setpgid race. It execs COMMAND, preserving the PID in $! for

@@ -9,6 +9,7 @@ from fixtures.harness import native_launcher
 
 ROOT = Path(__file__).resolve().parents[3]
 SESSION = "jarvis/scripts/lib/session.py"
+BACKEND = "jarvis/scripts/lib/session-backend.sh"
 # The instrument is session_test.py: each control proves its case goes red.
 CONTROLS = (
     # Without the name check, Start acts on a foreign tmux session named jarvis.
@@ -22,14 +23,22 @@ CONTROLS = (
     ("native pane terminal", SESSION, "('TERM', 'TMUX', 'TMUX_PANE')", "('TMUX', 'TMUX_PANE')",
      "test_manager_policy_reaches_native_and_source_failure_keeps_owner"),
     # Attach outside tmux execs a client on the recorded socket and session.
-    ("attach line", SESSION, '"attach-session", "-t", target])', '"attach-session", "-t", target + "-"])',
-     "test_attach_outside_tmux"),
+    ("attach line", SESSION, '"attach-session", "-t", "=" + terminal["session"]]',
+     '"attach-session", "-t", "=" + terminal["session"] + "-"]', "test_attach_outside_tmux"),
     # Inside tmux, the outside route would nest a client in the caller's pane.
-    ("no nesting", SESSION, 'if not os.environ.get("TMUX"):\n            sys.stderr.flush()',
-     'if True:\n            sys.stderr.flush()', "test_attach_inside_tmux"),
-    # display-message falls back to another terminal's client.
-    ("pane client", SESSION, '"list-clients", "-t", pane, "-F", "#{client_name}"',
-     '"display-message", "-p", "-t", pane, "#{client_name}"', "test_attach_moves_only_the_pane_client"),
+    ("terminal window", SESSION, 'if os.environ.get("TMUX"):', 'if False:', "test_attach_opens_a_terminal_window"),
+    # No terminal at all reads as a refusal instead of the nested attach.
+    ("no terminal", BACKEND, '[[ -n "${TERMINAL:-}" ]] || exit 3', '[[ -n "${TERMINAL:-}" ]] || exit 4',
+     "test_attach_nests_without_a_terminal"),
+    # A terminal that failed to open falls back to the nested attach.
+    ("launch failure", SESSION, 'if opened.returncode not in (0, 3):', 'if opened.returncode not in (0, 3, 5):',
+     "test_attach_refuses_a_terminal_that_does_not_open"),
+    # A launcher that exits 0 counts as an opened window.
+    ("client proof", BACKEND, "client=none seconds=5\\n' \"$LANE_TERMINAL\" >&2\n    exit 5",
+     "client=none seconds=5\\n' \"$LANE_TERMINAL\" >&2\n    exit 0", "test_attach_refuses_a_terminal_that_does_not_open"),
+    # An unresolvable $TERMINAL reads as no terminal.
+    ("unresolved terminal", BACKEND, '[[ -n "${TERMINAL:-}" ]] || exit 3', 'exit 3',
+     "test_attach_refuses_a_terminal_that_does_not_open"),
     ("no controller", SESSION, 'if not terminal:\n            raise Refusal("no-controller")',
      'if False:\n            raise Refusal("no-controller")', "test_attach_refuses_without_a_controller"),
 )

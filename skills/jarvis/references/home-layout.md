@@ -34,9 +34,9 @@ The [session command](../workflows/session.md#session-command) keeps one tmux co
 
 ## Attach
 
-A tmux picker such as sesh lists only your default server, so it does not show the managed session. Your route to it is `jarvis-session attach --home HOME`, from the Jarvis package installed in HOME. Outside tmux, the command attaches your terminal to the recorded socket and session. Inside tmux, it moves the client of the pane it runs in onto that session. That client becomes the managed session's client, so no tmux client runs inside another. With no live controller, it exits non-zero with one `jarvis-session: attach=refused cause=no-controller` line and starts nothing.
+A tmux picker such as sesh lists only your default server, so it does not show the managed session. Your route to it is `jarvis-session attach --home HOME`, from the Jarvis package installed in HOME. Outside tmux, the command attaches your terminal to the recorded socket and session. Inside tmux, it opens the attach in a new window of your terminal and leaves your tmux client where it is. It picks the terminal as orch's `open-terminal` does: `$TERMINAL`, then `xdg-terminal-exec`, then `ghostty`. The command succeeds once the new window's client is on the managed session. It refuses when no client attaches within 5 seconds, when the terminal exits non-zero, or when `$TERMINAL` names nothing on PATH and no other terminal is found. With `$TERMINAL` unset and no terminal found, it prints one line and attaches inside the current pane. With no live controller, it exits non-zero with one `jarvis-session: attach=refused cause=no-controller` line and starts nothing.
 
-To reach Jarvis from a picker, add an entry that runs the attach command. kendex does not write your picker's configuration. For sesh, add a session whose startup command runs attach, with HOME's absolute path in place of HOME:
+To reach Jarvis from a picker, add an entry that runs the attach command. kendex does not write your picker's configuration. One sesh session entry serves both sesh and television's sesh channel, which lists sesh's configured sessions and connects through `sesh connect`; bind that channel to a key such as Ctrl+Shift+S. Put HOME's absolute path in place of HOME:
 
 ```toml
 [[session]]
@@ -45,4 +45,4 @@ path = "HOME"
 startup_command = "HOME/.agents/skills/jarvis/scripts/jarvis-session attach --home HOME && exit"
 ```
 
-The `&& exit` closes the picker's session only after the move. A refusal leaves its line on screen. If the managed session ends between the command's check and the move, the terminal returns to the shell it started from. When you detach from Jarvis, the terminal also returns to the shell its client started from.
+The picker creates a session on your server and runs the command in it. The `&& exit` closes that session once the window opens, or once you detach from a nested attach. tmux's `detach-on-destroy` option then decides where your client goes. A refusal leaves its line on screen.

@@ -1725,41 +1725,124 @@ class SessionContract(unittest.TestCase):
         self.wait("stopped")
         self.assertFalse([line for line in self.stderr.splitlines() if line.startswith("jarvis-session: attach=")])
 
-    def test_attach_inside_tmux(self):
+    # A terminal the rows name in $TERMINAL: open runs its -e command on a
+    # pseudo-terminal of its own and records what it was handed; fail exits
+    # 1 and idle exits 0 at once, as a launcher handing off to a server can.
+    TERMINAL_STUB = """#!/usr/bin/env python3
+import fcntl, json, os, pty, struct, sys, termios
+if sys.argv[0].endswith("fail"):
+    sys.exit(1)
+if sys.argv[0].endswith("idle"):
+    sys.exit(0)
+assert sys.argv[1] == "-e", sys.argv
+with open(os.environ["FIXTURE_TERMINAL_RECORD"], "w") as stream:
+    json.dump({"pid": os.getpid(), "env": {key: os.environ.get(key) for key in ("TMUX", "TMUX_PANE", "WAYLAND_DISPLAY")}}, stream)
+pid, fd = pty.fork()
+if pid == 0:
+    fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+    os.execvp(sys.argv[2], sys.argv[2:])
+try:
+    while os.read(fd, 4096):
+        pass
+except OSError:
+    pass
+os.waitpid(pid, 0)
+"""
+
+    def terminal_stubs(self):
+        stubs = self.root / "terminals"
+        stubs.mkdir()
+        for name in ("fixture-term", "fixture-fail", "fixture-idle"):
+            (stubs / name).write_text(self.TERMINAL_STUB)
+            (stubs / name).chmod(0o755)
+        return str(stubs) + os.pathsep + self.env["PATH"]
+
+    def bare_path(self):
+        # Every command on PATH but the terminal candidates after $TERMINAL,
+        # so no row resolves the developer's own terminal.
+        farm = self.root / "bare-path"
+        farm.mkdir()
+        for directory in self.env["PATH"].split(os.pathsep):
+            if not os.path.isdir(directory):
+                continue
+            for entry in os.scandir(directory):
+                if entry.name not in ("xdg-terminal-exec", "ghostty") and not os.path.lexists(farm / entry.name):
+                    (farm / entry.name).symlink_to(entry.path)
+        for name in ("xdg-terminal-exec", "ghostty"):
+            self.assertIsNone(shutil.which(name, path=str(farm)))
+        return str(farm)
+
+    def test_attach_opens_a_terminal_window(self):
         self.call("start")
         home = self.wait()["terminal"]["server"]
         owner = self.stand_in("owner")
-        for label, socket, session in (("owner server", owner, "owner"), ("home server", home, "side")):
-            with self.subTest(label):
-                if socket == home:
-                    self.tmux_read(home, "-f", os.devnull, "new-session", "-d", "-s", session,
-                                   os.environ["JARVIS_TEST_BASH"], "--noprofile", "--norc")
-                client = self.pty_client(["tmux", "-S", socket, "attach-session", "-t", "=" + session], [owner, home])
-                self.assertEqual(self.clients(socket, until=bool), [str(client.pid) + " " + session])
-                result = self.attach(self.inside_env(socket, session))
-                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
-                # No client nests in a pane: the home's one client is the
-                # caller's own client process, moved off the session it ran in.
-                expected = [str(client.pid) + " jarvis"]
-                self.assertEqual(self.clients(home, until=lambda rows: rows == expected), expected)
-                self.assertEqual(self.tmux_read(socket, "has-session", "-t", "=" + session).returncode, 0)
-                if socket == owner:
-                    self.assertEqual(self.clients(owner), [])
-                self.tmux_read(home, "detach-client", "-s", "=jarvis")
-                client.wait(timeout=10)
+        original = self.pty_client(["tmux", "-S", owner, "attach-session", "-t", "=owner"], [owner, home])
+        before = [str(original.pid) + " owner"]
+        self.assertEqual(self.clients(owner, until=bool), before)
+        handed = self.root / "terminal.json"
+        env = self.inside_env(owner, "owner") | {"TERMINAL": "fixture-term", "PATH": self.terminal_stubs(),
+                                                 "HOME": str(self.root), "FIXTURE_TERMINAL_RECORD": str(handed)}
+        result = self.attach(env)
 
-    def test_attach_moves_only_the_pane_client(self):
+        def release():
+            # The terminal ends once its client leaves the home server.
+            self.tmux_read(home, "detach-client", "-s", "=jarvis")
+            if not handed.exists():
+                return
+            pid, limit = json.loads(handed.read_text())["pid"], time.monotonic() + 10
+            while time.monotonic() < limit:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+        self.addCleanup(release)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", ""))
+        # The window's own client attached; the caller's client, its server
+        # and its session are where they were.
+        record = json.loads(handed.read_text())
+        rows = self.clients(home)
+        self.assertEqual([row.split(" ")[1] for row in rows], ["jarvis"])
+        parent = subprocess.run(["ps", "-o", "ppid=", "-p", rows[0].split(" ")[0]], capture_output=True, text=True)
+        self.assertEqual(parent.stdout.strip(), str(record["pid"]))
+        self.assertEqual(self.clients(owner), before)
+        self.assertEqual(self.tmux_read(owner, "has-session", "-t", "=owner").returncode, 0)
+        self.assertEqual(record["env"], {"TMUX": None, "TMUX_PANE": None, "WAYLAND_DISPLAY": "fixture-wayland"})
+
+    def test_attach_nests_without_a_terminal(self):
         self.call("start")
         home = self.wait()["terminal"]["server"]
-        owner = self.stand_in("owner", "other")
-        other = self.pty_client(["tmux", "-S", owner, "attach-session", "-t", "=other"], [owner, home])
-        expected = [str(other.pid) + " other"]
-        self.assertEqual(self.clients(owner, until=bool), expected)
-        # The pane's session has no client while another terminal's is attached.
-        result = self.attach(self.inside_env(owner, "owner"))
-        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, "", "jarvis-session: attach=refused cause=no-client\n"))
-        self.assertEqual(self.clients(owner), expected)
-        self.assertEqual(self.clients(home), [])
+        owner = self.stand_in("owner")
+        errors = self.root / "attach.err"
+        line = ("exec env -u TERMINAL PATH=" + shlex.quote(self.bare_path()) + " " + shlex.quote(str(SCRIPT))
+                + " attach --home " + shlex.quote(str(self.home)) + " 2>" + shlex.quote(str(errors)))
+        self.tmux_read(owner, "new-session", "-d", "-s", "picker", line)
+        pane = self.tmux_read(owner, "display-message", "-p", "-t", "=picker:", "#{pane_pid}").stdout.strip()
+        # The client runs in the picker's own pane: its process is the pane's.
+        self.assertEqual(self.clients(home, until=bool), [pane + " jarvis"])
+        self.assertEqual(errors.read_text(),
+                         "No terminal is set in TERMINAL or found on PATH, so Jarvis opens inside this tmux pane.\n")
+        self.assertEqual(self.tmux_read(owner, "has-session", "-t", "=owner").returncode, 0)
+
+    def test_attach_refuses_a_terminal_that_does_not_open(self):
+        self.call("start")
+        home = self.wait()["terminal"]["server"]
+        owner = self.stand_in("owner")
+        stubs, bare = self.terminal_stubs(), self.bare_path()
+        # A found terminal that does not open, and a $TERMINAL naming nothing
+        # with no other candidate, refuse rather than nest in the pane.
+        rows = (("launcher exits non-zero", "fixture-fail", stubs,
+                 "terminal-launch-failed", "jarvis-session: terminal=fixture-fail exit=1"),
+                ("no client within the bound", "fixture-idle", stubs,
+                 "terminal-launch-failed", "jarvis-session: terminal=fixture-idle client=none seconds=5"),
+                ("TERMINAL names nothing on PATH", "fixture-missing", bare,
+                 "terminal-unresolved", "jarvis-session: terminal=unresolved requested=fixture-missing"))
+        for label, terminal, path, cause, detail in rows:
+            with self.subTest(label):
+                result = self.attach(self.inside_env(owner, "owner") | {"TERMINAL": terminal, "PATH": path})
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (1, "", "jarvis-session: attach=refused cause=" + cause + "\n" + detail + "\n"))
+                self.assertEqual(self.clients(home), [])
 
     def test_attach_refuses_without_a_controller(self):
         for label in ("never started", "stopped"):

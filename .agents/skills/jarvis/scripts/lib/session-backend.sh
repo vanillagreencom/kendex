@@ -360,5 +360,47 @@ case "$verb" in
   deliver)
     export TMUX="$1,0,0"
     pane_write pane "$2" "$3" file "$4" ;;
+  open-window)
+    # The attach a caller inside a tmux client opens in a new window of the
+    # user's own terminal, from the caller's environment less TMUX and
+    # TMUX_PANE, which jarvis-session clears. Status 3 is no terminal: no
+    # $TERMINAL and no candidate on PATH. 4 is a $TERMINAL naming nothing on
+    # PATH with no other candidate, which is not that absence. 5 is a
+    # terminal that exited non-zero or put no new client on the session
+    # within 5 seconds.
+    home="$1" socket="$2" session="$3"
+    printf -v line 'exec tmux -S %q attach-session -t %q' "$socket" "=$session"
+    if ! lane_terminal_pick "$home" jarvis "$line"; then
+      [[ -n "${TERMINAL:-}" ]] || exit 3
+      printf 'jarvis-session: terminal=unresolved requested=%s\n' "$TERMINAL" >&2
+      exit 4
+    fi
+    [[ -z "${TERMINAL:-}" || "$LANE_TERMINAL" == "$TERMINAL" ]] ||
+      printf 'jarvis-session: terminal=fallback requested=%s selected=%s\n' "$TERMINAL" "$LANE_TERMINAL" >&2
+    clients() { tmux -S "$socket" list-clients -t "=$session" -F '#{client_pid}'; }
+    before="$(clients)" || exit 5
+    lane_run_detached /dev/null /dev/null "${LANE_TERMINAL_ARGV[@]}" || exit 5
+    launcher="$!" waited=0
+    # A terminal that hands its window to a running server exits 0 at once,
+    # so only a new client on the session proves the window opened.
+    while (( waited < 50 )); do
+      after="$(clients)" || exit 5
+      for pid in $after; do
+        [[ $'\n'"$before"$'\n' == *$'\n'"$pid"$'\n'* ]] || exit 0
+      done
+      if [[ -n "$launcher" ]]; then
+        state="$(lane_process_state "$launcher")" || exit 5
+        if [[ -z "$state" || "$state" == Z ]]; then
+          rc=0
+          wait "$launcher" || rc=$?
+          [[ "$rc" == 0 ]] || { printf 'jarvis-session: terminal=%s exit=%s\n' "$LANE_TERMINAL" "$rc" >&2; exit 5; }
+          launcher=""
+        fi
+      fi
+      sleep 0.1
+      waited=$((waited + 1))
+    done
+    printf 'jarvis-session: terminal=%s client=none seconds=5\n' "$LANE_TERMINAL" >&2
+    exit 5 ;;
   *) printf 'jarvis-session: backend=%s\n' "$verb" >&2; exit 2 ;;
 esac
