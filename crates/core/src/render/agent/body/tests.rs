@@ -32,9 +32,12 @@ fn render(
 }
 
 #[test]
-fn every_harness_rebases_links_and_citations_from_the_catalog_into_the_scope() {
+fn every_harness_rebases_links_and_citations_without_changing_citation_labels() {
     let body = concat!(
         "[skill](../.agents/skills/s/workflows/w.md#part)\n",
+        "[authority.md § Who decides](../skills/own/owner-rules/references/authority.md#who-decides)\n",
+        "[`consistency-and-report.md § Findings`](../skills/review/references/consistency-and-report.md#findings)\n",
+        "![`authority.md#who-decides`](../images/a.png)\n",
         "[URL](https://example.com/a.md) [absolute](/etc/a.md) [anchor](#anchor)\n",
         "`../.agents/skills/s/workflows/w.md § Part`\n",
         "../.agents/skills/s/workflows/w.md § Part\n",
@@ -67,7 +70,10 @@ fn every_harness_rebases_links_and_citations_from_the_catalog_into_the_scope() {
                     install_root: Path::new("/project"),
                 },
             );
-            let expected = body.replace("../.agents", &format!("{prefix}.agents"));
+            let expected = body
+                .replace("../.agents", &format!("{prefix}.agents"))
+                .replace("../skills", &format!("{prefix}skills"))
+                .replace("../images", &format!("{prefix}images"));
             let actual = if harness == HarnessId::Codex {
                 toml::from_str::<toml::Value>(&output.text).unwrap()["developer_instructions"]
                     .as_str()
@@ -119,6 +125,11 @@ fn target_syntax_and_unrepresentable_paths_keep_their_contract() {
             false,
         ),
         ("[a.md#part](#part)", "[a.md#part](#part)", false),
+        (
+            "[../../../outside.md § Part](../../a.md)",
+            "[../../../outside.md § Part](../../../../a.md)",
+            false,
+        ),
         (
             "[s](%2e%2e/%2e%2e/%2e%2e/a.md)",
             "[s](%2e%2e/%2e%2e/%2e%2e/a.md)",

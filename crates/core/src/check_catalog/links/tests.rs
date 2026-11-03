@@ -59,6 +59,54 @@ fn broken(file: &str, link: &str) -> Vec<(u32, Broken)> {
         .collect()
 }
 
+#[test]
+fn citation_labels_are_not_relative_targets() {
+    let rows = [
+        (
+            "[authority.md § Who decides](../skills/own/owner-rules/references/authority.md#who-decides)",
+            vec!["../skills/own/owner-rules/references/authority.md#who-decides"],
+        ),
+        (
+            "[`consistency-and-report.md § Findings`](../skills/review/references/consistency-and-report.md#findings)",
+            vec!["../skills/review/references/consistency-and-report.md#findings"],
+        ),
+        (
+            "![authority.md § Who decides](../images/a.png)",
+            vec!["../images/a.png"],
+        ),
+        (
+            "[![`image.md#part`](../images/a.png) authority.md § Who decides](../a.md)",
+            vec!["../a.md", "../images/a.png"],
+        ),
+        ("[authority.md § Who decides](https://example.com)", vec![]),
+        ("![`image.md::part`](#part)", vec![]),
+        ("[authority.md § Who decides](/a.md)", vec![]),
+        ("[authority.md § Who decides]()", vec![]),
+        ("", vec![]),
+    ];
+    for (label, destinations) in rows {
+        let text = format!("{label}\nstandalone.md § Part\n`code.md#part`\n`src/a.rs::item`\n");
+        let links = super::relative_links(&text);
+        let actual: Vec<_> = links
+            .iter()
+            .map(|link| {
+                let written = &text[link.range.clone().unwrap()];
+                (link.target.as_str(), written, link.citation)
+            })
+            .collect();
+        let mut expected: Vec<_> = destinations
+            .iter()
+            .map(|target| (*target, *target, false))
+            .collect();
+        expected.extend([
+            ("standalone.md", "standalone.md", true),
+            ("code.md", "code.md", true),
+            ("src/a.rs", "src/a.rs", true),
+        ]);
+        assert_eq!(actual, expected, "{label}");
+    }
+}
+
 fn missing(path: &str) -> Option<Broken> {
     Some(Broken::Missing(path.to_owned()))
 }
