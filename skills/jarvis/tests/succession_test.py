@@ -81,6 +81,12 @@ print(json.dumps({"config_dir": row["account"]}))
                 self.call("start", harness=harness, mode="new", brief=brief if briefed else None)
                 self.wait()
                 brief.unlink()
+                if harness == "claude":
+                    brief.write_text("Corrected continuing instructions.")
+                    answer, code = self.call("update-brief", brief=brief)
+                    self.assertEqual((answer["state"], code), ("running", 0))
+                    private = start_brief + " Corrected continuing instructions."
+                    brief.unlink()
                 predecessor = json.loads(self.record.read_text())
                 self.assertIsInstance(predecessor.get("report_started_at"), int)
                 predecessor["report_started_at"] = 1000
