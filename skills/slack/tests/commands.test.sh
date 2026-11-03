@@ -115,7 +115,10 @@ case "\$n" in
 esac
 EOF
 chmod +x "$CMD"/*
-runs() { [ -f "$CMD/status.runs" ] && wc -l < "$CMD/status.runs" | tr -d ' ' || echo 0; }
+runs() {
+  if [ ! -e "$CMD/status.runs" ]; then echo 0; return 0; fi
+  wc -l < "$CMD/status.runs" | tr -d ' '
+}
 
 ALPHA="$(sk_new_root alpha)"
 BETA="$(sk_new_root beta)"
@@ -135,24 +138,28 @@ CONFIGURED=("SLACK_STATUS_COMMAND=$CMD/status" "SLACK_ASKS_COMMAND=$CMD/asks" "S
 # Both status names share the current owner gate. Keep this scenario usable
 # by the dispatch and repeated-warning controls below.
 status_commands() {
-  local name user before number response text alpha_before beta_before
+  local name user before after number response text alpha_before beta_before alpha_after beta_after
   STATUS_RESULT=""
-  alpha_before="$(directives "$ALPHA")"
-  beta_before="$(directives "$BETA")"
+  # Errexit is off; required evidence must keep the reader's failure status.
+  alpha_before="$(directives "$ALPHA")" || return $?
+  beta_before="$(directives "$BETA")" || return $?
   relay "$ALPHA" --root "$BETA" "${CONFIGURED[@]}"
   for name in /lanes /status; do
     for user in U001 U999 U009 U001; do
-      before="$(runs)"
+      before="$(runs)" || return $?
       number="$(slash "$name" "$user" "" "; touch $SK_TMP/pwned")"
       reply "$number" >/dev/null
       response="$(sk_state ".responses[\"$number\"][0].response_type")"
       text="$(sk_state ".responses[\"$number\"][0].text")"
       # Configured stdout is the product result; refusal wording is not.
       [ "$user" = U001 ] || text="withheld"
-      STATUS_RESULT="$STATUS_RESULT$name:$user:$response:$(($(runs) - before)):$text;"
+      after="$(runs)" || return $?
+      STATUS_RESULT="$STATUS_RESULT$name:$user:$response:$((after - before)):$text;"
     done
   done
-  STATUS_RESULT="$STATUS_RESULT$(($(directives "$ALPHA") - alpha_before))|$(($(directives "$BETA") - beta_before))|$([ -e "$SK_TMP/pwned" ] && echo ran || echo none)"
+  alpha_after="$(directives "$ALPHA")" || return $?
+  beta_after="$(directives "$BETA")" || return $?
+  STATUS_RESULT="$STATUS_RESULT$((alpha_after - alpha_before))|$((beta_after - beta_before))|$([ -e "$SK_TMP/pwned" ] && echo ran || echo none)"
   STATUS_WARNINGS="$(sed -n 's/^slack: command-renamed=\([^ ]*\) fix=\([^ ]*\) remove-in=\([^ ]*\)$/\1|\2|\3/p' "$SK_TMP/relay.err")"
   sk_relay_stop
 }
@@ -163,7 +170,7 @@ for name in /lanes /status; do
   STATUS_EXPECTED="$STATUS_EXPECTED$name:U001:ephemeral:1:status-fixture argc=0 stdin=0;"
 done
 STATUS_EXPECTED="${STATUS_EXPECTED}0|0|none"
-status_commands
+status_commands || exit $?
 assert_eq "$STATUS_RESULT" "$STATUS_EXPECTED" "both status names return configured output only to current owners, without payload execution or mailbox writes"
 assert_eq "$STATUS_WARNINGS" "/status|/lanes|2.0.0" "the retired command warns once with its replacement and removal version"
 # --- settings refused at start -------------------------------------------------
@@ -354,11 +361,46 @@ timed_out
 assert_eq "$RESULT" "$TIMED_OUT" "a timed-out command replies timeout, and its stderr before the bound and on TERM reaches the relay's stderr"
 
 # --- controls ----------------------------------------------------------------------
+# Inject a dependency failure at each count observation. Forward every other
+# read to the real tool so this exercises runs() and the existing mailbox reader.
+while read -r observation reader fail_at; do
+  READ_CALLS="$SK_TMP/count-$observation"
+  printf '0\n' > "$READ_CALLS" || exit $?
+  read_rc=0
+  (
+    failed_read() {
+      local calls
+      read -r calls < "$READ_CALLS" || return $?
+      calls=$((calls + 1))
+      printf '%s\n' "$calls" > "$READ_CALLS" || return $?
+      [ "$calls" -ne "$fail_at" ] || return 7
+      command "$@"
+    }
+    case "$reader" in
+      mailbox) jq() {
+        if [ "$1" = -s ]; then failed_read jq "$@"; else command jq "$@"; fi
+      } ;;
+      runs) wc() { failed_read wc "$@"; } ;;
+    esac
+    result=0
+    status_commands || result=$?
+    sk_relay_stop
+    exit "$result"
+  ) > "$SK_TMP/$observation.out" 2> "$SK_TMP/$observation.err" || read_rc=$?
+  assert_eq "$read_rc" 7 "$observation: failed required count evidence preserves its dependency status"
+done <<'ROWS'
+alpha-before mailbox 1
+beta-before mailbox 2
+alpha-after mailbox 3
+beta-after mailbox 4
+run-before runs 1
+run-after runs 2
+ROWS
 sk_mutant status-dispatch relay.py 'COMMANDS\["/status"\] = COMMANDS\["/lanes"\]' 'COMMANDS["/status"] = COMMANDS.pop("/lanes")'
-status_commands
+status_commands || exit $?
 sk_assert_red "$STATUS_RESULT" "$STATUS_EXPECTED" "control: the previous dispatch without /lanes fails the configured status scenario"
 sk_mutant status-warning relay.py 'name == "/status" and not self.status_renamed' 'name == "/status"'
-status_commands
+status_commands || exit $?
 sk_assert_red "$STATUS_WARNINGS" "/status|/lanes|2.0.0" "control: repeated retired-command warnings fail the one-warning contract"
 sk_mutant owner-gate relay.py 'self\.owner_set = set\(resolve_owner_ids\(self\.api, self\.settings\.owners\)\.values\(\)\)' \
   'self.owner_set = set().union(*(set(r.binding.owner_ids.values()) for r in self.roots))'
