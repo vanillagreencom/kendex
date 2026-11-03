@@ -104,14 +104,16 @@ def checked_record(path):
 
     invalid("record", set(record) == {"v", "request", "confirmation"}
             and type(record["v"]) is int and record["v"] == 1)
-    # The confirmation is the words form {ref, at, words} or the method form {ref, at, method}.
+    # VGS records modality, not identity; its legacy records need no caller field.
     confirmation = record["confirmation"]
     form = "method" if isinstance(confirmation, dict) and "method" in confirmation else "words"
-    fields = {"request": ("ref", "at", "text"), "confirmation": ("ref", "at", form)}
+    caller = ("caller",) if isinstance(confirmation, dict) and "caller" in confirmation else ()
+    fields = {"request": ("ref", "at", "text"), "confirmation": ("ref", "at", form, *caller)}
     for part, keys in fields.items():
         invalid(part, isinstance(record[part], dict) and set(record[part]) == set(keys))
         for key in keys:
             invalid(part + "." + key, isinstance(record[part][key], str))
+    invalid("confirmation.caller", confirmation.get("caller", "unproved") == "unproved")
     invalid("confirmation.method", form == "words" or confirmation["method"] in METHODS)
     for part in fields:
         invalid(part + ".ref", REFERENCE.fullmatch(record[part]["ref"]))
@@ -463,7 +465,9 @@ class Forwarder:
                 state["entries"].append({
                     "key": key, "request": request["ref"], "request_at": request["at"], "request_sha256": digest,
                     "confirmation": confirmation["ref"], "confirmed_at": confirmation["at"],
-                    "text": request["text"] + "\n\n" + line, "queued_at": now, "attempts": 0,
+                    "text": "forwarded-confirmation: caller=unproved\nrequest-text: "
+                            + json.dumps(request["text"], ensure_ascii=True) + "\n\n" + line,
+                    "queued_at": now, "attempts": 0,
                     "last_attempt": None, "cause": None, "detail": None, "forwarded": None,
                     "delivered_at": None, "read": False, "after": None, "closed_at": None})
         self.send([key])
