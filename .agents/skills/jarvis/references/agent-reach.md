@@ -65,7 +65,7 @@ Offer the command for the required reach, run in the repository's main checkout.
 
 The directive install brings orch, mailbox and lane-mail-check's required hooks. On Copilot CLI, add `--hook lane-mail-start,lane-mail-prompt`.
 
-Before approval, say what the command installs, that it writes the checkout and commits nothing, and that a directive install can require a session restart for its hooks to reach the running agent. After approval, install and repeat [Reachable repositories](../SKILL.md#reachable-repositories)' judgment. The agent must still run orch's `oversee register`. Call it instructable only after a directive send prints its receipt.
+Before approval, say what the command installs, that it writes the checkout and commits nothing, and that a directive install can require a session restart for its hooks to reach the running agent. After approval, install and repeat [Reachable repositories](../SKILL.md#reachable-repositories)' judgment. After a directive install, the agent must still run orch's `oversee register`. Call it instructable only after a directive send prints its receipt.
 
 ## Control host setup
 
@@ -149,7 +149,7 @@ The main receives the request, a blank line and this provenance line:
 forwarded-request: satellite=NAME request-ref=REF request-at=TIME confirmation-ref=REF confirmed-at=TIME key=KEY confirmation-method=words|voice|physical confirmation-text=WORDS
 ```
 
-`WORDS` is the owner's words as one JSON string, or `null` for a method confirmation. Apply Forward's word rule. A malformed line or nonconfirming words approve nothing; ask the owner with an ordinary owner ask quoting the request.
+`WORDS` is the owner's words as one JSON string, or `null` for a method confirmation. Apply Forward's word rule only to a words confirmation. A malformed line or nonconfirming words approve nothing; ask the owner with an ordinary owner ask quoting the request.
 
 Handle a valid forward as an owner directive and answer through [Instruct](#instruct)'s referenced reply. The answer reaches the owner on the main, not the satellite call.
 
