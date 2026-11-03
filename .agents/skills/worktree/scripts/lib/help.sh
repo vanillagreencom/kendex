@@ -598,7 +598,7 @@ print_push_help() {
   worktree_message help push
   cat <<'EOF'
 Usage: worktree push [ID|/path] [--set-upstream|-u] [--no-rebase]
-       worktree push [ID|/path] --prepare-base
+       worktree push [ID|/path] --prepare-base [--message-file FILE]
        worktree push [ID|/path] --to-base BASE_OID
 
 Base delivery: --prepare-base fetches origin/<default>, rebases onto it even
@@ -607,6 +607,10 @@ commit hooks. Its tree must equal the pre-fold tree. A hook refusal restores
 the item head and preserves hook edits in the index. Repair the finding and
 prepare again. A hook-changed tree refuses before validation or publication.
 Each rewritten commit is mapped through the existing rebase-map channel.
+With --message-file FILE, Git reads the final commit message from FILE (-
+reads standard input); relative paths start at the caller's directory.
+Without it, Git reuses the first item commit's message and authorship.
+An unread message file restores the item head through the same rollback.
 It pushes nothing and prints:
   prepared-base: base=BRANCH before=BASE_OID commit=SHA
 
