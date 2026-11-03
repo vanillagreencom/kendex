@@ -89,6 +89,26 @@ op run --env-file "<signing env file>" -- ../../ui/node_modules/.bin/tauri build
 
 The command inside each installer comes from an overlay under `crates/app/release/`, one per platform, passed as `--config release/<platform>.json`; each reads the command staged under `target/bundle-cli/`. To bundle with the command locally: `cargo build --release -p kendex-cli`, copy `target/release/kendex` to `target/bundle-cli/kendex`, then `../../ui/node_modules/.bin/tauri build --bundles deb,rpm --no-sign --config release/linux.json` from `crates/app`.
 
+### Distribution packages
+
+Follow the [release standard](changelog.d/README.md#release-standard) for version choice and release notes. After publishing the release, update the version and released-artifact pins in the [Arch recipes](packaging/arch/) and [Homebrew recipes](packaging/homebrew/). The recipes declare the filenames, targets and checksum fields. Compute each artifact's checksum with `sha256sum` on its completed release download. The `-git` Arch recipes derive their version from the cloned commit and need no release-checksum bump. Keep each Linux CLI digest equal in the Homebrew formula and the prebuilt Arch recipe.
+
+Regenerate each changed Arch `.SRCINFO` from its package directory with `makepkg --printsrcinfo > .SRCINFO`. Run `tools/check-aur-sync` before landing the recipes. It checks the recipe, generated metadata and named companion files; `--remote` compares the published files too. Preserve the recipes' version-restart metadata. Keep the cask's 5.x migration caveat until no install remains on 5.x.
+
+A newly supported target may carry an all-zero pin before its first release. Fill that pin as part of the release's recipe bump. Do not publish a placeholder recipe early. Keep Homebrew version bumps off `main` until their release is published: its publisher defers placeholders but does not check the downloads. The AUR publisher also defers a package while its pinned downloads are absent or disagree with their checksums. An unreadable source, unreachable host or unexpected HTTP response is a failure to resolve, not evidence of an unpublished release.
+
+Edit recipes here. The publishers overwrite direct edits in the AUR or tap. Landing recipe changes on `main` triggers the [AUR](.github/workflows/publish-aur.yml) and [Homebrew](.github/workflows/publish-homebrew.yml) publishers; their workflows declare the full trigger and dispatch contracts. AUR publication is also dispatched on `main` after stable or candidate publication. Its scheduled job compares publishable packages without publishing them.
+
+Inspect an unpublished change with `tools/publish-aur --dry-run [package...]` or `tools/publish-homebrew --dry-run`. These dry runs need no publication credential and push nothing. A plain workflow dry run keeps the selected branch and uses no environment. Real publication and AUR key checks use the main-only `kendex` environment. Read each tool's `--help` for its arguments and result keys, and inspect the publisher result before reporting publication. A deferred package is expected to differ from its channel until its release is ready.
+
+#### Publisher credentials
+
+Keep `AUR_SSH_PRIVATE_KEY`, `FLEET_GH_APP_ID` and `FLEET_GH_APP_PRIVATE_KEY` only in the `kendex` environment, whose branch restriction follows [D003](docs/decisions/D003-one-merge-path.md). The Homebrew workflow mints the fleet App token for `homebrew-kendex` alone; the App needs contents write there. Do not use a tap deploy key.
+
+The recorded AUR publisher is `vanillagreen`, with an RSA 4096 key fingerprint `SHA256:t8gSJ7RLCH3fyWUrv+wJqzDOyeXkGdhrDuyfVuu19Do`. Update this record on rotation. Before publication, prove the configured key with `tools/publish-aur --check-key KEYFILE`; it checks that the AUR greets the maintaining account. A key-file failure, rejected key or unreadable login result stops publication. The recorded fingerprint is not a substitute for that live proof.
+
+Set `AUR_SSH_KNOWN_HOSTS` to the `aur.archlinux.org` host-key line only after comparing it with the fingerprints on the Arch wiki's AUR page. The workflow prints the trusted fingerprint. Missing AUR key/host data or either App secret fails publication by name. Optional AUR commit-identity settings and their defaults are declared in `tools/publish-aur`.
+
 ## Release
 
-Cutting a release is the app-deploy skill, `.agents/skills/app-deploy/SKILL.md`; the package-manager recipes are `packaging/README.md`.
+Cutting a release is the app-deploy skill, `.agents/skills/app-deploy/SKILL.md`; recipe maintenance follows [Distribution packages](#distribution-packages).

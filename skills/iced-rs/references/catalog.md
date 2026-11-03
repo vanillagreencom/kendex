@@ -1,164 +1,38 @@
-# Widget Catalog Trait
+# Widget catalogs
 
-> `widget::*::Catalog` · iced 0.14.0
+Read when overriding or implementing widget styling in Iced 0.14.0. Each widget owns its catalog contract. The pinned [button](https://github.com/iced-rs/iced/blob/0.14.0/widget/src/button.rs) and [container](https://github.com/iced-rs/iced/blob/0.14.0/widget/src/container.rs) declarations show two different forms; do not assume one universal signature.
 
-Per-widget theming pattern. Each styleable widget defines `Style` (appearance fields), `Status` (runtime state), and `Catalog` (trait mapping `(Class, Status) -> Style`). The `Class` type is either a boxed closure or an enum of variants.
+## Classes and styles
 
-## API
+A class is the style selector stored by the widget. A style is the resulting appearance. The catalog's `default` method chooses the initial class; it is distinct from `Style::default`.
 
-### Generic shape
+Button styling uses the theme, class and interaction status. Container styling uses the theme and class without a status argument. Read the target widget before adding fields, status parameters or state transitions to its implementation.
 
-```rust
-pub trait Catalog {
-    type Class<'a>;
+Built-in theme catalogs commonly use a boxed style closure. An enum class can serve a fixed set of variants. The button source includes that example. If callers also need `.style(closure)`, satisfy the setter's actual conversion bound; an enum alone does not provide that conversion. A `.class(...)` call selects the stored class directly.
 
-    // Required methods
-    fn default<'a>() -> Self::Class<'a>;
-    fn style(&self, class: &Self::Class<'_>, status: Status) -> Style;
-}
-```
+## Overrides
 
-- **`Class<'a>`** — The "style specifier" type the widget stores. Usually a boxed closure `Box<dyn Fn(&Theme, Status) -> Style + 'a>`, but can be a plain enum like `ButtonClass::{Primary, Secondary, Danger}`.
-- **`default()`** — Returns the default class produced by the catalog. Used when the user doesn't pass `.style(...)` or a custom class.
-- **`style(&self, class, status)`** — Returns the `Style` for the given class and status. This is what the widget calls in its `draw()`.
-
-### The closure-based `Class`
-
-Most built-in widgets use a closure-based `Class` so you can override style inline:
-
-```rust
-impl Catalog for Theme {
-    type Class<'a> = Box<dyn Fn(&Theme, Status) -> Style + 'a>;
-
-    fn default<'a>() -> Self::Class<'a> {
-        Box::new(|theme, status| Style::default())
-    }
-
-    fn style(&self, class: &Self::Class<'_>, status: Status) -> Style {
-        class(self, status)
-    }
-}
-```
-
-### The enum-based `Class` (button example)
-
-```rust
-#[derive(Debug, Default)]
-pub enum ButtonClass {
-    #[default]
-    Primary,
-    Secondary,
-    Danger,
-}
-
-impl Catalog for MyTheme {
-    type Class<'a> = ButtonClass;
-
-    fn default<'a>() -> Self::Class<'a> {
-        ButtonClass::default()
-    }
-
-    fn style(&self, class: &Self::Class<'_>, status: Status) -> Style {
-        let mut style = Style::default();
-
-        match class {
-            ButtonClass::Primary => {
-                style.background = Some(Background::Color(
-                    Color::from_rgb(0.529, 0.808, 0.921),
-                ));
-            }
-            ButtonClass::Secondary => {
-                style.background = Some(Background::Color(Color::WHITE));
-            }
-            ButtonClass::Danger => {
-                style.background = Some(Background::Color(
-                    Color::from_rgb(0.941, 0.502, 0.502),
-                ));
-            }
-        }
-
-        style
-    }
-}
-```
-
-## Patterns
-
-### Inline style override
+Start from the widget's existing style function when changing only a few fields. Preserve its status handling and override the affected appearance fields. `Style::default` supplies a plain appearance value and may differ from the theme's default class.
 
 ```rust
 button("Click me")
     .on_press(Message::Clicked)
     .style(|theme, status| match status {
         button::Status::Hovered => button::Style {
-            background: Some(Background::Color(theme.extended_palette().primary.strong.color)),
-            ..button::default(theme, status)
+            background: Some(theme.extended_palette().primary.strong.color.into()),
+            ..button::primary(theme, status)
         },
-        _ => button::default(theme, status),
+        _ => button::primary(theme, status),
     })
 ```
 
-### Writing a `Catalog` for a custom widget
+The class lifetime allows a closure to borrow data that outlives the returned element. It cannot make view-local temporaries live longer. Widgets remain generic over the applicable catalog; these lifetime-parameterized class traits are not trait-object APIs.
 
-```rust
-// my_widget/mod.rs
+For a custom widget, define the appearance and status it actually needs, initialize its class through the catalog and resolve the appearance while drawing. If status carries extra state, keep it in that status value instead of adding a parallel styling parameter. `theme.md` and `theme-palette.md` own this package's theme/token guidance.
 
-#[derive(Default)]
-pub struct Style {
-    pub background: Option<Background>,
-    pub border:     Border,
-    pub text_color: Color,
-}
+## Related references
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Status {
-    Active,
-    Hovered,
-    Disabled,
-}
-
-pub trait Catalog {
-    type Class<'a>;
-    fn default<'a>() -> Self::Class<'a>;
-    fn style(&self, class: &Self::Class<'_>, status: Status) -> Style;
-}
-
-pub type StyleFn<'a, Theme> = Box<dyn Fn(&Theme, Status) -> Style + 'a>;
-
-impl Catalog for Theme {
-    type Class<'a> = StyleFn<'a, Theme>;
-
-    fn default<'a>() -> Self::Class<'a> {
-        Box::new(|theme, status| match status {
-            Status::Active  => Style { /* ... */ ..Style::default() },
-            Status::Hovered => Style { /* ... */ ..Style::default() },
-            Status::Disabled => Style { /* ... */ ..Style::default() },
-        })
-    }
-
-    fn style(&self, class: &Self::Class<'_>, status: Status) -> Style {
-        class(self, status)
-    }
-}
-
-// widget struct stores `class: <Theme as Catalog>::Class<'a>`
-// widget constructor sets class to `<Theme as Catalog>::default()`
-// widget `.style()` setter wraps a closure in `Box::new(...)`
-```
-
-## Gotchas
-
-- The `Catalog` trait is **not dyn-compatible** ( "This trait is not dyn compatible"). Consequently, widgets cannot store a `Box<dyn Catalog>` — they are generic over `Theme: Catalog` and the compiler monomorphises per theme.
-- `Class<'a>` is generic over a lifetime, so the style closure can borrow from the view function's local state. The view function's `Element` lifetime becomes the upper bound.
-- The enum-style `Class` (e.g. `ButtonClass::Primary`) is a great fit when you have a fixed palette of variants. The closure style is better when the user's style needs to depend on the theme's extended palette or dynamic state.
-- `Style` structs have many fields; use `..Style::default()` or `..button::default(theme, status)` to inherit the baseline and override only the fields you care about.
-- The `default()` function **doesn't mean "default value"** — it means "the default `Class` the widget starts with before any `.style(...)` override". Don't confuse with `Default::default()`.
-- If your custom widget has asymmetric states (e.g. a `Status` variant that carries extra data like `is_checked`), make it part of the `Status` enum itself, not a separate parameter — that keeps the catalog shape uniform.
-- No macro for building `Catalog` impls -- all hand-rolled.
-
-## See also
-
-- `theme.md`
-- `theme-palette.md`
 - `widget-button.md`
 - `widget-container.md`
+- `theme.md`
+- `theme-palette.md`

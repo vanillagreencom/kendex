@@ -1,125 +1,29 @@
-# Overlay
+# Custom overlays
 
-> `iced::advanced::overlay::Overlay` · iced 0.14.0
+Read when implementing an Iced 0.14.0 overlay after `guide-custom-overlays.md`. The pinned [Overlay and child aggregation](https://github.com/iced-rs/iced/blob/0.14.0/core/src/overlay.rs) and [Group](https://github.com/iced-rs/iced/blob/0.14.0/core/src/overlay/group.rs) declarations own the interfaces. Prefer the built-in alternatives the guide names when they meet the task.
 
-Trait for rendering on top of the normal widget tree (menus, tooltips, modals, popovers). Produced by `Widget::overlay()`; the runtime gives each overlay its own layout and draw pass above the main tree.
+## State and geometry
 
-## API
+An overlay implements layout and drawing, with optional input, operations, cursor feedback and nested overlays. Its methods differ from Widget methods: Overlay draw/update do not take a viewport parameter. Follow the guide's viewport rule when forwarding to descendant widgets rather than adding that parameter to the overlay method.
 
-### The `Overlay` trait
+Keep persistent open/closed and animation state in the originating widget's tree. Overlay values borrow that state and may be requested again for update, draw or operation traversal. The pinned [UserInterface runtime](https://github.com/iced-rs/iced/blob/0.14.0/runtime/src/user_interface.rs) owns those calls; do not assume one retained overlay value per animation.
 
-```rust
-pub trait Overlay<Message, Theme, Renderer>
-where
-    Renderer: Renderer,
-{
-    // Required methods
-    fn layout(&mut self, renderer: &Renderer, bounds: Size) -> Node;
-    fn draw(
-        &self,
-        renderer: &mut Renderer,
-        theme: &Theme,
-        style: &Style,
-        layout: Layout<'_>,
-        cursor: Cursor,
-    );
+Respect accumulated parent translation when locating the anchor, including through scrollables. Use layout bounds for the overlay's own coordinate space. The guide's positioning patterns and `examples/toast/src/main.rs` show anchor/translation handling.
 
-    // Provided methods
-    fn operate(
-        &mut self,
-        _layout: Layout<'_>,
-        _renderer: &Renderer,
-        _operation: &mut dyn Operation,
-    ) { ... }
-    fn update(
-        &mut self,
-        _event: &Event,
-        _layout: Layout<'_>,
-        _cursor: Cursor,
-        _renderer: &Renderer,
-        _clipboard: &mut dyn Clipboard,
-        _shell: &mut Shell<'_, Message>,
-    ) { ... }
-    fn mouse_interaction(
-        &self,
-        _layout: Layout<'_>,
-        _cursor: Cursor,
-        _renderer: &Renderer,
-    ) -> Interaction { ... }
-    fn overlay<'a>(
-        &'a mut self,
-        _layout: Layout<'a>,
-        _renderer: &Renderer,
-    ) -> Option<Element<'a, Message, Theme, Renderer>> { ... }
-    fn index(&self) -> f32 { ... }
-}
-```
+Returning no overlay removes its drawing path; it does not schedule a fade. Retain the overlay while a custom fade is active, then remove it after completion under the guide's visibility/invalidation rules. Check rendered alpha and interaction in the target renderer.
 
-### Constructing overlays
+## Groups and traversal
 
-Via `Widget::overlay`:
+Use `from_children` to collect child overlays from matching widget, tree and layout entries. A Group combines overlay elements and forwards layout, drawing, events, operations and nested overlays. It does not repair mismatched child structures.
 
-```rust
-fn overlay<'a>(
-    &'a mut self,
-    tree: &'a mut Tree,
-    layout: Layout<'a>,
-    renderer: &Renderer,
-    viewport: &Rectangle,
-    translation: Vector,
-) -> Option<Element<'a, Message, Theme, Renderer>>
-```
+Higher overlay indices draw above lower indices. The declaration owns the default. Give siblings explicit indices when relative order matters; Group's unstable sort does not guarantee input order for equal indices. Forward operations when focus/scroll queries must reach content inside the overlay.
 
-Offset the overlay anchor by `translation` so it follows the widget through scrollables. `viewport` is the clip region -- use it to hide overlays when the anchor scrolls out of view.
+Read `guide-custom-overlays.md` for the complete custom contract and `examples/toast/src/main.rs` for a composite overlay. The declaration and example are source evidence, not native viewport, fade or layering proof.
 
-### Overlay helpers
-
-```rust
-pub fn from_children<'a, Message, Theme, Renderer>(
-    children: &'a mut [Element<'_, Message, Theme, Renderer>],
-    tree: &'a mut Tree,
-    layout: Layout<'a>,
-    renderer: &Renderer,
-    viewport: &Rectangle,
-    translation: Vector,
-) -> Option<Element<'a, Message, Theme, Renderer>>
-where
-    Renderer: Renderer,
-```
-
-Aggregates child overlays into a single optional overlay for composite widgets.
-
-### `Group` (struct)
-
-```rust
-pub struct Group<'a, Message, Theme, Renderer> { /* ... */ }
-
-impl<'a, Message, Theme, Renderer> Group<'a, Message, Theme, Renderer> {
-    pub fn new() -> Self;
-    pub fn with_children(
-        children: Vec<Element<'a, Message, Theme, Renderer>>,
-    ) -> Self;
-    pub fn overlay(self) -> Element<'a, Message, Theme, Renderer>;
-}
-```
-
-`Group` is an overlay container that displays multiple overlay children and implements `Overlay` itself.
-
-## Patterns
-
-No standalone overlay examples in upstream docs. See `guide-custom-overlays.md` for full patterns.
-
-## Gotchas
-
-- `Overlay::draw` and `Overlay::update` do not take `viewport: &Rectangle` -- the overlay owns its rendering layer.
-- Respect `translation` when computing anchor position or overlays will not follow through scrollables.
-- Overlays are recreated each frame; open/closed state must live in the originating widget's `Tree` state.
-- Returning `None` from `overlay()` stops rendering immediately -- no built-in fade-out.
-- Default `index() = 1.0` -- override for deterministic ordering of multiple overlays.
-
-## See also
+## Related references
 
 - `advanced-widget.md`
 - `advanced-tree.md`
+- `advanced-operation.md`
 - `guide-custom-overlays.md`
 - `widget-tooltip.md`

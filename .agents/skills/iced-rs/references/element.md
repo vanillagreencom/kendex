@@ -1,72 +1,36 @@
-# Element
+# Elements
 
-> `iced::Element` · iced 0.14.0
+Read when composing Iced 0.14.0 views or mapping child messages. The pinned [Element implementation](https://github.com/iced-rs/iced/blob/0.14.0/core/src/element.rs) owns construction, mapping, widget access and layout explanation. The [versioned Pocket Guide](https://docs.rs/iced/0.14.0/iced/) shows view/update composition.
 
-Generic container for any widget. The return type of `view()`. Produced by calling `.into()` on any widget. Generic over `'a` (borrow lifetime), `Message`, `Theme`, and `Renderer`.
+## Composition
 
-## API
+An element hides a concrete widget type behind the common widget interface. Built-in widgets normally convert with `.into()`. Use an explicit `Element` return or conversion when Rust cannot infer the message or target type. `Element::new` also accepts a widget directly when implementing a custom conversion.
 
-Definition (abbreviated):
-
-```rust
-pub struct Element<'a, Message, Theme, Renderer> { /* private fields */ }
-
-impl<'a, Message, Theme, Renderer> Element<'a, Message, Theme, Renderer> {
-    pub fn new(widget: impl Widget<Message, Theme, Renderer> + 'a) -> Self;
-    pub fn map<B>(self, f: impl Fn(Message) -> B + 'a) -> Element<'a, B, Theme, Renderer>
-    where
-        Message: 'a,
-        B: 'a;
-    pub fn explain(self, color: impl Into<Color>) -> Self;
-    pub fn as_widget(&self) -> &dyn Widget<Message, Theme, Renderer>;
-    pub fn as_widget_mut(&mut self) -> &mut dyn Widget<Message, Theme, Renderer>;
-}
-```
-
-Every widget provides `From<Widget> for Element`, so widget trees end with `.into()`.
-
-## Patterns
-
-Typical view function:
+The view's resulting message type must match update. Map child messages into the parent's enum while composing the view:
 
 ```rust
-use iced::widget::{button, column, text};
-use iced::Element;
-
-fn view(counter: &Counter) -> Element<'_, Message> {
-    column![
-        text(counter.value).size(20),
-        button("Increment").on_press(Message::Increment),
-    ]
-    .spacing(10)
-    .into()
-}
-```
-
-Message mapping:
-
-```rust
-// In a parent view:
 child_component.view().map(Message::Child)
 ```
 
-Debug layout explanation:
+Keep the child identifier in that mapping when more than one child instance can emit the same message. The pinned `Element::map` example demonstrates indexed counters and delegation back to their update method.
+
+## Lifetimes and inspection
+
+The element's lifetime bounds the data its widget borrows. A view can borrow application state; it cannot return an element that borrows a temporary destroyed by that view call. Keep persistent application/widget state in its state owner rather than storing a borrowed view to extend its lifetime. An element that owns its data can have a different lifetime, so do not infer a universal expiration at the next view call.
+
+`as_widget` and `as_widget_mut` expose the underlying widget interface. They do not expose a general iterator of child elements or return the runtime's state tree. Use custom-widget/tree contracts when implementing traversal.
+
+For a layout diagnostic, wrap an element with `explain(color)`:
 
 ```rust
-// Wrap the entire tree to draw layout bounds in red:
-element.explain(Color::from_rgb(1.0, 0.0, 0.0))
+element.explain(iced::Color::from_rgb(1.0, 0.0, 0.0))
 ```
 
-## Gotchas
+The renderer draws that explanation. Confirm its output in the target application rather than treating the wrapper as a screenshot or layout test.
 
-- The `Element` returned by `view()` **must have the same `Message` type** as `update()`. Forgetting a `.map(...)` when composing child components is the classic type-mismatch bug.
-- `Element` **borrows** from the app state via `'a`. Don't try to store `Element`s in long-lived state — they only live until the next `view()` call.
-- `.into()` requires the target type to be inferable. When Rust can't infer, specify with `Element::from(widget)` or pin down the `Message` type.
-- `Element::new(widget)` is rarely used directly — prefer `.into()` through the `From` impls each widget provides.
-- No way to iterate an `Element`'s children from outside -- `as_widget()` exposes state tree, not child elements.
-
-## See also
+## Related references
 
 - `advanced-widget.md`
+- `advanced-tree.md`
 - `application.md`
 - `widget-column-row.md`

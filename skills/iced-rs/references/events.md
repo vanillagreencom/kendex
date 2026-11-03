@@ -1,119 +1,37 @@
-# Events
+# Runtime events
 
-> `iced::event` · iced 0.14.0
+Read when subscribing to Iced 0.14.0 input or window events. The pinned [event subscription implementation](https://github.com/iced-rs/iced/blob/0.14.0/futures/src/event.rs) owns filtering, status and redraw behavior. The [root exports](https://github.com/iced-rs/iced/blob/0.14.0/src/lib.rs) own the public `iced::event` API.
 
-Global event listening and filtering. The `Event` enum represents all runtime events (keyboard, mouse, window, touch, input method). Use `listen`, `listen_with`, or `listen_raw` to subscribe to events globally.
+## Listener choice
 
-## API
+`listen()` reports ignored runtime interaction events. It filters out events captured by widgets; it is not a listener for every event.
 
-### `Event` enum
-
-```rust
-pub enum Event {
-    Keyboard(keyboard::Event),
-    Mouse(mouse::Event),
-    Window(window::Event),
-    Touch(touch::Event),
-    InputMethod(input_method::Event),
-}
-```
-
-### `Status` enum
+Use `listen_with` when the application needs to filter by event, capture status or window ID. Return a message to deliver it or `None` to discard it. This listener excludes redraw requests and system-theme subscription events.
 
 ```rust
-pub enum Status {
-    Ignored,   // No widget handled the event
-    Captured,  // A widget captured the event
-}
-```
-
-### Functions
-
-```rust
-/// Listen to all runtime events. Every event is delivered to the subscriber.
-pub fn listen() -> Subscription<Event>;
-
-/// Listen and filter events. Return `Some(msg)` to produce a message,
-/// `None` to discard.
-pub fn listen_with<Message>(
-    f: fn(Event, Status, window::Id) -> Option<Message>,
-) -> Subscription<Message>
-where
-    Message: 'static + MaybeSend;
-
-/// Listen to raw (un-processed) events.
-pub fn listen_raw<Message>(
-    f: fn(Event, Status, window::Id) -> Option<Message>,
-) -> Subscription<Message>
-where
-    Message: 'static + MaybeSend;
-
-/// Listen for URL open events (macOS open-url, etc.).
-pub fn listen_url() -> Subscription<String>;
-```
-
-## Patterns
-
-### Subscribe to all events
-
-```rust
-use iced::event;
-
-fn subscription(&self) -> Subscription<Message> {
-    event::listen().map(Message::EventOccurred)
-}
-```
-
-### Filter for unhandled keyboard events
-
-```rust
-use iced::event::{self, Event, Status};
-use iced::keyboard;
-
-fn subscription(&self) -> Subscription<Message> {
-    event::listen_with(|event, status, _id| {
-        if let Status::Ignored = status {
-            if let Event::Keyboard(kb_event) = event {
-                return Some(Message::UnhandledKey(kb_event));
-            }
+iced::event::listen_with(|event, status, window_id| {
+    if status == iced::event::Status::Ignored {
+        if let iced::Event::Keyboard(key) = event {
+            return Some(Message::UnhandledKey(window_id, key));
         }
-        None
-    })
-}
-```
-
-### Window-specific event filtering
-
-```rust
-event::listen_with(|event, _status, window_id| {
-    if let Event::Window(window::Event::Resized(size)) = event {
-        Some(Message::WindowResized(window_id, size))
-    } else {
-        None
     }
+    None
 })
 ```
 
-### Listen for opened URLs
+Retain the window ID when one handler serves several windows. Check `Ignored` when a global shortcut should not also handle a widget's captured input. Use the event's keyboard, mouse, window, touch or input-method type for its details; their owning declarations supply the variant inventory.
 
-```rust
-fn subscription(&self) -> Subscription<Message> {
-    event::listen_url().map(Message::UrlOpened)
-}
-```
+## Redraws and host events
 
-## Gotchas
+`listen_raw` also includes redraw interaction events and passes their status. It does not promise delivery before widget processing. Filter it carefully: producing a message for each redraw can sustain another update/redraw loop. `animation.md` owns deliberate redraw loops.
 
-- `listen()` delivers every event to your `update` -- this can be noisy. Prefer `listen_with` to filter at the subscription level.
-- `listen_with` receives `Status` indicating whether a widget already handled the event. Check `Status::Ignored` to avoid duplicate handling.
-- The `window::Id` parameter in `listen_with`/`listen_raw` identifies which window the event belongs to. In single-window apps this is always the same ID.
-- `listen_raw` delivers events before widget processing. Use sparingly -- most apps should use `listen_with`.
-- `listen_url` is platform-specific (primarily macOS `open-url` protocol).
+The pinned root event module exports these three listeners. It does not export `listen_url`. A native URL-opening requirement needs its actual supported host integration and evidence before choosing an API; this reference establishes no URL-delivery behavior.
 
-## See also
+## Related references
 
-- `keyboard.md` -- `keyboard::Event` variants and key types
-- `mouse.md` -- `mouse::Event` variants
-- `window.md` -- `window::Event` variants
-- `touch.md` -- `touch::Event` variants
-- `subscription.md` -- `Subscription` creation and lifecycle
+- `keyboard.md`
+- `mouse.md`
+- `window.md`
+- `touch.md`
+- `subscription.md`
+- `animation.md`

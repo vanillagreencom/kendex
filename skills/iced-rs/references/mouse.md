@@ -1,121 +1,54 @@
 # Mouse
 
-> `iced::mouse` · iced 0.14.0
+Read when handling pointer buttons, wheel movement or cursor positions in iced 0.14.0. The pinned [mouse module](https://github.com/iced-rs/iced/blob/0.14.0/core/src/mouse.rs), [events](https://github.com/iced-rs/iced/blob/0.14.0/core/src/mouse/event.rs) and [buttons](https://github.com/iced-rs/iced/blob/0.14.0/core/src/mouse/button.rs) own declarations. [Cursor and interaction details](advanced-mouse.md) explain hit testing, layer visibility and click tracking.
 
-Mouse events, buttons, scroll deltas, cursor state, and system cursor icons. `Cursor` and `Interaction` are re-exported from `iced::advanced::mouse`; the `position_in`/`is_over` methods require the `advanced` feature.
+## Input handling
 
-## API
+The public `iced::mouse` module exposes `Cursor` and `Interaction`. Cursor position and hit-testing methods do not require the `advanced` feature. Implementing a custom Widget uses the separate [advanced API](advanced-widget.md).
 
-### `mouse::Event` enum
+Handle both line and pixel wheel deltas. Choose the conversion from lines to your application's units explicitly; the API specifies no universal pixel height for a line. [Winit conversion](https://github.com/iced-rs/iced/blob/0.14.0/winit/src/conversion.rs) preserves the separate wheel branches and converts cursor movement to window logical coordinates.
 
-```rust
-pub enum Event {
-    CursorEntered,
-    CursorLeft,
-    CursorMoved {
-        position: Point,
-    },
-    ButtonPressed(Button),
-    ButtonReleased(Button),
-    WheelScrolled {
-        delta: ScrollDelta,
-    },
-}
-```
-
-### `mouse::Button` enum
-
-```rust
-pub enum Button {
-    Left,
-    Right,
-    Middle,
-    Back,
-    Forward,
-    Other(u16),
-}
-```
-
-### `mouse::ScrollDelta` enum
-
-```rust
-pub enum ScrollDelta {
-    Lines  { x: f32, y: f32 },
-    Pixels { x: f32, y: f32 },
-}
-```
-
-For `Cursor` and `Interaction` details, see `advanced-mouse.md`.
+Use `cursor.is_over(layout.bounds())` before consuming a local pointer action. Use `position_in` when the handler needs widget-relative coordinates. Handle an unavailable cursor rather than inventing a position.
 
 ## Patterns
 
-### Listen to wheel events in a widget
+Inside a custom widget's `update`, publish and capture a handled wheel action. This excerpt uses an application-selected `line_height` and the widget's `on_scroll` callback:
 
 ```rust
-fn update(
-    &mut self,
-    _tree: &mut Tree,
-    event: &Event,
-    layout: Layout<'_>,
-    cursor: Cursor,
-    _renderer: &Renderer,
-    _clipboard: &mut dyn Clipboard,
-    shell: &mut Shell<'_, Message>,
-    _viewport: &Rectangle,
-) {
-    if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event {
-        if cursor.is_over(layout.bounds()) {
-            let y = match delta {
-                mouse::ScrollDelta::Lines { y, .. }  => *y * 16.0,
-                mouse::ScrollDelta::Pixels { y, .. } => *y,
-            };
-            shell.publish((self.on_scroll)(y));
-            shell.capture_event();
-        }
-    }
-}
-```
+use iced::{mouse, Event};
 
-### Handle a middle-click
-
-```rust
-if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Middle)) = event {
+if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event {
     if cursor.is_over(layout.bounds()) {
-        shell.publish(Message::MiddleClick);
+        let amount = match delta {
+            mouse::ScrollDelta::Lines { y, .. } => *y * line_height,
+            mouse::ScrollDelta::Pixels { y, .. } => *y,
+        };
+        shell.publish((self.on_scroll)(amount));
         shell.capture_event();
     }
 }
 ```
 
-### Global mouse listener via subscription
+Apply the same bounds-and-capture pattern to `ButtonPressed(mouse::Button::Middle)`. Handle `Button::Other` as a device/platform code, without assuming a fixed button meaning.
+
+For an application-wide forward-button action, an [event subscription](events.md) can select capture status and window identity. This handler accepts only ignored events and uses the application's `Message::Forward` variant:
 
 ```rust
-use iced::event::{self, Event};
-use iced::mouse;
+use iced::{event, mouse, Event, Subscription};
 
-fn subscription(_: &State) -> Subscription<Message> {
-    event::listen_with(|event, _status, _id| match event {
-        Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Forward)) => {
-            Some(Message::Forward)
-        }
+fn subscription() -> Subscription<Message> {
+    event::listen_with(|event, status, _window| match (event, status) {
+        (
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Forward)),
+            event::Status::Ignored,
+        ) => Some(Message::Forward),
         _ => None,
     })
 }
 ```
 
-## Gotchas
+Track `CursorEntered` and `CursorLeft` when the application needs window-entry state. For repeated-click recognition, retain the previous click and use the helper described in [advanced mouse](advanced-mouse.md); the event enum has no double-click variant.
 
-- `ScrollDelta::Lines` and `ScrollDelta::Pixels` are both emitted by real devices — always handle both. A common mistake is to only match on `Lines` and silently drop trackpad scrolling.
-- "One line" is typically 16 px, but that's not guaranteed — document your multiplier choice.
-- `CursorMoved { position }` is in **window** coordinates, not widget coordinates. Use `Cursor::position_in(layout.bounds())` inside a widget to get widget-relative coordinates.
-- The public `mouse` module and the `advanced::mouse` module share the same types but the extended `Cursor::position_in`/`position_over`/`is_over` methods are gated behind the `advanced` feature flag.
-- `Button::Other(u16)` is platform-specific — don't assume any particular numeric code means a particular button.
-- There is no `Event::DoubleClick` variant — double-click detection is done via the `iced::advanced::mouse::click::Click::new(position, button, previous)` helper. If you need timing-based double-click, track timestamps yourself.
-- No `is_inside_window` helper -- track `CursorEntered`/`CursorLeft` yourself.
+Verify wheel units, hit testing, button mapping and cursor feedback with the intended devices and backend. Source declarations alone do not establish those native results.
 
-## See also
-
-- `advanced-mouse.md`
-- `keyboard.md`
-- `events.md`
-- `touch.md`
+See [keyboard](keyboard.md) and [touch](touch.md).

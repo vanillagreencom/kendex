@@ -9,7 +9,7 @@ Widget tree traversal trait for querying/mutating state outside the normal messa
 ### `Operation` trait
 
 ```rust
-pub trait Operation<T> {
+pub trait Operation<T = ()>: Send {
     // Required
     fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<T>));
 

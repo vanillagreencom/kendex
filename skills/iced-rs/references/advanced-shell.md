@@ -1,101 +1,34 @@
 # Shell
 
-> `iced::advanced::Shell` · iced 0.14.0
+Read when a custom Iced 0.14.0 widget publishes messages, captures input or requests runtime work. The pinned [Shell declaration](https://github.com/iced-rs/iced/blob/0.14.0/core/src/shell.rs) owns its methods and merge semantics. `animation.md` owns redraw scheduling and the redraw/rebuild distinction.
 
-Communication channel between a widget and the iced runtime during `update()`. Publishes messages, requests redraws, captures events, invalidates layout, and merges child shells.
+## Messages and capture
 
-## API
+Publish a message when the application must handle an interaction. Capture the event when ancestors should not handle it as well. Publishing alone does not capture; keep both actions in the handler when both are needed.
 
 ```rust
-pub struct Shell<'a, Message> { /* private fields */ }
-
-impl<'a, Message> Shell<'a, Message> {
-    pub fn new(messages: &'a mut Vec<Message>) -> Shell<'a, Message>;
-    pub fn is_empty(&self) -> bool;
-
-    // Messages
-    pub fn publish(&mut self, message: Message);
-
-    // Event capture
-    pub fn capture_event(&mut self);
-    pub fn is_event_captured(&self) -> bool;
-    pub fn event_status(&self) -> Status;
-
-    // Redraws
-    pub fn request_redraw(&mut self);
-    pub fn request_redraw_at(&mut self, redraw_request: impl Into<RedrawRequest>);
-    pub fn redraw_request(&self) -> RedrawRequest;
-    pub fn replace_redraw_request(
-        shell: &mut Shell<'_, Message>,
-        redraw_request: RedrawRequest,
-    );
-
-    // Input method (IME)
-    pub fn request_input_method<T>(&mut self, ime: &InputMethod<T>)
-    where
-        T: AsRef<str>;
-    pub fn input_method(&self) -> &InputMethod;
-    pub fn input_method_mut(&mut self) -> &mut InputMethod;
-
-    // Invalidation
-    pub fn is_layout_invalid(&self) -> bool;
-    pub fn invalidate_layout(&mut self);
-    pub fn revalidate_layout(&mut self, f: impl FnOnce());
-    pub fn are_widgets_invalid(&self) -> bool;
-    pub fn invalidate_widgets(&mut self);
-
-    // Composition
-    pub fn merge<B>(&mut self, other: Shell<'_, B>, f: impl Fn(B) -> Message);
+if cursor.is_over(layout.bounds()) {
+    shell.publish((self.on_press)());
+    shell.capture_event();
 }
 ```
 
-## Patterns
+Run that pattern inside the intended event branch, such as a left-button press. Check current capture status when forwarding input through a composite widget.
 
-Emitting a message on click:
+## Invalidation and input methods
 
-```rust
-fn update(
-    &mut self,
-    _tree: &mut Tree,
-    event: &Event,
-    layout: Layout<'_>,
-    cursor: Cursor,
-    _renderer: &Renderer,
-    _clipboard: &mut dyn Clipboard,
-    shell: &mut Shell<'_, Message>,
-    _viewport: &Rectangle,
-) {
-    if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event {
-        if cursor.is_over(layout.bounds()) {
-            shell.publish((self.on_press)());
-            shell.capture_event();
-        }
-    }
-}
-```
+Use layout invalidation when geometry changes. Use widget invalidation when the runtime must rebuild widget values as well. The pinned [UserInterface runtime](https://github.com/iced-rs/iced/blob/0.14.0/runtime/src/user_interface.rs) consumes these flags; they are separate from requesting another frame.
 
-Animation redraws:
+Send input-method requests during `window::Event::RedrawRequested`, as the Shell contract requires. Retain preedit/cursor information in the widget's state until that request can be made. Check the target's native IME behavior; the method declaration is not a native delivery test.
 
-```rust
-shell.request_redraw();
+## Child shells
 
-shell.request_redraw_at(window::RedrawRequest::At(
-    std::time::Instant::now() + std::time::Duration::from_millis(16),
-));
-```
+A child shell can collect child messages before mapping them into the parent's message type. `merge` consumes that shell, maps and drains its messages, combines layout/widget invalidation and capture, takes the earliest redraw request and merges input-method requests. Merge the complete child shell instead of copying only its message buffer and losing those effects.
 
-## Gotchas
-
-- Call `capture_event()` when handling a mouse press or parents will also react ("drag is also firing a click" bugs).
-- `invalidate_widgets()` rebuilds the entire widget tree. Prefer `invalidate_layout()` when only geometry changed.
-- `request_redraw()` means "now"; `request_redraw_at()` schedules a specific time for coalescing.
-- IME requests are silently dropped outside `window::Event::RedrawRequested`.
-- `merge()` takes ownership of the other shell -- design composite widgets with a sub-shell that merges into the parent.
-
-## See also
+## Related references
 
 - `advanced-widget.md`
 - `advanced-overlay.md`
 - `advanced-tree.md`
 - `events.md`
-- `animation.md` — redraw vs rebuild invariant, invalidation modes
+- `animation.md`

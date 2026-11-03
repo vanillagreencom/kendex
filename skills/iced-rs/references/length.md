@@ -1,69 +1,42 @@
 # Length
 
-> `iced::Length` · iced 0.14.0
+Read when choosing a widget's width or height in iced 0.14.0. The pinned [Length declaration](https://github.com/iced-rs/iced/blob/0.14.0/core/src/length.rs) owns variants, conversions and layout helpers.
 
-Describes how a widget occupies space on a single axis. `Fill` takes all available space, `Shrink` uses intrinsic size, `Fixed(f32)` uses exact pixels, `FillPortion(u16)` distributes proportionally among siblings.
+## Sizing
 
-## API
+Choose a strategy independently for each axis. `Shrink` asks for the least space, `Fixed` asks for a fixed logical size, and filling strategies share remaining space. Parent constraints still govern the resulting layout; see [custom layout](advanced-layout.md).
 
-```rust
-pub enum Length {
-    Fill,
-    FillPortion(u16),
-    Shrink,
-    Fixed(f32),
-}
+`Fill` has the same weight as `FillPortion(1)`. Mix it with explicit portions when that weight is intended. Portions describe remaining space among siblings on the same parent axis, not an unconditional ratio of their final dimensions.
 
-impl Length {
-    pub fn fill_factor(&self) -> u16;
-    pub fn is_fill(&self) -> bool;
-    pub fn fluid(&self) -> Length;
-    pub fn enclose(self, other: Length) -> Length;
-}
-```
-
-Trait impls: `From<f32>`, `From<u32>`, `From<Pixels>` all produce `Length::Fixed`. Derives `Copy`, `Clone`, `PartialEq`, `Debug`.
+Do not assume a universal widget default. For example, [Container::new](https://github.com/iced-rs/iced/blob/0.14.0/widget/src/container.rs) derives its initial width and height from the child's fluid size hint. A filling child can therefore make its container fill that axis.
 
 ## Patterns
 
-Fixed height:
+Set a fixed logical height or fill the space the parent offers:
 
 ```rust
 use iced::widget::container;
-use iced::Element;
+use iced::Length;
 
-fn view(state: &State) -> Element<'_, Message> {
-    container("I am 300px tall!").height(300).into()
-}
+let fixed = container(content).height(300);
+let filling = container(other_content)
+    .width(Length::Fill)
+    .height(Length::Fill);
 ```
 
-Fill available space:
+Give siblings explicit weights when their intended remaining-space ratio should be visible:
 
 ```rust
-container(content).width(Length::Fill).height(Length::Fill)
-```
-
-Ratio-based layout with `FillPortion`:
-
-```rust
-row![
+iced::widget::row![
     sidebar.width(Length::FillPortion(1)),
     main_content.width(Length::FillPortion(3)),
 ]
 ```
 
-## Gotchas
+Numeric conversions produce fixed lengths in [logical pixels](https://github.com/iced-rs/iced/blob/0.14.0/core/src/pixels.rs), not character or grid units. A fixed zero asks for zero space; `Shrink` asks the layout to use the content's least space.
 
-- **Shrink is the default** for most widgets, but **containers inherit Fill from their children**. If you put a `Fill` child inside a container, the container will stretch to its parent on that axis — even if you wanted it to hug the child.
-- `FillPortion(1)` is equivalent to `Fill`. If you want strict ratios, give all columns explicit `FillPortion` values — don't mix `Fill` and `FillPortion`.
-- `Fixed(0.0)` is valid but rarely useful. Use `Shrink` to collapse to content.
-- `From<u32>` yields a fixed length in **logical pixels**, not grid units. `container.height(50)` is 50px, not 50 rem.
-- `fluid()` is the safe way to coerce an arbitrary `Length` into a Fill-or-Shrink value when you don't want explicit sizes to leak into a layout decision.
-- `FillPortion` only distributes across siblings in the same axis of the same parent.
+For layout code that needs only filling versus shrinking behavior, `fluid()` removes explicit sizes and portion weights. `enclose()` lets a shrinking strategy adopt a filling child; other cases remain unchanged. Use the declaration's `fill_factor()` contract when implementing a layout engine.
 
-## See also
+Check tight constraints, padding and sibling intrinsic sizes in the consuming layout. This reference provides source semantics; it does not establish a native layout result.
 
-- `padding.md`
-- `alignment.md`
-- `advanced-layout.md`
-- `widget-column-row.md`
+See [padding](padding.md), [alignment](alignment.md) and [rows and columns](widget-column-row.md).

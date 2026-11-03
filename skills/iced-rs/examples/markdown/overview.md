@@ -75,7 +75,7 @@ And that's everything! We just wrote a whole user interface. Let's run it:
 
 ```rust
 fn main() -> iced::Result {
-    iced::run("A cool counter", Counter::update, Counter::view)
+    iced::run(Counter::update, Counter::view)
 }
 ```
 
@@ -88,6 +88,6 @@ Iced will automatically:
 Read the [book], the [documentation], and the [examples] to learn more!
 
 [book]: https://book.iced.rs/
-[documentation]: https://docs.rs/iced/
-[examples]: https://github.com/iced-rs/iced/tree/0.14/examples#examples
+[documentation]: https://docs.rs/iced/0.14.0/iced/
+[examples]: https://github.com/iced-rs/iced/tree/0.14.0/examples#examples
 [The Elm Architecture]: https://guide.elm-lang.org/architecture/

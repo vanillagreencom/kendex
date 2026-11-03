@@ -1,91 +1,32 @@
 # Stream
 
-> `iced::stream` · iced 0.14.0
+Read when adapting an async producer to an iced 0.14.0 stream. The pinned [stream helpers](https://github.com/iced-rs/iced/blob/0.14.0/futures/src/stream.rs) own `channel` and `try_channel`. Use them for imperative async loops that publish values to a consumer.
 
-Utilities for bridging async futures into the stream world. Use `channel` or `try_channel` to convert imperative async code (loops, channels) into streams consumed by `Subscription::run` or `Task::stream`.
+## Producer
 
-## API
-
-### Functions
+The helper polls a producer future alongside a bounded channel receiver. Choose capacity for the workload. Awaiting `send` lets the channel apply backpressure. Handle a disconnected receiver so the producer can stop; do not replace that with a tight retry loop.
 
 ```rust
-/// Creates a `Stream` that yields items sent from a `Future` to an
-/// `mpsc::Sender`. A more ergonomic `stream::unfold` -- loop and publish
-/// from inside a `Future`.
-pub fn channel<T>(
-    size: usize,
-    f: impl AsyncFnOnce(Sender<T>),
-) -> impl Stream<Item = T>;
-
-/// Like `channel`, but the async closure may return an error.
-/// The stream yields `Result<T, E>` items.
-pub fn try_channel<T, E>(
-    size: usize,
-    f: impl AsyncFnOnce(Sender<T>) -> Result<(), E>,
-) -> impl Stream<Item = Result<T, E>>;
-```
-
-## Patterns
-
-### WebSocket-like stream via channel
-
-```rust
-use iced::stream;
-use iced::Subscription;
-
-fn subscription(&self) -> Subscription<Message> {
-    Subscription::run(|| {
-        stream::channel(100, async move |mut sender| {
-            let mut ws = connect_websocket().await;
-            loop {
-                let msg = ws.next().await;
-                sender.send(msg).await.ok();
-            }
-        })
-    })
-    .map(Message::WebSocketData)
-}
-```
-
-### Fallible stream with try_channel
-
-```rust
+use iced::futures::SinkExt;
 use iced::stream;
 
-let data_stream = stream::try_channel(10, async move |mut sender| {
-    let mut reader = open_file().await?;
-    while let Some(chunk) = reader.next_chunk().await? {
-        sender.send(chunk).await.ok();
+let values = stream::channel(1, async move |mut output| {
+    for value in 0..10 {
+        if output.send(value).await.is_err() {
+            break;
+        }
     }
-    Ok(())
 });
 ```
 
-### Use with Task::stream
+This produces a finite stream. A network worker can use the same pattern around its own connection/read loop; handle end-of-input and connection errors in that worker rather than repeatedly sending an absent value.
 
-```rust
-use iced::stream;
-use iced::Task;
+`try_channel` wraps sent values in `Ok` and yields an `Err` if its producer returns an error. The producer and receiver are selected together, so do not assume that error precedes or follows all buffered values. Handle results in the consuming application.
 
-Task::stream(stream::channel(1, async move |mut sender| {
-    for i in 0..10 {
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        sender.send(i).await.ok();
-    }
-}))
-.map(Message::Progress)
-```
+## Consumption
 
-## Gotchas
+Return `Task::stream(values).map(Message::Progress)` for a finite operation. For a passive worker, build the stream through `Subscription::run` or `run_with` and return that subscription while it is needed. See [subscription identity and completion](subscription.md).
 
-- `size` is the mpsc channel buffer size. Use a small value (1-10) for backpressure-aware streams. Larger values buffer more items in memory.
-- The `Sender` is bounded -- `sender.send(item).await` will wait if the buffer is full. Never use `try_send` in a tight loop without backpressure handling.
-- `try_channel` wraps each item in `Result`. If the closure returns `Err`, the error is yielded as a final `Result::Err` item and the stream ends.
-- The async closure runs in the runtime's async executor. It must be `'static` -- capture owned data, not references.
+The helpers themselves do not impose a universal `'static` bound. The Task or Subscription consumer imposes its own lifetime and `MaybeSend` requirements. Capture owned data when that boundary requires it. An async operation that uses Tokio also needs a compatible executor; the helper does not install one. See [futures](futures.md) and [time](time.md).
 
-## See also
-
-- `subscription.md` -- `Subscription::run` consumes streams
-- `task.md` -- `Task::stream` for one-shot stream tasks
-- `futures.md` -- `MaybeSend`, `Stream` re-exports
-- `time.md` -- `time::every` for interval-based subscriptions
+Dropping a stream stops polling its producer future; it does not prove that external work or side effects are undone. Check shutdown, backpressure and errors in the consuming runtime. No async worker or timing run is established here.

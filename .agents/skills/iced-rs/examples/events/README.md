@@ -1,6 +1,6 @@
 ## Events
 
-A log of native events displayed using a conditional `Subscription`.
+A native-event log with a control for recording events. Read [`src/main.rs`](src/main.rs) for the event handling.
 
 The __[`main`]__ file contains all the code of the example.
 

@@ -1,124 +1,40 @@
 # Time
 
-> `iced::time` · iced 0.14.0
+Read when scheduling ticks, polling async work or obtaining an instant in iced 0.14.0. The pinned [core time module](https://github.com/iced-rs/iced/blob/0.14.0/core/src/time.rs) owns time types and duration helpers; it re-exports `web_time` types for native/web use. The [root time module](https://github.com/iced-rs/iced/blob/0.14.0/src/time.rs) adds `now` and the selected backend's timer API.
 
-Re-exports of `std::time::{Duration, Instant}` plus helper functions for creating time-based subscriptions and tasks.
+## Timers
 
-## API
-
-### Re-exports
+Return a timer subscription while it is needed and remove it when idle. Map emitted instants into application messages:
 
 ```rust
-pub use std::time::Duration;
-pub use std::time::Instant;
-```
+use iced::{time, Subscription};
 
-### Functions
-
-```rust
-/// Returns a `Subscription` that yields the current `Instant` at each interval.
-/// First message after `duration`, then every `duration` thereafter.
-/// Requires feature `tokio` or `smol` or WebAssembly.
-pub fn every(duration: Duration) -> Subscription<Instant>;
-
-/// Returns a `Subscription` that runs an async function at a set interval,
-/// yielding the function's return value.
-/// Requires feature `tokio` or `smol` or WebAssembly.
-pub fn repeat<T>(
-    duration: Duration,
-    f: impl AsyncFn() -> T + MaybeSend + 'static,
-) -> Subscription<T>
-where
-    T: MaybeSend + 'static;
-
-/// Returns a `Task` that resolves to the current `Instant`.
-pub fn now() -> Task<Instant>;
-
-/// Convenience: creates a `Duration` from seconds.
-pub fn seconds(amount: u64) -> Duration;
-
-/// Convenience: creates a `Duration` from milliseconds.
-pub fn milliseconds(amount: u64) -> Duration;
-
-/// Convenience: creates a `Duration` from minutes.
-pub fn minutes(amount: u64) -> Duration;
-
-/// Convenience: creates a `Duration` from hours.
-pub fn hours(amount: u64) -> Duration;
-
-/// Convenience: creates a `Duration` from days.
-pub fn days(amount: u64) -> Duration;
-```
-
-## Patterns
-
-### Tick every second
-
-```rust
-use iced::time;
-use std::time::Duration;
-
-fn subscription(&self) -> Subscription<Message> {
-    time::every(Duration::from_secs(1)).map(Message::Tick)
-}
-
-// In update:
-Message::Tick(instant) => {
-    self.last_tick = instant;
-}
-```
-
-### Animation frame at 60 FPS
-
-```rust
-use iced::time;
-use std::time::Duration;
-
-fn subscription(&self) -> Subscription<Message> {
-    if self.animating {
-        time::every(Duration::from_millis(16)).map(Message::AnimationFrame)
+fn subscription(state: &State) -> Subscription<Message> {
+    if state.running {
+        time::every(time::seconds(1)).map(Message::Tick)
     } else {
         Subscription::none()
     }
 }
 ```
 
-### Periodic async polling
+The [default backend selection](https://github.com/iced-rs/iced/blob/0.14.0/futures/src/backend/default.rs) determines available timer helpers. Native Tokio and smol provide `every`; the Wasm backend provides its own implementation. A thread-pool or null backend does not acquire timers by supplying an interval value. Use [subscription identity](subscription.md) to understand why changing an interval restarts its timer.
+
+The [Tokio timer](https://github.com/iced-rs/iced/blob/0.14.0/futures/src/backend/native/tokio.rs) schedules its first `every` tick after the interval and skips missed ticks. Check the selected backend's timing behavior before relying on exact cadence. If an immediate initial timestamp is needed, return `time::now().map(Message::Tick)` as an initial task alongside the subscription.
+
+## Async polling
+
+The inspected Tokio backend also provides `repeat`. It takes a function returning a future, followed by the interval:
 
 ```rust
-use iced::time;
-use std::time::Duration;
-
-fn subscription(&self) -> Subscription<Message> {
-    time::repeat(Duration::from_secs(30), async || {
-        fetch_status().await
-    })
+time::repeat(fetch_status, time::seconds(30))
     .map(Message::StatusPolled)
-}
 ```
 
-### Get current time as a Task
+Here `fetch_status` is the application's async function. This implementation performs the first call immediately, then sleeps between completed calls. Its interval is not a fixed start-to-start cadence. The inspected smol and Wasm timer modules do not define this helper; do not assume Tokio's API exists on every backend.
 
-```rust
-fn update(&mut self, message: Message) -> Task<Message> {
-    match message {
-        Message::RecordTime => time::now().map(Message::TimeRecorded),
-        // ...
-    }
-}
-```
+## Instants and animation
 
-## Gotchas
+`time::now()` returns a Task that samples the instant when polled. Return it from boot/update and handle its mapped message when pure update logic needs runtime-provided time. Duration constructors and conversion units remain at the core declaration.
 
-- `every()` requires the `tokio` or `smol` feature flag (or WebAssembly). Without it, the function is not available.
-- `every()` yields `Subscription<Instant>`. Map to your message type: `time::every(dur).map(Message::Tick)`.
-- The first tick fires after `duration`, not immediately. For an immediate first tick, combine with `Task::done(Message::Tick(Instant::now()))`.
-- For animation, prefer `Shell::request_redraw` or `Shell::request_redraw_at` from within a custom widget over `time::every(16ms)`. The shell-based approach syncs with the compositor.
-- `now()` returns a `Task<Instant>`, not a raw `Instant`. This is designed for pure update functions (time-travel debugging support).
-
-## See also
-
-- `subscription.md` -- `Subscription` lifecycle and identity
-- `task.md` -- `Task` creation and chaining
-- `animation.md` -- animation scheduling with `request_redraw`
-- `advanced-shell.md` -- `Shell::request_redraw_at`
+A short timer interval is not a guaranteed frame rate. For custom-widget animation, follow [redraw scheduling](animation.md) and [Shell](advanced-shell.md) instead of maintaining an idle timer. Verify actual cadence, cancellation and target backend behavior in the consuming app. No native timer, browser or compositor timing result is established here.

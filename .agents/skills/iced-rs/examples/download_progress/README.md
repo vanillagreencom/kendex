@@ -1,8 +1,8 @@
 ## Download progress
 
-A basic application that asynchronously downloads multiple dummy files of 100 MB and tracks the download progress.
+A basic application that runs asynchronous downloads and displays their progress.
 
-The example implements a custom `Subscription` in the __[`download`](src/download.rs)__ module. This subscription downloads and produces messages that can be used to keep track of its progress.
+Read [`src/main.rs`](src/main.rs) for the application and [`src/download.rs`](src/download.rs) for the download task and progress messages.
 
 <div align="center">
   <img src="https://iced.rs/examples/download_progress.gif">

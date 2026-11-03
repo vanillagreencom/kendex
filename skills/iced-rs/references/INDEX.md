@@ -2,7 +2,7 @@
 
 Iced 0.14 API references and guides. Load on demand.
 
-- `api-module-tree.md` — hierarchical index of every public module, trait, struct, enum, function
+- `api-module-tree.md` — pinned export/feature discovery and task reading routes
 
 ## Synthesized guides
 
@@ -12,7 +12,7 @@ Iced 0.14 API references and guides. Load on demand.
 | `guide-custom-widgets.md` | `iced::advanced::Widget` — checklist, state, events, animation, hit-testing |
 | `guide-custom-overlays.md` | `iced::advanced::overlay::Overlay` — contract, viewport rule, panic sources |
 | `animation.md` | Paint-only vs layout-affecting, redraw scheduling, `Animation<T>`, hand-rolled, easing |
-| `animation-easing.md` | `Animation<T>` API (all methods) + `Easing` enum (32 variants) |
+| `animation-easing.md` | Transition/interpolation patterns and pinned `Animation<T>`/`Easing` owners |
 | `guide-animated-layout.md` | Animated transitions: measured positions, collapsed/expanded, keyed identity, clipping |
 | `guide-animation-debugging.md` | Animation/render bug checklist, symptom→cause table |
 | `shell-chrome.md` | Shell UI: action builders, floating menus, tab bars |
@@ -99,7 +99,7 @@ Iced 0.14 API references and guides. Load on demand.
 | `stream.md` | `stream::channel`, `try_channel` |
 | `time.md` | `time::every`, `repeat`, `now` |
 | `futures.md` | `MaybeSend`, `Stream`, `StreamExt` re-exports |
-| `debug.md` | `debug::time`, `time_with`, `enable`, `disable`; dev tools (`cargo-hot`, `comet`, F12 overlay) |
+| `debug.md` | `debug::time`, `time_with`, explicit span completion; developer-tool routes |
 | `system.md` | `system::information` (feature `sysinfo`) |
 
 ## Theming
@@ -108,7 +108,7 @@ Iced 0.14 API references and guides. Load on demand.
 |---|---|
 | `theme.md` | `Theme`, `Theme::custom`, `Theme::custom_with_fn` |
 | `theme-palette.md` | `Palette`, `palette::Extended`, `Background`, `Pair` |
-| `catalog.md` | `Catalog` trait — `StyleFn`, `Status`, `Style` |
+| `catalog.md` | Widget-specific classes/styles, closure bounds and status differences |
 
 ## Reading strategy
 

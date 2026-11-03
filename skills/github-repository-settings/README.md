@@ -1,12 +1,22 @@
 # GitHub repository settings
 
-Select local review instructions or enabled GitHub review files for a repository.
+Review-instruction setup for repository maintainers. Select a local review pointer or the enabled GitHub review files.
 
-## Operations
+## Features
 
-- `adopt --dry-run` previews takeover without writes and reports hand edits.
-- `render` writes the selected files through bot-instructions.
-- `check [--staged]` compares files without writes and reports the check location. With `--staged`, it reads tracked settings and review files from the index. Process and private-file settings keep their working values and normal precedence. A nested settings file keeps its working values only when it is absent from HEAD and the index. A staged deletion stays absent even if its working file remains.
+- Preview adoption without writing files, and report hand edits.
+- Write the selected review files through bot-instructions.
+- Check review files against their source, including staged changes.
+
+## Install
+
+```bash
+kendex add vanillagreencom/kendex --skill github-repository-settings
+```
+
+## How it works
+
+The package uses the existing bot-instructions manifest and renderer. A preview shows the files the selected mode would manage. It grants no write ownership. Follow [SKILL.md](SKILL.md) for adoption, rendering and checking, including the staged-reading contract.
 
 ## Setup
 
@@ -16,7 +26,7 @@ Choose `hosted` or `local` for `GITHUB_STANDARD_CHECK_LOCATION` before adoption.
 
 Local output writes the `AGENTS.md` review pointer region. It needs the manifest's `codex` flag and an installed bot-instructions package inside the checkout. It leaves remote files outside this operation. This package installs no hosted CI and declares no repository effects.
 
-The bot-instructions renderer, schemas and validators remain a temporary dependency. KEN-2362 removes that dependency after the ownership transition. See [the skill](SKILL.md) for commands.
+The required dependencies supply rendering, validation and settings lookup. [SKILL.md](SKILL.md) owns their delivery and compatibility requirements. `scripts/github-repository-settings --help` lists command options.
 
 ## Licence
 

@@ -88,8 +88,9 @@ Only implement `iced::advanced::overlay::Overlay` when none fit. See `guide-cust
 | `custom_quad` | `iced::advanced::Widget` | Custom rounded-quad |
 | `geometry` | `iced::advanced::Widget` + `Mesh2D` | Mesh drawing |
 | `bezier_tool`, `clock`, `color_palette`, `solar_system`, `the_matrix`, `game_of_life`, `sierpinski_triangle` | `canvas::Program` | 2D drawing fits Canvas cleanly |
-| `loading_spinners`, `arc` | Custom Widget + `canvas::Cache` | Animated arcs; loading_spinners is the canonical smooth-arc pattern |
-| `loupe` | Custom Widget + overlay | Hover-triggered transform overlay |
+| `loading_spinners` | Custom Widget + `canvas::Cache` | Smooth animated arcs |
+| `arc` | `canvas::Program` | Rotating arc |
+| `loupe` | Custom Widget | Hover-triggered clipped transform |
 | `toast` | Subscription + animated overlay | Notification lifecycle + composite widget with overlay |
 | `modal` | `stack` + `opaque` | Modal dialog without custom Overlay |
 | `pane_grid` | `pane_grid` built-in | Docking layout |

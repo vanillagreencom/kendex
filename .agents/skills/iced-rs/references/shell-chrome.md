@@ -1,10 +1,12 @@
-# Shell Chrome
+# Shell chrome
 
-Patterns for building app-level shell UI: header bars, action buttons, tab bars, and floating menus.
+Read when building header actions, tabs or floating menus. Follow the skill's [token policy](../SKILL.md#theming-no-custom-theme-type-for-tokens), [interaction ownership](../SKILL.md#single-message-per-interaction) and [overlay state isolation](../SKILL.md#overlay-state-isolation).
 
-## Token-driven builders
+## Builders
 
-Shell elements (action buttons, tab items, menu entries) repeat throughout the app. Extract them into builder functions that read sizing/spacing from `TOKENS` — never inline magic numbers.
+Use shared view builders for repeated actions, tabs and menu entries. Read every size and spacing value from the application's `TOKENS`. Use a custom Widget when composition cannot supply the required state, events or layout; see [surface selection](guide-surface-selection.md).
+
+Action buttons use a fixed square with a centered icon. Tabs use content-driven width and a token-defined bar height. Header rows fill the available width and use a token-defined height. This builder assumes the application's token value and `action_style` closure:
 
 ```rust
 fn shell_action<'a, Message: Clone + 'a>(
@@ -14,8 +16,8 @@ fn shell_action<'a, Message: Clone + 'a>(
     let t = &*TOKENS;
     button(
         container(content)
-            .width(Length::Fixed(t.action_size))
-            .height(Length::Fixed(t.action_size))
+            .width(t.action_size)
+            .height(t.action_size)
             .center(Length::Fill),
     )
     .padding(0)
@@ -25,73 +27,26 @@ fn shell_action<'a, Message: Clone + 'a>(
 }
 ```
 
-### Why builders, not components
+## Floating menus
 
-A helper returning `Element` is zero-cost view construction. Reserve custom `Widget` impls for elements needing their own state or event handling.
+Derive menu width from its widest label, icon space, gaps and horizontal padding. An estimated text width needs checking against the rendered font; use the [text measurement contract](advanced-text.md) when exact geometry matters.
 
-### Sizing rules
+Clamp the menu origin to the viewport. Flip above the trigger when it cannot fit below. Handle a menu larger than the viewport as part of that layout. Use `float` or `stack` with `opaque` for layering while keeping the base widget tree stable; follow the [overlay guide](guide-custom-overlays.md) for state and viewport rules.
 
-- Action buttons: fixed square (`action_size × action_size`), icon centered
-- Tab items: `Shrink` width (text-driven), fixed height matching the tab bar
-- Header row: `Fill` width, fixed height from tokens
-- All padding/spacing values from `TOKENS` — one change updates every instance
+For outside-click dismissal, the hit area must cover the outside region. A `mouse_area` sized only to the menu cannot receive those clicks. The [bundled modal helper](../examples/modal/src/main.rs) places opaque content inside a backdrop mouse area, then places that layer above the base. Preserve its nesting so inside clicks do not dismiss through the backdrop.
 
-## Content-driven floating menus
+For delayed hover dismissal, start an application timer when the pointer leaves the menu and cancel it on re-entry. About 200 ms is the suggested delay. The [MouseArea implementation](https://github.com/iced-rs/iced/blob/0.14.0/widget/src/mouse_area.rs) reports entry/exit from bounds and cursor state; a raw window `CursorLeft` event alone does not describe leaving a menu.
 
-Dropdown/context menus should derive their width from content rather than using a fixed size.
+## Tabs
 
-### Width computation
-
-Measure the widest item and apply symmetric horizontal padding:
+Pane-grid title content uses `Shrink` width so empty space remains draggable:
 
 ```rust
-fn menu_width(items: &[MenuItem], t: &AppTokens) -> f32 {
-    let max_text = items.iter()
-        .map(|item| estimate_text_width(&item.label, t.font_size))
-        .fold(0.0f32, f32::max);
-    // icon + gap + text + right padding
-    let content = t.menu_icon_size + t.space_sm + max_text + t.space_md;
-    content + 2.0 * t.menu_padding_h
-}
+pane_grid::TitleBar::new(row![tab_items].width(Length::Shrink))
 ```
 
-### Viewport clamping
+For a scrollable tab row, use horizontal scrolling with content-driven width and bound it to the title bar's available space. Check that the resulting layout still leaves the intended pick area. [TitleBar::is_over_pick_area](https://github.com/iced-rs/iced/blob/0.14.0/widget/src/pane_grid/title_bar.rs) owns the hit-test geometry; [pane-grid rules](../SKILL.md#pane_grid) own drag behavior.
 
-Menus opened near edges must not overflow the window. Clamp the menu origin so `origin.x + width <= viewport_width` and `origin.y + height <= viewport_height`. Flip above the trigger if there's no room below.
+Draw the active indicator through the tab's conditional style rather than inserting another widget. This keeps the tree structure stable as selection changes. A tab builder that borrows its label returns `Element<'a, Message>` from `label: &'a str`.
 
-### Dismiss behavior
-
-- **Click outside**: `mouse_area` wrapping the menu captures clicks; any click outside the menu bounds sends a dismiss message
-- **Hover exit with delay**: start a short timer (~200ms) on `CursorLeft`; cancel if cursor re-enters before the timer fires
-
-### Composition
-
-Use `float` or `stack` + `opaque` to layer the menu above siblings. The menu is an overlay — it must not affect the base layer's widget tree structure (see overlay state isolation rules in SKILL.md).
-
-## Tab bars
-
-Tab bars in title bars (pane_grid or standalone) follow the pick-area geometry rule:
-
-```rust
-// Tab row must use Shrink so the remaining space serves as pick area
-pane_grid::TitleBar::new(
-    row![tab_items].width(Length::Shrink)
-)
-```
-
-For scrollable tab bars, wrap the tab row in a horizontal `scrollable` with `Shrink` width. The scrollable's max width is bounded by the title bar's available space.
-
-### Active tab indicator
-
-Place the indicator (underline, background highlight) inside the tab builder via conditional styling — not as a separate widget. This keeps the tree shape stable regardless of which tab is active.
-
-```rust
-fn tab_item<'a>(label: &str, active: bool, on_press: Message) -> Element<'a, Message> {
-    let style = if active { tab_active_style } else { tab_inactive_style };
-    button(text(label).size(TOKENS.tab_font_size))
-        .padding([TOKENS.space_xs, TOKENS.space_sm])
-        .style(style)
-        .on_press(on_press)
-        .into()
-}
-```
+Check narrow windows, overflow, dismissal, hover re-entry, scrolling and drag capture in the consuming app. The source patterns do not establish native input or rendered results.

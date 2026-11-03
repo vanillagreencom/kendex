@@ -1,117 +1,30 @@
-# Application & Daemon
+# Application and daemon
 
-> `iced::application` + `iced::daemon` · iced 0.14.0
+Read when choosing or configuring an Iced 0.14.0 entrypoint. The pinned [application](https://github.com/iced-rs/iced/blob/0.14.0/src/application.rs), [daemon](https://github.com/iced-rs/iced/blob/0.14.0/src/daemon.rs) and [root run helper](https://github.com/iced-rs/iced/blob/0.14.0/src/lib.rs) own their signatures and builder methods.
 
-Entry points for launching iced apps. `application(boot, update, view)` for standard windowed apps; `daemon(boot, update, view)` for headless/multi-window. Both return a builder with fluent configuration (`.theme()`, `.font()`, `.subscription()`, etc.) and `.run()` to start.
+## Entrypoints
 
-## API
+Use `iced::run(update, view)` for a state with `Default` and default settings. Use `iced::application(boot, update, view)` when startup or configuration needs a builder. The bundled `examples/counter/src/main.rs` shows the update/view form.
 
-### `iced::application(boot, update, view)`
+Use `iced::daemon(boot, update, view)` for an application that controls its windows explicitly or runs without one. Its view receives both state and `window::Id`. A daemon opens no window by default and continues after all windows close. Open windows through window tasks and return `iced::exit()` when the daemon should terminate. The bundled `examples/multi_window/src/main.rs` shows per-window views and window tasks.
 
-```rust
-pub fn application<State, Message, Theme, Renderer>(
-    boot: impl BootFn<State, Message>,
-    update: impl UpdateFn<State, Message>,
-    view: impl for<'a> ViewFn<'a, State, Message, Theme, Renderer>,
-) -> Application<impl Program<State = State, Message = Message, Theme = Theme>>
-where
-    State: 'static,
-    Message: Send + 'static,
-    Theme: Base,
-    Renderer: Renderer,
-```
+Choose one runtime entrypoint for the process. Manage additional windows through that runtime rather than starting another application loop.
 
-### `iced::daemon(boot, update, view)`
+## State and effects
 
-```rust
-pub fn daemon<State, Message, Theme, Renderer>(
-    boot: impl BootFn<State, Message>,
-    update: impl UpdateFn<State, Message>,
-    view: impl for<'a> ViewFn<'a, State, Message, Theme, Renderer>,
-) -> Daemon<impl Program<State = State, Message = Message, Theme = Theme>>
-```
+Boot may return state alone or state with a startup task. Update may return no effect or a value convertible into `Task<Message>`. Keep side effects in these update/startup tasks and keep view construction pure.
 
-### Builder methods (shared by both)
+Messages must satisfy the entrypoint's send/lifetime requirements. Read its current run bounds as well: developer-tool features can add message requirements beyond the constructor. Do not copy only a partial bound list into application code.
 
-`.title(fn)`, `.subscription(fn)`, `.theme(fn)`, `.style(fn)`, `.scale_factor(fn)`, `.settings(Settings)`, `.antialiasing(bool)`, `.default_font(Font)`, `.font(bytes)`, `.window_size(Size)`, `.centered()`, `.resizable(bool)`, `.run()`.
+## Configuration
 
-### Function signatures
+Set subscriptions, theme, style, scale and fonts on the selected builder. Inspect its own methods: application window setters are not a shared daemon builder API. Configure a daemon's individual windows when opening them.
 
-- `boot`: `fn() -> State` or `fn() -> (State, Task<Message>)`
-- `update`: `fn(&mut State, Message)` or `fn(&mut State, Message) -> Task<Message>`
-- `view`: `fn(&State) -> Element<Message>`
+An application title can be static or a function of state; a daemon title can also use the window ID. Use a theme function when the theme depends on state. `theme.md` owns the styling guidance.
 
-## Patterns
+The font builder adds bytes to the fonts loaded at startup. Runtime font loading uses the font task API. Neither choice alone proves asynchronous font processing or a first-paint cost; inspect the runtime and measure before making that claim.
 
-### Minimal application
-
-```rust
-use iced::widget::{button, column, text, Column};
-
-pub fn main() -> iced::Result {
-    iced::application(u64::default, update, view).run()
-}
-
-#[derive(Debug, Clone)]
-enum Message {
-    Increment,
-}
-
-fn update(value: &mut u64, message: Message) {
-    match message {
-        Message::Increment => *value += 1,
-    }
-}
-
-fn view(value: &u64) -> Column<Message> {
-    column![
-        text(value),
-        button("+").on_press(Message::Increment),
-    ]
-}
-```
-
-### Setting a theme
-
-```rust
-use iced::Theme;
-
-pub fn main() -> iced::Result {
-    iced::application(new, update, view)
-        .theme(theme)
-        .run()
-}
-
-fn new() -> State {
-    // ...
-}
-
-fn theme(state: &State) -> Theme {
-    Theme::TokyoNight
-}
-```
-
-### `iced::run(update, view)` — minimal shortcut
-
-```rust
-pub fn main() -> iced::Result {
-    iced::run(update, view)
-}
-```
-
-A shortcut for when you don't need a custom `boot`. Uses `Default::default()` for the state.
-
-## Gotchas
-
-- `Message: Send + 'static` is required — async tasks need to move messages across threads.
-- `update` may return `Task<Message>` (for async effects) **or** nothing (for simple synchronous updates). Both are supported — iced infers the right form via `UpdateFn`.
-- `boot` can return either a bare `State` or `(State, Task<Message>)` if you need to kick off work on startup (e.g. loading a config file).
-- `.font(bytes)` loads fonts **synchronously** at startup — fine for a few KB, but large fonts will delay first paint. Use `font::load(bytes)` from within `boot` if you want async loading.
-- `iced::daemon()` will exit immediately if you don't open a window from `boot` (via `Task::from(window::open(...))`) — a silent daemon with no windows has nothing to render.
-- Only one `iced::application()` or `iced::daemon()` per process.
-- The builder's `title` is a function that re-evaluates on each state change.
-
-## See also
+## Related references
 
 - `element.md`
 - `task.md`

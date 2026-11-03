@@ -1,108 +1,42 @@
-# Debug
+# Debugging and timing
 
-> `iced::debug` · iced 0.14.0
+Read when measuring or inspecting an Iced 0.14.0 application. The pinned [root debug exports](https://github.com/iced-rs/iced/blob/0.14.0/src/lib.rs) expose `Span`, `time` and `time_with`. The [debug implementation](https://github.com/iced-rs/iced/blob/0.14.0/debug/src/lib.rs) owns recording, explicit span completion and feature/target behavior.
 
-Profiling and timing utilities for iced applications. Measure execution time of code blocks and toggle the debug overlay.
+## Timing
 
-## API
-
-### Functions
+Use `time_with` for an expression or update block whose result must be returned:
 
 ```rust
-/// Returns a `Span` that measures execution time until dropped.
-/// Use as a scope guard: `let _span = debug::time("my_operation");`
-pub fn time(name: impl Into<String>) -> Span;
-
-/// Executes a closure, logs its execution time, and returns its result.
-pub fn time_with<T>(name: impl Into<String>, f: impl FnOnce() -> T) -> T;
-
-/// Enables the debug overlay (performance metrics, widget tree).
-pub fn enable();
-
-/// Disables the debug overlay.
-pub fn disable();
+let result = iced::debug::time_with("parse_data", || parse_data(&raw_data));
 ```
 
-### `Span` struct
-
-A scope-guard type returned by `time()`. When dropped, it records the elapsed duration under the given name. The timing data is visible in the debug overlay.
-
-## Patterns
-
-### Measure a code block with scope guard
+For a wider scope, retain the span and finish it explicitly:
 
 ```rust
-use iced::debug;
-
-fn heavy_computation(&self) {
-    let _span = debug::time("heavy_computation");
-    // ... work happens here ...
-    // timing recorded when `_span` is dropped
-}
+let span = iced::debug::time("heavy_computation");
+heavy_computation();
+span.finish();
 ```
 
-### Measure and return a value
+The pinned span has no `Drop` completion implementation. Binding it alone does not finish the measurement. `time` takes a name; it does not accept the closure that belongs to `time_with`.
 
-```rust
-use iced::debug;
+Enabled native recording sends timing events to the debug client. The no-recording feature/target branch provides empty span methods, but that does not prove every caller expression or name allocation is free. Measure the workload before optimizing or retaining instrumentation on a hot path.
 
-let result = debug::time_with("parse_data", || {
-    expensive_parse(&raw_data)
-});
-```
+## Tools
 
-### Toggle debug overlay from a keyboard shortcut
+Enable the `debug` feature for the built-in developer tools; the pinned [feature declaration](https://github.com/iced-rs/iced/blob/0.14.0/Cargo.toml) describes the native F12 debugger. `iced::debug::enable` and `disable` are not public root exports. Check the selected tool's controls instead of calling those names through the root API.
 
-```rust
-use iced::keyboard;
-
-// In update:
-Message::ToggleDebug => {
-    if self.debug_enabled {
-        debug::disable();
-    } else {
-        debug::enable();
-    }
-    self.debug_enabled = !self.debug_enabled;
-}
-```
-
-### Profile update function
-
-```rust
-fn update(&mut self, message: Message) -> Task<Message> {
-    debug::time_with("update", || {
-        match message {
-            // ... handle messages ...
-        }
-    })
-}
-```
-
-## Dev tools
-
-| Tool | Purpose | Install |
+| Tool | Task | Install route |
 |---|---|---|
-| `cargo-hot` | Live UI patching | `cargo install cargo-hot` |
-| `comet` | Debugger: frame metrics, widget tree, message inspector | `cargo install --locked --git https://github.com/iced-rs/comet.git` |
+| [cargo-hot](https://github.com/hecrj/cargo-hot) | Experimental hot reload | `cargo install cargo-hot` |
+| [Comet](https://github.com/iced-rs/comet) | Inspect and debug an application | `cargo install --locked --git https://github.com/iced-rs/comet.git` |
 
-`features = ["debug"]` plus F12 enables the built-in debugger. Stress-test with `ICED_PRESENT_MODE=Immediate` and `unconditional-rendering`. Measure with `iced::debug::time` and `comet` before optimizing:
+The external tool repositories are discovery sources. Confirm compatibility, controls and recording in the pinned application before relying on them.
 
-```rust
-fn update(&mut self, message: Message) -> Task<Message> {
-    iced::debug::time(format!("{message:?}"), || match message { /* ... */ })
-}
-```
+For stress runs, the `unconditional-rendering` feature requests rendering on runtime events. The bundled `iced_wgpu/src/settings.rs::present_mode_from_env` owns `ICED_PRESENT_MODE`, including `immediate`. Record those settings with any measurement because they change its workload.
 
-## Gotchas
+## Related references
 
-- `time()` returns a `Span` scope guard. You must bind it to a variable (`let _span = ...`) or it will be dropped immediately, recording zero time.
-- Timing data is only visible when the debug overlay is enabled. Call `debug::enable()` or press the built-in debug hotkey (F12 by default).
-- These are lightweight wrappers -- safe to leave in production code. They become no-ops when the debug overlay is disabled.
-- `time_with` is the simpler API when you just want to time a single expression.
-
-## See also
-
-- `application.md` -- debug overlay configuration in application settings
-- `advanced-shell.md` -- `Shell::request_redraw` for frame timing
-- `window.md` -- window settings including debug mode
+- `application.md`
+- `advanced-shell.md`
+- `window.md`

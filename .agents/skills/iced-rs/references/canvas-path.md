@@ -1,123 +1,34 @@
-# Canvas: Path & Builder
+# Canvas paths
 
-> `iced::widget::canvas::Path` · iced 0.14.0
+Read when constructing Iced 0.14.0 vector geometry. Enable `canvas`. The pinned [Path](https://github.com/iced-rs/iced/blob/0.14.0/graphics/src/geometry/path.rs), [Builder](https://github.com/iced-rs/iced/blob/0.14.0/graphics/src/geometry/path/builder.rs) and [border radius](https://github.com/iced-rs/iced/blob/0.14.0/core/src/border.rs) declarations own constructors and curve methods.
 
-Immutable 2D vector path for `Frame::fill` and `Frame::stroke`. Built via convenience constructors (`Path::line`, `Path::circle`, etc.) or `Path::new(|builder| ...)`. Requires the `canvas` feature.
+## Construction
 
-## API
-
-### `Path` constructors
+Use convenience constructors for lines, rectangles, rounded rectangles and circles. Use `Path::new` when a closure needs to build a polyline or curves; it builds the resulting path after the closure returns. A separately created builder is consumed by `build`.
 
 ```rust
-impl Path {
-    pub fn new(f: impl FnOnce(&mut Builder)) -> Path;
-    pub fn line(from: Point, to: Point) -> Path;
-    pub fn rectangle(top_left: Point, size: Size) -> Path;
-    pub fn rounded_rectangle(top_left: Point, size: Size, radius: Radius) -> Path;
-    pub fn circle(center: Point, radius: f32) -> Path;
-}
-```
+use iced::Point;
+use iced::widget::canvas::Path;
 
-- **`new(f)`** — Build an arbitrary `Path` via a `Builder`.
-- **`line(from, to)`** — A single line segment.
-- **`rectangle(top_left, size)`** — An axis-aligned rectangle.
-- **`rounded_rectangle(top_left, size, radius)`** — With rounded corners.
-- **`circle(center, radius)`** — A circle.
-
-### `Builder`
-
-```rust
-impl Builder {
-    pub fn new() -> Builder;
-
-    pub fn move_to(&mut self, point: Point);
-    pub fn line_to(&mut self, point: Point);
-
-    pub fn arc(&mut self, arc: Arc);
-    pub fn arc_to(&mut self, a: Point, b: Point, radius: f32);
-
-    pub fn bezier_curve_to(
-        &mut self,
-        control_a: Point,
-        control_b: Point,
-        to: Point,
-    );
-    pub fn quadratic_curve_to(&mut self, control: Point, to: Point);
-
-    pub fn rectangle(&mut self, top_left: Point, size: Size);
-    pub fn rounded_rectangle(
-        &mut self,
-        top_left: Point,
-        size: Size,
-        radius: Radius,
-    );
-    pub fn circle(&mut self, center: Point, radius: f32);
-
-    pub fn close(&mut self);
-
-    pub fn build(self) -> Path;
-}
-```
-
-## Patterns
-
-### Convenience constructors
-
-```rust
-use iced::widget::canvas::{Path, Point, Size, Radius};
-
-// Create a line
-let line = Path::line(Point::new(0.0, 0.0), Point::new(10.0, 10.0));
-
-// Create a rectangle
-let rect = Path::rectangle(Point::new(0.0, 0.0), Size::new(100.0, 50.0));
-
-// Create a rounded rectangle
-let rounded = Path::rounded_rectangle(
-    Point::new(0.0, 0.0),
-    Size::new(100.0, 50.0),
-    Radius::from(10.0),
-);
-
-// Create a circle
-let circle = Path::circle(Point::new(50.0, 50.0), 25.0);
-```
-
-### Build a polyline via closure
-
-```rust
-let line_series = Path::new(|p| {
-    p.move_to(Point::new(0.0, 100.0));
+let line = Path::new(|path| {
+    path.move_to(Point::new(0.0, 100.0));
     for (x, y) in points.iter().copied() {
-        p.line_to(Point::new(x, y));
+        path.line_to(Point::new(x, y));
     }
 });
 ```
 
-### Smooth corner using `arc_to`
+Paths are immutable once built. Rebuild changed geometry and reuse stable paths where appropriate; do not assume a clone has no cost. `examples/bezier_tool/src/main.rs` shows path construction in a Canvas program.
 
-```rust
-let corner = Path::new(|p| {
-    p.move_to(Point::new(0.0, 0.0));
-    p.line_to(Point::new(100.0, 0.0));
-    p.arc_to(Point::new(100.0, 100.0), Point::new(0.0, 100.0), 20.0);
-    p.line_to(Point::new(0.0, 100.0));
-    p.close();
-});
-```
+## Corners and closure
 
+`arc_to(a, b, radius)` joins the current path toward a corner near `a` with a tangent arc toward `b`. Follow it with `line_to(b)` when the path must continue to that endpoint. It is not a substitute for drawing the complete next segment. Inspect the builder's degenerate cases when points coincide or the radius is zero.
 
-## Gotchas
+Use `iced::border::Radius` for rounded corners. `Radius::new(value)` and numeric conversion set a uniform radius; its named corner setters support asymmetric radii. `Point` and `Size` come from the root crate, not Canvas re-exports.
 
-- `Path` is **immutable once built** — to change it, build a new one. This is the opposite of the retained-mode approach some other canvas libraries take.
-- `arc_to` is the HTML5-style "smooth corner" function — it does **not** actually draw a straight line to the first control point, it only smooths the corner. Follow it with a `line_to` to the next intended point.
-- `close()` is optional but needed for a filled path to render as a closed region. An unclosed filled path is still filled (the fill rule assumes implicit closure), but stroke behaviour differs.
-- `Radius::from(f32)` creates uniform corners. For asymmetric: `Radius::new(tl, tr, br, bl)`.
-- `Path::new(|p| ...)` implicitly builds -- no need to call `.build()` manually.
-- Paths are ref-counted and cheap to clone. Build once outside the draw closure for stable geometry.
-- Sub-pixel coordinates produce blurry strokes -- snap to integers for crisp 1px lines.
+Call `close()` when the stroke must join the final point to the subpath start. Check fill behavior separately; implicit fill closure does not establish the same stroke. Verify thin strokes at the application's scale and transform instead of assuming integer coordinates alone guarantee crisp output.
 
-## See also
+## Related references
 
 - `canvas.md`
 - `canvas-geometry.md`
