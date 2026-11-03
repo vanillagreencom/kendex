@@ -59,7 +59,7 @@ Only `SLACK_OWNERS` steer. Anyone in the channel can read what the overseer post
 | Where you write | What happens |
 |---|---|
 | Top-level | The overseer receives a directive. |
-| In an open question's thread | Every reply is an answer to that question. It stays open until the overseer closes it, or its deadline closes it with an option that stands. |
+| In an open question's thread | Every reply is an answer to that question. |
 | In any other thread, at any age, including “Also send to channel” | The overseer receives a directive with the thread context it has not received. [Parent pointers](schemas/journal.md#parent-pointers) define that context. |
 | A file, with or without text | The overseer receives the text and each saved file path, or the reason a file could not be fetched. A failed file download does not hold back the message. |
 | No text and no file, or a message from a nonowner | The message is not routed. The relay replies once to that message; moving its journal aside allows that reply again. |
@@ -69,7 +69,7 @@ An :eyes: reaction means delivered; :white_check_mark: means read. These marks p
 
 A tracker-posted question shows an @mention, its first line, item link and deadline if present; its detail stays on the item. Other questions include the complete question and @mention, with their choices, recommendation, deadline and draft where supplied.
 
-A chat answer appears as “Answered in the chat”. A programmatic answer shows `Answered: <option>.` when it matches an option, otherwise “Answered outside the chat.” An unanswered question shows “No answer by the deadline” and the option that stood. A reserved question has no option that stands: after its deadline the relay mentions the owner once more in its thread, or a new thread if the old one is gone. A reply there answers it.
+The overseer records its ruling and closes the question. A reserved question waits for your decision; no option stands by default. [Owner asks](../orch/references/communication-modes.md#owner-asks) defines question closure and deadline handling.
 
 A request forwarded by a satellite's Jarvis appears with the request and its cited confirmation in a new channel message; the overseer's notices follow in that thread. The overseer judges the confirmation words. If the root post is refused before sending or its response is lost, notices can appear top-level. The relay does not turn an ambiguous send into a repeated post.
 
@@ -106,7 +106,7 @@ Owner messages still reach the overseer. Replies to messages the owner typed in 
 
 Presence setting changes take effect at the next poll without a restart. Emptying or removing the file setting ends the hold. A stale or missing presence file also ends it, except that a running relay retains a renamed file's hold until the replacement is fresh or the retained file is stale. A failed settings read keeps that checkout's hold and fails its post step; other checkouts continue. The retired presence keys stay readable until kendex 2.0.0 with a `setting-renamed` warning; an explicitly set new key takes precedence, including an empty value.
 
-The Jarvis session marks its view read with `lane-mail events --item overseer --box to-overseer --mark-read`. On resume, ordinary notices and questions the session marked read are skipped without a post or mention, including closed questions. Replies to Slack-origin messages, `/report` and forwarded requests still post. A skipped reserved question stays skipped after its deadline and a restart. An unread reserved question already posted still gets its reminder. Later notices/questions and held answers continue to post. A missing, unreadable or invalid read marker skips nothing; hold times do not decide which messages were read.
+The Jarvis session marks its view read with `lane-mail events --item overseer --box to-overseer --mark-read`. On resume, ordinary notices and questions the session marked read are skipped without a post or mention, including closed questions. Replies to Slack-origin messages, `/report` and forwarded requests still post. Later notices/questions and held answers continue to post. A missing, unreadable or invalid read marker skips nothing; hold times do not decide which messages were read.
 
 The oldest supported mailbox producer is orch 3.0.0. Producers without usable position metadata still route, but cannot supply Jarvis-read suppression or position-based answer read marks. Bad position fields produce `envelope-field` diagnostics; other invalid fields skip that message. A checkout poll failure names the checkout while the others continue. The [journal schema](schemas/journal.md) and `slack --help` own the record and diagnostic details.
 
