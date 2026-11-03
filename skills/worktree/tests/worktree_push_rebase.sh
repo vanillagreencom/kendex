@@ -1167,11 +1167,45 @@ fi
 echo
 # Base transport never changes the already-validated head. The remote base
 # can advance before the final fetch or during pre-push hook execution.
-for race in before-fetch during-push; do
+for race in before-fetch during-push message-control; do
   build "base-$race" pair fix
-  prepared="$(cd "$MAIN" && "$WORKTREE_SCRIPT" push "$WT" --prepare-base 2>"$ROOT/prepare.err")"
+  fold_expected_message="$(git -C "$WT" show -s --format=%B HEAD)"
+  commit_wt second.txt second
+  fold_tree="$(git -C "$WT" rev-parse 'HEAD^{tree}')"
+  fold_old="$(git -C "$WT" rev-list "$BASE..HEAD")"
+  fold_script="$WORKTREE_SCRIPT"
+  fold_options=()
+  if [[ "$race" != during-push ]]; then
+    fold_expected_message=$'feat(ROOT-1): deliver the complete item\n\nDelivered both phases.\n\nReviewed-by: Reviewer <review@example.com>'
+    printf '%s\n' "$fold_expected_message" >"$MAIN/message file"
+    fold_options=(--message-file 'message file')
+  fi
+  if [[ "$race" == message-control ]]; then
+    mkdir -p "$TMP_ROOT/fold-message-control"
+    cp -R "$PACKAGE_DIR" "$TMP_ROOT/fold-message-control/worktree"
+    cp -R "$PACKAGE_DIR/../github" "$TMP_ROOT/fold-message-control/github"
+    fold_script="$TMP_ROOT/fold-message-control/worktree/scripts/worktree"
+    assert_eq "$(grep -cF 'FOLD_MESSAGE=(-F "$PUSH_MESSAGE_FILE")' "$fold_script")" 1 "control: one supplied-message selection"
+    sed -i.bak 's/FOLD_MESSAGE=(-F "$PUSH_MESSAGE_FILE")/FOLD_MESSAGE=(-C "$FOLD_FIRST")/' "$fold_script"
+    assert_eq "$(cmp -s "$fold_script.bak" "$fold_script" && printf unchanged || printf changed)" changed "control: the supplied-message selection changed"
+  fi
+  prepared="$(cd "$MAIN" && "$fold_script" push "$WT" --prepare-base ${fold_options[@]+"${fold_options[@]}"} 2>"$ROOT/prepare.err")"
   prepared_before="$(sed -n 's/^prepared-base: .* before=\([^ ]*\) .*/\1/p' <<<"$prepared")"
   prepared_head="$(git -C "$WT" rev-parse HEAD)"
+  assert_eq "$(git -C "$WT" rev-parse 'HEAD^{tree}')" "$fold_tree" "$race: folding preserves the delivered tree"
+  assert_eq "$(remote_oid origin)" "" "$race: preparation publishes no item branch"
+  assert_eq "$(git --git-dir="$ROOT/origin.git" rev-parse main)" "$BASE" "$race: preparation publishes no base commit"
+  while IFS= read -r fold_commit; do
+    assert_eq "$(grep -Fx "rebase-map: $fold_commit $prepared_head" <<<"$prepared")" "rebase-map: $fold_commit $prepared_head" "$race: each item commit maps to the fold"
+  done <<<"$fold_old"
+  if [[ "$race" == message-control ]]; then
+    control_message="$(git -C "$WT" show -s --format=%B HEAD)"
+    control_detected=false
+    [[ "$control_message" == "$fold_expected_message" ]] || control_detected=true
+    assert_eq "$control_detected" true "must-fail: ignoring the message file rejects the supplied-message assertion"
+    continue
+  fi
+  assert_eq "$(git -C "$WT" show -s --format=%B HEAD)" "$fold_expected_message" "$race: the selected message and trailers reach the prepared commit"
   if [[ "$race" == before-fetch ]]; then
     commit_main advanced.txt advanced
     want_key=worktree-push-base-conflict
@@ -1199,10 +1233,10 @@ SH
   assert_eq "$(grep -c -- '--force' "$ROOT/trace" || true)" 0 "$race: no force argument reaches Git"
 done
 
-for fold_history in unpublished published authorized; do
+for fold_history in unpublished published authorized unread; do
   build "fold-refused-$fold_history" pair fix
   commit_wt second.txt second
-  if [[ "$fold_history" != unpublished ]]; then
+  if [[ "$fold_history" == published || "$fold_history" == authorized ]]; then
     git -C "$WT" push -q origin "HEAD:refs/heads/$ISSUE"
   fi
   if [[ "$fold_history" == authorized ]]; then
@@ -1212,15 +1246,21 @@ for fold_history in unpublished published authorized; do
   fold_before="$(git -C "$WT" rev-parse HEAD)"
   fold_authorization="$(git -C "$WT" config --worktree --get-regexp '^kendex-restack\.' || true)"
   fold_remote="$(remote_oid origin)"
-  cat > "$MAIN/.git/hooks/pre-commit" <<'SH'
+  fold_options=()
+  if [[ "$fold_history" == unread ]]; then
+    fold_options=(--message-file "$ROOT/absent-message")
+  else
+    cat > "$MAIN/.git/hooks/pre-commit" <<'SH'
 #!/usr/bin/env bash
 exit 23
 SH
-  chmod +x "$MAIN/.git/hooks/pre-commit"
+    chmod +x "$MAIN/.git/hooks/pre-commit"
+  fi
   fold_rc=0
-  (cd "$MAIN" && "$WORKTREE_SCRIPT" push "$WT" --prepare-base >"$ROOT/out" 2>"$ROOT/err") || fold_rc=$?
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" push "$WT" --prepare-base ${fold_options[@]+"${fold_options[@]}"} >"$ROOT/out" 2>"$ROOT/err") || fold_rc=$?
   assert_eq "$fold_rc" 1 "$fold_history: a normal commit hook can refuse the fold"
   assert_eq "$(git -C "$WT" rev-parse HEAD)" "$fold_before" "$fold_history: a refused fold restores the item branch head"
+  assert_eq "$(git -C "$WT" status --porcelain)" "" "$fold_history: a refused fold preserves the original work"
   assert_eq "$(git -C "$WT" config --worktree --get-regexp '^kendex-restack\.' || true)" "$fold_authorization" \
     "$fold_history: a refused fold restores the prior authorization"
   assert_eq "$(remote_oid origin)" "$fold_remote" "$fold_history: a refused fold preserves the remote branch"
