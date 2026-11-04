@@ -526,88 +526,49 @@ elif sys.argv[1]=='read':
                 call.assert_called_once_with(["op", "whoami"], {})
 
     def test_session_routes(self):
-        # Records each call; a vault list also acknowledges on HOME/ack, so the renewal is observed, not slept for.
-        # A vault list fails when HOME/expired existed as it started, as an app lock makes it fail.
-        body = """import os,sys,json
-home=os.environ['HOME']
-expired=os.path.exists(home+'/expired')
-with open(home+'/calls','a') as f:
-    f.write(json.dumps({'verb':sys.argv[1], 'session':os.environ.get('OP_SESSION'), 'biometric':os.environ.get('OP_BIOMETRIC_UNLOCK_ENABLED')})+'\\n')
-if sys.argv[1:3]==['vault','list']:
-    with open(home+'/ack','wb',buffering=0) as f: f.write(b'V')
-    if expired: sys.exit(1)
-elif sys.argv[1]=='read': sys.stdout.write('fixture-value')
-"""
-        ack_path = self.root / "ack"
-        os.mkfifo(ack_path, 0o600)
-        ack = os.open(ack_path, os.O_RDWR | os.O_NONBLOCK)
-        self.addCleanup(os.close, ack)
-        self.env["JARVIS_OP_KEEPALIVE_SECS"] = "1"
-        # A broker without a terminal, with each value of JARVIS_OP_APP_INTEGRATION, and with neither input.
-        # OP_SESSION alone is the service tests' route.
-        rows = (("app-integration", {"JARVIS_OP_APP_INTEGRATION": "1"}, None),
-                ("both", {"JARVIS_OP_APP_INTEGRATION": "1", "OP_SESSION": "fixture-session"},
-                 b"op-broker: session=route-conflict"),
-                ("neither", {}, b"op-broker: session=OP_SESSION-required"),
-                ("empty-setting", {"JARVIS_OP_APP_INTEGRATION": ""}, b"op-broker: session=OP_SESSION-required"),
-                ("unknown-setting", {"JARVIS_OP_APP_INTEGRATION": "yes"}, b"op-broker: setting=JARVIS_OP_APP_INTEGRATION"))
-        base = dict(self.env)
-        for route, settings, key in rows:
-            with self.subTest(route=route):
-                self.env = dict(base, **settings)
-                self.log.unlink(missing_ok=True)
-                if key is not None:
-                    self.executable("op", body)
-                    process = subprocess.Popen([sys.executable, "-B", str(SCRIPTS / "op-broker"), "--directory",
-                                                str(self.root / "broker")], env=self.env, stdin=subprocess.DEVNULL,
-                                               stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    try:
-                        _, stderr = process.communicate(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.communicate(timeout=10)
-                        self.fail("the broker served a route it must refuse")
-                    self.assertEqual(process.returncode, 2, stderr)
-                    self.assertEqual(stderr.splitlines()[0], key)
+        module = load("lib/op_fifo.py")
+        self.executable("op", OP)
+        # Service configuration comes from these environment settings. Refusals must precede any op call or ready FIFO.
+        rows = (("app-keepalive", {"JARVIS_OP_APP_INTEGRATION": "1", "JARVIS_OP_KEEPALIVE_SECS": "1"},
+                 "keepalive=unsupported cause=per-terminal-authorization"),
+                ("both", {"JARVIS_OP_APP_INTEGRATION": "1", "OP_SESSION": "fixture-session",
+                          "JARVIS_OP_KEEPALIVE_SECS": "1"}, "session=route-conflict"),
+                ("invalid-interval", {"JARVIS_OP_APP_INTEGRATION": "1", "JARVIS_OP_KEEPALIVE_SECS": "bad"},
+                 "setting=JARVIS_OP_KEEPALIVE_SECS"),
+                ("neither", {}, "session=OP_SESSION-required"),
+                ("empty-setting", {"JARVIS_OP_APP_INTEGRATION": ""}, "session=OP_SESSION-required"),
+                ("unknown-setting", {"JARVIS_OP_APP_INTEGRATION": "yes"}, "setting=JARVIS_OP_APP_INTEGRATION"))
+        directory = self.root / "broker"
+        for platform in ("linux", "darwin"):
+            for route, settings, key in rows:
+                with self.subTest(platform=platform, route=route), \
+                     patch.object(module, "sys", Platform(platform)), \
+                     patch.object(sys, "argv", ["op-broker", "--directory", str(directory)]), \
+                     patch.dict(os.environ, dict(self.env, **settings), clear=True), \
+                     patch.object(module.os, "isatty", return_value=False), \
+                     patch.object(module.select, "select", side_effect=AssertionError("broker entered request loop")), \
+                     redirect_stderr(io.StringIO()) as stderr, patch.object(sys, "stdout", new_callable=io.StringIO) as stdout:
+                    with self.assertRaises(SystemExit) as refused:
+                        module.main("broker")
+                    self.assertEqual((refused.exception.code, stderr.getvalue().splitlines()[0]), (2, "op-broker: " + key))
+                    self.assertEqual(stdout.getvalue(), "")
                     self.assertFalse(self.log.exists())
-                    continue
-                process = self.start(body, args=["--directory", str(self.root / "broker")], terminal=False)
+                    self.assertFalse(directory.exists())
 
-                def read():
-                    output = self.root / "value"
-                    result = self.run_tool("opq", "--directory", self.directory, "read", "op://fixture/item/password",
-                                           "--output", output)
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertEqual(output.read_bytes(), b"fixture-value")
-                    output.unlink()
-
-                def renewal(seconds):
-                    return bool(select.select([ack], [], [], seconds)[0]) and os.read(ack, 1) == b"V"
-
-                read()
-                self.assertTrue(renewal(10), "keepalive did not renew the app approval")
-                # A failed renewal disarms the keepalive, so a locked app raises no prompt with no request pending.
-                (self.root / "expired").touch()
-                self.assertTrue(renewal(10), "keepalive did not renew after a success")
-                self.assertTrue(select.select([process.stderr], [], [], 10)[0], "keepalive did not meet the failure")
-                self.assertEqual(process.stderr.readline(), b"op-broker: keepalive=failed exit=1\n")
-                # That vault list has exited; drop any acknowledgement a slow test left behind it.
-                try:
-                    os.read(ack, 4096)
-                except BlockingIOError:
-                    pass
-                self.assertFalse(renewal(2.5), "keepalive renewed after a failed renewal")
-                (self.root / "expired").unlink()
-                # A caller's successful call arms it again.
-                read()
-                self.assertTrue(renewal(10), "a successful call did not arm the keepalive again")
-                process.terminate()
-                _, stderr = process.communicate(timeout=10)
-                self.assertEqual(process.returncode, 0, stderr)
-                calls = self.calls()
-                self.assertEqual({call["verb"] for call in calls}, {"read", "vault"})
-                for call in calls:
-                    self.assertEqual((call["session"], call["biometric"]), (None, "true"))
+        # App calls without keepalive still use the native approval route. This fixture proves broker wiring, not approval.
+        self.env["JARVIS_OP_APP_INTEGRATION"] = "1"
+        process = self.start(terminal=False)
+        output = self.root / "value"
+        result = self.run_tool("opq", "--directory", self.directory, "read", "op://fixture/item/password",
+                               "--output", output)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(output.read_bytes(), b"fixture-value")
+        self.assertEqual([(call["verb"], call["session"], call["biometric"]) for call in self.calls()],
+                         [("read", None, "true")])
+        process.terminate()
+        _, stderr = process.communicate(timeout=10)
+        self.assertEqual(process.returncode, 0, stderr)
+        self.assertFalse(self.directory.exists())
 
     @unittest.skipUnless(sys.platform == "linux", "op requests are Linux only")
     def test_keepalive(self):
@@ -711,19 +672,13 @@ try:
 except OSError: readable=False
 with open(home+'/calls','a') as f:
     f.write(json.dumps({'verb':sys.argv[1], 'led':leader!=os.getpid(), 'terminal':terminal, 'leader_exe':readable})+'\\n')
-if sys.argv[1:3]==['vault','list'] and os.path.exists(home+'/ack'):
-    with open(home+'/ack','wb',buffering=0) as f: f.write(b'V')
 if sys.argv[1]=='read': sys.stdout.write('fixture-value')
 """
-        ack_path = self.root / "ack"
-        os.mkfifo(ack_path, 0o600)
-        ack = os.open(ack_path, os.O_RDWR | os.O_NONBLOCK)
-        self.addCleanup(os.close, ack)
         script = self.script("probe-script", 'op script-probe\n')
         output = self.root / "record"
         # The OP_SESSION route never asks the app: an op or @SCRIPT request leads a new session with no terminal.
-        rows = (("app-integration", {"JARVIS_OP_APP_INTEGRATION": "1", "JARVIS_OP_KEEPALIVE_SECS": "1"},
-                 {"read", "item", "script-probe", "vault"}, {"led": True, "terminal": True, "leader_exe": True}),
+        rows = (("app-integration", {"JARVIS_OP_APP_INTEGRATION": "1"},
+                 {"read", "item", "script-probe"}, {"led": True, "terminal": True, "leader_exe": True}),
                 ("session", {"OP_SESSION": "fixture-session"}, {"item", "script-probe"}, {"terminal": False}))
         base = dict(self.env)
         for route, settings, verbs, expected in rows:
@@ -738,8 +693,6 @@ if sys.argv[1]=='read': sys.stdout.write('fixture-value')
                 output.unlink()
                 self.assertEqual(self.record(self.opq("op", "--", "item", "get", "fixture", output=output), output)[0], 0)
                 self.assertEqual(self.record(self.opq("@" + str(script), output=output), output)[0], 0)
-                if "vault" in verbs:
-                    self.assertTrue(select.select([ack], [], [], 10)[0], "keepalive did not renew")
                 process.terminate()
                 _, stderr = process.communicate(timeout=10)
                 self.assertEqual(process.returncode, 0, stderr)
