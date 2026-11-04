@@ -485,7 +485,11 @@ fn dead_session_rows(overseer: &Path, record: &Document) -> Result<Vec<PathBuf>>
         {
             continue;
         }
-        let answering = server.get_or_insert_with(|| tmux::server(&tmux::ambient_socket()).ok());
+        let answering = server.get_or_insert_with(|| {
+            tmux::ambient_socket()
+                .and_then(|socket| tmux::server(&socket))
+                .ok()
+        });
         let Some(live) = answering.as_ref().filter(|live| live.pid == pid) else {
             continue;
         };

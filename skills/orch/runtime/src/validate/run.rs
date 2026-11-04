@@ -22,7 +22,7 @@ use serde::Serialize;
 
 use super::{KILL_GRACE, apply, item_of_run_dir, load};
 use crate::error::{Error, Result};
-use crate::mailbox::{Mailbox, Sent};
+use crate::mailbox::{Mailbox, Refusal, Sent};
 use crate::ops::mail::{KeyedSend, SendResult};
 use crate::ops::validate::{self, MarkNotice, RecordEnd, RecordStop, Validate, Validated};
 use crate::ops::{self, Env, ReconcileRound, Request, job_ended};
@@ -192,8 +192,9 @@ fn read_left(run_dir: &Path, stopped: bool) -> Left {
 }
 
 /// How a notice's send went: the owner word to mark the stage with, or a
-/// send held, the stage left owed for the next walk (a session send whose
-/// outcome is not known, or one the lane's record refuses for now).
+/// send held, the stage left owed for the next walk (a send whose outcome
+/// is not known, one the lane's record refuses for now, or a fleet record
+/// that cannot be read to route it).
 enum NoticeSend {
     Marked(String),
     Held,
@@ -208,8 +209,12 @@ enum NoticeSend {
 /// writes the lane's own inbox (`to-lane.jsonl`) and is judged by the key
 /// under the lock, so a replay after a lost mark lands once and reads
 /// `duplicate` = delivered. `sent` on a delivered or duplicate receipt;
-/// `unsent:<cause>` where the route refused or could not run, recorded, never
-/// a reason to hold the close. The file the program reads the notice from
+/// `unsent:<cause>` where the route refused or never started, recorded,
+/// never a reason to hold the close; held where its answer is not known,
+/// the replay under the key landing at most once. The fleet record picks
+/// the route, so one that cannot be read holds the notice: the mailbox
+/// route would send to a session lane with no owed record. The file the
+/// program reads the notice from
 /// is this walker's own scratch, `<key>.<the request's stamp>.notice`,
 /// created exclusively and removed by this walker alone, so a second walker
 /// of the same notice (the owed walk meeting the job's send in flight)
@@ -242,32 +247,31 @@ fn send_notice(
         return NoticeSend::Marked(format!("unsent:notice-write:{e}"));
     }
     let mark = match lane_record(settings, item) {
-        Some(lane) if lane.session_channel() => {
+        Ok(Some(lane)) if lane.session_channel() => {
             send_session(settings, &lane, key, &path, env, locking)
         }
-        Some(_) | None => NoticeSend::Marked(send_directive(settings, item, key, &path)),
+        Ok(Some(_) | None) => send_directive(settings, item, key, &path),
+        Err(()) => NoticeSend::Held,
     };
     let _ = fs::remove_file(&path);
     mark
 }
 
-/// The lane of `item` from the fleet record where one stands. A fleet with
-/// no record for `item`, or one that cannot be read, is no session lane:
-/// the mailbox route then writes a local inbox, which is the channel every
-/// non-cloud lane reads.
+/// The lane of `item` from the fleet record where one stands. No fleet, or
+/// one with no record for `item`, is no session lane: the mailbox route
+/// then writes a local inbox, which is the channel every non-cloud lane
+/// reads. A fleet that cannot be read is `Err`: it may hold a session lane.
 #[allow(
     clippy::disallowed_methods,
     reason = "the notice send's one read of the fleet record, to route a cloud session lane to its own send owner"
 )]
-fn lane_record(settings: &Settings, item: &str) -> Option<Lane> {
+fn lane_record(settings: &Settings, item: &str) -> std::result::Result<Option<Lane>, ()> {
     let fleet = state::fleet_path(&settings.state_dir);
-    let Ok(Some(snapshot)) = state::load(&fleet) else {
-        return None;
+    let Some(snapshot) = state::load(&fleet).map_err(|_| ())? else {
+        return Ok(None);
     };
-    let Ok(fleet) = FleetState::view(&fleet, &snapshot.doc) else {
-        return None;
-    };
-    fleet.lanes.into_iter().find(|l| l.item == item)
+    let fleet = FleetState::view(&fleet, &snapshot.doc).map_err(|_| ())?;
+    Ok(fleet.lanes.into_iter().find(|l| l.item == item))
 }
 
 /// The mailbox's outbound directive to a non-session lane, keyed by the run.
@@ -275,15 +279,30 @@ fn lane_record(settings: &Settings, item: &str) -> Option<Lane> {
     clippy::disallowed_methods,
     reason = "the validation job's one outbound send of the lane's end notice through the mailbox program, keyed by the run so a replay lands once"
 )]
-fn send_directive(settings: &Settings, item: &str, key: &str, file: &Path) -> String {
+fn send_directive(settings: &Settings, item: &str, key: &str, file: &Path) -> NoticeSend {
     match Mailbox::new(settings.lane_mail_cli.clone())
         .bounded(NOTICE_TIMEOUT)
         .send_directive(item, None, false, file, Some(key), None)
     {
-        Ok(Sent::Mailbox { .. } | Sent::Repeated { .. } | Sent::Session { .. }) => {
-            "sent".to_owned()
+        Ok(Sent::Mailbox { .. } | Sent::Repeated { .. }) => NoticeSend::Marked("sent".to_owned()),
+        // The program routed the lane to its session itself: the send's own
+        // result marks it.
+        Ok(Sent::Session { send }) => NoticeSend::Marked(session_mark(send.result)),
+        // Nothing was appended: the program never started, or refused by
+        // its own key before writing any mailbox.
+        Err(
+            refusal @ (Refusal::NotStarted { .. }
+            | Refusal::Exit {
+                status: Some(_),
+                keyed: Some(_),
+                ..
+            }),
+        ) => NoticeSend::Marked(format!("unsent:{refusal}")),
+        // No answer, a signal, an exit with no keyed line or a receipt that
+        // does not decode: the append may stand.
+        Err(Refusal::Unanswered { .. } | Refusal::Exit { .. } | Refusal::Reply { .. }) => {
+            NoticeSend::Held
         }
-        Err(refusal) => format!("unsent:{refusal}"),
     }
 }
 

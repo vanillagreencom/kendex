@@ -943,69 +943,85 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 )?)?);
             }
             let applied = persist(&path, &request, &env, locking, &settings)?;
-            // The reconcile may have closed a runtime-started run and written
-            // its end notice owed in that same transition; the owed walk runs
-            // after it as well as before, so that notice is sent in this call.
-            if let Request::ReconcileRound(_) = &request {
-                orch_runtime::validate::run::deliver_owed(&settings, &path, &env, locking)?;
-            }
-            // Run the live effect the persisted intent names and record its
-            // outcome; the committed outcome transition is the result.
-            match effects::run(
-                &path,
-                &request,
-                &applied.report,
-                &settings,
-                &env,
-                locking,
-                &schedule::SystemClock,
-            )? {
-                Some(outcome) => {
-                    // An admitted request is not its effect: a caller that
-                    // reads the status alone reads the effect's own outcome.
-                    let settled = if effect_exit {
-                        Some(match &outcome {
-                            effects::Effected::Recorded(applied) => {
-                                let ops::Report::RecordOutcome(r) = &applied.report else {
-                                    unreachable!("record-outcome returns its own report")
-                                };
-                                Settled::Recorded(r.intent.clone())
-                            }
-                            effects::Effected::Started(started) => {
-                                Settled::Job(effects::await_job(
-                                    &path,
-                                    &started.intent,
-                                    settings.verify * 2 + JOB_ANSWER_MARGIN,
-                                    &schedule::SystemClock,
-                                )?)
-                            }
-                        })
-                    } else {
-                        None
-                    };
-                    let mut reply = serde_json::json!({
-                        "persisted": applied,
-                        "effect": outcome,
-                    });
-                    if !notices_unmarked.is_empty() {
-                        reply["notices_unmarked"] = serde_json::to_value(notices_unmarked)?;
-                    }
-                    if let Some(settled) = settled {
-                        reply["settled"] = serde_json::to_value(settled.intent())?;
-                        let status = settled.status();
-                        if status != 0 {
-                            let _ = writeln!(
-                                std::io::stdout().lock(),
-                                "{}",
-                                serde_json::to_string(&Reply::ok(reply)).unwrap_or_default()
-                            );
-                            std::process::exit(status);
-                        }
-                    }
-                    reply
+            // Every refusal from here on comes after the request's intent was
+            // persisted: it names that intent, which stands for the reconcile,
+            // so a caller never reads it as nothing done.
+            let persisted = effects::persisted_intent(&applied.report).map(str::to_owned);
+            let effected = || -> Result<serde_json::Value> {
+                // The reconcile may have closed a runtime-started run and written
+                // its end notice owed in that same transition; the owed walk runs
+                // after it as well as before, so that notice is sent in this call.
+                if let Request::ReconcileRound(_) = &request {
+                    orch_runtime::validate::run::deliver_owed(&settings, &path, &env, locking)?;
                 }
-                None => serde_json::to_value(applied)?,
-            }
+                // Run the live effect the persisted intent names and record its
+                // outcome; the committed outcome transition is the result.
+                Ok(
+                    match effects::run(
+                        &path,
+                        &request,
+                        &applied.report,
+                        &settings,
+                        &env,
+                        locking,
+                        &schedule::SystemClock,
+                    )? {
+                        Some(outcome) => {
+                            // An admitted request is not its effect: a caller that
+                            // reads the status alone reads the effect's own outcome.
+                            let settled = if effect_exit {
+                                Some(match &outcome {
+                                    effects::Effected::Recorded(applied) => {
+                                        let ops::Report::RecordOutcome(r) = &applied.report else {
+                                            unreachable!("record-outcome returns its own report")
+                                        };
+                                        Settled::Recorded(r.intent.clone())
+                                    }
+                                    effects::Effected::Started(started) => {
+                                        Settled::Job(effects::await_job(
+                                            &path,
+                                            &started.intent,
+                                            settings.verify * 2 + JOB_ANSWER_MARGIN,
+                                            &schedule::SystemClock,
+                                        )?)
+                                    }
+                                })
+                            } else {
+                                None
+                            };
+                            let mut reply = serde_json::json!({
+                                "persisted": applied,
+                                "effect": outcome,
+                            });
+                            if !notices_unmarked.is_empty() {
+                                reply["notices_unmarked"] = serde_json::to_value(notices_unmarked)?;
+                            }
+                            if let Some(settled) = settled {
+                                reply["settled"] = serde_json::to_value(settled.intent())?;
+                                let status = settled.status();
+                                if status != 0 {
+                                    let _ = writeln!(
+                                        std::io::stdout().lock(),
+                                        "{}",
+                                        serde_json::to_string(&Reply::ok(reply))
+                                            .unwrap_or_default()
+                                    );
+                                    std::process::exit(status);
+                                }
+                            }
+                            reply
+                        }
+                        None => serde_json::to_value(applied)?,
+                    },
+                )
+            };
+            effected().map_err(|error| match persisted {
+                Some(intent) => Error::Persisted {
+                    intent,
+                    error: Box::new(error),
+                },
+                None => error,
+            })?
         }
         Verb::Reconcile { target } => {
             let settings = resolve_settings(&flags)?;

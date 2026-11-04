@@ -949,9 +949,9 @@ fn complete_transfer(
         .expect("complete_transfer runs past the opening phase");
     let owns = |name: &str| successor.target.owns(name);
     let (turns_before, session) = match phase {
-        Phase::Opening { .. } | Phase::CloudCreate { .. } => {
+        Phase::Opening { .. } | Phase::CloudCreate { .. } | Phase::Preparing { .. } => {
             unreachable!(
-                "opening is resolved before complete_transfer, and a transfer creates no cloud session"
+                "opening is resolved before complete_transfer, and a transfer creates no cloud session and asks no preparation"
             )
         }
         Phase::WindowOpened { .. } | Phase::Retired { .. } => {
@@ -1720,7 +1720,9 @@ pub(super) fn reconcile_transfer(run: &Run, intent: &Intent) -> Result<EffectOut
         | Phase::Delivering { .. }
         | Phase::Delivered { .. }
         | Phase::IdentityRead { .. }) => resolved,
-        Phase::CloudCreate { .. } => unreachable!("a transfer creates no cloud session"),
+        Phase::CloudCreate { .. } | Phase::Preparing { .. } => {
+            unreachable!("a transfer creates no cloud session and asks no preparation")
+        }
     };
     let mut outcome = judge_resolved(
         operation,
@@ -1892,6 +1894,7 @@ fn judge_resolved(
             None,
             Phase::Opening { .. }
             | Phase::CloudCreate { .. }
+            | Phase::Preparing { .. }
             | Phase::Retired { .. }
             | Phase::Delivering { .. }
             | Phase::Delivered { .. }
@@ -2029,6 +2032,6 @@ fn recorded_runner(phase: &Phase) -> Option<Identity> {
         | Phase::Retired { opened }
         | Phase::Delivering { opened, .. }
         | Phase::Delivered { opened, .. } => opened.identity.clone(),
-        Phase::Opening { .. } | Phase::CloudCreate { .. } => None,
+        Phase::Opening { .. } | Phase::CloudCreate { .. } | Phase::Preparing { .. } => None,
     }
 }

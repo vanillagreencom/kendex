@@ -208,7 +208,10 @@ fn overseer_target(overseer: &Overseer) -> Option<Target> {
         pane: text("pane")?.to_owned(),
         server: extra.get("server").and_then(u64_of)?,
         server_start: extra.get("server_start").and_then(u64_of),
-        socket: overseer_socket(overseer).unwrap_or_else(tmux::ambient_socket),
+        socket: match overseer_socket(overseer) {
+            Some(socket) => socket,
+            None => tmux::ambient_socket().ok()?,
+        },
         identity,
         home: text("home").map(PathBuf::from),
         cwd: PathBuf::from(text("cwd")?),
@@ -291,11 +294,10 @@ impl Wake {
         let Some(fleet) = load_fleet(&self.fleet)? else {
             return Ok(produced);
         };
-        let socket = fleet
-            .overseer
-            .as_ref()
-            .and_then(overseer_socket)
-            .unwrap_or_else(tmux::ambient_socket);
+        let socket = match fleet.overseer.as_ref().and_then(overseer_socket) {
+            Some(socket) => socket,
+            None => tmux::ambient_socket()?,
+        };
         for (name, state) in unread {
             let target = if name == OVERSEER_TARGET {
                 fleet.overseer.as_ref().and_then(overseer_target)

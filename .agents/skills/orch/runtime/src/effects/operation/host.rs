@@ -252,7 +252,7 @@ fn observe_pane(opened: &OpenedPane) -> Observed<Pane> {
 /// the server's start reads a server at that pid under another start as a
 /// reused pid, the recorded server gone with its panes.
 fn observe_key(key: &PaneRef) -> Observed<Pane> {
-    let server = match tmux::server(&tmux::ambient_socket()) {
+    let server = match tmux::ambient_socket().and_then(|socket| tmux::server(&socket)) {
         Ok(server) if server.pid as u64 == key.server => server,
         Ok(_) | Err(_) => return unanswering(key.server, None),
     };
@@ -305,13 +305,13 @@ fn overseer_pane(overseer: &Overseer) -> Option<(u64, String)> {
     ))
 }
 
-fn overseer_socket(overseer: &Overseer) -> PathBuf {
-    overseer
-        .extra
-        .get("server_socket")
-        .and_then(Value::as_str)
-        .map(PathBuf::from)
-        .unwrap_or_else(tmux::ambient_socket)
+/// The socket the overseer record names, else the ambient one, which an
+/// unread uid refuses.
+fn overseer_socket(overseer: &Overseer) -> agent_runtime::Result<PathBuf> {
+    match overseer.extra.get("server_socket").and_then(Value::as_str) {
+        Some(socket) => Ok(PathBuf::from(socket)),
+        None => tmux::ambient_socket(),
+    }
 }
 
 /// The proof for a predecessor whose record carries no identity:
@@ -347,7 +347,7 @@ pub(super) fn proof_of(overseer: &Overseer) -> Proof {
             cause: "server-start-unrecorded",
         };
     };
-    match tmux::server(&overseer_socket(overseer)) {
+    match overseer_socket(overseer).and_then(|socket| tmux::server(&socket)) {
         Ok(answering) if answering.pid as u64 == server && answering.start == start => {
             match tmux::pane_fields(&answering, &pane) {
                 Reading::Live(fields) => Proof::Standing { pid: fields.pid },
@@ -435,7 +435,7 @@ impl Operation<'_> {
                     &[],
                 ))
             })?;
-        let socket = tmux::ambient_socket();
+        let socket = tmux::ambient_socket()?;
         let server = tmux::server(&socket)?;
         if !tmux::session_present(&server, &session)? {
             return Err(agent_runtime::Error::refused(
@@ -623,12 +623,16 @@ impl Operation<'_> {
                 | state::Phase::Delivered { opened, .. }
                 | state::Phase::IdentityRead { opened, .. },
             ) => push(PathBuf::from(&opened.socket)),
-            Some(state::Phase::CloudCreate { .. }) | None => {}
+            Some(state::Phase::CloudCreate { .. } | state::Phase::Preparing { .. }) | None => {}
         }
-        if let Some(overseer) = overseer {
-            push(overseer_socket(overseer));
+        // A socket that cannot be named is no candidate: a key no socket
+        // answers for is read by its server's pid.
+        if let Some(Ok(socket)) = overseer.map(overseer_socket) {
+            push(socket);
         }
-        push(tmux::ambient_socket());
+        if let Ok(socket) = tmux::ambient_socket() {
+            push(socket);
+        }
         sockets
     }
 
@@ -1027,7 +1031,7 @@ impl Operation<'_> {
                 cause: "server-start-unrecorded",
             });
         };
-        let observed = match tmux::server(&overseer_socket(overseer)) {
+        let observed = match overseer_socket(overseer).and_then(|socket| tmux::server(&socket)) {
             Ok(server) if server.pid as u64 == key.server && server.start == server_start => {
                 observe_fields(&server, &key.pane)
             }
@@ -1753,9 +1757,10 @@ fn main_worktree(path: &str) -> std::result::Result<String, String> {
 /// child's working directory: the package takes its repository from the
 /// directory it runs in, so the removal runs in the main worktree, never
 /// inside the tree it deletes. The package inherits the runtime's
-/// environment. `Err` is a run that did not answer, keyed
-/// `removal-unanswered`: a `main` that cannot be entered, a package that
-/// could not start, or one that outran the bound.
+/// environment. `Err` is a run with no reply, held so the next close or
+/// reconcile asks again: a package that never started (a `main` that cannot
+/// be entered included) removed nothing, `removal-not-started`; one that
+/// outran the bound may have removed it, `removal-unanswered`.
 fn package_remove(cli: &Path, main: &str, path: &str) -> std::result::Result<RemoveReply, String> {
     let output = host::run_tagged_in(
         "worktree",
@@ -1769,7 +1774,13 @@ fn package_remove(cli: &Path, main: &str, path: &str) -> std::result::Result<Rem
         },
         CLI_TIMEOUT,
     )
-    .map_err(|e| format!("removal-unanswered:{e}"))?;
+    .map_err(|e| {
+        if let agent_runtime::Error::NotStarted { .. } = e {
+            format!("removal-not-started:{e}")
+        } else {
+            format!("removal-unanswered:{e}")
+        }
+    })?;
     let stdout = host::stdout_text(&output);
     let stderr = host::stderr_text(&output);
     Ok(RemoveReply {
@@ -2049,7 +2060,10 @@ pub(in crate::effects) fn adopt_controller(
     if !is_pane_id(&r.pane) {
         return Err(super::super::refused("pane-invalid", &[("pane", &r.pane)]));
     }
-    let socket = r.socket.clone().unwrap_or_else(tmux::ambient_socket);
+    let socket = match &r.socket {
+        Some(socket) => socket.clone(),
+        None => tmux::ambient_socket()?,
+    };
     let server = tmux::server(&socket)?;
     let fields = match tmux::pane_fields(&server, &r.pane) {
         Reading::Live(fields) => fields,
@@ -2189,9 +2203,10 @@ pub(in crate::effects) fn heal_controller(
     if Harness::parse(&harness_word).is_none() {
         return Ok(None);
     }
-    let socket = word("server_socket")
-        .map(PathBuf::from)
-        .unwrap_or_else(tmux::ambient_socket);
+    let socket = match word("server_socket") {
+        Some(socket) => PathBuf::from(socket),
+        None => tmux::ambient_socket()?,
+    };
     let server = tmux::server(&socket)?;
     if !names_pane(&overseer, server.pid, server.start, &pane) {
         return Ok(None);

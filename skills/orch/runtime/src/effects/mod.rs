@@ -254,7 +254,25 @@ pub fn run(
         locking,
         clock,
     };
-    let effect = match report {
+    let Some(effect) = live_effect(report) else {
+        return Ok(None);
+    };
+    run_effect(&run, request, effect).map(Some)
+}
+
+/// The intent a persisted request's report names, where its operation has
+/// a live effect.
+pub fn persisted_intent(report: &Report) -> Option<&str> {
+    live_effect(report).map(|effect| match effect {
+        Effect::Reconciled { intent }
+        | Effect::Persisted { intent }
+        | Effect::Supersedes { intent } => intent.id.as_str(),
+    })
+}
+
+/// The live effect a report names, `None` for an operation with none.
+fn live_effect(report: &Report) -> Option<&Effect> {
+    Some(match report {
         Report::LaunchLane(l) => &l.effect,
         Report::CloseOwnedResources(c) => &c.effect,
         Report::RequestTransfer(t) => &t.effect,
@@ -281,9 +299,8 @@ pub fn run(
         | Report::AdmitPaths(_)
         | Report::PruneRecords(_)
         | Report::Validate(_)
-        | Report::RecordQueueWatch(_) => return Ok(None),
-    };
-    run_effect(&run, request, effect).map(Some)
+        | Report::RecordQueueWatch(_) => return None,
+    })
 }
 
 /// The live effect `effect` names, run and recorded, or handed to its job.
@@ -509,7 +526,9 @@ fn stop_route_open(applied: &Applied) -> bool {
 /// neither a close nor a relaunch, and the close then stops what that pane
 /// holds. So is a cloud create held with its answer unknown, which has no
 /// local process to stop: the close is the person's settlement, its line
-/// naming the worktree whose session to check on claude.ai/code. One whose
+/// naming the worktree whose session to check on claude.ai/code; and a
+/// preparation held so (a hosted provider's create, a cloud lane's worktree
+/// create or push), its line naming the step and where it was asked. One whose
 /// pane cannot be observed is left open, and the close refuses
 /// `intent-open` as before: there is nothing to stop by. The close
 /// is then persisted through `operation`, the one store entry of the effect
@@ -536,7 +555,12 @@ fn supersede_launch(
         } else {
             None
         };
-        if !present && cloud.is_none() {
+        let preparing = if let Some(state::Phase::Preparing { step, at }) = &launch.intent.phase {
+            Some(json!({"step": step, "at": at}))
+        } else {
+            None
+        };
+        if !present && cloud.is_none() && preparing.is_none() {
             return Err(Error::IntentOpen {
                 intent: launch.intent.id.clone(),
                 op: launch.intent.op,
@@ -555,7 +579,7 @@ fn supersede_launch(
         let operation = Operation::open(run, &launch.intent)?;
         run.apply_outcome(operation.refuse(
             "superseded-by-close",
-            json!({"reconcile": "launch", "pane": pane, "cloud_create": cloud}),
+            json!({"reconcile": "launch", "pane": pane, "cloud_create": cloud, "preparing": preparing}),
         ))?;
     }
     // The launch intent is closed either way: the close now persists its

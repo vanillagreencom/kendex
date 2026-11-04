@@ -438,6 +438,17 @@ pub fn stop(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<(),
 /// the lane's checkout before it answers.
 const PREPARE_BOUND: Duration = Duration::from_secs(1800);
 
+/// Why a provider's `create` or `wait` gave no ready answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Asked {
+    /// The provider answered a refusal or an unusable line, or `lane-host`
+    /// never started.
+    Failed(String),
+    /// The call started and gave no answer within its bound, or a signal
+    /// ended it: the provider may hold the item.
+    Unknown(String),
+}
+
 /// What `create` answered: the ssh target, the worktree path on the host,
 /// the prefix the launch line runs under, and whether the preparation is
 /// still going.
@@ -454,7 +465,8 @@ pub struct Created {
 
 /// The provider's `create` line parsed, or the cause. A `75` is an item
 /// another session owns, named `item-owned`; a `75` whose line carries
-/// `state=preparing` is an accepted preparation.
+/// `state=preparing` is an accepted preparation; a create that never
+/// answered is `Asked::Unknown`.
 pub fn create(
     scripts: &Path,
     host: &str,
@@ -463,7 +475,7 @@ pub fn create(
     harness: &str,
     account: &str,
     relaunch: bool,
-) -> Result<Created, String> {
+) -> Result<Created, Asked> {
     let mut args = vec![
         "create",
         "--item",
@@ -478,8 +490,7 @@ pub fn create(
     if relaunch {
         args.push("--relaunch");
     }
-    let out = call(scripts, host, "create", &args, PREPARE_BOUND)
-        .map_err(|cause| format!("host-create-failed cause={cause}"))?;
+    let out = call(scripts, host, "create", &args, PREPARE_BOUND, "host-create")?;
     let line = host::stdout_text(&out);
     let mut created = Created {
         target: String::new(),
@@ -501,33 +512,42 @@ pub fn create(
     match exit_code(&out) {
         0 => {}
         75 if created.preparing => {}
-        75 => return Err("item-owned exit=75".to_owned()),
-        _ => return Err(format!("host-create-failed {}", cause_of("create", &out))),
+        75 => return Err(Asked::Failed("item-owned exit=75".to_owned())),
+        _ => {
+            return Err(Asked::Failed(format!(
+                "host-create-failed {}",
+                cause_of("create", &out)
+            )));
+        }
     }
     if created.target.is_empty()
         || created.path.is_empty()
         || created.prefix.is_empty()
         || line.contains('\n')
     {
-        return Err("host-line-invalid".to_owned());
+        return Err(Asked::Failed("host-line-invalid".to_owned()));
     }
     Ok(created)
 }
 
-/// After an accepted preparation: ready, or the cause the provider gave.
-pub fn wait(scripts: &Path, host: &str, item: &str) -> Result<(), String> {
+/// After an accepted preparation: ready, the cause the provider gave, or
+/// `Asked::Unknown` for a wait that never answered.
+pub fn wait(scripts: &Path, host: &str, item: &str) -> Result<(), Asked> {
     let out = call(
         scripts,
         host,
         "wait",
         &["wait", "--item", item],
         PREPARE_BOUND,
-    )
-    .map_err(|cause| format!("host-wait-failed cause={cause}"))?;
+        "host-wait",
+    )?;
     if out.status.success() {
         Ok(())
     } else {
-        Err(format!("host-wait-failed {}", cause_of("wait", &out)))
+        Err(Asked::Failed(format!(
+            "host-wait-failed {}",
+            cause_of("wait", &out)
+        )))
     }
 }
 
@@ -559,7 +579,10 @@ pub fn put(scripts: &Path, host: &str, item: &str, path: &str, bytes: &[u8]) -> 
     }
 }
 
-/// One provider call under `bound`, for the launch's long verbs.
+/// One provider call under `bound`, for the launch's long verbs, its
+/// answer read by the runner's three values: a `lane-host` that never
+/// started made nothing (`<key>-failed`); one whose bound passed, or that a
+/// signal ended, may have acted (`<key>-unanswered`).
 #[allow(
     clippy::disallowed_methods,
     reason = "the launch's provider calls, `lane-host` through the one runner under the record's host, each verb's bound its own"
@@ -570,9 +593,10 @@ fn call(
     operation: &'static str,
     args: &[&str],
     bound: Duration,
-) -> Result<std::process::Output, String> {
+    key: &str,
+) -> Result<std::process::Output, Asked> {
     let env: [(&str, &OsStr); 1] = [("ORCH_LANE_HOST", OsStr::new(host))];
-    host::run_tagged_in(
+    let out = host::run_tagged_in(
         TAG,
         LANE_HOST,
         &scripts.join(LANE_HOST),
@@ -584,7 +608,20 @@ fn call(
         },
         bound,
     )
-    .map_err(|e| e.to_string())
+    .map_err(|e| {
+        if let agent_runtime::Error::NotStarted { .. } = e {
+            Asked::Failed(format!("{key}-failed cause={e}"))
+        } else {
+            Asked::Unknown(format!("{key}-unanswered cause={e}"))
+        }
+    })?;
+    if out.status.code().is_none() {
+        return Err(Asked::Unknown(format!(
+            "{key}-unanswered {}",
+            cause_of(operation, &out)
+        )));
+    }
+    Ok(out)
 }
 
 // --- the one close ------------------------------------------------------------
@@ -1696,6 +1733,46 @@ pub fn retry_pending_closes(lanes: &[&Lane], pass: &Pass, hosts: &Hosts, out: &m
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A provider's long verb read by the runner's three values: a
+    /// `lane-host` that never started made nothing (`host-create-failed`);
+    /// one whose bound passed, or that a signal ended, may hold the item
+    /// (`host-create-unanswered`). Defect: a create or wait past its bound
+    /// read as failed, the launch settled while the provider holds the
+    /// item.
+    #[test]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the row links the shell into its own directory as the provider"
+    )]
+    fn a_provider_call_that_never_started_fails_and_one_with_no_answer_is_unknown() {
+        let dir = tempfile::tempdir().unwrap();
+        let ask = |script: &str, bound: Duration| {
+            call(
+                dir.path(),
+                "h",
+                "create",
+                &["-c", script],
+                bound,
+                "host-create",
+            )
+        };
+        assert!(matches!(
+            ask("exit 0", Duration::from_secs(10)),
+            Err(Asked::Failed(cause)) if cause.starts_with("host-create-failed cause=")
+        ));
+        // `lane-host` is the shell, so each row's script is its argument.
+        std::os::unix::fs::symlink("/bin/sh", dir.path().join(LANE_HOST)).unwrap();
+        assert!(matches!(
+            ask("exec sleep 5", Duration::from_millis(300)),
+            Err(Asked::Unknown(cause)) if cause.starts_with("host-create-unanswered cause=")
+        ));
+        assert!(matches!(
+            ask("kill -KILL $$", Duration::from_secs(10)),
+            Err(Asked::Unknown(cause)) if cause.starts_with("host-create-unanswered create exit=-1")
+        ));
+        assert!(ask("exit 0", Duration::from_secs(10)).is_ok());
+    }
 
     /// The capability line as the dispatcher validates it: the three keys
     /// this duty acts on, `pane` absent reading `local`, a value outside

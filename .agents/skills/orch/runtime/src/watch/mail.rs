@@ -505,7 +505,7 @@ impl MailDuty {
                 break;
             };
             match refusal {
-                Refusal::Call { .. } => {
+                Refusal::NotStarted { .. } | Refusal::Unanswered { .. } => {
                     for lane in &remaining[answered..] {
                         turn.refuse(&lane.item, &refusal);
                     }

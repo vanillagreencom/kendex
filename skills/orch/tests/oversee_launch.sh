@@ -265,7 +265,9 @@ mkdir -p "$BIN/processes" "$TMP_ROOT/work/tmp"
 # the suite's preference entry, claude:fable:high on the account `.claude`
 # under LANES_HOME, in the --cwd it is asked for, with the takeover brief in
 # its harness's form naming --handoff. `op --fleet` answers the
-# reply planted at OL_RUNTIME_REPLY, else hands a start to the shared
+# reply planted at OL_RUNTIME_REPLY, or with OL_RUNTIME_OP_EXIT set prints
+# OL_RUNTIME_OP_LINE on stderr and exits with that status, else hands a start
+# to the shared
 # performer lib/runtime-stub.sh writes beside it, which performs it as the
 # runtime's confirmed arm records it and answers `confirmed`. SCRIPT_DIR and
 # PROJECT_ROOT are the launcher's exports, so a mutant launcher's own libs
@@ -330,6 +332,10 @@ case "$*" in
     exit 0 ;;
 esac
 if [[ -n "${OL_RUNTIME_REPLY:-}" && -n "$request" ]]; then cat -- "$OL_RUNTIME_REPLY"; exit 0; fi
+if [[ -n "${OL_RUNTIME_OP_EXIT:-}" && -n "$request" ]]; then
+  [[ -z "${OL_RUNTIME_OP_LINE:-}" ]] || printf '%s\n' "$OL_RUNTIME_OP_LINE" >&2
+  exit "$OL_RUNTIME_OP_EXIT"
+fi
 [[ -n "$request" && "$(jq -r '.op' "$request")" == start-controller ]] \
   || { printf 'orch-runtime: fixture-unexpected argv=%s\n' "$*" >&2; exit 2; }
 exec "$(cd -- "$(dirname -- "$0")" && pwd -P)/.orch-runtime-start" "$request"
@@ -590,6 +596,22 @@ run_oversee OL_RUNTIME_REPLY="$TMP_ROOT/held-reply.json" -- launch --wait-secs 5
 assert_eq "$RC|$(first_line)|$(overseers)" \
   "1|oversee: controller-unconfirmed intent=fixture-held note=watch-launch-failed cause=job-unit: launch-failed status=1|0" \
   "a start the runtime holds unconfirmed is reported with its note and cause"
+# The runtime's answer contract: a refusal naming the intent it persisted,
+# and an end with no refusal (a panic's 101, a signal), may have acted, so
+# each is unconfirmed naming the intent, unread where none was named; a
+# refusal that names none is a refusal, nothing opened.
+run_oversee OL_RUNTIME_OP_EXIT=1 OL_RUNTIME_OP_LINE='orch-runtime: job-unclaimed intent_id=fixture-held persisted_intent=fixture-held' -- launch --wait-secs 5
+assert_eq "$RC|$(first_line)|$(overseers)" \
+  "1|oversee: controller-unconfirmed intent=fixture-held note=job-unclaimed cause=exit-1|0" \
+  "a refusal after the start's intent was persisted is unconfirmed, naming the intent"
+run_oversee OL_RUNTIME_OP_EXIT=101 OL_RUNTIME_OP_LINE="thread 'main' panicked at src/main.rs:1:1:" -- launch --wait-secs 5
+assert_eq "$RC|$(first_line)|$(overseers)" \
+  "1|oversee: controller-unconfirmed intent=unread note=none cause=exit-101|0" \
+  "a runtime that panicked on the start is unconfirmed with the intent unread"
+run_oversee OL_RUNTIME_OP_EXIT=1 OL_RUNTIME_OP_LINE='orch-runtime: overseer-live pane=%9' -- launch --wait-secs 5
+assert_eq "$RC|$(first_line)|$(overseers)" \
+  "1|oversee: start-refused key=overseer-live exit=1|0" \
+  "a refusal that names no persisted intent stays a refusal"
 # Control: a launcher whose request names no watch fails the watch-words row,
 # in a fleet of its own so the main record's generations stand.
 WATCHCTL="$(mutant_scripts watchctl oversee)" || exit 1

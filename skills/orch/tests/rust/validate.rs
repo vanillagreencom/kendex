@@ -911,6 +911,84 @@ fn the_job_closes_once_records_the_notice_owed_before_the_send_and_a_second_end_
     );
 }
 
+/// The end notice's mailbox route reads the program's answer three ways. A
+/// program that never started, or refused by its own key, appended nothing:
+/// `unsent`. One whose answer cannot be read (exit 0 with no receipt, or
+/// ended by a signal) may have appended: the notice stays owed and the
+/// round's reconcile sends it again under its key, `sent` on the receipt.
+/// A session send the program routed to itself is marked by its result,
+/// never `sent` whatever it was. A fleet record that cannot be read picks
+/// no route: nothing is sent and the notice stays owed.
+#[test]
+fn an_end_notice_whose_send_answer_is_unknown_stays_owed_and_one_never_started_is_unsent() {
+    let w = World::new();
+    let mut fresh = false;
+    let mut run = |extra: &[(&str, &str)]| -> (String, Value) {
+        let flags: &[&str] = if fresh { &["--fresh"] } else { &[] };
+        fresh = true;
+        let run_dir = ok(&w.start(flags, &[("JOB_UNIT_RECORD_ONLY", "1")]))["run_dir"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let result = ok(&w.run(
+            &[
+                "validate",
+                "run",
+                "--item",
+                ITEM_ID,
+                "--round",
+                ROUND,
+                "--run-dir",
+                &run_dir,
+            ],
+            extra,
+        ));
+        (run_dir, result)
+    };
+    let sends = |w: &World| {
+        w.log_lines("lane-mail")
+            .iter()
+            .filter(|l| l.starts_with("send "))
+            .count()
+    };
+    let reconcile = |w: &World| {
+        ok(&w.op(&json!({"op": "reconcile-round", "round_id": ROUND}), &[]));
+    };
+
+    for answer in ["quiet", "signal"] {
+        let (run_dir, result) = run(&[("LANE_MAIL_ANSWER", answer)]);
+        assert_eq!(result["notice"], "owed", "{answer}: {result}");
+        assert_eq!(w.stage(&run_dir)["notice"]["owner"], "owed", "{answer}");
+        let before = sends(&w);
+        reconcile(&w);
+        assert_eq!(sends(&w), before + 1, "{answer}: sent again under its key");
+        assert_eq!(w.stage(&run_dir)["notice"]["owner"], "sent", "{answer}");
+    }
+
+    let absent = w.root.join("no-such-lane-mail");
+    let (run_dir, result) = run(&[("LANE_MAIL_CLI", absent.to_str().unwrap())]);
+    let mark = result["notice"].as_str().unwrap().to_owned();
+    assert!(mark.starts_with("unsent:send: "), "{result}");
+    assert_eq!(w.stage(&run_dir)["notice"]["owner"], mark.as_str());
+
+    let (run_dir, result) = run(&[("LANE_MAIL_ANSWER", "session-failed")]);
+    assert_eq!(result["notice"], "unsent:session:failed", "{result}");
+    assert_eq!(
+        w.stage(&run_dir)["notice"]["owner"],
+        "unsent:session:failed"
+    );
+
+    let fleet = w.state.join("workflow-state-oversee.json");
+    fs::write(&fleet, "{ not a fleet").unwrap();
+    let before = sends(&w);
+    let (run_dir, result) = run(&[]);
+    assert_eq!(result["notice"], "owed", "{result}");
+    assert_eq!(sends(&w), before, "an unread fleet routes no send");
+    fs::remove_file(&fleet).unwrap();
+    reconcile(&w);
+    assert_eq!(w.stage(&run_dir)["notice"]["owner"], "sent");
+}
+
 /// The real mailbox program beside this crate, for the destination proof.
 fn real_lane_mail() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))

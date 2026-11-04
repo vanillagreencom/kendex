@@ -542,7 +542,9 @@ fn a_program_killed_after_queuing_leaves_the_send_owed_until_the_operator_marks_
 /// the credit read at the send; a refusal the mailbox program makes before
 /// the CLI (a session whose root is another repository's) records `failed`
 /// with the program's keyed line, the credit unread, no CLI call; a mailbox
-/// lane is refused `lane-channel` before any write, its mailbox untouched.
+/// program that never started records `failed` the same way, never an owed
+/// send left unknown; a mailbox lane is refused `lane-channel` before any
+/// write, its mailbox untouched.
 #[test]
 fn a_refused_send_records_its_result_with_the_words_and_a_mailbox_lane_is_refused() {
     let w = world();
@@ -600,6 +602,15 @@ fn a_refused_send_records_its_result_with_the_words_and_a_mailbox_lane_is_refuse
         assert_eq!(record["credit"], credit_record, "{item}: {record}");
         assert_eq!(w.cli_calls().len(), calls, "{item}: the CLI calls");
     }
+    let absent = w.root.join("no-such-lane-mail");
+    let out = w.send(CLOUD, &[("LANE_MAIL_CLI", absent.to_str().unwrap())]);
+    let answer = result(&out);
+    assert_eq!(answer["mark"], "recorded", "never started: {answer}");
+    assert_eq!(answer["send"]["result"], "failed", "{answer}");
+    let record = w.lane(CLOUD)["directive_send"].clone();
+    assert_eq!(record["result"], "failed", "{record}");
+    assert_eq!(record["credit"], "unread", "{record}");
+    assert_eq!(w.cli_calls().len(), 6, "never started: no CLI call");
     let before = std::fs::read(w.fleet_path()).unwrap();
     let out = w.send(MAILBOX, &[]);
     assert!(!out.status.success());

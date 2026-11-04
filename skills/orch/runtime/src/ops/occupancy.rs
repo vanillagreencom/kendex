@@ -178,7 +178,7 @@ fn pane_foreground(
     recorded: &Identity,
     harness: Option<Harness>,
 ) -> Reading<ProcessReading> {
-    let live = match tmux::server(&tmux::ambient_socket()) {
+    let live = match tmux::ambient_socket().and_then(|socket| tmux::server(&socket)) {
         Ok(live) if u64::from(live.pid) == server => live,
         Ok(_) | Err(_) => {
             return Reading::Unreadable {

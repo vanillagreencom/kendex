@@ -738,7 +738,7 @@ fn local_launch(
 /// whose one typed line starts the harness under the provider's prefix.
 fn hosted_launch(
     run: &Run,
-    operation: Operation,
+    mut operation: Operation,
     r: &LaunchLane,
     provider: &str,
     relaunch: bool,
@@ -788,17 +788,28 @@ fn hosted_launch(
         Ok(text) => text,
         Err(e) => return failed(operation, e.key()),
     };
-    let created = match hosted::create(
+    operation.record_phase(Phase::Preparing {
+        step: HOST_CREATE.to_owned(),
+        at: provider.to_owned(),
+    })?;
+    let mut created = hosted::create(
         &scripts, provider, &r.item, repo, &r.harness, account, relaunch,
-    ) {
-        Ok(created) => created,
-        Err(cause) => return failed(operation, &cause),
-    };
-    if created.preparing
-        && let Err(cause) = hosted::wait(&scripts, provider, &r.item)
+    );
+    if let Ok(made) = &created
+        && made.preparing
+        && let Err(asked) = hosted::wait(&scripts, provider, &r.item)
     {
-        return failed(operation, &cause);
+        created = Err(asked);
     }
+    let created = match created {
+        Ok(created) => created,
+        Err(hosted::Asked::Failed(cause)) => return failed(operation, &cause),
+        // The provider may hold the item: the intent stays open, the lane
+        // preparing, until a close settles it.
+        Err(hosted::Asked::Unknown(cause)) => {
+            return Ok(preparing_held(operation, HOST_CREATE, provider, &cause));
+        }
+    };
     if let Harness::Pi = harness
         && let Err(cause) = gate::hosted_pi(
             &scripts,
@@ -1044,16 +1055,29 @@ fn cloud_launch(
         return failed(operation, "cloud-bundle-risk cause=remote");
     };
     let worktree = run.settings.worktree_cli.clone();
+    operation.record_phase(Phase::Preparing {
+        step: WORKTREE_CREATE.to_owned(),
+        at: claim_root.display().to_string(),
+    })?;
     let wt = match package(
         &worktree,
         &claim_root,
         "create",
         &["create", &r.item, "--no-checkout"],
+        CLOUD_PREPARE_BOUND,
     ) {
         Ok(path) => PathBuf::from(path),
         Err(Package::Owned) => return failed(operation, "item-owned exit=75"),
         Err(Package::Failed(cause)) => {
             return failed(operation, &format!("worktree-failed {cause}"));
+        }
+        Err(Package::Unknown(cause)) => {
+            return Ok(preparing_held(
+                operation,
+                WORKTREE_CREATE,
+                &claim_root.display().to_string(),
+                &cause,
+            ));
         }
     };
     let Ok(branch) = git_line(&wt, "branch", &["symbolic-ref", "--short", "HEAD"]) else {
@@ -1065,15 +1089,28 @@ fn cloud_launch(
             .trim_end_matches('\n')
             .replace("{branch}", &branch)
     );
+    operation.record_phase(Phase::Preparing {
+        step: WORKTREE_PUSH.to_owned(),
+        at: wt.display().to_string(),
+    })?;
     if let Err(cause) = package(
         &worktree,
         &claim_root,
         "push",
         &["push", &r.item, "--set-upstream"],
+        CLOUD_PREPARE_BOUND,
     ) {
         let cause = match cause {
             Package::Owned => "exit=75".to_owned(),
             Package::Failed(cause) => cause,
+            Package::Unknown(cause) => {
+                return Ok(preparing_held(
+                    operation,
+                    WORKTREE_PUSH,
+                    &wt.display().to_string(),
+                    &cause,
+                ));
+            }
         };
         return failed(operation, &format!("cloud-push-failed {cause}"));
     }
@@ -1195,10 +1232,13 @@ fn git_line(
 }
 
 /// How the worktree package answered: the item is another session's (75),
-/// or a failure with its status and first stderr line.
+/// a failure with its status and first stderr line (the package never
+/// started included), or no answer: its bound passed or a signal ended it,
+/// so the worktree or the push may stand.
 enum Package {
     Owned,
     Failed(String),
+    Unknown(String),
 }
 
 /// `worktree VERB ARGS` in `dir` through the one runner: its stdout, or how
@@ -1212,6 +1252,7 @@ fn package(
     dir: &Path,
     operation: &'static str,
     args: &[&str],
+    bound: Duration,
 ) -> std::result::Result<String, Package> {
     let out = host::run_tagged_in(
         "launch",
@@ -1223,22 +1264,46 @@ fn package(
             cwd: Some(dir),
             env: &[],
         },
-        CLOUD_PREPARE_BOUND,
+        bound,
     )
-    .map_err(|e| Package::Failed(e.to_string()))?;
+    .map_err(|e| {
+        if let agent_runtime::Error::NotStarted { .. } = e {
+            Package::Failed(e.to_string())
+        } else {
+            Package::Unknown(e.to_string())
+        }
+    })?;
+    let first = host::stderr_text(&out)
+        .lines()
+        .next()
+        .unwrap_or("")
+        .to_owned();
     match out.status.code() {
         Some(0) => Ok(host::stdout_text(&out)),
         Some(75) => Err(Package::Owned),
-        code => Err(Package::Failed(format!(
-            "exit={} {}",
-            code.map_or_else(|| "signal".to_owned(), |c| c.to_string()),
-            host::stderr_text(&out).lines().next().unwrap_or("")
-        ))),
+        Some(code) => Err(Package::Failed(format!("exit={code} {first}"))),
+        None => Err(Package::Unknown(format!("exit=signal {first}"))),
     }
 }
 
 /// The note a cloud launch is held under where the create's answer was lost.
 const CLOUD_CREATE_UNKNOWN: &str = "cloud-create-unknown";
+
+/// The preparation steps a launch records before asking, each held as
+/// `<step>-unknown` where its answer is lost.
+const HOST_CREATE: &str = "host-create";
+const WORKTREE_CREATE: &str = "worktree-create";
+const WORKTREE_PUSH: &str = "worktree-push";
+
+/// A launch held over a preparation that gave no answer: the step, where it
+/// was asked and the runner's cause, for the person whose close settles it.
+fn preparing_held(operation: Operation, step: &str, at: &str, cause: &str) -> EffectOutcome {
+    operation.hold(json!({
+        "note": format!("{step}-unknown"),
+        "cause": cause,
+        "at": at,
+    }))
+}
 
 /// How the cloud session's create answered.
 enum Created {
@@ -1500,6 +1565,15 @@ pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutco
                 "reconcile": "launch",
                 "note": CLOUD_CREATE_UNKNOWN,
                 "worktree": worktree,
+            })));
+        }
+        // A preparation asked and never answered, its asking process ended
+        // included, may stand: held until a close.
+        Phase::Preparing { step, at } => {
+            return Ok(operation.hold(json!({
+                "reconcile": "launch",
+                "note": format!("{step}-unknown"),
+                "at": at,
             })));
         }
         Phase::Opening { opening } => match operation.recover_opening(opening)? {
@@ -1769,6 +1843,39 @@ mod tests {
             Created::Unknown(cause) if cause == "cloud-create-unanswered cause=signal"
         ));
     }
+
+    /// The worktree package read by the runner's three values. One that
+    /// never started made nothing and fails the launch; one that started
+    /// and outran its bound, or that a signal ended, may have made the
+    /// worktree or the push, so it is unknown. Defects: a start that
+    /// failed held for a person over nothing; a create or push that may
+    /// have acted settled failed.
+    #[test]
+    fn the_worktree_package_never_started_fails_and_one_with_no_answer_is_unknown() {
+        let dir = tempfile::tempdir().unwrap();
+        let sh = Path::new("/bin/sh");
+        let gone = dir.path().join("gone");
+        let started = |script: &str, bound: Duration| {
+            package(sh, dir.path(), "create", &["-c", script], bound)
+        };
+        assert!(matches!(
+            package(sh, &gone, "create", &["-c", "exit 0"], BOUND_TEST),
+            Err(Package::Failed(cause)) if cause.contains("gone")
+        ));
+        assert!(matches!(
+            started("kill -KILL $$", BOUND_TEST),
+            Err(Package::Unknown(cause)) if cause.starts_with("exit=signal")
+        ));
+        assert!(matches!(
+            started("exec sleep 5", Duration::from_millis(200)),
+            Err(Package::Unknown(_))
+        ));
+        assert!(
+            matches!(started("exit 3", BOUND_TEST), Err(Package::Failed(cause)) if cause.starts_with("exit=3"))
+        );
+    }
+
+    const BOUND_TEST: Duration = Duration::from_secs(10);
 
     /// The relaunch router. A bound session resumes under the same harness
     /// and account when the destination home holds its file; a request on

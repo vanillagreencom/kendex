@@ -721,7 +721,10 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     &[("path", &brief.display().to_string())],
                 ));
             }
-            let socket = socket.unwrap_or_else(tmux::ambient_socket);
+            let socket = match socket {
+                Some(socket) => socket,
+                None => tmux::ambient_socket()?,
+            };
             let server = tmux::server(&socket)?;
             if !tmux::session_present(&server, &session)? {
                 return Err(Error::refused(
@@ -757,7 +760,28 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 Some(_) | None => None,
             };
             let launched_at = clock::now();
-            let pane = tmux::new_window(&server, &session, &window_name, &intent.cwd)?;
+            // A `new-window` that started and gave no answer may have opened
+            // the window, and names no pane a record could hold: the refusal
+            // says so, with the session and the window's name to find it by.
+            let pane = match tmux::new_window(&server, &session, &window_name, &intent.cwd) {
+                Ok(pane) => pane,
+                Err(
+                    e @ Error::External {
+                        operation: "new-window",
+                        ..
+                    },
+                ) => {
+                    return Err(Error::refused(
+                        "launch-window-unanswered",
+                        &[
+                            ("cause", &e.to_string()),
+                            ("session", &session),
+                            ("window", &window_name),
+                        ],
+                    ));
+                }
+                Err(e) => return Err(e),
+            };
             let rec = LaunchRecord {
                 harness: intent.harness,
                 intent,

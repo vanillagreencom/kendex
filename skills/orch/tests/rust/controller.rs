@@ -2503,6 +2503,19 @@ fn a_job_is_a_setsid_group_where_no_manager_lingers_and_a_job_that_exits_before_
     assert_eq!(refusal_key(&out), "job-unclaimed", "{}", stderr(&out));
     let intent = runner.fleet()["intents"][0].clone();
     assert_eq!(intent["outcome"], "unconfirmed", "{intent}");
+    // The refusal came after the intent was persisted, and names it.
+    assert!(
+        stderr(&out)
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .ends_with(&format!(
+                " persisted_intent={}",
+                intent["id"].as_str().unwrap()
+            )),
+        "{}",
+        stderr(&out)
+    );
     let job = remaining(&intent["observation"], "job").clone();
     let pid = job["pid"]
         .as_u64()
@@ -4318,6 +4331,60 @@ fn codex_turns(home: &Path) -> Vec<String> {
     turns
 }
 
+/// Defect: a unit start whose answer was lost launched again under setsid.
+/// The fake user manager starts the watch's unit and then its
+/// `systemd-run` ends by a signal, so the start gave no answer, and the
+/// manager reads the unit `not-found`, as `--collect` leaves a unit that
+/// ran and ended. The launch holds the job by its unit, never a second
+/// watch beside it: the record names the unit the manager started, one
+/// unit stands, and no `setsid` route ran.
+#[test]
+fn a_unit_start_whose_answer_was_lost_is_held_by_its_unit_and_never_launched_again() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let (bin, env) = watch_world(runner.state_dir());
+    let fake = std::fs::read_to_string(bin.join("systemd-run")).unwrap();
+    let lost = fake
+        .strip_suffix("exit 0\n")
+        .expect("the fake ends its start with exit 0")
+        .to_owned()
+        + "kill -KILL $$\n";
+    std::fs::write(bin.join("systemd-run"), lost).unwrap();
+    let show_gone = "#!/bin/bash\nd=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\nprintf 'systemctl %s\\n' \"$*\" >> \"$d/systemd.log\"\ncase \" $* \" in\n  *\" show \"*) echo not-found; echo inactive; exit 0 ;;\nesac\nlast=\"${!#}\"\nunit=\"${last%.service}\"\n[[ -f \"$d/units/$unit\" ]] || exit 5\npid=\"$(<\"$d/units/$unit\")\"\nrm -f \"$d/units/$unit\"\nkill -TERM -- \"-$pid\" 2>/dev/null || true\nexit 0\n";
+    std::fs::write(bin.join("systemctl"), show_gone).unwrap();
+    for fake in ["systemd-run", "systemctl"] {
+        std::fs::set_permissions(bin.join(fake), std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    runner.tools = Some(bin.clone());
+    let state = runner
+        .state_dir()
+        .join(orch_runtime::state::FLEET_FILE_NAME);
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let report = effect_report(&runner.op_fleet_env(
+        &json!({
+            "op": "start-controller",
+            "controller": pending(runner.state_dir()),
+            "watch": watch_words(&state),
+        }),
+        &env,
+    ));
+    let overseer = runner.fleet()["overseer"].clone();
+    let units = units_started(&bin);
+    let record = std::fs::read_to_string(runner.state_dir().join("oversee-watch.runner"))
+        .unwrap_or_default();
+    stop_live_watch(&runner, &state);
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(overseer["watch"]["runner"], "systemd", "{overseer}");
+    assert_eq!(units, 1, "one unit, no second launch: {record}");
+    assert!(
+        record.contains("runner=systemd") && !record.contains("runner=setsid"),
+        "the launcher's record names the unit alone: {record}"
+    );
+}
+
 /// The number of units the fake user manager started under `bin`: the fleet
 /// watches launched.
 fn units_started(bin: &Path) -> usize {
@@ -5813,6 +5880,71 @@ fn a_predecessor_that_is_not_the_live_recorded_controller_is_refused_with_nothin
         before,
         "the pending is put back"
     );
+}
+
+/// Defect: a succession the runtime recorded, then refused, read as
+/// refused with nothing opened. The transfer's detached job never claims
+/// within its bound, so `op` refuses `job-unclaimed` after the intent was
+/// persisted and names it: the launcher says `transfer-unconfirmed` with
+/// that intent and the runtime's key, exits nonzero, and never says
+/// `transfer-refused` or `transfer-started`.
+#[test]
+fn a_succession_refused_after_its_intent_persisted_is_said_unconfirmed_naming_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let (scripts, bin, mut env, work) = walk_world(&runner, &[measured_account("bclaude", 5)]);
+    let state = runner
+        .state_dir()
+        .join(orch_runtime::state::FLEET_FILE_NAME);
+    let running = Stopped::start(&state, &runner.state_dir().join("unused.json"));
+    recorded_on(
+        &runner,
+        &server,
+        running.pid(),
+        "bclaude",
+        &work,
+        "bypass",
+        &[],
+    );
+    let (sleepers, log) = sleeper_world(runner.state_dir());
+    env.push(("PATH".to_owned(), tool_path(&[&sleepers, &bin])));
+    env.push(("ORCH_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
+    env.push(("SETSID_LOG".to_owned(), log.display().to_string()));
+    let out = oversee_launch(
+        &server,
+        &scripts,
+        &bin,
+        &env,
+        &work,
+        "claude",
+        "fable",
+        &stub("stub-confirm"),
+    )
+    .args(["--predecessor", "%99", "--wait-secs", "1"])
+    .output()
+    .unwrap();
+    let said = stderr(&out);
+    let intent = runner.fleet()["intents"][0].clone();
+    let id = intent["id"]
+        .as_str()
+        .expect("the transfer's intent")
+        .to_owned();
+    assert!(!out.status.success(), "{said}");
+    assert_eq!(
+        oversee_fields(&said, "transfer-unconfirmed"),
+        Some(vec![
+            format!("intent={id}"),
+            "note=job-unclaimed".to_owned(),
+            "cause=exit-1".to_owned(),
+        ]),
+        "{said}"
+    );
+    assert_eq!(oversee_fields(&said, "transfer-refused"), None, "{said}");
+    assert_eq!(intent["outcome"], "unconfirmed", "{intent}");
+    end_sleeper(standing_job_pid(&runner));
+    assert!(live(running.pid()), "nothing retired the predecessor");
 }
 
 /// Defect: a predecessor stopped, or a record changed, for a successor that

@@ -1,10 +1,12 @@
 //! The mailbox client (decision 121, Q1): the one Rust owner of every
 //! `lane-mail` call the runtime's watch makes, each through agent-runtime's
 //! one runner under the tag `mail` and under one bound, and each reply
-//! decoded into typed records at this boundary. A program that did not run
-//! or answer, a nonzero exit and a reply the decoder cannot read are each a
-//! typed [`Refusal`] that stops the one read it answered (decision 142 (1));
-//! no refusal is ever read as an empty mailbox.
+//! decoded into typed records at this boundary. A program that never
+//! started, one that gave no answer, a nonzero exit and a reply the decoder
+//! cannot read are each a typed [`Refusal`] that stops the one read it
+//! answered; no refusal is ever read as an empty mailbox. A program that
+//! never started did nothing, where one that gave no answer may have
+//! written: a send's caller reads the two apart.
 //!
 //! The wire forms are `lane-mail --help`'s: the `count= first=` header, one
 //! JSON envelope per line, the `receipts` section of `drain --receipts`, the
@@ -47,12 +49,16 @@ pub struct Mailbox {
     bound: Duration,
 }
 
-/// Why one call did not answer: the three refusals of the module doc, each
+/// Why one call did not answer: the refusals of the module doc, each
 /// naming the verb it stopped.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Refusal {
-    /// The program did not start or gave no answer within the bound.
-    Call { verb: &'static str, cause: String },
+    /// The program never started (the runner's `not-started`, or the
+    /// request file it reads not written): nothing it would do was done.
+    NotStarted { verb: &'static str, cause: String },
+    /// It started and gave no answer within the bound: what it did is not
+    /// known.
+    Unanswered { verb: &'static str, cause: String },
     /// It exited nonzero: `status` is `None` on a signal, `keyed` the first
     /// `lane-mail: <key>=<value>` line of its stderr, where it printed one.
     Exit {
@@ -73,7 +79,8 @@ pub enum Refusal {
 impl Refusal {
     pub fn verb(&self) -> &'static str {
         match self {
-            Refusal::Call { verb, .. }
+            Refusal::NotStarted { verb, .. }
+            | Refusal::Unanswered { verb, .. }
             | Refusal::Exit { verb, .. }
             | Refusal::Reply { verb, .. } => verb,
         }
@@ -83,7 +90,9 @@ impl Refusal {
 impl fmt::Display for Refusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Refusal::Call { verb, cause } => write!(f, "{verb}: {cause}"),
+            Refusal::NotStarted { verb, cause } | Refusal::Unanswered { verb, cause } => {
+                write!(f, "{verb}: {cause}")
+            }
             Refusal::Exit {
                 verb,
                 status,
@@ -421,9 +430,10 @@ impl Mailbox {
         argv.extend_from_slice(args);
         let output =
             host::run_tagged(TAG, PROGRAM, &self.cli, verb, &argv, self.bound).map_err(|e| {
-                Refusal::Call {
-                    verb,
-                    cause: e.to_string(),
+                let cause = e.to_string();
+                match e {
+                    agent_runtime::Error::NotStarted { .. } => Refusal::NotStarted { verb, cause },
+                    _ => Refusal::Unanswered { verb, cause },
                 }
             })?;
         Ok(Answer {
@@ -460,7 +470,7 @@ impl Mailbox {
             file.sync_data()
         };
         let answer = write()
-            .map_err(|e| Refusal::Call {
+            .map_err(|e| Refusal::NotStarted {
                 verb: VERB,
                 cause: format!("request {}: {e}", request.display()),
             })

@@ -92,6 +92,13 @@
 #        `setup-required` line, exit 69), refuses `start-refused`, or
 #        `transfer-refused` for a succession, naming its key and exit, with
 #        the runtime's own line under it, and nothing opens in its place.
+#        The start or transfer request itself may have acted where its
+#        refusal names the intent it persisted (`persisted_intent`, such as
+#        `job-unclaimed` with the job possibly started), or where the runtime
+#        ended with no refusal (101 a panic, 128 and above a signal): that
+#        refuses `controller-unconfirmed` or `transfer-unconfirmed` naming
+#        the intent, `unread` where none was named, the runtime's key as the
+#        note and `exit-N` as the cause.
 #   register writes the session record for the session this command runs in,
 #            a tmux pane a person opened by hand: runtime tmux, the tmux
 #            server, $TMUX_PANE, its window, the file its event rows land in,
@@ -177,12 +184,12 @@ message() { # KEY FIELD=VALUE...
     launch-failed) text='The session could not be opened or read; the step field names the call that failed. step=runtime is the orch runtime failing the start before anything opened, its note field the cause.' ;;
     start-refused) text='The orch runtime refused a call of the launch, or could not run: the key field is the first word of its own line, which follows; setup-required names the setup to run. Nothing was opened in its place.' ;;
     transfer-refused) text='The orch runtime refused a call of the succession, or could not run: the key field is the first word of its own line, which follows; overseer-changed names a predecessor the record does not name. Nothing was opened, and the predecessor keeps running.' ;;
-    controller-unconfirmed) text='The orch runtime recorded the start and could not confirm it: the note field names the step it holds at (watch-launch-failed, watch-unclaimed or watch-claim-unreadable for the fleet watch; a session step otherwise) and cause its cause. The record names no controller, and the runtime'\''s reconcile runs the step again from the intent named. A session the start opened stands at its composer under the record'\''s pending runner.' ;;
+    controller-unconfirmed) text='The orch runtime recorded the start and could not confirm it: the note field names the step it holds at (watch-launch-failed, watch-unclaimed or watch-claim-unreadable for the fleet watch; a session step otherwise) and cause its cause. The record names no controller, and the runtime'\''s reconcile runs the step again from the intent named. A session the start opened stands at its composer under the record'\''s pending runner. A cause of exit-N is the runtime ending after it recorded the start (note its refusal key) or before it answered (intent=unread): read the intents with orch-runtime state inspect --fleet before launching again.' ;;
     repo-unresolved) text='The checkout'\''s repository resolved to a value that is not owner/name, so the fleet watch'\''s --repo cannot be named. Nothing was launched. Set GH_REPO, or fix the origin remote.' ;;
     record-unwritten) text='The session record could not be written to the fleet state: an overseer nothing records is one the hooks and the watch cannot tell from any other session.' ;;
     overseer-launched) text='The overseer is running and recorded.' ;;
     transfer-failed) text='The orch runtime ran the succession and it failed before the predecessor was retired: the note field is the runtime'\''s reason and cause its cause. The predecessor keeps running and recorded.' ;;
-    transfer-unconfirmed) text='The orch runtime holds the succession open and could not settle it within the bound: its job still owns the intent named, and the note field names the step it holds at. Read the intent with orch-runtime state inspect --fleet before succeeding again.' ;;
+    transfer-unconfirmed) text='The orch runtime holds the succession open and could not settle it within the bound: its job still owns the intent named, and the note field names the step it holds at. A cause of exit-N is the runtime ending after it recorded the succession (note its refusal key, such as job-unclaimed with the job possibly started) or before it answered (intent=unread). Read the intent with orch-runtime state inspect --fleet before succeeding again.' ;;
     transfer-started) text='The orch runtime recorded the succession and its detached job runs it: the successor opens beside the predecessor, which is retired once the successor is up. The intent names it for orch-runtime state inspect --fleet.' ;;
     checkout-unsynced) text='The checkout this session opens in is not at its base branch'\''s origin head, so a merged hook, render or script may be missing from it. The launch goes on, on the tree as it stands; the fix field says what clears the cause.' ;;
     fleet-log-unwritten) text='The fleet log row for the line the key field names could not be written; that line stands and is printed beside this one. The step field says what failed, and the writer words follow.' ;;
@@ -300,16 +307,30 @@ ORCH_RUNTIME="${ORCH_RUNTIME_CLI:-$SCRIPT_DIR/orch-runtime}"
 # in ASKED. A call the runtime refuses, at an exit other than 0 or one
 # ASK_SETTLED lists (the exits `op --effect-exit` answers a settled effect
 # with), or a reply that names no `ok` result, refuses REFUSAL naming the
-# first word of the runtime's own line and its exit.
+# first word of the runtime's own line and its exit. Where ASK_HELD names a
+# key, the call is an `op` whose request persists an intent, and the
+# runtime's contract says which answers are refusals: exit 1 with a line
+# that names no `persisted_intent`, 2 usage, 69 the wrapper's setup line,
+# 126 and 127 a runtime that could not run. Any other answer (a refusal
+# naming the intent it persisted, a panic's 101, a signal's 128 and above,
+# a reply that names no `ok` result) may have acted, and dies ASK_HELD
+# naming the intent, `unread` where the runtime named none.
 REPLY=""
 ASKED=0
 ask() { # REFUSAL ARGS...
-  local refusal="$1" key
+  local refusal="$1" key intent
   shift
   ASKED=0
   REPLY="$("$ORCH_RUNTIME" "$@" 2>"$DEP_ERR")" || ASKED=$?
   if [[ " 0 ${ASK_SETTLED:-} " != *" $ASKED "* ]] || ! jq -e '.ok == true' <<<"$REPLY" >/dev/null 2>&1; then
     key="$(sed -n '1s/^orch-runtime: \([^ ]*\).*/\1/p' "$DEP_ERR")"
+    if [[ -n "${ASK_HELD:-}" ]]; then
+      intent="$(sed -n '1s/^orch-runtime: .* persisted_intent=\([^ ]*\).*/\1/p' "$DEP_ERR")" || intent=""
+      case "$ASKED" in
+        1|2|69|126|127) [[ -z "$intent" ]] || die "$ASK_HELD" "intent=$intent" "note=${key:-none}" "cause=exit-$ASKED" ;;
+        *) die "$ASK_HELD" "intent=${intent:-unread}" "note=${key:-none}" "cause=exit-$ASKED" ;;
+      esac
+    fi
     die "$refusal" "key=${key:-runtime-unavailable}" "exit=$ASKED"
   fi
   : > "$DEP_ERR"
@@ -428,7 +449,7 @@ launch() {
     # 0 the successor stands and the job retires the predecessor, 3 it
     # failed with the predecessor still running, 75 nothing settled within
     # the bound. Only the first is a succession.
-    ASK_SETTLED="3 75" ORCH_TMUX_VERIFY_SECS="$WAIT_SECS" \
+    ASK_SETTLED="3 75" ASK_HELD=transfer-unconfirmed ORCH_TMUX_VERIFY_SECS="$WAIT_SECS" \
       ask "$refusal" op --fleet --effect-exit --request "$REQUEST"
     fields="$(jq -r '[(.result.effect.intent // "none"), (.result.effect.job // "none"),
       (.result.settled.observation.note // "none"), (.result.settled.observation.cause // "none")]
@@ -440,7 +461,8 @@ launch() {
       *) die transfer-unconfirmed "intent=$intent" "note=$note" "cause=$cause" "predecessor=$PREDECESSOR" ;;
     esac
   fi
-  ORCH_TMUX_VERIFY_SECS="$WAIT_SECS" ask "$refusal" op --fleet --request "$REQUEST"
+  ASK_HELD=controller-unconfirmed ORCH_TMUX_VERIFY_SECS="$WAIT_SECS" \
+    ask "$refusal" op --fleet --request "$REQUEST"
   fields="$(jq -r '.result.effect.report.intent | [(.outcome // ""), (.id // "none"),
     (.observation.note // "none"), (.observation.cause // "none")] | join("\u001f")' <<<"$REPLY" 2>"$DEP_ERR")" \
     || die "$refusal" key=reply-unread

@@ -10,8 +10,10 @@
 # `list`), or by `<host> <argv>` where two hosts of one fleet answer
 # differently, or by either with `#N` appended for the Nth call of that
 # argv where a row answers a repeated read differently (a marker absent,
-# then present once the launch put it): `{exit?, stdout?, stderr?}`,
-# `stdout` the exact bytes printed, the status 0 when absent. A key the map
+# then present once the launch put it): `{exit?, stdout?, stderr?,
+# signal?}`, `stdout` the exact bytes printed, the status 0 when absent,
+# and `signal` a signal this call ends itself by after its output, so a
+# row reads a call with no answer. A key the map
 # lacks is exit 64 with `lane-host-fixture: unplanned argv=[...]` on stderr,
 # so a row that forgot an answer reads an unreadable call, never a missing
 # file. Bash 3.2.
@@ -31,4 +33,6 @@ if [ -z "$reply" ]; then
 fi
 jq -rj '.stderr // empty' <<<"$reply" >&2
 jq -rj '.stdout // empty' <<<"$reply"
+signal="$(jq -r '.signal // empty' <<<"$reply")"
+[ -z "$signal" ] || kill -s "$signal" "$$"
 exit "$(jq -r '.exit // 0' <<<"$reply")"

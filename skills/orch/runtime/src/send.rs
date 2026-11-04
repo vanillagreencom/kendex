@@ -78,10 +78,11 @@ struct Receipt {
 /// `lane-mail send --item --directive --file --state-dir` through the one
 /// runner, then the receipt as the mark. A refusal the program prints by its
 /// own key with no receipt (a foreign root, an unrecorded session) is a send
-/// that ran no CLI, recorded `failed` with that line; a program that gave
-/// no answer, ended on a signal or printed a receipt that does not decode
-/// leaves the record owed and refuses `directive-send-unsettled`, since
-/// whether the directive reached the session is unknown. The `send` verb's
+/// that ran no CLI, recorded `failed` with that line, as is a program that
+/// never started, recorded `failed` with the runner's cause; a program that
+/// gave no answer, ended on a signal or printed a receipt that does not
+/// decode leaves the record owed and refuses `directive-send-unsettled`,
+/// since whether the directive reached the session is unknown. The `send` verb's
 /// send, made under no key: the owed write reads no earlier send as this
 /// one's, so every send it admits is made.
 pub fn run(
@@ -181,6 +182,13 @@ fn send(
         }) => DirectiveSend {
             result: SendResult::Failed,
             text: line,
+            credit: Credit::Unread(Word::Unread),
+        },
+        // A program that never started sent nothing: the send failed, as one
+        // the program refused by its own key.
+        Err(refusal @ Refusal::NotStarted { .. }) => DirectiveSend {
+            result: SendResult::Failed,
+            text: refusal.to_string(),
             credit: Credit::Unread(Word::Unread),
         },
         Err(refusal) => return Err(unsettled(item, refusal.to_string())),

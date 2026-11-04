@@ -862,7 +862,16 @@ pub type WalkRead<'a> = &'a dyn Fn(&WalkRequest) -> Result<walk::Walked, String>
 pub type WallPickRead<'a> = &'a dyn Fn(&Path, Harness, &str, &str) -> Pick;
 /// The relaunch started through the job-unit launcher; `Err` its refusal.
 pub type RelaunchStart<'a> = &'a dyn Fn(&Path, &Relaunch) -> Result<(), String>;
-pub type SuccessionRun<'a> = &'a dyn Fn(&[String]) -> Result<(), String>;
+pub type SuccessionRun<'a> = &'a dyn Fn(&[String]) -> Result<SuccessionAnswer, String>;
+
+/// What a succession owner's command answered short of a failure: it ran
+/// to its end, or it started and gave no answer within the bound, so
+/// whether it succeeded is the record's to say.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SuccessionAnswer {
+    Done,
+    Unanswered { cause: String },
+}
 
 /// The wall route's answer as the lanes pass reads it: the `config_dir`
 /// of the account picked, none where no account qualifies, else unjudged
@@ -898,6 +907,10 @@ pub fn picked_by_judge(answer: PickAnswer) -> Pick {
 /// command, each one process.
 const RUNNER_BOUND: Duration = Duration::from_secs(120);
 
+/// How long after the pass that ran it a succession command that gave no
+/// answer has to move the record: its own bound, then as long again.
+const SUCCESSION_SETTLE: Duration = Duration::from_secs(2 * RUNNER_BOUND.as_secs());
+
 /// The job-unit name and record of a wall relaunch, beside its log.
 fn relaunch_record(r: &Relaunch) -> (String, PathBuf) {
     (
@@ -923,29 +936,41 @@ pub fn scripts_dir(project: &Path) -> PathBuf {
 }
 
 /// A controller's own succession command through the one runner: the
-/// first word the program, the rest its arguments.
+/// first word the program, the rest its arguments. A command that never
+/// started, or that exited with a failure, is `Err`; one that started and
+/// gave no answer, past the bound or ended by a signal, may have moved the
+/// record, so it is `Unanswered`.
 #[allow(
     clippy::disallowed_methods,
     reason = "the recorded owner's succession command, run once through the one runner in place of a transfer"
 )]
-pub fn succeed_through_runner(words: &[String]) -> Result<(), String> {
+pub fn succeed_through_runner(words: &[String]) -> Result<SuccessionAnswer, String> {
     let Some((program, args)) = words.split_first() else {
         return Err("succession command empty".to_owned());
     };
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    let out = host::run_tagged(
+    let out = match host::run_tagged(
         "succession-owner",
         "succession-owner",
         Path::new(program),
         "succeed",
         &args,
         RUNNER_BOUND,
-    )
-    .map_err(|e| e.to_string())?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(host::stderr_text(&out))
+    ) {
+        Ok(out) => out,
+        Err(e @ agent_runtime::Error::NotStarted { .. }) => return Err(e.to_string()),
+        Err(e) => {
+            return Ok(SuccessionAnswer::Unanswered {
+                cause: e.to_string(),
+            });
+        }
+    };
+    match out.status.code() {
+        Some(0) => Ok(SuccessionAnswer::Done),
+        Some(_) => Err(host::stderr_text(&out)),
+        None => Ok(SuccessionAnswer::Unanswered {
+            cause: "signal".to_owned(),
+        }),
     }
 }
 
@@ -1733,7 +1758,10 @@ fn pass_next_due() -> std::time::Instant {
 /// intent's note as its step and asked again on the next run while the
 /// recovery's attempts last, else the row is `reported`. A row naming no
 /// transfer is a succession owner's command, whose outcome is the
-/// owner's.
+/// owner's. A succession command that gave no answer is read by the
+/// record: one that moved it names another session, which this row never
+/// reads again; one that still names this session once the settle bound
+/// has passed is the owner's failure, said and `reported`.
 fn transfer_settled(
     record: &Record,
     row: &str,
@@ -1742,6 +1770,22 @@ fn transfer_settled(
     pass: &Pass,
     out: &mut Produced,
 ) {
+    if let Some(asked) = pass
+        .baseline
+        .get(TRANSFER_ROW, key)
+        .and_then(|v| v.strip_prefix("succession:"))
+    {
+        let asked = asked.parse::<u64>().unwrap_or(0);
+        if pass.now >= asked.saturating_add(SUCCESSION_SETTLE.as_secs()) {
+            out.failed.get_or_insert(format!(
+                "succession-owner-failed cause=unanswered pane={} record=unmoved",
+                record.pane
+            ));
+            out.changes.push(set(row, key, format!("{prefix}reported")));
+            out.changes.push(clear(TRANSFER_ROW, key));
+        }
+        return;
+    }
     let Some((attempt, intent_id)) = pass
         .baseline
         .get(TRANSFER_ROW, key)
@@ -1799,7 +1843,8 @@ fn transfer_settled(
 /// controller whose record names its own succession
 /// owner has that owner's command run instead, once: the row is
 /// `requested` on its success and `reported` on its failure, so a command
-/// that fails is not run again every pass.
+/// that fails is not run again every pass. A command that gave no answer is
+/// `requested` with its pass on the transfer row: the record settles it.
 fn transfer(
     record: &Record,
     case: OverseerCase,
@@ -1860,7 +1905,16 @@ fn transfer(
         out.events
             .push(Event::Tail(format!("succession owner={}", words.join(" "))));
         let word = match (pass.judges.succeed)(&words) {
-            Ok(()) => "requested",
+            Ok(SuccessionAnswer::Done) => "requested",
+            Ok(SuccessionAnswer::Unanswered { cause }) => {
+                context::note(
+                    "succession-owner-unanswered",
+                    &format!("pane={} cause={cause}", record.pane),
+                );
+                out.changes
+                    .push(set(TRANSFER_ROW, key, format!("succession:{}", pass.now)));
+                "requested"
+            }
             Err(cause) => {
                 out.failed
                     .get_or_insert(format!("succession-owner-failed cause={cause}"));

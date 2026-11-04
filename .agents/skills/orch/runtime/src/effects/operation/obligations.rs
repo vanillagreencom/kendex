@@ -392,7 +392,7 @@ impl Obligations {
         harness: Option<Harness>,
     ) -> Obligations {
         match phase {
-            None | Some(Phase::CloudCreate { .. }) => Obligations::none(),
+            None | Some(Phase::CloudCreate { .. } | Phase::Preparing { .. }) => Obligations::none(),
             Some(Phase::Opening { opening }) => match (&opening.pane, opening.asked) {
                 (None, false) => Obligations::none(),
                 (None, true) => Obligations::of(

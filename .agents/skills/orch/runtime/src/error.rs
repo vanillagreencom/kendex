@@ -288,6 +288,12 @@ pub enum Error {
     /// bound; the request is recorded `failed`.
     #[error("intent {intent}: the detached job never claimed the intent")]
     JobUnclaimed { intent: String },
+    /// A refusal that came after the request's intent was persisted: the
+    /// intent stands for the reconcile to settle, so a caller reads the
+    /// request as unconfirmed, never as refused. The key and fields are the
+    /// inner refusal's, with `persisted_intent` added.
+    #[error("{error}")]
+    Persisted { intent: String, error: Box<Error> },
     /// The fleet cap admits no further lane: `occupancy` slots charge it
     /// (decision 97), `lanes` of them lane records and `claims` legacy claim
     /// store rows, and `cap` is the setting.
@@ -669,6 +675,7 @@ impl Error {
             Error::IntentStarted { .. } => "intent-started",
             Error::JobLaunchFailed { .. } => "job-launch-failed",
             Error::JobUnclaimed { .. } => "job-unclaimed",
+            Error::Persisted { error, .. } => error.key(),
             Error::CapReached { .. } => "cap-reached",
             Error::CapUnreadable { .. } => "cap-unreadable",
             Error::AccountSpent { .. } => "account-spent",
@@ -871,6 +878,11 @@ impl Error {
             Error::IntentStarted { id } => vec![pair("intent_id", id.clone())],
             Error::JobLaunchFailed { intent, .. } | Error::JobUnclaimed { intent } => {
                 vec![pair("intent_id", intent.clone())]
+            }
+            Error::Persisted { intent, error } => {
+                let mut fields = error.fields();
+                fields.push(pair("persisted_intent", intent.clone()));
+                fields
             }
             Error::CapReached {
                 occupancy,

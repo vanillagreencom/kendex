@@ -2904,9 +2904,31 @@ fn retention_removes_only_the_kinds_it_names_and_every_other_entry_stands() {
 /// checked out), or kept forever when it names nothing that stands. The
 /// twelve shapes a workflow state names a worktree in, on a repository with
 /// linked worktrees, one pass: each state is kept or removed as the table
-/// says.
+/// says. The pass reads the worktrees through `git` by name, in this
+/// process, so the row runs as a child under the isolated environment and
+/// that `git` reads no configuration of the operator's.
 #[test]
 fn retention_keeps_an_item_state_that_names_a_standing_linked_worktree_and_takes_the_rest() {
+    if std::env::var_os("ISOLATED_CHILD").is_none() {
+        let out = program(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "retention_keeps_an_item_state_that_names_a_standing_linked_worktree_and_takes_the_rest",
+                "--nocapture",
+            ])
+            .env("ISOLATED_CHILD", "1")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        return;
+    }
     let world = World::new();
     let clock = FakeClock::new();
     let wall = clock.wall_secs();

@@ -39,9 +39,11 @@ fn real_lane_mail() -> PathBuf {
         .unwrap()
 }
 
-/// The stand-in that runs the real program from the lane root it names.
+/// The stand-in that runs the real program from the lane root it names,
+/// isolated from the operator's git configuration, since the rows hand it
+/// to the client in-process.
 fn hold() -> PathBuf {
-    fixtures().join("lane-mail-hold/lane-mail")
+    isolated_program(&fixtures().join("lane-mail-hold/lane-mail"))
 }
 
 /// One checkout holding the fleet state, its running lanes rooted at the
@@ -466,8 +468,9 @@ fn a_send_that_dies_before_its_receipt_repeated_under_its_operation_id_lands_one
 /// Decision 142 (1). Defect: a refused read taken as a lane with nothing
 /// new, or as an empty box. A program that exits nonzero, one whose header
 /// is not one, one that stops short of its receipts, one naming another
-/// lane and one that never answers each refuse the batched read by its
-/// typed cause with no lane drained; one that prints the first lane whole
+/// lane, one that never answers and one that never starts each refuse the
+/// batched read by its typed cause with no lane drained, the last two
+/// apart; one that prints the first lane whole
 /// and exits on the second answers for the first alone. Through the duty
 /// on the runner the nonzero exit is `watch-step-failed step=mail` once,
 /// the next refused turn under the runner's repeat rule (decision 156 (1),
@@ -538,7 +541,20 @@ fn a_refused_read_stops_the_turn_with_its_cause_and_reads_no_box_as_empty() {
             Box::new(|r| {
                 matches!(
                     r,
-                    Refusal::Call {
+                    Refusal::Unanswered {
+                        verb: "drain-many",
+                        ..
+                    }
+                )
+            }),
+        ),
+        (
+            "absent",
+            w.root.join("no-such-lane-mail"),
+            Box::new(|r| {
+                matches!(
+                    r,
+                    Refusal::NotStarted {
                         verb: "drain-many",
                         ..
                     }

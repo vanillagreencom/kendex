@@ -1076,3 +1076,128 @@ fn a_launch_whose_line_never_reached_its_window_closes_it_and_one_whose_paste_we
         }
     }
 }
+
+/// Defect: a timed-out `new-window` read as a refusal, and a tmux refusal
+/// read as no answer. Through the real binary on a private server, with a
+/// `tmux` on `PATH` that answers one verb its own way: a `new-window` tmux
+/// refuses is `tmux-refused`, no window opened; one that opens the window
+/// and then gives no answer within the bound is `launch-window-unanswered`,
+/// naming the session and the window, which stands.
+#[test]
+fn a_new_window_tmux_refused_is_refused_and_one_that_gave_no_answer_is_unanswered() {
+    use std::os::unix::fs::PermissionsExt;
+    let real = std::env::var_os("PATH")
+        .and_then(|path| {
+            std::env::split_paths(&path)
+                .map(|d| d.join("tmux"))
+                .find(|p| p.is_file())
+        })
+        .expect("tmux on PATH");
+    // (what the shim does on new-window, the refusal, whether the window stands)
+    for (answer, key, stands) in [
+        ("echo refused >&2; exit 1", "tmux-refused", false),
+        (
+            "\"$real\" \"$@\" >/dev/null; exec sleep 30",
+            "launch-window-unanswered",
+            true,
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let pane = PrivatePane::start(&root);
+        let shims = root.join("answering-tmux");
+        std::fs::create_dir(&shims).unwrap();
+        std::fs::write(
+            shims.join("tmux"),
+            format!(
+                "#!/bin/bash\nreal='{}'\nfor arg in \"$@\"; do [ \"$arg\" != new-window ] || {{ {answer}; }}; done\nexec \"$real\" \"$@\"\n",
+                real.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(shims.join("tmux"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        let intent = root.join("intent.json");
+        std::fs::write(
+            &intent,
+            serde_json::json!({"harness": "claude", "home": root.join("home"), "cwd": root})
+                .to_string(),
+        )
+        .unwrap();
+        let record = root.join("launch-record.json");
+        let path = std::env::join_paths(std::iter::once(shims.clone()).chain(
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+        ))
+        .unwrap();
+        let out = Command::new(binary())
+            .args(["launch", "--intent"])
+            .arg(&intent)
+            .arg("--record")
+            .arg(&record)
+            .arg("--socket")
+            .arg(&pane.socket)
+            .args(["--session", &pane.session, "--window-name", "launched"])
+            .env("PATH", &path)
+            .output()
+            .unwrap();
+        let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_default();
+        assert_eq!(reply["refusal"]["key"], key, "{key}: {reply}");
+        let windows = pane.tmux(&["list-windows", "-t", &pane.session, "-F", "#{window_name}"]);
+        assert_eq!(
+            windows.lines().any(|w| w == "launched"),
+            stands,
+            "{key}: the window: {windows}"
+        );
+        assert!(!record.exists(), "{key}: no pane to record");
+        if stands {
+            let fields = &reply["refusal"]["fields"];
+            assert!(
+                fields.to_string().contains("\"launched\""),
+                "the refusal names the window: {fields}"
+            );
+        }
+    }
+}
+
+/// Defect: a socket under a made-up uid. With no `$TMUX`, no numeric
+/// `$UID` and an `id` that fails, a launch that names no socket refuses
+/// `uid-unread` before any tmux call.
+#[test]
+fn a_launch_whose_uid_cannot_be_read_refuses_and_names_no_socket() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let shims = root.join("failing-id");
+    std::fs::create_dir(&shims).unwrap();
+    std::fs::write(
+        shims.join("id"),
+        "#!/bin/bash\necho 'id: unread' >&2\nexit 1\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(shims.join("id"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let intent = root.join("intent.json");
+    std::fs::write(
+        &intent,
+        serde_json::json!({"harness": "claude", "home": root.join("home"), "cwd": root})
+            .to_string(),
+    )
+    .unwrap();
+    let path = std::env::join_paths(std::iter::once(shims.clone()).chain(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    )))
+    .unwrap();
+    let out = Command::new(binary())
+        .args(["launch", "--intent"])
+        .arg(&intent)
+        .arg("--record")
+        .arg(root.join("launch-record.json"))
+        .args(["--session", "probe", "--window-name", "launched"])
+        .env("PATH", &path)
+        .env("TMUX_TMPDIR", &root)
+        .env_remove("TMUX")
+        .env_remove("UID")
+        .output()
+        .unwrap();
+    let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_default();
+    assert_eq!(reply["refusal"]["key"], "uid-unread", "{reply}");
+}

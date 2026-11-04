@@ -138,7 +138,7 @@ impl Readers<'static> {
     )]
     pub fn kernel() -> Readers<'static> {
         fn pane(server: u64, server_start: Option<u64>, pane: &str) -> Reading<PaneFields> {
-            let live = match tmux::server(&tmux::ambient_socket()) {
+            let live = match tmux::ambient_socket().and_then(|socket| tmux::server(&socket)) {
                 Ok(live) if u64::from(live.pid) == server => live,
                 Ok(_) | Err(_) => {
                     return Reading::Unreadable {
@@ -174,7 +174,7 @@ impl Readers<'static> {
             }
         }
         fn windows(session: &str) -> Reading<(u64, Vec<WindowRow>)> {
-            let live = match tmux::server(&tmux::ambient_socket()) {
+            let live = match tmux::ambient_socket().and_then(|socket| tmux::server(&socket)) {
                 Ok(live) => live,
                 Err(_) => {
                     return Reading::Unreadable {
@@ -1679,7 +1679,7 @@ fn strays(session: &str, pass: &Pass, out: &mut Produced) {
                 | Phase::Delivered { opened, .. }
                 | Phase::IdentityRead { opened, .. },
             ) => Some(opened.pane.clone()),
-            Some(Phase::CloudCreate { .. }) | None => None,
+            Some(Phase::CloudCreate { .. } | Phase::Preparing { .. }) | None => None,
         };
         known.extend(pane);
     }

@@ -66,6 +66,12 @@ pub struct Pane {
     pub session: String,
 }
 
+/// One tmux command and its own answer: its output where it succeeded, a
+/// refusal (`tmux-refused`) where tmux answered with a failure, so nothing
+/// it was asked to do was done. A tmux that never started is
+/// `Error::NotStarted`; one that started and gave no answer within the bound
+/// is `Error::External`, and a command that changes the server may then
+/// have acted.
 fn tmux(socket: Option<&Path>, operation: &'static str, args: &[&str]) -> Result<String> {
     let socket_arg = socket.map(|s| s.display().to_string());
     let mut full: Vec<&str> = Vec::new();
@@ -78,37 +84,53 @@ fn tmux(socket: Option<&Path>, operation: &'static str, args: &[&str]) -> Result
     // still honours it for the client's own session lookup, so clear it.
     let env: Vec<(&str, &OsStr)> = Vec::new();
     let output = run_with("tmux", operation, &full, &env, None, TIMEOUT)?;
-    if !output.status.success() {
+    if output.status.code().is_none() {
         return Err(Error::External {
             program: "tmux",
             operation,
-            cause: stderr_text(&output),
+            cause: "signal".to_owned(),
         });
+    }
+    if !output.status.success() {
+        return Err(Error::refused(
+            "tmux-refused",
+            &[("operation", operation), ("cause", &stderr_text(&output))],
+        ));
     }
     Ok(stdout_text(&output))
 }
 
-/// The socket tmux derives for this user when nothing names one.
-pub fn default_socket() -> PathBuf {
+/// The socket tmux derives for this user when nothing names one. The uid
+/// is `$UID` where it is a number, else `id -u`'s own answer; an `id` that
+/// fails, gives no answer or prints no number refuses `uid-unread`, never a
+/// socket under a made-up uid.
+pub fn default_socket() -> Result<PathBuf> {
     let tmpdir = std::env::var("TMUX_TMPDIR").unwrap_or_else(|_| "/tmp".to_owned());
-    let uid = std::env::var("UID")
-        .ok()
-        .or_else(|| {
-            run_with("id", "uid", &["-u"], &[], None, TIMEOUT)
-                .ok()
-                .map(|o| stdout_text(&o))
-        })
-        .unwrap_or_default();
-    PathBuf::from(tmpdir)
+    let numeric = |uid: &str| !uid.is_empty() && uid.bytes().all(|b| b.is_ascii_digit());
+    let uid = match std::env::var("UID") {
+        Ok(uid) if numeric(&uid) => uid,
+        Ok(_) | Err(_) => {
+            let output = run_with("id", "uid", &["-u"], &[], None, TIMEOUT)?;
+            let uid = stdout_text(&output).trim().to_owned();
+            if !output.status.success() || !numeric(&uid) {
+                return Err(Error::refused(
+                    "uid-unread",
+                    &[("answer", &uid), ("cause", &stderr_text(&output))],
+                ));
+            }
+            uid
+        }
+    };
+    Ok(PathBuf::from(tmpdir)
         .join(format!("tmux-{uid}"))
-        .join("default")
+        .join("default"))
 }
 
 /// The socket the caller's own `$TMUX` names, else the default.
-pub fn ambient_socket() -> PathBuf {
+pub fn ambient_socket() -> Result<PathBuf> {
     match std::env::var("TMUX") {
         Ok(value) if !value.is_empty() => {
-            PathBuf::from(value.split(',').next().unwrap_or_default())
+            Ok(PathBuf::from(value.split(',').next().unwrap_or_default()))
         }
         _ => default_socket(),
     }

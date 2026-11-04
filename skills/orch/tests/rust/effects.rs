@@ -5458,15 +5458,16 @@ fn cloud_lane(item: &str, runner: &Runner, wt: &Path) -> Value {
 }
 
 /// R-U5j2 L1: a worktree package that cannot start (a script that is not
-/// there never starts: the runner's cause, no `worktree-` keyed line) is no answer
-/// from the package, so the worktree is held `removal-unanswered`: the
+/// there never starts: the runner's cause, no `worktree-` keyed line)
+/// removed nothing, so the worktree is held `removal-not-started`: the
 /// close `unconfirmed`, the worktree in `remaining`, the lane not `done`,
 /// nothing removed, and the repeat reads it again once the install is
-/// repaired. The defect: a start that failed read as the package's refusal
+/// repaired. Defects: a start that failed read as the package's refusal
 /// records a terminal `kept: refused:...` on a lane whose close is never
-/// retried.
+/// retried; read as no answer (`removal-unanswered`), a removal that may
+/// have happened.
 #[test]
-fn a_worktree_package_that_cannot_start_holds_the_close_removal_unanswered() {
+fn a_worktree_package_that_cannot_start_holds_the_close_with_nothing_removed() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let runner = Runner::new(&server, "stub-confirm");
@@ -5485,8 +5486,8 @@ fn a_worktree_package_that_cannot_start_holds_the_close_removal_unanswered() {
     assert!(
         report["intent"]["observation"]["cause"]
             .as_str()
-            .is_some_and(|c| c.contains("removal-unanswered:")),
-        "held as no answer from the package: {report}"
+            .is_some_and(|c| c.contains("removal-not-started:")),
+        "held as a removal that never started: {report}"
     );
     assert_eq!(
         remaining(&report["intent"]["observation"], "worktree")["path"],
@@ -6008,6 +6009,57 @@ fn a_hosted_launch_runs_the_providers_verbs_and_opens_its_window_over_ssh() {
         "claude"
     );
     effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+}
+
+/// Defect: a provider create that may have acted settled failed. The
+/// provider's `create` ends on a signal with no answer: the launch is held
+/// `host-create-unknown` naming the host, the lane preparing and no window
+/// opened; a reconcile holds it again from the phase recorded before the
+/// create; and a close settles it, naming the step and the host.
+#[test]
+fn a_hosted_create_with_no_answer_is_held_until_a_close_settles_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+    let world = HostedLaunch::new(&server, dir.path(), record);
+    let account = world.runner.state_dir().display().to_string();
+    let answers_path = world.scripts.join("lane-host.json");
+    let mut answers: Value =
+        serde_json::from_str(&std::fs::read_to_string(&answers_path).unwrap()).unwrap();
+    answers[format!("create --item KEN-H --repo o/r --harness claude --account {account}")] =
+        json!({"signal": "KILL"});
+    std::fs::write(&answers_path, answers.to_string()).unwrap();
+    let panes_before = server.panes().len();
+    let report = effect_report(&world.runner.op_fleet(&world.request()));
+    assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
+    let observation = &report["intent"]["observation"];
+    assert_eq!(observation["note"], "host-create-unknown", "{report}");
+    assert_eq!(observation["at"], PROVIDER_PATH, "{report}");
+    assert_eq!(server.panes().len(), panes_before, "no window opened");
+    let reconciled = world.runner.reconcile_one();
+    assert_eq!(
+        reconciled["intent"]["outcome"], "unconfirmed",
+        "{reconciled}"
+    );
+    assert_eq!(
+        reconciled["intent"]["observation"]["note"], "host-create-unknown",
+        "{reconciled}"
+    );
+    assert_eq!(world.runner.fleet()["lanes"][0]["status"], "preparing");
+    let closed = world.runner.op_fleet(&terminal_close("KEN-H"));
+    let launch = world.runner.fleet()["intents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["op"] == "launch-lane")
+        .cloned()
+        .unwrap();
+    assert_eq!(launch["outcome"], "failed", "{launch} {}", stderr(&closed));
+    assert_eq!(
+        launch["observation"]["preparing"],
+        json!({"step": "host-create", "at": PROVIDER_PATH}),
+        "{launch}"
+    );
 }
 
 #[test]

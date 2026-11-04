@@ -1175,6 +1175,13 @@ pub enum Phase {
     /// session nothing here can name, so a reconcile holds the launch
     /// rather than reading nothing opened.
     CloudCreate { worktree: String },
+    /// Written before a launch asks a preparation whose answer can be lost:
+    /// a hosted provider's `create` (`step` `host-create`, `at` the host;
+    /// the `wait` after it included), a cloud lane's worktree `create` and
+    /// branch `push` (`worktree-create` at the claim root, `worktree-push`
+    /// at the worktree). Its effect may stand though nothing answered, so a
+    /// reconcile holds the launch until a close settles it.
+    Preparing { step: String, at: String },
 }
 
 impl Phase {
@@ -1187,7 +1194,7 @@ impl Phase {
             | Phase::Delivering { opened, .. }
             | Phase::Delivered { opened, .. }
             | Phase::IdentityRead { opened, .. } => Some(opened),
-            Phase::Opening { .. } | Phase::CloudCreate { .. } => None,
+            Phase::Opening { .. } | Phase::CloudCreate { .. } | Phase::Preparing { .. } => None,
         }
     }
 }

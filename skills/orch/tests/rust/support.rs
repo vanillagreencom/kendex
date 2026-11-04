@@ -310,6 +310,48 @@ fn isolated_bin() -> PathBuf {
     .clone()
 }
 
+/// `program` behind a wrapper that runs it with the scratch home and no
+/// global or system git configuration, for a program a row hands the
+/// runtime in-process: the one runner starts it with this test process's
+/// own environment, so a `git` it runs would read the operator's
+/// configuration. The rest of the environment passes through, so a row's
+/// own wrapper that exports a fixture's variables still reaches it. For a
+/// fixture of the tree, whose path outlives the run: each wrapper is written
+/// once under the temporary root, named by its text.
+pub fn isolated_program(program: &Path) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    let home = std::env::temp_dir().join("isolated-home");
+    std::fs::create_dir_all(&home).expect("the scratch home");
+    let quote = |text: &str| format!("'{}'", text.replace('\'', "'\\''"));
+    let text = format!(
+        "#!/bin/sh\nexport HOME={} GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null\nexec {} \"$@\"\n",
+        quote(&home.display().to_string()),
+        quote(&program.display().to_string())
+    );
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    let dir = std::env::temp_dir().join("isolated-programs");
+    std::fs::create_dir_all(&dir).expect("the isolated programs directory");
+    let name = program.file_name().unwrap_or_default().to_string_lossy();
+    let path = dir.join(format!("{:016x}-{name}", hasher.finish()));
+    if std::fs::read_to_string(&path).is_ok_and(|held| held == text) {
+        return path;
+    }
+    let tmp = dir.join(format!(
+        ".{name}.{}.{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    std::fs::write(&tmp, &text).expect("an isolated program");
+    std::fs::set_permissions(
+        &tmp,
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
+    )
+    .expect("an isolated program's mode");
+    let _ = std::fs::rename(&tmp, &path);
+    path
+}
+
 /// A test child's `PATH`: a row's own `prefixes` first, then the isolated
 /// tools directory, then the path this process inherited. Every row that
 /// sets `PATH` composes it here, so a prefix never drops the refusing `gh`.
