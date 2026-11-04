@@ -107,6 +107,307 @@ class Producer(unittest.TestCase):
         path = self.home / "tmp/lane-mail/overseer/to-lane.jsonl"
         return [json.loads(row) for row in path.read_text().splitlines()] if path.exists() else []
 
+    def initial_pass(self, side="local"):
+        args = [BASH, self.scripts / "vm-watch.sh", "--home", self.home, "--side", side]
+        if side.startswith("ssh:"):
+            result = subprocess.run(["ssh", side.split(":", 1)[1], "bash -s"],
+                                    input=shlex.join(map(str, args)) + "\n", cwd=self.home, env=self.env,
+                                    capture_output=True, text=True, timeout=30)
+        else:
+            result = self.command(args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        path = self.root / (side.replace(":", "-") + ".pass")
+        path.write_text(result.stdout)
+        return path
+
+    def native_events(self, root, box):
+        result = self.command([BASH, REPO / "skills/mailbox/scripts/lane-mail", "events",
+                               "--item", "overseer", "--box", box, "--after", "0"], root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+        return self.module.mailbox_header(lines[0])[0], [json.loads(row) for row in lines[1:]]
+
+    def test_initial_pass_boundary_uses_logical_positions(self):
+        self.clock(-100 * 86400)
+        self.mail(self.peer, "notice", "expired before adoption", "--to", "owner")
+        self.bin.joinpath("date").unlink()
+        boundary = self.mail(self.peer, "notice", "retained adoption boundary", "--to", "owner")
+        boundary_id = boundary.stdout.split("id=", 1)[1].split()[0]
+        # The public pass marks notices seen before the real compactor runs.
+        self.read_pass()
+        compact = self.command([BASH, REPO / "skills/mailbox/scripts/lane-mail", "compact",
+                                "--item", "overseer"], self.peer)
+        self.assertEqual(compact.returncode, 0, compact.stderr)
+        captured = self.initial_pass()
+        self.assertIn("retained adoption boundary", captured.read_text())
+        count, retained = self.native_events(self.peer, "to-overseer")
+        physical = self.peer.joinpath("tmp/lane-mail/overseer/to-overseer.jsonl").read_bytes().splitlines()
+        self.assertGreater(count, len(physical))
+        self.assertEqual([row["id"] for row in retained], [boundary_id])
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.module.Watch(self.home, BASH, self.settings, [captured])
+            later = self.mail(self.peer, "notice", "switch-time adoption notice", "--to", "owner")
+            later_id = later.stdout.split("id=", 1)[1].split()[0]
+            watch.tick(0, watch.acquire(0))
+        body = self.inbox()[0]["text"]
+        self.assertEqual([line for line in body.splitlines() if line in
+                          ("retained adoption boundary", "switch-time adoption notice", "expired before adoption")],
+                         ["switch-time adoption notice"], "adopted boundary replay")
+        _, retained = self.native_events(self.peer, "to-overseer")
+        self.assertEqual([row["id"] for row in retained], [boundary_id, later_id])
+
+    def test_initial_pass_home_inbox_handoff(self):
+        before = self.owner_note("owner before boundary")
+        captured = self.initial_pass()
+        self.assertNotIn("owner before boundary", captured.read_text())
+        drained = self.command([BASH, REPO / "skills/mailbox/scripts/lane-mail", "inbox", "--item", "overseer"])
+        self.assertEqual(drained.returncode, 0, drained.stderr)
+        self.assertIn(before, drained.stdout)
+        self.assertIn("owner before boundary", drained.stdout)
+        later = self.owner_note("owner after boundary")
+        with patch.dict(os.environ, self.env, clear=True):
+            watch = self.module.Watch(self.home, BASH, self.settings, [captured])
+            watch.accept(watch.acquire(0))
+        self.assertEqual([row["id"] for row in watch.state["unanswered"]["pending"]], [later])
+        _, retained = self.native_events(self.home, "to-lane")
+        self.assertEqual([(row["id"], row["text"]) for row in retained],
+                         [(before, "owner before boundary"), (later, "owner after boundary")])
+
+    def test_initial_pass_destination_and_root_identity(self):
+        equal = self.project("another/peer")
+        roots = (self.peer, equal)
+        self.registry.write_text("\n".join(map(str, roots)) + "\n")
+        self.settings.update(JARVIS_CONTROL_HOST="alpha", JARVIS_REMOTE_HOSTS="beta gamma",
+                             JARVIS_WAKE_SETTLE_SECS="0")
+        self.executable("ssh", '#!/bin/sh\nexec '+shlex.quote(BASH)+' -s\n')
+        for root in roots:
+            self.mail(root, "notice", "before " + str(root), "--to", "owner")
+        # The shim gives each destination the same full paths, as separate machine views.
+        captured = [self.initial_pass(side) for side in ("local", "ssh:alpha")]
+        for root in roots:
+            self.mail(root, "notice", "between alias captures " + str(root), "--to", "owner")
+        captured.append(self.initial_pass("ssh:beta"))
+        expected_seeds = {json.loads(path.read_text().splitlines()[-1][8:])["side"]:
+                          json.loads(path.read_text().splitlines()[-1][8:])["roots"] for path in captured}
+        for root in roots:
+            self.assertLess(expected_seeds["ssh:alpha"][str(root)]["to-overseer"]["count"],
+                            expected_seeds["ssh:beta"][str(root)]["to-overseer"]["count"])
+        snapshots = []
+        original_atomic = self.module.atomic_json
+        def observe_save(path, state):
+            snapshots.append(json.loads(json.dumps(state)))
+            original_atomic(path, state)
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            with patch.object(self.module, "atomic_json", side_effect=observe_save):
+                watch = self.module.Watch(self.home, BASH, self.settings, captured)
+            self.assertTrue(snapshots)
+            for saved in snapshots:
+                self.assertEqual(saved["cursors"], expected_seeds)
+                self.assertEqual((saved["offset"], saved["spans"], saved["due"], saved["pending"]), (0, [], None, None))
+                self.assertEqual(saved["legacy_control_host"], "alpha")
+            generation = watch.state["generation"]
+            for root in roots:
+                self.mail(root, "notice", "after " + str(root), "--to", "owner")
+            new_root = self.project("new/peer")
+            self.mail(new_root, "notice", "new root retained history", "--to", "owner")
+            self.registry.write_text("\n".join(map(str, (*roots, new_root))) + "\n")
+            self.settings["JARVIS_REMOTE_HOSTS"] = "gamma beta alpha"
+            watch = self.watch()
+            self.assertEqual(watch.state["generation"], generation)
+            watch.tick(0, self.acquire_all(watch, 0))
+        bodies = "\n".join(row["text"] for row in self.inbox())
+        blocks = bodies.split("EVENT mail ")[1:]
+        observed = []
+        for block in blocks:
+            header, _, text = block.split("\n", 2)
+            destination, root = re.search(r" destination=(\S+) root=(\S+)$", header).groups()
+            observed.append((destination, root, text.strip()))
+        expected = [(side, str(root), "after " + str(root))
+                    for side in ("local", "ssh:alpha", "ssh:beta", "ssh:gamma") for root in roots]
+        expected.extend((side, str(root), "between alias captures " + str(root))
+                        for side in ("local", "ssh:alpha", "ssh:gamma") for root in roots)
+        expected.extend(("ssh:gamma", str(root), "before " + str(root)) for root in roots)
+        expected.extend((side, str(new_root), "new root retained history")
+                        for side in ("local", "ssh:alpha", "ssh:beta", "ssh:gamma"))
+        self.assertCountEqual(observed, expected)
+
+    def test_initial_pass_refusals_leave_state_unchanged(self):
+        self.mail(self.peer, "notice", "retained through refusal", "--to", "owner")
+        captured = self.initial_pass()
+        original = captured.read_bytes()
+        footer = json.loads(original.splitlines()[-1][8:])
+        def changed(**fields):
+            record = dict(footer, **fields)
+            return original[:original.rfind(b"cursor: ")] + b"cursor: " + json.dumps(record).encode() + b"\n"
+        cases = [("malformed", b"cursor: {invalid}\n", "pass-unread"),
+                 ("later-invalid", b"cursor: {invalid}\n", "pass-unread"),
+                 ("truncated", original[:-1], "pass-unread"),
+                 ("two-passes", original * 2, "pass-unread"),
+                 ("no-roots", changed(roots=[]), "pass-unread"),
+                 ("duplicate", original, "destination-repeated"),
+                 ("failed-root", changed(roots={str(self.peer): {"cause": {"key": ["read", "exit", "1"]}}}), "root-failed")]
+        cases.extend((side, changed(side=side), "destination-unknown")
+                     for side in ("ssh:undeclared", "host", "relay", "report", "forward", "consumer"))
+        cases.append(("satellite-side", changed(side="ssh:alpha"), "destination-unknown"))
+        cases.extend((name, original, "state-exists")
+                     for name in ("empty-state", "empty-log", "footer-log", "established", "pending", "second-init",
+                                  "legacy-dormant", "legacy-frozen"))
+        self.settings["JARVIS_WAKE_SETTLE_SECS"] = "0"
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            for index, (name, data, code) in enumerate(cases):
+                with self.subTest(case=name):
+                    directory = self.root / ("refusal-%s" % index)
+                    directory.mkdir()
+                    self.settings["JARVIS_LOG_DIR"] = str(directory)
+                    self.settings.update(JARVIS_MAIN_HOST="main:/srv/home" if name == "satellite-side" else "",
+                                         JARVIS_CONTROL_HOST="alpha" if name == "satellite-side" else "")
+                    candidate = self.root / "candidate.pass"
+                    candidate.write_bytes(data)
+                    paths = [captured, candidate] if name in ("duplicate", "later-invalid") else [candidate]
+                    if name == "empty-state":
+                        directory.joinpath("batch.json").write_bytes(b"")
+                    elif name == "empty-log":
+                        directory.joinpath("events.log").write_bytes(b"")
+                    elif name == "footer-log":
+                        directory.joinpath("events.log").write_text(
+                            self.module.pass_output(footer["side"], footer["roots"], []))
+                        self.assertFalse(directory.joinpath("batch.json").exists())
+                    elif name in ("established", "pending", "second-init"):
+                        watch = (self.module.Watch(self.home, BASH, self.settings, [captured])
+                                 if name == "second-init" else self.watch())
+                        watch.accept(watch.acquire(0))
+                        if name == "pending":
+                            self.intercept_mail('if [ "$1" = send ]; then exit 1; fi')
+                            watch.batch(0)
+                            self.assertIsNotNone(watch.state["pending"])
+                            shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
+                    elif name in ("legacy-dormant", "legacy-frozen"):
+                        watch = self.watch()
+                        watch.append(self.module.pass_output("host", {"/srv/old": {"to-overseer": {"count": 7}}}, []))
+                        if name == "legacy-frozen":
+                            watch.state["legacy_control_host"] = "alpha"
+                            watch.save()
+                            self.settings["JARVIS_CONTROL_HOST"] = "beta"
+                    files = {path.name: path.read_bytes() for path in directory.iterdir()}
+                    envelopes = {str(root): self.native_events(root, "to-overseer")[1]
+                                 for root in (self.home, self.peer)}
+                    inbox = self.inbox()
+                    with patch.object(self.module, "atomic_json", side_effect=AssertionError("unexpected save")), \
+                            patch.object(self.module, "run", side_effect=AssertionError("unexpected operation")):
+                        with self.assertRaises(self.module.Failure) as refusal:
+                            self.module.Watch(self.home, BASH, self.settings, paths)
+                    self.assertEqual(refusal.exception.record["key"], ["initial-pass", "refusal", code])
+                    self.assertEqual({path.name: path.read_bytes() for path in directory.iterdir()}, files)
+                    self.assertEqual(self.inbox(), inbox)
+                    self.assertEqual({str(root): self.native_events(root, "to-overseer")[1]
+                                      for root in (self.home, self.peer)}, envelopes)
+                    if name in ("established", "pending", "second-init", "footer-log"):
+                        resumed = self.watch()
+                        self.assertEqual(resumed.cursors["local"], footer["roots"])
+                        if name == "footer-log":
+                            self.assertEqual(resumed.state["spans"], [])
+                        if "batch.json" in files:
+                            saved = json.loads(files["batch.json"])
+                            self.assertEqual(resumed.state["generation"], saved["generation"])
+                            self.assertEqual(resumed.state["pending"], saved["pending"])
+                    elif name in ("legacy-dormant", "legacy-frozen"):
+                        saved = json.loads(files["batch.json"])
+                        resumed = self.watch()
+                        side = "host" if name == "legacy-dormant" else "ssh:alpha"
+                        self.assertEqual(resumed.cursors[side]["/srv/old"]["to-overseer"]["count"], 7)
+                        self.assertEqual(resumed.state["generation"], saved["generation"])
+                        self.assertNotIn("ssh:beta", resumed.cursors)
+
+    def test_initial_pass_pending_retry_and_restart(self):
+        captured = self.initial_pass()
+        self.settings.update(JARVIS_WAKE_SETTLE_SECS="0", JARVIS_CONTROL_HOST="alpha")
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()):
+            watch = self.module.Watch(self.home, BASH, self.settings, [captured])
+            generation = watch.state["generation"]
+            self.mail(self.peer, "notice", "first after adoption", "--to", "owner")
+            watch.accept(watch.acquire(0))
+            self.intercept_mail('if [ "$1" = send ]; then exit 1; fi')
+            watch.batch(0)
+            pending = json.loads(watch.path.read_text())["pending"]
+            self.assertIn("first after adoption", pending["body"])
+            self.mail(self.peer, "notice", "second after adoption", "--to", "owner")
+            watch.accept(watch.acquire(1))
+            before = (watch.path.read_bytes(), watch.log.read_bytes())
+            with self.assertRaises(self.module.Failure) as refusal:
+                self.module.Watch(self.home, BASH, self.settings, [captured])
+            self.assertEqual(refusal.exception.record["key"], ["initial-pass", "refusal", "state-exists"])
+            self.assertEqual((watch.path.read_bytes(), watch.log.read_bytes()), before)
+            shutil.copyfile(REPO / "skills/mailbox/scripts/lane-mail", self.mail_command)
+            self.settings["JARVIS_CONTROL_HOST"] = "beta"
+            watch = self.watch()
+            self.assertEqual(watch.state["generation"], generation)
+            self.assertEqual(watch.state["legacy_control_host"], "alpha")
+            self.assertEqual(watch.state["pending"], pending)
+            original_save = watch.save
+            def stop_after_receipt():
+                if watch.state["pending"] is None:
+                    raise InterruptedError("acknowledgement barrier before commit")
+                original_save()
+            watch.save = stop_after_receipt
+            with self.assertRaises(InterruptedError):
+                watch.batch(1)
+            landed = self.inbox()[0]
+            self.assertEqual(landed["delivery_id"], pending["key"])
+            self.assertEqual(landed["text"], pending["body"].rstrip("\n"))
+            with self.assertRaises(self.module.Failure):
+                self.module.Watch(self.home, BASH, self.settings, [captured])
+            resumed = self.watch()
+            self.assertEqual(resumed.state["pending"], pending)
+            resumed.batch(2)
+            self.assertEqual(self.inbox(), [landed])
+            resumed.batch(3)
+            self.assertEqual(len(self.inbox()), 2)
+            self.assertIn("second after adoption", self.inbox()[1]["text"])
+            self.assertNotIn("first after adoption", self.inbox()[1]["text"])
+
+    def test_initial_pass_initialization_exits(self):
+        self.mail(self.peer, "notice", "handled before initialization", "--to", "owner")
+        captured = self.initial_pass()
+        log = Path(self.settings["JARVIS_LOG_DIR"])
+        self.home.joinpath("kendex.settings.toml").write_text('[env]\nJARVIS_LOG_DIR = '+json.dumps(str(log))+'\n')
+        # Run the real CLI dispatcher in a child with a parent-process deadline.
+        # Any continuing work fails at the existing executor/acquisition boundary.
+        probe = '''import importlib.util,sys
+from unittest.mock import patch
+spec=importlib.util.spec_from_file_location("watch",sys.argv[1])
+module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+sys.argv=[sys.argv[1],"loop","--bash",sys.argv[2],"--home",sys.argv[3],"--initial-pass",sys.argv[4]]
+with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("executor started")), patch.object(module.Watch,"acquire",side_effect=AssertionError("mail acquired")), patch.object(module.Watch,"_poll",side_effect=AssertionError("scheduler started")):
+ module.main()
+'''
+        inbox = self.inbox()
+        result = self.command([sys.executable, "-B", "-c", probe, self.scripts / "lib/watch.py", BASH, self.home, captured])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        state = json.loads(log.joinpath("batch.json").read_text())
+        self.assertEqual(state["cursors"], {"local": json.loads(captured.read_text().splitlines()[-1][8:])["roots"]})
+        self.assertEqual((state["offset"], state["spans"], state["due"], state["pending"]), (0, [], None, None))
+        self.assertTrue(state["generation"])
+        self.assertFalse(log.joinpath("events.log").exists())
+        self.assertEqual(self.inbox(), inbox)
+
+    def test_initial_pass_instrument_control(self):
+        case = Producer(methodName="test_initial_pass_boundary_uses_logical_positions")
+        case.setUp()
+        try:
+            path = case.scripts / "lib/watch.py"
+            source = path.read_text()
+            old = "seeds[side] = roots"
+            self.assertEqual(source.count(old), 1)
+            mutant = source.replace(old, "seeds[side] = {}")
+            self.assertNotEqual(source, mutant)
+            path.write_text(mutant)
+            case.module = load(path)
+            with self.assertRaisesRegex(AssertionError, "adopted boundary replay"):
+                case.test_initial_pass_boundary_uses_logical_positions()
+        finally:
+            case.doCleanups()
+
     def test_mail_pass_markers_restore_and_unreachable(self):
         self.mail(self.home, "notice", "owner message", "--to", "owner")
         ask = self.mail(self.peer, "ask", "question", "--to", "owner", "--recommend", "yes", "--options", "yes,no")
