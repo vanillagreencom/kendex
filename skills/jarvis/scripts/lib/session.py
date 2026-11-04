@@ -12,6 +12,7 @@ import re
 import select
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -67,7 +68,7 @@ def dialog_question(line):
     return "".join(c for c in DIALOG_FRAME.sub("", line) if c.isprintable())[:200]
 
 
-def environment(harness=None):
+def environment(harness=None, *, policy=False):
     # Keep desktop and transport access. Credentials and parent harness
     # identity come from the selected account, never the calling session.
     keys = {"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "TERM", "COLORTERM",
@@ -78,8 +79,40 @@ def environment(harness=None):
     # Pi's Claude provider home is independent of its selected Pi account.
     if harness == "pi" and os.environ.get("CLAUDE_CONFIG_DIR"):
         keys.add("CLAUDE_CONFIG_DIR")
-    return {key: value for key, value in os.environ.items()
-            if key in keys or key.startswith(("XDG_", "LC_"))}
+    selected = {key: value for key, value in os.environ.items()
+                if key in keys or key.startswith(("XDG_", "LC_"))}
+    if policy:
+        # Published user-manager policy only; shell-only exports are outside
+        # this contract. Extend this one list through a package change.
+        names = ("ORCH_LANE_EXCLUDE", "ORCH_LANE_RETIRE", "ORCH_LANE_ALIASES",
+                 "FLEET_USER", "AGENT_TMPDIR", "CLAUDE_CODE_TMPDIR")
+        deadline = time.monotonic() + 10
+        def read(argv):
+            try:
+                result = subprocess.run(argv, env=selected, capture_output=True, timeout=max(0.001, deadline - time.monotonic()))
+                if result.returncode:
+                    raise subprocess.CalledProcessError(result.returncode, argv)
+                return result.stdout.decode("utf-8")
+            except (OSError, subprocess.SubprocessError, UnicodeError) as failure:
+                print("jarvis-session: policy-source=unavailable operation=" + Path(argv[0]).name
+                      + " cause=" + type(failure).__name__, file=sys.stderr)
+                raise Refusal("launch-failed", "The user-session policy source could not be read.", "failed") from None
+        if sys.platform == "darwin":
+            for name in names:
+                value = read(["launchctl", "getenv", name])
+                if value:
+                    selected[name] = value[:-1] if value.endswith("\n") else value
+        else:
+            # systemctl(1) show-environment documents Bash dollar-single-quote
+            # assignments. Let Bash decode selected assignments, including NL.
+            source = read(["systemctl", "--user", "show-environment"])
+            assignments = [line for line in source.split("\n") if line.partition("=")[0] in names]
+            present = [line.partition("=")[0] for line in assignments]
+            values = read([BASH, "--noprofile", "--norc", "-ec",
+                           'eval "$1"; shift; for name; do printf "%s\\0" "${!name}"; done',
+                           "policy", "\n".join(assignments), *present]).split("\0")
+            selected.update(zip(present, values[:-1]))
+    return selected
 
 
 def home_state(home):
@@ -89,7 +122,7 @@ def home_state(home):
 
 
 class Session:
-    def __init__(self, home):
+    def __init__(self, home, env=None):
         self.home = str(Path(home).resolve(strict=True))
         state = home_state(self.home)
         self.path = state / "jarvis-session.json"
@@ -97,7 +130,7 @@ class Session:
         # Unix socket limits even when XDG_STATE_HOME is a deep directory.
         self.label = "jarvis-" + state.name[:32]
         self.deadline = time.monotonic() + CALL_SECONDS
-        self.env = environment()
+        self.env = environment() if env is None else env
         self.emitted = False
 
     def run(self, argv, *, input=None, check=True, env=None):
@@ -126,6 +159,34 @@ class Session:
     def tmux(self, *args, check=True, socket=None):
         target = ["-S", socket] if socket else ["-L", self.label]
         return self.run(["tmux", *target, "-f", os.devnull, *map(str, args)], check=check)
+
+    @contextmanager
+    def pane_command(self, argv):
+        # Socket values never enter process arguments or diagnostic command
+        # text. A private short directory fits AF_UNIX on Linux and macOS,
+        # even when the home/state path exceeds their socket pathname limit.
+        receiver = '''import json,os,socket,sys
+with socket.socket(socket.AF_UNIX) as channel:
+    channel.settimeout(10)
+    channel.connect(sys.argv[1])
+    with channel.makefile('r') as stream: argv,env=json.loads(stream.readline())
+    env.update({key:os.environ[key] for key in ('TERM', 'TMUX', 'TMUX_PANE')})
+    channel.sendall(b'1')
+os.execvpe(argv[0],argv,env)
+'''
+        # tempfile's private directory and socket's context own this one-use
+        # channel, including a refused tmux call or failed pane connection.
+        with tempfile.TemporaryDirectory(prefix="jarvis-pane-", dir="/tmp") as directory, socket.socket(socket.AF_UNIX) as listener:
+            address = str(Path(directory) / "channel")
+            listener.bind(address)
+            listener.listen(1)
+            yield shlex.join([sys.executable, "-B", "-X", "utf8", "-c", receiver, address])
+            listener.settimeout(max(0.001, self.deadline - time.monotonic()))
+            with listener.accept()[0] as channel:
+                channel.settimeout(max(0.001, self.deadline - time.monotonic()))
+                channel.sendall((json.dumps([argv, self.env]) + "\n").encode("utf-8"))
+                if channel.recv(1) != b"1":
+                    raise Refusal("launch-failed", "The pane could not receive its launch environment.", "failed")
 
     def read(self):
         try:
@@ -286,10 +347,10 @@ class Session:
         log = self.path.parent / "session.log"
         with log.open("a") as stream:
             child = subprocess.Popen([sys.executable, "-B", "-c",
-                                      "import runpy, sys; runtime = runpy.run_path(sys.argv[1], run_name='jarvis_worker'); runtime['Session'](sys.argv[3]).worker(sys.argv[2], int(sys.argv[4]))",
+                                      "import os, runpy, sys; runtime = runpy.run_path(sys.argv[1], run_name='jarvis_worker'); runtime['Session'](sys.argv[3], dict(os.environ)).worker(sys.argv[2], int(sys.argv[4]))",
                                       str(Path(__file__).resolve()), verb, self.home, str(generation)],
                                      stdin=subprocess.DEVNULL, stdout=stream, stderr=stream,
-                                     env=dict(environment(record["harness"]), JARVIS_BASH=BASH), start_new_session=True)
+                                     env=dict(self.env, JARVIS_BASH=BASH), start_new_session=True)
         try:
             identity = json.loads(self.backend("process", child.pid).stdout)
             record["worker"] = identity
@@ -414,6 +475,7 @@ class Session:
                 raise Refusal("tmux-missing")
             if not shutil.which(args.harness):
                 raise Refusal("app-missing")
+            self.env = environment(args.harness, policy=True)
             account = str(Path(args.account).resolve(strict=True))
             requested = stated = None
             if args.model is not None:
@@ -506,6 +568,7 @@ class Session:
             record = self.read()
             if not record or record.get("app_off"):
                 raise Refusal("app-off" if record and record.get("app_off") else "record-unreadable")
+            self.env = environment(record["harness"], policy=True)
             if record.get("intent") == "succeed" and record["state"] != "running":
                 if self.worker_live(record):
                     return self.answer(record), 0
@@ -526,6 +589,9 @@ class Session:
                                              choice.get("model", ""), choice.get("effort", "")).stdout)
             if not shutil.which(choice["harness"]):
                 raise Refusal("app-missing")
+            self.env.pop("CLAUDE_CONFIG_DIR", None)
+            if choice["harness"] == "pi" and os.environ.get("CLAUDE_CONFIG_DIR"):
+                self.env["CLAUDE_CONFIG_DIR"] = os.environ["CLAUDE_CONFIG_DIR"]
             return self._hand_over(record, choice, predecessor, saved_handoff)
 
     def _hand_over(self, record, choice, predecessor, saved_handoff):
@@ -720,7 +786,7 @@ class Session:
             prepared = json.loads(self.backend("prepare", record["harness"], record["account"], self.home,
                                                launch["id"], launch["file"], self.path, generation,
                                                choice.get("model", ""), choice.get("effort", ""),
-                                               env=environment(record["harness"])).stdout)
+                                               env=self.env).stdout)
             with self.locked():
                 record = self.read()
                 if not self._current_request(record, generation, verb):
@@ -741,17 +807,18 @@ class Session:
                         raise Refusal("name-conflict")
                 # A prompt-free shell keeps the pane alive before SessionStart.
                 creation = ["new-window", "-d", "-t", "=jarvis"] if succeeding and existing.returncode == 0 else ["new-session", "-d", "-s", "jarvis"]
-                runner = [sys.executable, "-B", "-c", "import runpy,sys; sys.exit(runpy.run_path(sys.argv[1],run_name='jarvis_runner')['Session'](sys.argv[2]).successor(int(sys.argv[3])))", str(Path(__file__).resolve()), self.home, str(generation)] if succeeding else [BASH, "--noprofile", "--norc"]
-                created = self.tmux(*creation, "-c", self.home,
-                                    "-P", "-F", "#{socket_path}\t#{pid}\t#{start_time}\t#{window_id}\t#{pane_id}", *runner)
-                socket, server, started, window, pane = created.stdout.strip().split("\t")
-                record.update(terminal={"server": socket, "session": "jarvis", "window": window, "pane": pane},
-                              server_pid=int(server), server_started_at=int(started), effective_home=prepared["effective_home"], account_var=prepared["var"],
-                              pending={"generation": generation, "server": int(server), "pane": pane,
-                                       "native_session_id": launch["id"] if record["harness"] != "codex" or launch["file"] else None})
-                # The acquisition remains locally owned until saved, including
-                # failures of the first ownership write or later setup writes.
-                acquired = record
+                runner = [sys.executable, "-B", "-c", "import os,runpy,sys; sys.exit(runpy.run_path(sys.argv[1],run_name='jarvis_runner')['Session'](sys.argv[2], dict(os.environ)).successor(int(sys.argv[3])))", str(Path(__file__).resolve()), self.home, str(generation)] if succeeding else [BASH, "--noprofile", "--norc"]
+                with self.pane_command(runner) as command:
+                    created = self.tmux(*creation, "-c", self.home,
+                                        "-P", "-F", "#{socket_path}\t#{pid}\t#{start_time}\t#{window_id}\t#{pane_id}", command)
+                    socket, server, started, window, pane = created.stdout.strip().split("\t")
+                    record.update(terminal={"server": socket, "session": "jarvis", "window": window, "pane": pane},
+                                  server_pid=int(server), server_started_at=int(started), effective_home=prepared["effective_home"], account_var=prepared["var"],
+                                  pending={"generation": generation, "server": int(server), "pane": pane,
+                                           "native_session_id": launch["id"] if record["harness"] != "codex" or launch["file"] else None})
+                    # Own the pane before delivery can fail. The first record
+                    # write and later setup remain locally owned until saved.
+                    acquired = record
                 if succeeding:
                     process = self.tmux("display-message", "-p", "-t", pane, "#{pane_pid}").stdout.strip()
                     record["process"] = json.loads(self.backend("process", process).stdout)
@@ -769,8 +836,8 @@ class Session:
                     command = prepared["line"]
                     # The account observer reads descendants of the pane shell.
                     # A tail keeps that shell from exec-replacing itself.
-                    self.tmux("respawn-pane", "-k", "-t", pane, "-c", self.home,
-                              BASH, "--noprofile", "--norc", "-c", command + '; result=$?; exit "$result"')
+                    with self.pane_command([BASH, "--noprofile", "--norc", "-c", command + '; result=$?; exit "$result"']) as command:
+                        self.tmux("respawn-pane", "-k", "-t", pane, "-c", self.home, command)
                     process = self.tmux("display-message", "-p", "-t", pane, "#{pane_pid}").stdout.strip()
                     record["process"] = json.loads(self.backend("process", process).stdout)
                     self.write(record)

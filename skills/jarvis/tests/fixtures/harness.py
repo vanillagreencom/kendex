@@ -150,6 +150,7 @@ def main():
                                  "account": str(account), "record": str(record_path), "pid": os.getpid(),
                                  "claude_config_dir": os.environ.get("CLAUDE_CONFIG_DIR"),
                                  "excluded_env": [key for key in fixture.get("excluded_env", []) if key in os.environ],
+                                 "selected_env": {key: os.environ.get(key) for key in fixture.get("selected_env", [])},
                                  "display": [os.environ.get("WAYLAND_DISPLAY"), os.environ.get("DISPLAY")]}) + "\n")
     history = fixture.get("history")
     if history == "pending":
