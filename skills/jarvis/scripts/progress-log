@@ -15,8 +15,9 @@ handoff-missing, handoff-unwritable, handoff-unreadable, section-missing,
 section-ambiguous. Success prints `progress-log: recorded id=ID at=TIME`.
 
 --archived FILE, an absolute or home-relative path inside the archive beside
-the selected handoff, appends FILE's line to that archive's INDEX.md in the
-form of references/long-session.md § Handoff, dated by FILE's records. Keys:
+the selected handoff, adds or enriches FILE's line in that archive's INDEX.md in the
+form of references/long-session.md § Handoff. New rows are dated by FILE's
+records; retained rows keep their dates and provenance fields. Keys:
 archive-outside, archive-missing, archive-unreadable, index-unwritable.
 Success prints the line after `progress-log: indexed `.
 
@@ -49,7 +50,7 @@ import sys
 PACKAGE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE / "scripts/lib"))
 from progress import (DEFAULT_HANDOFF, FIELDS, INDEX, archive_dir, check_state, format_record,  # noqa: E402
-                      handoff_path, ids, index_line, record_id, state_entries, state_ids)
+                      enrich_index, handoff_path, ids, index_line, record_id, state_entries, state_ids)
 from sections import section  # noqa: E402
 import watch  # noqa: E402
 
@@ -116,7 +117,7 @@ def append(handoff, values):
 
 
 def index(handoff, archived):
-    """Append archived's INDEX.md line to the archive beside handoff, after the file it already holds."""
+    """Index archived in place, or import its retained row from the source archive."""
     archive = archive_dir(handoff).resolve()
     archived = archived.resolve()
     if archive not in archived.parents:
@@ -133,12 +134,14 @@ def index(handoff, archived):
         with path.open("a+b") as out:
             fcntl.flock(out, fcntl.LOCK_EX)
             out.seek(0)
-            held = out.read()
-            # An unterminated last line gets its newline before this one.
-            out.write(((b"\n" if held and not held.endswith(b"\n") else b"") + line.encode("utf-8")))
+            held = out.read().decode("utf-8")
+            updated, line = enrich_index(held, line)
+            out.seek(0)
+            out.truncate()
+            out.write(updated.encode("utf-8"))
             out.flush()
             os.fsync(out.fileno())
-    except OSError as error:
+    except (OSError, UnicodeError) as error:
         raise Refusal("index-unwritable", path) from error
     return line
 

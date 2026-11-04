@@ -13,7 +13,7 @@ import unittest
 from mail_world import SCRIPTS, MailWorld, make_project
 
 sys.path.insert(0, str(SCRIPTS / "lib"))
-from progress import records  # noqa: E402
+from progress import index_ends, records  # noqa: E402
 
 STAMP = "2026-10-18T23:05:01Z"
 HANDOFF = ("# Handoff\n\n## State\n\nwork: KEN-1\n\n## Sub-agents\n\nnone\n\n## Instructions in force\n\nnone\n\n"
@@ -240,7 +240,8 @@ class ProgressLog(MailWorld):
                     self.assertFalse(index.exists())
                     continue
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(index.read_text(), expected)
+                self.assertEqual([row.split(" entries=", 1)[0] for row in index.read_text().splitlines()],
+                                 expected.splitlines())
         # An INDEX.md that cannot take the line refuses.
         shutil.rmtree(self.home / "state")
         (archive / "INDEX.md").mkdir(parents=True)
@@ -249,6 +250,97 @@ class ProgressLog(MailWorld):
                                "state/archive/h.md"], self.home)
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertEqual(result.stderr.split("=", 1)[0], "progress-log: index-unwritable")
+
+    def test_archive_facts_and_import(self):
+        # Retained facts are expected independently of the parser; the index
+        # consumer can locate the archive and source entry before reading it.
+        dated = ("## Progress log\n\n"
+                 "- Id and time: P-20261017T220000Z 2026-10-17T22:00:00Z\n"
+                 "  - Operation: Rule on KEN-12, owner C0123ABC:1793515695.587049 session=42\n"
+                 "  - Observed result and source: checked KEN-12 session=ignored\n"
+                 "  - Decision: session=42 session=group-a lesson retained\n"
+                 "  - State change: none\n"
+                 "- Id and time: P-20261018T230559Z 2026-10-18T23:05:59Z\n"
+                 "  - Operation: Handle 1793515834-3208082-27491; 123 01234567-89ab-cdef-0123-456789abcdef\n"
+                 "  - Observed result and source: unread\n"
+                 "  - Decision: no reply\n"
+                 "  - State change: none\n")
+        facts = [{"id": "P-20261017T220000Z", "line": 3, "at": "2026-10-17T22:00:00Z",
+                  "sessions": ["42", "group-a"], "trackers": ["KEN-12"], "messages": ["C0123ABC:1793515695.587049"]},
+                 {"id": "P-20261018T230559Z", "line": 8, "at": "2026-10-18T23:05:59Z",
+                  "sessions": "unread", "trackers": "unread", "messages": ["1793515834-3208082-27491"]}]
+        legacy = "\n- 11:00Z Ruled on KEN-18 session=prior-7\n  owner 1793515834-3208082-27491\n"
+        rows = (("dated", dated, facts, "2026-10-18T23:05Z"),
+                ("legacy", dated + legacy, facts + [
+                    {"id": "unread", "line": 14, "at": "unread", "sessions": ["prior-7"], "trackers": ["KEN-18"],
+                     "messages": ["1793515834-3208082-27491"], "time": "11:00Z"}], None),
+                ("unavailable facts", "# Retained archive\n", [], None))
+        archive = self.home / "state/archive"
+        archive.mkdir()
+        source, index = archive / "a.md", archive / "INDEX.md"
+        untouched = "- lost.md dates=unread..unread source=receipt-7\n"
+        for name, text, expected, end in rows:
+            with self.subTest(row=name):
+                source.write_bytes(text.encode())
+                index.write_text("# Archives\n" + untouched)
+                command = [sys.executable, "-B", self.scripts / "progress-log", "--archived", "state/archive/a.md"]
+                result = self.command(command, self.home)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                retained = index.read_text()
+                line = retained.splitlines()[-1]
+                self.assertEqual(line.split()[1], "a.md")
+                fields = dict(field.split("=", 1) for field in line.split()[2:])
+                self.assertEqual(json.loads(fields["entries"]), expected)
+                self.assertEqual(index_ends(retained), {"lost.md": None, "a.md": end})
+                # Import the pre-enrichment row while preserving its provenance.
+                original = ("# Archives\n" + line.split(" entries=", 1)[0] + " origin=retained source=entry-42\n"
+                            "- a.md dates=unread..unread origin=older\n" + untouched)
+                index.write_text(original)
+                previous = None
+                for _ in range(2):
+                    result = self.command(command, self.home)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    imported = index.read_text()
+                    self.assertEqual(result.stdout.split("indexed ", 1)[1], imported.splitlines()[1] + "\n")
+                    self.assertEqual(imported.splitlines()[0], "# Archives")
+                    imported_fields = dict(field.split("=", 1) for field in imported.splitlines()[1].split()[2:])
+                    self.assertEqual(json.loads(imported_fields.pop("entries")), expected)
+                    self.assertEqual(imported_fields, dict(dates=fields["dates"], origin="retained", source="entry-42"))
+                    self.assertEqual(imported.splitlines()[2].split(" entries=", 1)[0],
+                                     "- a.md dates=unread..unread origin=older")
+                    self.assertEqual(index_ends(imported), {"a.md": None, "lost.md": None})
+                    self.assertTrue(imported.endswith(untouched))
+                    self.assertEqual(source.read_bytes(), text.encode())
+                    if _:
+                        self.assertEqual(imported, previous)
+                    previous = imported
+                # Missing or unreadable evidence keeps the retained index whole.
+                for data, key in ((None, "archive-missing"), (b"\xff", "archive-unreadable")):
+                    source.unlink(missing_ok=True)
+                    if data is not None:
+                        source.write_bytes(data)
+                    result = self.command(command, self.home)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertEqual(result.stderr.split("=", 1)[0], "progress-log: " + key)
+                    self.assertEqual(index.read_text(), previous)
+
+    def test_archive_facts_control(self):
+        with tempfile.TemporaryDirectory() as folder:
+            copy = Path(folder) / "scripts"
+            shutil.copytree(SCRIPTS, copy)
+            library = copy / "lib/progress.py"
+            source = library.read_text()
+            old = 'json.dumps(entries, separators=(",", ":"))'
+            self.assertEqual(source.count(old), 1)
+            library.write_text(source.replace(old, 'json.dumps([], separators=(",", ":"))'))
+            case = ProgressLog(methodName="test_archive_facts_and_import")
+            case.scripts = copy
+            case.setUp()
+            try:
+                with self.assertRaises(AssertionError):
+                    case.test_archive_facts_and_import()
+            finally:
+                case.doCleanups()
 
     def check(self, world, handoff=None):
         """Run --check-state from the installed copy of self.scripts beside a linear stub reading world."""

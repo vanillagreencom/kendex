@@ -8,6 +8,7 @@ A State entry is one line with its indented lines; the ids it names decide
 whether `progress-log --check-state` lists it.
 """
 from pathlib import Path
+import json
 import re
 
 from sections import headings, section
@@ -17,7 +18,7 @@ HEAD = "Id and time"
 FIELDS = ("Operation", "Observed result and source", "Decision", "State change")
 _HEAD = re.compile(r"^- " + HEAD + r": (P-\d{8}T\d{6}Z(?:-\d+)?) (\S+)$")
 _FIELD = re.compile(r"^  - (" + "|".join(map(re.escape, FIELDS)) + r"): ?(.*)$")
-_LEGACY = re.compile(r"^- \d{2}:\d{2}Z (.*)$")
+_LEGACY = re.compile(r"^- (\d{2}:\d{2}Z) (.*)$")
 INDEX = "INDEX.md"
 UNREAD = "unread"
 _INDEX_LINE = re.compile(r"- (\S+)(.*)")
@@ -69,12 +70,12 @@ def format_record(identity, stamp, values):
 
 
 def records(text):
-    """Every record in text as a dict of id, at and its fields."""
+    """Every record in text as a dict of id, at, source line and its fields."""
     found, current, field = [], None, None
-    for line in text.splitlines():
+    for number, line in enumerate(text.splitlines(), 1):
         head = _HEAD.match(line)
         if head:
-            current = {"id": head[1], "at": head[2]}
+            current = {"id": head[1], "at": head[2], "line": number}
             found.append(current)
             field = None
             continue
@@ -97,17 +98,22 @@ def legacy_entries(text):
     Retained archives still hold this form; nothing writes it, and a reader
     applies it to archive files only.
     """
+    return [record["text"] for record in legacy_records(text)]
+
+
+def legacy_records(text):
+    """Pre-cutover entries with their source line; their full date and id are unread."""
     found, current = [], None
-    for line in text.splitlines():
+    for number, line in enumerate(text.splitlines(), 1):
         head = _LEGACY.match(line)
         if head:
-            current = [head[1]]
+            current = {"id": UNREAD, "at": UNREAD, "line": number, "time": head[1], "text": head[2]}
             found.append(current)
         elif current is not None and line[:1].isspace() and line.strip():
-            current.append(line.strip())
+            current["text"] += "\n" + line.strip()
         else:
             current = None
-    return ["\n".join(lines) for lines in found]
+    return found
 
 
 def index_line(name, text):
@@ -116,13 +122,46 @@ def index_line(name, text):
     An undated legacy entry leaves both endpoints unread, and so does a
     file with no record, so a reader reads the file.
     """
-    stamps = [record["at"] for record in records(text)]
-    if not stamps or legacy_entries(text):
+    dated, legacy = records(text), legacy_records(text)
+    stamps = [record["at"] for record in dated]
+    if not stamps or legacy:
         start = end = UNREAD
     else:
         # The fixed-width form sorts as time does.
         start, end = min(stamps)[:16] + "Z", max(stamps)[:16] + "Z"
-    return "- %s dates=%s..%s\n" % (name, start, end)
+    entries = []
+    for record in sorted(dated + legacy, key=lambda row: row["line"]):
+        source = "\n".join(record.get(field, "") for field in FIELDS) if "text" not in record else record["text"]
+        tracker, messages = state_ids(source)
+        operation = record.get("text", "\n".join(record.get(field, "") for field in ("Operation", "Decision")))
+        sessions = list(dict.fromkeys(re.findall(r"(?<!\S)session=(\S+)", operation)))
+        entries.append(dict(id=record["id"], line=record["line"], at=record["at"],
+                            sessions=sessions or UNREAD, trackers=tracker or UNREAD, messages=messages or UNREAD))
+        if "time" in record:
+            entries[-1]["time"] = record["time"]
+    return "- %s dates=%s..%s entries=%s\n" % (name, start, end, json.dumps(entries, separators=(",", ":")))
+
+
+def enrich_index(held, line):
+    """Enrich each retained row without changing its date or provenance fields."""
+    name = _INDEX_LINE.fullmatch(line.rstrip("\n"))[1]
+    entries = line.rstrip("\n").split(" entries=", 1)[1]
+    rows, found = [], False
+    for row in held.splitlines(keepends=True):
+        item = _INDEX_LINE.fullmatch(row.rstrip("\r\n"))
+        if item and item[1] == name:
+            if re.search(r"(?<!\S)entries=\S+", row):
+                row = re.sub(r"(?<!\S)entries=\S+", lambda _: "entries=" + entries, row)
+            else:
+                body = row.rstrip("\r\n")
+                row = body + " entries=" + entries + row[len(body):]
+            if not found:
+                line = row.rstrip("\r\n") + "\n"
+            found = True
+        rows.append(row)
+    if not found:
+        rows.append(("\n" if held and not held.endswith("\n") else "") + line)
+    return "".join(rows), line
 
 
 def index_ends(text):
