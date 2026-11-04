@@ -1,6 +1,6 @@
 ---
 name: docs-writing
-description: "States the writing standard, the repository layout, and the rules and finished example for each Markdown file type. Load when creating or editing any Markdown file or documentation HTML, such as README, DEVELOPMENT, architecture docs, reference docs, SKILL.md and AGENTS.md, and when rewriting or reviewing one."
+description: "Load when creating or editing any Markdown file or documentation HTML, such as README, DEVELOPMENT, architecture docs, reference docs, SKILL.md and AGENTS.md, and when rewriting or reviewing one."
 summary: "The writing standard, the repository layout, what each document holds, and a finished example per file type, with a blank-page rewrite workflow."
 license: MIT
 user-invocable: true

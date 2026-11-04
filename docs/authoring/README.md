@@ -211,7 +211,7 @@ Write the summary where the kind already keeps its metadata; kendex reads no sec
 # ---
 ```
 
-`description` and `summary` are not the same job. A `description` is what an agent reads to decide whether to load the package, so it is written for the agent; a `summary` is what a person reads to decide whether they want it. Where a package writes only a description, that description is shown.
+`description` and `summary` are not the same job. A `description` tells an agent when to load the package. For a skill, write only that trigger, with no account of what the skill does; put that account in `summary`. A `summary` tells a person whether they want the package. Where a package writes only a description, that description is shown.
 
 Write a summary as one or two short sentences about what the package does and what it changes for the person using it. Leave the precise rules, flags and limits to the package's own documentation. A long summary is not refused: a row clamps it to two lines.
 
