@@ -591,6 +591,7 @@
   ".agents/skills/jarvis/workflows/setup-github.md",
   ".agents/skills/jarvis/workflows/setup-linear.md",
   ".agents/skills/jarvis/workflows/setup-slack.md",
+  ".agents/skills/jarvis/workflows/tasks.md",
   ".agents/skills/linear/README.md",
   ".agents/skills/linear/SKILL.md",
   ".agents/skills/linear/kendex.settings.toml.example",

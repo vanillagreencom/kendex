@@ -2,6 +2,8 @@
 
 Follow this workflow when starting a continuing session, reconciling open work or transferring control.
 
+Use [Task reconciliation](tasks.md) for incoming requests, replies, worker results and blocker changes before launching work or waiting. Run that same procedure during Start's queue reconciliation, Progress checkpoint and Succession's reconciliation.
+
 Read each named section with `.agents/skills/jarvis/scripts/jarvis-section FILE 'Heading text'`, using its owning file and exact heading. The command includes child sections and stops before the next heading of the same or higher level. Use already loaded text when a parent read includes the requested child.
 
 ## Session command
