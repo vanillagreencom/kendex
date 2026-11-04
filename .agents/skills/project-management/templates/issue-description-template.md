@@ -58,7 +58,7 @@
 | `[SYMPTOM]` | Caller — the run, the user, or the red check that already showed the defect | Required on a review-born filing at priority 2, which is the reported tier; drop the line otherwise |
 | `[EVALUATION_LINE]` | The filed finding's code-quality evaluation line, as the finding carries it | Only when the finding carries one; drop the line otherwise. Its form is code-quality's `SKILL.md` § Finding Evaluation |
 | `[OWNER]` | Caller: the person or request that authorizes the work | Omit when absent |
-| Story / Why this matters | `items[].description`, or `create_fields.description` in analyzed mode | Story has three or four plain sentences about the person, today, the change and its consequence. Why this matters states the cost and benefit without retelling the sequence. Authors and reviewers judge the prose |
+| Story / Why this matters | `items[].description`, or `create_fields.description` in analyzed mode | Story is a simple user or agent story in three or four everyday sentences: who is affected, what they notice today, what changes and its consequence. Why this matters states the big-picture cost and benefit in time, money, failed work or the owner's attention, without retelling the sequence. Authors and reviewers judge the prose |
 | `[OBSERVABLE_ACCEPTANCE]` | Description and requirements | List observable checks under Done when, per [SKILL.md](../SKILL.md) § Disposition. A box is a one-line `Post-merge:` box, in the form that section gives with `Deadline: +Nh`, only when it needs a deployment or installation, live use over time, or a person's screen or hands. Branch proof comes first. Each checked box keeps its immediately following indented plain `Evidence:` line |
 | `[REQUIREMENT_*]` | `items[].recommendation` | Use as written — already a `* bullet` list — less what [SKILL.md](../SKILL.md) § Disposition cuts before filing |
 | `[OWNER_DIRECTIVE]` | The marked block in `items[].description` | Include this section after Context when present, copied unchanged. The Requirements row's Disposition cuts never apply to it; omit the section when absent |
@@ -73,5 +73,19 @@
 3. Before creating, check the governing decision with `.agents/skills/decider/scripts/decisions search "[KEYWORDS]"` and reference it in Filing record. A description must not contradict an active decision.
 4. Every create passes the validated final `labels[]` from the label preflight.
 5. Under a declared project map, every create passes `--project` with the map project [project-map.md § Routing](../references/project-map.md#routing) routes the item to, a child included; an item it routes to none is held as `project_needed`.
-6. Keep the quoted Story and Why this matters blocks before every heading, with an unquoted blank line between them and before the first heading. Keep the section order shown above. Requirements constrain the solution without repeating acceptance checks.
+6. Write Story and Why this matters for the non-engineer product owner who reads only those two blocks. Story includes no file, function, variable, test, fixture, package or command names, code-site counts or engineering jargon. Name a system by what it does. Put technical details in Requirements, Context or Evidence. Keep the quoted blocks before every heading, with an unquoted blank line between them and before the first heading. Keep the section order shown above. Requirements constrain the solution without repeating acceptance checks.
 7. Keep each `**Key**:` header at line start, with a blank line between every filing-record field and around every section heading. Each prose header value is one sentence with links. Keep Expected delta in the numeric form its reader accepts. A run, log or pull request is its URL and the one fact it shows. Keep published Artifacts links under Context. Move longer filing evidence and owner quotations outside the marked directive to short Evidence list items. Omit Evidence when empty. Paste no log lines. Mailbox and Slack ids outside the marked directive appear only in Source.
+
+## Opening example
+
+### Before
+
+The bad opening named lane_host, check-lane-host, altered, mutant_module, Package.mutant, m, a stub SDK, fixture/site counts, needles, moved callbacks and reddened this lane. Keep those engineering facts below the opening.
+
+### After
+
+> **Story:** Fleet has an automatic test for the code that runs agents on cloud machines. To prove the test catches real faults, it breaks that code on purpose in small ways. Today it does that by editing the code's exact text, so when someone moves or tidies the code, the test fails even though nothing is wrong. After this change, the test breaks the code in a way that does not depend on its exact text, so it fails only when something is really wrong.
+
+> **Why this matters:** Each false failure stops the work and spends test runs while an agent looks for a problem that does not exist. This happened on FLT-1408. Fewer false failures means changes finish sooner and cost less.
+
+This is the owner's accepted wording. The underlying Fleet incident and its stated cause have not been independently checked here.
