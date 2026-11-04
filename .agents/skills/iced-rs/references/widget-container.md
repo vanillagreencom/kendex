@@ -1,121 +1,10 @@
 # Container
 
-> `iced::widget::container` · iced 0.14.0
+Read when padding, sizing, aligning or decorating a single child in Iced 0.14.0.
 
-A single-child wrapper that aligns, pads, sizes, and styles its contents. The most frequently used layout widget in iced — think "div" with padding and alignment.
+The [pinned implementation](https://raw.githubusercontent.com/iced-rs/iced/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/container.rs) owns `Container`, its sizing/alignment helpers, clipping, ID, style, catalog and defaults. The [widget helpers](https://raw.githubusercontent.com/iced-rs/iced/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/helpers.rs) own the constructor.
 
-## API
-
-### `Container` struct
-
-```rust
-pub struct Container<'a, Message, Theme = Theme, Renderer = Renderer<Renderer, Renderer>>
-where
-    Theme: Catalog,
-    Renderer: Renderer,
-{ /* private fields */ }
-
-impl<'a, Message, Theme, Renderer> Container<'a, Message, Theme, Renderer>
-where
-    Theme: Catalog,
-    Renderer: Renderer,
-{
-    pub fn new(
-        content: impl Into<Element<'a, Message, Theme, Renderer>>,
-    ) -> Self;
-
-    pub fn id(self, id: impl Into<Id>) -> Self;
-    pub fn padding<P: Into<Padding>>(self, padding: P) -> Self;
-    pub fn width(self, width: impl Into<Length>) -> Self;
-    pub fn height(self, height: impl Into<Length>) -> Self;
-    pub fn max_width(self, max_width: impl Into<Pixels>) -> Self;
-    pub fn max_height(self, max_height: impl Into<Pixels>) -> Self;
-
-    // Sizing + alignment combinators
-    pub fn center_x(self, width: impl Into<Length>) -> Self;
-    pub fn center_y(self, height: impl Into<Length>) -> Self;
-    pub fn center(self, length: impl Into<Length>) -> Self;
-    pub fn align_left(self, width: impl Into<Length>) -> Self;
-    pub fn align_right(self, width: impl Into<Length>) -> Self;
-    pub fn align_top(self, height: impl Into<Length>) -> Self;
-    pub fn align_bottom(self, height: impl Into<Length>) -> Self;
-
-    pub fn align_x(self, alignment: impl Into<Horizontal>) -> Self;
-    pub fn align_y(self, alignment: impl Into<Vertical>) -> Self;
-
-    pub fn clip(self, clip: bool) -> Self;
-
-    pub fn style(self, style: impl Fn(&Theme) -> Style + 'a) -> Self
-    where
-        <Theme as Catalog>::Class<'a>: From<Box<dyn Fn(&Theme) -> Style + 'a>>;
-
-    pub fn class(self, class: impl Into<<Theme as Catalog>::Class<'a>>) -> Self;
-}
-```
-
-### `Style` struct
-
-```rust
-pub struct Style {
-    pub text_color: Option<Color>,
-    pub background: Option<Background>,
-    pub border: Border,
-    pub shadow: Shadow,
-    pub snap: bool,
-}
-
-impl Style {
-    pub fn color(self, color: impl Into<Color>) -> Style;
-    pub fn border(self, border: impl Into<Border>) -> Style;
-    pub fn background(self, background: impl Into<Background>) -> Style;
-    pub fn shadow(self, shadow: impl Into<Shadow>) -> Style;
-}
-```
-
-### `Catalog` trait
-
-```rust
-pub trait Catalog {
-    type Class<'a>;
-
-    fn default<'a>() -> Self::Class<'a>;
-    fn style(&self, class: &Self::Class<'_>) -> Style;
-}
-```
-
-### Type aliases
-
-```rust
-pub type StyleFn<'a, Theme> = Box<dyn Fn(&Theme) -> Style + 'a>;
-```
-
-### Functions
-
-```rust
-pub fn container<'a, Message, Theme, Renderer>(
-    content: impl Into<Element<'a, Message, Theme, Renderer>>,
-) -> Container<'a, Message, Theme, Renderer>;
-
-// Pre-made style functions
-pub fn transparent(theme: &Theme) -> Style;
-pub fn rounded_box(theme: &Theme) -> Style;
-pub fn bordered_box(theme: &Theme) -> Style;
-pub fn dark(theme: &Theme) -> Style;
-pub fn background(theme: &Theme) -> Style;
-pub fn primary(theme: &Theme) -> Style;
-pub fn secondary(theme: &Theme) -> Style;
-pub fn success(theme: &Theme) -> Style;
-pub fn warning(theme: &Theme) -> Style;
-pub fn danger(theme: &Theme) -> Style;
-
-// Advanced helpers
-pub fn draw_background(/* renderer, style, bounds */);
-pub fn layout(/* ... */) -> layout::Node;
-```
-
-## Patterns
-
-### Centered rounded card
+## Size and align
 
 ```rust
 use iced::widget::container;
@@ -126,48 +15,47 @@ container("Centered content")
     .style(container::rounded_box)
 ```
 
-### Pad + align
+`center(length)` sets both width and height, then centers the child on both axes. `center_x` and `center_y` set only their corresponding dimension and alignment. Alignment needs space within the container's bounds; it does not create that space.
+
+To fill the parent and center a padded child:
 
 ```rust
-container(column![row1, row2, row3].spacing(8))
-    .padding(16)
+use iced::{alignment, Length};
+
+container(content)
     .width(Length::Fill)
+    .height(Length::Fill)
+    .padding(16)
     .align_x(alignment::Horizontal::Center)
+    .align_y(alignment::Vertical::Center)
 ```
 
-### Custom style
+Use `max_width` and `max_height` to bound the available size. See [Length](length.md) and [Padding](padding.md) for their input semantics.
+
+## Style
+
+A container's style closure receives only the theme. It has no interaction status. Use a built-in style such as `rounded_box`, or change a `Style`:
 
 ```rust
 container(content)
     .padding(12)
     .style(|theme| container::Style {
         background: Some(theme.extended_palette().background.weak.color.into()),
-        border: border::rounded(4.0).width(1.0).color(theme.palette().primary),
+        border: iced::border::rounded(4)
+            .width(1)
+            .color(theme.palette().primary),
         ..container::Style::default()
     })
 ```
 
-### Top-level layout
+`container::background(background)` takes a background value and returns a Style. It is not a theme callback. `text_color: None` inherits the incoming renderer text color; an explicit color overrides it. Both closure styling and `.class(...)` use the pinned [`container::Catalog` contract](https://raw.githubusercontent.com/iced-rs/iced/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/container.rs); this container's class method does not require `advanced`.
 
-```rust
-container(main_view)
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .padding(0)
-```
+## Clipping and operations
 
-## Gotchas
+`clip(true)` narrows the viewport passed to the child's drawing when the container intersects the incoming viewport. Without clipping, the child receives the incoming viewport. This wrapper does not add scrolling; use [Scrollable](widget-scrollable.md) for that. Check the actual renderer and child when pixel clipping matters.
 
-- `center(length)` is equivalent to chaining `center_x(length).center_y(length)` — it sets both axes to the same length.
-- The `style` closure is `Fn(&Theme) -> Style`, not `Fn(&Theme, Status)` — containers have no status (they are non-interactive).
-- Without `clip(true)`, an overflowing child is rendered outside the container's bounds. Use `clip(true)` for scroll masks and overflow protection.
-- `text_color: None` means "inherit from parent"; set it explicitly to override.
-- The `id` method lets you target the container with `operate(Operation)` — e.g., programmatic scrolling, focus management.
+`.id(widget::Id)` identifies the bounds reported to `Operation::container`. The container then traverses its child. Assigning an ID does not itself make the container focusable or scrollable.
 
-## See also
+## Related references
 
-- `catalog.md` — the `Catalog` trait pattern
-- `widget-scrollable.md` — when content overflows and you want scrolling
-- `widget-stack.md` — for z-axis layering (overlap)
-- `length.md` — `Length::Fill`/`Shrink`/`Fixed` sizing
-- `padding.md` — `Padding` struct
+- [Stack](widget-stack.md): overlapping children.
