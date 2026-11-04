@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[3]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--main-ref", help="Also prove each succession case fails on this pre-change revision")
+    parser.add_argument("--case", help="Prove only the planted defects for this named test case")
     args = parser.parse_args()
     completed = 0
     with native_launcher() as native, tempfile.TemporaryDirectory() as allocation:
@@ -30,7 +31,11 @@ def main():
         # panes, Start's brief and harness, the home's task session, the
         # harness detected at the call and nearest PID, and a moved pane.
         backend, session = "jarvis/scripts/lib/session-backend.sh", "jarvis/scripts/lib/session.py"
-        defects = (("process identity", backend,
+        defects = (("known wall exclusion", backend,
+                    (('    exclude="${6:-}" mark=context caller="" OL_WALK_REFUSE_ID=""',
+                      '    exclude="" mark=context caller="" OL_WALK_REFUSE_ID=""'),),
+                    "test_known_wall_selection"),
+                   ("process identity", backend,
                     (('    lane_stop_identity "$1" "$2" "$3" || rc=$?',
                       '    lane_stop_identity "$1" "$(lane_process_start "$1")" "$3" || rc=$?'),),
                     "test_succession_identity"),
@@ -69,6 +74,8 @@ def main():
                     "test_adoption_recovery"))
         # The rows the latest change added, which its pre-change revision fails.
         cases = ("test_succession_contract",)
+        if args.case and args.case not in {case for _, _, _, case in defects}:
+            parser.error("no planted defect for case " + args.case)
         env = os.environ | {"JARVIS_TEST_SKILLS": str(skills), "JARVIS_TEST_NATIVE": str(native),
                             "JARVIS_TEST_SCRIPT": str(skills / "jarvis/scripts/jarvis-session")}
 
@@ -76,12 +83,16 @@ def main():
             nonlocal completed
             result = subprocess.run([os.environ["JARVIS_TEST_BASH"], str(ROOT / "skills/jarvis/tests/succession.test.sh"),
                                      "--failfast", "SuccessionContract." + case], env=env, capture_output=True, text=True, timeout=180)
+            print(result.stdout, end="", flush=True)
+            print(result.stderr, end="", flush=True)
             assert result.returncode != 0, name + " passed its planted defect"
             assert "FAILED (failures=" in result.stderr, result.stdout + result.stderr
             completed += 1
             print("control: rejected=" + name + " case=" + case, flush=True)
 
         for name, relative, edits, case in defects:
+            if args.case and case != args.case:
+                continue
             target = skills / relative
             clean = mutant = target.read_text()
             for old, new in edits:
@@ -99,6 +110,8 @@ def main():
                                     env={k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE")})
             source.write_text(result.stdout)
             for case in cases:
+                if args.case and case != args.case:
+                    continue
                 rejected("main=" + args.main_ref, case)
     print(f"pass: {completed} fail: 0")
 

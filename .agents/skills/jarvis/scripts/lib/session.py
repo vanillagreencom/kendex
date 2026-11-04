@@ -385,6 +385,13 @@ os.execvpe(argv[0],argv,env)
         return record.get("history")
 
     def retain_live(self, record, live):
+        transfer = record.get("transfer") or {}
+        if record.get("intent") == "succeed" and transfer.get("spent_account") and transfer["phase"] != "complete":
+            # A failed wall transfer must keep its original exclusion even
+            # when the predecessor still owns the home.
+            retained = dict(record)
+            retained.pop("worker", None)
+            return retained
         # Request flags survive a refusal. Native ownership keeps its original
         # generation, even though the request generation has advanced.
         controller_state = live.get("controller_state", live["state"])
@@ -560,7 +567,7 @@ os.execvpe(argv[0],argv,env)
             self.detach("start", next_record)
             return self.answer(next_record), 0
 
-    def succeed(self):
+    def succeed(self, account_walled=False):
         if not (BACKEND.parents[3] / "orch/scripts").is_dir():
             # Without the lifecycle owner, refuse before taking or ending control.
             raise Refusal("handover-failed", "Orch is not installed. The recorded account cannot start a successor.", "failed")
@@ -569,7 +576,9 @@ os.execvpe(argv[0],argv,env)
             if not record or record.get("app_off"):
                 raise Refusal("app-off" if record and record.get("app_off") else "record-unreadable")
             self.env = environment(record["harness"], policy=True)
+            spent_account = ""
             if record.get("intent") == "succeed" and record["state"] != "running":
+                spent_account = record["transfer"].get("spent_account", "")
                 if self.worker_live(record):
                     return self.answer(record), 0
                 # End an abandoned waiting or native successor before retrying.
@@ -584,9 +593,11 @@ os.execvpe(argv[0],argv,env)
                     raise Refusal("record-unreadable")
                 predecessor = record
                 saved_handoff = None
+            if account_walled and not spent_account:
+                spent_account = predecessor["account"] if predecessor else record["account"]
             choice = record.get("choice") or {}
             choice = json.loads(self.backend("select", record["harness"], record["account"], self.home,
-                                             choice.get("model", ""), choice.get("effort", "")).stdout)
+                                             choice.get("model", ""), choice.get("effort", ""), spent_account).stdout)
             if not shutil.which(choice["harness"]):
                 raise Refusal("app-missing")
             self.env.pop("CLAUDE_CONFIG_DIR", None)
@@ -613,6 +624,9 @@ os.execvpe(argv[0],argv,env)
         if saved.read_bytes() != contents:
             raise Refusal("record-unreadable")
         transfer = {"phase": "saved", "handoff": str(saved), "previous_handoff": saved_handoff}
+        spent_account = choice.pop("spent_account", "")
+        if spent_account:
+            transfer["spent_account"] = spent_account
         next_record = {"v": 1, "home": self.home, "harness": choice["harness"], "account": choice["account"], "choice": choice,
                        "report_started_at": record.get("report_started_at", int(time.time())),
                        "origin": record["origin"], "boot": record.get("boot"), "app_off": False,
@@ -1042,6 +1056,8 @@ def main():
             command.add_argument("--adopt-pid", type=int)
         elif verb == "stop":
             command.add_argument("--origin", choices=("app-off",))
+        elif verb == "succeed":
+            command.add_argument("--account-walled", action="store_true")
     args = parser.parse_args()
     if not clean(args.home) or (args.verb == "start" and not clean(args.account)):
         parser.error("path")
@@ -1073,7 +1089,7 @@ def main():
         elif args.verb == "stop":
             answer, code = session.stop(args.origin)
         elif args.verb == "succeed":
-            answer, code = session.succeed()
+            answer, code = session.succeed(args.account_walled)
         elif args.verb == "report-due":
             answer, code = session.report_due()
         else:

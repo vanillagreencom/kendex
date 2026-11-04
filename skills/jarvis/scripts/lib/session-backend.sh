@@ -83,17 +83,25 @@ case "$verb" in
     # account the session already runs on. A handover with room is a context
     # mark, so an unset preference keeps it. An account whose reading refuses
     # headroom is left out, and the caller entry picks another of its harness.
-    exclude="" mark=context caller="" OL_WALK_REFUSE_ID=""
+    exclude="${6:-}" mark=context caller="" OL_WALK_REFUSE_ID=""
     case "$rc" in
       0|4|5) ;;
-      3) exclude="$account" mark="" caller=caller OL_WALK_REFUSE_ID="$(ol_account_id "$account")" ;;
+      3) [[ -n "$exclude" ]] || exclude="$account" ;;
       *) printf 'jarvis-session: selection-failed account=%s exit=%s\n' "$account" "$rc" >&2
          [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
          exit 1 ;;
     esac
-    # A pi model naming no provider names no account any reading judges, so
-    # that session keeps its account without a walk.
-    if [[ "$caller_account" != unknown ]]; then
+    if [[ -n "$exclude" ]]; then
+      mark="" caller=caller
+      OL_WALK_REFUSE_ID="$(ol_account_id "$exclude")" || exit 1
+      if [[ "$harness" == pi ]]; then
+        pi_session_account "$model"
+        [[ "$PI_SESSION_ACCOUNT" == pi ]] || caller=""
+      fi
+    fi
+    # Ordinary context succession keeps a Pi account no provider can name.
+    # A known wall still needs a launchable alternative from the walk.
+    if [[ "$caller_account" != unknown || -n "$exclude" ]]; then
       ol_preference_entries "$(ol_preference "$mark")" || { printf 'jarvis-session: invalid-preference entry=%s\n' "$OL_BAD_ENTRY" >&2; exit 1; }
       OL_WALK_CALLER_HARNESS="$harness" OL_WALK_CALLER_LANE="$account"
       OL_WALK_CALLER_MODEL="$model" OL_WALK_CALLER_PICK_MODEL="$model" OL_WALK_CALLER_EFFORT="$effort"
@@ -125,14 +133,14 @@ case "$verb" in
       done
       if (( walk_rc == 0 )); then
         harness="$OL_HARNESS" account="$OL_LANE_DIR" model="$OL_MODEL" effort="$OL_EFFORT"
-      elif [[ -n "$caller" || "$walk_rc" != 3 ]]; then
+      elif [[ -n "$exclude" || "$walk_rc" != 3 ]]; then
         printf 'jarvis-session: selection-failed account=%s reason=%s\n' "$account" "${OL_REASON:-no-lane-qualifies}" >&2
         [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
         exit 1
       fi
     fi
-    jq -cn --arg harness "$harness" --arg account "$account" --arg model "$model" --arg effort "$effort" \
-      '{harness:$harness,account:$account,model:$model,effort:$effort}' ;;
+    jq -cn --arg harness "$harness" --arg account "$account" --arg model "$model" --arg effort "$effort" --arg spent_account "$exclude" \
+      '{harness:$harness,account:$account,model:$model,effort:$effort} + if $spent_account == "" then {} else {spent_account:$spent_account} end' ;;
   choice)
     # A Start's stated model and effort, read as task-prepare reads them.
     source "$ROOT/jarvis/scripts/lib/jarvis-env.sh"
