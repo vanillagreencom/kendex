@@ -5,6 +5,156 @@
 set -uo pipefail
 . "$(dirname "$0")/lib/harness.sh"
 
+# The driver imports the production runner. Its parent bounds even a pump
+# that never yields; the target's completion marker proves excess was drained.
+cat > "$SK_TMP/runner-check.py" <<'PY'
+import json, os, pathlib, signal, subprocess, sys, tracemalloc
+sys.path.insert(0, sys.argv[1])
+from mailbox import LaneMail, RunTimeout, run_bounded
+import mailbox
+root, row = pathlib.Path(sys.argv[2]), sys.argv[3]
+C = 52096
+if row == "capture":
+    marker = root / "drained"
+    if marker.exists(): marker.unlink()
+    program = '''import os, pathlib, sys, threading
+chunk = b'x' * 4096
+barrier = threading.Barrier(2)
+def emit(fd):
+    barrier.wait()
+    for _ in range(4096):
+        os.write(fd, chunk)
+t = threading.Thread(target=emit, args=(2,))
+t.start()
+emit(1)
+t.join()
+pathlib.Path(sys.argv[1]).write_text('drained')
+'''
+    tracemalloc.start()
+    tracemalloc.reset_peak()
+    result = run_bounded([sys.executable, "-c", program, str(marker)], root, 5, command_output_limit=C)
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert result.returncode == 0 and marker.read_text() == "drained"
+    assert result.stdout == result.stderr == "x" * C
+    assert result.stdout_cut and result.stderr_cut
+    print("capture: peak=%d bound=2723872 retained=104192" % peak, flush=True)
+    assert peak <= 2723872, "pre-accumulation allocation bound"
+elif row == "contracts":
+    for n in (0, C - 1, C, C + 1):
+        result = run_bounded([sys.executable, "-c", "import os,sys; n=int(sys.argv[1]); os.write(1,b'x'*n); os.write(2,b'y'*n)", str(n)], root, 5, command_output_limit=C)
+        assert (result.stdout, result.stderr, result.stdout_cut, result.stderr_cut) == ("x" * min(n,C), "y" * min(n,C), n > C, n > C)
+    result = run_bounded([sys.executable, "-c", "import os; os.write(1,b'a\\r\\n\\xff\\rb')"], root, 5, command_output_limit=C)
+    assert result.stdout == "a\n\ufffd\nb"
+    args = ["", "; not shell", "caf\u00e9", "bad\udcff"]
+    program = "import json,os,sys; print(json.dumps([sys.argv[1:],os.getcwd(),sys.stdin.read(),os.environ['EXACT']]))"
+    result = run_bounded([sys.executable, "-c", program, *args], root, 5, env={"EXACT":"caller", "LC_CTYPE":"C", "PATH":os.defpath}, command_output_limit=C)
+    assert json.loads(result.stdout) == [args, str(root), "", "caller"]
+    # Larger than pipe capacity: request writes and child reads must progress
+    # together, preserving the original environment rather than Python's copy.
+    exact = {"EXACT": "z" * 60000, "LC_CTYPE":"C", "PATH":os.defpath}
+    import shutil
+    result = run_bounded([shutil.which("env")],root,5,env=exact,command_output_limit=100000)
+    assert dict(line.split("=",1) for line in result.stdout.splitlines()) == exact
+    for command, code in (("raise SystemExit(3)",3), ("import os,signal; os.kill(os.getpid(),signal.SIGTERM)",-15), ("import os,signal; os.kill(os.getpid(),signal.SIGKILL)",-9)):
+        result = run_bounded([sys.executable,"-c",command],root,5,command_output_limit=C)
+        assert result.returncode == code
+    for path in (root / "missing", root / "non-executable"):
+        if path.name == "non-executable":
+            path.write_text("no exec")
+        try:
+            run_bounded([str(path)],root,5,command_output_limit=C)
+        except OSError as error:
+            assert error.operation == "exec" and error.errno in (2,13)
+        else:
+            raise AssertionError("exec error became target exit")
+    # LaneMail uses whole output, including the final receipt after the cap.
+    script = root / ".agents/skills/mailbox/scripts/lane-mail"
+    script.parent.mkdir(parents=True)
+    script.write_text('#!' + sys.executable + '\nprint("x" * 60000 + " id=final")\n')
+    script.chmod(0o755)
+    code, out, err = LaneMail(root)._run("events")
+    assert code == 0 and len(out) > C and out.endswith("id=final\n") and err == ""
+    # A descendant holds both pipes after the leader exits. No reap precedes
+    # the TERM/KILL group cleanup, even though the leader is already a zombie.
+    program = '''import os, signal
+if os.fork() == 0:
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    while True: signal.pause()
+'''
+    mailbox.LANE_MAIL_CLEANUP_SECONDS = .05
+    try:
+        run_bounded([sys.executable,"-c",program],root,.2,command_output_limit=C)
+    except RunTimeout as error:
+        assert isinstance(error.output,str) and isinstance(error.stderr,str)
+    else:
+        raise AssertionError("descendant pipe hold never timed out")
+elif row == "deadline":
+    # Inject setup elapsed time at prepared status, without a real-clock wait.
+    clock = [0.0]
+    original_read = mailbox.os.read
+    original_clock = mailbox.time.monotonic
+    def read(fd, n):
+        value = original_read(fd,n)
+        if value[:1] == b"P": clock[0] = 11.0
+        return value
+    mailbox.time.monotonic = lambda: clock[0]
+    mailbox.os.read = read
+    try:
+        try:
+            run_bounded([sys.executable,"-c","print('deadline')"],root,10,command_output_limit=C)
+        except RunTimeout as error:
+            assert error.cmd[0] == sys.executable and error.timeout == 10
+        else:
+            raise AssertionError("bootstrap elapsed time renewed target deadline")
+    finally:
+        mailbox.time.monotonic = original_clock
+        mailbox.os.read = original_read
+    print("contracts: passed")
+PY
+runner_check() {
+  python3 - "$SK_TMP/runner-check.py" "${SK_BIN%/*}/lib" "$SK_TMP/runner-$1" "$1" <<'PY'
+import os, pathlib, signal, subprocess, sys
+pathlib.Path(sys.argv[3]).mkdir(exist_ok=True)
+proc = subprocess.Popen([sys.executable, *sys.argv[1:]], start_new_session=True)
+try:
+    sys.exit(proc.wait(timeout=20))
+except subprocess.TimeoutExpired:
+    os.killpg(proc.pid, signal.SIGKILL)
+    proc.wait()
+    sys.exit("runner-check: parent deadline")
+PY
+}
+runner_check capture
+assert_eq "$?" 0 'both streams stay within the traced capture envelope while the producer completes'
+runner_check contracts
+assert_eq "$?" 0 'runner preserves target inputs, direct receipts and exit evidence'
+runner_check deadline
+assert_eq "$?" 0 'bootstrap setup consumes the original execution deadline'
+# A pump-only renewal is still refused by finish's entry-deadline check.
+# Give the mutant a fresh full budget after preparation at BOTH observations;
+# keep the real pump/exec operations and the same independent timeout assertion.
+sk_copy deadline-renew
+python3 - "${SK_BIN%/*}/lib/mailbox.py" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+old = 'until - time.monotonic()'
+assert s.count(old) == 2
+new = s.replace(old, '(timeout if status[:1] == b"P" else until - time.monotonic())')
+assert new != s
+p.write_text(new)
+PY
+runner_check deadline > "$SK_TMP/deadline-control.out" 2>&1
+assert_eq "$?" 1 'control: renewing the target deadline fails the same injected-time assertion'
+assert_has "$(cat "$SK_TMP/deadline-control.out")" 'bootstrap elapsed time renewed target deadline' 'the deadline control reaches the original-deadline assertion'
+sk_bin_reset
+sk_mutant capture-late mailbox.py '    def add\(self, chunk: bytes\) -> None:[\s\S]*?\n    def text' '    def add(self, chunk: bytes) -> None:\n        if self.used == 0:\n            self.data = bytearray()\n        self.data.extend(chunk)\n        self.used = min(len(self.data), self.limit)\n        self.cut = len(self.data) > self.limit\n\n    def text'
+runner_check capture > "$SK_TMP/capture-control.out" 2>&1
+assert_eq "$?" 1 'control: whole-output accumulation fails the same traced allocation assertion'
+assert_has "$(cat "$SK_TMP/capture-control.out")" 'pre-accumulation allocation bound' 'the capture control fails on allocation, not final lengths or completion'
+sk_bin_reset
+
 sk_fake_start --page 2
 echo "=== slack mailbox events ==="
 

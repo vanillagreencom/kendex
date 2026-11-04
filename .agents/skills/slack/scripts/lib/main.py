@@ -114,6 +114,16 @@ SLACK_STATUS_COMMAND and SLACK_ASKS_COMMAND, the command lines /lanes and
 overseer mailbox /report writes one directive to; SLACK_HOME_COMMAND, the
 command line whose output the Home tab shows. A command line runs with no
 shell; after 10 seconds TERM and then KILL stop its process group.
+Each stdout/stderr capture is bounded to 4 * the 12,000-character post cap
+plus 4096 bytes (52,096 bytes). Excess is drained and discarded. A cut is
+noted in the reply; oversized successful stdout is withheld in full because
+whole-output secret checking is unavailable. Stderr stays on relay stderr.
+On Linux the child sets and verifies oom_score_adj=1000 before target exec;
+macOS skips scoring. A missing Linux interface permits an unscored command
+with a diagnostic; an actual score I/O failure refuses that command's start.
+The unit keeps MemoryMax and uses OOMPolicy=continue. These reduce risk,
+not guarantee survival. No unit counters are acquired; SIGKILL alone is not
+reported as OOM, a victim identity or a configured memory-limit event.
 SLACK_JARVIS_SESSION_FILE (empty) and SLACK_JARVIS_SESSION_MAX_AGE (600) are read per root
 at every poll, using the settings reader when that root's files change,
 with the original caller exports taking precedence. Other settings need
@@ -148,6 +158,12 @@ Non-fatal diagnostics on stderr:
   command-failed=SETTING cause=start|timeout|exit-N|empty
     The command line SETTING names failed or printed nothing. The reply
     or Home tab names the cause and carries none of the command's output.
+  command-score-unavailable=SETTING cause=absent
+    The Linux scoring interface is absent; the command ran unscored.
+  command-output-cut=SETTING stream=stderr bytes=N
+    Stderr exceeded its capture bound; only its retained prefix is local.
+  secret-check-incomplete=command=SETTING
+    Oversized successful stdout is withheld, including its retained prefix.
   command-unanswerable=COMMAND
     A slash command arrived with no response_url; nothing ran.
   home-not-enabled=setting|slack

@@ -129,6 +129,10 @@ EXPLAIN = {
         "The text or file matches the secret-value pattern and is not sent."
         " Nothing that matches leaves this host through the relay."
     ),
+    "secret-check-incomplete": (
+        "The command's stdout exceeded the capture bound. Whole-output"
+        " secret checking is unavailable, so none of its stdout is sent."
+    ),
     "secret-pattern-invalid": (
         "The secret-value pattern file does not hold exactly one pattern"
         " line; the relay sends nothing until it does."
