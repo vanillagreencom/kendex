@@ -1,9 +1,9 @@
-//! The item transitions: rounds, validation admission, accepted results
-//! with their outcome and end, a round's admitted runs reconciled against
-//! the host, the verification record and the handoff record. Each row
-//! applies the library's operations to the legacy-shaped item fixture
-//! beside this file under an injected clock; the last rows run the built
-//! binary so the wire names of the new fields are the ones a workflow
+//! The item transitions: rounds, validation admission, accepted results with
+//! their outcome and end, a round's admitted runs reconciled against the host,
+//! the verification record and the handoff record. Each row applies the
+//! library's operations to the item fixture beside this file, in the shape the
+//! `workflow-state` script writes, under an injected clock; the last rows run
+//! the built binary so the wire names of the new fields are the ones a workflow
 //! writes.
 #![allow(
     clippy::disallowed_methods,
@@ -171,6 +171,10 @@ fn handoff_with(
         traps: vec!["the guard chain refuses the branch under main's scripts".into()],
         context: json!({"decision": "handoff", "source": "native"}),
         relaunch,
+        session_id: None,
+        pane_key: None,
+        cause: None,
+        model: None,
         written_at: written_at.map(str::to_owned),
     }))
 }
@@ -197,7 +201,7 @@ fn validate_stages(path: &Path) -> Vec<Stage> {
         .collect()
 }
 
-/// Decision 33: an operation patches only the keys it writes.
+/// An operation patches only the keys it writes.
 #[test]
 fn begin_round_mints_supersedes_and_opens_in_one_write() {
     let dir = tempfile::tempdir().unwrap();
@@ -244,7 +248,7 @@ fn begin_round_mints_supersedes_and_opens_in_one_write() {
     assert_eq!(body.stages[2].kind, StageKind::Review);
 }
 
-/// Decision 100: the runtime mints the run's identity at admission, before
+/// The runtime mints the run's identity at admission, before
 /// any runner starts, once per round. A repeat of the request, whatever
 /// clock or nonce the call carries, returns the open admission and writes
 /// nothing; `attempt: next` mints the rerun beside it; with no open
@@ -362,9 +366,9 @@ fn admission_is_idempotent_per_round_and_mints_the_next_attempt_on_request() {
     assert_eq!(fs::read_to_string(&bare).unwrap(), text);
 }
 
-/// The legacy order: the runner minted the directory and the caller names
-/// it. The id is read from the name, the caller's identity wins, and a
-/// repeat of the same directory is a no-op with the same reply shape.
+/// The runner minted the directory and the caller names it. The id is read from
+/// the name, the caller's identity wins, and a repeat of the same directory is
+/// a no-op with the same reply shape.
 #[test]
 fn a_runner_named_run_dir_is_admitted_as_given_and_repeats_as_a_no_op() {
     let dir = tempfile::tempdir().unwrap();
@@ -440,14 +444,15 @@ fn accept_result_closes_the_round_stage_once_with_its_outcome() {
     run(&path, &begin(RoundKind::Dev)).unwrap();
     let err = run(&path, &accept(ROUND, None, StageOutcome::Pass, None)).unwrap_err();
     assert_eq!(err.key(), "round-superseded");
-    // A stage a legacy writer closed carries no word; the reply says so.
-    let legacy = dir.path().join("workflow-state-KEN-2.json");
+    // A stage another writer closed without a word carries none; the reply
+    // says so.
+    let unworded = dir.path().join("workflow-state-KEN-2.json");
     fs::write(
-        &legacy,
+        &unworded,
         ITEM.replacen("\"end\": null", "\"end\": 1769600900", 1),
     )
     .unwrap();
-    let closed = run(&legacy, &accept(ROUND, None, StageOutcome::Pass, None)).unwrap();
+    let closed = run(&unworded, &accept(ROUND, None, StageOutcome::Pass, None)).unwrap();
     let Report::AcceptResult(c) = closed.report else {
         panic!("{:?}", closed.report)
     };
@@ -456,7 +461,7 @@ fn accept_result_closes_the_round_stage_once_with_its_outcome() {
     assert_eq!(c.outcome, None);
 }
 
-/// Decision 80: a run that ended without a pass closes its admitted stage
+/// A run that ended without a pass closes its admitted stage
 /// with the word, so no admitted run stays open after it ended, and the
 /// closed stage keeps its cost: its start, its end and the `validate_rounds`
 /// row beside it.
@@ -548,7 +553,7 @@ fn a_non_pass_outcome_closes_the_admitted_run_and_keeps_its_cost() {
     }
 }
 
-/// Decisions 81 and 103: the runtime stats the artifact the acceptance
+/// The runtime stats the artifact the acceptance
 /// rests on, and its modification time is the stage's end when it lies in
 /// `[start, now]`; one outside is refused with the bounds, an artifact that
 /// cannot be stat'ed is refused by name, and the file keeps its bytes.
@@ -732,7 +737,7 @@ fn closed(outcome: StageOutcome, cause: RunCause, seconds: Option<u64>) -> RunSt
     }
 }
 
-/// Decision 102: the reconcile closes every admitted run that will not
+/// The reconcile closes every admitted run that will not
 /// end on its own, with the word the host supports, keeps a live run open
 /// and reports what it could not read, and touches no cost.
 #[test]
@@ -950,7 +955,7 @@ fn reconcile_round_closes_every_ended_or_lost_run_and_keeps_a_live_one_open() {
     assert!(r.runs.is_empty());
 }
 
-/// Decision 52: `.verification` is `{head, verdict, reason, source, at}`,
+/// `.verification` is `{head, verdict, reason, source, at}`,
 /// appended on the first write and replaced in place by a later one; a
 /// word that is no verdict, ci-wait's `pending` among them, writes
 /// nothing.
@@ -1046,11 +1051,11 @@ fn record_verification_writes_the_record_once_and_a_later_write_replaces_it() {
     assert_eq!(object(&path)["verification"]["verdict"], "fail");
 }
 
-/// Step-4 map § A10 and decision 100: a handoff names the round it leaves
-/// open; the same content recorded again is the same operation and writes
-/// nothing, other content needs `supersede` and keeps the resume stamp;
-/// the continuing session resumes that same round, stamped once, and reads
-/// the admitted run it waits on instead of starting a new one.
+/// A handoff names the round it leaves open; the same content recorded again is
+/// the same operation and writes nothing, other content needs `supersede` and
+/// keeps the resume stamp; the continuing session resumes that same round,
+/// stamped once, and reads the admitted run it waits on instead of starting a
+/// new one.
 #[test]
 fn a_handoff_is_recorded_once_per_content_and_resumed_once() {
     let dir = tempfile::tempdir().unwrap();
@@ -1064,7 +1069,7 @@ fn a_handoff_is_recorded_once_per_content_and_resumed_once() {
     let err = run(&path, &handoff(Some("no-such-round"), None, None)).unwrap_err();
     assert_eq!(err.key(), "round-unknown");
     assert_eq!(fs::read_to_string(&path).unwrap(), text);
-    // The legacy stamp rule on written_at.
+    // The stamp rule on written_at.
     for (given, key) in [
         ("2026-01-29 15:20:00Z", "handoff-written-at-invalid"),
         ("soon", "handoff-written-at-invalid"),
@@ -1127,7 +1132,7 @@ fn a_handoff_is_recorded_once_per_content_and_resumed_once() {
     assert_eq!(record["context"]["decision"], "handoff");
     assert!(
         record.get("resumed_at").is_none(),
-        "a standing record carries no resumed_at, as the legacy judge reads one"
+        "a standing record carries no resumed_at, as the standing-handoff readers read one"
     );
     // The same content again, later and without a stamp, is the same
     // operation: nothing written, the standing stamp reported.
@@ -1232,7 +1237,7 @@ fn a_handoff_is_recorded_once_per_content_and_resumed_once() {
     );
     // Once the run closed, a resume still names it, now by its recorded
     // outcome: the continuation reuses the run its job ended rather than
-    // starting a new one (decision 184 (3)).
+    // starting a new one.
     run(
         &path,
         &accept(ROUND, Some(&a.run_dir), StageOutcome::Lost, None),
@@ -1251,7 +1256,7 @@ fn a_handoff_is_recorded_once_per_content_and_resumed_once() {
     );
     // The round's next attempt admitted beside the lost one (a recovery
     // round's shape): the runs are listed newest first, so the
-    // continuation's first is the attempt still to read (decision 188 (f)).
+    // continuation's first is the attempt still to read.
     let next = admitted(run_at(&path, &admit_next(ROUND), NOW_SECS + 1000).unwrap());
     let later = run_at(&path, &resume(), NOW_SECS + 1100).unwrap();
     let Report::ResumeHandoff(r4) = later.report else {
@@ -1272,10 +1277,10 @@ fn a_handoff_is_recorded_once_per_content_and_resumed_once() {
         "newest first"
     );
 
-    // A record the legacy `set handoff` wrote names no round and no route
-    // and carries `resumed_at: null`; the resume still stamps it, and a
-    // supersede of an unresumed one carries no stamp over.
-    let legacy = dir.path().join("workflow-state-KEN-3.json");
+    // A record `workflow-state set handoff` writes names no round and no
+    // route and carries `resumed_at: null`; the resume still stamps it, and
+    // a supersede of an unresumed one carries no stamp over.
+    let unrouted = dir.path().join("workflow-state-KEN-3.json");
     let mut doc: Document = serde_json::from_str(ITEM).unwrap();
     doc.insert(
         "handoff".into(),
@@ -1285,18 +1290,18 @@ fn a_handoff_is_recorded_once_per_content_and_resumed_once() {
             "resumed_at": null
         }),
     );
-    fs::write(&legacy, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
-    let superseded = run(&legacy, &other(true)).unwrap();
+    fs::write(&unrouted, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+    let superseded = run(&unrouted, &other(true)).unwrap();
     let Report::RecordHandoff(s) = superseded.report else {
         panic!("{:?}", superseded.report)
     };
     assert!(s.replaced);
     assert!(
-        object(&legacy)["handoff"].get("resumed_at").is_none(),
+        object(&unrouted)["handoff"].get("resumed_at").is_none(),
         "an unresumed record superseded stays unresumed"
     );
-    fs::write(&legacy, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
-    let resumed = run(&legacy, &resume()).unwrap();
+    fs::write(&unrouted, serde_json::to_string_pretty(&doc).unwrap()).unwrap();
+    let resumed = run(&unrouted, &resume()).unwrap();
     let Report::ResumeHandoff(l) = resumed.report else {
         panic!("{:?}", resumed.report)
     };
@@ -1305,7 +1310,7 @@ fn a_handoff_is_recorded_once_per_content_and_resumed_once() {
     assert_eq!(l.relaunch, None);
     assert_eq!(l.remaining, vec!["submit-pr § 2".to_owned()]);
     assert_eq!(l.open_runs, Vec::<OpenRun>::new());
-    assert_eq!(object(&legacy)["handoff"]["resumed_at"], NOW_SECS);
+    assert_eq!(object(&unrouted)["handoff"]["resumed_at"], NOW_SECS);
 }
 
 // --- the binary: the wire names a workflow writes ------------------------
@@ -1528,7 +1533,7 @@ fn op_admits_closes_reconciles_and_hands_off_a_round_through_the_wire_names() {
     assert_eq!(report["resumed_now"], true);
     // The round's runs the continuation has not consumed, each with its
     // outcome, newest first: the stopped next attempt, then the no-verdict
-    // close (decisions 184 (3), 188 (f)).
+    // close.
     assert_eq!(
         report["open_runs"],
         json!([
@@ -1544,11 +1549,10 @@ fn op_admits_closes_reconciles_and_hands_off_a_round_through_the_wire_names() {
     assert_eq!(reply(&out)["result"]["report"]["resumed_now"], false);
 }
 
-/// Decision 124c (10), R-U4g4 Codex probe: the run directory of an admitted
-/// validation stage is read three-valued. A directory that cannot be read
-/// (its parent refuses traversal) is no proof of absence: the reconcile holds
-/// the stage open as unreadable, never closing it `Stopped`; only a
-/// directory read `NotFound` closes it.
+/// The run directory of an admitted validation stage is read three-valued. A
+/// directory that cannot be read (its parent refuses traversal) is no proof of
+/// absence: the reconcile holds the stage open as unreadable, never closing it
+/// `Stopped`; only a directory read `NotFound` closes it.
 #[test]
 fn an_unreadable_admitted_run_holds_the_stage_open() {
     use std::os::unix::fs::PermissionsExt;
@@ -1586,8 +1590,8 @@ fn an_unreadable_admitted_run_holds_the_stage_open() {
 }
 
 // ---------------------------------------------------------------------------
-// U6c: the acceptance's authorization and the round record's two fields
-// (step6-map § A3, § A8, § B's directed micro change).
+// The acceptance's authorization, the directed micro change and the round
+// record's two fields.
 // ---------------------------------------------------------------------------
 
 use orch_runtime::state::{Authorization, AuthorizedBy};
@@ -1634,7 +1638,7 @@ fn record_of(path: &Path) -> Value {
     serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap()
 }
 
-/// Decisions 142 (5), 100: an acceptance records who accepted the step,
+/// An acceptance records who accepted the step,
 /// and the authorization is part of the acceptance's identity: a repeat
 /// under the same one is the no-op a repeat is, one under another refuses
 /// and leaves the record, and a close never gains an authorization after
@@ -1695,7 +1699,7 @@ fn an_acceptance_records_its_authorization_and_a_repeat_under_another_refuses() 
     assert_eq!(object(&path)["stages"][0].get("authorization"), None);
 }
 
-/// Decisions 168 (4), 183 Q5, 182 Q4: an owner-directed micro change runs
+/// An owner-directed micro change runs
 /// under the item key `directive-<id>` (the hook's and the mailbox's item
 /// alphabet admit no colon), its declared validation runs once as a
 /// `validate` row closed on its verdict, and the round's own close names
@@ -1844,14 +1848,13 @@ fn fixture_link(name: &str) -> (String, Value) {
     )
 }
 
-/// Decisions 174 (3), 182 Q6, 188 (e), 192 Q11: one Completion Summary per
-/// item, posted by the acceptance after its close committed, created on
-/// the item's first acceptance where the item's comment list names none,
-/// and updated in place by the recorded id on every later one, with no
-/// list once an id is recorded; a refused post is in the reply and the
-/// acceptance stands. The defect: a comment per acceptance (round 9 item
-/// 3), a post before the close, a create with no list before it, a created
-/// comment not updated in place, or a refused post failing the acceptance.
+/// One Completion Summary per item, posted by the acceptance after its close
+/// committed, created on the item's first acceptance where the item's comment
+/// list names none, and updated in place by the recorded id on every later one,
+/// with no list once an id is recorded; a refused post is in the reply and the
+/// acceptance stands. The defect: a comment per acceptance, a post before the
+/// close, a create with no list before it, a created comment not updated in
+/// place, or a refused post failing the acceptance.
 #[test]
 fn two_acceptances_of_one_item_post_one_summary_comment_the_second_an_update_by_the_recorded_id() {
     let dir = tempfile::tempdir().unwrap();
@@ -1944,7 +1947,7 @@ fn two_acceptances_of_one_item_post_one_summary_comment_the_second_an_update_by_
     assert_eq!(lines(&log).len(), 7);
 }
 
-/// Decision 192 Q10: the round's screenshots reach the item through the
+/// The round's screenshots reach the item through the
 /// acceptance's own post. The request's `attachments` are each an
 /// `--attach` on the create; the links the CLI appended under the body
 /// are read back from its answer and recorded beside the id; and every
@@ -1952,8 +1955,8 @@ fn two_acceptances_of_one_item_post_one_summary_comment_the_second_an_update_by_
 /// summary file, since the CLI's update replaces the body whole and takes
 /// no `--attach`. A later request's attachments are not attached: the
 /// create is the one upload. The defect: a captured screenshot never
-/// reaching the item once the dev agent's own post is retired, or an
-/// update dropping the links the create carried (R-U6-3 M1).
+/// reaching the item, which the dev agent posts no comment to, or an update
+/// dropping the links the create carried.
 #[test]
 fn an_acceptance_with_attachments_creates_the_comment_with_each_and_every_update_keeps_their_links()
 {
@@ -2025,10 +2028,10 @@ fn an_acceptance_with_attachments_creates_the_comment_with_each_and_every_update
     assert_eq!(state["stages"][1]["outcome"], "pass");
 }
 
-/// Decisions 34, 192 Q11: a record written with an `origin` word names the
-/// comment the acceptance updates in place; the word is read past and the
-/// record after carries none. The defect: an item accepted under the
-/// earlier record shape refused, or its comment no longer updated.
+/// A record written with an `origin` word names the comment the acceptance
+/// updates in place; the word is read past and the record after carries
+/// none. The defect: an item whose record carries the word refused, or its
+/// comment not updated.
 #[test]
 fn a_summary_comment_recorded_with_an_origin_word_reads_without_it_and_is_updated_in_place() {
     let dir = tempfile::tempdir().unwrap();
@@ -2061,18 +2064,16 @@ fn a_summary_comment_recorded_with_an_origin_word_reads_without_it_and_is_update
     assert_eq!(state["summary_comment"]["at"], report["summary"]["at"]);
 }
 
-/// Decisions 187 (3), 188 (e), 191, 192 Q11: a runtime that ended after
-/// the CLI created the comment and before the id's record (the fixture
-/// kills it inside the create) leaves the comment on the item with no
-/// `summary_comment`. The next acceptance's list names it, the newest
-/// headed `## Completion Summary` on any page of the list, not an older
-/// headed comment, a comment mentioning the words or one quoting the
-/// heading; records it with the links its body carries; and updates it in
-/// place with those links kept: one comment, one create. The defect: the
-/// crash replay creating a second summary (R-U6-2 § B), recording a
-/// comment that is not the item's summary, a summary past the list's
-/// first page re-created, or the found comment's links lost by the update
-/// (R-U6-3 M1).
+/// A runtime that ended after the CLI created the comment and before the id's
+/// record (the fixture kills it inside the create) leaves the comment on the
+/// item with no `summary_comment`. The next acceptance's list names it, the
+/// newest headed `## Completion Summary` on any page of the list, not an older
+/// headed comment, a comment mentioning the words or one quoting the heading;
+/// records it with the links its body carries; and updates it in place with
+/// those links kept: one comment, one create. The defect: the crash replay
+/// creating a second summary, recording a comment that is not the item's
+/// summary, a summary past the list's first page re-created, or the found
+/// comment's links lost by the update.
 #[test]
 fn an_acceptance_after_a_crash_inside_the_create_finds_the_comment_on_any_page_and_updates_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -2169,7 +2170,7 @@ fn an_acceptance_after_a_crash_inside_the_create_finds_the_comment_on_any_page_a
     );
 }
 
-/// Decision 188 (e): a list that fails (the CLI refused, could not run, or
+/// A list that fails (the CLI refused, could not run, or
 /// answered no list) creates nothing, since whether a comment exists is not
 /// known; the acceptance stands with `failed` and the cause, and the next
 /// acceptance asks again. The defect: an unreadable list read as an empty
@@ -2231,11 +2232,10 @@ fn a_failed_comment_list_creates_no_summary_and_the_acceptance_stands() {
     );
 }
 
-/// Round 9 item 5, decisions 174 (5), 182 Q7: a round records the item body
-/// revision its caller read and says when it is later than the kind's
-/// previous round's; a first round, an equal or older revision and a round
-/// handed none report no move. The defect: a round that reads a moved body
-/// and says nothing.
+/// A round records the item body revision its caller read and says when it is
+/// later than the kind's previous round's; a first round, an equal or older
+/// revision and a round handed none report no move. The defect: a round that
+/// reads a moved body and says nothing.
 #[test]
 fn begin_round_records_the_body_revision_and_reports_body_moved_past_the_previous_rounds() {
     let dir = tempfile::tempdir().unwrap();

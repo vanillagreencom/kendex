@@ -6,7 +6,8 @@
 # every other launch flag, draws Claude Code's composer marker (❯ then
 # U+00A0) so the judge reads the pane idle, and records each line it reads
 # as a user turn in a session file of Claude Code's shape named by that id
-# under CLAUDE_CONFIG_DIR (`tmp/orch-rebuild/native/run2/claude/home`: a
+# under CLAUDE_CONFIG_DIR (`projects/<cwd slug>/<id>.jsonl`, as agent-runtime's
+# `session` module reads it: a
 # `user` row with a string `content`, `sessionId` and `cwd`), so a delivery
 # to it is confirmed the way the runtime confirms one to the real harness.
 # It launches no model and reaches no account; it stands in for a harness on

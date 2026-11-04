@@ -28,7 +28,7 @@ Start `[CI_PENDING_COUNT]=0` and `[MERGE_RETRY_COUNT]=0` for `[PREPARED_HEAD]`; 
 On `status=complete` with `verdict=fail`, a transient runner failure is rerun once per head before the attempt, as [submit-pr.md § 5.1](../workflows/submit-pr.md#51-ci-failure-recovery) One rerun per head reads and records it, with `[STATE_KEY]` as the key: where the recorded `ci_rerun.head` is not the verdict's `result.head`, record the rerun, then ask for it, and on `rerun run=[RUN_ID]` record the run and relaunch the wait through Waiter launch after the interval the wait keeps between calls, never at once, since GitHub registers the new attempt after the verb answers:
 
 ```bash
-[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/workflow-state set [STATE_KEY] ci_rerun '{"head": "[HEAD]", "run": null, "at": "[NOW]"}'
+[MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime state set --item [STATE_KEY] /ci_rerun '{"head": "[HEAD]", "run": null, "at": "[NOW]"}'
 env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-rerun [PR_NUMBER] --required-only
 ```
 

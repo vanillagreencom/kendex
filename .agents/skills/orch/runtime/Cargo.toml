@@ -31,8 +31,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 thiserror = "2"
 clap = { version = "4.6", features = ["derive"] }
-# U5d2: the reset a usage-limit banner names, resolved in the zone it names
-# or the runner's own, with the fall-back hour's two instants (decision 160 (1)).
+# The reset a usage-limit banner names, resolved in the zone it names or the
+# runner's own, with the fall-back hour's two instants.
 jiff = "0.2"
 
 [dev-dependencies]
@@ -101,6 +101,10 @@ path = "../tests/rust/send.rs"
 [[test]]
 name = "accounts"
 path = "../tests/rust/accounts.rs"
+
+[[test]]
+name = "state"
+path = "../tests/rust/state.rs"
 
 [lints.rust]
 unsafe_code = "forbid"

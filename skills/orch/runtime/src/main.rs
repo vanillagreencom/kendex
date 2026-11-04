@@ -32,11 +32,10 @@ use orch_runtime::watch;
 )]
 struct Cli {
     /// The state directory for `--item` and `--fleet`, over every settings
-    /// source; the legacy `--state-dir`.
+    /// source.
     #[arg(long, global = true)]
     state_dir: Option<PathBuf>,
-    /// Keep the settings reader off the project's private env file; the
-    /// legacy `--no-private-env`.
+    /// Keep the settings reader off the project's private env file.
     #[arg(long, global = true)]
     no_private_env: bool,
     #[command(subcommand)]
@@ -67,23 +66,22 @@ enum Verb {
         #[command(flatten)]
         target: Target,
     },
-    /// The detached job a transfer runs in (decision 76): claim the open
-    /// intent, run its effect from the request written beside the record,
-    /// record the outcome.
+    /// The detached job a transfer runs in: claim the open intent, run its
+    /// effect from the request written beside the record, record the outcome.
     Job {
         #[command(flatten)]
         target: Target,
         #[arg(long)]
         intent: String,
     },
-    /// The standing scheduler over one fleet state (decisions 62, 121).
+    /// The standing scheduler over one fleet state.
     Watch {
         #[command(subcommand)]
         op: WatchOp,
     },
     /// Judge the paths a running lane adds, or a launch before its record
     /// stands, against the fleet's holders under the launch lock, and widen
-    /// the lane record where one stands (decisions 118 (3), 142 (4)).
+    /// the lane record where one stands.
     Admit {
         #[command(flatten)]
         target: Target,
@@ -93,9 +91,9 @@ enum Verb {
         #[arg(long)]
         request: PathBuf,
     },
-    /// U6d: send a directive to a cloud session lane of the fleet: the send
-    /// recorded owed on the lane first, made once through `lane-mail`, and
-    /// its receipt stamped after (decision 31).
+    /// Send a directive to a cloud session lane of the fleet: the send
+    /// recorded owed on the lane first, made once through `lane-mail`, and its
+    /// receipt stamped after.
     Send {
         /// The lane's item.
         #[arg(long)]
@@ -104,23 +102,20 @@ enum Verb {
         #[arg(long)]
         file: PathBuf,
     },
-    /// U6h: the accounts judge's reads (step6-map § A10): the pick a
-    /// launcher receives (decision 94 (b)) and the roster under the judge's
-    /// statement.
+    /// The accounts judge's reads: the pick a launcher receives and the roster
+    /// under the judge's statement.
     Accounts {
         #[command(subcommand)]
         op: AccountsOp,
     },
-    /// U6a: a validation run, started for a round and run as its detached
-    /// job (step6-map § A1).
+    /// A validation run, started for a round and run as its detached job.
     Validate {
         #[command(subcommand)]
         op: ValidateOp,
     },
-    /// U6b: read an item's proof rows for a need (step6-map § A2): complete
-    /// with the rows that prove the tree, pending on a ci row, or missing
-    /// naming the tree and the narrowest declared mode it lacks. The read
-    /// records nothing.
+    /// Read an item's proof rows for a need: complete with the rows that prove
+    /// the tree, pending on a ci row, or missing naming the tree and the
+    /// narrowest declared mode it lacks. The read records nothing.
     ReadProof {
         #[arg(long)]
         item: String,
@@ -156,7 +151,7 @@ fn parse_need(word: &str) -> std::result::Result<orch_runtime::ops::proof::Need,
     }
 }
 
-/// U6a: the validation run's verbs.
+/// The validation run's verbs.
 #[derive(Subcommand)]
 enum ValidateOp {
     /// Resolve the mode from the project's declaration, classify the
@@ -164,8 +159,8 @@ enum ValidateOp {
     /// and the job on the round's admitted run, write the run directory
     /// the executor reads, and launch the run's job detached.
     Start {
-        /// The item and round, or the admitted run directory the legacy
-        /// start forwards.
+        /// The item and round, or the admitted run directory the start
+        /// forwards.
         #[arg(long, requires = "round", conflicts_with = "run_dir")]
         item: Option<String>,
         #[arg(long, requires = "item")]
@@ -184,7 +179,7 @@ enum ValidateOp {
         /// The caller's word: dev, submit or restack.
         #[arg(long, default_value = "dev")]
         caller: String,
-        /// The poll interval the run records; the legacy `--poll`.
+        /// The poll interval the run records.
         #[arg(long, default_value_t = orch_runtime::validate::POLL_DEFAULT, value_parser = clap::value_parser!(u64).range(1..))]
         poll: u64,
         /// Run the command whatever earlier row would answer it.
@@ -201,12 +196,12 @@ enum ValidateOp {
         #[arg(long)]
         run_dir: String,
     },
-    /// U6l: stop a started run: the stop recorded on its open stage, the
-    /// job ended by its recorded identity through the launcher, the stage
-    /// closed `stopped` with the lane's end notice (decision 188 (c)).
+    /// Stop a started run: the stop recorded on its open stage, the job ended
+    /// by its recorded identity through the launcher, the stage closed
+    /// `stopped` with the lane's end notice.
     Stop {
-        /// The item; without it the run directory names it, as the legacy
-        /// stop forwards.
+        /// The item; without it the run directory names it, as the stop
+        /// forwards.
         #[arg(long)]
         item: Option<String>,
         #[arg(long)]
@@ -225,7 +220,7 @@ fn parse_mode(word: &str) -> std::result::Result<orch_runtime::state::ValidateMo
     }
 }
 
-/// U6h: the accounts judge's verbs.
+/// The accounts judge's verbs.
 #[derive(Subcommand)]
 enum AccountsOp {
     /// Which account a launch spends: the listing judged with this fleet's
@@ -237,11 +232,10 @@ enum AccountsOp {
         target: Target,
         #[arg(long)]
         harness: String,
-        /// The selector the harness runs; the legacy `--native-model`.
+        /// The selector the harness runs.
         #[arg(long)]
         native_model: Option<String>,
-        /// A config dir the pick omits before judging; the legacy
-        /// `--exclude-lane`.
+        /// A config dir the pick omits before judging.
         #[arg(long = "exclude-lane")]
         exclude: Vec<String>,
         /// The item of the lane a relaunch replaces: its charge is left
@@ -260,18 +254,18 @@ enum AccountsOp {
         /// The bound in percent used; `ORCH_LANE_MAX_PCT` where unset.
         #[arg(long, value_parser = clap::value_parser!(u32).range(0..=100), conflicts_with = "min_headroom_pct")]
         max_pct: Option<u32>,
-        /// The headroom the caller's own judgement triggers at: the same
-        /// bound as `--max-pct 100-T`, the succession walk's and the
-        /// turn-end hook's mark (U8d).
+        /// The headroom the caller's own judgement triggers at: the same bound
+        /// as `--max-pct 100-T`, the succession walk's and the turn-end hook's
+        /// mark.
         #[arg(long, value_parser = clap::value_parser!(u32).range(0..=100))]
         min_headroom_pct: Option<u32>,
         /// Hold the account's own binding bucket to the bound beside the
-        /// model's window (U8d).
+        /// model's window.
         #[arg(long)]
         binding_floor: bool,
-        /// Print the lane's launch prefix, `VAR=<config dir>`, and exit by
-        /// the answer's exit in place of the reply: the room check a
-        /// consumer's `SECOND_OPINION_<NAME>_ROOM_CMD` runs (U8d).
+        /// Print the lane's launch prefix, `VAR=<config dir>`, and exit by the
+        /// answer's exit in place of the reply: the room check a consumer's
+        /// `SECOND_OPINION_<NAME>_ROOM_CMD` runs.
         #[arg(long)]
         env: bool,
     },
@@ -291,22 +285,20 @@ enum WatchOp {
     Run {
         #[command(flatten)]
         target: Target,
-        /// Seconds between two runs of a long-pass duty; the legacy
-        /// `--interval`.
+        /// Seconds between two runs of a long-pass duty.
         #[arg(long, default_value_t = 240, value_parser = clap::value_parser!(u64).range(1..))]
         interval: u64,
-        /// Long passes per heartbeat; the legacy `--max-loops`.
+        /// Long passes per heartbeat.
         #[arg(long, default_value_t = 25, value_parser = clap::value_parser!(u32).range(1..))]
         max_loops: u32,
-        /// The stamp the heartbeat's `since=` carries; the legacy `--since`.
+        /// The stamp the heartbeat's `since=` carries.
         #[arg(long)]
         since: Option<String>,
-        /// A live runner's pid to stop and replace; the legacy
-        /// `OVERSEE_WATCH_REPLACE`.
+        /// A live runner's pid to stop and replace.
         #[arg(long)]
         replace: Option<u32>,
-        /// A repository (`owner/repo`) the GitHub inventories read beside
-        /// the lanes' own and the connected ones; the legacy `--repo`.
+        /// A repository (`owner/repo`) the GitHub inventories read beside the
+        /// lanes' own and the connected ones.
         #[arg(long = "repo")]
         repos: Vec<String>,
     },
@@ -350,8 +342,18 @@ enum StateOp {
         #[command(flatten)]
         target: Target,
     },
-    /// Create a state file with the object `workflow-state init` writes,
-    /// refusing a standing file.
+    /// An item's close-out: every entry of the state directory named for
+    /// the item leaves but its mailbox and its record's lock file, after one
+    /// archive of them, the mailbox and each standing `--archive` path, which
+    /// the caller removes after. With no fleet state the directory's
+    /// retention runs too, since no watch runs it there.
+    Remove {
+        #[arg(long)]
+        item: String,
+        #[arg(long)]
+        archive: Vec<PathBuf>,
+    },
+    /// Create a state file with the init object, refusing a standing file.
     Init {
         #[command(flatten)]
         target: Target,
@@ -368,15 +370,259 @@ enum StateOp {
         #[arg(long)]
         sub_issues: Option<String>,
     },
+    /// The value at a JSON pointer; the whole record with none.
+    Get {
+        #[command(flatten)]
+        target: Target,
+        pointer: Option<String>,
+    },
+    /// Whether the record stands, with its key and path.
+    Exists {
+        #[command(flatten)]
+        target: Target,
+    },
+    /// The record's path.
+    Path {
+        #[command(flatten)]
+        target: Target,
+    },
+    /// Set the value at a JSON pointer. A `{` or `[` prefix, `null`,
+    /// `true`, `false` and an all-digit word are JSON; anything else is
+    /// the string itself, so a quoted word keeps its quotes.
+    Set {
+        #[command(flatten)]
+        target: Target,
+        pointer: String,
+        value: String,
+    },
+    /// Set the value at a JSON pointer to the one JSON value a file holds.
+    SetFile {
+        #[command(flatten)]
+        target: Target,
+        pointer: String,
+        #[arg(value_name = "FILE")]
+        source: PathBuf,
+    },
+    /// Append a value, judged as `set` judges it, to the array at a JSON
+    /// pointer, created when absent.
+    Append {
+        #[command(flatten)]
+        target: Target,
+        pointer: String,
+        value: String,
+    },
+    /// Append the one JSON value a file holds to the array at a JSON
+    /// pointer, created when absent.
+    AppendFile {
+        #[command(flatten)]
+        target: Target,
+        pointer: String,
+        #[arg(value_name = "FILE")]
+        source: PathBuf,
+    },
+    /// Add one to the number at a JSON pointer; an absent field counts
+    /// from 0.
+    Increment {
+        #[command(flatten)]
+        target: Target,
+        pointer: String,
+    },
+    /// Set the field at a JSON pointer to the current epoch seconds.
+    SetNow {
+        #[command(flatten)]
+        target: Target,
+        pointer: String,
+    },
+    /// Set the field at a JSON pointer to the commit a checkout's HEAD
+    /// names.
+    SetGitHead {
+        #[command(flatten)]
+        target: Target,
+        pointer: String,
+        /// The checkout; the working directory when unset.
+        #[arg(long)]
+        worktree: Option<PathBuf>,
+    },
+    /// A round cap: the resolved limit, or `below` or `at-cap` over the
+    /// item's own count or a given one.
+    Cap {
+        /// REVIEW_MAX_CYCLES, REVIEW_MAX_EXTERNAL_ROUNDS or CI_FIX_MAX_CYCLES.
+        setting: String,
+        #[arg(long, conflicts_with = "count")]
+        item: Option<String>,
+        #[arg(long)]
+        count: Option<u64>,
+    },
+    /// Spend one attempt of a pull request's automatic retry budget.
+    HeadBudget {
+        #[command(subcommand)]
+        op: HeadBudgetOp,
+    },
+    /// Record the stop a pull request is told and render its comment.
+    PostPrStop {
+        #[command(subcommand)]
+        op: StopOp,
+    },
+    /// The fleet log: its two reads and the row append.
+    Log {
+        #[command(subcommand)]
+        op: LogOp,
+    },
+    /// The owner's standing instructions.
+    Standing {
+        #[command(subcommand)]
+        op: StandingOp,
+    },
+    /// Mint a key for work with no issue id; writes nothing.
+    NewLocalKey,
+    /// Mint a round token, set it at a JSON pointer and report it.
+    NewRoundId {
+        #[command(flatten)]
+        target: Target,
+        pointer: String,
+    },
+    /// The owner progress report's path, its directory created.
+    ProgressReportPath {
+        /// The report a succession writes.
+        #[arg(long)]
+        succession: bool,
+    },
+    /// Whether the item's handoff record stands in any place it is read.
+    HandoffStanding {
+        #[arg(long)]
+        item: String,
+        /// The lane root whose `tmp` is read after the state directory.
+        #[arg(long)]
+        worktree: Option<PathBuf>,
+    },
+    /// Stamp the item's handoff record resumed in every place it stands.
+    HandoffResume {
+        #[arg(long)]
+        item: String,
+        /// The lane root whose `tmp` is read after the state directory.
+        #[arg(long)]
+        worktree: Option<PathBuf>,
+    },
+    /// The recorded finding occurrences.
+    Findings {
+        #[command(subcommand)]
+        op: FindingsOp,
+    },
 }
 
-/// The clock, nonce and owner this process stamps with. The nonce comes
-/// from the hasher's random seed, the one source of randomness std provides;
-/// the owner is this process's identity through agent-runtime's one reader
-/// (decision 72). A failed identity read refuses the verb with its cause
-/// (decision 90); a reader that answers with no process for this pid
-/// leaves the owner unset, and the library then refuses to persist an
-/// intent without one.
+#[derive(Subcommand)]
+enum HeadBudgetOp {
+    /// `continue` with the attempt spent, or `at-cap` with nothing written.
+    Take {
+        #[arg(long)]
+        item: String,
+        /// `review-wait` restarts its count on a new head; `ci-fix` counts
+        /// across heads.
+        #[arg(long, value_parser = parse_budget_kind)]
+        kind: orch_runtime::ops::store::BudgetKind,
+        #[arg(long)]
+        head: String,
+    },
+}
+
+/// The budget word a `--kind` carries.
+fn parse_budget_kind(
+    word: &str,
+) -> std::result::Result<orch_runtime::ops::store::BudgetKind, String> {
+    orch_runtime::ops::store::BudgetKind::parse(word)
+        .ok_or_else(|| format!("{word}: not review-wait or ci-fix"))
+}
+
+#[derive(Args)]
+struct StopFields {
+    #[arg(long)]
+    item: String,
+    #[arg(long)]
+    name: String,
+    #[arg(long)]
+    gate: String,
+    #[arg(long)]
+    remaining: String,
+    /// The Markdown comment, rendered where this call records the stop.
+    #[arg(long)]
+    comment_file: PathBuf,
+}
+
+#[derive(Subcommand)]
+enum StopOp {
+    /// Record the stop, replacing a standing one.
+    Record(StopFields),
+    /// Record the stop where none stands; keep a standing one.
+    RecordIfEmpty(StopFields),
+}
+
+#[derive(Subcommand)]
+enum LogOp {
+    /// The last `ORCH_TAKEOVER_ROWS` rows but `cycle` and `token`; none
+    /// where no fleet record stands.
+    Takeover {
+        #[command(flatten)]
+        target: Target,
+    },
+    /// Every proposal and ruling row.
+    Audit {
+        #[command(flatten)]
+        target: Target,
+    },
+    /// Append the row a file holds, its `at` stamped when absent and its
+    /// text bounded by `ORCH_FLEET_LOG_ROW_BYTES`.
+    Append {
+        #[command(flatten)]
+        target: Target,
+        #[arg(value_name = "FILE")]
+        source: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum StandingOp {
+    /// Append the instruction a file holds, its `at` stamped when absent.
+    Add {
+        #[command(flatten)]
+        target: Target,
+        #[arg(value_name = "FILE")]
+        source: PathBuf,
+    },
+    /// Replace the array with the one a file holds and record the lift as
+    /// one ruling row in the same write.
+    Lift {
+        #[command(flatten)]
+        target: Target,
+        #[arg(value_name = "FILE")]
+        source: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum FindingsOp {
+    /// `{prior, classes}` over the recorded occurrences, for the requests a
+    /// file holds or for every known class.
+    Query {
+        #[arg(long)]
+        item: String,
+        file: Option<PathBuf>,
+    },
+    /// Record the verified findings a batch file holds: a new identity
+    /// joins, a known identity under the same class adds nothing, another
+    /// class refuses and leaves coverage unknown.
+    Record {
+        #[arg(long)]
+        item: String,
+        file: PathBuf,
+    },
+}
+
+/// The clock, nonce and owner this process stamps with. The nonce comes from
+/// the hasher's random seed, the one source of randomness std provides; the
+/// owner is this process's identity through agent-runtime's one reader. A
+/// failed identity read refuses the verb with its cause; a reader that answers
+/// with no process for this pid leaves the owner unset, and the library then
+/// refuses to persist an intent without one.
 #[allow(
     clippy::disallowed_methods,
     reason = "the command reads the wall clock and its own identity for the stamp and the owner it writes with (decision 72); no effect runs here"
@@ -409,9 +655,8 @@ fn system_env() -> Result<Env> {
     })
 }
 
-/// The checkout the runtime runs in and the settings it acts on, resolved
-/// once per process from the command line, the project files and the
-/// environment, as the legacy scripts resolve them.
+/// The checkout the runtime runs in and the settings it acts on, resolved once
+/// per process from the command line, the project files and the environment.
 fn resolve_settings(flags: &Flags) -> Result<Settings> {
     let cwd = std::env::current_dir()
         .map_err(|e| Error::Runtime(agent_runtime::Error::io("cwd", PathBuf::from("."), e)))?;
@@ -470,33 +715,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             "crate": env!("CARGO_PKG_VERSION"),
             "agent_runtime_protocol": agent_runtime::protocol::PROTOCOL,
         }),
-        Verb::State {
-            op: StateOp::Inspect { target },
-        } => {
-            let settings = resolve_settings(&flags)?;
-            serde_json::to_value(inspect_state(&target_path(&target, &settings))?)?
-        }
-        Verb::State {
-            op:
-                StateOp::Init {
-                    target,
-                    agent,
-                    worktree,
-                    branch,
-                    qa_labels,
-                    sub_issues,
-                },
-        } => {
-            let settings = resolve_settings(&flags)?;
-            let fields = state::InitFields {
-                agent: agent.unwrap_or_default(),
-                worktree: worktree.unwrap_or_default(),
-                branch: branch.unwrap_or_default(),
-                qa_labels: parse_array(qa_labels.as_deref())?,
-                sub_issues: parse_array(sub_issues.as_deref())?,
-            };
-            serde_json::to_value(init_state(&target_path(&target, &settings), &fields)?)?
-        }
+        Verb::State { op } => state_verb(op, &flags, locking)?,
         Verb::Op { target, request } => {
             let settings = resolve_settings(&flags)?;
             let path = target_path(&target, &settings);
@@ -506,7 +725,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             // reach GitHub for a target it could never record on.
             ops::target_kind(&path, &request)?;
             // What the settings refuse before any transition: a succession
-            // under `ORCH_OVERSEER_SUCCESSION=off` (decision 78).
+            // under `ORCH_OVERSEER_SUCCESSION=off`.
             ops::admit(&request, &settings)?;
             let env = system_env()?;
             // A verification reads GitHub first and makes its one
@@ -514,8 +733,8 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             if let Request::VerifyHead(r) = &request {
                 return Ok(serde_json::to_value(verify_head(&path, r, &env, locking)?)?);
             }
-            // U6g: a pull request's verification reads its current head
-            // first, then judges and records it as verify-head does.
+            // A pull request's verification reads its current head first, then
+            // judges and records it as verify-head does.
             if let Request::VerifyPr(r) = &request {
                 return Ok(serde_json::to_value(ops::verify_pr::run(
                     &path, r, &env, locking,
@@ -528,15 +747,15 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     &path, r, &settings, locking,
                 )?)?);
             }
-            // U6a: a round's reconcile first sends the end notices its
-            // closed runs still owe, the continuation a crash between a
-            // run's close and its send left (decision 124f (28)).
+            // A round's reconcile first sends the end notices its closed runs
+            // still owe, the continuation a crash between a run's close and
+            // its send left.
             if let Request::ReconcileRound(_) = &request {
                 orch_runtime::validate::run::deliver_owed(&settings, &path, &env, locking)?;
             }
             // The notices earlier outcomes still owe are sent before the
             // request's own transition; a mark the store refused is in the
-            // reply and fails nothing (decision 124i (36)).
+            // reply and fails nothing.
             let notices_unmarked = effects::send_owed_notices(
                 &path,
                 &request,
@@ -545,9 +764,9 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 locking,
                 &schedule::SystemClock,
             )?;
-            // U6c: an acceptance makes its close, posts the round's summary
-            // through the tracker CLI and records the comment's id
-            // (step6-map § A8); its reply is the close's report.
+            // An acceptance makes its close, posts the round's summary through
+            // the tracker CLI and records the comment's id; its reply is the
+            // close's report.
             if let Request::AcceptResult(r) = &request {
                 return Ok(serde_json::to_value(ops::accept(
                     &path,
@@ -558,10 +777,9 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 )?)?);
             }
             let applied = persist(&path, &request, &env, locking, &settings)?;
-            // U6a: the reconcile may have closed a runtime-started run and
-            // written its end notice owed in that same transition; the owed
-            // walk runs after it as well as before, so that notice is sent
-            // in this call (decision 184 (2)).
+            // The reconcile may have closed a runtime-started run and written
+            // its end notice owed in that same transition; the owed walk runs
+            // after it as well as before, so that notice is sent in this call.
             if let Request::ReconcileRound(_) = &request {
                 orch_runtime::validate::run::deliver_owed(&settings, &path, &env, locking)?;
             }
@@ -623,7 +841,6 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             let env = system_env()?;
             serde_json::to_value(admit(&path, &request, &env, locking, &settings)?)?
         }
-        // U6a
         Verb::Validate {
             op:
                 ValidateOp::Start {
@@ -669,7 +886,6 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &settings, &item, &round, &run_dir, &env, locking,
             )?)?
         }
-        // U6l
         Verb::Validate {
             op: ValidateOp::Stop { item, run_dir },
         } => {
@@ -683,7 +899,6 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 locking,
             )?)?
         }
-        // U6b
         Verb::ReadProof {
             item,
             tree,
@@ -702,7 +917,6 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             };
             serde_json::to_value(orch_runtime::proof::run(&settings, &item, &request)?)?
         }
-        // U6d
         Verb::Send { item, file } => {
             let settings = resolve_settings(&flags)?;
             let path = state::fleet_path(&settings.state_dir);
@@ -715,11 +929,10 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
     Ok(value)
 }
 
-/// The `watch` verbs. `run` claims as this process's identity (decision
-/// 99), records the legacy claim fields (the pane it serves, its program and
-/// directory, its arguments) and registers every duty, one registration
-/// line each (decision 153 (2)): the reconcile of every open intent on the
-/// long cadence (decision 121, Q4) and the duties under `watch/`.
+/// The `watch` verbs. `run` claims as this process's identity, records the
+/// claim fields (the pane it serves, its program and directory, its arguments)
+/// and registers every duty, one registration line each: the reconcile of
+/// every open intent on the long cadence and the duties under `watch/`.
 fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json::Value> {
     let settings = resolve_settings(flags)?;
     let clock = schedule::SystemClock;
@@ -769,9 +982,9 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
                 identity,
                 record,
             );
-            // The tracker read duty (U5e): the inventories once per pass,
-            // the terminal closes, the heartbeat's inputs; the GitHub duty
-            // (U5e2) shares its slot.
+            // The tracker read duty: the inventories once per pass, the
+            // terminal closes, the heartbeat's inputs; the GitHub duty shares
+            // its slot.
             let shared = watch::tracker::register(
                 &mut runner,
                 &path,
@@ -780,8 +993,8 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
                 locking,
                 since.clone(),
             )?;
-            // U5f: the verification duty on the tracker's slot, the
-            // heartbeat's body on both slots, the report and the retention.
+            // The verification duty on the tracker's slot, the heartbeat's
+            // body on both slots, the report and the retention.
             let verifying = watch::verifying::register(&mut runner, &settings, shared.clone());
             watch::heartbeat::register(
                 &mut runner,
@@ -841,8 +1054,8 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
     }
 }
 
-/// U6h: the accounts judge's verbs, each a read: the pick over the
-/// listing and this fleet's state, the roster over the listing.
+/// The accounts judge's verbs, each a read: the pick over the listing and this
+/// fleet's state, the roster over the listing.
 #[allow(
     clippy::disallowed_methods,
     reason = "the command's one construction of the kernel host for the pick's occupancy read; the judge acts on nothing"
@@ -937,14 +1150,13 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
 /// by its refusal key.
 const RECONCILE_REFUSED: &str = "reconcile-refused";
 
-/// What the reconcile duty publishes of its report: a line per open intent
-/// it could not complete or mark, printed when the refusal is new or its
-/// key changed and cleared when the intent is no longer refused, as the
-/// legacy printed a standing `main-workflow-absent`; a line per owed session
-/// send no kept receipt settles, keyed the same way by item and cause; and a
-/// line per owed notice sent whose mark the store refused. A deferral to a
-/// live or unreadable owner is a reconciled outcome, not a refusal, and
-/// prints nothing (decisions 128 (5), 130).
+/// What the reconcile duty publishes of its report: a line per open intent it
+/// could not complete or mark, printed when the refusal is new or its key
+/// changed and cleared when the intent is no longer refused,; a line per owed
+/// session send no kept receipt settles, keyed the same way by item and cause;
+/// and a line per owed notice sent whose mark the store refused. A deferral to
+/// a live or unreadable owner is a reconciled outcome, not a refusal, and
+/// prints nothing.
 fn reconcile_lines(run: &effects::ReconcileRun, baseline: &watch::Baseline) -> watch::Produced {
     let mut produced = watch::Produced::default();
     for refused in &run.refused {
@@ -968,9 +1180,9 @@ fn reconcile_lines(run: &effects::ReconcileRun, baseline: &watch::Baseline) -> w
             });
         }
     }
-    // U6d2 (decision 184 (5)): the baseline row kind holding each lane
-    // whose session send stands owed with no receipt to settle it, by the
-    // settle's cause word; the line prints once per cause.
+    // The baseline row kind holding each lane whose session send stands owed
+    // with no receipt to settle it, by the settle's cause word; the line
+    // prints once per cause.
     const DIRECTIVE_SEND_UNSETTLED: &str = "directive-send-unsettled";
     let unsettled = &run.directive_sends.sends_unsettled;
     for send in unsettled {
@@ -1003,10 +1215,9 @@ fn reconcile_lines(run: &effects::ReconcileRun, baseline: &watch::Baseline) -> w
     produced
 }
 
-/// The lock policy for the host whose `PATH` is `path_var`, as the legacy
-/// writers resolve theirs: the legacy wait, and the mutex wherever
-/// `flock(1)` is not on that path. The one lookup of the lock tool, which
-/// decides the locking every write of this process takes.
+/// The lock policy for the host whose `PATH` is `path_var`: the wait, and the
+/// mutex wherever `flock(1)` is not on that path. The one lookup of the lock
+/// tool, which decides the locking every write of this process takes.
 #[allow(
     clippy::disallowed_methods,
     reason = "the command's one lookup of the lock tool"
@@ -1038,6 +1249,373 @@ fn init_state(path: &Path, fields: &state::InitFields) -> Result<state::Initiali
     state::init(path, fields)
 }
 
+/// The `state remove` verb: the item's close-out, then, where no fleet
+/// state stands to run a watch, one retention pass over the directory. A
+/// relative `--archive` path is the caller's working directory's.
+fn remove_item(
+    settings: &Settings,
+    item: &str,
+    archive: &[PathBuf],
+    locking: Locking,
+    now: u64,
+) -> Result<serde_json::Value> {
+    let project = &settings.roots.project;
+    let cwd = std::env::current_dir()
+        .map_err(|e| Error::Runtime(agent_runtime::Error::io("cwd", Path::new("."), e)))?;
+    let archive: Vec<PathBuf> = archive.iter().map(|path| cwd.join(path)).collect();
+    let closed = orch_runtime::archive::close_out(
+        &settings.archive_root,
+        project,
+        &settings.state_dir,
+        item,
+        &archive,
+        locking,
+        now,
+    )?;
+    let fleet = state::fleet_path(&settings.state_dir);
+    let fleet_stands = match std::fs::metadata(&fleet) {
+        Ok(_) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(e) => return Err(Error::Runtime(agent_runtime::Error::io("read", &fleet, e))),
+    };
+    let dir_stands = std::fs::metadata(&settings.state_dir).is_ok();
+    let pruned = if fleet_stands || !dir_stands {
+        serde_json::Value::Null
+    } else {
+        let pruned =
+            watch::retention::pass(&fleet, &watch::Paths::of(&fleet)?, settings, locking, now)?;
+        serde_json::json!({
+            "paths": pruned.paths,
+            "kept": pruned.archive,
+            "unlocked": pruned.unlocked,
+        })
+    };
+    Ok(serde_json::json!({
+        "removed": closed.removed,
+        "kept": closed.archive,
+        "pruned": pruned,
+    }))
+}
+
+/// The `state` verbs: a workflow's reads and writes of a record through the
+/// store module, under the settings resolved once per process.
+fn state_verb(op: StateOp, flags: &Flags, locking: Locking) -> Result<serde_json::Value> {
+    use orch_runtime::ops::store::{self, Cap, CapSource, LogReader, StopMode, Write};
+    let settings = resolve_settings(flags)?;
+    let store_settings = &settings.store;
+    let path_of = |target: &Target| target_path(target, &settings);
+    let write = |target: &Target, write: Write| -> Result<serde_json::Value> {
+        let env = system_env()?;
+        store::run_write(&path_of(target), locking, store_settings, &env, &write)
+    };
+    let item_target = |item: String| Target {
+        file: None,
+        item: Some(item),
+        fleet: false,
+    };
+    match op {
+        StateOp::Inspect { target } => Ok(serde_json::to_value(inspect_state(&path_of(&target))?)?),
+        StateOp::Init {
+            target,
+            agent,
+            worktree,
+            branch,
+            qa_labels,
+            sub_issues,
+        } => {
+            let fields = state::InitFields {
+                agent: agent.unwrap_or_default(),
+                worktree: worktree.unwrap_or_default(),
+                branch: branch.unwrap_or_default(),
+                qa_labels: parse_array(qa_labels.as_deref())?,
+                sub_issues: parse_array(sub_issues.as_deref())?,
+            };
+            Ok(serde_json::to_value(init_state(
+                &path_of(&target),
+                &fields,
+            )?)?)
+        }
+        StateOp::Get { target, pointer } => {
+            let doc = store::read(&path_of(&target))?;
+            let pointer = pointer.unwrap_or_default();
+            let value = store::get(&doc, &pointer)?;
+            Ok(serde_json::json!({"pointer": pointer, "value": value}))
+        }
+        StateOp::Exists { target } => store::exists(&path_of(&target), &target_key(&target)),
+        StateOp::Path { target } => Ok(serde_json::json!({
+            "issue_id": target_key(&target),
+            "path": path_of(&target).display().to_string(),
+        })),
+        StateOp::Set {
+            target,
+            pointer,
+            value,
+        } => write(
+            &target,
+            Write::Set {
+                pointer,
+                value: store::judge(&value)?,
+            },
+        ),
+        StateOp::SetFile {
+            target,
+            pointer,
+            source,
+        } => write(
+            &target,
+            Write::SetFile {
+                pointer,
+                file: source,
+            },
+        ),
+        StateOp::Append {
+            target,
+            pointer,
+            value,
+        } => write(
+            &target,
+            Write::Append {
+                pointer,
+                value: store::judge(&value)?,
+            },
+        ),
+        StateOp::AppendFile {
+            target,
+            pointer,
+            source,
+        } => write(
+            &target,
+            Write::AppendFile {
+                pointer,
+                file: source,
+            },
+        ),
+        StateOp::Increment { target, pointer } => write(&target, Write::Increment { pointer }),
+        StateOp::SetNow { target, pointer } => {
+            let now = system_env()?.now_secs;
+            write(
+                &target,
+                Write::Set {
+                    pointer,
+                    value: serde_json::Value::from(now),
+                },
+            )
+        }
+        StateOp::SetGitHead {
+            target,
+            pointer,
+            worktree,
+        } => {
+            let head = store::git_head(worktree.as_deref().unwrap_or(Path::new(".")))?;
+            write(
+                &target,
+                Write::Set {
+                    pointer,
+                    value: serde_json::Value::String(head),
+                },
+            )
+        }
+        StateOp::Cap {
+            setting,
+            item,
+            count,
+        } => {
+            let cap = Cap::parse(&setting)?;
+            let path = state::item_path(&settings.state_dir, item.as_deref().unwrap_or_default());
+            let doc = item.as_ref().map(|_| store::read(&path)).transpose()?;
+            let source = match (&doc, count) {
+                (Some(doc), _) => CapSource::Item(doc),
+                (None, Some(count)) => CapSource::Count(count),
+                (None, None) => CapSource::Bare,
+            };
+            store::cap(&path, store_settings, cap, &source)
+        }
+        StateOp::HeadBudget {
+            op: HeadBudgetOp::Take { item, kind, head },
+        } => write(&item_target(item), Write::HeadBudget { kind, head }),
+        StateOp::PostPrStop { op } => {
+            let (mode, fields) = match op {
+                StopOp::Record(fields) => (StopMode::Record, fields),
+                StopOp::RecordIfEmpty(fields) => (StopMode::RecordIfEmpty, fields),
+            };
+            let env = system_env()?;
+            let path = state::item_path(&settings.state_dir, &fields.item);
+            let write = Write::PostPrStop {
+                mode,
+                name: fields.name,
+                gate: fields.gate,
+                remaining: fields.remaining,
+            };
+            store::post_pr_stop(
+                &path,
+                locking,
+                store_settings,
+                &env,
+                &write,
+                &fields.comment_file,
+            )
+        }
+        StateOp::Log { op } => match op {
+            LogOp::Takeover { target } => {
+                let doc = store::read_if_standing(&path_of(&target))?;
+                let rows = store::log_rows(doc.as_ref(), store_settings, LogReader::Takeover);
+                Ok(serde_json::json!({"rows": rows}))
+            }
+            LogOp::Audit { target } => {
+                let doc = store::read(&path_of(&target))?;
+                let rows = store::log_rows(Some(&doc), store_settings, LogReader::Audit);
+                Ok(serde_json::json!({"rows": rows}))
+            }
+            LogOp::Append { target, source } => write(&target, Write::LogAppend { file: source }),
+        },
+        StateOp::Standing { op } => match op {
+            StandingOp::Add { target, source } => {
+                write(&target, Write::StandingAdd { file: source })
+            }
+            StandingOp::Lift { target, source } => {
+                write(&target, Write::StandingLift { file: source })
+            }
+        },
+        StateOp::Remove { item, archive } => {
+            let env = system_env()?;
+            remove_item(&settings, &item, &archive, locking, env.now_secs)
+        }
+        StateOp::NewLocalKey => {
+            let key = store::local_key(&system_env()?, std::process::id());
+            Ok(serde_json::json!({"key": key}))
+        }
+        StateOp::NewRoundId { target, pointer } => {
+            let token = system_env()?.round_id();
+            write(
+                &target,
+                Write::Set {
+                    pointer,
+                    value: serde_json::Value::String(token),
+                },
+            )
+        }
+        StateOp::ProgressReportPath { succession } => {
+            let now = system_env()?.now_secs;
+            let path =
+                store::progress_report_path(&store_settings.progress_report_dir, now, succession)?;
+            Ok(serde_json::json!({"path": path.display().to_string()}))
+        }
+        StateOp::HandoffStanding { item, worktree } => {
+            let root = handoff_root(&settings, flags, worktree.as_deref());
+            store::handoff_standing(&settings.state_dir, &item, root.as_deref())
+        }
+        StateOp::HandoffResume { item, worktree } => {
+            handoff_resume(&settings, flags, locking, &item, worktree.as_deref())
+        }
+        StateOp::Findings {
+            op: FindingsOp::Query { item, file },
+        } => {
+            let doc = store::read(&state::item_path(&settings.state_dir, &item))?;
+            let requests = file.as_deref().map(store::finding_requests).transpose()?;
+            store::findings_query(&doc, requests)
+        }
+        StateOp::Findings {
+            op: FindingsOp::Record { item, file },
+        } => {
+            let env = system_env()?;
+            let path = state::item_path(&settings.state_dir, &item);
+            store::findings_record(&path, locking, store_settings, &env, &file)
+        }
+    }
+}
+
+/// The key a target's record is kept under: the item, `oversee` for the
+/// fleet, the item a file's name carries.
+fn target_key(target: &Target) -> String {
+    if let Some(item) = &target.item {
+        return item.clone();
+    }
+    if target.fleet {
+        return "oversee".to_owned();
+    }
+    target
+        .file
+        .as_deref()
+        .and_then(state::item_of)
+        .map(str::to_owned)
+        .unwrap_or_default()
+}
+
+/// The lane root whose `tmp` is the handoff record's second place: the
+/// named worktree, else, with no state directory named either, the linked
+/// worktree the caller runs in, whose launch may forbid writing the main
+/// checkout.
+fn handoff_root(settings: &Settings, flags: &Flags, worktree: Option<&Path>) -> Option<PathBuf> {
+    if let Some(root) = worktree {
+        return Some(root.to_path_buf());
+    }
+    if flags.state_dir.is_none() && settings.roots.project != settings.roots.common {
+        return Some(settings.roots.project.clone());
+    }
+    None
+}
+
+/// Stamp the handoff record resumed in every place it stands, through the
+/// `resume-handoff` transition on each, so no place keeps a spent record
+/// standing. A place that could not be read refuses after the standing ones
+/// are stamped; none standing refuses.
+fn handoff_resume(
+    settings: &Settings,
+    flags: &Flags,
+    locking: Locking,
+    item: &str,
+    worktree: Option<&Path>,
+) -> Result<serde_json::Value> {
+    use orch_runtime::ops::store::{self, Write};
+    use orch_runtime::watch::lanes::{HandoffReading, handoff_places, handoff_read};
+    let root = handoff_root(settings, flags, worktree);
+    let mut resumed = Vec::new();
+    let mut unread = None;
+    for place in handoff_places(&settings.state_dir, item, root.as_deref()) {
+        match handoff_read(&place) {
+            HandoffReading::Stands { .. } => {
+                let env = system_env()?;
+                // The fleet record's handoff is the overseer's own, outside
+                // the item transitions; its stamp is the pointer write.
+                let resumed_at = if state::Kind::of_path(&place) == state::Kind::Fleet {
+                    let write = Write::Set {
+                        pointer: "/handoff/resumed_at".to_owned(),
+                        value: serde_json::Value::from(env.now_secs),
+                    };
+                    store::run_write(&place, locking, &settings.store, &env, &write)?;
+                    env.now_secs
+                } else {
+                    let request = Request::ResumeHandoff(ops::ResumeHandoff {});
+                    let applied = persist(&place, &request, &env, locking, settings)?;
+                    let ops::Report::ResumeHandoff(report) = applied.report else {
+                        unreachable!("a resume-handoff request reports its resume")
+                    };
+                    report.resumed_at
+                };
+                resumed.push(serde_json::json!({
+                    "file": place.display().to_string(),
+                    "resumed_at": resumed_at,
+                }));
+            }
+            HandoffReading::Unreadable { path } => {
+                unread.get_or_insert(path);
+            }
+            HandoffReading::None => {}
+        }
+    }
+    if let Some(path) = unread {
+        return Err(agent_runtime::Error::refused(
+            "handoff-unread",
+            &[("state-file", &path.display().to_string())],
+        )
+        .into());
+    }
+    if resumed.is_empty() {
+        return Err(agent_runtime::Error::refused("handoff-none", &[("issue", item)]).into());
+    }
+    Ok(serde_json::json!({"resumed": resumed}))
+}
+
 /// The `verify-head` request's one call of the verification, which reads
 /// GitHub and records the verdict; the compiler boundary names the
 /// verification, so this is its one caller.
@@ -1054,9 +1632,9 @@ fn verify_head(
     verify::run(path, r, env, locking, verify::Caller::VerifyHead)
 }
 
-/// The command's one store entry: the request's transition committed,
-/// judged against the host facts a lane transition needs (decision 97), the
-/// cap setting, the legacy claim store and the kernel's own reads.
+/// The command's one store entry: the request's transition committed, judged
+/// against the host facts a lane transition needs, the cap setting, the claim
+/// store and the kernel's own reads.
 #[allow(
     clippy::disallowed_methods,
     reason = "the command's one store entry; every effect that follows runs through the operation handle"
@@ -1072,9 +1650,9 @@ fn persist(
     ops::apply_on(path, request, env, locking, &host)
 }
 
-/// The host a fleet transition judges against: the cap, the legacy claim
-/// store, the kernel's reads, the programs the admission reads through and
-/// the settings the accounts judge reads a launch's account under (U6i).
+/// The host a fleet transition judges against: the cap, the claim store, the
+/// kernel's reads, the programs the admission reads through and the settings
+/// the accounts judge reads a launch's account under.
 #[allow(
     clippy::disallowed_methods,
     reason = "the command's one construction of the kernel host, handed to the store entries alone"
@@ -1090,7 +1668,7 @@ fn kernel_host(settings: &Settings) -> ops::Host<'_> {
 }
 
 /// The `admit` verb's one store entry: the judgement committed under the
-/// launch lock (decision 108 (5)) through the one dispatcher.
+/// launch lock through the one dispatcher.
 #[allow(
     clippy::disallowed_methods,
     reason = "the command's one admission store entry; no effect runs after it"

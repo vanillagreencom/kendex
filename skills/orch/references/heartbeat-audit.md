@@ -11,7 +11,7 @@ This rule applies to the fleet's Linear team. A GitHub-only fleet skips it with 
 Read counts and identifiers only in the overseer; the TPM reads full bodies, comments and source. Use the fleet's explicit `[OVERSEE_STATE_DIR]` for every state command:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state --state-dir [OVERSEE_STATE_DIR] get oversee '.last_backlog_audit'
+.agents/skills/orch/scripts/orch-runtime --state-dir [OVERSEE_STATE_DIR] state get --fleet /last_backlog_audit
 .agents/skills/linear/scripts/linear.sh issues list --team [TEAM] --state Backlog --max --format ids
 .agents/skills/linear/scripts/linear.sh issues list --team [TEAM] --state Triage --max --format ids
 ```
@@ -24,7 +24,7 @@ Read counts and identifiers only in the overseer; the TPM reads full bodies, com
 - **Audit record.** After both full-audit passes validate and the primary applies the authorized actions and sends any owed ask, record the completion time as ISO 8601 UTC and a fresh post-audit Backlog count with the command below. Pending owner rows do not prevent recording a completed analysis. A failed pass or mutation leaves the prior record unchanged. An aged-Triage-only pass does not reset the full-audit clock.
 
 ```bash
-.agents/skills/orch/scripts/workflow-state --state-dir [OVERSEE_STATE_DIR] set oversee last_backlog_audit '{"at":"[UTC_TIME]","backlog":[BACKLOG_COUNT]}'
+.agents/skills/orch/scripts/orch-runtime --state-dir [OVERSEE_STATE_DIR] state set --fleet /last_backlog_audit '{"at":"[UTC_TIME]","backlog":[BACKLOG_COUNT]}'
 ```
 
 - **Progress report.** Follow communication's [summary template](../../communication/references/reports.md#summary-template) in every `report-due` owner summary. Report `created N, closed M since the last report` with the outcome readings. Count distinct issue IDs from verified audit § 8 execution results and lane creation and closure receipts since the last report sent to the owner, or fleet start for the first report. Proposals and pending rows do not count; missing receipts read `counts unread`, never zero. Include every team Triage item still older than 24 hours and the reason it remains in Triage, including a pending owner ask. Read Triage fresh for the report, not from the fleet-lane verifier's `triaged` log.

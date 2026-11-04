@@ -52,12 +52,11 @@ impl RoundKind {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BeginRound {
     pub kind: RoundKind,
-    /// U6c: the item's `updatedAt` as the caller's own read of the item
-    /// returned it (step6-map § A8), recorded on the round's stage as
-    /// handed; the reply says `body_moved` where it is later than the
-    /// revision the kind's previous round recorded, compared as the
-    /// tracker's own ISO 8601 UTC text. A stale value is recorded, not
-    /// judged: the record says what the round read.
+    /// The item's `updatedAt` as the caller's own read of the item returned it,
+    /// recorded on the round's stage as handed; the reply says `body_moved`
+    /// where it is later than the revision the kind's previous round recorded,
+    /// compared as the tracker's own ISO 8601 UTC text. A stale value is
+    /// recorded, not judged: the record says what the round read.
     #[serde(default)]
     pub body_revision: Option<String>,
 }
@@ -65,20 +64,19 @@ pub struct BeginRound {
 /// Record that a validation run was admitted for a round before any work
 /// starts, so a run with no process yet is not read as no run.
 ///
-/// Without `run_dir` the runtime mints the run's identity: `run_id` is
-/// `<UTC stamp>-<nonce>` and `run_dir` is `<worktree>/tmp/dev-validate-
-/// <run_id>` under the item's recorded worktree, the directory
-/// `dev-validate-run --run-id <run_id>` then creates. The request is
-/// idempotent per round: while an admitted run of the round stands open, a
-/// repeat returns that run and writes nothing, whatever clock or nonce the
-/// call carries, so a replayed delegation command continues the attempt it
-/// admitted instead of minting a second identity. A further attempt is
-/// minted only when the request says `attempt: next`, the rerun the dev
-/// gate permits after a run that ended without a pass, or when no open
-/// admission of the round stands. With `run_dir` the caller's runner
-/// minted the identity first, the legacy order, `run_id` is read from the
-/// directory's name, and the same directory admitted again is a no-op. An
-/// empty `run_dir` is read as absent.
+/// Without `run_dir` the runtime mints the run's identity: `run_id` is `<UTC
+/// stamp>-<nonce>` and `run_dir` is `<worktree>/tmp/dev-validate-<run_id>`
+/// under the item's recorded worktree, the directory `dev-validate-run --run-id
+/// <run_id>` then creates. The request is idempotent per round: while an
+/// admitted run of the round stands open, a repeat returns that run and writes
+/// nothing, whatever clock or nonce the call carries, so a replayed delegation
+/// command continues the attempt it admitted instead of minting a second
+/// identity. A further attempt is minted only when the request says `attempt:
+/// next`, the rerun the dev gate permits after a run that ended without a pass,
+/// or when no open admission of the round stands. With `run_dir` the caller's
+/// runner minted the identity first, `run_id` is read from the directory's
+/// name, and the same directory admitted again is a no-op. An empty `run_dir`
+/// is read as absent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordValidationAdmission {
     pub round_id: String,
@@ -112,24 +110,24 @@ pub struct AcceptResult {
     pub outcome: StageOutcome,
     #[serde(default)]
     pub end: Option<EndSource>,
-    /// U6c: who accepts the step (step6-map § A3), recorded on the stage
-    /// at the close and part of the acceptance's identity after it. A
+    /// Who accepts the step, recorded on the stage at the close and part of
+    /// the acceptance's identity after it. A
     /// round's own close on an item keyed `directive-<id>` must name the
     /// owner's directive, by that id; a run's close (`run_dir`) is the
     /// runner's verdict and names none.
     #[serde(default)]
     pub authorization: Option<Authorization>,
-    /// U6c: the round's Completion Summary to post after the close
-    /// (step6-map § A8), by `ops::accept`.
+    /// The round's Completion Summary to post after the close, by
+    /// `ops::accept`.
     #[serde(default)]
     pub summary_file: Option<PathBuf>,
-    /// U7e: the files to attach to the summary comment where this
-    /// acceptance creates it (decision 192 Q10), the round's screenshots
-    /// as the dev return artifact names them; an update keeps the links
+    /// The files to attach to the summary comment where this acceptance
+    /// creates it, the round's screenshots as the dev return artifact names
+    /// them; an update keeps the links
     /// the record carries instead.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<PathBuf>,
-    /// U6c: the comment the post earned, recorded as the item's
+    /// The comment the post earned, recorded as the item's
     /// `summary_comment` by the acceptance's own repeat of its request. A
     /// caller names the file, never the comment.
     #[serde(default)]
@@ -144,7 +142,7 @@ pub struct EndSource {
 }
 
 /// Reconcile a round's admitted validation runs against the host, so no
-/// admitted run stays open after it ended (decision 102). Every open
+/// admitted run stays open after it ended. Every open
 /// `validate` stage of the round is read through its run directory: an
 /// ended run, its sentinel written, closes with the word the sentinel
 /// names; an admitted directory that was never created, a refused or never
@@ -176,8 +174,8 @@ pub struct RecordVerification {
     pub source: String,
 }
 
-/// Verify a published head where it stands and record the verdict
-/// (decision 93). `verify::run` reads GitHub for `head`, a full 40-hex
+/// Verify a published head where it stands and record the verdict.
+/// `verify::run` reads GitHub for `head`, a full 40-hex
 /// lowercase commit id, on `base` of `repo` (`owner/name`), and on a final
 /// verdict writes `.verification` through [`RecordVerification`] in the
 /// same call. `required_only` judges the base's required contexts alone
@@ -235,6 +233,17 @@ pub struct RecordHandoff {
     pub context: Value,
     #[serde(default)]
     pub relaunch: Option<Relaunch>,
+    /// The session the lane handed off from and why, as the turn-end hook
+    /// records them on a model switch: the relaunch resumes the session they
+    /// name. Each is written only where given.
+    #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
+    pub pane_key: Option<String>,
+    #[serde(default)]
+    pub cause: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
     #[serde(default)]
     pub written_at: Option<String>,
 }
@@ -268,7 +277,6 @@ impl Verdict {
         }
     }
 
-    /// The word the record holds.
     pub fn word(self) -> &'static str {
         match self {
             Verdict::Pass => "pass",
@@ -278,7 +286,6 @@ impl Verdict {
     }
 }
 
-/// A round minted and opened.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoundBegun {
     pub kind: RoundKind,
@@ -286,13 +293,12 @@ pub struct RoundBegun {
     pub start: u64,
     /// The round ids of the open stages of this kind the new round closed.
     pub superseded: Vec<Option<String>>,
-    /// U6c: true where `body_revision` was handed and is later than the
+    /// True where `body_revision` was handed and is later than the
     /// one the kind's previous round recorded; false with nothing to
     /// compare.
     pub body_moved: bool,
 }
 
-/// A validation run admitted for a round.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValidationAdmitted {
     pub round_id: String,
@@ -316,26 +322,24 @@ pub struct ResultAccepted {
     pub run_dir: Option<String>,
     pub start: u64,
     pub end: u64,
-    /// The word on the stage; absent on a stage a legacy writer closed
-    /// before this operation existed.
+    /// The word on the stage; absent on a stage another writer closed
+    /// without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outcome: Option<StageOutcome>,
     /// False when the stage was already closed.
     pub closed_now: bool,
-    /// U6c: the authorization the stage was closed under.
+    /// The authorization the stage was closed under.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authorization: Option<Authorization>,
-    /// U6c: the item's recorded Completion Summary comment, after this
+    /// The item's recorded Completion Summary comment, after this
     /// request's own record of it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary_comment: Option<SummaryComment>,
-    /// U6c: how this acceptance's summary post ended, where a file was
-    /// named.
+    /// How this acceptance's summary post ended, where a file was named.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub summary: Option<super::accept::SummaryPost>,
 }
 
-/// A verification verdict written for a head.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VerificationRecorded {
     pub head: String,
@@ -424,10 +428,10 @@ pub enum RunCause {
     LaunchFailed,
 }
 
-/// A run of the round the continuation reads instead of starting a new one
-/// (decision 184 (3)): an open validation stage it waits on (`outcome` none),
-/// or a stage that ended while the lane was away, whose recorded `outcome`
-/// the continuation reuses. Listed newest first (decision 188 (f)).
+/// A run of the round the continuation reads instead of starting a new one:
+/// an open validation stage it waits on (`outcome` none), or a stage that
+/// ended while the lane was away, whose recorded `outcome` the continuation
+/// reuses. Listed newest first.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpenRun {
     pub run_dir: String,
@@ -478,7 +482,6 @@ fn round_known(stages: &[Stage], round_id: &str) -> bool {
         .any(|s| s.kind != StageKind::Validate && s.round_id.as_deref() == Some(round_id))
 }
 
-/// The directory name prefix every validation run directory carries.
 const RUN_DIR_PREFIX: &str = "dev-validate-";
 
 /// The item a state file names: the stem after `workflow-state-`.
@@ -521,7 +524,7 @@ pub(super) fn begin_round(
     let round_id = env.round_id();
     let now = env.now_secs;
     let stages = stages(path, doc)?;
-    // U6c: the kind's previous round is the last stage of the kind that
+    // The kind's previous round is the last stage of the kind that
     // recorded a revision; the stamps are the tracker's own ISO 8601 UTC
     // text, so later is greater.
     let previous = stages
@@ -654,8 +657,8 @@ pub(super) fn accept_result(
 }
 
 /// [`accept_result`] with the end the caller read itself, where it gives
-/// one: the validation job's close at its sentinel's time (U6l, decision
-/// 187 (8)); the request's own source, or now, otherwise.
+/// one: the validation job's close at its sentinel's time; the request's
+/// own source, or now, otherwise.
 pub(super) fn accept_result_at(
     path: &Path,
     doc: &mut Document,
@@ -691,8 +694,8 @@ pub(super) fn accept_result_at(
             round_id: r.round_id.clone(),
         });
     }
-    // U6c: a directed item's step is accepted under the owner's directive
-    // alone (decisions 168 (4), 183 Q5); its runs close on their verdicts.
+    // A directed item's step is accepted under the owner's directive alone;
+    // its runs close on their verdicts.
     if r.run_dir.is_none()
         && let Some(directive) = state::directive_of(path)
         && !r
@@ -704,8 +707,8 @@ pub(super) fn accept_result_at(
             directive: directive.to_owned(),
         });
     }
-    // U6c: the authorization is part of the acceptance's identity
-    // (decision 100): a closed stage keeps the one it was closed under.
+    // The authorization is part of the acceptance's identity: a closed
+    // stage keeps the one it was closed under.
     if stage.end.is_some()
         && let Some(given) = &r.authorization
         && stage.authorization.as_ref() != Some(given)
@@ -745,14 +748,13 @@ pub(super) fn accept_result_at(
     })
 }
 
-/// The key the item's Completion Summary comment is recorded under.
 const SUMMARY_COMMENT_KEY: &str = "summary_comment";
 
-/// U6c, U7e: record the comment the acceptance's post earned or its list
-/// found, and answer the item's recorded comment after it. The id alone is
-/// the comment's identity: a given id that differs refuses, so no comment
-/// is orphaned by a second record, and a given naming the recorded id
-/// writes its stamp and attachments over the record's.
+/// Record the comment the acceptance's post earned or its list found, and
+/// answer the item's recorded comment after it. The id alone is the comment's
+/// identity: a given id that differs refuses, so no comment is orphaned by a
+/// second record, and a given naming the recorded id writes its stamp and
+/// attachments over the record's.
 fn record_summary_comment(
     path: &Path,
     doc: &mut Document,
@@ -798,8 +800,8 @@ fn artifact_mtime(artifact: &Path) -> Result<u64> {
 /// A stage as a close left it.
 pub(super) struct Closed {
     pub(super) end: u64,
-    /// The word on the stage; absent on a stage a legacy writer closed
-    /// before the word existed.
+    /// The word on the stage; absent on a stage another writer closed
+    /// without one.
     pub(super) outcome: Option<StageOutcome>,
     pub(super) closed_now: bool,
 }
@@ -884,8 +886,8 @@ fn unit_ended(load: &str, active: &str) -> Option<bool> {
     }
 }
 
-/// The job a started run records, read by its identity (ML:87, decision
-/// 99): the unit through the user manager, or the process by pid and
+/// The job a started run records, read by its identity: the unit through
+/// the user manager, or the process by pid and
 /// start, so a pid the system reused reads gone under another start and
 /// never keeps a dead run open. A job whose launcher never answered is
 /// read from the launcher's record beside the run; one that records no
@@ -985,7 +987,7 @@ fn read_job(job: &ValidateJob) -> RunRead {
 }
 
 /// Whether the job a started run records has ended, for the stop's bounded
-/// wait on the job it ended (U6l, decision 188 (c)): `Some(true)` read gone
+/// wait on the job it ended: `Some(true)` read gone
 /// by its identity, `Some(false)` live, `None` where the read could not
 /// say, which is never gone.
 pub(crate) fn job_ended(job: &ValidateJob) -> Option<bool> {
@@ -1049,7 +1051,7 @@ fn sentinel_ended(run_dir: &Path) -> std::result::Result<Option<RunRead>, String
     reason = "a validation run's recorded pid is read beside the record for the stage's reconcile; it is never signalled here"
 )]
 fn read_run(run_dir: &Path, job: Option<&ValidateJob>) -> RunRead {
-    // Three-valued (decision 124c): the directory is opened for listing, and
+    // Three-valued: the directory is opened for listing, and
     // only `NotFound` proves it absent; a path that is not a directory, or
     // one that cannot be read, holds the stage as unreadable rather than
     // closing it.
@@ -1063,12 +1065,12 @@ fn read_run(run_dir: &Path, job: Option<&ValidateJob>) -> RunRead {
         }
         Err(e) => return RunRead::Unreadable(format!("run directory: {e}")),
     }
-    // A run the runtime started is read by its job's identity first (ML:87,
-    // M1, decision 184 (2)): while the job lives it owns the close and the
-    // end notice, so its stage stays open even past the sentinel the child
-    // wrote; only a job read gone falls to the sentinel it left, which the
-    // reconcile then closes with the notice owed. A run that ran nothing, or
-    // one the legacy start launched, has no runtime job and falls through.
+    // A run the runtime started is read by its job's identity first: while
+    // the job lives it owns the close and the end notice, so its stage stays
+    // open even past the sentinel the child wrote; only a job read gone
+    // falls to the sentinel it left, which the reconcile then closes with the
+    // notice owed. A run that ran nothing, or one its caller's runner
+    // started, has no runtime job and falls through.
     if let Some(job) = job.filter(|j| j.runner.as_deref() != Some("none")) {
         return match read_job(job) {
             RunRead::Gone { outcome, cause } => match sentinel_ended(run_dir) {
@@ -1079,7 +1081,8 @@ fn read_run(run_dir: &Path, job: Option<&ValidateJob>) -> RunRead {
             other => other,
         };
     }
-    // A legacy run: the sentinel first, then the child's bare pid.
+    // A run its caller's runner started: the sentinel first, then the
+    // child's bare pid.
     match sentinel_ended(run_dir) {
         Ok(Some(ended)) => return ended,
         Ok(None) => {}
@@ -1098,7 +1101,7 @@ fn read_run(run_dir: &Path, job: Option<&ValidateJob>) -> RunRead {
         },
         Err(cause) => return RunRead::Unreadable(cause),
     };
-    // The legacy start records the child's pid and no process start, so
+    // The caller's runner records the child's pid and no process start, so
     // this is a pid read, not an identity read: a reused pid keeps a dead
     // run open; it never closes a live one. A run the runtime started is
     // read by its job's identity above.
@@ -1174,7 +1177,7 @@ pub(super) fn reconcile_round(
             }
             // A job gone with no sentinel closes `lost`, unless the stage
             // records the intentional stop `validate stop` wrote before it
-            // ended the job (decision 188 (c)): then `stopped`, the word the
+            // ended the job: then `stopped`, the word the
             // job's own close reads the same way. No one recorded an
             // intent for a `lost` run.
             RunRead::Gone { outcome, cause } => {
@@ -1187,9 +1190,9 @@ pub(super) fn reconcile_round(
         };
         close_stage(path, doc, index, stage, end, outcome, env)?;
         // A runtime-started run's close owes its lane the end notice, written
-        // in the same transition; the owed walk after the reconcile sends it
-        // (M1, decision 184 (2)). The job closed a live run itself and already
-        // owns its notice; a legacy run (no runtime job) owes none.
+        // in the same transition; the owed walk after the reconcile sends it.
+        // The job closed a live run itself and already owns its notice; a run
+        // with no runtime job owes none.
         if stage
             .job
             .as_ref()
@@ -1224,7 +1227,6 @@ pub(super) fn reconcile_round(
     })
 }
 
-/// The key `.verification` is written under.
 const VERIFICATION_KEY: &str = "verification";
 
 pub(super) fn record_verification(
@@ -1269,10 +1271,9 @@ pub(super) fn record_verification(
     })
 }
 
-/// The key `.handoff` is written under.
 const HANDOFF_KEY: &str = "handoff";
 
-/// The legacy stamp rule for `written_at`: absent or empty is stamped from
+/// The stamp rule for `written_at`: absent or empty is stamped from
 /// the clock; a given stamp must be the ISO 8601 UTC form and not later
 /// than the clock, and a past one is kept.
 fn written_at(given: Option<&str>, env: &Env) -> Result<String> {
@@ -1318,6 +1319,16 @@ pub(super) fn record_handoff(
         ("relaunch", json!(r.relaunch)),
     ] {
         state::set(&mut record, key, value);
+    }
+    for (key, value) in [
+        ("session_id", &r.session_id),
+        ("pane_key", &r.pane_key),
+        ("cause", &r.cause),
+        ("model", &r.model),
+    ] {
+        if let Some(value) = value {
+            state::set(&mut record, key, value.clone());
+        }
     }
     let standing = match doc.get(HANDOFF_KEY) {
         None | Some(Value::Null) => None,
@@ -1382,13 +1393,12 @@ pub(super) fn resume_handoff(
     // The runs the continuation reads: the round's validation stages whose
     // result it has not consumed, each with its outcome, so a run the job
     // closed while the lane was away is reused by its outcome rather than
-    // re-run or refused (decision 184 (3)). The round is open at a resume
-    // (the handoff was recorded before any accept), so every one of its
-    // non-superseded validation stages is unconsumed, open or closed; this
-    // is robust to the job's close landing on either side of the handoff's
-    // `written_at`, which the job writes seconds later and under load (the
-    // departure from 184 (3)'s `written_at` cut is in reports/U6a2.md).
-    // Newest first, by `(start, index)` (decision 188 (f)): a recovery round
+    // re-run or refused. The round is open at a resume (the handoff was
+    // recorded before any accept), so every one of its non-superseded
+    // validation stages is unconsumed, open or closed; no cut at the
+    // handoff's `written_at` is made, since the job's close can land on
+    // either side of it, seconds later and under load.
+    // Newest first, by `(start, index)`: a recovery round
     // hands its failed run beside the later pass, and the continuation reads
     // the first.
     let mut runs: Vec<(u64, usize, OpenRun)> = stages(path, doc)?

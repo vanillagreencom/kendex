@@ -34,9 +34,9 @@ Standalone only: use the extracted issue as `[STATE_KEY]`, or `pr-[PR_NUMBER]` w
 ```bash
 .agents/skills/github/scripts/github.sh pr-issue [PR_NUMBER] --format=text
 env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --jq .headRefName
-.agents/skills/orch/scripts/workflow-state exists --json [STATE_KEY]
-.agents/skills/orch/scripts/workflow-state init [STATE_KEY] --branch [PR_BRANCH]
-.agents/skills/orch/scripts/workflow-state update [STATE_KEY] '.post_pr_stop = null'
+.agents/skills/orch/scripts/orch-runtime state exists --item [STATE_KEY]
+.agents/skills/orch/scripts/orch-runtime state init --item [STATE_KEY] --branch [PR_BRANCH]
+.agents/skills/orch/scripts/orch-runtime state set --item [STATE_KEY] /post_pr_stop null
 ```
 
 ## 2. Fetch Error Details
@@ -70,10 +70,10 @@ git -C "[WORKTREE_PATH]" push
 
 Infer the agent from the component paths or issue labels. Apply [Delegation](../references/skill-rules.md#delegation) before each dev or integration-analysis delegation. A test failure in concurrent code that passes locally is a flaky-test candidate — check the project's testing conventions (missing barriers, iteration-based waits, static mutable state) before treating it as a real regression.
 
-Stamp the round as separate tool calls immediately before delegating. Apply the cleanup condition and arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). Each command takes the one state key as `[ISSUE_ID]`: the caller's `issue_id` when managed, § 1's `[STATE_KEY]` standalone.
+Stamp the round as separate tool calls immediately before delegating. Apply the cleanup condition and arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). Each command takes the one state key as `[ISSUE_ID]`: the caller's `issue_id` when managed, § 1's `[STATE_KEY]` standalone. The mint stores the token at `ci_round_id` and answers it as `result.value`:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state new-round-id [ISSUE_ID] ci_round_id
+.agents/skills/orch/scripts/orch-runtime state new-round-id --item [ISSUE_ID] /ci_round_id
 ```
 
 Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup condition to this helper call:
@@ -83,7 +83,7 @@ Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup cond
 ```
 
 ```bash
-.agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
+.agents/skills/orch/scripts/orch-runtime state set-now --item [ISSUE_ID] /dev_delegated_at
 ```
 
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
@@ -186,14 +186,14 @@ jq -cn --arg repo "[OWNER/REPO]" --argjson pr [PR_NUMBER] \
 On `status=complete` with `verdict=fail`, a transient runner failure is rerun once per head before the result goes anywhere, as [submit-pr.md § 5.1](submit-pr.md#51-ci-failure-recovery) One rerun per head reads and records it, with `[STATE_KEY]` as the key: where the recorded `ci_rerun.head` is not the verdict's `result.head`, record the rerun, then ask for it, and on `rerun run=[RUN_ID]` record the run and repeat the wait after the interval submit-pr.md § 5 keeps between calls, never at once, since GitHub registers the new attempt after the verb answers:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state set [STATE_KEY] ci_rerun '{"head": "[HEAD]", "run": null, "at": "[NOW]"}'
+.agents/skills/orch/scripts/orch-runtime state set --item [STATE_KEY] /ci_rerun '{"head": "[HEAD]", "run": null, "at": "[NOW]"}'
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh ci-rerun [PR_NUMBER] --required-only
 ```
 
 A passing or unconfigured CI result, `status=complete` with `verdict=pass` or `verdict=none`, clears the head-bound standalone budget:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state update [STATE_KEY] '.post_pr_budgets.ci_fix = null'
+.agents/skills/orch/scripts/orch-runtime state set --item [STATE_KEY] /post_pr_budgets/ci_fix null
 ```
 
 **Linear only** — post the short status to the tracker:
@@ -242,13 +242,13 @@ Managed failures return to the caller, which owns `CI_FIX_MAX_CYCLES`. Standalon
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
-.agents/skills/orch/scripts/workflow-state head-budget take [STATE_KEY] ci-fix [CI_HEAD]
+.agents/skills/orch/scripts/orch-runtime state head-budget take --item [STATE_KEY] --kind ci-fix --head [CI_HEAD]
 ```
 
-`continue` reruns § 1. `at-cap` records and returns `ci-fix-cap`:
+Its reply's `verdict`: `continue` reruns § 1. `at-cap` records and returns `ci-fix-cap`:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state post-pr-stop record [STATE_KEY] ci-fix-cap ci "[REMAINING_CHECKS_AND_ATTEMPTS]" [WORKTREE_PATH]/tmp/post-pr-stop-[STATE_KEY].md
+.agents/skills/orch/scripts/orch-runtime state post-pr-stop record --item [STATE_KEY] --name ci-fix-cap --gate ci --remaining "[REMAINING_CHECKS_AND_ATTEMPTS]" --comment-file [WORKTREE_PATH]/tmp/post-pr-stop-[STATE_KEY].md
 .agents/skills/github/scripts/github.sh post-comment [PR_NUMBER] --body-file [WORKTREE_PATH]/tmp/post-pr-stop-[STATE_KEY].md
 ```
 

@@ -104,10 +104,10 @@ With `ORCH_DELIVERY=push-base`, skip step 1 because no PR exists. Run step 2 thr
    **Restack proof.** Before either caller resumes, bind `[WORKTREE_PATH]` to `[WT_PATH]`, `[STATE_KEY]` to `[ISSUE]` and `[PREPARED_HEAD]` to the pushed head. Read the current head's recorded skip. Where one stands, ask the runtime whether the item's proof rows prove the pushed head: a pass at its tree over the new base, or the run the skip is equivalent to, read by the head (`restack-skip` owns the equivalence; the reader takes the skip's validated run as the tree's). A range pass counts where the project declares a range command and no CI context; a full pass covers the tree whole. A reused tree alone supplies no passing validation. This read starts no validation:
 
    ```bash
-   if ! RESTACK_SKIPS="$(.agents/skills/orch/scripts/workflow-state get [STATE_KEY] '.restack_skips // []')"; then
+   if ! RESTACK_SKIPS="$(.agents/skills/orch/scripts/orch-runtime state get --item [STATE_KEY] /restack_skips)"; then
      exit 1
    fi
-   if ! RESTACK_PROOF_HEAD="$(jq -r --arg head [PREPARED_HEAD] '[.[] | select(.head == $head)] | last | .validated_head // empty' <<<"$RESTACK_SKIPS")"; then
+   if ! RESTACK_PROOF_HEAD="$(jq -r --arg head [PREPARED_HEAD] '[(.result.value // [])[] | select(.head == $head)] | last | .validated_head // empty' <<<"$RESTACK_SKIPS")"; then
      exit 1
    fi
    if [[ -n "$RESTACK_PROOF_HEAD" ]]; then
@@ -129,7 +129,7 @@ A PR [submit-pr.md](submit-pr.md) § 2 step 5 armed at creation stays armed unti
 Run step 1 above on the PR. It reads the live arm and queue membership and unarms in its order; a PR it finds neither armed nor queued needs nothing. A hand-back means its final read still found the PR armed or queued: run step 1 once more. A second hand-back replaces the caller's stop with one saying the PR is still armed, which `record` writes over any earlier stop and every later `record-if-empty` keeps, and the run ends there:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state post-pr-stop record [STATE_KEY] disarm-unconfirmed merge "PR #[PR_NUMBER] is still armed or queued: the lane could not disarm it, and GitHub can merge it with no lane watching" [STOP_DIR]/post-pr-stop-[STATE_KEY].md
+.agents/skills/orch/scripts/orch-runtime state post-pr-stop record --item [STATE_KEY] --name disarm-unconfirmed --gate merge --remaining "PR #[PR_NUMBER] is still armed or queued: the lane could not disarm it, and GitHub can merge it with no lane watching" --comment-file [STOP_DIR]/post-pr-stop-[STATE_KEY].md
 ```
 
 ```bash

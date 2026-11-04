@@ -8,7 +8,7 @@ Delegate a set of fix items to a specialist dev agent and accept the round from 
 | `dev-fix [ISSUE_ID]` | Fix items for a specific issue |
 | (from a review workflow) | Managed lifecycle with caller context |
 
-**Caller context** (via `⤵`): `worktree`; `lifecycle`, `"managed"` (return at § 3) or `"self"` (default); `dev_agent`, a live dev agent; `issue_id`, the workflow-state key, whose forms `workflow-state --help` § Keys enumerates, never the bare GitHub issue number; `items`, formatted review items; `source`, `pr-review` | `pr-comments` | `qa-review` | `review` | `local-review` (default `conversation`); `qa_agent`.
+**Caller context** (via `⤵`): `worktree`; `lifecycle`, `"managed"` (return at § 3) or `"self"` (default); `dev_agent`, a live dev agent; `issue_id`, the workflow-state key ([workflow-state.md § Keys](../schemas/workflow-state.md#keys)), never the bare GitHub issue number; `items`, formatted review items; `source`, `pr-review` | `pr-comments` | `qa-review` | `review` | `local-review` (default `conversation`); `qa_agent`.
 
 **Standalone init** (`lifecycle: "self"`). Use the argument as `ISSUE_ID`, else `git-context issue-from-branch .`. Apply [Worktree Scope](../SKILL.md#workflow-execution) and resolve `WT_PATH` as `git-context repo-root "[DIR]"` (inside a worktree `[DIR]` is `.`; from the main repo, `worktree path [ISSUE_ID]`, asking before creating).
 
@@ -75,15 +75,15 @@ Before stamping or delegating the round, check its base:
 Before stamping any group's round, apply [Finding occurrences § Query and admission](../schemas/workflow-state.md#query-and-admission) to this proposed fix set. Write `[WORKTREE_PATH]/tmp/finding-requests-[ISSUE_ID].json` from its source review items or exact failed-receipt check tokens, then read:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state findings query [ISSUE_ID] [WORKTREE_PATH]/tmp/finding-requests-[ISSUE_ID].json
+.agents/skills/orch/scripts/orch-runtime state findings query --item [ISSUE_ID] [WORKTREE_PATH]/tmp/finding-requests-[ISSUE_ID].json
 ```
 
-Save that exact result with the harness file tool as `[WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json`. Take the [finding-specific design read](../references/design-review.md#inputs-and-actions) before the round is minted, pruned or given its delegation time. Carry this same JSON in the existing ask/status and the delegation's `Finding occurrences:` line; unknown or failed intake remains unknown through that route. This read grants no fix or validation allowance.
+A nonzero exit or `ok: false` is a failed query. Otherwise save the reply's `result`, the `{prior, classes}` object, unchanged with the harness file tool as `[WORKTREE_PATH]/tmp/finding-context-[ISSUE_ID].json`. Take the [finding-specific design read](../references/design-review.md#inputs-and-actions) before the round is minted, pruned or given its delegation time. Carry this same JSON in the existing ask/status and the delegation's `Finding occurrences:` line; unknown or failed intake remains unknown through that route. This read grants no fix or validation allowance.
 
 1. **Determine the agent.** `dev_agent` wins. Otherwise read state, falling back to the issue's `agent:*` label or the component paths:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.agent // empty'
+   .agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /agent
    ```
 
 2. **Group items by agent domain** when multi-domain, ordered per [references/skill-rules.md § Coordination](../references/skill-rules.md#coordination). Prefer two scoped rounds over one broad round past roughly eight items.
@@ -124,17 +124,17 @@ Save that exact result with the harness file tool as `[WORKTREE_PATH]/tmp/findin
    ```
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
+   .agents/skills/orch/scripts/orch-runtime state set-now --item [ISSUE_ID] /dev_delegated_at
    ```
 
    Then write the round's admission request, `[WORKTREE_PATH]/tmp/validation-admission-[ISSUE_ID]-[DEV_ROUND_ID].json`, with the harness file tool as `{"op": "record-validation-admission", "round_id": "[DEV_ROUND_ID]"}`; the delegation's `Validation admission:` line names the command that runs it, as [dev-start.md § 2](dev-start.md#2-delegate) states. The start under the admitted id is `orch-runtime validate start`, which the fix round reaches through `dev-validate-run --worktree [WORKTREE_PATH] --base [BASE_SHA] --run-id [RUN_ID]`: a round that names its base takes the narrowest mode the project declares, `ci` where `DEV_VALIDATE_CI_CONTEXT` is declared and the base requires it, else `range` where `DEV_VALIDATE_RANGE_CMD` is declared, else the whole battery; a `--validate-mode full` on a project declaring a narrower mode is refused without a cause, and the mode is on the admitted entry's `proof`.
 
    Then persist the delegated item set on disk. Write `[WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json` with the harness file-write tool as a JSON array of `{"n": [N], "text": "[ITEM_TEXT]", "reach": "[REACH]"}`, one per delegated item. Copy `[ITEM_TEXT]` under [dev-round.md § Item text](../schemas/dev-round.md#item-text). `[REACH]` names the shipped producer, user action, or fixture that reaches the finding: a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix: disposition it per [`../references/finding-disposition.md` § Filing bar](../../reviewer/references/finding-disposition.md#filing-bar) instead of delegating it. The writer refuses a short list of shapes, enumerated in [`../schemas/dev-round.md`](../schemas/dev-round.md) and in `dev-round-write --help`; it is a backstop and not the judgement: a reach it accepts has been recorded, not approved.
 
-   Read the near-ceiling lines the last recorded round left, and render one `Near-ceiling:` line per entry in the delegation. The key is the one carrier: the artifact's own path is addressed by `dev_round_id`, which the stamp above has already overwritten.
+   Read the near-ceiling lines the last recorded round left, and render one `Near-ceiling:` line per entry in the delegation; an absent field renders none. The key is the one carrier: the artifact's own path is addressed by `dev_round_id`, which the stamp above has already overwritten.
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.near_ceiling // []'
+   .agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /near_ceiling
    ```
 
    Decide whether this fix round may add protected files. [`../schemas/dev-round.md` § Protected additions](../schemas/dev-round.md#protected-additions) is the sole scope definition. The default is none.
@@ -192,7 +192,7 @@ Save that exact result with the harness file tool as `[WORKTREE_PATH]/tmp/findin
    **Check A**, two tool calls:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.dev_round_id // empty'
+   .agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /dev_round_id
    ```
 
    ```bash
@@ -257,13 +257,13 @@ Save that exact result with the harness file tool as `[WORKTREE_PATH]/tmp/findin
    ```
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state append-file [ISSUE_ID] pr_comment_review.patched_causes tmp/patched-cause-[ISSUE_ID].json
+   .agents/skills/orch/scripts/orch-runtime state append-file --item [ISSUE_ID] /pr_comment_review/patched_causes tmp/patched-cause-[ISSUE_ID].json
    ```
 
    Copy `[LOCATION]` from the fixed item's header as written. Copy `[OWNER]` from its `Owner:` line as written; omit the `owner` key when the item has no such line.
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state increment [ISSUE_ID] cycles
+   .agents/skills/orch/scripts/orch-runtime state increment --item [ISSUE_ID] /cycles
    ```
 
    Each write clears the item from BOTH buckets before appending its own entry, matched on the RECORDED entry's (location, description), the § 8 key. One write per item, and the item stands in exactly one bucket, once.

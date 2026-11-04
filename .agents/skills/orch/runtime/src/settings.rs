@@ -1,19 +1,19 @@
 //! The runtime's one settings reader: the project's `[env]` tables, its
 //! private env file and the caller's environment, layered the way the
-//! legacy `workflow-state` loads them, read as data and never run.
+//! shell store loaded them, read as data and never run.
 //!
 //! Precedence, highest first: a flag on the command line, the caller's own
 //! environment, the private env file (`.env.local`, or the file
 //! `KENDEX_ENV_FILE` names, skipped under `--no-private-env`),
 //! `.kendex/settings.toml`, then `kendex.settings.toml`. An empty value is
-//! an unset one, as the legacy `${KEY:-default}` reads take it.
+//! an unset one, as a shell `${KEY:-default}` read takes it.
 //!
 //! The settings files follow the kendex `[env]` contract the shell loader
 //! holds them to: `[env]` assignments of single-line basic strings with no
 //! `"` or `\`, or literal strings with no apostrophe, an optional trailing
 //! `#` comment, a duplicate key refused, a `[`-led line a lone `[name]`
 //! header or refused, a leading byte-order mark refused. The private env
-//! file is shell to its legacy loader; here it is read as data, which is the
+//! file is shell to the loader that sources it; here it is read as data, which is the
 //! only way to answer what it says without running what it does: an
 //! assignment line, `KEY=VALUE` with an optional leading `export`, whose
 //! value is single-quoted, double-quoted under the contract above, or one
@@ -31,6 +31,7 @@ use agent_runtime::harness::Harness;
 use agent_runtime::host;
 use agent_runtime::launch::{Permission, QuestionTool};
 
+use crate::archive::ArchiveRoot;
 use crate::error::Result;
 
 /// The folder the per-item state is kept in, relative to the main checkout
@@ -55,10 +56,10 @@ pub const HARNESS_BINARIES_KEY: &str = "ORCH_HARNESS_BINARIES";
 pub const WORKTREE_CLI_KEY: &str = "WORKTREE_CLI";
 /// Whether a controller may ask for its own succession: `on`, the default,
 /// or `off`, under which `request-transfer` refuses before any intent
-/// persists (decision 78).
+/// persists.
 pub const SUCCESSION_KEY: &str = "ORCH_OVERSEER_SUCCESSION";
-/// The job-unit launcher a succession's effect is detached through
-/// (decision 76); empty finds the installed orch package's own.
+/// The job-unit launcher a succession's effect is detached through; empty
+/// finds the installed orch package's own.
 pub const JOB_UNIT_KEY: &str = "ORCH_JOB_UNIT";
 /// The settings key naming the project's private env file.
 pub const ENV_FILE_KEY: &str = "KENDEX_ENV_FILE";
@@ -68,7 +69,6 @@ pub const DEFAULT_ENV_FILE: &str = ".env.local";
 pub const SETTINGS_FILES: [&str; 2] = ["kendex.settings.toml", ".kendex/settings.toml"];
 /// The worktree package's program under the project's install.
 pub const WORKTREE_CLI_DEFAULT: &str = ".agents/skills/worktree/scripts/worktree";
-// U5g: the agent-runtime command the wake duty delivers through.
 /// The agent-runtime command the wake duty delivers through; empty finds
 /// the installed agent-runtime package's own wrapper.
 pub const AGENT_RUNTIME_KEY: &str = "ORCH_AGENT_RUNTIME";
@@ -77,14 +77,13 @@ pub const AGENT_RUNTIME_DEFAULT: &str = ".agents/skills/agent-runtime/scripts/ag
 /// The orch package's job-unit launcher under the project's install.
 pub const JOB_UNIT_DEFAULT: &str = ".agents/skills/orch/scripts/lib/job-unit.sh";
 /// The lanes the fleet cap admits at once: every lane kind but
-/// `claude-cloud`, which the legacy cloud cap bounds. The shipped default
-/// is 4; the legacy launcher keeps its own, 3 (`open-terminal`, `orch-env
-/// ORCH_OVERSEER_LANES 3`), until it retires (decision 94).
+/// `claude-cloud`, which the cloud cap bounds. The shipped default
+/// is 4; the shell launcher `open-terminal` defaults to 3.
 pub const LANE_CAP_KEY: &str = "ORCH_OVERSEER_LANES";
-/// The directory the legacy launcher keeps its claim store under, as
+/// The directory the shell launcher keeps its claim store under, as
 /// `<dir>/claims` (`lib/lane-claims.sh`, `lane_claims_dir`); the main
 /// checkout's `tmp/oversee-watch` when unset. Read, never written, by the
-/// lane cap's admission during coexistence (decision 97).
+/// lane cap's admission while both launchers run.
 pub const CLAIM_STATE_DIR_KEY: &str = "OVERSEE_WATCH_STATE_DIR";
 /// The mailbox program a close asks for a lane's unanswered asks; empty
 /// finds the installed mailbox package.
@@ -96,8 +95,8 @@ pub const DEV_VALIDATE_CLI_KEY: &str = "DEV_VALIDATE_CLI";
 pub const LANE_MAIL_CLI_DEFAULT: &str = ".agents/skills/mailbox/scripts/lane-mail";
 /// The orch package's validation runner under the project's install.
 pub const DEV_VALIDATE_CLI_DEFAULT: &str = ".agents/skills/orch/scripts/dev-validate-run";
-// U6a: the project's validation declaration, which `validate start`
-// resolves the mode from (step6-map § A4; `dev-validate-run --help`).
+// The project's validation declaration, which `validate start`
+// resolves the mode from (`dev-validate-run --help`).
 /// The project's whole battery; empty is no declaration, which a start
 /// refuses.
 pub const DEV_VALIDATE_CMD_KEY: &str = "DEV_VALIDATE_CMD";
@@ -119,7 +118,7 @@ pub const DEV_VALIDATE_TIMEOUT_SECS_KEY: &str = "DEV_VALIDATE_TIMEOUT_SECS";
 pub const DELIVERY_KEY: &str = "ORCH_DELIVERY";
 const DEFAULT_VALIDATE_TIMEOUT_SECS: u64 = 3600;
 /// The program the lane admission reads a diff range's changed paths
-/// through (decision 118 (4)); empty finds the installed change-scope
+/// through; empty finds the installed change-scope
 /// package's `harness-only`.
 pub const SCOPE_PATHS_CLI_KEY: &str = "CHANGE_SCOPE_PATHS_CLI";
 /// The change-scope package's path reader under the project's install.
@@ -127,11 +126,10 @@ pub const SCOPE_PATHS_CLI_DEFAULT: &str = ".agents/skills/change-scope/scripts/h
 /// The claim store under the main checkout when no directory is named.
 pub const CLAIM_STORE_DEFAULT: &str = "tmp/oversee-watch/claims";
 /// Seconds a transfer's or a stop's caller waits for its detached job to
-/// claim the intent (decision 143): the claim's own bound, apart from the
+/// claim the intent: the claim's own bound, apart from the
 /// tmux verification bound a test shortens to force a failed delivery.
 pub const JOB_CLAIM_SECS_KEY: &str = "ORCH_JOB_CLAIM_SECS";
 /// Seconds between the end of one mail turn and the start of the next
-/// (step5-map F1).
 pub const WATCH_MAIL_INTERVAL_KEY: &str = "ORCH_WATCH_MAIL_INTERVAL";
 /// Long passes between two repeats of a standing mark or stall line.
 pub const OVERSEER_MARK_REPEAT_KEY: &str = "ORCH_OVERSEER_MARK_REPEAT";
@@ -160,15 +158,13 @@ pub const WALL_RELAUNCH_KEY: &str = "ORCH_WALL_RELAUNCH";
 pub const MAIN_WORKFLOWS_KEY: &str = "ORCH_MAIN_WORKFLOWS";
 /// The Linear team the tracker duties read; unset leaves them off.
 pub const LINEAR_TEAM_KEY: &str = "LINEAR_TEAM";
-/// The tracker program the tracker duty reads through (the legacy
-/// `oversee-watch` key); empty finds the installed linear package's own.
+/// The tracker program the tracker duty reads through; empty finds the
+/// installed linear package's own.
 pub const TRACKER_CLI_KEY: &str = "OVERSEE_WATCH_TRACKER";
 /// The linear package's program under the project's install.
 pub const TRACKER_CLI_DEFAULT: &str = ".agents/skills/linear/scripts/linear.sh";
-// U5e2: the reducer the GitHub duty runs per repository.
 /// The github skill's reducer the GitHub duty runs per repository with
-/// `GH_REPO` (the legacy `oversee-watch` key); empty finds the installed
-/// github package's own.
+/// `GH_REPO`; empty finds the installed github package's own.
 pub const PR_WATCH_CLI_KEY: &str = "OVERSEE_WATCH_PR_WATCH";
 /// The github package's reducer under the project's install.
 pub const PR_WATCH_CLI_DEFAULT: &str = ".agents/skills/github/scripts/pr-watch.sh";
@@ -182,7 +178,7 @@ pub const SECURITY_ALERT_TOKEN_FILE_KEY: &str = "ORCH_SECURITY_ALERT_TOKEN_FILE"
 /// default, or `off`.
 pub const EXTERNAL_TRIAGE_KEY: &str = "ORCH_EXTERNAL_TRIAGE";
 /// Further `owner/repo` names the GitHub duty reads beside the fleet's,
-/// separated by whitespace, lowercased and deduplicated as the legacy
+/// separated by whitespace, lowercased and deduplicated as the shell
 /// `orch_connected_repos` read them.
 pub const CONNECTED_REPOS_KEY: &str = "ORCH_CONNECTED_REPOS";
 /// The owner's tracker account, whose comments answer a tracker-posted ask
@@ -194,36 +190,61 @@ pub const USER_EMAIL_KEY: &str = "KENDEX_USER_EMAIL";
 /// The label a tracker-posted ask carries; the owner-answer read is
 /// configured only with both the label and an email.
 pub const OWNER_ASK_LABEL_KEY: &str = "ORCH_OWNER_ASK_LABEL";
-// U5d2: the overseer mark line's payload names the preference.
+// The overseer mark line's payload names the preference.
 /// The `harness:model:effort` entries a succession walks for the
 /// successor lane (`lib/overseer-launch.sh`, `ol_preference`); the mark
 /// line's payload names its value.
 pub const OVERSEER_PREFERENCE_KEY: &str = "ORCH_OVERSEER_PREFERENCE";
 /// The standard class on each harness (`OL_DEFAULT_PREFERENCE`).
 pub const DEFAULT_OVERSEER_PREFERENCE: &str = "claude:standard:high,codex:standard:high";
-// U5f: the retention, report and heartbeat duties' keys.
 /// Days past a record's own recorded end before the retention duty removes
-/// it (the key `workflow-state prune` and `lane-mail compact` read): the
-/// event log's rotated segments and an ended lane's paths. A count of none
-/// is a misconfiguration, as the legacy `find -mtime -0` kept everything.
+/// it (the key `lane-mail compact` reads too): the event log's rotated
+/// segments, an ended lane's paths and every other unit of the state
+/// directory. A count of none is a misconfiguration: nothing would stand a
+/// day.
 pub const RECORD_RETENTION_DAYS_KEY: &str = "ORCH_RECORD_RETENTION_DAYS";
-/// The report judge the report duty calls each long cadence (the legacy
-/// `oversee-watch` key); empty finds the installed orch package's own.
+/// Where the prune and an item's close-out archive what they remove. A set
+/// value is an absolute path, else every archive write refuses it, while a
+/// verb that writes no archive runs; empty takes `archive/` under
+/// `FLEET_DIR`, else under `~/.fleet`.
+pub const ARCHIVE_ROOT_KEY: &str = "ORCH_ARCHIVE_ROOT";
+/// The fleet directory the default archive root sits under.
+pub const FLEET_DIR_KEY: &str = "FLEET_DIR";
+/// The report judge the report duty calls each long cadence; empty finds
+/// the installed orch package's own.
 pub const REPORT_CLI_KEY: &str = "OVERSEE_WATCH_REPORT";
 /// The orch package's report judge under the project's install.
 pub const REPORT_CLI_DEFAULT: &str = ".agents/skills/orch/scripts/oversee-report";
-/// The account reader the heartbeat's roster and owed verdicts run (the
-/// legacy `oversee-watch` key; decision 121 Q9); empty finds the installed
-/// orch package's own.
+/// The account reader the heartbeat's roster and owed verdicts run;
+/// empty finds the installed orch package's own.
 pub const LANES_CLI_KEY: &str = "OVERSEE_WATCH_LANES";
 /// The orch package's account reader under the project's install.
 pub const LANES_CLI_DEFAULT: &str = ".agents/skills/orch/scripts/lanes";
 const DEFAULT_RECORD_RETENTION_DAYS: u32 = 5;
-// U6h: the accounts judge's keys (step6-map § A10; decision 183 Q11).
+// The state verbs' keys.
+/// The fleet-log rows a successor reads whole at takeover, so the bound on
+/// each row's text is what bounds that read.
+pub const TAKEOVER_ROWS_KEY: &str = "ORCH_TAKEOVER_ROWS";
+/// The bytes of text one fleet-log row may carry.
+pub const FLEET_LOG_ROW_BYTES_KEY: &str = "ORCH_FLEET_LOG_ROW_BYTES";
+/// The owner progress reports' directory; a relative path joins the main
+/// checkout.
+pub const PROGRESS_REPORT_DIR_KEY: &str = "ORCH_PROGRESS_REPORT_DIR";
+/// The round caps: re-review cycles, external review rounds, CI-fix cycles.
+pub const REVIEW_MAX_CYCLES_KEY: &str = "REVIEW_MAX_CYCLES";
+pub const REVIEW_MAX_EXTERNAL_ROUNDS_KEY: &str = "REVIEW_MAX_EXTERNAL_ROUNDS";
+pub const CI_FIX_MAX_CYCLES_KEY: &str = "CI_FIX_MAX_CYCLES";
+const DEFAULT_TAKEOVER_ROWS: u64 = 10;
+const DEFAULT_FLEET_LOG_ROW_BYTES: u64 = 600;
+const DEFAULT_PROGRESS_REPORT_DIR: &str = "tmp/progress-reports";
+const DEFAULT_REVIEW_MAX_CYCLES: u64 = 1;
+const DEFAULT_REVIEW_MAX_EXTERNAL_ROUNDS: u64 = 4;
+const DEFAULT_CI_FIX_MAX_CYCLES: u64 = 6;
+// The accounts judge's keys.
 /// A providerless machine's own statement of a plan's end, `<name>=<YYYY-
 /// MM-DD>` pairs: the account is picked until that UTC day and measured
 /// after it, so a stated end a live reading contradicts is seen. The judge
-/// reads it; the legacy reader is run with it emptied, so it measures the
+/// reads it; the account reader is run with it emptied, so it measures the
 /// account instead of listing it `retired` unread.
 pub const LANE_RETIRE_KEY: &str = "ORCH_LANE_RETIRE";
 /// The bound a pick admits an account under, in percent used (`lanes`'
@@ -234,7 +255,7 @@ pub const LANE_MAX_PCT_KEY: &str = "ORCH_LANE_MAX_PCT";
 pub const LANE_BURN_PCT_KEY: &str = "ORCH_LANE_BURN_PCT_PER_HOUR";
 /// The account headroom the overseer hands off at, and so the room a seat
 /// keeps for it: a worker's pick holds a seat to `min(ORCH_LANE_MAX_PCT,
-/// 100 - this)` (U8d, KEN-4416).
+/// 100 - this)`.
 pub const OVERSEER_HEADROOM_PCT_KEY: &str = "ORCH_OVERSEER_HEADROOM_PCT";
 /// The Codex credit balance a window wall is lifted above (`lanes`'
 /// `ORCH_LANE_CODEX_CREDIT_FLOOR`).
@@ -247,7 +268,7 @@ pub const CLOUD_CREDIT_FLOOR_KEY: &str = "ORCH_LANE_CLOUD_CREDIT_FLOOR";
 pub const LANE_CLOUD_REPOS_KEY: &str = "ORCH_LANE_CLOUD_REPOS";
 /// `<pi root>=<used>/<granted>` pairs: the Copilot pool each Pi root
 /// spends, as the owner states it, judged where no provider row reads it
-/// (`lanes`' own setting; U8d3).
+/// (`lanes`' own setting).
 pub const LANE_COPILOT_POOL_KEY: &str = "ORCH_LANE_COPILOT_POOL";
 /// The lane names the reader never reads (`lanes`' own setting), read here
 /// for the stated Pi roots alone, which no reader lists.
@@ -286,7 +307,7 @@ const GIT_TIMEOUT: Duration = Duration::from_secs(15);
 /// The keys this runtime reads from the private env file.
 const READ_KEYS: [&str; 50] = [
     TRACKER_CLI_KEY,
-    PR_WATCH_CLI_KEY, // U5e2
+    PR_WATCH_CLI_KEY,
     SECURITY_ALERTS_KEY,
     SECURITY_ALERT_TOKEN_FILE_KEY,
     EXTERNAL_TRIAGE_KEY,
@@ -302,14 +323,13 @@ const READ_KEYS: [&str; 50] = [
     LAUNCH_PERMISSION_KEY,
     HARNESS_BINARIES_KEY,
     WORKTREE_CLI_KEY,
-    AGENT_RUNTIME_KEY, // U5g
+    AGENT_RUNTIME_KEY,
     SUCCESSION_KEY,
     JOB_UNIT_KEY,
     LANE_CAP_KEY,
     CLAIM_STATE_DIR_KEY,
     LANE_MAIL_CLI_KEY,
     DEV_VALIDATE_CLI_KEY,
-    // U6a
     DEV_VALIDATE_CMD_KEY,
     DEV_VALIDATE_RANGE_CMD_KEY,
     DEV_VALIDATE_CI_CONTEXT_KEY,
@@ -332,8 +352,7 @@ const READ_KEYS: [&str; 50] = [
     WALL_RELAUNCH_KEY,
     MAIN_WORKFLOWS_KEY,
     LINEAR_TEAM_KEY,
-    OVERSEER_PREFERENCE_KEY, // U5d2
-    // U5f
+    OVERSEER_PREFERENCE_KEY,
     RECORD_RETENTION_DAYS_KEY,
     REPORT_CLI_KEY,
     LANES_CLI_KEY,
@@ -350,7 +369,7 @@ pub struct Flags {
 /// The checkout the settings belong to: the toplevel of the directory the
 /// runtime runs in, and the main checkout a relative state directory is
 /// resolved against (a linked worktree keeps its state beside the main
-/// checkout's, as the legacy `project_path` resolves it).
+/// checkout's, as the store's `project_path` resolves it).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Roots {
     pub project: PathBuf,
@@ -375,7 +394,7 @@ impl QuestionToolSetting {
     }
 }
 
-/// Whether a controller may ask for its own succession (decision 78).
+/// Whether a controller may ask for its own succession.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Succession {
     On,
@@ -383,7 +402,7 @@ pub enum Succession {
 }
 
 impl Succession {
-    /// The setting's word, as the legacy `succession=` field printed it.
+    /// The setting's word, as the watch's `succession=` field printed it.
     pub fn word(self) -> &'static str {
         match self {
             Succession::On => "on",
@@ -399,10 +418,9 @@ pub enum WallRelaunch {
     Ask,
 }
 
-/// The fleet watch's settings, read once at the runner's start (step5-map
-/// A2-A10): the cadence the mail duty keeps and the bounds the observation,
-/// mail and tracker duties judge against, each with the legacy
-/// `oversee-watch` default. `--interval` and `--max-loops` are the runner's
+/// The fleet watch's settings, read once at the runner's start: the cadence
+/// the mail duty keeps and the bounds the observation, the mail and tracker
+/// duties judge against. `--interval` and `--max-loops` are the runner's
 /// own flags.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WatchSettings {
@@ -417,13 +435,13 @@ pub struct WatchSettings {
     pub cloud_stall: Duration,
     pub lane_age: Duration,
     pub wall_relaunch: WallRelaunch,
-    /// `owner/repo:workflow.yml` entries, lowercased repository, as the
-    /// legacy read them; an entry of another shape is refused.
+    /// `owner/repo:workflow.yml` entries, lowercased repository; an entry
+    /// of another shape is refused.
     pub main_workflows: Vec<String>,
     pub linear_team: Option<String>,
 }
 
-/// Whether a GitHub audit runs: the legacy `on`/`off` switches.
+/// Whether a GitHub audit runs: the `on`/`off` switches.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Audit {
     On,
@@ -439,13 +457,12 @@ pub struct OwnerTracker {
     pub label: String,
 }
 
-/// What the tracker and GitHub read duties consume (step5-map A4, A10),
-/// each with its legacy `oversee-watch` default.
+/// What the tracker and GitHub read duties consume.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReadSettings {
     /// The tracker program the tracker duty reads through.
     pub tracker_cli: PathBuf,
-    /// The reducer the GitHub duty runs per repository (U5e2).
+    /// The reducer the GitHub duty runs per repository.
     pub pr_watch_cli: PathBuf,
     pub security_alerts: Audit,
     /// The installation token file the alert reads run under.
@@ -456,7 +473,7 @@ pub struct ReadSettings {
     pub owner_tracker: Option<OwnerTracker>,
 }
 
-/// U6a: how a change is delivered, which decides whether a ci request may
+/// How a change is delivered, which decides whether a ci request may
 /// defer to the pull request's required CI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Delivery {
@@ -464,8 +481,8 @@ pub enum Delivery {
     PushBase,
 }
 
-/// U6a: the project's validation declaration, the one source `validate
-/// start` resolves a run's mode from (step6-map § A4): the whole battery,
+/// The project's validation declaration, the one source `validate
+/// start` resolves a run's mode from: the whole battery,
 /// the range command where declared, the CI context where declared, the
 /// selector, the finding prefix and the bound. A command is its text,
 /// trimmed of nothing; an empty or blank value is no declaration.
@@ -480,7 +497,7 @@ pub struct ValidateSettings {
     pub delivery: Delivery,
 }
 
-/// U6h: one stated retirement, `<name>=<YYYY-MM-DD>`: the account whose
+/// One stated retirement, `<name>=<YYYY-MM-DD>`: the account whose
 /// alias or directory name is `name` ends its plan on that UTC day.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Retirement {
@@ -488,10 +505,9 @@ pub struct Retirement {
     pub date: String,
 }
 
-/// U6h: what the accounts judge reads beside the listing (step6-map
-/// § A10): the local retirement statement and the pick's bounds, each the
-/// legacy `lanes` default where unset, refused by key and value as `lanes`
-/// refused them.
+/// What the accounts judge reads beside the listing: the local retirement
+/// statement and the pick's bounds, each the `lanes` default where unset,
+/// refused by key and value as `lanes` refuses them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountSettings {
     pub retire: Vec<Retirement>,
@@ -502,7 +518,7 @@ pub struct AccountSettings {
     pub cloud_credit_floor: u64,
     pub cloud_repos: Vec<CloudRepo>,
     /// `ORCH_LANE_COPILOT_POOL`: the Copilot pool each Pi root spends, as
-    /// the owner states it (U8d3).
+    /// the owner states it.
     pub copilot_pool: Vec<CopilotPool>,
     /// `ORCH_LANE_EXCLUDE`'s names, applied to the stated Pi roots alone:
     /// the reader applies the setting to every row it lists.
@@ -514,7 +530,7 @@ pub struct AccountSettings {
     pub host: Option<String>,
 }
 
-/// U8d: one `ORCH_LANE_CLOUD_REPOS` entry, `<name>=<owner>/<repo>`: the
+/// One `ORCH_LANE_CLOUD_REPOS` entry, `<name>=<owner>/<repo>`: the
 /// account whose alias or directory name is `name` has access to `repo`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CloudRepo {
@@ -522,7 +538,7 @@ pub struct CloudRepo {
     pub repo: String,
 }
 
-/// U8d3: one `ORCH_LANE_COPILOT_POOL` entry, `<pi root>=<used>/<granted>`:
+/// One `ORCH_LANE_COPILOT_POOL` entry, `<pi root>=<used>/<granted>`:
 /// the Copilot pool the Pi root at `dir` spends, `used` of `granted`
 /// credits spent, as the owner states it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -532,7 +548,7 @@ pub struct CopilotPool {
     pub granted: u64,
 }
 
-/// U8d4: one `ORCH_LANE_ALIASES` entry, `<name>=<alias>`: the lane whose
+/// One `ORCH_LANE_ALIASES` entry, `<name>=<alias>`: the lane whose
 /// directory name is `name`, with or without its dot, is called `alias`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Alias {
@@ -544,53 +560,51 @@ pub struct Alias {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
     pub roots: Roots,
-    /// The tracker and GitHub read duties' keys.
     pub reads: ReadSettings,
     pub state_dir: PathBuf,
     pub tmux_session: Option<String>,
     pub verify: Duration,
     pub close_grace: Duration,
-    /// How long a caller waits for its detached job to claim the intent
-    /// (decision 143).
     pub claim: Duration,
     pub watch: WatchSettings,
     pub question_tool: QuestionToolSetting,
     pub permission: Permission,
     pub harness_binaries: BTreeMap<Harness, PathBuf>,
     pub worktree_cli: PathBuf,
-    /// U5g: the agent-runtime command the wake duty delivers through.
     pub agent_runtime: PathBuf,
     pub succession: Succession,
-    /// The job-unit launcher a transfer's effect is detached through.
     pub job_unit: PathBuf,
-    /// The lanes the fleet cap admits at once (decision 97).
     pub lane_cap: u32,
-    /// The legacy claim store the cap's admission reads, never writes.
+    /// The shell launcher's claim store the cap's admission reads, never writes.
     pub claim_store: PathBuf,
-    /// The mailbox program a close asks for unanswered asks.
     pub lane_mail_cli: PathBuf,
-    /// The program a close ends a worktree's validation runs through.
     pub dev_validate_cli: PathBuf,
-    /// U6a: the project's validation declaration.
     pub validate: ValidateSettings,
-    /// The program the lane admission reads a range's changed paths
-    /// through.
     pub scope_paths_cli: PathBuf,
-    /// U5d2: the succession's preference entries, which the overseer mark
+    /// The succession's preference entries, which the overseer mark
     /// line's payload names; an empty value reads as the default, as this
     /// reader takes every key.
     pub overseer_preference: String,
-    // U5f: the retention, report and heartbeat duties.
-    /// Days past its own recorded end before the retention duty removes a
-    /// record.
     pub retention_days: u32,
-    /// The report judge the report duty calls (`oversee-report due`).
+    pub archive_root: ArchiveRoot,
     pub report_cli: PathBuf,
-    /// The account reader the heartbeat runs (`lanes list --json`, `lanes
-    /// pick`).
     pub lanes_cli: PathBuf,
-    /// U6h: the accounts judge's statement and bounds.
     pub accounts: AccountSettings,
+    pub store: StoreSettings,
+}
+
+/// The state verbs' settings: the takeover window and the row bound of the
+/// fleet log, the progress report directory, and the round caps. A cap of
+/// none is a documented value, so each is a whole number from zero.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StoreSettings {
+    pub takeover_rows: u64,
+    pub fleet_log_row_bytes: u64,
+    /// Absolute: a relative setting is joined to the main checkout.
+    pub progress_report_dir: PathBuf,
+    pub review_max_cycles: u64,
+    pub review_max_external_rounds: u64,
+    pub ci_fix_max_cycles: u64,
 }
 
 fn refused(key: &'static str, fields: &[(&str, &str)]) -> crate::Error {
@@ -608,12 +622,12 @@ fn file_refusal(path: &Path, key: &str, reason: &str) -> crate::Error {
     )
 }
 
-fn value_refusal(key: &str, value: &str) -> crate::Error {
+pub(crate) fn value_refusal(key: &str, value: &str) -> crate::Error {
     refused("setting-invalid", &[("key", key), ("value", value)])
 }
 
 /// The checkout roots for `cwd`, read from git through the one runner. A
-/// directory outside any repository is its own root, as the legacy
+/// directory outside any repository is its own root, as the shell
 /// `git rev-parse --show-toplevel || pwd` takes it.
 pub fn roots(cwd: &Path) -> Result<Roots> {
     let cwd_text = cwd.display().to_string();
@@ -711,7 +725,7 @@ pub fn load(
             values.insert(key, value);
         }
     } else {
-        // Under `--no-private-env` the legacy loader takes `ORCH_STATE_DIR`
+        // Under `--no-private-env` the shell loader takes `ORCH_STATE_DIR`
         // alone from the files, the later file outranking the earlier and
         // both outranking the caller's environment, and reads no other key
         // from them (`workflow-state` § State directory). Every other key
@@ -751,9 +765,8 @@ pub fn load(
             },
         }
     };
-    // The legacy watch's `^(0|[1-9][0-9]*)$` (`oversee-watch:623`, `:636`):
-    // a wait of none is a documented value (the mail read once a turn, a
-    // directive reported unread at once).
+    // Zero, or digits with no leading zero: a wait of none is a documented
+    // value (the mail read once a turn, a directive reported unread at once).
     let secs_or_none = |key: &str, default: u64| -> Result<Duration> {
         match get(key) {
             None => Ok(Duration::from_secs(default)),
@@ -800,7 +813,7 @@ pub fn load(
         Some(path) => PathBuf::from(path),
         None => roots.project.join(JOB_UNIT_DEFAULT),
     };
-    // Base ten, no sign and no leading zero, as the legacy launcher parses
+    // Base ten, no sign and no leading zero, as the shell launcher parses
     // it; a count of none names a misconfiguration (a cap of none admits no
     // lane, a repeat of none repeats every pass).
     let count = |key: &str, default: u32| -> Result<u32> {
@@ -813,8 +826,7 @@ pub fn load(
         }
     };
     let lane_cap = count(LANE_CAP_KEY, DEFAULT_LANE_CAP)?;
-    // The legacy watch's `^[0-9]+$` with the value at least 1
-    // (`oversee-watch:603`): a leading zero is admitted there.
+    // Digits alone with the value at least 1, a leading zero admitted.
     let passes = |key: &str, default: u32| -> Result<u32> {
         match get(key) {
             None => Ok(default),
@@ -885,11 +897,11 @@ pub fn load(
         None => roots.project.join(default),
     };
     let lane_mail_cli = program(LANE_MAIL_CLI_KEY, LANE_MAIL_CLI_DEFAULT);
-    let agent_runtime = program(AGENT_RUNTIME_KEY, AGENT_RUNTIME_DEFAULT); // U5g
+    let agent_runtime = program(AGENT_RUNTIME_KEY, AGENT_RUNTIME_DEFAULT);
     let dev_validate_cli = program(DEV_VALIDATE_CLI_KEY, DEV_VALIDATE_CLI_DEFAULT);
-    // U6a: a command whose value is blank is no declaration, as the legacy
+    // A command whose value is blank is no declaration, as the shell
     // `${cmd//[[:space:]]/}` read it; a prefix with a newline inside can
-    // prefix no line, which the legacy left unrecorded, and is refused.
+    // prefix no line, which the shell left unrecorded, and is refused.
     let command = |key: &str| get(key).filter(|v| !v.trim().is_empty()).map(str::to_owned);
     let finding_prefix = match get(DEV_VALIDATE_FINDING_PREFIX_KEY) {
         Some(text) if text.contains('\n') => {
@@ -897,7 +909,7 @@ pub fn load(
         }
         other => other.map(str::to_owned),
     };
-    // The legacy `check_seconds`: every byte a digit and the value above
+    // The shell `check_seconds` rule: every byte a digit and the value above
     // zero, a leading zero admitted.
     let validate_timeout = match get(DEV_VALIDATE_TIMEOUT_SECS_KEY) {
         None => Duration::from_secs(DEFAULT_VALIDATE_TIMEOUT_SECS),
@@ -923,12 +935,27 @@ pub fn load(
     let scope_paths_cli = program(SCOPE_PATHS_CLI_KEY, SCOPE_PATHS_CLI_DEFAULT);
     let overseer_preference = get(OVERSEER_PREFERENCE_KEY)
         .unwrap_or(DEFAULT_OVERSEER_PREFERENCE)
-        .to_owned(); // U5d2
-    // U5f
+        .to_owned();
     let retention_days = count(RECORD_RETENTION_DAYS_KEY, DEFAULT_RECORD_RETENTION_DAYS)?;
+    let archive_root = match get(ARCHIVE_ROOT_KEY) {
+        Some(text) if Path::new(text).is_absolute() => ArchiveRoot::Configured(PathBuf::from(text)),
+        Some(text) => ArchiveRoot::Invalid(text.to_owned()),
+        None => {
+            let fleet = match get(FLEET_DIR_KEY) {
+                Some(dir) => PathBuf::from(dir),
+                None => PathBuf::from(get("HOME").unwrap_or("")).join(".fleet"),
+            };
+            let fleet = if fleet.is_absolute() {
+                fleet
+            } else {
+                roots.project.join(fleet)
+            };
+            ArchiveRoot::Default(fleet.join("archive"))
+        }
+    };
     let report_cli = program(REPORT_CLI_KEY, REPORT_CLI_DEFAULT);
     let lanes_cli = program(LANES_CLI_KEY, LANES_CLI_DEFAULT);
-    // U6h: the accounts judge's keys, held to `lanes`' own grammar
+    // The accounts judge's keys, held to `lanes`' own grammar
     // (`validate_lane_settings`, `pct_valid`): a retirement names a lane
     // (no `/`, no `~`) and a real calendar day; a percentage is a whole
     // number 0 to 100; a value nobody can read is refused, never defaulted.
@@ -969,7 +996,7 @@ pub fn load(
             },
         }
     };
-    // U8d: a cloud repository entry names a lane (as a retirement does) and
+    // A cloud repository entry names a lane (as a retirement does) and
     // an `owner/repo` in GitHub's own alphabet; one nobody can read is
     // refused, never dropped, since a dropped entry would hand a cloud
     // session an account with no access to the repository.
@@ -999,7 +1026,7 @@ pub fn load(
             });
         }
     }
-    // U8d3: the stated Copilot pool, `lanes`' `copilot_pool_entries` rule:
+    // The stated Copilot pool, `lanes`' `copilot_pool_entries` rule:
     // an absolute Pi root, the credits used and granted as whole numbers of
     // at most twelve digits, the grant above zero, one entry per root; an
     // entry nobody can read is refused, never dropped, since a reading
@@ -1037,7 +1064,7 @@ pub fn load(
             exclude.push(item.to_owned());
         }
     }
-    // U8d4: `ORCH_LANE_ALIASES` as `lanes` reads it (`validate_lane_settings`):
+    // `ORCH_LANE_ALIASES` as `lanes` reads it (`validate_lane_settings`):
     // an item without `=` or with an empty side is passed over, never refused.
     let mut aliases = Vec::new();
     if let Some(text) = get(LANE_ALIASES_KEY) {
@@ -1070,8 +1097,9 @@ pub fn load(
             .filter(|h| *h != "local")
             .map(str::to_owned),
     };
-    // The read duties' keys (`security_alerts_init`, `outside_contribution_init`,
-    // `orch_connected_repos`, `owner_tracker_settings`).
+    // The read duties' keys; the connected repositories and the owner
+    // tracker keep the shell's grammar (`orch_connected_repos`,
+    // `owner_tracker_settings`).
     let audit = |key: &str| match get(key) {
         None | Some("on") => Ok(Audit::On),
         Some("off") => Ok(Audit::Off),
@@ -1099,17 +1127,35 @@ pub fn load(
     };
     let reads = ReadSettings {
         tracker_cli: program(TRACKER_CLI_KEY, TRACKER_CLI_DEFAULT),
-        pr_watch_cli: program(PR_WATCH_CLI_KEY, PR_WATCH_CLI_DEFAULT), // U5e2
+        pr_watch_cli: program(PR_WATCH_CLI_KEY, PR_WATCH_CLI_DEFAULT),
         security_alerts: audit(SECURITY_ALERTS_KEY)?,
         security_alert_token_file: get(SECURITY_ALERT_TOKEN_FILE_KEY).map(PathBuf::from),
         external_triage: audit(EXTERNAL_TRIAGE_KEY)?,
         connected_repos,
         owner_tracker,
     };
+    let progress_report_dir =
+        PathBuf::from(get(PROGRESS_REPORT_DIR_KEY).unwrap_or(DEFAULT_PROGRESS_REPORT_DIR));
+    let store = StoreSettings {
+        takeover_rows: whole(TAKEOVER_ROWS_KEY, DEFAULT_TAKEOVER_ROWS)?,
+        fleet_log_row_bytes: whole(FLEET_LOG_ROW_BYTES_KEY, DEFAULT_FLEET_LOG_ROW_BYTES)?,
+        progress_report_dir: if progress_report_dir.is_absolute() {
+            progress_report_dir
+        } else {
+            roots.common.join(progress_report_dir)
+        },
+        review_max_cycles: whole(REVIEW_MAX_CYCLES_KEY, DEFAULT_REVIEW_MAX_CYCLES)?,
+        review_max_external_rounds: whole(
+            REVIEW_MAX_EXTERNAL_ROUNDS_KEY,
+            DEFAULT_REVIEW_MAX_EXTERNAL_ROUNDS,
+        )?,
+        ci_fix_max_cycles: whole(CI_FIX_MAX_CYCLES_KEY, DEFAULT_CI_FIX_MAX_CYCLES)?,
+    };
     Ok(Settings {
         roots: roots.clone(),
         reads,
         state_dir,
+        store,
         tmux_session: get(TMUX_SESSION_KEY).map(str::to_owned),
         verify: secs(VERIFY_SECS_KEY, DEFAULT_VERIFY_SECS)?,
         close_grace: secs(CLOSE_SECS_KEY, DEFAULT_CLOSE_SECS)?,
@@ -1119,25 +1165,25 @@ pub fn load(
         permission,
         harness_binaries,
         worktree_cli,
-        agent_runtime, // U5g
+        agent_runtime,
         succession,
         job_unit,
         lane_cap,
         claim_store,
         lane_mail_cli,
         dev_validate_cli,
-        validate, // U6a
+        validate,
         scope_paths_cli,
-        overseer_preference, // U5d2
-        // U5f
+        overseer_preference,
         retention_days,
+        archive_root,
         report_cli,
         lanes_cli,
-        accounts, // U6h
+        accounts,
     })
 }
 
-/// U8d4: `lanes`' `lane_key_valid`, the one grammar of a name that stands
+/// `lanes`' `lane_key_valid`, the one grammar of a name that stands
 /// for a lane in a setting (`ORCH_LANE_EXCLUDE`, `ORCH_LANE_RETIRE`,
 /// `ORCH_LANE_CLOUD_REPOS`): a directory name or an alias, never empty;
 /// a `/` or a `~` makes it a path, which names no lane, so a statement
@@ -1146,7 +1192,7 @@ fn lane_key_valid(name: &str) -> bool {
     !name.is_empty() && !name.contains('/') && !name.contains('~')
 }
 
-/// U6h: whether `text` is a `YYYY-MM-DD` naming a real calendar day
+/// Whether `text` is a `YYYY-MM-DD` naming a real calendar day
 /// (`lanes`' `calendar_date_valid`, arithmetic rather than `date(1)`).
 pub fn calendar_date_valid(text: &str) -> bool {
     let bytes = text.as_bytes();
@@ -1178,7 +1224,7 @@ pub fn calendar_date_valid(text: &str) -> bool {
 }
 
 /// The private env file's project-relative name: the default, or the
-/// configured one held to the spelling the legacy loader admits.
+/// configured one held to the spelling the shell loader admits.
 fn private_env_name(named: Option<&str>) -> Result<PathBuf> {
     let Some(named) = named else {
         return Ok(PathBuf::from(DEFAULT_ENV_FILE));
@@ -1367,12 +1413,12 @@ mod tests {
         fs::write(path, text).unwrap();
     }
 
-    /// The legacy ladder, one rung at a time: the flag, the caller's
+    /// The ladder, one rung at a time: the flag, the caller's
     /// environment, the private file, `.kendex/settings.toml`,
     /// `kendex.settings.toml`, then `tmp`, a relative value resolved on the
     /// main checkout and an absolute one kept.
     #[test]
-    fn the_state_directory_follows_the_legacy_ladder() {
+    fn the_state_directory_follows_the_flag_environment_and_file_ladder() {
         let dir = tempfile::tempdir().unwrap();
         let roots = roots_in(dir.path());
         let tree = &roots.project;
@@ -1437,7 +1483,7 @@ mod tests {
         );
     }
 
-    /// Finding 12: under `--no-private-env` the files give `ORCH_STATE_DIR`
+    /// Under `--no-private-env` the files give `ORCH_STATE_DIR`
     /// alone, outranking the caller's environment, and no other file key is
     /// read; every other key comes from the environment.
     #[test]
@@ -1594,14 +1640,13 @@ mod tests {
                 main_workflows: Vec::new(),
                 linear_team: None,
             },
-            "the legacy oversee-watch defaults"
+            "the watch's documented defaults"
         );
         assert!(settings.harness_binaries.is_empty());
         assert_eq!(
             settings.worktree_cli,
             roots.project.join(WORKTREE_CLI_DEFAULT)
         );
-        // U5g
         assert_eq!(
             settings.agent_runtime,
             roots.project.join(AGENT_RUNTIME_DEFAULT)
@@ -1689,7 +1734,7 @@ mod tests {
             PathBuf::from("/opt/dev-validate-run")
         );
         assert_eq!(settings.scope_paths_cli, PathBuf::from("/opt/harness-only"));
-        // A relative claim directory is the project's, as the legacy
+        // A relative claim directory is the project's, as the shell
         // launcher reads it from the checkout it runs in.
         let relative = load(&roots, &env(&[(CLAIM_STATE_DIR_KEY, "tmp/w")]), &FLAGS).unwrap();
         assert_eq!(relative.claim_store, roots.project.join("tmp/w/claims"));
@@ -1750,11 +1795,11 @@ mod tests {
         }
     }
 
-    /// The read duties' keys (U5e): each default is the legacy's, the words
-    /// and shapes are the legacy readers', the rest is refused by key and
-    /// value, and the owner tracker is configured only by both its halves.
+    /// The read duties' keys: each default, word and shape, the rest
+    /// refused by key and value, and the owner tracker configured only by
+    /// both its halves.
     #[test]
-    fn the_read_duties_keys_take_their_legacy_defaults_words_and_refusals() {
+    fn the_read_duties_keys_take_their_defaults_words_and_refusals() {
         let dir = tempfile::tempdir().unwrap();
         let roots = roots_in(dir.path());
         let settings = load(&roots, &env(&[]), &FLAGS).unwrap();
@@ -1833,13 +1878,13 @@ mod tests {
         }
     }
 
-    /// R-U5a F2. Defect: the three watch keys read through the stricter
-    /// parsers of the launcher's keys, refusing values the legacy watch
-    /// admits (`oversee-watch:603`, `:623`, `:636`) and so refusing every
-    /// runtime verb on a fleet that sets them. Each key's legacy-valid edge
-    /// reads as the legacy read it.
+    /// Defect: the three watch keys read through the stricter
+    /// parsers of the launcher's keys, refusing values the watch
+    /// admits and so refusing every
+    /// runtime verb on a fleet that sets them. Each key's admitted edge
+    /// reads as the watch read it.
     #[test]
-    fn the_watch_keys_admit_the_legacy_grammars_edges() {
+    fn the_watch_keys_admit_their_grammars_edges() {
         let dir = tempfile::tempdir().unwrap();
         let roots = roots_in(dir.path());
         let settings = load(
@@ -1857,14 +1902,10 @@ mod tests {
         assert_eq!(settings.watch.dead_passes, 2);
     }
 
-    // U5f: the retention, report and heartbeat duties' keys.
-    /// Decision 141 (3). Defect: a mistyped retention read as the default
-    /// (the legacy `orch-env` handed `find -mtime` whatever stood), or a
-    /// count of none, which the legacy `find -mtime -0` kept everything
-    /// under; and a report or account program read from anywhere but the
-    /// legacy's own keys. Each default is the legacy's, a set value is
-    /// taken as given, and a value outside `[1-9][0-9]*` is refused by key
-    /// and value.
+    /// Defect: a mistyped retention read as the default, or a count of
+    /// none, which keeps nothing a day; and a report or account program
+    /// read from anywhere but its own key. A set value is taken as given,
+    /// and a value outside `[1-9][0-9]*` is refused by key and value.
     #[test]
     fn the_retention_report_and_lanes_keys_take_their_defaults_and_refuse_by_key_and_value() {
         let dir = tempfile::tempdir().unwrap();
@@ -1896,6 +1937,51 @@ mod tests {
                     ("key".into(), RECORD_RETENTION_DAYS_KEY.into()),
                     ("value".into(), value.into())
                 ],
+                "{value:?}"
+            );
+        }
+    }
+
+    /// Defect: an archive root read as a bare relative path lands the
+    /// archive under whatever directory the duty runs in, and a `~` taken
+    /// literally makes a directory named `~`; a default that ignores the
+    /// fleet directory archives beside the wrong fleet. A set value is an
+    /// absolute path or held as given for the archive's write to refuse;
+    /// the default follows `FLEET_DIR`, else the home.
+    #[test]
+    fn the_archive_root_is_absolute_or_refused_and_defaults_under_the_fleet_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = roots_in(dir.path());
+        let settings = load(&roots, &env(&[("HOME", "/home/o")]), &FLAGS).unwrap();
+        assert_eq!(
+            settings.archive_root,
+            ArchiveRoot::Default(PathBuf::from("/home/o/.fleet/archive"))
+        );
+        let settings = load(
+            &roots,
+            &env(&[("HOME", "/home/o"), (FLEET_DIR_KEY, "/fleet")]),
+            &FLAGS,
+        )
+        .unwrap();
+        assert_eq!(
+            settings.archive_root,
+            ArchiveRoot::Default(PathBuf::from("/fleet/archive"))
+        );
+        let settings = load(
+            &roots,
+            &env(&[(FLEET_DIR_KEY, "/fleet"), (ARCHIVE_ROOT_KEY, "/archives")]),
+            &FLAGS,
+        )
+        .unwrap();
+        assert_eq!(
+            settings.archive_root,
+            ArchiveRoot::Configured(PathBuf::from("/archives"))
+        );
+        for value in ["archives", "~/archives", "./x"] {
+            let settings = load(&roots, &env(&[(ARCHIVE_ROOT_KEY, value)]), &FLAGS).unwrap();
+            assert_eq!(
+                settings.archive_root,
+                ArchiveRoot::Invalid(value.into()),
                 "{value:?}"
             );
         }

@@ -25,7 +25,7 @@ use orch_runtime::error::Error;
 use orch_runtime::schedule::Clock;
 use orch_runtime::watch;
 
-/// The one injected clock as a test drives it (decision 121, Q16): time
+/// The one injected clock as a test drives it: time
 /// moves only when the test passes it, and a `sleep` blocks its thread
 /// until the clock has reached its wake time. Shared by the runner's two
 /// duty threads and the operation handle alike, so one `pass` wakes every
@@ -176,7 +176,7 @@ pub fn binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_orch-runtime"))
 }
 
-/// The binary as every suite starts it (decision 164): its environment
+/// The binary as every suite starts it: its environment
 /// selected by [`isolation_env`], never inherited, no private environment
 /// file, and the temporary root as its working directory, so no caller's
 /// settings, team, repositories, tokens or mailbox and no checkout above a
@@ -196,9 +196,8 @@ pub fn isolated() -> Command {
 
 /// `name` as a test child under [`isolation_env`]: the one constructor for
 /// every program a row starts that reads a home or a configuration (`git`,
-/// a shipped script), so no row's own start reaches the operator's files
-/// (R-RECON2 C1: a fixture's `git` and the mailbox handler started raw read
-/// the operator's `~/.gitconfig` and its includes).
+/// a shipped script), so no row's own start reaches the operator's files,
+/// such as `~/.gitconfig` and its includes.
 pub fn program(name: impl AsRef<std::ffi::OsStr>) -> Command {
     let mut command = Command::new(name);
     isolation_env(&mut command);
@@ -255,7 +254,7 @@ pub fn isolation_env(command: &mut Command) -> &mut Command {
         command.env(name, value);
     }
     // The user manager's bus: the session fact the detached job's launcher
-    // starts its unit through (decision 76); a test row is the one place a
+    // starts its unit through; a test row is the one place a
     // unit starts, and without the bus the launcher falls to setsid.
     for bus in ["XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"] {
         if let Some(value) = std::env::var_os(bus) {
@@ -268,12 +267,11 @@ pub fn isolation_env(command: &mut Command) -> &mut Command {
 /// The tools directory under the temporary root that every test child sees
 /// on `PATH` after a row's own prefixes: a `gh` that refuses, so a row that
 /// names no `gh` fixture never reaches the operator's real `gh` by omission
-/// (R-U5h: the admission's real `gh` under the scratch home started
-/// `gh send-telemetry` and connected out). Written once per process (the
-/// rows of one test binary start together on a cold temporary root:
-/// R-U5h2 Copilot F1) and published atomically under a temporary name no
-/// other process uses, so two test binaries writing it at once both read
-/// one whole file.
+/// (a real `gh` under the scratch home starts `gh send-telemetry` and
+/// connects out). Written once per process (the rows of one test binary
+/// start together on a cold temporary root) and published atomically under
+/// a temporary name no other process uses, so two test binaries writing it
+/// at once both read one whole file.
 fn isolated_bin() -> PathBuf {
     static DIR: OnceLock<PathBuf> = OnceLock::new();
     DIR.get_or_init(|| {
@@ -327,7 +325,7 @@ pub fn stub(name: &str) -> PathBuf {
 
 /// The shell every private server's panes run, resolved once: bash from
 /// this process's PATH, else `/bin/sh`. Set explicitly on each server so no
-/// user tmux configuration or login shell reaches a row (decision 69).
+/// user tmux configuration or login shell reaches a row.
 pub fn pane_shell() -> &'static str {
     static SHELL: OnceLock<String> = OnceLock::new();
     SHELL.get_or_init(|| {
@@ -345,7 +343,7 @@ pub fn pane_shell() -> &'static str {
 /// A private tmux server on its own socket with one detached session, ended
 /// on drop so a panicking test still reaps it. It reads no configuration
 /// file and names its pane shell, so the host's `~/.tmux.conf` and login
-/// shell reach no row (decision 69).
+/// shell reach no row.
 pub struct Server {
     pub socket: PathBuf,
     pub session: String,
@@ -368,12 +366,11 @@ impl Server {
     pub fn start_with_config(dir: &Path, session: &str, config: &Path) -> Server {
         let socket = dir.join("tmux.sock");
         // The server's environment is every pane's: selected, never the
-        // test process's own (decision 164).
+        // test process's own.
         let mut command = Command::new("tmux");
         isolation_env(&mut command);
         // The first window opens before `default-shell` is set below and
-        // would run the passwd login shell: name the pane shell here too
-        // (decision 69).
+        // would run the passwd login shell: name the pane shell here too.
         command.env("SHELL", pane_shell());
         let out = command
             .arg("-S")
@@ -535,7 +532,6 @@ impl Server {
         );
     }
 
-    /// The pid of the pane's process.
     pub fn pane_pid(&self, pane: &str) -> u32 {
         let out = tmux(
             &self.socket,
@@ -565,7 +561,7 @@ impl Drop for Server {
     fn drop(&mut self) {
         // The server's own socket first. Where a row's directory dropped
         // before the server, the socket is gone and `kill-server` reaches
-        // nothing (R-RECON S4's class, whatever a row's drop order): then
+        // nothing, whatever a row's drop order: then
         // the pid the server started as is signalled, by pid alone and only
         // while its command line still names this socket, so a reused pid
         // is never touched.
@@ -676,8 +672,9 @@ impl Runner {
             stub: stub(stub_name),
             verify: Some(5),
             tools: None,
-            // The job-unit launcher a transfer detaches its effect through
-            // (decision 76): the orch package's own, beside these tests.
+            // A transfer detaches its effect through the orch package's own
+            // job-unit launcher, beside these tests, so a row runs the shipped
+            // launcher and no other on the host.
             env: vec![("ORCH_JOB_UNIT".to_owned(), job_unit().display().to_string())],
         }
     }
@@ -722,7 +719,10 @@ impl Runner {
 
     /// Poll the fleet until the intent whose id begins `prefix` has ended,
     /// or stands `unconfirmed` with its owner gone (the job recorded what it
-    /// could and exited), bounded; the intent as recorded.
+    /// could and exited), and the notice its outcome owes is marked or its
+    /// owner is gone, bounded; the intent as recorded. The mark is the owner's
+    /// last write to the record after its outcome, so a row that acts on the
+    /// record once this returns meets no write of the job's.
     pub fn wait_intent_settled(&self, prefix: &str, bound: Duration) -> Value {
         let deadline = Instant::now() + bound;
         loop {
@@ -740,7 +740,8 @@ impl Runner {
                 let owner_gone = intent["owner"]["pid"]
                     .as_u64()
                     .is_none_or(|pid| !live(pid as u32));
-                if ended || (intent["outcome"] == "unconfirmed" && owner_gone) {
+                let marked = intent["notice"]["owner"] != "owed" || owner_gone;
+                if (ended || (intent["outcome"] == "unconfirmed" && owner_gone)) && marked {
                     return intent;
                 }
                 assert!(
@@ -867,7 +868,6 @@ impl Runner {
         assert!(out.status.success(), "init: {}", stderr(&out));
     }
 
-    /// The fleet state as JSON.
     pub fn fleet(&self) -> Value {
         let text =
             std::fs::read_to_string(self.state_dir().join("workflow-state-oversee.json")).unwrap();
@@ -958,7 +958,7 @@ pub fn neighbour_row(kind: &str, cwd: &Path) -> String {
 
 /// A neighbouring lead session in the same home and cwd as the runner's,
 /// written to throughout a test by a child the test owns, so it is the
-/// newest file whenever the runtime looks (R-U19 probes A and B).
+/// newest file whenever the runtime looks.
 pub struct Neighbour {
     pub file: PathBuf,
     pub _writer: Owned,
@@ -1029,8 +1029,8 @@ pub fn launch_request(item: &str, mail_root: &Path) -> Value {
 }
 
 /// The overseer record a succession reads: a predecessor whose harness
-/// process is `pid`, on the test's server. `harness_pid` is the string the
-/// legacy `ol_record_start` wrote through jq's `--arg` (decision 63).
+/// process is `pid`, on the test's server. `harness_pid` is the string
+/// `ol_record_start` writes through jq's `--arg`.
 pub fn overseer_record(pid: u32, start: &str, server: &Server, cwd: &Path) -> Value {
     json!({
         "runtime": "tmux",
@@ -1114,8 +1114,8 @@ pub fn phase(
 }
 
 /// The `opening` phase a launch or succession records before its window
-/// opens (decision 73): the recorded server and floor, and the pane once
-/// the effect's own `new-window` printed one (decision 96).
+/// opens: the recorded server and floor, and the pane once the effect's own
+/// `new-window` printed one.
 pub fn opening_phase(server: &Server, since_ms: u64, pane: Option<&str>) -> Value {
     let mut phase = json!({
         "phase": "opening",
@@ -1132,7 +1132,7 @@ pub fn opening_phase(server: &Server, since_ms: u64, pane: Option<&str>) -> Valu
 }
 
 /// Where the pane of `intent_id` registers itself under the runner's state
-/// directory (decision 96).
+/// directory.
 pub fn receipt_path(runner: &Runner, intent_id: &str) -> PathBuf {
     runner
         .state_dir()
@@ -1275,7 +1275,7 @@ pub fn transfer_intent(phase: Option<Value>, original_pending: Option<Value>) ->
 }
 
 /// The obligation of `kind` an `unconfirmed` outcome left standing, as the
-/// observation's `remaining` carries it (decision 111 (A)): the first of
+/// observation's `remaining` carries it: the first of
 /// that kind, or `Null` where none stands.
 pub fn remaining<'a>(observation: &'a Value, kind: &str) -> &'a Value {
     observation["remaining"]

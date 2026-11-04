@@ -1,10 +1,10 @@
-//! What charges the fleet's lane cap (decision 97), judged at admission
+//! What charges the fleet's lane cap, judged at admission
 //! from the records and the kernel table in one transition, with no release
 //! write. The execution charge is derived from the recorded identities
 //! before any status word is read: a lane attempt charges one slot while a
 //! proven live owned harness identity exists (its recorded launch or wake
 //! process, read through the one identity reader), while its launch intent
-//! is open (the preparing row an admission wrote, decision 72), or while an
+//! is open (the preparing row an admission wrote), or while an
 //! explicit unexpired [`Reservation`] an op wrote stands. A pane, a status
 //! word, parked disk, a pending return or a native transcript never charges,
 //! and `done`, `stopped` and `parked` are never read as zero: a live
@@ -32,10 +32,9 @@
 //! identity derives is owned execution the relaunch does not replace, and
 //! the relaunch is refused beside it (`retained_charge`).
 //!
-//! During coexistence the legacy claim store is read, never written
-//! (decisions 82, 97): a `.claim` row carries a server pid and a pane id
-//! and no harness identity. It is suppressed only on two proofs together
-//! (decision 111 (B)): the `launch` identity of a lane of this fleet
+//! The shell launcher's claim store is read, never written: a `.claim`
+//! row carries a server pid and a pane id and no harness identity. It is
+//! suppressed only on two proofs together: the `launch` identity of a lane of this fleet
 //! recorded at that server pid and pane id reads `Live`, and the pane the
 //! row names, on the server it names, holds that identity in its
 //! foreground group, read through `observe::foreground` with the recorded
@@ -54,7 +53,7 @@
 //! | `.reserve`: a launcher pid and no start, which is no identity | 1 | `unknown`, `identity-unrecorded`; never read by that pid |
 //! | a row that does not parse | 1 | `unknown`, `malformed` |
 //!
-//! The legacy launcher's pruner is the only remover of its rows; this
+//! The shell launcher's pruner is the only remover of its rows; this
 //! reader deletes none.
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -76,37 +75,36 @@ use crate::state::{EffectOp, Intent, Lane, LaneStatus, LaunchIdentity};
 /// The `kind` a Claude cloud lane records: hosted, its `mail_root` the
 /// item's worktree on this machine. The cloud cap counts it, not this one
 /// (`lane-cap.sh`'s `cap_kind`); the lane observation duty does not observe
-/// it; the close owes its worktree (decision 154 (1)).
+/// it; the close owes its worktree.
 pub(crate) const CLOUD_KIND: &str = "claude-cloud";
 
 /// The host facts a fleet transition judges beside the record: the lane cap
-/// setting, the legacy claim store, the liveness read of the one identity
+/// setting, the shell claim store, the liveness read of the one identity
 /// reader and the pane read a claim's suppression needs. The reads are
 /// injected so a transition is a function of the record and what the
 /// kernel and the tmux server answered; production takes
 /// [`Host::kernel`]. The readers are private to `ops`: an effect file
 /// receives the operation handle and no primitive function pointer
-/// (decision 124g (25)). No read takes a pid alone (decision 108: a pid
-/// alone is no identity).
+/// No read takes a pid alone: a pid alone is no identity.
 pub struct Host<'a> {
     pub lane_cap: u32,
-    /// The legacy claim store; `None` where no legacy launcher writes one.
+    /// The shell claim store; `None` where no shell launcher writes one.
     pub claim_store: Option<PathBuf>,
     /// Whether a recorded identity still runs under its recorded start.
     pub(super) still_runs: &'a dyn Fn(&Identity) -> Reading<Identity>,
-    /// Who holds the terminal of the pane a claim row names (decision 111
-    /// (B)): the pane by exact id on the server with that pid, read with the
+    /// Who holds the terminal of the pane a claim row names: the pane by
+    /// exact id on the server with that pid, read with the
     /// lane's live launch identity and its harness. Consulted only for a
     /// claim at the numbers of a live launch identity.
     pub(super) pane_foreground: PaneForeground<'a>,
-    /// The admission's reads (decision 118 (4), (6)): the item read
+    /// The admission's reads: the item read
     /// eligibility and the Location paths are judged from, for the
     /// launching item and for a holder with no recorded touched set, and
     /// the changed paths of a diff range. `None` on a host built for an
     /// entry that launches no lane.
     pub(super) admission: Option<AdmissionReads<'a>>,
     /// The settings the accounts judge reads a launch's account under
-    /// (step6-map A5): the listing reader and the account bounds. `None`
+    /// the listing reader and the account bounds. `None`
     /// on a host built for an entry that launches no lane, which judges no
     /// account.
     pub(super) accounts: Option<&'a Settings>,
@@ -114,10 +112,10 @@ pub struct Host<'a> {
 
 impl Host<'static> {
     /// The host as production judges it: the kernel's own identity read and
-    /// the pane read through the one judge (decision 97).
+    /// the pane read through the one judge.
     #[allow(
         clippy::disallowed_methods,
-        reason = "the one site that hands the kernel's identity reader to a fleet transition, which judges live processes beside the record and never acts on one (decision 111 (B))"
+        reason = "the one site that hands the kernel's identity reader to a fleet transition, which judges live processes beside the record and never acts on one"
     )]
     pub fn kernel(lane_cap: u32, claim_store: Option<PathBuf>) -> Host<'static> {
         Host {
@@ -163,16 +161,16 @@ pub(super) type PaneForeground<'a> =
 /// `server`, read for `recorded`, a lane's launch identity, with `harness`
 /// naming the lane's harness processes. A lane record names its server by
 /// pid alone, so the read goes to the caller's ambient server, the socket
-/// `$TMUX` names or the user's default, the server the legacy claim writer
+/// `$TMUX` names or the user's default, the server the shell claim writer
 /// and this runtime's launches open their windows on (`effects::fleet_server`);
 /// a server there with another pid, or none answering, leaves the pane
 /// `Unreadable`, never gone, since a server pid is handed on to later
 /// servers. The pane is read by exact id and its foreground through
 /// `observe::foreground` with the recorded identity, so no other process is
-/// ever taken for the harness (decision 99).
+/// ever taken for the harness.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the occupancy's one pane read, injected through Host: a lane transition judges who holds a claimed pane beside the record and never acts on it (decision 111 (B))"
+    reason = "the occupancy's one pane read, injected through Host: a lane transition judges who holds a claimed pane beside the record and never acts on it"
 )]
 fn pane_foreground(
     server: u64,
@@ -207,10 +205,10 @@ pub enum ChargeReason {
     Reservation,
     /// Ownership could not be established: an unreadable identity, a record
     /// in flight with no identity, a reservation with no readable term, a
-    /// legacy reservation row, or a claim row that does not parse.
+    /// shell reservation row, or a claim row that does not parse.
     /// Protected, never released.
     Unknown,
-    /// A legacy claim store row no live lane record accounts for.
+    /// A shell claim store row no live lane record accounts for.
     Claim,
 }
 
@@ -221,11 +219,11 @@ pub enum ChargeSource {
     Lane {
         item: String,
     },
-    /// A legacy `claim.*.claim` row, by file name.
+    /// A shell `claim.*.claim` row, by file name.
     Claim {
         file: String,
     },
-    /// A legacy `claim.*.reserve` row, by file name.
+    /// A shell `claim.*.reserve` row, by file name.
     Reservation {
         file: String,
     },
@@ -375,7 +373,7 @@ pub(super) fn lane_charge(
         }
     }
     // A launch in progress holds its slot while its intent is open; expiry
-    // alone cannot release a still-authorized launcher (decision 72).
+    // alone cannot release a still-authorized launcher.
     if lane.status == LaneStatus::Preparing && launch_open {
         return Some(charge(ChargeReason::Preparing, None));
     }
@@ -400,7 +398,7 @@ fn retained_charge(lane: &Lane, ids: &Identities) -> Option<Charge> {
     execution_charge(lane, ids.wake.as_ref(), ChargeReason::Wake)
 }
 
-/// One row of the legacy claim store as this reader takes it.
+/// One row of the shell claim store as this reader takes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum ClaimRow {
     /// A lane's claim: the tmux server pid and pane id its window had.
@@ -411,14 +409,14 @@ pub(super) enum ClaimRow {
     },
     /// A launcher's reservation: a slot held from its count until its claim
     /// or record stands. It names a pid and no start, so it protects until
-    /// the legacy launcher removes it.
+    /// the shell launcher removes it.
     Reserve { file: String },
     /// A row that does not parse; its fleet cannot be told, so it protects
-    /// a slot until the legacy readers, which prune such rows, remove it.
+    /// a slot until the shell readers, which prune such rows, remove it.
     Malformed { file: String },
 }
 
-/// The spelling the legacy launcher gives a fleet in its claim rows: the
+/// The spelling the shell launcher gives a fleet in its claim rows: the
 /// state file's directory resolved physically, else its own spelling with
 /// trailing slashes off (`lane_claims_canon`), then the file name.
 pub(super) fn canonical_fleet(path: &Path) -> String {
@@ -440,9 +438,9 @@ pub(super) fn canonical_fleet(path: &Path) -> String {
     format!("{dir}/{name}")
 }
 
-/// The path the fleet launch lock is taken beside: the legacy `cap_take`
+/// The path the fleet launch lock is taken beside: the shell `cap_take`
 /// holds `flock` on `<fleet>.launch.lock`, and `record::lock` names its
-/// file `<base>.lock`, so the base is `<fleet>.launch` in the legacy
+/// file `<base>.lock`, so the base is `<fleet>.launch` in the shell
 /// fleet spelling.
 pub(super) fn launch_lock_base(path: &Path) -> PathBuf {
     PathBuf::from(format!("{}.launch", canonical_fleet(path)))
@@ -533,8 +531,7 @@ pub(super) fn launch_open(intents: &[Intent], item: &str) -> bool {
 
 /// A lane whose `launch` identity reads live, at the server pid and pane id
 /// its launch records: the one provenance a claim row is matched on, and
-/// the identity the pane read must find holding that pane (decision 111
-/// (B)). A live wake is no launch: it runs outside any pane.
+/// the identity the pane read must find holding that pane. A live wake is no launch: it runs outside any pane.
 struct LiveLaunch<'a> {
     server: u64,
     pane: &'a str,
@@ -603,7 +600,7 @@ fn claim_charge(
 /// [`lane_charge`] from identities read once each, except the lane a
 /// relaunch replaces (`replacing`: its item and the identities the caller
 /// read), which charges only what the relaunch does not replace; then the
-/// legacy rows no live launch, read in its pane, accounts for
+/// shell rows no live launch, read in its pane, accounts for
 /// ([`claim_charge`]).
 pub(super) fn occupancy(
     lanes: &[Lane],
@@ -691,7 +688,7 @@ mod tests {
 
     /// The pane reader a row installs where no claim may reach the pane
     /// read: a read through it is a suppression attempted on numbers, a
-    /// wake or a status word alone, the defect decision 111 (B) closes.
+    /// wake or a status word alone.
     fn never_a_pane(
         server: u64,
         pane: &str,
@@ -734,7 +731,7 @@ mod tests {
         lane_charge(lane, false, 0, &read_identities(lane, host)).map(|c| (c.reason, c.cause))
     }
 
-    /// Decision 97's charge rules with decision 108 (2)'s order, each from
+    /// The charge rules, identities before status words, each from
     /// a planted reading: the identities are read before any status word,
     /// so a live recorded identity charges on every status, `done`
     /// included; a gone one releases whatever the status word says; a
@@ -891,8 +888,8 @@ mod tests {
         );
     }
 
-    /// A deliberate reservation holds its slot to its term and no longer
-    /// (decision 97): before `until` it charges whatever the identity reads,
+    /// A deliberate reservation holds its slot to its term and no longer:
+    /// before `until` it charges whatever the identity reads,
     /// at and after it only a live identity does; a term that is no stamp
     /// protects; the identity is read before the reservation, so a live
     /// harness under a lapsed hold charges `live`.
@@ -963,8 +960,7 @@ mod tests {
         summary
     }
 
-    /// The legacy store, read and never written (decisions 108 (1), 111
-    /// (B)): a claim at the server pid and pane id of a lane whose launch
+    /// The shell store, read and never written: a claim at the server pid and pane id of a lane whose launch
     /// identity reads live is suppressed once the pane, read on that
     /// server with that identity, holds it in its foreground group, so a
     /// live lane with its claim is one slot; the same pane read with a
@@ -979,7 +975,7 @@ mod tests {
     /// a row; a cloud lane record belongs to the cloud cap and charges
     /// nothing here.
     #[test]
-    fn legacy_claim_rows_are_accounted_by_provenance_or_protected() {
+    fn shell_claim_rows_are_accounted_by_provenance_or_protected() {
         let dir = tempfile::tempdir().unwrap();
         let store = dir.path().join("claims");
         fs::create_dir_all(&store).unwrap();
@@ -1187,7 +1183,7 @@ mod tests {
             == ChargeSource::Lane {
                 item: "KEN-A".into()
             }));
-        // R-U4b2 C1: a stopped lane whose detached wake reads live keeps its
+        // A stopped lane whose detached wake reads live keeps its
         // launch's server pid and pane id, numbers a later server and
         // another attempt's window may hold. The wake charges once, as owned
         // execution; it proves nothing about the pane, so the claim at those
@@ -1216,7 +1212,7 @@ mod tests {
     }
 
     #[test]
-    fn the_fleet_spelling_follows_the_legacy_canon() {
+    fn the_fleet_spelling_follows_the_shell_launchers_canon() {
         let dir = tempfile::tempdir().unwrap();
         let real = fs::canonicalize(dir.path()).unwrap();
         let link = dir.path().join("link");
@@ -1232,7 +1228,7 @@ mod tests {
         assert_eq!(
             launch_lock_base(&link.join("workflow-state-oversee.json")),
             real.join("workflow-state-oversee.json.launch"),
-            "the legacy launch lock is `<fleet>.launch.lock`"
+            "the shell launch lock is `<fleet>.launch.lock`"
         );
     }
 }

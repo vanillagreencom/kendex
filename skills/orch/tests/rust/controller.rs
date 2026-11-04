@@ -1,10 +1,14 @@
-//! Live-effect process tests of the controller lifetimes (step4-map § A2 to
-//! A8), each driven through the `orch-runtime` executable against a private
-//! tmux server and a stub harness: a self-succession started from the
-//! predecessor's own pane and completed by the detached job (decision 76),
-//! the succession rows, death recovery with and without a recorded identity
-//! (decision 77), the walled and off refusals and the explicit stop
-//! (decision 78), the first launch and the adoption.
+//! Live-effect process tests of the controller lifetimes, each driven
+//! through the `orch-runtime` executable against a private tmux server and
+//! a stub harness: a self-succession started from the predecessor's own
+//! pane and completed by the detached job, the succession rows, death
+//! recovery with and without a recorded identity, the walled and off
+//! refusals and the explicit stop, the first launch and the adoption. The
+//! runtime's waits run on its own clock in the op and the job, so a row
+//! reaches none of them: every wait here is a bounded poll of a child's own
+//! signal, its bound the suite's (`SETTLE`, which the op's claim wait is
+//! given too), and a stub a short bound must find ready is read through a
+//! gate on its exec, never raced.
 #![allow(
     clippy::disallowed_methods,
     reason = "the process tests hold owned children and a private tmux server and wait on real time for them"
@@ -19,8 +23,36 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 use support::*;
 
-/// The bound a detached job's succession settles in.
+/// The bound a detached job's succession settles in, and the bound its
+/// caller waits for the job's claim.
 const SETTLE: Duration = Duration::from_secs(40);
+
+/// The binary as every row runs it: the job's claim waited for as long as
+/// the row waits for the intent, and the launch bound the production one. A
+/// row that needs a bound to elapse sets its own.
+fn suite_runner(server: &Server, stub: &str) -> Runner {
+    let mut runner = Runner::new(server, stub);
+    runner.verify = None;
+    runner.env.push((
+        "ORCH_JOB_CLAIM_SECS".to_owned(),
+        SETTLE.as_secs().to_string(),
+    ));
+    runner
+}
+
+/// Gate the runner's readiness on the stub holding its pane: the tmux shim
+/// answers the job's first pane-field read of a pane it opened only once
+/// `/proc/<pane pid>/comm` names the harness, so a short launch bound
+/// measures what the stub does once it runs, never its start.
+fn gated_readiness(runner: &mut Runner) {
+    let opened = runner.state_dir().join("hold.opened");
+    runner.tools = Some(fixtures().join("tmux-hold"));
+    runner.env.extend([
+        ("TMUX_REAL".to_owned(), which_tmux()),
+        ("TMUX_HOLD_OPENED".to_owned(), opened.display().to_string()),
+        ("TMUX_HOLD_READY_COMM".to_owned(), "claude".to_owned()),
+    ]);
+}
 
 /// The fixture record on the test's own server at its real start, naming
 /// `pane`, with the predecessor identity given or none recorded.
@@ -61,7 +93,6 @@ fn request_for(record: &Value, cwd: &Path, cause: &str) -> Value {
     })
 }
 
-/// Write `record` as the overseer with the test's pending standing.
 fn plant(runner: &Runner, record: Value) {
     let mut fleet = runner.fleet();
     fleet["overseer"] = record;
@@ -69,7 +100,6 @@ fn plant(runner: &Runner, record: Value) {
     runner.write_fleet(&fleet);
 }
 
-/// Poll until `f` holds, bounded; `what` names the condition on failure.
 fn wait_until(what: &str, bound: Duration, f: impl Fn() -> bool) {
     let deadline = Instant::now() + bound;
     while !f() {
@@ -112,10 +142,10 @@ fn refusal_key(out: &std::process::Output) -> String {
         .to_owned()
 }
 
-/// Decision 76, step4-map F3: the overseer runs its succession from its own
-/// pane. The predecessor here is a stub harness in a pane that runs the
-/// `op` as a foreground child, as the overseer's shell tool runs
-/// `oversee-succeed`. The op hands the effect to a detached job and answers
+/// Defect: a succession asked from the controller's own pane ends with the
+/// process that asked. The predecessor here is a stub harness in a pane
+/// that runs the `op` as a foreground child, as the overseer's shell tool
+/// does. The op hands the effect to a detached job and answers
 /// `transfer-started`; the job retires the predecessor, whose exit closes
 /// the pane the op asked from, and completes the succession. The tmux shim
 /// holds the job at each `send-keys`: the launch line typed into the
@@ -126,7 +156,7 @@ fn refusal_key(out: &std::process::Output) -> String {
 fn a_self_succession_from_the_predecessors_own_pane_completes() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let pane = server.open_stub(
         "overseer",
@@ -188,10 +218,10 @@ fn a_self_succession_from_the_predecessors_own_pane_completes() {
     // as soon as whatever runs the effect reaches it, within the bound every
     // other wait here has, so a route that never opens the window fails the
     // row with the phase it reached.
-    release_hold(&fifo, Duration::from_secs(30), evidence);
+    release_hold(&fifo, secs(30), evidence);
     // The op answers at once, the effect handed to the job that now owns
     // the intent.
-    let answer = wait_reply(&out, Duration::from_secs(30), evidence);
+    let answer = wait_reply(&out, secs(30), evidence);
     assert_eq!(
         answer["ok"],
         true,
@@ -219,9 +249,7 @@ fn a_self_succession_from_the_predecessors_own_pane_completes() {
     // The job retires the predecessor: the stub harness ends and its exit
     // closes the pane the op asked from; the job, on its way to the brief
     // it will type, is alive after the process that asked is gone.
-    wait_until("the predecessor stopped", Duration::from_secs(20), || {
-        !live(pid)
-    });
+    wait_until("the predecessor stopped", secs(20), || !live(pid));
     assert!(
         live(owner_pid),
         "the job survived the predecessor's retirement"
@@ -231,15 +259,13 @@ fn a_self_succession_from_the_predecessors_own_pane_completes() {
         owner["start"],
         "under its recorded identity"
     );
-    wait_until(
-        "the predecessor's pane closed",
-        Duration::from_secs(10),
-        || !server.panes().contains(&pane),
-    );
+    wait_until("the predecessor's pane closed", secs(10), || {
+        !server.panes().contains(&pane)
+    });
     assert!(live(owner_pid), "the job survived the pane's close");
     // The second hold, the brief: released, the job confirms the turn and
     // publishes.
-    release_hold(&fifo, Duration::from_secs(30), evidence);
+    release_hold(&fifo, secs(30), evidence);
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
     assert_eq!(intent["phase"]["phase"], "identity-read");
@@ -262,16 +288,18 @@ fn a_self_succession_from_the_predecessors_own_pane_completes() {
     );
 }
 
-/// Decision 76: a repeated request while the job runs reconciles against the
-/// live owner and touches nothing (decision 72). Decision 61, R-U18 P12: a
-/// runner that lost the pasted brief records no turn, so the job never
-/// publishes it; the runner is kept for a reconcile, which reads the same.
+/// Defects: a repeated request while the job runs acting over the live
+/// owner, and a runner that lost the pasted brief published as the
+/// controller. The repeat reconciles against the live owner and touches
+/// nothing; the runner that records no turn is never published and is kept
+/// for a reconcile, which reads the same.
 #[test]
 fn a_repeated_request_reads_the_job_as_owner_live_and_a_lost_brief_keeps_the_runner() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-mute");
+    let mut runner = suite_runner(&server, "stub-mute");
     runner.verify = Some(3);
+    gated_readiness(&mut runner);
     runner.init_fleet();
     let brief = runner.state_dir().join("handoff.md");
     std::fs::write(&brief, "HANDOFF\n").unwrap();
@@ -279,21 +307,34 @@ fn a_repeated_request_reads_the_job_as_owner_live_and_a_lost_brief_keeps_the_run
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
     let mut request = transfer_request(&server, runner.state_dir());
     request["brief_file"] = json!(brief.display().to_string());
-    let started = runner.transfer_started(&request);
-    // The repeat shares the file with the job's own writes: a write the job
-    // made between the repeat's read and its store refuses it, and the
-    // repeat asks again, as any contender does.
-    let repeat = loop {
-        let out = runner.op_fleet(&request);
-        let answer = reply(&out);
-        if answer["ok"] == true {
-            break answer["result"]["effect"]["report"].clone();
-        }
-        assert_eq!(refusal_key(&out), "record-changed", "{}", stderr(&out));
-    };
+    // The tmux shim holds the job at each `send-keys`, writing the mark just
+    // before it: the launch line typed into the runner's window, held until
+    // the repeat has read the record, so the repeat meets a live owner and no
+    // other writer however the two processes are scheduled; then the brief.
+    // The mark is taken away before the first release, so its return says
+    // the first hold's reader is gone and the second release reaches the
+    // second hold. A held tmux call ends at agent-runtime's 15 s command
+    // bound, so the first hold spans the repeat alone.
+    let fifo = runner.state_dir().join("hold.fifo");
+    let mark = runner.state_dir().join("hold.mark");
+    mkfifo(&fifo);
+    let hold = [
+        ("TMUX_HOLD_FIFO", fifo.to_str().unwrap()),
+        ("TMUX_HOLD_MARK", mark.to_str().unwrap()),
+        ("TMUX_HOLD_VERB", "send-keys"),
+    ];
+    let started = runner.transfer_started_env(&request, &hold);
+    wait_until("the job reached the launch line", SETTLE, || mark.exists());
+    let answer = reply(&runner.op_fleet(&request));
+    assert_eq!(answer["ok"], true, "{answer}");
+    let repeat = &answer["result"]["effect"]["report"];
     assert_eq!(repeat["intent"]["outcome"], "unconfirmed", "{repeat}");
     assert_eq!(repeat["intent"]["observation"]["note"], "owner-live");
     assert_eq!(repeat["intent"]["owner"], started["owner"]);
+    std::fs::remove_file(&mark).unwrap();
+    release_hold(&fifo, secs(10), || runner.fleet().to_string());
+    wait_until("the job reached the brief", SETTLE, || mark.exists());
+    release_hold(&fifo, secs(10), || runner.fleet().to_string());
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     assert_eq!(intent["outcome"], "unconfirmed", "{intent}");
     assert_eq!(intent["observation"]["note"], "brief-unconfirmed");
@@ -317,7 +358,7 @@ fn a_repeated_request_reads_the_job_as_owner_live_and_a_lost_brief_keeps_the_run
 fn a_succession_retires_the_predecessor_then_publishes_the_successor() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
@@ -337,24 +378,25 @@ fn a_succession_retires_the_predecessor_then_publishes_the_successor() {
     );
     let pane = overseer["pane"].as_str().unwrap().to_owned();
     assert!(pane.starts_with('%'));
-    // The successor's identity is the runner's own process, written as the
-    // number the runtime writes (decision 63 reads the legacy string).
+    // The successor's identity is the runner's own process, written as a
+    // number.
     assert_eq!(overseer["harness_pid"], server.pane_pid(&pane));
     assert!(overseer["pending"].is_null(), "pending dropped on publish");
-    // The intent recorded every phase on its way (decision 62).
+    // The intent recorded every phase on its way.
     assert_eq!(intent["phase"]["phase"], "identity-read");
     assert_eq!(intent["phase"]["pid"], server.pane_pid(&pane));
     assert_eq!(intent["cause"], "live");
 }
 
-/// Decision 61, R-U18 high 2: the brief is delivered only after retirement
-/// and the runner's composer, and the successor is published only once the
-/// runner's own session file records that turn.
+/// Defect: a brief typed before the predecessor is retired, or a successor
+/// published before its own session file records the turn. The brief is
+/// delivered only after retirement and the runner's composer, and the
+/// successor is published only once the runner's own file records it.
 #[test]
 fn a_succession_delivers_the_brief_after_retirement_and_publishes_on_the_runner_s_turn() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let brief = runner.state_dir().join("handoff.md");
     std::fs::write(&brief, "HANDOFF line one\nHANDOFF line two\n").unwrap();
@@ -377,9 +419,11 @@ fn a_succession_delivers_the_brief_after_retirement_and_publishes_on_the_runner_
     assert_eq!(intent["phase"]["phase"], "identity-read");
 }
 
-/// Decision 61, R-U18 high 4: a precondition read before retirement refuses
-/// `failed` with the predecessor in control and no runner left. The job
-/// reads them, so its environment carries each row's setting.
+/// Defect: a predecessor retired for a successor that cannot run. A
+/// precondition read before retirement refuses `failed` with the predecessor
+/// in control and no runner left. The job reads them, so its environment
+/// carries each row's setting; the bound is short, since the fourth row
+/// needs it to elapse over a stub that never draws.
 #[test]
 fn a_succession_whose_preconditions_fail_never_retires() {
     struct Row {
@@ -422,7 +466,7 @@ fn a_succession_whose_preconditions_fail_never_retires() {
     for row in rows {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
-        let mut runner = Runner::new(&server, "stub-confirm");
+        let mut runner = suite_runner(&server, "stub-confirm");
         runner.verify = Some(1);
         runner.init_fleet();
         let predecessor = Owned::sleep();
@@ -467,20 +511,21 @@ fn a_succession_whose_preconditions_fail_never_retires() {
     }
 }
 
-/// Decision 120 (2), (3): the predecessor's handles join the intent's set
-/// at the start of its retirement, before the first signal, so a retirement
-/// that does not end it cannot fail the succession out from under them. A
-/// recorded start that is not the live process's reads stale: nothing is
-/// signalled, the waiting runner is stopped, and the intent holds
-/// `predecessor-not-retired` with the recorded identity standing on one
-/// stale reading. The reconcile's second independent reading settles that
-/// identity (decision 68), and the succession, its runner gone, fails after
-/// retirement; the live process under the reused pid is never signalled.
+/// Defect: a retirement that does not end the predecessor failing the
+/// succession out from under its handles, or a live process under a reused
+/// pid signalled. The predecessor's handles join the intent's set at the
+/// start of its retirement, before the first signal. A recorded start that
+/// is not the live process's reads stale: nothing is signalled, the waiting
+/// runner is stopped, and the intent holds `predecessor-not-retired` with
+/// the recorded identity standing on one stale reading. The reconcile's
+/// second independent reading settles that identity, and the succession,
+/// its runner gone, fails after retirement; the live process under the
+/// reused pid is never signalled.
 #[test]
 fn a_succession_that_cannot_retire_the_predecessor_holds_it_and_signals_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let predecessor = Owned::sleep();
     // A recorded start that is not the live process's: the stop reads the
@@ -504,8 +549,8 @@ fn a_succession_that_cannot_retire_the_predecessor_holds_it_and_signals_nothing(
     // The runner opened at its composer was stopped: the only pane is the
     // server's own.
     assert_eq!(server.panes().len(), 1);
-    // The second independent reading settles the stale identity (decision
-    // 68): the recorded controller is gone, and with the runner gone too the
+    // The second independent reading settles the stale identity: the
+    // recorded controller is gone, and with the runner gone too the
     // succession fails after retirement, the live process still untouched.
     let report = runner.reconcile_one();
     assert_eq!(report["intent"]["outcome"], "failed", "{report}");
@@ -515,15 +560,18 @@ fn a_succession_that_cannot_retire_the_predecessor_holds_it_and_signals_nothing(
     assert!(live(predecessor.pid()), "still never signalled");
 }
 
-/// Decision 65, R-U19 probe A: a neighbouring lead session in the same home
-/// and directory takes turns throughout; they never confirm the runner's
-/// delivery, which is read in the runner's own file alone.
+/// Defect: a delivery confirmed by a neighbouring lead session's turns. One
+/// in the same home and directory takes turns throughout; they never
+/// confirm the runner's delivery, which is read in the runner's own file
+/// alone. The runner is read ready through the gate, so the short bound
+/// measures the turn that never comes.
 #[test]
 fn a_neighbour_session_s_turns_never_confirm_the_runner_s_delivery() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-mute");
+    let mut runner = suite_runner(&server, "stub-mute");
     runner.verify = Some(2);
+    gated_readiness(&mut runner);
     runner.init_fleet();
     let brief = runner.state_dir().join("handoff.md");
     std::fs::write(&brief, "HANDOFF\n").unwrap();
@@ -564,14 +612,15 @@ fn a_neighbour_session_s_turns_never_confirm_the_runner_s_delivery() {
     assert_eq!(runner.fleet()["overseer"]["generation"], 3);
 }
 
-/// Decision 65, R-U19 probe B: a neighbouring lead session holding more
-/// turns than the runner is kept the newest file by replies; the runner's
-/// recorded turn in its own file still publishes the succession.
+/// Defect: the runner's turn looked for in the newest session file. A
+/// neighbouring lead session holding more turns than the runner is kept the
+/// newest file by replies; the runner's recorded turn in its own file still
+/// publishes the succession.
 #[test]
 fn a_neighbour_holding_more_turns_never_hides_the_runner_s_recorded_turn() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let brief = runner.state_dir().join("handoff.md");
     std::fs::write(&brief, "HANDOFF\n").unwrap();
@@ -599,16 +648,13 @@ fn a_neighbour_holding_more_turns_never_hides_the_runner_s_recorded_turn() {
     assert_eq!(runner.fleet()["overseer"]["generation"], 4);
 }
 
-/// Decision 77: a dead-cause recovery of a predecessor with no recorded
-/// identity. The generation-bound exit record proves it terminal whatever
-/// the pane shows; so does the recorded pane gone on the proven server. A
-/// pane standing on that server is an unknown stop, refused before anything
-/// opens; absence on a server that is not the recorded one proves nothing.
-/// The successor's readiness is gated on the stub's acknowledgement, the
-/// shim answering the job's first pane-field read of the pane it opened
-/// only once the stub holds it, and the runner's verification bound is the
-/// production default (decision 124i (34)): the retirement judgement is
-/// what each row proves, not the stub's startup under load.
+/// Defect: a predecessor with no recorded identity replaced on a pane
+/// reading alone. In a dead-cause recovery the generation-bound exit record
+/// proves it terminal whatever the pane shows; so does the recorded pane
+/// gone on the proven server. A pane standing on that server is an unknown
+/// stop, refused before anything opens; absence on a server that is not the
+/// recorded one proves nothing. The successor's readiness is read through
+/// the gate: the retirement judgement is what each row proves.
 #[test]
 fn a_dead_predecessor_with_no_identity_is_proven_terminal_by_the_exit_record_or_its_pane_alone() {
     struct Row {
@@ -683,19 +729,11 @@ fn a_dead_predecessor_with_no_identity_is_proven_terminal_by_the_exit_record_or_
             cause: Some("server-gone"),
         },
     ];
-    let real_tmux = which_tmux();
     for row in rows {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
-        let mut runner = Runner::new(&server, "stub-confirm");
-        runner.verify = None;
-        runner.tools = Some(fixtures().join("tmux-hold"));
-        let opened = runner.state_dir().join("hold.opened");
-        runner.env.extend([
-            ("TMUX_REAL".to_owned(), real_tmux.clone()),
-            ("TMUX_HOLD_OPENED".to_owned(), opened.display().to_string()),
-            ("TMUX_HOLD_READY_COMM".to_owned(), "claude".to_owned()),
-        ]);
+        let mut runner = suite_runner(&server, "stub-confirm");
+        gated_readiness(&mut runner);
         runner.init_fleet();
         let record = (row.plant)(&server, &runner);
         plant(&runner, record.clone());
@@ -735,14 +773,14 @@ fn a_dead_predecessor_with_no_identity_is_proven_terminal_by_the_exit_record_or_
     }
 }
 
-/// Step4-map A6: a walled succession names the spent account, and a
-/// successor resolving to it refuses before any intent persists; one on
-/// another account runs.
+/// Defect: a walled succession relaunched on the account the wall spent. The
+/// request names the spent account, and a successor resolving to it refuses
+/// before any intent persists; one on another account runs.
 #[test]
 fn a_walled_succession_refuses_a_successor_on_the_spent_account() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
@@ -771,14 +809,15 @@ fn a_walled_succession_refuses_a_successor_on_the_spent_account() {
     assert_eq!(runner.fleet()["overseer"]["generation"], 4);
 }
 
-/// Decision 78: `ORCH_OVERSEER_SUCCESSION=off` refuses a transfer before
-/// any transition, so the record and the intents directory are as they
-/// were; a stop under the same setting is admitted.
+/// Defect: a succession run, or a record written, with succession off.
+/// `ORCH_OVERSEER_SUCCESSION=off` refuses a transfer before any transition,
+/// so the record and the intents directory are as they were; a stop under
+/// the same setting is admitted.
 #[test]
 fn succession_off_refuses_a_transfer_and_writes_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
@@ -808,8 +847,9 @@ fn succession_off_refuses_a_transfer_and_writes_nothing() {
     assert!(!live(predecessor.pid()));
 }
 
-/// Decision 111 (5), R-U4a6b C1 (4): once the job launcher has been asked,
-/// the job is an obligation until it claims or is read ended. A launcher
+/// Defect: a job the launcher may have started read as never started. Once
+/// the job launcher has been asked, the job is an obligation until it
+/// claims or is read ended. A launcher
 /// that wrote its record and then failed without saying nothing started
 /// leaves the transfer `unconfirmed` with the job standing and its request
 /// file kept for it; the reconcile reads the record, finds no claim and
@@ -827,7 +867,7 @@ fn a_job_the_launcher_did_not_answer_for_stands_until_read_and_the_reconcile_rea
     ] {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
-        let runner = Runner::new(&server, "stub-confirm");
+        let runner = suite_runner(&server, "stub-confirm");
         runner.init_fleet();
         let predecessor = Owned::sleep();
         plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
@@ -896,15 +936,16 @@ fn a_job_the_launcher_did_not_answer_for_stands_until_read_and_the_reconcile_rea
     }
 }
 
-/// Decision 115 (B): a `setsid` job that recorded its own identity and exited
-/// before claiming is read gone at the reconcile by that identity and
-/// discharged, so the intent reconciles to `failed` rather than standing
-/// forever; the predecessor it never retired stands.
+/// Defect: an intent standing forever over a job that exited before it
+/// claimed. A `setsid` job that recorded its own identity and exited before
+/// claiming is read gone at the reconcile by that identity and discharged,
+/// so the intent reconciles to `failed`; the predecessor it never retired
+/// stands.
 #[test]
 fn an_unclaimed_setsid_job_that_exits_before_claiming_reconciles() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
@@ -941,14 +982,15 @@ fn an_unclaimed_setsid_job_that_exits_before_claiming_reconciles() {
     assert!(live(predecessor.pid()), "nothing retired the predecessor");
 }
 
-/// Decision 115 (B): one outstanding-job predicate serves both routes, so a
-/// repeated stop whose job never claimed reconciles that job rather than
-/// starting a second; the launcher is asked once.
+/// Defect: a second job started over one that has not claimed yet. One
+/// outstanding-job predicate serves both routes, so a repeated stop whose
+/// job never claimed reconciles that job rather than starting a second; the
+/// launcher is asked once.
 #[test]
 fn a_repeated_stop_with_an_unclaimed_job_does_not_start_a_second_job() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
@@ -988,21 +1030,22 @@ fn a_repeated_stop_with_an_unclaimed_job_does_not_start_a_second_job() {
     assert!(live(predecessor.pid()), "nothing retired the predecessor");
 }
 
-/// Decision 78: the explicit stop retires the controller exactly by its
-/// identity and records `off`; a death recovery then refuses
-/// `controller-off`; the one way back is `start-controller`, whose
-/// confirmation clears the mark.
+/// Defect: a stopped controller relaunched by death recovery, or a stop
+/// that signals more than the recorded identity. The explicit stop retires
+/// the controller exactly by its identity and records `off`; a death
+/// recovery then refuses `controller-off`; the one way back is
+/// `start-controller`, whose confirmation clears the mark.
 #[test]
 fn stop_controller_retires_exactly_and_records_off_which_death_recovery_honours() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let predecessor = Owned::sleep();
     let bystander = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
-    // The stop runs as a detached job (decision 109 (3)): the reply is its
-    // start, the outcome is read off the intent once the job recorded it.
+    // The stop runs as a detached job: the reply is its start, the outcome
+    // is read off the intent once the job recorded it.
     let started = runner.op_fleet(&json!({"op": "stop-controller"}));
     assert_eq!(
         reply(&started)["result"]["effect"]["started"],
@@ -1039,15 +1082,17 @@ fn stop_controller_retires_exactly_and_records_off_which_death_recovery_honours(
     assert_eq!(overseer["harness_pid"], server.pane_pid(&pane));
 }
 
-/// Decision 78 with no identity recorded: decision 77's proof confirms the
-/// stop (the pane gone on the proven server) and `off` is recorded; a pane
-/// standing with nothing naming what runs in it fails the stop, since an
-/// exact retirement has nothing to act on, and records nothing.
+/// Defect: a stop with no identity recorded acting on a pane nothing names,
+/// or recording `off` over a controller that may run. The terminal proof
+/// confirms the stop (the pane gone on the proven server) and `off` is
+/// recorded; a pane standing with nothing naming what runs in it fails the
+/// stop, since an exact retirement has nothing to act on, and records
+/// nothing.
 #[test]
 fn stop_controller_without_an_identity_takes_the_proof_or_fails() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     plant(&runner, record_on(&server, runner.state_dir(), "%99", None));
     runner.op_fleet(&json!({"op": "stop-controller"}));
@@ -1075,15 +1120,15 @@ fn stop_controller_without_an_identity_takes_the_proof_or_fails() {
     );
 }
 
-/// Step4-map A2: the first launch of a controller on a fleet that recorded
-/// none publishes generation 1 with the runner's identity; a start over a
-/// controller whose identity reads live fails `overseer-live` before
-/// anything opens.
+/// Defect: a start opening a second controller over a live one. The first
+/// launch of a controller on a fleet that recorded none publishes
+/// generation 1 with the runner's identity; a start over a controller whose
+/// identity reads live fails `overseer-live` before anything opens.
 #[test]
 fn start_controller_opens_the_first_controller_and_refuses_over_a_live_one() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     assert!(runner.fleet().get("overseer").is_none());
     let brief = runner.state_dir().join("brief.md");
@@ -1097,7 +1142,7 @@ fn start_controller_opens_the_first_controller_and_refuses_over_a_live_one() {
     assert_eq!(report["generation"], 1);
     assert_eq!(
         report["intent"]["observation"]["retired_by"], "record-empty",
-        "a bare fleet's record names no session (decision 109 (1))"
+        "a bare fleet's record names no session"
     );
     let overseer = runner.fleet()["overseer"].clone();
     assert_eq!(overseer["generation"], 1);
@@ -1114,7 +1159,7 @@ fn start_controller_opens_the_first_controller_and_refuses_over_a_live_one() {
     // Over a live controller: nothing opens, the record stands.
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let live_controller = Owned::sleep();
     let mut fleet = runner.fleet();
@@ -1142,15 +1187,16 @@ fn start_controller_opens_the_first_controller_and_refuses_over_a_live_one() {
     assert!(live(live_controller.pid()));
 }
 
-/// Step4-map A3: an adoption records the harness identity read in the
-/// pane's foreground, never the caller's word; a record of another, live
-/// controller refuses `overseer-live`; a pane holding no harness refuses
-/// `pane-not-harness`; the same pane adopted again is healed in place.
+/// Defect: an adoption recording the caller's word for what runs in the
+/// pane. It records the harness identity read in the pane's foreground; a
+/// record of another, live controller refuses `overseer-live`; a pane
+/// holding no harness refuses `pane-not-harness`; the same pane adopted
+/// again is healed in place.
 #[test]
 fn adopt_controller_binds_the_harness_read_in_the_pane_and_refuses_a_live_record_or_a_shell() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let pane = server.open_stub(
         "overseer",
@@ -1210,11 +1256,14 @@ fn adopt_controller_binds_the_harness_read_in_the_pane_and_refuses_a_live_record
     assert_eq!(runner.fleet()["overseer"]["pane"], pane);
 }
 
-/// Decision 105: abandoning a waiting runner before retirement completes
-/// `failed` only once its stop and its window's close both answered. A pane
-/// the host does not answer for is left as it stands and the intent stays
-/// open; a window close the host refuses after the runner's stop holds the
-/// intent open with the cause, never `failed` with the runner claimed gone.
+/// Defect: an abandonment closed `failed` with the runner claimed gone over
+/// a pane the host did not answer for. Abandoning a waiting runner before
+/// retirement completes `failed` only once its stop and its window's close
+/// both answered. A pane the host does not answer for is left as it stands
+/// and the intent stays open; a window close the host refuses after the
+/// runner's stop holds the intent open with the cause. The runner stands at
+/// its composer before the reconcile, so the bound is short: it is what an
+/// unanswering host is retried for.
 #[test]
 fn an_abandonment_whose_runner_cannot_be_read_or_closed_holds_the_intent_open() {
     struct Row {
@@ -1225,11 +1274,9 @@ fn an_abandonment_whose_runner_cannot_be_read_or_closed_holds_the_intent_open() 
         fail_verb: Option<&'static str>,
         runner: &'static str,
         cause_prefix: &'static str,
-        /// Whether the runner's pane still stands afterwards.
         pane_stands: bool,
-        /// Whether the runner's identity is still an obligation afterwards
-        /// (decision 111 (A)): discharged by its own stop, never by the
-        /// window's close.
+        /// Whether the runner's identity is still an obligation afterwards:
+        /// discharged by its own stop, never by the window's close.
         identity_stands: bool,
     }
     let rows = [
@@ -1267,7 +1314,8 @@ fn an_abandonment_whose_runner_cannot_be_read_or_closed_holds_the_intent_open() 
     for row in rows {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
-        let mut runner = Runner::new(&server, "stub-confirm");
+        let mut runner = suite_runner(&server, "stub-confirm");
+        runner.verify = Some(1);
         runner.init_fleet();
         let predecessor = Owned::sleep();
         let pane = server.open_stub(
@@ -1287,8 +1335,8 @@ fn an_abandonment_whose_runner_cannot_be_read_or_closed_holds_the_intent_open() 
         );
         fleet["overseer"]["pending"] = pending(runner.state_dir());
         // The runner's identity was read before this process ended: the
-        // phase carries it (decision 99), so the abandonment stops exactly
-        // that process and carries it on an unsettled outcome.
+        // phase carries it, so the abandonment stops exactly that process
+        // and carries it on an unsettled outcome.
         let mut opened = phase("window-opened", &server, &pane, now_ms(), None);
         opened["identity"] = json!({"pid": runner_pid, "start": start_of(runner_pid)});
         fleet["intents"] = json!([transfer_intent(Some(opened), None)]);
@@ -1409,14 +1457,15 @@ fn an_abandonment_whose_runner_cannot_be_read_or_closed_holds_the_intent_open() 
     }
 }
 
-/// The runtime's judgement of which intents are open, read by the legacy
-/// watch's succession guard through `state inspect`: an open transfer is
-/// listed, a closed one is not, and an item file lists none.
+/// Defect: a closed intent listed open, or an item file's intents listed,
+/// by `state inspect`, which a succession guard reads before it acts: an
+/// open transfer is listed, a closed one is not, and an item file lists
+/// none.
 #[test]
 fn inspect_lists_the_open_intents_the_runtime_judges_open() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let mut fleet = runner.fleet();
     let mut closed = transfer_intent(None, None);
@@ -1442,7 +1491,8 @@ fn inspect_lists_the_open_intents_the_runtime_judges_open() {
     );
 }
 
-/// Decision 109 (3): the explicit stop runs as the detached job the
+/// Defect: a stop asked from the controller's own pane ending with the
+/// process that asked. The explicit stop runs as the detached job the
 /// succession runs as. The predecessor here is a stub harness in a pane that
 /// runs the `op` as a foreground child, as the overseer's shell tool runs an
 /// explicit off from its own pane. The op hands the stop to the job and
@@ -1453,7 +1503,7 @@ fn inspect_lists_the_open_intents_the_runtime_judges_open() {
 fn a_self_stop_from_the_predecessors_own_pane_records_off_and_closes_the_pane() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let pane = server.open_stub(
         "overseer",
@@ -1491,7 +1541,7 @@ fn a_self_stop_from_the_predecessors_own_pane_records_off_and_closes_the_pane() 
     )
     .unwrap();
     server.send_line(&pane, &format!("RUN bash {}", script.display()));
-    let answer = wait_reply(&out, Duration::from_secs(30), || {
+    let answer = wait_reply(&out, secs(30), || {
         format!(
             "op.err {:?}\nscreen {:?}\nfleet {}",
             std::fs::read_to_string(&err),
@@ -1518,14 +1568,10 @@ fn a_self_stop_from_the_predecessors_own_pane_records_off_and_closes_the_pane() 
     );
     // The job retires the predecessor: the stub ends and its exit closes
     // the pane the op asked from; the job outlives both and records `off`.
-    wait_until("the predecessor stopped", Duration::from_secs(20), || {
-        !live(pid)
+    wait_until("the predecessor stopped", secs(20), || !live(pid));
+    wait_until("the predecessor's pane closed", secs(10), || {
+        !server.panes().contains(&pane)
     });
-    wait_until(
-        "the predecessor's pane closed",
-        Duration::from_secs(10),
-        || !server.panes().contains(&pane),
-    );
     let intent = runner.wait_intent_settled("stop-controller:", SETTLE);
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
     assert_eq!(intent["observation"]["retired_by"], "identity");
@@ -1541,14 +1587,12 @@ fn a_self_stop_from_the_predecessors_own_pane_records_off_and_closes_the_pane() 
         !live(effect["handed_from"]["pid"].as_u64().unwrap() as u32),
         "the op that asked is gone with its pane"
     );
-    wait_until("the job exited", Duration::from_secs(10), || {
-        !live(owner_pid)
-    });
+    wait_until("the job exited", secs(10), || !live(owner_pid));
 }
 
-/// Decision 109 (1), the R-U4c C1 probe as a row: a live stub in a pane the
-/// record names on this server with no server start and no identity is an
-/// unresolved controller, not an absent one. A start refuses
+/// Defect: an unresolved controller read as an absent one. A live stub in a
+/// pane the record names on this server with no server start and no
+/// identity is unresolved, not absent. A start refuses
 /// `predecessor-unproven` and opens nothing; an adoption from another pane
 /// refuses the same; a stop names nothing to retire and touches the pane;
 /// the stub runs on throughout. The remedy, adoption from the record's own
@@ -1557,7 +1601,7 @@ fn a_self_stop_from_the_predecessors_own_pane_records_off_and_closes_the_pane() 
 fn an_unproven_predecessor_is_never_replaced_and_its_pane_never_closed() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let pane = server.open_stub(
         "overseer",
@@ -1633,8 +1677,9 @@ fn an_unproven_predecessor_is_never_replaced_and_its_pane_never_closed() {
     assert_eq!(healed["harness_pid"], pid);
 }
 
-/// Decision 109 (2): the predecessor's window is a handle the publication
-/// settles. With the window close refused by the host, the succession stays
+/// Defect: a successor published over the predecessor's unread window. The
+/// window is a handle the publication settles. With its close refused by
+/// the host, the succession stays
 /// `unconfirmed` at `identity-read` with the successor live and the brief
 /// delivered, nothing published; the host answering again, the reconcile
 /// closes the window and publishes.
@@ -1642,7 +1687,7 @@ fn an_unproven_predecessor_is_never_replaced_and_its_pane_never_closed() {
 fn a_publication_waits_for_the_predecessors_window_to_read() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-confirm");
+    let mut runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let predecessor = Owned::sleep();
     // The record names an idle pane on this server as the predecessor's,
@@ -1677,9 +1722,9 @@ fn a_publication_waits_for_the_predecessors_window_to_read() {
             .starts_with("pane-close:"),
         "{intent}"
     );
-    // A failed publication consumed nothing (decision 120 (1)): the
-    // predecessor's window stands among the held handles, beside the runner's
-    // own, which the publication did not take.
+    // A failed publication consumed nothing: the predecessor's window stands
+    // among the held handles, beside the runner's own, which the publication
+    // did not take.
     assert!(
         intent["observation"]["remaining"]
             .as_array()
@@ -1688,8 +1733,8 @@ fn a_publication_waits_for_the_predecessors_window_to_read() {
                 .any(|o| o["kind"] == "pane" && o["pane"] == json!(idle))),
         "{intent}"
     );
-    // The runner's own process was not published either (R-U4g3-codex site 2):
-    // a failed publication consumes nothing.
+    // The runner's own process was not published either: a failed
+    // publication consumes nothing.
     assert!(
         intent["obligations"]["standing"]
             .as_array()
@@ -1726,17 +1771,16 @@ fn a_publication_waits_for_the_predecessors_window_to_read() {
     assert_eq!(overseer["harness_pid"], server.pane_pid(&successor));
 }
 
-/// Decision 109 (7): a failure the job records is announced once, to the
-/// Decision 124f (28), R-U4g6 opus `probe-notice-crash.rs` and Codex M1: the
-/// state a crash between a job intent's failed outcome write and its send
-/// leaves is a closed intent whose notice is recorded `owed`. The next
+/// Defect: a notice lost to a crash between a job intent's failed outcome
+/// write and its send, or sent twice. The state that crash leaves is a
+/// closed intent whose notice is recorded `owed`. The next
 /// reconcile, with no open intent to reconcile, sends that notice once and
 /// marks it `sent`; the reconcile after it sends nothing again.
 #[test]
 fn a_reconcile_sends_the_notice_a_closed_intent_still_owes_once() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-confirm");
+    let mut runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let mail_log = runner.state_dir().join("lane-mail.log");
     runner
@@ -1791,7 +1835,7 @@ fn a_reconcile_sends_the_notice_a_closed_intent_still_owes_once() {
 }
 
 /// The job-unit record of the intent `id`'s detached job, the address its
-/// sidecar obligation records (decision 184 (6)).
+/// sidecar obligation records.
 fn job_record(runner: &Runner, id: &str) -> String {
     runner
         .state_dir()
@@ -1809,16 +1853,16 @@ fn owner_notices(mail_log: &Path) -> usize {
         .count()
 }
 
-/// Decision 124f (28), R-U4g7 opus `probe-notice-stamped.rs` (the request
-/// case): a live `request-transfer` on a fleet whose closed intent of an
-/// earlier generation still owes its notice. The request sends the notice
+/// Defect: a live request failed, or its owed notice dropped, by the notice
+/// walk that precedes it. A live `request-transfer` on a fleet whose closed
+/// intent of an earlier generation still owes its notice sends the notice
 /// once, marks it `sent`, and proceeds to its own effect,
 /// `transfer-started`; the walk never fails the request it precedes.
 #[test]
 fn a_live_request_with_an_owed_notice_proceeds() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-confirm");
+    let mut runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let mail_log = runner.state_dir().join("lane-mail.log");
     runner
@@ -1876,8 +1920,9 @@ fn a_live_request_with_an_owed_notice_proceeds() {
 fn a_job_failure_reaches_the_fleet_log_and_the_owner_once() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-mute");
+    let mut runner = suite_runner(&server, "stub-mute");
     runner.verify = Some(2);
+    gated_readiness(&mut runner);
     runner.init_fleet();
     let mail_log = runner.state_dir().join("lane-mail.log");
     runner
@@ -1935,9 +1980,10 @@ fn a_job_failure_reaches_the_fleet_log_and_the_owner_once() {
     );
 }
 
-/// Decision 109 (5), the R-U4c H1 probe as a row: the runtime builds the
-/// successor's command from the typed launch fields through the one launch
-/// builder, which routes the account by the harness's table. A Pi successor
+/// Defect: a successor launched from the recorded shell line rather than its
+/// typed fields. The runtime builds the successor's command from the typed
+/// launch fields through the one launch builder, which routes the account
+/// by the harness's table. A Pi successor
 /// on a `pi-claude/` model is launched with Pi's own root in
 /// `PI_CODING_AGENT_DIR` and the chosen Claude seat in `CLAUDE_CONFIG_DIR`,
 /// its model word carrying the provider and the effort, the caller's own
@@ -1950,7 +1996,7 @@ fn the_successor_is_launched_from_its_typed_fields_with_the_account_routed() {
     // so the succession abandons it before retirement; the record is read.
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-record");
+    let mut runner = suite_runner(&server, "stub-record");
     runner.verify = Some(1);
     runner.init_fleet();
     let seat = dir.path().join("seat");
@@ -2018,7 +2064,7 @@ fn the_successor_is_launched_from_its_typed_fields_with_the_account_routed() {
     // Claude under native permission: the caller's words, no bypass word.
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-record");
+    let runner = suite_runner(&server, "stub-record");
     runner.init_fleet();
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
@@ -2068,12 +2114,12 @@ fn the_successor_is_launched_from_its_typed_fields_with_the_account_routed() {
         "the pending line is recorded for display"
     );
 
-    // Copilot under the bypass posture (decision 115 (E)): the builder owns
-    // the permission environment, so `COPILOT_ALLOW_ALL=true` reaches the
+    // Copilot under the bypass posture: the builder owns the permission
+    // environment, so `COPILOT_ALLOW_ALL=true` reaches the
     // launched process whatever the argv words, read off the recorded env.
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-record");
+    let mut runner = suite_runner(&server, "stub-record");
     runner.verify = Some(1);
     runner.init_fleet();
     let seat = dir.path().join("copilot-home");
@@ -2122,8 +2168,7 @@ fn the_successor_is_launched_from_its_typed_fields_with_the_account_routed() {
 }
 
 // ---------------------------------------------------------------------------
-// Decision 120: the controller rows of R-U4g2 (P3 to P7), the Codex probes,
-// the job identity and the posture guard.
+// The recorded set across a crash, the job identity and the posture guard.
 // ---------------------------------------------------------------------------
 
 /// The discharged rows of the intent's recorded set whose evidence word is
@@ -2159,8 +2204,9 @@ fn launched_var<'a>(launched: &'a Value, name: &str) -> &'a Value {
     &launched["env"][name]
 }
 
-/// R-U4g2 P3 (decision 120 (2)): a crash between the predecessor's stop and
-/// the `retired` write. The recorded set is the window-opened one; the
+/// Defect: a reconcile after a crash between the predecessor's stop and the
+/// `retired` write publishing over its unread window. The recorded set is
+/// the window-opened one; the
 /// predecessor is gone and its window's close is refused by the host. The
 /// reconcile acquires the predecessor's handles before it acts and publishes
 /// nothing over its unread window: `unconfirmed`, the window standing.
@@ -2168,7 +2214,7 @@ fn launched_var<'a>(launched: &'a Value, name: &str) -> &'a Value {
 fn a_crash_before_the_retired_write_never_publishes_over_an_unread_window() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-confirm");
+    let mut runner = suite_runner(&server, "stub-confirm");
     runner.verify = Some(1);
     runner.init_fleet();
     let since = now_ms();
@@ -2213,7 +2259,7 @@ fn a_crash_before_the_retired_write_never_publishes_over_an_unread_window() {
         "predecessor-window-unread"
     );
     // A failed publication consumed nothing: the predecessor's window stands
-    // among the held handles, beside the runner's own (decision 120 (1)).
+    // among the held handles, beside the runner's own.
     assert!(
         report["intent"]["observation"]["remaining"]
             .as_array()
@@ -2240,8 +2286,8 @@ fn a_crash_before_the_retired_write_never_publishes_over_an_unread_window() {
     assert_eq!(runner.fleet()["overseer"]["generation"], 4);
 }
 
-/// R-U4g2 P4 (decision 120 (5)): the predecessor's window close lands on the
-/// predecessor's own pane key, never on the runner's. With the runner's own
+/// Defect: the predecessor's window close discharging the runner's pane. The
+/// close lands on the predecessor's own pane key. With the runner's own
 /// window close refused and the runner's identity gone, the predecessor's
 /// window is closed and discharged by that close while the runner's pane
 /// stands held; two reconciles later the intent is still open, never
@@ -2250,7 +2296,7 @@ fn a_crash_before_the_retired_write_never_publishes_over_an_unread_window() {
 fn the_predecessors_close_never_discharges_the_runners_pane() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-confirm");
+    let mut runner = suite_runner(&server, "stub-confirm");
     runner.verify = Some(1);
     runner.init_fleet();
     let since = now_ms();
@@ -2335,23 +2381,24 @@ fn the_predecessors_close_never_discharges_the_runners_pane() {
     assert!(!server.panes().contains(&pane));
 }
 
-/// R-U4g2 P5 (decision 120 (2)): the controller stop records `signalled`
-/// before its first signal. Its `kill` stands in for a process that ignores
-/// the signal, so the stop times out and holds; with the record then moved
-/// under the open intent by a legacy writer, the reconcile holds
-/// `target-moved` with `stop` not `none`: a refusal is impossible after a
-/// signal on the intent. Decision 124d (20): that moved reconcile retries
-/// on the intent's own set, so the signalled predecessor is stopped by its
-/// own token there, never left live for the operator. The predecessor's
-/// pane is planted on a server process that is live (this test's own) but
-/// answers at no socket, the unobservable cell of decision 64 that holds
-/// the set open; a pane on a server replaced at the recorded pid reads gone
-/// instead and settles it (decision 124g (30)).
+/// Defect: a stop refused after it signalled, or a signalled predecessor
+/// left live once the record moved under its intent. The controller stop
+/// records `signalled` before its first signal. Its `kill` stands in for a
+/// process that ignores the signal, so the stop times out and holds; with
+/// the record then moved under the open intent by another writer, the
+/// reconcile holds `target-moved` with `stop` not `none`: a refusal is
+/// impossible after a signal on the intent. That moved reconcile retries on
+/// the intent's own set, so the signalled predecessor is stopped by its own
+/// token there, never left live for the operator. The predecessor's pane is
+/// planted on a server process that is live (this test's own) but answers
+/// at no socket, the unobservable reading that holds the set open; a pane
+/// on a server replaced at the recorded pid reads gone instead and settles
+/// it.
 #[test]
 fn a_signalled_controller_stop_never_refuses() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-confirm");
+    let mut runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
@@ -2372,8 +2419,8 @@ fn a_signalled_controller_stop_never_refuses() {
     );
     assert!(live(predecessor.pid()), "the noop kill signalled nothing");
     runner.tools = None;
-    // A legacy record writer (`ol_record_write`) moves the generation under
-    // the open intent.
+    // Another writer of the record moves the generation under the open
+    // intent.
     let mut fleet = runner.fleet();
     fleet["overseer"]["generation"] = json!(4);
     fleet["overseer"].as_object_mut().unwrap().remove("off");
@@ -2387,8 +2434,8 @@ fn a_signalled_controller_stop_never_refuses() {
         "a signalled stop cannot refuse: {report}"
     );
     assert!(report["intent"]["observation"].get("untouched").is_none());
-    // R-U4g3 (opus) C1 (a), decision 124a (1): the moved target closes the
-    // intent only on a terminal word. Held `unconfirmed` on its planted pane
+    // The moved target closes the intent only on a terminal word. Held
+    // `unconfirmed` on its planted pane
     // the host cannot prove, it stays open with the generation it observed
     // noted, its receipt and job files kept.
     let after = runner.fleet()["intents"][0].clone();
@@ -2398,9 +2445,9 @@ fn a_signalled_controller_stop_never_refuses() {
     );
     assert!(after["reconciled"].is_null(), "{after}");
     assert_eq!(after["observed_generation"], 4, "{after}");
-    // Decision 124d (20): the moved reconcile stopped the signalled
-    // predecessor through its own set's token, with the real `kill` now in
-    // reach; nothing the record names at generation 4 was read for it.
+    // The moved reconcile stopped the signalled predecessor through its own
+    // set's token, with the real `kill` now in reach; nothing the record
+    // names at generation 4 was read for it.
     assert!(
         discharged_by(&after, "stopped")
             .iter()
@@ -2413,16 +2460,17 @@ fn a_signalled_controller_stop_never_refuses() {
     );
 }
 
-/// R-U4g2 P6 (decision 120 (3)): after retirement, with the pending gone, the
-/// runner's pane standing and its recorded identity gone, the recorded set
-/// holds the predecessor's pane and identity. The failure consumes the whole
+/// Defect: a failure after retirement dropping part of the recorded set.
+/// With the pending gone, the runner's pane standing and its recorded
+/// identity gone, the recorded set holds the predecessor's pane and
+/// identity. The failure consumes the whole
 /// recorded set: the runner stopped and its window closed, the predecessor's
 /// identity read and its window closed, nothing dropped.
 #[test]
 fn pending_missing_after_retirement_consumes_the_predecessor() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-confirm");
+    let mut runner = suite_runner(&server, "stub-confirm");
     runner.verify = Some(1);
     runner.init_fleet();
     let since = now_ms();
@@ -2476,8 +2524,8 @@ fn pending_missing_after_retirement_consumes_the_predecessor() {
     );
 }
 
-/// R-U4g2 P7, decision 120 (C2): the outstanding-job predicate reads the
-/// recorded job obligations, never the claim's `handed_from`. An earlier job
+/// Defect: the outstanding-job predicate reading the claim's `handed_from`
+/// rather than the recorded job obligations. An earlier job
 /// of the intent claimed it; the repeat's own job was asked, its launcher did
 /// not answer and its group identity reads live: a further repeat starts no
 /// other job while that one stands.
@@ -2485,7 +2533,7 @@ fn pending_missing_after_retirement_consumes_the_predecessor() {
 fn a_repeat_after_a_claimed_job_starts_no_job_while_one_stands() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
@@ -2535,18 +2583,23 @@ fn a_repeat_after_a_claimed_job_starts_no_job_while_one_stands() {
     assert!(live(predecessor.pid()), "nothing retired the predecessor");
 }
 
-/// Decision 120 (C2, L1): the real setsid launcher reads its child's identity
+/// Defect: a job identity manufactured by the launcher, or an exited job
+/// standing forever. The real setsid launcher reads its child's identity
 /// from the kernel table before it returns, and the runtime records that
 /// identity before the claim wait. A real child that exits before it claims
 /// stands as its recorded group until the reconcile reads it gone by that
-/// identity and discharges `job-exited`: `failed`, never standing forever,
-/// and no start was ever manufactured.
+/// identity and discharges `job-exited`: `failed`. The child is a short
+/// sleep that never claims, so the claim bound is one second: the refusal
+/// is certain, the wait short.
 #[test]
 fn a_real_setsid_child_that_exits_before_claiming_is_read_gone_by_its_recorded_identity() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-confirm");
+    let mut runner = suite_runner(&server, "stub-confirm");
     runner.verify = Some(1);
+    runner
+        .env
+        .push(("ORCH_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
     runner.init_fleet();
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
@@ -2586,19 +2639,17 @@ fn a_real_setsid_child_that_exits_before_claiming_is_read_gone_by_its_recorded_i
     );
     // The child is gone: the reconcile reads the recorded group gone and
     // discharges the job, so the intent fails rather than standing forever.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while live(pid) {
-        assert!(Instant::now() < deadline, "the child never exited");
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    wait_until("the child exited", secs(5), || !live(pid));
     let report = runner.reconcile_one();
     assert_eq!(report["intent"]["outcome"], "failed", "{report}");
     assert_eq!(report["intent"]["observation"]["job"], "ended");
     assert!(live(predecessor.pid()), "nothing retired the predecessor");
 }
 
-/// Decision 120 (M1): the caller's argv reaches the launched command exactly
-/// as given, the judged posture travels as its own field, and the builder
+/// Defect: the caller's words reshaped on the way to the launch, or a bypass
+/// word slipped under a `native` posture. The caller's argv reaches the
+/// launched command exactly as given, the judged posture travels as its own
+/// field, and the builder
 /// derives the environment from the posture: a `native` posture whose words
 /// carry the harness's bypass word refuses `permission-mismatch` before any
 /// window; a `bypass` posture whose words already carry it adds no second
@@ -2610,7 +2661,7 @@ fn the_callers_argv_reaches_the_launch_as_given_under_the_posture_it_spells() {
     // A two-word value stays one argv element.
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-record");
+    let runner = suite_runner(&server, "stub-record");
     runner.init_fleet();
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
@@ -2635,7 +2686,7 @@ fn the_callers_argv_reaches_the_launch_as_given_under_the_posture_it_spells() {
     // A bypass word under the native posture: refused before any window.
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-record");
+    let runner = suite_runner(&server, "stub-record");
     runner.init_fleet();
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
@@ -2660,7 +2711,7 @@ fn the_callers_argv_reaches_the_launch_as_given_under_the_posture_it_spells() {
     // values the posture derives.
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-record");
+    let runner = suite_runner(&server, "stub-record");
     runner.init_fleet();
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
@@ -2709,7 +2760,7 @@ fn the_callers_argv_reaches_the_launch_as_given_under_the_posture_it_spells() {
     // `COPILOT_ALLOW_ALL=true`.
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-record");
+    let mut runner = suite_runner(&server, "stub-record");
     runner.verify = Some(1);
     runner.init_fleet();
     let seat = dir.path().join("copilot-home");
@@ -2754,10 +2805,11 @@ fn the_callers_argv_reaches_the_launch_as_given_under_the_posture_it_spells() {
     );
 }
 
-/// R-U4g3 (opus) M1, decision 124a (3): a predecessor stop that reads
-/// `Unreadable` before it sends any signal (a `ps` that fails for the
-/// predecessor's pid, its legacy `lstart` start read through `ps`) leaves the
-/// predecessor as it was. Its handles return to its record, discharged
+/// Defect: a predecessor whose stop could not read it held as retiring, or
+/// its succession left open. A stop that reads `Unreadable` before it sends
+/// any signal (a `ps` that fails for the predecessor's pid, whose recorded
+/// start is the `lstart` form read through `ps`) leaves the predecessor as
+/// it was. Its handles return to its record, discharged
 /// `not-signalled` by that answer, and the succession fails before
 /// retirement with the pending restored: the healthy predecessor runs on and
 /// a new controller operation is not refused `intent-open`.
@@ -2766,7 +2818,7 @@ fn a_stop_unread_before_any_signal_fails_before_retirement_and_restores_the_pend
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-confirm");
+    let mut runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let predecessor = Owned::sleep();
     let lstart = String::from_utf8(
@@ -2828,15 +2880,16 @@ fn a_stop_unread_before_any_signal_fails_before_retirement_and_restores_the_pend
     );
 }
 
-/// Decision 124a (3): a predecessor stop that signalled and timed out (a `kill`
-/// that signals nothing) holds the succession with the predecessor live; the
+/// Defect: a live predecessor held as retiring by every reconcile after a
+/// stop that timed out. A stop that signalled and timed out (a `kill` that
+/// signals nothing) holds the succession with the predecessor live; the
 /// reconcile, reading it live, runs the stop again through the signalling
 /// method, and with the host's own `kill` the predecessor ends.
 #[test]
 fn a_live_predecessor_after_a_timed_out_stop_is_re_signalled_by_the_reconcile() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-confirm");
+    let mut runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
@@ -2863,7 +2916,8 @@ fn a_live_predecessor_after_a_timed_out_stop_is_re_signalled_by_the_reconcile() 
     assert_eq!(report["intent"]["observation"]["retired"], true, "{report}");
 }
 
-/// Decision 124a (4), R-U4g3 (opus) H1: a `native` posture with a narrower
+/// Defect: a narrower permission word read as a bypass, or a bypass alias
+/// let through under `native`. A `native` posture with a narrower
 /// permission word launches with exactly that word and no bypass word or
 /// environment, for each harness's narrower spelling; a `native` posture
 /// carrying a full-bypass alias refuses `permission-mismatch`.
@@ -2872,7 +2926,7 @@ fn a_native_posture_keeps_a_narrower_permission_word_and_refuses_a_bypass_alias(
     let launch = |harness: &str, words: &[&str]| -> (Value, Value) {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
-        let mut runner = Runner::new(&server, "stub-record");
+        let mut runner = suite_runner(&server, "stub-record");
         runner.verify = Some(1);
         runner.init_fleet();
         let seat = dir.path().join("seat");
@@ -2965,9 +3019,9 @@ fn a_native_posture_keeps_a_narrower_permission_word_and_refuses_a_bypass_alias(
         intent["observation"]["note"], "permission-mismatch",
         "{intent}"
     );
-    // Decision 124b (5), L1: a `native` posture whose words carry a narrower
-    // permission word before a full-bypass one is a mismatch; the builder
-    // reads every word, not the first.
+    // A `native` posture whose words carry a narrower permission word before
+    // a full-bypass one is a mismatch; the builder reads every word, not the
+    // first.
     let (intent, _) = launch(
         "claude",
         &[
@@ -2988,8 +3042,9 @@ fn original_pending_of(runner: &Runner) -> Value {
     pending(runner.state_dir())
 }
 
-/// Decision 124b (6), R-U4g4 L2 and probe P3: a launch-failed path after the
-/// record's pre-write rewrites the sidecar with a `status=` word, which a
+/// Defect: a job held `possibly-started` for good over a record that says
+/// nothing started. A launch-failed path after the record's pre-write
+/// rewrites the sidecar with a `status=` word, which a
 /// later read settles as nothing started. A stop whose job-sidecar names
 /// such a record reconciles rather than holding `possibly-started` for good;
 /// the predecessor it never retired stands.
@@ -2997,7 +3052,7 @@ fn original_pending_of(runner: &Runner) -> Value {
 fn a_launcher_record_with_a_status_word_settles_the_job() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
@@ -3010,7 +3065,7 @@ fn a_launcher_record_with_a_status_word_settles_the_job() {
     runner.write_fleet(&fleet);
     let record = runner.state_dir().join("intents").join(format!("{id}.job"));
     std::fs::create_dir_all(record.parent().unwrap()).unwrap();
-    // Byte for byte what job-unit.sh now leaves on its identity-unread path.
+    // Byte for byte what job-unit.sh leaves on its identity-unread path.
     std::fs::write(
         &record,
         "runner=setsid\nstatus=identity-unread\nline=runner=setsid reason=no-systemd-run\n",
@@ -3027,8 +3082,9 @@ fn a_launcher_record_with_a_status_word_settles_the_job() {
     );
 }
 
-/// Decision 124c (9), R-U4g4 Codex C1: the launcher-side handle writes only
-/// while it still owns the intent. A stub launcher starts the real runtime
+/// Defect: the launcher's late identity write resurrecting a job that has
+/// claimed. The launcher-side handle writes only while it still owns the
+/// intent. A stub launcher starts the real runtime
 /// job, waits for its claim, pauses it, then returns its sidecar: the
 /// launcher's identity write after the claim lands nothing, the caller is
 /// answered `transfer-started` with the claimant as owner, and the claimant's
@@ -3038,7 +3094,7 @@ fn an_early_job_claim_is_not_overwritten_by_the_launcher_write() {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-confirm");
+    let mut runner = suite_runner(&server, "stub-confirm");
     runner.verify = Some(30);
     runner.init_fleet();
     let predecessor = Owned::sleep();
@@ -3168,7 +3224,7 @@ fn watch_world(dir: &Path) -> (std::path::PathBuf, Vec<(String, String)>) {
 
 /// The workflow block's entry line for the fleet state `state`, the words a
 /// `start-controller` request's `watch` carries as `oversee launch` composes
-/// them (U7d): the shipped entry beside these tests, then its arguments as
+/// them: the shipped entry beside these tests, then its arguments as
 /// `workflows/oversee.md` § 4 spells them, the overseer's harness and, after
 /// `--`, the overseer's own flag words. `--repo` is left out: the row claims
 /// the watch, and a repository would set the GitHub duty reading.
@@ -3199,8 +3255,6 @@ fn watch_words(state: &Path) -> Value {
     ])
 }
 
-/// Step6-map A7 row (1), decision 133 (staying alive): the fleet's watch
-/// exists whenever its controller does, started by the record's owner.
 /// Defect: a start that publishes a controller with no watch, or one that
 /// reads a refused launch as a watch started. The request carries the
 /// block's words; the effect launches them through the real `job-unit.sh
@@ -3214,7 +3268,7 @@ fn watch_words(state: &Path) -> Value {
 fn start_controller_launches_the_fleet_watch_and_a_refused_launch_is_unconfirmed() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-confirm");
+    let mut runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let (bin, env) = watch_world(runner.state_dir());
     runner.tools = Some(bin.clone());
@@ -3253,14 +3307,12 @@ fn start_controller_launches_the_fleet_watch_and_a_refused_launch_is_unconfirmed
     );
     let out = runner.run(&["watch", "stop", "--file", &state.display().to_string()]);
     assert!(out.status.success(), "watch stop: {}", stderr(&out));
-    wait_until("the stopped watch ended", Duration::from_secs(20), || {
-        !live(claim.pid)
-    });
+    wait_until("the stopped watch ended", secs(20), || !live(claim.pid));
 
     // The launcher refuses: nothing started, the start held with the cause.
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let state = runner
         .state_dir()
@@ -3303,8 +3355,8 @@ fn start_controller_launches_the_fleet_watch_and_a_refused_launch_is_unconfirmed
             .is_none(),
         "nothing claimed the fleet state"
     );
-    // Decision 184 (6): the hold owes the owner one notice, recorded `owed`
-    // with the outcome before the send runs, sent once and marked.
+    // The hold owes the owner one notice, recorded `owed` with the outcome
+    // before the send runs, sent once and marked.
     let intent = runner.fleet()["intents"][0].clone();
     let text = format!(
         "orch-runtime: watch-launch-failed op=start-controller intent={} outcome=unconfirmed cause={}",
@@ -3368,12 +3420,12 @@ fn snapshot_mailbox(runner: &Runner, snapshot: &Path, log: &Path) -> std::path::
     path
 }
 
-/// Decision 184 (6), R-U6-1 Copilot 3: the start's process dies between the
-/// watch's launch and the read of the launcher's record, leaving the sidecar
-/// obligation standing with the record's address and the record naming the
-/// live job. Defect: the reconcile reading the sidecar at the intent's own
-/// job address, finding nothing there, and launching a second watch over the
-/// first. The launcher is a fixture that writes the record naming a process
+/// Defect: a second watch launched over the first by a reconcile that reads
+/// the sidecar at the intent's own job address and finds nothing there. The
+/// start's process dies between the watch's launch and the read of the
+/// launcher's record, leaving the sidecar obligation standing with the
+/// record's address and the record naming the live job. The launcher is a
+/// fixture that writes the record naming a process
 /// the row owns, kills its caller and answers. The reconcile then reads the
 /// sidecar at its recorded address three ways: unreadable (the record made a
 /// directory) holds the start, nothing launched; live (the record restored)
@@ -3386,7 +3438,7 @@ fn a_crash_between_the_watch_launch_and_its_record_read_launches_no_second_watch
     use std::os::unix::process::ExitStatusExt;
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-confirm");
+    let mut runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let state = runner
         .state_dir()
@@ -3534,8 +3586,7 @@ fn shipped_scripts() -> std::path::PathBuf {
 /// sibling skills the scripts source are linked beside `orch`. The walk's
 /// `kendex tier-model` finds the `kendex-launch` fixture in `bin`, the
 /// watch world's directory first on the rows' `PATH`, never the operator's
-/// install (decisions 164, 175). Returns the scripts directory the launcher
-/// is started from.
+/// install. Returns the scripts directory the launcher is started from.
 fn launcher_checkout(
     runner: &Runner,
     bin: &Path,
@@ -3645,6 +3696,7 @@ fn oversee_launch(
             "ORCH_HARNESS_BINARIES",
             format!("{harness}={}", program_path.display()),
         )
+        .env("ORCH_JOB_CLAIM_SECS", SETTLE.as_secs().to_string())
         .env("ORCH_JOB_UNIT", job_unit())
         .env(
             "LANE_MAIL_CLI",
@@ -3678,9 +3730,7 @@ fn runner_pane(server: &Server) -> String {
     panes.into_iter().next().unwrap()
 }
 
-/// The user turns the gated Codex stub's rollouts under `home` record, as
-/// the text of each completed `UserMessage` item, in file order.
-fn codex_turns(home: &Path) -> Vec<String> {
+fn rollouts(home: &Path) -> Vec<std::path::PathBuf> {
     fn walk(dir: &Path, into: &mut Vec<std::path::PathBuf>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
@@ -3697,8 +3747,14 @@ fn codex_turns(home: &Path) -> Vec<String> {
     let mut files = Vec::new();
     walk(&home.join("sessions"), &mut files);
     files.sort();
+    files
+}
+
+/// The user turns the gated Codex stub's rollouts under `home` record, as
+/// the text of each completed `UserMessage` item, in file order.
+fn codex_turns(home: &Path) -> Vec<String> {
     let mut turns = Vec::new();
-    for file in files {
+    for file in rollouts(home) {
         for line in std::fs::read_to_string(&file).unwrap().lines() {
             let row: Value = serde_json::from_str(line).unwrap();
             if row["type"] == "event_msg"
@@ -3733,22 +3789,20 @@ fn stop_live_watch(runner: &Runner, state: &Path) {
     assert!(live(claim.pid), "a live watch claim: {claim:?}");
     let out = runner.run(&["watch", "stop", "--fleet"]);
     assert!(out.status.success(), "watch stop: {}", stderr(&out));
-    wait_until("the stopped watch ended", Duration::from_secs(20), || {
-        !live(claim.pid)
-    });
+    wait_until("the stopped watch ended", secs(20), || !live(claim.pid));
 }
 
-/// Decisions 197a and 198 (R-U7-1 M1/H1): the first launch's brief outlives
-/// the launcher, because the runtime delivers it, and a start held before
+/// Defect: the launcher's brief removed with the launcher, so a start held
+/// `session-unbound` (a Codex account whose rollout appears after its
+/// composer is drawn) is held `brief-unreadable` by every reconcile, and a
+/// repeated launch meets the same intent and holds the same way; only a
+/// hand-closed window lets it fail. The first launch's brief outlives the
+/// launcher, because the runtime delivers it, and a start held before
 /// delivery is delivered by a reconcile that runs after `oversee launch`
-/// ended. Defect: the launcher wrote the brief to a scratch file its EXIT
-/// trap removed, so a start held `session-unbound` (a Codex account whose
-/// rollout appears after its composer is drawn, the shipped producer) was
-/// held `brief-unreadable` by every reconcile, and a repeated launch met the
-/// same intent and held the same way; only a hand-closed window let it fail.
-/// The row drives the real `scripts/oversee launch` into the real runtime's
-/// `start-controller` (the join of the launcher's request and the runtime's
-/// effect, which every pinned half missed twice this round): the gated
+/// ended. The row drives the real `scripts/oversee launch` into the real
+/// runtime's `start-controller`, the join of the launcher's request and the
+/// runtime's effect that a row pinned against a fixture of either half
+/// misses: the gated
 /// Codex stub holds the start before delivery and the launcher exits
 /// `controller-unconfirmed`; the brief file the intent names stands under
 /// the state directory; a repeated launch before the release meets the
@@ -3759,7 +3813,7 @@ fn stop_live_watch(runner: &Runner, state: &Path) {
 fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-confirm");
+    let mut runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let (bin, env) = watch_world(runner.state_dir());
     let work = runner.state_dir().join("work");
@@ -3839,14 +3893,18 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
 
     // The rollout appears; the reconcile delivers the launcher's brief and
     // publishes the controller.
-    release_hold(&gate, Duration::from_secs(10), || {
-        format!("{:?}", server.window_names())
+    release_hold(&gate, secs(10), || format!("{:?}", server.window_names()));
+    // The reconcile binds the runner by the rollout's `session_meta` line,
+    // which the stub writes after it makes the directory.
+    wait_until("the stub wrote its session metadata", secs(10), || {
+        rollouts(&account).iter().any(|file| {
+            std::fs::read_to_string(file).is_ok_and(|text| {
+                text.split_once('\n')
+                    .and_then(|(first, _)| serde_json::from_str::<Value>(first).ok())
+                    .is_some_and(|row| row["type"] == "session_meta")
+            })
+        })
     });
-    wait_until(
-        "the stub wrote its rollout",
-        Duration::from_secs(10),
-        || account.join("sessions").is_dir(),
-    );
     runner.tools = Some(bin.clone());
     runner.env.extend(env.iter().cloned());
     runner.env.push((
@@ -3873,11 +3931,10 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
     stop_live_watch(&runner, &state);
 }
 
-/// Decision 197a: the launcher's request against the real effect in one
-/// call, the healthy path. Defect: a launcher and a runtime each pinned
-/// against a fixture of the other and joined wrong (this round's bridge
-/// stand-in answered the wrong shape; the brief's scratch lifetime passed
-/// every half). The real `scripts/oversee launch` with the Claude stub
+/// Defect: a launcher and a runtime each pinned against a fixture of the
+/// other and joined wrong. The launcher's request against the real effect
+/// in one call, the healthy path: the real `scripts/oversee launch` with
+/// the Claude stub
 /// confirms in its own call, prints `overseer-launched` from the record,
 /// and the record carries the launcher's directory, line, model, account
 /// and pane as the bridge rows read them; the brief typed into the stub is
@@ -3886,7 +3943,7 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
 fn a_first_launch_confirmed_in_its_call_records_the_launchers_identity() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = Runner::new(&server, "stub-confirm");
+    let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let (bin, env) = watch_world(runner.state_dir());
     let work = runner.state_dir().join("work");

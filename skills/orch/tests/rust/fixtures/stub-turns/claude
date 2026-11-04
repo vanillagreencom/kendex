@@ -1,12 +1,13 @@
 #!/bin/bash
-# A composer stub for the wake rows (step5-map § B rows 3, 7, 8), named
+# A composer stub for the wake rows, named
 # `claude` so the kernel records the harness's own process name for it;
 # the `#!` line names bash directly, since `env` would exec bash under its
 # own name. It draws Claude Code's composer marker (❯ then U+00A0) so the
 # judge reads the pane idle, takes `--session-id <uuid>` and ignores every
 # other launch flag, and records each line it reads as one user turn in a
 # session file of Claude Code's shape named by that id under
-# CLAUDE_CONFIG_DIR (`tmp/orch-rebuild/native/run2/claude/home`: a `user`
+# CLAUDE_CONFIG_DIR (`projects/<cwd slug>/<id>.jsonl`, as agent-runtime's
+# `session` module reads it: a `user`
 # row with a string `content`, `sessionId` and `cwd`), then draws the
 # composer again. Its turn state is a file the row reads:
 #   STUB_TURNS_STATE  written `idle` at rest and `working` from a line

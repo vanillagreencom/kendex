@@ -24,7 +24,7 @@ append_launch() { append_agent '{"run_in_background":true}' 'Async agent launche
 append_teammate() {
   append_agent '{"name":"reviewer"}' "$(printf 'Spawned successfully. (This tool result is internal metadata.)\nagent_id: areviewer-t1\nname: reviewer\nThe agent is now running and will receive instructions via mailbox.')"
 }
-# The measured control-VM probe on KEN-4273 resumes a TaskStop-ended teammate.
+# A recorded Claude run resumes a TaskStop-ended teammate in this shape.
 append_stopped_resume() { # [RESULT] [NOTIFICATION]
   append_teammate
   append_call TaskStop '{"task_id":"reviewer"}' '{"message":"Successfully stopped task: areviewer-t1","task_id":"areviewer-t1","task_type":"in_process_teammate"}'
@@ -406,8 +406,9 @@ run_payload "$(jq -nc --arg p "$TRANSCRIPT" '{session_id:"s1",transcript_path:$p
 expect 2 'lane-mail-check: context=600000' 'the released judge retains ordinary Stop behavior'
 launch 250000 Agent
 expect 2 'lane-mail-check: agent-input=reserve-unsupported' 'an installed older judge cannot admit a reserve launch'
-# A retained edit can lower the old cap to the default launch boundary. Two
-# boundary values alone cannot prove that it consumes a changed reserve.
+# A retained edit can lower the older judge's cap to the default launch
+# boundary. Two boundary values alone cannot prove that it consumes a
+# changed reserve.
 sed 's/-ge 400000/-ge 250000/' "$LEGACY_LIB/lane-context.sh" > "$TMP_ROOT/lower-legacy-cap"
 mv "$TMP_ROOT/lower-legacy-cap" "$LEGACY_LIB/lane-context.sh"
 launch 249999 Agent ORCH_HANDOFF_AGENT_RESERVE_TOKENS=200000

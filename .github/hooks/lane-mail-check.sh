@@ -1717,10 +1717,11 @@ question_tool_check() {
 # lane at its mark is told to hand off, not to go on.
 
 # The record of the lane's last judged turn end, in the lane's own mailbox
-# directory beside the context reading. A legacy count has no status state,
-# so the first status file reading establishes that state as a report. The
-# optional held mark belongs to both recorded facts and clears when either
-# changes. The status state holds no pathname that could redirect a read.
+# directory beside the context reading. A record may hold a count and no
+# status state; the first status file reading then establishes that state as
+# a report. The optional held mark belongs to both recorded facts and clears
+# when either changes. The status state holds no pathname that could redirect
+# a read.
 SENT_RECORD=""
 STATUS_FILE=""
 STATUS_STATE=""
@@ -3220,16 +3221,13 @@ pi_account() {
   return 0
 }
 
-# Called plainly, so errexit is live throughout this body: a status left to it
-# would exit the hook with neither 0 nor 2 and end the turn with no mark
-# judged. Every status is therefore tested where it is taken.
 model_item_state() { # FILE STATE_DIR
   # Reuse the state writer's lock when a launch predates its item state.
   # Initialize only under that lock so concurrent callbacks cannot erase work.
   "$BASH" -euo pipefail -c '
       . "$1/../../mailbox/scripts/lib/file-lock.sh"
       mkdir -p -- "$2"
-      (orch_take_lock 200 "$3.lock" 10 || exit 1
+      (orch_take_lock 200 "$3.lock" 10 || { printf "lane-mail-check: lock-failed lock-file=%s\n" "$3.lock" >&2; exit 1; }
        [[ -f "$3" ]] || "$1/workflow-state" --state-dir "$2" init "$4" --worktree "$5" >/dev/null
       ) 200>"$3.lock"
     ' _ "$SCRIPTS" "$2" "$1" "$ITEM" "$ROOT" 2>"$WORK_DIR/model.err"
@@ -3530,8 +3528,7 @@ handoff_check() {
        | del(.stop_failure)
        | .session_id=$session | .pane_key=$pane | .cause="model-switched" | .model=$model') || return 0
     # Preserve existing workflow state, including unpushed round work.
-    { [ -f "$handoff_sd/workflow-state-$ITEM.json" ] ||
-      "$SCRIPTS/workflow-state" --state-dir "$handoff_sd" init "$ITEM" --worktree "$ROOT" >/dev/null 2>"$WORK_DIR/model.err"; } &&
+    model_item_state "$handoff_sd/workflow-state-$ITEM.json" "$handoff_sd" &&
       "$SCRIPTS/workflow-state" --state-dir "$handoff_sd" set "$ITEM" handoff "$handoff" >/dev/null 2>>"$WORK_DIR/model.err" ||
       {
         if [ "$native" = true ]; then
@@ -3671,9 +3668,9 @@ handoff_check() {
   fi
 
   # The account the credential THIS session runs on still has, judged by the
-  # one account judge, the orch runtime's `accounts pick --lane` (KEN-4416:
-  # the launch, the succession walk, the overseer's mark and this turn end
-  # ask one judge and one limit). Its reply carries the answer's exit by
+  # one account judge, the orch runtime's `accounts pick --lane` (the
+  # launch, the succession walk, the overseer's mark and this turn end ask
+  # one judge and one limit). Its reply carries the answer's exit by
   # number: 0 has room, 3 reaches the headroom mark or the overseer seat's
   # room, and 4 is a directory that is no configured lane of this harness.
   # Every other answer, a runtime the install has not built (the wrapper's

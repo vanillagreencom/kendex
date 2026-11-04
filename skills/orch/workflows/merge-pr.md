@@ -39,7 +39,7 @@ mkdir -p [MAIN_REPO_ROOT]/tmp
 **Stop routes.** Every `records [STOP_NAME]` branch below records against the `[STATE_KEY]` § 3 resolved for the PR it is stopping, renders into the one path this workflow uses, and posts that file on that PR:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state post-pr-stop record [STATE_KEY] [STOP_NAME] [GATE] "[REMAINING]" [MAIN_REPO_ROOT]/tmp/post-pr-stop-[STATE_KEY].md
+.agents/skills/orch/scripts/orch-runtime state post-pr-stop record --item [STATE_KEY] --name [STOP_NAME] --gate [GATE] --remaining "[REMAINING]" --comment-file [MAIN_REPO_ROOT]/tmp/post-pr-stop-[STATE_KEY].md
 ```
 
 ```bash
@@ -77,15 +77,15 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --
 ```
 
 ```bash
-.agents/skills/orch/scripts/workflow-state exists --json [STATE_KEY]
+.agents/skills/orch/scripts/orch-runtime state exists --item [STATE_KEY]
 ```
 
 ```bash
-.agents/skills/orch/scripts/workflow-state init [STATE_KEY] --branch [PR_BRANCH]
+.agents/skills/orch/scripts/orch-runtime state init --item [STATE_KEY] --branch [PR_BRANCH]
 ```
 
 ```bash
-.agents/skills/orch/scripts/workflow-state update [STATE_KEY] '.post_pr_stop = null'
+.agents/skills/orch/scripts/orch-runtime state set --item [STATE_KEY] /post_pr_stop null
 ```
 
 **Ready-head review request.** Bind `[REVIEW_BASE_CHECKOUT]` by [Gate-mode routing](../references/gates.md#gate-mode-routing). Before each readiness check, request an open ready head through the existing owner. This includes a cloud PR whose request run skipped its draft opening. The owner reads this item's saved error retry outcome. It preserves a completed retry or fallback, an active request or a completed Copilot review at that head. A skipped request run supplies no such work. Never close and reopen a PR to request review.
@@ -338,10 +338,10 @@ Use the output as `MAIN_REPO_ROOT`.
    **Recovery cycle** — route the failure back into ci-fix, never fix CI by hand:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state cap CI_FIX_MAX_CYCLES
+   .agents/skills/orch/scripts/orch-runtime state cap CI_FIX_MAX_CYCLES
    ```
 
-   Max `[MAX_CYCLES]` recovery cycles per merge-pr run. At the cap, report the failing check names, ci-fix's last error summary, and what each cycle attempted — never a bare "persistent failure" — then skip steps 2-6 and hand back. Gate or CI behavior changes need a fresh head. **The re-queue rule**, which every other workflow points to: after a merge-group run concludes `failure` or `timed_out`, re-arm only a new head, the fix ci-fix pushes. A cancelled merge-group run, or one the infrastructure lost, may re-arm the same head once. An unchanged head never re-enters the queue after a red run: the merge-group run is the only proof of a head, and a re-run of the same head spends a full queue run on a known failure.
+   Its reply's `limit` is `[MAX_CYCLES]`, the recovery cycles per merge-pr run. At the cap, report the failing check names, ci-fix's last error summary, and what each cycle attempted — never a bare "persistent failure" — then skip steps 2-6 and hand back. Gate or CI behavior changes need a fresh head. **The re-queue rule**, which every other workflow points to: after a merge-group run concludes `failure` or `timed_out`, re-arm only a new head, the fix ci-fix pushes. A cancelled merge-group run, or one the infrastructure lost, may re-arm the same head once. An unchanged head never re-enters the queue after a red run: the merge-group run is the only proof of a head, and a re-run of the same head spends a full queue run on a known failure.
 
    1. `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-6 → § 5 step 1` with context `worktree`, `lifecycle: "managed"`, `issue_id`. For a queue ejection the failing run is the **merge-group** run (event `merge_group`), not necessarily the PR-head run — locate it via the failing check's run link or `gh run list --event merge_group --limit 10` and point ci-fix at it.
    2. Re-confirm the gate at the head about to be re-armed, under the `GATE_MODE` ci-fix returned (skip under `off`):
@@ -480,15 +480,15 @@ Use the output as `MAIN_REPO_ROOT`.
 
    That oid is `[MERGE_SHA]`. Each reply is one of the three dispositions ([references/finding-disposition.md](../../reviewer/references/finding-disposition.md)): `Declined: [reason]`, `Fixed in [MERGE_SHA]`, or `Tracked: [ISSUE_ID]` with the issue created first under [skill-rules.md § Coordination](../references/skill-rules.md#coordination). Reply and resolve through `github.sh post-reply` and `github.sh resolve-thread`, under the section's clearing rule and `-C [MAIN_REPO_ROOT]` like the read above. This read happens once. A thread landing after it is unhandled: nothing else reads a merged PR's threads.
 
-6. **Verify the project and remove the worktree.** Run the build, install, and verification work the project's own instructions require after a merge; this workflow defines no generic command and does not infer one. A project's install record (`.kendex-lock.json`) is recorded by the route its own instructions name, never re-recorded by the lane after a merge or a restack. On failure, report the command and its diagnostic in § 6 and keep the worktree. Once it passes, save the item's workflow-state JSON before close-out. Read its path with `workflow-state path [STATE_KEY]` from `[MAIN_REPO_ROOT]`. Create `[MAIN_REPO_ROOT]/tmp/cycle-state/` if needed. Copy that file once to `[MAIN_REPO_ROOT]/tmp/cycle-state/workflow-state-pr-[PR_NUMBER].json`, named by the merged PR whatever `[STATE_KEY]` is: a PR number names one merge in this repository, so a later merge of the same item never reads this copy as its own. This copy must sit outside the worktree being removed. If an earlier close-out already removed the live file, keep the saved copy. If neither copy reads as a JSON object, report the failure and keep the worktree. The cycle recorder reads only the copy its `--pr` names after removal and leaves it in place, so a repeated record reads it again. Host close archives a hosted clone's `tmp/` with its copy.
+6. **Verify the project and remove the worktree.** Run the build, install, and verification work the project's own instructions require after a merge; this workflow defines no generic command and does not infer one. A project's install record (`.kendex-lock.json`) is recorded by the route its own instructions name, never re-recorded by the lane after a merge or a restack. On failure, report the command and its diagnostic in § 6 and keep the worktree. Once it passes, save the item's state file before close-out. Read its path, the reply's `result.path`, with `orch-runtime state path --item [STATE_KEY]` from `[MAIN_REPO_ROOT]`. Create `[MAIN_REPO_ROOT]/tmp/cycle-state/` if needed. Copy that file once to `[MAIN_REPO_ROOT]/tmp/cycle-state/workflow-state-pr-[PR_NUMBER].json`, named by the merged PR whatever `[STATE_KEY]` is: a PR number names one merge in this repository, so a later merge of the same item never reads this copy as its own. This copy must sit outside the worktree being removed. If an earlier close-out already removed the live file, keep the saved copy. If neither copy reads as a JSON object, report the failure and keep the worktree. The cycle recorder reads only the copy its `--pr` names after removal and leaves it in place, so a repeated record reads it again. Host close archives a hosted clone's `tmp/` with its copy.
 
-   Keep the saved file inside `tmp/cycle-state/`: `workflow-state remove` judges top-level state entries by item name, so a saved file directly under `tmp/` would be removed too. Close the item out under the main checkout's state directory, `tmp/` under `[MAIN_REPO_ROOT]` by default, before worktree removal. Where § 4 found an issue worktree, name its `tmp/` for the close-out's archive; otherwise drop the `--archive` pair:
+   Keep the saved file inside `tmp/cycle-state/`: the close-out judges top-level state entries by item name, so a saved file directly under `tmp/` would be removed too. Close the item out under the main checkout's state directory, `tmp/` under `[MAIN_REPO_ROOT]` by default, before worktree removal. Where § 4 found an issue worktree, name its `tmp/` for the close-out's archive; otherwise drop the `--archive` pair:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state remove [STATE_KEY] --archive [WORKTREE_PATH]/tmp
+   .agents/skills/orch/scripts/orch-runtime state remove --item [STATE_KEY] --archive [WORKTREE_PATH]/tmp
    ```
 
-   What it takes, archives and keeps is [schemas/workflow-state.md § Item close-out](../schemas/workflow-state.md#item-close-out). Its `removed kept=` line names the archive holding the item's state and the worktree's `tmp/` records, and goes on § 6's `tmp/ close-out` line. A refusal keeps the worktree, since the worktree's records may be in no archive: the refusal's first line goes on that line instead, and the worktree line reads `standing — close-out refused`.
+   What it takes, archives and keeps is [schemas/workflow-state.md § Item close-out](../schemas/workflow-state.md#item-close-out). Its reply's `result.kept` names the archive holding the item's state and the worktree's `tmp/` records, which goes on § 6's `tmp/ close-out` line. A refusal keeps the worktree, since the worktree's records may be in no archive: the refusal's key goes on that line instead, and the worktree line reads `standing — close-out refused`.
 
    With the project verification passed and the close-out done, re-run step 4's disposal predicate whole. Step 4 read it two steps ago, and step 5's replies and this step's build can each dirty the tree or move the branch. `worktree remove` runs `git worktree remove --force` and then `rm -rf`, so it refuses nothing itself: uncommitted content, untracked content and a worktree that has moved to another branch all go with the directory, the lane mailbox alone moving to `[MAIN_REPO_ROOT]`, and the predicate is the only thing between them and that.
 
@@ -529,7 +529,7 @@ Worktree `[WORKTREE_PATH]` gone / standing — [cause]
 
 </output_format>
 
-The `Container` row appears only when § 5 step 2 found a container parent. When § 5 step 3 hit a blocking outcome it carries the warning instead of a sha: `⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`. The worktree line closes the block with step 6's read: `gone`, or `standing — [cause]` — the cause step 4's disposal predicate named, or `foreign lease` from the helper, or `project verification failed`, or `close-out refused`. Omit it only where § 4 found no issue worktree. The `tmp/ close-out` line carries step 6's `removed kept=` line from `workflow-state remove`, or the first line of its refusal, and is omitted where that command never ran. Add a `Review gate` row only when the merge did not proceed on a plain `approved` verdict — `⚠️ reviewer-down proceed (no reviewer posted; PR_REVIEW_ON_TIMEOUT=proceed)` or `⚠️ forced (user override)`.
+The `Container` row appears only when § 5 step 2 found a container parent. When § 5 step 3 hit a blocking outcome it carries the warning instead of a sha: `⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`. The worktree line closes the block with step 6's read: `gone`, or `standing — [cause]` — the cause step 4's disposal predicate named, or `foreign lease` from the helper, or `project verification failed`, or `close-out refused`. Omit it only where § 4 found no issue worktree. The `tmp/ close-out` line carries the archive step 6's close-out reported, or its refusal key, and is omitted where that command never ran. Add a `Review gate` row only when the merge did not proceed on a plain `approved` verdict — `⚠️ reviewer-down proceed (no reviewer posted; PR_REVIEW_ON_TIMEOUT=proceed)` or `⚠️ forced (user override)`.
 
 For `merge-pr all`, add the cross-PR analysis and a merge table:
 

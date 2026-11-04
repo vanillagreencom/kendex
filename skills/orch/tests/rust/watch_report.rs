@@ -1,21 +1,20 @@
-//! The verification, report, heartbeat-body and retention duties (decisions
-//! 121 Q5, Q8; 126 (1); 128 (9); 141 (1), (2), (6); step5-map § A1, § A5,
-//! § A6, § A11): the `verifying` lines and `verifying-deadline` events on
-//! the legacy's own fixtures, recorded once (decision 135 (5)); a deadline
+//! The verification, report, heartbeat-body and retention duties: the
+//! `verifying` lines and `verifying-deadline` events on the recorded watch's
+//! own fixtures, recorded once; a deadline
 //! row that moves only after its event line is durable; `report-due` once
 //! per due with its reason and `report-unjudged` on a bad answer; both
 //! duties indifferent to the controller's state; the heartbeat's body under
 //! busy mail, carrying the capacity line and moving no due time, and saying
 //! `unread` for every list no duty has read; and retention judging each
 //! record by its own recorded end and its own session's close, writing
-//! nothing over a fresh fleet record. Each row names the defect it catches
-//! at its doc comment.
+//! nothing over a fresh fleet record, removing only the kinds it names and
+//! compacting the overseer mailbox.
 //!
 //! Most rows call a duty's body on a hand-built tick and apply what it
 //! produced to the baseline themselves, as the runner's `commit` does; the
 //! rows that need the runner's threads drive it on the fake clock. Every
 //! program a duty runs is a fixture symlinked into the row's world, named
-//! to the duty through the settings or its context (decision 164).
+//! to the duty through the settings or its context.
 #![allow(
     clippy::disallowed_methods,
     reason = "the rows write the fixtures and records they plant and drive the one fake clock"
@@ -24,14 +23,16 @@
 #[path = "support.rs"]
 mod support;
 
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
 use agent_runtime::clock;
 use agent_runtime::process::Identity;
+use agent_runtime::record::{SystemTimer, Wait};
 use orch_runtime::error::Error;
 use orch_runtime::ops::Env;
-use orch_runtime::ops::prune::{PruneRecords, RecordsPruned, prune_records};
+use orch_runtime::ops::prune::{PlannedRows, PruneRecords, RecordsPruned, prune_records};
 use orch_runtime::schedule::{Clock, Duty};
 use orch_runtime::settings::{self, Flags as SettingsFlags, Roots, Settings};
 use orch_runtime::state::{self, FLEET_FILE_NAME, InitFields, Locking};
@@ -53,7 +54,7 @@ fn epoch(stamp: &str) -> u64 {
     clock::epoch_secs(stamp).unwrap_or_else(|| panic!("{stamp}"))
 }
 
-/// The recorded legacy answers (`tmp/orch-rebuild/u5f/record-legacy.sh`).
+/// The recorded answers these duties keep byte for byte.
 fn recorded_lines(name: &str) -> Vec<String> {
     lines(&fixtures().join("legacy-recorded").join(name))
 }
@@ -66,9 +67,21 @@ fn lines(path: &Path) -> Vec<String> {
         .collect()
 }
 
-/// The Done-when text `744fd5727:skills/orch/tests/oversee_watch_owed.sh`'s `verifying_world` gives
-/// its two Verifying items.
+/// The Done-when text the recorded owed world gives its two Verifying items.
 const DEADLINE_BOXES: &str = "## Done when\n- [x] branch proof\n- [ ] Post-merge: Read deployed health; Where: live service; Why after merge: needs deployment; Deadline: 2026-10-02T00:00:00Z\n- [ ] Post-merge: Read consumer refresh; Where: consumer PR; Why after merge: needs rollout; Deadline: 2026-10-03T00:00:00Z";
+
+/// The mailbox program as the retention duty runs it: each call's argv a
+/// line of `lane-mail.argv` beside it; with `lane-mail.refuse` beside it,
+/// a keyed refusal and exit 2.
+const LANE_MAIL_FIXTURE: &str = r#"#!/bin/sh
+here="$(dirname "$0")"
+printf '%s\n' "$*" >> "$here/lane-mail.argv"
+if [ -e "$here/lane-mail.refuse" ]; then
+  echo "lane-mail: write-failed=$here/tmp/lane-mail/overseer" >&2
+  exit 2
+fi
+echo "compacted item=overseer to-lane=0 to-overseer=0"
+"#;
 
 /// One world: a state directory with the fleet record, the fixtures
 /// symlinked under the names the duties run, and the settings naming them.
@@ -91,6 +104,9 @@ impl World {
         ] {
             std::os::unix::fs::symlink(fix.join(fixture), dir.path().join(name)).unwrap();
         }
+        let mail = dir.path().join("lane-mail-fixture");
+        std::fs::write(&mail, LANE_MAIL_FIXTURE).unwrap();
+        std::fs::set_permissions(&mail, std::fs::Permissions::from_mode(0o755)).unwrap();
         let roots = Roots {
             project: dir.path().to_path_buf(),
             common: dir.path().to_path_buf(),
@@ -100,9 +116,11 @@ impl World {
             &roots,
             &[
                 ("ORCH_WATCH_MAIL_INTERVAL".into(), "5".into()),
+                ("FLEET_DIR".into(), at("fleet").into()),
                 ("OVERSEE_WATCH_TRACKER".into(), at("linear").into()),
                 ("OVERSEE_WATCH_LANES".into(), at("lanes").into()),
                 ("OVERSEE_WATCH_REPORT".into(), at("oversee-report").into()),
+                ("LANE_MAIL_CLI".into(), mail.display().to_string().into()),
             ],
             &SettingsFlags {
                 state_dir: Some(dir.path().to_path_buf()),
@@ -125,6 +143,16 @@ impl World {
 
     fn paths(&self) -> Paths {
         Paths::of(&self.fleet_path()).unwrap()
+    }
+
+    fn pass(&self, now: u64) -> Result<retention::Pruned, Error> {
+        retention::pass(
+            &self.fleet_path(),
+            &self.paths(),
+            &self.settings,
+            Locking::FLOCK,
+            now,
+        )
     }
 
     fn write_fleet(&self, value: &Value) {
@@ -247,18 +275,18 @@ fn runner<'a>(world: &World, clock: &'a FakeClock) -> Runner<'a> {
     )
 }
 
-/// Step5-map § A5, decision 135 (5). Defect: a `verifying` line or a
-/// `verifying-deadline` event drifting from the legacy bytes the session
+/// Defect: a `verifying` line or a
+/// `verifying-deadline` event drifting from the recorded bytes the session
 /// keys on; a standing deadline raised on every pass; a waiting box raised;
 /// a container's outcome box missed or its child box read as open. The
-/// legacy's answers on `744fd5727:skills/orch/tests/oversee_watch_owed.sh`'s own worlds, recorded once
-/// (`tmp/orch-rebuild/u5f/recorded/`): the deadline world's four events
+/// recorded answers on the owed suite's own worlds, recorded once: the
+/// deadline world's four events
 /// and four lines, then nothing on the second pass with the lines held for
 /// the heartbeat; the unfired trigger's four waiting lines and no event;
 /// the Triage container's outcome box, then `boxes=0` once its only box is
 /// the child's.
 #[test]
-fn the_verifying_lines_and_deadline_events_match_the_legacys_recorded_bytes() {
+fn the_verifying_lines_and_deadline_events_match_the_recorded_bytes() {
     let clock = FakeClock::new();
     let now = epoch("2026-10-02T00:00:01Z");
     // The deadline world: two Verifying items, two post-merge boxes each.
@@ -393,10 +421,10 @@ fn the_verifying_lines_and_deadline_events_match_the_legacys_recorded_bytes() {
     assert_eq!(baseline.get("verifying-deadline", "KEN-P"), None);
 }
 
-/// Step5-map § D, decision 121 Q5 (U5a's order on this duty). Defect: a
+/// Defect: a
 /// `verifying-deadline` row advanced before its event line is on disk, so
-/// a crash between the two loses the deadline for good (the legacy
-/// committed the row first, `A1:174`). Through the runner with the
+/// a crash between the two loses the deadline for good. Through the runner
+/// with the
 /// baseline's write blocked: the eight lines of the deadline world are on
 /// disk and no row moved; the next run reprints them once and lands the
 /// row; the run after prints nothing.
@@ -501,8 +529,8 @@ const REPORT_BODY: [&str; 4] = [
     "  first-commit KEN-1 launched=2026-09-21T00:00:00Z first_commit=none secs=- tier=-",
 ];
 
-/// Step5-map § A6, decisions 94, 128 (5), 130, 141 (6). Defect: a due
-/// report said on every long pass (the legacy's, corrected by the row), or
+/// Defect: a due
+/// report said on every long pass, or
 /// not said again when its reason moves; a refused or unparsable answer
 /// read as "not due" (silence); the span line missing a lane or reading an
 /// unreadable timeline as none. `oversee-report due`'s answer through the
@@ -590,9 +618,8 @@ fn report_due_prints_once_per_due_with_its_reason_and_a_bad_answer_is_report_unj
     );
 }
 
-/// Decision 121 Q8. Defect: a controller gate on verification or the
-/// report (the legacy ran neither while the overseer read dead, walled or
-/// off, `A1:232`). The same fleet with no controller record, with an
+/// Defect: a controller gate on verification or the report, so neither
+/// runs while the overseer reads dead, walled or off. The same fleet with no controller record, with an
 /// explicit `off`, and with a record naming a pane on a server that is
 /// gone: both duties produce the same lines on each.
 #[test]
@@ -670,30 +697,29 @@ fn owed((id, state, priority, lane, host, harness, model, delivery): OwedRow<'_>
     }
 }
 
-/// Decisions 121 Q5, Q9, 126 (1), 130; step5-map § A1, § B row 5; U7d.
 /// Defect: a heartbeat body that moves its own due time or is moved by
-/// mail; a body line drifting from the legacy bytes (the open list, the
+/// mail; a body line drifting from the recorded bytes (the open list, the
 /// roster, the verifying and owed lines with their wall verdicts); the
 /// capacity line missing or naming held items; an owed verdict that
 /// ignores the listing the judge reads. Under one mail event every 7 s for
 /// 7000 s, with the tracker, GitHub and verification slots holding
-/// `744fd5727:skills/orch/tests/oversee_watch_owed.sh`'s world and the
+/// the recorded owed world and the
 /// listing fixture its roster: one heartbeat at the first tick at or past
-/// 6000 s, its block the legacy's recorded bytes, then the quota, reducer
+/// 6000 s, its block the recorded bytes, then the quota, reducer
 /// and capacity lines. The owed verdicts are the accounts judge's over the
-/// listing's windows (the legacy's were planted `lanes pick` answers): the
+/// listing's windows: the
 /// Opus windows of both claude accounts walled until 2026-10-04 and their
 /// shared windows with room, so an Opus launch is `dated` there and a
 /// Sonnet one `queue`; every codex window walled, codex2 resetting first;
 /// the hosted codex record judged on the provider's own listing under its
-/// host (U8d: the judge reads the provider's rows and asks the reader for
+/// host (the judge reads the provider's rows and asks the reader for
 /// no pick), where the one codex account has room, and the host's
 /// capability line read for the repository rule.
 #[test]
 fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
     let world = World::new();
     let paths = world.paths();
-    // The roster line's fields as the legacy recorded them, and the windows
+    // The roster line's fields as the recording holds them, and the windows
     // the judge reads beside them: the 5-hour and weekly percentages with
     // their resets, and the model-scoped buckets.
     let account = |alias: &str, harness: &str, verdict: &str, resets: &str, windows: Value| {
@@ -940,7 +966,7 @@ fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
         .take_while(|l| !l.starts_with("EVENT directive-read "))
         .cloned()
         .collect();
-    // The recording ran the legacy watch with `--max-loops 1 --interval 0`;
+    // The recording ran the recorded watch with `--max-loops 1 --interval 0`;
     // its first line is the flags', every line under it the body's.
     let mut want = vec!["EVENT heartbeat loops=25 interval=240s since=none".to_owned()];
     want.extend(recorded_lines("heartbeat.out").into_iter().skip(1));
@@ -991,7 +1017,7 @@ fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
     );
 }
 
-/// R-RECON S7. Defect: a heartbeat with nothing read yet saying nothing
+/// Defect: a heartbeat with nothing read yet saying nothing
 /// where the owed list goes, so a standing tracker failure reads as
 /// nothing owed. The body with every slot empty, the roster refused and
 /// the open list unanswered: each list's `unread` line in its place, the
@@ -1033,8 +1059,8 @@ fn the_heartbeat_body_says_unread_for_every_list_no_duty_has_read() {
     );
 }
 
-/// One `lanes list --json` record as `744fd5727:skills/orch/tests/oversee_watch_accounts.sh`'s
-/// `account` wrote it: `-` for the headroom or the reset is the null an
+/// One `lanes list --json` record as the recorded accounts world wrote it:
+/// `-` for the headroom or the reset is the null an
 /// unmeasured account carries.
 fn account_record(alias: &str, through: &str, reading: &str) -> Value {
     let words: Vec<&str> = reading.split_whitespace().collect();
@@ -1088,11 +1114,10 @@ fn account_events(produced: &Produced) -> Vec<String> {
 
 const CLAUDE_KEY: &str = "claude|local|/home/u/.claude";
 
-/// Decision 176 (1) (b); `744fd5727:skills/orch/tests/oversee_watch_accounts.sh`'s `renewal`,
-/// `crossing`, `reset`, `dropped`, `reset_unparsed` and `shared_alias`
-/// cases. Defect: an account's change said twice while unchanged (the row
+/// The recorded accounts world's `renewal`, `crossing`, `reset`, `dropped`,
+/// `reset_unparsed` and `shared_alias` cases. Defect: an account's change said twice while unchanged (the row
 /// not advanced), or not said again on the next change; the `change=` or
-/// `was=` text drifting from the legacy bytes; a reset time that moved
+/// `was=` text drifting from the recorded bytes; a reset time that moved
 /// while still ahead read as a reset, or a passed reset the reading still
 /// names; an account the listing dropped for a pass losing its row, so its
 /// return is judged against nothing; two accounts sharing an alias judged
@@ -1100,8 +1125,7 @@ const CLAUDE_KEY: &str = "claude|local|/home/u/.claude";
 /// each pass says, at the wall it runs at.
 #[test]
 fn an_account_change_is_said_once_with_what_changed_from_what_and_again_on_the_next() {
-    // `744fd5727:skills/orch/tests/oversee_watch_accounts.sh`'s BEFORE and AFTER: one hour before and
-    // after the reset sequence's first reset.
+    // One hour before and after the reset sequence's first reset.
     const BEFORE: u64 = 1_790_247_600;
     const AFTER: u64 = 1_790_254_800;
     const ANY: u64 = BEFORE;
@@ -1280,16 +1304,16 @@ fn an_account_change_is_said_once_with_what_changed_from_what_and_again_on_the_n
     }
 }
 
-/// Decision 176 (1) (b); `744fd5727:skills/orch/tests/oversee_watch_accounts.sh`'s `ACCOUNT_SEQUENCES`
-/// table and its four controls. Defect: an unmeasured reading moving the
+/// The recorded accounts world's sequence table and its four controls.
+/// Defect: an unmeasured reading moving the
 /// row (so a provider holding a credential while a lane runs flaps an
-/// event every other pass, the legacy's `flap` control); a measured
+/// event every other pass, the recorded watch's `flap` control); a measured
 /// change after the gap not said (`measured`); an `expired` or `retired`
 /// reading after a measured one not said, or said only once when it
 /// recurs after a renewal (`expired`, `retired`); an unmeasured first
 /// sighting written as a row. Each row of the table is one pass's
 /// reading, the event tail it says and the `account` row saved under the
-/// legacy's key afterwards, `-` for none.
+/// recorded watch's key afterwards, `-` for none.
 #[test]
 fn an_unmeasured_reading_keeps_the_row_and_a_terminal_status_is_news() {
     const SEQUENCES: &[(&str, &str, &str, &str)] = &[
@@ -1472,7 +1496,7 @@ fn an_unmeasured_reading_keeps_the_row_and_a_terminal_status_is_news() {
     assert_eq!(got, want);
 }
 
-/// Decision 176 (1) (b), decisions 99, 105, 156 (1); `744fd5727:skills/orch/tests/oversee_watch_accounts.sh`'s
+/// The accounts suite's
 /// `unread`, `empty_listing` and `missing_status`/`missing_verdict` cases.
 /// Defect: a listing that could not be read, or one the watch cannot
 /// compare (an empty answer at exit 0, a record with no status or
@@ -1576,18 +1600,17 @@ fn touch(path: &Path) {
     std::fs::write(path, "x\n").unwrap();
 }
 
-/// Decisions 128 (9), 141 (1), (2), 146. Defect: a lane read ended by
-/// `done` alone (an old vintage's `closed` record kept for a month, round
-/// 6 item 1); a record judged by a directory's newest write (an append-only
+/// Defect: a lane read ended by
+/// `done` alone (an old vintage's `closed` record kept for a month); a record judged by a directory's newest write (an append-only
 /// `handoffs/` keeping a sibling's file alive); a lane with its worktree
-/// standing and no reason recorded pruned; a kept worktree touched; unread
-/// mail or the newest log segment removed; the fleet start's record
+/// standing and no reason recorded pruned; a kept worktree touched; mail
+/// written within the retention or the newest log segment removed; the fleet start's record
 /// dropped; a running lane relaunched after a confirmed close read ended by
 /// that earlier session's close, its state files deleted and its record
-/// dropped (R-RECON F1). One pass at the fake wall over ten records and
+/// dropped. One pass at the fake wall over ten records and
 /// three segments.
 #[test]
-fn retention_prunes_each_record_by_its_own_recorded_end_and_never_unread_mail_or_a_kept_worktree() {
+fn retention_prunes_each_record_by_its_own_recorded_end_and_never_recent_mail_or_a_kept_worktree() {
     let world = World::new();
     let paths = world.paths();
     let clock = FakeClock::new();
@@ -1636,7 +1659,7 @@ fn retention_prunes_each_record_by_its_own_recorded_end_and_never_unread_mail_or
             {"kind": "ruling", "item": "KEN-1", "text": "no stamp"}
         ]
     }));
-    // The paths: each item's state, lock, run directory and handoff, the
+    // The paths: each item's state, lock, status file and handoff, the
     // mailbox beside them; the live lane's handoff written now makes the
     // handoffs directory's newest write now.
     let dir = world.path();
@@ -1645,11 +1668,12 @@ fn retention_prunes_each_record_by_its_own_recorded_end_and_never_unread_mail_or
     ] {
         touch(&dir.join(format!("workflow-state-{item}.json")));
         touch(&dir.join(format!("workflow-state-{item}.json.lock")));
-        touch(&dir.join(format!("{item}.run")).join("stdout.log"));
+        touch(&dir.join(format!("lane-status-{item}.md")));
         touch(&dir.join("handoffs").join(format!("{item}-handoff.md")));
         touch(&dir.join("lane-mail").join(item).join("to-lane.jsonl"));
         for path in [
             dir.join(format!("workflow-state-{item}.json")),
+            dir.join(format!("lane-status-{item}.md")),
             dir.join("handoffs").join(format!("{item}-handoff.md")),
         ] {
             set_modified(&path, wall - 10 * day);
@@ -1666,7 +1690,7 @@ fn retention_prunes_each_record_by_its_own_recorded_end_and_never_unread_mail_or
     }
     touch(&paths.log);
     touch(&wake::record_path(&world.fleet_path()));
-    let pruned = retention::pass(&world.fleet_path(), &paths, dir, 5, wall).unwrap();
+    let pruned = world.pass(wall).unwrap();
     assert_eq!(
         pruned.segments,
         vec![
@@ -1682,24 +1706,30 @@ fn retention_prunes_each_record_by_its_own_recorded_end_and_never_unread_mail_or
     );
     let gone = |path: PathBuf| std::fs::symlink_metadata(&path).is_err();
     for item in ["KEN-0", "KEN-A", "KEN-B", "KEN-G", "KEN-H"] {
+        assert!(
+            gone(dir.join(format!("workflow-state-{item}.json"))),
+            "{item}: the record pruned"
+        );
         for path in [
-            dir.join(format!("workflow-state-{item}.json")),
-            dir.join(format!("workflow-state-{item}.json.lock")),
-            dir.join(format!("{item}.run")),
+            dir.join(format!("lane-status-{item}.md")),
             dir.join("handoffs").join(format!("{item}-handoff.md")),
         ] {
-            assert!(gone(path.clone()), "{} pruned", path.display());
+            assert!(!gone(path.clone()), "{}: the close-out's", path.display());
         }
         assert!(
+            !gone(dir.join(format!("workflow-state-{item}.json.lock"))),
+            "{item}: the record's lock stays"
+        );
+        assert!(
             !gone(dir.join("lane-mail").join(item).join("to-lane.jsonl")),
-            "{item}: unread mail is never pruned"
+            "{item}: a mailbox written within the retention stays"
         );
     }
     for item in ["KEN-C", "KEN-D", "KEN-E", "KEN-R"] {
         for path in [
             dir.join(format!("workflow-state-{item}.json")),
             dir.join(format!("workflow-state-{item}.json.lock")),
-            dir.join(format!("{item}.run")),
+            dir.join(format!("lane-status-{item}.md")),
             dir.join("handoffs").join(format!("{item}-handoff.md")),
         ] {
             assert!(!gone(path.clone()), "{} kept", path.display());
@@ -1774,7 +1804,7 @@ fn retention_prunes_each_record_by_its_own_recorded_end_and_never_unread_mail_or
         owner: None,
     };
     let request = PruneRecords {
-        lanes: pruned.records.clone(),
+        lanes: pruned.rows.clone(),
         cutoff,
     };
     let report = prune_records(&world.fleet_path(), &mut doc, &request, &env).unwrap();
@@ -1787,6 +1817,7 @@ fn retention_prunes_each_record_by_its_own_recorded_end_and_never_unread_mail_or
                 "KEN-G".into(),
                 "KEN-H".into()
             ],
+            confirmed: pruned.rows.iter().map(|r| r.item.clone()).collect(),
             fleet_log: 1,
         }
     );
@@ -1802,18 +1833,18 @@ fn retention_prunes_each_record_by_its_own_recorded_end_and_never_unread_mail_or
     );
     assert_eq!(doc["fleet_log"].as_array().unwrap().len(), 2);
     // A second pass finds nothing more to remove.
-    let again = retention::pass(&world.fleet_path(), &paths, dir, 5, wall).unwrap();
+    let again = world.pass(wall).unwrap();
     assert_eq!(again.segments, Vec::<PathBuf>::new());
     assert_eq!(again.paths, Vec::<PathBuf>::new());
 }
 
-/// Decision 214 H1. Defect: a prune that reaches past its two arrays and
+/// Defect: a prune that reaches past its two arrays and
 /// drops a standing instruction from the live record, so a successor
-/// re-applies a stop the owner had lifted (round-10 item 2). A standing
+/// re-applies a stop the owner had lifted. A standing
 /// instruction is a row of the fleet record's `standing[]` and has no
 /// retention; the fixture's is older than the cutoff, with a `fleet_log`
 /// row on each side of the cutoff. The duty as the runner runs it, the
-/// record read back from the disk after the store's write: the old row and
+/// record read back from the disk after the store's write: the aged row and
 /// the closed lane's record leave, the array is byte for byte what was
 /// written.
 #[test]
@@ -1912,7 +1943,7 @@ fn the_retention_duty_prints_nothing_and_removes_through_the_runner() {
     assert_eq!(baseline.passes.get(&Duty::Retention), Some(&wall));
 }
 
-/// R-RECON S3. Defect: a first retention pass rewriting a fresh fleet
+/// Defect: a first retention pass rewriting a fresh fleet
 /// record (`state init --fleet` writes no `lanes` and no `fleet_log`; an
 /// array read that inserts the absent key changes the document, and the
 /// store writes it). The duty on the fake clock over the record as `state
@@ -1952,4 +1983,825 @@ fn a_first_retention_pass_over_a_fresh_fleet_record_writes_nothing() {
         before,
         "the fleet record's bytes"
     );
+}
+
+/// The paths an archive holds, as `tar` lists them, each relative to `/`.
+fn archived(archive: &Path) -> Vec<String> {
+    let out = program("tar")
+        .args(["-tzf", &archive.display().to_string()])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+fn relative(path: &Path) -> String {
+    path.strip_prefix("/").unwrap().display().to_string()
+}
+
+/// Defect: an open intent's receipt or request, a brief, a closed intent's
+/// notice or a file no intent names removed with the closed intents' files,
+/// so the effect, the reconcile or the mailbox that still reads it finds
+/// nothing; and a unit removed with no archive is the only copy's end. One
+/// pass over an open intent and a closed one, each with files older than
+/// the cutoff, unnamed files under `intents/`, the handoff files and the
+/// progress reports: only the closed intent's receipt, request and job
+/// record and the stamped reports leave, and the archive the pass names
+/// holds every path that left.
+#[test]
+fn retention_keeps_an_open_intents_files_and_archives_every_unit_that_leaves() {
+    let world = World::new();
+    let clock = FakeClock::new();
+    let wall = clock.wall_secs();
+    let day = 86_400;
+    let old = clock::iso_utc(wall - 10 * day);
+    let dir = world.path();
+    let intents = dir.join("intents");
+    let brief = intents.join("start-controller.20260101T000000Z.7.brief");
+    let mut held = lane_intent("launch-lane", "KEN-1", "not-started", None);
+    held["phase"] = json!({"phase": "opening", "server": 1, "server_start": 1, "socket": "/none",
+                           "since_ms": 0, "brief": brief.display().to_string()});
+    let mut closed = lane_intent("close-owned-resources", "KEN-2", "confirmed", None);
+    closed["completed_at"] = json!(old);
+    world.write_fleet(&json!({
+        "issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
+        "lanes": [lane("KEN-0", "running", &old, json!({}))],
+        "intents": [held, closed]
+    }));
+    let stands = [
+        intents.join("launch-lane:KEN-1:1-1.pane"),
+        intents.join("launch-lane:KEN-1:1-1.request"),
+        brief.clone(),
+        intents.join("close-owned-resources:KEN-2:1-1.notice"),
+        intents.join("close-owned-resources:KEN-2:1-1.pane.tmp"),
+        intents.join("stray.pane"),
+        intents.join("fresh.pane"),
+        dir.join("handoffs").join("OVERSEER-HANDOFF.md"),
+        dir.join("handoffs").join("session-1.md"),
+        dir.join("tmp").join("progress-reports").join("notes.md"),
+    ];
+    let leaves = [
+        intents.join("close-owned-resources:KEN-2:1-1.pane"),
+        intents.join("close-owned-resources:KEN-2:1-1.request"),
+        intents.join("close-owned-resources:KEN-2:1-1.job"),
+        dir.join("tmp")
+            .join("progress-reports")
+            .join("01-01-00-00.md"),
+        dir.join("tmp")
+            .join("progress-reports")
+            .join("12-31-23-59-succession.md"),
+    ];
+    for path in stands.iter().chain(&leaves) {
+        touch(path);
+        set_modified(path, wall - 10 * day);
+    }
+    set_modified(&intents.join("fresh.pane"), wall - day);
+    let pruned = world.pass(wall).unwrap();
+    for path in &stands {
+        assert!(
+            std::fs::symlink_metadata(path).is_ok(),
+            "{} stands",
+            path.display()
+        );
+    }
+    for path in &leaves {
+        assert!(
+            std::fs::symlink_metadata(path).is_err(),
+            "{} left",
+            path.display()
+        );
+    }
+    let archive = pruned.archive.expect("the archive the pass wrote");
+    let name = archive.file_name().unwrap().to_string_lossy().into_owned();
+    assert!(
+        archive.starts_with(dir.join("fleet").join("archive"))
+            && name.starts_with(&format!("prune-{wall}-"))
+            && name.ends_with(".tgz"),
+        "{}",
+        archive.display()
+    );
+    let listed = archived(&archive);
+    for path in &leaves {
+        let want = relative(path);
+        assert!(listed.contains(&want), "{want} archived: {listed:?}");
+    }
+    assert!(
+        listed.iter().any(|p| p.ends_with("/records.json")),
+        "the records file: {listed:?}"
+    );
+    assert_eq!(
+        pruned.paths.len(),
+        leaves.len(),
+        "every unit that left, and nothing else: {:?}",
+        pruned.paths
+    );
+}
+
+/// Defect: a receipt a pane writes after its intent was closed by hand,
+/// judged by that close alone and removed on the next pass, so the watch
+/// reads the live pane as a stray. A launch closed ten days ago, its
+/// request as old and its receipt written a minute ago: the request leaves
+/// and the receipt stands.
+#[test]
+fn retention_keeps_a_receipt_written_after_its_intent_closed() {
+    let world = World::new();
+    let wall = FakeClock::new().wall_secs();
+    let mut closed = lane_intent("launch-lane", "KEN-3", "failed", None);
+    closed["completed_at"] = json!(clock::iso_utc(wall - 10 * 86_400));
+    world.write_fleet(&json!({
+        "issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
+        "lanes": [], "intents": [closed]
+    }));
+    let intents = world.path().join("intents");
+    let request = intents.join("launch-lane:KEN-3:1-1.request");
+    touch(&request);
+    set_modified(&request, wall - 10 * 86_400);
+    let receipt = intents.join("launch-lane:KEN-3:1-1.pane");
+    touch(&receipt);
+    set_modified(&receipt, wall - 60);
+    let pruned = world.pass(wall).unwrap();
+    assert_eq!(pruned.paths.len(), 1, "{:?}", pruned.paths);
+    assert!(!request.exists(), "the old request leaves");
+    assert!(receipt.exists(), "the late receipt stands");
+}
+
+/// Defect: nothing compacts the overseer mailbox, or a refused compaction
+/// stops the prune or passes unsaid. The duty as the runner runs it, the
+/// mailbox program refusing: it was asked to compact the overseer mailbox
+/// at the main checkout, the pass says `watch-step-failed`, and a file
+/// past the retention still leaves.
+#[test]
+fn the_retention_duty_compacts_the_overseer_mailbox_and_says_a_refusal() {
+    let world = World::new();
+    let paths = world.paths();
+    let clock = FakeClock::new();
+    let wall = clock.wall_secs();
+    let old = world.path().join("workflow-state-KEN-9.json");
+    std::fs::write(&old, "{}\n").unwrap();
+    set_modified(&old, wall - 10 * 86_400);
+    touch(&world.path().join("lane-mail.refuse"));
+    let mut runner = runner(&world, &clock);
+    runner.register(
+        Duty::Retention,
+        retention::body(retention::Context {
+            locking: Locking::FLOCK,
+            fleet: world.fleet_path(),
+            paths: paths.clone(),
+            settings: world.settings.clone(),
+        }),
+    );
+    let identity = me();
+    let ended = run_driven(runner, &clock, &paths, &identity, || {
+        clock.await_sleepers(1);
+    });
+    assert!(ended.is_ok(), "{ended:?}");
+    assert_eq!(
+        lines(&world.path().join("lane-mail.argv")),
+        vec![format!(
+            "compact --item overseer --root {}",
+            world.path().display()
+        )]
+    );
+    assert_eq!(
+        lines(&paths.log),
+        vec!["EVENT watch-step-failed step=retention count=1".to_owned()]
+    );
+    assert!(std::fs::symlink_metadata(&old).is_err(), "the prune ran");
+}
+
+/// The real program `name` on this host's `PATH`, which a fixture execs.
+fn real(name: &str) -> String {
+    let out = program("sh")
+        .args(["-c", &format!("command -v {name}")])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().to_owned()
+}
+
+/// Defect: the retention pass removes an item record while a writer holds
+/// its lock mid-update, so the write in flight is lost, or removes a record
+/// written since the pass judged it. A stale record with no lane record and
+/// no worktree, the shell store's `update` held between its locked read and
+/// its move by a `jq` that waits for a release; the pass starts and is
+/// released into after the writer: the update lands and the record stands.
+#[test]
+fn retention_leaves_an_item_record_a_shell_writer_holds() {
+    let world = World::new();
+    let wall = FakeClock::new().wall_secs();
+    let record = world.path().join("workflow-state-KEN-9.json");
+    std::fs::write(&record, "{\"issue_id\":\"KEN-9\"}\n").unwrap();
+    set_modified(&record, wall - 10 * 86_400);
+    let tools = world.path().join("bin");
+    std::fs::create_dir(&tools).unwrap();
+    let jq = tools.join("jq");
+    std::fs::write(
+        &jq,
+        r#"#!/bin/sh
+case "$*" in
+  *late*)
+    "$REAL_JQ" "$@" > "$HOLD_CAPTURE" || exit 1
+    : > "$HOLD_READY"
+    n=0
+    while [ ! -e "$HOLD_RELEASE" ]; do
+      n=$((n + 1))
+      [ "$n" -lt 3000 ] || exit 1
+      sleep 0.01
+    done
+    cat "$HOLD_CAPTURE" ;;
+  *) exec "$REAL_JQ" "$@" ;;
+esac
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&jq, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let ready = world.path().join("ready");
+    let release = world.path().join("release");
+    let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/workflow-state");
+    let mut writer = program(&script);
+    writer
+        .args(["--no-private-env", "--state-dir"])
+        .arg(world.path())
+        .args(["update", "KEN-9", ".late = \"held\""])
+        .env("PATH", tool_path(&[tools.as_path()]))
+        .env("REAL_JQ", real("jq"))
+        .env("HOLD_READY", &ready)
+        .env("HOLD_RELEASE", &release)
+        .env("HOLD_CAPTURE", world.path().join("captured"))
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped());
+    let mut writer = Owned(writer.spawn().unwrap());
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !ready.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the writer reached its locked read"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let pruned = std::thread::scope(|s| {
+        let pass = s.spawn(|| world.pass(wall));
+        // Bounded, and only the control's reach depends on it: a pass that
+        // has not reached the lock by then waits on it all the same.
+        let held = std::time::Instant::now() + Duration::from_secs(2);
+        while std::time::Instant::now() < held && !pass.is_finished() {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        std::fs::write(&release, "").unwrap();
+        pass.join().unwrap()
+    })
+    .unwrap();
+    let status = writer.0.wait().unwrap();
+    let mut cause = String::new();
+    std::io::Read::read_to_string(&mut writer.0.stderr.take().unwrap(), &mut cause).unwrap();
+    assert!(status.success(), "the writer's update: {cause}");
+    let doc: Value = serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+    assert_eq!(doc["late"], "held");
+    assert!(!pruned.paths.contains(&record), "{:?}", pruned.paths);
+}
+
+/// Defect: one record whose lock stays held, a stale mutex on a host
+/// without `flock`, fails every retention pass, so nothing else ever ages
+/// out. The duty as the runner runs it under the mutex policy with a short
+/// wait, over an old record whose `.lock.d` stands and another old record:
+/// the pass says `watch-step-failed`, the record and its mutex stand for
+/// the next pass, and the other record leaves.
+#[test]
+fn a_record_whose_lock_stays_held_keeps_its_item_and_the_pass_takes_the_rest() {
+    let world = World::new();
+    let paths = world.paths();
+    let clock = FakeClock::new();
+    let wall = clock.wall_secs();
+    let record = world.path().join("workflow-state-KEN-S.json");
+    std::fs::write(&record, "{}\n").unwrap();
+    set_modified(&record, wall - 10 * 86_400);
+    let mutex = world.path().join("workflow-state-KEN-S.json.lock.d");
+    std::fs::create_dir(&mutex).unwrap();
+    let scratch = world.path().join("workflow-state-KEN-T.json");
+    std::fs::write(&scratch, "{}\n").unwrap();
+    set_modified(&scratch, wall - 10 * 86_400);
+    let mut runner = runner(&world, &clock);
+    runner.register(
+        Duty::Retention,
+        retention::body(retention::Context {
+            locking: Locking {
+                wait: Wait {
+                    limit: Duration::from_millis(200),
+                    poll: Duration::from_millis(20),
+                    timer: &SystemTimer,
+                },
+                legacy_mutex: true,
+            },
+            fleet: world.fleet_path(),
+            paths: paths.clone(),
+            settings: world.settings.clone(),
+        }),
+    );
+    let identity = me();
+    let ended = run_driven(runner, &clock, &paths, &identity, || {
+        clock.await_sleepers(1);
+    });
+    assert!(ended.is_ok(), "{ended:?}");
+    assert_eq!(
+        lines(&paths.log),
+        vec!["EVENT watch-step-failed step=retention count=1".to_owned()]
+    );
+    assert!(record.exists() && mutex.exists());
+    assert!(
+        std::fs::symlink_metadata(&scratch).is_err(),
+        "the pass went on"
+    );
+}
+
+/// Defect: a record's lock taken with its record, so a holder of the
+/// unlinked inode and a newcomer on a new one both hold "the" lock once the
+/// key is created again. An old item record with its old lock and mutex:
+/// the record leaves; its lock and mutex stand.
+#[test]
+fn no_lock_file_leaves_and_a_record_leaves_without_its_lock() {
+    let world = World::new();
+    let wall = FakeClock::new().wall_secs();
+    let dir = world.path();
+    let record = dir.join("workflow-state-KEN-9.json");
+    std::fs::write(&record, "{}\n").unwrap();
+    let record_lock = dir.join("workflow-state-KEN-9.json.lock");
+    touch(&record_lock);
+    let record_mutex = dir.join("workflow-state-KEN-9.json.lock.d");
+    std::fs::create_dir(&record_mutex).unwrap();
+    for path in [&record, &record_lock, &record_mutex] {
+        set_modified(path, wall - 10 * 86_400);
+    }
+    let pruned = world.pass(wall).unwrap();
+    assert!(!record.exists() && record_lock.exists() && record_mutex.exists());
+    assert_eq!(pruned.paths, vec![record.clone()], "{:?}", pruned.paths);
+}
+
+/// Defect: the retention pass drops a lane row, the item's record and its
+/// mailbox from a judgement the fleet moved under: a relaunch during the
+/// archive turns the ended lane live, and the pass removes it all anyway.
+/// The duty's body, its `tar` updating the lane to `running` under a new
+/// session and appending a mailbox turn before it archives: the live row,
+/// the record and the mailbox all stand.
+#[test]
+fn retention_keeps_a_lane_relaunched_during_its_archive() {
+    if std::env::var_os("RELAUNCH_CHILD").is_none() {
+        // The archive's `tar` is found on this process's `PATH`: the row
+        // runs again as a child with the fixture first on it.
+        let dir = tempfile::tempdir().unwrap();
+        let shim = dir.path().join("tar");
+        std::fs::write(
+            &shim,
+            r#"#!/bin/bash
+set -euo pipefail
+args=("$@")
+while [[ "$1" != -T ]]; do shift; done
+record=$(grep 'workflow-state-KEN-9.json$' "$2")
+state="/${record%/*}"
+/bin/bash "$STORE" --no-private-env --state-dir "$state" update oversee '.lanes[1].status = "running" | .lanes[1].session_since = "new-session"'
+printf 'new turn\n' >> "$state/lane-mail/KEN-9/to-lane.jsonl"
+exec "$REAL_TAR" "${args[@]}"
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let out = program(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "retention_keeps_a_lane_relaunched_during_its_archive",
+                "--nocapture",
+            ])
+            .env("RELAUNCH_CHILD", "1")
+            .env("PATH", tool_path(&[dir.path()]))
+            .env("REAL_TAR", real("tar"))
+            .env(
+                "STORE",
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/workflow-state"),
+            )
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        return;
+    }
+    let world = World::new();
+    let clock = FakeClock::new();
+    let wall = clock.wall_secs();
+    let old = clock::iso_utc(wall - 10 * 86_400);
+    world.write_fleet(&json!({
+        "issue_id": "oversee", "launch_queue": [], "fleet_log": [],
+        "lanes": [lane("KEN-0", "running", &old, json!({})), lane("KEN-9", "done", &old, json!({}))]
+    }));
+    let record = world.path().join("workflow-state-KEN-9.json");
+    std::fs::write(&record, "{\"issue_id\":\"KEN-9\"}\n").unwrap();
+    set_modified(&record, wall - 10 * 86_400);
+    let mailbox = world.path().join("lane-mail/KEN-9");
+    touch(&mailbox.join("to-lane.jsonl"));
+    set_modified(&mailbox.join("to-lane.jsonl"), wall - 10 * 86_400);
+    set_modified(&mailbox, wall - 10 * 86_400);
+    let baseline = Baseline::default();
+    let tick = Tick {
+        duty: Duty::Retention,
+        now: clock.now(),
+        wall,
+        baseline: &baseline,
+        clock: &clock,
+    };
+    let mut body = retention::body(retention::Context {
+        fleet: world.fleet_path(),
+        paths: world.paths(),
+        settings: world.settings.clone(),
+        locking: Locking::FLOCK,
+    });
+    let produced = body(&tick);
+    assert!(produced.is_ok(), "{produced:?}");
+    let fleet = world.fleet();
+    assert!(
+        fleet["lanes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["item"] == "KEN-9" && row["status"] == "running"),
+        "{fleet}"
+    );
+    assert!(record.exists() && mailbox.exists());
+}
+
+/// Defect: `prune-records` drops an item's rows that a writer moved since
+/// the judgement read them. The judgement's rows of an ended lane, and the
+/// fleet record holding that lane relaunched: nothing leaves and the item
+/// is not confirmed; the unmoved item's rows leave.
+#[test]
+fn prune_records_drops_no_row_moved_since_the_judgement() {
+    let world = World::new();
+    let ended = lane("KEN-9", "done", "2026-01-01T00:00:00Z", json!({}));
+    let unmoved = lane("KEN-8", "done", "2026-01-01T00:00:00Z", json!({}));
+    let mut relaunched = ended.clone();
+    relaunched["status"] = json!("running");
+    let fleet = json!({
+        "issue_id": "oversee",
+        "lanes": [lane("KEN-0", "running", "2026-01-01T00:00:00Z", json!({})), relaunched, unmoved.clone()]
+    });
+    let Value::Object(mut doc) = fleet else {
+        unreachable!()
+    };
+    let request = PruneRecords {
+        lanes: vec![
+            PlannedRows {
+                item: "KEN-9".into(),
+                rows: vec![ended],
+                drop: true,
+            },
+            PlannedRows {
+                item: "KEN-8".into(),
+                rows: vec![unmoved],
+                drop: true,
+            },
+        ],
+        cutoff: 0,
+    };
+    let env = Env {
+        now_secs: 0,
+        now_nanos: 0,
+        nonce: 1,
+        owner: None,
+    };
+    let report = prune_records(&world.fleet_path(), &mut doc, &request, &env).unwrap();
+    assert_eq!(report.confirmed, vec!["KEN-8".to_owned()]);
+    assert_eq!(report.lanes, vec!["KEN-8".to_owned()]);
+    let left: Vec<(&str, &str)> = doc["lanes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| (l["item"].as_str().unwrap(), l["status"].as_str().unwrap()))
+        .collect();
+    assert_eq!(left, vec![("KEN-0", "running"), ("KEN-9", "running")]);
+}
+
+/// Defect: a session rows file the fleet record still names retired
+/// because its pane is gone, so the overseer or the successor bound to it
+/// loses its rows. Four files of panes the private ambient server does not
+/// hold, three named by `overseer.session_rows`, `overseer.pending.
+/// session_rows` and `pending.session_rows`: only the unnamed one leaves.
+#[test]
+fn retention_keeps_a_session_rows_file_the_fleet_names() {
+    if std::env::var_os("NAMED_ROWS_CHILD").is_none() {
+        // The pane read goes to the ambient server `TMUX` names: the row
+        // runs again as a child whose `TMUX` is a private server's.
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "named");
+        let out = program(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "retention_keeps_a_session_rows_file_the_fleet_names",
+                "--nocapture",
+            ])
+            .env("NAMED_ROWS_CHILD", "1")
+            .env(
+                "TMUX",
+                format!("{},{},0", server.socket.display(), server.pid),
+            )
+            .env("ROWS_SERVER", server.pid.to_string())
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        return;
+    }
+    let world = World::new();
+    let wall = FakeClock::new().wall_secs();
+    let pid: u32 = std::env::var("ROWS_SERVER").unwrap().parse().unwrap();
+    let overseer = world.path().join("tmp/lane-mail/overseer");
+    std::fs::create_dir_all(&overseer).unwrap();
+    let rows = |pane: u32| {
+        let file = overseer.join(format!("session-{pid}-{pane}.jsonl"));
+        std::fs::write(&file, "{}\n").unwrap();
+        file.display().to_string()
+    };
+    let named = [rows(99_991), rows(99_992), rows(99_993)];
+    let unnamed = rows(99_994);
+    world.write_fleet(&json!({
+        "issue_id": "oversee", "launch_queue": [], "lanes": [], "fleet_log": [],
+        "overseer": {"session_rows": named[0], "pending": {"session_rows": named[1]}},
+        "pending": {"session_rows": named[2]}
+    }));
+    let pruned = world.pass(wall).unwrap();
+    assert_eq!(pruned.paths, vec![PathBuf::from(&unnamed)]);
+    for file in &named {
+        assert!(Path::new(file).exists(), "{file}");
+    }
+}
+
+/// Defect: an ended lane's row kept for good once its item's files are
+/// gone, since the rows the commit drops came only from items a file
+/// names. An ended lane whose item `state remove` closed out: two duty
+/// passes, and the row has left.
+#[test]
+fn retention_retires_an_ended_row_without_remaining_files() {
+    let world = World::new();
+    let clock = FakeClock::new();
+    let wall = clock.wall_secs();
+    let old = clock::iso_utc(wall - 10 * 86_400);
+    world.write_fleet(&json!({
+        "issue_id": "oversee", "launch_queue": [], "fleet_log": [],
+        "lanes": [lane("KEN-0", "running", &old, json!({})), lane("KEN-9", "done", &old, json!({}))]
+    }));
+    let record = world.path().join("workflow-state-KEN-9.json");
+    std::fs::write(&record, "{\"issue_id\":\"KEN-9\"}\n").unwrap();
+    let removed = isolated()
+        .arg("--state-dir")
+        .arg(world.path())
+        .args(["state", "remove", "--item", "KEN-9"])
+        .env("FLEET_DIR", world.path().join("fleet"))
+        .current_dir(world.path())
+        .output()
+        .unwrap();
+    assert!(
+        removed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&removed.stderr)
+    );
+    assert!(!record.exists());
+    for _ in 0..2 {
+        let baseline = Baseline::default();
+        let tick = Tick {
+            duty: Duty::Retention,
+            now: clock.now(),
+            wall,
+            baseline: &baseline,
+            clock: &clock,
+        };
+        let mut body = retention::body(retention::Context {
+            fleet: world.fleet_path(),
+            paths: world.paths(),
+            settings: world.settings.clone(),
+            locking: Locking::FLOCK,
+        });
+        assert!(body(&tick).is_ok());
+    }
+    assert!(
+        !world.fleet()["lanes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["item"] == "KEN-9"),
+        "the ended row left"
+    );
+}
+
+/// The duty's body over `world` with `settings`, once, at `wall`.
+fn duty_pass(world: &World, settings: &Settings, clock: &FakeClock, wall: u64) {
+    let baseline = Baseline::default();
+    let tick = Tick {
+        duty: Duty::Retention,
+        now: clock.now(),
+        wall,
+        baseline: &baseline,
+        clock,
+    };
+    let mut body = retention::body(retention::Context {
+        fleet: world.fleet_path(),
+        paths: world.paths(),
+        settings: settings.clone(),
+        locking: Locking::FLOCK,
+    });
+    let produced = body(&tick);
+    assert!(produced.is_ok(), "{produced:?}");
+}
+
+fn ended_lane_world(world: &World, wall: u64) -> PathBuf {
+    let old = clock::iso_utc(wall - 10 * 86_400);
+    world.write_fleet(&json!({
+        "issue_id": "oversee", "launch_queue": [], "fleet_log": [],
+        "lanes": [lane("KEN-0", "running", &old, json!({})), lane("KEN-9", "done", &old, json!({}))]
+    }));
+    let record = world.path().join("workflow-state-KEN-9.json");
+    std::fs::write(&record, "{\"issue_id\":\"KEN-9\"}\n").unwrap();
+    set_modified(&record, wall - 10 * 86_400);
+    record
+}
+
+/// Defect: an entry of the state directory the pass names no kind for
+/// removed by its age, though a writer the pass does not serialize can
+/// still write or bind it: a lane's own files, a handoff, a brief, the
+/// completion summary and audit of an item whose state expired, a mailbox,
+/// the claim store, a directive send's receipt, an owner alert's notice or
+/// operator scratch; or removed by a later pass once its item's record and
+/// row are gone. An ended lane and an expired item with no lane, each with
+/// its record past the retention, and every such entry ten days old: the
+/// two records and the row leave, and through a second pass everything
+/// else stands.
+#[test]
+fn retention_removes_only_the_kinds_it_names_and_every_other_entry_stands() {
+    let world = World::new();
+    let clock = FakeClock::new();
+    let wall = clock.wall_secs();
+    let record = ended_lane_world(&world, wall);
+    let dir = world.path();
+    let expired = dir.join("workflow-state-KEN-5.json");
+    std::fs::write(&expired, "{}\n").unwrap();
+    set_modified(&expired, wall - 10 * 86_400);
+    let stays = [
+        dir.join("completion-summary-KEN-5.md"),
+        dir.join("audit-KEN-5.json"),
+        dir.join("lane-status-KEN-9.md"),
+        dir.join("dev-round-KEN-9-r1.json"),
+        dir.join("lane-wake-KEN-9.log"),
+        dir.join("wall-relaunch-KEN-9.log"),
+        dir.join("completion-summary-KEN-9.md"),
+        dir.join("handoffs").join("KEN-9-handoff.md"),
+        dir.join("model-handoff.abcdef"),
+        dir.join("lane-mail").join("KEN-9").join("to-lane.jsonl"),
+        dir.join("oversee-watch")
+            .join("claims")
+            .join("claim.ABCDEF.claim"),
+        dir.join("directive-send").join("KEN-2.r0.json"),
+        dir.join("overseer-wake-unread.txt"),
+        dir.join("mutstab-diag").join("run.log"),
+    ];
+    for path in &stays {
+        touch(path);
+        for at in path.ancestors().take_while(|at| *at != dir) {
+            set_modified(at, wall - 10 * 86_400);
+        }
+    }
+    duty_pass(&world, &world.settings, &clock, wall);
+    assert!(!record.exists(), "the ended lane's record leaves");
+    assert!(!expired.exists(), "the expired item's record leaves");
+    assert!(
+        !world.fleet()["lanes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["item"] == "KEN-9"),
+        "the row leaves"
+    );
+    for path in &stays {
+        assert!(path.exists(), "{} stands", path.display());
+    }
+    duty_pass(&world, &world.settings, &clock, wall);
+    for path in &stays {
+        assert!(path.exists(), "next pass: {} stands", path.display());
+    }
+}
+
+/// Defect: an item with no lane record whose workflow state is older than
+/// the retention is pruned under the lane still working in its worktree
+/// (a state that names a linked worktree or a branch a linked worktree has
+/// checked out), or kept forever when it names nothing that stands. The
+/// twelve shapes a workflow state names a worktree in, on a repository with
+/// linked worktrees, one pass: each state is kept or removed as the table
+/// says.
+#[test]
+fn retention_keeps_an_item_state_that_names_a_standing_linked_worktree_and_takes_the_rest() {
+    let world = World::new();
+    let clock = FakeClock::new();
+    let wall = clock.wall_secs();
+    let day = 86_400;
+    let project = world.path();
+    let git = |args: &[&str]| {
+        let out = program("git")
+            .args(["-C", &project.display().to_string()])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["config", "gc.auto", "0"]);
+    git(&["config", "commit.gpgsign", "false"]);
+    git(&["commit", "-q", "--allow-empty", "-m", "base"]);
+    git(&["branch", "ken-4"]);
+    git(&["branch", "ken-6"]);
+    let trees = project.join("trees");
+    for name in ["ken-1", "other-2", "ken-3", "ken-5", "ken-12"] {
+        git(&[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            name,
+            &trees.join(name).display().to_string(),
+            "main",
+        ]);
+    }
+    std::fs::remove_dir_all(trees.join("ken-12")).unwrap();
+    let quoted = trees.join("ken-q\ntree");
+    git(&[
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "ken-11",
+        &quoted.display().to_string(),
+        "main",
+    ]);
+    let plain = project.join("plain");
+    std::fs::create_dir(&plain).unwrap();
+    let at = |p: &Path| p.display().to_string();
+    let shapes: [(&str, Value, bool); 12] = [
+        (
+            "KEN-1",
+            json!({"worktree": at(&trees.join("ken-1")), "branch": "ken-1"}),
+            true,
+        ),
+        (
+            "KEN-2",
+            json!({"worktree": at(&trees.join("other-2"))}),
+            true,
+        ),
+        (
+            "KEN-3",
+            json!({"worktree": at(&trees.join("gone-3")), "branch": "ken-3"}),
+            true,
+        ),
+        (
+            "KEN-4",
+            json!({"worktree": at(&trees.join("gone-4")), "branch": "ken-4"}),
+            false,
+        ),
+        ("KEN-5", json!({"branch": "ken-5"}), true),
+        ("KEN-6", json!({"branch": "ken-6"}), false),
+        ("KEN-7", json!({"branch": "main"}), false),
+        (
+            "KEN-8",
+            json!({"worktree": at(project), "branch": "main"}),
+            false,
+        ),
+        ("KEN-9", json!({}), false),
+        ("KEN-10", json!({"worktree": at(&plain)}), false),
+        ("KEN-11", json!({"worktree": at(&quoted)}), true),
+        ("KEN-12", json!({"branch": "ken-12"}), false),
+    ];
+    for (item, state, _) in &shapes {
+        let path = project.join(format!("workflow-state-{item}.json"));
+        std::fs::write(&path, serde_json::to_string(state).unwrap()).unwrap();
+        set_modified(&path, wall - 10 * day);
+    }
+    world.pass(wall).unwrap();
+    for (item, _, kept) in &shapes {
+        let name = format!("workflow-state-{item}.json");
+        assert_eq!(
+            std::fs::symlink_metadata(project.join(&name)).is_ok(),
+            *kept,
+            "{name} kept={kept}"
+        );
+    }
 }

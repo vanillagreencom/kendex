@@ -93,8 +93,8 @@ got="$(second_entry)"
 # --- fix rounds outside the loop leave the loop budget alone --------
 # `dev-fix.md` increments `cycles` on EVERY fix round it runs — QA fixes in
 # review-pr § 7, and review.md / submit-pr.md rounds before the loop starts.
-# While the gate read `.cycles`, those rounds spent loop budget they never
-# used, and a QA recheck after four loop cycles was refused outright.
+# A gate reading `.cycles` would spend loop budget on those rounds and
+# refuse a QA recheck after four loop cycles.
 sd_qa="$TMP_ROOT/state-qa"
 ws --state-dir "$sd_qa" init KEN-9 --worktree "$REPO_ROOT" --branch ken-9 >/dev/null
 for _ in 1 2 3 4 5 6 7; do
@@ -140,7 +140,7 @@ again="$(ws --state-dir "$sd_scn" get KEN-8 .rereview_cycles)"
   && pass "a second QA re-check is permitted and still spends nothing" \
   || fail "a second QA re-check is permitted and still spends nothing" "rc=$rc got=$again"
 
-# --- § 2 records the first-cycle panel -----------------------------
+# --- the first-cycle panel -----------------------------------------
 # The first cycle's panel lands on its own key with its agents and its reason,
 # and spends nothing: a first cycle is not a re-review cycle.
 sd_first="$TMP_ROOT/state-first"
@@ -150,52 +150,6 @@ first="$(ws --state-dir "$sd_first" get KEN-3 '[.first_panel.agents, .first_pane
 [[ "$rc" -eq 0 && "$first" == '[["reviewer-doc","reviewer-error"],"docs + shell",0]' ]] \
   && pass "first_panel is written with its agents and its reason and spends no re-review budget" \
   || fail "first_panel is written with its agents and its reason and spends no re-review budget" "rc=$rc got=$first"
-
-REVIEW_PR_WF="$REPO_ROOT/skills/orch/workflows/review-pr.md"
-section_2() { awk '$0 == "## 2. Prepare Reviewers" { on = 1; next } on && /^## 3[.]/ { on = 0 } on' "$1"; }
-FIRST_WRITE='workflow-state set [ISSUE_ID] first_panel'
-grep -q -F "$FIRST_WRITE" <<<"$(section_2 "$REVIEW_PR_WF")" \
-  && pass "§ 2 records its panel on first_panel" \
-  || fail "§ 2 records no first_panel"
-
-# The zero cap's one writer: the walk sets review_fix_round itself, so only
-# these pins hold § 4 Fix Delegation to the write `cap --issue` reads, and
-# every other workflow to leaving it alone.
-section_4() { awk '$0 == "## 4. Handle Review Items" { on = 1; next } on && /^## 5[.]/ { on = 0 } on' "$1"; }
-FIX_WRITE='workflow-state set [ISSUE_ID] review_fix_round true'
-grep -q -F "$FIX_WRITE" <<<"$(section_4 "$REVIEW_PR_WF")" \
-  && pass "§ 4 records its fix round on review_fix_round" \
-  || fail "§ 4 records no review_fix_round"
-writers="$(grep -r -n -F 'set [ISSUE_ID] review_fix_round' "$REPO_ROOT/skills/orch/workflows")" || true
-[[ "$(wc -l <<<"$writers")" -eq 1 && "$writers" == "$REVIEW_PR_WF:"* ]] \
-  && pass "no other workflow writes review_fix_round" \
-  || fail "review_fix_round is not written by review-pr.md alone" "$writers"
-
-# --- § 7 states which counter governs it --------------------------
-# The doc side of the same separation. § 7 must name its own key and must not
-# read or raise the § 4 budget.
-# The pins are IDENTIFIERS and a heading reference — the key § 7 writes, the
-# counter it must not touch, the check it must not route through — never a
-# sentence: § 7 states the separation without naming the counter, so a token
-# scan over the whole section is the assertion.
-section_7() { awk '$0 == "## 7. Handle QA Items" { on = 1; next } on && /^## 8[.]/ { on = 0 } on' "$1"; }
-S7="$(section_7 "$REVIEW_PR_WF")"
-grep -q -F 'qa_recheck_panel' <<<"$S7" \
-  && pass "§ 7 sets its QA panel on its own key" \
-  || fail "§ 7 does not name qa_recheck_panel"
-grep -q -F 'rereview_cycles' <<<"$S7" \
-  && fail "§ 7 still names the § 4 budget" "$(grep -n -F 'rereview_cycles' <<<"$S7")" \
-  || pass "§ 7 neither reads nor raises rereview_cycles"
-grep -q -F 'At The Cap' <<<"$S7" \
-  && fail "§ 7 still routes through § 4's At The Cap check" \
-  || pass "§ 7 routes through no cap check"
-# With no counter, the two convergence exits both need a round to surface
-# nothing new. A loop where every round finds a DIFFERENT blocker fires
-# neither, so the section needs the recurrence exit as well: one root cause
-# reappearing ends it with a structural close, not another patch round.
-grep -q -F 'finding-disposition.md#recurrence' <<<"$S7" \
-  && pass "§ 7 carries the recurrence exit for a loop that never surfaces nothing" \
-  || fail "§ 7 has no exit for a loop where every round finds something new"
 
 # Other set fields are untouched by the cap.
 ws --state-dir "$sd" set KEN-1 skip_qa true >/dev/null && rc=0 || rc=$?
@@ -340,45 +294,11 @@ got="$(other_zero "$SCOPE_WS")"
   && pass "the external-cap row flags a zero-cap exception that matches any cap" \
   || fail "the external-cap row MISSED a zero-cap exception that matches any cap" "got=$got"
 
-# § 7 changed to the shared key: the assertion must catch the counter
-# coming back into the section that must not spend it.
-CTRL_WF="$TMP_ROOT/review-pr-shared.md"
-sed 's/the § 4 budget `REVIEW_MAX_CYCLES` bounds is neither read nor raised in this section/`rereview_cycles` is read here/' "$REVIEW_PR_WF" > "$CTRL_WF"
-if cmp -s "$CTRL_WF" "$REVIEW_PR_WF"; then
-  fail "§ 7 counter control planted nothing — its sed program matched no text"
-elif grep -q -F 'rereview_cycles' <<<"$(section_7 "$CTRL_WF")"; then
-  pass "the assertion flags rereview_cycles back inside § 7"
-else
-  fail "the assertion MISSED rereview_cycles back inside § 7"
-fi
-
-# The unpatched § 2: no first_panel write, so the first cycle leaves no record.
-CTRL_WF="$TMP_ROOT/review-pr-nofirst.md"
-grep -v -F "$FIRST_WRITE" "$REVIEW_PR_WF" > "$CTRL_WF" || true
-if cmp -s "$CTRL_WF" "$REVIEW_PR_WF"; then
-  fail "§ 2 first_panel control planted nothing — its filter matched no text"
-elif grep -q -F "$FIRST_WRITE" <<<"$(section_2 "$CTRL_WF")"; then
-  fail "the assertion MISSED § 2 recording no first_panel"
-else
-  pass "the assertion flags § 2 recording no first_panel"
-fi
-
-# § 4 without its review_fix_round write: every later § 4 read at 0 is below.
-CTRL_WF="$TMP_ROOT/review-pr-nofix.md"
-grep -v -F "$FIX_WRITE" "$REVIEW_PR_WF" > "$CTRL_WF" || true
-if cmp -s "$CTRL_WF" "$REVIEW_PR_WF"; then
-  fail "§ 4 review_fix_round control planted nothing — its filter matched no text"
-elif grep -q -F "$FIX_WRITE" <<<"$(section_4 "$CTRL_WF")"; then
-  fail "the assertion MISSED § 4 recording no review_fix_round"
-else
-  pass "the assertion flags § 4 recording no review_fix_round"
-fi
-
 # --- a fix diff's panel against first_panel ------------------------
 # A rereview_panel or verification_panel holding every first_panel reviewer
 # is refused as panel-copy unless `domain_reasons` names, per first_panel
-# reviewer, why the fix diff concerns that domain. The first row is KEN-3449's
-# copy: a nonempty free-text `reason` and nothing else. A refused rereview
+# reviewer, why the fix diff concerns that domain. The first row is a copy
+# carrying a nonempty free-text `reason` and nothing else. A refused rereview
 # write spends no budget; verification spends none either way.
 FIRST='{"agents": ["reviewer-arch", "reviewer-correctness", "reviewer-error", "reviewer-security", "reviewer-quality", "reviewer-test", "reviewer-doc"], "reason": "first cycle"}'
 ALL='"reviewer-arch", "reviewer-correctness", "reviewer-error", "reviewer-security", "reviewer-quality", "reviewer-test", "reviewer-doc"'
@@ -417,7 +337,7 @@ for row in "${COPY_ROWS[@]}"; do
   assert_eq "$(copy_verdict "$n" "$field" "$panel")" "$want|$count" "panel-copy row $n: $field"
 done
 
-# The check disabled: the KEN-3449 copy goes through and spends the budget.
+# The check disabled: the reason-only copy goes through and spends the budget.
 COPY_WS="$(mutant_scripts copy-blind workflow-state)/workflow-state" || exit 1
 mutate_file "$COPY_WS" 'if [[ -n "$uncovered" ]]; then' 'if false && [[ -n "$uncovered" ]]; then'
 IFS='|' read -r field panel want count <<<"${COPY_ROWS[0]}"

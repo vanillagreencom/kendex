@@ -8,8 +8,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/../../skills/orch/tests/lib/named-process
 COMPANION="${COMPANION_UNDER_TEST:-$REPO_ROOT/hooks/lane-mail-model-switch.sh}"
 OWNED_CHILD=""
 OWNED_SOCKET=""
+LOCK_HOLDER=""
 cleanup_model_world() {
   if [[ -n "$OWNED_CHILD" ]]; then kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; fi
+  if [[ -n "$LOCK_HOLDER" ]]; then kill "$LOCK_HOLDER" 2>/dev/null || :; wait "$LOCK_HOLDER" 2>/dev/null || :; fi
   [[ -z "$OWNED_SOCKET" ]] || tmux -S "$OWNED_SOCKET" kill-server 2>/dev/null || :
   rm -rf -- "${TMP_ROOT:?}"
 }
@@ -19,7 +21,7 @@ trap cleanup_model_world EXIT
 # repeating unrelated worlds. An ordinary run still exercises every case.
 if [[ -n "${MODEL_CONTROL:-}" ]]; then
   case "${MODEL_CONTROL_CASE:-}" in
-    matching|family-alias|no-fleet-record|gui-session|adapter|fresh-shell|complete|extended|conflicting-selector|retired-callback|replaced-before-write|stale-launch|missing-judge|optional-account|reset|reset-warning) ;;
+    matching|family-alias|no-fleet-record|gui-session|adapter|fresh-shell|complete|extended|conflicting-selector|retired-callback|replaced-before-write|stale-launch|missing-judge|optional-account|reset|reset-replaced|reset-warning|lock-cause) ;;
     *) printf 'lane-mail-model-switch.test: control-case=unknown value=%s\n' "${MODEL_CONTROL_CASE:-}" >&2; exit 1 ;;
   esac
 fi
@@ -479,6 +481,69 @@ retired-pane|predecessor|s1|s1|0
 ROWS
 fi
 
+if model_case reset-replaced; then
+echo '=== a replacement committed between the reset read and its write keeps its own check ==='
+# Defect: the reset reads the lane, then writes. A relaunch that lands in
+# between would take the predecessor's passed check and count a reset for a
+# launch whose first turn never ran, so the write must compare the lane it
+# read inside the store's lock and leave a changed lane as it stands.
+model_world reset-replaced claude-fable-5-1
+"$S/workflow-state" --state-dir "$LANE/tmp" update oversee '
+  (.lanes[0] | {launch,launched_at}) as $identity
+  | .lanes[0].model_check={outcome:"switched",session_id:"previous",recovery_started:true,
+      launch_identity:($identity | .launch.pane="%old")}
+  | .fleet_log=[{kind:"model-switched",item:"KEN-3916",recovery:"replaced"}]' >/dev/null
+# The lane reports a step, so the idle judge after the marks passes it.
+printf 'wait\n' > "$LANE/tmp/lane-status-KEN-3916.md"
+mv -- "$S/workflow-state" "$S/workflow-state.real"
+cat > "$S/workflow-state" <<'STATE'
+#!/usr/bin/env bash
+set -euo pipefail
+# The first write that would carry the reset row lands after the relaunch.
+if [[ "$1" == --state-dir && "$3 $4" == "update oversee" && "$5" == *model-recovery-reset* && ! -f "$0.relaunched" ]]; then
+  : > "$0.relaunched"
+  "$0.real" --state-dir "$2" update oversee '
+    .lanes[0].launched_at="launch-c"
+    | .lanes[0].launch.pane="%replacement"
+    | .lanes[0].model_check={outcome:"switched",session_id:"s2",recovery_started:true,
+        launch_identity:{launch:{pane:"%replacement"},launched_at:"launch-c"}}' >/dev/null
+fi
+exec "$0.real" "$@"
+STATE
+chmod +x "$S/workflow-state"
+run_payload '{"hook_event_name":"Stop","session_id":"s1","stop_hook_active":false}'
+assert_eq "$([[ -f "$S/workflow-state.relaunched" ]] && echo yes)" yes 'the relaunch lands before the reset write'
+assert_eq "$(jq -r '.lanes[0].model_check.session_id' "$LANE/tmp/workflow-state-oversee.json")" s2 \
+  'a reset raced by a relaunch leaves the replacement check'
+assert_eq "$(jq '[.fleet_log[] | select(.kind=="model-recovery-reset")] | length' "$LANE/tmp/workflow-state-oversee.json")" 0 \
+  'a reset raced by a relaunch counts no reset'
+kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
+fi
+
+if model_case lock-cause; then
+echo '=== a model switch meeting a held item lock names the lock ==='
+# Defect: the item state's init waits on the store's lock for its bound and
+# then gives up. With no cause line, the handoff-unwritten notice carries
+# nothing under its key where the store's own writer names the lock.
+model_world lock-cause claude-fable-5-1
+lock="$LANE/tmp/workflow-state-KEN-3916.json.lock"
+"$BASH" -c '. "$1"; exec 200>"$2"; orch_take_lock 200 "$2" 10 || exit 1; : > "$3"
+  until [ -f "$4" ] || [ "$SECONDS" -ge 60 ]; do sleep 0.05; done' \
+  _ "$REPO_ROOT/skills/mailbox/scripts/lib/file-lock.sh" "$lock" "$TMP_ROOT/lock-held" "$TMP_ROOT/lock-release" &
+LOCK_HOLDER=$!
+until [[ -f "$TMP_ROOT/lock-held" ]] || ! kill -0 "$LOCK_HOLDER" 2>/dev/null; do sleep 0.05; done
+assert_eq "$([[ -f "$TMP_ROOT/lock-held" ]] && echo held)" held 'the item lock is held before the switch'
+event claude-opus-4-8
+: > "$TMP_ROOT/lock-release"
+wait "$LOCK_HOLDER" || :
+LOCK_HOLDER=""
+assert_eq "$(jq -r '.hookSpecificOutput.additionalContext | split("\n")[0:2] | join("|")' "$TMP_ROOT/stdout")" \
+  "lane-mail-check: model-unavailable=handoff-unwritten|lane-mail-check: lock-failed lock-file=$lock" \
+  'a held item lock is named under the handoff-unwritten key'
+await_recovery || :
+kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
+fi
+
 if model_case reset-warning; then
 echo '=== reset dependency failures preserve Stop and later model notices ==='
 # workflow-state and tmux can fail at a replacement's first Stop. Their
@@ -577,6 +642,8 @@ old, new = {
     "unavailable": ('if .model_checks[$session] != null then', 'if false then'),
     "reset": ('    model_recovery_reset\n', '    : # model_recovery_reset\n'),
     "reset-warning": ('message model-unavailable reset-launch-unread', 'model_unavailable_notice reset-launch-unread ""'),
+    "lock-cause": ('|| { printf "lane-mail-check: lock-failed lock-file=%s\\n" "$3.lock" >&2; exit 1; }', '|| exit 1'),
+    "reset-compare": ('    | if $current.launch != $record.launch or $current.launched_at != $record.launched_at\n        or $current.session_id != $record.session_id or $current.model_check != $record.model_check\n', '    | if false\n'),
 }[rule]
 assert text.count(old) == 1
 changed = text.replace(old, new)
@@ -607,6 +674,8 @@ unbound|gui-session
 notice|adapter
 reset|reset
 reset-warning|reset-warning
+reset-compare|reset-replaced
+lock-cause|lock-cause
 CONTROLS
   while IFS='|' read -r rule control_case; do
     control="$TMP_ROOT/relaunch-$rule.sh"

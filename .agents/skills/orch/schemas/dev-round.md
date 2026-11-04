@@ -12,7 +12,7 @@ The record sits inside the delegated worktree, so it is trusted the way every ot
 
 `[ISSUE_ID]` is the normalized workflow-state key. Dev-side workflows name the same value `[ARTIFACT_KEY]`, and a bundled round uses the Parent ID. It and `[ROUND_ID]` must match `^[A-Za-z0-9._-]+$` with no `..`.
 
-Optional `finding_occurrences` stores the pre-stamp `workflow-state findings query` result unchanged, supplied by `--finding-occurrences-file`. It is part of the record's immutable input, not a permission or a counter. A record without it reads as having none. The source and count contract is [workflow-state.md § Finding occurrences](workflow-state.md#finding-occurrences).
+Optional `finding_occurrences` stores the `result` of the pre-stamp `orch-runtime state findings query` reply unchanged, supplied by `--finding-occurrences-file`. It is part of the record's immutable input, not a permission or a counter. A record without it reads as having none. The source and count contract is [workflow-state.md § Finding occurrences](workflow-state.md#finding-occurrences).
 
 ## Schema
 

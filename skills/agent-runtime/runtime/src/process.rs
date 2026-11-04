@@ -6,10 +6,10 @@
 //! On Linux the start is the `starttime` field of `/proc/<pid>/stat`, in
 //! clock ticks since boot, read as a file; elsewhere it is the `lstart`
 //! column of `ps`, which is the one portable spelling. A recorded start is
-//! read back in its own form, so the legacy shell writers' bare `lstart`
-//! text and this crate's `ticks:` form each match the process they name.
+//! read back in its own form, so the shell writers' bare `lstart` text and
+//! this crate's `ticks:` form each match the process they name.
 //!
-//! Every read here answers with a [`Reading`] (decision 99): the process
+//! Every read here answers with a [`Reading`]: the process
 //! live under its identity, gone (no live process holds the pid, an exited
 //! one awaiting its parent's wait included), or unreadable with the cause.
 //! A `/proc` entry that cannot be read or parsed, a `ps` that failed, or a
@@ -22,7 +22,7 @@
 //! interpreter's name for a script, and carries no pid, so the identity
 //! reader reads the group's members itself.
 
-// Every reading here is matched variant by variant (decision 105): a
+// Every reading here is matched variant by variant: a
 // wildcard arm would let a later variant fall into an absence.
 #![deny(clippy::wildcard_enum_match_arm)]
 
@@ -119,15 +119,26 @@ fn stat_reading(read: std::io::Result<String>) -> Reading<Stat> {
             };
         }
     };
+    // A task being reaped (`X`) writes its process group and session as
+    // -1, which no group parses from; its state alone says it is gone, as a
+    // zombie's does.
+    if matches!(stat_state(&text), Some('Z' | 'X')) {
+        return Reading::Gone;
+    }
     match parse_stat(&text) {
         None => Reading::Unreadable {
             cause: "stat-unparsed",
         },
-        Some(Stat {
-            state: 'Z' | 'X', ..
-        }) => Reading::Gone,
         Some(stat) => Reading::Live(stat),
     }
+}
+
+/// The state field of a stat line: the first field after the command
+/// name's closing parenthesis.
+#[cfg(target_os = "linux")]
+fn stat_state(stat: &str) -> Option<char> {
+    let close = stat.rfind(')')?;
+    stat[close + 1..].split_whitespace().next()?.chars().next()
 }
 
 #[cfg(target_os = "linux")]
@@ -135,8 +146,8 @@ fn stat_of(pid: u32) -> Reading<Stat> {
     stat_reading(fs::read_to_string(format!("/proc/{pid}/stat")))
 }
 
-/// What a `ps -p <pid>` answer says, from its exit status and both streams
-/// (decision 105). A row under exit 0 is `Live`, its blanks squeezed. `Gone`
+/// What a `ps -p <pid>` answer says, from its exit status and both streams.
+/// A row under exit 0 is `Live`, its blanks squeezed. `Gone`
 /// is the one documented no-match answer alone: exit 1 with nothing on
 /// either stream. procps-ng exits 1 when it printed no process
 /// (`src/ps/output.c`, `show_one_proc`'s end-of-run call: `exit(1)` unless
@@ -246,16 +257,16 @@ fn start_ticks(_pid: u32) -> Reading<String> {
 }
 
 /// The `ps -o lstart` start of a pid as `lstart:<squeezed text>`. Available
-/// on every host, so a legacy `lstart`-form identity can be matched on
-/// Linux too.
+/// on every host, so an `lstart`-form identity a shell writer recorded can
+/// be matched on Linux too.
 fn start_lstart(pid: u32) -> Reading<String> {
     ps_column(pid, "lstart").map(|text| format!("lstart:{text}"))
 }
 
 /// The form a recorded start is written in, so a reader matches a live pid's
-/// start in the same form. The runtime writes the host form; a legacy shell
-/// writer records the bare `ps -o lstart` text; the non-Linux reader records
-/// `lstart:`. All three are admitted (decision 55).
+/// start in the same form. The runtime writes the host form; a shell writer
+/// records the bare `ps -o lstart` text; the non-Linux reader records
+/// `lstart:`. All three are admitted.
 enum StartForm {
     Ticks,
     Lstart,
@@ -271,7 +282,7 @@ fn start_form(recorded: &str) -> StartForm {
 
 /// The comparable body of a recorded start: the digits after `ticks:`, or
 /// the `lstart` text with any `lstart:` prefix dropped and its blanks
-/// squeezed, as `ps -o lstart` and the legacy `lane_process_start` squeeze
+/// squeezed, as `ps -o lstart` and the shell's `lane_process_start` squeeze
 /// it. Two spellings of one process's start compare equal here.
 fn normalize_start(recorded: &str) -> String {
     if let Some(ticks) = recorded.strip_prefix("ticks:") {
@@ -318,8 +329,8 @@ pub fn foreground_group(pane_pid: u32) -> Reading<Option<u32>> {
 /// holds the pid, and also when the pid now carries another start: the
 /// recorded process ended either way, and [`identity`] tells the two apart
 /// for a caller that needs to. The recorded start is read in its own form,
-/// so a `ticks:`, an `lstart:` and a bare legacy start each match the live
-/// pid they name (decision 55).
+/// so a `ticks:`, an `lstart:` and a bare `lstart` start each match the
+/// live pid they name.
 pub fn still_runs(id: &Identity) -> Reading<Identity> {
     match identity(id.pid) {
         Reading::Live(_) => {}
@@ -337,9 +348,8 @@ pub fn still_runs(id: &Identity) -> Reading<Identity> {
 /// listing is left out, and so is one that has exited and waits for its
 /// parent (a zombie), which holds its pid and runs nothing: the `/proc`
 /// read answers it gone, and the `ps` read drops its `Z` row. One entry
-/// that cannot be read or parsed makes the whole table unreadable (decision
-/// 99), since a decision over an incomplete table could select the wrong
-/// process.
+/// that cannot be read or parsed makes the whole table unreadable, since a
+/// decision over an incomplete table could select the wrong process.
 pub fn table() -> std::result::Result<Vec<Row>, Unreadable> {
     #[cfg(target_os = "linux")]
     {
@@ -487,7 +497,7 @@ pub fn is_shell(name: &str) -> bool {
 }
 
 /// What an exact stop did. A caller that drops it has not learned whether
-/// the process ended (decision 105).
+/// the process ended.
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", tag = "outcome")]
@@ -785,8 +795,8 @@ mod tests {
         );
     }
 
-    /// Decision 99: the three readings of one `/proc` stat read, from the
-    /// kernel's answers as planted. No entry and an exited process are
+    /// The three readings of one `/proc` stat read, from the kernel's
+    /// answers as planted. No entry and an exited process are
     /// `Gone`; a refused read and an unparsable line are `Unreadable` with
     /// their causes, never an absence.
     #[cfg(target_os = "linux")]
@@ -801,6 +811,14 @@ mod tests {
             stat_reading(Ok(stat_line("claude", "Z"))),
             Reading::Gone,
             "an exited process awaiting its parent"
+        );
+        assert_eq!(
+            stat_reading(Ok(
+                "2412049 (sh) X 0 -1 -1 0 -1 4227084 171 0 0 0 0 0 0 0 20 0 0 0 21454565 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 17 16 0 0 0 0 0 0 0 0 0 0 0 0 0
+".to_owned()
+            )),
+            Reading::Gone,
+            "a task being reaped, its group and session written as -1"
         );
         assert_eq!(
             stat_reading(Err(Io::from(ErrorKind::NotFound))),
@@ -825,7 +843,7 @@ mod tests {
         );
     }
 
-    /// Decision 99: a table is read whole or not at all. A process that
+    /// A table is read whole or not at all. A process that
     /// exited mid-listing is left out; one entry that could not be read
     /// fails the table with that entry's cause.
     #[cfg(target_os = "linux")]
@@ -874,7 +892,7 @@ mod tests {
         .expect("the fake ps runs")
     }
 
-    /// Decision 105: the readings of a `ps -p` answer by its real exit
+    /// The readings of a `ps -p` answer by its real exit
     /// status, from a fake `ps` on `PATH`. A row under exit 0 is live. The
     /// documented no-match answer, exit 1 with nothing on either stream, is
     /// gone. A `ps` killed by a signal, one exiting 2, a usage error written
@@ -929,7 +947,7 @@ mod tests {
     /// A child that exited and stands unreaped holds its pid as a zombie:
     /// the table leaves it out and its identity reads gone, so a group
     /// read by pgid never holds on a member only its parent's reap would
-    /// end (decision 124l (47)).
+    /// end.
     #[cfg(target_os = "linux")]
     #[test]
     fn the_table_leaves_an_unreaped_exited_child_out() {
@@ -967,7 +985,7 @@ mod tests {
         assert!(!only_shells_below(&t, 20));
     }
 
-    /// Decision 99 on a real process: a child this test holds reads live
+    /// On a real process: a child this test holds reads live
     /// under its identity, and once it has exited, still held unreaped so
     /// its pid is nobody else's, reads gone. A recorded start the pid never
     /// carried, in the host's own form, reads gone through `still_runs`
@@ -993,7 +1011,7 @@ mod tests {
     /// The `ticks:` start form is `/proc`'s: Linux reads it, so a ticks
     /// start the pid never carried is gone there; a host without `/proc`
     /// cannot read the form at all, so the same identity is unreadable with
-    /// its cause, never gone (M2 of R-U4a5).
+    /// its cause, never gone.
     #[test]
     fn a_ticks_start_is_read_on_linux_and_unreadable_elsewhere() {
         let child = Held::sleep();
@@ -1019,13 +1037,13 @@ mod tests {
         );
     }
 
-    /// Decision 55: one reader admits every start form a shipped writer
+    /// One reader admits every start form a shipped writer
     /// produced. A `ticks:`, an `lstart:` and a bare `ps -o lstart` start
     /// each match the live process they name, and any other value is `Gone`.
     #[test]
     fn still_runs_matches_every_shipped_start_form_and_rejects_a_mismatch() {
         let me = std::process::id();
-        // The lstart text a legacy shell writer records bare, and the
+        // The lstart text a shell writer records bare, and the
         // non-Linux reader records with an `lstart:` prefix.
         let Reading::Live(prefixed) = start_lstart(me) else {
             panic!("own lstart");

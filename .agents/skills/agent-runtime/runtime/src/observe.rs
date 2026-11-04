@@ -11,7 +11,7 @@
 //! draws lines a marker rule can match, before the harness has started or
 //! after it has gone, and never reads idle whatever it draws.
 
-// Every process reading is matched variant by variant (decision 105).
+// Every process reading is matched variant by variant.
 #![deny(clippy::wildcard_enum_match_arm)]
 
 use regex::Regex;
@@ -71,7 +71,7 @@ pub enum ProcessReading {
     /// or the harness under an identity other than the recorded one.
     ForegroundOther { name: String, pid: u32 },
     /// The table, the pane's process or the identity it needed could not be
-    /// read; `cause` is the reader's word for what failed (decision 99).
+    /// read; `cause` is the reader's word for what failed.
     Unread { cause: &'static str },
 }
 
@@ -99,7 +99,7 @@ impl Identities for Kernel {
 /// itself or a harness a non-interactive shell wrapper waits on; `owns`
 /// names the harness's processes (`Harness::owns_process_of`). With
 /// `recorded`, only that exact identity is the harness, and no other
-/// process is ever selected in its place (decision 99); without one, the
+/// process is ever selected in its place; without one, the
 /// nearest harness-named member is, and its identity is read for the caller
 /// to record. A group of shells alone is `ShellsOnly` when no harness
 /// process runs under the pane at all, else `ForegroundShell`. A table, a
@@ -226,8 +226,7 @@ static AUTH_FAILURE: LazyLock<Regex> = LazyLock::new(|| {
 /// the harness's own drawing below.
 static MARKER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^❯|^›").unwrap());
 /// Claude Code's composer: the marker then U+00A0, the padding it gives the
-/// input line and no shell prompt or echoed turn carries (measured over
-/// 146 captures by the legacy `open-terminal`).
+/// input line and no shell prompt or echoed turn carries.
 static CLAUDE_COMPOSER: LazyLock<Regex> = LazyLock::new(|| Regex::new("^❯\u{a0}").unwrap());
 /// Codex's composer line, `› ` then its placeholder or the draft.
 static CODEX_MARKER: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^› ").unwrap());
@@ -250,8 +249,7 @@ static PI_FOOTER: LazyLock<Regex> = LazyLock::new(|| {
 
 /// Codex's refusal of one turn for the selected model's capacity
 /// (`lane-state.sh` `MODEL_CAPACITY`), drawn above the composer the lane
-/// then sits at: the one marker that tells this idle from a finished turn's
-/// (decision 121, Q6).
+/// then sits at: the one marker that tells this idle from a finished turn's.
 static CODEX_CAPACITY: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"Selected model is at capacity").unwrap());
 
@@ -262,9 +260,9 @@ pub fn codex_capacity_refused(slice: &str) -> bool {
         && slice.lines().any(|l| CODEX_MARKER.is_match(l))
 }
 
-/// Whether a wall screen is the live process's (decision 125 (1) as decision
-/// 130 shrank it): a screen first seen before the process holding the pane
-/// started was drawn by an earlier process and is scrollback, not a wall.
+/// Whether a wall screen is the live process's: a screen first seen before
+/// the process holding the pane started was drawn by an earlier process and
+/// is scrollback, not a wall.
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "age", rename_all = "kebab-case")]
@@ -398,8 +396,8 @@ pub fn pi_composer_drawn(slice: &str) -> bool {
 }
 
 /// Whether the harness's own composer is drawn in the slice. Each rule is
-/// the harness's live input line as the native probe captured it at rest
-/// (`tmp/orch-rebuild/native/run2/<harness>/inspect-idle.json`): Claude's
+/// the harness's live input line as the native probe
+/// (`tests/native/thin-path.sh`) captured it at rest: Claude's
 /// marker padded with U+00A0, Codex's `› ` line, Copilot's marker line
 /// framed by a rule under it, Pi's rule, prompt and footer. A shell prompt
 /// that happens to start with the marker, `❯ cd … && exec claude …` as the
@@ -623,7 +621,7 @@ mod tests {
         ));
     }
 
-    /// Decision 60: a shell at its prompt, or any other process, in the
+    /// A shell at its prompt, or any other process, in the
     /// pane's foreground never reads idle, whatever the screen draws; a
     /// drawn composer with the process table unread is not idle either.
     #[test]
@@ -706,7 +704,7 @@ mod tests {
         }
     }
 
-    /// Decision 99: with a recorded identity, the judge confirms that
+    /// With a recorded identity, the judge confirms that
     /// identity's foreground state and selects no other process. Another
     /// harness-named process holding the terminal is named as other, a
     /// recorded pid now carrying another process is other, and an identity
@@ -892,7 +890,7 @@ mod tests {
         ));
     }
 
-    /// Decision 121, Q6: the Codex capacity refusal reads `idle` through the
+    /// The Codex capacity refusal reads `idle` through the
     /// judge, and the one marker tells it from a finished turn's idle; a
     /// Claude screen quoting the phrase, with no Codex marker, is not it.
     #[test]
@@ -910,7 +908,7 @@ mod tests {
         ));
     }
 
-    /// Decision 125 (1), 130: a wall first seen before the live process
+    /// A wall first seen before the live process
     /// started is older, one seen at or after it is current, and a start
     /// that cannot be read leaves the wall unjudged, never current.
     #[test]

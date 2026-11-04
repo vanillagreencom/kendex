@@ -10,8 +10,7 @@
 # rollout write, which the runtime's binding reads as `session-unbound`. A
 # gate the row never made ends this process, so the runtime reads the runner
 # exited rather than a start that was never held. The rollout is Codex's
-# shape as the native run recorded it
-# (`tmp/orch-rebuild/native/run2/codex/home/sessions`): under
+# shape as agent-runtime's `session` module reads it: under
 # `sessions/YYYY/MM/DD/rollout-<stamp>-<id>.jsonl`, a `session_meta` row
 # naming the id and this directory, then one `event_msg` row completing a
 # `UserMessage` item per line it reads on stdin, so a delivery to it is

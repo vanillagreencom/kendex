@@ -1,15 +1,14 @@
-//! The controller transitions: the seven lifetimes of step4-map § A2 to A8
-//! as four operations. `start-controller` opens a controller's lane with no
-//! predecessor to retire (first launch, and the launch after an explicit
-//! `off`); `adopt-controller` binds a controller a person opened by hand,
-//! from an identity the effects read in its pane (decisions 60, 99);
-//! `request-transfer` asks for a succession under one of four causes
-//! (live, dead, walled, refused-recovery), compared against the record the
-//! requester saw; `stop-controller` is the explicit off of decision 78. The
-//! `claim-intent` transition hands an open intent's owner lease to the
-//! detached job that runs a transfer (decision 76). The outcome arms publish
-//! the successor, restore the pending a failed request overwrote, keep a
-//! waiting runner, or record `off`.
+//! The controller transitions, four operations. `start-controller` opens a
+//! controller's lane with no predecessor to retire (first launch, and the
+//! launch after an explicit `off`); `adopt-controller` binds a controller a
+//! person opened by hand, from an identity the effects read in its pane;
+//! `request-transfer` asks for a succession under one of four causes (live,
+//! dead, walled, refused-recovery), compared against the record the
+//! requester saw; `stop-controller` is the explicit off. The `claim-intent`
+//! transition hands an open intent's owner lease to the detached job that
+//! runs a transfer or a stop. The outcome arms publish the successor,
+//! restore the pending a failed request overwrote, keep a waiting runner, or
+//! record `off`.
 
 use std::path::{Path, PathBuf};
 
@@ -31,8 +30,8 @@ use crate::state::{
     SUCCESSOR_IDENTITY_KEYS, TransferCause,
 };
 
-/// The overseer record the requester saw: the legacy succession
-/// compare-and-swap set. A key left out compares as `null`, which is what
+/// The overseer record the requester saw: the succession compare-and-swap
+/// set. A key left out compares as `null`, which is what
 /// an absent key reads as. `session_id` left out or empty matches any
 /// recorded one; `pending` left out requires none to stand.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -71,8 +70,8 @@ impl OverseerExpected {
 
 /// Ask for an overseer succession: record the successor as pending and the
 /// intent to open it, when the record still is what the requester saw. The
-/// successor is the judged input (decision 75): the legacy account walk
-/// picked it, or the watch read it off the record as the held line.
+/// successor is the judged input: the account judge picked it, or the watch
+/// read it off the record as the held line.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RequestTransfer {
     pub expected: OverseerExpected,
@@ -92,8 +91,8 @@ pub struct RequestTransfer {
     /// that wrote it; it must be the recorded controller's.
     #[serde(default)]
     pub handoff_session_id: Option<String>,
-    /// A model recovery's binding (decision 109 (8)): the record the
-    /// recovery was acquired against, as `ol_recovery_bound` reads it. The
+    /// A model recovery's binding: the record the recovery was acquired
+    /// against, as `ol_recovery_bound` reads it. The
     /// transition refuses `recovery-unbound` and writes nothing unless the
     /// record still carries that launch, a `model_check` that read
     /// `switched` for the recorded session, and the same launch identity.
@@ -101,7 +100,7 @@ pub struct RequestTransfer {
     pub recovery: Option<Recovery>,
 }
 
-/// The launch a model recovery was bound to: the seven fields the legacy
+/// The launch a model recovery was bound to: the seven fields
 /// `ol_model_launch` projects. A field left out compares as `null`.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Recovery {
@@ -147,7 +146,7 @@ impl Recovery {
     }
 }
 
-/// The legacy `ol_recovery_bound` predicate on the record as it stands: the
+/// The `ol_recovery_bound` predicate on the record as it stands: the
 /// record's launch is the request's, its `model_check` read `switched` for
 /// the recorded session, and that check's `launch_identity` is the record's
 /// launch. The cause names the first clause that fails.
@@ -188,14 +187,14 @@ pub struct TransferRequested {
 
 /// Open a controller's lane where none runs: the first launch, or the launch
 /// after an explicit `off`. `controller` is the launch identity and line the
-/// legacy launcher built (decision 75); the effect refuses `overseer-live`
-/// over a controller it reads live, so no record compare is asked for.
+/// launcher built; the effect refuses `overseer-live` over a controller it
+/// reads live, so no record compare is asked for.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StartController {
     pub controller: Pending,
     #[serde(default)]
     pub brief_file: Option<PathBuf>,
-    /// The fleet watch's launch line (step6-map A7): the `oversee-watch`
+    /// The fleet watch's launch line: the `oversee-watch`
     /// entry and its arguments, the words the workflow's launch block hands
     /// the job launcher after its own (`workflows/oversee.md` § 4). The
     /// effect launches them detached through that launcher once the
@@ -217,7 +216,7 @@ pub struct ControllerStarted {
 /// Bind a controller this runtime did not launch: the pane a person opened
 /// it in, on the fleet server (or the one `socket` names), and what the
 /// person knows of its launch. The identity is read in that pane by the
-/// effects (decision 60), never taken from the caller.
+/// effects, never taken from the caller.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AdoptController {
     pub pane: String,
@@ -262,7 +261,7 @@ pub struct ControllerAdopted {
     pub healed: bool,
 }
 
-/// Retire the recorded controller exactly and record `off` (decision 78).
+/// Retire the recorded controller exactly and record `off`.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct StopController {}
 
@@ -273,8 +272,8 @@ pub struct StopRequested {
     pub effect: Effect,
 }
 
-/// Take the owner lease of an open intent whose effect has not started
-/// (decision 76): the detached job's first act, before it opens anything.
+/// Take the owner lease of an open intent whose effect has not started: the
+/// detached job's first act, before it opens anything.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ClaimIntent {
     pub intent_id: String,
@@ -286,9 +285,9 @@ pub struct IntentClaimed {
     pub intent: Intent,
 }
 
-/// Write an effect's progress into its intent before the wait that follows
-/// (decisions 62, 115 (A)): the phase where one moved and the obligation set
-/// as it stands, each written on an open intent alone.
+/// Write an effect's progress into its intent before the wait that follows:
+/// the phase where one moved and the obligation set as it stands, each
+/// written on an open intent alone.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordProgress {
     pub intent_id: String,
@@ -298,13 +297,12 @@ pub struct RecordProgress {
     pub obligations: Option<ObligationRecord>,
     /// The owner the launcher-side handle writes under: the write is a no-op
     /// once another owner holds the intent, so a job that claimed between the
-    /// launcher's last read and its write keeps its own set (decision 124b);
-    /// `apply` retries the transition on a conflicting snapshot (decision
-    /// 124d (18)). `None` writes always.
+    /// launcher's last read and its write keeps its own set; `apply` retries
+    /// the transition on a conflicting snapshot. `None` writes always.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub while_owner: Option<Owner>,
-    /// The failure announcement a job's outcome made (decision 109 (7)),
-    /// written after the outcome's own write applied (decision 124d (17)):
+    /// The failure announcement a job's outcome made, written after the
+    /// outcome's own write applied:
     /// the fleet-log row is appended in this write and the notice recorded on
     /// the intent, once; an intent that carries one takes no second.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -319,12 +317,11 @@ pub struct ProgressRecorded {
     pub progress: Progress,
 }
 
-/// What the store did with a progress write (decision 124h (32)): recorded
-/// it; accepted it as the intent already stood, so the revision did not
-/// move (decision 89); or yielded it to the owner that holds the intent
-/// now, writing nothing, where the request named `while_owner` and the
-/// intent is another's (decision 124b). An unchanged set under the
-/// recorded owner is accepted, never yielded.
+/// What the store did with a progress write: recorded it; accepted it as
+/// the intent already stood, so the revision did not move; or yielded it to
+/// the owner that holds the intent now, writing nothing, where the request
+/// named `while_owner` and the intent is another's. An unchanged set under
+/// the recorded owner is accepted, never yielded.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Progress {
@@ -335,7 +332,7 @@ pub enum Progress {
 
 /// What `ORCH_OVERSEER_SUCCESSION` admits before any transition runs: a
 /// `request-transfer` under `off` refuses `succession-off` and persists
-/// nothing (decision 78). Every other request is admitted.
+/// nothing. Every other request is admitted.
 pub fn admit(request: &Request, settings: &Settings) -> Result<()> {
     if let (Request::RequestTransfer(_), Succession::Off) = (request, settings.succession) {
         return Err(Error::SuccessionOff);
@@ -367,8 +364,8 @@ pub(super) fn overseer(path: &Path, doc: &Document) -> Result<Overseer> {
 
 /// An open intent of another controller operation, or of this one on an
 /// earlier generation, refuses: one controller operation at a time, on the
-/// one overseer (decision 36). The same operation on the same target is
-/// the caller's to reconcile, read before this.
+/// one overseer. The same operation on the same target is the caller's to
+/// reconcile, read before this.
 fn no_other_controller_intent(intents: &[Intent], op: EffectOp, target: &str) -> Result<()> {
     match intents
         .iter()
@@ -383,7 +380,7 @@ fn no_other_controller_intent(intents: &[Intent], op: EffectOp, target: &str) ->
     }
 }
 
-/// A controller stopped on purpose refuses every succession (decision 78):
+/// A controller stopped on purpose refuses every succession:
 /// only `start-controller` opens one again.
 fn refuse_off(path: &Path, current: &Overseer) -> Result<()> {
     if current.extra.get("off").is_some_and(|off| !off.is_null()) {
@@ -478,9 +475,9 @@ pub(super) fn request_transfer(
     no_other_controller_intent(&intents, EffectOp::RequestTransfer, &target)?;
     refuse_off(path, &current)?;
     check_cause(r, &current)?;
-    // A model recovery's binding (decision 109 (8)): the legacy predicate,
-    // judged in the same transition that installs the pending, so a recovery
-    // whose authorization no longer holds writes nothing.
+    // A model recovery's binding, judged in the same transition that
+    // installs the pending, so a recovery whose authorization no longer
+    // holds writes nothing.
     let record = state::object_mut(path, doc, "overseer")?;
     if let Some(recovery) = &r.recovery
         && let Err(cause) = recovery_bound(record, recovery)
@@ -490,7 +487,7 @@ pub(super) fn request_transfer(
             cause,
         });
     }
-    // The legacy compare-and-swap, `ol_succession_owned`: the six identity
+    // The succession compare-and-swap: the six identity
     // keys equal, `session_id` equal or not expected, `pending` equal. A
     // dead controller's recovery takes the held line as the successor, so
     // the standing `pending` is its input, not something it compares.
@@ -586,8 +583,8 @@ pub(super) fn stop_controller(
     })
 }
 
-/// Hand an open, not yet started intent to the process asking (decision
-/// 76): its owner becomes this `Env`'s. An intent that ended refuses
+/// Hand an open, not yet started intent to the process asking: its owner
+/// becomes this `Env`'s. An intent that ended refuses
 /// `intent-complete`; one whose effect recorded a phase refuses
 /// `intent-started`, since its prior owner opened something a second owner
 /// would open again.
@@ -622,10 +619,10 @@ pub(super) fn claim_intent(
     }
     intent.handed_from = intent.owner.replace(owner.clone());
     // The job the launcher was asked for is this claimant: its handle and
-    // its unread record are settled by the claim itself (decision 115 (B)),
-    // and the job's own owner lease is what a reconcile reads from here. A
-    // set the claim changed is a replaced set: its revision moves, so a token
-    // the launcher minted before the claim acts no more (decision 124d (16)).
+    // its unread record are settled by the claim itself, and the job's own
+    // owner lease is what a reconcile reads from here. A set the claim
+    // changed is a replaced set: its revision moves, so a token the launcher
+    // minted before the claim acts no more.
     if let Some(obligations) = &mut intent.obligations
         && obligations.discharge_where(ObligationRecord::is_job, "claimed") > 0
     {
@@ -643,12 +640,12 @@ pub(super) fn claim_intent(
     Ok(IntentClaimed { intent })
 }
 
-/// Write an effect's progress (decisions 62, 115 (A)). The phase and the
+/// Write an effect's progress. The phase and the
 /// obligation set go onto an open intent, refusing `intent-complete` on a
 /// closed one as a phase write always has; the sent mark goes onto the
 /// notice the outcome's write recorded owed, once: a second write finds it
 /// recorded and changes nothing. A write that leaves the document as it was
-/// is written nowhere (decision 89).
+/// is written nowhere.
 pub(super) fn record_progress(
     path: &Path,
     doc: &mut Document,
@@ -664,8 +661,8 @@ pub(super) fn record_progress(
     let mut intent = intents[index].clone();
     // The launcher-side handle writes only while it still owns the intent: a
     // job that claimed between the launcher's last read and this write keeps
-    // its own set, read under the store lock (decision 124b), and the write
-    // is yielded to that claimant by name (decision 124h (32)).
+    // its own set, read under the store lock, and the write is yielded to
+    // that claimant by name.
     if let Some(expected) = &r.while_owner
         && intent.owner.as_ref() != Some(expected)
     {
@@ -676,8 +673,8 @@ pub(super) fn record_progress(
         });
     }
     // A write that carries only a notice mark is a continuation of the
-    // intent's recorded outcome, taken on the closed intent (decision 124i
-    // (36)); the store's content comparison still holds the mark.
+    // intent's recorded outcome, taken on the closed intent; the store's
+    // content comparison still holds the mark.
     let continuation = r.phase.is_none() && r.obligations.is_none();
     if !continuation && !intent.open() {
         return Err(Error::IntentComplete {
@@ -687,8 +684,8 @@ pub(super) fn record_progress(
     }
     let before = doc.clone();
     // The notice the outcome's write recorded `owed` is marked with how its
-    // send went (decision 124f (28)); a notice already marked, or none
-    // recorded, is left as it is, so a second sender changes nothing.
+    // send went; a notice already marked, or none recorded, is left as it
+    // is, so a second sender changes nothing.
     if let Some(notice) = &r.notice
         && intent.notice.as_ref().is_some_and(Notice::owed)
     {
@@ -706,7 +703,7 @@ pub(super) fn record_progress(
         state::set(row, "phase", serde_json::to_value(phase)?);
     }
     if let Some(obligations) = &r.obligations {
-        // The compare-and-swap on the set (decision 124f (26)): the write
+        // The compare-and-swap on the set: the write
         // names the revision its handle read the set at, and a record that
         // holds another was replaced by another handle or process since, so
         // the write is refused and the handle acts on nothing. A write that
@@ -745,7 +742,7 @@ pub(super) fn record_progress(
 /// Apply an adoption: the one transition of the read-then-record
 /// `adopt-controller`, on the identity the effects read in the pane. The
 /// read travels as the token only the operation module mints from its own
-/// pane read (decisions 124 (1), 124i (37)), so no caller supplies
+/// pane read, so no caller supplies
 /// adoption evidence; the compiler boundary names this function too, so
 /// that module is its one caller.
 #[allow(
@@ -769,7 +766,7 @@ pub(crate) fn apply_adoption(
     })
 }
 
-/// Whether a record field is empty as the legacy heal reads it: absent,
+/// Whether a record field is empty as the heal reads it: absent,
 /// `null` or `""`.
 fn empty(record: &Document, key: &str) -> bool {
     match record.get(key) {
@@ -958,9 +955,9 @@ fn record_transfer_outcome(
                 }
             }
             state::set(record, "generation", generation + 1);
-            // The server as the string the legacy writers hand jq through
-            // `--arg`, which `ol_owns` compares it as; a lane's
-            // `launch.server` is a number, so the identity carries one.
+            // The server as a string, the form the record carries and
+            // `ol_owns` compares; a lane's `launch.server` is a number, so
+            // the identity carries one.
             state::set(record, "pane", pane);
             state::set(record, "server", server.to_string());
             match r.server_start {
@@ -980,20 +977,20 @@ fn record_transfer_outcome(
                 state::delete(record, key);
             }
             // The successor's own native session, where the confirmation
-            // bound it (decision 65): written as the heal appends it, so the
-            // turn-end hook finds the binding rather than filling it later.
+            // bound it: written as the heal appends it, so the turn-end hook
+            // finds the binding rather than filling it later.
             if let Some(id) = &r.session_id {
                 state::set(record, "session_id", id.as_str());
             }
             // A controller that runs is not off: the start after an
-            // explicit stop clears the mark (decision 78).
+            // explicit stop clears the mark.
             state::delete(record, "off");
             // The runtime launched the successor and read its process
             // identity, so it writes `harness_pid`/`harness_start` now,
             // appended as `ol_record_start` appends them. The next
-            // succession then has a predecessor identity to retire by
-            // (decision 58). A confirmation always carries them, since a
-            // launch with no readable identity records `unconfirmed`.
+            // succession then has a predecessor identity to retire by. A
+            // confirmation always carries them, since a launch with no
+            // readable identity records `unconfirmed`.
             if let (Some(pid), Some(start)) = (
                 r.launch.as_ref().and_then(|l| l.pid),
                 r.launch.as_ref().and_then(|l| l.start.clone()),
@@ -1027,8 +1024,8 @@ fn record_transfer_outcome(
             // A failure after retirement: the predecessor is gone and a
             // waiting runner stands. Keep the runner's identity under
             // `overseer.pending.runner` so a reconcile completes from it, and
-            // leave the generation unmoved (decision 58). Before retirement
-            // the effect records `failed`, not this.
+            // leave the generation unmoved. Before retirement the effect
+            // records `failed`, not this.
             if retired(r.observation.as_ref())
                 && let Some(runner) = &r.launch
             {
@@ -1077,11 +1074,10 @@ mod tests {
     use crate::ops::{Effect, Report, Request};
     use crate::state::{LaunchIdentity, Notice, fixtures};
 
-    /// Finding 6, probe P11b, and decision 37: the compare-and-swap judges
-    /// the legacy identity set, and a standing `pending` the requester names
-    /// is overwritten and kept for restore.
+    /// The compare-and-swap judges the recorded identity set, and a standing
+    /// `pending` the requester names is overwritten and kept for restore.
     #[test]
-    fn request_transfer_compares_the_legacy_identity_set() {
+    fn request_transfer_compares_the_recorded_identity_set() {
         let dir = tempfile::tempdir().unwrap();
         let path = fleet_file(dir.path());
         let drifted = fixtures::FLEET
@@ -1177,7 +1173,7 @@ mod tests {
     }
 
     /// A transfer request under each cause and what the transition
-    /// requires of it (step4-map A5 to A8): `dead` takes the held line over
+    /// requires of it: `dead` takes the held line over
     /// a standing pending without comparing it; `walled` names the spent
     /// account and refuses a successor on it, by the canonical directory;
     /// `refused-recovery` names the handoff's session and refuses another
@@ -1296,7 +1292,7 @@ mod tests {
             panic!()
         };
         assert!(matches!(&t.effect, Effect::Persisted { .. }));
-        // off: every cause refuses, and nothing is written (decision 78).
+        // off: every cause refuses, and nothing is written.
         let off = fixtures::FLEET.replacen(
             "\"generation\": 3,",
             "\"generation\": 3, \"off\": {\"at\": \"2026-10-26T10:00:00Z\", \"generation\": 3},",
@@ -1326,7 +1322,7 @@ mod tests {
         }
     }
 
-    /// Decision 78 at the transition: `ORCH_OVERSEER_SUCCESSION=off`
+    /// At the transition, `ORCH_OVERSEER_SUCCESSION=off`
     /// refuses a transfer before any transition and admits every other
     /// request.
     #[test]
@@ -1463,7 +1459,7 @@ mod tests {
         );
     }
 
-    /// Decision 78: a confirmed stop records `off {at, generation}` and
+    /// A confirmed stop records `off {at, generation}` and
     /// moves nothing else; a failed or unconfirmed one records nothing. A
     /// dead-cause transfer then refuses `controller-off`.
     #[test]
@@ -1501,7 +1497,7 @@ mod tests {
         assert_eq!(object(&path)["overseer"], before);
     }
 
-    /// Decision 76: the detached job takes the intent's owner lease by
+    /// The detached job takes the intent's owner lease by
     /// claiming it; a claim of an intent that ended, or whose effect has a
     /// phase, refuses and writes nothing.
     #[test]
@@ -1578,7 +1574,7 @@ mod tests {
         );
     }
 
-    /// Decision 124h (32): a launcher-side write of a set the record already
+    /// A launcher-side write of a set the record already
     /// holds, under the owner the record names, is accepted as unchanged,
     /// never yielded; the same write naming another owner is yielded to the
     /// recorded owner by name, and nothing lands.
@@ -1640,7 +1636,7 @@ mod tests {
         );
     }
 
-    /// Decision 124b (6): the launcher-side write guard. A record-progress or
+    /// The launcher-side write guard. A record-progress or
     /// a record-outcome that names `while_owner` is a no-op once another
     /// owner holds the intent, so a job that claimed between the launcher's
     /// last read and its write keeps its own set and the launcher's stale
@@ -1721,7 +1717,7 @@ mod tests {
         // The same writes without the owner guard land when they name the
         // set's current revision, so the guard is what holds the claimant's
         // set; a write naming a revision the record no longer holds is the
-        // compare-and-swap's refusal, `set-replaced` (decision 124f (26)).
+        // compare-and-swap's refusal, `set-replaced`.
         let open_progress = |revision: u64| {
             Request::RecordProgress(Box::new(RecordProgress {
                 intent_id: id.clone(),
@@ -1750,7 +1746,7 @@ mod tests {
             vec![sidecar()],
             "an unguarded write at the current revision lands"
         );
-        // Decision 124d (16): a write that replaces the set moves its
+        // A write that replaces the set moves its
         // revision; the same set written again keeps it; one naming the
         // revision before the replacement is refused and lands nothing.
         let replaced_at = landed.revision;
@@ -1778,11 +1774,10 @@ mod tests {
         );
     }
 
-    /// Decision 124d (18), R-U4g5 Codex `owner-lock-probe.rs`: a claim that
-    /// lands between the launcher-side transition's owner read and its store
-    /// is answered with the claimant's state, never `record-changed`. The
-    /// production `apply` is run with the claim committed in that gap; it
-    /// reads again and yields to the claimant.
+    /// A claim that lands between the launcher-side transition's owner read
+    /// and its store is answered with the claimant's state, never
+    /// `record-changed`: the production `apply` is run with the claim
+    /// committed in that gap; it reads again and yields to the claimant.
     #[test]
     fn a_claim_between_the_owner_read_and_the_store_returns_the_claimant() {
         let dir = tempfile::tempdir().unwrap();
@@ -1847,6 +1842,82 @@ mod tests {
             "the launcher's set never landed over the claim: {stored:?}"
         );
         assert!(once.get(), "the claim landed in the gap");
+    }
+
+    /// The launcher writes the job's sidecar into the intent the instant the
+    /// job starts, so the job's first claim store can meet a record that
+    /// moved under its read.
+    #[test]
+    fn a_detached_jobs_claim_survives_a_concurrent_write_to_the_fleet_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fleet_file(dir.path());
+        let id = intend(&path, &transfer(expected()));
+        let job = Env {
+            owner: Some(state::Owner {
+                pid: 777,
+                start: "ticks:777".into(),
+            }),
+            ..env()
+        };
+        let sidecar = Request::RecordProgress(Box::new(RecordProgress {
+            intent_id: id.clone(),
+            phase: None,
+            obligations: Some(ObligationRecord {
+                standing: vec![crate::state::Held {
+                    obligation: crate::state::Obligation::JobSidecar {
+                        record: "/fleet/intents/transfer.job".to_owned(),
+                    },
+                    role: Some(crate::state::Role::Job),
+                    harness: None,
+                }],
+                ..Default::default()
+            }),
+            while_owner: Some(owner()),
+            notice: None,
+        }));
+        let once = std::cell::Cell::new(false);
+        let sidecar_in_the_gap = || {
+            if !once.replace(true) {
+                crate::ops::apply(&path, &sidecar, &env(), LOCK).unwrap();
+            }
+        };
+        let applied = crate::ops::apply_interleaved(
+            &path,
+            &claim(&id),
+            &job,
+            LOCK,
+            None,
+            &sidecar_in_the_gap,
+        )
+        .expect("the claim lands, not record-changed");
+        let Report::ClaimIntent(c) = &applied.report else {
+            panic!("a claim report")
+        };
+        assert_eq!(c.intent.owner.as_ref().unwrap().pid, 777, "{:?}", c.intent);
+        let stored = fleet(&path)
+            .intents
+            .into_iter()
+            .find(|i| i.id == id)
+            .unwrap();
+        assert_eq!(stored.owner.as_ref().unwrap().pid, 777);
+        assert_eq!(stored.handed_from, Some(owner()));
+        let obligations = stored
+            .obligations
+            .expect("the claim transitioned the launcher's record");
+        assert!(
+            obligations.discharged.iter().any(|d| {
+                d.by == "claimed"
+                    && matches!(d.obligation, crate::state::Obligation::JobSidecar { .. })
+            }),
+            "the launcher's sidecar handle is discharged by the claim: {obligations:?}"
+        );
+        assert!(
+            !obligations
+                .standing_obligations()
+                .any(ObligationRecord::is_job),
+            "{obligations:?}"
+        );
+        assert!(once.get(), "the launcher's write landed in the gap");
     }
 
     /// The adoption transition on the identity the effects read: the same
@@ -1959,13 +2030,13 @@ mod tests {
 
     /// its identity (nulls where the pending names none), `class` only where
     /// the pending carries one, the next generation, the successor's own
-    /// `pane` and `server` from the confirmation (the server as the string
-    /// the legacy `--arg` writes), `server_start` where the confirmation
+    /// `pane` and `server` from the confirmation (the server as a string),
+    /// `server_start` where the confirmation
     /// carries it and null otherwise, `window` and `session_rows` null for
     /// the successor's watch start to fill, and none of the ended session's
     /// `session_id`, `harness_pid`, `harness_start`, `model_check`, `exit` or
-    /// `pending`. Keys keep their place (decision 34); the expected sequence
-    /// below is the fixture's with the dropped keys gone.
+    /// `pending`. Keys keep their place; the expected sequence below is the
+    /// fixture's with the dropped keys gone.
     #[test]
     fn a_confirmed_transfer_publishes_the_successor_identity_bound_to_its_own_pane() {
         let dir = tempfile::tempdir().unwrap();
@@ -1981,7 +2052,7 @@ mod tests {
         };
         assert_eq!(r.generation, Some(4));
         let after = object(&path)["overseer"].as_object().unwrap().clone();
-        let legacy = json!({
+        let published = json!({
             "runtime": "tmux",
             "generation": 4,
             "server": "41020",
@@ -1997,22 +2068,22 @@ mod tests {
             "effort": "high",
             "cwd": "/r",
             "launch_line": "cd /r && codex",
-            // The bound session the confirmation carries (decision 65), as
-            // the heal appends it (R-U4c F): the predecessor's was dropped
-            // above, so the successor's own takes the next place.
+            // The bound session the confirmation carries, as the heal appends
+            // it: the predecessor's was dropped above, so the successor's own
+            // takes the next place.
             "session_id": "native-1",
             // The runtime launched the successor and read its process
             // identity, so it writes these now, appended as `ol_record_start`
-            // appends them (task 1, decision 58). `outcome` carries pid 6000.
+            // appends them. `outcome` carries pid 6000.
             "harness_pid": 6000,
             "harness_start": "ticks:6000",
         });
-        let legacy = legacy.as_object().unwrap();
-        assert_eq!(keys(&after), keys(legacy), "key sequence");
-        for (key, value) in legacy {
+        let published = published.as_object().unwrap();
+        assert_eq!(keys(&after), keys(published), "key sequence");
+        for (key, value) in published {
             assert_eq!(after.get(key), Some(value), "{key}");
         }
-        assert_eq!(&after, legacy);
+        assert_eq!(&after, published);
         // A confirmation that knows the successor's server start records it
         // as the number `ol_record_write` writes (`$start | tonumber`); one
         // that bound no session writes none.
@@ -2027,7 +2098,7 @@ mod tests {
         assert_eq!(after["pane"], Value::from("%20"));
         assert_eq!(after["server"], Value::from("41020"));
         assert_eq!(after["server_start"], Value::from(1_769_600_000_u64));
-        let unbound: Vec<String> = keys(legacy)
+        let unbound: Vec<String> = keys(published)
             .into_iter()
             .filter(|k| k != "session_id")
             .collect();
@@ -2054,7 +2125,7 @@ mod tests {
         let after = object(&path)["overseer"].as_object().unwrap().clone();
         assert_eq!(after["class"], Value::from("gpt"));
         assert_eq!(after["cwd"], Value::Null);
-        let mut with_class = keys(legacy);
+        let mut with_class = keys(published);
         with_class.insert(
             with_class.iter().position(|k| k == "effort").unwrap(),
             "class".into(),
@@ -2066,10 +2137,10 @@ mod tests {
         );
     }
 
-    /// R-U13 finding 1: a transfer's confirmation is the successor's
-    /// identity. One that names no launch, or a launch without a pane or a
-    /// server, refuses `launch-missing` naming the absent member, writes
-    /// nothing and leaves the intent open for a confirmation that does.
+    /// A transfer's confirmation is the successor's identity. One that names
+    /// no launch, or a launch without a pane or a server, refuses
+    /// `launch-missing` naming the absent member, writes nothing and leaves
+    /// the intent open for a confirmation that does.
     #[test]
     fn a_transfer_confirmation_without_the_successor_pane_on_a_server_refuses_launch_missing() {
         let dir = tempfile::tempdir().unwrap();
@@ -2112,12 +2183,11 @@ mod tests {
         assert_eq!(fleet(&path).overseer.unwrap().generation, Some(4));
     }
 
-    /// R-U13 finding 1: the successor's own watch start keeps the record a
-    /// confirmed transfer leaves only where `ol_owns($server; $start;
-    /// $pane)` holds for its pane on its server
-    /// (`watch-overseer-record.sh:150`), and rebuilds it from `{}`
-    /// otherwise, dropping the generation and the identity the confirmation
-    /// published. The condition is encoded in `ol_owns` above, without jq.
+    /// The successor's own watch start keeps the record a confirmed transfer
+    /// leaves only where `ol_owns($server; $start; $pane)` holds for its pane
+    /// on its server, and rebuilds it from `{}` otherwise, dropping the
+    /// generation and the identity the confirmation published. The condition
+    /// is encoded in `ol_owns` above, without jq.
     #[test]
     fn the_confirmed_transfer_record_is_owned_by_the_successor_pane_on_its_server_unstarted_or_at_its_start()
      {
@@ -2131,8 +2201,8 @@ mod tests {
         assert!(ol_owns(&predecessor, "41020", "1769590000", "%7"));
         assert!(!ol_owns(&predecessor, "41020", "1769590000", "%20"));
         assert!(!ol_owns(&predecessor, "41020", "1769590001", "%7"));
-        // The record U13 wrote, the binding nulled: no pane names the
-        // successor, so its watch start discards it (R-U13's jq replay).
+        // The record with its binding nulled: no pane names the successor,
+        // so its watch start discards it.
         let mut nulled = predecessor.clone();
         for key in ["pane", "server", "server_start"] {
             nulled.insert(key.to_owned(), Value::Null);
@@ -2208,11 +2278,10 @@ mod tests {
         )
     }
 
-    /// Decision 109 (8): a transfer carrying a recovery binding is admitted
-    /// only where the legacy `ol_recovery_bound` predicate holds on the
-    /// record as it stands; each clause that fails refuses `recovery-unbound`
-    /// with its cause and writes nothing, the pending untouched and no
-    /// intent made.
+    /// A transfer carrying a recovery binding is admitted only where the
+    /// `ol_recovery_bound` predicate holds on the record as it stands; each
+    /// clause that fails refuses `recovery-unbound` with its cause and writes
+    /// nothing, the pending untouched and no intent made.
     #[test]
     fn a_recovery_transfer_is_refused_unbound_unless_the_record_still_binds_it() {
         let dir = tempfile::tempdir().unwrap();
@@ -2303,14 +2372,14 @@ mod tests {
         );
     }
 
-    /// Decisions 109 (7), 124f (28): a failed or unconfirmed outcome of a
-    /// transfer or a stop records the notice it owes with its own write,
-    /// `owed`, and appends one fleet-log row under the legacy's kind and
-    /// item in that write; the follow-up progress write marks the notice
-    /// with how the send went and appends nothing; the same mark written
-    /// again, or a mark on a notice already sent, changes nothing. A start's
-    /// outcome carrying a notice records it the same way (decision 184 (6));
-    /// which of its outcomes carries one is the effect's to say.
+    /// A failed or unconfirmed outcome of a transfer or a stop records the
+    /// notice it owes with its own write, `owed`, and appends one fleet-log
+    /// row under the recorded kind and item in that write; the follow-up
+    /// progress write marks the notice with how the send went and appends
+    /// nothing; the same mark written again, or a mark on a notice already
+    /// sent, changes nothing. A start's outcome carrying a notice records it
+    /// the same way; which of its outcomes carries one is the effect's to
+    /// say.
     #[test]
     fn a_job_failure_is_announced_in_the_fleet_log_once_per_intent() {
         let dir = tempfile::tempdir().unwrap();
@@ -2400,7 +2469,7 @@ mod tests {
         assert_eq!(fleet(&path).intents[0].notice, Some(owed));
     }
 
-    /// Decision 109 (4): an outcome that changes nothing of the record
+    /// An outcome that changes nothing of the record
     /// leaves the file's bytes as they were; a reconcile reading what the
     /// last one read writes nothing.
     #[test]

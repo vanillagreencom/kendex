@@ -21,6 +21,7 @@
 mod support;
 
 use std::collections::HashMap;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{Duration, UNIX_EPOCH};
@@ -787,6 +788,10 @@ fn a_close_needs_a_ground_asks_the_mailbox_and_then_ends_the_harness() {
         ],
         ..asking
     };
+    // The item's own files beside the fleet record: the close on the
+    // tracker's verdict is the item's close-out too.
+    let item_state = plant(fleet.state_dir(), "workflow-state-KEN-A.json");
+    let status_file = plant(fleet.state_dir(), "lane-status-KEN-A.md");
     let answer = reply(&fleet.op(&terminal_close("KEN-A")));
     assert_eq!(answer["ok"], true, "{answer}");
     let report = &answer["result"]["effect"]["report"];
@@ -794,6 +799,28 @@ fn a_close_needs_a_ground_asks_the_mailbox_and_then_ends_the_harness() {
     assert!(!live(harness.pid()), "the recorded harness ended");
     let lane = fleet.lane("KEN-A");
     assert_eq!(lane["status"], "done");
+    assert!(
+        std::fs::symlink_metadata(&item_state).is_err(),
+        "the item's state left with the terminal close"
+    );
+    assert!(
+        std::fs::symlink_metadata(&status_file).is_err(),
+        "the lane status file left with the terminal close"
+    );
+    let archives = std::env::temp_dir()
+        .join("isolated-home/.fleet/archive")
+        .join(fleet.state_dir().file_name().unwrap())
+        .join("oversee");
+    assert!(
+        std::fs::read_dir(&archives).unwrap().any(|e| {
+            e.unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("close-KEN-A-")
+        }),
+        "the close-out's archive under {}",
+        archives.display()
+    );
     assert!(
         lane.get("pending_pr").is_none(),
         "a full close drops the PR identity"
@@ -1550,4 +1577,198 @@ fn a_claim_is_suppressed_only_by_the_launch_identity_holding_its_pane() {
         own,
         "the store is read, never written"
     );
+}
+
+/// The paths an archive holds, as `tar` lists them, each relative to `/`.
+fn archived(archive: &Path) -> Vec<String> {
+    let out = program("tar")
+        .args(["-tzf", &archive.display().to_string()])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+fn relative(path: &Path) -> String {
+    std::fs::canonicalize(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .strip_prefix("/")
+        .unwrap()
+        .display()
+        .to_string()
+}
+
+fn plant(dir: &Path, rel: &str) -> PathBuf {
+    let path = dir.join(rel);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, "x\n").unwrap();
+    path
+}
+
+fn age(path: &Path, secs: u64) {
+    let now = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let at = UNIX_EPOCH + Duration::from_secs(now - secs);
+    std::fs::File::open(path).unwrap().set_modified(at).unwrap();
+}
+
+/// Defect: an item's close-out that takes a sibling item's files whose key
+/// extends its own, its mailbox or its record's lock, or that removes
+/// before its archive stands, so a crash between leaves no copy. `state
+/// remove` through the executable on a directory with no fleet state: the
+/// item's state, status file, handoff and run directory leave, the mailbox
+/// and the record's lock stay, the siblings stand, the archive the reply
+/// names holds every path that left beside the mailbox and the `--archive`
+/// path, and the directory's own retention ran, since no watch runs it
+/// there, taking another item's expired record.
+#[test]
+fn state_remove_takes_the_items_files_after_their_archive_and_leaves_its_siblings() {
+    let fleet = Fleet::new(1);
+    let dir = fleet.state_dir();
+    let leaves = [
+        plant(dir, "workflow-state-KEN-A.json"),
+        plant(dir, "handoffs/KEN-A-handoff.md"),
+        plant(dir, "KEN-A.run/stdout.log"),
+        plant(dir, "lane-status-KEN-A.md"),
+    ];
+    let stays = [
+        plant(dir, "workflow-state-KEN-A.json.lock"),
+        plant(dir, "lane-mail/KEN-A/to-lane.jsonl"),
+        plant(dir, "workflow-state-KEN-AB.json"),
+        plant(dir, "audit-KEN-B.json"),
+    ];
+    let extra = plant(dir, "extra/tmp/dev-return-KEN-A-1-1.json");
+    let expired = dir.join("workflow-state-KEN-Z.json");
+    std::fs::write(&expired, "{}\n").unwrap();
+    age(&expired, 10 * 86_400);
+    let out = fleet.run(&[
+        "state",
+        "remove",
+        "--item",
+        "KEN-A",
+        "--archive",
+        &dir.join("extra").join("tmp").display().to_string(),
+    ]);
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{answer}");
+    for path in &leaves {
+        assert!(
+            std::fs::symlink_metadata(path).is_err(),
+            "{} left",
+            path.display()
+        );
+    }
+    for path in &stays {
+        assert!(
+            std::fs::symlink_metadata(path).is_ok(),
+            "{} stands",
+            path.display()
+        );
+    }
+    let mut removed: Vec<String> = answer["result"]["removed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| relative(Path::new(p.as_str().unwrap())))
+        .collect();
+    removed.sort();
+    let mut want: Vec<String> = [
+        "KEN-A.run",
+        "handoffs/KEN-A-handoff.md",
+        "lane-status-KEN-A.md",
+        "workflow-state-KEN-A.json",
+    ]
+    .iter()
+    .map(|rel| format!("{}/{rel}", relative(dir)))
+    .collect();
+    want.sort();
+    assert_eq!(removed, want);
+    let kept = PathBuf::from(answer["result"]["kept"].as_str().expect("the archive"));
+    let listed = archived(&kept);
+    for rel in [
+        "workflow-state-KEN-A.json",
+        "handoffs/KEN-A-handoff.md",
+        "KEN-A.run/stdout.log",
+        "lane-status-KEN-A.md",
+        "lane-mail/KEN-A/to-lane.jsonl",
+    ] {
+        let path = format!("{}/{rel}", relative(dir));
+        assert!(listed.contains(&path), "{path} archived: {listed:?}");
+    }
+    assert!(
+        listed.contains(&relative(&extra)),
+        "the --archive path's file archived: {listed:?}"
+    );
+    assert!(
+        !listed.iter().any(|p| p.ends_with("audit-KEN-B.json")),
+        "a sibling's file is not archived: {listed:?}"
+    );
+    assert!(
+        std::fs::symlink_metadata(&expired).is_err(),
+        "the expired record left with the directory's retention"
+    );
+    let pruned: Vec<String> = answer["result"]["pruned"]["paths"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| relative(Path::new(p.as_str().unwrap())))
+        .collect();
+    assert_eq!(
+        pruned,
+        vec![format!("{}/workflow-state-KEN-Z.json", relative(dir))]
+    );
+    assert!(
+        std::fs::symlink_metadata(dir.join("extra")).is_ok(),
+        "the --archive path is the caller's to remove"
+    );
+}
+
+/// Defect: a removal that fails part way reported without the archive that
+/// already holds the path, so the operator cannot find the copy. A run
+/// directory whose mode forbids unlinking inside it: the close-out refuses
+/// `remove-failed` naming the archive, which holds the file, and the file
+/// still stands.
+#[test]
+fn state_remove_refuses_a_failed_removal_naming_the_archive_that_holds_the_path() {
+    let fleet = Fleet::new(1);
+    let dir = fleet.state_dir();
+    let held = plant(dir, "KEN-A.run/stdout.log");
+    let run_dir = held.parent().unwrap().to_path_buf();
+    std::fs::set_permissions(&run_dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    if std::fs::write(run_dir.join("probe"), "x").is_ok() {
+        // A process the mode does not bind cannot plant the failure.
+        std::fs::set_permissions(&run_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+        return;
+    }
+    let out = fleet.run(&["state", "remove", "--item", "KEN-A"]);
+    let answer = reply(&out);
+    std::fs::set_permissions(&run_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(answer["ok"], false, "{answer}");
+    assert_eq!(answer["refusal"]["key"], "remove-failed");
+    let fields: HashMap<String, String> = answer["refusal"]["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|pair| {
+            (
+                pair[0].as_str().unwrap().to_owned(),
+                pair[1].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    let kept = PathBuf::from(&fields["kept"]);
+    assert!(
+        archived(&kept).contains(&format!("{}/KEN-A.run/stdout.log", relative(dir))),
+        "the archive holds the path that could not be removed"
+    );
+    assert!(std::fs::symlink_metadata(&held).is_ok(), "the file stands");
 }

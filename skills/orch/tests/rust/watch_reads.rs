@@ -1,11 +1,9 @@
-//! The tracker and GitHub read duties (decision 121 Q17; step5-map § A4,
-//! § A10; decisions 87, 104, 106, 126 (1), 128 (9), 135 (5), 141 (4), 142
-//! (1), 162 (2)): each inventory read once per pass through the linear, gh,
-//! reducer and mailbox fixtures, a dependency failure refusing the
-//! inventory and never reading as an empty set, the quota receipt holding
-//! the tracker reads alone, the legacy's recorded answers on its own
-//! fixtures, the triage key, the terminal close, the heartbeat's inputs,
-//! and the GitHub duty's split from the tracker's (U5e2): the reducer
+//! The tracker and GitHub read duties: each inventory read once per pass
+//! through the linear, gh, reducer and mailbox fixtures, a dependency
+//! failure refusing the inventory and never reading as an empty set, the
+//! quota receipt holding the tracker reads alone, the recorded watch's
+//! answers on its own fixtures, the triage key, the terminal close, the
+//! heartbeat's inputs, and the GitHub duty's split from the tracker's: the reducer
 //! pass, the security alerts, the outside contributions, the budget scan,
 //! the owner's tracker answers and the due tracker asks. Each row names
 //! the defect it catches at its doc comment.
@@ -42,7 +40,7 @@ use orch_runtime::watch::{
 use serde_json::{Value, json};
 use support::*;
 
-/// The floor the legacy recording ran with (`record-legacy.sh`).
+/// The floor the recorded watch ran with.
 const SINCE: &str = "2026-08-15T09:00:00Z";
 const SINCE_EPOCH: u64 = 1_786_784_400;
 
@@ -276,7 +274,7 @@ fn item(
         "blocked_by_open": blocked_by})
 }
 
-/// The triage world the legacy recording ran (`record-legacy.sh`).
+/// The triage world the recorded watch ran.
 fn triage_items() -> Vec<Value> {
     vec![
         item(
@@ -405,7 +403,7 @@ fn set(kind: &str, identity: &str, value: &str) -> Change {
     }
 }
 
-/// Decisions 87, 104: a dependency failure never becomes an empty or
+/// A dependency failure never becomes an empty or
 /// passing inventory. Defect: a refused tracker call, a short page or a
 /// malformed member read as the whole inventory, closing or triaging on
 /// nothing. Each row refuses with its cause key and field, and nothing
@@ -502,7 +500,7 @@ fn an_auth_failure_a_short_page_and_a_malformed_member_each_refuse_their_invento
         let settings = world.settings(&[]);
         let ctx = world.context(settings.clone(), Some(SINCE));
         let shared = ctx.shared.clone();
-        // A GitHub defect is the GitHub duty's refusal (decision 162 (2)).
+        // A GitHub defect is the GitHub duty's refusal.
         let mut body = if key.starts_with("github") {
             github::body(world.github_context(
                 settings,
@@ -532,7 +530,7 @@ fn an_auth_failure_a_short_page_and_a_malformed_member_each_refuse_their_invento
     }
 }
 
-/// Decision 142 (1), A1:258-260. Defect: the tracker's quota refusal read
+/// Defect: the tracker's quota refusal read
 /// as a failed pass (stopping the GitHub reads and the closes with it) or
 /// as an empty tracker (closing nothing, triaging nothing, forever), or a
 /// hold that no reset ends. The receipt is held as a typed row; while it
@@ -642,7 +640,7 @@ fn the_quota_receipt_holds_tracker_reads_until_its_reset_and_nothing_else() {
     );
 }
 
-/// Step5-map § B row 6 on the real body: the `linear-hold` fixture holds
+/// On the real body: the `linear-hold` fixture holds
 /// the tracker's first call on a FIFO while the clock passes three mail
 /// intervals. Defect: a tracker read holding the mail turns.
 #[test]
@@ -740,11 +738,9 @@ fn a_tracker_read_held_on_the_fifo_delays_no_mail_run() {
     );
 }
 
-/// Decision 135 (5), the legacy's recorded answer on its triage world
-/// (`record-legacy.sh`, `recorded/triage.out`: KEN-1, KEN-2 and KEN-4;
-/// KEN-3 kept, KEN-5 before the floor); decision 141 (4). Defect: an item
-/// raised on every pass while unresolved (the legacy, `recorded/
-/// triage-again.out`, the correction), or an item whose state or newest
+/// The recorded watch's answer on its triage world (`recorded/triage.out`:
+/// KEN-1, KEN-2 and KEN-4; KEN-3 kept, KEN-5 before the floor). Defect: an
+/// item raised on every pass while unresolved, or an item whose state or newest
 /// comment moved not raised again, or an acknowledged item raised. The
 /// first pass raises the three; the second raises nothing; a comment on
 /// KEN-2 raises it once; a verdict on KEN-1 clears its row; the items are
@@ -851,8 +847,7 @@ fn an_unchanged_item_emits_no_line_and_a_moved_key_raises_it_once() {
     );
 }
 
-/// Decision 135 (5), the legacy's recorded answer on `744fd5727:skills/orch/tests/oversee_watch_owed.sh`'s
-/// shared world (`recorded/owed.lines`: nine lines with their state,
+/// The recorded watch's answer on the owed world (`recorded/owed.lines`: nine lines with their state,
 /// priority and lane). Defect: an item in flight, queued or done read as
 /// owed, a record's fields lost, or the Verifying items dropped from the
 /// inventory the verification duty reads. The owed rows match the
@@ -982,12 +977,12 @@ fn the_owed_inventory_matches_the_legacys_recorded_lines() {
     );
 }
 
-/// Decision 135 (5), the legacy's recorded answer on the merged fixture
+/// The recorded watch's answer on the merged fixture
 /// (`recorded/merged.lines`: #1 on the branch and #2 by title scope; #3 a
 /// fork, #4 a mention, #5 before the floor; nothing on the second pass).
 /// Defect: a mention or a fork read as the lane's delivery, a merge before
 /// the floor reported, a key reported twice across passes, or the search
-/// read without its total. The two lines print once, in the legacy's
+/// read without its total. The two lines print once, in the recorded
 /// order; the search and the head list are each read once per repository.
 #[test]
 fn the_merged_index_matches_the_legacys_recorded_lines() {
@@ -1080,8 +1075,7 @@ fn the_merged_index_matches_the_legacys_recorded_lines() {
     );
 }
 
-/// Decisions 128 (9), 146. Defect: an item the tracker shows ended left
-/// with a live lane record (the legacy closed through `lane-close`), a
+/// Defect: an item the tracker shows ended left with a live lane record, a
 /// close asked twice for one item, or a refused close asked again on the
 /// next pass under the same key. A stopped lane whose item is Done with
 /// every box checked gets one `close-owned-resources` request, its line
@@ -1220,7 +1214,7 @@ fn a_terminal_item_with_no_recorded_close_gets_one_close_request() {
     );
 }
 
-/// Decisions 126 (1), 130. Defect: the heartbeat's capacity line naming an
+/// Defect: the heartbeat's capacity line naming an
 /// item a lane holds, a queued item or a blocked one, or missing a Backlog
 /// item. The slot the heartbeat body reads names the open items with no
 /// open blocker that no lane holds and the queue does not name, sorted.
@@ -1362,7 +1356,7 @@ fn the_duty_owns_its_row_kinds() {
     let _ = set("triage", "KEN-1", "Todo|-");
 }
 
-// --- U5e2: the GitHub duty's readings and the split -----------------------------
+// --- the GitHub duty's readings and the split -----------------------------
 
 /// The main-push reads of the one repository answer an empty completed
 /// list for every workflow and event, so the budget workflow stands and
@@ -1378,8 +1372,7 @@ fn quiet_main(world: &mut World) {
     }
 }
 
-/// The alert token file the fleet renews, as the legacy harness planted
-/// it: mode 600, one word.
+/// The alert token file the fleet renews: mode 600, one word.
 fn plant_token(world: &World, token: &str) -> PathBuf {
     let path = world.dir.path().join("alert-token");
     std::fs::write(&path, format!("{token}\n")).unwrap();
@@ -1387,11 +1380,9 @@ fn plant_token(world: &World, token: &str) -> PathBuf {
     path
 }
 
-/// The reducer pass (the bytes `744fd5727:skills/orch/tests/oversee_watch.sh`
-/// § 1 pins). Defect: the reducer run without
+/// The reducer pass, the recorded bytes. Defect: the reducer run without
 /// `GH_REPO` or with a flag, a repository's standing attention on the first
-/// pass of a run reported as news (the legacy baselined it with one stderr
-/// note), a new key not reported, a standing key reported again, an error
+/// pass of a run reported as news, a new key not reported, a standing key reported again, an error
 /// key baselined on the first pass, or a reducer's global failure (nonzero,
 /// no line) read as no attention. The fixture logs its environment.
 #[test]
@@ -1523,8 +1514,7 @@ fn the_reducer_runs_per_repository_with_gh_repo_and_a_rising_edge_is_news_once()
     assert_eq!(baseline, Baseline::default());
 }
 
-/// The bytes `744fd5727:skills/orch/tests/oversee_watch.sh`
-/// `refresh_merge_replay` pins: a rolling refresh has no item, so its
+/// The recorded bytes of a merge replay: a rolling refresh has no item, so its
 /// `refresh-ready` identity is kept by number once the reducer's line
 /// clears, until the pull request merges (one `EVENT merged 1144
 /// kendex/refresh <repo>`) or closes unmerged. Defect: the identity dropped
@@ -1601,8 +1591,7 @@ fn a_refresh_identity_is_kept_until_its_pull_request_merges_once() {
     );
 }
 
-/// The alert pass, the bytes `744fd5727:skills/orch/tests/oversee_watch_security.sh`
-/// pins (`LINE_DEPENDABOT pr=12`, `LINE_CODE`, `LINE_SECRET`, the repeats,
+/// The alert pass, the recorded bytes (`LINE_DEPENDABOT pr=12`, `LINE_CODE`, `LINE_SECRET`, the repeats,
 /// the unread line). Defect: an alert read without the installation token
 /// or every other read with it, an alert reported once and then forgotten
 /// while no verdict stands, a failed list read as no alerts (its rows
@@ -1817,8 +1806,7 @@ fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_ale
     );
 }
 
-/// The contribution pass, the bytes `744fd5727:skills/orch/tests/oversee_watch_outside.sh`
-/// pins. Defect: a fleet author (a bot, an owner, a member, a collaborator,
+/// The contribution pass, the recorded bytes. Defect: a fleet author (a bot, an owner, a member, a collaborator,
 /// a private member whose permission is admin) reported, an outside pull
 /// request or issue reported on every pass, a pushed head not reported
 /// again, the permission read repeated for one login in a pass, or a
@@ -1949,9 +1937,8 @@ fn outside_contributions_are_reported_once_and_a_pull_request_again_on_a_new_hea
     );
 }
 
-/// The budget scan (`oversee-watch:2392-2502`, the bytes
-/// `744fd5727:skills/orch/tests/oversee_watch_main_push.sh` `budget_once` pins: the event and
-/// the row's raw compact JSON). Defect: a non-producer run (a pull request
+/// The budget scan, the recorded bytes of the event and the row's raw
+/// compact JSON. Defect: a non-producer run (a pull request
 /// event) read for annotations, a producer's warnings reported more than
 /// once, duplicate warnings across jobs repeated, or the row's bytes moved
 /// by a repeat pass.
@@ -2075,12 +2062,10 @@ fn the_budget_scan_reports_a_completed_producer_run_once_and_keeps_its_row_bytes
     }
 }
 
-/// Decision 162 (2), the split. Defect: a GitHub refusal discarding the
-/// tracker pass's news and closes (U5e's one body printed `step=tracker`
-/// and moved nothing), and the tracker's own GitHub read, one stopped
-/// GitHub-tracked lane's issue, refused, discarding them too (R-RECON F3:
-/// the legacy read each lane's end on its own and went on,
-/// `check_terminal_lanes`, `oversee-watch:1527-1532`). Through the runner
+/// The split. Defect: a GitHub refusal discarding the tracker pass's news
+/// and closes, and the tracker's own GitHub read, one stopped
+/// GitHub-tracked lane's issue, refused, discarding them too, where each
+/// lane's end is read on its own and the pass goes on. Through the runner
 /// with both duties: every gh read fails, the tracker's triage lines and
 /// the Linear lane's close land, the GitHub lane stays stopped with no
 /// verdict, the tracker's partial failure is one counted line after its
@@ -2195,16 +2180,15 @@ fn a_github_refusal_leaves_the_trackers_triage_line_and_close_intact() {
     );
 }
 
-/// R-RECON (Copilot F5), `lib/verifying.sh:141-161`. Defect: the open
+/// Defect: the open
 /// blockers the tracker reads dropped on the way to the verification duty,
 /// so a blocked Verifying box reads `due` with `blocked_by=-` and the
 /// heartbeat raises work whose prerequisite is open. The tracker body reads
 /// the item with its blocker, the verification body judges the slot it
 /// left: the box is `blocked` and names the blocker, with no deadline
-/// event (the legacy's `blocked` row, `744fd5727:skills/orch/tests/oversee_watch_owed.sh:763`, and its
-/// `blocker_closed` case); once the blocker closes the box is due and the
-/// event fires. The lines and the event are the legacy watch's recorded
-/// bytes on the suite's own world (`tmp/orch-rebuild/U5e3/record-legacy.sh`).
+/// event; once the blocker closes the box is due and the event fires. The
+/// lines and the event are the recorded watch's bytes on the suite's own
+/// world.
 #[test]
 fn an_open_blocker_read_by_the_tracker_holds_the_verifying_box_blocked_until_it_closes() {
     const NOW: u64 = 1_790_899_201; // 2026-10-02T00:00:01Z, `verifying_one`'s clock
@@ -2295,8 +2279,7 @@ fn an_open_blocker_read_by_the_tracker_holds_the_verifying_box_blocked_until_it_
 }
 
 /// The owner's tracker answers, the description repair and the due tracker
-/// asks (`oversee-watch:2758-2867`; the mail suite's `tracker-*` rows,
-/// `744fd5727:skills/orch/tests/oversee_watch_mail.sh`). Defect: a posted ask's owner comment not
+/// asks. Defect: a posted ask's owner comment not
 /// handed back as its answer under the comment's delivery id, the question
 /// comment or another author's comment handed back, a description that
 /// lost its action line left unrepaired (or repaired every pass), a due

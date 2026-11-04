@@ -1,48 +1,45 @@
-//! The lane observation duty (decision 121 Q11; step5-map § A2): one read
-//! per recorded lane per pass, by the pane key and the identity its launch
-//! records, judged once by the one judge over three-valued inputs, with
-//! every event line handed back before the baseline row it settles moves.
+//! The lane observation duty: one read per recorded lane per pass, by the pane
+//! key and the identity its launch records, judged once by the one judge over
+//! three-valued inputs, with every event line handed back before the baseline
+//! row it settles moves.
 //!
-//! Nothing here acts. The duty reads a pane by its exact id on the server
-//! the record names, its foreground through `observe::foreground` with the
+//! Nothing here acts. The duty reads a pane by its exact id on the server the
+//! record names, its foreground through `observe::foreground` with the
 //! recorded identity, its screen, and a Pi lane's session rows; it emits the
-//! legacy's lines and asks the baseline for the rows that keep each one
-//! news once. A reading that fails is `lane-unreadable` with its cause and
-//! never `window-gone` or `lane-exited` (decisions 99, 105). A window the
-//! fleet session holds that no record, open intent or receipt names is
-//! `stray-window`, reported and never adopted or closed (decision 96).
+//! lines and asks the baseline for the rows that keep each one news once. A
+//! reading that fails is `lane-unreadable` with its cause and never
+//! `window-gone` or `lane-exited`. A window the fleet session holds that no
+//! record, open intent or receipt names is `stray-window`, reported and never
+//! adopted or closed.
 //!
-//! The wall rule (decisions 125 (1), 130): a wall screen first seen before
-//! the live process started is that process's scrollback, not its wall;
-//! the `usage-limit` row is keyed to the identity the wall was judged for,
-//! so a replayed screen from an earlier process never promotes. A Pi lane's
-//! rows wall is the harness's own current record and needs no comparison.
+//! The wall rule: a wall screen first seen before the live process started is
+//! that process's scrollback, not its wall; the `usage-limit` row is keyed to
+//! the identity the wall was judged for, so a replayed screen from an earlier
+//! process never promotes. A Pi lane's rows wall is the harness's own current
+//! record and needs no comparison.
 //!
-//! The wall's record and route (decision 160 (1)): the reset the banner
-//! names is read by the legacy grammar (`lib/usage-reset.sh`) and the line
-//! is `usage-limit-passed` once the clock passes it; the account wall
-//! record and the lane record's own wall are written through
-//! `ops::wall`; the wall relaunch is the legacy's `open-terminal
-//! --relaunch`, started detached through the one runner after the
-//! account walk's pick, under `ORCH_WALL_RELAUNCH=auto` (decision 121
-//! Q10); a window gone while that relaunch is still opening its
-//! replacement is not `window-gone` (`wall_relaunch_pending`). A lane
-//! `ORCH_WATCH_LANE_AGE_SECS` past its launch is `lane-long`
-//! once per age interval with the counters the legacy read from its
-//! records. A lane told to hand off records `.handoff` in its item's state
-//! and exits (`check_handoff`): the record is read where `workflow-state
+//! The wall's record and route: the reset the banner names is read by the
+//! grammar (`lib/usage-reset.sh`) and the line is `usage-limit-passed` once
+//! the clock passes it; the account wall record and the lane record's own wall
+//! are written through `ops::wall`; the wall relaunch is `open-terminal
+//! --relaunch`, started detached through the one runner after the account
+//! walk's pick, under `ORCH_WALL_RELAUNCH=auto`; a window gone while that
+//! relaunch is still opening its replacement is not `window-gone`
+//! (`wall_relaunch_pending`). A lane `ORCH_WATCH_LANE_AGE_SECS` past its
+//! launch is `lane-long` once per age interval with the counters its records
+//! give. A lane told to hand off records `.handoff` in its item's state and
+//! exits (`check_handoff`): the record is read where `workflow-state
 //! handoff-standing` read it and is `handoff` once per record.
 //!
-//! Hosted lanes are observed here by the capability line their host
-//! declares (`watch::hosted`; decisions 57, 176 (1), 192 Q1): a kind with a
-//! local pane is read by that pane as a local lane is, a `status=verb` kind
-//! through the provider's status verb as well, a `status=none` kind (a
-//! cloud session) by its pull request alone; a hosted lane's status file
-//! and records are read through the provider, and a merged hosted lane
-//! whose worktree the host no longer has is closed through `lane-close` at
-//! its `lane-exited` or `lane-idle` line.
+//! Hosted lanes are observed here by the capability line their host declares
+//! (`watch::hosted`): a kind with a local pane is read by that pane as a local
+//! lane is, a `status=verb` kind through the provider's status verb as well, a
+//! `status=none` kind (a cloud session) by its pull request alone; a hosted
+//! lane's status file and records are read through the provider, and a merged
+//! hosted lane whose worktree the host no longer has is closed through
+//! `lane-close` at its `lane-exited` or `lane-idle` line.
 
-// Every reading is matched variant by variant (decision 105).
+// Every reading is matched variant by variant.
 #![deny(clippy::wildcard_enum_match_arm)]
 
 use std::collections::BTreeSet;
@@ -105,7 +102,7 @@ pub type WindowsRead<'a> = &'a dyn Fn(&str) -> Reading<(u64, Vec<WindowRow>)>;
 
 /// The host reads the duty takes, injected so a pass is a function of the
 /// record and what the kernel, the server and the files answered; production
-/// takes [`Readers::kernel`]. No read takes a pid alone (decision 108).
+/// takes [`Readers::kernel`]. No read takes a pid alone.
 pub struct Readers<'a> {
     /// The pane a launch names.
     pub pane: PaneRead<'a>,
@@ -220,11 +217,10 @@ impl Readers<'static> {
     }
 }
 
-/// The relaunch the wall route starts (`oversee-watch:4694`, `wall_route`):
-/// the record's own `open-terminal --relaunch` line from its `recovery`
-/// fields (`lib/lane-relaunch.sh`, `lane_recovery_args`), run detached in
-/// the launch's checkout with its session, its output at `log`, its exit
-/// status landing beside `marker`.
+/// The relaunch the wall route starts: the record's own `open-terminal
+/// --relaunch` line from its `recovery` fields (`lib/lane-relaunch.sh`,
+/// `lane_recovery_args`), run detached in the launch's checkout with its
+/// session, its output at `log`, its exit status landing beside `marker`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Relaunch {
     pub item: String,
@@ -241,9 +237,9 @@ pub struct Relaunch {
     pub log: PathBuf,
 }
 
-/// The wall route's two legacy calls and the setting that gates the
-/// second, injected so a row plants the answers; production wires the
-/// overseer module's [`super::overseer::Legacy`] reads.
+/// The wall route's two calls and the setting that gates the second, injected
+/// so a row plants the answers; production wires the overseer module's
+/// [`super::overseer::Legacy`] reads.
 pub struct WallRoute<'a> {
     pub relaunch: WallRelaunch,
     /// `lanes pick --harness H --native-model M --exclude-lane SPENT --json`.
@@ -254,8 +250,8 @@ pub struct WallRoute<'a> {
 }
 
 /// The pane ids every receipt under `<state dir>/intents/` names: the first
-/// pane word of each `.pane` file (decision 96). An absent directory is no
-/// receipt; a listing or a file that cannot be read is unreadable.
+/// pane word of each `.pane` file. An absent directory is no receipt; a
+/// listing or a file that cannot be read is unreadable.
 pub fn receipts_in(state_dir: &Path) -> Reading<Vec<String>> {
     let dir = state_dir.join("intents");
     let entries = match std::fs::read_dir(&dir) {
@@ -299,9 +295,9 @@ pub enum WallSource {
     Rows,
 }
 
-/// What one lane is doing, the legacy `lane_state` words over the typed
-/// inputs. `Unreadable` is a read that failed; `Unjudged` is a read that
-/// settles nothing.
+/// What one lane is doing, the `lane_state` words over the typed inputs.
+/// `Unreadable` is a read that failed; `Unjudged` is a read that settles
+/// nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LaneState {
     Gone,
@@ -339,10 +335,10 @@ pub struct Inputs<'a> {
     pub harness: Option<Harness>,
 }
 
-/// The classifier, in the legacy rung order: the window, the read, the
-/// process (a pane with nothing but shells under it is the lane, finished),
-/// the rows where the harness writes them, then the screen through the one
-/// judge. A Pi lane with no rows is unjudged, never idle off its pane.
+/// The classifier, in the rung order: the window, the read, the process (a
+/// pane with nothing but shells under it is the lane, finished), the rows
+/// where the harness writes them, then the screen through the one judge. A Pi
+/// lane with no rows is unjudged, never idle off its pane.
 pub fn classify(inputs: &Inputs) -> LaneState {
     match inputs.pane {
         Reading::Live(_) => {}
@@ -454,10 +450,10 @@ pub struct Pass<'a> {
     /// The state directory the receipts are read under, the item states
     /// stand in and a relaunch logs to.
     pub state_dir: &'a Path,
-    /// The legacy claim store, beside which the account wall records and
-    /// the relaunch markers live (`lib/lane-claims.sh`, `lane_claims_dir`).
+    /// The claim store, beside which the account wall records and the relaunch
+    /// markers live (`lib/lane-claims.sh`, `lane_claims_dir`).
     pub claim_store: &'a Path,
-    /// The legacy scripts directory, for the relaunch's `open-terminal`.
+    /// The scripts directory, for the relaunch's `open-terminal`.
     pub scripts: &'a Path,
     /// The wall route's calls and setting.
     pub route: &'a WallRoute<'a>,
@@ -647,8 +643,8 @@ pub fn banner_payload(slice: &str, banner: &str, cap: usize) -> Option<Vec<Strin
 /// The lines of an event's payload as events.
 fn payload(lines: Vec<String>) -> impl Iterator<Item = Event> {
     // The capture keeps each row's trailing blanks for the judge
-    // (`host::tmux::capture`); the legacy's joined capture carried none
-    // under its lines, and a reader of the log needs none.
+    // (`host::tmux::capture`); the joined capture carried none under its
+    // lines, and a reader of the log needs none.
     lines
         .into_iter()
         .map(|l| Event::Tail(l.trim_end_matches(' ').to_owned()))
@@ -670,33 +666,30 @@ pub(super) fn clear(kind: &str, lane: &str) -> Change {
     }
 }
 
-/// A partial failure of the pass, said by the runner under its one rule
-/// (decision 156 (1)); the first one stands, the pass goes on.
+/// A partial failure of the pass, said by the runner under its one rule; the
+/// first one stands, the pass goes on.
 pub(super) fn fail(out: &mut Produced, line: String) {
     out.failed.get_or_insert(line);
 }
 
-/// The watch's own state directory, beside the legacy claim store
-/// (`PW_STATE_DIR`): where the account wall records and the relaunch
-/// markers live.
+/// The watch's own state directory, beside the claim store (`PW_STATE_DIR`):
+/// where the account wall records and the relaunch markers live.
 pub fn watch_state_dir(claim_store: &Path) -> &Path {
     claim_store.parent().unwrap_or(claim_store)
 }
 
 /// The lanes pass: every in-flight lane a pane or the provider's status verb
-/// judges read once, the lines the legacy printed for each kind, the hosted
-/// readings (the prepare records, the cloud stall, the finished-hosted
-/// close), the stray sweep and the start stall, with the rows that keep each
-/// line news once. A host whose capability line could not be read is the
-/// pass's failure once, and its lanes are left unjudged this pass.
+/// judges read once, the lines printed for each kind, the hosted readings (the
+/// prepare records, the cloud stall, the finished-hosted close), the stray
+/// sweep and the start stall, with the rows that keep each line news once. A
+/// host whose capability line could not be read is the pass's failure once,
+/// and its lanes are left unjudged this pass.
 pub fn observe(pass: &Pass) -> Produced {
     let mut out = Produced::default();
     let cap = pass.settings.tail_lines as usize;
-    // The hosts of the lanes this pass judges, the in-flight ones alone, as
-    // the legacy read the running rows' hosts (`fleet_merge`,
-    // `oversee-watch:959-969`): a parked, done or stopped record's host is
-    // not asked; `lane_long`'s parked arm reads no line (R-U7-1 L1, R-U7-2
-    // L1).
+    // The hosts of the lanes this pass judges, the in-flight ones alone: a
+    // parked, done or stopped record's host is not asked; `lane_long`'s parked
+    // arm reads no line.
     let hosts = Hosts::read(
         pass.scripts,
         pass.fleet.lanes.iter().filter(|l| l.status.in_flight()),
@@ -721,7 +714,7 @@ pub fn observe(pass: &Pass) -> Produced {
     }
     hosted::prune_close_markers(pass, &mut out);
     // A `status=none` kind's window holds no harness the pane passes judge
-    // (`fleet_merge`, `oversee-watch:964`).
+    // (`fleet_merge`).
     let lanes: Vec<(&Lane, Capabilities)> = in_flight
         .iter()
         .filter_map(|l| hosts.of(l).ok().map(|caps| (*l, caps)))
@@ -767,11 +760,10 @@ pub fn observe(pass: &Pass) -> Produced {
     out
 }
 
-/// The lane record's own wall (`wall_pause`): the observations handed to
-/// the record's transition where a wall stands on a record, a `usage-limit`
-/// row stands, or this pass read one; otherwise the record is left
-/// untouched, as the legacy left it. A refused write is the duty's news as
-/// one line, and the next pass asks again.
+/// The lane record's own wall (`wall_pause`): the observations handed to the
+/// record's transition where a wall stands on a record, a `usage-limit` row
+/// stands, or this pass read one; otherwise the record is left untouched. A
+/// refused write is the duty's news as one line, and the next pass asks again.
 fn wall_pauses(walls: &[WallObservation], pass: &Pass, out: &mut Produced) {
     let standing = pass
         .fleet
@@ -784,8 +776,8 @@ fn wall_pauses(walls: &[WallObservation], pass: &Pass, out: &mut Produced) {
     if !(standing || seen || !pass.baseline.identities("usage-limit").is_empty()) {
         return;
     }
-    // A refused write is the pass's partial failure (said by the runner
-    // under its one rule), as the legacy said it on stderr alone.
+    // A refused write is the pass's partial failure (said by the runner under
+    // its one rule).
     if let Err(cause) = (pass.wall_pauses)(RecordWallPauses {
         observations: walls.to_vec(),
     }) {
@@ -805,10 +797,10 @@ pub enum HandoffReading {
     Unreadable { path: PathBuf },
 }
 
-/// One place's answer (`workflow-state`, `handoff_read`): an absent file
-/// is none; a file that cannot be read or parsed is unreadable; `.handoff`
-/// stands where it is an object with no `resumed_at`.
-fn handoff_read(path: &Path) -> HandoffReading {
+/// One place's answer: an absent file is none; a file that cannot be read
+/// or parsed is unreadable, never no handoff; `.handoff` stands where it is
+/// an object with no `resumed_at`.
+pub fn handoff_read(path: &Path) -> HandoffReading {
     let unreadable = || HandoffReading::Unreadable {
         path: path.to_path_buf(),
     };
@@ -837,21 +829,32 @@ fn handoff_read(path: &Path) -> HandoffReading {
     }
 }
 
-/// The item's standing handoff over the places the legacy read
-/// (`handoff_places`, with the watch's state directory and the lane's root
-/// as the worktree): the item's file under the fleet's state directory,
-/// then under the root's `tmp`; the first standing record wins, else any
-/// unreadable place, else none.
-pub fn handoff_standing(state_dir: &Path, lane: &Lane) -> HandoffReading {
-    let mut places = vec![state::item_path(state_dir, &lane.item)];
-    if let Some(root) = lane.mail_root.as_deref().filter(|r| !r.is_empty()) {
-        let place = state::item_path(&Path::new(root).join("tmp"), &lane.item);
+/// The places an item's handoff record is read, in order: the item's file
+/// under the state directory, then under the lane root's `tmp` where a root
+/// is named and that is another file. A lane whose launch forbids writing
+/// the main checkout keeps its record in its worktree's `tmp`.
+pub fn handoff_places(state_dir: &Path, item: &str, root: Option<&Path>) -> Vec<PathBuf> {
+    let mut places = vec![state::item_path(state_dir, item)];
+    if let Some(root) = root {
+        let place = state::item_path(&root.join("tmp"), item);
         if place != places[0] {
             places.push(place);
         }
     }
+    places
+}
+
+/// The item's standing handoff over its places, the lane's root as the
+/// worktree: the first standing record wins, else any unreadable place,
+/// else none.
+pub fn handoff_standing(state_dir: &Path, lane: &Lane) -> HandoffReading {
+    let root = lane
+        .mail_root
+        .as_deref()
+        .filter(|r| !r.is_empty())
+        .map(Path::new);
     let mut unread = None;
-    for place in places {
+    for place in handoff_places(state_dir, &lane.item, root) {
         match handoff_read(&place) {
             HandoffReading::Stands { record } => return HandoffReading::Stands { record },
             HandoffReading::Unreadable { path } => {
@@ -866,13 +869,12 @@ pub fn handoff_standing(state_dir: &Path, lane: &Lane) -> HandoffReading {
     }
 }
 
-/// `check_handoff` (`oversee-watch:2097`): every local lane's record, any
-/// status, read once; a standing record is `handoff` with the record under
-/// it once per record (the row keyed by the record's checksum, so a re-run
-/// between the event and the relaunch says nothing), a record the relaunch
-/// stamped clears the row, and a place that could not be read is the
-/// pass's partial failure with the other lanes' news standing. Rows of
-/// items no record names go.
+/// The handoff read: every local lane's record, any status, read once; a
+/// standing record is `handoff` with the record under it once per record (the
+/// row keyed by the record's checksum, so a re-run between the event and the
+/// relaunch says nothing), a record the relaunch stamped clears the row, and a
+/// place that could not be read is the pass's partial failure with the other
+/// lanes' news standing. Rows of items no record names go.
 fn handoffs(pass: &Pass, out: &mut Produced) {
     let recorded: BTreeSet<&str> = pass.fleet.lanes.iter().map(|l| l.item.as_str()).collect();
     for item in pass.baseline.identities("handoff") {
@@ -939,11 +941,10 @@ fn observe_one(
     };
     match &state {
         LaneState::Gone => {
-            // A window gone because the relaunch the route started is
-            // still opening it is not news, and its rows wait for the pass
-            // that judges the gone window (`oversee-watch:4812`); a marker
-            // this pass cannot read is its partial failure, never "not
-            // pending" (decision 156 (1)).
+            // A window gone because the relaunch the route started is still
+            // opening it is not news, and its rows wait for the pass that
+            // judges the gone window; a marker this pass cannot read is its
+            // partial failure, never "not pending".
             let marker = wall::relaunch_marker_path(watch_state_dir(pass.claim_store), lane);
             match relaunch_pending(&marker, pass.settings.prepare, pass.now) {
                 RelaunchPending::Pending => return reading,
@@ -1170,10 +1171,9 @@ fn wall(
     let observed = WallReading::Walled { first_seen };
     let identity = identity_word(obs.identity.as_ref());
     let auth = kind == WallKind::Auth;
-    // The reset the banner states decides which event this is
-    // (`oversee-watch:4897-4906`): pinned to the first sighting, never to
-    // this pass, so a dayless clause names the day the wall was seen on;
-    // a login wall has no reset.
+    // The reset the banner states decides which event this is: pinned to the
+    // first sighting, never to this pass, so a dayless clause names the day
+    // the wall was seen on; a login wall has no reset.
     let reset_at = if auth {
         None
     } else {
@@ -1237,8 +1237,8 @@ fn wall(
             Routed::Left => {}
         }
     }
-    // The legacy body (`oversee-watch:4960`): the lane, the claimed account
-    // where the record names one, `resets=` where read, `wall_kind=auth`.
+    // The line's body: the lane, the claimed account where the record names
+    // one, `resets=` where read, `wall_kind=auth`.
     let mut line = lane.clone();
     if !account.is_empty() {
         line.push(' ');
@@ -1276,17 +1276,15 @@ enum Routed {
     Left,
 }
 
-/// The usage-limit route (`oversee-watch:4694`, `wall_route`): the account
-/// walk's pick for the record's model with the spent account excluded, its
-/// answer the line under the event; under `ORCH_WALL_RELAUNCH=auto` a
-/// qualifying account takes the lane through the record's own relaunch,
-/// started detached through the one runner, its marker written first for
-/// the legacy outcome reader. A hosted lane whose kind declares a local pane
-/// has its harness stopped through the provider first (`oversee-watch:4727-
-/// 4735`: `lane-host stop --item --harness`), and a stop not confirmed
-/// refuses the relaunch as `stop-failed` with the status. A relaunch refused
-/// after the pick is said under the event, after the pick's line, and never
-/// asked again this pass.
+/// The usage-limit route: the account walk's pick for the record's model with
+/// the spent account excluded, its answer the line under the event; under
+/// `ORCH_WALL_RELAUNCH=auto` a qualifying account takes the lane through the
+/// record's own relaunch, started detached through the one runner, its marker
+/// written first for the outcome reader. A hosted lane whose kind declares a
+/// local pane has its harness stopped through the provider first (`lane-host
+/// stop --item --harness`), and a stop not confirmed refuses the relaunch as
+/// `stop-failed` with the status. A relaunch refused after the pick is said
+/// under the event, after the pick's line, and never asked again this pass.
 fn route(
     obs: &Observed,
     account: &str,
@@ -1301,9 +1299,7 @@ fn route(
         Routed::Left
     };
     // A record naming no item, harness, model or account asks no pick and
-    // leaves the wall to the overseer with the event alone, as the legacy
-    // left it (its refusal went to stderr, which this log has no line
-    // for).
+    // leaves the wall to the overseer with the event alone.
     let harness = obs.lane.harness.as_deref().and_then(Harness::parse);
     let model = obs.lane.model.as_deref().unwrap_or("");
     let (Some(harness), false, false) = (harness, model.is_empty(), account.is_empty()) else {
@@ -1396,10 +1392,9 @@ struct Recovery {
 }
 
 /// The record's own relaunch line (`lib/lane-relaunch.sh`,
-/// `lane_recovery_args`, the local arm): `open-terminal` keeps the choices
-/// it can repeat in `recovery`, and a record without them, or whose
-/// checkout is gone, refuses before anything is stopped. `Err` is the
-/// legacy's cause word.
+/// `lane_recovery_args`, the local arm): `open-terminal` keeps the choices it
+/// can repeat in `recovery`, and a record without them, or whose checkout is
+/// gone, refuses before anything is stopped. `Err` is the cause word.
 fn recovery_args(lane: &Lane, harness: Harness, to: &str, pass: &Pass) -> Result<Recovery, String> {
     let recovery = lane.extra.get("recovery").and_then(Value::as_object);
     let field = |key: &str| recovery.and_then(|r| r.get(key));
@@ -1465,14 +1460,13 @@ fn recovery_args(lane: &Lane, harness: Harness, to: &str, pass: &Pass) -> Result
 }
 
 /// `start-stalled`: a lane `running_at` for `start_stall` seconds with no
-/// status file under its mail root, repeated every `mark_repeat` passes
-/// while the file is missing; a file that stands ends it, and one that
-/// cannot be read settles nothing. The file is read where the lane's kind
-/// keeps it (`check_start_stall`, `oversee-watch:2662`): on this disk for a
-/// local kind, through the provider for a `files=verb` kind (a fetch that
-/// failed is `start-stall-unread`, the pass's failure and no line; a lane
-/// whose worktree the host no longer has is left), and a `files=none` kind,
-/// a cloud session, by its pull request (`hosted::cloud_start_stall`).
+/// status file under its mail root, repeated every `mark_repeat` passes while
+/// the file is missing; a file that stands ends it, and one that cannot be
+/// read settles nothing. The file is read where the lane's kind keeps it: on
+/// this disk for a local kind, through the provider for a `files=verb` kind (a
+/// fetch that failed is `start-stall-unread`, the pass's failure and no line;
+/// a lane whose worktree the host no longer has is left), and a `files=none`
+/// kind, a cloud session, by its pull request (`hosted::cloud_start_stall`).
 fn start_stall(lane: &Lane, pass: &Pass, hosts: &Hosts, out: &mut Produced) {
     let name = lane_name(lane);
     let Some(running) = lane.running_at.as_deref().and_then(clock::epoch_secs) else {
@@ -1566,10 +1560,10 @@ fn start_stall(lane: &Lane, pass: &Pass, hosts: &Hosts, out: &mut Produced) {
         .push(set("start-stalled", &name, format!("{running}|{passes}")));
 }
 
-/// The stray sweep (decisions 96, 121 Q11): every window of the fleet
-/// session whose pane no lane record, controller record, open intent,
-/// receipt or own pane names is reported once per pane key and never
-/// adopted or closed. An unreadable listing or receipt set reports nothing.
+/// The stray sweep: every window of the fleet session whose pane no lane
+/// record, controller record, open intent, receipt or own pane names is
+/// reported once per pane key and never adopted or closed. An unreadable
+/// listing or receipt set reports nothing.
 fn strays(session: &str, pass: &Pass, out: &mut Produced) {
     let (server, windows) = match (pass.readers.windows)(session) {
         Reading::Live(listing) => listing,
@@ -1634,14 +1628,13 @@ fn strays(session: &str, pass: &Pass, out: &mut Produced) {
     }
 }
 
-/// `lane-long` (`lib/watch-host-kinds.sh:446`, `check_lane_long`): a
-/// running or parked lane, on this disk or hosted, `lane_age` past its
-/// record's `launched_at`, reported once per age interval with the counters
-/// the legacy read from its records, the row keyed by the item and pruned
-/// only once no record names it, so the gap a relaunch or a handoff leaves
-/// keeps the reported interval. A hosted lane's `Step` line and records are
-/// read through the provider; a `files=none` kind's stage is `none` and its
-/// counts `unread`.
+/// `lane-long`: a running or parked lane, on this disk or hosted, `lane_age`
+/// past its record's `launched_at`, reported once per age interval with the
+/// counters its records give, the row keyed by the item and pruned only once
+/// no record names it, so the gap a relaunch or a handoff leaves keeps the
+/// reported interval. A hosted lane's `Step` line and records are read through
+/// the provider; a `files=none` kind's stage is `none` and its counts
+/// `unread`.
 fn lane_long(pass: &Pass, hosts: &Hosts, out: &mut Produced) {
     let bound = pass.settings.lane_age.as_secs();
     let recorded: BTreeSet<&str> = pass.fleet.lanes.iter().map(|l| l.item.as_str()).collect();
@@ -1808,8 +1801,8 @@ impl Counters {
 /// the worktree; a state the lane has not written, or one that cannot be
 /// read, counts nothing.
 fn lane_counters(lane: &Lane, pass: &Pass) -> Counters {
-    // The worktree the record names, read three-valued where the legacy's
-    // `-d` test stood: a root this reader cannot read counts nothing.
+    // The worktree the record names, read three-valued where the `-d` test
+    // stood: a root this reader cannot read counts nothing.
     let root = match lane.mail_root.as_deref().map(Path::new) {
         None => None,
         Some(root) => match std::fs::metadata(root) {
@@ -1830,10 +1823,9 @@ fn lane_counters(lane: &Lane, pass: &Pass) -> Counters {
     }
 }
 
-/// The item's workflow state as the legacy read it for its counts
-/// (`lane_item_state`, `jq -c .`): the file's JSON object, whatever its
-/// shape; `Gone` where the lane has written none, unreadable where the
-/// file is no object.
+/// The item's workflow state as the counts read it: the file's JSON object,
+/// whatever its shape; `Gone` where the lane has written none, unreadable
+/// where the file is no object.
 pub(super) fn item_doc(path: &Path) -> Reading<Document> {
     match std::fs::read_to_string(path) {
         Ok(text) => match serde_json::from_str::<Value>(&text) {
@@ -1878,14 +1870,13 @@ pub fn validation_runs_of(text: &str) -> Option<usize> {
     (well_formed && unique.len() == runs.len()).then_some(runs.len())
 }
 
-/// The counts the legacy `lane_state_rounds` read (`lib/lane-gitfile.sh:270`)
-/// from the item's workflow state: review rounds as the first panel, the
-/// re-review cycles and the comment-review iterations; fix receipts as the
-/// `stages` of kind `fix`, unread without a `stages` list; the restacks;
-/// repeated class rounds as the later distinct patch commits that repeat
-/// an equal cause or a shared location or owner key, unread without any
-/// patch. `None` where a field has a shape the count cannot read, as the
-/// legacy's jq refused the whole set.
+/// The counts the `lane_state_rounds` read from the item's workflow state:
+/// review rounds as the first panel, the re-review cycles and the
+/// comment-review iterations; fix receipts as the `stages` of kind `fix`,
+/// unread without a `stages` list; the restacks; repeated class rounds as the
+/// later distinct patch commits that repeat an equal cause or a shared
+/// location or owner key, unread without any patch. `None` where a field has a
+/// shape the count cannot read.
 pub fn counters_of(doc: &Document, validation_runs: Option<usize>) -> Option<Counters> {
     fn count(value: Option<&Value>) -> Option<u64> {
         match value {
@@ -1995,13 +1986,12 @@ fn shared_cause_key(a: &Value, b: &Value) -> bool {
     cause_keys(b).iter().any(|k| keys.contains(k))
 }
 
-/// The reset clause a usage-limit banner states (`lib/usage-reset.sh`):
-/// what shape it comes in and what instant it names given the moment the
-/// banner was first seen. The three tails in the legacy's order, dated
-/// (`resets Sep 6, 4pm`, Codex's `Try again at Sep 6th, 2026 4:30 PM`),
-/// weekday (`resets Thursday 4am`) and clock (`resets 9:50am
-/// (America/Los_Angeles)`, `resets 21:00`); a duration, a weekday with no
-/// clock and a bare number name no instant.
+/// The reset clause a usage-limit banner states (`lib/usage-reset.sh`): what
+/// shape it comes in and what instant it names given the moment the banner was
+/// first seen. The three tails in order, dated (`resets Sep 6, 4pm`, Codex's
+/// `Try again at Sep 6th, 2026 4:30 PM`), weekday (`resets Thursday 4am`) and
+/// clock (`resets 9:50am (America/Los_Angeles)`, `resets 21:00`); a duration,
+/// a weekday with no clock and a bare number name no instant.
 pub mod reset {
     use jiff::civil::{Date, DateTime};
     use jiff::tz::{AmbiguousOffset, TimeZone};
@@ -2035,8 +2025,8 @@ pub mod reset {
         Clock,
     }
 
-    /// The wall a banner names, as the legacy's key: the tail, the clock
-    /// in 24-hour form and the zone named in parentheses, if any.
+    /// The wall a banner names, as the key: the tail, the clock in 24-hour
+    /// form and the zone named in parentheses, if any.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct Key {
         pub day: Day,
@@ -2045,10 +2035,10 @@ pub mod reset {
         pub zone: Option<String>,
     }
 
-    /// A clock as the legacy's `USAGE_RESET_CLOCK` reads it: one or two
-    /// digits, an optional `:MM`, an optional `:SS`, an optional blank, an
-    /// optional meridiem. `None` without a clock at all; the minutes and
-    /// meridiem are checked by the caller.
+    /// A clock as the `USAGE_RESET_CLOCK` reads it: one or two digits, an
+    /// optional `:MM`, an optional `:SS`, an optional blank, an optional
+    /// meridiem. `None` without a clock at all; the minutes and meridiem are
+    /// checked by the caller.
     fn clock(text: &str) -> Option<(u32, Option<u8>, Option<char>, usize)> {
         let bytes = text.as_bytes();
         let digits = bytes
@@ -2356,11 +2346,11 @@ pub mod reset {
     mod tests {
         use super::*;
 
-        /// The port keeps the legacy's answers on the suite's banners
+        /// The rows hold the answers on the banners
         /// (`tests/oversee_watch_usage_limit.sh` § the reset the banner
-        /// states, `RESET_NOW` 1788364800 read in UTC): each form the
-        /// grammar accepts resolves to the instant the suite pins, and the
-        /// forms it excludes name none.
+        /// states, `RESET_NOW` 1788364800 read in UTC): each form the grammar
+        /// accepts resolves to the instant the suite pins, and the forms it
+        /// excludes name none.
         #[test]
         fn the_reset_clause_resolves_as_the_legacy_suite_pins_it() {
             let since = 1_788_364_800;
@@ -2504,11 +2494,12 @@ mod tests {
         value.to_string()
     }
 
-    /// The port keeps the legacy's counts on the suite's states
+    /// The rows hold the counts on the states
     /// (`tests/oversee_watch_start_stall.sh` § lane-long counts existing
-    /// review and patch records, `NAME|STATE|REVIEW|FIXES|VALIDATIONS|RESTACKS|REPEATED`
-    /// with the run index each case plants): each row's five words, and
-    /// `None` for the shape the legacy's jq refused.
+    /// review and patch records,
+    /// `NAME|STATE|REVIEW|FIXES|VALIDATIONS|RESTACKS|REPEATED` with the run
+    /// index each case plants): each row's five words, and `None` for the
+    /// shape the count refuses.
     #[test]
     fn the_counts_read_as_the_legacy_suite_pins_them() {
         let four = Some(4);

@@ -342,12 +342,12 @@ plant_siblings() { # SCRIPTS_DIR [SKIP]
 #                     `setup-required` line naming the install's scripts/setup
 #                     on stderr, exit 69, as skills/orch/scripts/orch-runtime
 #                     answers it
-# The account judge the hook asks at a lane's turn end, `accounts pick`
-# (U8d), is answered in every mode but `fails` and `unbuilt`: the reply
-# planted at SCRIPTS_DIR/orch-runtime.pick where a case plants one, else the
-# legacy judge beside the stub, SCRIPTS_DIR/lanes, asked the same question
-# through its `pick` and its answer wrapped as the verb's reply, the exit by
-# number and the record (the launch suites' stub wraps it the same,
+# The account judge the hook asks at a lane's turn end, `accounts pick`,
+# is answered in every mode but `fails` and `unbuilt`: the reply planted at
+# SCRIPTS_DIR/orch-runtime.pick where a case plants one, else the judge
+# beside the stub, SCRIPTS_DIR/lanes, asked the same question through its
+# `pick` and its answer wrapped as the verb's reply, the exit by number and
+# the record (the launch suites' stub wraps it the same,
 # skills/orch/tests/lib/open-terminal-stubs.sh), its stderr passed through.
 # Every other verb is refused, so a case reads only these answers.
 runtime_stub() { # SCRIPTS_DIR MODE [CWD] [ORIGIN]

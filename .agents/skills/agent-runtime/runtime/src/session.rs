@@ -16,13 +16,13 @@
 //!
 //! A session is bound by the id its launch fixed, or as the one lead that
 //! appeared for its directory after the launch and stood in no baseline
-//! read before it (decision 65). No reader here picks a file by its age: a
-//! lookup that can name a neighbour's file is not an API (decision 92).
+//! read before it. No reader here picks a file by its age: a lookup that
+//! can name a neighbour's file is not an API.
 //!
 //! The same files record each user turn, which is how a delivery is
 //! confirmed: a turn the harness itself wrote down arrived, whatever the
-//! pane paste returned. The shapes are the native probe's
-//! (`tmp/orch-rebuild/native/run2/<harness>/home`):
+//! pane paste returned. The shapes are those each harness writes in its
+//! home, as the native probe (`tests/native/thin-path.sh`) captured them:
 //!
 //! - Claude Code: a `user` row whose `message.content` is a string; a tool
 //!   result is a `user` row too, with an array.
@@ -104,8 +104,8 @@ pub fn fixed_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Option
 }
 
 /// Whether the destination home holds a session with the fixed id `id` for
-/// `cwd`, read three-valued so a relaunch tells absent from unreadable
-/// (decision 115 (G)). `Live(())` is present, `Gone` absent, `Unreadable`
+/// `cwd`, read three-valued so a relaunch tells absent from unreadable.
+/// `Live(())` is present, `Gone` absent, `Unreadable`
 /// a read that failed. Every resumable harness has a lookup: Claude by the
 /// file its fixed id names; Codex by the rollout under its store whose name
 /// ends in the id; Copilot by its session-state directory for the id; Pi
@@ -130,8 +130,8 @@ pub fn resume_present(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Re
 /// metadata read failed. Each harness names the file by its id (module
 /// doc): Claude by the path its fixed id gives, Copilot by its session-state
 /// directory, Codex and Pi by the id in the file name under their store. A
-/// file is found by the id its launch bound and never by its age (decision
-/// 92), so a neighbour's or a subagent's file is never named in its place.
+/// file is found by the id its launch bound and never by its age, so a
+/// neighbour's or a subagent's file is never named in its place.
 pub fn fixed_id_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Reading<PathBuf> {
     let present = |file: PathBuf| match fs::metadata(&file) {
         Ok(meta) if meta.is_file() => Reading::Live(file),
@@ -149,8 +149,8 @@ pub fn fixed_id_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Rea
         Harness::Codex => {
             // The id is the tail of the rollout file name
             // `rollout-<stamp>-<id>.jsonl`, under `sessions/YYYY/MM/DD/`. The
-            // store's root is read three-valued through the one listing
-            // (decision 120, L2): no root is a cold home, an absent session; a
+            // store's root is read three-valued through the one listing: no
+            // root is a cold home, an absent session; a
             // root that cannot be listed is unreadable, never absent.
             let root = home.join("sessions");
             match listed(&root) {
@@ -349,7 +349,7 @@ pub fn identify(harness: Harness, file: &Path, cwd: Option<&Path>) -> Result<Opt
                 return Ok(None);
             };
             // A session with no event yet is not a lead; an events file
-            // that cannot be read is no evidence of either (decision 95).
+            // that cannot be read is no evidence of either.
             let events = file.with_file_name("events.jsonl");
             match fs::metadata(&events) {
                 Ok(meta) if meta.len() > 0 => {}
@@ -449,7 +449,7 @@ const MTIME_UNREADABLE: Unreadable = Unreadable {
 
 /// The entries of `dir`, every one read: a listing or an entry that fails
 /// is `Unreadable`, since a candidate dropped is a session that may be
-/// bound to its neighbour (decision 95). `Gone` is a directory that does
+/// bound to its neighbour. `Gone` is a directory that does
 /// not exist.
 fn listed(dir: &Path) -> Reading<Vec<PathBuf>> {
     let entries = match fs::read_dir(dir) {
@@ -607,7 +607,7 @@ fn candidates(harness: Harness, home: &Path, cwd: &Path) -> Reading<Vec<Candidat
 /// Every lead session the harness recorded for `cwd` under `home`, oldest
 /// or newest alike: the baseline a launch reads before its window opens, so
 /// the session that appears after it can be told from every neighbour that
-/// stood before (decision 65). `Gone` is a store with no root for the cwd,
+/// stood before. `Gone` is a store with no root for the cwd,
 /// an empty baseline read; `Unreadable` is a baseline not read, which binds
 /// nothing by appearance later.
 pub fn lead_ids(harness: Harness, home: &Path, cwd: &Path) -> Reading<Vec<String>> {
@@ -637,7 +637,7 @@ pub fn lead_ids(harness: Harness, home: &Path, cwd: &Path) -> Reading<Vec<String
 /// or more cannot be told apart, and none has appeared yet. A set is read
 /// whole or not at all: any candidate that could not be read makes the
 /// reading `Unreadable`, so one readable lead beside an unreadable one binds
-/// nothing (decision 95).
+/// nothing.
 pub fn new_leads(
     harness: Harness,
     home: &Path,
@@ -736,7 +736,7 @@ mod tests {
         );
     }
 
-    /// Decision 108 (8): a read that fails is `Unreadable`, never a candidate
+    /// A read that fails is `Unreadable`, never a candidate
     /// dropped. A Copilot session directory the reader cannot enter beside a
     /// readable lead makes the whole reading unreadable, for the baseline
     /// and for the leads that appeared alike; a Codex day directory the
@@ -966,7 +966,7 @@ mod tests {
         );
     }
 
-    /// Decision 65: the sessions that appeared since the window opened are
+    /// The sessions that appeared since the window opened are
     /// the leads for the cwd modified since then and absent from the
     /// baseline; a neighbour that stood before is excluded however recently
     /// it was written, and another cwd's session never counts.
@@ -1020,7 +1020,7 @@ mod tests {
     /// file's age: the newest file in the store is another session's and is
     /// not named; an absent file is `Gone`, never a neighbour's. Defect: a
     /// delivery confirmed on whatever file was written last, a subagent's
-    /// or a neighbour's (decision 92).
+    /// or a neighbour's.
     #[test]
     fn a_fixed_id_names_its_own_file_and_never_the_newest_one() {
         let dir = tempfile::tempdir().unwrap();

@@ -12,14 +12,14 @@ The fleet log is the oversee state's `fleet_log[]` ([schemas/workflow-state.md �
 
 Append each record before replacing the file for the next one.
 
-The record carries no time: `append-file` stamps `at` from its own clock and refuses as `fleet-log-at-future` a record already dated later than it. `[ONE_LINE]` holds at most `ORCH_FLEET_LOG_ROW_BYTES` bytes, default 600, and a longer one is refused as `fleet-log-row-bytes`. The `append-file` entry in `workflow-state --help` names the rest of what it refuses on that field.
+The record carries no time: `orch-runtime state log append` stamps `at` from its own clock. It refuses a record that is not a JSON object as `fleet-log-record`, an `at` that does not read `YYYY-MM-DDThh:mm:ssZ` and name a real instant as `fleet-log-at-invalid`, one later than its clock as `fleet-log-at-future`, and `[ONE_LINE]` longer than `ORCH_FLEET_LOG_ROW_BYTES` bytes, default 600, as `fleet-log-row-bytes`.
 
 ```json
 {"kind":"[KIND]","item":"[ITEM]","text":"[ONE_LINE]"}
 ```
 
 ```bash
-.agents/skills/orch/scripts/workflow-state append-file oversee fleet_log tmp/fleet-log-record.json
+.agents/skills/orch/scripts/orch-runtime state log append --fleet tmp/fleet-log-record.json
 ```
 
 A standing instruction from the owner is one row of the oversee record's `standing[]` array, and its lift one `ruling` row: [communication-modes.md § Recording](communication-modes.md#recording).
@@ -156,7 +156,7 @@ An overseer that DIES reaches none of this: it runs no turn, so it judges no mar
 
 ### Keep the report's inputs current
 
-After each `oversee.md` § 2 selection, `workflow-state set oversee launch_queue '["[ITEM]",...]'` with the items not yet launched, in launch order. The queue is the order and the tracker the membership: the `heartbeat` handling below adds what the tracker says the fleet owes.
+After each `oversee.md` § 2 selection, `orch-runtime state set --fleet /launch_queue '["[ITEM]",...]'` with the items not yet launched, in launch order. The queue is the order and the tracker the membership: the `heartbeat` handling below adds what the tracker says the fleet owes.
 
 A question sent to the owner is an owner ask ([communication-modes.md § Owner asks](communication-modes.md#owner-asks)), and the report's Waiting on you row reads the unresolved ones from the mailbox itself; nothing is recorded in the state for it.
 
@@ -278,7 +278,7 @@ the lane record predates the launcher recording the lane's harness, and its pane
 
 An `issue-N` record carrying no tracker refuses as `tracker-read-failed cause=key-ambiguous`, that key being what a GitHub lane and a Linear lane are both given: it wants `--tracker linear|github`, and a GitHub lane's repository, read from nothing, wants `--repo [OWNER/REPO]` besides. Act on that refusal's `cause=`, which names which read did not answer and whose body defines each one; `cause=read-failed` is the tracker CLI itself failing, and its words are on the lines above the refusal. `source=derived` is a tracker read from the item key and `source=given` one the record or `--tracker` carried; on a key that answers, `--tracker` only pins what the key already says. Each option fills only a field the record leaves null or absent, and one that contradicts a value the record carries refuses as `record-invalid` rather than repointing the lane.
 
-An exited lane closes without any of the three, but its files leave the state directory only where its tracker answers: pass `--tracker` or `--repo` on that close for a record carrying neither, since a second close of a `done` record never reaches the removal; otherwise the files stay for as long as the prune holds the item live ([schemas/workflow-state.md § Prune](../schemas/workflow-state.md#prune)).
+An exited lane closes without any of the three, but its files leave the state directory only where its tracker answers: pass `--tracker` or `--repo` on that close for a record carrying neither, since a second close of a `done` record never reaches the removal; otherwise its files stay until a later close-out of the item ([schemas/workflow-state.md § Item close-out](../schemas/workflow-state.md#item-close-out)), and the retention duty takes only its workflow state, once its lane record's end is past `ORCH_RECORD_RETENTION_DAYS` and its worktree is gone or kept on purpose ([§ Prune](../schemas/workflow-state.md#prune)).
 
 ### `lane-close` refusing `validate-stop-failed`
 
@@ -298,7 +298,7 @@ A wall forced on a scratch lane by removing its account's login, with another ac
 
 ### `usage-limit`
 
-the watch left the wall to the overseer: `ORCH_WALL_RELAUNCH=ask`, no lane qualified (`pick none`), or a `wall-relaunch-refused` line on its stderr names the step that stopped it. `reason=context-unavailable` names the cause: `permission-choice-unrecorded` for a legacy record or custom command whose original flags cannot be recovered; `checkout-unavailable` when the launch checkout is gone; `host-capabilities-unavailable exit=N` when the saved host capability read failed, with its cause on stderr; or `relative-provider-deferred:KEN-3996` for deferred automatic recovery through a relative provider executable path. `reason=stop-failed` is a hosted stop the provider did not confirm (`lane-relaunched` above).
+the watch left the wall to the overseer: `ORCH_WALL_RELAUNCH=ask`, no lane qualified (`pick none`), or a `wall-relaunch-refused` line on its stderr names the step that stopped it. `reason=context-unavailable` names the cause: `permission-choice-unrecorded` for a record or custom command whose original flags cannot be recovered; `checkout-unavailable` when the launch checkout is gone; `host-capabilities-unavailable exit=N` when the saved host capability read failed, with its cause on stderr; or `relative-provider-deferred:KEN-3996` for deferred automatic recovery through a relative provider executable path. `reason=stop-failed` is a hosted stop the provider did not confirm (`lane-relaunched` above).
 
 The line under the event is the judge's answer where one ran: `pick lane=[DIR]`, `pick none`, or `pick unjudged exit=[N]`, the exit being the account judge's answer carried by number (3 walled, 4 no record, 5 unmeasured).
 
@@ -604,7 +604,7 @@ Read the `account-roster` lines under the open PRs as the fleet's current capaci
 
 Then each `owed [ITEM] state=[STATE] priority=[N] lane=[LANE] verdict=[VERDICT]` line: an item the tracker holds as owed work, with no running, preparing or parked record, that `launch_queue` lacks; a parked item with work left over its merged pull request is named by the `parked-merged` lines ahead of the `heartbeat` line and takes that rule. `priority=-` is no priority, which ranks after every numbered one. `verdict=queue` → gate it as `oversee.md` § 2 Select Work does; one that passes goes into `launch_queue` at its priority position, relaunched per `oversee.md` § 3 Recovery relaunch where `lane=` names a record, and one that fails is reported to the owner with the reason it cannot run, in the chat and the next status report's summary. A record with no harness, or whose host lists no account its pick would judge, is `queue`: its launch picks the account. Every account read behind a verdict is the record's own host's, the one its relaunch stays on. `verdict=merged pr=[N]` → the record carries the `cycle` of pull request N's merge while the tracker still holds the item: where that merge finished the item, complete it in the tracker; where the item went back to work after it, queue it as for `queue`. `verdict=dated` → the judge found every account for the record's harness and model walled: launch and queue nothing, and name the item with its `until=` reset in the chat when first judged so and in that summary; each heartbeat judges it again. `verdict=unjudged` → the host's `lanes list` failed, or the judge measured no account or failed, named on stderr as `owed-accounts-unread` or `owed-wall-unjudged`, so the next heartbeat judges it.
 
-Then the triage pass: run `oversee.md` § Bounded issue reads. Drop IDs already recorded in the fleet state's `triaged`, and send the remaining candidate IDs through the `triage` verifier. Judge only issues a fleet lane filed: the candidate set is each lane item's created-issue records in workflow state (`audit_issues_created`, `pr_comment_review.issues_created`) plus each lane PR body's Created Issues section; the created-since listing backstops trackers without that state. Anything outside the set is left alone. Record each verdict by writing `{"issue": "[ID]", "verdict": "[kept|canceled]", "reason": "[ONE_LINE]"}` to `tmp/triage-verdict-[ID].json` with the harness file-write tool and running `workflow-state append-file oversee triaged tmp/triage-verdict-[ID].json`, in the state `oversee.md` § 3 Lane record creates before the first append; the next pass runs on its own.
+Then the triage pass: run `oversee.md` § Bounded issue reads. Drop IDs already recorded in the fleet state's `triaged`, and send the remaining candidate IDs through the `triage` verifier. Judge only issues a fleet lane filed: the candidate set is each lane item's created-issue records in workflow state (`audit_issues_created`, `pr_comment_review.issues_created`) plus each lane PR body's Created Issues section; the created-since listing backstops trackers without that state. Anything outside the set is left alone. Record each verdict by writing `{"issue": "[ID]", "verdict": "[kept|canceled]", "reason": "[ONE_LINE]"}` to `tmp/triage-verdict-[ID].json` with the harness file-write tool and running `orch-runtime state append-file --fleet /triaged tmp/triage-verdict-[ID].json`, in the state `oversee.md` § 3 Lane record creates before the first append; the next pass runs on its own.
 
 ### `reconcile-refused intent=[ID] refusal=[KEY]`
 

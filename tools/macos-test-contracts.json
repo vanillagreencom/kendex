@@ -195,7 +195,6 @@
     "skills/orch/tests/base-freshness.sh": "linux-duplicate",
     "skills/orch/tests/ci_wait.sh": "linux-duplicate",
     "skills/orch/tests/claude-model-classes.sh": "linux-duplicate",
-    "skills/orch/tests/codex_agent_type_guidance.sh": "linux-duplicate",
     "skills/orch/tests/codex_round_wait.sh": "linux-duplicate",
     "skills/orch/tests/connected-repos.test.sh": "linux-duplicate",
     "skills/orch/tests/container_close.sh": "linux-duplicate",

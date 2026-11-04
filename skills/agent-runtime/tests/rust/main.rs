@@ -152,8 +152,8 @@ fn a_bypass_launch_spells_the_claude_bypass_flag_and_a_native_one_does_not() {
     assert!(!native.args.contains(&flag));
 }
 
-/// Pi 1.4.0's default composer at rest: the capture-pane output of run 2's
-/// probe after its first turn (`tmp/orch-rebuild/native/run2/pi/final-screen.txt`).
+/// Pi 1.4.0's default composer at rest: the capture-pane output of the
+/// native probe (`tests/native/thin-path.sh`) at rest once its turns ended.
 const PI_IDLE: &str = include_str!("fixtures/pi-idle.txt");
 /// The same session while its first turn ran: the drawn lines the probe's
 /// inspection kept, with the `── ⠹ Working ──` editor border.
@@ -179,8 +179,7 @@ fn pi_captures_judge_idle_at_rest_and_working_mid_turn() {
 }
 
 /// The three marker-drawing harnesses at rest, as the native probe's
-/// `inspect` captured them after the first turn
-/// (`tmp/orch-rebuild/native/run2/<harness>/inspect-idle.json`): each reads
+/// `inspect` captured them after the first turn: each reads
 /// idle under its own composer rule. Codex's `›` line is no other
 /// harness's composer, and neither Claude's nor Copilot's is Codex's;
 /// Copilot's unpadded `❯` is not Claude's. Claude frames its padded marker
@@ -645,11 +644,11 @@ fn a_codex_composer_over_a_blank_draft_reads_idle() {
     }
 }
 
-/// Decision 108 (6) through `inspect`: a cold directory. The launch read an
+/// Through `inspect`: a cold directory. The launch read an
 /// empty baseline (`baseline: []`), and the one Codex lead that appeared for
 /// the cwd after it binds; the same record written before the field, with
 /// no baseline key, binds nothing, since nothing tells its session from a
-/// neighbour's (decision 92).
+/// neighbour's.
 #[test]
 fn an_empty_baseline_read_binds_the_one_lead_that_appeared_and_no_baseline_binds_nothing() {
     let dir = tempfile::tempdir().unwrap();
@@ -684,7 +683,7 @@ fn an_empty_baseline_read_binds_the_one_lead_that_appeared_and_no_baseline_binds
     assert!(result.get("native_session_unreadable").is_none());
 }
 
-/// Decision 115 (G), 120 L2: the Codex fixed-id lookup reads the store's
+/// The Codex fixed-id lookup reads the store's
 /// root three-valued through the listing. No root is an absent session; a
 /// root this process cannot list is unreadable, never absent; a rollout
 /// whose name ends in the id is present.
@@ -736,7 +735,7 @@ fn the_codex_fixed_id_lookup_reads_an_unlistable_store_as_unreadable() {
     );
 }
 
-/// Decision 108 (8) through `inspect`: a Copilot session directory this
+/// Through `inspect`: a Copilot session directory this
 /// process cannot enter beside one readable lead. The store is unread, so
 /// nothing binds and the reply names the cause; with the directory readable
 /// again the one lead binds.
@@ -841,7 +840,7 @@ fn deliver_on(
     (reply, out.status.code().unwrap_or(-1))
 }
 
-/// Decisions 61, 65. Defect: a delivery read as confirmed from the paste
+/// Defect: a delivery read as confirmed from the paste
 /// alone, with no turn the harness itself recorded; a confirmation read
 /// from a file the id does not name; a session with no id typed into. A
 /// `--no-paste` read gives the idle state and the fixed file's turn count;

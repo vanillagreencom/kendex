@@ -4,8 +4,8 @@
 # (`› ` then its placeholder) so the judge reads the pane idle, writes the
 # rollout file a Codex session records under CODEX_HOME
 # (`sessions/YYYY/MM/DD/rollout-<stamp>-<id>.jsonl`, its first row the
-# `session_meta` of a lead, as `tmp/orch-rebuild/native/run2/codex/home`
-# holds it), named by the `--session-id` it is given, and appends every
+# `session_meta` of a lead, as agent-runtime's `session` module reads it),
+# named by the `--session-id` it is given, and appends every
 # line it reads to the file STUB_TURNS_LINES names, so a row proves nothing
 # was typed into it. It stands until its stdin closes.
 lines="${STUB_TURNS_LINES:-}"

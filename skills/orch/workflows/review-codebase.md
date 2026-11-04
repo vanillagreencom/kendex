@@ -1,6 +1,6 @@
 # Codebase Review Workflow
 
-Ad-hoc whole-codebase reviewer fanout. No PR, no issue, no diff, no fix delegation. Always standalone — no managed lifecycle and no workflow-state file.
+Ad-hoc whole-codebase reviewer fanout. No PR, no issue, no diff, no fix delegation. Always standalone — no managed lifecycle and no state file.
 
 | Command | Behavior |
 |---------|----------|

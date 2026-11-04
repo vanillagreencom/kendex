@@ -19,7 +19,9 @@ archive_root() { # REPO_ROOT DESTINATION_SUFFIX [REMOVAL_ROOT_OR_ARCHIVE_INPUT..
         return 0
     fi
     command -v python3 >/dev/null 2>&1 || { printf '%s\n' 'state-archive: dependency-missing command=python3 key=ORCH_ARCHIVE_ROOT' >&2; return 1; }
-    # path owns ORCH_STATE_DIR resolution for every caller, including SSH.
+    # `workflow-state path` owns ORCH_STATE_DIR resolution for every caller:
+    # the mailbox's compaction and the SSH provider's close-out source this
+    # library, and neither builds the orch runtime.
     state_file="$("$SCRIPT_DIR/workflow-state" path oversee)" || return 1
     # merge-pr removes linked checkouts; prune removes state subdirectories.
     # A configured archive must outlive both, including through directory links.

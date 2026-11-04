@@ -698,7 +698,7 @@ expect 0 - "a lane whose handoff record stands ends its turn at its account's ma
 
 # The judge answers exit 3 for both account walls and overseer seats: its
 # record's verdict names which, and on a seat its `need` the room the seat
-# keeps for the overseer (KEN-4416). A seat row plants the judge's reply, the
+# keeps for the overseer. A seat row plants the judge's reply, the
 # record the runtime printed for a seat at 55 used held under a headroom of 50
 # and of 60 (`tests/rust/accounts.rs`'s world; the account's path and `need`
 # are the two rows' differences), so the seat line is proven on the record's
@@ -795,7 +795,7 @@ assert_eq "RC=$RC $(model_lines)" "RC=0 lane-mail-check: account=unmeasured|0" \
   "an account with an inventory entry and no usable credential is reported, never read as room, with no model line in its cause"
 
 # A runtime the install has not built for its sources (the wrapper's
-# `setup-required`, exit 69; decision 184 (8)) answers no judgement: the
+# `setup-required`, exit 69) answers no judgement: the
 # turn end passes with the notice naming the install's setup, the account
 # neither read as room nor held, and no judge is asked. The control is the
 # hook's `69)` arm dropped: the answer then falls to the unmeasured arm, a
@@ -3283,8 +3283,8 @@ install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 stop
 expect 0 "$GAP" "control: without its refusal a lane that sent nothing ends its turn"
 
-# The old judge used only mail sends. Removing the status comparison restores
-# that rule and rejects the paired no-send status update.
+# Removing the status comparison leaves a judge that reads mail sends alone,
+# which rejects the paired no-send status update.
 mutant idle-ignores-status -e 's@^  if \[ -n "\$STATUS_STATE" \] \&\& \[ "\$STATUS_STATE" != "\$RECORDED_STATUS" \]; then$@  if false; then@'
 new_handoff_lane control_idle_status KEN-104
 REPORT_ITEM=""

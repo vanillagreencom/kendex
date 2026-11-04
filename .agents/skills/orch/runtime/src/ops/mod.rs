@@ -1,56 +1,47 @@
 //! The domain operations over the workflow records. Each is one transition
 //! performed under the record's lock through the write check: the result a
 //! caller gets is derived from the state the write committed, never from a
-//! later unlocked read (the legacy `update-report` property).
+//! later unlocked read.
 //!
 //! A transition reads typed views of the document and writes it back as a
-//! patch: the keys the legacy writer of the same transition writes, deletes
-//! or appends, and nothing else. An operation that starts an external effect
-//! persists its intent (operation, target, owner) in the same
-//! transition and reports how far the effect got as agent-runtime's
-//! `Outcome`. One intent per target may be open: a repeated request of the
-//! same operation reconciles it, another operation on the target refuses.
-//! A transition never runs the effect itself: it returns the persisted
-//! intent as [`Effect::Persisted`], the `effects` module runs the effect
-//! against the host and records what it observed through `record-outcome`,
-//! and a reconciliation re-observes an open intent the same way.
+//! patch: the keys the writer of the same transition writes, deletes or
+//! appends, and nothing else. An operation that starts an external effect
+//! persists its intent (operation, target, owner) in the same transition and
+//! reports how far the effect got as agent-runtime's `Outcome`. One intent per
+//! target may be open: a repeated request of the same operation reconciles it,
+//! another operation on the target refuses. A transition never runs the effect
+//! itself: it returns the persisted intent as [`Effect::Persisted`], the
+//! `effects` module runs the effect against the host and records what it
+//! observed through `record-outcome`, and a reconciliation re-observes an open
+//! intent the same way.
 //!
 //! The transitions are grouped by the record they move: `item` (rounds,
 //! validation admission, accepted results, verification), `lane` (launch,
 //! adoption, close, phases and the lane outcome arms) and `controller`
-//! (succession and its outcome arms). This module holds the request and
-//! report envelopes, the dispatch, the intent contract every effect
-//! operation shares and the `record-outcome` frame that closes an intent.
+//! (succession and its outcome arms). This module holds the request and report
+//! envelopes, the dispatch, the intent contract every effect operation shares
+//! and the `record-outcome` frame that closes an intent.
 
-/// U6c: the acceptance's post-transition step (step6-map § A8).
 pub mod accept;
-/// U6h: the accounts judge, the view over the legacy listing and the pick.
 pub mod accounts;
-/// The admission judgement a launch and a running lane's added path run
-/// (decisions 118 (3), (4), (6), 142 (4); U5i).
 mod admission;
 mod controller;
 mod item;
 mod lane;
-/// The mail duty's types (U5c).
 pub mod mail;
 mod occupancy;
-/// U6b: the proof record's one reader over the validate stages.
 pub mod proof;
 pub mod prune;
+pub mod store;
 #[cfg(test)]
 #[allow(
     clippy::disallowed_methods,
     reason = "the rows' shared store entry point"
 )]
 mod testing;
-/// U6a: the validation run's stage transitions and the reuse judge.
 pub mod validate;
-/// U6g: a pull request's current head verified where it stands.
 pub mod verify_pr;
-/// The wake duty's types (U5g).
 pub mod wake;
-// U5d2: the wall records (decision 160 (1)).
 pub mod wall;
 
 pub use accept::{SummaryPost, accept};
@@ -67,8 +58,8 @@ pub use item::{
     ResultAccepted, ResumeHandoff, RoundBegun, RoundKind, RoundReconciled, RunCause, RunReconciled,
     RunState, ValidationAdmitted, Verdict, VerificationRecorded, VerifyHead,
 };
-// U6l: the stop's bounded wait reads the job by the item transitions' one
-// identity reader.
+// The stop's bounded wait reads the job by the item transitions' one identity
+// reader.
 pub(crate) use item::job_ended;
 pub use lane::{
     AdoptSession, CloseOwnedResources, CloseRequested, LaneAdopted, LaneLaunched, LaneParked,
@@ -103,21 +94,20 @@ pub struct Env {
     pub now_nanos: u128,
     pub nonce: u32,
     /// The identity of the process persisting an intent, read through
-    /// agent-runtime's one identity reader (decision 72). `None` where the
-    /// caller could not read it; the intent then carries no owner and a
-    /// reconcile judges it as a legacy intent.
+    /// agent-runtime's one identity reader. `None` where the caller could not
+    /// read it; an operation that persists an intent then refuses
+    /// `owner-unreadable`.
     pub owner: Option<Owner>,
 }
 
 impl Env {
-    /// The round token the legacy `new-round-id` mints:
-    /// `<nanoseconds since the epoch>-<random>`. An intent id ends in the
-    /// same stamp.
+    /// The round token `begin-round` mints: `<nanoseconds since the
+    /// epoch>-<random>`. An intent id ends in the same stamp.
     pub fn round_id(&self) -> String {
         format!("{}-{}", self.now_nanos, self.nonce)
     }
 
-    /// The ISO 8601 UTC stamp the legacy stamps use.
+    /// The ISO 8601 UTC stamp every record field carries.
     pub fn iso(&self) -> String {
         clock::iso_utc(self.now_secs)
     }
@@ -144,54 +134,52 @@ pub struct RecordOutcome {
     #[serde(default)]
     pub server_start: Option<u64>,
     /// The socket of the server `launch` names, recorded as the successor's
-    /// `server_socket` and on the kept runner, so a later observation
-    /// reaches that server by name (decision 64).
+    /// `server_socket` and on the kept runner, so a later observation reaches
+    /// that server by name.
     #[serde(default)]
     pub server_socket: Option<String>,
-    /// The record's `window`: `<session>:<title>` on a lane, the tmux
-    /// window id on the overseer, as the legacy launchers write them.
+    /// The record's `window`: `<session>:<title>` on a lane, the tmux window
+    /// id on the overseer.
     #[serde(default)]
     pub window: Option<String>,
-    /// The tmux session a confirmed lane launch opened in; the fleet
-    /// records the first as `tmux.session`, as the first legacy launch does.
+    /// The tmux session a confirmed lane launch opened in; the fleet records
+    /// the first as `tmux.session`, as the first launch does.
     #[serde(default)]
     pub tmux_session: Option<String>,
     /// The line a confirmed successor ran, written over the pending one.
     #[serde(default)]
     pub launch_line: Option<String>,
-    /// The fleet watch a confirmed start launched or found claimed, written
-    /// as the record's `overseer.watch` (step6-map A7); a succession
-    /// carries none and keeps the field as it stands.
+    /// The fleet watch a confirmed start launched or found claimed, written as
+    /// the record's `overseer.watch`; a succession carries none and keeps the
+    /// field as it stands.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub watch: Option<crate::state::WatchJob>,
     /// What the effect observed, kept on the intent for a reconciliation.
     #[serde(default)]
     pub observation: Option<Value>,
-    /// The owner the launcher-side handle closes under: the outcome is a
-    /// no-op once another owner holds the intent, so a job that claimed keeps
-    /// its own record (decision 124b); the transition is retried on a
-    /// conflicting snapshot and answers the claimant's state (decision 124d
-    /// (18)). `None` records always.
+    /// The owner the launcher-side handle closes under: the outcome is a no-op
+    /// once another owner holds the intent, so a job that claimed keeps its
+    /// own record; the transition is retried on a conflicting snapshot and
+    /// answers the claimant's state. `None` records always.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub while_owner: Option<Owner>,
-    /// The lane keys a lane intent's terminal carries (decision 124d (14)):
-    /// the lane arms move the lane only while its launch names nothing but
-    /// these and its stamp is the intent's; otherwise the intent closes
-    /// `intent-stale` and the lane is left as found. An outcome without them
-    /// is judged by the intent's own recorded set, else by its stamp alone.
+    /// The lane keys a lane intent's terminal carries: the lane arms move the
+    /// lane only while its launch names nothing but these and its stamp is the
+    /// intent's; otherwise the intent closes `intent-stale` and the lane is
+    /// left as found. An outcome without them is judged by the intent's own
+    /// recorded set, else by its stamp alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lane_keys: Option<LaneKeys>,
     /// The announcement a failed or unconfirmed outcome of a transfer or a
-    /// stop owes (decisions 109 (7), 124f (28)): recorded `owed` with the
-    /// outcome, its fleet-log row appended in the same write, where the
-    /// intent carries none yet; the send is the continuation the recording
-    /// boundary runs after the write. Ignored on every other operation.
+    /// stop owes: recorded `owed` with the outcome, its fleet-log row appended
+    /// in the same write, where the intent carries none yet; the send is the
+    /// continuation the recording boundary runs after the write. Ignored on
+    /// every other operation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notice: Option<Notice>,
-    /// The obligation set's revision as the writer read it (decision 124l
-    /// (47)): the store refuses the outcome where the record's set holds
-    /// another, so a terminal never closes over a set another handle
-    /// replaced. `None` compares nothing.
+    /// The obligation set's revision as the writer read it: the store refuses
+    /// the outcome where the record's set holds another, so a terminal never
+    /// closes over a set another handle replaced. `None` compares nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub set_revision: Option<u64>,
 }
@@ -211,17 +199,16 @@ pub enum Request {
     /// makes.
     AdoptController(Box<AdoptController>),
     StopController(StopController),
-    /// Take an open intent's owner lease: the detached job's first act
-    /// (decision 76).
+    /// Take an open intent's owner lease: the detached job's first act.
     ClaimIntent(ClaimIntent),
     AcceptResult(AcceptResult),
     RecordVerification(RecordVerification),
     /// Read GitHub for a pinned head, then record; the `verify` module runs
     /// it, since the reads come before the one transition it makes.
     VerifyHead(VerifyHead),
-    /// U6g: read a pull request's current head, then verify it as
-    /// `verify-head` does; `ops::verify_pr` runs it, since the reads come
-    /// before the one transition it makes.
+    /// Read a pull request's current head, then verify it as `verify-head`
+    /// does; `ops::verify_pr` runs it, since the reads come before the one
+    /// transition it makes.
     VerifyPr(VerifyPr),
     ReconcileRound(ReconcileRound),
     RecordHandoff(Box<RecordHandoff>),
@@ -233,24 +220,22 @@ pub enum Request {
     RecordOutcome(Box<RecordOutcome>),
     RecordPhase(RecordPhase),
     /// An effect's phase and obligation set, written before the wait that
-    /// follows (decisions 62, 115).
+    /// follows.
     RecordProgress(Box<RecordProgress>),
-    /// A directive's send receipt onto the lane (decision 31; the mail
-    /// duty's).
+    /// A directive's send receipt onto the lane.
     RecordDirectiveSend(mail::RecordDirectiveSend),
     /// The lanes' walls as the observation duty read them this pass.
     RecordWallPauses(wall::RecordWallPauses),
     /// The admission judgement of a candidate's paths against the fleet's
-    /// holders (decision 142 (4)), under the launch lock.
+    /// holders, under the launch lock.
     AdmitPaths(Box<AdmitPaths>),
     /// The retention duty's judged records leaving the fleet state.
     PruneRecords(prune::PruneRecords),
-    /// U6a: the validation run's steps, tagged by `step`.
+    /// The validation run's steps, tagged by `step`.
     Validate(validate::Validate),
 }
 
 impl Request {
-    /// The request's `op` word.
     pub fn name(&self) -> &'static str {
         match self {
             Request::LaunchLane(_) => "launch-lane",
@@ -332,7 +317,7 @@ pub enum Effect {
     /// A launch intent for the target stands open; nothing was created. The
     /// caller reconciles it and, when it stays unconfirmed with a recorded
     /// pane, closes it `superseded-by-close` and asks again, so the close
-    /// stops what the pane holds (decision 67).
+    /// stops what the pane holds.
     Supersedes { intent: Intent },
 }
 
@@ -381,7 +366,7 @@ pub enum Report {
     RecordWallPauses(wall::WallPausesRecorded),
     AdmitPaths(Box<PathsAdmitted>),
     PruneRecords(prune::RecordsPruned),
-    /// U6a: the validation run's step reports, tagged by `step`.
+    /// The validation run's step reports, tagged by `step`.
     Validate(Box<validate::Validated>),
 }
 
@@ -402,10 +387,10 @@ pub fn apply(path: &Path, request: &Request, env: &Env, locking: Locking) -> Res
 }
 
 /// [`apply`] with the host facts a fleet transition judges live processes
-/// against: the lane cap, the legacy claim store and the identity reads
-/// (decision 97). The reads happen between the snapshot and the write, and
-/// the write check refuses a record another writer moved meanwhile, so the
-/// count and the row it admits commit together or not at all.
+/// against: the lane cap, the claim store and the identity reads. The reads
+/// happen between the snapshot and the write, and the write check refuses a
+/// record another writer moved meanwhile, so the count and the row it admits
+/// commit together or not at all.
 pub fn apply_on(
     path: &Path,
     request: &Request,
@@ -426,16 +411,34 @@ fn apply_host(
     apply_interleaved(path, request, env, locking, host, &|| {})
 }
 
-/// How many fresh reads an owner-conditional write takes before a snapshot
-/// that keeps moving under it is reported as `record-changed`.
-const CONDITIONAL_RETRIES: u32 = 8;
+/// How many fresh reads a re-applied write takes before a record that keeps
+/// moving under it is reported as `record-changed`.
+const REREADS: u32 = 8;
 
-/// Whether `request` writes only while its owner still holds the intent
-/// (decision 124c (9)): the launcher-side progress and outcome writes.
+/// Run `attempt` again while its store refuses `record-changed`, up to
+/// [`REREADS`] times. Each attempt reads the record afresh and re-applies its
+/// transition, so a write another writer committed between the read and the
+/// store is kept, never overwritten.
+fn reread<R>(attempt: impl Fn() -> Result<R>) -> Result<R> {
+    let mut attempts = 0;
+    loop {
+        match attempt() {
+            Err(e) if attempts < REREADS && e.key() == "record-changed" => attempts += 1,
+            settled => return settled,
+        }
+    }
+}
+
+/// Whether a store of `request` that refuses `record-changed` is read again
+/// and re-applied: the launcher-side progress and outcome writes, which write
+/// only while their owner still holds the intent, and the job's claim, whose
+/// first store can meet the launcher's sidecar write that lands the instant
+/// the job starts.
 fn owner_conditional(request: &Request) -> bool {
     match request {
         Request::RecordProgress(r) => r.while_owner.is_some(),
         Request::RecordOutcome(r) => r.while_owner.is_some(),
+        Request::ClaimIntent(_) => true,
         Request::LaunchLane(_)
         | Request::AdoptSession(_)
         | Request::BeginRound(_)
@@ -444,7 +447,6 @@ fn owner_conditional(request: &Request) -> bool {
         | Request::StartController(_)
         | Request::AdoptController(_)
         | Request::StopController(_)
-        | Request::ClaimIntent(_)
         | Request::AcceptResult(_)
         | Request::RecordVerification(_)
         | Request::VerifyHead(_)
@@ -494,31 +496,21 @@ fn apply_interleaved(
     };
     if owner_conditional(request) {
         // The owner the transition compared is the one the store commits
-        // against (decision 124d (18)): a snapshot another writer moved
-        // between the read and the store is read again, so a claim that
-        // landed in the gap is answered with the claimant's state, never
-        // `record-changed`. The ordinary stale-write refusal stays for a
-        // record that keeps moving.
-        let mut attempts = 0;
-        return loop {
-            match transition() {
-                Err(e) if attempts < CONDITIONAL_RETRIES && e.key() == "record-changed" => {
-                    attempts += 1;
-                }
-                settled => break settled,
-            }
-        };
+        // against: a snapshot another writer moved between the read and the
+        // store is read again, so a claim that landed in the gap is answered
+        // with the claimant's state, never `record-changed`. The ordinary
+        // stale-write refusal stays for a record that keeps moving.
+        return reread(transition);
     }
     if matches!(request, Request::LaunchLane(_) | Request::AdmitPaths(_)) {
         // A lane admission, and the path admission that judges against the
-        // same holders (decisions 108 (5), 142 (4)), run under the fleet
-        // launch lock the legacy launcher holds around its own count and
-        // reservation write (`lane-cap.sh` `cap_take`: `flock` on
-        // `<fleet>.launch.lock`), from before the snapshot read through the
-        // committed row, so a legacy count and this admission exclude each
-        // other and two contenders on one path are judged one after the
-        // other (decision 108 (3)); the state file's own lock is taken
-        // inside, by the write, in the legacy's order.
+        // same holders, run under the fleet launch lock the launcher holds
+        // around its own count and reservation write (`lane-cap.sh`
+        // `cap_take`: `flock` on `<fleet>.launch.lock`), from before the
+        // snapshot read through the committed row, so a launcher's count and
+        // this admission exclude each other and two contenders on one path are
+        // judged one after the other; the state file's own lock is taken
+        // inside, by the write, as the launcher takes them.
         return state::locked(&occupancy::launch_lock_base(path), locking, transition);
     }
     transition()
@@ -736,15 +728,15 @@ enum Standing {
     Clear,
     /// The same operation's intent: the caller reconciles it.
     Same(Intent),
-    /// A launch intent a close may supersede once its reconcile reads it
-    /// still unconfirmed with a recorded pane (decision 67).
+    /// A launch intent a close may supersede once its reconcile reads it still
+    /// unconfirmed with a recorded pane.
     Supersedable(Intent),
 }
 
-/// The standing open intent on `target` against the operation `op` asks
-/// for. Every pair of operations refuses `intent-open`, except a close over
-/// an open launch, which supersedes it: a hung launch would otherwise have
-/// neither a close nor a relaunch (decision 67).
+/// The standing open intent on `target` against the operation `op` asks for.
+/// Every pair of operations refuses `intent-open`, except a close over an open
+/// launch, which supersedes it: a hung launch would otherwise have neither a
+/// close nor a relaunch.
 fn open_intent(intents: &[Intent], op: EffectOp, target: &str) -> Result<Standing> {
     let Some(intent) = intents.iter().find(|i| i.target == target && i.open()) else {
         return Ok(Standing::Clear);
@@ -823,10 +815,10 @@ fn push_intent(path: &Path, doc: &mut Document, intent: &Intent) -> Result<()> {
 }
 
 /// The intent an effect operation persists. It carries the identity of the
-/// process persisting it (decision 72), and is never persisted without one
-/// (decision 90): a contender could not tell a live operation with no
-/// owner from a dead one, and would fail it out from under the live effect.
-/// Only a record written before the owner field existed may lack it.
+/// process persisting it, and is never persisted without one: a contender
+/// could not tell a live operation with no owner from a dead one, and would
+/// fail it out from under the live effect. A stored intent may still lack
+/// it, and is judged as one with no owner.
 fn new_intent(op: EffectOp, target: &str, env: &Env) -> Result<Intent> {
     let Some(owner) = env.owner.clone() else {
         return Err(Error::OwnerUnreadable { op: op.word() });
@@ -864,8 +856,7 @@ fn string_or_null(value: &Option<String>) -> Value {
     }
 }
 
-/// Null `key` where `doc` holds it; an absent optional field gains no null
-/// (decision 34).
+/// Null `key` where `doc` holds it; an absent optional field gains no null.
 fn null_held(doc: &mut Document, key: &str) {
     if doc.contains_key(key) {
         state::set(doc, key, Value::Null);
@@ -899,9 +890,8 @@ fn record_outcome(
     let mut intent = intents[index].clone();
     // The launcher-side handle closes only while it still owns the intent: a
     // job that claimed between the launcher's last read and this write keeps
-    // its own record (decision 124b); `apply` retries this transition on a
-    // conflicting snapshot, so the owner read here is the one the write
-    // commits against (decision 124d (18)).
+    // its own record; `apply` retries this transition on a conflicting
+    // snapshot, so the owner read here is the one the write commits against.
     if r.while_owner.is_some() && intent.owner != r.while_owner {
         return Ok(OutcomeRecorded {
             intent,
@@ -926,9 +916,9 @@ fn record_outcome(
             outcome: intent.outcome,
         });
     }
-    // The set as the writer read it (decision 124l (47)): a terminal over a
-    // set another handle replaced since is refused, the same answer a
-    // progress write on that set gets.
+    // The set as the writer read it: a terminal over a set another handle
+    // replaced since is refused, the same answer a progress write on that set
+    // gets.
     if let Some(read) = r.set_revision {
         let found = intent.obligations.as_ref().map_or(0, |o| o.revision);
         if read != found {
@@ -939,9 +929,9 @@ fn record_outcome(
             });
         }
     }
-    // The document as read, kept to compare the patched one against
-    // (decisions 89, 109 (4)): an outcome that changes nothing, a reconcile
-    // reading what the last one read, must not move the file.
+    // The document as read, kept to compare the patched one against: an
+    // outcome that changes nothing, a reconcile reading what the last one
+    // read, must not move the file.
     let before = doc.clone();
     let mut recorded = OutcomeRecorded {
         intent: intent.clone(),
@@ -950,10 +940,9 @@ fn record_outcome(
         generation: None,
         reconciled: None,
     };
-    // A reconcile that found the owner still live, or could not read it,
-    // wrote this outcome to record only its observation and defer to the
-    // owner (decisions 72, 99): it moves no record and marks no staleness,
-    // whatever the target now reads.
+    // A reconcile that found the owner still live, or could not read it, wrote
+    // this outcome to record only its observation and defer to the owner: it
+    // moves no record and marks no staleness, whatever the target now reads.
     let owner_live = matches!(
         r.observation
             .as_ref()
@@ -961,11 +950,10 @@ fn record_outcome(
             .and_then(Value::as_str),
         Some(state::OWNER_LIVE | state::OWNER_UNREAD)
     );
-    // A target that moved under the intent closes it only on a terminal
-    // word (decision 124a (1)): an `unconfirmed` outcome keeps the intent
-    // open, with the generation or status it observed noted, so the handles
-    // its set still holds have a reader on the next reconcile; its receipt
-    // and job files stay with it.
+    // A target that moved under the intent closes it only on a terminal word:
+    // an `unconfirmed` outcome keeps the intent open, with the generation or
+    // status it observed noted, so the handles its set still holds have a
+    // reader on the next reconcile; its receipt and job files stay with it.
     let terminal = matches!(r.outcome, Outcome::Confirmed | Outcome::Failed);
     let stale = if owner_live {
         None
@@ -1038,13 +1026,11 @@ fn record_outcome(
     if !intent.open() {
         intent.completed_at = Some(at.clone());
     }
-    // The one failure announcement of a job's intent (decision 109 (7)),
-    // recorded with the outcome that owes it (decision 124f (28)): the
-    // fleet-log row the legacy `die_status` appended, under the same kind
-    // and item, and the notice `owed` on the intent, so the send that
-    // follows has a record to continue from and a repeated outcome owes
-    // nothing again. A start held on its watch takes the same (decision 184
-    // (6)); a lane's intent takes no row.
+    // The one failure announcement of a job's intent, recorded with the
+    // outcome that owes it: a fleet-log row under the job's kind and item, and
+    // the notice `owed` on the intent, so the send that follows has a record
+    // to continue from and a repeated outcome owes nothing again. A start held
+    // on its watch takes the same; a lane's intent takes no row.
     if let Some(notice) = &r.notice
         && intent.notice.is_none()
         && matches!(
@@ -1088,8 +1074,8 @@ fn record_outcome(
     if let Some(generation) = intent.observed_generation {
         state::set(row, "observed_generation", generation);
     }
-    // An outcome that left the document as it was is recorded nowhere, and
-    // the store then writes nothing (decision 89).
+    // An outcome that left the document as it was is recorded nowhere, and the
+    // store then writes nothing.
     if state::same_document(path, doc, &before)? {
         recorded.recorded_now = false;
     }
@@ -1155,7 +1141,6 @@ mod tests {
         assert_eq!(err.key(), "record-missing");
     }
 
-    /// Every effect kind's outcome.
     #[test]
     fn recording_an_outcome_completes_each_effect_kind() {
         struct Row {
@@ -1268,9 +1253,9 @@ mod tests {
         }
     }
 
-    /// R-U10 finding 1: the sequences that stuck when the id carried the
-    /// file's revision. Each completes, every intent closed and no two
-    /// sharing an id.
+    /// Defect: an intent id that repeats on one target, so a sequence of
+    /// operations there sticks. Each sequence completes, every intent closed
+    /// and no two sharing an id.
     #[test]
     fn intent_sequences_on_one_target_complete() {
         struct Row {
@@ -1351,9 +1336,9 @@ mod tests {
         }
     }
 
-    /// Decision 90: a launch, close or succession persists no intent without
-    /// the identity of the process asking. The refusal carries the stable
-    /// key and the operation, and the file is left as it was.
+    /// A launch, close or succession persists no intent without the identity
+    /// of the process asking. The refusal carries the stable key and the
+    /// operation, and the file is left as it was.
     #[test]
     fn an_intent_is_never_persisted_without_the_owners_identity() {
         let dir = tempfile::tempdir().unwrap();
@@ -1441,8 +1426,8 @@ mod tests {
         }
     }
 
-    /// Finding 7, probes A and B, and decision 36: one open intent per
-    /// target, and a late outcome on a lane whose record moved refuses.
+    /// One open intent per target, and a late outcome on a lane whose record
+    /// moved refuses.
     #[test]
     fn intents_on_one_target_exclude_each_other_and_late_outcomes_refuse() {
         struct Row {
@@ -1458,8 +1443,8 @@ mod tests {
             )
             .unwrap();
         }
-        /// A legacy writer's edit of the lane between two operations.
-        fn legacy_edit(path: &Path, item: &str, key: &str, value: Value) {
+        /// A writer's edit of the lane between two operations.
+        fn writer_edit(path: &Path, item: &str, key: &str, value: Value) {
             let mut doc = object(path);
             let lanes = doc["lanes"].as_array_mut().unwrap();
             let lane = lanes.iter_mut().find(|l| l["item"] == item).unwrap();
@@ -1472,7 +1457,7 @@ mod tests {
         }
         let rows = [
             Row {
-                name: "probe A: a launch while a close intent is open",
+                name: "a launch while a close intent is open",
                 steps: |p| {
                     stopped(p);
                     run(p, &close("KEN-4437"))?;
@@ -1486,9 +1471,8 @@ mod tests {
                 },
             },
             Row {
-                // Decision 67: the close supersedes the launch rather than
-                // refusing; no second intent is written until the launch
-                // intent is closed.
+                // The close supersedes the launch rather than refusing; no
+                // second intent is written until the launch intent is closed.
                 name: "a close while a launch intent is open",
                 steps: |p| {
                     run(p, &launch("KEN-4468"))?;
@@ -1562,16 +1546,15 @@ mod tests {
                     assert_eq!(intents[1].outcome, Outcome::Confirmed);
                 },
             },
-            // Decision 44, sequence 1: a legacy `lane-close` moved the lane
-            // to done under an open launch intent. The launch's outcome no
-            // longer wedges the lane (R-U13 finding 2): it reconciles the
-            // intent as `intent-stale` with the observed status and leaves
-            // the lane as the legacy writer left it.
+            // A `lane-close` moved the lane to done under an open launch
+            // intent. The launch's outcome reconciles the intent as
+            // `intent-stale` with the observed status and leaves the lane as
+            // that writer left it.
             Row {
-                name: "probe B: a launch confirmed on a lane closed since reconciles stale",
+                name: "a launch confirmed on a lane closed since reconciles stale",
                 steps: |p| {
                     let id = intent_id(&run(p, &launch("KEN-4468"))?);
-                    legacy_edit(p, "KEN-4468", "status", Value::from("done"));
+                    writer_edit(p, "KEN-4468", "status", Value::from("done"));
                     run(p, &outcome(&id, Outcome::Confirmed))?;
                     Ok(())
                 },
@@ -1584,16 +1567,16 @@ mod tests {
                     assert_eq!(intent.observed_status, Some(LaneStatus::Done));
                 },
             },
-            // Decision 44, sequence: a lane relaunched under an open close
-            // intent. The close's outcome reconciles the intent as stale and
-            // leaves the running lane alone, no longer refusing.
+            // A lane relaunched under an open close intent. The close's
+            // outcome reconciles the intent as stale and leaves the running
+            // lane alone.
             Row {
                 name: "a close confirmed on a lane relaunched since reconciles stale",
                 steps: |p| {
                     let id = intent_id(&run(p, &launch("KEN-4468"))?);
                     run(p, &outcome(&id, Outcome::Confirmed))?;
                     let id = intent_id(&run(p, &close("KEN-4468"))?);
-                    legacy_edit(
+                    writer_edit(
                         p,
                         "KEN-4468",
                         "session_since",
@@ -1672,10 +1655,10 @@ mod tests {
         assert_eq!(err.key(), "lane-live");
     }
 
-    /// Finding 3: every fleet operation runs on a file whose `triaged` rows
-    /// include the legacy `item`-keyed and string shapes.
+    /// Every fleet operation runs on a file whose `triaged` rows include the
+    /// `item`-keyed and string shapes.
     #[test]
-    fn fleet_operations_run_on_legacy_triaged_rows() {
+    fn fleet_operations_run_on_every_triaged_row_shape() {
         let dir = tempfile::tempdir().unwrap();
         let path = fleet_file(dir.path());
         let triaged = object(&path)["triaged"].clone();

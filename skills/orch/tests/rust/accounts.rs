@@ -2563,10 +2563,10 @@ struct Arm<'a> {
 /// pool, the `anthropic/` API grant, a seat, the cloud credit), and one per
 /// input that steers a pick to a site of its own (the exclusion, the
 /// retirement, the aliases, the stated pool, the cloud repositories, the
-/// headroom, the model, `--exclude-lane`, `--for-overseer`,
-/// `--binding-floor` and `--projected`) for each pool kind and each host
-/// form the verb dispatches on, this machine's read and a provider host. A
-/// ruling pins instead: the claim store and the seats, which the fleet
+/// headroom, the credit floor, the model, `--exclude-lane`,
+/// `--for-overseer`, `--binding-floor` and `--projected`) for each pool kind
+/// and each host form the verb dispatches on, this machine's read and a
+/// provider host. A ruling pins instead: the claim store and the seats, which the fleet
 /// state replaces; the settings refusal, which the loader owns; the
 /// dispatcher's class form, unnamed harness, `--exclude-lane` beside
 /// `--lane` and `--projected` without `--lane`, which no shipped caller
@@ -2747,8 +2747,6 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
         ]
     };
     let api_refusal = || json!({"cause": "api-credit", "retry_at": null});
-    // The named record of a Pi root on the Copilot pool refused or judged
-    // by `verdict`, through `alias`.
     let copilot_word = |verdict: &str, alias: &str| {
         vec![
             ("verdict", json!(verdict)),
@@ -2761,6 +2759,30 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             ("verdict", json!("retired")),
             ("pool", json!("copilot")),
             ("retire_date", json!("2026-01-01")),
+        ]
+    };
+    // The provider's grant row with 100 dollars left, admitted under a
+    // floor below it.
+    let floor_room = || {
+        vec![
+            ask(
+                api_chooser(),
+                "lane",
+                0,
+                Some(0),
+                vec![("verdict", json!("room")), ("pool", json!("api-credit"))],
+            ),
+            ask(
+                named_launch(api_model, &pi_dir),
+                "lane",
+                0,
+                Some(0),
+                vec![
+                    ("measured_through", json!("host")),
+                    ("verdict", json!("room")),
+                    ("pool", json!("api-credit")),
+                ],
+            ),
         ]
     };
     let retired_root = |dir: &str| {
@@ -3961,6 +3983,74 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
                             json!({"cause": "cloud-credit", "retry_at": null}),
                         ),
                     ],
+                ),
+            ],
+        },
+        Arm {
+            name: "the API grant's credit floor at 0 admits a grant with 100 dollars left, as the retained pick did",
+            usage: fresh.clone(),
+            provider: Some(grant_row(100)),
+            env: vec![("ORCH_LANE_CLOUD_CREDIT_FLOOR", "0")],
+            asks: floor_room(),
+        },
+        Arm {
+            name: "the API grant's credit floor at 10 admits a grant with 100 dollars left, as the retained pick did",
+            usage: fresh.clone(),
+            provider: Some(grant_row(100)),
+            env: vec![("ORCH_LANE_CLOUD_CREDIT_FLOOR", "10")],
+            asks: floor_room(),
+        },
+        Arm {
+            name: "the API grant's credit floor at 100 walls a grant with 100 dollars left, as the retained pick did",
+            usage: fresh.clone(),
+            provider: Some(grant_row(100)),
+            env: vec![("ORCH_LANE_CLOUD_CREDIT_FLOOR", "100")],
+            asks: vec![
+                ask(
+                    api_chooser(),
+                    "none",
+                    3,
+                    Some(3),
+                    vec![
+                        ("walled", json!(1)),
+                        (
+                            "exclusions",
+                            json!([{"config_dir": pi_dir, "reason": "walled"}]),
+                        ),
+                    ],
+                ),
+                ask(
+                    named_launch(api_model, &pi_dir),
+                    "walled",
+                    3,
+                    Some(3),
+                    vec![
+                        ("verdict", json!("walled")),
+                        ("pool", json!("api-credit")),
+                        ("refusal", api_refusal()),
+                    ],
+                ),
+            ],
+        },
+        Arm {
+            name: "the API grant's credit floor at 0 admits no grant this machine's read cannot measure, as the retained pick answered",
+            usage: fresh.clone(),
+            provider: None,
+            env: vec![("ORCH_LANE_CLOUD_CREDIT_FLOOR", "0")],
+            asks: vec![
+                ask(
+                    api_chooser(),
+                    "unmeasured",
+                    5,
+                    Some(5),
+                    provider_unmeasured(),
+                ),
+                ask(
+                    named_launch(api_model, &pi_dir),
+                    "unmeasured",
+                    5,
+                    Some(5),
+                    grant_unmeasured(),
                 ),
             ],
         },

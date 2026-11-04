@@ -8,7 +8,7 @@ Delegate the implementation of one issue, or of a bundled multi-agent work item,
 | `dev-start [ISSUE_ID]` | Implement a specific issue |
 | (from start-worktree / review-pr) | Managed lifecycle with caller context |
 
-**Caller context** (via `⤵`): `worktree`; `lifecycle`, `"managed"` (return at § 4) or `"self"` (default); `issue_id`, the workflow-state key, whose forms `workflow-state --help` § Keys enumerates, never the bare GitHub issue number.
+**Caller context** (via `⤵`): `worktree`; `lifecycle`, `"managed"` (return at § 4) or `"self"` (default); `issue_id`, the workflow-state key ([workflow-state.md § Keys](../schemas/workflow-state.md#keys)), never the bare GitHub issue number.
 
 **Standalone init** (`lifecycle: "self"`). Use the argument as `ISSUE_ID`, else:
 
@@ -33,7 +33,7 @@ Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`.
 Initialize state unless it exists:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
+.agents/skills/orch/scripts/orch-runtime state exists --item [ISSUE_ID]
 ```
 
 ```bash
@@ -41,7 +41,7 @@ Initialize state unless it exists:
 ```
 
 ```bash
-.agents/skills/orch/scripts/workflow-state init [ISSUE_ID] --worktree [WT_PATH] --branch "[BRANCH_FROM_PREVIOUS_COMMAND]"
+.agents/skills/orch/scripts/orch-runtime state init --item [ISSUE_ID] --worktree [WT_PATH] --branch "[BRANCH_FROM_PREVIOUS_COMMAND]"
 ```
 
 ## 1. Determine Agent
@@ -70,7 +70,7 @@ Apply the Ancestor gate ([references/skill-rules.md § Coordination](../referenc
 Then stamp the round and apply the cleanup condition in [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). Run each selected command as a separate tool call:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
+.agents/skills/orch/scripts/orch-runtime state set-git-head --item [ISSUE_ID] /pre_delegate_sha --worktree [WORKTREE_PATH]
 ```
 
 A standing dev round (`.dev_round_id` not null, as a bundled group's predecessor leaves it) is reconciled before the new round supersedes it, so its admitted runs close with their words: write `[WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json` with the harness file tool as `{"op": "reconcile-round", "round_id": "[PRIOR_DEV_ROUND_ID]"}` and run it with the command below; a run its reply reports `live` keeps running under the superseded round.
@@ -90,15 +90,15 @@ Apply [Round Closure](../references/skill-rules.md#round-closure)'s cleanup cond
 ```
 
 ```bash
-.agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] dev_delegated_at
+.agents/skills/orch/scripts/orch-runtime state set-now --item [ISSUE_ID] /dev_delegated_at
 ```
 
 Then write the round's admission request, `[WORKTREE_PATH]/tmp/validation-admission-[ISSUE_ID]-[DEV_ROUND_ID].json`, with the harness file tool as `{"op": "record-validation-admission", "round_id": "[DEV_ROUND_ID]"}`. The delegation's `Validation admission:` line names the command that runs it; the dev agent runs it before each validation start, so the run is admitted, under the directory the runtime names, before any work starts.
 
-Then read the near-ceiling lines. Both templates below render one `Near-ceiling:` line per entry of this read, which the round-id stamp does not disturb; a first round on a fresh key reads `[]` and renders none.
+Then read the near-ceiling lines. Both templates below render one `Near-ceiling:` line per entry of this read, which the round-id stamp does not disturb; a first round on a fresh key reads `[]`, and a state written before the field existed has none; either renders none.
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.near_ceiling // []'
+.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /near_ceiling
 ```
 
 Embed the round token as `[DEV_ROUND_ID]` in the delegation's `Round ID:` line and arm the watchdog per [references/skill-rules.md § Round Closure](../references/skill-rules.md#round-closure). On Codex, resolve spawn parameters with `scripts/spawn-adapter spawn [AGENT_TYPE]`.
@@ -106,7 +106,7 @@ Embed the round token as `[DEV_ROUND_ID]` in the delegation's `Round ID:` line a
 After each spawn, persist the session:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.child_sessions["[AGENT_TYPE]"] = {"status": "active", "agent_id": "[AGENT_OR_TASK_ID]", "runtime_agent_type": "[RUNTIME_AGENT_TYPE]", "agent_type_fallback": [FALLBACK_REASON_JSON_OR_NULL]}'
+.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /child_sessions/[AGENT_TYPE] '{"status": "active", "agent_id": "[AGENT_OR_TASK_ID]", "runtime_agent_type": "[RUNTIME_AGENT_TYPE]", "agent_type_fallback": [FALLBACK_REASON_JSON_OR_NULL]}'
 ```
 
 ### Single issue
@@ -171,7 +171,7 @@ Acceptance is a pure function of **A** (the on-disk artifact) and **B** (git and
 **Check A**, two tool calls:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.dev_round_id // empty'
+.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /dev_round_id
 ```
 
 ```bash
@@ -183,7 +183,7 @@ Acceptance is a pure function of **A** (the on-disk artifact) and **B** (git and
 **Check B**, `B = pass` only when every check passes:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pre_delegate_sha // empty'
+.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /pre_delegate_sha
 .agents/skills/orch/scripts/git-context head [WORKTREE_PATH]
 git -C "[WORKTREE_PATH]" status --porcelain
 .agents/skills/linear/scripts/linear.sh issues validate-completion [ISSUE_ID] --include-children-of [ISSUE_ID]
@@ -240,7 +240,7 @@ After all rules are stored, resolve the PR from the worktree:
 `status: no_pr` ends this step. Normal PR creation reads the stored list. When a PR exists, read the complete stored list from workflow state:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.pr_comment_review.proposed_rules // []'
+.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /pr_comment_review/proposed_rules
 ```
 
 Write the remote `body` value to `[WORKTREE_PATH]/tmp/pr-body-proposed-rules-[ISSUE_ID].md` with the harness file tool. Replace only its `## Proposed rules` section with the stored list, or add that section when absent. Preserve every other line from the remote body. Post that file:
@@ -258,7 +258,7 @@ The accept paths, implement and fix alike, and the retry path for a structurally
 `[NEAR_CEILING_ARRAY]` is the artifact's `near_ceiling` as `dev-artifact-check` echoed it: a JSON array of strings, `[]` when the round recorded none, or `null` when the byte-ceiling probe did not answer: the lane exited other than 0 or 1, the lane path held a file or link that could not run, or the writer ran without `--near-ceiling-base`. On `null`, skip the write and name the echoed `near_ceiling_error` in the round's report; an empty list there would tell the next round no binary blob is near the ceiling. Each entry names a binary blob that round left within reach of the byte ceiling. The next round's delegation renders one `Near-ceiling:` line per entry so it can plan Git LFS, an asset store or generation before the blob grows. The write REPLACES the key: state describes the branch as the last recorded round left it. A blob moved out of Git stops being carried, and a blob pushed into the warn band starts being carried.
 
 ```bash
-.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.near_ceiling = [NEAR_CEILING_ARRAY]'
+.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /near_ceiling '[NEAR_CEILING_ARRAY]'
 ```
 
 ### Validation status

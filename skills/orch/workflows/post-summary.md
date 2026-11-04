@@ -10,15 +10,15 @@ Post the session summary to the git host and issue tracker, plus selective hando
 
 **Caller context** (via `⤵`): `worktree`; `lifecycle` — `"managed"` (return at § 3) or `"self"` (default); `issue_id` — the workflow-state key, the normalized issue ID, never the bare GitHub issue number; `pr_number`. Every lifecycle path resolves `TRACKER` and `ISSUE_REF` from `issue_id` per [Tracker Resolution](../SKILL.md#tracker-resolution), and `SUB_ISSUE_REF` the same way from each completed sub-issue's own id, before rendering the summary.
 
-**Standalone init** (`lifecycle: "self"`): `git-context issue-from-branch .` gives `ISSUE_ID`; resolve `TRACKER` per [Tracker Resolution](../SKILL.md#tracker-resolution); `WT_PATH` is `git-context repo-root "[DIR]"`, `[DIR]` being `.` unless `worktree exists`/`worktree path` says otherwise; `pr-view-json [WT_PATH] --json number` gives `PR_NUMBER`. When `workflow-state exists --json [ISSUE_ID]` reports false, initialize with `git-context branch [WT_PATH]` and `workflow-state init`.
+**Standalone init** (`lifecycle: "self"`): `git-context issue-from-branch .` gives `ISSUE_ID`; resolve `TRACKER` per [Tracker Resolution](../SKILL.md#tracker-resolution); `WT_PATH` is `git-context repo-root "[DIR]"`, `[DIR]` being `.` unless `worktree exists`/`worktree path` says otherwise; `pr-view-json [WT_PATH] --json number` gives `PR_NUMBER`. When `orch-runtime state exists --item [ISSUE_ID]` reports false, initialize with `git-context branch [WT_PATH]` and `orch-runtime state init`.
 
 ## 1. Post The Summary
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{fixed_count: (.fixed_items | length), escalated_count: (.escalated_items | length), audit_issues: (.audit_issues_created | length), pr_issues: (.pr_comment_review.issues_created | length), cycles: .cycles, post_pr_stop: .post_pr_stop}'
+STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID])" && jq -c '.result.value | {fixed_count: (.fixed_items | length), escalated_count: (.escalated_items | length), audit_issues: (.audit_issues_created | length), pr_issues: (.pr_comment_review.issues_created | length), cycles: .cycles, post_pr_stop: .post_pr_stop}' <<<"$STATE_READ"
 ```
 
-Collect each actual round's Validation Routes from its completion or fix artifact, and read any later restack run's native evidence, following [dev-implement.md § 9.1](../../dev/workflows/dev-implement.md#91-completion-summary-file). Carry those rows into this comment, preserving their original identities and outcomes. Include each child on its originating item when bundled; the parent summary may also carry the rows. A compact workflow-state projection or final verdict cannot fill fields absent from the original sources.
+Collect each actual round's Validation Routes from its completion or fix artifact, and read any later restack run's native evidence, following [dev-implement.md § 9.1](../../dev/workflows/dev-implement.md#91-completion-summary-file). Carry those rows into this comment, preserving their original identities and outcomes. Include each child on its originating item when bundled; the parent summary may also carry the rows. A compact projection of the state or a final verdict cannot fill fields absent from the original sources.
 
 **Skip if** every count is zero, `post_pr_stop` is null and there are no validation routes to report → § 2.
 

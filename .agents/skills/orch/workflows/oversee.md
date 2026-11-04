@@ -26,7 +26,7 @@ Select unblocked, non-terminal development items from the tracker. Exclude Verif
 
 The fleet state's `launch_queue` holds the order; its membership is the tracker's, never handoff memory: every heartbeat names each owed tracker item the queue lacks as an `owed` line under [oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds) `heartbeat`, which routes each verdict.
 
-A GitHub item labeled `blocked` is not a candidate. An item whose `worktree create` exits 75 belongs to another session: skip it; its siblings still launch. On the tmux surface that claim IS `open-terminal`'s own worktree create, never pre-create the worktree. A surface that creates its own worktree environment (Codex app threads) records the claim in workflow-state before launch.
+A GitHub item labeled `blocked` is not a candidate. An item whose `worktree create` exits 75 belongs to another session: skip it; its siblings still launch. On the tmux surface that claim IS `open-terminal`'s own worktree create, never pre-create the worktree. A surface that creates its own worktree environment (Codex app threads) records the claim in the fleet state before launch.
 
 Oversee runs as at most one session per repo. `open-terminal --state-dir` enforces the two caps in [lane-directive.md § Caps](../references/lane-directive.md#caps). Select items only where their cap has room; on other surfaces keep those same limits yourself:
 
@@ -120,14 +120,14 @@ Resolve the fleet state address through [overseer takeover § Fleet state addres
 
 On the tmux surface `open-terminal` creates the state on the first launch and records every lane it launches, relaunches or wakes as one `lanes[]` entry; nothing is written by hand. [lane-directive.md § Tmux session](../references/lane-directive.md#tmux-session) names the tmux session its windows open in.
 
-On surface 2 and surface 3 the overseer's first hand-written write creates it: a surface-2 lane record below, or a `fleet_log` or `triaged` append ([oversee-events.md](../references/oversee-events.md)). Before that first write, when `exists` reports false, run `init` (init overwrites: never re-init a live fleet state):
+On surface 2 and surface 3 the overseer's first hand-written write creates it: a surface-2 lane record below, or a `fleet_log` or `triaged` append ([oversee-events.md](../references/oversee-events.md)). Before that first write, when `exists` reports false, run `init`, which refuses a standing file as `state-exists`:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state exists --json oversee
+.agents/skills/orch/scripts/orch-runtime state exists --fleet
 ```
 
 ```bash
-.agents/skills/orch/scripts/workflow-state init oversee
+.agents/skills/orch/scripts/orch-runtime state init --fleet
 ```
 
 A record's `item` is the lane's record key, `[ITEM_KEY]` throughout this workflow: the Linear id for a Linear item and `issue-N` for a GitHub item, as `open-terminal` records it and the watch names it, never the `[OWNER/REPO]#[N]` the brief spells.
@@ -135,7 +135,7 @@ A record's `item` is the lane's record key, `[ITEM_KEY]` throughout this workflo
 On surface 2, whose launcher is the harness's own, append the same record after the first launch of an item, with `window` null. Set `[OBLIGATION_OR_NULL]` to the accepted object from [Obligation lineage](../references/lane-directive.md#obligation-lineage), or JSON `null` when unknown:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state append oversee lanes '{"item":"[ITEM_KEY]","tracker":"[TRACKER]","repo":"[OWNER/REPO_OR_NULL]","harness":"[HARNESS]","window":null,"account":null,"host":null,"mail_root":"[LANE_WORKTREE]","surface":"[SURFACE]","model":"[MODEL]","session_id":null,"launched_at":"[NOW]","status":"running","obligation":[OBLIGATION_OR_NULL]}'
+.agents/skills/orch/scripts/orch-runtime state append --fleet /lanes '{"item":"[ITEM_KEY]","tracker":"[TRACKER]","repo":"[OWNER/REPO_OR_NULL]","harness":"[HARNESS]","window":null,"account":null,"host":null,"mail_root":"[LANE_WORKTREE]","surface":"[SURFACE]","model":"[MODEL]","session_id":null,"launched_at":"[NOW]","status":"running","obligation":[OBLIGATION_OR_NULL]}'
 ```
 
 For an existing surface-2 item, use `workflow-state update-report` to merge into its record under the existing lock. Judge the supplied mapping against the retained binding in that same update: refuse a conflict without changing state, preserve a known binding for absent/null input, and bind a previously unknown value only from the accepted directive. Never append a duplicate item or replace its record wholesale. Relaunch, wake and handoff keep `launched_at`; a fresh ordinary launch can renew it while retaining the obligation and previous cycle.
@@ -143,7 +143,7 @@ For an existing surface-2 item, use `workflow-state update-report` to merge into
 `[NOW]` is `date -u +%Y-%m-%dT%H:%M:%SZ`, read before the launch it timestamps and never after, because the earliest `launched_at` is the fleet start the watch takes as `--since`:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get oversee '.lanes[0].launched_at'
+.agents/skills/orch/scripts/orch-runtime state get --fleet /lanes/0/launched_at
 ```
 
 `mail_root` is the lane's worktree path as its own host sees it, and the lane's status file is `[MAIL_ROOT]/tmp/lane-status-[ISSUE_ID].md`. Every later mailbox call for a lane whose record carries `host` runs with `ORCH_LANE_HOST` set to that value and names the root: `lane-mail send --root [MAIL_ROOT] --host`, and `lane-host cat` or `touch`; `lane-close` reads the host from the record. A lane on this host needs neither, and a local lane whose `mail_root` is a worktree of another repository still takes `--root [MAIL_ROOT]`, run from a checkout of that repository: `lane-mail` refuses a cross-repository `send` as `lane-foreign`.
@@ -156,7 +156,7 @@ The watch's `--since` is the earliest `lanes[].launched_at`, else the launch's o
 
 Read its events as § Watch delivery states. A harness that wakes only at a background command's exit reads that same log in single passes.
 
-Before every pass, the watch reads every `lanes[]` record whose status is `running`: the item, its window and its `mail_root`, using the named host for a record that has one. Automatic close uses the directory containing `[OVERSEE_STATE]`; each lane's own workflow-state reads keep their lane-specific location. A lane launch, relaunch, or close while the watch runs needs no watch restart.
+Before every pass, the watch reads every `lanes[]` record whose status is `running`: the item, its window and its `mail_root`, using the named host for a record that has one. Automatic close uses the directory containing `[OVERSEE_STATE]`; each lane's own state reads keep their lane-specific location. A lane launch, relaunch, or close while the watch runs needs no watch restart.
 
 Each duty appends every event it found to the event log beside the fleet state, `oversee-watch.log`, as `EVENT` lines with their payload lines, in the shapes [oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds) states. Handle every line.
 
@@ -278,17 +278,11 @@ Report one line per lane in the rows [../references/communication-modes.md](../r
 
 Reapply the [takeover path check](oversee-takeover.md#1-read-the-mailbox-and-handoff). Rewrite the handoff's State and Workarounds sections under [communication-modes.md § Handoff](../references/communication-modes.md#handoff), at Stop and succession; a standing instruction is a row of the oversee record's `standing[]` array, never a handoff line, and one whose end has come is lifted before the rewrite ([communication-modes.md § Recording](../references/communication-modes.md#recording)). The handoff file carries no tmux command: a pane write it hands on names `pane-write`, as Pane paste in [oversee-lanes.md § Talking to a lane](../references/oversee-lanes.md#talking-to-a-lane) gives it.
 
-Write each status report given in chat, this one included, to the path `workflow-state progress-report-path` prints as well.
+Write each status report given in chat, this one included, to the `result.path` of `orch-runtime state progress-report-path` as well.
 
-At that rewrite, here and at a succession, run the retention [schemas/workflow-state.md § Recording policy](../schemas/workflow-state.md#recording-policy) states. Where it prints a `kept=` line, record that line in the fleet log; its other outputs are [§ Prune](../schemas/workflow-state.md#prune)'s. A succession writes its report through § Succession below before these preparation steps. Under a repeat watch, keep that watch's `[RUN_DIR]`:
+The watch's retention duty runs the retention [schemas/workflow-state.md § Recording policy](../schemas/workflow-state.md#recording-policy) states, the overseer mailbox's compaction included; no step here prunes or compacts by hand. A succession writes its report through § Succession below before these preparation steps.
 
-```bash
-.agents/skills/orch/scripts/workflow-state prune --keep [RUN_DIR]
-```
-
-Single passes, and Stop, whose watch is already stopped, run `prune` with no `--keep`.
-
-After these reads, reports and retention steps, prepare the complete headerless body in a separate ignored scratch file under [communication-modes.md § Handoff](../references/communication-modes.md#handoff). At Stop and succession, write the snapshot without a pane or launch choice:
+After these reads and reports, prepare the complete headerless body in a separate ignored scratch file under [communication-modes.md § Handoff](../references/communication-modes.md#handoff). At Stop and succession, write the snapshot without a pane or launch choice:
 
 ```bash
 .agents/skills/orch/scripts/oversee-succeed --write-only --handoff-body [BODY] --handoff [HANDOFF_PATH]
@@ -302,7 +296,7 @@ At an overseer trigger under [oversee-events.md § Judgement rules](../reference
 
 1. Wait for a safe point. Finish any `merged` event, answer each lane waiting on a root answer, and collect every attached child's return. Keep each wait inside the current turn. Claude Code uses its native task list or measured id/status fallback and its wait or result tools. Codex, Pi and Copilot track the children they launched. Pi waits through `get_subagent_result`. If a handoff cannot wait, name every unfinished child and its known output path in the handoff's State, or state that its state and path are unknown.
 2. Write the progress report by the [report-due event](../references/oversee-events.md#event-kinds), with `--succession` on `oversee-report write`, whatever `ORCH_REPORT` says. Do not repeat a refused `write` during this handover. Tell the user the handover has no report and give the cause from its first stderr line. Put that line in the handoff and continue preparation. The successor's next report covers the same merges.
-3. Complete § 5's retention and handoff preparation, including the `--write-only` snapshot. Require that write to pass before claiming an installed snapshot or recording it for manual recovery.
+3. Complete § 5's handoff preparation, including the `--write-only` snapshot. Require that write to pass before claiming an installed snapshot or recording it for manual recovery.
 4. Run the plain succession call under a shell-tool timeout longer than its `--wait-secs`:
 
    ```bash

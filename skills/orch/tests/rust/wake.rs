@@ -1,12 +1,14 @@
-//! The wake duty (step5-map § B rows 3, 7, 8; decisions 60, 61, 65, 99,
-//! 121 Q6, 135a): a lead or lane idle with unread mail is typed one line
+//! The wake duty: a lead or lane idle with unread mail is typed one line
 //! through agent-runtime's `deliver`, confirmed only by a new user turn in
 //! its own bound session file; the mark is in the watch's own record on
 //! disk before the paste and a repeat for the same unread state types
 //! nothing, whatever the fleet record's writers do to the lane meanwhile; a
 //! Codex target and an unreadable pane are never typed into. Each row names
 //! the defect it catches at its doc comment. The stub harnesses are
-//! `fixtures/stub-turns/{claude,codex}`.
+//! `fixtures/stub-turns/{claude,codex}`. The runner runs on the fake clock;
+//! the paste's confirming-turn wait runs in the `deliver` child on the
+//! production bound, a bounded poll of the stub's own session file, and the
+//! rows' other waits are bounded polls of a stub's own signal.
 #![allow(
     clippy::disallowed_methods,
     reason = "the rows hold a private tmux server and owned children, plant the records they read and drive the one fake clock"
@@ -31,9 +33,6 @@ use orch_runtime::watch::wake::{self, OVERSEER_TARGET, UNREAD_KIND};
 use orch_runtime::watch::{self, Baseline, Change, Flags, Paths, Produced, Recorded, Runner, Tick};
 use serde_json::{Value, json};
 use support::*;
-
-/// How long a paste waits for its confirming turn in these rows.
-const BOUND_SECS: u64 = 4;
 
 /// The agent-runtime binary the duty delivers through, built once from
 /// the sibling crate into this suite's own target directory: Cargo builds
@@ -75,9 +74,9 @@ fn agent_runtime() -> &'static Path {
 
 /// The settings a wake in `dir` runs under: the agent-runtime command
 /// `agent_runtime`, the two stub harnesses, the mailbox fixture the owner
-/// is alerted through (`lane-mail` in `dir`, which logs beside itself), a
-/// short paste bound and the legacy mail interval; nothing is read from
-/// the test's own tree.
+/// is alerted through (`lane-mail` in `dir`, which logs beside itself) and
+/// the mail interval the scheduler's cadence is read from; the paste bound
+/// is the production one, and nothing is read from the test's own tree.
 fn settings_in(dir: &Path, agent_runtime: &Path) -> Settings {
     let roots = Roots {
         project: dir.to_path_buf(),
@@ -99,10 +98,6 @@ fn settings_in(dir: &Path, agent_runtime: &Path) -> Settings {
             (
                 "LANE_MAIL_CLI".into(),
                 dir.join("lane-mail").as_os_str().into(),
-            ),
-            (
-                "ORCH_TMUX_VERIFY_SECS".into(),
-                BOUND_SECS.to_string().into(),
             ),
             ("ORCH_WATCH_MAIL_INTERVAL".into(), "20".into()),
         ],
@@ -282,8 +277,8 @@ impl Fleet {
         })
     }
 
-    /// The overseer record naming `pane` as the controller's session, as
-    /// the legacy launchers write it.
+    /// The overseer record naming `pane` as the controller's session, in
+    /// the shape the fleet record carries.
     fn overseer(&self, harness: &str, pane: &StubPane) -> Value {
         json!({
             "runtime": "tmux",
@@ -316,7 +311,6 @@ impl Fleet {
         self.write_fleet(&fleet);
     }
 
-    /// The Claude session file the stub records `session` in.
     fn session_file(&self, session: &str) -> PathBuf {
         project_dir(&self.home, &self.cwd).join(format!("{session}.jsonl"))
     }
@@ -325,7 +319,6 @@ impl Fleet {
         file_turns(&self.session_file(session))
     }
 
-    /// The watch's wake record beside the fleet state.
     fn record_file(&self) -> PathBuf {
         wake::record_path(&self.fleet_file())
     }
@@ -440,7 +433,6 @@ fn rendered(produced: &Produced) -> Vec<String> {
     produced.events.iter().map(|e| e.render()).collect()
 }
 
-/// The stub's turn state as its state file holds it.
 fn state_of(path: &Path) -> String {
     std::fs::read_to_string(path)
         .unwrap_or_default()
@@ -509,13 +501,14 @@ impl Drop for Follower {
     }
 }
 
-/// § B row 3. Defect: a delivery confirmed on whatever session file in the
-/// home was written last, a subagent's beside the lead's, so a wake to a
-/// lead that lost the line reads delivered while the subagent chats on.
-/// Lead and subagent files sit in one home and cwd, the subagent's gaining
-/// user rows throughout; the lead that records nothing is `unconfirmed`
-/// after the bound, and only a lead that records the line in its own
-/// bound file is `delivered`. A second pass for the same unread state
+/// Defect: a delivery confirmed on whatever session file in the home was
+/// written last, a subagent's beside the lead's, so a wake to a lead that
+/// lost the line reads delivered while the subagent chats on. Lead and
+/// subagent files sit in one home and cwd, the subagent's gaining user rows
+/// throughout; the lead that records nothing is `unconfirmed` once the
+/// production bound elapses in the `deliver` child, the one wait of these
+/// rows that runs its length, and only a lead that records the line in its
+/// own bound file is `delivered`. A second pass for the same unread state
 /// types nothing again.
 #[test]
 fn a_subagent_s_file_never_confirms_the_lead_s_delivery() {
@@ -585,8 +578,8 @@ fn a_subagent_s_file_never_confirms_the_lead_s_delivery() {
     assert_eq!(fleet.turns("lead-1"), Vec::<String>::new());
 }
 
-/// § B row 7. Defect: the log append read as the delivery, with no turn
-/// the harness itself recorded; or a Codex controller typed into. A stub
+/// Defect: the log append read as the delivery, with no turn the harness
+/// itself recorded; or a Codex controller typed into. A stub
 /// controller idle at its composer after its turn, the scheduler live and
 /// one unread event: a Claude controller gets one delivery confirmed by
 /// its own session file, and a test-owned follower on the log receives
@@ -698,9 +691,9 @@ fn an_idle_controller_gets_one_confirmed_delivery_or_a_named_limit_and_a_followe
     }
 }
 
-/// § B row 8. Defect: an installed idle delivery that handles the first
-/// message alone, or a harness the test keeps mid-turn so the second lands
-/// in the same turn. Two unread states twenty seconds apart, signalled
+/// Defect: an installed idle delivery that handles the first message
+/// alone, or a harness the test keeps mid-turn so the second lands in the
+/// same turn. Two unread states twenty seconds apart, signalled
 /// through the mail duty's slot on the live scheduler, are two user rows in
 /// the stub's own session file, the stub idle between them by its state
 /// file.
@@ -743,12 +736,13 @@ fn two_events_apart_give_two_user_rows_with_the_stub_idle_between() {
         clock.pass(secs(20));
         clock.pass(secs(20));
         assert_eq!(fleet.turns("lead-1").len(), 1, "{:?}", fleet.log_lines());
-        assert_eq!(state_of(&state), "idle", "idle between the two");
+        // The turn is confirmed by the stub's row; it reads idle after it.
+        await_state(&state, "idle");
         *next.lock().unwrap() = Some("m-2".into());
         clock.pass(secs(20));
         clock.pass(secs(20));
         assert_eq!(fleet.turns("lead-1").len(), 2, "{:?}", fleet.log_lines());
-        assert_eq!(state_of(&state), "idle");
+        await_state(&state, "idle");
     })
     .unwrap();
     let wakes: Vec<String> = fleet
@@ -767,8 +761,8 @@ fn two_events_apart_give_two_user_rows_with_the_stub_idle_between() {
     );
 }
 
-/// Decision 135a. Defect: the mark written after the paste, so a crash
-/// between the two leaves no mark and the repeat types the line again.
+/// Defect: the mark written after the paste, so a crash between the two
+/// leaves no mark and the repeat types the line again.
 /// The paste call dies after the mark is on disk (an agent-runtime that
 /// exits without a reply on the paste alone, the real one for the read):
 /// the pass fails loud, the mark stands for the unread state, and the
@@ -824,9 +818,9 @@ fn a_mark_before_the_paste_pastes_nothing_on_the_repeat_and_a_later_state_pastes
     assert_eq!(fleet.turns("lead-1").len(), 1, "typed once");
 }
 
-/// Decisions 94, 121 Q6. Defect: a Codex lane typed into through the
-/// unproved paste route, a second execution over its live history. The
-/// lane is read idle, reported `wake-limit`, and nothing reaches its pane.
+/// Defect: a Codex lane typed into through the unproved paste route, a
+/// second execution over its live history. The lane is read idle, reported
+/// `wake-limit`, and nothing reaches its pane.
 #[test]
 fn a_codex_shaped_lane_reads_wake_limit_and_is_not_typed_into() {
     let fleet = Fleet::new();
@@ -854,11 +848,11 @@ fn a_codex_shaped_lane_reads_wake_limit_and_is_not_typed_into() {
     assert_eq!(rendered(&again), Vec::<String>::new(), "reported once");
 }
 
-/// Decisions 135a, 159. Defect: the mark kept on the lane record, where the
-/// legacy `open-terminal --wake` (the overseer's route for a Codex lane the
-/// duty reported) rewrites the lane's `wake` object from its own record and
-/// the mark goes with it, so the same unread state is reported again and,
-/// on a pasting harness, typed again. A Codex lane and a Claude lane are
+/// Defect: the mark kept on the lane record, where `open-terminal --wake`
+/// (the overseer's route for a Codex lane the duty reported) rewrites the
+/// lane's `wake` object from its own record and the mark goes with it, so
+/// the same unread state is reported again and, on a pasting harness, typed
+/// again. A Codex lane and a Claude lane are
 /// served once; the wake-mode patch lands on both lane rows between the
 /// passes; a fresh body (a restarted runner, holding nothing in memory)
 /// reads the marks standing and reports and types nothing again.
@@ -896,7 +890,7 @@ fn an_open_terminal_wake_on_the_lane_record_moves_no_mark_and_nothing_is_reporte
     assert_eq!(
         fleet.read_fleet()["lanes"][1]["wake"],
         json!({"pid": 4242, "start": "ticks:77"}),
-        "the legacy wake identity stands on the lane row"
+        "open-terminal's wake identity stands on the lane row"
     );
     let again = run_once(&mut fleet.body(), &baseline, &clock).unwrap();
     assert_eq!(rendered(&again), Vec::<String>::new(), "the same state");
@@ -915,8 +909,8 @@ fn an_open_terminal_wake_on_the_lane_record_moves_no_mark_and_nothing_is_reporte
     );
 }
 
-/// Decisions 99, 105. Defect: an unreadable or gone pane read as idle and
-/// typed into, or marked as delivered to. A lane whose recorded pane is
+/// Defect: an unreadable or gone pane read as idle and typed into, or
+/// marked as delivered to. A lane whose recorded pane is
 /// gone and one whose recorded server the socket does not answer for are
 /// never typed into, print nothing and leave no mark.
 #[test]
@@ -943,12 +937,11 @@ fn a_gone_or_unreadable_pane_is_never_typed_into_and_leaves_no_mark() {
     );
 }
 
-/// Round 11 (decisions 130, 223 A.6). Defect: an idle overseer holding
-/// the owner's unread note that no wake reaches (a Codex overseer's limit
-/// here; an unconfirmed paste is the same class) and nobody told, since
-/// the idle overseer is the one reader of the log: the owner learned of it
-/// 3.5 hours later from a human reading the pane; or the owner told on
-/// every pass, or again after a runner restart. A Codex overseer with
+/// Defect: an idle overseer holding the owner's unread note that no wake
+/// reaches (a Codex overseer's limit here; an unconfirmed paste is the same
+/// class) and nobody told, since the idle overseer is the one reader of the
+/// log; or the owner told on every pass, or again after a runner restart. A
+/// Codex overseer with
 /// unread mail: pass one says `idle-unread` and `wake-limit`; pass two
 /// sends the owner one notice through the overseer mailbox naming the
 /// unread envelope and the cause; pass three sends nothing; a restarted

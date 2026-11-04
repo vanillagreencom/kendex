@@ -19,16 +19,16 @@ A worktree cwd skips this read; § 1 step 3 routes it on. Any answer but `local`
 
 ## 0. Resume From A Handoff
 
-**Skip if** no work item was named (`start` alone, or `start new`), or the read below prints the verdict `workflow-state: handoff-standing=none`, the one that means no record stands. For `start github OWNER/REPO#N`, `[ISSUE_ID]` is `issue-[N]` (§ 1).
+**Skip if** no work item was named (`start` alone, or `start new`), or the read below answers `none` as its reply's `result.standing`, the word that means no record stands. For `start github OWNER/REPO#N`, `[ISSUE_ID]` is `issue-[N]` (§ 1).
 
 ```bash
-.agents/skills/orch/scripts/workflow-state handoff-standing [ISSUE_ID]
+.agents/skills/orch/scripts/orch-runtime state handoff-standing --item [ISSUE_ID]
 ```
 
-That verb owns the question of whether a record stands, and where it is read, for this workflow, for [start-worktree.md](start-worktree.md) § 1 step 3, which runs this section from a worktree cwd, and for the watch and turn-end hook that ask it too. The word on its first line is the answer and its exit status is not; `workflow-state --help` states what each verdict means and this file does not restate it. **Stop and report** on any other verdict, and on any non-zero status, naming the item and what the reader wrote: the state could not be read, or the script never reached the verb, and preparing the item from § 1 would redo the steps its record lists as merged. A `stands` verdict carries the record on the line under it. The record is a lane's handoff ([oversee-events.md § Hand off a lane](../references/oversee-events.md#judgement-rules)), on every surface. Print it, stamp it in every place it stands, then continue from the first entry of its `remaining` list instead of § 1-5, or from the continuation start-worktree.md § 1 step 3 names on that route:
+That verb owns the question of whether a record stands, and where it is read, for this workflow, for [start-worktree.md](start-worktree.md) § 1 step 3, which runs this section from a worktree cwd, and for the watch that asks it too. The reply's `result.standing` word is the answer and the exit status is not; the `handoff` row of [workflow-state.md](../schemas/workflow-state.md#field-definitions) states what each word means and this file does not restate it. **Stop and report** on any other verdict, and on any non-zero status, naming the item and what the reader wrote: the state could not be read, or the script never reached the verb, and preparing the item from § 1 would redo the steps its record lists as merged. A `stands` answer carries the record as `result.record`. The record is a lane's handoff ([oversee-events.md § Hand off a lane](../references/oversee-events.md#judgement-rules)), on every surface. Print it, stamp it in every place it stands, then continue from the first entry of its `remaining` list instead of § 1-5, or from the continuation start-worktree.md § 1 step 3 names on that route:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state handoff-resume [ISSUE_ID]
+.agents/skills/orch/scripts/orch-runtime state handoff-resume --item [ISSUE_ID]
 ```
 
 ## 1. Route

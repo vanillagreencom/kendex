@@ -55,7 +55,7 @@ A finding at a location `patched_causes` records, or sharing an `owner` with a r
 Every loop that dispositions findings reads both records before its first disposition, with this command and no restatement of it:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{patched: (.pr_comment_review.patched_causes // []), frozen: (.pr_comment_review.frozen_causes // [])}'
+STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID])" && jq -c '.result.value | {patched: (.pr_comment_review.patched_causes // []), frozen: (.pr_comment_review.frozen_causes // [])}' <<<"$STATE_READ"
 ```
 
 ## Filing bar

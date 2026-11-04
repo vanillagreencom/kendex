@@ -1,14 +1,15 @@
 # shellcheck shell=bash
-# A stand-in for scripts/orch-runtime in the legacy suites: the succession a
-# legacy script hands to the runtime is recorded, not run, a first launch's
-# start is performed as the runtime's confirmed arm records it, and the
-# watch's read of the runtime's open intents answers from a file the row
-# plants. Sourced; defines fixture_runtime_stub and
-# fixture_runtime_start_perform.
+# A stand-in for scripts/orch-runtime in the shell suites, which run where no
+# runtime is built: the succession a script hands to the runtime is
+# recorded, not run, a first launch's start is performed as the runtime's
+# confirmed arm records it, the watch's read of the runtime's open intents
+# answers from a file the row plants, and a workflow fence's item-record
+# read and write go through the store. Sourced; defines fixture_runtime_stub
+# and fixture_runtime_start_perform.
 #
 # fixture_runtime_start_perform DIR — write DIR/.orch-runtime-start, the
 # performer a runtime stand-in hands a `start-controller` request to
-# (`oversee launch`'s, U7d): it performs the start as the runtime's
+# (`oversee launch`'s): it performs the start as the runtime's
 # confirmed arm records it (runtime/src/ops/controller.rs §
 # record_transfer_outcome, effects/transfer.rs § succeed) through the
 # launcher's own adapter call and record writer: the request's controller
@@ -79,23 +80,29 @@ EOF
 # answers with the open intents in RECORD_DIR/runtime.open-intents (`[]`
 # when absent), or exits with the status RECORD_DIR/runtime.inspect-rc
 # holds, printing one keyed line. `accounts pick`, the account judge the
-# succession walk and the mark judge ask (U8d), answers the reply planted
+# succession walk and the mark judge ask, answers the reply planted
 # at RECORD_DIR/runtime.pick-lane for a named pick (`--lane`) and at
 # RECORD_DIR/runtime.pick for the chooser where a row plants one (a reply
 # the verb printed on a fixture, never one written by hand: the record's
-# spelling is what the caller's reading is proven on), else the legacy
+# spelling is what the caller's reading is proven on), else the shell
 # judge beside the stub (DIR/lanes, else the shipped `lanes`) asked the
 # same question through its `pick`, its answer wrapped as the verb's reply,
 # the exit by number and the record, as the launch suites' stub wraps it
 # (lib/open-terminal-stubs.sh); `--fleet` and `--replaces` are the verb's
-# words alone and are dropped.
+# words alone and are dropped. `state get --item KEY [POINTER]` and
+# `state set --item KEY POINTER VALUE` answer through the store beside the
+# stub (DIR/workflow-state, else the shipped one), the pointer's tokens
+# joined as the store's dotted field, so the store's `set` judges VALUE as
+# the runtime's does; the get's reply carries the pointer and its value.
 fixture_runtime_stub() { # DIR [RECORD_DIR]
-  local dir="$1" record="${2:-}" lanes
+  local dir="$1" record="${2:-}" lanes store
   [[ "$dir" == "$TMP_ROOT/"* ]] || { echo 'runtime-stub: dir=not-private' >&2; return 1; }
   [[ ! -L "$dir/orch-runtime" ]] || rm -- "${dir:?}/orch-runtime"
   fixture_runtime_start_perform "$dir" || return 1
   lanes="$dir/lanes"
   [[ -e "$lanes" ]] || lanes="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts" && pwd)/lanes"
+  store="$dir/workflow-state"
+  [[ -e "$store" ]] || store="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts" && pwd)/workflow-state"
   cat > "$dir/orch-runtime" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
@@ -147,6 +154,16 @@ case "\${1:-} \${2:-}" in
     open='[]'
     [[ ! -f "\$record/runtime.open-intents" ]] || open="\$(cat "\$record/runtime.open-intents")"
     printf '{"protocol":"orch-runtime-v1","ok":true,"result":{"kind":"fleet","open_intents":%s}}\\n' "\$open" ;;
+  "state get")
+    [[ "\${3:-}" == --item && -n "\${4:-}" && \$# -le 5 ]] || { echo 'orch-runtime: usage' >&2; exit 2; }
+    doc="\$('$store' get "\$4")"
+    jq -c --arg pointer "\${5:-}" '{protocol: "orch-runtime-v1", ok: true, result: {pointer: \$pointer,
+      value: getpath(\$pointer | split("/")[1:] | map(if test("^[0-9]+\$") then tonumber else . end))}}' <<<"\$doc" ;;
+  "state set")
+    [[ "\${3:-}" == --item && -n "\${4:-}" && "\${5:-}" == /?* && \$# -eq 6 ]] || { echo 'orch-runtime: usage' >&2; exit 2; }
+    field="\${5#/}"
+    '$store' set "\$4" "\${field//\//.}" "\$6" >/dev/null
+    printf '{"protocol":"orch-runtime-v1","ok":true,"result":{}}\\n' ;;
   *) echo "orch-runtime: usage" >&2; exit 2 ;;
 esac
 EOF

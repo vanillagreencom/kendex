@@ -12,6 +12,7 @@ REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 source "$TEST_DIR/lib/assertions.sh"
 source "$TEST_DIR/lib/growth-state.sh"
 source "$TEST_DIR/lib/shared-skill-libs.sh"
+source "$TEST_DIR/lib/runtime-stub.sh"
 TMP_ROOT="$(mktemp -d)" || { echo 'worktree_push_delivery: scratch=mktemp-failed' >&2; exit 1; }
 [[ -d "$TMP_ROOT" && ! -L "$TMP_ROOT" ]] || exit 1
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || exit 1
@@ -42,9 +43,12 @@ GITHUB_COMMAND="$(awk '/^gh issue close / { print; exit }' "$SUBMIT")"
 PR_COMMAND="$(awk '/^   \.agents\/skills\/github\/scripts\/github.sh .* pr-create / { sub(/^   /, ""); print; exit }' "$SUBMIT")"
 COMPLETE_COMMAND="$(awk '/^   \[MAIN_REPO_ROOT\]\/\.agents\/skills\/linear\/scripts\/linear.sh issues complete / { sub(/^   /, ""); print; exit }' "$MERGE")"
 NOTICE_COMMAND="$(awk '/^\.agents\/skills\/mailbox\/scripts\/lane-mail notice / { print; exit }' "$SUBMIT")"
-MICRO_COMMAND="$(awk '/^\.agents\/skills\/orch\/scripts\/workflow-state set .* tier micro$/ { print; exit }' "$REPO_ROOT/skills/orch/workflows/micro.md")"
+MICRO_COMMAND="$(awk '/^\.agents\/skills\/orch\/scripts\/orch-runtime state set .* \/tier micro$/ { print; exit }' "$REPO_ROOT/skills/orch/workflows/micro.md")"
 [[ -n "$CHECKPOINT_COMMAND" && -n "$DELIVERY_COMMAND" && -n "$PUSH_COMMAND" && -n "$PREPARE_COMMAND" && -n "$PUBLISH_COMMAND" && -n "$REVIEW_COMMAND" && -n "$ROOT_COMMAND" && -n "$GITHUB_COMMAND" && -n "$PR_COMMAND" && -n "$COMPLETE_COMMAND" && -n "$NOTICE_COMMAND" && -n "$MICRO_COMMAND" ]] || exit 1
-mkdir -p "$TMP_ROOT/bin"
+# The fences read and write the item record through the runtime, which the
+# stand-in answers through the store.
+mkdir -p "$TMP_ROOT/bin" "$TMP_ROOT/runtime"
+fixture_runtime_stub "$TMP_ROOT/runtime" "$TMP_ROOT/runtime" || exit 1
 cat > "$TMP_ROOT/bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -148,6 +152,7 @@ workflow_command() { # COMMAND
   command="${command//\[OWNER\/REPO\]/fixture/project}"
   command="${command//.agents\/skills\/mailbox\/scripts\/lane-mail/$MAIL}"
   command="${command//.agents\/skills\/orch\/scripts\/workflow-state/$STATE}"
+  command="${command//.agents\/skills\/orch\/scripts\/orch-runtime/$TMP_ROOT/runtime/orch-runtime}"
   command="${command//.agents\/skills\/orch\/scripts\/git-context/$REPO_ROOT\/skills\/orch\/scripts\/git-context}"
   (cd "$wt" && env -u MAIN_REPO_ROOT FIXTURE_ROOT="$root" BODY_FILE="$wt/tmp/body" "$BASH" -c "$command")
 }

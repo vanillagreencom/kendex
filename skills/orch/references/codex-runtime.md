@@ -56,8 +56,8 @@ A fenced command in these documents is read by a hook before the harness runs it
 rg -n '\x60kendex refresh\x60' skills/
 ```
 
-- Derived values → helper scripts (`git-context`, `workflow-state`), never substitution ([../SKILL.md](../SKILL.md) § State Management).
-- Related `workflow-state` operations → one `get '{...}'` or one `update '... | ...'`. Split what cannot collapse, `set-git-head`/`set-now` (they compute their own value), a read mixed with a write, a `// empty` default that would collapse a combined object, a per-item loop, into separate calls.
+- Derived values → helper scripts (`git-context`, `orch-runtime state`), never substitution ([../SKILL.md](../SKILL.md) § State Management).
+- Related state reads → one `orch-runtime state get` held in a variable, then one jq filter over its `.result.value` once the read exits 0. Related writes → the one command the step names; `set-git-head` and `set-now` compute their own value.
 - An optional environment variable affecting a command → omit the option and let the script auto-detect, or read it with `printenv VAR` and run a second command with a literal value. Never put an unset-variable expansion in a required command.
 
 ### Rule-refused porcelain
@@ -144,7 +144,7 @@ A Codex lane arms no mailbox monitor ([watch-delivery.md § Lane mailbox monitor
 
 Spawn generated agents without a full-history fork. A full-history fork inherits the parent's runtime settings. Resolve parameters with `scripts/spawn-adapter spawn <canonical-agent-name>`: the canonical hyphenated name is the identity everywhere orch records anything, and the adapter confines the runtime spelling to `record.runtime_metadata`. `--fallback-reason` is for a deliberate generic-worker fallback, never one a name-schema rejection caused. Use the fork option this surface exposes: `fork_turns: "none"` on MultiAgentV2, `fork_context: false` on V1. Prepare the complete `DELEGATION:` message under [skill-rules.md § Codex thread reuse](skill-rules.md#codex-thread-reuse), including the target agent's full instructions and workflow. Give a V2 `spawn_agent` that initial message in `message`. Use `followup_task` for a new task on a finished V2 thread and `send_message` for guidance to a running one. On V1, use `send_input` after spawning.
 
-`scripts/spawn-adapter slots` prints the effective thread cap and the `REVIEWER_SLOT_BUDGET` it implies, warning when only the legacy key is set (it is ignored); a running session keeps its old cap until restarted. It reads configuration, not threads in use. Before each spawn, count threads with `list_agents` under [skill-rules.md § Codex thread reuse](skill-rules.md#codex-thread-reuse). On a V2 surface with no `close_agent`, finished threads still hold slots and `interrupt_agent` releases none. Reuse an eligible finished thread through `followup_task` before reporting a cap blocker. On V1, keep `close_agent` retirement. Set the reported budget in `kendex.settings.toml` `[env]`.
+`scripts/spawn-adapter slots` prints the effective thread cap and the `REVIEWER_SLOT_BUDGET` it implies, warning when only the ignored key is set; a running session keeps its old cap until restarted. It reads configuration, not threads in use. Before each spawn, count threads with `list_agents` under [skill-rules.md § Codex thread reuse](skill-rules.md#codex-thread-reuse). On a V2 surface with no `close_agent`, finished threads still hold slots and `interrupt_agent` releases none. Reuse an eligible finished thread through `followup_task` before reporting a cap blocker. On V1, keep `close_agent` retirement. Set the reported budget in `kendex.settings.toml` `[env]`.
 
 ## Codex Desktop app handoff
 

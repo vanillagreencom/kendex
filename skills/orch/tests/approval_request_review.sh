@@ -6,6 +6,7 @@ TEST_DIR="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 REPO_ROOT="$(cd -- "$TEST_DIR/../../.." && pwd -P)"
 source "$TEST_DIR/lib/assertions.sh"
 source "$TEST_DIR/lib/growth-state.sh"
+source "$TEST_DIR/lib/runtime-stub.sh"
 TMP_ROOT="$(mktemp -d)" || { echo 'approval_request_review: scratch=mktemp-failed' >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "approval_request_review: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'approval_request_review: scratch=resolve-failed' >&2; exit 1; }
@@ -223,7 +224,7 @@ for row in \
   [[ -z "$diagnostic" ]] || assert_contains "$(cat "$ERR")" "approval-wait: $diagnostic pr=42 repo=consumer/repo" "$label key" "$ERR"
   [[ "$diagnostic" != ready-failed ]] || assert_contains "$(cat "$ERR")" 'operation=markPullRequestReadyForReview' "$label operation" "$ERR"
 done
-# The old gate read still reaches base-unreadable under the identical fixture.
+# A GraphQL gate read still reaches base-unreadable under the identical fixture.
 scripts="$(mutant_scripts rest-base-control approval-wait)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/github"
 ln -s "$REPO_ROOT/skills/review-gate" "$TMP_ROOT/review-gate"
@@ -257,8 +258,8 @@ mutate_file "$scripts/approval-wait" 'base_json=$(gh api "repos/$REPO/pulls/$PR_
 printf 'true\n' > "$DRAFT_FILE"
 RUN_ENV=(DENY_GRAPHQL=true)
 run_action "$scripts/approval-wait" 0 --request-review --mark-ready --base-checkout "$BASE"
-assert_eq "$RC|$(cat "$OUT")|$REQUESTS|$(cat "$DRAFT_FILE")" '2||0|true' 'control: old gate read blocks draft completion' "$ERR"
-assert_contains "$(cat "$ERR")" 'approval-wait: base-unreadable pr=42 repo=consumer/repo' 'control: old gate refusal key' "$ERR"
+assert_eq "$RC|$(cat "$OUT")|$REQUESTS|$(cat "$DRAFT_FILE")" '2||0|true' 'control: a GraphQL base read blocks draft completion' "$ERR"
+assert_contains "$(cat "$ERR")" 'approval-wait: base-unreadable pr=42 repo=consumer/repo' 'control: a GraphQL base read refuses base-unreadable' "$ERR"
 scripts="$(mutant_scripts rest-refusal-control approval-wait)" || exit 1
 mutate_file "$scripts/approval-wait" 'base_json=$(gh api "repos/$REPO/pulls/$PR_NUM" 2>"$GH_ERR_FILE")' \
   'base_json=$(gh api "repos/$REPO/pulls/$PR_NUM" 2>"$GH_ERR_FILE" || printf '\''{"base":{"ref":"feature/base"}}'\'')'
@@ -330,12 +331,17 @@ run_action "$RUN" 0 "${READY_ARGS[@]}"
 assert_eq "$RC|$(cat "$OUT")|$REQUESTS" '0|fallback cause=draft|0' \
   'control: removing the publication flag breaks its ready request'
 ready_doc_args "$REPO_ROOT/skills/orch/workflows/submit-pr.md" || exit 1
-# Drive submit's real record comparison and the real request owner.
+# Drive submit's real record comparison and the real request owner. The
+# fences read and write the item record through the runtime, which the
+# stand-in answers through the store.
+mkdir -p "$TMP_ROOT/runtime"
+fixture_runtime_stub "$TMP_ROOT/runtime" "$TMP_ROOT/runtime" || exit 1
 PUBLICATION_SCRIPT="$TMP_ROOT/publication.sh"
-code="$(awk '/^[[:space:]]*COPILOT_REQUESTED_HEAD=/ {take=1} take {print} take && /^[[:space:]]*fi$/ {exit}' "$REPO_ROOT/skills/orch/workflows/submit-pr.md")"
+code="$(awk '/^[[:space:]]*if ! COPILOT_REQUESTED_HEAD=/ {take=1} take {print} take && /approval-wait/ {seen=1} take && seen && /^[[:space:]]*fi$/ {exit}' "$REPO_ROOT/skills/orch/workflows/submit-pr.md")"
 [[ -n "$code" ]] || exit 1
 publication_script() { # CODE HEAD FILE
   local code="$1"
+  code="${code//.agents\/skills\/orch\/scripts\/orch-runtime/$TMP_ROOT/runtime/orch-runtime}"
   code="${code//.agents\/skills\/orch\/scripts\//$REPO_ROOT/skills/orch/scripts/}"
   code="${code//\[PR_NUMBER\]/42}"
   code="${code//\[ISSUE_ID\]/KEN-3231}"
@@ -391,7 +397,7 @@ assert_eq "$RC|$REQUESTS|$(cat "$TRANSITION_LOG")" '0|1|request head=current-hea
   'submit still requests the later combined head' "$ERR"
 cp "$early_doc" "$TMP_ROOT/early-mutant.md"
 early_block="$(sed -n '/^[[:space:]]*\*\*Push-first first head/,/^- `open-first`/p' "$early_doc")"
-mutate_file "$TMP_ROOT/early-mutant.md" "$early_block" "$(sed 's/^[[:space:]]*env .*approval-wait /  : # &/; s/^[[:space:]]*\.agents\/skills\/orch\/scripts\/workflow-state update /  : # &/' <<<"$early_block")"
+mutate_file "$TMP_ROOT/early-mutant.md" "$early_block" "$(sed 's/^[[:space:]]*env .*approval-wait /  : # &/; s/^[[:space:]]*\.agents\/skills\/orch\/scripts\/orch-runtime state set /  : # &/' <<<"$early_block")"
 publication_script "$(early_publication_code "$TMP_ROOT/early-mutant.md")" first-head "$TMP_ROOT/early-publication.sh"
 "$STATE" --state-dir "$TMP_ROOT/state" update KEN-3231 '.pr_order = "push-first" | .pr_approval.copilot_rerequest_head = null' >/dev/null
 printf 'true\n' > "$DRAFT_FILE"
@@ -593,7 +599,7 @@ rm -- "$DRAFT_FILE" "$HEAD_FILE"
 # GitHub dismisses the previous review when another Copilot request starts.
 DISMISSED_THEN_ERROR="${HEAD_REVIEW/APPROVED/DISMISSED}"$'\n'"$ERROR_REVIEW"
 # Copilot's own answer, rather than a local file-exclusion list, decides
-# whether a second request can review anything (KEN-4440).
+# whether a second request can review anything.
 NO_FILES_REVIEW='[{"user":{"login":"copilot-pull-request-reviewer[bot]"},"commit_id":"current-head","state":"COMMENTED","body":"Copilot wasn\u0027t able to review any files in this pull request."}]'
 # A first error, the wait owner's retry, then a no-files answer leaves a
 # saved retry that must not hide Copilot's new answer.
@@ -802,7 +808,7 @@ for row in \
 done
 
 # The consumer's declared refresh identity takes the overseer route with no
-# Copilot request (KEN-3338); every other head and consumer keeps its route.
+# Copilot request; every other head and consumer keeps its route.
 REFRESH_PULL='{"head":{"ref":"kendex/refresh"},"user":{"login":"lanes-app[bot]","type":"Bot"}}'
 DECLARED='REVIEW_GATE_REFRESH_REVIEW = "overseer";REVIEW_GATE_REFRESH_BRANCH = "kendex/refresh";REVIEW_GATE_REFRESH_AUTHOR = "lanes-app[bot]"'
 refresh_case() { # GATE CALLER_COPILOT BASE_REFRESH PULL [ENV...]

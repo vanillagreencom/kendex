@@ -8,7 +8,7 @@ Pre-submission review, bounded fixes, QA, and issue audit. `review-pr [PR#]` res
 
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the checkout the paragraph above resolves `WT_PATH` from.
 
-**Standalone init** (`lifecycle: "self"`): resolve `ISSUE_ID` with `git-context issue-from-branch .`, then `workflow-state exists --json [ISSUE_ID]`; when absent, initialize with `git-context branch [WT_PATH]` and `workflow-state init [ISSUE_ID] --worktree [WT_PATH] --branch [BRANCH]`, since the round-start prune reads the worktree from state, and resolve `TRACKER`. On this path § 5 derives its QA signals from the diff scan and judgment — there is no dev artifact.
+**Standalone init** (`lifecycle: "self"`): resolve `ISSUE_ID` with `git-context issue-from-branch .`, then `orch-runtime state exists --item [ISSUE_ID]`; when absent, initialize with `git-context branch [WT_PATH]` and `orch-runtime state init --item [ISSUE_ID] --worktree [WT_PATH] --branch [BRANCH]`, since the round-start prune reads the worktree from state, and resolve `TRACKER`. On this path § 5 derives its QA signals from the diff scan and judgment — there is no dev artifact.
 
 ---
 
@@ -27,10 +27,10 @@ A non-empty `status --porcelain` stops the review. Managed with a `dev_agent`: r
 **Review depth.** Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). Bind `[REVIEW_FLOOR]` to the class a route promised this run, which [micro.md § Escape](micro.md#escape) records:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.review_floor // "micro"'
+.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /review_floor
 ```
 
-A read that exits 0 with the field unset prints `micro`, which raises no class to a reviewed depth. A nonzero exit from this read runs the full review, as a nonzero `review-depth` exit does. Otherwise use that checkout's reviewer command against `[WORKTREE_PATH]`:
+A read that exits 0 with the field unset binds `micro`, which raises no class to a reviewed depth. A nonzero exit from this read runs the full review, as a nonzero `review-depth` exit does. Otherwise use that checkout's reviewer command against `[WORKTREE_PATH]`:
 
 ```bash
 "[REVIEW_BASE_CHECKOUT]/.agents/skills/reviewer/scripts/review-depth" --base origin/[BASE_BRANCH] --head HEAD --repo [WORKTREE_PATH] --floor "[REVIEW_FLOOR]"
@@ -56,7 +56,7 @@ A failed check omits the path and carries `- decision index lookup failed for [D
 ### 1.2 Re-Review Context
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{cycles: (.cycles // 0), fixed_items: (.fixed_items // []), escalated_items: (.escalated_items // []), declined_items: (.declined_items // [])}'
+STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID])" && jq -c '.result.value | {cycles: (.cycles // 0), fixed_items: (.fixed_items // []), escalated_items: (.escalated_items // []), declined_items: (.declined_items // [])}' <<<"$STATE_READ"
 ```
 
 `cycles > 0` fills the "previous review cycle" block of the delegation from `fixed_items`, `escalated_items` and `declined_items`.
@@ -73,7 +73,7 @@ The shared reader refreshes Claude, Codex and Pi through their existing adapters
 
 An explicit Codex `--attached-launch` can return `alternate-review`: the reserve refuses an attached launch, but the same native reading still has plain room. Keep the selected full mandatory panel and run its required domains as process-owned Codex reviewers through [codex-runtime.md § Process-owned reviewers](../references/codex-runtime.md#process-owned-reviewers). Use one domain per wave. Skip attached slot sizing, thread selection and spawn on this path; continue through panel selection, existing assignment reads and § 2.1. This verdict authorizes no attached launch and no advisory replacement. An unflagged call or another harness keeps its existing verdict.
 
-A `due` verdict takes the existing parent handoff. The reader found the plain mark due or automatic compaction, could not independently prove plain room, or retains the caller's legacy reserve verdict. An ordinary checkpoint passes `--checkpoint` in its place and uses the plain mark. Preserve the returned `decision` and `source` as the handoff's `context`, and keep an unavailable decision unknown. Set `REVIEWER_SLOTS=0`. Before handoff, bind `git -C [WORKTREE_PATH] rev-parse --verify HEAD` as `[BOUND_HEAD]`, then checkpoint the committed head through the branch-publication owner:
+A `due` verdict takes the existing parent handoff. The reader found the plain mark due or automatic compaction, could not independently prove plain room, or retains the caller's reserve verdict. An ordinary checkpoint passes `--checkpoint` in its place and uses the plain mark. Preserve the returned `decision` and `source` as the handoff's `context`, and keep an unavailable decision unknown. Set `REVIEWER_SLOTS=0`. Before handoff, bind `git -C [WORKTREE_PATH] rev-parse --verify HEAD` as `[BOUND_HEAD]`, then checkpoint the committed head through the branch-publication owner:
 
 ```bash
 .agents/skills/orch/scripts/worktree-push --checkpoint --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID] --set-upstream
@@ -92,7 +92,7 @@ A handoff resets no counters, validation receipts, findings/dispositions or fail
 `[AGENTS]` is the caller's `agents` context when provided. Otherwise it is the first-cycle panel: the reviewers this harness exposes whose domains the whole diff, `origin/[BASE_BRANCH]...HEAD`, or the issue's Done-when touches, by [§ 4's scoped-panel rule](#bounded-re-review). Read the Done-when first: `linear.sh issues get [ISSUE_ID]` `.description` for Linear, `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body` for GitHub. A failed read, or a `pr-N` key, selects from the diff alone, and `[PANEL_REASON]` says so. On a fresh § 1 entry, record the panel before any spawn (a proved continuation retains its original panel), `[PANEL_REASON]` naming the domains touched, or `caller panel` for a caller's `agents`:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] first_panel '{"agents": [PANEL_AGENTS_JSON], "reason": "[PANEL_REASON]"}'
+.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /first_panel '{"agents": [PANEL_AGENTS_JSON], "reason": "[PANEL_REASON]"}'
 ```
 
 Do not hardcode a count or a list. Where the harness exposes `reviewer-error`, a diff owning a subprocess, a transport (stream, socket, SSE), or a teardown path always carries it: relevance never drops it from the panel. With no reviewers available, skip to § 5 with verdict `pass`.
@@ -106,7 +106,7 @@ For attached review only, resolve the reviewer mode per [references/skill-rules.
 Check for a recorded runtime demotion before choosing persistent mode:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{observed: (.reviewer_slots_observed // 0), live: (.child_sessions // {} | [to_entries[] | select((.value.status // "active") == "active")] | length)}'
+STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID])" && jq -c '.result.value | {observed: (.reviewer_slots_observed // 0), live: (.child_sessions // {} | [to_entries[] | select((.value.status // "active") == "active")] | length)}' <<<"$STATE_READ"
 ```
 
 On Codex MultiAgentV2, [skill-rules.md § Codex thread reuse](../references/skill-rules.md#codex-thread-reuse) replaces the active-only count above: read `spawn-adapter slots` and `list_agents`, counting every held thread and the primary once. Set `REVIEWER_SLOTS` to eligible finished reviewer threads plus `max(0, effective_cap - held threads)`. Bound the wave by a positive `reviewer_slots_observed` and by a nonzero configured budget after the primary and other active work. A zero-sized wave takes the held-thread wait in Codex thread reuse. Use wave mode when the panel exceeds this size; otherwise use persistent mode. Re-read before each spawn. On other surfaces, `observed > 0` → wave mode at that size. Otherwise a budget of `0` is persistent mode, and a budget above `0` gives `REVIEWER_SLOTS = budget - 1 - live` (minimum 1; the `1` is this primary session), with wave mode when `[AGENTS]` exceeds it. A `child_sessions` record with no `status` counts as active. Recompute at every § 2 entry.
@@ -114,7 +114,7 @@ On Codex MultiAgentV2, [skill-rules.md § Codex thread reuse](../references/skil
 Read existing reviewer state before any spawn:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{review_agents: (.review_agents // []), review_agent_ids: (.review_agent_ids // {}), review_agent_runtime_types: (.review_agent_runtime_types // {})}'
+STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID])" && jq -c '.result.value | {review_agents: (.review_agents // []), review_agent_ids: (.review_agent_ids // {}), review_agent_runtime_types: (.review_agent_runtime_types // {})}' <<<"$STATE_READ"
 ```
 
 For `alternate-review`, use the process ownership facts in existing status and `remaining`/`traps` prose. Retain accepted and attempted assignments, including attached work already assigned. Select only never-launched required domains for a new process wave. Keep canonical names in `review_agents`; process-owned domains have no `review_agent_ids` or attached runtime-type entry. Never put a process number in either map. Missing runner, CLI, native source or launch selection stops this route with that exact cause; report it to the caller.
@@ -139,7 +139,7 @@ A failure, `none`, or empty output sets `EXTERNAL_REVIEW_REQUESTED=false`; anyth
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json
-.agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] review_delegated_at
+.agents/skills/orch/scripts/orch-runtime state set-now --item [ISSUE_ID] /review_delegated_at
 ```
 
 `[REVIEW_ROUND_ID]` is the reply's `.result.report.round_id`. The one write mints the token, supersedes the open review stage and opens the new one ([workflow-state.md](../schemas/workflow-state.md) `stages`); § 3.3 closes it.
@@ -149,7 +149,7 @@ A failure, `none`, or empty output sets `EXTERNAL_REVIEW_REQUESTED=false`; anyth
 **Attached review only, through the active-set write below.** Select an eligible finished thread or spawn each reviewer in `REVIEWERS_TO_LAUNCH` under [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse), resolving fresh Codex spawn parameters with `scripts/spawn-adapter spawn <reviewer-name>`. In **wave mode**, restrict this section to `[WAVE]` — the first up-to-`REVIEWER_SLOTS` reviewers in `[AGENTS]` not yet in `review_wave_done` — and reset the tracking on fresh entry from § 2.1 (skip the reset on a proved original-batch continuation or when re-entering from § 3.2 for the next wave of the same cycle). A continuation selects its wave only from the never-launched launch subset above, retaining the full required panel:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_wave_done '[]'
+.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /review_wave_done '[]'
 ```
 
 On V1, a closed reviewer has no session to reuse: recreate it fresh. On V2, retirement keeps the thread allocated: reuse an eligible finished reviewer through `followup_task` with the complete delegation below. Write state for the assigned wave under canonical reviewer names. If a spawn fails with the runtime's thread-limit error, do not retry it and do not tear down the reviewers that did spawn — continue with those, fold the failed reviewer into a later wave, and use that smaller size for the rest of the cycle. Record the demotion in one write, counting assigned reusable threads as well as successful fresh spawns in `[OBSERVED_SPAWN_COUNT]` on V2. On a proved continuation, preserve `review_wave_done` instead of the reset in this fresh-batch write:
@@ -222,7 +222,7 @@ mkdir -p [WORKTREE_PATH]/tmp
 Execute the exact command printed after `wait:` and repeat it per its exit code (`second-opinion --help`) until terminal, processing other reviewer events in between. When terminal, validate its artifact like a reviewer JSON, with `review_delegated_at` as the freshness boundary (the § 3.1 sweep covers a silent finisher):
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .review_delegated_at
+.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /review_delegated_at
 .agents/skills/orch/scripts/review-artifact-check --file "$EXTERNAL_OUTPUT" [WORKTREE_PATH] [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND] --issue [ISSUE_ID]
 ```
 
@@ -237,7 +237,7 @@ Execute the exact command printed after `wait:` and repeat it per its exit code 
 `OUTSTANDING` is the active set plus `{external}` when requested, excluding only accepted returns or execution outcomes already resolved under this section. On a continuation, keep every required domain accounted for as accepted, attempted/unread, never-launched/unread or unresponsive; an unread domain prevents advancing past collection until its normal acceptance or deadline route resolves it. A reviewer completes **only** when its on-disk artifact validates — a return message carrying `Verdict:`/`File:` is never sufficient:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .review_delegated_at
+.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /review_delegated_at
 .agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT] [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND] --issue [ISSUE_ID]
 ```
 
@@ -254,7 +254,7 @@ Match `artifact.agent` to the preserved canonical assignment and required panel.
 Run the applicable check on every return message and every watchdog sweep. `ok == true` → drop the agent from `OUTSTANDING` and append its path, carrying the result's `repeats` to § 4; `reason == "valid_undermeasured"` → carry the result's `measurement_failed` string into the review summary beside that verdict, with `measurement_suppressed` when present, and never present the domain as clean.
 
 ```bash
-.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] json_paths "[PATH]"
+.agents/skills/orch/scripts/orch-runtime state append --item [ISSUE_ID] /json_paths "[PATH]"
 ```
 
 Wave mode uses this combined write instead, then shuts that reviewer's session down:
@@ -295,7 +295,7 @@ Sweep the filesystem on every wake. Per-agent deadline from `review_delegated_at
 Wave mode also shuts an `unresponsive` reviewer down and records it, so the slot frees and the reviewer does not relaunch this cycle:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] review_wave_done "[AGENT]"
+.agents/skills/orch/scripts/orch-runtime state append --item [ISSUE_ID] /review_wave_done "[AGENT]"
 ```
 
 `OUTSTANDING` empty (`unresponsive` counts as execution resolved, never accepted) → § 3.3 in persistent mode only when no never-launched required domain remains unread; otherwise return to § 2 for admission of that subset. In wave mode, return to § 2.2 for the next wave while any reviewer in `[AGENTS]` is missing from `review_wave_done`, else § 3.3. Every process-owned next wave passes its Process launch admission before the runtime command; returning here skips neither admission nor the preserved batch ownership. A proved continuation keeps its original batch across these launches; ordinary new waves keep § 2.2's fresh-batch rule.
@@ -376,10 +376,10 @@ Omit empty categories. Read `patched_causes` and `frozen_causes` first, with the
 For ordinary items, the default `REVIEW_MAX_CYCLES` of 1 gives one fix round and one re-review of that fix diff, then § 5 and submit. At 0 it gives one fix round, accepted on its validation, and no re-review. A project setting raises it for a standard item; [small.md](small.md) holds a small item to 1; micro runs none. A blocker open at the cap takes the dispositions below. The cap decides before any delegation:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state cap REVIEW_MAX_CYCLES --issue [ISSUE_ID]
+.agents/skills/orch/scripts/orch-runtime state cap REVIEW_MAX_CYCLES --item [ISSUE_ID]
 ```
 
-It prints `below [COUNT]/[CAP]` or `at-cap [COUNT]/[CAP]`, counting `rereview_cycles`, never `cycles`. At 0 it reads `below` until Fix Delegation sets `review_fix_round`, whatever the round's items come to. Apply the own-regression rule below before routing on this result. Below the cap → Fix Delegation. At it the fix loop ends here, except for the `fix set`'s `structural-close` items and the correction or cut below.
+Its reply's `verdict` is `below` or `at-cap`, with `count` and `limit`, counting `rereview_cycles`, never `cycles`. At 0 it reads `below` until Fix Delegation sets `review_fix_round`, whatever the round's items come to. Apply the own-regression rule below before routing on this result. Below the cap → Fix Delegation. At it the fix loop ends here, except for the `fix set`'s `structural-close` items and the correction or cut below.
 
 **A fix round's own regression.** A blocker in lines the last fix round's diff wrote (`pre_delegate_sha` to head), which no earlier review reported, gets one correction past the cap per pull request. Before selecting it, read the round files `tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json` named by the `round_id` of each `dev` or `fix` stage, including rounds from other review paths. A recorded `Correction: own-regression [BOUNDARY_SHA]` line in `items[].text` means this pull request has used its correction. Unmarked rounds, including ordinary cap-zero and `structural-close` rounds, consume none. If no correction is recorded, add these blockers to the `fix set`. Retain the new batch's boundary from the worktree head before Fix Delegation overwrites `pre_delegate_sha`, and append that correction line to each correction item's existing text. All delegated domain groups carry the same boundary and count as one correction. Complete the whole batch before re-review. Bounded Re-Review identifies that batch by the correction boundary matching `pre_delegate_sha` and takes `verification_panel` before its cap-zero exit. A later such blocker in the same pull request ends fix rounds, even below the cap: add a cut item to the `fix set` where the Done-when does not need its code; otherwise escalate it below and name it in the lane status for the overseer's [design review](../references/design-review.md). On this terminal pass, route as at the cap. Retain only structural-close and cut items in the `fix set`. Every other outstanding blocker takes the escalation write below.
 
@@ -398,8 +398,8 @@ It prints `below [COUNT]/[CAP]` or `at-cap [COUNT]/[CAP]`, counting `rereview_cy
 **Skip if** the `fix set` is empty. Findings that leave `items` are never dropped: declined per [finding-disposition](../../reviewer/references/finding-disposition.md) when a cut removed their surface, recorded in `escalated_items` when § 8's audit is to file them. Never fix as the main agent.
 
 ```bash
-.agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WORKTREE_PATH]
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] review_fix_round true
+.agents/skills/orch/scripts/orch-runtime state set-git-head --item [ISSUE_ID] /pre_delegate_sha --worktree [WORKTREE_PATH]
+.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /review_fix_round true
 ```
 
 **Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 4 re-review` with context `worktree`, `lifecycle: "managed"`, `dev_agent`, `issue_id`, `items` (the `fix set` above, each formatted per [dev-round.md § Item text](../schemas/dev-round.md#item-text)), and `source: pr-review`.
@@ -409,7 +409,7 @@ It prints `below [COUNT]/[CAP]` or `at-cap [COUNT]/[CAP]`, counting `rereview_cy
 Apply [At The Cap](#at-the-cap)'s correction verification route first. For every other § 4 fix round or a submit-pr cut, cap 0 (bare `cap REVIEW_MAX_CYCLES` prints `0`) → § 5, accepted on validation. Any other entry, a § 7 QA round included, scopes re-review to what the round changed. Read the round's diff to decide:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .pre_delegate_sha
+.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /pre_delegate_sha
 .agents/skills/github/scripts/git-diff-summary -C [WORKTREE_PATH] [PRE_SHA]
 ```
 
@@ -421,10 +421,10 @@ Apply [At The Cap](#at-the-cap)'s correction verification route first. For every
 The scoped panel is the reviewers whose domains the fix diff touches, the reviewers whose defect classes the round fixed (the blocker finders), and external review when available. A domain counts when the fix diff changes code or text that reviewer reads, not when the item's first diff did; omit reviewers with nothing in the fix diff to read. Record the scoping on `verification_panel` for the correction route [At The Cap](#at-the-cap) selects. Otherwise use `rereview_panel` below while budget remains, or `verification_panel` for the past-budget verification this section permits:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] rereview_panel '{"agents": [PANEL_AGENTS_JSON], "reason": "[DOMAINS_TOUCHED] + blocker finders + external"}'
+.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /rereview_panel '{"agents": [PANEL_AGENTS_JSON], "reason": "[DOMAINS_TOUCHED] + blocker finders + external"}'
 ```
 
-A panel holding every `first_panel` reviewer adds `"domain_reasons": {"[AGENT]": "[WHY THE FIX DIFF CONCERNS THIS DOMAIN]", ...}` with one entry per `first_panel` reviewer; `workflow-state` refuses a full copy without it as `panel-copy`.
+A panel holding every `first_panel` reviewer adds `"domain_reasons": {"[AGENT]": "[WHY THE FIX DIFF CONCERNS THIS DOMAIN]", ...}` with one entry per `first_panel` reviewer; the runtime refuses a full copy without it as `panel-copy`.
 
 **The loop ends** when two consecutive cycles surface no new blocker, at this section's cap-0 exit, or when the At The Cap check ends it (the `rereview_panel` write raises `rereview_cycles`, refusing at the cap). The cap bounds NEW cycles, never verification, apart from that exit: a fix diff no reviewer has seen gets one focused verification pass, the `rereview_panel` rule scoped to that diff, and this loop's last fix round has budget for it; past the budget such a pass takes `verification_panel` instead, which the cap does not gate. That pass's items re-enter § 4, where the `fix set` decides what still delegates. In wave mode the panel replaces `[AGENTS]` for the cycle and wave mechanics apply unchanged.
 
@@ -447,7 +447,7 @@ Then record the QA routing. One command reads the dev round's `qa_labels`, scans
 **Judgment** — you may add or drop a signal with a one-line reason: run the same command again with `--add [SIGNAL]` or `--drop [SIGNAL]`, each followed by its own `--reason "[ONE_LINE]"`. Put every judgment in that one run: a later run rescans and replaces the record, keeping only its own judgments. Drop a signal when the triggering code is trivial or test-only; never drop one for schedule pressure. `skip_qa` true → set it false, record `qa_decision` with `"rationale":"user skip"`, → § 7:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] qa_decision '{"signals":[],"agents":{},"rationale":"user skip"}'
+.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /qa_decision '{"signals":[],"agents":{},"rationale":"user skip"}'
 ```
 
 Signals empty → § 7. Otherwise → § 6.
@@ -502,7 +502,7 @@ On the way out, and before § 8, disposition every item still outstanding — ev
 ## 8. Summary And Issue Audit
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{json_paths: (.json_paths // []), fixed: (.fixed_items // []), escalated: (.escalated_items // []), declined: (.declined_items // [])}'
+STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID])" && jq -c '.result.value | {json_paths: (.json_paths // []), fixed: (.fixed_items // []), escalated: (.escalated_items // []), declined: (.declined_items // [])}' <<<"$STATE_READ"
 ```
 
 Empty `json_paths` → report "No review items" and → § 9. Otherwise read every JSON, collect the `category == "issue"` suggestions, and deduplicate by (location, description), keeping the first and noting all sources.
@@ -563,7 +563,7 @@ Apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination
 Record each created issue:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] audit_issues_created "[CREATED_ISSUE_ID]"
+.agents/skills/orch/scripts/orch-runtime state append --item [ISSUE_ID] /audit_issues_created "[CREATED_ISSUE_ID]"
 ```
 
 **Children created to be worked here** (Linear only). When the audit created `make_child` issues under `[ISSUE_ID]`, first record `[ISSUE_ID]` as their in-PR bundle root, the marker dev-start's Ancestor gate and every container reader read ([skill-rules.md § Coordination](../references/skill-rules.md#coordination)): read its description with `issues get [ISSUE_ID]`, add the line `**In-PR bundle**: yes` under its `## Filing record` heading, write the full description to `[WORKTREE_PATH]/tmp/in-pr-bundle-[ISSUE_ID].md`, and save it with `issues update [ISSUE_ID] --description-file [WORKTREE_PATH]/tmp/in-pr-bundle-[ISSUE_ID].md`. Then delegate them immediately via `⤵ workflows/dev-start.md § 1-4` with context `worktree`, `lifecycle`: inherit, and `issue_id`. The managed call must pass dev-start's § 2 live Ancestor gate before delegation. If delegation is skipped, including a gate refusal, FIRST remove that line the same way and detach from `[ISSUE_ID]` each `audit_issues_created` entry whose live `issues get [CHILD_ID]` reports `parent_id` `[ISSUE_ID]`, or `merge-pr.md` cascade-Dones them. Each detach:
@@ -582,10 +582,10 @@ After delegating children, apply the § 4 bounded re-review rule to their diff.
 - **`open-first`**: keep § 1's pending line, and write no verdict line: this review's fix round is still local, and the overseer must not approve or request Copilot on the head it replaces. Record that this review returned, which lets [submit-pr.md](submit-pr.md) § 2 run its triage, write this verdict once its push lands, and arm the pull request:
 
   ```bash
-  .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_order open-first-returned
+  .agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /pr_order open-first-returned
   ```
 
-- **`push-first`**: keep the pending review line until `[VERDICT]` is `pass`; it holds overseer approval while submit § 2 step 5 arms nothing. The early request already marked the PR ready. Only a `pass` records `push-first-returned` with `workflow-state set [ISSUE_ID] pr_order push-first-returned`. Submit publishes the combined fixes and requests each unrecorded head before it arms auto-merge.
+- **`push-first`**: keep the pending review line until `[VERDICT]` is `pass`; it holds overseer approval while submit § 2 step 5 arms nothing. The early request already marked the PR ready. Only a `pass` records `push-first-returned` with `orch-runtime state set --item [ISSUE_ID] /pr_order push-first-returned`. Submit publishes the combined fixes and requests each unrecorded head before it arms auto-merge.
 
 - **Any other value, or absent**: in a lane whose brief names a status file, write its review line, `Review: [VERDICT]`. Record no workflow state: a review-first lane, a re-submit review and a trivial-diff skip leave `pr_order` as they found it.
 

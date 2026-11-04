@@ -108,7 +108,7 @@ message() { # REASON FIELD=VALUE...
     prepare-stop-failed) printf '%s\n' 'The background launch job the record names could not be stopped. Close-out changed nothing else.' ;;
     validate-stop-failed) printf '%s\n' "A validation run in the lane's worktree could not be ended. The window and record are unchanged; dev-validate-run's own words are on the lines above this one." ;;
     item-files-failed) printf '%s\n' "The item's files in the state directory could not all be removed. The host, window and record are unchanged, and a second close retries the removal. workflow-state's own words are on the lines above this one." ;;
-    item-files-kept) printf '%s\n' "The item is not finished, or its tracker did not answer, so its files in the state directory stay for a relaunch. cause is open for an item the tracker holds open, and otherwise names the read that did not answer, as tracker-read-failed does. How long they stay is the prune's keep list, as workflow-state prune --help states." ;;
+    item-files-kept) printf '%s\n' "The item is not finished, or its tracker did not answer, so its files in the state directory stay for a relaunch. cause is open for an item the tracker holds open, and otherwise names the read that did not answer, as tracker-read-failed does. They stay until a later close-out of the item; the retention duty takes only its workflow state, once its lane record's end is past ORCH_RECORD_RETENTION_DAYS and its worktree is gone or kept on purpose, as workflow-state.md § Prune states." ;;
     merged-unjudged) printf '%s\n' "The record carries no cycle of a merge, and worktree merged could not say whether the item's pull request merged. status is its exit, its own words on the lines above this one; cause=worktree-missing is a worktree skill not installed beside this one, and cause=stderr-unsaved a mktemp that could not make the file its words are read from. The host close goes on without --merged, so the provider keeps the whole archive." ;;
     helper-missing) printf '%s\n' 'The required helper is not executable. Close-out changed nothing.' ;;
     park-refused)
@@ -385,8 +385,10 @@ null or absent; the record wins where it carries a value, and an option that
 contradicts one refuses as record-invalid. An exited lane closes without any
 of them, but its files leave the state directory only where its tracker
 answers, so a record carrying no tracker or repository takes --tracker or
---repo on that close; otherwise the files stay for as long as the prune holds
-the item live.
+--repo on that close; otherwise the files stay until a later close-out of the
+item, and the retention duty takes only its workflow state, once its lane
+record's end is past ORCH_RECORD_RETENTION_DAYS and its worktree is gone or
+kept on purpose, as workflow-state.md § Prune states.
 
 A field neither the record nor an option carries is read from the lane where
 the lane answers it: tracker from the item key, linear for a tracker
@@ -485,8 +487,8 @@ fi
 [[ "$count" == 1 ]] || { message record-missing "item=$ITEM" "count=$count" >&2; exit 1; }
 record="$(jq -c --arg item "$ITEM" '.[] | select(.item == $item)' <<<"$records")" \
   || { message record-invalid "item=$ITEM" "field=record" >&2; exit 1; }
-# A lane with an orch-runtime intent open is the runtime's to move (decision
-# 44): this writer refuses rather than moving the record out from under that
+# A lane with an orch-runtime intent open is the runtime's to move: this
+# writer refuses rather than moving the record out from under that
 # effect. The runtime judges which intents are open; this script only asks,
 # and only where the state holds any intent row, so a fleet the runtime never
 # wrote into needs no runtime binary to close a lane.
@@ -730,8 +732,8 @@ tracker_terminal() {
   TRACKER_CAUSE=""
   if [[ "$TERMINAL_MODE" != close ]]; then
     # A resumed sandbox can be stopped or running while its PR is still open.
-    # The record owns that wait independently of its provider status. A legacy
-    # parked record with no identity still refuses rather than skipping it.
+    # The record owns that wait independently of its provider status. A parked
+    # record with no identity still refuses rather than skipping it.
     pending_pr="$(jq -c 'if .parked != null then .parked elif .pending_pr != null then .pending_pr elif .status == "parked" then {} else null end' <<<"$record")" \
       || { TRACKER_CAUSE=parked-record-invalid; return 2; }
   fi

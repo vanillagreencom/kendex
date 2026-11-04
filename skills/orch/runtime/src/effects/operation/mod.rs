@@ -15,9 +15,9 @@
 //! and `Stopped` carry evidence this module's own readers produced. Every
 //! write a handle makes is made under the owner the intent recorded when
 //! the handle opened: a write the store finds under another owner is
-//! yielded to that claimant and the handle acts on nothing (decision 124h
-//! (32)). A terminal outcome is built only by consuming the handle:
-//! `settle`, `hold`, `refuse` and `publish`; nothing else constructs one,
+//! yielded to that claimant and the handle acts on nothing. A terminal
+//! outcome is built only by consuming the handle: `settle`, `hold`,
+//! `refuse` and `publish`; nothing else constructs one,
 //! and a settlement needs every obligation discharged. `apply_outcome` is
 //! the one path from an outcome to the store. The effect files' other
 //! entries to the store, beside the handle's own writes, are the few this
@@ -25,7 +25,7 @@
 //! `adopt_controller`'s one adoption write, `run_job`'s claim, the
 //! owed-notice walk's marks, and `load`, their one read.
 //!
-//! What the guard is for (decision 129). The fleet record tells the truth
+//! What the guard is for. The fleet record tells the truth
 //! about what is open, owned, free and finished, so an overseer or the
 //! scheduler never acts on a guess; the ledger above holds that for the
 //! code that acts. The guard against a developer's accidental call past the
@@ -88,61 +88,58 @@ use crate::ops::{
 };
 use crate::schedule::Clock;
 use crate::state::{
-    self, EffectOp, Intent, LaneKeys, Obligation, OpenedPane, Overseer, Owner, Phase, Role,
+    self, CloseGround, EffectOp, Intent, LaneKeys, Obligation, OpenedPane, Overseer, Owner, Phase,
+    Role,
 };
 
-/// The operation handle: the one owner of the intent's recorded set for this
-/// run (decision 120 (1)).
 pub(in crate::effects) struct Operation<'a> {
     run: &'a Run<'a>,
     intent_id: String,
     op: EffectOp,
     /// The lane's stamp the intent was written at, carried on a lane
-    /// intent's terminal with the set's lane keys (decision 124d (14)).
+    /// intent's terminal with the set's lane keys.
     lane_since: Option<String>,
     phase: Option<Phase>,
     /// The set as this handle read it, carrying the store's `revision` of
     /// that read, mirrored after each of the handle's own writes: the one
     /// value named revision, which every write sends back so the store
     /// refuses `set-replaced` where another handle or process replaced the
-    /// set meanwhile (decision 124f (26)).
+    /// set meanwhile.
     obligations: Obligations,
     /// The harness kind the target runs under this intent, recorded on every
-    /// handle acquired under the harness role (decision 124g (29)): a lane
+    /// handle acquired under the harness role: a lane
     /// close's from the lane record at the bootstrap, a lane launch's from
     /// its selection. `None` on a controller intent, whose handles are the
     /// runner's and the predecessor's.
     harness: Option<Harness>,
-    /// The identities this run read stale (decision 68): the only ones a
+    /// The identities this run read stale: the only ones a
     /// stale count may discharge, since that count is this run's own second
     /// reading.
     stale: Vec<Identity>,
     /// The owner the intent recorded when this handle opened, what every
     /// write of the handle is made under: a write the store finds under
     /// another owner, a job's claim landed since, is yielded to that owner
-    /// and the handle acts on nothing (decisions 124b, 124h (32)). `None`
-    /// on an intent recorded before the owner existed, whose writes are
-    /// unconditional.
+    /// and the handle acts on nothing. `None` on an intent that records no
+    /// owner, whose writes are unconditional.
     while_owner: Option<Owner>,
     /// The clock every wait of the handle reads: the run's, the one
-    /// `main.rs` builds (decision 121, Q16).
+    /// `main.rs` builds.
     clock: &'a dyn Clock,
 }
 
 impl<'a> Operation<'a> {
-    /// Open the handle on `intent`: the recorded set where one stands, else
-    /// the bootstrap of an intent written before the field existed, written
-    /// at once (decision 120 (1)). A launch or succession bootstraps from its
-    /// phase; a lane close from the lane's launch record, its wake and the
-    /// validation stop a last outcome recorded `validate: stop-failed` for
-    /// (a close that runs owes it from its start, through
-    /// [`Operation::owe_validation`]); a controller stop from the overseer
-    /// record.
+    /// Open the handle on `intent`: the recorded set where one stands, else the
+    /// bootstrap of an intent that records no set, written at once. A launch or
+    /// succession bootstraps from its phase; a lane close from the lane's
+    /// launch record, its wake and the validation stop a last outcome recorded
+    /// `validate: stop-failed` for (a close that runs owes it from its start,
+    /// through [`Operation::owe_validation`]); a controller stop from the
+    /// overseer record.
     pub(in crate::effects) fn open(run: &'a Run<'a>, intent: &Intent) -> Result<Operation<'a>> {
         let recorded = Obligations::recorded(intent)?;
         let bootstrapped = recorded.is_none();
         // The harness kind is the set's where one is recorded; the target's
-        // record is read for it only at a bootstrap (decision 124g (29)).
+        // record is read for it only at a bootstrap.
         let (obligations, harness) = match recorded {
             Some(obligations) => {
                 let harness = obligations.recorded_harness();
@@ -171,8 +168,8 @@ impl<'a> Operation<'a> {
         Ok(operation)
     }
 
-    /// The harness kind the intent's target runs, read once at open
-    /// (decision 124g (29)): a lane close's from the lane record, a lane
+    /// The harness kind the intent's target runs, read once at open: a
+    /// lane close's from the lane record, a lane
     /// launch's from the intent's selection; a controller intent names none.
     fn harness_of(run: &Run, intent: &Intent) -> Result<Option<Harness>> {
         Ok(match intent.op {
@@ -190,9 +187,9 @@ impl<'a> Operation<'a> {
         })
     }
 
-    /// The harness kind the set records under the harness role (decision
-    /// 124g (29)): what names the processes below a recorded root that a
-    /// stop on this set may signal, never the harness the target runs now.
+    /// The harness kind the set records under the harness role: what names
+    /// the processes below a recorded root that a stop on this set may
+    /// signal, never the harness the target runs now.
     pub(in crate::effects) fn recorded_harness(&self) -> Option<Harness> {
         self.obligations.recorded_harness()
     }
@@ -214,13 +211,12 @@ impl<'a> Operation<'a> {
         Operation::principal(self.op)
     }
 
-    /// The set's revision as this handle last read or wrote it.
     #[cfg(test)]
     fn revision(&self) -> u64 {
         self.obligations.record().revision
     }
 
-    /// The lane keys a lane intent's terminal carries (decision 124d (14)):
+    /// The lane keys a lane intent's terminal carries:
     /// the stamp and the harness identity and pane recorded under the
     /// harness role. `None` on a controller intent.
     fn lane_keys(&self) -> Option<LaneKeys> {
@@ -235,7 +231,7 @@ impl<'a> Operation<'a> {
     }
 
     /// Whether `lane` moved under this intent: the one judgement the store's
-    /// lane arm applies too, on the same keys (decision 124d (14)).
+    /// lane arm applies too, on the same keys.
     pub(in crate::effects) fn lane_moved(&self, lane: &state::Lane) -> bool {
         match self.lane_keys() {
             Some(keys) => ops::lane_moved(lane, &keys),
@@ -244,8 +240,8 @@ impl<'a> Operation<'a> {
     }
 
     /// The identities an earlier handle of this same request read stale: a
-    /// reading this handle makes of one counts no second time (decision
-    /// 124e (22)); decision 68's second reading is a later request's.
+    /// reading this handle makes of one counts no second time; a second
+    /// reading is a later request's.
     pub(in crate::effects) fn already_read_stale(&mut self, stale: &[Identity]) {
         for id in stale {
             if !self.stale.contains(id) {
@@ -286,35 +282,34 @@ impl<'a> Operation<'a> {
     }
 
     /// Whether the record says this intent signalled anything, on this run or
-    /// an earlier one (decision 115 (A)).
+    /// an earlier one.
     pub(in crate::effects) fn signalled(&self) -> bool {
         self.obligations.record().signalled
     }
 
     /// Whether the record never acquired a handle at all: nothing stands and
-    /// nothing was ever discharged. Decision 68's one documented
-    /// `unconfirmed` cell, a record with neither identity nor pane, closed by
-    /// hand; a set that recorded any handle settles by what it reads.
+    /// nothing was ever discharged. Such a record, with neither identity nor
+    /// pane, stays `unconfirmed` and is closed by hand; a set that recorded
+    /// any handle settles by what it reads.
     pub(in crate::effects) fn recorded_nothing(&self) -> bool {
         let record = self.obligations.record();
         record.standing.is_empty() && record.discharged.is_empty()
     }
 
-    /// Whether the worktree's validation stop is still owed.
     pub(in crate::effects) fn owes_validation(&self) -> bool {
         self.obligations.stands(&Obligation::Validation)
     }
 
     /// A close about to run owes the worktree's validation runs to orch's own
-    /// runner's answer (decision 108 (7)): acquired before the first signal.
+    /// runner's answer: acquired before the first signal.
     pub(in crate::effects) fn owe_validation(&mut self) -> Result<()> {
         self.add_as(Obligation::Validation, Role::Validation)
     }
 
     /// A close about to run owes the lane's local worktree, the record's
     /// `mail_root` (`lane-close`: a local lane's mail root is its worktree),
-    /// to its own release or keep (decision 128 (9)): acquired before the
-    /// first signal. A hosted lane's worktree is its host's (decision 57),
+    /// to its own release or keep: acquired before the
+    /// first signal. A hosted lane's worktree is its host's,
     /// except a `claude-cloud` lane's, whose `mail_root` is the item's
     /// worktree on this machine (the `lanes` row of the schema), the one
     /// worktree `lane-close` removes for a hosted lane; a record naming
@@ -336,7 +331,7 @@ impl<'a> Operation<'a> {
 
     /// Whether the predecessor's handles the overseer record names were
     /// acquired by this intent: retirement begun, on this run or an earlier
-    /// one (decision 120 (2)).
+    /// one.
     pub(in crate::effects) fn retirement_begun(&self, overseer: &Overseer) -> bool {
         let handles = Obligations::of_overseer(overseer);
         let record = self.obligations.record();
@@ -346,18 +341,17 @@ impl<'a> Operation<'a> {
             .any(|handle| record.holds(handle))
     }
 
-    /// Write the intent's progress: the phase where it stands and the set as
-    /// it stands, before the action the caller is about to take (decisions
-    /// 62, 115 (A), 120 (2)). The set names the revision this handle read it
-    /// at, and the store refuses `set-replaced` where the record holds
-    /// another (decision 124f (26)); the revision the store assigned is
-    /// mirrored, so the next write names the set it replaces. A write the
-    /// store yielded to the intent's claimant, a job that claimed since this
-    /// handle opened, is the error `intent-yielded` naming that owner
-    /// (decision 124h (32)): every acting method's first write is this one,
-    /// so the method stops here and acts on nothing, and the caller hands
-    /// the claimant's state back through its own route. An unchanged set
-    /// the recorded owner still holds is accepted, not yielded.
+    /// Write the intent's progress: the phase where it stands and the set as it
+    /// stands, before the action the caller is about to take. The set names the
+    /// revision this handle read it at, and the store refuses `set-replaced`
+    /// where the record holds another; the revision the store assigned is
+    /// mirrored, so the next write names the set it replaces. A write the store
+    /// yielded to the intent's claimant, a job that claimed since this handle
+    /// opened, is the error `intent-yielded` naming that owner: every acting
+    /// method's first write is this one, so the method stops here and acts on
+    /// nothing, and the caller hands the claimant's state back through its own
+    /// route. An unchanged set the recorded owner still holds is accepted, not
+    /// yielded.
     fn write(&mut self) -> Result<()> {
         let applied = ops::apply(
             self.run.path,
@@ -396,11 +390,10 @@ impl<'a> Operation<'a> {
     }
 
     /// Record the signal before it is sent: from the first no run of this
-    /// intent can refuse (decision 115 (A)). The write is made on every
+    /// intent can refuse. The write is made on every
     /// signal, the first or a later one, since it is the conditional write
     /// that proves this handle's set is still the record's: a set another
-    /// handle replaced refuses `set-replaced` here and nothing is signalled
-    /// (decision 124f (26)).
+    /// handle replaced refuses `set-replaced` here and nothing is signalled.
     fn signal(&mut self) -> Result<()> {
         self.obligations.spend();
         self.write()
@@ -434,7 +427,7 @@ impl<'a> Operation<'a> {
     }
 
     /// The predecessor's recorded handles become obligations of the intent
-    /// at the start of its retirement (decisions 115 (A), 120 (2)): written
+    /// at the start of its retirement: written
     /// before the stop or the close that follows.
     pub(in crate::effects) fn begin_retirement(&mut self, overseer: &Overseer) -> Result<()> {
         self.obligations.extend(Obligations::of_overseer(overseer));
@@ -518,7 +511,7 @@ impl<'a> Operation<'a> {
         .read_stale(stale)
     }
 
-    /// The publication (decision 115 (A)): the runner's pane and identity
+    /// The publication: the runner's pane and identity
     /// pass to the record it publishes; everything else the set names, the
     /// predecessor's handles included, must already be discharged by its own
     /// evidence, else the handle comes back with what stands, boxed since it
@@ -574,22 +567,22 @@ impl<'a> Operation<'a> {
 }
 
 /// The record-outcome request an effect's outcome builds, applied on the
-/// same file as a second committed transition: the one recording boundary
-/// (decision 111 (A) (4)). The set the effect left is written first where
-/// the record does not hold it yet (decision 115 (A)); a job's failure
+/// same file as a second committed transition: the one recording boundary.
+/// The set the effect left is written first where the record does not hold
+/// it yet; a job's failure
 /// travels with the outcome as the notice it owes, recorded `owed` by the
 /// outcome's own write, and is sent only once that write stands under this
-/// owner, then marked (decisions 124d (17), 124f (28)), so an owner that
+/// owner, then marked, so an owner that
 /// moved announces nothing and the claimant's state is the answer, and a
 /// notice a crash left owed is sent by the next outcome or reconcile; an
 /// intent the outcome closes takes its pane's receipt and its job's files
 /// with it. The outcome's write names the set revision the
-/// handle read (decision 124l (47)): the set write's own result moves it
+/// handle read: the set write's own result moves it
 /// forward for the outcome's write, and the store refuses the outcome where
 /// the record's set moved. Every file effect here, the
 /// receipt's and the job files' removal, runs only where
-/// the outcome's write reports the intent still this writer's (decision
-/// 124k (40)); an owner that moved leaves the claimant's files alone.
+/// the outcome's write reports the intent still this writer's; an owner
+/// that moved leaves the claimant's files alone.
 pub(in crate::effects) fn apply_outcome(run: &Run, outcome: EffectOutcome) -> Result<Applied> {
     let record_after = outcome.record.clone();
     let while_owner = outcome.while_owner.clone();
@@ -641,13 +634,39 @@ pub(in crate::effects) fn apply_outcome(run: &Run, outcome: EffectOutcome) -> Re
             if !r.intent.open() {
                 receipt::remove(&run.receipt_path(&r.intent.id));
                 job::remove_files(&run.settings.state_dir, &r.intent.id);
+                close_out(run, &r.intent)?;
             }
         }
     }
     Ok(applied)
 }
 
-/// The wire record of an effect's outcome (decision 111 (A) (4)): the word,
+/// An item's close-out once its lane's close on the tracker's terminal
+/// verdict stands recorded: the item's files, its lane status file among
+/// them, leave the state directory after their archive stands; its mailbox
+/// stays. A close on any other ground, or one the record moved under, ends
+/// the lane and leaves the item's files, which a relaunch resumes into.
+fn close_out(run: &Run, intent: &Intent) -> Result<()> {
+    let terminal = intent.op == EffectOp::CloseOwnedResources
+        && intent.outcome == Outcome::Confirmed
+        && intent.reconciled.is_none()
+        && matches!(intent.close, Some(CloseGround::Terminal { .. }));
+    if !terminal {
+        return Ok(());
+    }
+    crate::archive::close_out(
+        &run.settings.archive_root,
+        &run.settings.roots.project,
+        &run.settings.state_dir,
+        &intent.target,
+        &[],
+        run.locking,
+        run.env.now_secs,
+    )?;
+    Ok(())
+}
+
+/// The wire record of an effect's outcome: the word,
 /// the record fields it publishes or keeps, and the observation with what
 /// remains or stands untouched written beside it.
 fn record(outcome: EffectOutcome) -> RecordOutcome {
@@ -703,8 +722,8 @@ fn record(outcome: EffectOutcome) -> RecordOutcome {
     }
 }
 
-/// The host facts a lane transition judges live processes against
-/// (decision 97): the settings' cap and legacy claim store, and the
+/// The host facts a lane transition judges live processes against: the
+/// settings' cap and the claim store, and the
 /// kernel's own reads, private to `ops`.
 pub(in crate::effects) fn host(run: &Run) -> ops::Host<'static> {
     ops::Host::kernel(
@@ -714,14 +733,14 @@ pub(in crate::effects) fn host(run: &Run) -> ops::Host<'static> {
 }
 
 /// Read a state file for the effect files: their one entry to the store's
-/// reader, which the compiler boundary names (decision 124k (41)). `None`
+/// reader, which the compiler boundary names. `None`
 /// where no file stands.
 pub(in crate::effects) fn load(path: &std::path::Path) -> Result<Option<state::Snapshot>> {
     state::load(path)
 }
 
 /// Persist the close the dispatcher found over a superseded launch, once the
-/// launch intent is closed (decision 67): one of the effect files' store
+/// launch intent is closed: one of the effect files' store
 /// entries beside the handle's own writes (the header names them), judged
 /// against the host as the command's entry is. It takes the typed close
 /// alone, never a request.
@@ -752,7 +771,6 @@ mod tests {
 
     use super::*;
 
-    /// An owned sleeper and its identity through the one reader.
     fn sleeper() -> (std::process::Child, Identity) {
         let child = std::process::Command::new("/bin/sleep")
             .arg("60")
@@ -818,9 +836,9 @@ mod tests {
         json!({"kind": "process", "pid": id.pid, "start": id.start, "role": role})
     }
 
-    /// A record with an obligation under no role, written by an unreleased
-    /// build before roles existed, opens no handle: `role-missing` names the
-    /// intent and nothing is written. The same record under a role opens.
+    /// A record with an obligation under no role opens no handle:
+    /// `role-missing` names the intent and nothing is written. The same
+    /// record under a role opens.
     #[test]
     fn a_record_with_an_obligation_under_no_role_is_refused_role_missing() {
         let dir = tempfile::tempdir().unwrap();
@@ -855,10 +873,10 @@ mod tests {
         assert_eq!(opened.harness_identity(), Some(id));
     }
 
-    /// Decision 124g (30), R-U4g6 opus L3: a moved close holding a pane key
+    /// Defect: a moved close holding a pane key
     /// whose server start is not the start of the server now answering at
     /// the key's pid reads that pane gone with its server, `server-unmatched`
-    /// (decision 66), on the retry's close of its own panes: the key is
+    /// on the retry's close of its own panes: the key is
     /// discharged `pane-gone`, the intent settles, and the pane that stands
     /// on the replacement server is never touched. A key at the server's
     /// real start, the control, closes its pane by exact id.
@@ -914,11 +932,11 @@ mod tests {
         let _ = agent_runtime::host::tmux::kill_server(&server);
     }
 
-    /// Decision 124d (16): a token names a key of the set that minted it and
-    /// acts on no other. The token one intent's handle minted for its
-    /// process is handed to another intent's handle, whose set never held
-    /// that process: the stop is refused `token-stale`, nothing is written
-    /// and the sleeper is never signalled.
+    /// Defect: a token acting on a key its handle's set never held. A token
+    /// names a key of the set that minted it and acts on no other. The token
+    /// one intent's handle minted for its process is handed to another intent's
+    /// handle, whose set never held that process: the stop is refused
+    /// `token-stale`, nothing is written and the sleeper is never signalled.
     #[test]
     fn a_token_for_a_process_the_handles_set_never_held_is_refused_token_stale() {
         let dir = tempfile::tempdir().unwrap();
@@ -966,7 +984,7 @@ mod tests {
         );
     }
 
-    /// Decision 124f (26), R-U4g6 Codex `removed-target-probe.rs`: the set is
+    /// Defect: the set is
     /// replaced through the real transition while a handle stands open, the
     /// process removed from it. The handle's token is refused at its first
     /// write, `set-replaced`, before anything is signalled: the sleeper
@@ -1022,14 +1040,13 @@ mod tests {
         );
     }
 
-    /// Decision 124h (32), R-U4g7 Codex `rg7_owner_moved_must_refuse_before_acting`:
-    /// a handle opened under the intent's recorded owner mints a token for
-    /// an owned sleeper; a claimant takes the intent through the real claim
+    /// Defect: a handle opened under the intent's recorded owner mints a token
+    /// for an owned sleeper; a claimant takes the intent through the real claim
     /// and replaces the set with an empty one through the real progress
-    /// transition. The old handle's stop is refused `intent-yielded`, naming
+    /// transition. The first handle's stop is refused `intent-yielded`, naming
     /// the claimant, at its first write, before anything is signalled: the
-    /// sleeper lives, the claimant still owns the intent and its empty set
-    /// is unchanged.
+    /// sleeper lives, the claimant still owns the intent and its empty set is
+    /// unchanged.
     #[test]
     fn a_write_the_store_yielded_to_a_claimant_stops_the_handle_before_it_acts() {
         let dir = tempfile::tempdir().unwrap();

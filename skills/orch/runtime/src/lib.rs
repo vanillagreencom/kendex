@@ -3,12 +3,12 @@
 //! operations over them, plus the standing scheduler that decides when each
 //! duty is due.
 //!
-//! The crate owns the item and fleet state files as the legacy
-//! `workflow-state` script shaped them, every transition over them, and the
-//! write check (the content comparison under the file's lock). It writes a
-//! record as a patch on the document it read, so a field
-//! it does not transition keeps its value and position, and it refuses only
-//! what a legacy reader refuses on the same file. It does not own process or
+//! The crate owns the item and fleet state files in the shape the
+//! `workflow-state` script writes, every transition over them, and the write
+//! check (the content comparison under the file's lock). It writes a record
+//! as a patch on the document it read, so a field it does not transition
+//! keeps its value and position, and it refuses only what the script's
+//! readers refuse on the same file. It does not own process or
 //! native-session identity, launch, observation, delivery or the exact stop:
 //! those are `agent-runtime`'s, and an operation that needs one persists its
 //! intent here, runs the effect through that crate (`effects`) and records
@@ -22,18 +22,17 @@
 //! claim, its event log and its baseline, driving the duties on
 //! `schedule`'s due times.
 
+pub mod archive;
 pub mod effects;
 pub mod error;
 pub mod mailbox;
 pub mod ops;
-/// U6b: the proof record's read verb over an item's validate stages.
 pub mod proof;
 pub mod protocol;
 pub mod schedule;
 pub mod send;
 pub mod settings;
 pub mod state;
-/// U6a: the validation run's start and its detached job.
 pub mod validate;
 pub mod verify;
 pub mod watch;

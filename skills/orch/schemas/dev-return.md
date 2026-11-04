@@ -16,7 +16,7 @@ A foreground attempt interrupted before its record completed writes a `FAILING` 
 
 Fix rounds have an input-side sibling bound by the same token, `tmp/dev-round-[ISSUE_ID]-[ROUND_ID].json`, the delegated item set the orchestrator persists at stamp time; `--expect-items-from-round` checks this receipt's `items[]` against it. Schema: [`dev-round.md`](dev-round.md).
 
-`[ISSUE_ID]` is the workflow-state key where one exists, whose forms `workflow-state --help` § Keys enumerates; a bundled delegation uses the Parent ID. An ad-hoc id is a `local-` key from `workflow-state new-local-key`, never an empty or free-form string. That command writes nothing, so ad-hoc work that runs no workflow-state step uses the key to name the receipt alone. [`review.md` § 4](../workflows/review.md#4-present-and-fix) mints one for a review of a branch carrying no issue id and inits state under it. Both, and `[ROUND_ID]`, must match `^[A-Za-z0-9._-]+$` with no `..`.
+`[ISSUE_ID]` is the workflow-state key where one exists ([workflow-state.md § Keys](workflow-state.md#keys)); a bundled delegation uses the Parent ID. An ad-hoc id is a `local-` key from `orch-runtime state new-local-key`, never an empty or free-form string. That command writes nothing, so ad-hoc work that runs no state step uses the key to name the receipt alone. [`review.md` § 4](../workflows/review.md#4-present-and-fix) mints one for a review of a branch carrying no issue id and inits state under it. Both, and `[ROUND_ID]`, must match `^[A-Za-z0-9._-]+$` with no `..`.
 
 ## Schema
 

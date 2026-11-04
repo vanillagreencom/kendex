@@ -37,24 +37,24 @@ The full session from inside a worktree: implement → publication and review in
 
    `--adopt` takes over the lease the session-start hook took under this session's environment owner. Do **not** pass `--repo` (`claim` and `refresh` reject it). Exit 75 means another session holds the lease — coordinate with that owner instead of proceeding. A flock-less host still serializes through the guard's exclusive-file mutex; exit 1 means the guard itself failed — stop and read its message, never continue unguarded.
 
-6. **Initialize state unless it exists.** `init` overwrites, and a restarted item's state file carries its round history (`cycles`, `fixed_items`, `patched_causes`), so read existence and the branch first:
+6. **Initialize state unless it exists.** `init` refuses a standing file as `state-exists`, and a restarted item's state file carries its round history (`cycles`, `fixed_items`, `patched_causes`), so read existence and the branch first:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state exists --json [ISSUE_ID]
+   .agents/skills/orch/scripts/orch-runtime state exists --item [ISSUE_ID]
    .agents/skills/orch/scripts/git-context branch [WORKTREE_PATH]
    ```
 
    `exists` false → initialize:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state init [ISSUE_ID] --worktree [WORKTREE_PATH] --branch "[BRANCH]"
+   .agents/skills/orch/scripts/orch-runtime state init --item [ISSUE_ID] --worktree [WORKTREE_PATH] --branch "[BRANCH]"
    ```
 
    `exists` true → keep the state and record where this session runs:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] worktree "[WORKTREE_PATH]"
-   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] branch "[BRANCH]"
+   .agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /worktree "[WORKTREE_PATH]"
+   .agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /branch "[BRANCH]"
    ```
 
    `[BRANCH]` is the `git-context branch` output.
@@ -62,7 +62,7 @@ The full session from inside a worktree: implement → publication and review in
    Record the tier this session runs at. It lifts any bound a `small` run left in the state; [small.md](small.md) § 1 records `small` after this step:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] tier standard
+   .agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /tier standard
    ```
 
 7. **Gate on base freshness.** Every route into a worktree lands here, fresh or reused, except a handoff resume (step 3):
@@ -100,7 +100,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-order [WORKTR
 Record the order its `pr-order=` field names, `review-first` on a non-zero exit:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_order [ORDER]
+.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /pr_order [ORDER]
 ```
 
 All orders end at the caller's review step: § 3 here, or [small.md](small.md) § 3 when small.md runs this section.
@@ -117,7 +117,7 @@ All orders end at the caller's review step: § 3 here, or [small.md](small.md) �
   Route the answer per [Copilot requests](../references/gates.md#copilot-requests) before recording the head. A nonzero return stops this pass with no request record. Then record the head:
 
   ```bash
-  .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.pr_approval.copilot_rerequest_head = "[HEAD_SHA]"'
+  .agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /pr_approval/copilot_rerequest_head [HEAD_SHA]
   ```
 
   Continue to the review step. Keep `pr_order` at `push-first` and the lane's `Review: pending` line through internal fix rounds: it holds overseer approval, and submit § 2 step 5 arms nothing. The passing review and submit publish the combined fixes and request each unrecorded head.
@@ -131,7 +131,7 @@ All orders end at the caller's review step: § 3 here, or [small.md](small.md) �
   An open pull request → the review step, which reviews the pushed head; its fix round commits stay local until § 4 pushes them. A failed submit return, a `no_pr` status or a read error opened nothing to review on. Record the review-first order:
 
   ```bash
-  .agents/skills/orch/scripts/workflow-state set [ISSUE_ID] pr_order review-first
+  .agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /pr_order review-first
   ```
 
   Then report once that the early open failed, with the line submit-pr or this read printed, and take the `review-first` row.
@@ -162,7 +162,7 @@ After successful `push-base` delivery, submit-pr § 2.1 already completed the tr
 Before either summary, `MERGE_READY = false` preserves submit-pr's stop or creates `merge-gates-unmet`:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state post-pr-stop record-if-empty [ISSUE_ID] merge-gates-unmet merge "[UNMET_GATE_AND_REMAINING_WORK]" [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
+.agents/skills/orch/scripts/orch-runtime state post-pr-stop record-if-empty --item [ISSUE_ID] --name merge-gates-unmet --gate merge --remaining "[UNMET_GATE_AND_REMAINING_WORK]" --comment-file [WORKTREE_PATH]/tmp/post-pr-stop-[ISSUE_ID].md
 ```
 
 `recorded` wrote that file, so post it:
@@ -176,7 +176,7 @@ Before either summary, `MERGE_READY = false` preserves submit-pr's stop or creat
 Read the final stop before § 5.1. `MERGE_READY = true` clears it:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.post_pr_stop = null'
+.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /post_pr_stop null
 ```
 
 ### 5.1 Post Summary
@@ -186,7 +186,7 @@ Read the final stop before § 5.1. `MERGE_READY = true` clears it:
 ### 5.3 Session Summary
 
 ```bash
-.agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{cycles: .cycles, fixed_count: (.fixed_items | length), escalated_count: (.escalated_items | length), pr_iterations: .pr_comment_review.iterations, pr_fixes: (.pr_comment_review.fixes | length), pr_issues: (.pr_comment_review.issues_created | length), audit_issues: (.audit_issues_created | length), post_pr_stop: .post_pr_stop}'
+STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID])" && jq -c '.result.value | {cycles: .cycles, fixed_count: (.fixed_items | length), escalated_count: (.escalated_items | length), pr_iterations: .pr_comment_review.iterations, pr_fixes: (.pr_comment_review.fixes | length), pr_issues: (.pr_comment_review.issues_created | length), audit_issues: (.audit_issues_created | length), post_pr_stop: .post_pr_stop}' <<<"$STATE_READ"
 ```
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).

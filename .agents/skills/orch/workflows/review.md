@@ -51,7 +51,7 @@ A failed check omits the path and carries `- decision index lookup failed for [D
 
 ## 2. Launch Reviewers
 
-With no `ISSUE_ID`, mint `LOCAL_KEY` through `workflow-state new-local-key`, initialize it through `workflow-state init [LOCAL_KEY] --worktree [WT_PATH] --branch [BRANCH]`, and use it as `ISSUE_ID` from here. This workflow removes that local state in § 5. For an issue key with no state, initialize that key first. Apply [Record verified findings](../schemas/workflow-state.md#record-verified-findings) admission for this local batch, with state writes enabled; § 3 supplies acceptance and § 4 supplies disposition and completion.
+With no `ISSUE_ID`, mint `LOCAL_KEY`, the reply's `result.key`, through `orch-runtime state new-local-key`, initialize it through `orch-runtime state init --item [LOCAL_KEY] --worktree [WT_PATH] --branch [BRANCH]`, and use it as `ISSUE_ID` from here. This workflow removes that local state in § 5. For an issue key with no state, initialize that key first. Apply [Record verified findings](../schemas/workflow-state.md#record-verified-findings) admission for this local batch, with state writes enabled; § 3 supplies acceptance and § 4 supplies disposition and completion.
 
 Apply [Delegation](../references/skill-rules.md#delegation) for the target worktree before selecting any stored reviewer session.
 
@@ -83,7 +83,7 @@ Wait for every reviewer. Under an unlimited budget do NOT shut them down before 
 Extract the report path and verdict from each return; halt and report if any return does not carry them. Apply the shared contract's acceptance to each returned file. Overall verdict is `action_required` when any reviewer has blockers, else `pass`. Append each accepted path:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state append [ISSUE_ID] json_paths "[PATH]"
+.agents/skills/orch/scripts/orch-runtime state append --item [ISSUE_ID] /json_paths "[PATH]"
 ```
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
@@ -141,7 +141,7 @@ Omit empty categories. **Disposition is by rule, not by prompt** — never prese
 Complete [Record verified findings](../schemas/workflow-state.md#record-verified-findings) for this local batch. An empty fix set goes to the filing route below or § 5; otherwise, with either key:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state set-git-head [ISSUE_ID] pre_delegate_sha [WT_PATH]
+.agents/skills/orch/scripts/orch-runtime state set-git-head --item [ISSUE_ID] /pre_delegate_sha --worktree [WT_PATH]
 ```
 
 **Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 4 tail` with context `worktree`, `lifecycle: "managed"`, `dev_agent` (from state or labels), `issue_id`, `items` (every blocker plus every `category == "fix"` suggestion, each formatted per [dev-round.md § Item text](../schemas/dev-round.md#item-text)), `source: review`. State writes for fixed and escalated items belong to dev-fix — do not repeat them here.
@@ -166,10 +166,10 @@ Apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination
 
 Shut the review agents down (wave runs already did).
 
-**Skip if** § 2 minted no `LOCAL_KEY`. A key from the branch names live state that later workflows read, so only `LOCAL_KEY` is removed. Its state has no later reader, since the next review mints its own key:
+**Skip if** § 2 minted no `LOCAL_KEY`. A key from the branch names live state that later workflows read, so only `LOCAL_KEY` is removed. Its state has no later reader, since the next review mints its own key; the close-out archives and removes the key's files ([workflow-state.md § Item close-out](../schemas/workflow-state.md#item-close-out)):
 
 ```bash
-.agents/skills/orch/scripts/workflow-state remove [LOCAL_KEY]
+.agents/skills/orch/scripts/orch-runtime state remove --item [LOCAL_KEY]
 ```
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).

@@ -576,7 +576,7 @@ fi
 
 # Keep the actual repository's dependency graph and workflow timing evidence.
 # The configured command below is a tiny failure/repair fixture: it proves
-# estimate consumption and receipt ownership, not the sampled suites' runtime.
+# estimate consumption and admission, not the sampled suites' runtime.
 timing="$TMP/timing-checkout"
 mkdir -p "$timing"
 git -C "$REPO" ls-files -z > "$TMP/timing-files"
@@ -692,76 +692,34 @@ else
 fi
 
 runner="$REPO/skills/orch/scripts/dev-validate-run"
-writer="$REPO/skills/orch/scripts/dev-return-write"
-checker="$REPO/skills/orch/scripts/dev-artifact-check"
-state="$REPO/skills/orch/scripts/workflow-state"
 mkdir -p "$timing/tmp"
 timing_run "$runner" --worktree "$timing" --validate-mode range --base "$timing_base" --poll 1
 failed_run="$(sed -n 's/^state=started run-dir=\([^ ]*\) .*$/\1/p' <<<"$OUT")"
 [ "$RC" -eq 1 ] && [ "$(cat "$timing/tmp/attempts")" = attempt ] && [ -n "$failed_run" ] \
   && ok 'the native admission owner runs the within-bound original once and records failure' \
   || { bad 'the native admission owner runs the within-bound original once and records failure' "$OUT"; exit 1; }
-cp -R "$failed_run" "$TMP/failed-run-bytes"
-git -C "$timing" add "$timing_tests/$timing_suite.sh"
-git -C "$timing" commit -q -m original
-timing_head="$(git -C "$timing" rev-parse HEAD)"
-# The receipt binds the run's staged tree after the fixture commit.
-timing_run "$writer" --worktree "$timing" --kind implement --issue local-timing --round-id timing \
-  --branch main --commit "$timing_head" --validate 'FAILING: fixture' --validate-run-dir "$failed_run" --no-summary
-original="$OUT"
-[ "$RC" -eq 0 ] && [ -f "$original" ] \
-  && ok 'the failed native run writes its original immutable receipt' \
-  || { bad 'the failed native run writes its original immutable receipt' "$OUT"; exit 1; }
-cp "$original" "$TMP/original-receipt"
-timing_run "$state" --state-dir "$timing/tmp" init local-timing --worktree "$timing" --branch main
-timing_run "$state" --state-dir "$timing/tmp" set local-timing dev_round_id timing
-for row in cycles:2 rereview_cycles:3 submit_cycles:4; do
-  timing_run "$state" --state-dir "$timing/tmp" set local-timing "${row%:*}" "${row#*:}"
-done
-timing_run "$checker" --worktree "$timing" --issue local-timing --round-id timing
-before_counters="$(jq -c '{cycles,rereview_cycles,submit_cycles}' "$timing/tmp/workflow-state-local-timing.json")"
 
 printf '# repair=done\n' >> "$timing/$timing_tests/$timing_suite.sh"
-git -C "$timing" add "$timing_tests/$timing_suite.sh"
 # The focused repair proof executes the changed fixture, outside the configured
 # attempt counter, just as the workflow requires before native admission.
 timing_run "$BASH" -c 'cd -- "$1" && "$2" "$3"' _ "$timing" "$BASH" "$timing_tests/$timing_suite.sh"
-[ "$RC" -eq 0 ] && ok 'the focused repair passes before recovery admission' \
-  || { bad 'the focused repair passes before recovery admission' "$OUT"; exit 1; }
+[ "$RC" -eq 0 ] && ok 'the focused repair passes before the later run is admitted' \
+  || { bad 'the focused repair passes before the later run is admitted' "$OUT"; exit 1; }
 cp "$timing/tmp/attempts" "$TMP/proved-attempts"
 timing_preview "$GUARD"
 [ "$RC" -eq 0 ] && [ "$(sed -n '/^expected-secs=/p' <<<"$OUT")" = expected-secs=413 ] \
   && ok 'native repaired preview fits the unchanged 413-second fixture bound' \
   || { bad 'native repaired preview fits the unchanged 413-second fixture bound' "$OUT"; exit 1; }
+# The round's later run is a new run of the same command: the failed run
+# answers nothing for the repaired tree, and the measured bound admits it.
 timing_run "$runner" --worktree "$timing" --validate-mode range --base "$timing_base" --poll 1
-recovery_run="$(sed -n 's/^state=started run-dir=\([^ ]*\) .*$/\1/p' <<<"$OUT")"
-[ "$RC" -eq 0 ] && [ -n "$recovery_run" ] \
+later_run="$(sed -n 's/^state=started run-dir=\([^ ]*\) .*$/\1/p' <<<"$OUT")"
+[ "$RC" -eq 0 ] && [ -n "$later_run" ] \
   && [ "$(wc -l < "$timing/tmp/attempts")" -eq "$(( $(wc -l < "$TMP/proved-attempts") + 1 ))" ] \
-  && ok 'measured admission permits exactly one configured recovery attempt' \
-  || { bad 'measured admission permits exactly one configured recovery attempt' "$OUT"; exit 1; }
-git -C "$timing" commit -q -m repair
-timing_head="$(git -C "$timing" rev-parse HEAD)"
-timing_run "$writer" --worktree "$timing" --kind implement --issue local-timing --round-id timing \
-  --branch main --commit "$timing_head" --recovery --validate pass --validate-run-dir "$recovery_run" --validate-note measured --no-summary
-companion="$OUT"
-[ "$RC" -eq 0 ] && [ -f "$companion" ] && cmp -s "$original" "$TMP/original-receipt" \
-  && diff -r "$failed_run" "$TMP/failed-run-bytes" >/dev/null \
-  && ok 'recovery preserves the original failure receipt and native evidence bytes' \
-  || { bad 'recovery preserves the original failure receipt and native evidence bytes' "$OUT"; exit 1; }
-timing_run "$checker" --worktree "$timing" --issue local-timing --round-id timing
-[ "$RC" -eq 0 ] && [ "$(jq -r '.verdict' <<<"$OUT")" = accept ] \
-  && [ "$(jq -c '{cycles,rereview_cycles,submit_cycles}' "$timing/tmp/workflow-state-local-timing.json")" = "$before_counters" ] \
-  && jq -e --arg old "${original##*/}" --arg new "${companion##*/}" \
-    '.validate_rounds | map(.receipt) | index($old) != null and index($new) != null' \
-    "$timing/tmp/workflow-state-local-timing.json" >/dev/null \
-  && ok 'the recovery checker retains both validation rounds without spending another round counter' \
-  || bad 'the recovery checker retains both validation rounds without spending another round counter' "$OUT"
-timing_run "$writer" --worktree "$timing" --kind implement --issue local-timing --round-id timing \
-  --branch main --commit "$timing_head" --recovery --validate pass --validate-run-dir "$recovery_run" --validate-note measured --no-summary
-[ "$RC" -eq 2 ] && ok 'a second terminal recovery receipt remains refused' \
-  || bad 'a second terminal recovery receipt remains refused' "$OUT"
+  && ok 'measured admission runs the later run of the round once under the same bound' \
+  || { bad 'measured admission runs the later run of the round once under the same bound' "$OUT"; exit 1; }
 # Change the covered fixture so its earlier passing tree cannot answer this
-# admission check. The recovery above kept its 413-second bound throughout.
+# admission check. The later run above kept its 413-second bound throughout.
 printf '# over bound\n' >> "$timing/$timing_tests/$timing_suite.sh"
 attempts_before="$(cat "$timing/tmp/attempts")"
 timing_run env DEV_VALIDATE_TIMEOUT_SECS=412 "$runner" --worktree "$timing" --validate-mode range --base "$timing_base" --poll 1

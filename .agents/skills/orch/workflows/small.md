@@ -19,7 +19,7 @@ The tier is read once, at the admission that launched the run, and floors the ru
 Run [start-worktree.md](start-worktree.md) § 1, which records the tier as `standard`, on a handoff resume too. Then record it as `small`, which is what bounds § 3 and § 4:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state set [ISSUE_ID] tier small
+.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /tier small
 ```
 
 Where that § 1's step 3 stamped a handoff record, continue from the first entry of the record's `remaining` list instead of § 2-5.
@@ -38,9 +38,9 @@ Run [start-worktree.md](start-worktree.md) § 2 through its step 4. Then check t
 
 Run [start-worktree.md](start-worktree.md) § 3 under these bounds:
 
-- **Panel.** The first-cycle panel is the domains the diff touches, by [review-pr.md](review-pr.md) § 2 Prepare Reviewers, and holds three reviewers at most. The external lane counts as one of the three: its findings enter the fix set like any reviewer's. Resolve review-pr.md § 2.1 before writing a panel, and record its answer as `"external": true` or `false` beside `agents`, so with the lane requested two domain reviewers remain. `workflow-state` refuses a `first_panel`, `rereview_panel` or `verification_panel` with no `external` marker as `panel-external`, and a larger one as `panel-bound`. Trim a larger panel in this order: `reviewer-error` where review-pr.md § 2 always carries it, then the reviewers whose findings the pass verifies, then the domains with the most changed production lines. The same trim applies to the verification panel [review-pr-comments.md](review-pr-comments.md) writes.
+- **Panel.** The first-cycle panel is the domains the diff touches, by [review-pr.md](review-pr.md) § 2 Prepare Reviewers, and holds three reviewers at most. The external lane counts as one of the three: its findings enter the fix set like any reviewer's. Resolve review-pr.md § 2.1 before writing a panel, and record its answer as `"external": true` or `false` beside `agents`, so with the lane requested two domain reviewers remain. The runtime refuses a `first_panel`, `rereview_panel` or `verification_panel` with no `external` marker as `panel-external`, and a larger one as `panel-bound`. Trim a larger panel in this order: `reviewer-error` where review-pr.md § 2 always carries it, then the reviewers whose findings the pass verifies, then the domains with the most changed production lines. The same trim applies to the verification panel [review-pr-comments.md](review-pr-comments.md) writes.
 - **QA.** [review-pr.md](review-pr.md) § 5 drops `needs-review` when the change is not visible in the UI or in the CLI output, recording `qa_decision` with the rationale `small tier: nothing visible`. `needs-safety-audit`, `needs-perf-test` and `needs-ui-review` follow review-pr.md § 5 unchanged.
-- **Fix rounds.** [review-pr.md § At The Cap](review-pr.md#at-the-cap) states the default bound. For this item `workflow-state cap REVIEW_MAX_CYCLES --issue [ISSUE_ID]` holds it at 1 even where a project setting raises it, and holds a setting of 0 as set. A QA fix round follows review-pr.md § 7 Converged unchanged; this bound does not count it.
+- **Fix rounds.** [review-pr.md § At The Cap](review-pr.md#at-the-cap) states the default bound. For this item `orch-runtime state cap REVIEW_MAX_CYCLES --item [ISSUE_ID]` holds it at 1 even where a project setting raises it, and holds a setting of 0 as set. A QA fix round follows review-pr.md § 7 Converged unchanged; this bound does not count it.
 - **Findings.** A wording, naming or index finding is answered by reply and starts no fix push: [finding-disposition.md § Decision flow](../../reviewer/references/finding-disposition.md#decision-flow).
 - **Validation.** The implement round consumes the existing `dev-validate-run` route and result as [dev-implement.md § 5 Validate](../../dev/workflows/dev-implement.md#5-validate) sets out. A fix round validates its own range, as [dev-fix.md](dev-fix.md) delegates it. No step reruns a green battery on an unchanged tree.
 
@@ -50,7 +50,7 @@ Before § 4, repeat the § 2 check on the tree the review left. `tier=small` con
 
 `ORCH_DELIVERY=push-base` takes [submit-pr.md § 2.1](submit-pr.md#21-base-publication), which stops an item with an open post-merge box. Keep § 3's local validation and internal review. Report its pushed commit and take the direct-delivery finalize route below.
 
-Run [start-worktree.md](start-worktree.md) § 4. Bot threads get two rounds at most: `workflow-state cap REVIEW_MAX_EXTERNAL_ROUNDS --issue [ISSUE_ID]` reads a cap of 2 for this item. At that cap [review-pr-comments.md](review-pr-comments.md) answers every standing thread by reply. GitHub's approval and thread-resolution rules still apply.
+Run [start-worktree.md](start-worktree.md) § 4. Bot threads get two rounds at most: `orch-runtime state cap REVIEW_MAX_EXTERNAL_ROUNDS --item [ISSUE_ID]` reads a cap of 2 for this item. At that cap [review-pr-comments.md](review-pr-comments.md) answers every standing thread by reply. GitHub's approval and thread-resolution rules still apply.
 
 Whenever HEAD differs from the head the last § 2 check measured, repeat that check before the lane's next push and before [submit-pr.md](submit-pr.md) § 6.1 Merge Gates; a step that pushes before it returns, such as ci-fix, is checked on its return. `tier=small` continues; anything else escapes.
 
