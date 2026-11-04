@@ -166,7 +166,7 @@ class OwnerAsksContract(unittest.TestCase):
                         self.action("done", row, key, text="Evidence supplied")
                 self.assertEqual(len(self.source.deliveries), deliveries)
 
-    def test_done_and_snooze_keep_original_request_until_delegate_evidence(self):
+    def test_done_and_snooze_follow_complete_current_view_membership(self):
         row = self.page()["rows"][0]
         result = self.action("done", row, "done", text="Evidence")
         self.assertEqual(result["state"], "checking")
@@ -182,8 +182,31 @@ class OwnerAsksContract(unittest.TestCase):
         self.assertEqual(restored["state"], "checking")
         self.assertEqual((restored["id"], restored["askedAt"], restored["link"]), (snoozed["id"], row["askedAt"], row["link"]))
         self.source.data["tracker"]["requests"] = []
-        with self.assertRaises(owner_asks.Unavailable):
-            self.page()
+        self.assertEqual(self.page()["rows"], [])
+        for action in (None, "reply", "done", "later"):
+            with self.subTest(action=action):
+                self.source.data = projection(str(self.home))
+                row = self.page()["rows"][0]
+                if action:
+                    receipt = self.action(action, row, "membership-" + action, text="Evidence",
+                                          until=owner_asks.iso(self.now + 60))
+                    self.assertEqual((receipt["kind"], receipt["state"]),
+                                     ("accepted", {"reply": "open", "done": "checking", "later": "snoozed"}[action]))
+                else:
+                    self.assertEqual(self.owner.read()["deltas"], {})
+                before = self.owner.session.path.read_bytes()
+                # The canonical reader refuses failed/incomplete traversals;
+                # neither refusal supplies an empty membership result.
+                with patch.object(self.source, "stable", side_effect=owner_asks.Unavailable("Source traversal incomplete")):
+                    with self.assertRaises(owner_asks.Unavailable):
+                        self.page()
+                self.assertEqual(self.owner.session.path.read_bytes(), before)
+                self.source.data["tracker"]["requests"] = []
+                for view in ("active", "snoozed"):
+                    page = self.page(view)
+                    self.assertEqual((page["activeCount"], page["snoozedCount"], page["rows"], page["complete"]),
+                                     (0, 0, [], True))
+                self.assertEqual(self.owner.read()["deltas"], {})
 
     def test_overlapping_actions_have_one_winner(self):
         row = self.page()["rows"][0]
@@ -418,6 +441,8 @@ payload = json.loads(json.loads(next(line[7:] for line in config.splitlines() if
 query = payload['query']
 path = Path(os.environ['TRACKER_DATABASE'])
 comments = json.loads(path.read_text())
+mode_path = path.with_suffix('.mode')
+mode = mode_path.read_text() if mode_path.exists() else 'present'
 def connection(nodes):
     return {'nodes': nodes, 'pageInfo': {'hasNextPage': False, 'endCursor': None}}
 def comment(row):
@@ -441,8 +466,15 @@ elif 'TeamKeys' in query:
 elif 'viewer' in query:
     data = {'viewer': {'id': 'posting-app'}}
 elif 'ListIssues' in query:
-    data = {'issues': connection([dict(id='issue-uuid', identifier='KEN-1', url='https://linear.app/example/issue/KEN-1',
-                                      updatedAt='2026-11-01T01:00:00Z')])}
+    if mode == 'failed':
+        print('___HTTP_CODE___403', end='')
+        sys.exit(0)
+    issues = connection([] if mode == 'omitted' else [dict(
+        id='issue-uuid', identifier='KEN-1', url='https://linear.app/example/issue/KEN-1',
+        updatedAt='2026-11-01T01:00:00Z')])
+    if mode == 'incomplete':
+        issues['pageInfo'] = {'hasNextPage': True, 'endCursor': None}
+    data = {'issues': issues}
 elif 'comments' in query:
     data = {'issues': connection([dict(id='issue-uuid', identifier='KEN-1', comments=connection(list(map(comment, comments))))])}
 else:
@@ -466,6 +498,35 @@ print(json.dumps({'data': data})+'___HTTP_CODE___200', end='')
                 self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
                 self.assertEqual((receipt["kind"], receipt["state"]),
                                  ("accepted", "checking" if action == "done" else "open"))
+        self.assertEqual(len(json.loads(database.read_text())), 3)
+        state_path, = (self.root / "runtime").rglob("owner-asks.json")
+        mode_path = database.with_suffix(".mode")
+        for state in ("checking", "snoozed"):
+            with self.subTest(state=state):
+                mode_path.write_text("present")
+                result, page = self.run_cli()
+                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                row = page["rows"][0]
+                if state == "snoozed":
+                    payload = json.dumps({"requestId": "membership-later", "expectedRevision": row["revision"],
+                                          "until": owner_asks.iso(owner_asks.time.time() + 3600)})
+                    result, receipt = self.run_cli("later", None, payload, "--id", row["id"])
+                    self.assertEqual((result.returncode, receipt["state"]), (0, state))
+                else:
+                    self.assertEqual(row["state"], state)
+                before = state_path.read_bytes()
+                for mode in ("failed", "incomplete"):
+                    mode_path.write_text(mode)
+                    result, unavailable = self.run_cli()
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(unavailable["kind"], "unavailable")
+                    self.assertEqual(state_path.read_bytes(), before)
+                mode_path.write_text("omitted")
+                result, page = self.run_cli()
+                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                self.assertEqual((page["activeCount"], page["snoozedCount"], page["rows"], page["complete"]),
+                                 (0, 0, [], True))
+                self.assertEqual(json.loads(state_path.read_text())["deltas"], {})
         self.assertEqual(len(json.loads(database.read_text())), 3)
 
     def test_satellite_uses_the_same_main_receipt_without_local_state(self):

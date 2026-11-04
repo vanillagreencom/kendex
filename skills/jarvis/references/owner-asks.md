@@ -17,7 +17,7 @@ The main reads the registered projects on its declared destinations through the 
 
 The main home's mailbox `owner-tracker-settings` command supplies the existing posting configuration judgement. An unconfigured tracker adds no tracker requests. A configured tracker uses Linear `comments owner-requests` with that judgement's email and label. This reader uses the existing assigned-issue filters and exact-email resolver. Each comment mentioning the resolved owner's canonical profile URL is a separate request. Its immutable comment identity, author, creation time, parent and server URL remain the original request metadata. No owner, team, account, profile URL or view name is a package default.
 
-Cross-source suppression requires confirmed tracker posting and equality of workspace, issue UUID and request comment identity. Distinct mailbox asks and distinct comments on one issue remain distinct. A closed mailbox ask's exact tracker mirror stays suppressed while canonical closure evidence remains. A ruling prefix, changed label, unrelated comment or Done claim supplies no verified closure.
+Cross-source suppression requires confirmed tracker posting and equality of workspace, issue UUID and request comment identity. Distinct mailbox asks and distinct comments on one issue remain distinct. A closed mailbox ask's exact tracker mirror stays suppressed while canonical closure evidence remains.
 
 ## Pages
 
@@ -35,6 +35,6 @@ Reply sends through the original mailbox or tracker thread and leaves the ask op
 
 The main saves delivery intent before an external append. An uncertain result stays unconfirmed. An identical deliberate retry reads positive canonical evidence; it never blindly resends. Mailbox recovery requires the exact delivery identity and ask reference. Tracker recovery requires the exact posting actor, original parent and body with its action marker. An empty read proves no failed delivery. Retained receipts survive source compaction, but an uncertain append whose positive evidence disappeared cannot be settled automatically.
 
-The delegate's canonical mailbox close removes its ask after a complete source read. If an acted-on request disappears without that evidence, including a tracker label change, the list reports unavailable for delegate verification. A tracker ruling alone remains open or checking until its canonical completion evidence can be proved.
+The delegate's canonical mailbox close removes its ask after a complete source read. An acted-on mailbox ask that disappears without that evidence makes the list unavailable for delegate verification. The configured tracker view alone owns tracker-only membership: a request remains open while a complete read returns it. A later complete read that omits it closes it and removes any checking or snooze delta, including after a label or assignee change. Failed or incomplete reads change no action state and report unavailable. Listing retains no untouched request identities or historical membership.
 
 Failures return `{v:1,kind:"unavailable",cause:string}` and a nonzero exit. A transport timeout or missing receipt proves neither acceptance nor refusal. Retain the request identity and reply draft until the delegate or a deliberate identical retry confirms the result.
