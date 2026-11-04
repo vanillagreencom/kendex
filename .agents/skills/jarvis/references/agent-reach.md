@@ -12,6 +12,10 @@ A project-list row names a folder and can carry a missing/unreadable-folder note
 
 A main Jarvis uses `.agents/skills/jarvis/scripts/owner-note REPO FILE` to reach its declared machines under [Control host setup](#control-host-setup). A satellite forwards to the main under [Main and satellites](#main-and-satellites). The mailbox's `lane-mail --help` owns verb, envelope, receipt and refusal syntax; `owner-note --help` owns its selection options and refusal keys.
 
+A read-only mailbox consumer, such as a relay, uses `owner-note --resolve REPO` without FILE. The command returns JSON with the selected destination, registered root and mailbox command path; `owner-note --help` owns the fields. It uses the same selectors and destination refusals as sending. It reads no mail, changes no read position and grants no directive authority. The consumer's own read authorization still applies.
+
+Resolution selects the first registered route. It checks neither mailbox installation nor overseer liveness, and proves no delivery. On the legacy control-host-first route, a later send can fall back locally after `overseer-absent`; resolution cannot predict that outcome.
+
 ## Read
 
 Run `[LANE_MAIL] events --item overseer --box to-overseer --after [N] --mark-read`. It records the snapshot's logical count for the Slack relay's hold resume. Use `0` for every envelope, or the previous count for that repository.
@@ -105,7 +109,7 @@ Never commit the value in `kendex.settings.toml`: a cloned main would then becom
 
 A satellite handles local voice, windows, apps, files, screen and sign-ins. It forwards requests that act on accounts, the fleet, the home repository or anything outside this machine.
 
-Its watch-loop reads only its home, renews no Slack hold, runs no control-host pass and schedules no progress checkpoint. Owner-note refuses `role-satellite`.
+Its watch-loop reads only its home, renews no Slack hold, runs no control-host pass and schedules no progress checkpoint. Owner-note sending refuses `role-satellite`; read-only resolution selects only local roots.
 
 Do not run [Read](#read), [Answer an ask](#answer-an-ask) or [Instruct](#instruct) on a satellite. Tell the owner that the main handles the request. A repository's own lane-mail does not enforce the Jarvis role. Do not commit or push the home repository from a satellite; the package cannot observe those clone commits, so review holds this rule.
 

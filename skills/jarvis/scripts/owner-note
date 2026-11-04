@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Usage: owner-note [--host ALIAS | --local] REPO FILE
+#        owner-note --resolve [--host ALIAS | --local] REPO
 # Send FILE and the verify footer to the selected registered overseer.
 set -euo pipefail
 SCRIPT_ROOT="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"
