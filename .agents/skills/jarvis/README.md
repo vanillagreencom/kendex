@@ -41,9 +41,18 @@ kendex add vanillagreencom/kendex --bundle jarvis --harness claude,codex,copilot
 
 ## How it works
 
-Your assistant reads the Jarvis skill when you delegate a task. It follows the reading routes in [SKILL.md](SKILL.md) to load the reference that the task needs.
+Jarvis reads the guidance your request needs, works within the authority you give it and checks the result. In a continuing session, open work stays in your tracker and recovery notes help the next session continue. These pages explain the current package and identify changes still being built.
 
-The install command adds the Jarvis skill, its required skills, its declared agents and the skills assigned to those agents. kendex renders the agents for the selected harnesses. The bundle also installs the session hooks that confirm the native session identity. Installing `orch` alone does not install Jarvis or its declared agents.
+| Your question | Read |
+|---|---|
+| How does a request get finished? | [Tasks](references/HIW-tasks.md) |
+| How does Jarvis work with other agents? | [Delegation](references/HIW-delegation.md) |
+| How does work continue after a restart or handover? | [Sessions](references/HIW-sessions.md) |
+| What does Jarvis remember? | [Memory](references/HIW-memory.md) |
+| How do requests and decisions reach Jarvis? | [Messages](references/HIW-messages.md) |
+| What happens when a result needs another check? | [Checks](references/HIW-checks.md) |
+| How does Jarvis use my computer and accounts? | [Tools](references/HIW-tools.md) |
+| What belongs in my Jarvis home? | [Home](references/HIW-home.md) |
 
 ## Customise
 
