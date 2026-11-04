@@ -234,12 +234,15 @@ class OwnerAsksContract(unittest.TestCase):
         sources = owner_asks.Sources(session, {})
         secret = "sk-" + "a" * 30
         failures = [
-            (None, owner_asks.watch.Failure("lane-mail", "timeout", None, "deadline")),
-            (None, OSError(13, "permission denied")),
-            ("remote", ("main-unreachable", "ssh: host refused " + secret)),
-            (None, subprocess.CompletedProcess([], 7, "", "lane-mail: mailbox-unreadable=" + secret)),
+            (None, owner_asks.watch.Failure("lane-mail", "timeout", None, "deadline"),
+             ["lane-mail", "timeout", "None"]),
+            (None, OSError(13, "permission denied"), ["mailbox/lane-mail", "PermissionError", "13"]),
+            ("remote", ("main-unreachable", "ssh: host refused " + secret),
+             ["mailbox/lane-mail", "transport", "main-unreachable"]),
+            (None, subprocess.CompletedProcess([], 7, "", "lane-mail: mailbox-unreadable=" + secret),
+             ["mailbox/lane-mail", "refusal", "mailbox-unreadable"]),
         ]
-        for host, failure in failures:
+        for host, failure, key in failures:
             with self.subTest(host=host, failure=type(failure).__name__):
                 target = owner_asks.watch.Destination("ssh:remote" if host else "local", host)
                 if host:
@@ -255,7 +258,7 @@ class OwnerAsksContract(unittest.TestCase):
                 self.assertEqual(len(lines), 1)
                 record = json.loads(lines[0].split("=", 1)[1])
                 self.assertEqual(record["destination"], target.key + ":" + str(self.home))
-                self.assertTrue(record["key"])
+                self.assertEqual(record["key"], key)
                 self.assertNotIn(secret, lines[0])
 
     def test_control_rejects_receipt_and_page_cap_regressions(self):
@@ -350,6 +353,9 @@ class PublicOwnerAsks(MailWorld):
         for checkout_code in (False, True):
             with self.subTest(checkout_code=checkout_code):
                 if checkout_code:
+                    (remote / "base64.py").write_text('from pathlib import Path\nPath(' +
+                                                     repr(str(self.root / "executed-checkout-code")) +
+                                                     ').touch()\nraise SystemExit(91)\n')
                     for package, entry in (("jarvis", "lib/jarvis-env.sh"), ("mailbox", "lane-mail"),
                                            ("linear", "linear.sh"), ("slack", "slack")):
                         scripts = remote / ".agents/skills" / package / "scripts"
