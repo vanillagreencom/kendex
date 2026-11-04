@@ -965,12 +965,12 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     // reads the status alone reads the effect's own outcome.
                     let settled = if effect_exit {
                         Some(match &outcome {
-                            effects::Effected::Recorded(applied) => match &applied.report {
-                                ops::Report::RecordOutcome(r) => {
-                                    Settled::Recorded(r.intent.clone())
-                                }
-                                _ => Settled::Unread,
-                            },
+                            effects::Effected::Recorded(applied) => {
+                                let ops::Report::RecordOutcome(r) = &applied.report else {
+                                    unreachable!("record-outcome returns its own report")
+                                };
+                                Settled::Recorded(r.intent.clone())
+                            }
                             effects::Effected::Started(started) => {
                                 Settled::Job(effects::await_job(
                                     &path,
@@ -991,9 +991,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                         reply["notices_unmarked"] = serde_json::to_value(notices_unmarked)?;
                     }
                     if let Some(settled) = settled {
-                        if let Some(intent) = settled.intent() {
-                            reply["settled"] = serde_json::to_value(intent)?;
-                        }
+                        reply["settled"] = serde_json::to_value(settled.intent())?;
                         let status = settled.status();
                         if status != 0 {
                             let _ = writeln!(
@@ -1555,31 +1553,27 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
 const JOB_ANSWER_MARGIN: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// The intent an `--effect-exit` call reads its status from: the outcome
-/// its effect recorded here, its job's as last read, or none where the
-/// effect's report names no intent.
+/// its effect recorded here, or its job's as last read.
 enum Settled {
     Recorded(state::Intent),
     Job(state::Intent),
-    Unread,
 }
 
 impl Settled {
-    fn intent(&self) -> Option<&state::Intent> {
+    fn intent(&self) -> &state::Intent {
         match self {
-            Settled::Recorded(intent) | Settled::Job(intent) => Some(intent),
-            Settled::Unread => None,
+            Settled::Recorded(intent) | Settled::Job(intent) => intent,
         }
     }
 
     /// 0 confirmed, or a job's runner up and waiting for this caller's exit;
-    /// 3 failed, or closed by a reconcile because its record moved; 75 open
-    /// with its outcome unknown, the intent's reconcile its owner.
+    /// 3 failed; 75 open with its outcome unknown, the intent's reconcile its
+    /// owner.
     fn status(&self) -> i32 {
         const FAILED: i32 = 3;
         let (intent, job) = match self {
             Settled::Recorded(intent) => (intent, false),
             Settled::Job(intent) => (intent, true),
-            Settled::Unread => return effects::UNCONFIRMED_EXIT,
         };
         if intent.open() {
             return if job && effects::runner_recorded(intent) {

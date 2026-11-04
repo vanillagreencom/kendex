@@ -65,9 +65,11 @@ pub fn source(caller: &Caller, harness: Harness) -> Source {
 }
 
 /// The walk a succession the `mark` sent takes for `caller` on `harness`.
-/// Where the caller's own account reads at its trigger, the walk is the
-/// headroom mark's whatever mark fired first, since that account is the one
-/// the successor must leave. A headroom or rate mark leaves the caller's
+/// Where the caller's own account reaches an account mark (its headroom
+/// trigger, else a wall its rate projects inside the setting), the walk is
+/// that mark's whatever mark fired first, headroom, then rate, then context,
+/// since that account is the one the successor must leave. A headroom or
+/// rate mark leaves the caller's
 /// account out of every pick. A context or memory mark keeps the caller's
 /// own account, unpicked, where it has room; a context mark also keeps an
 /// account nothing measures where no other account of its harness has room
@@ -84,19 +86,17 @@ fn walk_request(
     mark: MarkKind,
     now: u64,
 ) -> WalkRequest {
-    let state = match mark {
-        MarkKind::Headroom | MarkKind::Rate => None,
+    let (state, reached) = match mark {
+        MarkKind::Headroom | MarkKind::Rate => (None, None),
         MarkKind::Context | MarkKind::Memory => {
-            Some(caller.account_state(harness, settings, path, host, now))
+            let (state, reached) = caller.account_departure(harness, settings, path, host, now);
+            (Some(state), reached)
         }
     };
-    let mark = match state {
-        Some(AccountState::AtTrigger) => MarkKind::Headroom,
-        Some(AccountState::HasRoom | AccountState::Unmeasured | AccountState::Unreadable)
-        | None => mark,
-    };
+    let mark = reached.unwrap_or(mark);
     let mut entry = caller.walk_entry(harness);
-    entry.keep = state == Some(AccountState::HasRoom);
+    entry.keep = state == Some(AccountState::HasRoom)
+        && matches!(mark, MarkKind::Context | MarkKind::Memory);
     let (exclude, preference) = match mark {
         MarkKind::Headroom | MarkKind::Rate => (caller.account.iter().cloned().collect(), None),
         MarkKind::Context => (

@@ -1263,7 +1263,10 @@ impl OverseerDriver<'_> {
                 baseline: &self.baseline,
                 settings: &self.settings.watch,
                 succession: Succession::On,
-                preference: &self.settings.overseer_preference,
+                preference: self
+                    .settings
+                    .overseer_preference_set
+                    .then_some(self.settings.overseer_preference.as_str()),
                 now: self.now,
                 transfer: &transfer,
                 context_record: self.context_record.as_deref(),
@@ -1342,9 +1345,9 @@ fn walk_b(_: &WalkRequest) -> Result<Walked, String> {
 }
 
 /// The line under a reached mark for the session in `cwd` at `pane`.
-fn hand_over(cwd: &Path, pane: &str, kind: &str, preference: &str) -> String {
+fn hand_over(cwd: &Path, pane: &str, kind: &str, walks: &str) -> String {
     format!(
-        "Hand this session over at the next safe point: write the overseer handoff file, choose the successor with orch-runtime successor --fleet --cwd {} --predecessor {pane} --mark {kind} (it walks ORCH_OVERSEER_PREFERENCE={preference}) and ask orch-runtime op --fleet --effect-exit for request-transfer with cause live, its .result.successor as the successor and its .result.expected as the expected record, which answers the transfer's own outcome.",
+        "Hand this session over at the next safe point: write the overseer handoff file, choose the successor with orch-runtime successor --fleet --cwd {} --predecessor {pane} --mark {kind} (it walks {walks}) and ask orch-runtime op --fleet --effect-exit for request-transfer with cause live, its .result.successor as the successor and its .result.expected as the expected record, which answers the transfer's own outcome.",
         cwd.display()
     )
 }
@@ -1649,7 +1652,7 @@ fn the_mark_line_carries_the_succession_s_handling_under_it() {
                 dir.path(),
                 &pane,
                 "headroom",
-                "claude:standard:high,codex:standard:high"
+                "ORCH_OVERSEER_PREFERENCE=claude:standard:high,codex:standard:high"
             ),
         ]
     );
@@ -1665,10 +1668,19 @@ fn the_mark_line_carries_the_succession_s_handling_under_it() {
         server, fleet, reached, no_walk, readers2, transfers2, chosen
     );
     chosen.settings.overseer_preference = "claude:fable:high".to_owned();
+    chosen.settings.overseer_preference_set = true;
     let preferred = chosen.pass(&state);
     assert_eq!(
         lines(&preferred).get(1).map(String::as_str),
-        Some(hand_over(dir.path(), &pane, "headroom", "claude:fable:high").as_str()),
+        Some(
+            hand_over(
+                dir.path(),
+                &pane,
+                "headroom",
+                "ORCH_OVERSEER_PREFERENCE=claude:fable:high"
+            )
+            .as_str()
+        ),
         "{:?}",
         lines(&preferred)
     );
@@ -1807,7 +1819,7 @@ fn the_context_reading_is_handed_to_the_judge_and_a_context_mark_is_said_once_pe
                 dir.path(),
                 &pane,
                 "context",
-                "claude:standard:high,codex:standard:high"
+                "this session's own entry alone, ORCH_OVERSEER_PREFERENCE being unset"
             ),
         ]
     );
@@ -2907,6 +2919,38 @@ fn a_stalled_cloud_lane_whose_directive_went_unanswered_is_closed_once_with_the_
         5,
         "no second close after no answer"
     );
+    // A close that never started (its program not executable) closed
+    // nothing: no marker stands, and once it can run the next pass closes.
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::remove_file(&marker).unwrap();
+    world.plant_close(ok("kept=/archive/CC-1\n"));
+    let close = world.scripts.join("lane-close");
+    std::fs::remove_file(&close).unwrap();
+    std::fs::copy(fixtures().join("lane-close/lane-close"), &close).unwrap();
+    std::fs::set_permissions(&close, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let unstarted = driver.pass(&state);
+    assert!(
+        unstarted
+            .failed
+            .as_deref()
+            .is_some_and(|f| f.starts_with("lane-close-failed item=CC-1 ")),
+        "{:?}",
+        unstarted.failed
+    );
+    assert!(
+        std::fs::metadata(&marker).is_err(),
+        "nothing started, no marker"
+    );
+    std::fs::set_permissions(&close, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let closed = driver.pass(&state);
+    assert_eq!(
+        event_lines(&closed),
+        vec![
+            "EVENT lane-closed CC-1",
+            "EVENT cloud-stall-closed CC-1 directive_age=4540"
+        ]
+    );
+    assert_eq!(world.close_log().len(), 6);
 }
 
 /// `oversee-watch:2662` (`check_start_stall`, the `HOSTED_ROOT` arm), the
@@ -3918,6 +3962,40 @@ fn an_unconfirmed_wall_replacement_keeps_its_marker_until_its_launch_settles_and
         assert!(
             outcomes(&mut driver).is_empty(),
             "confirms={confirms}: said once"
+        );
+    }
+}
+
+#[test]
+fn a_relaunch_the_launcher_answers_possibly_started_is_read_as_started_and_one_never_started_as_refused()
+ {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let relaunch = Relaunch {
+        item: "KEN-4".to_owned(),
+        window: "gh-4".to_owned(),
+        to: "/a".to_owned(),
+        spent: "/b".to_owned(),
+        cwd: dir.path().to_path_buf(),
+        session: "fleet".to_owned(),
+        args: vec!["true".to_owned()],
+        marker: dir.path().join("wall-relaunch.gh-4"),
+        log: dir.path().join("wall-relaunch-KEN-4.log"),
+    };
+    // (the launcher's status, the file's mode, read as started)
+    for (status, mode, started) in [
+        (0, 0o755, true),
+        (6, 0o755, true),
+        (4, 0o755, false),
+        (0, 0o644, false),
+    ] {
+        let launcher = dir.path().join(format!("job-unit-{status}-{mode:o}"));
+        std::fs::write(&launcher, format!("#!/bin/bash\nexit {status}\n")).unwrap();
+        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(mode)).unwrap();
+        assert_eq!(
+            overseer::relaunch_through_launcher(&launcher, &relaunch).is_ok(),
+            started,
+            "status={status} mode={mode:o}"
         );
     }
 }

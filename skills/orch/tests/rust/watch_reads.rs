@@ -1262,6 +1262,61 @@ fn a_terminal_close_whose_effect_fails_is_said_refused_not_closed() {
     assert!(live(harness.pid()), "the refused close stopped nothing");
 }
 
+#[test]
+fn an_open_terminal_close_the_watch_asked_is_settled_by_its_own_next_pass() {
+    let harness = Owned::sleep();
+    // A live process that is no tmux server stands at the recorded server
+    // pid: the pane cannot be read, so the close's effect stays open.
+    let mut not_a_server = Some(Owned::sleep());
+    let server_pid = not_a_server.as_ref().unwrap().pid();
+    let mut world = World::new();
+    world.write_fleet(&json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
+        "lanes": [{"item": "KEN-3", "tracker": "linear", "repo": "owner/repo", "harness": "claude",
+            "window": null, "host": null, "mail_root": "/srv/lane/x", "status": "stopped",
+            "session_since": "2026-10-09T00:00:00Z",
+            "launch": {"pane": "%7", "server": server_pid, "pid": harness.pid(), "start": harness.start()}}]}));
+    world.linear("statuses list", statuses());
+    world.linear("issues list", json!({"body": []}));
+    world.linear("issues bulk-get", json!({"body": {"issues": {"nodes": [
+        {"identifier": "KEN-3", "state": {"type": "canceled"}, "description": null, "children": {"nodes": []}}
+    ]}}}));
+    quiet_github(&mut world);
+    world.gh(
+        "repos/owner/repo/pulls?state=closed&head=owner%3Aken-3&per_page=100&page=1",
+        json!({"body": []}),
+    );
+    world.gh(
+        "search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20%22KEN-3%22%20in%3Atitle%2Cbody&per_page=100&page=1",
+        json!({"body": {"total_count": 0, "incomplete_results": false, "items": []}}),
+    );
+    let mailbox = world.dir.path().join("quiet-lane-mail");
+    std::fs::write(&mailbox, "#!/bin/bash\nexit 0\n").unwrap();
+    std::fs::set_permissions(&mailbox, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mailbox = mailbox.display().to_string();
+    let settings = world.settings(&[("LANE_MAIL_CLI", mailbox.as_str())]);
+    let clock = FakeClock::new();
+    let mut body = tracker::body(world.context(settings, None));
+    let mut baseline = Baseline::default();
+    let close = |w: &World| -> Value {
+        w.fleet()["intents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["op"] == "close-owned-resources")
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    let first = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
+    assert!(rendered(&first).is_empty(), "{:?}", rendered(&first));
+    assert_eq!(close(&world)["outcome"], "unconfirmed", "{}", close(&world));
+    // The process at the recorded server pid ends: the pane reads gone, so
+    // the watch's own next pass settles its close.
+    not_a_server.take();
+    let second = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1240).unwrap();
+    assert_eq!(rendered(&second), vec!["EVENT lane-closed KEN-3"]);
+    assert_eq!(close(&world)["outcome"], "confirmed", "{}", close(&world));
+}
+
 /// Defect: the heartbeat's capacity line naming an
 /// item a lane holds, a queued item or a blocked one, or missing a Backlog
 /// item. The slot the heartbeat body reads names the open items with no

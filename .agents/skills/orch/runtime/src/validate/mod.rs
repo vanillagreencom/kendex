@@ -1529,10 +1529,17 @@ fn ask_launcher(
                 line: host::stdout_text(&out),
             }
         }
-        // An end with no status, or no answer in the bound, may have
-        // started the job.
+        // An end with no status, or the launcher's own possibly-started
+        // answer, may have started the job.
         Ok(out) if out.status.code().is_none() => Launch::Unanswered {
             cause: out.status.to_string(),
+        },
+        Ok(out) if out.status.code() == Some(JOB_UNIT_UNCONFIRMED) => Launch::Unanswered {
+            cause: host::stderr_text(&out)
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .to_owned(),
         },
         Ok(out) => Launch::Refused {
             cause: host::stderr_text(&out)
@@ -1541,11 +1548,20 @@ fn ask_launcher(
                 .unwrap_or_default()
                 .to_owned(),
         },
+        // A launcher that never started ran nothing; one that gave no answer
+        // in the bound may have.
+        Err(e @ agent_runtime::Error::NotStarted { .. }) => Launch::Refused {
+            cause: e.to_string(),
+        },
         Err(e) => Launch::Unanswered {
             cause: e.to_string(),
         },
     }
 }
+
+/// The job launcher's status for a job that may have started with nothing
+/// able to say (`launch-unconfirmed`, `lib/job-unit.sh`'s launch).
+pub const JOB_UNIT_UNCONFIRMED: i32 = 6;
 
 /// Start a validation run: read, record, launch.
 pub fn start(

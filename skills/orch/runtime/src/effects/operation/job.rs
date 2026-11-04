@@ -1657,10 +1657,10 @@ fn send_notices(run: &Run, due: fn(&Notice) -> bool, last: bool) -> Result<Vec<N
 /// --item overseer --to owner --file FILE`). A notice the owner already
 /// received within the mailbox's window
 /// is refused by the CLI as a repeat, which is `sent`; any other refusal is
-/// `unsent:<cause>`; a CLI that gave no answer (its bound passed, a signal
-/// ended it, or it could not be run) is `unanswered:<cause>`, since the
-/// notice may have gone. Each is recorded, never a reason to hold the
-/// outcome.
+/// `unsent:<cause>`, and so is a CLI that never started; one that started
+/// and gave no answer (its bound passed, or a signal ended it) is
+/// `unanswered:<cause>`, since the notice may have gone. Each is recorded,
+/// never a reason to hold the outcome.
 fn send_owner_notice(run: &Run, intent_id: &str, text: &str) -> String {
     let path = run
         .settings
@@ -1706,6 +1706,8 @@ fn send_owner_notice(run: &Run, intent_id: &str, text: &str) -> String {
                 }
             }
         }
+        // A CLI that never started sent nothing.
+        Err(e @ agent_runtime::Error::NotStarted { .. }) => format!("unsent:{}", e.key()),
         Err(e) => format!("{}{}", state::NOTICE_UNANSWERED, e.key()),
     }
 }

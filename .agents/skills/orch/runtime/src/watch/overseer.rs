@@ -57,7 +57,7 @@ use super::{Body, Produced, Runner, Tick};
 use crate::ops::accounts::{self, PickAnswer, PickRequest};
 use crate::ops::walk::{self, WalkRequest};
 use crate::ops::{OverseerExpected, RequestTransfer};
-use crate::settings::{Settings, Succession, WatchSettings};
+use crate::settings::{MarkSettings, Settings, Succession, WatchSettings};
 use crate::state::{FleetState, Pending, TransferCause};
 
 /// The gap alert's notice file under the state directory.
@@ -471,17 +471,20 @@ impl Caller {
         }
     }
 
-    /// The state of this session's own account, as [`judge_marks`] reads it.
-    pub(crate) fn account_state(
+    /// This session's own account as [`judge_marks`] reads it: its state,
+    /// and the account mark it reaches, which a succession leaves the
+    /// account by whatever mark sent it.
+    pub(crate) fn account_departure(
         &self,
         harness: Harness,
         settings: &Settings,
         fleet_path: &Path,
         host: &crate::ops::Host<'_>,
         now: u64,
-    ) -> AccountState {
-        self.own_account(harness, settings, fleet_path, host, now)
-            .state
+    ) -> (AccountState, Option<MarkKind>) {
+        let read = self.own_account(harness, settings, fleet_path, host, now);
+        let reached = read.reached(&settings.marks);
+        (read.state, reached)
     }
 
     /// The pending the walk's choice opens: its harness, account, model,
@@ -544,6 +547,21 @@ struct AccountRead {
 }
 
 impl AccountRead {
+    /// The account mark this reading reaches: the headroom trigger, else a
+    /// wall the measured rate projects inside the setting. Headroom leads,
+    /// since it names the account to leave.
+    fn reached(&self, marks: &MarkSettings) -> Option<MarkKind> {
+        if self.state == AccountState::AtTrigger {
+            return Some(MarkKind::Headroom);
+        }
+        (marks.wall_minutes > 0
+            && self.rate_state == "measured"
+            && self
+                .projected
+                .is_some_and(|projected| projected <= u64::from(marks.wall_minutes)))
+        .then_some(MarkKind::Rate)
+    }
+
     fn headroom_field(&self) -> String {
         match (self.state, self.headroom) {
             (AccountState::HasRoom | AccountState::AtTrigger, Some(h)) => h.to_string(),
@@ -713,7 +731,8 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
         m.decision = decision.clone();
         m
     };
-    if account.state == AccountState::AtTrigger {
+    let account_mark = account.reached(marks);
+    if account_mark == Some(MarkKind::Headroom) {
         let mut m = reached(
             MarkKind::Headroom,
             account.headroom.unwrap_or(0).to_string(),
@@ -725,10 +744,8 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
         }
         return Ok(m);
     }
-    if marks.wall_minutes > 0
-        && account.rate_state == "measured"
+    if account_mark == Some(MarkKind::Rate)
         && let Some(projected) = account.projected
-        && projected <= u64::from(marks.wall_minutes)
     {
         let mut m = reached(
             MarkKind::Rate,
@@ -966,12 +983,20 @@ pub fn relaunch_through_launcher(job_unit: &Path, r: &Relaunch) -> Result<(), St
         "launch",
         &args,
         RUNNER_BOUND,
-    )
-    .map_err(|e| e.to_string())?;
-    if out.status.success() {
-        Ok(())
-    } else {
-        Err(host::stderr_text(&out))
+    );
+    // A launch the launcher answers possibly started, or that gave no
+    // answer, is read as started: the marker written before it owns its
+    // outcome, said from the relaunch's status or as stuck past the prepare
+    // bound. One that never started, or a refusal, ran nothing.
+    let out = match out {
+        Ok(out) => out,
+        Err(e @ agent_runtime::Error::NotStarted { .. }) => return Err(e.to_string()),
+        Err(_) => return Ok(()),
+    };
+    match out.status.code() {
+        Some(0) | None => Ok(()),
+        Some(crate::validate::JOB_UNIT_UNCONFIRMED) => Ok(()),
+        Some(_) => Err(host::stderr_text(&out)),
     }
 }
 
@@ -1118,8 +1143,9 @@ pub struct Pass<'a> {
     pub baseline: &'a Baseline,
     pub settings: &'a WatchSettings,
     pub succession: Succession,
-    /// `ORCH_OVERSEER_PREFERENCE`, which the mark line's payload names.
-    pub preference: &'a str,
+    /// `ORCH_OVERSEER_PREFERENCE`, which the mark line's payload names;
+    /// `None` where the setting names none.
+    pub preference: Option<&'a str>,
     pub now: u64,
     /// The one request the duty makes: `request-transfer`, as the `op`
     /// command runs it; `Ok` is the intent it persisted, `Err` the
@@ -1702,8 +1728,8 @@ fn pass_next_due() -> std::time::Instant {
 }
 
 /// The transfer a `requested` row asked for, read by its outcome: in
-/// flight, or confirmed with the record moved, it holds; failed, or closed
-/// under a moved record, it is said as `overseer-relaunch-failed` with the
+/// flight, or confirmed, it holds, a confirmed transfer having moved the
+/// record; failed, it is said as `overseer-relaunch-failed` with the
 /// intent's note as its step and asked again on the next run while the
 /// recovery's attempts last, else the row is `reported`. A row naming no
 /// transfer is a succession owner's command, whose outcome is the
@@ -2133,18 +2159,24 @@ fn mark_check(record: &Record, key: &str, marks: Option<&Marks>, pass: &Pass, ou
             succession: marks.succession,
         });
         // The handling under the line: the succession's own words, naming
-        // the walk and the preference it reads.
+        // the walk the verb takes for this mark: at a context mark with no
+        // preference set, the session's own entry alone.
+        let walks = match (marks.key, pass.preference) {
+            (MarkKey::Reached(MarkKind::Context), None) => {
+                "this session's own entry alone, ORCH_OVERSEER_PREFERENCE being unset".to_owned()
+            }
+            (_, Some("")) => "ORCH_OVERSEER_PREFERENCE=empty".to_owned(),
+            (_, preference) => format!(
+                "ORCH_OVERSEER_PREFERENCE={}",
+                preference.unwrap_or(crate::settings::DEFAULT_OVERSEER_PREFERENCE)
+            ),
+        };
         let sentence = match marks.succession {
             Succession::Off => "ORCH_OVERSEER_SUCCESSION is off, so no successor opens: rewrite the overseer handoff file and ask the user to start a fresh overseer session.".to_owned(),
             Succession::On => format!(
-                "Hand this session over at the next safe point: write the overseer handoff file, choose the successor with orch-runtime successor --fleet --cwd {} --predecessor {} --mark {kind} (it walks ORCH_OVERSEER_PREFERENCE={}) and ask orch-runtime op --fleet --effect-exit for request-transfer with cause live, its .result.successor as the successor and its .result.expected as the expected record, which answers the transfer's own outcome.",
+                "Hand this session over at the next safe point: write the overseer handoff file, choose the successor with orch-runtime successor --fleet --cwd {} --predecessor {} --mark {kind} (it walks {walks}) and ask orch-runtime op --fleet --effect-exit for request-transfer with cause live, its .result.successor as the successor and its .result.expected as the expected record, which answers the transfer's own outcome.",
                 text(record.raw.get("cwd")).unwrap_or_else(|| "[CHECKOUT]".to_owned()),
                 record.pane,
-                if pass.preference.is_empty() {
-                    "empty"
-                } else {
-                    pass.preference
-                }
             ),
         };
         out.events.push(Event::Tail(sentence));
@@ -2399,7 +2431,10 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
                 baseline: tick.baseline,
                 settings: &ctx.settings.watch,
                 succession: ctx.settings.succession,
-                preference: &ctx.settings.overseer_preference,
+                preference: ctx
+                    .settings
+                    .overseer_preference_set
+                    .then_some(ctx.settings.overseer_preference.as_str()),
                 now: tick.wall,
                 transfer: &transfer,
                 context_record: Some(&context_record),

@@ -155,8 +155,9 @@ pub struct RecordOutcome {
     /// The line a confirmed successor ran, written over the pending one.
     #[serde(default)]
     pub launch_line: Option<String>,
-    /// The home a confirmed successor runs under, as its launch prepared it,
-    /// written over the pending's.
+    /// The home a confirmed successor or local lane runs its sessions under,
+    /// as its launch prepared it: written over the pending's, or as the
+    /// lane's `home`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<String>,
     /// The fleet watch a confirmed start launched or found claimed, written as

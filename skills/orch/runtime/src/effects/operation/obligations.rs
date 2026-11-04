@@ -392,7 +392,7 @@ impl Obligations {
         harness: Option<Harness>,
     ) -> Obligations {
         match phase {
-            None => Obligations::none(),
+            None | Some(Phase::CloudCreate { .. }) => Obligations::none(),
             Some(Phase::Opening { opening }) => match (&opening.pane, opening.asked) {
                 (None, false) => Obligations::none(),
                 (None, true) => Obligations::of(
@@ -1107,8 +1107,8 @@ pub(in crate::effects) struct Wire {
     pub window: Option<String>,
     pub tmux_session: Option<String>,
     pub launch_line: Option<String>,
-    /// The home a confirmed controller runs under, as its launch prepared
-    /// it.
+    /// The home a confirmed controller or local lane runs its sessions
+    /// under, as its launch prepared it.
     pub home: Option<String>,
     /// The fleet watch a confirmed start launched or found claimed.
     pub watch: Option<WatchJob>,
@@ -1675,6 +1675,7 @@ mod tests {
                 baseline: Vec::new(),
                 pane: pane.map(str::to_owned),
                 asked,
+                home: None,
             },
         }
     }

@@ -3159,6 +3159,110 @@ fn a_notice_whose_send_got_no_answer_is_sent_once_more_by_the_heartbeat_and_neve
     assert_eq!(sent(), 2, "sent once more");
 }
 
+#[test]
+fn a_transfer_the_watch_asked_whose_job_never_claimed_is_settled_by_the_watch_itself() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    let work = runner.state_dir().to_path_buf();
+    let (bin, env) = watch_world(&work);
+    // The job launcher takes its setsid route, whose child never claims.
+    for fake in ["systemd-run", "systemctl", "loginctl"] {
+        std::fs::remove_file(bin.join(fake)).unwrap();
+    }
+    for tool in ["setsid", "loginctl"] {
+        std::os::unix::fs::symlink(fixtures().join("setsid-sleeper").join(tool), bin.join(tool))
+            .unwrap();
+    }
+    runner.tools = Some(bin);
+    runner.env.extend(env);
+    runner
+        .env
+        .push(("ORCH_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
+    let pane = server.open_window("overseer", &work, "bash --norc --noprofile");
+    let agent_runtime::reading::Reading::Live(fields) = agent_runtime::host::tmux::pane_fields(
+        &agent_runtime::host::tmux::server(&server.socket).unwrap(),
+        &pane,
+    ) else {
+        panic!("the overseer's pane reads")
+    };
+    let ended = Owned::sleep();
+    let mut record = overseer_record(ended.pid(), &ended.start(), &server, &work);
+    drop(ended);
+    record["pane"] = json!(pane);
+    record["window"] = json!(fields.pane.window);
+    record["server_start"] = json!(server.start);
+    record.as_object_mut().unwrap().remove("launch_line");
+    let mut fleet = runner.fleet();
+    fleet["overseer"] = record;
+    runner.write_fleet(&fleet);
+    let state = work.join(orch_runtime::state::FLEET_FILE_NAME);
+    let mut watch = isolated();
+    watch
+        .args(["--state-dir", &work.display().to_string()])
+        .args(["watch", "run", "--file", &state.display().to_string()])
+        .args(["--interval", "1", "--since", "2026-01-01T00:00:00Z"])
+        .current_dir(&work)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    runner.apply_env(&mut watch);
+    let mut watch = watch.spawn().expect("watch run");
+    let transfers = |runner: &Runner| -> Vec<Value> {
+        runner.fleet()["intents"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|i| i["op"] == "request-transfer")
+            .collect()
+    };
+    let sleepers = |runner: &Runner| -> Vec<u32> {
+        transfers(runner)
+            .iter()
+            .filter_map(|i| remaining(&i["observation"], "job")["pid"].as_u64())
+            .map(|pid| pid as u32)
+            .collect()
+    };
+    // The first transfer's job is launched and never claims: the intent
+    // stands open, the watch its owner.
+    let deadline = Instant::now() + SETTLE;
+    while sleepers(&runner).is_empty() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let first = transfers(&runner).first().cloned().unwrap_or(Value::Null);
+    let held = (first["outcome"].clone(), first["owner"]["pid"].as_u64());
+    for pid in sleepers(&runner) {
+        end_sleeper(pid);
+    }
+    // Its job ended: the watch's own reconcile reads it gone and closes the
+    // intent, where it deferred to itself as a live owner.
+    let id = first["id"].clone();
+    let settled = || {
+        transfers(&runner)
+            .into_iter()
+            .find(|i| i["id"] == id)
+            .is_some_and(|i| i["outcome"] == "failed")
+    };
+    let deadline = Instant::now() + SETTLE;
+    while !settled() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let closed = settled();
+    stop_live_watch(&runner, &state);
+    let _ = watch.wait();
+    for pid in sleepers(&runner) {
+        end_sleeper(pid);
+    }
+    assert_eq!(
+        held,
+        (json!("unconfirmed"), Some(u64::from(watch.id()))),
+        "{first}"
+    );
+    assert!(closed, "{}", json!(transfers(&runner)));
+}
+
 /// Defect: the caller's words reshaped on the way to the launch, or a bypass
 /// word slipped under a `native` posture. The caller's argv reaches the
 /// launched command exactly as given, the judged posture travels as its own
@@ -6496,6 +6600,8 @@ fn a_reconcile_of_an_opened_successor_writes_no_trust_record_and_asks_no_gate() 
         let pid = server.pane_pid(&pane);
         let mut ph = phase("window-opened", &server, &pane, since, None);
         ph["identity"] = json!({"pid": pid, "start": start_of(pid)});
+        // The home the runner's launch recorded, where its sessions are.
+        ph["home"] = json!(runner.state_dir().display().to_string());
         let mut fleet = runner.fleet();
         fleet["overseer"] =
             overseer_record(GONE_PID as u32, "ticks:1", &server, runner.state_dir());
@@ -6527,6 +6633,11 @@ fn a_reconcile_of_an_opened_successor_writes_no_trust_record_and_asks_no_gate() 
         assert!(!asked, "{harness}: {report}");
         if harness == "claude" {
             assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+            assert_eq!(
+                runner.fleet()["overseer"]["home"],
+                runner.state_dir().display().to_string(),
+                "the published home is the one the launch recorded"
+            );
         }
     }
 }
@@ -6545,7 +6656,9 @@ fn a_marks_succession_leaves_the_account_a_rate_mark_spends_and_keeps_one_a_cont
     unread["wall"] = Value::Null;
     let mut codex = measured_account("ccodex", 20);
     codex["harness"] = json!("codex");
-    let cases: [Case; 5] = [
+    let mut burning = measured_account("eclaude", 40);
+    burning["usage_rate_pct_per_min"] = json!(2.0);
+    let cases: [Case; 6] = [
         (
             "rate",
             vec![fast.clone(), measured_account("bclaude", 70)],
@@ -6583,6 +6696,13 @@ fn a_marks_succession_leaves_the_account_a_rate_mark_spends_and_keeps_one_a_cont
             None,
             "950000:1000000",
             "ccodex",
+        ),
+        (
+            "context, caller's rate mark due too",
+            vec![burning, measured_account("bclaude", 70)],
+            None,
+            "950000:1000000",
+            "bclaude",
         ),
     ];
     for (case, rows, preference, context, account) in cases {

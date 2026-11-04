@@ -303,19 +303,27 @@ impl Successor {
     }
 
     /// The successor `pending` names once its runner opened, for a
-    /// reconcile: the same preconditions and the home its launch prepared,
-    /// read by the same rule with no trust record written and no gate
-    /// asked over a successor that already runs.
-    fn opened(settings: &Settings, pending: &state::Pending) -> Result<Successor> {
+    /// reconcile: the same preconditions and the home its launch recorded
+    /// on the opening (an opening that recorded none, the pending's
+    /// account), with no trust record written, no gate asked and no home
+    /// resolved again in this process. A reconcile builds no command, so the
+    /// home is all the launch fields it carries.
+    fn opened(
+        settings: &Settings,
+        pending: &state::Pending,
+        recorded: Option<&str>,
+    ) -> Result<Successor> {
         let (harness, cwd) = Self::checked(pending)?;
-        let homes = super::launch::prepared_home(
-            settings,
-            harness,
-            pending.account.as_deref(),
-            pending.model.as_deref(),
-            kept(pending, harness),
-            &cwd,
-        )?;
+        let home = recorded
+            .or(pending.account.as_deref())
+            .map(PathBuf::from)
+            .or_else(|| operation::default_home(harness));
+        let homes = LaunchHome {
+            sessions: home.clone(),
+            named: home,
+            account: None,
+            trust: None,
+        };
         Self::of(settings, pending, harness, cwd, homes)
     }
 
@@ -706,7 +714,7 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
     // 73); a reconcile at `opening` with a dead owner adopts the runner by
     // its receipt, and before retirement that is still an
     // abandon.
-    let opening = match operation.opening(&server, &floor, brief) {
+    let opening = match operation.opening(&server, &floor, brief, Some(&successor.home)) {
         Ok(opening) => opening,
         Err(e) => return Ok(failed_before_retirement_refused(operation, &Error::from(e))),
     };
@@ -941,7 +949,11 @@ fn complete_transfer(
         .expect("complete_transfer runs past the opening phase");
     let owns = |name: &str| successor.target.owns(name);
     let (turns_before, session) = match phase {
-        Phase::Opening { .. } => unreachable!("opening is resolved before complete_transfer"),
+        Phase::Opening { .. } | Phase::CloudCreate { .. } => {
+            unreachable!(
+                "opening is resolved before complete_transfer, and a transfer creates no cloud session"
+            )
+        }
         Phase::WindowOpened { .. } | Phase::Retired { .. } => {
             let Some(brief) = &opened.brief else {
                 // No handoff to deliver: the runner idle at its composer
@@ -1708,6 +1720,7 @@ pub(super) fn reconcile_transfer(run: &Run, intent: &Intent) -> Result<EffectOut
         | Phase::Delivering { .. }
         | Phase::Delivered { .. }
         | Phase::IdentityRead { .. }) => resolved,
+        Phase::CloudCreate { .. } => unreachable!("a transfer creates no cloud session"),
     };
     let mut outcome = judge_resolved(
         operation,
@@ -1799,7 +1812,9 @@ fn judge_resolved(
     // failure here does with the runner depends on what stands below.
     let successor = match overseer.pending.as_ref() {
         None => Err("pending-missing"),
-        Some(pending) => Successor::opened(run.settings, pending).map_err(|e| e.key()),
+        Some(pending) => {
+            Successor::opened(run.settings, pending, opened.home.as_deref()).map_err(|e| e.key())
+        }
     };
     let by = match (retirement, phase) {
         (Some(by), _) => by,
@@ -1876,6 +1891,7 @@ fn judge_resolved(
         (
             None,
             Phase::Opening { .. }
+            | Phase::CloudCreate { .. }
             | Phase::Retired { .. }
             | Phase::Delivering { .. }
             | Phase::Delivered { .. }
@@ -2013,6 +2029,6 @@ fn recorded_runner(phase: &Phase) -> Option<Identity> {
         | Phase::Retired { opened }
         | Phase::Delivering { opened, .. }
         | Phase::Delivered { opened, .. } => opened.identity.clone(),
-        Phase::Opening { .. } => None,
+        Phase::Opening { .. } | Phase::CloudCreate { .. } => None,
     }
 }

@@ -643,6 +643,11 @@ pub struct Lane {
     pub window: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
+    /// The home the lane's last confirmed local launch ran its sessions
+    /// under, as that launch prepared it; a relaunch reads the bound
+    /// session there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1026,6 +1031,11 @@ pub struct Opening {
     /// `asked` names a window possibly opened, and one without it nothing.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub asked: bool,
+    /// The home the runner's native sessions are read under, as its launch
+    /// prepared it: every reconcile reads the runner there, never a home
+    /// resolved again in its own process.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<String>,
 }
 
 impl Opening {
@@ -1045,6 +1055,7 @@ impl Opening {
             session_id: self.session_id.clone(),
             baseline: self.baseline.clone(),
             identity,
+            home: self.home.clone(),
         }
     }
 }
@@ -1092,6 +1103,10 @@ pub struct OpenedPane {
     /// another process in its place.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity: Option<Identity>,
+    /// The home the runner's native sessions are read under, as its launch
+    /// prepared it ([`Opening::home`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<String>,
 }
 
 /// The runner's own native session file, bound once before the brief is
@@ -1155,6 +1170,11 @@ pub enum Phase {
         pid: u64,
         start: String,
     },
+    /// Written before a cloud session's create is asked: a create whose
+    /// answer is lost, the asking process ended included, may have made a
+    /// session nothing here can name, so a reconcile holds the launch
+    /// rather than reading nothing opened.
+    CloudCreate { worktree: String },
 }
 
 impl Phase {
@@ -1167,7 +1187,7 @@ impl Phase {
             | Phase::Delivering { opened, .. }
             | Phase::Delivered { opened, .. }
             | Phase::IdentityRead { opened, .. } => Some(opened),
-            Phase::Opening { .. } => None,
+            Phase::Opening { .. } | Phase::CloudCreate { .. } => None,
         }
     }
 }

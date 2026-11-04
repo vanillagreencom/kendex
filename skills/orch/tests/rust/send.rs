@@ -1077,10 +1077,19 @@ fn two_walkers_of_one_notice_make_one_send_the_later_reading_the_earliers_inside
     );
 }
 
-#[test]
-fn a_cloud_launch_pushes_the_branch_creates_the_session_through_the_cli_and_records_it() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = std::fs::canonicalize(dir.path()).unwrap().join("repo");
+/// A checkout with a GitHub origin, the orch scripts beside it, a Claude
+/// account and a brief, and a worktree package that makes and pushes the
+/// item's branch, logging each call: the world a cloud launch runs in.
+struct CloudWorld {
+    root: PathBuf,
+    account: PathBuf,
+    brief: PathBuf,
+    worktree: PathBuf,
+    worktree_log: PathBuf,
+}
+
+fn cloud_world(dir: &Path) -> CloudWorld {
+    let root = std::fs::canonicalize(dir).unwrap().join("repo");
     std::fs::create_dir_all(&root).unwrap();
     init_repo(&root);
     git(
@@ -1105,8 +1114,8 @@ fn a_cloud_launch_pushes_the_branch_creates_the_session_through_the_cli_and_reco
     std::fs::create_dir_all(&account).unwrap();
     let brief = root.join("brief.md");
     std::fs::write(&brief, "Do the thing for CC-9.\n").unwrap();
-    let worktree_log = dir.path().join("worktree.log");
-    let worktree = dir.path().join("worktree");
+    let worktree_log = dir.join("worktree.log");
+    let worktree = dir.join("worktree");
     script(
         &worktree,
         &format!(
@@ -1115,6 +1124,95 @@ fn a_cloud_launch_pushes_the_branch_creates_the_session_through_the_cli_and_reco
             root = root.display()
         ),
     );
+    CloudWorld {
+        root,
+        account,
+        brief,
+        worktree,
+        worktree_log,
+    }
+}
+
+impl CloudWorld {
+    /// The runtime in this world, the cloud CLI fixture first on `PATH`.
+    fn run(&self, args: &[&str], env: &[(&str, &Path)]) -> std::process::Output {
+        let mut command = isolated();
+        command
+            .args(["--state-dir", &self.root.display().to_string()])
+            .args(args)
+            .env("PATH", tool_path(&[&fixtures().join("claude-cloud")]))
+            .env("WORKTREE_CLI", &self.worktree)
+            .current_dir(&self.root);
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        command.output().unwrap()
+    }
+
+    /// `launch-lane` for `item` on the cloud.
+    fn launch(&self, item: &str, env: &[(&str, &Path)]) -> std::process::Output {
+        let request = self.root.join(format!("request-{item}.json"));
+        std::fs::write(
+            &request,
+            json!({
+                "op": "launch-lane",
+                "item": item,
+                "harness": "claude",
+                "mail_root": self.root.display().to_string(),
+                "account": self.account.display().to_string(),
+                "host": "claude-cloud",
+                "model": "opus",
+                "brief_file": self.brief.display().to_string(),
+            })
+            .to_string(),
+        )
+        .unwrap();
+        self.run(
+            &["op", "--fleet", "--request", &request.display().to_string()],
+            env,
+        )
+    }
+
+    fn fleet(&self) -> Value {
+        serde_json::from_str(
+            &std::fs::read_to_string(self.root.join("workflow-state-oversee.json")).unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn lane(&self, item: &str) -> Value {
+        self.fleet()["lanes"]
+            .as_array()
+            .and_then(|lanes| lanes.iter().find(|l| l["item"] == item))
+            .cloned()
+            .unwrap_or(Value::Null)
+    }
+
+    fn intent(&self, item: &str) -> Value {
+        self.fleet()["intents"]
+            .as_array()
+            .and_then(|intents| {
+                intents
+                    .iter()
+                    .rev()
+                    .find(|i| i["target"] == item && i["op"] == "launch-lane")
+            })
+            .cloned()
+            .unwrap_or(Value::Null)
+    }
+}
+
+#[test]
+fn a_cloud_launch_pushes_the_branch_creates_the_session_through_the_cli_and_records_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let world = cloud_world(dir.path());
+    let CloudWorld {
+        root,
+        account,
+        brief,
+        worktree,
+        worktree_log,
+    } = &world;
     let claude_log = dir.path().join("claude.log");
     let parent_log = dir.path().join("parent.log");
     let request = root.join("request.json");
@@ -1138,7 +1236,7 @@ fn a_cloud_launch_pushes_the_branch_creates_the_session_through_the_cli_and_reco
     command
         .args(["--state-dir", &root.display().to_string()])
         .args(["state", "init", "--fleet"])
-        .current_dir(&root);
+        .current_dir(root);
     let out = command.output().unwrap();
     assert!(out.status.success(), "init: {}", stderr(&out));
     let mut command = isolated();
@@ -1148,11 +1246,11 @@ fn a_cloud_launch_pushes_the_branch_creates_the_session_through_the_cli_and_reco
         .env("PATH", tool_path(&[&fixtures().join("claude-cloud")]))
         .env("CLAUDE_CLOUD_LOG", &claude_log)
         .env("CLAUDE_CLOUD_PARENT_LOG", &parent_log)
-        .env("WORKTREE_CLI", &worktree)
+        .env("WORKTREE_CLI", worktree)
         // The overseer's own session marker, which the create must not
         // hand the CLI: the builder's removals reach the child.
         .env("CLAUDECODE", "parent-fixture")
-        .current_dir(&root);
+        .current_dir(root);
     let report = effect_report(&command.output().unwrap());
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
     let lane = &report["lane"];
@@ -1176,7 +1274,7 @@ fn a_cloud_launch_pushes_the_branch_creates_the_session_through_the_cli_and_reco
         json!(["o/r", "owner/repo"]),
         "the origin and the item's repository, as GitHub reads names"
     );
-    let calls: Vec<String> = std::fs::read_to_string(&worktree_log)
+    let calls: Vec<String> = std::fs::read_to_string(worktree_log)
         .unwrap()
         .lines()
         .map(str::to_owned)
@@ -1214,58 +1312,89 @@ fn a_cloud_launch_pushes_the_branch_creates_the_session_through_the_cli_and_reco
     );
     // A create whose answer is lost may have made a session nothing here can
     // name: the launch stays open with the lane preparing, never failed, and
-    // a reconcile keeps it so.
-    let request = root.join("request-lost.json");
-    std::fs::write(
-        &request,
-        json!({
-            "op": "launch-lane",
-            "item": "CC-10",
-            "harness": "claude",
-            "mail_root": root.display().to_string(),
-            "account": account.display().to_string(),
-            "host": "claude-cloud",
-            "model": "opus",
-            "brief_file": brief.display().to_string(),
-        })
-        .to_string(),
-    )
-    .unwrap();
-    let mut command = isolated();
-    command
-        .args(["--state-dir", &root.display().to_string()])
-        .args(["op", "--fleet", "--request", &request.display().to_string()])
-        .env("PATH", tool_path(&[&fixtures().join("claude-cloud")]))
-        .env("CLAUDE_CLOUD_LOG", &claude_log)
-        .env("CLAUDE_CLOUD_ANSWER", "not an answer")
-        .env("WORKTREE_CLI", &worktree)
-        .current_dir(&root);
-    let report = effect_report(&command.output().unwrap());
+    // a reconcile keeps it so; a close is the person's settlement.
+    let lost = world.launch(
+        "CC-10",
+        &[
+            ("CLAUDE_CLOUD_LOG", claude_log.as_path()),
+            ("CLAUDE_CLOUD_ANSWER", Path::new("not an answer")),
+        ],
+    );
+    let report = effect_report(&lost);
     assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
     assert_eq!(
         report["intent"]["observation"]["note"], "cloud-create-unknown",
         "{report}"
     );
-    let fleet: Value = serde_json::from_str(
-        &std::fs::read_to_string(root.join("workflow-state-oversee.json")).unwrap(),
-    )
-    .unwrap();
-    let lane = fleet["lanes"]
-        .as_array()
-        .and_then(|lanes| lanes.iter().find(|l| l["item"] == "CC-10"))
-        .cloned()
-        .unwrap_or(Value::Null);
-    assert_eq!(lane["status"], "preparing", "{lane}");
-    let mut command = isolated();
-    command
-        .args(["--state-dir", &root.display().to_string()])
-        .args(["reconcile", "--fleet"])
-        .current_dir(&root);
-    let answer = reply(&command.output().unwrap());
+    assert_eq!(world.lane("CC-10")["status"], "preparing");
+    let answer = reply(&world.run(&["reconcile", "--fleet"], &[]));
     let reconciled = &answer["result"]["reconciled"][0]["report"]["intent"];
     assert_eq!(reconciled["outcome"], "unconfirmed", "{answer}");
     assert_eq!(
         reconciled["observation"]["note"], "cloud-create-unknown",
         "{answer}"
     );
+    let request = root.join("close-CC-10.json");
+    std::fs::write(
+        &request,
+        json!({
+            "op": "close-owned-resources",
+            "item": "CC-10",
+            "terminal": {"verdict": "canceled", "source": "claude.ai/code read by a person"},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let closed = world.run(
+        &["op", "--fleet", "--request", &request.display().to_string()],
+        &[],
+    );
+    assert!(
+        closed.status.success(),
+        "the close settles the held create: {}",
+        stderr(&closed)
+    );
+    let launch = world.intent("CC-10");
+    assert_eq!(launch["outcome"], "failed", "{launch}");
+    assert_eq!(
+        launch["observation"]["cloud_create"],
+        root.join("wt").join("CC-10").display().to_string(),
+        "{launch}"
+    );
+    assert_ne!(world.lane("CC-10")["status"], "preparing");
+}
+
+#[test]
+fn a_cloud_create_whose_asking_process_ends_is_held_and_never_asked_again() {
+    let dir = tempfile::tempdir().unwrap();
+    let world = cloud_world(dir.path());
+    let claude_log = dir.path().join("claude.log");
+    let init = world.run(&["state", "init", "--fleet"], &[]);
+    assert!(init.status.success(), "init: {}", stderr(&init));
+    // The CLI ends the `op` that asked it, as a caller's own end does
+    // mid-create: nothing answers, whatever the cloud made.
+    let killed = world.launch(
+        "CC-11",
+        &[
+            ("CLAUDE_CLOUD_LOG", claude_log.as_path()),
+            ("CLAUDE_CLOUD_KILL", Path::new("parent")),
+        ],
+    );
+    assert!(!killed.status.success(), "the asking op ended");
+    let answer = reply(&world.run(&["reconcile", "--fleet"], &[]));
+    let reconciled = &answer["result"]["reconciled"][0]["report"]["intent"];
+    assert_eq!(reconciled["outcome"], "unconfirmed", "{answer}");
+    assert_eq!(
+        reconciled["observation"]["note"], "cloud-create-unknown",
+        "{answer}"
+    );
+    assert_eq!(world.lane("CC-11")["status"], "preparing");
+    let again = world.launch("CC-11", &[("CLAUDE_CLOUD_LOG", claude_log.as_path())]);
+    let report = reply(&again);
+    assert_eq!(world.intent("CC-11")["outcome"], "unconfirmed", "{report}");
+    let creates = std::fs::read_to_string(&claude_log)
+        .unwrap()
+        .matches("argv=")
+        .count();
+    assert_eq!(creates, 1, "no second create beside the one that may stand");
 }

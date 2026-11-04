@@ -623,7 +623,7 @@ impl Operation<'_> {
                 | state::Phase::Delivered { opened, .. }
                 | state::Phase::IdentityRead { opened, .. },
             ) => push(PathBuf::from(&opened.socket)),
-            None => {}
+            Some(state::Phase::CloudCreate { .. }) | None => {}
         }
         if let Some(overseer) = overseer {
             push(overseer_socket(overseer));

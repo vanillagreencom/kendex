@@ -603,9 +603,9 @@ pub enum Closed {
     Deferred,
     /// Any other end: the status and the output's first line.
     Failed { cause: String },
-    /// No answer: the runner's bound passed or a signal ended it, so the
-    /// close may have happened. Its marker stands for the next pass, which
-    /// leaves the lane to the operator.
+    /// No answer: the close started and its bound passed, or a signal ended
+    /// it, so it may have happened. Its marker stands for the next pass,
+    /// which leaves the lane to the operator.
     Unanswered { cause: String },
 }
 
@@ -627,6 +627,12 @@ fn run_close(scripts: &Path, state_dir: &Path, item: &str) -> Closed {
         CLOSE_BOUND,
     ) {
         Ok(out) => out,
+        // A close that never started closed nothing.
+        Err(e @ agent_runtime::Error::NotStarted { .. }) => {
+            return Closed::Failed {
+                cause: e.to_string(),
+            };
+        }
         Err(e) => {
             return Closed::Unanswered {
                 cause: e.to_string(),

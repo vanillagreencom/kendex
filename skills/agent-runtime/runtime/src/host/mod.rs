@@ -53,10 +53,18 @@ impl Failed {
     }
 
     pub fn into_error(self, caller: Caller) -> Error {
-        Error::External {
-            program: caller.program,
-            operation: caller.operation,
-            cause: self.cause(),
+        let cause = self.cause();
+        match self {
+            Failed::Spawn(_) | Failed::Cwd(_) => Error::NotStarted {
+                program: caller.program,
+                operation: caller.operation,
+                cause,
+            },
+            Failed::Answer(_) => Error::External {
+                program: caller.program,
+                operation: caller.operation,
+                cause,
+            },
         }
     }
 }
@@ -380,7 +388,7 @@ impl Drop for Detached {
 /// Start `executable` in `place` as a [`Detached`] child, counted under
 /// `tag` as every run is, with `stderr` as its standard error where the
 /// caller hands a file. The spawn is the one site a detached process starts
-/// at; a spawn that fails is `external-failed` with its cause and counts
+/// at; a spawn that fails is `not-started` with its cause and counts
 /// nothing.
 pub fn start_detached(
     tag: &'static str,
@@ -833,6 +841,11 @@ mod tests {
         };
         let failed = start(caller, exe.as_os_str(), &[], place, None, false, BOUND).unwrap_err();
         assert!(matches!(failed, Failed::Cwd(_)), "{failed:?}");
+        // Through the public runner, a run that never started is told from
+        // one that gave no answer.
+        let err =
+            run_tagged_in("row-e", "u5b2-no-cwd", &exe, "place", &[], place, BOUND).unwrap_err();
+        assert!(matches!(err, Error::NotStarted { .. }), "{err:?}");
         assert_eq!(counts().of("u5b2-no-cwd", Some("row-e")), 0);
     }
 

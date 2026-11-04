@@ -76,9 +76,14 @@ fi
 
 # shellcheck source=lib/job-unit.sh
 source "$SCRIPT_DIR/lib/job-unit.sh"
+# A launch the launcher answers possibly started (6) is read back as one
+# that started: only the runtime's claim says whether it runs.
+launched=0
 job_unit_launch "watch-$(date -u +%Y%m%dT%H%M%SZ)" "$DIR/oversee-watch.runner" -- \
   sh -c 'err=$1; shift; exec "$@" 2>>"$err"' sh "$DIR/oversee-watch.err" \
   "$RUNTIME" watch run --file "$STATE" --replace "$OWNER" ${RUN_ARGS[@]+"${RUN_ARGS[@]}"} \
+  || launched=$?
+[[ "$launched" -eq 0 || "$launched" -eq 6 ]] \
   || die 1 watch-relaunch-failed "pid=$OWNER" "error=${JOB_UNIT_ERROR_KEY:-launch-failed}" "$JOB_UNIT_ERROR"
 
 # The loop's own record, released on its behalf: only by the loop's own pass,

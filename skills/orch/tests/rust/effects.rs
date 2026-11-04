@@ -6705,6 +6705,11 @@ fn a_pi_root_the_private_env_file_names_is_the_root_a_seat_lane_is_judged_and_ru
     pi_root_ready(&relocated);
     let opened = launch("KEN-PR2");
     assert_ne!(opened["intent"]["outcome"], "failed", "{opened}");
+    assert_eq!(
+        opened["intent"]["phase"]["home"],
+        relocated.display().to_string(),
+        "the opening records the home a reconcile reads: {opened}"
+    );
     let recorded: Value =
         serde_json::from_str(&std::fs::read_to_string(work.join("launch-record.json")).unwrap())
             .unwrap();
@@ -6827,19 +6832,30 @@ fn a_reconciled_pi_lane_on_a_seat_binds_its_session_under_pis_root_not_the_seat(
     lane["account"] = json!(seat.display().to_string());
     let mut fleet = runner.fleet();
     fleet["lanes"] = json!([lane]);
+    // The launch recorded Pi's root on its opening; the reconcile's own
+    // environment names another.
+    let mut opened = phase("window-opened", &server, &pane, since, None);
+    opened["home"] = json!(root.display().to_string());
     fleet["intents"] = json!([lane_intent(
         "launch-lane",
         "KEN-PIR",
         "not-started",
-        Some(phase("window-opened", &server, &pane, since, None)),
+        Some(opened),
     )]);
     runner.write_fleet(&fleet);
+    runner.env.retain(|(key, _)| key != "PI_CODING_AGENT_DIR");
+    runner.env.push((
+        "PI_CODING_AGENT_DIR".to_owned(),
+        dir.path().join("elsewhere").display().to_string(),
+    ));
     let report = runner.reconcile_one();
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    let lane = runner.fleet()["lanes"][0].clone();
+    assert_eq!(lane["session_id"], "pi-session-1", "{report}");
     assert_eq!(
-        runner.fleet()["lanes"][0]["session_id"],
-        "pi-session-1",
-        "{report}"
+        lane["home"],
+        root.display().to_string(),
+        "the relaunch reads the recorded home: {lane}"
     );
 }
 
@@ -6886,6 +6902,7 @@ fn a_codex_lane_with_no_account_resumes_the_session_its_served_home_holds() {
     let mut stopped = lane("KEN-CXR", "stopped", &runner, Value::Null);
     stopped["harness"] = json!("codex");
     stopped["session_id"] = json!("codex-session-1");
+    stopped["home"] = json!(served.display().to_string());
     stopped.as_object_mut().unwrap().remove("account");
     let mut fleet = runner.fleet();
     fleet["lanes"] = json!([stopped]);

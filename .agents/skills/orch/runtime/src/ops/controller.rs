@@ -1600,6 +1600,7 @@ mod tests {
             session_id: None,
             baseline: Vec::new(),
             identity: None,
+            home: None,
         };
         run(
             &path,

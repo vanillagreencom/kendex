@@ -1317,12 +1317,12 @@ fn close_terminal_lanes(
                     identity: lane.item.clone(),
                 });
             }
-            // The close's intent stands open for its reconcile, and the next
-            // pass's request reconciles it: nothing is said of it yet.
+            // The close's intent stands open, and the next pass's request,
+            // this watch's own, reconciles it: nothing is said of it yet.
             Ok(false) => {
                 let _ = writeln!(
                     std::io::stderr(),
-                    "lane-close-failed item={} outcome=unconfirmed",
+                    "lane-close-pending item={} outcome=unconfirmed",
                     lane.item
                 );
             }
@@ -1359,7 +1359,7 @@ fn close_terminal_lanes(
 /// How a close's effect ended, by the outcome it recorded.
 enum Closed {
     Confirmed,
-    /// Failed, with the intent's note, or closed under a moved record.
+    /// Failed, with the intent's note.
     Failed(String),
     /// Unconfirmed, the intent left open.
     Open,

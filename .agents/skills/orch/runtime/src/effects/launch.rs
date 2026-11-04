@@ -97,38 +97,18 @@ type Owner<'a> = &'a dyn Fn(Harness, &Path, &Path, &str) -> Reading<Option<PathB
 /// or whose session file is absent from the destination home by its fixed
 /// id, starts fresh with `account-switched`: the context continues through
 /// the handoff record, never a transcript another account cannot read.
-/// The destination is the home the launch's own rule names (`named_home`):
-/// the account, else the home the harness inherits, a local Codex window's
-/// from the fleet server; its store holds the sessions a private launch
-/// home links. A home that rule refuses refuses the route.
-fn relaunch_route(run: &Run, operation: &Operation, lane: &Lane, r: &LaunchLane) -> Result<Route> {
+/// The destination is the home the lane's last confirmed launch recorded,
+/// where its bound session was written (a private Codex home links the
+/// account's store); a lane that recorded none reads its account, else the
+/// harness's default home. Nothing is resolved again in this process.
+fn relaunch_route(run: &Run, lane: &Lane, r: &LaunchLane) -> Result<Route> {
     let handoff = standing_handoff(run, &lane.item)?;
-    let Some(harness) = Harness::parse(&r.harness) else {
-        return Ok(route_of(lane, r, handoff, None, &operation::session_owner));
-    };
-    let kept = match (harness, &r.account, surface_of(r.host.as_deref())) {
-        (Harness::Codex, None, Surface::Local) => {
-            let doc_session = fleet_tmux_session(run.path)?;
-            let served = operation
-                .fleet_server(doc_session.as_deref())
-                .and_then(|(server, session)| operation::server_codex_home(&server, &session));
-            match served {
-                Ok(kept) => kept,
-                Err(e) => return Ok(Route::Refuse { cause: e.key() }),
-            }
-        }
-        (Harness::Codex | Harness::Claude | Harness::Copilot | Harness::Pi, _, _) => None,
-    };
-    let destination = match named_home(
-        run.settings,
-        harness,
-        r.account.as_deref(),
-        r.model.as_deref(),
-        kept.as_deref(),
-    ) {
-        Ok((home, _)) => home.or_else(|| operation::default_home(harness)),
-        Err(e) => return Ok(Route::Refuse { cause: e.key() }),
-    };
+    let destination = lane
+        .home
+        .as_deref()
+        .or(r.account.as_deref())
+        .map(PathBuf::from)
+        .or_else(|| Harness::parse(&r.harness).and_then(operation::default_home));
     Ok(route_of(
         lane,
         r,
@@ -466,30 +446,6 @@ pub(super) fn launch_home(
     })
 }
 
-/// The home a launch [`launch_home`] already prepared runs under, read by
-/// the same rule without writing a trust record or asking the gate: a
-/// reconcile of a running successor names the home it was opened on, and
-/// neither question has an answer that could change what already runs.
-pub(super) fn prepared_home(
-    settings: &Settings,
-    harness: Harness,
-    account: Option<&str>,
-    model: Option<&str>,
-    kept: Option<&Path>,
-    cwd: &Path,
-) -> Result<LaunchHome> {
-    let (home, billed) = named_home(settings, harness, account, model, kept)?;
-    let named = home
-        .map(|home| trust::prepared_home(harness, &home, cwd))
-        .transpose()?;
-    Ok(LaunchHome {
-        sessions: named.clone().or_else(|| operation::default_home(harness)),
-        named,
-        account: billed,
-        trust: None,
-    })
-}
-
 /// The trust record a launch of `harness` under `home` needs for `cwd`,
 /// made before the window opens; its refusal is the launch's.
 #[allow(
@@ -607,7 +563,7 @@ fn scripts_dir(settings: &Settings) -> PathBuf {
 pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Result<EffectOutcome> {
     let operation = Operation::open(run, intent)?;
     let (lane, _) = lane_for_intent(run.path, &intent.id)?;
-    let route = relaunch_route(run, &operation, &lane, r)?;
+    let route = relaunch_route(run, &lane, r)?;
     // A destination session store that could not be read, or a bound
     // session another directory owns, refuses before any window opens,
     // nothing recorded.
@@ -645,11 +601,16 @@ fn open_and_confirm(
     owns: &dyn Fn(&str) -> bool,
     sessions: Sessions,
 ) -> Result<EffectOutcome> {
-    // The server and floor are recorded before the window opens, so a crash
-    // in the open leaves a phase a reconcile can resume: it adopts the pane
-    // this launch's receipt names, fails the recorded pane that never
-    // registered, or fails `nothing-opened`.
-    let opening = match operation.opening(server, floor, None) {
+    // The server, the floor and the home the sessions are read under are
+    // recorded before the window opens, so a crash in the open leaves a
+    // phase a reconcile can resume: it adopts the pane this launch's receipt
+    // names, fails the recorded pane that never registered, or fails
+    // `nothing-opened`.
+    let home = match &sessions {
+        Sessions::Store { home, .. } => *home,
+        Sessions::Hosted { .. } => None,
+    };
+    let opening = match operation.opening(server, floor, None, home) {
         Ok(opening) => opening,
         Err(e) => return Ok(operation.settle(Word::Failed, json!({"cause": e.key()}))),
     };
@@ -1032,7 +993,7 @@ fn on_path(name: &str) -> Option<PathBuf> {
 /// through `send`.
 fn cloud_launch(
     run: &Run,
-    operation: Operation,
+    mut operation: Operation,
     lane: &Lane,
     r: &LaunchLane,
 ) -> Result<EffectOutcome> {
@@ -1133,6 +1094,9 @@ fn cloud_launch(
             extra_args: &[],
         },
     )?;
+    operation.record_phase(Phase::CloudCreate {
+        worktree: wt.display().to_string(),
+    })?;
     let session = match cloud_create(&command, &prompt) {
         Created::Session(id) => id,
         Created::Refused(cause) => return failed(operation, &cause),
@@ -1279,10 +1243,11 @@ const CLOUD_CREATE_UNKNOWN: &str = "cloud-create-unknown";
 /// How the cloud session's create answered.
 enum Created {
     Session(String),
-    /// The CLI exited non-zero or answered `ok: false`: nothing was created.
+    /// The CLI never started, exited non-zero or answered `ok: false`:
+    /// nothing was created.
     Refused(String),
-    /// No answer within the bound, or one that names no session: a session
-    /// may exist. No documented interface lists cloud sessions by id
+    /// No answer within the bound, an end by a signal, or an answer that
+    /// names no session: a session may exist. No documented interface lists cloud sessions by id
     /// (`claude agents --json` names local sessions alone, and the session
     /// list is claude.ai/code's page), so nothing reads it back here.
     Unknown(String),
@@ -1330,12 +1295,20 @@ fn cloud_create(command: &LaunchCommand, prompt: &str) -> Created {
         CLOUD_BOUND,
     ) {
         Ok(out) => out,
+        // A CLI that never started made nothing; one that started and gave
+        // no answer may have.
+        Err(e @ agent_runtime::Error::NotStarted { .. }) => {
+            return Created::Refused(format!("cloud-create-refused cause={e}"));
+        }
         Err(e) => return Created::Unknown(format!("cloud-create-unanswered cause={e}")),
     };
     if !out.status.success() {
+        // A CLI ended by a signal gave no answer.
+        let Some(code) = out.status.code() else {
+            return Created::Unknown("cloud-create-unanswered cause=signal".to_owned());
+        };
         return Created::Refused(format!(
-            "cloud-create-refused exit={} cause={}",
-            out.status.code().unwrap_or(-1),
+            "cloud-create-refused exit={code} cause={}",
             host::stderr_text(&out).lines().next().unwrap_or("")
         ));
     }
@@ -1458,6 +1431,7 @@ fn launch_outcome(
                     window: Some(format!("{tmux_session}:{item}")),
                     tmux_session: Some(tmux_session.to_owned()),
                     mail_root,
+                    home: opened.home.clone(),
                     ..Wire::default()
                 }),
                 Err(operation) => {
@@ -1503,18 +1477,6 @@ pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutco
     // Every standing handle is read by its own key first.
     operation.read_standing(None)?;
     let Some(phase) = &intent.phase else {
-        // A cloud create whose answer was lost may have made a session that
-        // nothing reads back: the obligation stands until a person settles
-        // it, closing the lane.
-        if let Some(observation) = intent
-            .observation
-            .as_ref()
-            .filter(|o| o.get("note").and_then(Value::as_str) == Some(CLOUD_CREATE_UNKNOWN))
-        {
-            let mut observation = observation.clone();
-            observation["reconcile"] = json!("launch");
-            return Ok(operation.hold(observation));
-        }
         return Ok(operation.settle(
             Word::Failed,
             json!({"reconcile": "launch", "phase": "none", "cause": "nothing-opened"}),
@@ -1530,6 +1492,16 @@ pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutco
     // back on the outcome of a launch that ended there.
     let local = matches!(surface_of(lane.host.as_deref()), Surface::Local);
     let (opened, registered) = match phase {
+        // A cloud create asked and never answered, its asking process ended
+        // included, may have made a session nothing here can name: the
+        // launch stays held until a close supersedes it.
+        Phase::CloudCreate { worktree } => {
+            return Ok(operation.hold(json!({
+                "reconcile": "launch",
+                "note": CLOUD_CREATE_UNKNOWN,
+                "worktree": worktree,
+            })));
+        }
         Phase::Opening { opening } => match operation.recover_opening(opening)? {
             Recovered::Adopted {
                 pane,
@@ -1655,38 +1627,15 @@ fn judge_opened(
             .as_deref()
             .map(PathBuf::from)
             .unwrap_or_default();
-        // The sessions are read under the home the lane's launch resolved,
-        // read again by the same rule with nothing written: a Pi lane on a
-        // seat keeps Pi's root, never the seat. A home that cannot be read
-        // holds the launch, as an unreadable store does.
-        let home = if hosted {
-            None
-        } else {
-            let resolved = match (harness, &lane.account) {
-                (Harness::Codex, None) => operation::server_codex_home(&pane.server, &pane.session),
-                (Harness::Codex | Harness::Claude | Harness::Copilot | Harness::Pi, _) => Ok(None),
-            }
-            .and_then(|kept| {
-                prepared_home(
-                    run.settings,
-                    harness,
-                    lane.account.as_deref(),
-                    lane.model.as_deref(),
-                    kept.as_deref(),
-                    &cwd,
-                )
-            });
-            match resolved {
-                Ok(homes) => homes.sessions,
-                Err(e) => {
-                    return Ok(launch_pane_unconfirmed(
-                        operation,
-                        opened,
-                        json!({"reconcile": "launch", "observed": "present", "note": "home-unreadable", "cause": e.key()}),
-                    ));
-                }
-            }
-        };
+        // The sessions are read under the home the launch recorded on its
+        // opening, never one resolved again in this process: a Pi lane on a
+        // seat keeps Pi's root, never the seat. An opening that recorded none
+        // reads the account the lane records.
+        let home = opened
+            .home
+            .as_deref()
+            .or(lane.account.as_deref())
+            .map(PathBuf::from);
         let sessions = if hosted {
             Sessions::Hosted {
                 mail_root: cwd.display().to_string(),
@@ -1734,6 +1683,7 @@ mod tests {
             harness: Some("claude".to_owned()),
             window: None,
             account: Some(account.to_owned()),
+            home: None,
             host: None,
             kind: None,
             mail_root: mail_root.map(|p| p.display().to_string()),
@@ -1777,6 +1727,47 @@ mod tests {
             scope_range: None,
             in_scope: Vec::new(),
         }
+    }
+
+    /// The cloud CLI as `cloud_create` runs it: `sh -c SCRIPT`, the create's
+    /// own words after it as the script's positional parameters.
+    fn cloud_cli(cwd: PathBuf, script: &str) -> LaunchCommand {
+        LaunchCommand {
+            program: "sh".to_owned(),
+            args: vec!["-c".to_owned(), script.to_owned()],
+            env: Default::default(),
+            env_remove: Vec::new(),
+            cwd,
+            brief_arg: None,
+            brief_path: None,
+        }
+    }
+
+    /// A cloud create whose CLI never started made nothing, so it is
+    /// refused and a second launch may ask again. Defect: the run read as
+    /// no answer, holding the launch for a person over nothing.
+    #[test]
+    fn a_cloud_create_whose_cli_never_started_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let gone = cloud_cli(dir.path().join("gone"), "exit 0");
+        assert!(matches!(
+            cloud_create(&gone, "brief"),
+            Created::Refused(cause) if cause.starts_with("cloud-create-refused")
+        ));
+    }
+
+    /// A cloud create whose CLI started and ended by a signal gave no
+    /// answer, so a session may exist and the create is unknown. Defect:
+    /// the end read as a refusal, which lets a second launch create a
+    /// second session beside one that may stand.
+    #[test]
+    fn a_cloud_create_whose_cli_is_killed_is_unknown() {
+        let dir = tempfile::tempdir().unwrap();
+        let killed = cloud_cli(dir.path().to_owned(), "kill -KILL $$");
+        assert!(matches!(
+            cloud_create(&killed, "brief"),
+            Created::Unknown(cause) if cause == "cloud-create-unanswered cause=signal"
+        ));
     }
 
     /// The relaunch router. A bound session resumes under the same harness

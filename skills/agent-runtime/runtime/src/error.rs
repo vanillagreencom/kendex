@@ -48,6 +48,16 @@ pub enum Error {
         operation: &'static str,
         cause: String,
     },
+    /// An external program this crate drives never started: it could not
+    /// be spawned, or its working directory entered. Nothing it would do
+    /// was done, where a program that started and gave no answer may have
+    /// acted.
+    #[error("{program} {operation}: {cause}")]
+    NotStarted {
+        program: &'static str,
+        operation: &'static str,
+        cause: String,
+    },
     /// The requested operation is outside what the named harness or host
     /// supports; the cause names the missing native capability.
     #[error("{operation} unsupported on {subject}: {cause}")]
@@ -94,6 +104,7 @@ impl Error {
             Error::RecordShape { .. } => "record-shape",
             Error::Process { .. } => "process-failed",
             Error::External { .. } => "external-failed",
+            Error::NotStarted { .. } => "not-started",
             Error::Unsupported { .. } => "unsupported",
             Error::Refused { key, .. } => key,
         }

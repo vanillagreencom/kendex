@@ -392,6 +392,103 @@ fn a_launch_whose_answer_was_lost_keeps_its_stage_open_until_the_reconcile_reads
     assert_eq!(w.stage(&run_dir)["outcome"], "lost");
 }
 
+#[test]
+fn a_unit_start_whose_answer_and_read_are_lost_keeps_its_live_run_open_until_the_reconcile_reads_the_unit()
+ {
+    use std::os::unix::fs::PermissionsExt;
+    let w = World::new();
+    // A lingering manager that starts the unit, loses the start's answer,
+    // and answers the unit read only once the row has planted its answer.
+    let tools = w.root.join("manager");
+    fs::create_dir(&tools).unwrap();
+    let fake = fs::read_to_string(fixtures().join("cutover-fakes/systemd-run")).unwrap();
+    let started = fake.strip_suffix("exit 0\n").unwrap();
+    let systemd_run = format!(
+        "{started}run_dir=\"\"\nfor ((i=0;i<${{#argv[@]}};i++)); do\n  [ \"${{argv[i]}}\" != --run-dir ] || run_dir=\"${{argv[i+1]}}\"\ndone\nfor ((i=0;i<600;i++)); do [ ! -f \"$run_dir/pid\" ] || break; sleep 0.05; done\nexit 1\n"
+    );
+    let answer = tools.join("answer");
+    let systemctl = format!(
+        "#!/bin/bash\n[ -f '{}' ] || exit 1\ncat '{}'\n",
+        answer.display(),
+        answer.display()
+    );
+    for (name, text) in [
+        ("systemd-run", systemd_run),
+        ("systemctl", systemctl),
+        ("loginctl", "#!/bin/bash\necho yes\n".to_owned()),
+    ] {
+        fs::write(tools.join(name), text).unwrap();
+        fs::set_permissions(tools.join(name), fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let hold = w.root.join("child-hold");
+    assert!(program("mkfifo").arg(&hold).status().unwrap().success());
+    let launcher = support::job_unit().display().to_string();
+    let path = tool_path(&[&tools]);
+    let hold_path = hold.display().to_string();
+    let env = [
+        ("ORCH_JOB_UNIT", launcher.as_str()),
+        ("PATH", path.as_str()),
+        ("DEV_VALIDATE_CHILD_HOLD", hold_path.as_str()),
+    ];
+    let (key, line) = refusal(&w.start(&[], &env));
+    let run_dir = line
+        .split(' ')
+        .find_map(|f| f.strip_prefix("run_dir="))
+        .unwrap_or_default()
+        .to_owned();
+    let unit: u32 = fs::read_dir(tools.join("units"))
+        .ok()
+        .and_then(|mut entries| entries.next())
+        .and_then(|entry| fs::read_to_string(entry.unwrap().path()).ok())
+        .and_then(|pid| pid.trim().parse().ok())
+        .expect("the manager started the unit");
+    // The run's own close, and the unit's group, once the row has read it.
+    let release = || {
+        let _ = fs::write(&hold, "release\n");
+        let _ = program("kill")
+            .args(["-TERM", "--", &format!("-{unit}")])
+            .status();
+    };
+    let stage = w.stage(&run_dir);
+    let child: u32 = run_file(&run_dir, "pid").trim().parse().unwrap();
+    let open = (key.clone(), stage["end"].is_null(), support::live(child));
+    let second = refusal(&w.start(&[], &env)).0;
+    // The unit still runs: the reconcile keeps the run open.
+    fs::write(&answer, "loaded\nactive\n").unwrap();
+    ok(&w.op(&json!({"op": "reconcile-round", "round_id": ROUND}), &env));
+    let kept = w.stage(&run_dir)["end"].is_null();
+    release();
+    assert_eq!(open, ("launch-unanswered".to_owned(), true, true), "{line}");
+    assert_eq!(second, "run-live", "nothing launched beside the live run");
+    assert!(kept, "the reconcile keeps a live unit's run open");
+    // The unit ended: the reconcile closes the run.
+    let deadline = Instant::now() + JOB_BOUND;
+    while support::live(child) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    fs::write(&answer, "not-found\ninactive\n").unwrap();
+    ok(&w.op(&json!({"op": "reconcile-round", "round_id": ROUND}), &env));
+    assert!(!w.stage(&run_dir)["end"].is_null(), "{}", w.stage(&run_dir));
+}
+
+#[test]
+fn a_launcher_that_never_started_stops_its_stage() {
+    use std::os::unix::fs::PermissionsExt;
+    let w = World::new();
+    let launcher = w.root.join("job-unit-not-executable");
+    fs::copy(support::job_unit(), &launcher).unwrap();
+    fs::set_permissions(&launcher, fs::Permissions::from_mode(0o644)).unwrap();
+    let launcher = launcher.display().to_string();
+    let (key, line) = refusal(&w.start(&[], &[("ORCH_JOB_UNIT", &launcher)]));
+    assert_eq!(key, "launch-failed", "{line}");
+    let run_dir = line
+        .split(' ')
+        .find_map(|f| f.strip_prefix("run_dir="))
+        .unwrap()
+        .to_owned();
+    assert_eq!(w.stage(&run_dir)["outcome"], "stopped");
+}
+
 /// A1 row (1), the live rule: a round with an open started run refuses a
 /// second start as `run-live` and records nothing. Defect caught: two
 /// batteries beside each other, the slower failing on load.

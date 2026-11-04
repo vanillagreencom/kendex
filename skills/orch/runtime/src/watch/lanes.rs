@@ -1679,7 +1679,7 @@ fn strays(session: &str, pass: &Pass, out: &mut Produced) {
                 | Phase::Delivered { opened, .. }
                 | Phase::IdentityRead { opened, .. },
             ) => Some(opened.pane.clone()),
-            None => None,
+            Some(Phase::CloudCreate { .. }) | None => None,
         };
         known.extend(pane);
     }

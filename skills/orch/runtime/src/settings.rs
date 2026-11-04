@@ -13,14 +13,14 @@
 //! `"` or `\`, or literal strings with no apostrophe, an optional trailing
 //! `#` comment, a duplicate key refused, a `[`-led line a lone `[name]`
 //! header or refused, a leading byte-order mark refused. The private env
-//! file is shell to the loader that sources it; here it is read as data, which is the
-//! only way to answer what it says without running what it does: an
-//! assignment line, `KEY=VALUE` with an optional leading `export`, whose
-//! value is single-quoted, double-quoted under the contract above, or one
-//! bare word with no quote, `$`, `#`, backslash or whitespace. A line of any
-//! other shape assigns nothing here; one that assigns a key this runtime
-//! reads in a shape it cannot decode refuses, since reading past it would
-//! take the shell's value for another.
+//! file is shell to the loader that sources it; here it is read and never
+//! run, one assignment line at a time, `KEY=VALUE` with an optional leading
+//! `export`. An account key's value is read as the sourcing shell assigns
+//! it in the forms [`decode_account_value`] names, and any other form is
+//! passed over with a notice; every other key's value is read as data
+//! under [`decode_shell_value`], and a shape that reader cannot decode
+//! refuses, since reading past it would take the shell's value for
+//! another. A line of any other shape assigns nothing here.
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
@@ -1613,7 +1613,9 @@ fn decode_shell_value(raw: &str) -> Option<String> {
 /// `${HOME}` read as `home`, and in a bare word a `~` at its start or after
 /// a `:`, before a `/`, a `:` or its end, read as `home` too, as bash
 /// expands it in an assignment; then blanks and an optional `#` comment.
-/// `None` is any other shell form, or a home form with no home to read.
+/// An empty value is the empty string, which blanks the key as the shell's
+/// assignment does. `None` is any other shell form, or a home form with no
+/// home to read.
 fn decode_account_value(raw: &str, home: Option<&str>) -> Option<String> {
     let raw = raw.trim_end();
     let comment_only = |rest: &str| {
@@ -1632,7 +1634,10 @@ fn decode_account_value(raw: &str, home: Option<&str>) -> Option<String> {
         return expand_home(value, home, false);
     }
     let (word, rest) = raw.split_at(raw.find(char::is_whitespace).unwrap_or(raw.len()));
-    if word.is_empty() || !comment_only(rest) || word.contains(['#', '\\', '\'', '"', '`']) {
+    if word.is_empty() {
+        return comment_only(rest).then(String::new);
+    }
+    if !comment_only(rest) || word.contains(['#', '\\', '\'', '"', '`']) {
         return None;
     }
     expand_home(word, home, true)
@@ -1936,7 +1941,9 @@ mod tests {
     /// A key outside the account keys reads its value as data, a shell
     /// form inside quotes as the text it is, and refuses the load in a
     /// shape only a shell reads; an account key's form only a shell reads
-    /// is passed over, the load and every other key read as before.
+    /// is passed over, the load and every other key read as before, and an
+    /// empty account value blanks the key over a settings file's value, as
+    /// the sourced file did.
     #[test]
     fn a_private_file_line_this_runtime_reads_must_decode_as_data() {
         let dir = tempfile::tempdir().unwrap();
@@ -1977,6 +1984,21 @@ mod tests {
                 codex_home,
                 "{home:?}"
             );
+        }
+        write(
+            &roots.project,
+            "kendex.settings.toml",
+            "[env]\nORCH_LANE_EXCLUDE = \"lane-x\"\n",
+        );
+        for (text, exclude) in [
+            ("", vec!["lane-x"]),
+            ("ORCH_LANE_EXCLUDE=\n", vec![]),
+            ("export ORCH_LANE_EXCLUDE=\n", vec![]),
+            ("ORCH_LANE_EXCLUDE= # cleared\n", vec![]),
+        ] {
+            write(&roots.project, ".env.local", text);
+            let settings = load(&roots, &env(&[]), &FLAGS).unwrap();
+            assert_eq!(settings.accounts.exclude, exclude, "{text:?}");
         }
     }
 

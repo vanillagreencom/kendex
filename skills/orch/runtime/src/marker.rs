@@ -86,6 +86,11 @@ pub struct Checkout {
 )]
 pub fn checkout(worktree: &Path) -> Result<Checkout> {
     let dir = worktree.display().to_string();
+    let isolation = git_isolation();
+    let env: Vec<(&str, &std::ffi::OsStr)> = isolation
+        .iter()
+        .map(|(name, value)| (*name, value.as_os_str()))
+        .collect();
     let out = host::run_tagged_in(
         "launch",
         "git",
@@ -102,7 +107,7 @@ pub fn checkout(worktree: &Path) -> Result<Checkout> {
         ],
         Place {
             cwd: None,
-            env: &[],
+            env: &env,
         },
         GIT_BOUND,
     )
@@ -127,6 +132,24 @@ pub fn checkout(worktree: &Path) -> Result<Checkout> {
             &[("cause", "rev-parse-short")],
         )),
     }
+}
+
+/// What `git` runs with beside the process's environment: nothing in a
+/// build, so a lane's checkout is read under the operator's own
+/// configuration; under the crate's own rows a scratch home and no global
+/// or system configuration, so no row reads the operator's files.
+#[cfg(not(test))]
+fn git_isolation() -> Vec<(&'static str, std::ffi::OsString)> {
+    Vec::new()
+}
+
+#[cfg(test)]
+fn git_isolation() -> Vec<(&'static str, std::ffi::OsString)> {
+    vec![
+        ("HOME", std::env::temp_dir().join("isolated-home").into()),
+        ("GIT_CONFIG_NOSYSTEM", "1".into()),
+        ("GIT_CONFIG_GLOBAL", "/dev/null".into()),
+    ]
 }
 
 /// What a component of the record may be before anything is written: a

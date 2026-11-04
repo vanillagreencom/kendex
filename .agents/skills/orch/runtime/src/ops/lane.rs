@@ -1167,6 +1167,11 @@ pub(super) fn record_launch_outcome(
             state::set(lane, "running_at", at);
             state::set(lane, "launch", serde_json::to_value(&r.launch)?);
             state::set(lane, "session_id", string_or_null(&r.session_id));
+            // The home a local launch read its sessions under, which a
+            // relaunch reads the bound session from.
+            if let Some(home) = &r.home {
+                state::set(lane, "home", home.as_str());
+            }
             recorded.lane = Some(Box::new(lane_at(path, doc, index)?));
         }
         Outcome::Failed => {
@@ -2288,6 +2293,7 @@ mod tests {
             session_id: Some("0f6e".into()),
             baseline: Vec::new(),
             identity: None,
+            home: None,
         };
         let session = state::BoundSession {
             session_id: "0f6e".into(),

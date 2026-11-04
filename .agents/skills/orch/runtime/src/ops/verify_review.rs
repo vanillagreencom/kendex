@@ -215,8 +215,9 @@ fn review_settings(settings: &ReviewSettings) -> Result<Review> {
 
 /// The ready mark under the head: `marking` is written before `gh pr
 /// ready`, so a mark whose answer was refused or lost is made again while
-/// the pull request reads draft; `done` once the flag read after it is
-/// ready, so a draft a person restores is never marked over.
+/// the pull request reads draft; `done` once a view after it reads the
+/// flag ready, this call's or a later one's, so a draft a person restores
+/// is never marked over.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum Ready {
@@ -644,13 +645,12 @@ impl Gate<'_> {
             })
         };
         let mut pull = None;
-        let ready = marked
-            || (!self.view.draft && record.as_ref().is_some_and(held_as_draft) && {
-                let read = review::pull(&self.gh, &self.r.repo, self.r.pr)?;
-                let ready = !read.draft;
-                pull = Some(read);
-                ready
-            });
+        let mut ready = marked;
+        if !ready && !self.view.draft && record.as_ref().is_some_and(held_as_draft) {
+            let read = review::pull(&self.gh, &self.r.repo, self.r.pr)?;
+            ready = !read.draft;
+            pull = Some(read);
+        }
         let stands = |head: &HeadRecord| head.request.is_some() && !(ready && held_as_draft(head));
         if let Some(head) = record.as_ref().filter(|head| stands(head)) {
             self.reply.request = head.request.as_ref().map(|q| q.report(false));
@@ -730,7 +730,17 @@ impl Gate<'_> {
             Some(standing) if stands(&standing) => Ok((standing.clone(), (standing, false))),
             standing => {
                 let base = standing.unwrap_or_else(|| HeadRecord::fresh(stamp));
+                // A lapsing draft fallback starts the period and the hold
+                // with the request it releases: no review was asked for
+                // while the head stood as a draft.
+                let (at, period_started) = if held_as_draft(&base) {
+                    (stamp.clone(), stamp.clone())
+                } else {
+                    (base.at.clone(), base.period_started.clone())
+                };
                 let merged = HeadRecord {
+                    at,
+                    period_started,
                     request: Some(request.clone()),
                     retry: retry.clone().or(base.retry.clone()),
                     ..base

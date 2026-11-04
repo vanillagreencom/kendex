@@ -75,6 +75,9 @@ impl From<&Error> for Refusal {
             ],
             Error::External {
                 program, operation, ..
+            }
+            | Error::NotStarted {
+                program, operation, ..
             } => vec![
                 pair("program", (*program).to_owned()),
                 pair("operation", (*operation).to_owned()),

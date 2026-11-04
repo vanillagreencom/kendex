@@ -507,8 +507,11 @@ fn stop_route_open(applied: &Applied) -> bool {
 /// finds it. One still unconfirmed with its pane present is closed `failed`
 /// with `superseded-by-close`, since a hung launch would otherwise have
 /// neither a close nor a relaunch, and the close then stops what that pane
-/// holds. One whose pane cannot be observed is left open, and the close
-/// refuses `intent-open` as before: there is nothing to stop by. The close
+/// holds. So is a cloud create held with its answer unknown, which has no
+/// local process to stop: the close is the person's settlement, its line
+/// naming the worktree whose session to check on claude.ai/code. One whose
+/// pane cannot be observed is left open, and the close refuses
+/// `intent-open` as before: there is nothing to stop by. The close
 /// is then persisted through `operation`, the one store entry of the effect
 /// files.
 fn supersede_launch(
@@ -528,7 +531,12 @@ fn supersede_launch(
             .and_then(|o| o.get("observed"))
             .and_then(Value::as_str)
             == Some("present");
-        if !present {
+        let cloud = if let Some(state::Phase::CloudCreate { worktree }) = &launch.intent.phase {
+            Some(worktree.clone())
+        } else {
+            None
+        };
+        if !present && cloud.is_none() {
             return Err(Error::IntentOpen {
                 intent: launch.intent.id.clone(),
                 op: launch.intent.op,
@@ -547,7 +555,7 @@ fn supersede_launch(
         let operation = Operation::open(run, &launch.intent)?;
         run.apply_outcome(operation.refuse(
             "superseded-by-close",
-            json!({"reconcile": "launch", "pane": pane}),
+            json!({"reconcile": "launch", "pane": pane, "cloud_create": cloud}),
         ))?;
     }
     // The launch intent is closed either way: the close now persists its
@@ -824,8 +832,13 @@ fn reconcile_intent(run: &Run, intent_id: &str) -> Result<Reconciled> {
     // observation, so a contender racing the owner before its first phase
     // never fails the intent out from under it. One it
     // cannot read defers the same way, with the cause. A dead
-    // or absent owner (an intent may record none) lets the reconcile proceed.
+    // or absent owner (an intent may record none) lets the reconcile proceed,
+    // and so does the reconciling process itself: the watch, which persists
+    // a terminal close or a transfer and reconciles on the one runner thread
+    // that ran the effect, has no effect of its own in flight beside it.
+    let own = intent.owner.is_some() && intent.owner == run.env.owner;
     match operation::owner(&intent) {
+        Reading::Live(_) if own => {}
         Reading::Live(_) => {
             return deferred(
                 run,

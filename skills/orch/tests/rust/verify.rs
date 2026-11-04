@@ -4726,8 +4726,9 @@ fn a_refused_ready_mark_is_sent_again_and_its_request_follows() {
 /// mark reached GitHub, stands `marking`: the next call reads the head's
 /// draft flag, marks again only where it still reads draft, records `done`
 /// either way and releases the `draft` fallback an earlier call recorded,
-/// so the request goes out once. A head recorded `done` that a person
-/// returns to draft is never marked over.
+/// so the request goes out once. The mark that landed is settled by a call
+/// that does not ask to mark. A head recorded `done` that a person returns
+/// to draft is never marked over.
 #[test]
 fn a_ready_mark_whose_answer_was_lost_is_settled_by_the_heads_flag_and_its_request_follows() {
     let ready = format!("pr ready {PR} --repo {REPO}");
@@ -4749,7 +4750,7 @@ fn a_ready_mark_whose_answer_was_lost_is_settled_by_the_heads_flag_and_its_reque
         assert_eq!(lost["status"], "unreadable", "{landed}: {lost}");
         assert_eq!(gh.head_record()["ready"], "marking", "{landed}");
         gh.answer(&format!("pr ready {PR}"), json!({}));
-        let repeat = ok_result(&gh.review(true, &[]));
+        let repeat = ok_result(&gh.review(!landed, &[]));
         assert_eq!(marks(&gh), sent, "{landed}: {:?}", gh.log());
         assert_eq!(gh.head_record()["ready"], "done", "{landed}");
         assert_eq!(
@@ -4812,6 +4813,58 @@ fn a_draft_made_ready_outside_the_gate_lapses_its_draft_fallback_once_both_reads
     );
 }
 
+/// A head that stood as a `draft` fallback past the review budget gets its
+/// period from the request that releases it: the releasing call, whether
+/// it marks the draft itself, settles a mark whose answer was lost, or
+/// reads a draft made ready outside the gate, answers `pending` with the
+/// request out, never a spent period's verdict.
+#[test]
+fn a_draft_fallback_released_past_the_budget_starts_its_period_with_the_request() {
+    for route in ["marked", "lost-mark", "outside"] {
+        let mut gh = Github::review_world();
+        gh.answer(&format!("pr view {PR}"), review_view("", &[], true))
+            .answer(
+                &pull_path(),
+                rest_pull(true, "feat", "lane-app[bot]", "Bot"),
+            );
+        let held = ok_result(&gh.review(false, &[]));
+        assert_eq!(held["request"]["cause"], "draft", "{route}: {held}");
+        let aged = json!(stamp_ago(1000));
+        gh.set_head("at", aged.clone());
+        gh.set_head("period_started", aged.clone());
+        let released = match route {
+            "marked" => {
+                gh.answer(&format!("pr ready {PR}"), json!({}));
+                ok_result(&gh.review(true, &[]))
+            }
+            "lost-mark" => {
+                gh.replies.insert(
+                    format!("pr ready {PR}"),
+                    json!({"signal": "TERM", "landed": true}),
+                );
+                let lost = ok_result(&gh.review(true, &[]));
+                assert_eq!(lost["status"], "unreadable", "{lost}");
+                gh.answer(&format!("pr ready {PR}"), json!({}));
+                ok_result(&gh.review(true, &[]))
+            }
+            _ => {
+                gh.answer(&format!("pr view {PR}"), review_view("", &[], false))
+                    .answer(
+                        &pull_path(),
+                        rest_pull(false, "feat", "lane-app[bot]", "Bot"),
+                    );
+                ok_result(&gh.review(false, &[]))
+            }
+        };
+        assert_eq!(released["status"], "pending", "{route}: {released}");
+        assert_eq!(released["request"]["outcome"], "requested", "{route}");
+        assert_eq!(gh.requests(), 1, "{route}: {:?}", gh.log());
+        let head = gh.head_record();
+        assert_ne!(head["period_started"], aged, "{route}: {head}");
+        assert_ne!(head["at"], aged, "{route}: {head}");
+    }
+}
+
 /// A POST that ended with no exit status, as a call killed or timed out
 /// leaves it, may or may not have reached GitHub: the request stands
 /// `requested`, and the next call reads GitHub's record of it. With no sign
@@ -4857,12 +4910,17 @@ fn a_request_whose_answer_was_lost_is_sent_once_more_then_falls_back_unconfirmed
     assert_eq!(fourth["request"]["recorded_now"], false, "{fourth}");
     assert_eq!(gh.requests(), 2, "{:?}", gh.log());
 
-    // A POST whose transport failed, a nonzero exit with no answer from
-    // GitHub, is no refusal: the request stands, and the next call finds
-    // it landed or sends it once more.
-    for (landed, sent) in [(true, 1), (false, 2)] {
+    // A POST whose transport failed, or that GitHub answered with a 5xx,
+    // has no answer from GitHub on the request and is no refusal: the
+    // request stands, and the next call finds it landed or sends it once
+    // more.
+    for (landed, sent, server_error) in [(true, 1, false), (false, 2, false), (false, 2, true)] {
         let mut gh = Github::review_world();
-        gh.unreachable(&post, landed);
+        if server_error {
+            gh.refused(&post, 502, "Bad Gateway");
+        } else {
+            gh.unreachable(&post, landed);
+        }
         let lost = ok_result(&gh.review(false, &[]));
         assert_eq!(lost["status"], "unreadable", "{landed}: {lost}");
         assert_eq!(lost["reason"], "request-review-read-failed", "{landed}");

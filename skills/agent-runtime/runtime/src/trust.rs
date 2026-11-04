@@ -86,16 +86,6 @@ pub fn prepare(harness: Harness, home: &Path, launch_dir: &Path) -> Result<Prepa
     }
 }
 
-/// The home [`prepare`] names for a launch of `harness` under `home` in
-/// `launch_dir`, read without writing anything, for a launch that already
-/// ran on it.
-pub fn prepared_home(harness: Harness, home: &Path, launch_dir: &Path) -> Result<PathBuf> {
-    match harness {
-        Harness::Codex => Ok(codex_route(home, launch_dir)?.home),
-        Harness::Claude | Harness::Copilot | Harness::Pi => Ok(home.to_path_buf()),
-    }
-}
-
 /// Where one launch directory's private Codex home sits under the account:
 /// `<account>/lane-launch/<leaf>-<cksum>/home`. The leaf is the launch
 /// directory's basename with every byte outside `A-Za-z0-9._-` made `_`,
@@ -293,10 +283,7 @@ fn codex_section(dir: &Path) -> String {
     format!("projects.\"{}\"", dir.display())
 }
 
-/// Which home a Codex launch under `home_given` in `dir` runs on, read and
-/// nothing written: the account where its own config trusts `dir`, else the
-/// private home under it.
-fn codex_route(home_given: &Path, dir: &Path) -> Result<Prepared> {
+fn codex(home_given: &Path, dir: &Path) -> Result<Prepared> {
     let h = Harness::Codex;
     // The account, never a private home: a caller inside a launched session
     // reads its own `CODEX_HOME` to name its lane, and a home taken raw here
@@ -305,40 +292,25 @@ fn codex_route(home_given: &Path, dir: &Path) -> Result<Prepared> {
     if account.as_os_str().is_empty() {
         return Err(refused("home-path", h, home_given, None));
     }
+    let config = account.join("config.toml");
     let home = home_path(account, dir);
+    let private = home.join("config.toml");
     // Both configs a launch here can open: the private home is where the
     // launch-home route points `CODEX_HOME`, so it is where Codex writes the
     // answer somebody gives at the pane.
-    let in_account = codex_trusted(&account.join("config.toml"), dir, h)?;
-    let in_home = codex_trusted(&home.join("config.toml"), dir, h)?;
+    let in_account = codex_trusted(&config, dir, h)?;
+    let in_home = codex_trusted(&private, dir, h)?;
     if in_account == Some(false) || in_home == Some(false) {
         return Err(refused("trust-refused", h, dir, None));
     }
     // `preapproved` is the account's own answer and only the account's: a
     // `trusted` in the private home is this preparation's own earlier write.
-    Ok(if in_account == Some(true) {
-        Prepared {
+    if in_account == Some(true) {
+        return Ok(Prepared {
             route: Route::Preapproved,
             home: account.to_path_buf(),
-        }
-    } else {
-        Prepared {
-            route: Route::LaunchHome,
-            home,
-        }
-    })
-}
-
-fn codex(home_given: &Path, dir: &Path) -> Result<Prepared> {
-    let h = Harness::Codex;
-    let route = codex_route(home_given, dir)?;
-    if route.route == Route::Preapproved {
-        return Ok(route);
+        });
     }
-    let account = account_of(home_given);
-    let config = account.join("config.toml");
-    let home = route.home;
-    let private = home.join("config.toml");
     private_dir(&home, "home-create", h)?;
     // The transcript store belongs to the account: the harness creates what
     // is missing under the home it is given, and a rollout written inside
@@ -861,13 +833,7 @@ mod tests {
                     .replace("DIR", &dir.display().to_string())
             });
             let lane = account(root.path(), name, body.as_deref(), true);
-            let read = prepared_home(Harness::Codex, &lane, &dir).unwrap();
-            assert!(
-                fs::symlink_metadata(home_path(&lane, &dir)).is_err(),
-                "{name}: the read writes nothing"
-            );
             let prepared = prepare(Harness::Codex, &lane, &dir).unwrap();
-            assert_eq!(read, prepared.home, "{name}: the home the launch runs on");
             assert_eq!(prepared.route, route, "{name}");
             assert_eq!(prepared.home != lane, private, "{name}: private");
             let config = prepared.home.join("config.toml");

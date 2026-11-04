@@ -71,9 +71,12 @@
 #       it exited before its row was read and the record says `exited-N`,
 #       `status=identity-unread` where its row could not be read,
 #       `status=unwound-failed` where its group could not be read empty; or a
-#       unit the manager would not describe); 5 --memory-max
+#       unit the manager reports in no running state); 5 --memory-max
 #       where the job would run under setsid (memory-max-unheld, with the
-#       runner line).
+#       runner line); 6 the job may have started and nothing could say
+#       (launch-unconfirmed): the manager lost the start's answer and could
+#       not be asked of the unit, which RECORD names, or a forked child's
+#       group could not be read empty (`status=unwound-failed`).
 #   job-unit.sh attach RECORD -- ARGV...
 #       Run ARGV attached: a child of this process, in its session, working
 #       directory and environment, that leads a process group of its own,
@@ -384,7 +387,7 @@ job_unit_launch() { # NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
     # then still runs, contained as far as a process group reaches, and its
     # record says why.
     if ! load="$(systemctl --user show -p LoadState --value -- "$JOB_UNIT_NAME.service" 2>/dev/null)"; then
-      job_unit_fail launch-failed "unit=$JOB_UNIT_NAME.service step=show detail=${launch_err%%$'\n'*}" 4
+      job_unit_fail launch-unconfirmed "unit=$JOB_UNIT_NAME.service step=show detail=${launch_err%%$'\n'*}" 6
       return
     fi
     case "$load" in
@@ -463,11 +466,13 @@ job_unit_launch() { # NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
 # rewritten, so the runtime reads the ended launch from the reply the
 # launcher that unwound the child gave it.
 job_unit_launch_ended() { # RECORD WORD REPLY KEY STATUS
-  local reply="status=$3"
+  local reply="status=$3" key="$4" status="$5"
   [[ "$4" != record-unwritable ]] || reply="path=$1 $reply"
   job_unit_record_ended "$1" "$2" || reply="$reply record=unwritable"
   JOB_UNIT_PID="" JOB_UNIT_START=""
-  job_unit_fail "$4" "$reply" "$5"
+  # A group that could not be read empty may still run the job.
+  [[ "$2" != unwound-failed ]] || { key=launch-unconfirmed; status=6; }
+  job_unit_fail "$key" "$reply" "$status"
 }
 
 # End the child this launch forked and everything it started, then read
