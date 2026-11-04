@@ -428,6 +428,9 @@ print(json.dumps(owner._presence('ssh:fixture')))
             skills = Path(allocation).resolve() / "skills"
             for package in ("jarvis", "orch", "mailbox", "linear", "slack"):
                 shutil.copytree(REPO / "skills" / package / "scripts", skills / package / "scripts")
+            references = skills / "orch/references"
+            references.mkdir()
+            shutil.copyfile(REPO / "skills/orch/references/secret-value.ere", references / "secret-value.ere")
             path = skills / "jarvis/scripts/lib/watch.py"
             original = path.read_text()
             old = "[sys.executable,'-I','-B','-c',%s]"
@@ -441,6 +444,8 @@ print(json.dumps(owner._presence('ssh:fixture')))
                                     capture_output=True, text=True, timeout=60)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("FAILED (failures=", result.stderr)
+            self.assertIn("(checkout_code=True)", result.stderr)
+            self.assertNotIn("(checkout_code=False)", result.stderr)
 
     def slack_thread(self, home, ask):
         # Exercise Slack's public mapping/permalink owner against its existing
