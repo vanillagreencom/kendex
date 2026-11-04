@@ -360,6 +360,168 @@ TIMED_OUT="ephemeral|/lanes failed (timeout); its output is not shown.|1|1|1"
 timed_out
 assert_eq "$RESULT" "$TIMED_OUT" "a timed-out command replies timeout, and its stderr before the bound and on TERM reaches the relay's stderr"
 
+# The real threaded reader/worker invokes this target for slash AND Home.
+# Its first operation observes its own score; parent scoring must not change.
+cat > "$CMD/score" <<'PY'
+#!/usr/bin/env python3
+import pathlib, sys
+score = pathlib.Path('/proc/self/oom_score_adj').read_text().strip() if sys.platform.startswith('linux') else 'not-linux'
+print('score=' + score)
+PY
+chmod +x "$CMD/score"
+score_run() {
+  relay "$ALPHA" "SLACK_STATUS_COMMAND=$CMD/score" "SLACK_HOME_COMMAND=$CMD/score"
+  SCORE_PARENT_BEFORE="$(python3 - "$SK_BG_PIDS" <<'PY'
+import pathlib,sys
+p = pathlib.Path('/proc') / sys.argv[1] / 'oom_score_adj'
+print(p.read_text().strip() if p.exists() else 'not-linux')
+PY
+)"
+  SCORE_SLASH="$(reply "$(slash /lanes U001)")"
+  home_open U001
+  reply "$(slash /deploy U001)" >/dev/null
+  SCORE_HOME="$(last_view)"
+  SCORE_PARENT_AFTER="$(python3 - "$SK_BG_PIDS" <<'PY'
+import pathlib,sys
+p = pathlib.Path('/proc') / sys.argv[1] / 'oom_score_adj'
+print(p.read_text().strip() if p.exists() else 'not-linux')
+PY
+)"
+  sk_relay_stop
+}
+SCORE_WANT=not-linux
+[ ! -e /proc/self/oom_score_adj ] || SCORE_WANT=1000
+score_run
+assert_eq "$SCORE_SLASH|$SCORE_HOME" "ephemeral|score=$SCORE_WANT|U001|score=$SCORE_WANT" 'slash and Home targets observe child scoring before exec'
+assert_eq "$SCORE_PARENT_BEFORE" "$SCORE_PARENT_AFTER" 'the threaded relay never changes its own score'
+if [ "$SCORE_WANT" = 1000 ]; then
+  sk_mutant score-999 mailbox.py 'command_score = 1000' 'command_score = 999'
+  score_run
+  assert_eq "$SCORE_SLASH|$SCORE_HOME" 'ephemeral|score=999|U001|score=999' 'score control really executes both targets with 999, including consistent readback'
+  sk_assert_red "$SCORE_SLASH|$SCORE_HOME" 'ephemeral|score=1000|U001|score=1000' 'control: the same independent child score assertion rejects 999'
+  sk_bin_reset
+fi
+
+cat > "$CMD/output" <<'PY'
+#!/usr/bin/env python3
+import os, pathlib, sys
+mode = pathlib.Path(__file__).with_name('output.mode').read_text().strip()
+C = 52096
+token = b'xo' + b'xb-' + b'123456789012'
+if mode == 'split-secret':
+    os.write(1,b'x' * 4093 + b' ' + token[:2])
+    os.write(1,token[2:])
+elif mode == 'boundary-secret':
+    os.write(1,b'prefix-sentinel' + b'x' * (C-18) + b' ' + token)
+elif mode == 'discard-secret':
+    os.write(1,b'prefix-sentinel' + b'x' * C + b' ' + token)
+elif mode in ('oversize','nonzero'):
+    os.write(1,b'prefix-sentinel' + b'x' * C)
+    if mode == 'nonzero': sys.exit(3)
+elif mode == 'stderr':
+    os.write(2,b'local-only' + b'e' * C)
+    print('safe-answer')
+elif mode == 'kill':
+    import signal
+    os.kill(os.getpid(),signal.SIGKILL)
+else:
+    print('safe-answer')
+PY
+chmod +x "$CMD/output"
+# One shared boundary owns slash/Home secrecy and disclosure. Discarded
+# secrets are never claimed checked: even benign oversized success refuses.
+output_rows() {
+  local mode cause text slash_text home_text surface selected="${1:-}"
+  relay "$ALPHA" "SLACK_STATUS_COMMAND=$CMD/output" "SLACK_HOME_COMMAND=$CMD/output"
+  while read -r mode cause; do
+    [ -z "$selected" ] || [ "$mode" = "$selected" ] || continue
+    printf '%s\n' "$mode" > "$CMD/output.mode"
+    slash_text="$(reply "$(slash /lanes U001)")"
+    home_open U001
+    reply "$(slash /deploy U001)" >/dev/null
+    home_text="$(last_view)"
+    for surface in slash Home; do
+      if [ "$surface" = slash ]; then text="$slash_text"; else text="$home_text"; fi
+      if [ "$cause" = success ]; then
+        assert_has "$text" safe-answer "$mode/$surface: complete safe stdout reaches the result"
+      else
+        assert_has "$text" "($cause)" "$mode/$surface: the shared result owner keeps the observed cause"
+        assert_lacks "$text" prefix-sentinel "$mode/$surface: no retained prefix reaches the result"
+      fi
+      case "$mode" in
+        oversize|boundary-secret|discard-secret|nonzero|stderr)
+          assert_has "$text" 'output cut at 52096 bytes' "$mode/$surface: the visible result discloses the capture cut" ;;
+      esac
+      assert_lacks "$text" local-only "$mode/$surface: stderr is never delivered to Slack"
+      if [ "$mode" = kill ]; then
+        assert_lacks "$text" OOM "$mode/$surface: SIGKILL has no invented OOM attribution"
+        assert_lacks "$text" 'memory limit' "$mode/$surface: SIGKILL has no invented configured-limit attribution"
+      fi
+    done
+  done <<'ROWS'
+clean success
+split-secret secret-value
+boundary-secret secret-check-incomplete
+discard-secret secret-check-incomplete
+oversize secret-check-incomplete
+stderr success
+nonzero exit-3
+kill exit--9
+clean success
+ROWS
+  sk_relay_stop
+}
+output_rows
+assert_has "$(cat "$SK_TMP/relay.err")" local-only 'retained command stderr keeps its local destination'
+sk_mutant home-cut relay.py 'text \+= withheld\("SLACK_HOME_COMMAND", cause\)' 'text = withheld("SLACK_HOME_COMMAND", cause)'
+CONTROL_FAIL="$SK_FAIL"
+CONTROL_RC=0
+CONTROL_OUT="$(output_rows nonzero; [ "$SK_FAIL" = "$CONTROL_FAIL" ])" || CONTROL_RC=$?
+assert_eq "$CONTROL_RC" 1 'control: overwriting Home annotations fails the existing output row'
+assert_has "$CONTROL_OUT" 'FAIL nonzero/Home: the visible result discloses the capture cut' 'the Home control reaches its own cut-disclosure assertion'
+sk_bin_reset
+# Real I/O failure and a missing Linux interface are distinct. These copies
+# alter only the interface path, never add a production fault-injection API.
+if [ "$SCORE_WANT" = 1000 ]; then
+  for score_path in "$SK_TMP/absent-score" /dev/full /dev/null /dev/full/not-directory; do
+    sk_mutant score-path mailbox.py '/proc/self/oom_score_adj' "$score_path"
+    : > "$CMD/status.runs"
+    relay "$ALPHA" "SLACK_STATUS_COMMAND=$CMD/status"
+    SCORE_RESULT="$(reply "$(slash /lanes U001)")"
+    assert_has "$(reply "$(slash /deploy U001)")" '/deploy' 'the worker keeps answering after a scoring result'
+    sk_relay_stop
+    if [ "$score_path" = "$SK_TMP/absent-score" ]; then
+      assert_eq "$(runs)" 1 'absent scoring interface keeps command support'
+      assert_has "$(cat "$SK_TMP/relay.err")" 'command-score-unavailable=' 'absence is disclosed, never reported applied'
+    else
+      assert_eq "$(runs)" 0 'a real scoring I/O failure never executes the target'
+      assert_has "$SCORE_RESULT" '(start)' 'a real scoring failure is a command start failure'
+      assert_has "$(cat "$SK_TMP/relay.err")" 'errno=' 'scoring failures retain their operation and errno'
+    fi
+    sk_bin_reset
+  done
+  sk_mutant score-error-fallback mailbox.py '/proc/self/oom_score_adj' '/dev/full/not-directory'
+  python3 - "${SK_BIN%/*}/lib/mailbox.py" <<'PY'
+import pathlib,sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+assert s.count('if error.errno != errno.ENOENT:') == 1
+p.write_text(s.replace('if error.errno != errno.ENOENT:', 'if False:'))
+PY
+  : > "$CMD/status.runs"
+  relay "$ALPHA" "SLACK_STATUS_COMMAND=$CMD/status"
+  reply "$(slash /lanes U001)" >/dev/null
+  sk_relay_stop
+  assert_eq "$(runs)" 1 'score-error control actually starts the target'
+  sk_assert_red "$(runs)" 0 'control: treating a real score error as absence fails the same no-target assertion'
+  sk_bin_reset
+fi
+sk_mutant not-linux mailbox.py 'sys.platform.startswith\("linux"\)' 'False'
+relay "$ALPHA" "SLACK_STATUS_COMMAND=$CMD/status"
+assert_has "$(reply "$(slash /lanes U001)")" status-fixture 'non-Linux scoring skip preserves command support'
+sk_relay_stop
+sk_bin_reset
+
 # --- controls ----------------------------------------------------------------------
 # Inject a dependency failure at each count observation. Forward every other
 # read to the real tool so this exercises runs() and the existing mailbox reader.
@@ -419,13 +581,25 @@ sk_assert_red "$RESULT" "1|1" "control: the notice answering a /report, skipped 
 sk_mutant report-notice relay.py 'elif reply:\n                route = "reply"' 'elif reply:\n                route = "notice" if delivery_id.startswith(COMMAND_KEY) else "reply"'
 held_report
 sk_assert_red "$RESULT" "jarvis|1|" "control: a notice naming the /report directive, routed as a notice, stays held"
-sk_mutant term-stderr mailbox.py 'exc\.output, exc\.stderr = proc\.communicate' 'proc.communicate'
+sk_mutant term-stderr mailbox.py 'capture\[kind\]\.add\(chunk\)' 'capture[kind].add(chunk) if not timed_out else None'
 timed_out
 sk_assert_red "$RESULT" "$TIMED_OUT" "control: the stderr read after TERM dropped, the relay's stderr lacks the command's TERM line"
-sk_mutant home-unchecked relay.py '        try:\n            secret_check\(out\.encode\(\), f"command=\{setting\}"\)\n        except Refusal as refusal:\n            print_refusal\(refusal\)\n            return "", refusal\.key\n' ''
+sk_mutant home-unchecked relay.py 'secret_check\(out\.encode\(\), f"command=\{setting\}", complete=not result.stdout_cut\)' 'None'
 withheld
 sk_assert_red "${VIEWS[2]}" "$HOME_SECRET" "control: a Home command's output sent unchecked publishes the secret"
-sk_mutant start-raise relay.py '        except OSError:\n            cause = "start"\n' ''
+sk_mutant incomplete-check secret.py 'if not complete:' 'if False:'
+printf '%s\n' oversize > "$CMD/output.mode"
+relay "$ALPHA" "SLACK_STATUS_COMMAND=$CMD/output" "SLACK_HOME_COMMAND=$CMD/output"
+CUT_CONTROL="$(reply "$(slash /lanes U001)")"
+home_open U001
+reply "$(slash /deploy U001)" >/dev/null
+CUT_CONTROL="$CUT_CONTROL|$(last_view)"
+sk_relay_stop
+CONTROL_FAIL="$SK_FAIL"
+CONTROL_RC=0
+CONTROL_OUT="$(assert_lacks "$CUT_CONTROL" prefix-sentinel 'oversize: no retained prefix reaches slash or Home'; [ "$SK_FAIL" = "$CONTROL_FAIL" ])" || CONTROL_RC=$?
+assert_eq "$CONTROL_RC" 1 'control: skipping incomplete checking fails the same withheld-prefix assertion'
+sk_mutant start-raise relay.py '        except CommandSetupError as exc:[\s\S]*?        finally:' '        finally:'
 withheld
 sk_assert_red "$MISSING" "$MISSING_REPLY" "control: a command that cannot start, raised out of the worker, stops the relay"
 sk_mutant home-raise relay.py 'self\.home_disabled\("slack"\)\n                return' 'self.home_disabled("slack")\n                raise'

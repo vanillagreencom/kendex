@@ -115,8 +115,8 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, Iterable, List, NoReturn, Optional, Set, Tuple, Union
 
-from api import RETRIES, Slack, markdown_checked
-from mailbox import LANE_MAIL_TIMEOUT_SECONDS, MAILBOX_READ_FILES, LaneMail, run_bounded
+from api import MARKDOWN_LIMIT, RETRIES, Slack, markdown_checked
+from mailbox import CommandSetupError, LANE_MAIL_TIMEOUT_SECONDS, MAILBOX_READ_FILES, LaneMail, run_bounded
 from markup import Verbatim, continuations, outbound, plain
 from refusals import LockRefusal, Refusal, keyed, notice, print_refusal
 from secret import check as secret_check
@@ -178,6 +178,9 @@ REPORT_TEXT = "The owner typed /report in Slack: send a progress report now."
 # its process group; `run_bounded` states the stop's further bound, and the
 # whole hold stays far inside the stall bound.
 COMMAND_SECONDS = 10
+# Four UTF-8 bytes per display character plus one read-chunk formatting
+# margin. Each stream has this byte cap, before decoding or secret checking.
+COMMAND_OUTPUT_BYTES = 4 * MARKDOWN_LIMIT + 4096
 # chat.postMessage's recommended bound on a message's `text`, which a
 # response_url reply carries (https://docs.slack.dev/reference/methods/chat.postMessage).
 REPLY_CHARS = 4000
@@ -1823,30 +1826,50 @@ class Relay:
         the relay's stderr, never to Slack."""
         self.progress("command:" + setting)
         out, err = "", ""
+        result = None
+        setup = ""
         try:
-            code, out, err = run_bounded(list(argv), Path.cwd(), COMMAND_SECONDS, env=CALLER_ENV)
-            cause = "" if code == 0 else f"exit-{code}"
+            result = run_bounded(list(argv), Path.cwd(), COMMAND_SECONDS, env=CALLER_ENV,
+                                 command_output_limit=COMMAND_OUTPUT_BYTES)
+            out, err = result.stdout, result.stderr
+            cause = "" if result.returncode == 0 else f"exit-{result.returncode}"
         except subprocess.TimeoutExpired as exc:
+            result = exc.result
             err = exc.stderr
             cause = "timeout"
+        except CommandSetupError as exc:
+            result = exc.result
+            err = result.stderr
+            cause = "start"
+            setup = f" operation={exc.operation} errno={exc.errno}"
         except OSError:
             cause = "start"
         finally:
             self.progress("command:" + setting, True)
         if err:
             sys.stderr.write(err)
+        cuts = []
+        if result is not None:
+            if result.scoring == "absent":
+                notice("command-score-unavailable", f"{setting} cause=absent", file=sys.stderr)
+            cuts = [stream for stream in ("stdout", "stderr") if getattr(result, stream + "_cut")]
+            if result.stderr_cut:
+                notice("command-output-cut", f"{setting} stream=stderr bytes={COMMAND_OUTPUT_BYTES}", file=sys.stderr)
+        annotation = f"{', '.join(cuts)} output cut at {COMMAND_OUTPUT_BYTES} bytes. " if cuts else ""
         out = out.strip()
-        if not cause and not out:
+        if not cause and not out and not (result and result.stdout_cut):
             cause = "empty"
         if cause:
-            print(keyed("command-failed", f"{setting} cause={cause}"), file=sys.stderr, flush=True)
-            return "", cause
+            print(keyed("command-failed", f"{setting} cause={cause}{setup}"), file=sys.stderr, flush=True)
+            return annotation, cause
         try:
-            secret_check(out.encode(), f"command={setting}")
+            secret_check(out.encode(), f"command={setting}", complete=not result.stdout_cut)
         except Refusal as refusal:
             print_refusal(refusal)
-            return "", refusal.key
-        return out, ""
+            if result.stdout_cut:
+                annotation += "Whole-output secret checking is unavailable. "
+            return annotation, refusal.key
+        return annotation + out, ""
 
     def answer_with(self, name: str, setting: str, argv: Tuple[str, ...]) -> str:
         """The reply of a command that shows a configured command's output."""
@@ -1854,7 +1877,7 @@ class Relay:
             return f"{name} is not enabled on this relay; {setting} turns it on."
         text, cause = self.command_output(setting, argv)
         if cause:
-            return withheld(name, cause)
+            return text + withheld(name, cause)
         return bounded(text, REPLY_CHARS)
 
     def report(self, payload: Dict) -> str:
@@ -1889,7 +1912,7 @@ class Relay:
                 return
             text, cause = self.command_output("SLACK_HOME_COMMAND", self.settings.home_command)
             if cause:
-                text = withheld("SLACK_HOME_COMMAND", cause)
+                text += withheld("SLACK_HOME_COMMAND", cause)
             # views.publish takes `view` as a JSON-encoded string
             # (https://docs.slack.dev/reference/methods/views.publish).
             self.api.post("views.publish", user_id=user, view=json.dumps({"type": "home", "blocks": home_blocks(text)}))

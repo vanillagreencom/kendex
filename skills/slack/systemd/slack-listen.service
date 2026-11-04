@@ -16,6 +16,9 @@ RestartSec=60
 # One poll's messages and one streamed upload: tens of megabytes. The cap
 # holds a runaway relay to that order and lets the slice keep the rest.
 MemoryMax=256M
+# Keep surviving relay processes after an OOM kill; this does not isolate
+# command allocations or guarantee that the relay survives.
+OOMPolicy=continue
 
 [Install]
 WantedBy=default.target
