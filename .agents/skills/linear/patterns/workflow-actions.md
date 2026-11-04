@@ -92,3 +92,25 @@ scripts/linear.sh issues create \
 ```
 
 `[PATH]` holds a body built from project-management's `templates/issue-description-template.md`, including the `Reached by:` line. `[VALIDATED_LABELS]` is the full set project-management's `references/labels.md` § Creates Carry the Full Set selects, validated by step 2 of § Labels, not a bare agent label. Add any blocking relations the new issue should impose after it exists.
+
+## Task discovery
+
+Read a managed task project's complete issue set without a state or recency filter. Select unresolved work from the returned states, descriptions and current decisions. Use the selected project's UUID to avoid mixing same-name projects.
+
+```bash
+scripts/linear.sh issues list --project-id [PROJECT_UUID] --max
+scripts/linear.sh issues list --search [REQUEST_OR_OUTCOME_TERMS] --include-archived --max
+scripts/linear.sh issues get [ISSUE_ID]
+scripts/linear.sh comments bulk-list [ISSUE_ID_1] [ISSUE_ID_2]
+```
+
+At adoption or scope change, also run the project list with `--include-archived`. Include terminal rows in that migration review. Read matching items and complete comments before deciding reuse or restoration. Read closure history from native issue Activity when the reason for a terminal transition matters. Use the team's native Archives to restore an archived item before editing it; the installed CLI has no unarchive action. Follow the existing state-transition procedure above when reopening an editable item. Read changed items through `issues bulk-get` to confirm retention. A failed or truncated read establishes no complete discovery.
+
+## Task-scope automation
+
+Read [Linear's Auto-close documentation](https://linear.app/docs/delete-archive-issues#auto-close) before setting up a managed task scope. The native interface is **Team settings > Workflows & automations > Auto-close**. The setting affects the team, including work outside the selected project; a project selection does not narrow that authority.
+
+1. Confirm the selected project's actual team and the operator's authority over this team-wide setting. Open that team's native settings and inspect Auto-close's current enabled state, inactivity period and destination status when present. Record the actual team and project ids with the observed values on the caller's setup item.
+2. Disable Auto-close for that team through the native setting. If the caller lacks authority, retain the exact setting change as unresolved for its authorized owner. Neither an unfinished project nor periodic issue updates substitutes for disabling the setting.
+3. Reopen that same team's settings after saving. Read back the actual disabled state and record it, its scope and evidence reference on the setup item. An unavailable setting or readback leaves setup unresolved. The CLI's `teams get` does not expose this setting and a successful credential check proves no automation configuration.
+4. Inspect existing terminal and archived task outcomes through Task discovery before relying on open-task discovery. A setting change restores no previously closed item. Keep Auto-archive separate; use the native Archives restoration route for any archived item that still owes an outcome.

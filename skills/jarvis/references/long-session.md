@@ -20,6 +20,8 @@ Each record kind has one home. Write a record to its home, never to the handoff.
 - For a fix sent to another owner, put the Done-when box on a check item in the session's own task project instead. Link the other owner's item. Keep the box and check item open until the session records the check where the problem was seen. The other owner's Done mark closes neither the box nor the check item.
 - Select the checks by the tracker's Verifying state across the workspace, and also read every open check item in the session's own task project. Read both selections live and through every page. When a read fails, report the checks unavailable.
 
+Use [Task reconciliation](../workflows/tasks.md) to capture and reuse each requested outcome, apply current decisions and retain its next action before delegation, waiting or succession. Its tracker setup and migration steps precede reliance on open-item discovery.
+
 ## Handoff
 
 Before normal succession, wait for every attached sub-agent this session launched to return in the current turn. Use the harness wait or result tool and collect each result. Record a failed child as failed. Launch an attached child only when the context room holds its return. Otherwise use the orch job runner described in `waiter-launch.md`, Launch, or a separate session. Record its run directory in the handoff. If the session is dead, walled, or cannot read its child state, the emergency handoff names each known unfinished child, its known output location, and any unknown state or location. An output location can be a file path or a harness reply. The successor reads existing child output before repeating the task.
