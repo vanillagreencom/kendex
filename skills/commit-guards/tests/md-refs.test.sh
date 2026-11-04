@@ -486,6 +486,25 @@ run_rows \
   "the document extra adds to the default list|fx_extra_docs extra-docs|COMMIT_GUARDS_MD_REFS_PATHS_EXTRA=docs/*.md|--all|rc=1 $(dead docs/guide.md 1 "$(untracked '](nope.md)' docs/nope.md)");$(failed 1 1 3)" \
   "control: without it the default list does not read that document|fx_extra_docs extra-docs-unset||--all|rc=0 $(clean 0 2)" \
   "an extra is checked as the list is|fx_comment_ok extra-absolute|COMMIT_GUARDS_MD_REFS_SOURCE_PATHS_EXTRA=/etc/x|--all|rc=2 ${ERR}path-absolute=md-refs:/etc/x"
+# Rendered Codex instructions contain Markdown inside a TOML multiline string.
+# The link uses a tracked destination; its displayed basename is not a path.
+while IFS='|' read -r shape instruction expected; do
+  world_src "toml-link-$shape"
+  put .codex/agents/runtime.toml 'developer_instructions = """\n'"$instruction"'\n"""\n'
+  assert_eq "$shape: TOML section citation" "$expected" "$(run '' --all)"
+  [ "$shape" = link ] || continue
+  gg_mutant MUTANT_AWK lib/md-refs.awk '  s = mask_links(s, 0)' '  if (0) s = mask_links(s, 0)'
+  MDR="${MUTANT_AWK%/lib/md-refs.awk}/md-refs"
+  status=0
+  (PASS=0; FAIL=0; assert_eq "$shape" "$expected" "$(run '' --all)"; [ "$FAIL" -eq 0 ]) \
+    >"$TMP/control-toml-link.log" 2>&1 || status=$?
+  assert_eq "control: unmasked TOML link turns its assertion red" 1 "$status"
+  MDR="$SKILL_DIR/scripts/md-refs"
+done <<CASES
+link|Read [plugins.md § Invariants](../../docs/architecture/plugins.md#invariants).|rc=0 $(clean 0 2 1)
+bare|Read plugins.md § Invariants.|rc=1 $(dead .codex/agents/runtime.toml 2 "$(nocite 'plugins.md § Invariants.' plugins.md .codex/agents/runtime.toml)");$(failed 1 1 2 1)
+CASES
+
 fx_js_regex js-regex-control Rules
 gg_mutant MUTANT_READER lib/comment-text.sh '      if (js && c == "/"' '      if (0 && js && c == "/"'
 MDR="${MUTANT_READER%/lib/comment-text.sh}/md-refs"
