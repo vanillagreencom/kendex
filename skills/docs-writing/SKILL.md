@@ -87,6 +87,7 @@ Before writing a file, find its type in this table, then read its section and it
 | `AGENTS.md` | [agents.md](references/agents.md) | [root-agents.md](examples/root-agents.md) | none |
 | `*/AGENTS.md` | [agents.md](references/agents.md) | [nested-agents-plugins.md](examples/nested-agents-plugins.md) | none |
 | `SKILL.md`, `*/SKILL.md`, `*/workflows/*.md`, `agents/*.md`, `*/agents/*.md` | [skill-files.md](references/skill-files.md) | [skill-entry.md](examples/skill-entry.md) | none |
+| `*/references/HIW-*.md` | [human-page.md](references/human-page.md) | [HIW-tasks.md](examples/HIW-tasks.md) | none |
 | `*/references/*.md`, `*/schemas/*.md`, `*/patterns/*.md`, `CHECKS.md`, `*/CHECKS.md` | [reference-docs.md](references/reference-docs.md) | [reference.md](examples/reference.md) | none |
 | `DEVELOPMENT.md`, `*/DEVELOPMENT.md` | [development.md](references/development.md) | [development.md](examples/development.md) | none |
 | `README.md`, `*/README.md` | [readme.md](references/readme.md) | [readme.md](examples/readme.md) | `order`, `value-table` |
