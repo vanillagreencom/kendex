@@ -692,7 +692,7 @@ fx_shipped() { # the five shipped documents beside what they cite: consumer file
   local doc
   repo "$1"
   mkdir -p "$R/skills/commit-guards/scripts/lib" "$R/skills/commit-guards/references"
-  for doc in SKILL.md README.md CHECKS.md DEVELOPMENT.md references/hooks-and-settings.md; do
+  for doc in SKILL.md README.md CHECKS.md DEVELOPMENT.md references/hooks-and-settings.md kendex.settings.toml.example; do
     cp "$SKILL_DIR/$doc" "$R/skills/commit-guards/$doc"
   done
   # A content citation is answered by the file's bytes, so this is the real
