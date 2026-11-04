@@ -28,10 +28,8 @@
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
-#[cfg(target_os = "linux")]
 use std::fs;
 use std::os::unix::process::ExitStatusExt;
-#[cfg(not(target_os = "linux"))]
 use std::path::Path;
 use std::process::{ExitStatus, Output};
 use std::sync::{Mutex, PoisonError};
@@ -238,6 +236,73 @@ pub fn identity(pid: u32) -> Reading<Identity> {
             Reading::Unreadable { cause } => return Reading::Unreadable { cause },
         }
         start_lstart(pid).map(|start| Identity { pid, start })
+    }
+}
+
+/// What a process's memory control group reads: the bytes charged to it
+/// and the nearest cap on its path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Memory {
+    pub current: u64,
+    pub max: u64,
+}
+
+/// The memory of the control group `pid` runs in against the nearest cap
+/// on that group's path under `cgroup_root` (the cgroup v2 tree): `Live(None)`
+/// where no cap stands on the path, so a reading there decides nothing;
+/// `Gone` where `proc_root` holds no such pid; unreadable where the group,
+/// its charge or a cap on the path could not be read or parsed, which is
+/// never a reading of zero. A `memory.max` of `max` is no cap and the walk
+/// goes on to the parent; the root of the tree keeps none.
+pub fn memory_of(proc_root: &Path, cgroup_root: &Path, pid: u32) -> Reading<Option<Memory>> {
+    let unreadable = |cause: &'static str| Reading::Unreadable { cause };
+    let text = match fs::read_to_string(proc_root.join(pid.to_string()).join("cgroup")) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Reading::Gone,
+        Err(_) => return unreadable("cgroup-unreadable"),
+    };
+    // The v2 line is `0::/<path>`; a host on the v1 hierarchy names the
+    // memory controller's own line instead.
+    let Some(path) = text.lines().find_map(|line| {
+        let mut fields = line.splitn(3, ':');
+        let (id, controllers, path) = (fields.next()?, fields.next()?, fields.next()?);
+        ((id == "0" && controllers.is_empty()) || controllers.split(',').any(|c| c == "memory"))
+            .then(|| path.trim_start_matches('/').to_owned())
+    }) else {
+        return unreadable("cgroup-unnamed");
+    };
+    let group = cgroup_root.join(&path);
+    let number = |file: &Path| -> std::result::Result<Option<u64>, &'static str> {
+        match fs::read_to_string(file) {
+            Ok(text) if text.trim() == "max" => Ok(None),
+            Ok(text) => text
+                .trim()
+                .parse::<u64>()
+                .map(Some)
+                .map_err(|_| "cgroup-figure-unparsed"),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(_) => Err("cgroup-file-unreadable"),
+        }
+    };
+    let current = match number(&group.join("memory.current")) {
+        Ok(Some(current)) => current,
+        Ok(None) => return unreadable("memory-current-unreadable"),
+        Err(cause) => return unreadable(cause),
+    };
+    let mut dir = group.as_path();
+    loop {
+        match number(&dir.join("memory.max")) {
+            Ok(Some(max)) => return Reading::Live(Some(Memory { current, max })),
+            Ok(None) => {}
+            Err(cause) => return unreadable(cause),
+        }
+        if dir == cgroup_root {
+            return Reading::Live(None);
+        }
+        match dir.parent() {
+            Some(parent) if parent.starts_with(cgroup_root) => dir = parent,
+            Some(_) | None => return Reading::Live(None),
+        }
     }
 }
 
@@ -547,6 +612,7 @@ fn signal(pid: u32, name: &str) -> Result<bool> {
         &[&format!("-{name}"), &pid.to_string()],
         host::Place::default(),
         None,
+        false,
         KILL_TIMEOUT,
     )
     .map_err(|failed| Error::Process {

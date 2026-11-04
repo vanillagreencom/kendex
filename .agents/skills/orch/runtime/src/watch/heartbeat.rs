@@ -285,9 +285,10 @@ fn wall_verdict(
     now: u64,
 ) -> String {
     let unjudged = format!("verdict=unjudged harness={}", owed.harness);
-    let lane_host = (owed.host != LOCAL).then_some(owed.host.as_str());
+    // The item's host as recorded, `local` included: the judge reads a
+    // local item on this machine's listing whatever provider is set.
     let listing = listings.entry(owed.host.clone()).or_insert_with(|| {
-        accounts::roster(&ctx.settings, lane_host, now)
+        accounts::roster(&ctx.settings, Some(&owed.host), now)
             .map_err(|cause| note("accounts", &cause))
             .ok()
     });
@@ -303,7 +304,7 @@ fn wall_verdict(
     let request = PickRequest {
         harness: owed.harness.clone(),
         model: (owed.model != "-").then(|| owed.model.clone()),
-        host: lane_host.map(str::to_owned),
+        host: Some(owed.host.clone()),
         ..PickRequest::default()
     };
     match accounts::pick_fleet(&ctx.settings, &ctx.path, host, &request, now) {

@@ -156,7 +156,7 @@ while IFS='|' read -r shape label tokens active session agent expected key; do
       git -C "$LANE" config maintenance.auto false
       git -C "$LANE" checkout -q -b main
       git -C "$LANE" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
-      hole_install oversee-succeed
+      hole_install orch-runtime
       plant_judge "$LANE/.agents/skills/orch/scripts"
       judge_says "$BELOW_MARK_LINE"
       (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)

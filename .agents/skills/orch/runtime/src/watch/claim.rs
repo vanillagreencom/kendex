@@ -1,22 +1,19 @@
 //! The runner's claim on one fleet state: `oversee-watch.pid` beside the
-//! state file, naming the runner's identity, its pid and its process start
-//! (decision 99), the state file it holds, its pane, origin, script and
-//! working directory. A second runner reads the claim's identity
-//! three-valued: live refuses `watch-running`, gone (a dead pid, or its pid
-//! reused under another start) is taken over, unreadable is refused and
-//! never taken. A record naming a pid with no start, the one
-//! `lib/watch-pid.sh`'s `watch_pid_write` writes, names no identity and is
-//! read by its pid alone: a pid no process holds reads gone and is taken
-//! over with `start=none`; a running pid reads unreadable (`start-missing`)
-//! and is never taken or stopped.
+//! state file, naming the runner's identity, its pid and its process start,
+//! the state file it holds, its pane, origin, script and working directory.
+//! A second runner reads the claim's identity three-valued: live refuses
+//! `watch-running`, gone (a dead pid, or its pid reused under another
+//! start) is taken over, unreadable is refused and never taken. A record
+//! naming a pid with no start, the one a released repeat loop wrote, names
+//! no identity and is read by its pid alone: a pid no process holds reads
+//! gone and is taken over with `start=none`; a running pid reads unreadable
+//! (`start-missing`) and is never taken or stopped.
 //!
 //! One reader answers whether a record names an identity, [`Claim::names`]:
 //! the pid and the start, both.
 //!
-//! The record's fields and the retained command are the ones
-//! `lib/watch-pid.sh` reads (`watch_pid_live`, `watch_argv_read`), the
-//! library the `oversee-watch` entry sources before it starts the runtime,
-//! with `start=` after them.
+//! The record's `key=value` form is the one a released loop's record
+//! carries, with `start=` after its fields, so one reader reads both.
 //!
 //! The record is published by linking a whole, synced, pid-named temporary
 //! onto the record's path, which fails where a record already stands, so of
@@ -42,11 +39,9 @@ use crate::error::{Result, WatchError};
 use crate::schedule::Clock;
 use crate::state::FLEET_FILE_NAME;
 
-/// The claim record `watch_pid_live` reads.
+/// The claim record.
 pub const PID_FILE: &str = "oversee-watch.pid";
-/// The retained command `watch_argv_read` reads.
-pub const ARGV_FILE: &str = "oversee-watch.argv";
-/// The event log the controller session follows (step5-map F7).
+/// The event log the controller session follows.
 pub const LOG_FILE: &str = "oversee-watch.log";
 /// The typed baseline record.
 pub const BASELINE_FILE: &str = "oversee-watch.baseline.json";
@@ -60,16 +55,14 @@ pub const STOP_BOUND: Duration = Duration::from_secs(60);
 /// How often the stop re-reads the claim within its bound.
 const STOP_POLL: Duration = Duration::from_millis(100);
 
-/// The record files beside the fleet state, resolved as `watch_pid_paths`
-/// resolves them: the directory canonical, so two spellings of one state
-/// file name one record.
+/// The record files beside the fleet state: the directory canonical, so two
+/// spellings of one state file name one record.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Paths {
     pub dir: PathBuf,
     /// The fleet state as the record's `state=` names it.
     pub state: PathBuf,
     pub pid: PathBuf,
-    pub argv: PathBuf,
     pub log: PathBuf,
     pub baseline: PathBuf,
     pub stop: PathBuf,
@@ -91,7 +84,6 @@ impl Paths {
         Ok(Paths {
             state: dir.join(name),
             pid: dir.join(PID_FILE),
-            argv: dir.join(ARGV_FILE),
             log: dir.join(LOG_FILE),
             baseline: dir.join(BASELINE_FILE),
             stop: dir.join(STOP_FILE),
@@ -178,13 +170,13 @@ pub fn names_runner(paths: &Paths, identity: &Identity) -> Result<bool> {
 
 /// Whether the claim's process still runs, by its recorded identity: live
 /// under the same start, gone where the pid is dead or reused under
-/// another start, unreadable where the process table cannot be read
-/// (decision 99). A claim with no start is read by its pid alone: gone
-/// where no process holds it, else unreadable (`start-missing`), since a
-/// running pid with no start to match is no identity to refuse or stop by.
+/// another start, unreadable where the process table cannot be read. A
+/// claim with no start is read by its pid alone: gone where no process
+/// holds it, else unreadable (`start-missing`), since a running pid with no
+/// start to match is no identity to refuse or stop by.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the claim's one identity read: the runner it refuses or takes over by (decision 99)"
+    reason = "the claim's one identity read: the runner it refuses or takes over by"
 )]
 pub fn read_live(claim: &Claim) -> Reading<Identity> {
     let Some(start) = &claim.start else {
@@ -209,8 +201,6 @@ pub struct Record<'a> {
     pub origin: &'a str,
     pub script: &'a str,
     pub cwd: &'a str,
-    /// The arguments after the program, as `watch_argv_read` returns them.
-    pub args: &'a [String],
 }
 
 /// How a write of the claim ended.
@@ -225,11 +215,10 @@ pub enum Written {
 
 /// Write the claim as this runner: the record whole in a pid-named
 /// temporary, synced, then linked onto the record's path, which fails where
-/// one stands, so two starts cannot both claim; then the retained command,
-/// replaced whole (`watch_pid_write`).
+/// one stands, so two starts cannot both claim.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the claim's one writer: the record files beside the fleet state, the claim linked into place exclusively and the command replaced atomically"
+    reason = "the claim's one writer: the record beside the fleet state, linked into place exclusively"
 )]
 pub fn write(paths: &Paths, record: &Record) -> Result<Written> {
     let whole = |tmp: &Path, bytes: &[u8]| -> std::io::Result<()> {
@@ -265,25 +254,6 @@ pub fn write(paths: &Paths, record: &Record) -> Result<Written> {
         }
     };
     let written = link().map_err(|e| record_error(&paths.pid, "write", e))?;
-    if written == Written::Held {
-        return Ok(written);
-    }
-    let mut argv = Vec::new();
-    for word in ["watch-command-v1", record.script, record.cwd]
-        .into_iter()
-        .chain(record.args.iter().map(String::as_str))
-    {
-        argv.extend_from_slice(word.as_bytes());
-        argv.push(0);
-    }
-    let replace = || -> std::io::Result<()> {
-        let tmp = paths
-            .argv
-            .with_extension(format!("{}.tmp", record.identity.pid));
-        whole(&tmp, &argv)?;
-        std::fs::rename(&tmp, &paths.argv)
-    };
-    replace().map_err(|e| record_error(&paths.argv, "write", e))?;
     Ok(written)
 }
 
@@ -457,7 +427,7 @@ mod tests {
         assert_eq!((startless.pid, startless.start), (4242, None));
     }
 
-    /// R-U5a F1, decision 156 (5). Defect: two readers answering "does this
+    /// Defect: two readers answering "does this
     /// record name that identity" differently, one by pid alone and one by
     /// pid and an equal start, under which a stop reads another runner's
     /// claim as released. The one reader: the pid and the start, both.

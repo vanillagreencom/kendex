@@ -1,0 +1,33 @@
+#!/bin/bash
+# A `setsid` whose first child ends its launcher the moment the launcher has
+# recorded the child's identity in the fleet record: it reads the fleet state
+# `--file` names in its argv until the open `start-controller` intent's
+# standing set holds a `job-group` with this pid (the launcher's own write,
+# which follows its identity read), kills its parent with KILL, writes the
+# marker $SETSID_CRASH_ONCE and execs a sleep the row owns and ends. A second
+# call, the marker standing, execs the real `setsid` at $SETSID_REAL on the
+# argv as given. Every call is appended to $SETSID_LOG when set. The
+# `loginctl` beside it says the user manager does not linger.
+[ -z "${SETSID_LOG:-}" ] || printf '%s\n' "$*" >> "$SETSID_LOG"
+if [ -e "${SETSID_CRASH_ONCE:?}" ]; then
+  exec "${SETSID_REAL:?}" "$@"
+fi
+file=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --file) file="${2:-}"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+[ -n "$file" ] || { echo 'setsid-crash: no --file in the argv' >&2; exit 4; }
+deadline=$((SECONDS + 30))
+while [ "$SECONDS" -lt "$deadline" ]; do
+  if jq -e --arg pid "$$" '.intents[] | select(.op == "start-controller" and .completed_at == null) | .obligations.standing[] | select(.kind == "job-group" and .pid == ($pid | tonumber))' "$file" >/dev/null 2>&1; then
+    : > "$SETSID_CRASH_ONCE"
+    kill -KILL "$PPID"
+    exec sleep 300
+  fi
+  sleep 0.02
+done
+echo 'setsid-crash: the launcher never recorded this pid' >&2
+exit 4

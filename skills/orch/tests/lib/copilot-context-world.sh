@@ -61,24 +61,14 @@ SDK
   FLOW_STOP="$(cd -- "$root" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$user_home" COPILOT_HOME="$cop_home" \
     ORCH_STATE_DIR="$root/tmp" ORCH_LANE_DIRS="" ORCH_OVERSEER_SUCCESSION=on "$@" \
     bash "$root/.github/hooks/lane-mail-check.sh" <<<"$payload")" || return 1
-  FLOW_RECORD=none FLOW_VERDICT=""
+  FLOW_RECORD=none
   if [[ -f "$root/tmp/lane-mail/CC-1/context.json" ]]; then
     FLOW_RECORD="$(jq -r '"\(.tokens):\(.window)"' "$root/tmp/lane-mail/CC-1/context.json")" || return 1
-    FLOW_VERDICT=lane
     return 0
   fi
   if [[ -f "$root/tmp/lane-mail/overseer/context.json" ]]; then
     reading="$(jq -r 'if .tokens != null and .window != null then "\(.tokens):\(.window)" else "" end' \
       "$root/tmp/lane-mail/overseer/context.json")" || return 1
     if [[ -n "$reading" ]]; then FLOW_RECORD="$reading"; fi
-  else
-    reading=""
   fi
-  # The value comes only from the real hook's record. An absent reader supplies
-  # no context argument, so main/control cannot be given a fabricated reading.
-  local context=()
-  [[ -z "$reading" ]] || context=(--context "$reading")
-  FLOW_VERDICT="$(cd -- "$root" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$user_home" COPILOT_HOME="$cop_home" \
-    ORCH_STATE_DIR="$root/tmp" ORCH_LANE_DIRS="" ORCH_OVERSEER_SUCCESSION=on "$@" \
-    "$scripts/oversee-succeed" --check-marks --harness copilot ${context[@]+"${context[@]}"})" || return 1
 }

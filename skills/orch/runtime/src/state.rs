@@ -943,6 +943,10 @@ pub struct Selection {
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effort: Option<String>,
+    /// Whether the launch re-enters a standing record, so a provider reuses
+    /// the worktree it holds.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub relaunch: bool,
 }
 
 /// The process that persisted an intent: its pid and start, read through

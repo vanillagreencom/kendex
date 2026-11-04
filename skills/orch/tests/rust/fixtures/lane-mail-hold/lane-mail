@@ -8,8 +8,8 @@
 # mailbox lock and its receipt captured, then writes its own pid to
 # $LANE_MAIL_HOLD_MARK and blocks on the FIFO before relaying the receipt.
 # The row kills it there: the append landed, the receipt never reached the
-# caller. The FIFO reader holds no pipe of the caller's, so the kill ends
-# the call at once; the row releases the FIFO after. The real program is the
+# caller. The read is the shim's own, so the kill ends the call and its
+# reader at once. The real program is the
 # sibling mailbox package's, found from this file's own place in the tree
 # unless $LANE_MAIL_REAL names another.
 real="${LANE_MAIL_REAL:-$(cd "$(dirname "$0")/../../../../.." && pwd -P)/mailbox/scripts/lane-mail}"
@@ -26,7 +26,13 @@ if [ "${1:-}" = send ] && [ -n "${LANE_MAIL_HOLD_FIFO:-}" ]; then
   out="$("$real" "$@")"
   status=$?
   [ -z "${LANE_MAIL_HOLD_MARK:-}" ] || printf '%s\n' "$$" > "$LANE_MAIL_HOLD_MARK"
-  cat "$LANE_MAIL_HOLD_FIFO" >/dev/null 2>&1
+  # The read-write open never blocks and the read gives up after
+  # HOLD_BOUND_SECS, so a row that dies before its release leaves no reader.
+  [ -p "$LANE_MAIL_HOLD_FIFO" ] || { echo "lane-mail-hold: hold-not-fifo path=$LANE_MAIL_HOLD_FIFO" >&2; exit 2; }
+  exec 9<>"$LANE_MAIL_HOLD_FIFO"
+  read -r -t "${HOLD_BOUND_SECS:-120}" -u 9 _ \
+    || { echo "lane-mail-hold: hold-unreleased path=$LANE_MAIL_HOLD_FIFO bound=${HOLD_BOUND_SECS:-120}" >&2; exit 124; }
+  exec 9<&-
   printf '%s\n' "$out"
   exit "$status"
 fi

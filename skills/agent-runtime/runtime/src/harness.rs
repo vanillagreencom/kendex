@@ -426,6 +426,7 @@ fn probe_executable(harness: Harness, executable: &OsStr) -> Result<Installed> {
         &["--version"],
         host::Place::default(),
         None,
+        false,
         PROBE_TIMEOUT,
     ) {
         Ok(out) => {

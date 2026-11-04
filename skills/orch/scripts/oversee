@@ -98,13 +98,12 @@
 #        posture as the record's `controller`, the brief naming --handoff
 #        as `brief_file` (written under the fleet state directory's
 #        `intents/`, where the runtime reads it at delivery, a reconcile
-#        after this command ended included), and the fleet watch's launch line as
-#        ../workflows/oversee.md § 4 spells it as `watch`: the `oversee-watch`
-#        entry beside this script, `--repeat 60 --state` the fleet state,
-#        `--interval 240 --since` the first lane record's `launched_at` or
-#        this launch's time, `--harness` the entry's, `--repo` the
-#        checkout's repository where one resolves, and the step-5 flags
-#        after `--`. The runtime opens the session at the base index in the
+#        after this command ended included), and the fleet watch's launch
+#        words as `watch`: the `orch-runtime` wrapper beside this script,
+#        `watch run --file` the fleet state, `--interval 240 --since` the
+#        first lane record's `launched_at` or this launch's time, and
+#        `--repo` the checkout's repository where one resolves. The runtime
+#        opens the session at the base index in the
 #        fleet's tmux session, brings it to its composer, delivers the
 #        brief, launches the watch detached through the job launcher and
 #        writes the session record: the identity, the line, the watch and
@@ -730,8 +729,8 @@ start_controller() {
   ( set -o noclobber && printf '%s\n' "$OL_BRIEF" > "$brief" ) || die launch-failed step=brief
   # The words as a JSON array: `--args` takes each as one positional string,
   # so a flag word crosses whole; `--` ends jq's own option parsing.
-  watch_words="$(jq -n '$ARGS.positional' --args -- "$SCRIPT_DIR/oversee-watch" --repeat 60 --state "$state_abs" \
-    --interval 240 --since "$since" --harness "$OL_HARNESS" ${repo:+--repo "$repo"} -- ${OL_FLAGS[@]+"${OL_FLAGS[@]}"} 2>"$DEP_ERR")" \
+  watch_words="$(jq -n '$ARGS.positional' --args -- "$ORCH_RUNTIME" watch run --file "$state_abs" \
+    --interval 240 --since "$since" ${repo:+--repo "$repo"} 2>"$DEP_ERR")" \
     || die launch-failed step=request
   jq -cn --argjson identity "${OL_IDENTITY:-null}" --arg line "$OL_CMD" --arg brief "$brief" --argjson watch "$watch_words" '
     {op: "start-controller",

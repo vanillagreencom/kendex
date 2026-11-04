@@ -24,7 +24,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/lane-mail-check.sh}"
 REPO_ROOT="$(cd "$TEST_DIR/../.." && pwd -P)"
 LANE_MAIL="$REPO_ROOT/skills/mailbox/scripts/lane-mail"
-# The overseer's `oversee-succeed --check-marks` has kendex classify its
+# The overseer's own marks are the runtime's `marks` verb, planted below; kendex classifies its
 # entries' models; the orch fixture answers that read whether or not a kendex
 # is installed.
 # shellcheck source=../../../skills/orch/tests/lib/tier-model-path.sh
@@ -365,8 +365,18 @@ runtime_stub() { # SCRIPTS_DIR MODE [CWD] [ORIGIN]
   esac
   rm -f -- "$scripts/orch-runtime" "$scripts/orch-runtime.reply"
   if [ "$mode" = fails ]; then
-    printf '#!/bin/sh\necho "orch-runtime: claim-unreadable path=%s cause=record=unreadable" >&2\nexit 1\n' \
-      "${state%/*}/oversee-watch.pid" > "$scripts/orch-runtime"
+    # The claim read refused; the marks still answer from the judge files.
+    cat > "$scripts/orch-runtime" <<STUB
+#!/usr/bin/env bash
+case "\$1 \$2" in
+  "marks --fleet")
+    printf '%s\n' "\$*" >> '$JUDGE_DIR/args'
+    [ ! -f '$JUDGE_DIR/err' ] || cat '$JUDGE_DIR/err' >&2
+    [ ! -f '$JUDGE_DIR/out' ] || cat '$JUDGE_DIR/out'
+    exit "\$(cat '$JUDGE_DIR/rc' 2>/dev/null || echo 0)" ;;
+  *) echo "orch-runtime: claim-unreadable path=${state%/*}/oversee-watch.pid cause=record=unreadable" >&2; exit 1 ;;
+esac
+STUB
   elif [ "$mode" = unbuilt ]; then
     printf '#!/bin/sh\necho "orch-runtime: setup-required key=fixture run=%s" >&2\nexit 69\n' \
       "$scripts/setup" > "$scripts/orch-runtime"
@@ -379,6 +389,15 @@ runtime_stub() { # SCRIPTS_DIR MODE [CWD] [ORIGIN]
 #!/usr/bin/env bash
 case "\$1 \$2" in
   "watch status") cat -- '$scripts/orch-runtime.reply' ;;
+  "marks --fleet")
+    printf '%s\n' "\$*" >> '$JUDGE_DIR/args'
+    # stdout is handed away before the wait: the hook reads this in a command
+    # substitution, which stays open while any writer holds that pipe, so a
+    # sleep left behind by the ceiling would outlast the kill.
+    [ ! -f '$JUDGE_DIR/hang' ] || { exec 1>/dev/null; sleep 120; }
+    [ ! -f '$JUDGE_DIR/err' ] || cat '$JUDGE_DIR/err' >&2
+    [ ! -f '$JUDGE_DIR/out' ] || cat '$JUDGE_DIR/out'
+    exit "\$(cat '$JUDGE_DIR/rc' 2>/dev/null || echo 0)" ;;
   "accounts pick")
     if [ -f '$scripts/orch-runtime.pick' ]; then cat -- '$scripts/orch-runtime.pick'; exit 0; fi
     shift 2
@@ -583,45 +602,38 @@ variant() { # NAME SED-ARGUMENT...
 }
 
 # --- the overseer -----------------------------------------------------------
-# The judge, and the whole of what this hook reads about an overseer's marks.
-# It records its argv, so a row can pin that the hook asked for the judgement
-# and nothing else, and answers from files a row writes: `out` its keyed line,
-# `rc` its exit status, `err` its own words, `hang` a read that outlasts the
-# hook's ceiling. Its own behaviour is oversee_succeed.sh's subject.
+# The judge, and the whole of what this hook reads about an overseer's marks:
+# the runtime stub's `marks --fleet` arm (runtime_stub). It records its argv,
+# so a row can pin that the hook asked for the judgement and nothing else, and
+# answers from files a row writes: `out` its reply, `rc` its exit status,
+# `err` its own words, `hang` a read that outlasts the hook's ceiling. Its own
+# behaviour is the runtime's Rust rows' subject.
 JUDGE_DIR="$TMP_ROOT/judge"
 mkdir -p "$JUDGE_DIR"
 plant_judge() { # [SCRIPTS_DIR]
   local scripts="${1:-$LANE/.claude/skills/orch/scripts}"
-  [ -n "${1:-}" ] || plant_install oversee-succeed
-  rm -f -- "$scripts/oversee-succeed"
-  cat > "$scripts/oversee-succeed" <<JUDGE
-#!/bin/sh
-printf '%s\n' "\$*" >> "$JUDGE_DIR/args"
-# stdout is handed away before the wait: the hook reads this in a command
-# substitution, which stays open while any writer holds that pipe, so a sleep
-# left behind by the ceiling would outlast the kill.
-[ ! -f "$JUDGE_DIR/hang" ] || { exec 1>/dev/null; sleep 120; }
-[ ! -f "$JUDGE_DIR/err" ] || cat "$JUDGE_DIR/err" >&2
-[ ! -f "$JUDGE_DIR/out" ] || cat "$JUDGE_DIR/out"
-exit "\$(cat "$JUDGE_DIR/rc" 2>/dev/null || echo 0)"
-JUDGE
-  chmod +x "$scripts/oversee-succeed"
+  [ -n "${1:-}" ] || plant_install
+  runtime_stub "$scripts" none || return 1
   rm -f -- "${JUDGE_DIR:?}/args" "${JUDGE_DIR:?}/out" "${JUDGE_DIR:?}/err" \
     "${JUDGE_DIR:?}/rc" "${JUDGE_DIR:?}/hang"
 }
-judge_says() { printf '%s\n' "$1" > "$JUDGE_DIR/out"; }
+# The judge's reply: RESULT, the verb's result object, under the runtime's
+# own envelope.
+judge_says() { # RESULT
+  jq -nc --argjson result "$1" '{protocol: "orch-runtime-v1", ok: true, result: $result}' > "$JUDGE_DIR/out"
+}
 judge_calls() { [ -f "$JUDGE_DIR/args" ] && wc -l < "$JUDGE_DIR/args" | tr -d ' ' || echo 0; }
 judge_argv() { cat "$JUDGE_DIR/args" 2>/dev/null || true; }
 
-CONTEXT_MARK_LINE="oversee-succeed: mark-reached kind=context value=612000 mark=500000 succession=on headroom=80"
+CONTEXT_MARK_LINE='{"key":"mark-reached","kind":"context","value":"612000","mark":"500000","succession":"on","headroom":"80"}'
 # The same crossing with the succession the operator turned off, which the
-# judgement reports on its own line and this hook reads nowhere else.
-OFF_MARK_LINE="oversee-succeed: mark-reached kind=context value=612000 mark=500000 succession=off headroom=80"
-OFF_HEADROOM_LINE="oversee-succeed: mark-reached kind=headroom value=4 mark=10 succession=off account=eclaude resets=2026-07-27T06:00:00Z"
-HEADROOM_MARK_LINE="oversee-succeed: mark-reached kind=headroom value=4 mark=10 succession=on account=eclaude resets=2026-07-27T06:00:00Z"
-RATE_MARK_LINE="oversee-succeed: mark-reached kind=rate value=30 mark=30 succession=on account=eclaude"
-QUALIFYING_MARK_LINE="oversee-succeed: mark-reached kind=qualifying value=1 mark=1 succession=on headroom=unreadable"
-BELOW_MARK_LINE="oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80"
+# judgement reports in its own reply and this hook reads nowhere else.
+OFF_MARK_LINE='{"key":"mark-reached","kind":"context","value":"612000","mark":"500000","succession":"off","headroom":"80"}'
+OFF_HEADROOM_LINE='{"key":"mark-reached","kind":"headroom","value":"4","mark":"10","succession":"off","account":"eclaude","resets":"2026-07-27T06:00:00Z"}'
+HEADROOM_MARK_LINE='{"key":"mark-reached","kind":"headroom","value":"4","mark":"10","succession":"on","account":"eclaude","resets":"2026-07-27T06:00:00Z"}'
+RATE_MARK_LINE='{"key":"mark-reached","kind":"rate","value":"30","mark":"30","succession":"on","account":"eclaude"}'
+QUALIFYING_MARK_LINE='{"key":"mark-reached","kind":"qualifying","value":"1","mark":"1","succession":"on","headroom":"unreadable"}'
+BELOW_MARK_LINE='{"key":"below-mark","context":"room","tokens":100000,"window":1000000,"mark":"500000","succession":"on","headroom":"80"}'
 
 # An overseer session: a repository on a branch no mailbox is named for, so the
 # lane rules find nothing, with the orch install and the judge beside the hook

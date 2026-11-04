@@ -124,13 +124,15 @@ impl LaunchLane {
         ]
     }
 
-    /// The fields the launch writes when it confirms.
-    fn selection(&self) -> Selection {
+    /// The fields the launch writes when it confirms, and whether the
+    /// launch re-enters a standing record.
+    fn selection(&self, relaunch: bool) -> Selection {
         Selection {
             harness: self.harness.clone(),
             account: self.account.clone(),
             model: self.model.clone(),
             effort: self.effort.clone(),
+            relaunch,
         }
     }
 }
@@ -655,6 +657,13 @@ pub(super) fn launch_lane(
                 state::set(lane, "host", r.host().map_or(Value::Null, Value::from));
                 state::set(lane, "kind", kind);
             }
+            // A hosted lane's root moves to its host once the host answers;
+            // the checkout the launch ran from is where a relaunch runs again.
+            if r.host().is_some() {
+                state::set(lane, "checkout", r.mail_root.as_str());
+            } else {
+                state::delete(lane, "checkout");
+            }
             if r.refresh {
                 state::set(lane, "refresh", true);
             } else {
@@ -676,6 +685,9 @@ pub(super) fn launch_lane(
             if r.refresh {
                 record["refresh"] = Value::Bool(true);
             }
+            if r.host().is_some() {
+                record["checkout"] = Value::String(r.mail_root.clone());
+            }
             rows.push(record);
             let index = rows.len() - 1;
             if let Some(judged) = &judged {
@@ -686,7 +698,7 @@ pub(super) fn launch_lane(
     };
     let mut intent = new_intent(EffectOp::LaunchLane, &r.item, env)?;
     intent.lane_since = Some(at);
-    intent.selection = Some(r.selection());
+    intent.selection = Some(r.selection(position.is_some()));
     intent.exclude_account = r.exclude_account.as_deref().map(canonical_account);
     push_intent(path, doc, &intent)?;
     Ok(LaneLaunched {
@@ -1309,6 +1321,7 @@ mod tests {
                 account: Some("/a/a1".into()),
                 model: Some("claude-opus-5-5".into()),
                 effort: Some("high".into()),
+                relaunch: false,
             })
         );
         // The appended record has `lane_record_write`'s keys in its order.

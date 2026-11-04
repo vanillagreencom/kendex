@@ -79,6 +79,26 @@ enum Verb {
         #[command(subcommand)]
         op: WatchOp,
     },
+    /// Judge the recorded controller's own marks: the context reading handed
+    /// in, its account at the headroom trigger, the rate to its wall, its
+    /// process's memory against its cgroup cap where a mark is set, and the
+    /// qualifying count with the successor the walk chose. The reply names
+    /// one mark reached, one figure unmeasured, or every mark read and none
+    /// reached; nothing is launched or written.
+    Marks {
+        #[command(flatten)]
+        target: Target,
+        /// `TOKENS:WINDOW`, the window empty where no adapter named one;
+        /// left out, the account marks alone are judged.
+        #[arg(long)]
+        context: Option<String>,
+        /// The controller's harness where its record names none.
+        #[arg(long)]
+        harness: Option<String>,
+        /// The controller's account directory where its record names none.
+        #[arg(long)]
+        account: Option<String>,
+    },
     /// Judge the paths a running lane adds, or a launch before its record
     /// stands, against the fleet's holders under the launch lock, and widen
     /// the lane record where one stands.
@@ -393,6 +413,10 @@ enum WatchOp {
         /// lanes' own and the connected ones.
         #[arg(long = "repo")]
         repos: Vec<String>,
+        /// The credential ladder ran and this process was started again
+        /// under its selection.
+        #[arg(long, hide = true)]
+        credential_selected: bool,
     },
     /// The claim and whether its identity runs, the due times the records
     /// imply, and the last event line's number.
@@ -933,6 +957,24 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         }
         Verb::Accounts { op } => accounts_verb(op, &flags)?,
         Verb::Watch { op } => watch_verb(op, &flags, locking)?,
+        Verb::Marks {
+            target,
+            context,
+            harness,
+            account,
+        } => {
+            let settings = resolve_settings(&flags)?;
+            let path = target_path(&target, &settings);
+            let now = system_env()?.now_secs;
+            watch::overseer::marks_verb(
+                &settings,
+                &path,
+                context.as_deref(),
+                harness.as_deref(),
+                account.as_deref(),
+                now,
+            )?
+        }
         Verb::Admit { target, request } => {
             let settings = resolve_settings(&flags)?;
             let path = target_path(&target, &settings);
@@ -1063,8 +1105,81 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
     Ok(value)
 }
 
-/// The `watch` verbs. `run` claims as this process's identity, records the
-/// claim fields (the pane it serves, its program and directory, its arguments)
+/// The github skill's credential ladder under the project's install.
+const GH_AUTH_LADDER: &str = ".agents/skills/github/scripts/gh-auth-ladder";
+
+/// How long the ladder's bounded probes may take together.
+const GH_AUTH_LADDER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// The word `watch run` is started again with once the ladder has run.
+const CREDENTIAL_SELECTED: &str = "--credential-selected";
+
+/// Select the GitHub credential this process and every `gh` it starts read
+/// with, once, before the claim, so a watch that cannot read GitHub never
+/// stands as the fleet's watch: the github skill's ladder prints the two
+/// token variables as it leaves them, and this process starts itself again
+/// in place under that environment with `--credential-selected`, which
+/// changes no running thread's environment and keeps the pid and start the
+/// launcher recorded. A ladder with no working candidate refuses
+/// `auth-failed`; one that cannot be run, and a restart that fails, refuse
+/// with their cause. Returns only the refusal.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the command's one run of the credential ladder through the one runner, and its one restart of itself under the selection"
+)]
+fn reexec_with_github_auth(settings: &Settings) -> Error {
+    let ladder = settings.roots.project.join(GH_AUTH_LADDER);
+    let project = settings.roots.project.display().to_string();
+    let out = match agent_runtime::host::run_tagged(
+        "watch",
+        "gh-auth-ladder",
+        &ladder,
+        "select",
+        &["--project", &project],
+        GH_AUTH_LADDER_TIMEOUT,
+    ) {
+        Ok(out) => out,
+        Err(e) => return Error::Runtime(e),
+    };
+    if !out.status.success() {
+        let line = agent_runtime::host::stderr_text(&out)
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_owned();
+        return Error::Runtime(agent_runtime::Error::refused(
+            "auth-failed",
+            &[("service", "github"), ("detail", &line)],
+        ));
+    }
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(e) => return Error::Runtime(agent_runtime::Error::io("exe", PathBuf::from("."), e)),
+    };
+    let mut command = std::process::Command::new(&exe);
+    command
+        .args(std::env::args_os().skip(1))
+        .arg(CREDENTIAL_SELECTED);
+    for line in agent_runtime::host::stdout_text(&out).lines() {
+        let Some((name, value)) = line.split_once('=') else {
+            continue;
+        };
+        if !matches!(name, "GH_TOKEN" | "GITHUB_TOKEN") {
+            continue;
+        }
+        if value.is_empty() {
+            command.env_remove(name);
+        } else {
+            command.env(name, value);
+        }
+    }
+    let e = std::os::unix::process::CommandExt::exec(&mut command);
+    Error::Runtime(agent_runtime::Error::io("exec", exe, e))
+}
+
+/// The `watch` verbs. `run` runs the credential ladder, claims as this
+/// process's identity, records the claim fields (the pane it serves, its
+/// program and directory)
 /// and registers every duty, one registration line each: the reconcile of
 /// every open intent on the long cadence and the duties under `watch/`.
 fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json::Value> {
@@ -1078,7 +1193,11 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
             since,
             replace,
             repos,
+            credential_selected,
         } => {
+            if !credential_selected {
+                return Err(reexec_with_github_auth(&settings));
+            }
             let path = target_path(&target, &settings);
             let paths = watch::Paths::of(&path)?;
             let env = system_env()?;
@@ -1101,7 +1220,6 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
                     .map_err(|e| {
                         Error::Runtime(agent_runtime::Error::io("cwd", PathBuf::from("."), e))
                     })?,
-                args: std::env::args().skip(1).collect(),
             };
             let mut runner = watch::Runner::new(
                 paths,

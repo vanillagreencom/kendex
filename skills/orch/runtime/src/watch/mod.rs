@@ -1,65 +1,58 @@
-//! The standing scheduler (decision 62; decision 121): one long-lived
-//! `watch run` per fleet state, claimed by process identity, running every
-//! duty on its own due time from one clock and writing every event the
-//! controller session follows to one numbered log.
+//! The standing scheduler: one long-lived `watch run` per fleet state,
+//! claimed by process identity, running every duty on its own due time
+//! from one clock and writing every event the controller session follows
+//! to one numbered log.
 //!
-//! Threads (decision 121, Q16): the mail duty runs on its own thread and
-//! every other duty on one shared thread, each thread owning the due times
-//! of its duties, so a slow tracker read never delays a mail turn and a slow
-//! mail call never delays the shared duties. Each duty's due time is its own
-//! (`schedule`): running one moves no other, each resumes from its own pass
-//! stamp after a restart, and the heartbeat is due every `max-loops ×
-//! interval` seconds from the last heartbeat, never moved by an event (Q5).
+//! Threads: the mail duty runs on its own thread and every other duty on
+//! one shared thread, each thread owning the due times of its duties, so a
+//! slow tracker read never delays a mail turn and a slow mail call never
+//! delays the shared duties. Each duty's due time is its own (`schedule`):
+//! running one moves no other, each resumes from its own pass stamp after
+//! a restart, and the heartbeat is due every `max-loops × interval` seconds
+//! from the last heartbeat, never moved by an event.
 //!
-//! The rule of decisions 128 (5) and 130: a due duty that finds nothing
-//! emits no line, so the session it follows is not woken; the heartbeat is
-//! the only periodic line. A duty hands back the events it has and the
-//! baseline changes they imply; `commit` appends and syncs the events first,
-//! then writes the baseline, so a crash between the two reprints the line on
-//! the duty's next run and never loses it.
+//! A due duty that finds nothing emits no line, so the session it follows
+//! is not woken; the heartbeat is the only periodic line. A duty hands back
+//! the events it has and the baseline changes they imply; `commit` appends
+//! and syncs the events first, then writes the baseline, so a crash between
+//! the two reprints the line on the duty's next run and never loses it.
 //!
-//! Failure policy (decisions 148 (4), 156 (1); decisions 133, 142 (1)): a
-//! duty body that fails, whole or in part, is loud in the log, `EVENT
-//! watch-step-failed step=<duty> count=N` with the consecutive count, its
-//! cause on stderr, and its due time moves one cadence on from its anchor;
-//! the other duties and the other thread go on. The line goes out on the
-//! first failure and every `ORCH_OVERSEER_MARK_REPEAT`th after, so a
-//! standing failure does not wake the session it follows every pass; a run
-//! with no failure ends the count. Only the runner's own records failing
-//! (the log, the baseline, the claim, the stop request) end the run,
-//! `watch-record`, which releases the claim.
+//! Failure policy: a duty body that fails, whole or in part, is loud in the
+//! log, `EVENT watch-step-failed step=<duty> count=N` with the consecutive
+//! count, its cause on stderr, and its due time moves one cadence on from
+//! its anchor; the other duties and the other thread go on. The line goes
+//! out on the first failure and every `ORCH_OVERSEER_MARK_REPEAT`th after,
+//! so a standing failure does not wake the session it follows every pass;
+//! a run with no failure ends the count. Only the runner's own records
+//! failing (the log, the baseline, the claim, the stop request) end the
+//! run, `watch-record`, which releases the claim.
 //!
 //! The runner reconciles every open intent on the long cadence through the
 //! existing `reconcile` request, which is read-only toward a live or
-//! unreadable owner (Q4; decisions 72, 109 (4)); a transfer's or stop's
-//! effect keeps its own detached job (decision 76). It stops on `watch stop`
-//! or a terminal signal; a stop releases the claim, a signal leaves it for
-//! the next runner to read gone and take over.
+//! unreadable owner; a transfer's or stop's effect keeps its own detached
+//! job. It stops on `watch stop` or a terminal signal; a stop releases the
+//! claim, a signal leaves it for the next runner to read gone and take
+//! over.
 
 pub mod baseline;
 pub mod claim;
-// U6h: the overseer's context record and its three judgements.
 pub mod context;
 pub mod events;
 pub mod github;
-// U7a: the hosted readings of the lane duty (step7-map § A1).
+pub mod heartbeat;
 pub mod hosted;
 pub mod lanes;
 pub mod mail;
-pub mod overseer;
-// U8e: the owner's alert through the overseer mailbox, the overseer and wake duties' one route.
-pub mod owner_alert;
-// U5e2: the GitHub duty's readings (decision 162 (2)).
 pub mod outside;
+pub mod overseer;
+pub mod owner_alert;
 pub mod pr_watch;
-pub mod security;
-pub mod tracker;
-pub mod wake;
-// U5f: the verification, report, heartbeat-body and retention duties.
-pub mod heartbeat;
 pub mod report;
 pub mod retention;
+pub mod security;
+pub mod tracker;
 pub mod verifying;
+pub mod wake;
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -80,8 +73,8 @@ pub use claim::{Paths, Stopped};
 pub use events::{Event, EventLog, Takeover};
 
 /// The longest one wait between two reads of the stop request and the
-/// claim: a stop lands within this, as the legacy loop's `tick_sleep 1`
-/// read its mailbox, and a duty due again at once waits this long first.
+/// claim: a stop lands within this, and a duty due again at once waits this
+/// long first.
 const SLICE: Duration = Duration::from_secs(1);
 
 /// How many times a start tries its claim after another start linked a
@@ -122,14 +115,14 @@ pub struct Tick<'a> {
 /// back what it found; the runner writes.
 pub type Body<'a> = Box<dyn FnMut(&Tick) -> Result<Produced> + Send + 'a>;
 
-/// The runner's own flags: the legacy `--interval`, `--max-loops`,
-/// `--since` and `OVERSEE_WATCH_REPLACE`.
+/// The runner's own flags: `--interval`, `--max-loops`, `--since` and
+/// `--replace`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Flags {
     pub interval: Duration,
     pub max_loops: u32,
-    /// Printed in the heartbeat's `since=` field, as the legacy printed the
-    /// stamp its successor was handed.
+    /// Printed in the heartbeat's `since=` field: the stamp the runner was
+    /// handed.
     pub since: Option<String>,
     /// A live runner the launcher named for replacement.
     pub replace: Option<u32>,
@@ -168,7 +161,6 @@ pub struct Recorded {
     pub pane: String,
     pub script: String,
     pub cwd: String,
-    pub args: Vec<String>,
 }
 
 /// The epoch second the clock's wall reads: what a baseline row holds.
@@ -187,8 +179,7 @@ fn epoch(clock: &dyn Clock) -> u64 {
 /// The instant a duty is due at, from the epoch second its row recorded and
 /// its cadence: `now` plus what remains of the cadence, or `now` where the
 /// cadence has passed. With no row, `first`: the mail turn and the long
-/// duties run at once, the heartbeat one period out, as the legacy's first
-/// run did.
+/// duties run at once, the heartbeat one period out.
 fn due_from_row(
     now: Instant,
     wall: u64,
@@ -234,9 +225,9 @@ impl<'a> Runner<'a> {
             mark_repeat: settings.watch.mark_repeat,
             bodies: Vec::new(),
         };
-        // The heartbeat's placeholder body (step5-map A1): the line with the
-        // fields this unit can fill; its pass stamp is the runner's, as
-        // every duty's is. Its body proper (U5f) replaces this registration.
+        // The heartbeat's line with the fields the runner holds; its pass
+        // stamp is the runner's, as every duty's is. The heartbeat module's
+        // body replaces this registration.
         runner.register(
             Duty::Heartbeat,
             Box::new(move |_: &Tick| {
@@ -286,7 +277,6 @@ impl<'a> Runner<'a> {
             origin: "hand",
             script: &self.record.script,
             cwd: &self.record.cwd,
-            args: &self.record.args,
         };
         for _ in 0..CLAIM_TRIES {
             let mut takeover = None;
@@ -378,13 +368,10 @@ impl<'a> Runner<'a> {
                 let every = self.cadences.of(duty).every;
                 let first = match duty {
                     Duty::Heartbeat => every,
-                    // U5g: the wake is due at once, like the mail turn.
-                    Duty::Wake => Duration::ZERO,
-                    // U5e2: the GitHub duty is a long duty, due at once.
-                    Duty::GitHub => Duration::ZERO,
-                    // U5f: the retention is a long duty, due at once.
-                    Duty::Retention => Duration::ZERO,
-                    Duty::Mail
+                    Duty::Wake
+                    | Duty::GitHub
+                    | Duty::Retention
+                    | Duty::Mail
                     | Duty::NativeObservation
                     | Duty::Tracker
                     | Duty::Verification
@@ -529,7 +516,7 @@ impl Thread<'_, '_> {
                         *count += 1;
                         // The cause is said once, here, for the launcher's
                         // record of this run's stderr; the line carries the
-                        // legacy's fields alone and repeats on the
+                        // step and the count alone and repeats on the
                         // `mark_repeat` rule, after the lines the run earned.
                         let _ = writeln!(
                             std::io::stderr(),
@@ -563,7 +550,7 @@ impl Thread<'_, '_> {
                 Some((_, next)) => next.saturating_duration_since(now).min(SLICE),
                 None => SLICE,
             };
-            // A duty due again at once (the legacy mail interval 0, a body
+            // A duty due again at once (a mail interval of 0, a body
             // asking for now) waits one slice first: the loop never spins.
             let wait = if wait.is_zero() { SLICE } else { wait };
             self.clock.sleep(wait);
@@ -571,7 +558,7 @@ impl Thread<'_, '_> {
     }
 }
 
-/// The one write order (step5-map § D): the event lines appended and synced
+/// The one write order: the event lines appended and synced
 /// to the log, then the baseline written with the changes they settle and
 /// the duty's pass stamp where the run earned one. A failed baseline write
 /// leaves the lines on disk and the rows where they were, which the next
@@ -595,7 +582,7 @@ fn commit(store: &Mutex<Store>, produced: Produced, stamp: Option<Change>) -> Re
 /// the due times the records imply, the event log's path and the last
 /// event line's number. The overseer's turn-end hook (`lane-mail-check.sh`,
 /// `watch_live` and `wake_check`) reads `claim.standing`, `claim.cwd`,
-/// `claim.origin` and `log` off it (step6-map A7).
+/// `claim.origin` and `log` off it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Status {
     pub claim: Option<ClaimStatus>,
@@ -650,13 +637,8 @@ pub fn status(paths: &Paths) -> Result<Status> {
             .iter()
             .map(|(duty, at)| {
                 let every = match duty {
-                    Duty::Mail => c.mail_secs,
-                    // U5g: the wake on the mail cadence.
-                    Duty::Wake => c.mail_secs,
-                    // U5e2: the GitHub duty on the long cadence.
-                    Duty::GitHub => c.interval_secs,
-                    // U5f: the retention on the long cadence.
-                    Duty::Retention => c.interval_secs,
+                    Duty::Mail | Duty::Wake => c.mail_secs,
+                    Duty::GitHub | Duty::Retention => c.interval_secs,
                     Duty::Heartbeat => c.interval_secs * u64::from(c.max_loops),
                     Duty::NativeObservation
                     | Duty::Tracker

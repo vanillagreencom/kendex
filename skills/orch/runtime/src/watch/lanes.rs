@@ -240,7 +240,7 @@ pub struct Relaunch {
 
 /// The wall route's two calls and the setting that gates the second, injected
 /// so a row plants the answers; production wires the overseer module's
-/// [`super::overseer::Legacy`] reads.
+/// [`super::overseer::Judges`] reads.
 pub struct WallRoute<'a> {
     pub relaunch: WallRelaunch,
     /// `lanes pick --harness H --native-model M --exclude-lane SPENT --json`.
@@ -1393,17 +1393,43 @@ struct Recovery {
     args: Vec<String>,
 }
 
-/// The record's own relaunch as a `launch-lane` request on the picked
-/// account: the record's harness, model, effort, host, tracker and
-/// repository, its checkout (the recorded `mail_root`, else the checkout
-/// an earlier launcher recorded under `recovery`), its refresh word and
-/// the spent account excluded, written beside the state for `orch-runtime
-/// op --fleet` to apply. A record whose checkout is gone, or whose provider
-/// is spelled relative to nothing, refuses before anything is stopped.
-/// `Err` is the cause word.
+/// The words the walled lane's successor starts on, since it continues an
+/// item mid-workflow on another account: resume from where the session
+/// stopped and read the mailbox first, the harness's own monitor re-armed
+/// where it has one, closed by the unattended words every lane brief
+/// carries.
+const UNATTENDED_TEXT: &str = include_str!("unattended.txt");
+
+fn continuation(item: &str, harness: Harness) -> String {
+    let rearm = match harness {
+        Harness::Claude => format!(
+            ", then re-arm your mailbox monitor on .agents/skills/mailbox/scripts/lane-mail watch --item {item} through your harness background wake"
+        ),
+        Harness::Copilot => format!(
+            ", then re-arm your mailbox monitor on .agents/skills/mailbox/scripts/lane-mail watch --once --item {item} as a background command"
+        ),
+        Harness::Codex | Harness::Pi => String::new(),
+    };
+    format!(
+        "Resume the orch workflow for {item} from where this session stopped. Run .agents/skills/mailbox/scripts/lane-mail inbox --item {item} first and act on every envelope it prints, answers and directives alike, as its text directs{rearm}. {}\n",
+        UNATTENDED_TEXT.trim_end_matches('\n')
+    )
+}
+
+/// The record's own relaunch as two requests the runtime's entry applies in
+/// order from the lane's checkout: the predecessor retired through the
+/// close route on the `no-landing` ground (its harness idle under its
+/// recorded identity, the item's work kept), then `launch-lane` on the
+/// picked account with the record's harness, model, effort, host, tracker
+/// and repository, its refresh word, the spent account excluded and the
+/// continuation as its brief. The checkout is the one the launch ran from
+/// (`checkout` on a hosted record, whose `mail_root` is its host's; the
+/// `recovery.cwd` an earlier launcher recorded; else `mail_root`). A
+/// record whose checkout is gone, or whose provider is spelled relative to
+/// nothing, refuses before anything is stopped. `Err` is the cause word.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the wall relaunch's request file, the watch's own file beside the state, written before the detached relaunch starts"
+    reason = "the wall relaunch's request and brief files, the watch's own files beside the state, written before the detached relaunch starts"
 )]
 fn relaunch_request(
     lane: &Lane,
@@ -1415,11 +1441,13 @@ fn relaunch_request(
     let recovery = lane.extra.get("recovery").and_then(Value::as_object);
     let field = |key: &str| recovery.and_then(|r| r.get(key));
     let cwd = lane
-        .mail_root
-        .as_deref()
-        .filter(|root| !root.is_empty())
+        .extra
+        .get("checkout")
+        .and_then(Value::as_str)
         .or_else(|| field("cwd").and_then(Value::as_str))
-        .unwrap_or("");
+        .or(lane.mail_root.as_deref())
+        .unwrap_or("")
+        .trim();
     if cwd.is_empty() {
         return Err("checkout-unrecorded".to_owned());
     }
@@ -1432,6 +1460,22 @@ fn relaunch_request(
         .and_then(Value::as_bool)
         .or_else(|| lane.extra.get("refresh").and_then(Value::as_bool))
         .unwrap_or(false);
+    let stem = pass
+        .state_dir
+        .join(format!("wall-relaunch-{}", lane.item))
+        .display()
+        .to_string();
+    let brief = PathBuf::from(format!("{stem}.md"));
+    std::fs::write(&brief, continuation(&lane.item, harness))
+        .map_err(|e| format!("brief-unwritten path={} cause={e}", brief.display()))?;
+    let close = PathBuf::from(format!("{stem}.close.json"));
+    let retire = json!({
+        "op": "close-owned-resources",
+        "item": lane.item,
+        "no_landing": {"reason": "usage-limit", "source": "wall-route"},
+    });
+    std::fs::write(&close, retire.to_string())
+        .map_err(|e| format!("request-unwritten path={} cause={e}", close.display()))?;
     let mut request = json!({
         "op": "launch-lane",
         "item": lane.item,
@@ -1440,6 +1484,7 @@ fn relaunch_request(
         "account": to,
         "exclude_account": spent,
         "refresh": refresh,
+        "brief_file": brief.display().to_string(),
     });
     for (key, value) in [
         ("tracker", &lane.tracker),
@@ -1453,18 +1498,20 @@ fn relaunch_request(
             request[key] = json!(value);
         }
     }
-    let file = pass
-        .state_dir
-        .join(format!("wall-relaunch-{}.json", lane.item));
+    let file = PathBuf::from(format!("{stem}.json"));
     std::fs::write(&file, request.to_string())
         .map_err(|e| format!("request-unwritten path={} cause={e}", file.display()))?;
+    // The two requests in order through the one shell word: the launch is
+    // asked only once the close request was admitted, and its own
+    // transition refuses a lane whose harness still runs.
     let args = vec![
+        "sh".to_owned(),
+        "-c".to_owned(),
+        "\"$1\" --state-dir \"$2\" op --fleet --request \"$3\" && \"$1\" --state-dir \"$2\" op --fleet --request \"$4\"".to_owned(),
+        "wall-relaunch".to_owned(),
         pass.scripts.join("orch-runtime").display().to_string(),
-        "--state-dir".to_owned(),
         pass.state_dir.display().to_string(),
-        "op".to_owned(),
-        "--fleet".to_owned(),
-        "--request".to_owned(),
+        close.display().to_string(),
         file.display().to_string(),
     ];
     Ok(Recovery {

@@ -273,6 +273,22 @@ pub const LANE_BURN_PCT_KEY: &str = "ORCH_LANE_BURN_PCT_PER_HOUR";
 /// keeps for it: a worker's pick holds a seat to `min(ORCH_LANE_MAX_PCT,
 /// 100 - this)`.
 pub const OVERSEER_HEADROOM_PCT_KEY: &str = "ORCH_OVERSEER_HEADROOM_PCT";
+/// The minutes to the account's wall, at the measured rate, the overseer
+/// hands off at; 0 is no rate mark.
+pub const OVERSEER_WALL_MINUTES_KEY: &str = "ORCH_OVERSEER_WALL_MINUTES";
+/// The count of accounts above the headroom trigger, the overseer's own
+/// among them, at or under which the overseer moves onto the one with more
+/// room; 0 is no qualifying mark.
+pub const OVERSEER_SUCCESSOR_ACCOUNTS_KEY: &str = "ORCH_OVERSEER_SUCCESSOR_ACCOUNTS";
+/// The percent of its cgroup's memory cap the overseer's harness process
+/// hands off at; unset is no memory mark.
+pub const OVERSEER_MEMORY_PCT_KEY: &str = "ORCH_OVERSEER_MEMORY_PCT";
+/// The share of the context window a reading is due strictly past, held
+/// to the judge's ceiling.
+pub const HANDOFF_CONTEXT_PCT_KEY: &str = "ORCH_HANDOFF_CONTEXT_PCT";
+const DEFAULT_OVERSEER_WALL_MINUTES: u32 = 20;
+const DEFAULT_OVERSEER_SUCCESSOR_ACCOUNTS: u32 = 1;
+const DEFAULT_HANDOFF_CONTEXT_PCT: u32 = 90;
 /// The Codex credit balance a window wall is lifted above (`lanes`'
 /// `ORCH_LANE_CODEX_CREDIT_FLOOR`).
 pub const CODEX_CREDIT_FLOOR_KEY: &str = "ORCH_LANE_CODEX_CREDIT_FLOOR";
@@ -324,10 +340,16 @@ pub const HOST_BUSY_WAIT_KEY: &str = "ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS";
 /// address.
 pub const CLAUDE_USAGE_URL_KEY: &str = "ORCH_LANES_CLAUDE_USAGE_URL";
 pub const CODEX_USAGE_URL_KEY: &str = "ORCH_LANES_CODEX_USAGE_URL";
+/// The Claude token endpoint a renewal posts its refresh-token grant to,
+/// and the OAuth client id it posts with; with no client id every expired
+/// Claude account reads `error` naming the key.
+pub const CLAUDE_TOKEN_URL_KEY: &str = "ORCH_LANES_CLAUDE_TOKEN_URL";
+pub const CLAUDE_CLIENT_ID_KEY: &str = "ORCH_LANES_CLAUDE_CLIENT_ID";
 const DEFAULT_USAGE_TTL: u64 = 300;
 const DEFAULT_HOST_ACCOUNTS_TIMEOUT: u64 = 30;
 const CLAUDE_USAGE_URL_DEFAULT: &str = "https://api.anthropic.com/api/oauth/usage";
 const CODEX_USAGE_URL_DEFAULT: &str = "https://chatgpt.com/backend-api/wham/usage";
+const CLAUDE_TOKEN_URL_DEFAULT: &str = "https://platform.claude.com/v1/oauth/token";
 const DEFAULT_LANE_MAX_PCT: u32 = 95;
 const DEFAULT_LANE_BURN_PCT: u32 = 5;
 const DEFAULT_OVERSEER_HEADROOM_PCT: u32 = 5;
@@ -389,6 +411,10 @@ const READ_KEYS: &[&str] = &[
     WATCH_MAIL_INTERVAL_KEY,
     OVERSEER_MARK_REPEAT_KEY,
     OVERSEER_DEAD_PASSES_KEY,
+    OVERSEER_WALL_MINUTES_KEY,
+    OVERSEER_SUCCESSOR_ACCOUNTS_KEY,
+    OVERSEER_MEMORY_PCT_KEY,
+    HANDOFF_CONTEXT_PCT_KEY,
     WATCH_TAIL_LINES_KEY,
     WATCH_PREPARE_SECS_KEY,
     DIRECTIVE_UNREAD_SECS_KEY,
@@ -603,6 +629,8 @@ pub struct AccountSettings {
     pub host_busy_wait: Option<String>,
     pub claude_usage_url: String,
     pub codex_usage_url: String,
+    pub claude_token_url: String,
+    pub claude_client_id: Option<String>,
 }
 
 /// One `ORCH_LANE_CLOUD_REPOS` entry, `<name>=<owner>/<repo>`: the
@@ -648,6 +676,8 @@ pub struct Settings {
     pub worktree_cli: PathBuf,
     pub agent_runtime: PathBuf,
     pub succession: Succession,
+    /// The controller's own marks.
+    pub marks: MarkSettings,
     pub job_unit: PathBuf,
     pub lane_cap: u32,
     /// The shell launcher's claim store the cap's admission reads, never writes.
@@ -671,6 +701,17 @@ pub struct Settings {
     pub accounts: AccountSettings,
     pub store: StoreSettings,
     pub review: ReviewSettings,
+}
+
+/// The controller's own marks beyond the headroom trigger: the rate mark
+/// in minutes, the qualifying count, the memory mark where set, and the
+/// context share.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarkSettings {
+    pub wall_minutes: u32,
+    pub successor_accounts: u32,
+    pub memory_pct: Option<u32>,
+    pub context_pct: u32,
 }
 
 /// The state verbs' settings: the takeover window and the row bound of the
@@ -1197,6 +1238,31 @@ pub fn load(
             });
         }
     }
+    // A whole number of at most nine digits, 0 included: 0 turns a mark off.
+    let minutes = |key: &str, default: u32| -> Result<u32> {
+        match get(key) {
+            None => Ok(default),
+            Some(text) => match text.parse::<u32>() {
+                Ok(n) if text.len() <= 9 && text.bytes().all(|b| b.is_ascii_digit()) => Ok(n),
+                Ok(_) | Err(_) => Err(value_refusal(key, text)),
+            },
+        }
+    };
+    let marks = MarkSettings {
+        wall_minutes: minutes(OVERSEER_WALL_MINUTES_KEY, DEFAULT_OVERSEER_WALL_MINUTES)?,
+        successor_accounts: minutes(
+            OVERSEER_SUCCESSOR_ACCOUNTS_KEY,
+            DEFAULT_OVERSEER_SUCCESSOR_ACCOUNTS,
+        )?,
+        memory_pct: match get(OVERSEER_MEMORY_PCT_KEY) {
+            None => None,
+            Some(_) => Some(pct(OVERSEER_MEMORY_PCT_KEY, 0)?),
+        },
+        context_pct: match pct(HANDOFF_CONTEXT_PCT_KEY, DEFAULT_HANDOFF_CONTEXT_PCT)? {
+            0 => return Err(value_refusal(HANDOFF_CONTEXT_PCT_KEY, "0")),
+            n => n,
+        },
+    };
     let accounts = AccountSettings {
         retire,
         max_pct: pct(LANE_MAX_PCT_KEY, DEFAULT_LANE_MAX_PCT)?,
@@ -1230,6 +1296,10 @@ pub fn load(
         codex_usage_url: get(CODEX_USAGE_URL_KEY)
             .unwrap_or(CODEX_USAGE_URL_DEFAULT)
             .to_owned(),
+        claude_token_url: get(CLAUDE_TOKEN_URL_KEY)
+            .unwrap_or(CLAUDE_TOKEN_URL_DEFAULT)
+            .to_owned(),
+        claude_client_id: get(CLAUDE_CLIENT_ID_KEY).map(str::to_owned),
     };
     // The read duties' keys; the connected repositories and the owner
     // tracker keep the shell's grammar (`orch_connected_repos`,
@@ -1309,6 +1379,7 @@ pub fn load(
         worktree_cli,
         agent_runtime,
         succession,
+        marks,
         job_unit,
         lane_cap,
         claim_store,

@@ -19,7 +19,14 @@
 # closes, which a kill-server or a window kill does.
 printf '\xe2\x80\xba Ask Codex to do anything\n'
 home="${CODEX_HOME:?}"
-read -r _ < "$home/rollout-gate" || exit 4
+gate="$home/rollout-gate"
+[ -p "$gate" ] || exit 4
+# The read-write open never blocks and the read gives up after
+# HOLD_BOUND_SECS, so a row that dies before its release leaves no reader.
+exec 9<>"$gate"
+read -r -t "${HOLD_BOUND_SECS:-120}" -u 9 _ \
+  || { echo "stub-codex-gated: hold-unreleased path=$gate bound=${HOLD_BOUND_SECS:-120}" >&2; exit 124; }
+exec 9<&-
 id="stub-$$"
 day="$home/sessions/$(date -u +%Y/%m/%d)"
 mkdir -p "$day" || exit 4

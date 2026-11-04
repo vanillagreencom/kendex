@@ -28,7 +28,13 @@ done < "$run_dir/start"
   printf 'validate: lanes=fixture selection=%s\n' "${DEV_VALIDATE_CHILD_SELECTION:-all}"
 } > "$run_dir/log"
 if [ -n "${DEV_VALIDATE_CHILD_HOLD:-}" ]; then
-  read -r _ < "$DEV_VALIDATE_CHILD_HOLD"
+  # The read-write open never blocks and the read gives up after
+  # HOLD_BOUND_SECS, so a row that dies before its release leaves no reader.
+  [ -p "$DEV_VALIDATE_CHILD_HOLD" ] || { echo "dev-validate-child: hold-not-fifo path=$DEV_VALIDATE_CHILD_HOLD" >&2; exit 2; }
+  exec 9<>"$DEV_VALIDATE_CHILD_HOLD"
+  read -r -t "${HOLD_BOUND_SECS:-120}" -u 9 _ \
+    || { echo "dev-validate-child: hold-unreleased path=$DEV_VALIDATE_CHILD_HOLD bound=${HOLD_BOUND_SECS:-120}" >&2; exit 124; }
+  exec 9<&-
 fi
 [ -z "${DEV_VALIDATE_CHILD_NO_SENTINEL:-}" ] || exit 0
 if [ -n "${DEV_VALIDATE_CHILD_AT:-}" ]; then

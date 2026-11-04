@@ -826,7 +826,7 @@ impl World {
     }
 }
 
-/// R-U6-2 Copilot 2 (decision 187 (2), 188 (d)): a session the CLI answers
+/// A session the CLI answers
 /// archived for took no notice, and the stage says so. The end notice to a
 /// cloud lane whose session is archived is marked `unsent:session:archived`,
 /// never `sent`, the lane's `directive_send` records `archived` under the
@@ -1077,13 +1077,6 @@ fn two_walkers_of_one_notice_make_one_send_the_later_reading_the_earliers_inside
     );
 }
 
-/// Defect: a cloud lane recorded launched on a session nothing created, or
-/// on a branch the session could not clone; a session created from a
-/// description that names no branch. The launch makes the item's worktree
-/// without a checkout, pushes its branch, creates the session through the
-/// CLI's own JSON answer under the lane's account with the brief closed by
-/// the session words, and records the session id with no window; the
-/// repositories the session needs access to are on the outcome.
 #[test]
 fn a_cloud_launch_pushes_the_branch_creates_the_session_through_the_cli_and_records_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -1123,6 +1116,7 @@ fn a_cloud_launch_pushes_the_branch_creates_the_session_through_the_cli_and_reco
         ),
     );
     let claude_log = dir.path().join("claude.log");
+    let parent_log = dir.path().join("parent.log");
     let request = root.join("request.json");
     std::fs::write(
         &request,
@@ -1153,7 +1147,11 @@ fn a_cloud_launch_pushes_the_branch_creates_the_session_through_the_cli_and_reco
         .args(["op", "--fleet", "--request", &request.display().to_string()])
         .env("PATH", tool_path(&[&fixtures().join("claude-cloud")]))
         .env("CLAUDE_CLOUD_LOG", &claude_log)
+        .env("CLAUDE_CLOUD_PARENT_LOG", &parent_log)
         .env("WORKTREE_CLI", &worktree)
+        // The overseer's own session marker, which the create must not
+        // hand the CLI: the builder's removals reach the child.
+        .env("CLAUDECODE", "parent-fixture")
         .current_dir(&root);
     let report = effect_report(&command.output().unwrap());
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
@@ -1208,5 +1206,10 @@ fn a_cloud_launch_pushes_the_branch_creates_the_session_through_the_cli_and_reco
     assert!(
         cli.contains(&format!("config={}", account.display())),
         "the session is created under the lane's account: {cli}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&parent_log).unwrap(),
+        "parent-marker=\n",
+        "the builder's environment removals reach the CLI"
     );
 }

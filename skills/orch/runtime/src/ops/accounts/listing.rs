@@ -25,13 +25,14 @@ use agent_runtime::host::{self, Place};
 use serde_json::{Map, Value, json};
 
 use super::cache::{self, FigureRead, REFUSAL_WINDOW_S, Refusal};
+use super::renewal;
 use super::usage::{self, CopilotLogin, Credential, Rounding, SESSION_WINDOW_S};
 use super::{AccountRow, TAG, credit_room, grant, wall_verdict};
 use crate::ops::wall;
 use crate::settings::{AccountSettings, CopilotPool, Settings};
 
 const COPILOT_CREDITS_URL: &str = "https://api.github.com/copilot_internal/user";
-const CLAUDE_OAUTH_BETA: &str = "oauth-2025-04-20";
+pub(super) const CLAUDE_OAUTH_BETA: &str = "oauth-2025-04-20";
 /// A request's own bound is curl's `--max-time 10`; the runner's covers
 /// the start.
 const REQUEST_BOUND: Duration = Duration::from_secs(15);
@@ -436,6 +437,7 @@ fn measure(ctx: &mut Ctx, account: &Found) -> Value {
             ),
         );
     }
+    let mut renewed = false;
     let (token, account_id, plan) = match harness {
         "copilot" => match copilot_token(dir) {
             Ok(token) => (token, String::new(), String::new()),
@@ -495,24 +497,33 @@ fn measure(ctx: &mut Ctx, account: &Found) -> Value {
                 plan,
                 account_id,
             } => {
-                let expired = if harness == "claude" && usage::expired(refresh_expires_ms, ctx.now)
-                {
-                    Some("refresh token expired; sign in again")
-                } else if usage::expired(expires_ms, ctx.now) {
-                    Some("access token expired")
-                } else {
-                    None
-                };
-                if let Some(detail) = expired {
-                    let mut reading = Reading::refused("expired", detail.to_owned());
+                if harness == "claude" && usage::expired(refresh_expires_ms, ctx.now) {
+                    let mut reading = Reading::refused(
+                        "expired",
+                        "refresh token expired; sign in again".to_owned(),
+                    );
                     reading.plan = plan;
                     return row(ctx, reading);
                 }
-                (token, account_id, plan)
+                if usage::expired(expires_ms, ctx.now) {
+                    match renewed_token(ctx, harness, dir) {
+                        Ok(token) => {
+                            renewed = true;
+                            (token, account_id, plan)
+                        }
+                        Err(reading) => {
+                            let mut reading = *reading;
+                            reading.plan = plan;
+                            return row(ctx, reading);
+                        }
+                    }
+                } else {
+                    (token, account_id, plan)
+                }
             }
         },
     };
-    let mut reading = usage_reading(ctx, harness, dir, &token, &account_id);
+    let mut reading = usage_reading(ctx, harness, dir, &token, &account_id, renewed);
     reading.plan = match (harness, &reading.usage) {
         ("copilot", Some(Usage::Body(body))) => body
             .get("copilot_plan")
@@ -522,7 +533,11 @@ fn measure(ctx: &mut Ctx, account: &Found) -> Value {
         ("copilot", _) => String::new(),
         _ => plan,
     };
-    row(ctx, reading)
+    let mut row = row(ctx, reading);
+    if renewed {
+        row["refreshable"] = json!(true);
+    }
+    row
 }
 
 /// A Copilot account's token from its stored login: `config.json`'s own,
@@ -638,19 +653,73 @@ fn stated_row(ctx: &Ctx, dir: &str, entry: Option<&CopilotPool>) -> Value {
     )
 }
 
+/// The live token of an account whose access token expired: the refusal
+/// its record holds for the token endpoint, else the renewal under the
+/// credentials lock. A refusal the endpoint answered is recorded for its
+/// window, so no caller on the host posts the refused grant again; one
+/// this machine raised on its own posted nothing, and nothing stops the
+/// next listing from posting.
+fn renewed_token(ctx: &mut Ctx, harness: &str, dir: &str) -> Result<String, Box<Reading>> {
+    let path = cache::record_path(&ctx.usage_dir, harness, dir);
+    if !credential_newer(harness, dir, &path)
+        && let Some(record) = cache::read(&path, harness, dir)
+        && let Some((refusal, age)) = cache::refusal(&record, "token", ctx.now)
+    {
+        let mut reading = Reading::refused(&refusal.status, refusal.detail.clone());
+        reading.age = Some(age);
+        return Err(Box::new(reading));
+    }
+    let refused = match renewal::renew(ctx.accounts, harness, dir, ctx.now) {
+        Ok(token) => return Ok(token),
+        Err(refused) => refused,
+    };
+    let detail = format!(
+        "access token expired and could not be renewed: {}",
+        refused.cause
+    );
+    if let Some(code) = refused.code {
+        let refusal = Refusal {
+            endpoint: "token".to_owned(),
+            status: refused.status.clone(),
+            code: Some(code.to_string()),
+            detail: detail.clone(),
+            expires_at: ctx.now + refusal_window(refused.retry_after.as_deref()),
+        };
+        if let Err(cause) = cache::write_refusal(&path, harness, dir, refusal, ctx.now) {
+            ctx.notes.push(format!(
+                "refusal-unrecorded dir={} cause={cause}",
+                ctx.usage_dir.display()
+            ));
+        }
+    }
+    Err(Box::new(Reading::refused(&refused.status, detail)))
+}
+
+/// A refusal's window: the answer's own Retry-After where it named
+/// seconds, else the default. A Retry-After written as an HTTP date names
+/// no seconds to wait out, and a window nobody can read is never zero.
+fn refusal_window(retry_after: Option<&str>) -> u64 {
+    retry_after
+        .and_then(|r| r.parse::<u64>().ok())
+        .filter(|w| *w > 0)
+        .unwrap_or(REFUSAL_WINDOW_S)
+}
+
 /// The account's usage: its record's figure where fresh enough, its
 /// record's live refusal, else one request under the host-wide lock, the
 /// record read again inside it so a caller that waited takes what the
-/// holder brought back instead of posting its own.
+/// holder brought back instead of posting its own. A login this listing
+/// renewed itself is the same account, so its record stands.
 fn usage_reading(
     ctx: &mut Ctx,
     harness: &str,
     dir: &str,
     token: &str,
     account_id: &str,
+    renewed: bool,
 ) -> Reading {
     let path = cache::record_path(&ctx.usage_dir, harness, dir);
-    let newer_credential = credential_newer(harness, dir, &path);
+    let newer_credential = !renewed && credential_newer(harness, dir, &path);
     let record = |ctx: &mut Ctx| -> Option<Reading> {
         if newer_credential {
             return None;
@@ -812,12 +881,7 @@ fn fetch(
             status = "plan_ended".to_owned();
             detail = ended;
         }
-        let window = answer
-            .retry_after
-            .as_deref()
-            .and_then(|r| r.parse::<u64>().ok())
-            .filter(|w| *w > 0)
-            .unwrap_or(REFUSAL_WINDOW_S);
+        let window = refusal_window(answer.retry_after.as_deref());
         let refusal = Refusal {
             endpoint: "usage".to_owned(),
             status: status.clone(),

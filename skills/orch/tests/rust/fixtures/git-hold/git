@@ -18,7 +18,13 @@ for arg in "$@"; do
 done
 if [ "$held" -eq 1 ] && [ -n "${GIT_HOLD_FIFO:-}" ]; then
   [ -z "${GIT_HOLD_MARK:-}" ] || : > "$GIT_HOLD_MARK"
-  cat "$GIT_HOLD_FIFO" >/dev/null
+  # The read-write open never blocks and the read gives up after
+  # HOLD_BOUND_SECS, so a row that dies before its release leaves no reader.
+  [ -p "$GIT_HOLD_FIFO" ] || { echo "git-hold: hold-not-fifo path=$GIT_HOLD_FIFO" >&2; exit 2; }
+  exec 9<>"$GIT_HOLD_FIFO"
+  read -r -t "${HOLD_BOUND_SECS:-120}" -u 9 _ \
+    || { echo "git-hold: hold-unreleased path=$GIT_HOLD_FIFO bound=${HOLD_BOUND_SECS:-120}" >&2; exit 124; }
+  exec 9<&-
   if [ -n "${GIT_HOLD_SKIP:-}" ] && [ -e "$GIT_HOLD_SKIP" ]; then
     exit 128
   fi

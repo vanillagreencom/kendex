@@ -847,187 +847,89 @@ fn succession_off_refuses_a_transfer_and_writes_nothing() {
     assert!(!live(predecessor.pid()));
 }
 
-/// Defect: a job the launcher may have started read as never started. Once
-/// the job launcher has been asked, the job is an obligation until it
-/// claims or is read ended. A launcher
-/// that wrote its record and then failed without saying nothing started
-/// leaves the transfer `unconfirmed` with the job standing and its request
-/// file kept for it; the reconcile reads the record, finds no claim and
-/// keeps it standing, never `failed` over a job that may still run. The
-/// launcher's own statement that nothing started (`status=`, a `setsid`
-/// that forked nothing) is honoured: `failed`, the pending restored, the
-/// request removed.
-#[test]
-fn a_job_the_launcher_did_not_answer_for_stands_until_read_and_the_reconcile_reads_it() {
-    let job_unit = fixtures().join("job-unit-fail/job-unit");
-    let job_unit = job_unit.display().to_string();
-    for (line, outcome) in [
-        ("job-unit: launch-failed detail=no-answer", "unconfirmed"),
-        ("job-unit: launch-failed status=1", "failed"),
-    ] {
-        let dir = tempfile::tempdir().unwrap();
-        let server = Server::start(dir.path(), "fleet");
-        let runner = suite_runner(&server, "stub-confirm");
-        runner.init_fleet();
-        let predecessor = Owned::sleep();
-        plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
-        let out = runner.op_fleet_env(
-            &transfer_request(&server, runner.state_dir()),
-            &[("ORCH_JOB_UNIT", &job_unit), ("JOB_UNIT_FAIL_LINE", line)],
-        );
-        assert_eq!(
-            refusal_key(&out),
-            "job-launch-failed",
-            "{line}: {}",
-            stderr(&out)
-        );
-        let fleet = runner.fleet();
-        let intent = &fleet["intents"][0];
-        assert_eq!(intent["outcome"], outcome, "{line}: {intent}");
-        assert_eq!(intent["observation"]["note"], "job-launch-failed", "{line}");
-        let id = intent["id"].as_str().unwrap().to_owned();
-        let request = runner
-            .state_dir()
-            .join("intents")
-            .join(format!("{id}.request"));
-        if outcome == "failed" {
-            assert!(intent["completed_at"].is_string(), "{line}: {intent}");
-            assert!(
-                intent["observation"].get("job").is_none(),
-                "{line}: nothing started, nothing stands: {intent}"
-            );
-            assert!(!request.exists(), "{line}: the request is removed");
-            assert!(live(predecessor.pid()), "{line}: the predecessor stands");
-            continue;
-        }
-        assert!(intent["completed_at"].is_null(), "{line}: {intent}");
-        assert_eq!(intent["observation"]["job"], "possibly-started", "{line}");
-        assert_eq!(
-            remaining(&intent["observation"], "job")["job"],
-            "possibly-started",
-            "{line}: the launcher's record names no identity yet, so the job stands unread: {intent}"
-        );
-        assert!(request.exists(), "{line}: the request is kept for the job");
-        assert_eq!(
-            fleet["overseer"]["pending"],
-            pending(runner.state_dir()),
-            "{line}: the pending stands as requested while the job may run"
-        );
-        // The reconcile reads the record: no claim, a job that names no
-        // identity to read, so it stands; nothing is assumed absent.
-        let report = runner.reconcile_one();
-        assert_eq!(
-            report["intent"]["outcome"], "unconfirmed",
-            "{line}: {report}"
-        );
-        assert_eq!(report["intent"]["observation"]["note"], "nothing-opened");
-        assert_eq!(report["intent"]["observation"]["job"], "possibly-started");
-        assert_eq!(
-            remaining(&report["intent"]["observation"], "job")["job"],
-            "possibly-started",
-            "{line}: the reconcile reads the unread record and the job stands: {report}"
-        );
-        assert!(request.exists(), "{line}: the request is still kept");
-        assert!(
-            runner.fleet()["intents"][0]["completed_at"].is_null(),
-            "{line}: the intent stays open for the job's claim"
-        );
-        assert!(live(predecessor.pid()), "{line}: the predecessor stands");
+/// The `setsid` route's world for a job that never claims: `bin`, for the
+/// op's `PATH`, holds the `setsid-sleeper` fixture (a `setsid` that logs
+/// its argv to `SETSID_LOG` and execs a sleep the row owns) and its
+/// `loginctl` saying the user manager does not linger. Returns `bin` and
+/// the log.
+fn sleeper_world(dir: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+    let bin = dir.join("sleeper-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    for tool in ["setsid", "loginctl"] {
+        std::os::unix::fs::symlink(fixtures().join("setsid-sleeper").join(tool), bin.join(tool))
+            .unwrap();
     }
+    (bin, dir.join("setsid.log"))
 }
 
-/// Defect: an intent standing forever over a job that exited before it
-/// claimed. A `setsid` job that recorded its own identity and exited before
-/// claiming is read gone at the reconcile by that identity and discharged,
-/// so the intent reconciles to `failed`; the predecessor it never retired
-/// stands.
-#[test]
-fn an_unclaimed_setsid_job_that_exits_before_claiming_reconciles() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let runner = suite_runner(&server, "stub-confirm");
-    runner.init_fleet();
-    let predecessor = Owned::sleep();
-    plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
-    let job_unit = fixtures().join("job-unit-fail/job-unit");
-    let job_unit = job_unit.display().to_string();
-    let dead = (GONE_PID as u32).to_string();
-    let out = runner.op_fleet_env(
-        &transfer_request(&server, runner.state_dir()),
-        &[
-            ("ORCH_JOB_UNIT", &job_unit),
-            ("JOB_UNIT_FAIL_PID", &dead),
-            ("JOB_UNIT_FAIL_START", "ticks:1"),
-        ],
-    );
-    assert_eq!(refusal_key(&out), "job-launch-failed", "{}", stderr(&out));
-    let fleet = runner.fleet();
-    let intent = &fleet["intents"][0];
-    assert_eq!(intent["outcome"], "unconfirmed", "{intent}");
-    assert_eq!(intent["observation"]["job"], "possibly-started");
-    assert_eq!(
-        remaining(&intent["observation"], "job")["pid"],
-        GONE_PID,
-        "the recorded setsid group stands by its own pid: {intent}"
-    );
-    // The reconcile reads that group identity gone and discharges the job,
-    // so the intent fails rather than standing forever.
-    let report = runner.reconcile_one();
-    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
-    assert_eq!(report["intent"]["observation"]["job"], "ended");
-    assert!(
-        remaining(&report["intent"]["observation"], "job").is_null(),
-        "the exited job is discharged: {report}"
-    );
-    assert!(live(predecessor.pid()), "nothing retired the predecessor");
+/// The launches the `setsid` fixture logged.
+fn launches(log: &Path) -> usize {
+    std::fs::read_to_string(log)
+        .unwrap_or_default()
+        .lines()
+        .count()
+}
+
+/// The pid the standing job obligation of the one open intent names, as
+/// the fleet records it.
+fn standing_job_pid(runner: &Runner) -> u32 {
+    let intent = runner.fleet()["intents"][0].clone();
+    intent["obligations"]["standing"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|o| o["kind"] == "job-group"))
+        .and_then(|o| o["pid"].as_u64())
+        .unwrap_or_else(|| panic!("a job group stands: {intent}")) as u32
+}
+
+/// End the sleeper the row owns by its pid and wait until it reads gone.
+fn end_sleeper(pid: u32) {
+    let _ = std::process::Command::new("kill")
+        .args(["-KILL", &pid.to_string()])
+        .status();
+    wait_until("the sleeper ended", secs(10), || !live(pid));
 }
 
 /// Defect: a second job started over one that has not claimed yet. One
 /// outstanding-job predicate serves both routes, so a repeated stop whose
 /// job never claimed reconciles that job rather than starting a second; the
-/// launcher is asked once.
+/// launcher spawns once.
 #[test]
 fn a_repeated_stop_with_an_unclaimed_job_does_not_start_a_second_job() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = suite_runner(&server, "stub-confirm");
+    let mut runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
-    let job_unit = fixtures().join("job-unit-fail/job-unit");
-    let job_unit = job_unit.display().to_string();
-    let log = runner.state_dir().join("job-unit.log");
-    let log_s = log.display().to_string();
-    let env = [
-        ("ORCH_JOB_UNIT", job_unit.as_str()),
-        ("JOB_UNIT_LOG", log_s.as_str()),
-        (
-            "JOB_UNIT_FAIL_LINE",
-            "job-unit: launch-failed detail=no-answer",
-        ),
-    ];
-    // The launcher is asked and does not answer for the job: the unread
-    // sidecar stands, the stop intent open.
-    let out = runner.op_fleet_env(&json!({"op": "stop-controller"}), &env);
-    assert_eq!(refusal_key(&out), "job-launch-failed", "{}", stderr(&out));
-    assert_eq!(
-        runner.fleet()["intents"][0]["observation"]["job"],
-        "possibly-started"
-    );
+    let (bin, log) = sleeper_world(runner.state_dir());
+    runner.tools = Some(bin);
+    runner
+        .env
+        .push(("ORCH_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
+    runner
+        .env
+        .push(("SETSID_LOG".to_owned(), log.display().to_string()));
+    // The job never claims within the bound: it stands by its identity, the
+    // stop intent open.
+    let out = runner.op_fleet(&json!({"op": "stop-controller"}));
+    assert_eq!(refusal_key(&out), "job-unclaimed", "{}", stderr(&out));
+    let job = standing_job_pid(&runner);
+    assert!(live(job), "the job the launcher recorded runs");
     // The repeated stop reconciles the standing job and starts no second one.
-    let out2 = runner.op_fleet_env(&json!({"op": "stop-controller"}), &env);
+    let out2 = runner.op_fleet(&json!({"op": "stop-controller"}));
     let report = effect_report(&out2);
     assert_eq!(
         report["intent"]["observation"]["job"], "possibly-started",
         "{report}"
     );
-    let calls = std::fs::read_to_string(&log)
-        .unwrap()
-        .lines()
-        .filter(|l| l.starts_with("launch "))
-        .count();
-    assert_eq!(calls, 1, "the launcher was asked once, no second job");
+    assert_eq!(
+        remaining(&report["intent"]["observation"], "job")["pid"],
+        job,
+        "the standing group is what holds the repeat: {report}"
+    );
+    assert_eq!(launches(&log), 1, "a second job while the first stands");
     assert!(live(predecessor.pid()), "nothing retired the predecessor");
+    end_sleeper(job);
 }
 
 /// Defect: a stopped controller relaunched by death recovery, or a stop
@@ -1834,7 +1736,7 @@ fn a_reconcile_sends_the_notice_a_closed_intent_still_owes_once() {
     );
 }
 
-/// The job-unit record of the intent `id`'s detached job, the address its
+/// The launcher's record of the intent `id`'s detached job, the address its
 /// sidecar obligation records.
 fn job_record(runner: &Runner, id: &str) -> String {
     runner
@@ -2525,44 +2427,34 @@ fn pending_missing_after_retirement_consumes_the_predecessor() {
 }
 
 /// Defect: the outstanding-job predicate reading the claim's `handed_from`
-/// rather than the recorded job obligations. An earlier job
-/// of the intent claimed it; the repeat's own job was asked, its launcher did
-/// not answer and its group identity reads live: a further repeat starts no
-/// other job while that one stands.
+/// rather than the recorded job obligations. An earlier job of the intent
+/// claimed it; the repeat's own job was launched and never claimed, and its
+/// group identity reads live: a further repeat starts no other job while
+/// that one stands.
 #[test]
 fn a_repeat_after_a_claimed_job_starts_no_job_while_one_stands() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = suite_runner(&server, "stub-confirm");
+    let mut runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
-    let standing_job = Owned::sleep();
-    let job_unit = fixtures()
-        .join("job-unit-fail/job-unit")
-        .display()
-        .to_string();
-    let log = runner.state_dir().join("job-unit.log");
-    let log_s = log.display().to_string();
-    let pid_s = standing_job.pid().to_string();
-    let start_s = standing_job.start();
-    let settings = [
-        ("ORCH_JOB_UNIT", job_unit.as_str()),
-        ("JOB_UNIT_LOG", log_s.as_str()),
-        (
-            "JOB_UNIT_FAIL_LINE",
-            "job-unit: launch-failed detail=no-answer",
-        ),
-        ("JOB_UNIT_FAIL_PID", pid_s.as_str()),
-        ("JOB_UNIT_FAIL_START", start_s.as_str()),
-    ];
-    let out = runner.op_fleet_env(&json!({"op": "stop-controller"}), &settings);
-    assert_eq!(refusal_key(&out), "job-launch-failed", "{}", stderr(&out));
+    let (bin, log) = sleeper_world(runner.state_dir());
+    runner.tools = Some(bin);
+    runner
+        .env
+        .push(("ORCH_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
+    runner
+        .env
+        .push(("SETSID_LOG".to_owned(), log.display().to_string()));
+    let out = runner.op_fleet(&json!({"op": "stop-controller"}));
+    assert_eq!(refusal_key(&out), "job-unclaimed", "{}", stderr(&out));
+    let job = standing_job_pid(&runner);
     // An earlier job of this intent had claimed it.
     let mut fleet = runner.fleet();
     fleet["intents"][0]["handed_from"] = json!({"pid": 1, "start": "ticks:1"});
     runner.write_fleet(&fleet);
-    let out2 = runner.op_fleet_env(&json!({"op": "stop-controller"}), &settings);
+    let out2 = runner.op_fleet(&json!({"op": "stop-controller"}));
     let report = effect_report(&out2);
     assert_eq!(
         report["intent"]["observation"]["job"], "possibly-started",
@@ -2570,52 +2462,43 @@ fn a_repeat_after_a_claimed_job_starts_no_job_while_one_stands() {
     );
     assert_eq!(
         remaining(&report["intent"]["observation"], "job")["pid"],
-        standing_job.pid(),
+        job,
         "the standing group is what holds the repeat: {report}"
     );
-    let calls = std::fs::read_to_string(&log)
-        .unwrap()
-        .lines()
-        .filter(|l| l.starts_with("launch "))
-        .count();
-    assert_eq!(calls, 1, "a second job while the first stands");
-    assert!(live(standing_job.pid()));
+    assert_eq!(launches(&log), 1, "a second job while the first stands");
+    assert!(live(job));
     assert!(live(predecessor.pid()), "nothing retired the predecessor");
+    end_sleeper(job);
 }
 
 /// Defect: a job identity manufactured by the launcher, or an exited job
-/// standing forever. The real setsid launcher reads its child's identity
-/// from the kernel table before it returns, and the runtime records that
-/// identity before the claim wait. A real child that exits before it claims
-/// stands as its recorded group until the reconcile reads it gone by that
-/// identity and discharges `job-exited`: `failed`. The child is a short
-/// sleep that never claims, so the claim bound is one second: the refusal
-/// is certain, the wait short.
+/// standing forever. Where no user manager lingers the launcher forks the
+/// job under `setsid` and reads its identity from the kernel's table before
+/// it returns, records it before the claim wait, and a child that exits
+/// before it claims stands as its recorded group until the reconcile reads
+/// it gone by that identity and discharges `job-exited`: `failed`, the
+/// request removed, the predecessor it never retired standing. The child
+/// is a sleep that never claims, so the claim bound is one second and the
+/// row ends the child itself once the identity is recorded.
 #[test]
-fn a_real_setsid_child_that_exits_before_claiming_is_read_gone_by_its_recorded_identity() {
+fn a_job_is_a_setsid_group_where_no_manager_lingers_and_a_job_that_exits_before_claiming_is_read_gone_by_its_recorded_identity()
+ {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let mut runner = suite_runner(&server, "stub-confirm");
     runner.verify = Some(1);
-    runner
-        .env
-        .push(("ORCH_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
     runner.init_fleet();
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
-    let launcher = fixtures()
-        .join("job-unit-exit/job-unit")
-        .display()
-        .to_string();
-    let real = job_unit().display().to_string();
-    let out = runner.op_fleet_env(
-        &transfer_request(&server, runner.state_dir()),
-        &[
-            ("ORCH_JOB_UNIT", &launcher),
-            ("JOB_UNIT_REAL", &real),
-            ("JOB_UNIT_EXIT_AFTER", "0.3"),
-        ],
-    );
+    let (bin, log) = sleeper_world(runner.state_dir());
+    runner.tools = Some(bin);
+    runner
+        .env
+        .push(("ORCH_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
+    runner
+        .env
+        .push(("SETSID_LOG".to_owned(), log.display().to_string()));
+    let out = runner.op_fleet(&transfer_request(&server, runner.state_dir()));
     assert_eq!(refusal_key(&out), "job-unclaimed", "{}", stderr(&out));
     let intent = runner.fleet()["intents"][0].clone();
     assert_eq!(intent["outcome"], "unconfirmed", "{intent}");
@@ -2624,25 +2507,35 @@ fn a_real_setsid_child_that_exits_before_claiming_is_read_gone_by_its_recorded_i
         .as_u64()
         .expect("the launcher read the child's pid") as u32;
     let start = job["start"].as_str().expect("and its start").to_owned();
-    assert!(start.starts_with("ticks:"), "{start}");
-    assert_ne!(start, "ticks:0", "no manufactured start");
-    let record = std::fs::read_to_string(
-        runner
-            .state_dir()
-            .join("intents")
-            .join(format!("{}.job", intent["id"].as_str().unwrap())),
-    )
-    .unwrap();
+    assert_eq!(start, start_of(pid), "the start the kernel reports for it");
+    let id = intent["id"].as_str().unwrap().to_owned();
+    let record = std::fs::read_to_string(job_record(&runner, &id)).unwrap();
     assert!(
         record.contains(&format!("pid={pid}\nstart={start}\n")),
         "the launcher's record names the identity it read: {record}"
     );
-    // The child is gone: the reconcile reads the recorded group gone and
-    // discharges the job, so the intent fails rather than standing forever.
-    wait_until("the child exited", secs(5), || !live(pid));
+    assert!(
+        record.lines().any(|l| l.starts_with("line=runner=setsid ")),
+        "the setsid route, with its reason: {record}"
+    );
+    let request = runner
+        .state_dir()
+        .join("intents")
+        .join(format!("{id}.request"));
+    assert!(request.exists(), "the request is kept for the job");
+    assert_eq!(launches(&log), 1);
+    // The child exits before claiming: the reconcile reads the recorded
+    // group gone and discharges the job, so the intent fails rather than
+    // standing forever.
+    end_sleeper(pid);
     let report = runner.reconcile_one();
     assert_eq!(report["intent"]["outcome"], "failed", "{report}");
     assert_eq!(report["intent"]["observation"]["job"], "ended");
+    assert!(
+        remaining(&report["intent"]["observation"], "job").is_null(),
+        "the exited job is discharged: {report}"
+    );
+    assert!(!request.exists(), "the request is removed with the outcome");
     assert!(live(predecessor.pid()), "nothing retired the predecessor");
 }
 
@@ -3043,143 +2936,90 @@ fn original_pending_of(runner: &Runner) -> Value {
 }
 
 /// Defect: a job held `possibly-started` for good over a record that says
-/// nothing started. A launch-failed path after the record's pre-write
-/// rewrites the sidecar with a `status=` word, which a
-/// later read settles as nothing started. A stop whose job-sidecar names
-/// such a record reconciles rather than holding `possibly-started` for good;
-/// the predecessor it never retired stands.
+/// nothing started, or a job assumed absent over a record the reconcile
+/// cannot read. The reconcile reads the launcher's record at the sidecar's
+/// recorded address three-valued: a `status=` word, the rewrite a launch
+/// that ended after its fork leaves, settles the job as nothing started; a
+/// record naming no identity, what a launcher crash between its pre-write
+/// and its identity read leaves, holds the job `possibly-started`; a record
+/// naming a gone identity discharges the job `job-exited` and the transfer
+/// fails; a record that cannot be read holds the job. The predecessor the
+/// job never retired stands in every case.
 #[test]
-fn a_launcher_record_with_a_status_word_settles_the_job() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let runner = suite_runner(&server, "stub-confirm");
-    runner.init_fleet();
-    let predecessor = Owned::sleep();
-    plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
-    let id = "stop-controller:overseer:3:1-1";
-    let mut fleet = runner.fleet();
-    fleet["intents"] = json!([{
-        "id": id, "op": "stop-controller", "target": "overseer:3", "created_at": "2026-01-29T15:20:00Z", "outcome": "not-started",
-        "obligations": {"standing": [{"kind": "job-sidecar", "record": job_record(&runner, id), "role": "job"}], "discharged": [], "signalled": false},
-    }]);
-    runner.write_fleet(&fleet);
-    let record = runner.state_dir().join("intents").join(format!("{id}.job"));
-    std::fs::create_dir_all(record.parent().unwrap()).unwrap();
-    // Byte for byte what job-unit.sh leaves on its identity-unread path.
-    std::fs::write(
-        &record,
-        "runner=setsid\nstatus=identity-unread\nline=runner=setsid reason=no-systemd-run\n",
-    )
-    .unwrap();
-    let report = runner.reconcile_one();
-    assert_ne!(
-        report["intent"]["observation"]["job"], "possibly-started",
-        "a record naming a status settles the job: {report}"
-    );
-    assert!(
-        remaining(&report["intent"]["observation"], "job").is_null(),
-        "the sidecar is discharged, nothing stands for it: {report}"
-    );
-}
-
-/// Defect: the launcher's late identity write resurrecting a job that has
-/// claimed. The launcher-side handle writes only while it still owns the
-/// intent. A stub launcher starts the real runtime
-/// job, waits for its claim, pauses it, then returns its sidecar: the
-/// launcher's identity write after the claim lands nothing, the caller is
-/// answered `transfer-started` with the claimant as owner, and the claimant's
-/// discharged set stands.
-#[test]
-fn an_early_job_claim_is_not_overwritten_by_the_launcher_write() {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let mut runner = suite_runner(&server, "stub-confirm");
-    runner.verify = Some(30);
-    runner.init_fleet();
-    let predecessor = Owned::sleep();
-    plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
-    let launcher = dir.path().join("job-unit");
-    // The real job's claim is the barrier: the launcher returns only once
-    // the fleet file records the claim (`handed_from` set), never on a count
-    // alone; a claim that never lands fails the launch loudly.
-    std::fs::write(&launcher, fixtures_held_launcher()).unwrap();
-    std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let request = transfer_request(&server, runner.state_dir());
-    let out = runner.op_fleet_env(&request, &[("ORCH_JOB_UNIT", launcher.to_str().unwrap())]);
-    let after = runner.fleet();
-    let intent = after["intents"][0].clone();
-    let id = intent["id"].as_str().unwrap().to_owned();
-    let record = runner.state_dir().join("intents").join(format!("{id}.job"));
-    if let Ok(pid) = std::fs::read_to_string(format!("{}.child", record.display())) {
-        let _ = std::process::Command::new("kill")
-            .args(["-KILL", pid.trim()])
-            .status();
+fn the_reconcile_reads_a_launcher_record_three_valued() {
+    // record text (a directory where `None`), outcome, observation job word, a job remains
+    let rows: [(Option<&str>, &str, Option<&str>, bool); 4] = [
+        (
+            Some("runner=setsid\nstatus=identity-unread\nline=runner=setsid reason=no-linger\n"),
+            "failed",
+            None,
+            false,
+        ),
+        (
+            Some("runner=setsid\nline=runner=setsid reason=no-linger\n"),
+            "unconfirmed",
+            Some("possibly-started"),
+            true,
+        ),
+        (
+            Some(
+                "runner=setsid\npid=2000000000\nstart=ticks:1\nline=runner=setsid reason=no-linger\n",
+            ),
+            "failed",
+            Some("ended"),
+            false,
+        ),
+        (None, "unconfirmed", Some("possibly-started"), true),
+    ];
+    for (text, outcome, job, remains) in rows {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let runner = suite_runner(&server, "stub-confirm");
+        runner.init_fleet();
+        let predecessor = Owned::sleep();
+        plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
+        let id = "request-transfer:overseer:3:1-1";
+        let mut fleet = runner.fleet();
+        fleet["intents"] = json!([{
+            "id": id, "op": "request-transfer", "target": "overseer:3", "created_at": "2026-01-29T15:20:00Z", "outcome": "not-started",
+            "obligations": {"standing": [{"kind": "job-sidecar", "record": job_record(&runner, id), "role": "job"}], "discharged": [], "signalled": false},
+        }]);
+        runner.write_fleet(&fleet);
+        let record = runner.state_dir().join("intents").join(format!("{id}.job"));
+        std::fs::create_dir_all(record.parent().unwrap()).unwrap();
+        match text {
+            Some(text) => std::fs::write(&record, text).unwrap(),
+            None => std::fs::create_dir(&record).unwrap(),
+        }
+        let report = runner.reconcile_one();
+        let observation = &report["intent"]["observation"];
+        assert_eq!(report["intent"]["outcome"], outcome, "{text:?}: {report}");
+        assert_eq!(
+            observation.get("job").and_then(Value::as_str),
+            job,
+            "{text:?}: {report}"
+        );
+        assert_eq!(
+            !remaining(observation, "job").is_null(),
+            remains,
+            "{text:?}: {report}"
+        );
+        assert!(
+            live(predecessor.pid()),
+            "{text:?}: nothing retired the predecessor"
+        );
     }
-    let answer = reply(&out);
-    assert_eq!(answer["ok"], true, "{}", stderr(&out));
-    assert_eq!(
-        answer["result"]["effect"]["started"], "transfer-started",
-        "the claimant's state is the answer: {answer}"
-    );
-    assert_ne!(
-        answer["result"]["effect"]["owner"], answer["result"]["effect"]["handed_from"],
-        "the owner answered is the claimant: {answer}"
-    );
-    let standing = intent["obligations"]["standing"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    assert!(
-        !standing.iter().any(|o| o["kind"] == "job"),
-        "the claimed job was resurrected by the launcher's late write: {intent}"
-    );
-    assert_eq!(
-        discharged_by(&intent, "claimed").len(),
-        1,
-        "the claim's discharge stands: {intent}"
-    );
-}
-
-/// The stub launcher of the early-claim row: job-unit's argv contract, the
-/// real job started as its child, the claim awaited on the fleet file, the
-/// child paused, then its identity recorded and answered as job-unit does.
-fn fixtures_held_launcher() -> String {
-    [
-        "#!/bin/bash",
-        "set -u",
-        "record=$3",
-        "file=${10}",
-        "intent=${12}",
-        "shift 4",
-        "\"$@\" </dev/null >/dev/null 2>&1 &",
-        "pid=$!",
-        "deadline=$((SECONDS + 60))",
-        "claimed=0",
-        "while (( SECONDS < deadline )); do",
-        "  if jq -e --arg id \"$intent\" '.intents[] | select(.id==$id) | .handed_from != null' \"$file\" >/dev/null 2>&1; then claimed=1; break; fi",
-        "  sleep .02",
-        "done",
-        "kill -STOP \"$pid\" 2>/dev/null || true",
-        "printf '%s' \"$pid\" > \"$record.child\"",
-        "if (( ! claimed )); then echo 'job-unit: fixture claim never landed' >&2; exit 4; fi",
-        "row=$(cat \"/proc/$pid/stat\") || { echo 'job-unit: fixture child row unread' >&2; exit 4; }",
-        "start=$(awk '{print $20}' <<<\"${row##*)}\")",
-        "printf 'runner=setsid\\npid=%s\\nstart=ticks:%s\\n' \"$pid\" \"$start\" > \"$record\"",
-        "printf 'runner=setsid pid=%s start=ticks:%s\\n' \"$pid\" \"$start\"",
-        "",
-    ]
-    .join("\n")
 }
 
 /// The world a start's fleet watch launches into, in the runner's state
 /// directory `dir`: `bin`, for the op's `PATH`, holds the cutover fakes as
 /// the user manager (`systemd-run` runs a unit's argv under setsid and
 /// records its pid under `bin/units/<unit>`) and the `gh` fixture that
-/// answers the entry's credential ladder; beside it the runtime wrapper the
-/// entry execs (the test binary under the entry's name, as the shipped
-/// wrapper names it) and the report judge fixture. The op's environment
-/// reaches the job through `job-unit.sh launch`, which passes its caller's.
+/// answers the credential ladder; beside it the runtime wrapper the watch
+/// words name (the test binary, as the shipped wrapper execs the keyed
+/// binary), the report judge fixture, and the github skill under the
+/// project's install layout, whose ladder `watch run` runs before it
+/// claims. The op's environment reaches the job as the launcher's own.
 /// Returns `bin` and the environment the op carries for the watch.
 fn watch_world(dir: &Path) -> (std::path::PathBuf, Vec<(String, String)>) {
     use std::os::unix::fs::PermissionsExt;
@@ -3191,6 +3031,7 @@ fn watch_world(dir: &Path) -> (std::path::PathBuf, Vec<(String, String)>) {
         std::fs::set_permissions(&to, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
     std::os::unix::fs::symlink(fixtures().join("gh-auth-fixture/gh"), bin.join("gh")).unwrap();
+    github_skill_under(dir);
     let report = dir.join("oversee-report");
     std::os::unix::fs::symlink(
         fixtures().join("oversee-report-fixture/oversee-report"),
@@ -3201,17 +3042,13 @@ fn watch_world(dir: &Path) -> (std::path::PathBuf, Vec<(String, String)>) {
     std::fs::write(
         &wrapper,
         format!(
-            "#!/bin/bash\nname=\"${{ORCH_RUNTIME_NAME:-$0}}\"\nunset ORCH_RUNTIME_NAME\nexec -a \"$name\" \"{}\" --no-private-env \"$@\"\n",
+            "#!/bin/bash\nexec \"{}\" --no-private-env \"$@\"\n",
             binary().display()
         ),
     )
     .unwrap();
     std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
     let env = vec![
-        (
-            "OVERSEE_WATCH_RUNTIME".to_owned(),
-            wrapper.display().to_string(),
-        ),
         ("ORCH_SECURITY_ALERTS".to_owned(), "off".to_owned()),
         (
             "OVERSEE_WATCH_REPORT".to_owned(),
@@ -3222,48 +3059,53 @@ fn watch_world(dir: &Path) -> (std::path::PathBuf, Vec<(String, String)>) {
     (bin, env)
 }
 
-/// The workflow block's entry line for the fleet state `state`, the words a
-/// `start-controller` request's `watch` carries as `oversee launch` composes
-/// them: the shipped entry beside these tests, then its arguments as
-/// `workflows/oversee.md` § 4 spells them, the overseer's harness and, after
-/// `--`, the overseer's own flag words. `--repo` is left out: the row claims
-/// the watch, and a repository would set the GitHub duty reading.
+/// The github skill linked under `root`'s install layout,
+/// `.agents/skills/github`, where `watch run` finds its credential ladder.
+fn github_skill_under(root: &Path) {
+    let skills = root.join(".agents/skills");
+    std::fs::create_dir_all(&skills).unwrap();
+    std::os::unix::fs::symlink(
+        shipped_scripts()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("github"),
+        skills.join("github"),
+    )
+    .unwrap();
+}
+
+/// The watch words a `start-controller` request carries for the fleet
+/// state `state`: the runtime wrapper beside it, `watch run --file` the
+/// state and the flags `oversee launch` composes. `--repo` is left out: the
+/// row claims the watch, and a repository would set the GitHub duty
+/// reading.
 fn watch_words(state: &Path) -> Value {
-    let entry = job_unit()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("oversee-watch");
+    let wrapper = state.parent().unwrap().join("orch-runtime");
     json!([
-        entry.display().to_string(),
-        "--repeat",
-        "60",
-        "--state",
+        wrapper.display().to_string(),
+        "watch",
+        "run",
+        "--file",
         state.display().to_string(),
         "--interval",
         "240",
         "--since",
         "2026-01-01T00:00:00Z",
-        "--harness",
-        "claude",
-        "--",
-        "--model",
-        "opus",
-        "--effort",
-        "high",
     ])
 }
 
 /// Defect: a start that publishes a controller with no watch, or one that
 /// reads a refused launch as a watch started. The request carries the
-/// block's words; the effect launches them through the real `job-unit.sh
-/// launch` with the cutover fakes as the user manager once the runner is
-/// read at its composer, and the row reads the claim the runtime wrote,
-/// the record's `overseer.watch` naming the unit the manager started, and
-/// the job discharged by that claim. A launcher that refuses leaves the
-/// start `unconfirmed` naming the launch, the record naming no controller
-/// and the runner standing for the reconcile.
+/// watch words; the effect launches them through its own launcher as a
+/// unit of the cutover fakes' user manager once the runner is read at its
+/// composer, and the row reads the claim the runtime wrote, the record's
+/// `overseer.watch` naming the unit the manager started, and the job
+/// discharged by that claim. A launch that cannot open the watch's stderr
+/// file (a directory stands at its path) leaves the start `unconfirmed`
+/// naming the launch, the record naming no controller and the runner
+/// standing for the reconcile.
 #[test]
 fn start_controller_launches_the_fleet_watch_and_a_refused_launch_is_unconfirmed() {
     let dir = tempfile::tempdir().unwrap();
@@ -3309,16 +3151,24 @@ fn start_controller_launches_the_fleet_watch_and_a_refused_launch_is_unconfirmed
     assert!(out.status.success(), "watch stop: {}", stderr(&out));
     wait_until("the stopped watch ended", secs(20), || !live(claim.pid));
 
-    // The launcher refuses: nothing started, the start held with the cause.
+    // The watch's stderr file cannot be opened: nothing started, the start
+    // held with the cause.
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let runner = suite_runner(&server, "stub-confirm");
+    let mut runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let state = runner
         .state_dir()
         .join(orch_runtime::state::FLEET_FILE_NAME);
-    let job_unit = fixtures().join("job-unit-fail/job-unit");
-    let job_unit = job_unit.display().to_string();
+    let bin = runner.state_dir().join("no-linger-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::os::unix::fs::symlink(
+        fixtures().join("setsid-sleeper/loginctl"),
+        bin.join("loginctl"),
+    )
+    .unwrap();
+    std::fs::create_dir(runner.state_dir().join("oversee-watch.err")).unwrap();
+    runner.tools = Some(bin);
     let mail_log = runner.state_dir().join("lane-mail.log");
     let snapshot = runner.state_dir().join("at-notice.json");
     let mailbox = snapshot_mailbox(&runner, &snapshot, &mail_log);
@@ -3328,11 +3178,7 @@ fn start_controller_launches_the_fleet_watch_and_a_refused_launch_is_unconfirmed
             "controller": pending(runner.state_dir()),
             "watch": watch_words(&state),
         }),
-        &[
-            ("ORCH_JOB_UNIT", &job_unit),
-            ("JOB_UNIT_FAIL_LINE", "job-unit: launch-failed status=1"),
-            ("LANE_MAIL_CLI", mailbox.to_str().unwrap()),
-        ],
+        &[("LANE_MAIL_CLI", mailbox.to_str().unwrap())],
     ));
     assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
     assert_eq!(
@@ -3421,18 +3267,16 @@ fn snapshot_mailbox(runner: &Runner, snapshot: &Path, log: &Path) -> std::path::
 }
 
 /// Defect: a second watch launched over the first by a reconcile that reads
-/// the sidecar at the intent's own job address and finds nothing there. The
-/// start's process dies between the watch's launch and the read of the
-/// launcher's record, leaving the sidecar obligation standing with the
-/// record's address and the record naming the live job. The launcher is a
-/// fixture that writes the record naming a process
-/// the row owns, kills its caller and answers. The reconcile then reads the
-/// sidecar at its recorded address three ways: unreadable (the record made a
-/// directory) holds the start, nothing launched; live (the record restored)
-/// holds it with the job's identity standing in the sidecar's place, nothing
-/// launched; the job ended reads gone, after which the launcher is asked
-/// again, once. The first hold owes the owner's notice; the later ones owe
-/// nothing again.
+/// the job the crashed start recorded as nobody's. The start's process dies
+/// the moment it has recorded the launched job's identity in the intent's
+/// set, before the claim wait: the `setsid` fixture that execs the job
+/// watches the fleet record for the group naming its own pid, then kills
+/// its launcher and sleeps on as the job the row owns. The reconcile then
+/// reads the job by that identity: live, it holds the start with the job
+/// standing and launches nothing, owing the owner one notice; gone, it
+/// discharges `job-exited` and launches once more, the fixture this time
+/// execing the real `setsid` on the words as given, so the watch claims and
+/// the reconcile confirms the start.
 #[test]
 fn a_crash_between_the_watch_launch_and_its_record_read_launches_no_second_watch() {
     use std::os::unix::process::ExitStatusExt;
@@ -3440,139 +3284,110 @@ fn a_crash_between_the_watch_launch_and_its_record_read_launches_no_second_watch
     let server = Server::start(dir.path(), "fleet");
     let mut runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
+    let (bin, env) = watch_world(runner.state_dir());
+    for fake in ["systemd-run", "systemctl", "loginctl"] {
+        std::fs::remove_file(bin.join(fake)).unwrap();
+    }
+    for tool in ["setsid", "loginctl"] {
+        std::os::unix::fs::symlink(fixtures().join("setsid-crash").join(tool), bin.join(tool))
+            .unwrap();
+    }
     let state = runner
         .state_dir()
         .join(orch_runtime::state::FLEET_FILE_NAME);
-    let watch = Owned::sleep();
-    let watch_pid = watch.pid().to_string();
-    let watch_start = watch.start();
-    let log = runner.state_dir().join("job-unit.log");
-    let crash = fixtures().join("job-unit-crash/job-unit");
+    let log = runner.state_dir().join("setsid.log");
+    let once = runner.state_dir().join("setsid.crashed");
+    let real_setsid = {
+        let out = std::process::Command::new("sh")
+            .args(["-c", "command -v setsid"])
+            .output()
+            .expect("which setsid");
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    };
+    let mut crash_env: Vec<(&str, &str)> =
+        env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let log_s = log.display().to_string();
+    let once_s = once.display().to_string();
+    crash_env.extend([
+        ("SETSID_LOG", log_s.as_str()),
+        ("SETSID_CRASH_ONCE", once_s.as_str()),
+        ("SETSID_REAL", real_setsid.as_str()),
+    ]);
     let mut op = runner.spawn_op_fleet(
         &json!({
             "op": "start-controller",
             "controller": pending(runner.state_dir()),
             "watch": watch_words(&state),
         }),
-        &[
-            ("ORCH_JOB_UNIT", crash.to_str().unwrap()),
-            ("JOB_UNIT_CRASH_PID", &watch_pid),
-            ("JOB_UNIT_CRASH_START", &watch_start),
-            ("JOB_UNIT_LOG", log.to_str().unwrap()),
-        ],
-        runner.state_dir(),
+        &crash_env,
+        &bin,
     );
     let status = op.wait().unwrap();
     assert_eq!(
         status.signal(),
         Some(9),
-        "the launcher ended the start: {status:?}"
+        "the job's fixture ended the start once its identity was recorded: {status:?}"
     );
-    let record = runner.state_dir().join("oversee-watch.runner");
-    let record_s = record.display().to_string();
     let intent = runner.fleet()["intents"][0].clone();
     assert_eq!(intent["outcome"], "not-started", "{intent}");
-    let standing = |intent: &Value| {
-        intent["obligations"]["standing"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default()
-    };
+    let watch = standing_job_pid(&runner);
+    assert!(live(watch), "the job the start recorded runs on: {intent}");
+    let record = std::fs::read_to_string(runner.state_dir().join("oversee-watch.runner")).unwrap();
     assert!(
-        standing(&intent)
-            .iter()
-            .any(|o| o["kind"] == "job-sidecar" && o["record"] == record_s),
-        "the sidecar stands with its address: {intent}"
+        record.contains(&format!("pid={watch}\nstart={}\n", start_of(watch))),
+        "the record names the job the set names: {record}"
     );
-    let launched = || {
-        std::fs::read_to_string(&log)
-            .unwrap_or_default()
-            .lines()
-            .filter(|l| l.starts_with("launch "))
-            .count()
-    };
-    assert_eq!(launched(), 1, "the crashed start's own launch");
-    runner.env = vec![
-        (
-            "ORCH_JOB_UNIT".to_owned(),
-            fixtures()
-                .join("job-unit-fail/job-unit")
-                .display()
-                .to_string(),
-        ),
-        (
-            "JOB_UNIT_FAIL_LINE".to_owned(),
-            "job-unit: launch-failed status=1".to_owned(),
-        ),
-        ("JOB_UNIT_LOG".to_owned(), log.display().to_string()),
-    ];
-    // Unreadable: a directory where the record stands.
-    std::fs::remove_file(&record).unwrap();
-    std::fs::create_dir(&record).unwrap();
+    assert_eq!(launches(&log), 1, "the crashed start's own launch");
+    runner.tools = Some(bin.clone());
+    runner.env.extend(env.iter().cloned());
+    runner.env.extend([
+        ("SETSID_LOG".to_owned(), log_s.clone()),
+        ("SETSID_CRASH_ONCE".to_owned(), once_s.clone()),
+        ("SETSID_REAL".to_owned(), real_setsid.clone()),
+    ]);
+    // Live: the job stands by its identity; nothing launches over it.
     let report = runner.reconcile_one();
     assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
     assert_eq!(
         report["intent"]["observation"]["note"], "watch-unclaimed",
         "{report}"
     );
+    assert_eq!(report["intent"]["observation"]["job"], "setsid", "{report}");
     assert_eq!(
-        report["intent"]["observation"]["job"], "unread",
-        "an unreadable record holds the job unread: {report}"
+        launches(&log),
+        1,
+        "a live job is the watch's start; nothing launches over it"
     );
-    assert_eq!(launched(), 1, "an unreadable record is no reason to launch");
     let intent = runner.fleet()["intents"][0].clone();
     assert_eq!(
         intent["notice"]["key"], "watch-unclaimed",
         "the hold owes the owner its notice: {intent}"
     );
     assert_eq!(intent["notice"]["owner"], "sent", "{intent}");
-    // Live: the record restored names the job the row holds.
-    std::fs::remove_dir(&record).unwrap();
-    std::fs::write(
-        &record,
-        format!("runner=setsid\npid={watch_pid}\nstart={watch_start}\n"),
-    )
-    .unwrap();
+    // Gone: the job ended, read so by its identity, and the watch is
+    // launched once more, which claims and confirms the start.
+    end_sleeper(watch);
     let report = runner.reconcile_one();
-    assert_eq!(
-        report["intent"]["observation"]["note"], "watch-unclaimed",
-        "{report}"
-    );
-    assert_eq!(report["intent"]["observation"]["job"], "setsid", "{report}");
-    assert_eq!(
-        launched(),
-        1,
-        "a live job is the watch's start; nothing launches over it"
-    );
-    let intent = runner.fleet()["intents"][0].clone();
-    assert_eq!(discharged_by(&intent, "sidecar-read").len(), 1, "{intent}");
-    assert!(
-        standing(&intent)
-            .iter()
-            .any(|o| o["kind"] == "job-group" && o["pid"] == watch.pid()),
-        "the job's identity stands in the sidecar's place: {intent}"
-    );
-    // Gone: the job ended, read so by its identity, and the launcher is
-    // asked once more.
-    drop(watch);
-    let report = runner.reconcile_one();
-    assert_eq!(
-        report["intent"]["observation"]["note"], "watch-launch-failed",
-        "{report}"
-    );
-    assert_eq!(launched(), 2, "one more launch, for the job read gone");
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(launches(&log), 2, "one more launch, for the job read gone");
     let intent = runner.fleet()["intents"][0].clone();
     assert_eq!(discharged_by(&intent, "job-exited").len(), 1, "{intent}");
+    assert_eq!(discharged_by(&intent, "watch-claimed").len(), 1, "{intent}");
     assert_eq!(
         intent["notice"]["key"], "watch-unclaimed",
         "one notice per intent: {intent}"
     );
+    let overseer = runner.fleet()["overseer"].clone();
+    assert_eq!(overseer["watch"]["runner"], "setsid", "{overseer}");
+    stop_live_watch(&runner, &state);
 }
 
-/// The orch package's `scripts/` directory beside these tests: the shipped
-/// launcher and the entries it names.
+/// The orch package's `scripts/` directory beside these tests.
 fn shipped_scripts() -> std::path::PathBuf {
-    job_unit().parent().unwrap().parent().unwrap().to_path_buf()
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("scripts")
 }
 
 /// The checkout the real `oversee launch` runs from, under the runner's
@@ -3702,7 +3517,6 @@ fn oversee_launch(
             format!("{harness}={}", program_path.display()),
         )
         .env("ORCH_JOB_CLAIM_SECS", SETTLE.as_secs().to_string())
-        .env("ORCH_JOB_UNIT", job_unit())
         .env(
             "LANE_MAIL_CLI",
             fixtures().join("lane-mail-quiet/lane-mail"),
@@ -3824,6 +3638,7 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
     let work = runner.state_dir().join("work");
     let account = runner.state_dir().join("codex-account");
     std::fs::create_dir(&work).unwrap();
+    github_skill_under(&work);
     std::fs::create_dir(&account).unwrap();
     // The account trusts the launch directory already, so the launch runs
     // under the account as its home, where the stub writes its rollout.
@@ -3954,6 +3769,7 @@ fn a_first_launch_confirmed_in_its_call_records_the_launchers_identity() {
     let work = runner.state_dir().join("work");
     let account = runner.state_dir().join("claude-account");
     std::fs::create_dir(&work).unwrap();
+    github_skill_under(&work);
     std::fs::create_dir(&account).unwrap();
     let scripts = launcher_checkout(&runner, &bin, &mut env, &account, "claude");
     let launched = oversee_launch(
@@ -4340,4 +4156,544 @@ fn the_reconcile_heals_a_controller_record_left_unbound_from_its_own_pane() {
         "a bound record is left as it is: {answer}"
     );
     assert_eq!(std::fs::read(&state).unwrap(), bytes, "the bytes stand");
+}
+
+// ---------------------------------------------------------------------------
+// The controller's own marks: the judge's answers through `marks --fleet`,
+// the memory mark on fixture cgroup files, and the transfer onto the mark
+// reply's successor.
+// ---------------------------------------------------------------------------
+
+/// A world the marks are judged over: planted accounts under its home, the
+/// fleet state in its root, the judge's fixtures on its `bin`.
+struct MarksWorld {
+    dir: tempfile::TempDir,
+    env: Vec<(String, String)>,
+}
+
+impl MarksWorld {
+    fn new() -> MarksWorld {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("bin")).unwrap();
+        std::fs::create_dir_all(dir.path().join("home")).unwrap();
+        for (name, fixture) in [
+            ("lane-host", "lane-host/lane-host"),
+            ("bin/curl", "usage-curl/curl"),
+            ("bin/kendex", "kendex-launch/kendex"),
+        ] {
+            std::os::unix::fs::symlink(fixtures().join(fixture), dir.path().join(name)).unwrap();
+        }
+        let root = dir.path().display().to_string();
+        let env = vec![
+            (
+                "HOME".to_owned(),
+                dir.path().join("home").display().to_string(),
+            ),
+            ("OVERSEE_WATCH_STATE_DIR".to_owned(), root.clone()),
+            ("ORCH_STATE_DIR".to_owned(), root.clone()),
+            (
+                "OVERSEE_WATCH_LANES".to_owned(),
+                dir.path().join("lanes").display().to_string(),
+            ),
+            (
+                "USAGE_FIXTURE_DIR".to_owned(),
+                dir.path().join("fixtures").display().to_string(),
+            ),
+            ("ORCH_LANE_BURN_PCT_PER_HOUR".to_owned(), "0".to_owned()),
+        ];
+        MarksWorld { dir, env }
+    }
+
+    fn path(&self) -> &Path {
+        self.dir.path()
+    }
+
+    fn dir(&self, alias: &str) -> String {
+        self.path()
+            .join("home")
+            .join(format!(".{alias}"))
+            .display()
+            .to_string()
+    }
+
+    fn plant(&mut self, host: Option<&str>, rows: &[Value]) {
+        let env = plant_accounts(self.path(), self.path(), host, rows, now_secs());
+        for (key, value) in env {
+            self.env.retain(|(k, _)| *k != key);
+            self.env.push((key, value));
+        }
+    }
+
+    /// The fleet state whose controller record names `account` on the
+    /// Claude harness in this world's root.
+    fn write_fleet(&self, account: &str) {
+        let fleet = json!({
+            "issue_id": "oversee", "triaged": [], "launch_queue": [], "lanes": [], "fleet_log": [],
+            "overseer": {
+                "generation": 3, "harness": "claude", "account": account, "home": account,
+                "model": "opus", "effort": "high", "cwd": self.path().display().to_string(),
+                "server": "1", "pane": "%1", "permission": "bypass",
+            },
+        });
+        std::fs::write(
+            self.path().join(orch_runtime::state::FLEET_FILE_NAME),
+            serde_json::to_string(&fleet).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn fleet(&self) -> Value {
+        serde_json::from_str(
+            &std::fs::read_to_string(self.path().join(orch_runtime::state::FLEET_FILE_NAME))
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn environment(&self) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+        self.env.iter().map(|(k, v)| (k.into(), v.into())).collect()
+    }
+
+    /// The binary in this world, with `extra` settings over its own.
+    fn run(&self, args: &[&str], extra: &[(&str, &str)]) -> std::process::Output {
+        let mut command = isolated();
+        command
+            .current_dir(self.path())
+            .env("PATH", tool_path(&[&self.path().join("bin")]))
+            .args(args);
+        for (key, value) in &self.env {
+            command.env(key, value);
+        }
+        for (key, value) in extra {
+            command.env(key, value);
+        }
+        command.output().unwrap()
+    }
+
+    /// `marks --fleet` with `args` under `extra`: the reply's result.
+    fn marks(&self, args: &[&str], extra: &[(&str, &str)]) -> Value {
+        let out = self.run(&[&["marks", "--fleet"][..], args].concat(), extra);
+        let answer = reply(&out);
+        assert_eq!(answer["ok"], json!(true), "{}", stderr(&out));
+        answer["result"].clone()
+    }
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+/// A measured Claude account at `alias`, `used` percent on its weekly
+/// window, rated slowly so the rate mark reads measured and far off.
+fn measured_account(alias: &str, used: u64) -> Value {
+    let weekly = agent_runtime::clock::iso_utc(now_secs() + 60 * 3600);
+    json!({
+        "alias": alias,
+        "harness": "claude",
+        "config_dir": format!("/home/me/.{alias}"),
+        "measured_through": "local",
+        "status": "ok",
+        "verdict": if used < 95 { "room" } else { "walled" },
+        "headroom_pct": 100 - used,
+        "binding_bucket": "weekly",
+        "binding_resets_at": weekly,
+        "wall": used,
+        "session_5h_pct": 5,
+        "weekly_pct": used,
+        "monthly_pct": null,
+        "model_buckets": [],
+        "resets": {"session": agent_runtime::clock::iso_utc(now_secs() + 3600), "weekly": weekly, "model": null, "monthly": null},
+        "usage_rate_state": "measured",
+        "usage_rate_pct_per_min": 0.005,
+        "usage_age_s": 0,
+        "claims": 0,
+        "pool": "plan"
+    })
+}
+
+/// Defect: the context mark judged after the account, or a reading under
+/// both marks refusing the turn. A reading past the token cap is
+/// `mark-reached kind=context` before any account is read, with the
+/// decision the handoff record carries; a reading below both marks with
+/// the account above the trigger is `below-mark` carrying the headroom
+/// read; a reading with no window is `mark-unmeasured kind=context`.
+#[test]
+fn the_marks_judge_reads_the_context_mark_before_the_account_and_the_rest_below_both() {
+    let mut world = MarksWorld::new();
+    world.write_fleet("/home/nobody/.claude");
+    let reached = world.marks(&["--context", "520000:1000000"], &[]);
+    assert_eq!(reached["key"], json!("mark-reached"), "{reached}");
+    assert_eq!(reached["kind"], json!("context"));
+    assert_eq!(reached["value"], json!("520000"));
+    assert_eq!(reached["mark"], json!("90"));
+    assert_eq!(reached["headroom"], json!("unreadable"));
+    assert_eq!(reached["succession"], json!("on"));
+    assert_eq!(
+        reached["context_decision"],
+        json!({"tokens": 520000, "window": 1000000, "cap": 400000, "mark_pct": 90,
+               "cap_mark": 400000, "window_mark": 900000, "reserve_applied": false, "reserve_tokens": 0})
+    );
+    world.plant(None, &[measured_account("eclaude", 10)]);
+    world.write_fleet(&world.dir("eclaude"));
+    let below = world.marks(&["--context", "100000:1000000"], &[]);
+    assert_eq!(below["key"], json!("below-mark"), "{below}");
+    assert_eq!(below["context"], json!("room"));
+    assert_eq!(below["tokens"], json!(100000));
+    assert_eq!(below["window"], json!(1000000));
+    assert_eq!(below["mark"], json!("90"));
+    assert_eq!(below["headroom"], json!("90"));
+    let unnamed = world.marks(&["--context", "100000:"], &[]);
+    assert_eq!(unnamed["key"], json!("mark-unmeasured"), "{unnamed}");
+    assert_eq!(unnamed["kind"], json!("context"));
+    assert_eq!(unnamed["reason"], json!("window-unnamed"));
+    let alone = world.marks(&[], &[]);
+    assert_eq!(alone["key"], json!("below-mark"), "{alone}");
+    assert_eq!(alone["context"], json!("unjudged"));
+    assert_eq!(alone["headroom"], json!("90"));
+}
+
+/// Defect: a caller measured through the provider's row read as unmeasured,
+/// or an ended plan read as room. The provider's row with room supplies the
+/// caller's headroom; a `plan_ended` row reaches the headroom mark at zero
+/// carrying its status.
+#[test]
+fn a_hosted_caller_reads_its_headroom_off_the_providers_row_and_an_ended_plan_the_mark() {
+    let mut world = MarksWorld::new();
+    let mut room = measured_account("claude", 5);
+    room["measured_through"] = json!("host");
+    room["usage_rate_state"] = json!("one-sample");
+    world.plant(Some("prov"), &[room]);
+    world.write_fleet("/home/me/.claude");
+    let off = [("ORCH_OVERSEER_WALL_MINUTES", "0")];
+    let below = world.marks(&["--context", "100000:1000000"], &off);
+    assert_eq!(below["key"], json!("below-mark"), "{below}");
+    assert_eq!(below["headroom"], json!("95"));
+    let mut ended = measured_account("claude", 5);
+    ended["measured_through"] = json!("host");
+    ended["status"] = json!("plan_ended");
+    ended["detail"] = json!("http-403-oauth_not_allowed_for_organization");
+    world.plant(Some("prov"), &[ended]);
+    let reached = world.marks(&["--context", "100000:1000000"], &off);
+    assert_eq!(reached["key"], json!("mark-reached"), "{reached}");
+    assert_eq!(reached["kind"], json!("headroom"));
+    assert_eq!(reached["value"], json!("0"));
+    assert_eq!(reached["mark"], json!("5"));
+    assert_eq!(reached["status"], json!("plan_ended"));
+    assert_eq!(reached["account"], json!("claude"));
+    assert_eq!(reached["resets"], json!("none"));
+    assert_eq!(reached["context_decision"]["tokens"], json!(100000));
+}
+
+/// Defect: a burn that reaches the wall inside the setting read as room, or
+/// the minutes counted from the judgement instead of the sample. Sixty
+/// points of headroom burning two points a minute reach the wall in thirty
+/// minutes: the rate mark fires at thirty and not at twenty-nine.
+#[test]
+fn a_fast_burn_reaches_the_rate_mark_at_the_minutes_the_sample_projects() {
+    let mut world = MarksWorld::new();
+    let mut fast = measured_account("eclaude", 40);
+    fast["usage_rate_pct_per_min"] = json!(2.0);
+    world.plant(None, &[fast]);
+    world.write_fleet(&world.dir("eclaude"));
+    let reached = world.marks(
+        &["--context", "100000:1000000"],
+        &[("ORCH_OVERSEER_WALL_MINUTES", "30")],
+    );
+    assert_eq!(reached["key"], json!("mark-reached"), "{reached}");
+    assert_eq!(reached["kind"], json!("rate"));
+    assert_eq!(reached["value"], json!("30"));
+    assert_eq!(reached["mark"], json!("30"));
+    assert_eq!(reached["account"], json!("eclaude"));
+    let below = world.marks(
+        &["--context", "100000:1000000"],
+        &[("ORCH_OVERSEER_WALL_MINUTES", "29")],
+    );
+    assert_eq!(below["key"], json!("below-mark"), "{below}");
+    assert_eq!(below["headroom"], json!("60"));
+}
+
+/// Defect: an unmeasured reading of the caller's own account compared as
+/// zero headroom, so one other account with room reached the qualifying
+/// mark on an account nothing read. The unmeasured caller answers
+/// `mark-unmeasured kind=headroom` before the qualifying arm runs, with
+/// the walk's fixtures standing by on the path.
+#[test]
+fn an_unmeasured_caller_answers_mark_unmeasured_headroom_before_the_qualifying_arm() {
+    let mut world = MarksWorld::new();
+    let mut unread = measured_account("eclaude", 10);
+    unread["status"] = json!("unreachable");
+    unread["headroom_pct"] = Value::Null;
+    unread["wall"] = Value::Null;
+    world.plant(None, &[unread, measured_account("bclaude", 10)]);
+    world.write_fleet(&world.dir("eclaude"));
+    let answer = world.marks(&[], &[("ORCH_OVERSEER_SUCCESSOR_ACCOUNTS", "1")]);
+    assert_eq!(answer["key"], json!("mark-unmeasured"), "{answer}");
+    assert_eq!(answer["kind"], json!("headroom"));
+    assert_eq!(answer["reason"], json!("headroom-none"));
+    assert!(answer.get("successor").is_none(), "{answer}");
+}
+
+/// Defect: the transfer walking again after the mark's walk chose, and
+/// answering "no candidate" where the judgement had one. A caller with
+/// room beside one account with more room, at a qualifying setting of two,
+/// reaches the mark with the walk's choice as the reply's `successor`;
+/// `request-transfer` takes that entry as the pending it records, asking no
+/// walk and no classifier (none is on its path).
+#[test]
+fn the_qualifying_marks_successor_is_the_walks_choice_and_the_transfer_records_it_unwalked() {
+    let mut world = MarksWorld::new();
+    world.plant(
+        None,
+        &[
+            measured_account("eclaude", 10),
+            measured_account("bclaude", 5),
+        ],
+    );
+    world.write_fleet(&world.dir("eclaude"));
+    let reached = world.marks(&[], &[("ORCH_OVERSEER_SUCCESSOR_ACCOUNTS", "2")]);
+    assert_eq!(reached["key"], json!("mark-reached"), "{reached}");
+    assert_eq!(reached["kind"], json!("qualifying"));
+    assert_eq!(reached["value"], json!("2"));
+    assert_eq!(reached["mark"], json!("2"));
+    assert_eq!(reached["headroom"], json!("90"));
+    let successor = reached["successor"].clone();
+    assert_eq!(successor["harness"], json!("claude"), "{successor}");
+    assert_eq!(successor["account"], json!(world.dir("bclaude")));
+    assert_eq!(successor["home"], json!(world.dir("bclaude")));
+    assert_eq!(successor["cwd"], json!(world.path().display().to_string()));
+    assert_eq!(successor["permission"], json!("bypass"));
+    let before = world.fleet()["overseer"].clone();
+    let request = json!({
+        "op": "request-transfer",
+        "cause": "live",
+        "expected": {
+            "server": before["server"], "server_start": before["server_start"],
+            "pane": before["pane"], "generation": before["generation"],
+            "launch_line": before["launch_line"], "cwd": before["cwd"],
+        },
+        "successor": successor,
+    });
+    let file = world.path().join("request.json");
+    std::fs::write(&file, request.to_string()).unwrap();
+    // The job is held on the `setsid` route, a sleep the row owns standing in
+    // for it, so nothing runs the transfer and clears the pending first.
+    let (bin, log) = sleeper_world(world.path());
+    let out = world.run(
+        &["op", "--fleet", "--request", &file.display().to_string()],
+        &[
+            ("PATH", &tool_path(&[&bin])),
+            ("SETSID_LOG", &log.display().to_string()),
+            ("ORCH_JOB_CLAIM_SECS", "1"),
+        ],
+    );
+    let after = world.fleet();
+    let job = after["intents"][0]["obligations"]["standing"]
+        .as_array()
+        .and_then(|rows| rows.iter().find(|o| o["kind"] == "job-group"))
+        .and_then(|o| o["pid"].as_u64())
+        .unwrap_or_else(|| panic!("a job group stands: {after}")) as u32;
+    end_sleeper(job);
+    assert_eq!(
+        after["overseer"]["pending"],
+        reached["successor"],
+        "the pending is the reply's entry: {}",
+        stderr(&out)
+    );
+    assert!(
+        !stderr(&out).contains("preference-class-unread"),
+        "no second walk ran: {}",
+        stderr(&out)
+    );
+}
+
+/// Defect: a memory cap on the process's cgroup path read as absent, an
+/// unreadable charge read as zero, or a mark firing with no setting. On
+/// fixture cgroup files: a cap on a parent of the group is the nearest cap
+/// and the charge against it reaches the mark; a path with no cap is inert;
+/// a group whose charge cannot be read is `mark-unmeasured kind=memory`; a
+/// pid the proc tree lacks is gone; with no setting the mark is never
+/// judged.
+#[test]
+fn the_memory_mark_reads_the_cgroup_three_valued_and_fires_at_the_setting() {
+    use agent_runtime::process::{Identity, Memory, memory_of};
+    use agent_runtime::reading::Reading;
+    use orch_runtime::watch::overseer::{Caller, MarkKey, MarkKind, MarksAsk, judge_marks};
+    let mut world = MarksWorld::new();
+    world.plant(None, &[measured_account("eclaude", 10)]);
+    world.write_fleet(&world.dir("eclaude"));
+    let proc_root = world.path().join("proc");
+    let cgroup = world.path().join("cgroup");
+    std::fs::create_dir_all(proc_root.join("4242")).unwrap();
+    std::fs::write(proc_root.join("4242/cgroup"), "0::/a/b\n").unwrap();
+    std::fs::create_dir_all(cgroup.join("a/b")).unwrap();
+    std::fs::write(cgroup.join("a/b/memory.current"), "900\n").unwrap();
+    std::fs::write(cgroup.join("a/b/memory.max"), "max\n").unwrap();
+    std::fs::write(cgroup.join("a/memory.max"), "1000\n").unwrap();
+    assert_eq!(
+        memory_of(&proc_root, &cgroup, 4242),
+        Reading::Live(Some(Memory {
+            current: 900,
+            max: 1000
+        }))
+    );
+    std::fs::write(cgroup.join("a/memory.max"), "max\n").unwrap();
+    assert_eq!(memory_of(&proc_root, &cgroup, 4242), Reading::Live(None));
+    std::fs::remove_file(cgroup.join("a/b/memory.current")).unwrap();
+    assert_eq!(
+        memory_of(&proc_root, &cgroup, 4242),
+        Reading::Unreadable {
+            cause: "memory-current-unreadable"
+        }
+    );
+    assert_eq!(memory_of(&proc_root, &cgroup, 9999), Reading::Gone);
+    let settings = |extra: &[(&str, &str)]| {
+        let roots = orch_runtime::settings::Roots {
+            project: world.path().to_path_buf(),
+            common: world.path().to_path_buf(),
+        };
+        let mut environment = world.environment();
+        environment.extend(extra.iter().map(|(k, v)| ((*k).into(), (*v).into())));
+        orch_runtime::settings::load(
+            &roots,
+            &environment,
+            &orch_runtime::settings::Flags {
+                state_dir: Some(world.path().to_path_buf()),
+                private_env: false,
+            },
+        )
+        .unwrap()
+    };
+    let fleet_path = world.path().join(orch_runtime::state::FLEET_FILE_NAME);
+    let caller = Caller {
+        harness: Some(agent_runtime::harness::Harness::Claude),
+        account: Some(world.dir("eclaude")),
+        home: Some(world.dir("eclaude")),
+        model: Some("opus".to_owned()),
+        effort: None,
+        cwd: Some(world.path().display().to_string()),
+        permission: None,
+        extra_args: Vec::new(),
+        identity: Some(Identity {
+            pid: 4242,
+            start: "ticks:1".to_owned(),
+        }),
+    };
+    let judge = |extra: &[(&str, &str)], reading: Reading<Option<Memory>>| {
+        let settings = settings(extra);
+        let host =
+            orch_runtime::ops::Host::kernel(settings.lane_cap, Some(settings.claim_store.clone()));
+        let memory = |_: &Identity| reading.clone();
+        judge_marks(&MarksAsk {
+            settings: &settings,
+            fleet_path: &fleet_path,
+            host: &host,
+            caller: &caller,
+            context: None,
+            memory: &memory,
+            now: now_secs(),
+        })
+        .unwrap()
+    };
+    let set = [
+        ("ORCH_OVERSEER_MEMORY_PCT", "80"),
+        ("ORCH_OVERSEER_WALL_MINUTES", "0"),
+    ];
+    let capped = Reading::Live(Some(Memory {
+        current: 900,
+        max: 1000,
+    }));
+    let reached = judge(&set, capped.clone());
+    assert_eq!(reached.key, MarkKey::Reached(MarkKind::Memory));
+    assert_eq!(reached.value, "90");
+    assert_eq!(reached.mark, "80");
+    assert_eq!(judge(&set, Reading::Live(None)).key, MarkKey::Below);
+    let unread = judge(
+        &set,
+        Reading::Unreadable {
+            cause: "memory-current-unreadable",
+        },
+    );
+    assert_eq!(unread.key, MarkKey::Unmeasured(MarkKind::Memory));
+    assert_eq!(unread.reason, "memory-current-unreadable");
+    let unset = judge(
+        &[("ORCH_OVERSEER_WALL_MINUTES", "0")],
+        Reading::Unreadable {
+            cause: "memory-current-unreadable",
+        },
+    );
+    assert_eq!(unset.key, MarkKey::Below, "no setting judges no memory");
+}
+
+// ---------------------------------------------------------------------------
+// The watch a start launches over a released loop's record.
+// ---------------------------------------------------------------------------
+
+/// Defect: a start refusing its watch for good over the claim a released
+/// repeat loop left when it died without its trap: a record naming a dead
+/// pid and no `start=`. The start's watch step reads that record gone,
+/// launches `watch run`, which takes the record over with one
+/// `watch-taken-over` line naming `start=none`, claims under its own
+/// identity, and the start confirms with the job discharged by that claim.
+#[test]
+fn a_stale_start_less_claim_is_taken_over_by_the_starts_watch_with_one_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let (bin, env) = watch_world(runner.state_dir());
+    runner.tools = Some(bin);
+    let state = runner
+        .state_dir()
+        .join(orch_runtime::state::FLEET_FILE_NAME);
+    let paths = orch_runtime::watch::claim::Paths::of(&state).unwrap();
+    std::fs::write(
+        &paths.pid,
+        format!(
+            "pid={GONE_PID}\nstate={}\npane=%1\norigin=hand\nscript=/w/oversee-watch\ncwd=/w\n",
+            paths.state.display()
+        ),
+    )
+    .unwrap();
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let report = effect_report(&runner.op_fleet_env(
+        &json!({
+            "op": "start-controller",
+            "controller": pending(runner.state_dir()),
+            "watch": watch_words(&state),
+        }),
+        &env,
+    ));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    let claim = orch_runtime::watch::claim::read(&paths)
+        .unwrap()
+        .expect("the runtime's claim replaced the released record");
+    assert!(
+        claim.start.is_some(),
+        "the claim names an identity: {claim:?}"
+    );
+    assert!(live(claim.pid), "a live runtime claim: {claim:?}");
+    let lines: Vec<String> = std::fs::read_to_string(&paths.log)
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(
+        lines.first().map(String::as_str),
+        Some(format!("EVENT watch-taken-over pid={GONE_PID} start=none reason=gone").as_str()),
+        "{lines:?}"
+    );
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|l| l.starts_with("EVENT watch-taken-over "))
+            .count(),
+        1,
+        "one takeover line: {lines:?}"
+    );
+    let intent = runner.fleet()["intents"][0].clone();
+    assert_eq!(discharged_by(&intent, "watch-claimed").len(), 1, "{intent}");
+    stop_live_watch(&runner, &state);
 }

@@ -398,37 +398,39 @@ fn resolve(entry: &Entry, caller_model: &str) -> std::result::Result<Resolved, S
 /// Whether `words` carry exactly one permission posture of `source` and it
 /// is a full bypass: the one posture another harness's launch can take as
 /// its own. A second posture word, or a permission flag with a value the
-/// table does not name, is a posture nobody translates.
+/// table does not name, is a posture nobody translates. The spelling match
+/// is `Harness::permission_word_in`'s, asked one word at a time (a window
+/// of two for the `FLAG VALUE` form, which its answer spells with a space).
 fn transferable(source: Harness, words: &[String]) -> bool {
-    let spellings = source.permission_spellings();
     let (mut postures, mut bypass) = (0, 0);
     let mut i = 0;
     while i < words.len() {
-        let word = words[i].as_str();
-        let next = words.get(i + 1).map(String::as_str);
-        let matched = spellings.iter().find_map(|(spelling, meaning)| {
-            if word == *spelling {
-                return Some((1, *meaning));
-            }
-            let (flag, value) = spelling.split_once('=')?;
-            (word == flag && next == Some(value)).then_some((2, *meaning))
+        let one = source.permission_word_in(&words[i..=i]);
+        let two = one.is_none().then(|| {
+            source
+                .permission_word_in(&words[i..(i + 2).min(words.len())])
+                .filter(|(spelling, _)| spelling.contains(' '))
         });
-        if let Some((span, meaning)) = matched {
-            postures += 1;
-            if meaning == PermissionMeaning::FullBypass {
-                bypass += 1;
+        match one.or(two.flatten()) {
+            Some((spelling, meaning)) => {
+                postures += 1;
+                if meaning == PermissionMeaning::FullBypass {
+                    bypass += 1;
+                }
+                i += spelling.split(' ').count();
             }
-            i += span;
-            continue;
+            None => {
+                let word = words[i].as_str();
+                if source.permission_spellings().iter().any(|(spelling, _)| {
+                    spelling.split_once('=').is_some_and(|(flag, _)| {
+                        word == flag || word.starts_with(&format!("{flag}="))
+                    })
+                }) {
+                    postures += 1;
+                }
+                i += 1;
+            }
         }
-        if spellings.iter().any(|(spelling, _)| {
-            spelling
-                .split_once('=')
-                .is_some_and(|(flag, _)| word == flag || word.starts_with(&format!("{flag}=")))
-        }) {
-            postures += 1;
-        }
-        i += 1;
     }
     postures == 1 && bypass == 1
 }
@@ -578,7 +580,6 @@ fn skip(entry: &str, reason: &str, lane: Option<&str>) -> Value {
     json!({"entry": entry, "reason": reason, "lane": lane})
 }
 
-/// The capability lines read so far, one read per host.
 struct Hosts<'a> {
     scripts: &'a Path,
     lines: BTreeMap<String, Capabilities>,
@@ -1031,13 +1032,11 @@ pub fn walk(
     Ok(walked)
 }
 
-/// A step of the walk: a preference entry, or the caller's own.
 enum Step {
     Entry(Entry),
     Caller(Caller),
 }
 
-/// The judge's word for an answer, as its reply spells it.
 fn word(answer: &PickAnswer) -> &'static str {
     match answer {
         PickAnswer::Lane(_) => "lane",
@@ -1059,10 +1058,6 @@ fn word(answer: &PickAnswer) -> &'static str {
 mod tests {
     use super::*;
 
-    /// The grammar's answers on the settings' own forms: a class, an exact
-    /// id, a native default, a Pi model with its provider, a numeric
-    /// entry, the mark on the final lane entry alone, a host in a lane
-    /// entry alone, and the refusals.
     #[test]
     fn the_preference_grammar_admits_the_settings_forms_and_refuses_the_rest() {
         let lane = |text: &str| Preference::parse(text, Scope::Lane);
@@ -1134,9 +1129,6 @@ mod tests {
         }
     }
 
-    /// The posture that crosses to another harness: exactly one permission
-    /// word of the source's row, a full bypass; a narrower word, two words,
-    /// a flag with an unnamed value, or none does not.
     #[test]
     fn a_posture_transfers_only_as_one_full_bypass_word() {
         let words = |text: &str| {

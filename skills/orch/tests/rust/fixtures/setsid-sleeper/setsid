@@ -1,0 +1,8 @@
+#!/bin/bash
+# A `setsid` whose child never claims: the argv the runtime's launcher hands
+# it is logged to $SETSID_LOG when set and replaced by a sleep this process
+# execs, so the pid and start the launcher reads from the kernel's table are
+# the sleeper's, which the row owns and ends. The `loginctl` beside it says
+# the user manager does not linger, so the launcher takes this route.
+[ -z "${SETSID_LOG:-}" ] || printf '%s\n' "$*" >> "$SETSID_LOG"
+exec sleep 300

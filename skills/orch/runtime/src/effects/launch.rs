@@ -7,7 +7,6 @@
 //! host read and write here goes through [`Operation`] or the one runner.
 
 use std::collections::BTreeSet;
-use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -253,11 +252,38 @@ fn prepare_launch(
     if let Some(brief) = &r.brief_file {
         read_brief(brief)?;
     }
-    // The account home, else the harness's default home, never the cwd.
-    let home = r
-        .account
-        .as_deref()
-        .map(PathBuf::from)
+    // The home the launch names, never the cwd: the account where the
+    // account's variable is the harness's own home variable; a Pi lane on
+    // another provider's seat names none, so Pi keeps its own root and the
+    // seat rides in `account` alone. The trust record for the launch
+    // directory stands before the window opens under the named home, or
+    // under the default home of a harness that asks a trust question
+    // (Codex, Copilot); an accountless Claude launch leaves the operator's
+    // own config untouched. A private Codex home built under the account
+    // is then the home the launch runs under, its sessions linked from the
+    // account's.
+    let one_variable = harness.account_var(r.model.as_deref()) == harness.home_var();
+    let account = match (r.account.as_deref(), one_variable) {
+        (Some(_), true) | (None, _) => None,
+        (Some(account), false) => Some(Path::new(account)),
+    };
+    let named_home = match (r.account.as_deref(), one_variable) {
+        (Some(account), true) => Some(PathBuf::from(account)),
+        (Some(_), false) | (None, _) => None,
+    };
+    let trusted = match (&named_home, harness) {
+        (Some(home), _) => Some(prepare_trust(harness, home, &cwd)?),
+        (None, Harness::Codex | Harness::Copilot) => match operation::default_home(harness) {
+            Some(home) => Some(prepare_trust(harness, &home, &cwd)?),
+            None => None,
+        },
+        (None, Harness::Claude | Harness::Pi) => None,
+    };
+    // Where the sessions are read: the home the launch runs under, else the
+    // harness's own default root.
+    let home = trusted
+        .as_ref()
+        .map(|t| t.home.clone())
         .or_else(|| operation::default_home(harness));
     let floor = match (route, &home) {
         (Route::Resume { session_id }, _) => SessionFloor::Fixed(session_id.clone()),
@@ -266,20 +292,6 @@ fn prepare_launch(
         (Route::Refuse { .. }, _) => {
             unreachable!("a refuse route fails before prepare_launch")
         }
-    };
-    // The trust record for the launch directory stands before the window
-    // opens, under the home the harness reads: the account's own config,
-    // or a private Codex home built under the account, which is then the
-    // home the launch runs under. The account routes billing only where
-    // its variable differs from the home's.
-    let trusted = match &home {
-        Some(home) => Some(prepare_trust(harness, home, &cwd)?),
-        None => None,
-    };
-    let one_variable = harness.account_var(r.model.as_deref()) == harness.home_var();
-    let account = match (r.account.as_deref(), one_variable) {
-        (Some(_), true) | (None, _) => None,
-        (Some(account), false) => Some(Path::new(account)),
     };
     let (mut intent, _) = build_launch(
         settings,
@@ -421,8 +433,9 @@ enum Surface<'a> {
     Hosted(&'a str),
 }
 
-fn surface_of(r: &LaunchLane) -> Surface<'_> {
-    match r.host.as_deref() {
+/// The surface a record's or a request's `host` names.
+fn surface_of(host: Option<&str>) -> Surface<'_> {
+    match host {
         None | Some("") | Some("local") => Surface::Local,
         Some(CLOUD_KIND) => Surface::Cloud,
         Some(provider) => Surface::Hosted(provider),
@@ -444,9 +457,12 @@ pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Resul
     if let Route::Refuse { cause } = &route {
         return Ok(operation.settle(Word::Failed, json!({"cause": cause})));
     }
-    let mut outcome = match surface_of(r) {
+    // Whether the launch re-enters a standing record, as the transition
+    // judged it: the provider then reuses the worktree it holds.
+    let relaunch = intent.selection.as_ref().is_some_and(|s| s.relaunch);
+    let mut outcome = match surface_of(r.host.as_deref()) {
         Surface::Local => local_launch(run, operation, r, &route)?,
-        Surface::Hosted(provider) => hosted_launch(run, operation, r, &route, provider)?,
+        Surface::Hosted(provider) => hosted_launch(run, operation, r, provider, relaunch)?,
         Surface::Cloud => cloud_launch(run, operation, &lane, r)?,
     };
     outcome.annotate("route", json!(route.word()));
@@ -586,7 +602,6 @@ fn local_launch(
         Sessions::Store {
             home: prep.home.as_deref(),
             cwd: &cwd,
-            mail_root: None,
         },
     )?;
     if let Some(route) = prep.trust {
@@ -602,8 +617,8 @@ fn hosted_launch(
     run: &Run,
     operation: Operation,
     r: &LaunchLane,
-    route: &Route,
     provider: &str,
+    relaunch: bool,
 ) -> Result<EffectOutcome> {
     let failed = |operation: Operation, cause: &str| {
         Ok(operation.settle(Word::Failed, json!({"cause": cause})))
@@ -647,13 +662,6 @@ fn hosted_launch(
         Ok(text) => text,
         Err(e) => return failed(operation, e.key()),
     };
-    let relaunch = matches!(route, Route::Resume { .. })
-        || matches!(
-            route,
-            Route::Fresh {
-                cause: Some("harness-switched" | "account-switched" | "session-retired")
-            }
-        );
     let created = match hosted::create(
         &scripts, provider, &r.item, repo, &r.harness, account, relaunch,
     ) {
@@ -668,8 +676,7 @@ fn hosted_launch(
     if let Err(cause) = hosted_marker(&scripts, provider, &r.item, &created.path, r.refresh) {
         return failed(operation, &cause);
     }
-    let command = match hosted_command(run.settings, r, route, harness, &created, brief.as_deref())
-    {
+    let command = match hosted_command(run.settings, r, harness, &created, brief.as_deref()) {
         Ok(command) => command,
         Err(e) => return failed(operation, e.key()),
     };
@@ -677,16 +684,15 @@ fn hosted_launch(
         return failed(operation, e.key());
     }
     let target = Target::new(run.settings, harness);
-    let floor = match route {
-        Route::Resume { session_id } => SessionFloor::Fixed(session_id.clone()),
-        Route::Fresh { .. } | Route::Refuse { .. } => SessionFloor::Baseline(Vec::new()),
-    };
+    // A hosted lane's sessions live on its host and bind nothing here, so
+    // every hosted launch starts the harness fresh and the context
+    // continues through the handoff record.
     open_and_confirm(
         operation,
         r,
         &server,
         &session,
-        &floor,
+        &SessionFloor::Baseline(Vec::new()),
         &command,
         harness,
         &|name| name == "ssh" || target.owns(name),
@@ -788,7 +794,6 @@ fn hosted_marker(
 fn hosted_command(
     settings: &Settings,
     r: &LaunchLane,
-    route: &Route,
     harness: Harness,
     created: &hosted::Created,
     brief: Option<&str>,
@@ -813,12 +818,6 @@ fn hosted_command(
     )?;
     intent.program = None;
     lane_words(&mut intent, &remote_cwd);
-    if let Route::Resume { session_id } = route {
-        intent.resume = Some(Resume {
-            session_id: session_id.clone(),
-            session_file: None,
-        });
-    }
     let mut remote = agent_runtime::launch::build(&intent)?;
     if let (Some(index), Some(text)) = (remote.brief_arg, brief) {
         remote.args[index] = text.to_owned();
@@ -1099,24 +1098,35 @@ fn package(
     reason = "the cloud session's creation through the Claude CLI, the one runner under the launch's tag; the record is written only once the CLI answered"
 )]
 fn cloud_create(command: &LaunchCommand, prompt: &str) -> std::result::Result<String, String> {
-    let mut args: Vec<&str> = command.args.iter().map(String::as_str).collect();
-    args.extend(["--cloud", "--output-format", "json", "-p", prompt]);
-    let mut env: Vec<(&str, &OsStr)> = command
-        .env
-        .iter()
-        .map(|(k, v)| (k.as_str(), OsStr::new(v.as_str())))
-        .collect();
-    env.push(("CCR_FORCE_BUNDLE", OsStr::new("")));
-    env.push(("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", OsStr::new("1")));
+    // The builder's environment removals reach the child through `env -u`,
+    // since the runner only adds; the additions ride the same line.
+    let mut args: Vec<String> = Vec::new();
+    for name in &command.env_remove {
+        args.push("-u".to_owned());
+        args.push(name.clone());
+    }
+    for (name, value) in &command.env {
+        args.push(format!("{name}={value}"));
+    }
+    args.push("CCR_FORCE_BUNDLE=".to_owned());
+    args.push("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1".to_owned());
+    args.push(command.program.clone());
+    args.extend(command.args.iter().cloned());
+    args.extend(
+        ["--cloud", "--output-format", "json", "-p", prompt]
+            .into_iter()
+            .map(str::to_owned),
+    );
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let out = host::run_tagged_in(
         "launch",
         "claude",
-        Path::new(&command.program),
+        Path::new("env"),
         "cloud-create",
         &args,
         Place {
             cwd: Some(&command.cwd),
-            env: &env,
+            env: &[],
         },
         CLOUD_BOUND,
     )
@@ -1145,7 +1155,6 @@ enum Sessions<'a> {
     Store {
         home: Option<&'a Path>,
         cwd: &'a Path,
-        mail_root: Option<String>,
     },
     Hosted {
         mail_root: String,
@@ -1175,11 +1184,7 @@ fn launch_outcome(
                     observation["note"] = json!("session-hosted");
                     (None, Some(mail_root))
                 }
-                Sessions::Store {
-                    home,
-                    cwd,
-                    mail_root,
-                } => {
+                Sessions::Store { home, cwd } => {
                     let session_id = match &opened.session_id {
                         Some(id) => Some(id.clone()),
                         None => {
@@ -1222,7 +1227,7 @@ fn launch_outcome(
                             }
                         }
                     };
-                    (session_id, mail_root)
+                    (session_id, None)
                 }
             };
             // The lane launch publishes: its pane and identity pass to the
@@ -1300,7 +1305,7 @@ pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutco
     // outcome; a pending reading binds no pane and leaves the lane as found
     // for the next reconcile. The marker written before the window is read
     // back on the outcome of a launch that ended there.
-    let local = matches!(surface_of_lane(&lane), Surface::Local);
+    let local = matches!(surface_of(lane.host.as_deref()), Surface::Local);
     let (opened, registered) = match phase {
         Phase::Opening { opening } => match operation.recover_opening(opening)? {
             Recovered::Adopted {
@@ -1344,15 +1349,6 @@ pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutco
     Ok(outcome)
 }
 
-/// The surface a lane record names, by its `host`.
-fn surface_of_lane(lane: &Lane) -> Surface<'_> {
-    match lane.host.as_deref() {
-        None | Some("") | Some("local") => Surface::Local,
-        Some(CLOUD_KIND) => Surface::Cloud,
-        Some(provider) => Surface::Hosted(provider),
-    }
-}
-
 /// Judge the pane a launch intent names past `opening`: gone, or its server
 /// replaced or gone, is `failed`; one an unanswering server still holds, or
 /// one the host did not answer for, is `unconfirmed` with the cause; one
@@ -1394,7 +1390,7 @@ fn judge_opened(
         ));
     };
     let target = Target::new(run.settings, harness);
-    let hosted = matches!(surface_of_lane(lane), Surface::Hosted(_));
+    let hosted = matches!(surface_of(lane.host.as_deref()), Surface::Hosted(_));
     let owns = |name: &str| (hosted && name == "ssh") || target.owns(name);
     let (foreground, state) =
         match operation.read_pane(&pane, harness, &owns, opened.identity.as_ref())? {
@@ -1449,7 +1445,6 @@ fn judge_opened(
             Sessions::Store {
                 home: home.as_deref(),
                 cwd: &cwd,
-                mail_root: None,
             }
         };
         let mut outcome = launch_outcome(
@@ -1716,12 +1711,6 @@ mod tests {
         );
     }
 
-    /// Defect: a lane line that leaves the harness's own compaction on,
-    /// so orch's handoff mark reads a window the harness has already
-    /// folded, or that refuses a harness with no such word; a lane that
-    /// writes as the owner or names no origin. Each harness's lane line
-    /// carries its compaction-off words where it has them and the two lane
-    /// variables.
     #[test]
     fn a_lane_line_turns_compaction_off_where_the_harness_can_and_carries_the_lane_words() {
         for harness in [
@@ -1774,12 +1763,6 @@ mod tests {
         }
     }
 
-    /// Defect: a relaunch into one worktree resuming the transcript another
-    /// worktree's lane recorded under the same account, where the store is
-    /// keyed by id alone, so the lane continues the other item's context.
-    /// A bound session whose file records another directory refuses
-    /// `session-owned-elsewhere` before any window; one recording the lane's
-    /// own directory, or none, resumes.
     #[test]
     fn a_relaunch_refuses_a_bound_session_another_directory_owns() {
         let dir = tempfile::tempdir().unwrap();

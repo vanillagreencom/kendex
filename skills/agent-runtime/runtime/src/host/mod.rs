@@ -3,7 +3,7 @@
 //! harness adapter owns everything the harness itself emits.
 
 // Every pane reading and close is matched variant by variant, here and in
-// the tmux host below (decision 105).
+// the tmux host below.
 #![deny(clippy::wildcard_enum_match_arm)]
 
 pub mod tmux;
@@ -139,7 +139,7 @@ pub struct Place<'a> {
     pub cwd: Option<&'a Path>,
     /// Added to the environment the child inherits, in order, so a name
     /// given twice takes its last value. Nothing is removed: a child that
-    /// runs a legacy script still reads `PATH`, `HOME` and the harness
+    /// runs a shell script still reads `PATH`, `HOME` and the harness
     /// variables.
     pub env: &'a [(&'a str, &'a OsStr)],
 }
@@ -161,8 +161,16 @@ pub(crate) fn run_with(
         tag: None,
     };
     let place = Place { cwd: None, env };
-    start(caller, OsStr::new(program), args, place, stdin, timeout)
-        .map_err(|failed| failed.into_error(caller))
+    start(
+        caller,
+        OsStr::new(program),
+        args,
+        place,
+        stdin,
+        false,
+        timeout,
+    )
+    .map_err(|failed| failed.into_error(caller))
 }
 
 /// The same runner for an executable named by path, for a consumer crate
@@ -187,6 +195,7 @@ pub fn run(
         args,
         Place::default(),
         None,
+        false,
         timeout,
     )
     .map_err(|failed| failed.into_error(caller))
@@ -215,7 +224,7 @@ pub fn run_tagged(
 }
 
 /// `run_tagged` with the child started in `place`: for a program that takes
-/// its repository from the directory it runs in, or a legacy script that
+/// its repository from the directory it runs in, or a shell script that
 /// reads its subject from a variable. The same spawn site, bound and count
 /// as every run.
 pub fn run_tagged_in(
@@ -232,8 +241,16 @@ pub fn run_tagged_in(
         operation,
         tag: Some(tag),
     };
-    start(caller, executable.as_os_str(), args, place, None, timeout)
-        .map_err(|failed| failed.into_error(caller))
+    start(
+        caller,
+        executable.as_os_str(),
+        args,
+        place,
+        None,
+        false,
+        timeout,
+    )
+    .map_err(|failed| failed.into_error(caller))
 }
 
 /// `run_tagged_in` with `stdin` fed to the child: for a program that takes
@@ -261,9 +278,110 @@ pub fn run_tagged_fed(
         args,
         place,
         Some(stdin),
+        false,
         timeout,
     )
     .map_err(|failed| failed.into_error(caller))
+}
+
+/// `run_tagged_fed` with the child leading its own process group, so a
+/// ceiling that signals the runtime's group (a hook's `timeout`) leaves the
+/// child to finish what it already began: a renewal whose endpoint has
+/// answered lands its file. The same spawn site, bound and count.
+#[allow(clippy::too_many_arguments)]
+pub fn run_tagged_fed_own_group(
+    tag: &'static str,
+    program: &'static str,
+    executable: &Path,
+    operation: &'static str,
+    args: &[&str],
+    place: Place,
+    stdin: &[u8],
+    timeout: Duration,
+) -> Result<Output> {
+    let caller = Caller {
+        program,
+        operation,
+        tag: Some(tag),
+    };
+    start(
+        caller,
+        executable.as_os_str(),
+        args,
+        place,
+        Some(stdin),
+        true,
+        timeout,
+    )
+    .map_err(|failed| failed.into_error(caller))
+}
+
+/// A child the runner started and does not wait on: its standard input
+/// and output are the null device, its standard error the file the caller
+/// opened for it or the null device, and no pipe of this process reaches
+/// it, so it outlives the caller. The caller reads it through the process
+/// identity reader and reaps it by this handle once it has exited; a handle
+/// dropped while the child runs leaves it running.
+pub struct Detached {
+    child: std::process::Child,
+}
+
+impl Detached {
+    pub fn pid(&self) -> u32 {
+        self.child.id()
+    }
+
+    /// The child's exit status, reaped, or `None` while it runs.
+    pub fn exited(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        self.child.try_wait()
+    }
+
+    /// Wait for the child to exit and reap it.
+    pub fn reap(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        self.child.wait()
+    }
+}
+
+/// Start `executable` in `place` as a [`Detached`] child, counted under
+/// `tag` as every run is, with `stderr` as its standard error where the
+/// caller hands a file. The spawn is the one site a detached process starts
+/// at; a spawn that fails is `external-failed` with its cause and counts
+/// nothing.
+pub fn start_detached(
+    tag: &'static str,
+    program: &'static str,
+    executable: &Path,
+    operation: &'static str,
+    args: &[&str],
+    place: Place,
+    stderr: Option<std::fs::File>,
+) -> Result<Detached> {
+    let caller = Caller {
+        program,
+        operation,
+        tag: Some(tag),
+    };
+    if let Some(cwd) = place.cwd {
+        enterable(cwd).map_err(|failed| failed.into_error(caller))?;
+    }
+    let mut command = Command::new(executable);
+    command.args(args);
+    if let Some(cwd) = place.cwd {
+        command.current_dir(cwd);
+    }
+    for (name, value) in place.env {
+        command.env(name, value);
+    }
+    command.stdin(Stdio::null()).stdout(Stdio::null());
+    command.stderr(match stderr {
+        Some(file) => Stdio::from(file),
+        None => Stdio::null(),
+    });
+    let child = command
+        .spawn()
+        .map_err(|e| Failed::Spawn(e).into_error(caller))?;
+    count_start(executable.as_os_str(), caller.tag);
+    Ok(Detached { child })
 }
 
 /// `cwd` as a directory a child can start in. Read three-valued through
@@ -288,6 +406,7 @@ pub(crate) fn start(
     args: &[&str],
     place: Place,
     stdin: Option<&[u8]>,
+    own_group: bool,
     timeout: Duration,
 ) -> std::result::Result<Output, Failed> {
     if let Some(cwd) = place.cwd {
@@ -295,6 +414,9 @@ pub(crate) fn start(
     }
     let mut command = Command::new(executable);
     command.args(args);
+    if own_group {
+        std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    }
     if let Some(cwd) = place.cwd {
         command.current_dir(cwd);
     }
@@ -432,6 +554,44 @@ mod tests {
         assert_eq!(tagged.of("u5b-row-a", None), after.of("u5b-row-a", None));
     }
 
+    /// A detached start counts one start under its tag, holds no pipe of
+    /// this process (a child that writes to its streams blocks on nothing
+    /// and ends), and is reaped by its handle. Defects: a detached child
+    /// left uncounted, or one held open by an inherited pipe the caller
+    /// never drains.
+    #[test]
+    fn a_detached_start_counts_once_and_is_reaped_by_its_handle() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = stub(
+            dir.path(),
+            "u8u-detached",
+            "yes | head -c 200000 >/dev/null; echo out; echo err >&2; exit 3\n",
+        );
+        let before = counts();
+        let mut child = start_detached(
+            "row-d",
+            "u8u-detached",
+            &exe,
+            "noop",
+            &[],
+            Place::default(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            counts().of("u8u-detached", Some("row-d")) - before.of("u8u-detached", Some("row-d")),
+            1
+        );
+        assert!(child.pid() > 0);
+        let status = child.reap().unwrap();
+        assert_eq!(status.code(), Some(3));
+        assert_eq!(
+            child.exited().ok().flatten().map(|s| s.code()),
+            Some(Some(3)),
+            "a reaped child answers its status again"
+        );
+    }
+
     /// An executable that never starts is no start. Defect: counting the
     /// attempt, which would put a missing program's refusals into a
     /// measurement of process starts.
@@ -450,6 +610,7 @@ mod tests {
             &[],
             Place::default(),
             None,
+            false,
             BOUND,
         )
         .unwrap_err();
@@ -499,7 +660,7 @@ mod tests {
     /// and counts under its tag. Defects: the directory not entered (the
     /// worktree package would read the runtime's own repository); an
     /// environment replaced instead of added to, which loses `PATH` and the
-    /// harness variables the legacy passes read; the first of two values
+    /// harness variables a shell script reads; the first of two values
     /// kept.
     #[test]
     fn a_placed_run_enters_its_cwd_and_adds_to_the_inherited_environment() {
@@ -547,7 +708,7 @@ mod tests {
             cwd: Some(&gone),
             env: &[],
         };
-        let failed = start(caller, exe.as_os_str(), &[], place, None, BOUND).unwrap_err();
+        let failed = start(caller, exe.as_os_str(), &[], place, None, false, BOUND).unwrap_err();
         assert!(matches!(failed, Failed::Cwd(_)), "{failed:?}");
         assert_eq!(counts().of("u5b2-no-cwd", Some("row-e")), 0);
     }
@@ -555,7 +716,7 @@ mod tests {
     /// The bound applies to a placed run: a child that outlives it is ended
     /// and the run reads as no answer, after one counted start. Defect: the
     /// new entry passing an unbounded wait, which the worktree package's
-    /// hold (R-U5j S4) relies on never happening.
+    /// hold relies on never happening.
     #[test]
     fn the_bound_applies_to_a_placed_run() {
         let dir = tempfile::tempdir().unwrap();
@@ -576,5 +737,58 @@ mod tests {
         .unwrap_err();
         assert!(matches!(err, Error::External { .. }), "{err:?}");
         assert_eq!(counts().of("u5b2-bounded", Some("row-f")), 1);
+    }
+
+    /// A child started apart leads its own process group, so a signal to
+    /// this process's group does not reach it; an ordinary child shares
+    /// the group.
+    #[test]
+    fn a_child_started_apart_leads_its_own_process_group() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = stub(dir.path(), "u8j-group", "echo $$; ps -o pgid= -p $$");
+        let read = |out: Output| {
+            let text = String::from_utf8_lossy(&out.stdout).to_string();
+            let mut lines = text.lines();
+            let pid = lines.next().unwrap_or("").trim().to_owned();
+            let pgid = lines.next().unwrap_or("").trim().to_owned();
+            (pid, pgid)
+        };
+        let own = String::from_utf8_lossy(
+            &Command::new("ps")
+                .args(["-o", "pgid=", "-p", &std::process::id().to_string()])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .trim()
+        .to_owned();
+        let (pid, pgid) = read(
+            run_tagged_fed_own_group(
+                "u8j-group",
+                "u8j-group",
+                &exe,
+                "apart",
+                &[],
+                Place::default(),
+                b"",
+                BOUND,
+            )
+            .unwrap(),
+        );
+        assert_eq!(pgid, pid, "a child started apart leads its own group");
+        let (_, shared) = read(
+            run_tagged_fed(
+                "u8j-group",
+                "u8j-group",
+                &exe,
+                "shared",
+                &[],
+                Place::default(),
+                b"",
+                BOUND,
+            )
+            .unwrap(),
+        );
+        assert_eq!(shared, own, "an ordinary child shares the runtime's group");
     }
 }

@@ -380,13 +380,14 @@ for wrapper in session-start-row session-end-row stop-failure-row; do
 done
 
 # The overseer's own turn end writes the Stop that lifts its wall. The fleet
-# state names pane %9 on server 7000 as the overseer, and a judge stub puts it
-# under both marks, so the turn ends; what it judges is lane-mail-check.test.sh's.
+# state names pane %9 on server 7000 as the overseer, and the runtime stub in
+# its install puts it under both marks, so the turn ends; what it judges is
+# lane-mail-check.test.sh's.
 new_checkout overseer_stop
 rm -f -- "$CHECKOUT/.agents/skills/orch/scripts"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$CHECKOUT/.agents/skills/orch/scripts"
-printf '#!/bin/sh\necho "oversee-succeed: context-below-mark tokens=1 mark=500000 headroom=80"\n' \
-  > "$CHECKOUT/.agents/skills/orch/scripts/oversee-succeed"
+printf '#!/bin/sh\necho %s\n' "'{\"ok\":true,\"result\":{\"key\":\"below-mark\",\"context\":\"room\",\"tokens\":1,\"mark\":\"500000\",\"headroom\":\"80\"}}'" \
+  > "$CHECKOUT/.agents/skills/orch/scripts/orch-runtime"
 (cd "$CHECKOUT" && .agents/skills/orch/scripts/workflow-state init oversee >/dev/null \
   && .agents/skills/orch/scripts/workflow-state set oversee overseer '{"server":"7000","server_start":1790000000,"pane":"%9"}' >/dev/null)
 run stop-failure-row "$WALL"

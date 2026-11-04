@@ -1,5 +1,4 @@
-//! The scheduler core (decision 121; step5-map § A0, § A1, § B rows 5 and
-//! 6, § D; decision 148): the identity-bound claim, the duty threads on one
+//! The scheduler core: the identity-bound claim, the duty threads on one
 //! fake clock, the event line durable before its baseline row, the failure
 //! policy, the per-duty stamps and the `EVENT` grammar. Each row names the
 //! defect it catches at its doc comment.
@@ -19,10 +18,9 @@ use std::time::{Duration, Instant, SystemTime};
 
 use agent_runtime::process::Identity;
 use orch_runtime::error::Error;
-use orch_runtime::ops::{self, Env, Request};
 use orch_runtime::schedule::Duty;
 use orch_runtime::settings::{self, Flags as SettingsFlags, Roots, Settings, Succession};
-use orch_runtime::state::{self, FLEET_FILE_NAME, Locking, Owner};
+use orch_runtime::state::FLEET_FILE_NAME;
 use orch_runtime::watch::events::OverseerCase;
 use orch_runtime::watch::{self, Change, Event, Flags, Paths, Produced, Recorded, Runner, Tick};
 use serde_json::{Value, json};
@@ -64,7 +62,6 @@ fn recorded() -> Recorded {
         pane: "none".into(),
         script: "/w/orch-runtime".into(),
         cwd: "/w".into(),
-        args: vec!["watch".into(), "run".into()],
     }
 }
 
@@ -211,7 +208,7 @@ fn a_live_claim_is_refused_and_a_gone_one_is_taken_over_with_an_event_line() {
     assert!(live(sleeper.pid()), "the sleeper was never touched");
 }
 
-/// R-U8-1 F1. Defect: the claim record `watch_pid_write` writes
+/// Defect: the claim record a released repeat loop writes
 /// (`lib/watch-pid.sh`: `pid`, `state`, `pane`, `origin`, `script`, `cwd`,
 /// no `start=`), left with a dead pid by a loop that ended without its
 /// trap, refused `watch-claim-unreadable` on every start until a person
@@ -440,8 +437,8 @@ fn verification_ticks(until: u64) -> Vec<u64> {
     expected
 }
 
-/// Row (b), § B row 5. Defect: the legacy reset of the heartbeat on any
-/// news (step5-map F3), or a long duty's due time moved by a mail run.
+/// Defect: a reset of the heartbeat on any news, or a long duty's due
+/// time moved by a mail run.
 /// Under one mail event every 7 s for 7000 s of fake time, the heartbeat
 /// fires once, at the first tick at or past its due time (6000 s), and the
 /// verification slot runs at every first tick at or past each 240 s due
@@ -485,7 +482,7 @@ fn busy_mail_moves_neither_the_heartbeat_nor_the_verification_due_times() {
     assert_eq!(expected.len(), 29);
 }
 
-/// Decision 148 (5), R-U5a follow-up 3. Defect: one pass stamp shared by
+/// Defect: one pass stamp shared by
 /// every long duty and moved by the heartbeat too, under which a restart
 /// resumes verification from the heartbeat's start (6246 s in row (b)'s
 /// sequence, not its own 6120 s). Each duty resumes from its own stamp.
@@ -544,8 +541,8 @@ fn a_restart_resumes_each_duty_from_its_own_stamp() {
     );
 }
 
-/// Row (c), § B row 6. Defect: one thread for every duty (the legacy
-/// sequential pass, `run_due` as written), under which a tracker read held
+/// Defect: one thread for every duty (one sequential pass), under which
+/// a tracker read held
 /// for 60 s holds every mail turn. The tracker body blocks on a FIFO while
 /// the clock passes 60 s in three mail intervals: three more mail runs
 /// complete while the tracker's has not.
@@ -611,9 +608,8 @@ fn a_tracker_duty_held_on_a_fifo_delays_no_mail_run() {
     assert_eq!(tracker.runs(), 1);
 }
 
-/// Decision 148 (2), R-U5a F2. Defect: a zero cadence spinning its thread
-/// (a wait of none between two runs). Under `ORCH_WATCH_MAIL_INTERVAL=0`,
-/// the legacy's "read the mail once a turn", the mail duty runs once per
+/// Defect: a zero cadence spinning its thread (a wait of none between two
+/// runs). Under `ORCH_WATCH_MAIL_INTERVAL=0`, the mail duty runs once per
 /// slice: at start and once more for each second passed.
 #[test]
 fn a_zero_mail_interval_runs_the_mail_duty_once_per_slice() {
@@ -636,7 +632,7 @@ fn a_zero_mail_interval_runs_the_mail_duty_once_per_slice() {
     assert_eq!(mail.runs(), 4, "one run at start and one per slice");
 }
 
-/// Decision 148 (4), R-U5a follow-up 1. Defect: a duty body's error ending
+/// Defect: a duty body's error ending
 /// the run (both threads, the claim released), under which one transient
 /// read failure stops mail and verification until a restart. A body that
 /// fails twice then succeeds: the first failure's `watch-step-failed` line
@@ -699,7 +695,7 @@ fn a_failing_body_is_a_counted_line_and_the_run_goes_on() {
     );
 }
 
-/// Decision 156 (1), R-U5a2 follow-up 1. Defect: a standing failure waking
+/// Defect: a standing failure waking
 /// the session the log follows on every pass (a `watch-step-failed` line
 /// each 240 s with no news), and a body's partial failure said by the body
 /// under a count of its own, outside the one rule. Under
@@ -803,7 +799,7 @@ fn a_standing_failure_repeats_its_line_on_the_mark_repeat_rule() {
     );
 }
 
-/// Decision 148 (6), R-U5a follow-up 5. Defect: a body unable to ask for a
+/// Defect: a body unable to ask for a
 /// run earlier than its cadence (the overseer box's 1 s poll), or a wake
 /// moving a due time later. A body asking for a run 1 s later gets it, and
 /// the regular cadence resumes from that run.
@@ -839,7 +835,7 @@ fn a_body_asking_for_an_earlier_run_gets_it_and_the_cadence_resumes() {
     );
 }
 
-/// Row (d), § D acceptance; decision 148 (9). Defect: the baseline row
+/// Defect: the baseline row
 /// written before (or without) the event line's durable append, under
 /// which a crash between the two loses the news. The baseline write is
 /// made to fail where a crash would land, after the log's append and sync:
@@ -918,13 +914,12 @@ fn an_event_line_is_durable_before_its_baseline_row_and_a_crash_between_reprints
     }
 }
 
-/// Row (e). Defect: a rendering that drifts from the legacy bytes, which
-/// the session's event handling keys on. Every variant against the line
-/// the legacy printed (`oversee-watch`'s `echo` and `printf` sites, cited
-/// at each variant; the suites' pinned heartbeat lines), and this
+/// Defect: a rendering that drifts from the bytes the session's event
+/// handling keys on. Every variant against the line the controller session
+/// parses (the suites' pinned heartbeat lines among them), and this
 /// runtime's own lines as it defines them.
 #[test]
-fn every_event_renders_to_the_legacy_bytes() {
+fn every_event_renders_to_its_recorded_bytes() {
     let s = |text: &str| text.to_owned();
     let rows: Vec<(Event, &str)> = vec![
         (
@@ -1048,7 +1043,7 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT watch-taken-over pid=4242 start=ticks:9 reason=replace",
         ),
-        // U5g: the wake duty's own lines.
+        // The wake duty's own lines.
         (
             Event::WakeDelivered { target: s("KEN-1") },
             "EVENT wake-delivered KEN-1",
@@ -1068,12 +1063,10 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT wake-limit KEN-1 harness=codex cause=process-running",
         ),
-        // oversee-watch:2162
         (
             Event::LaneReady { item: s("KEN-1") },
             "EVENT lane-ready KEN-1",
         ),
-        // oversee-watch:2161
         (
             Event::LanePrepareStuck {
                 item: s("KEN-1"),
@@ -1083,7 +1076,6 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT lane-prepare-stuck KEN-1 age=1801s log=/t/prep.log",
         ),
-        // oversee-watch:4686
         (
             Event::LanePrepareStuck {
                 item: s("KEN-1"),
@@ -1093,7 +1085,6 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT lane-prepare-stuck KEN-1 age=1801s log=/t/relaunch.log reason=relaunch-pending",
         ),
-        // oversee-watch:2163
         (
             Event::LanePrepareFailed {
                 item: s("KEN-1"),
@@ -1103,7 +1094,6 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT lane-prepare-failed KEN-1 reason=wait-failed log=/t/prep.log",
         ),
-        // oversee-watch:4678
         (
             Event::LanePrepareFailed {
                 item: s("KEN-1"),
@@ -1113,7 +1103,6 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT lane-prepare-failed KEN-1 reason=relaunch-failed exit=3 log=/t/relaunch.log",
         ),
-        // oversee-watch:1963
         (
             Event::ParkedMerged {
                 item: s("KEN-1"),
@@ -1122,7 +1111,6 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT parked-merged KEN-1 pr=5898 repo=vanillagreencom/kendex",
         ),
-        // oversee-watch:1884
         (
             Event::ParkedClosed {
                 item: s("KEN-1"),
@@ -1131,14 +1119,12 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT parked-closed KEN-1 pr=5898 repo=vanillagreencom/kendex",
         ),
-        // oversee-watch:1928
         (
             Event::Merged {
                 line: s("5898 kendex/refresh vanillagreencom/kendex"),
             },
             "EVENT merged 5898 kendex/refresh vanillagreencom/kendex",
         ),
-        // oversee-watch:2228
         (
             Event::MainWorkflowAbsent {
                 repo: s("vanillagreencom/kendex"),
@@ -1147,7 +1133,6 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT main-workflow-absent vanillagreencom/kendex workflow=ci.yml cause=not-found",
         ),
-        // oversee-watch:2381
         (
             Event::MainPushFailing {
                 repo: s("vanillagreencom/kendex"),
@@ -1159,7 +1144,6 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT main-push-failing vanillagreencom/kendex workflow=ci.yml event=push run=1234 jobs=guards,tests cause=failure",
         ),
-        // oversee-watch:2487
         (
             Event::MainPushBudget {
                 repo: s("vanillagreencom/kendex"),
@@ -1168,7 +1152,6 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT main-push-budget vanillagreencom/kendex workflow=skill-tests.yml run=1234 warnings=[\"budget\"]",
         ),
-        // oversee-watch:2633
         (
             Event::RefreshFailing {
                 repo: s("vanillagreencom/kendex"),
@@ -1179,7 +1162,6 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT refresh-failing vanillagreencom/kendex runs=2 last=1234 since=2026-01-01T00:00:00Z report=initial cause=failure",
         ),
-        // oversee-watch:2735
         (
             Event::LaneStalled {
                 item: s("KEN-1"),
@@ -1188,7 +1170,7 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT lane-stalled KEN-1 age=3601",
         ),
-        // U7a: the hosted readings' lines (step7-map § A1).
+        // The hosted readings' lines.
         // lib/watch-host-kinds.sh:420, the state word a ready pull request adds
         (
             Event::LaneStalled {
@@ -1206,7 +1188,6 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT cloud-stall-closed CC-1 directive_age=1900",
         ),
-        // oversee-watch:3178
         (
             Event::OwnerAskResolved {
                 re: s("a-7"),
@@ -1215,7 +1196,6 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT owner-ask-resolved a-7 by=text id=m-9",
         ),
-        // oversee-watch:3179
         (
             Event::OwnerAskClosed {
                 re: s("a-7"),
@@ -1223,9 +1203,7 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT owner-ask-closed a-7 by=explicit",
         ),
-        // oversee-watch:3180
         (Event::OwnerNote { id: s("m-9") }, "EVENT owner-note m-9"),
-        // oversee-watch:3181
         (
             Event::PeerNote {
                 repository: s("vanillagreencom/other"),
@@ -1244,7 +1222,6 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT peer-note vanillagreencom/other m-9 kind=peer re=m-2",
         ),
-        // oversee-watch:3186
         (
             Event::LaneQuestion {
                 item: s("KEN-1"),
@@ -1252,7 +1229,6 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT lane-question KEN-1 m-9",
         ),
-        // oversee-watch:3189
         (
             Event::LaneNotice {
                 item: s("KEN-1"),
@@ -1260,7 +1236,6 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT lane-notice KEN-1 m-9",
         ),
-        // oversee-watch:4061
         (
             Event::OverseerMark {
                 pane: s("%7"),
@@ -1271,7 +1246,6 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT overseer-mark %7 kind=account value=97 mark=headroom succession=off",
         ),
-        // oversee-watch:4159
         (
             Event::OverseerContextStale {
                 pane: s("%7"),
@@ -1279,7 +1253,6 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT overseer-context-stale %7 age=3601",
         ),
-        // oversee-watch:4175
         (
             Event::OverseerContextUnmeasured {
                 pane: s("%7"),
@@ -1287,7 +1260,6 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT overseer-context-unmeasured %7 gap=3",
         ),
-        // oversee-watch:4576
         (
             Event::OverseerSession {
                 case: OverseerCase::Dead,
@@ -1324,7 +1296,6 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT overseer-reserve %7 window=@3 passes=1 succession=off source=rows record=none",
         ),
-        // oversee-watch:4751
         (
             Event::LaneRelaunched {
                 item: s("KEN-1"),
@@ -1333,7 +1304,6 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT lane-relaunched KEN-1 lane=a2 from=a1",
         ),
-        // oversee-watch:4998
         (
             Event::LaneAsking {
                 lane: s("gh-3"),
@@ -1348,12 +1318,10 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT lane-asking gh-3 session-record=none",
         ),
-        // oversee-watch:5067
         (
             Event::ModelCapacity { lane: s("gh-3") },
             "EVENT model-capacity gh-3",
         ),
-        // oversee-watch:5092
         (
             Event::IdleAfterReturn {
                 lane: s("gh-3"),
@@ -1361,7 +1329,6 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT idle-after-return gh-3 stop-cause=allow-all-blocked-by-policy",
         ),
-        // oversee-watch:5221
         (
             Event::Account {
                 fields: s("a1 harness=claude status=ok verdict=walled"),
@@ -1371,7 +1338,6 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT account a1 harness=claude status=ok verdict=walled change=verdict,reset was=ok/room",
         ),
-        // oversee-watch:5610 and :5621
         (
             Event::VerifyingDeadline {
                 id: s("KEN-1"),
@@ -1386,9 +1352,7 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT verifying-deadline KEN-1 box=2 trigger={\"kind\":\"ci\"} status=due deadline=2026-01-01T00:00:00Z",
         ),
-        // U5d: the observation duty's lines (decision 152).
-        // oversee-watch:4960, the bytes 744fd5727:skills/orch/tests/oversee_watch_pi_lanes.sh and
-        // 744fd5727:skills/orch/tests/oversee_watch_usage_limit.sh pin
+        // The observation duty's lines.
         (
             Event::UsageLimit {
                 passed: false,
@@ -1431,8 +1395,7 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT lane-unreadable gh-3 cause=server-unreachable",
         ),
-        // U5c: the mail duty's lines (decision 152).
-        // oversee-watch:3195 and :3199, the bytes 744fd5727:skills/orch/tests/oversee_watch_mail.sh pins
+        // The mail duty's lines.
         (
             Event::Payload {
                 line: s("Hold KEN-7 for the owner."),
@@ -1446,14 +1409,14 @@ fn every_event_renders_to_the_legacy_bytes() {
             "  options: cut, keep",
         ),
         (Event::Payload { line: s("") }, "  "),
-        // U5e: the tracker and GitHub read duty's lines (decision 152).
+        // The tracker and GitHub read duty's lines.
         (
             Event::TrackerQuota {
                 line: s("tracker-quota status=future reset=2026-01-01T00:10:00Z limit=requests"),
             },
             "EVENT tracker-quota status=future reset=2026-01-01T00:10:00Z limit=requests",
         ),
-        // U5d2: the local-lane readings' lines (decision 152).
+        // The local-lane readings' lines.
         // lib/watch-host-kinds.sh:462, the bytes 744fd5727:skills/orch/tests/oversee_watch_start_stall.sh
         // pins (`separate_counts`, `parked`)
         (
@@ -1482,7 +1445,7 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT lane-long issue-3 age=12600 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=parked",
         ),
-        // U5e2: the GitHub duty's readings' lines (decision 152).
+        // The GitHub duty's readings' lines.
         // The bytes 744fd5727:skills/orch/tests/oversee_watch.sh § 1 pins
         (Event::PrWatch { rc: 1 }, "EVENT pr-watch rc=1"),
         // The bytes 744fd5727:skills/orch/tests/oversee_watch_security.sh
@@ -1549,18 +1512,14 @@ fn every_event_renders_to_the_legacy_bytes() {
             },
             "EVENT outside-contribution owner/repo#3101 kind=issue author=fixture-visitor",
         ),
-        // U5f: the report and heartbeat duties' lines (decision 152).
-        // oversee-watch:5248 (`echo "EVENT $out"` on `oversee-report due`'s
-        // line), the bytes 744fd5727:skills/orch/tests/oversee_watch_report.sh pins
+        // The report and heartbeat duties' lines.
         (
             Event::ReportDue {
                 line: s("report-due reason=minutes since=2026-10-01T00:00:00Z"),
             },
             "EVENT report-due reason=minutes since=2026-10-01T00:00:00Z",
         ),
-        // oversee-watch:5715-5733: a heartbeat body line, printed as the
-        // legacy printed it, unprefixed (744fd5727:skills/orch/tests/oversee_watch_owed.sh pins
-        // the `owed` line)
+        // A heartbeat body line, printed unprefixed.
         (
             Event::Body {
                 line: s("owed KEN-6 state=in-review priority=3 lane=none verdict=queue"),
@@ -1573,22 +1532,18 @@ fn every_event_renders_to_the_legacy_bytes() {
     }
 }
 
-// U7a: the hosted close through `watch run` (step7-map § A1 row (2)).
-/// The watch over a stalled cloud lane, started through the entry with the
-/// `lane-host` and `lane-close` fixtures under the project's scripts
-/// directory and the `gh` fixture first on `PATH`, `extra` on its
-/// environment.
+// The hosted close through `watch run`.
+/// The watch over a stalled cloud lane, started with the `lane-host` and
+/// `lane-close` fixtures under the project's scripts directory and the
+/// `gh` fixture first on `PATH`, `extra` on its environment.
 fn spawn_hosted_watch_run(dir: &Path, extra: &[(&str, &str)]) -> std::process::Child {
-    let mut command = entry_command(dir, &["--interval", "1"]);
+    let mut command = watch_run_command(dir, &["--interval", "1"]);
     for (name, value) in extra {
         command.env(name, value);
     }
-    command.spawn().expect("spawn the entry")
+    command.spawn().expect("spawn watch run")
 }
 
-/// Decision 192 Q2; `lib/watch-host-kinds.sh:431` (`cloud_stall_close`),
-/// `oversee-watch:1420` (`close_hosted_lane`), the case
-/// `744fd5727:skills/orch/tests/oversee_watch_cloud.sh` pinned on one pass.
 /// Defect: a close asked again after a crash between the ask and its answer,
 /// so a lane `lane-close` closed is closed again (its archive line lost, a
 /// second `lane-closed` on the log); or a close asked with nothing written
@@ -1773,7 +1728,6 @@ fn watch_cmd(dir: &Path, args: &[&str]) -> std::process::Output {
     command
         .args(["--state-dir", &dir.display().to_string()])
         .args(args)
-        .env("ORCH_JOB_UNIT", job_unit().display().to_string())
         .current_dir(dir);
     command.output().expect("orch-runtime watch")
 }
@@ -1789,32 +1743,12 @@ fn lane_mail() -> PathBuf {
         .join("mailbox/scripts/lane-mail")
 }
 
-/// The thin entry, `scripts/oversee-watch`, as the workflow starts it.
-fn entry() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .join("scripts/oversee-watch")
-}
-
-/// The runtime the entry execs, named by `OVERSEE_WATCH_RUNTIME`: a wrapper
-/// that takes the entry's name through `ORCH_RUNTIME_NAME`, as the shipped
-/// `orch-runtime` wrapper does, and adds `--no-private-env` to the test
-/// binary (the shipped wrapper resolves the keyed cache binary, which a
-/// test has not built).
-fn runtime_wrapper(dir: &Path) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-    let path = dir.join("orch-runtime");
-    std::fs::write(
-        &path,
-        format!(
-            "#!/bin/bash\nname=\"${{ORCH_RUNTIME_NAME:-$0}}\"\nunset ORCH_RUNTIME_NAME\nexec -a \"$name\" \"{}\" --no-private-env \"$@\"\n",
-            binary().display()
-        ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-    path
+/// The github skill linked under `dir`'s install layout, where `watch run`
+/// finds the credential ladder it runs before it claims.
+fn github_skill_under(dir: &Path) {
+    let skills = dir.join(".agents/skills");
+    std::fs::create_dir_all(&skills).unwrap();
+    link_fixture("../../../../github", &skills.join("github"));
 }
 
 /// `fixture` linked into the row's world at `at`; a link already there is
@@ -1827,117 +1761,49 @@ fn link_fixture(fixture: &str, at: &Path) {
     }
 }
 
-/// The environment an entry start in `dir` runs under, on `command`, with
-/// every duty's program named so the run is quiet on an empty fleet
-/// (decision 164): the shipped mailbox client over the test directory, the
-/// alert pass off (with no token file it would print its credential line),
-/// the report judge as the fixture that answers "not due" (it reads its
-/// reply beside the path it is invoked as, so the row links it in), and
-/// `gh` as the fixture that answers the entry's credential ladder
-/// (`bin/gh`, its status from `bin/gh.auth-status`, absent for 0, every
-/// other call refused). `bin` is first on `PATH`, so a row's own fakes go
-/// there too. The same environment serves a program that starts the entry
-/// (a launcher, the retired loop), which hands it down.
-fn entry_env(command: &mut Command, dir: &Path) {
+/// The environment a `watch run` in `dir` runs under, on `command`, with
+/// every duty's program named so the run is quiet on an empty fleet: the
+/// shipped mailbox client over the test directory, the alert pass off (with
+/// no token file it would print its credential line), the report judge as
+/// the fixture that answers "not due" (it reads its reply beside the path
+/// it is invoked as, so the row links it in), `gh` as the fixture that
+/// answers the credential ladder (`bin/gh`, its status from
+/// `bin/gh.auth-status`, absent for 0, every other call refused) and the
+/// github skill under the directory's install layout, where the ladder is.
+/// `bin` is first on `PATH`, so a row's own fakes go there too.
+fn watch_env(command: &mut Command, dir: &Path) {
     let report = dir.join("oversee-report");
     link_fixture("oversee-report-fixture/oversee-report", &report);
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     link_fixture("gh-auth-fixture/gh", &bin.join("gh"));
+    github_skill_under(dir);
     isolation_env(command);
     command
         .env("PATH", tool_path(&[&bin]))
-        .env("OVERSEE_WATCH_RUNTIME", runtime_wrapper(dir))
-        .env("ORCH_JOB_UNIT", job_unit().display().to_string())
         .env("LANE_MAIL_CLI", lane_mail())
         .env("ORCH_SECURITY_ALERTS", "off")
         .env("OVERSEE_WATCH_REPORT", &report)
         .current_dir(dir);
 }
 
-/// The entry on the fleet state in `dir`, `--repeat 60 --state <file>` then
-/// `flags`, under [`entry_env`].
-fn entry_command(dir: &Path, flags: &[&str]) -> Command {
+/// `watch run --file <state>` then `flags` on the fleet state in `dir`,
+/// under [`watch_env`].
+fn watch_run_command(dir: &Path, flags: &[&str]) -> Command {
     let state = dir.join(FLEET_FILE_NAME);
-    let mut command = Command::new(entry());
-    entry_env(&mut command, dir);
+    let mut command = isolated();
+    watch_env(&mut command, dir);
     command
-        .args(["--repeat", "60", "--state", &state.display().to_string()])
+        .args(["watch", "run", "--file", &state.display().to_string()])
         .args(flags)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     command
 }
 
-/// The user manager a lingering host's `job-unit.sh launch` reaches, faked
-/// in `dir`'s `bin` (R-U5h's probes, decision 179 (1)): `systemd-run` runs
-/// a unit's argv under setsid and records its pid under `bin/units/<unit>`,
-/// `systemctl stop` TERMs that group, `loginctl` says the manager lingers.
-/// Copied, not linked: the fakes write their log and units beside
-/// themselves.
-fn install_manager_fakes(dir: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let bin = dir.join("bin");
-    std::fs::create_dir_all(&bin).unwrap();
-    for fake in ["systemd-run", "systemctl", "loginctl"] {
-        let to = bin.join(fake);
-        std::fs::copy(fixtures().join("cutover-fakes").join(fake), &to).unwrap();
-        std::fs::set_permissions(&to, std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-}
-
-/// The workflow's launch block (`workflows/oversee.md` § 4) on the fleet
-/// state in `dir`, under [`entry_env`]: `job-unit.sh launch` on the state's
-/// runner record, the entry's stderr appended to its `.err`, the entry with
-/// `--repeat 60 --state <state>` then `words`, the block's remaining
-/// placeholders as the row fills them. The manager is the row's to fake.
-fn workflow_launch(dir: &Path, words: &[&str]) -> Command {
-    let state = dir.join(FLEET_FILE_NAME);
-    let mut launch = Command::new("bash");
-    entry_env(&mut launch, dir);
-    launch
-        .arg(job_unit())
-        .args([
-            "launch",
-            "watch-R",
-            &dir.join("oversee-watch.runner").display().to_string(),
-            "--",
-            "sh",
-            "-c",
-            "err=$1; shift; exec \"$@\" 2>>\"$err\"",
-            "sh",
-            &dir.join("oversee-watch.err").display().to_string(),
-            &entry().display().to_string(),
-            "--repeat",
-            "60",
-            "--state",
-            &state.display().to_string(),
-        ])
-        .args(words);
-    launch
-}
-
-/// The runtime's claim on `paths`, once a record carrying a start names a
-/// live pid, within `bound`: its pid, or none. For a runner no child handle
-/// holds (a detached start).
-fn await_runtime_claim(paths: &Paths, bound: Duration) -> Option<u32> {
-    let deadline = Instant::now() + bound;
-    loop {
-        if let Ok(Some(claim)) = watch::claim::read(paths)
-            && live(claim.pid)
-        {
-            return Some(claim.pid);
-        }
-        if Instant::now() >= deadline {
-            return None;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-}
-
-/// The output of an entry start that must end on its own within `bound`:
-/// one that runs on past it is a runner the row forbids, killed and
-/// reported as `overrun`.
+/// The output of a start that must end on its own within `bound`: one
+/// that runs on past it is a runner the row forbids, killed and reported
+/// as `overrun`.
 fn bounded_output(
     mut child: std::process::Child,
     bound: Duration,
@@ -1955,10 +1821,11 @@ fn bounded_output(
     child.wait_with_output().unwrap()
 }
 
-/// Spawn the entry in `dir` with `flags`; the runtime it execs claims as
-/// the child's pid.
+/// Spawn `watch run` in `dir` with `flags`; it claims as the child's pid.
 fn spawn_watch_run(dir: &Path, flags: &[&str]) -> std::process::Child {
-    entry_command(dir, flags).spawn().expect("spawn the entry")
+    watch_run_command(dir, flags)
+        .spawn()
+        .expect("spawn watch run")
 }
 
 /// Wait until the runner `child` has claimed `paths`, bounded; a child
@@ -1983,38 +1850,37 @@ fn await_claim(child: &mut std::process::Child, paths: &Paths) {
     }
 }
 
-/// Decision 178. Defect: an entry that starts the runtime with no GitHub
-/// credential selected, so on a host whose env token is stale and whose
-/// keyring fails, every GitHub read of every pass refuses where the retired
-/// loop selected the project's bot token; or one that claims the fleet
-/// before the ladder answers. With `gh auth status` failing and no bot
-/// token to load, the entry refuses `auth-failed` (exit 2) with no claim
-/// record, no retained command and no runtime started, after the ladder's
-/// one probe.
+/// Defect: a watch started with no GitHub credential selected, so on a host
+/// whose env token is stale and whose keyring fails, every GitHub read of
+/// every pass refuses where the project's bot token would have served; or
+/// one that claims the fleet before the ladder answers. With `gh auth
+/// status` failing and no bot token to load, `watch run` refuses
+/// `auth-failed` with no claim record and no event log, after the ladder's
+/// one probe of each candidate.
 #[test]
-fn an_entry_that_cannot_authenticate_refuses_before_any_claim() {
+fn a_watch_run_that_cannot_authenticate_refuses_before_any_claim() {
     let dir = tempfile::tempdir().unwrap();
     let state_dir = std::fs::canonicalize(dir.path()).unwrap();
     let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
     assert!(init.status.success(), "init: {}", stderr(&init));
-    let mut command = entry_command(&state_dir, &["--interval", "240"]);
+    let mut command = watch_run_command(&state_dir, &["--interval", "240"]);
     std::fs::write(state_dir.join("bin/gh.auth-status"), "1\n").unwrap();
     let out = bounded_output(
         command.spawn().unwrap(),
-        secs(10),
-        "the entry ran on with no credential selected",
+        secs(30),
+        "the watch ran on with no credential selected",
     );
     let err = stderr(&out);
-    assert_eq!(out.status.code(), Some(2), "{err}");
-    assert!(
-        err.lines()
-            .any(|line| line == "oversee-watch: auth-failed service=github"),
+    assert!(!out.status.success(), "{err}");
+    assert_eq!(
+        err.lines().next().map(|l| l.split_whitespace().nth(1)),
+        Some(Some("auth-failed")),
         "{err}"
     );
     let paths = paths_in(&state_dir);
     assert!(
-        !paths.pid.exists() && !paths.argv.exists(),
-        "the entry claimed before the ladder answered"
+        std::fs::metadata(&paths.pid).is_err() && std::fs::metadata(&paths.log).is_err(),
+        "the watch claimed before the ladder answered"
     );
     assert_eq!(
         std::fs::read_to_string(state_dir.join("bin/gh.log")).unwrap_or_default(),
@@ -2023,7 +1889,7 @@ fn an_entry_that_cannot_authenticate_refuses_before_any_claim() {
     );
 }
 
-/// Decision 148 (3), R-U5a-codex F2. Defect: the reconcile duty discarding
+/// Defect: the reconcile duty discarding
 /// its report, so an open intent it could not complete or mark (a close
 /// whose lane record is gone, `tests/rust/effects.rs`'s `lane-missing`
 /// fixture) is never surfaced. Through `watch run`, the fixture emits one
@@ -2079,7 +1945,7 @@ fn a_refused_intent_reaches_the_log_once_through_watch_run() {
     );
 }
 
-/// Decision 184 (5), R-U6-1 M2. Defect: an owed session send no receipt
+/// Defect: an owed session send no receipt
 /// settles reported in the reconcile's reply alone, so the log carries
 /// nothing and the operator learns of it from the next send's refusal; or
 /// reported on every pass. Through `watch run` on a one-second long
@@ -2149,236 +2015,6 @@ fn an_owed_send_no_receipt_settles_reaches_the_log_once_per_cause_through_watch_
         baseline.get("directive-send-unsettled", "CC-1"),
         Some("receipt-missing"),
         "the row that quiets the next pass"
-    );
-}
-
-/// Work item 8, decision 143. Defect: the claim wait bounded by the tmux
-/// verification bound, under which a row that shortens the tmux bound to
-/// force a failed delivery also fails the claim. A detached job's claim
-/// that lands after the tmux bound (5 s) and before the claim bound (15 s)
-/// is accepted as `transfer-started` naming the claimant.
-#[test]
-fn a_claim_landing_after_the_tmux_bound_and_before_the_claim_bound_is_accepted() {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = tempfile::tempdir().unwrap();
-    let state_dir = std::fs::canonicalize(dir.path()).unwrap();
-    let path = state_dir.join(FLEET_FILE_NAME);
-    std::fs::copy(fixtures().join("workflow-state-oversee.json"), &path).unwrap();
-    // A launcher that records a live group and answers at once: the job
-    // then "claims" when the row says so.
-    let sleeper = Owned::sleep();
-    let job_unit = state_dir.join("job-unit");
-    std::fs::write(
-        &job_unit,
-        format!(
-            "#!/bin/bash\nprintf 'runner=setsid\\npid={pid}\\nstart={start}\\nline=runner=setsid reason=fixture\\n' > \"$3\"\necho 'runner=setsid pid={pid}'\n",
-            pid = sleeper.pid(),
-            start = sleeper.start()
-        ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&job_unit, std::fs::Permissions::from_mode(0o755)).unwrap();
-    let roots = Roots {
-        project: state_dir.clone(),
-        common: state_dir.clone(),
-    };
-    let settings = settings::load(
-        &roots,
-        &[
-            ("ORCH_TMUX_VERIFY_SECS".into(), "5".into()),
-            (
-                "ORCH_JOB_UNIT".into(),
-                job_unit.display().to_string().into(),
-            ),
-            (
-                "LANE_MAIL_CLI".into(),
-                fixtures()
-                    .join("lane-mail-quiet/lane-mail")
-                    .display()
-                    .to_string()
-                    .into(),
-            ),
-        ],
-        &SettingsFlags {
-            state_dir: Some(state_dir.clone()),
-            private_env: false,
-        },
-    )
-    .unwrap();
-    assert_eq!(settings.verify, secs(5));
-    assert_eq!(settings.claim, secs(15), "the production claim bound");
-    let owner = Owner {
-        pid: 77,
-        start: "ticks:77".into(),
-    };
-    let env = Env {
-        now_secs: 1_769_700_000,
-        now_nanos: 1_769_700_000_000_000_000,
-        nonce: 77,
-        owner: Some(owner.clone()),
-    };
-    let request: Request = serde_json::from_value(json!({
-        "op": "request-transfer",
-        "expected": {
-            "server": "41020", "server_start": 1769590000, "pane": "%7", "generation": 3,
-            "launch_line": "cd /home/u/dev/kendex && CLAUDE_CONFIG_DIR=/home/u/.claude-lanes/a1 claude --model claude-opus-5-5 --effort high",
-            "cwd": "/home/u/dev/kendex", "pending": null,
-        },
-        "successor": {
-            "launch_line": "cd /r && claude", "harness": "claude", "account": "/a", "home": "/a",
-            "model": "opus", "cwd": "/r",
-        },
-    }))
-    .unwrap();
-    let locking = Locking::FLOCK;
-    let applied =
-        ops::apply_on(&path, &request, &env, locking, &ops::Host::kernel(4, None)).unwrap();
-    let claimant = Owner {
-        pid: 88,
-        start: "ticks:88".into(),
-    };
-    let clock = FakeClock::new();
-    let effected = std::thread::scope(|s| {
-        let handle = s.spawn(|| {
-            orch_runtime::effects::run(
-                &path,
-                &request,
-                &applied.report,
-                &settings,
-                &env,
-                locking,
-                &clock,
-            )
-        });
-        clock.await_sleepers(1);
-        // Past the tmux bound, short of the claim bound: 8 s in 200 ms polls.
-        for _ in 0..40 {
-            clock.pass(Duration::from_millis(200));
-        }
-        let intent_id = state::load(&path).unwrap().unwrap().doc["intents"][0]["id"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        ops::apply(
-            &path,
-            &Request::ClaimIntent(ops::ClaimIntent { intent_id }),
-            &Env {
-                owner: Some(claimant.clone()),
-                ..env.clone()
-            },
-            locking,
-        )
-        .unwrap();
-        clock.release(Duration::from_millis(200));
-        handle.join().expect("the launcher thread")
-    });
-    let effected = effected.unwrap().expect("a transfer has a live effect");
-    let value = serde_json::to_value(&effected).unwrap();
-    assert_eq!(value["started"], "transfer-started", "{value}");
-    assert_eq!(
-        value["owner"]["pid"], 88,
-        "the claimant owns the intent: {value}"
-    );
-    assert_eq!(clock.elapsed(), Duration::from_millis(8200));
-}
-
-/// Decision 179 (2), R-U5h F2, R-U5h2 F1. Defect: a watch start that drops
-/// `--harness` and `-- FLAGS`, so a hand-opened overseer's record holds no
-/// launch line and its death has no successor to replay (`held_successor`),
-/// or keeps a former session's line and its permission words; the
-/// workflow's launch block once passed neither. The record `oversee
-/// register` writes for a hand-opened session (this pane on this server, its
-/// start, an identity, no line) and the workflow's launch block, its
-/// placeholders filled, run from that pane: the record's `launch_line` is
-/// the line `oversee-succeed --print-launch-line` printed for the block's
-/// harness and flags, the permission word among them, and the identity
-/// stands beside it.
-#[test]
-fn a_registered_sessions_record_holds_the_line_the_entry_hands_on() {
-    let dir = tempfile::tempdir().unwrap();
-    let state_dir = std::fs::canonicalize(dir.path()).unwrap();
-    let server = Server::start(&state_dir, "fleet");
-    let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
-    assert!(init.status.success(), "{}", stderr(&init));
-    let state = state_dir.join(FLEET_FILE_NAME);
-    let paths = Paths::of(&state).unwrap();
-    install_manager_fakes(&state_dir);
-    let pane = server.open_idle("overseer", &state_dir);
-    let mut fleet: Value = serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
-    fleet["overseer"] = json!({
-        "runtime": "tmux",
-        "generation": 1,
-        "server": server.pid.to_string(),
-        "server_start": server.start,
-        "server_socket": server.socket.display().to_string(),
-        "pane": pane,
-        "harness": "claude",
-        "account": state_dir.display().to_string(),
-        "home": state_dir.display().to_string(),
-        "model": "opus",
-        "cwd": state_dir.display().to_string(),
-    });
-    std::fs::write(&state, serde_json::to_string_pretty(&fleet).unwrap()).unwrap();
-    // The block's words after `--state`, each placeholder filled; the
-    // launch runs in the pane, as § 4 has it.
-    let mut launch = workflow_launch(
-        &state_dir,
-        &[
-            "--interval",
-            "240",
-            "--since",
-            "2026-01-01T00:00:00Z",
-            "--harness",
-            "codex",
-            "--repo",
-            "owner/items",
-            "--repo",
-            "owner/other",
-            "--",
-            "--dangerously-bypass-approvals-and-sandbox",
-            "--model",
-            "fable",
-        ],
-    );
-    launch
-        .env("TMUX", format!("{},0,0", server.socket.display()))
-        .env("TMUX_PANE", &pane)
-        .env(
-            "OVERSEE_WATCH_SUCCEED",
-            fixtures().join("succeed-print/oversee-succeed"),
-        );
-    let out = launch.output().unwrap();
-    assert!(out.status.success(), "the launch: {}", stderr(&out));
-    let claimed = await_runtime_claim(&paths, secs(25));
-    let err_text = std::fs::read_to_string(paths.dir.join("oversee-watch.err")).unwrap_or_default();
-    let after: Value = serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
-    // The detached runner is nobody's child: stopped before the asserts.
-    if claimed.is_some() {
-        let stop = watch_cmd(&state_dir, &["watch", "stop", "--fleet"]);
-        assert!(
-            reply(&stop)["ok"].as_bool().unwrap_or(false),
-            "{}",
-            stderr(&stop)
-        );
-    }
-    assert!(
-        claimed.is_some(),
-        "the runtime claimed under the launched unit: {err_text}"
-    );
-    let overseer = &after["overseer"];
-    assert_eq!(
-        overseer["launch_line"],
-        "launch: --print-launch-line --handoff tmp/handoffs/OVERSEER-HANDOFF.md --harness codex -- --dangerously-bypass-approvals-and-sandbox --model fable",
-        "the line a death replays is the print of the block's harness and flags, the permission word among them: {overseer} {err_text}"
-    );
-    assert_eq!(
-        (
-            overseer["pane"].as_str(),
-            overseer["harness"].as_str(),
-            overseer["model"].as_str()
-        ),
-        (Some(pane.as_str()), Some("claude"), Some("opus")),
-        "the registered identity stands beside it: {overseer}"
     );
 }
 

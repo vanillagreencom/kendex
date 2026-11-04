@@ -49,7 +49,13 @@ composer
 set_state idle
 held() {
   [ -n "$hold" ] || return 0
-  read -r _ < "$hold"
+  # The read-write open never blocks and the read gives up after
+  # HOLD_BOUND_SECS, so a row that dies before its release leaves no reader.
+  [ -p "$hold" ] || { echo "stub-turns: hold-not-fifo path=$hold" >&2; exit 2; }
+  exec 9<>"$hold"
+  read -r -t "${HOLD_BOUND_SECS:-120}" -u 9 _ \
+    || { echo "stub-turns: hold-unreleased path=$hold bound=${HOLD_BOUND_SECS:-120}" >&2; exit 124; }
+  exec 9<&-
 }
 while IFS= read -r line; do
   set_state working

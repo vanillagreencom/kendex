@@ -672,10 +672,7 @@ impl Runner {
             stub: stub(stub_name),
             verify: Some(5),
             tools: None,
-            // A transfer detaches its effect through the orch package's own
-            // job-unit launcher, beside these tests, so a row runs the shipped
-            // launcher and no other on the host.
-            env: vec![("ORCH_JOB_UNIT".to_owned(), job_unit().display().to_string())],
+            env: Vec::new(),
         }
     }
 
@@ -769,15 +766,27 @@ impl Runner {
         command
             .args(["--state-dir", &self.state_dir().display().to_string()])
             .args(args)
+            .current_dir(self.state_dir());
+        self.apply_env(&mut command);
+        for (name, value) in extra {
+            command.env(name, value);
+        }
+        command.output().expect("orch-runtime")
+    }
+
+    /// The runner's environment on `command`: the fleet server and session,
+    /// the stub harness, the quiet mailbox and validation stubs (a row
+    /// plants asks through `LANE_MAIL_ASKS` in `env`), the bound, the tools
+    /// and the runner's own entries; the same for a child that is not the
+    /// binary itself, such as the detached line the wall route starts.
+    pub fn apply_env(&self, command: &mut Command) {
+        command
             .env("TMUX", format!("{},0,0", self.server_socket.display()))
             .env("ORCH_TMUX_SESSION", &self.session)
             .env(
                 "ORCH_HARNESS_BINARIES",
                 format!("claude={}", self.stub.display()),
             )
-            // The mailbox and validation runner a close asks, as stubs that
-            // answer no asks and stop nothing; a row plants asks through
-            // `LANE_MAIL_ASKS` in `env`.
             .env(
                 "LANE_MAIL_CLI",
                 fixtures().join("lane-mail-quiet/lane-mail"),
@@ -785,8 +794,7 @@ impl Runner {
             .env(
                 "DEV_VALIDATE_CLI",
                 fixtures().join("dev-validate-quiet/dev-validate-run"),
-            )
-            .current_dir(self.state_dir());
+            );
         if let Some(verify) = self.verify {
             command.env("ORCH_TMUX_VERIFY_SECS", verify.to_string());
         }
@@ -796,10 +804,6 @@ impl Runner {
         for (name, value) in &self.env {
             command.env(name, value);
         }
-        for (name, value) in extra {
-            command.env(name, value);
-        }
-        command.output().expect("orch-runtime")
     }
 
     /// Spawn a fleet `op` as a background child with `extra` environment and
@@ -1193,11 +1197,14 @@ pub fn mkfifo(path: &Path) {
     assert!(out.status.success(), "mkfifo: {}", stderr(&out));
 }
 
-/// Release the tmux-hold shim waiting on `fifo`, within `bound`: the write
-/// blocks until the shim opens its end, so it runs on its own thread and the
-/// row waits on it with a deadline. A hold the effect never reaches, a job
-/// that failed before its held verb, fails the row here with `evidence`
-/// rather than blocking it for the suite's whole timeout.
+/// Release the hold fixture waiting on `fifo` with one line, within `bound`:
+/// the write blocks until the fixture opens its end, so it runs on its own
+/// thread and the row waits on it with a deadline. A hold the effect never
+/// reaches, a job that failed before its held verb, fails the row here with
+/// `evidence` rather than blocking it for the suite's whole timeout. Each
+/// hold fixture gives up its read after `HOLD_BOUND_SECS`, 120 by default,
+/// four times the longest `bound` a row passes here, so a row that dies
+/// before its release leaves no held child behind it.
 pub fn release_hold(fifo: &Path, bound: Duration, evidence: impl Fn() -> String) {
     let path = fifo.to_path_buf();
     let (tx, rx) = std::sync::mpsc::channel();
@@ -1694,7 +1701,8 @@ fn plant_local(dir: &Path, state: &Path, row: &Value, now: u64) {
     let credential = match harness {
         "claude" => json!({"claudeAiOauth": {
             "accessToken": format!("token-{alias}"), "refreshToken": format!("refresh-{alias}"),
-            "expiresAt": expires_ms, "subscriptionType": row["plan"].as_str().unwrap_or("max")}})
+            "expiresAt": expires_ms, "refreshTokenExpiresAt": expires_ms,
+            "subscriptionType": row["plan"].as_str().unwrap_or("max")}})
         .to_string(),
         "codex" => json!({"tokens": {"access_token": format!("token-{alias}"), "account_id": format!("acct-{alias}")}}).to_string(),
         _ => json!({"copilotTokens": format!("token-{alias}")}).to_string(),

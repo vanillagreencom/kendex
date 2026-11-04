@@ -3,9 +3,11 @@
 # real `curl -s -D - -w '\n%{http_code}' URL -K -` capture reads, from
 # fixture files under USAGE_FIXTURE_DIR named by the token the request
 # carries. The token arrives on stdin in curl's config form (`header =
-# "Authorization: Bearer T"` or `token T`), never on argv; the URL on argv
-# names the endpoint: `usage` (Claude or Codex), `profile` (Claude's
-# profile) or `copilot` (api.github.com). The answer for token T at
+# "Authorization: Bearer T"` or `token T`), never on argv; a token POST's
+# body on stdin names it as its `refresh_token`. The URL on argv names
+# the endpoint: `usage` (Claude or Codex), `profile` (Claude's profile),
+# `copilot` (api.github.com) or `token` (Claude's token endpoint). The
+# answer for token T at
 # endpoint E is `<T>.<E>.json` as the body with `<T>.<E>.status` beside it
 # (`<code> [retry-after]`, 200 when absent); a token with no body file is a
 # request that could not be run (exit 1). Every call appends `<E> <T>` to
@@ -17,12 +19,14 @@ dir="${USAGE_FIXTURE_DIR:?}"
 config="$(cat)"
 token="${config#*Authorization: Bearer }"
 [ "$token" != "$config" ] || token="${config#*Authorization: token }"
+[ "$token" != "$config" ] || token="${config#*\"refresh_token\":\"}"
 token="${token%%\"*}"
 endpoint=unknown
 for arg in "$@"; do
   case "$arg" in
     */profile) endpoint=profile ;;
     */usage) endpoint=usage ;;
+    */oauth/token) endpoint=token ;;
     *copilot_internal/user*) endpoint=copilot ;;
   esac
 done

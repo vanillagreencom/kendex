@@ -244,12 +244,15 @@ usage 199000 272000 s1 $(overseer_env)
 assert_eq "$(quiet) record=$(record) key=$(jq -r .pane_key "$BOX/context.json" 2>/dev/null)" \
   "RC=0 stdout= stderr=- record=199000 217600 s1 null key=$OVERSEER_SERVER $OVERSEER_PANE" \
   "the overseer's reading is recorded in its mailbox under its pane key"
+# The judge, handed that reading, finds it due.
+plant_judge
+judge_says '{"key":"mark-reached","kind":"context","value":"199000","mark":"90","succession":"on","headroom":"unreadable","context_decision":{"tokens":199000,"window":217600,"cap":400000,"mark_pct":90,"cap_mark":400000,"window_mark":195840,"reserve_applied":false,"reserve_tokens":0}}'
 # shellcheck disable=SC2046
 turn_end s1 $(overseer_env) "$MARK90"
-assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision) route=$(stdout_field .reason | grep -cF -- '/oversee-succeed --context 199000:217600 -- [THE PERMISSION')" \
-  "RC=0 first=lane-mail-check: context=199000 decision=block route=1" \
-  "its turn end hands that reading to oversee-succeed, which judges it due, and names the succession carrying it"
-rm -f -- "${BOX:?}/context.json"
+assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision) argv=$(judge_argv | tail -n 1) route=$(stdout_field .reason | grep -cF -- '/oversee-succeed --context 199000:217600 -- [THE PERMISSION')" \
+  "RC=0 first=lane-mail-check: context=199000 decision=block argv=marks --fleet --context 199000:217600 route=1" \
+  "its turn end hands that reading to the judge, which judges it due, and names the succession carrying it"
+rm -f -- "${BOX:?}/context.json" "${JUDGE_DIR:?}/out"
 # shellcheck disable=SC2046
 usage 199000 272000 s1 $(overseer_env %3)
 assert_eq "$(quiet) record=$(record)" "RC=0 stdout= stderr=- record=none" \

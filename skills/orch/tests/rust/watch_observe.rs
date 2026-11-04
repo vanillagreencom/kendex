@@ -35,6 +35,7 @@ use agent_runtime::reading::Reading;
 use agent_runtime::rows::{self, LaneVerdict};
 use jiff::tz::TimeZone;
 use orch_runtime::ops::accounts::Roster;
+use orch_runtime::ops::walk::{Chosen, WalkAnswer, WalkRequest, Walked};
 use orch_runtime::ops::wall::{self, AccountWall, RecordWallPauses};
 use orch_runtime::ops::{self, RequestTransfer};
 use orch_runtime::settings::{self, Flags as SettingsFlags, Roots, Settings, Succession};
@@ -42,7 +43,9 @@ use orch_runtime::state::{self, FleetState, Locking, Record, TransferCause};
 use orch_runtime::watch::context;
 use orch_runtime::watch::hosted;
 use orch_runtime::watch::lanes::{self, Readers, Relaunch, WallRoute, WindowRow};
-use orch_runtime::watch::overseer::{self, Legacy, Marks, Pick, Slot, Source, Verdict};
+use orch_runtime::watch::overseer::{
+    self, Caller, ContextRead, Judges, MarkKey, MarkKind, Marks, Pick, Slot, Source, Verdict,
+};
 use orch_runtime::watch::{Baseline, Change, Event, Produced};
 use serde_json::{Value, json};
 use std::ffi::OsString;
@@ -827,18 +830,32 @@ fn a_walled_lane_is_relaunched_once_under_auto_and_only_reported_under_ask() {
         // The relaunch is the runtime's own request, applied by its entry
         // with no launcher script between: the record's harness and model,
         // the picked account, the spent one excluded, the refresh word.
-        let request_file = driver.state_dir.join("wall-relaunch-KEN-4.json");
+        let stem = driver.state_dir.join("wall-relaunch-KEN-4");
+        let request_file = PathBuf::from(format!("{}.json", stem.display()));
+        let close_file = PathBuf::from(format!("{}.close.json", stem.display()));
+        let brief_file = PathBuf::from(format!("{}.md", stem.display()));
         assert_eq!(
             relaunch.args,
             vec![
+                "sh".to_owned(),
+                "-c".to_owned(),
+                "\"$1\" --state-dir \"$2\" op --fleet --request \"$3\" && \"$1\" --state-dir \"$2\" op --fleet --request \"$4\"".to_owned(),
+                "wall-relaunch".to_owned(),
                 "/nonexistent/orch-runtime".to_owned(),
-                "--state-dir".to_owned(),
                 driver.state_dir.display().to_string(),
-                "op".to_owned(),
-                "--fleet".to_owned(),
-                "--request".to_owned(),
+                close_file.display().to_string(),
                 request_file.display().to_string(),
             ]
+        );
+        let retire: Value =
+            serde_json::from_str(&std::fs::read_to_string(&close_file).unwrap()).unwrap();
+        assert_eq!(
+            retire,
+            json!({
+                "op": "close-owned-resources",
+                "item": "KEN-4",
+                "no_landing": {"reason": "usage-limit", "source": "wall-route"},
+            })
         );
         let request: Value =
             serde_json::from_str(&std::fs::read_to_string(&request_file).unwrap()).unwrap();
@@ -852,8 +869,17 @@ fn a_walled_lane_is_relaunched_once_under_auto_and_only_reported_under_ask() {
                 "account": "/home/me/.bclaude",
                 "exclude_account": "/home/me/.eclaude",
                 "refresh": true,
+                "brief_file": brief_file.display().to_string(),
                 "model": "opus",
             })
+        );
+        let brief = std::fs::read_to_string(&brief_file).unwrap();
+        assert!(
+            brief.starts_with("Resume the orch workflow for KEN-4 from where this session stopped.")
+                && brief.contains("lane-mail inbox --item KEN-4")
+                && brief.contains("lane-mail watch --item KEN-4")
+                && brief.ends_with("never as a question in chat. Never end a turn waiting on the person, and end none before a lane-mail ask or notice, or the lane status file, says where the work stands. Send a notice only when the work changed since your last notice, with a new head, PR, verdict, blocker, request or finish. A wait that continues updates the lane status file only. Where you would stop to ask, read lane-mail inbox and continue the workflow.\n"),
+            "the continuation closed by the unattended words: {brief:?}"
         );
         assert_eq!(
             relaunch.marker,
@@ -1221,7 +1247,7 @@ fn a_window_nothing_records_is_a_stray_reported_once_and_never_closed() {
 /// answers and a recording transfer.
 struct OverseerDriver<'a> {
     readers: Readers<'a>,
-    legacy: Legacy<'a>,
+    judges: Judges<'a>,
     settings: Settings,
     baseline: Baseline,
     slot: Slot,
@@ -1243,7 +1269,7 @@ impl OverseerDriver<'_> {
             &overseer::Pass {
                 fleet,
                 readers: &self.readers,
-                legacy: &self.legacy,
+                judges: &self.judges,
                 baseline: &self.baseline,
                 settings: &self.settings.watch,
                 succession: Succession::On,
@@ -1261,34 +1287,77 @@ impl OverseerDriver<'_> {
     }
 }
 
-fn below(_: &Path, _: Option<Harness>, _: Option<&str>) -> Result<Marks, String> {
-    Marks::parse("oversee-succeed: account-below-mark kind=headroom").ok_or_default()
+/// A judge's answer as a row plants it.
+fn marks(key: MarkKey, value: &str, mark: &str, succession: Succession, account: &str) -> Marks {
+    Marks {
+        key,
+        value: value.to_owned(),
+        mark: mark.to_owned(),
+        succession,
+        account: account.to_owned(),
+        resets: String::new(),
+        status: String::new(),
+        reserve_only: false,
+        reason: String::new(),
+        headroom: String::new(),
+        context: ContextRead::Unjudged,
+        decision: None,
+        successor: None,
+    }
+}
+
+fn below(_: &Caller, _: Option<&str>) -> Result<Marks, String> {
+    Ok(marks(MarkKey::Below, "", "", Succession::On, ""))
 }
 
 fn no_alert(_: &str) -> Result<(), String> {
     panic!("no gap stood two passes")
 }
 
-trait OrDefault<T> {
-    fn ok_or_default(self) -> Result<T, String>;
+fn reached(_: &Caller, _: Option<&str>) -> Result<Marks, String> {
+    Ok(marks(
+        MarkKey::Reached(MarkKind::Headroom),
+        "50",
+        "5",
+        Succession::On,
+        "/home/me/.eclaude",
+    ))
 }
 
-impl<T> OrDefault<T> for Option<T> {
-    fn ok_or_default(self) -> Result<T, String> {
-        self.ok_or_else(|| "unparsed".to_owned())
-    }
+/// The overseer walk choosing the Claude account `bclaude`.
+fn walk_b(_: &WalkRequest) -> Result<Walked, String> {
+    Ok(Walked {
+        answer: WalkAnswer::Lane(Box::new(Chosen {
+            entry: "claude:opus:high".to_owned(),
+            harness: "claude".to_owned(),
+            host: None,
+            model: "opus".to_owned(),
+            class: None,
+            effort: "high".to_owned(),
+            pick_model: "opus".to_owned(),
+            account: Some("/home/me/.bclaude".to_owned()),
+            record: None,
+            warning: None,
+            launch: None,
+            kept: false,
+            kept_unmeasured: false,
+        })),
+        walk: "claude:opus:high".to_owned(),
+        entries: 1,
+        skipped: Vec::new(),
+        walled: 0,
+        unmeasured: 0,
+        unread: Vec::new(),
+        deprecated: Vec::new(),
+    })
 }
 
-fn reached(_: &Path, _: Option<Harness>, _: Option<&str>) -> Result<Marks, String> {
-    Marks::parse("oversee-succeed: mark-reached kind=headroom value=50 mark=5 succession=on account=/home/me/.eclaude").ok_or_default()
+fn no_walk(_: &WalkRequest) -> Result<Walked, String> {
+    panic!("the overseer walk is asked only for a walled succession")
 }
 
-fn pick_b(_: &Path, _: Harness, _: &str) -> Pick {
-    Pick::Lane("/home/me/.bclaude".to_owned())
-}
-
-fn no_pick(_: &Path, _: Harness, _: &str) -> Pick {
-    panic!("the account walk is asked only for a walled succession")
+fn no_succeed(_: &[String]) -> Result<(), String> {
+    panic!("no record names a succession owner")
 }
 
 fn no_wall_pick(_: &Path, _: Harness, _: &str, _: &str) -> Pick {
@@ -1299,9 +1368,15 @@ fn no_relaunch(_: &Path, _: &Relaunch) -> Result<(), String> {
     panic!("the wall relaunch is the lanes pass's, never the overseer's")
 }
 
-/// A standing mark with succession off (`oversee-watch:4062`).
-fn reached_off(_: &Path, _: Option<Harness>, _: Option<&str>) -> Result<Marks, String> {
-    Marks::parse("oversee-succeed: mark-reached kind=headroom value=50 mark=5 succession=off account=/home/me/.eclaude").ok_or_default()
+/// A standing mark with succession off.
+fn reached_off(_: &Caller, _: Option<&str>) -> Result<Marks, String> {
+    Ok(marks(
+        MarkKey::Reached(MarkKind::Headroom),
+        "50",
+        "5",
+        Succession::Off,
+        "/home/me/.eclaude",
+    ))
 }
 
 macro_rules! overseer_driver {
@@ -1324,12 +1399,13 @@ macro_rules! overseer_driver {
                 receipts: &lanes::receipts_in,
                 zone: &zone,
             },
-            legacy: Legacy {
+            judges: Judges {
                 scripts: PathBuf::from("/nonexistent"),
                 marks: &$marks,
-                pick: &$pick,
+                walk: &$pick,
                 wall_pick: &no_wall_pick,
                 relaunch: &no_relaunch,
+                succeed: &no_succeed,
             },
             settings: settings_in($fleet.runner.state_dir()),
             baseline: Baseline::default(),
@@ -1387,7 +1463,7 @@ fn a_dead_overseer_is_counted_on_two_passes_and_transferred_once_with_cause_dead
     let window = window_of(&server, &pane);
     fleet.set_overseer(overseer_at(&server, &pane, &window, dir.path()));
     let state = fleet.read();
-    overseer_driver!(server, fleet, below, no_pick, readers, transfers, driver);
+    overseer_driver!(server, fleet, below, no_walk, readers, transfers, driver);
     let key = format!("{} {pane}", server.pid);
     let first = driver.pass(&state);
     assert!(lines(&first).is_empty(), "{:?}", lines(&first));
@@ -1442,7 +1518,7 @@ fn a_dead_overseer_is_counted_on_two_passes_and_transferred_once_with_cause_dead
     moved["server"] = json!((server.pid + 1).to_string());
     fleet.set_overseer(moved);
     let unreadable = fleet.read();
-    overseer_driver!(server, fleet, below, no_pick, readers2, transfers2, driver2);
+    overseer_driver!(server, fleet, below, no_walk, readers2, transfers2, driver2);
     for _ in 0..3 {
         let produced = driver2.pass(&unreadable);
         assert!(lines(&produced).is_empty(), "{:?}", lines(&produced));
@@ -1495,7 +1571,7 @@ fn a_walled_overseer_is_transferred_with_cause_walled_and_the_spent_account_excl
     record["harness_start"] = json!(identity.start);
     fleet.set_overseer(record);
     let state = fleet.read();
-    overseer_driver!(server, fleet, reached, pick_b, readers, transfers, driver);
+    overseer_driver!(server, fleet, reached, walk_b, readers, transfers, driver);
     let key = format!("{} {pane}", server.pid);
     let first = driver.pass(&state);
     assert_eq!(
@@ -1531,7 +1607,7 @@ fn a_walled_overseer_is_transferred_with_cause_walled_and_the_spent_account_excl
         );
     }
     // The same rows wall with the account judgement reading room: lifted.
-    overseer_driver!(server, fleet, below, no_pick, readers2, transfers2, lifted);
+    overseer_driver!(server, fleet, below, no_walk, readers2, transfers2, lifted);
     let produced = lifted.pass(&state);
     assert!(lines(&produced).is_empty(), "{:?}", lines(&produced));
     assert_eq!(lifted.slot.read().unwrap().verdict, Verdict::Live);
@@ -1566,13 +1642,13 @@ fn the_mark_line_carries_the_succession_s_handling_under_it() {
     record["harness_start"] = json!(identity.start);
     fleet.set_overseer(record);
     let state = fleet.read();
-    overseer_driver!(server, fleet, reached, no_pick, readers, transfers, driver);
+    overseer_driver!(server, fleet, reached, no_walk, readers, transfers, driver);
     let first = driver.pass(&state);
     assert_eq!(
         lines(&first),
         vec![
             format!("EVENT overseer-mark {pane} kind=headroom value=50 mark=5 succession=on"),
-            "Run /nonexistent/oversee-succeed -- [FLAGS] at the next safe point, with ORCH_OVERSEER_PREFERENCE=claude:standard:high,codex:standard:high choosing the successor lane.".to_owned(),
+            "Hand this session over at the next safe point: write the overseer handoff file, choose the successor with orch-runtime accounts walk --overseer (ORCH_OVERSEER_PREFERENCE=claude:standard:high,codex:standard:high) and ask orch-runtime op --fleet for request-transfer with it.".to_owned(),
         ]
     );
     assert_eq!(driver.slot.read().unwrap().verdict, Verdict::Live);
@@ -1584,14 +1660,14 @@ fn the_mark_line_carries_the_succession_s_handling_under_it() {
         lines(&second)
     );
     overseer_driver!(
-        server, fleet, reached, no_pick, readers2, transfers2, chosen
+        server, fleet, reached, no_walk, readers2, transfers2, chosen
     );
     chosen.settings.overseer_preference = "claude:fable:high".to_owned();
     let preferred = chosen.pass(&state);
     assert_eq!(
         lines(&preferred).get(1).map(String::as_str),
         Some(
-            "Run /nonexistent/oversee-succeed -- [FLAGS] at the next safe point, with ORCH_OVERSEER_PREFERENCE=claude:fable:high choosing the successor lane."
+            "Hand this session over at the next safe point: write the overseer handoff file, choose the successor with orch-runtime accounts walk --overseer (ORCH_OVERSEER_PREFERENCE=claude:fable:high) and ask orch-runtime op --fleet for request-transfer with it."
         ),
         "{:?}",
         lines(&preferred)
@@ -1600,7 +1676,7 @@ fn the_mark_line_carries_the_succession_s_handling_under_it() {
         server,
         fleet,
         reached_off,
-        no_pick,
+        no_walk,
         readers3,
         transfers3,
         off
@@ -1710,18 +1786,24 @@ fn the_context_reading_is_handed_to_the_judge_and_a_context_mark_is_said_once_pe
     );
     session_rows(&rows, &[started(now - 600), stopped(now - 30)]);
     let handed: RefCell<Vec<Option<String>>> = RefCell::new(Vec::new());
-    let marks = |_: &Path, _: Option<Harness>, context: Option<&str>| {
+    let marks = |_: &Caller, context: Option<&str>| {
         handed.borrow_mut().push(context.map(str::to_owned));
-        Marks::parse("oversee-succeed: mark-reached kind=context value=910000 mark=90 succession=on headroom=unreadable window=1000000").ok_or_default()
+        Ok(marks(
+            MarkKey::Reached(MarkKind::Context),
+            "910000",
+            "90",
+            Succession::On,
+            "",
+        ))
     };
-    overseer_driver!(server, fleet, marks, no_pick, readers, transfers, driver);
+    overseer_driver!(server, fleet, marks, no_walk, readers, transfers, driver);
     driver.context_record = Some(record.clone());
     let first = driver.pass(&state);
     assert_eq!(
         lines(&first),
         vec![
             format!("EVENT overseer-mark {pane} kind=context value=910000 mark=90 succession=on"),
-            "Run /nonexistent/oversee-succeed -- [FLAGS] at the next safe point, with ORCH_OVERSEER_PREFERENCE=claude:standard:high,codex:standard:high choosing the successor lane.".to_owned(),
+            "Hand this session over at the next safe point: write the overseer handoff file, choose the successor with orch-runtime accounts walk --overseer (ORCH_OVERSEER_PREFERENCE=claude:standard:high,codex:standard:high) and ask orch-runtime op --fleet for request-transfer with it.".to_owned(),
         ]
     );
     assert_eq!(
@@ -1786,7 +1868,7 @@ fn a_full_window_with_no_later_stop_row_is_the_session_gone_by_context() {
         now - 60,
     );
     session_rows(&rows, &[started(now - 600), stopped(now - 120)]);
-    overseer_driver!(server, fleet, below, no_pick, readers, transfers, driver);
+    overseer_driver!(server, fleet, below, no_walk, readers, transfers, driver);
     driver.context_record = Some(record.clone());
     let first = driver.pass(&state);
     assert!(lines(&first).is_empty(), "{:?}", lines(&first));
@@ -1813,7 +1895,7 @@ fn a_full_window_with_no_later_stop_row_is_the_session_gone_by_context() {
         &rows,
         &[started(now - 600), stopped(now - 120), stopped(now - 30)],
     );
-    overseer_driver!(server, fleet, below, no_pick, readers2, transfers2, turned);
+    overseer_driver!(server, fleet, below, no_walk, readers2, transfers2, turned);
     turned.context_record = Some(record.clone());
     let live = turned.pass(&state);
     assert!(lines(&live).is_empty(), "{:?}", lines(&live));
@@ -1838,7 +1920,7 @@ fn a_stale_context_record_with_a_later_stop_row_is_said_on_every_pass() {
     let now = 1_800_000_000;
     context_record(&record, &key, Some(100), Some(1_000_000), None, now - 4000);
     session_rows(&rows, &[started(now - 6000), stopped(now - 100)]);
-    overseer_driver!(server, fleet, below, no_pick, readers, transfers, driver);
+    overseer_driver!(server, fleet, below, no_walk, readers, transfers, driver);
     driver.context_record = Some(record.clone());
     let first = driver.pass(&state);
     assert_eq!(
@@ -1898,7 +1980,7 @@ fn a_gap_is_said_once_then_alerted_to_the_owner_once_sent_and_quiet_after() {
         alerts.borrow_mut().push(text.to_owned());
         Ok(())
     };
-    overseer_driver!(server, fleet, below, no_pick, readers, transfers, driver);
+    overseer_driver!(server, fleet, below, no_walk, readers, transfers, driver);
     driver.context_record = Some(record.clone());
     driver.alert = &alert;
     let first = driver.pass(&state);
@@ -3288,12 +3370,17 @@ fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_re
         );
         record["host"] = json!(PROVIDER);
         record["kind"] = json!("ssh");
+        // The lane's root is on its host; the checkout the launch ran from
+        // is where the relaunch runs again.
+        let remote_root = dir.path().join("only-on-the-remote-host");
+        record["mail_root"] = json!(remote_root.display().to_string());
+        record["checkout"] = json!(dir.path().display().to_string());
         fleet.set_lanes(vec![record]);
         let state = fleet.read();
         let world = HostedWorld::new(dir.path());
         let status_file = format!(
             "cat --item KEN-4 {}/tmp/lane-status-KEN-4.md",
-            dir.path().display()
+            remote_root.display()
         );
         world.plant_host(&[
             ("capabilities", ok(&format!("{SSH_LINE}\tpane=local"))),
@@ -3344,6 +3431,11 @@ fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_re
             .unwrap();
             assert_eq!(request["host"], PROVIDER, "{request}");
             assert_eq!(request["kind"], "ssh", "{request}");
+            assert_eq!(
+                request["mail_root"],
+                dir.path().canonicalize().unwrap().display().to_string(),
+                "the relaunch runs from the checkout, not the host's root: {request}"
+            );
         }
     }
 }
@@ -3423,4 +3515,352 @@ fn the_prepare_records_are_said_once_per_key() {
         driver.baseline.get("lane-prepare", "KEN-2"),
         Some(format!("{}|ready", now - 10).as_str())
     );
+}
+
+/// The wall route's two requests applied by the runtime's own entry from the
+/// lane's checkout, as the detached relaunch applies them: the walled
+/// harness retired through the close route, the replacement launched on
+/// the picked account with the continuation as its brief.
+#[test]
+fn the_wall_relaunch_retires_the_walled_harness_and_relaunches_it_through_the_runtime() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let checkout = dir.path().join("checkout");
+    std::fs::create_dir_all(&checkout).unwrap();
+    let init = program("git")
+        .args(["-C", &checkout.display().to_string(), "init", "-q"])
+        .output()
+        .unwrap();
+    assert!(init.status.success(), "{}", stderr(&init));
+    let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
+    let old_account = dir.path().join("old-account");
+    let new_account = dir.path().join("new-account");
+    std::fs::create_dir_all(&old_account).unwrap();
+    std::fs::create_dir_all(&new_account).unwrap();
+    let mut record = relaunchable(
+        lane_record(
+            "KEN-4",
+            "gh-4",
+            "claude",
+            &server,
+            &pane,
+            Some(&identity),
+            &checkout,
+        ),
+        &checkout,
+    );
+    record["account"] = json!(old_account.display().to_string());
+    fleet.set_lanes(vec![record]);
+    let state = fleet.read();
+    let scripts = dir.path().join("scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::os::unix::fs::symlink(binary(), scripts.join("orch-runtime")).unwrap();
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = scripts;
+    driver.pick = Pick::Lane(new_account.display().to_string());
+    let produced = driver.pass(&state);
+    assert_eq!(
+        driver.relaunches.borrow().len(),
+        1,
+        "{:?}",
+        lines(&produced)
+    );
+    let relaunch = driver.relaunches.borrow()[0].clone();
+    // The detached line as the starter runs it: the entry's word first.
+    let mut command = program(&relaunch.args[0]);
+    command
+        .args(&relaunch.args[1..])
+        .current_dir(&relaunch.cwd)
+        .env("ORCH_TMUX_SESSION", &relaunch.session);
+    fleet.runner.apply_env(&mut command);
+    let out = command.output().unwrap();
+    assert!(
+        out.status.success(),
+        "the relaunch's requests were refused: {}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        stderr(&out)
+    );
+    assert!(
+        !live(identity.pid),
+        "the walled harness was retired before the replacement was asked"
+    );
+    let lane = &fleet.runner.fleet()["lanes"][0];
+    assert_eq!(lane["status"], "running", "{lane}");
+    assert_eq!(lane["account"], new_account.display().to_string(), "{lane}");
+    assert_ne!(lane["launch"]["pane"], pane, "a new window: {lane}");
+    let recorded: Value = serde_json::from_str(
+        &std::fs::read_to_string(checkout.join("launch-record.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        recorded["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|a| a.as_str().is_some_and(|text| {
+                text.starts_with(
+                    "Resume the orch workflow for KEN-4 from where this session stopped.",
+                ) && text.contains("lane-mail inbox --item KEN-4")
+                    && text.contains("lane-mail watch --item KEN-4")
+            })),
+        "the replacement starts on the continuation: {recorded}"
+    );
+    assert_eq!(
+        recorded["env"]["CLAUDE_CONFIG_DIR"],
+        new_account.display().to_string()
+    );
+    effect_report(&fleet.runner.op_fleet(&json!({
+        "op": "close-owned-resources",
+        "item": "KEN-4",
+        "terminal": {"verdict": "completed", "source": "test"},
+    })));
+}
+
+// ---------------------------------------------------------------------------
+// The dead replay from the record's own fields, the walled case the walk
+// answers none for, and the succession owner's command in place of a
+// transfer.
+// ---------------------------------------------------------------------------
+
+/// Defect: a dead controller whose record carries no launch line left
+/// unreplaced, as a record the runtime's own start wrote carries none. The
+/// held successor is the record's own typed fields: the transfer asked
+/// for carries them, a fresh session with no resume and no line.
+#[test]
+fn a_dead_controller_is_replayed_from_its_records_own_fields_with_no_launch_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let pane = server.open_window("overseer", dir.path(), "bash --norc --noprofile");
+    let window = window_of(&server, &pane);
+    let mut record = overseer_at(&server, &pane, &window, dir.path());
+    record.as_object_mut().unwrap().remove("launch_line");
+    record["effort"] = json!("high");
+    record["permission"] = json!("bypass");
+    record["extra_args"] = json!(["--verbose"]);
+    fleet.set_overseer(record);
+    let state = fleet.read();
+    overseer_driver!(server, fleet, below, no_walk, readers, transfers, driver);
+    let key = format!("{} {pane}", server.pid);
+    for _ in 0..3 {
+        driver.pass(&state);
+    }
+    assert_eq!(
+        driver.baseline.get("overseer-dead", &key),
+        Some("requested")
+    );
+    let asked = transfers.borrow();
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].cause, TransferCause::Dead);
+    let successor = &asked[0].successor;
+    assert_eq!(successor.launch_line, None);
+    assert_eq!(successor.resume, None);
+    assert_eq!(successor.harness.as_deref(), Some("claude"));
+    assert_eq!(successor.account.as_deref(), Some("/home/me/.eclaude"));
+    assert_eq!(successor.home.as_deref(), Some("/home/me/.eclaude"));
+    assert_eq!(successor.model.as_deref(), Some("opus"));
+    assert_eq!(successor.effort.as_deref(), Some("high"));
+    assert_eq!(
+        successor.cwd.as_deref(),
+        Some(dir.path().display().to_string().as_str())
+    );
+    assert_eq!(
+        successor.permission,
+        Some(agent_runtime::launch::Permission::Bypass)
+    );
+    assert_eq!(successor.extra_args, vec!["--verbose".to_owned()]);
+}
+
+/// Defect: a walled controller transferred onto no account, or asked for
+/// again every pass once the walk found none. The walk answering `none`
+/// marks the row reported with no request made; the walk choosing an
+/// entry of another harness opens that harness under the full bypass with
+/// none of the caller's words.
+#[test]
+fn a_walled_controller_is_held_where_the_walk_chooses_none_and_crosses_harness_on_its_choice() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let claude = named_sleep(dir.path(), "claude");
+    let pane = server.open_window(
+        "overseer",
+        dir.path(),
+        &format!(
+            "bash -c \"printf '\\xe2\\x9d\\xaf\\xc2\\xa0\\n'; exec {} 600\"",
+            claude.display()
+        ),
+    );
+    let identity = await_named(&server, &pane, "claude");
+    let window = window_of(&server, &pane);
+    let rows_file = dir.path().join("session-rows.jsonl");
+    std::fs::write(
+        &rows_file,
+        "{\"harness\":\"claude\",\"event\":\"StopFailure\",\"error\":\"rate_limit\",\"message\":\"You've hit your weekly limit · resets Oct 4\"}\n",
+    )
+    .unwrap();
+    let mut record = overseer_at(&server, &pane, &window, dir.path());
+    record["session_rows"] = json!(rows_file.display().to_string());
+    record["harness_pid"] = json!(identity.pid.to_string());
+    record["harness_start"] = json!(identity.start);
+    record["extra_args"] = json!(["--dangerously-skip-permissions"]);
+    fleet.set_overseer(record);
+    let state = fleet.read();
+    let asked: RefCell<Vec<WalkRequest>> = RefCell::new(Vec::new());
+    let walk_none = |request: &WalkRequest| {
+        asked.borrow_mut().push(request.clone());
+        Ok(Walked {
+            answer: WalkAnswer::None,
+            walk: "claude:opus:high".to_owned(),
+            entries: 1,
+            skipped: Vec::new(),
+            walled: 1,
+            unmeasured: 0,
+            unread: Vec::new(),
+            deprecated: Vec::new(),
+        })
+    };
+    overseer_driver!(
+        server, fleet, reached, walk_none, readers, transfers, driver
+    );
+    let key = format!("{} {pane}", server.pid);
+    driver.pass(&state);
+    driver.pass(&state);
+    assert_eq!(
+        driver.baseline.get("overseer-walled", &key),
+        Some("reported")
+    );
+    assert!(transfers.borrow().is_empty(), "nothing is asked for");
+    {
+        let walks = asked.borrow();
+        assert_eq!(walks.len(), 1);
+        assert_eq!(walks[0].exclude, vec!["/home/me/.eclaude".to_owned()]);
+        assert_eq!(
+            walks[0].source.as_ref().and_then(|s| s.flags.clone()),
+            Some(vec!["--dangerously-skip-permissions".to_owned()])
+        );
+        assert_eq!(
+            walks[0].caller.as_ref().map(|c| c.harness.as_str()),
+            Some("claude")
+        );
+    }
+    let third = driver.pass(&state);
+    assert!(lines(&third).is_empty(), "{:?}", lines(&third));
+    assert_eq!(
+        asked.borrow().len(),
+        1,
+        "a reported wall is not walked again"
+    );
+    let walk_codex = |_: &WalkRequest| {
+        Ok(Walked {
+            answer: WalkAnswer::Lane(Box::new(Chosen {
+                entry: "codex:standard:high".to_owned(),
+                harness: "codex".to_owned(),
+                host: None,
+                model: String::new(),
+                class: Some("standard".to_owned()),
+                effort: "high".to_owned(),
+                pick_model: String::new(),
+                account: Some("/home/me/.codex".to_owned()),
+                record: None,
+                warning: None,
+                launch: None,
+                kept: false,
+                kept_unmeasured: false,
+            })),
+            walk: "codex:standard:high".to_owned(),
+            entries: 1,
+            skipped: Vec::new(),
+            walled: 0,
+            unmeasured: 0,
+            unread: Vec::new(),
+            deprecated: Vec::new(),
+        })
+    };
+    overseer_driver!(
+        server, fleet, reached, walk_codex, readers2, transfers2, crossed
+    );
+    crossed.pass(&state);
+    crossed.pass(&state);
+    let asked = transfers2.borrow();
+    assert_eq!(asked.len(), 1);
+    let successor = &asked[0].successor;
+    assert_eq!(successor.harness.as_deref(), Some("codex"));
+    assert_eq!(successor.account.as_deref(), Some("/home/me/.codex"));
+    assert_eq!(successor.home.as_deref(), Some("/home/me/.codex"));
+    assert_eq!(successor.model, None);
+    assert_eq!(successor.effort.as_deref(), Some("high"));
+    assert_eq!(successor.class.as_deref(), Some("standard"));
+    assert_eq!(
+        successor.permission,
+        Some(agent_runtime::launch::Permission::Bypass)
+    );
+    assert!(successor.extra_args.is_empty());
+}
+
+/// Defect: orch opening a successor for a controller another lifecycle
+/// records. A dead controller whose record names its succession command
+/// has that command run once through the runner, the line naming it under
+/// the death's line, and no transfer asked for; a command that fails is
+/// reported, not run again every pass.
+#[test]
+fn a_dead_controller_whose_record_names_a_succession_owner_has_that_command_run_and_no_transfer() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let pane = server.open_window("overseer", dir.path(), "bash --norc --noprofile");
+    let window = window_of(&server, &pane);
+    let mut record = overseer_at(&server, &pane, &window, dir.path());
+    record["succession"] = json!(["jarvis-session", "succeed", "--home", "/h/jarvis"]);
+    fleet.set_overseer(record);
+    let state = fleet.read();
+    let runs: RefCell<Vec<Vec<String>>> = RefCell::new(Vec::new());
+    let succeed = |words: &[String]| {
+        runs.borrow_mut().push(words.to_vec());
+        Ok(())
+    };
+    overseer_driver!(server, fleet, below, no_walk, readers, transfers, driver);
+    driver.judges.succeed = &succeed;
+    let key = format!("{} {pane}", server.pid);
+    driver.pass(&state);
+    let second = driver.pass(&state);
+    assert_eq!(
+        lines(&second),
+        vec![format!(
+            "EVENT overseer-dead {pane} window={window} passes=2 succession=on source=process"
+        )]
+    );
+    let third = driver.pass(&state);
+    assert_eq!(
+        lines(&third),
+        vec!["succession owner=jarvis-session succeed --home /h/jarvis".to_owned()]
+    );
+    assert_eq!(
+        driver.baseline.get("overseer-dead", &key),
+        Some("requested")
+    );
+    assert!(transfers.borrow().is_empty(), "no transfer is asked for");
+    assert_eq!(
+        *runs.borrow(),
+        vec![vec![
+            "jarvis-session".to_owned(),
+            "succeed".to_owned(),
+            "--home".to_owned(),
+            "/h/jarvis".to_owned()
+        ]]
+    );
+    driver.pass(&state);
+    assert_eq!(runs.borrow().len(), 1, "run once");
+    let failing = |_: &[String]| Err("exit 1".to_owned());
+    overseer_driver!(server, fleet, below, no_walk, readers2, transfers2, failed);
+    failed.judges.succeed = &failing;
+    failed.pass(&state);
+    failed.pass(&state);
+    let third = failed.pass(&state);
+    assert_eq!(
+        third.failed.as_deref(),
+        Some("succession-owner-failed cause=exit 1")
+    );
+    assert_eq!(failed.baseline.get("overseer-dead", &key), Some("reported"));
+    assert!(transfers2.borrow().is_empty());
 }

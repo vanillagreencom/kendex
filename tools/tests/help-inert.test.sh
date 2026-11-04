@@ -176,10 +176,6 @@ orch	scripts/open-terminal	KEN-1 --harness claude --help
 orch	scripts/orch-env	--help
 orch	scripts/orch-env	-h
 orch	scripts/orch-env	help
-orch	scripts/oversee-watch	--help
-orch	scripts/oversee-watch	-h
-orch	scripts/oversee-watch	help
-orch	scripts/oversee-watch	--repo o/r --item KEN-1 -h
 orch	scripts/reconcile-work-items	--help
 orch	scripts/reconcile-work-items	-h
 orch	scripts/reconcile-work-items	help

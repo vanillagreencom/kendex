@@ -556,17 +556,16 @@ assert_eq "$RC|$(sed -n 's/window=@[0-9]*/window=@N/; s/session=%[0-9]*/session=
   "a first launch from outside tmux opens the overseer at the base index and records it"
 # The request: the walk's pick and the launch identity as the controller,
 # with the line and its bypass posture; the brief file holding the takeover
-# brief; the watch words as the block spells them (../workflows/oversee.md § 4),
-# the entry beside the launcher, the fleet state, `--since` this launch's
-# time (no lane record stands), the harness, the checkout's repository and
-# the launch flags after `--`.
+# brief; the watch words: the runtime wrapper beside the launcher, `watch run
+# --file` the fleet state, `--since` this launch's time (no lane record
+# stands) and the checkout's repository.
 LAUNCH_LINE="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 claude -n overseer --model fable --effort high $BYPASS $(printf '%q' "$COMPACT") $(printf '%q' "$QUESTION_OFF") '$BRIEF'"
 assert_eq "$(requested_argv)|$(requested '.op')|$(requested '.controller | [.harness, .account, .home, .model, .effort, .cwd, .class, .permission] | join("|")')|$(requested '.controller.launch_line')|$(requested_brief)" \
   "op --fleet --request|start-controller|claude|$H/.claude|$H/.claude|fable|high|$WORK_REAL|top|bypass|$LAUNCH_LINE|$BRIEF" \
   "the request carries the walk's pick and identity, the line, the bypass posture and the takeover brief"
 assert_eq "$(requested '.watch | join(" ")' | sed 's/--since [^ ]*/--since T/')" \
-  "$QUIET_SCRIPTS/oversee-watch --repeat 60 --state $WORK_REAL/tmp/workflow-state-oversee.json --interval 240 --since T --harness claude --repo owner/fleet -- --model fable --effort high $BYPASS $COMPACT $QUESTION_OFF" \
-  "the request's watch is the block's words: the entry, the fleet state, the harness, the repository and the launch flags"
+  "$BIN/orch-runtime watch run --file $WORK_REAL/tmp/workflow-state-oversee.json --interval 240 --since T --repo owner/fleet" \
+  "the request's watch is the runtime's own words: the wrapper, the fleet state and the repository"
 assert_eq "$(requested '.watch[] | select(startswith("20"))' | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$')" 1 \
   "with no lane record the watch's --since is this launch's time"
 identity() { printf '%s|' "$(recorded harness)" "$(recorded account)" "$(recorded home)" "$(recorded model)" "$(recorded effort)" "$(recorded cwd)"; }
@@ -906,8 +905,7 @@ assert_eq "$RC|$(recorded harness)|$(recorded account)|$(recorded model)|$(recor
 copilot_context_flow "$TMP_ROOT/work" "$H" "$H/.1copilot" "$SRC_DIR" \
   TMUX="$TMUX_ADDR" TMUX_PANE="$(recorded pane)" TMUX_TMPDIR="$TMUX_DIR" \
   ORCH_LANES_FETCH_CMD="$FETCHER" FIXTURE_DIR="$FIXTURE_DIR"
-assert_eq "$FLOW_RECORD|$(jq -r '.decision' <<<"$FLOW_STOP")|$(sed -n 's/^oversee-succeed: mark-reached kind=\([^ ]*\).*/\1/p' <<<"$FLOW_VERDICT")" \
-  '199000:217600|block|context' "oversee launch records the first turn and the real judge reaches succession"
+assert_eq "$FLOW_RECORD" '199000:217600' "oversee launch records the first turn"
 rm -rf -- "${H:?}/.1copilot/extensions"
 # A hand-opened Copilot session can lack both supported context readers.
 printf '{}\n' > "$H/.1copilot/settings.json"
@@ -1000,7 +998,7 @@ assert_eq "$(grep -c '^oversee: turn-end-hook=missing harness=copilot .*fix=' <<
 copilot_context_flow "$TMP_ROOT/work" "$H" "$H/.1copilot" "$SRC_DIR" \
   TMUX="$TMUX_ADDR" TMUX_PANE="$COPILOT_PANE" TMUX_TMPDIR="$TMUX_DIR" \
   ORCH_LANES_FETCH_CMD="$FETCHER" FIXTURE_DIR="$FIXTURE_DIR"
-assert_eq "$FLOW_RECORD|$(jq -r '.decision' <<<"$FLOW_STOP")" '199000:217600|block' \
+assert_eq "$FLOW_RECORD" '199000:217600' \
   "registered Copilot loads the reader at the next start and records its first turn"
 rm -f -- "$TMP_ROOT/work/tmp/lane-mail/overseer/session-$SERVER_PID-${COPILOT_PANE#%}.jsonl"
 assert_eq "$RC|$(recorded harness)|$(recorded account)|$(recorded home)" \

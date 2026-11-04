@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# The fake Codex CLI for the renewal rows: `codex app-server` reads the
+# runtime's requests on stdin and, at `account/read` with `refreshToken`,
+# does what the files under USAGE_FIXTURE_DIR say. `codex.renewed.json` is
+# copied over `$CODEX_HOME/auth.json` before the answer, as the CLI writes
+# its renewed login; absent, auth.json is left alone, a refresh the CLI
+# could not make, and `codex.says` is then the CLI's own `Failed to refresh
+# token:` message on stderr and `codex.answer` its answer to request 1.
+# `codex.exits` makes it exit at once answering nothing, as a codex with
+# no app-server does. Every run appends `<CODEX_HOME> <working dir>
+# <methods>` to `codex.log` in that directory; any other argument vector is
+# logged and refused. Bash 3.2.
+set -u
+dir="${USAGE_FIXTURE_DIR:?}"
+[ "$*" = app-server ] || { printf '%s %s argv=%s\n' "${CODEX_HOME:-}" "$(pwd)" "$*" >> "$dir/codex.log"; exit 2; }
+[ ! -f "$dir/codex.exits" ] || { printf '%s %s exited\n' "${CODEX_HOME:-}" "$(pwd)" >> "$dir/codex.log"; exit 2; }
+answer='{"id":1,"result":{"account":null,"requiresOpenaiAuth":true}}'
+methods=""
+while IFS= read -r line; do
+  m="${line#*\"method\":\"}"; m="${m%%\"*}"
+  methods="$methods${methods:+,}$m"
+  case "$line" in
+    *'"method":"account/read"'*'"refreshToken":true'*)
+      [ ! -f "$dir/codex.renewed.json" ] || cp -- "$dir/codex.renewed.json" "${CODEX_HOME:?}/auth.json"
+      [ ! -f "$dir/codex.says" ] ||
+        printf '\033[31mERROR\033[0m \033[2mcodex_login::auth::manager\033[0m\033[2m:\033[0m Failed to refresh token: %s\n' "$(cat "$dir/codex.says")" >&2
+      if [ -f "$dir/codex.answer" ]; then cat "$dir/codex.answer"; else printf '%s\n' "$answer"; fi
+      ;;
+  esac
+done
+printf '%s %s %s\n' "${CODEX_HOME:-}" "$(pwd)" "$methods" >> "$dir/codex.log"

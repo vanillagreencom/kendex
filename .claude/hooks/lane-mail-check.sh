@@ -547,6 +547,10 @@ message() { # KEY VALUE [CAUSE]
         printf 'oversee-succeed reads a qualifying-account count of %s against the ORCH_OVERSEER_SUCCESSOR_ACCOUNTS mark of %s, by the rule oversee-succeed --help states. The account this session runs on reads headroom=%s, where none or unreadable is an account nothing measured rather than one spent. Succeed this session yourself onto another account before no account remains.\n%s\n' \
           "$2" "$MARK" "${MARK_HEADROOM:-none}" "$HANDOFF_INSTRUCTION"
         ;;
+      memory=*)
+        printf 'The orch runtime reads the memory of this overseer'\''s harness process at %s percent of its cgroup cap, at or past the ORCH_OVERSEER_MEMORY_PCT mark of %s. Succeed this session yourself before the cap ends it with no handoff.\n%s\n' \
+          "$2" "$MARK" "$HANDOFF_INSTRUCTION"
+        ;;
       question-tool=*)
         if [ "$CALLER" = subagent ]; then
           printf 'this agent works in a lane, and a lane asks its overseer only through lane mail: %s opens a dialog on a pane the overseer cannot see or answer. Stop, and report the question to the lead, which sends it with lane-mail ask.\n' "$2"
@@ -3061,20 +3065,22 @@ overseer_unrecorded() {
   return 0
 }
 
-# The overseer's two marks at its turn end, judged by `oversee-succeed
-# --check-marks` and acted on here. That script decides where both marks sit,
-# which account row is this session's, and what a reading it could not take
-# means; this function reads the key it printed and nothing else, so the
+# The overseer's own marks at its turn end, judged by the orch runtime's
+# `marks --fleet` and acted on here. The runtime decides where every mark
+# sits, which account is this session's, and what a reading it could not
+# take means; this function reads the reply's key and nothing else, so the
 # turn-end refusal and the watch event cannot describe one overseer
-# differently. Who judges the context mark, and when, is
-# the orch skill's Oversee events § Judgement rules, the overseer's
-# own case.
+# differently. Who judges the context mark, and when, is the orch skill's
+# Oversee events § Judgement rules, the overseer's own case. A runtime the
+# install has not built judges nothing here: the turn end passes with the
+# notice, and the watch, which judges the same marks every pass, reports a
+# reached one.
 #
 # Called plainly from handoff_check, whose errexit is live: every status is
 # tested where it is taken.
 overseer_marks() {
-  [ -x "$SCRIPTS/oversee-succeed" ] || refuse_handoff script "$SCRIPTS/oversee-succeed"
-  local decision=null
+  [ -x "$SCRIPTS/orch-runtime" ] || refuse_handoff script "$SCRIPTS/orch-runtime"
+  local decision=null fields
 
   # Bounded by BOUND_BY, for the reason stated where it is set: this judgement
   # reads the one account the overseer session runs on, through the same
@@ -3083,10 +3089,14 @@ overseer_marks() {
   # (up to 10 seconds) and, after a 429 with nothing cached, one sleep of up to
   # 5 seconds and one more usage request.
   JUDGE_RC=0
-  JUDGE=$(${BOUND_BY[@]+"${BOUND_BY[@]}"} "$SCRIPTS/oversee-succeed" --check-marks \
+  JUDGE=$(${BOUND_BY[@]+"${BOUND_BY[@]}"} "$SCRIPTS/orch-runtime" marks --fleet \
     ${JUDGE_ARGS[@]+"${JUDGE_ARGS[@]}"} 2>"$WORK_DIR/judge.err") || JUDGE_RC=$?
   case "$JUDGE_RC" in
     0) ;;
+    69) # the install's own setup-required answer, said once per turn end
+      [ "${WATCH_STANDING:-}" = unbuilt ] || message marks unbuilt "$(cat -- "$WORK_DIR/judge.err")"
+      return 0
+      ;;
     124)
       message marks timeout "the read was abandoned after $ACCOUNT_CEILING seconds"
       return 0
@@ -3097,35 +3107,47 @@ overseer_marks() {
       ;;
   esac
 
-  # The keyed first line is that script's contract, and the three fields below
-  # are what a refusal names. A `mark-reached` line always carries all three;
+  # The reply's result is the runtime's contract, and the three fields below
+  # are what a refusal names. A `mark-reached` reply always carries all three;
   # any other key is a mark that did not fire or a reading it could not take,
-  # and both end the turn — an overseer whose marks nothing could measure must
+  # and both end the turn: an overseer whose marks nothing could measure must
   # still be able to end a turn, exactly as a lane whose account nothing
-  # measured can.
-  JUDGE_LINE=${JUDGE%%"$NL"*}
-  case "$JUDGE_LINE" in
-    'oversee-succeed: mark-reached '*) ;;
-    'oversee-succeed: mark-unmeasured '*)
+  # measured can. The fields are read in one jq run, an absent one as `-`,
+  # since a tab-split read would drop an empty field and shift the rest.
+  JUDGE_LINE=$(printf '%s\n' "$JUDGE" | jq -c '.result // empty' 2>/dev/null) || JUDGE_LINE=""
+  if [ -z "$JUDGE_LINE" ]; then
+    message marks unjudged "$JUDGE"
+    return 0
+  fi
+  fields=$(printf '%s\n' "$JUDGE_LINE" | jq -r '[.key, .kind, .value, .mark, .headroom, .succession, (.context_decision | tojson)]
+    | map(if . == null or . == "" or . == "null" then "-" else tostring end) | join("\u001f")' 2>/dev/null) || fields=""
+  MARK_KEY=${fields%%$'\037'*}; fields=${fields#*$'\037'}
+  MARK_KIND=${fields%%$'\037'*}; fields=${fields#*$'\037'}
+  MARK_VALUE=${fields%%$'\037'*}; fields=${fields#*$'\037'}
+  MARK=${fields%%$'\037'*}; fields=${fields#*$'\037'}
+  MARK_HEADROOM=${fields%%$'\037'*}; fields=${fields#*$'\037'}
+  SUCCESSION=${fields%%$'\037'*}; fields=${fields#*$'\037'}
+  decision=$fields
+  [ "$MARK_KEY" != - ] || MARK_KEY=""
+  [ "$MARK_KIND" != - ] || MARK_KIND=""
+  [ "$MARK_VALUE" != - ] || MARK_VALUE=""
+  [ "$MARK" != - ] || MARK=""
+  [ "$MARK_HEADROOM" != - ] || MARK_HEADROOM=""
+  [ "$decision" != - ] || decision=null
+  [ "$SUCCESSION" != - ] || SUCCESSION=on
+  case "$MARK_KEY" in
+    mark-reached) ;;
+    mark-unmeasured)
       message marks unmeasured "$JUDGE_LINE"
       return 0
       ;;
-    *) return 0 ;;
+    below-mark) return 0 ;;
+    *)
+      message marks unjudged "$JUDGE_LINE"
+      return 0
+      ;;
   esac
-  MARK_KIND=""
-  MARK_VALUE=""
-  SUCCESSION=on
-  for field in $JUDGE_LINE; do
-    case "$field" in
-      kind=*) MARK_KIND=${field#kind=} ;;
-      value=*) MARK_VALUE=${field#value=} ;;
-      mark=*) MARK=${field#mark=} ;;
-      headroom=*) MARK_HEADROOM=${field#headroom=} ;;
-      succession=*) SUCCESSION=${field#succession=} ;;
-      context_decision=*) decision=${field#context_decision=} ;;
-    esac
-  done
-  # A line missing one of the three is an answer this hook cannot act on, and
+  # A reply missing one of the three is an answer this hook cannot act on, and
   # refusing on it would name a figure nothing read.
   if [ -z "$MARK_KIND" ] || [ -z "$MARK_VALUE" ] || [ -z "$MARK" ]; then
     message marks unjudged "$JUDGE_LINE"
@@ -3136,14 +3158,14 @@ overseer_marks() {
   # watch event reports the context mark, so it is refused whatever the
   # setting; the handoff record the refusal names ends
   # it once the succession it also names refuses as off. The setting is read
-  # off the judgement's own line rather than here, so a spelling this hook
-  # would take for `on` and that script refuses cannot exist: that script
+  # off the judgement's own reply rather than here, so a spelling this hook
+  # would take for `on` and the runtime refuses cannot exist: the runtime
   # refuses it, and the refusal is reported under `marks=unjudged`.
   [ "$SUCCESSION" != off ] || [ "$MARK_KIND" = context ] || return 0
   case "$MARK_KIND" in
     context) refuse_judged_handoff "$decision" context "$MARK_VALUE" ;;
     headroom) PCT="$MARK"; refuse_judged_handoff "$decision" headroom "$MARK_VALUE" ;;
-    rate|qualifying) refuse_judged_handoff "$decision" "$MARK_KIND" "$MARK_VALUE" ;;
+    rate|qualifying|memory) refuse_judged_handoff "$decision" "$MARK_KIND" "$MARK_VALUE" ;;
     *) message marks unjudged "$JUDGE_LINE" ;;
   esac
   return 0

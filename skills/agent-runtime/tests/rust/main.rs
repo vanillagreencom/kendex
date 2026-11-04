@@ -692,7 +692,7 @@ fn an_empty_baseline_read_binds_the_one_lead_that_appeared_and_no_baseline_binds
 fn the_codex_fixed_id_lookup_reads_an_unlistable_store_as_unreadable() {
     use agent_runtime::Harness;
     use agent_runtime::reading::Reading;
-    use agent_runtime::session::resume_present;
+    use agent_runtime::session::resume_owner;
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
@@ -700,22 +700,29 @@ fn the_codex_fixed_id_lookup_reads_an_unlistable_store_as_unreadable() {
     std::fs::create_dir_all(&home).unwrap();
     let id = "0f6e2c1a-7d1b-4a0e-9f3c-2b5d8e1f4a6c";
     assert_eq!(
-        resume_present(Harness::Codex, &home, &cwd, id),
+        resume_owner(Harness::Codex, &home, &cwd, id),
         Reading::Gone,
         "no sessions root is a cold home"
     );
     let day = home.join("sessions").join("2026").join("10").join("30");
     std::fs::create_dir_all(&day).unwrap();
     assert_eq!(
-        resume_present(Harness::Codex, &home, &cwd, id),
+        resume_owner(Harness::Codex, &home, &cwd, id),
         Reading::Gone,
         "a root with no rollout for the id is absent"
     );
-    std::fs::write(day.join(format!("rollout-a-{id}.jsonl")), "{}\n").unwrap();
+    std::fs::write(
+        day.join(format!("rollout-a-{id}.jsonl")),
+        format!(
+            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"cwd\":\"{}\",\"parent_thread_id\":null,\"source\":\"cli\"}}}}\n",
+            cwd.display()
+        ),
+    )
+    .unwrap();
     assert_eq!(
-        resume_present(Harness::Codex, &home, &cwd, id),
-        Reading::Live(()),
-        "the rollout named by the id is present"
+        resume_owner(Harness::Codex, &home, &cwd, id),
+        Reading::Live(Some(cwd.clone())),
+        "the rollout named by the id is present and names its directory"
     );
     let root = home.join("sessions");
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o000)).unwrap();
@@ -723,7 +730,7 @@ fn the_codex_fixed_id_lookup_reads_an_unlistable_store_as_unreadable() {
         std::fs::read_dir(&root),
         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied
     );
-    let read = resume_present(Harness::Codex, &home, &cwd, id);
+    let read = resume_owner(Harness::Codex, &home, &cwd, id);
     std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
     assert!(
         denied,

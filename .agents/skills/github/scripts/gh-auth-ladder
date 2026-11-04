@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# gh-auth-ladder: select the GitHub credential a long-running reader inherits,
+# once, before it starts. The ladder, each candidate probed at most once: a
+# selected env token (GH_TOKEN or GITHUB_TOKEN) validated with a bounded
+# `gh api user`; that failing, the keyring once, the stale env token then
+# unset; that failing, the project's GH_BOT_TOKEN from the caller's
+# environment or the project's env files, validated the same way. A probe
+# killed at KENDEX_GITHUB_AUTH_TIMEOUT (status 124) is asked once more before
+# the fallback, since the first call through an egress proxy can be the slow
+# one.
+#
+# Usage:
+#   gh-auth-ladder --project ROOT
+#       ROOT is the project whose env files hold GH_BOT_TOKEN. Prints two
+#       lines, `GH_TOKEN=VALUE` and `GITHUB_TOKEN=VALUE`, the two variables as
+#       the ladder leaves them; an empty VALUE is a variable the caller unsets.
+#       Exit 0 a candidate works; 2 `gh-auth-ladder: auth-failed
+#       service=github` on stderr, nothing works; 3 usage.
+#   gh-auth-ladder --help
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+usage() { sed -n '/^# Usage:/,/^#   gh-auth-ladder --help$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+
+PROJECT=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --project) [[ -n "${2:-}" ]] || { echo 'gh-auth-ladder: usage option=--project' >&2; exit 3; }; PROJECT="$2"; shift 2 ;;
+    --help | -h | help) usage; exit 0 ;;
+    *) echo "gh-auth-ladder: usage option=$1" >&2; exit 3 ;;
+  esac
+done
+[[ -n "$PROJECT" ]] || { echo 'gh-auth-ladder: usage option=--project' >&2; exit 3; }
+
+# shellcheck source=lib/gh-auth.sh
+source "$SCRIPT_DIR/lib/gh-auth.sh"
+
+auth_status() {
+  local status=0
+  kendex_github_auth_status || status=$?
+  if [[ "$status" -eq 124 ]] && kendex_github_has_env_token; then
+    kendex_github_auth_status
+    return
+  fi
+  return "$status"
+}
+
+kendex_github_sanitize_gh_env
+if ! auth_status; then
+  unset GH_TOKEN GITHUB_TOKEN
+  if ! token="$(kendex_github_load_token "$PROJECT" default)" || [[ -z "$token" ]]; then
+    echo 'gh-auth-ladder: auth-failed service=github' >&2
+    exit 2
+  fi
+  export GH_TOKEN="$token"
+  auth_status || { echo 'gh-auth-ladder: auth-failed service=github' >&2; exit 2; }
+fi
+printf 'GH_TOKEN=%s\nGITHUB_TOKEN=%s\n' "${GH_TOKEN:-}" "${GITHUB_TOKEN:-}"

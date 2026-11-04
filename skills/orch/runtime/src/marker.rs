@@ -38,24 +38,20 @@ pub fn item_name(item: &str) -> Result<&str> {
     Ok(item)
 }
 
-/// `<common>/lane-mail/<item in lower case>`.
 pub fn marker_path(common: &Path, item: &str) -> PathBuf {
     common.join("lane-mail").join(item.to_ascii_lowercase())
 }
 
-/// `<common>/lane-launch/<item in lower case>.json`.
 pub fn launch_path(common: &Path, item: &str) -> PathBuf {
     common
         .join("lane-launch")
         .join(format!("{}.json", item.to_ascii_lowercase()))
 }
 
-/// `<worktree git dir>/lane-refresh`.
 pub fn refresh_path(git_dir: &Path) -> PathBuf {
     git_dir.join("lane-refresh")
 }
 
-/// `<root>/tmp/lane-mail/<item>`.
 pub fn mailbox_path(root: &Path, item: &str) -> PathBuf {
     root.join("tmp").join("lane-mail").join(item)
 }
@@ -169,13 +165,6 @@ pub struct Resumed<'a> {
     pub session_id: &'a str,
 }
 
-/// The record as written.
-#[derive(Debug)]
-pub struct Written {
-    pub marker: PathBuf,
-    pub mailbox: PathBuf,
-}
-
 /// Write the launch record for `item` into `worktree`: the marker holding
 /// the root, the mailbox directory, the refresh record for a refresh lane
 /// (removed otherwise, so a relaunch states it again), the launch-fields
@@ -187,12 +176,7 @@ pub struct Written {
     clippy::disallowed_methods,
     reason = "the launch record's writer: the marker, the mailbox directory and the refresh record, written before the window the hook will judge opens"
 )]
-pub fn write(
-    worktree: &Path,
-    item: &str,
-    refresh: bool,
-    resumed: Option<Resumed>,
-) -> Result<Written> {
+pub fn write(worktree: &Path, item: &str, refresh: bool, resumed: Option<Resumed>) -> Result<()> {
     let item = item_name(item)?;
     let Checkout {
         root,
@@ -238,7 +222,7 @@ pub fn write(
     } else {
         remove(&refresh_record)?;
     }
-    Ok(Written { marker, mailbox })
+    Ok(())
 }
 
 /// Whether the context reading at `context` is the resumed session's own:
@@ -396,10 +380,8 @@ mod tests {
         root
     }
 
-    /// Defect: the containment judged after a component was made, or a
-    /// link followed into a place the hook never reads. The table: each
-    /// component as a link or the wrong kind refuses `marker-unsafe` naming
-    /// it and writes nothing; a linked `tmp` is admitted.
+    /// A linked `tmp` is a worktree setup's own and is admitted; every other
+    /// component as a link or the wrong kind refuses before anything is made.
     #[test]
     fn a_linked_or_wrong_kind_component_refuses_before_anything_is_written() {
         let dir = tempfile::tempdir().unwrap();
@@ -442,26 +424,23 @@ mod tests {
         let linked_tmp = dir.path().join("linked-tmp");
         fs::create_dir_all(&linked_tmp).unwrap();
         symlink(&linked_tmp, root.join("tmp")).unwrap();
-        let written = write(&root, "KEN-7", false, None).unwrap();
+        write(&root, "KEN-7", false, None).unwrap();
         assert_eq!(
-            fs::read_to_string(&written.marker).unwrap(),
+            fs::read_to_string(marker_path(&root.join(".git"), "KEN-7")).unwrap(),
             format!("{}\n", fs::canonicalize(&root).unwrap().display())
         );
-        assert!(written.mailbox.is_dir());
-        assert!(written.mailbox.starts_with(root.join("tmp")));
+        let mailbox = fs::canonicalize(mailbox_path(&root, "KEN-7")).unwrap();
+        assert!(mailbox.is_dir());
+        assert!(mailbox.starts_with(fs::canonicalize(&linked_tmp).unwrap()));
     }
 
-    /// Defect: a fresh or switched session inheriting the predecessor's
-    /// context reading, or a resumed one losing it; a refresh record left
-    /// from an earlier launch. The reading stays only across the session
-    /// the resumed identity names; the refresh record follows the launch.
     #[test]
     fn the_context_reading_survives_only_the_resumed_session_and_the_refresh_record_follows_the_launch()
      {
         let dir = tempfile::tempdir().unwrap();
         let root = checkout_in(dir.path());
-        let written = write(&root, "KEN-7", true, None).unwrap();
-        let context = written.mailbox.join(CONTEXT_RECORD);
+        write(&root, "KEN-7", true, None).unwrap();
+        let context = mailbox_path(&root, "KEN-7").join(CONTEXT_RECORD);
         fs::write(
             &context,
             r#"{"harness":"claude","session_id":"s-1","context":5}"#,

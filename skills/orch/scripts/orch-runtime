@@ -38,10 +38,4 @@ if [ ! -x "$binary" ]; then
   printf 'orch-runtime: setup-required key=%s run=%s\n' "$key" "$here/setup" >&2
   exit 69
 fi
-# Under the name ORCH_RUNTIME_NAME gives, else this wrapper's own: the fleet
-# watch's entry, `oversee-watch`, names itself so the binary's command line
-# carries it, the liveness test lib/watch-pid.sh reads (a name `exec -a`
-# hands a script is lost at its shebang). The name is this process's alone.
-name="${ORCH_RUNTIME_NAME:-$0}"
-unset ORCH_RUNTIME_NAME
-exec -a "$name" "$binary" "$@"
+exec "$binary" "$@"

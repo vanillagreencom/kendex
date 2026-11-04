@@ -66,6 +66,7 @@ use crate::watch::hosted::{self, Launch};
 
 mod cache;
 pub mod listing;
+mod renewal;
 mod usage;
 
 pub use listing::{Listing, ProviderRead};
@@ -535,7 +536,8 @@ impl Roster {
     }
 }
 
-/// The listing under `host` where one is named, else under the
+/// The listing under `host` where one is named (`local` this machine's
+/// own reading, whatever provider is configured), else under the
 /// configured provider: the roster, or the cause where it could not be
 /// read whole, for the caller to say in its place (`account-unread`'s
 /// fields).
@@ -544,7 +546,9 @@ pub fn roster(
     host: Option<&str>,
     now: u64,
 ) -> std::result::Result<Roster, String> {
-    let host = host.or(settings.accounts.host.as_deref());
+    let host = host
+        .or(settings.accounts.host.as_deref())
+        .filter(|h| *h != LOCAL && !h.is_empty());
     let host_word = host.unwrap_or(LOCAL);
     let listing =
         listing::list(settings, host, now).map_err(|cause| format!("host={host_word} {cause}"))?;
@@ -1057,7 +1061,7 @@ fn wall_verdict(wall: Option<f64>, max: f64) -> &'static str {
 /// floor, with the three flags as the reader printed them. The credits
 /// count as room on a seat as on any account: they spend no
 /// plan window the overseer needs.
-fn credit_room(row: &AccountRow, floor: f64) -> bool {
+pub(crate) fn credit_room(row: &AccountRow, floor: f64) -> bool {
     let Some(credits) = &row.credits else {
         return false;
     };
@@ -1871,7 +1875,7 @@ pub fn pick_fleet(
         ..req.clone()
     };
     let lane_host = req.host.as_deref().filter(|h| *h != LOCAL && !h.is_empty());
-    let roster = match roster(settings, lane_host, now) {
+    let roster = match roster(settings, req.host.as_deref(), now) {
         Ok(roster) => roster,
         Err(cause) => {
             return PickAnswer::Unjudged {
@@ -1948,6 +1952,8 @@ mod tests {
             host_busy_wait: None,
             claude_usage_url: String::new(),
             codex_usage_url: String::new(),
+            claude_token_url: String::new(),
+            claude_client_id: None,
         }
     }
 

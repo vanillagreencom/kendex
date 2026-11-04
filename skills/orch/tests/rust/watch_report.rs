@@ -329,7 +329,6 @@ fn runner<'a>(world: &World, clock: &'a FakeClock) -> Runner<'a> {
             pane: "none".into(),
             script: "/w/orch-runtime".into(),
             cwd: "/w".into(),
-            args: vec!["watch".into(), "run".into()],
         },
     )
 }
@@ -1636,6 +1635,69 @@ fn an_unreadable_listing_is_a_counted_failure_that_keeps_the_previous_reading() 
     assert_eq!(
         baseline.get("account", &claude_key(&world)),
         Some("ok|room|2026-10-01T00:00:00Z|-")
+    );
+}
+
+/// Defect: an owed item on this machine (`host=local`) in a fleet whose
+/// provider is set judged on the provider's reading: `dated` or unjudged
+/// while the local account has room.
+#[test]
+fn an_owed_local_item_under_a_fleet_provider_is_judged_on_the_local_listing() {
+    let world = World::new();
+    let clock = FakeClock::new();
+    let wall = clock.wall_secs();
+    let mut baseline = Baseline::default();
+    // The provider's reading names the same account as the local one, so
+    // under the provider it is the one reading of that account.
+    let mut provider = account_record("claude", "host", "ok walled 0 2026-10-04T00:00:00Z");
+    provider["config_dir"] = json!(world.home_dir("claude"));
+    let planted: Vec<(String, String)> = world
+        .plant_accounts(
+            Some("provider-x"),
+            &[
+                account_record("claude", "local", "ok room 60 2026-10-01T00:00:00Z"),
+                provider,
+            ],
+            wall,
+        )
+        .into_iter()
+        .chain([("ORCH_LANE_HOST".to_owned(), "provider-x".to_owned())])
+        .collect();
+    let shared = Shared::default();
+    shared.lock().unwrap().tracker = Some(TrackerInventory {
+        read_at: 0,
+        owed: vec![owed((
+            "KEN-1",
+            OwedState::InProgress,
+            "2",
+            "stopped",
+            "local",
+            "claude",
+            "-",
+            None,
+        ))],
+        verifying: Vec::new(),
+        open_unblocked: Vec::new(),
+    });
+    let mut body = heartbeat::body(heartbeat::Context {
+        settings: world.settings_with(&planted),
+        path: world.fleet_path(),
+        max_loops: 25,
+        interval: secs(240),
+        since: None,
+        repos: Vec::new(),
+        gh: world.path().join("gh"),
+        shared,
+        verifying: Lines::default(),
+    });
+    let produced = pass(Duty::Heartbeat, &mut body, &mut baseline, &clock, wall).unwrap();
+    assert_eq!(produced.failed, None);
+    let lines = rendered(&produced);
+    assert!(
+        lines.contains(
+            &"owed KEN-1 state=in-progress priority=2 lane=stopped verdict=queue".to_owned()
+        ),
+        "the local item is judged on the local account's room, not the provider's wall: {lines:?}"
     );
 }
 

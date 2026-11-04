@@ -447,7 +447,6 @@ fn codex_compaction_overrides(args: &[String]) -> String {
     serde_json::json!({"harness": "codex", "settings": settings}).to_string()
 }
 
-/// Quote one word for a POSIX shell.
 pub fn shell_quote(word: &str) -> String {
     if !word.is_empty()
         && word.chars().all(|c| {
@@ -626,11 +625,6 @@ mod tests {
         }
     }
 
-    /// Defect: a permission word missing for its posture, or a launch
-    /// setting dropped, leaves an unattended lane at a prompt nobody
-    /// answers. One row per harness: the bypass word once, the launch
-    /// settings first and the question-tool words present, under the
-    /// bypass posture with no caller word.
     #[test]
     fn every_harness_s_bypass_launch_carries_its_permission_word_and_settings() {
         type Row<'a> = (Harness, Option<&'a str>, &'a [&'a str], &'a [&'a str]);
@@ -691,11 +685,8 @@ mod tests {
         }
     }
 
-    /// Defect: a prompt switch absent from a full-bypass Claude launch, a
-    /// resumed one included, walls the lane at its first flagged removal;
-    /// one present on a narrower grant or a native launch is a claim the
-    /// posture does not make. The switches follow the full bypass, not the
-    /// posture word alone.
+    /// The provider gives the switches no effect outside bypassPermissions
+    /// mode, so they follow the full bypass and not the posture word alone.
     #[test]
     fn claude_s_prompt_switches_ride_a_full_bypass_launch_alone() {
         let rows: [(&str, Permission, &[&str], bool, bool); 5] = [
@@ -750,11 +741,9 @@ mod tests {
         }
     }
 
-    /// Defect: a scrub leaving one identity name lets the child answer as
-    /// the launching session or find its desktop. The rendered line is run
-    /// with every name set on the child shell; none reaches the harness,
-    /// and a Pi launch's own model declaration is set again after the
-    /// clearing.
+    /// The line is run with every scrubbed name set on the child shell: a
+    /// tmux window takes the server's environment, so the builder's map
+    /// proves nothing and the child's own environment is the reading.
     #[test]
     fn every_launch_clears_the_launching_session_s_identity() {
         let dir = tempfile::tempdir().unwrap();
@@ -780,10 +769,9 @@ mod tests {
         }
     }
 
-    /// Defect: a Copilot lane with the shared skills tree off, a placeholder
-    /// token ahead of its stored login, or a folder-trust grant on a command
-    /// that grants no full bypass. The child's environment is read after the
-    /// pane's shell expanded the line, under the HOME the row gives it.
+    /// The skills tree is read after the pane's shell expanded the line,
+    /// under the HOME the row gives the child, since the builder never sees
+    /// a HOME.
     #[test]
     fn copilot_s_environment_names_the_shared_skills_tree_clears_the_token_and_grants_trust_on_a_full_bypass_alone()
      {
@@ -821,11 +809,8 @@ mod tests {
         }
     }
 
-    /// Defect: a Codex lane whose compaction words the hook's reader never
-    /// sees judges the window against a stored default. The variable
-    /// carries the command's own settings as the reader parses them, the
-    /// caller's spelling included, and is empty where the command carries
-    /// none; no other harness carries it.
+    /// The JSON is pinned as the hook's reader parses it, keys sorted, the
+    /// caller's own `-c` spellings included.
     #[test]
     fn a_codex_launch_hands_its_compaction_overrides_to_the_hook_s_reader() {
         let mut off = bare(Harness::Codex);
@@ -875,11 +860,9 @@ mod tests {
         }
     }
 
-    /// Defect: a brief path holding a space, an apostrophe or `$` quoted
-    /// twice or not at all reaches the harness as several words, or with
-    /// the shell's expansion in place of the file's text. The line is run
-    /// through a recorder that prints its argv; the last word is the file's
-    /// text, whatever it holds.
+    /// A recorder prints its argv, so the brief is read as the harness
+    /// would receive it, after the pane's shell and the command
+    /// substitution.
     #[test]
     fn the_brief_path_is_quoted_once_whatever_it_holds() {
         let dir = tempfile::tempdir().unwrap();
@@ -923,10 +906,8 @@ mod tests {
         );
     }
 
-    /// Defect: a resume that opens a fresh session, or a Copilot resume
-    /// whose line is read as the session id. Each harness's own resume
-    /// form, the brief after it; Copilot's brief behind `-i` on a fresh
-    /// launch too.
+    /// Copilot's `--resume` takes an optional value, so its brief must ride
+    /// `-i` and never follow the id as a bare word.
     #[test]
     fn the_resume_forms_continue_each_harness_s_own_session_with_the_brief_after() {
         let rows: [(Harness, &[&str]); 4] = [

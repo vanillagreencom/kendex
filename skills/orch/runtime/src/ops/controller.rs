@@ -194,10 +194,9 @@ pub struct StartController {
     pub controller: Pending,
     #[serde(default)]
     pub brief_file: Option<PathBuf>,
-    /// The fleet watch's launch line: the `oversee-watch`
-    /// entry and its arguments, the words the workflow's launch block hands
-    /// the job launcher after its own (`workflows/oversee.md` § 4). The
-    /// effect launches them detached through that launcher once the
+    /// The fleet watch's launch words: `orch-runtime watch run --file
+    /// <fleet state>` with its flags, as the request names them. The effect
+    /// launches them detached through its own job launcher once the
     /// controller's lane is confirmed, before the publication, and records
     /// the job on the controller record as `overseer.watch`; a launch that
     /// refuses or never claims leaves the start `unconfirmed` naming it. Left

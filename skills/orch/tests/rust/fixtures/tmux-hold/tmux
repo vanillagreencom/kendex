@@ -18,7 +18,7 @@
 # format naming `pane_pid`, never the mode read that precedes a paste)
 # answers only once /proc/<pane pid>/comm reads that word, so the launch's
 # first pane-field read after it typed its line sees the harness the line
-# exec'd, never the shell still running it (decision 124i (34)). A pane the
+# exec'd, never the shell still running it. A pane the
 # test opened itself is not in the file and is never gated.
 verb=""
 target=""
@@ -64,8 +64,14 @@ for arg in "$@"; do
   if [ "$arg" = "${TMUX_HOLD_VERB:-new-window}" ]; then
     if [ -n "${TMUX_HOLD_FIFO:-}" ]; then
       [ -z "${TMUX_HOLD_MARK:-}" ] || : > "$TMUX_HOLD_MARK"
-      # Blocks until the test writes to the FIFO, then falls through to exec.
-      cat "$TMUX_HOLD_FIFO" >/dev/null
+      # Waits for the test's line on the FIFO, then falls through to exec.
+      # The read-write open never blocks and the read gives up after
+      # HOLD_BOUND_SECS, so a row that dies before its release leaves no reader.
+      [ -p "$TMUX_HOLD_FIFO" ] || { echo "tmux-hold: hold-not-fifo path=$TMUX_HOLD_FIFO" >&2; exit 2; }
+      exec 9<>"$TMUX_HOLD_FIFO"
+      read -r -t "${HOLD_BOUND_SECS:-120}" -u 9 _ \
+        || { echo "tmux-hold: hold-unreleased path=$TMUX_HOLD_FIFO bound=${HOLD_BOUND_SECS:-120}" >&2; exit 124; }
+      exec 9<&-
     fi
     break
   fi

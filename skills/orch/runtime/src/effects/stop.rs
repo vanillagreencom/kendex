@@ -215,7 +215,9 @@ impl Close<'_> {
                         reading: ProcessReading::Harness { .. },
                         ..
                     },
-                    State::Idle,
+                    // A walled harness takes no turn either: the wall route
+                    // retires it on this ground before its replacement.
+                    State::Idle | State::Walled { .. },
                 )) => {}
                 Reading::Live((foreground, state)) => {
                     return Ok(Err((

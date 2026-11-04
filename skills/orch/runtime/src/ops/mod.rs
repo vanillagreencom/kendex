@@ -456,7 +456,7 @@ pub(crate) fn reread<R>(attempt: impl Fn() -> Result<R>) -> Result<R> {
 /// only while their owner still holds the intent, and the job's claim, whose
 /// first store can meet the launcher's sidecar write that lands the instant
 /// the job starts.
-fn owner_conditional(request: &Request) -> bool {
+fn reread_on_record_changed(request: &Request) -> bool {
     match request {
         Request::RecordProgress(r) => r.while_owner.is_some(),
         Request::RecordOutcome(r) => r.while_owner.is_some(),
@@ -518,7 +518,7 @@ fn apply_interleaved(
         state::store(path, &snapshot, &doc, locking)?;
         Ok(Applied { kind, report })
     };
-    if owner_conditional(request) {
+    if reread_on_record_changed(request) {
         // The owner the transition compared is the one the store commits
         // against: a snapshot another writer moved between the read and the
         // store is read again, so a claim that landed in the gap is answered

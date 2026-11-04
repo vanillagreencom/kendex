@@ -6,10 +6,10 @@
 //! claude`: each is named for the harness it stands in for and run by bash
 //! directly, so the kernel records the harness's process name for the pane's
 //! foreground process, which the judge requires before it reads the pane
-//! idle (decision 60). They are selected through the `ORCH_HARNESS_BINARIES`
+//! idle. They are selected through the `ORCH_HARNESS_BINARIES`
 //! product setting for a custom install path. The tmux server each test
 //! makes lives on its own socket under a `TempDir`, reads no configuration
-//! file and runs a named pane shell (decision 69); the test ends it with
+//! file and runs a named pane shell; the test ends it with
 //! `tmux -S <sock> kill-server` on that socket alone and never signals by
 //! name.
 #![allow(
@@ -52,7 +52,7 @@ fn a_launch_confirmed_records_the_running_lane_with_its_pane_identity() {
     assert!(launch["pane"].as_str().unwrap().starts_with('%'));
     assert_eq!(launch["server"], server.pid);
     // The identity is the pane's foreground process, the stub itself, which
-    // the kernel names for the harness (decision 60).
+    // the kernel names for the harness.
     let pid = launch["pid"].as_u64().expect("the pane process pid") as u32;
     assert_eq!(launch["pane"].as_str().unwrap(), {
         let pane = launch["pane"].as_str().unwrap();
@@ -5744,13 +5744,7 @@ fn marker_of(root: &Path, item: &str) -> Option<String> {
     }
 }
 
-/// Defect: a launch that opens its window before the lane's launch record
-/// stands, so a crash between the two, or a hook that fires before the
-/// record, leaves a lane its mail never reaches; and a launch that ended
-/// there answering nothing about the record. The effect is held at its
-/// `new-window` call: the marker, the lane's mailbox and the refresh
-/// record already stand; the process is killed there; the reconcile of
-/// the intent left at `opening` reads the marker back on its outcome.
+/// The effect is held at its `new-window` call and killed there.
 #[test]
 fn a_launch_writes_its_marker_and_mailbox_before_the_window_and_a_crash_between_reads_them_back() {
     let dir = tempfile::tempdir().unwrap();
@@ -5931,14 +5925,6 @@ impl HostedLaunch {
     }
 }
 
-/// Defect: a hosted lane launched by a window alone, its provider never
-/// asked to make the worktree, or its launch record on the host trusted
-/// rather than read; a marker the host lacks left unwritten. The launch
-/// runs the provider's verbs in order under the record's host, writes the
-/// marker where the host has none and reads it back, then opens the fleet
-/// window on the ssh client, whose one typed line starts the harness under
-/// the provider's prefix, and confirms the harness through it; the record
-/// runs with the host, its kind and the worktree the host named.
 #[test]
 fn a_hosted_launch_runs_the_providers_verbs_and_opens_its_window_over_ssh() {
     let dir = tempfile::tempdir().unwrap();
@@ -5956,6 +5942,11 @@ fn a_hosted_launch_runs_the_providers_verbs_and_opens_its_window_over_ssh() {
         lane["mail_root"],
         world.host(),
         "the worktree the host named"
+    );
+    assert_eq!(
+        lane["checkout"],
+        world.runner.state_dir().display().to_string(),
+        "the checkout the launch ran from stays beside the host's root"
     );
     assert_eq!(lane["window"], "fleet:KEN-H");
     assert_eq!(lane["session_id"], Value::Null);
@@ -6019,10 +6010,6 @@ fn a_hosted_launch_runs_the_providers_verbs_and_opens_its_window_over_ssh() {
     effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
 }
 
-/// Defect: a hosted lane launched onto a host where nothing built the orch
-/// runtime its workflow calls, read as launched. The launch record the
-/// provider wrote names no runtime: the launch fails by name before any
-/// window, the provider's verbs having run up to that read.
 #[test]
 fn a_hosted_lane_whose_runtime_is_unbuilt_is_refused_before_any_window() {
     let dir = tempfile::tempdir().unwrap();
@@ -6051,5 +6038,223 @@ fn a_hosted_lane_whose_runtime_is_unbuilt_is_refused_before_any_window() {
     assert!(
         std::fs::metadata(world.tools.join("ssh.log")).is_err(),
         "nothing dialled"
+    );
+}
+
+#[test]
+fn a_hold_fixture_whose_row_never_releases_it_ends_within_its_bound() {
+    use std::io::Write;
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let fifo = |name: &str| {
+        let path = root.join(name);
+        mkfifo(&path);
+        path.display().to_string()
+    };
+    let run_dir = root.join("run");
+    std::fs::create_dir(&run_dir).unwrap();
+    std::fs::write(run_dir.join("start"), "").unwrap();
+    let codex_home = root.join("codex-home");
+    std::fs::create_dir(&codex_home).unwrap();
+    mkfifo(&codex_home.join("rollout-gate"));
+    let path = |name: &str| root.join(name).display().to_string();
+    // Each hold fixture with the words and settings that bring it to its
+    // hold; the real program it would run after a release is `true`.
+    type Case = (&'static str, Vec<String>, Vec<(&'static str, String)>);
+    let cases: Vec<Case> = vec![
+        (
+            "tmux-hold/tmux",
+            vec!["new-window".into()],
+            vec![
+                ("TMUX_HOLD_FIFO", fifo("tmux.fifo")),
+                ("TMUX_REAL", "true".into()),
+            ],
+        ),
+        (
+            "git-hold/git",
+            vec!["worktree".into(), "remove".into(), "lane".into()],
+            vec![
+                ("GIT_HOLD_FIFO", fifo("git.fifo")),
+                ("GIT_REAL", "true".into()),
+            ],
+        ),
+        (
+            "lane-mail-hold/lane-mail",
+            vec!["send".into()],
+            vec![
+                ("LANE_MAIL_HOLD_FIFO", fifo("lane-mail.fifo")),
+                ("LANE_MAIL_REAL", "true".into()),
+            ],
+        ),
+        (
+            "kill-hold/kill",
+            vec!["-TERM".into(), "1".into()],
+            vec![
+                ("KILL_HOLD_FIFO", fifo("kill.fifo")),
+                ("KILL_HOLD_LOG", path("kill.log")),
+            ],
+        ),
+        (
+            "linear-hold/linear.sh",
+            vec!["issue".into()],
+            vec![
+                ("LINEAR_HOLD_FIFO", fifo("linear.fifo")),
+                ("LINEAR_HOLD_LOG", path("linear-hold.log")),
+            ],
+        ),
+        (
+            "stub-turns/claude",
+            vec![],
+            vec![("STUB_TURNS_HOLD", fifo("turns.fifo"))],
+        ),
+        (
+            "stub-codex-gated/codex",
+            vec![],
+            vec![("CODEX_HOME", codex_home.display().to_string())],
+        ),
+        (
+            "dev-validate-child/dev-validate-run",
+            vec![
+                "--child".into(),
+                "--run-dir".into(),
+                run_dir.display().to_string(),
+            ],
+            vec![("DEV_VALIDATE_CHILD_HOLD", fifo("validate.fifo"))],
+        ),
+    ];
+    let started: Vec<_> = cases
+        .iter()
+        .map(|(fixture, args, env)| {
+            let mut command = program(fixtures().join(fixture));
+            command
+                .args(args)
+                .envs(env.iter().map(|(name, value)| (*name, value)))
+                .env("HOLD_BOUND_SECS", "1")
+                .current_dir(root)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .process_group(0);
+            let mut child = command.spawn().unwrap();
+            // The turn stub holds on the line it reads; the others ignore it.
+            let mut stdin = child.stdin.take().unwrap();
+            let _ = stdin.write_all(b"turn\n");
+            (*fixture, child, stdin)
+        })
+        .collect();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut ended = Vec::new();
+    let mut held = Vec::new();
+    for (fixture, mut child, stdin) in started {
+        let status = loop {
+            match child.try_wait().unwrap() {
+                Some(status) => break Some(status),
+                None if Instant::now() >= deadline => break None,
+                None => std::thread::sleep(Duration::from_millis(20)),
+            }
+        };
+        match status {
+            Some(status) => ended.push((fixture, status.code())),
+            None => {
+                // The leader is unreaped, so its group id still names this
+                // row's group; the group holds the fixture's own children.
+                let _ = program("kill")
+                    .args(["-KILL", "--", &format!("-{}", child.id())])
+                    .status();
+                let _ = child.wait();
+                held.push(fixture);
+            }
+        }
+        drop(stdin);
+    }
+    assert!(
+        held.is_empty(),
+        "held past the bound with no writer: {held:?}"
+    );
+    for (fixture, code) in ended {
+        assert_eq!(code, Some(124), "{fixture} ends as its hold unreleased");
+    }
+}
+
+/// A second launch on the record the first left: the provider is asked to
+/// reuse the worktree it holds, whatever session the record binds.
+#[test]
+fn a_hosted_relaunch_asks_the_provider_to_reuse_its_worktree() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+    let world = HostedLaunch::new(&server, dir.path(), record);
+    let mut fleet = world.runner.fleet();
+    let mut prior = lane("KEN-H", "stopped", &world.runner, Value::Null);
+    prior["host"] = json!(PROVIDER_PATH);
+    prior["kind"] = json!("ssh");
+    prior["launched_at"] = json!("2026-01-29T15:20:00Z");
+    fleet["lanes"] = json!([prior]);
+    world.runner.write_fleet(&fleet);
+    let account = world.runner.state_dir().display().to_string();
+    let host = world.host();
+    let mut answers: Value = serde_json::from_str(
+        &std::fs::read_to_string(world.scripts.join("lane-host.json")).unwrap(),
+    )
+    .unwrap();
+    answers[format!(
+        "create --item KEN-H --repo o/r --harness claude --account {account} --relaunch"
+    )] = json!({"stdout": format!("ssh-target=lane.example\tpath={host}\tremote-prefix=exec bash -c\n")});
+    std::fs::write(
+        world.scripts.join("lane-host.json"),
+        serde_json::to_string(&answers).unwrap(),
+    )
+    .unwrap();
+    let report = effect_report(&world.runner.op_fleet(&world.request()));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert!(
+        world
+            .calls()
+            .iter()
+            .any(|c| c.contains(" create ") && c.ends_with(" --relaunch")),
+        "the standing record's worktree is reused: {:?}",
+        world.calls()
+    );
+    effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+}
+
+/// A Pi lane billing a Claude seat runs under Pi's own root; the seat
+/// reaches the launch through its own variable alone.
+#[test]
+fn a_pi_lane_on_a_claude_seat_keeps_pis_own_root_beside_the_seat() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-record");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    let seat = dir.path().join("claude-seat");
+    std::fs::create_dir_all(&seat).unwrap();
+    let mut request = launch_request("KEN-PI", runner.state_dir());
+    request["harness"] = json!("pi");
+    request["model"] = json!("pi-claude/fable");
+    request["account"] = json!(seat.display().to_string());
+    let binaries = format!("pi={}", fixtures().join("stub-record").join("pi").display());
+    let out = runner.op_fleet_env(&request, &[("ORCH_HARNESS_BINARIES", binaries.as_str())]);
+    let report = effect_report(&out);
+    assert!(
+        matches!(
+            report["intent"]["outcome"].as_str(),
+            Some("confirmed" | "unconfirmed")
+        ),
+        "{report}"
+    );
+    let recorded: Value = serde_json::from_str(
+        &std::fs::read_to_string(runner.state_dir().join("launch-record.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        recorded["env"]["CLAUDE_CONFIG_DIR"],
+        seat.display().to_string()
+    );
+    assert_eq!(
+        recorded["env"]["PI_CODING_AGENT_DIR"], "",
+        "Pi's own root is not the seat: {recorded}"
     );
 }

@@ -431,7 +431,7 @@ open_context_row() { # [OPEN_TERMINAL]
     LANE_MAIL_ITEM=CC-1 PATH="$BIN:$PATH" TMUX=fake TMUX_PANE=%1
 }
 open_context_row
-assert_eq "$FLOW_RECORD|$(jq -r '.decision' <<<"$FLOW_STOP")" '199000:217600|block' \
+assert_eq "$FLOW_RECORD" '199000:217600' \
   "open-terminal's installed reader reaches the first turn end"
 stage "$TMP_ROOT/drop-install"
 mutate_file "$TMP_ROOT/drop-install/scripts/open-terminal" \

@@ -155,7 +155,6 @@ impl World {
                 pane: "none".into(),
                 script: "/w/orch-runtime".into(),
                 cwd: "/w".into(),
-                args: vec!["watch".into(), "run".into()],
             },
         );
         mail::register_duty(&mut runner, self.duty());
@@ -419,8 +418,6 @@ fn a_send_that_dies_before_its_receipt_repeated_under_its_operation_id_lands_one
         };
         let kill = Command::new("kill").args(["-9", &pid]).output().unwrap();
         assert!(kill.status.success(), "{}", stderr(&kill));
-        // The orphaned reader is released so nothing of the row outlives it.
-        release_hold(&fifo, secs(10), || "the stand-in's FIFO reader".into());
         send.join().unwrap()
     });
     assert!(

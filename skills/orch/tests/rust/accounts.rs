@@ -4781,3 +4781,790 @@ fn an_excluded_and_a_retired_account_are_listed_with_their_flags_and_refused_by_
     assert_eq!(retired["record"]["retired"], json!(true));
     assert_eq!(retired["record"]["retire_date"], json!(today));
 }
+
+/// Defect: an entry naming `local` in a fleet whose provider is set
+/// judged on the provider's reading of the same account: the walk
+/// refuses the local account unmeasured or walled while it has room.
+#[test]
+fn an_explicit_local_request_under_a_fleet_provider_is_judged_on_the_local_listing() {
+    let mut world = World::new(&[
+        ("ORCH_LANE_PREFERENCE", "claude@local:fable:high"),
+        ("ORCH_LANE_HOST", "provider-x"),
+    ]);
+    std::os::unix::fs::symlink(
+        fixtures().join("kendex-launch/kendex"),
+        world.path().join("bin/kendex"),
+    )
+    .unwrap();
+    world.write_fleet(vec![], None);
+    let local = measured("aclaude", 20, 5);
+    let mut provider = through_host(measured("aclaude", 100, 100));
+    provider["config_dir"] = json!(world.dir("aclaude"));
+    world.plant_host_listing("provider-x", &[local, provider]);
+    let mut command = world.command();
+    command.args(["accounts", "walk", "--fleet"]);
+    let result = World::reply(command);
+    assert_eq!(result["answer"], json!("lane"), "{result}");
+    assert_eq!(result["chosen"]["host"], json!("local"), "{result}");
+    assert_eq!(
+        result["chosen"]["account"].as_str(),
+        Some(world.dir("aclaude").as_str()),
+        "the local account on its own reading, not the provider's: {result}"
+    );
+    assert!(
+        !world.host_log().iter().any(|l| l.ends_with(" accounts")),
+        "the provider's rows are not read for a local request: {:?}",
+        world.host_log()
+    );
+}
+
+// --- token renewal -------------------------------------------------------------------------------
+
+/// The credentials file of the planted local account `alias`.
+fn credential_file(world: &World, harness: &str, alias: &str) -> PathBuf {
+    let name = if harness == "claude" {
+        ".credentials.json"
+    } else {
+        "auth.json"
+    };
+    PathBuf::from(world.dir(alias)).join(name)
+}
+
+/// A Claude login written over the planted one: the access token
+/// `token-aclaude` expiring at `expires_ms`, `refresh` as the refresh token
+/// where given, the refresh login ending at `login_ends_ms` where given.
+/// The text written is returned, so a row can read the file back whole.
+fn write_claude_login(
+    world: &World,
+    expires_ms: u64,
+    refresh: Option<&str>,
+    login_ends_ms: Option<u64>,
+) -> String {
+    let mut oauth = json!({
+        "accessToken": "token-aclaude",
+        "expiresAt": expires_ms,
+        "subscriptionType": "max",
+    });
+    if let Some(refresh) = refresh {
+        oauth["refreshToken"] = json!(refresh);
+    }
+    if let Some(ends) = login_ends_ms {
+        oauth["refreshTokenExpiresAt"] = json!(ends);
+    }
+    let text = json!({"claudeAiOauth": oauth}).to_string();
+    std::fs::write(credential_file(world, "claude", "aclaude"), &text).unwrap();
+    text
+}
+
+fn base64url(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let n = chunk.iter().fold(0u32, |n, b| (n << 8) | u32::from(*b)) << (8 * (3 - chunk.len()));
+        for i in 0..=chunk.len() {
+            out.push(TABLE[((n >> (18 - 6 * i)) & 63) as usize] as char);
+        }
+    }
+    out
+}
+
+/// A Codex access token: a JWT whose `exp` claim is `exp`.
+fn jwt(exp: u64) -> String {
+    format!(
+        "{}.{}.sig",
+        base64url(b"{\"alg\":\"RS256\"}"),
+        base64url(format!("{{\"exp\":{exp}}}").as_bytes())
+    )
+}
+
+/// The Codex login written over the planted one: `access` expiring as its
+/// claim says, `refresh` beside it where given.
+fn write_codex_login(world: &World, access: &str, refresh: Option<&str>) {
+    let mut tokens = json!({"access_token": access, "account_id": "acct-1"});
+    if let Some(refresh) = refresh {
+        tokens["refresh_token"] = json!(refresh);
+    }
+    std::fs::write(
+        credential_file(world, "codex", "acodex"),
+        json!({"tokens": tokens}).to_string(),
+    )
+    .unwrap();
+}
+
+/// A file under the world's fixture directory, the one the fake `curl`
+/// and the fake `codex` read.
+fn plant_fixture(world: &World, name: &str, text: &str) {
+    let fixtures = world.path().join("fixtures");
+    std::fs::create_dir_all(&fixtures).unwrap();
+    std::fs::write(fixtures.join(name), text).unwrap();
+}
+
+/// The fake Codex CLI first on the world's path, and the fixture
+/// directory it logs into.
+fn plant_codex_stub(world: &World) {
+    std::fs::create_dir_all(world.path().join("fixtures")).unwrap();
+    std::os::unix::fs::symlink(
+        fixtures().join("codex-renew/codex"),
+        world.path().join("bin/codex"),
+    )
+    .unwrap();
+}
+
+fn codex_log(world: &World) -> Vec<String> {
+    std::fs::read_to_string(world.path().join("fixtures/codex.log"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The record of `alias` in the listing `accounts roster` prints.
+fn listed_row(world: &World, alias: &str) -> Value {
+    let roster = world.roster();
+    roster["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["alias"] == json!(alias))
+        .map(|r| r["record"].clone())
+        .unwrap_or_else(|| panic!("{alias}: {roster}"))
+}
+
+/// A world holding one Claude account whose access token expired an hour
+/// ago, its refresh token `refresh-aclaude`, no usage record (so a renewed
+/// login fetches its usage) and the client id configured.
+fn expired_claude_world() -> World {
+    let mut world = World::new(&[("ORCH_LANES_CLAUDE_CLIENT_ID", "client-1")]);
+    world.write_fleet(Vec::new(), None);
+    world.plant_listing(&[measured("aclaude", 20, 5)]);
+    std::fs::remove_file(world.record_path("claude", "aclaude")).unwrap();
+    write_claude_login(&world, (now() - 3600) * 1000, Some("refresh-aclaude"), None);
+    std::fs::create_dir_all(world.path().join("fixtures")).unwrap();
+    world
+}
+
+/// The token endpoint's answer for `refresh-aclaude`: a renewed login
+/// `renewed-token` with the rotated refresh token, and the usage body
+/// the renewed token reads.
+fn plant_renewal(world: &World, status: Option<&str>) {
+    world.plant_answer(
+        "refresh-aclaude",
+        "token",
+        &json!({"access_token": "renewed-token", "refresh_token": "rotated-refresh", "expires_in": 3600}),
+        status,
+    );
+    world.plant_answer(
+        "renewed-token",
+        "usage",
+        &json!({"seven_day": {"utilization": 20, "resets_at": stamp(now() + 7 * 86_400)}}),
+        None,
+    );
+}
+
+/// Defect: a token endpoint's refusal read as a dead login, so a 429 or a
+/// 503 sends the operator to sign in again; the refused POST posted again
+/// on the next listing inside the answer's own window; a 2xx carrying no
+/// token, or a lifetime of zero, writing a live token under a past expiry,
+/// so every later listing rotates the refresh token the harness holds.
+/// Each answer reads its own status with the code in the detail, the
+/// refusal is recorded for the Retry-After or the default window with the
+/// next listing posting nothing, and no refusal touches the file.
+#[test]
+fn a_claude_token_refusal_reads_its_status_by_http_answer_and_parks_the_lane_for_its_window() {
+    let cases = [
+        (
+            "429 900",
+            json!({"error": {"type": "rate_limit_error", "message": "Rate limited."}}),
+            "rate_limited",
+            900,
+        ),
+        (
+            "503",
+            json!({"error": {"type": "api_error", "message": "Overloaded"}}),
+            "unreachable",
+            300,
+        ),
+        (
+            "400",
+            json!({"error": {"type": "invalid_grant", "message": "Refresh token not found"}}),
+            "expired",
+            300,
+        ),
+        ("401", json!({}), "expired", 300),
+        (
+            "200",
+            json!({"error": {"type": "invalid_request", "message": "bad body"}}),
+            "expired",
+            300,
+        ),
+        (
+            "200",
+            json!({"access_token": "renewed-token", "refresh_token": "rotated-refresh"}),
+            "expired",
+            300,
+        ),
+        (
+            "200",
+            json!({"access_token": "renewed-token", "refresh_token": "rotated-refresh", "expires_in": 0}),
+            "expired",
+            300,
+        ),
+    ];
+    for (status, body, expected, window) in cases {
+        let world = expired_claude_world();
+        let planted =
+            std::fs::read_to_string(credential_file(&world, "claude", "aclaude")).unwrap();
+        world.plant_answer("refresh-aclaude", "token", &body, Some(status));
+        let row = listed_row(&world, "aclaude");
+        assert_eq!(row["status"], json!(expected), "{status} {body}: {row}");
+        assert_eq!(row["refreshable"], json!(false), "{status}: {row}");
+        assert_eq!(row["headroom_pct"], Value::Null, "{status}: {row}");
+        let detail = row["detail"].as_str().unwrap();
+        assert!(
+            detail.starts_with("access token expired and could not be renewed: "),
+            "{status}: {detail}"
+        );
+        let code = status.split(' ').next().unwrap();
+        if code != "200" {
+            assert!(
+                detail.contains(&format!("HTTP {code}")),
+                "{status}: {detail}"
+            );
+        }
+        assert_eq!(world.curl_log(), vec!["token refresh-aclaude"], "{status}");
+        assert_eq!(
+            std::fs::read_to_string(credential_file(&world, "claude", "aclaude")).unwrap(),
+            planted,
+            "{status}: the file is untouched by a refusal"
+        );
+        let record: Value = serde_json::from_str(
+            &std::fs::read_to_string(world.record_path("claude", "aclaude")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            record["refusal"]["endpoint"],
+            json!("token"),
+            "{status}: {record}"
+        );
+        assert_eq!(record["refusal"]["code"], json!(code), "{status}: {record}");
+        assert_eq!(
+            record["refusal"]["expires_at"].as_u64().unwrap()
+                - record["fetched_at"].as_u64().unwrap(),
+            window,
+            "{status}: {record}"
+        );
+        let again = listed_row(&world, "aclaude");
+        assert_eq!(again["status"], json!(expected), "{status}: {again}");
+        assert!(again["usage_age_s"].is_number(), "{status}: {again}");
+        assert_eq!(
+            world.curl_log(),
+            vec!["token refresh-aclaude"],
+            "{status}: nothing is posted inside the window"
+        );
+    }
+}
+
+/// Defect: a renewal this machine cannot make reading as a dead login (no
+/// client id), or posting to the endpoint with nothing to renew with (no
+/// refresh token); a POST that never reached the endpoint recorded as a
+/// refusal, so the next listing never posts again; a renewed login's
+/// refresh token on an argument vector, or written without its new
+/// expiry. The two refusals this machine raises post nothing and record
+/// nothing; the unreached endpoint reads `unreachable` with no record, and
+/// the next listing renews: the file holds the new token, the rotated
+/// refresh token and an expiry one lifetime on, the lane reads its usage
+/// through the new token and is marked `refreshable`.
+#[test]
+fn a_claude_renewal_this_machine_cannot_make_names_its_cause_and_posts_nothing() {
+    let mut world = World::new(&[]);
+    world.write_fleet(Vec::new(), None);
+    world.plant_listing(&[measured("aclaude", 20, 5)]);
+    std::fs::remove_file(world.record_path("claude", "aclaude")).unwrap();
+    write_claude_login(&world, (now() - 3600) * 1000, Some("refresh-aclaude"), None);
+    plant_renewal(&world, None);
+    let row = listed_row(&world, "aclaude");
+    assert_eq!(row["status"], json!("error"), "{row}");
+    assert!(
+        row["detail"]
+            .as_str()
+            .unwrap()
+            .contains("ORCH_LANES_CLAUDE_CLIENT_ID"),
+        "{row}"
+    );
+    assert_eq!(
+        world.curl_log(),
+        Vec::<String>::new(),
+        "no client id: nothing is posted"
+    );
+    assert!(
+        std::fs::metadata(world.record_path("claude", "aclaude")).is_err(),
+        "no client id: nothing is recorded"
+    );
+
+    let world = expired_claude_world();
+    write_claude_login(&world, (now() - 3600) * 1000, None, None);
+    plant_renewal(&world, None);
+    let row = listed_row(&world, "aclaude");
+    assert_eq!(row["status"], json!("expired"), "{row}");
+    assert!(
+        row["detail"].as_str().unwrap().contains("no refresh token"),
+        "{row}"
+    );
+    assert_eq!(
+        world.curl_log(),
+        Vec::<String>::new(),
+        "no refresh token: nothing is posted"
+    );
+    assert!(std::fs::metadata(world.record_path("claude", "aclaude")).is_err());
+
+    let world = expired_claude_world();
+    let row = listed_row(&world, "aclaude");
+    assert_eq!(row["status"], json!("unreachable"), "{row}");
+    assert_eq!(row["refreshable"], json!(false), "{row}");
+    assert_eq!(world.curl_log(), vec!["token refresh-aclaude"]);
+    assert!(
+        std::fs::metadata(world.record_path("claude", "aclaude")).is_err(),
+        "an unreached endpoint answered no window to record"
+    );
+    plant_renewal(&world, None);
+    let before = now();
+    let row = listed_row(&world, "aclaude");
+    assert_eq!(row["status"], json!("ok"), "{row}");
+    assert_eq!(row["refreshable"], json!(true), "{row}");
+    assert_eq!(row["headroom_pct"], json!(80), "{row}");
+    assert_eq!(
+        world.curl_log(),
+        vec![
+            "token refresh-aclaude",
+            "token refresh-aclaude",
+            "usage renewed-token"
+        ],
+        "the next listing posts again and reads usage through the new token"
+    );
+    let file: Value = serde_json::from_str(
+        &std::fs::read_to_string(credential_file(&world, "claude", "aclaude")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        file["claudeAiOauth"]["accessToken"],
+        json!("renewed-token"),
+        "{file}"
+    );
+    assert_eq!(
+        file["claudeAiOauth"]["refreshToken"],
+        json!("rotated-refresh"),
+        "{file}"
+    );
+    assert_eq!(
+        file["claudeAiOauth"]["subscriptionType"],
+        json!("max"),
+        "{file}"
+    );
+    let expires = file["claudeAiOauth"]["expiresAt"].as_u64().unwrap();
+    assert!(
+        (before + 3600) * 1000 <= expires && expires <= (now() + 3600 + 60) * 1000,
+        "the new expiry is one lifetime on: {expires}"
+    );
+    let argv = std::fs::read_to_string(world.path().join("fixtures/curl.argv")).unwrap();
+    assert!(
+        !argv.contains("refresh-aclaude"),
+        "no refresh token on an argument vector: {argv}"
+    );
+    assert!(argv.contains("--data-binary @-"), "{argv}");
+    assert!(argv.contains("-A claude-cli/"), "{argv}");
+    let mode = std::os::unix::fs::PermissionsExt::mode(
+        &std::fs::metadata(credential_file(&world, "claude", "aclaude"))
+            .unwrap()
+            .permissions(),
+    );
+    assert_eq!(
+        mode & 0o777,
+        0o600,
+        "the rewritten file is the owner's alone"
+    );
+}
+
+/// Defect: a live access token under an ended refresh login seated, or
+/// renewed through a login the endpoint has already ended; a login with
+/// hours left refused. Ended at the listing's instant, the account reads
+/// `expired` with nothing posted, the named pick refuses it `unmeasured`
+/// and the chooser seats none; with the login live the account is
+/// measured; with the access token expired and the login ended, no POST
+/// is made; a file stating no login end is renewed.
+#[test]
+fn a_live_access_token_under_an_ended_refresh_login_is_refused_without_a_post() {
+    let live = (now() + 365 * 86_400) * 1000;
+    let world = expired_claude_world();
+    world.plant_answer(
+        "token-aclaude",
+        "usage",
+        &json!({"seven_day": {"utilization": 20, "resets_at": stamp(now() + 7 * 86_400)}}),
+        None,
+    );
+    plant_renewal(&world, None);
+    write_claude_login(&world, live, Some("refresh-aclaude"), Some(now() * 1000));
+    let row = listed_row(&world, "aclaude");
+    assert_eq!(row["status"], json!("expired"), "{row}");
+    assert_eq!(row["refreshable"], json!(false), "{row}");
+    assert_eq!(
+        world.curl_log(),
+        Vec::<String>::new(),
+        "an ended login posts nothing"
+    );
+    let by_name = world.pick(&named(&world.dir("aclaude"), claude(None)));
+    assert_eq!(by_name["answer"], json!("unmeasured"), "{by_name}");
+    assert_eq!(by_name["exit"], json!(5), "{by_name}");
+    assert_eq!(by_name["record"]["status"], json!("expired"), "{by_name}");
+    let chooser = world.pick(&claude(None));
+    assert_eq!(chooser["answer"], json!("none"), "{chooser}");
+    assert_eq!(chooser["exit"], json!(3), "{chooser}");
+    assert_eq!(chooser["record"]["unmeasured"], json!(1), "{chooser}");
+
+    write_claude_login(
+        &world,
+        live,
+        Some("refresh-aclaude"),
+        Some((now() + 3600) * 1000),
+    );
+    let row = listed_row(&world, "aclaude");
+    assert_eq!(row["status"], json!("ok"), "{row}");
+    assert_eq!(row["refreshable"], json!(false), "{row}");
+    assert_eq!(world.curl_log(), vec!["usage token-aclaude"]);
+
+    write_claude_login(
+        &world,
+        (now() - 3600) * 1000,
+        Some("refresh-aclaude"),
+        Some((now() - 1) * 1000),
+    );
+    let row = listed_row(&world, "aclaude");
+    assert_eq!(row["status"], json!("expired"), "{row}");
+    assert_eq!(
+        world.curl_log(),
+        vec!["usage token-aclaude"],
+        "an expired token under an ended login is not renewed"
+    );
+
+    write_claude_login(&world, (now() - 3600) * 1000, Some("refresh-aclaude"), None);
+    let row = listed_row(&world, "aclaude");
+    assert_eq!(row["status"], json!("ok"), "{row}");
+    assert_eq!(row["refreshable"], json!(true), "{row}");
+    assert_eq!(row["headroom_pct"], json!(80), "{row}");
+    assert_eq!(
+        world.curl_log(),
+        vec!["usage token-aclaude", "token refresh-aclaude"],
+        "a login this listing renewed is the same account: its record is served"
+    );
+}
+
+/// Defect: two listings renewing one account at once, each posting the
+/// refresh token, so the endpoint rotates it twice and the loser's file
+/// holds a retired token that signs the account out of every tool sharing
+/// it. Two listings started together on an expired account post the grant
+/// once: the one that waited takes the live token the other wrote, both
+/// read the usage through it, and the file holds the rotated refresh
+/// token.
+#[test]
+fn two_renewers_under_the_credentials_lock_rotate_the_refresh_token_once() {
+    let world = expired_claude_world();
+    plant_renewal(&world, None);
+    plant_fixture(&world, "delay", "2\n");
+    let children: Vec<std::process::Child> = (0..2)
+        .map(|_| {
+            let mut command = world.command();
+            command
+                .args(["accounts", "roster"])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            command.spawn().unwrap()
+        })
+        .collect();
+    for child in children {
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+        let row = reply["result"]["rows"][0]["record"].clone();
+        assert_eq!(row["status"], json!("ok"), "{reply}");
+        assert_eq!(row["refreshable"], json!(true), "{reply}");
+        assert_eq!(row["headroom_pct"], json!(80), "{reply}");
+    }
+    let log = world.curl_log();
+    assert_eq!(
+        log.iter().filter(|l| l.starts_with("token ")).count(),
+        1,
+        "one grant for two renewers: {log:?}"
+    );
+    assert_eq!(
+        log.iter().filter(|l| l.starts_with("usage ")).count(),
+        1,
+        "one usage request, the waiter served from the record: {log:?}"
+    );
+    let file: Value = serde_json::from_str(
+        &std::fs::read_to_string(credential_file(&world, "claude", "aclaude")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        file["claudeAiOauth"]["refreshToken"],
+        json!("rotated-refresh"),
+        "{file}"
+    );
+    assert_eq!(
+        file["claudeAiOauth"]["accessToken"],
+        json!("renewed-token"),
+        "{file}"
+    );
+}
+
+/// Defect: the credentials file rewritten in place, so a rotation that
+/// stops between the endpoint's answer and the file's end leaves a torn
+/// file the harness cannot read. The directory loses its write bit while
+/// the grant is in flight: the rotated token cannot land, the account
+/// reads `error` naming the file, and the file it held is whole.
+#[test]
+fn a_rotation_that_cannot_land_its_file_leaves_the_old_credentials_whole() {
+    use std::os::unix::fs::PermissionsExt;
+    let world = expired_claude_world();
+    let planted = std::fs::read_to_string(credential_file(&world, "claude", "aclaude")).unwrap();
+    plant_renewal(&world, None);
+    plant_fixture(&world, "delay", "3\n");
+    let mut command = world.command();
+    command
+        .args(["accounts", "roster"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let child = command.spawn().unwrap();
+    let started = std::time::Instant::now();
+    while !world.curl_log().iter().any(|l| l.starts_with("token ")) {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(20),
+            "the grant was never posted: {:?}",
+            world.curl_log()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let dir = PathBuf::from(world.dir("aclaude"));
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o500)).unwrap();
+    let out = child.wait_with_output().unwrap();
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let row = reply["result"]["rows"][0]["record"].clone();
+    assert_eq!(row["status"], json!("error"), "{reply}");
+    assert!(
+        row["detail"].as_str().unwrap().contains("could not be"),
+        "{reply}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(credential_file(&world, "claude", "aclaude")).unwrap(),
+        planted,
+        "the old file is whole"
+    );
+    assert_eq!(world.curl_log(), vec!["token refresh-aclaude"]);
+    let leftovers: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.ends_with(".tmp"))
+        .collect();
+    assert_eq!(leftovers, Vec::<String>::new());
+}
+
+/// Defect: a Codex refresh-token grant of the runtime's own, which races
+/// every Codex session on the account; the CLI's failure read as a dead
+/// login whatever it said; a token the CLI left expired reported as live;
+/// the CLI asked under another home or directory, or asked at all with no
+/// refresh token or no CLI. The renewal runs `codex app-server` in the
+/// account's directory under its `CODEX_HOME` and reads `auth.json` back:
+/// a renewed file measures the account; each failure the CLI logged, or
+/// answered, reads the status its words earn with the remedy in the
+/// detail; no refresh token and no CLI on the path never start it.
+/// One Codex renewal case: whether the CLI renews, what it says on stderr
+/// and answers to request 1, whether it exits at once, the status and the
+/// detail fragments the account reads, and the log's last word.
+type CodexCase<'a> = (
+    bool,
+    Option<&'a str>,
+    Option<&'a str>,
+    bool,
+    &'a str,
+    Vec<&'a str>,
+    &'a str,
+);
+
+#[test]
+fn a_codex_renewal_is_the_cli_s_own_run_and_its_auth_json_read_back_is_the_verdict() {
+    let revoked = "Your access token could not be refreshed. Please log out and sign in again.";
+    let offline = "error sending request for url (https://auth.openai.com/oauth/token)";
+    let unknown = "500 Internal Server Error: upstream failure";
+    let error_answer = "{\"error\":{\"code\":-32603,\"message\":\"workspace routing discovery failed\"},\"id\":1}\n";
+    let asked = "initialize,initialized,account/read";
+    let cases: [CodexCase; 8] = [
+        (true, None, None, false, "ok", vec![], asked),
+        (
+            false,
+            Some(revoked),
+            None,
+            false,
+            "expired",
+            vec!["codex could not renew it: Your access token", "codex login"],
+            asked,
+        ),
+        (
+            false,
+            Some(offline),
+            None,
+            false,
+            "unreachable",
+            vec!["codex could not reach the token endpoint: error sending"],
+            asked,
+        ),
+        (
+            false,
+            None,
+            Some(error_answer),
+            false,
+            "unreachable",
+            vec!["codex answered the renewal with an error: workspace routing discovery failed"],
+            asked,
+        ),
+        (
+            false,
+            Some(unknown),
+            Some(error_answer),
+            false,
+            "unreachable",
+            vec![
+                "codex could not renew it: 500 Internal Server Error: upstream failure; codex answered the renewal with an error",
+            ],
+            asked,
+        ),
+        (
+            false,
+            Some(unknown),
+            None,
+            false,
+            "expired",
+            vec![
+                "codex could not renew it: 500 Internal Server Error: upstream failure; run codex once with CODEX_HOME=",
+            ],
+            asked,
+        ),
+        (
+            false,
+            None,
+            None,
+            false,
+            "expired",
+            vec!["codex did not renew it; run codex once with CODEX_HOME="],
+            asked,
+        ),
+        (
+            false,
+            None,
+            None,
+            true,
+            "expired",
+            vec!["codex did not renew it; run codex once with CODEX_HOME="],
+            "exited",
+        ),
+    ];
+    let mut codex_row = measured("acodex", 30, 0);
+    codex_row["harness"] = json!("codex");
+    let renewed_auth = json!({"tokens": {
+        "access_token": jwt(now() + 36_000), "refresh_token": "rotated-refresh", "account_id": "acct-1"}})
+    .to_string();
+    for (renewed, says, answer, exits, expected, fragments, last) in cases {
+        let mut world = World::new(&[]);
+        world.write_fleet(Vec::new(), None);
+        world.plant_listing(&[codex_row.clone()]);
+        write_codex_login(&world, &jwt(now() - 60), Some("refresh-codex"));
+        plant_codex_stub(&world);
+        if renewed {
+            plant_fixture(&world, "codex.renewed.json", &renewed_auth);
+        }
+        if let Some(says) = says {
+            plant_fixture(&world, "codex.says", says);
+        }
+        if let Some(answer) = answer {
+            plant_fixture(&world, "codex.answer", answer);
+        }
+        if exits {
+            plant_fixture(&world, "codex.exits", "");
+        }
+        let dir = world.dir("acodex");
+        let row = listed_row(&world, "acodex");
+        assert_eq!(row["status"], json!(expected), "{says:?} {answer:?}: {row}");
+        assert_eq!(row["refreshable"], json!(renewed), "{row}");
+        if renewed {
+            assert_eq!(row["headroom_pct"], json!(70), "{row}");
+            assert_eq!(
+                world.curl_log(),
+                Vec::<String>::new(),
+                "the record is served: {row}"
+            );
+        } else {
+            assert_eq!(row["headroom_pct"], Value::Null, "{row}");
+            let detail = row["detail"].as_str().unwrap();
+            assert!(
+                detail.starts_with("access token expired and could not be renewed: "),
+                "{detail}"
+            );
+            for fragment in fragments {
+                assert!(detail.contains(fragment), "{fragment:?} in {detail:?}");
+            }
+            assert_eq!(
+                detail.contains(&format!("CODEX_HOME={dir}")),
+                expected == "expired",
+                "a dead login names its remedy, an untested one none: {detail}"
+            );
+        }
+        assert_eq!(codex_log(&world), vec![format!("{dir} {dir} {last}")]);
+    }
+
+    let mut world = World::new(&[]);
+    world.write_fleet(Vec::new(), None);
+    world.plant_listing(&[codex_row.clone()]);
+    write_codex_login(&world, &jwt(now() - 60), None);
+    plant_codex_stub(&world);
+    plant_fixture(&world, "codex.renewed.json", &renewed_auth);
+    let row = listed_row(&world, "acodex");
+    assert_eq!(row["status"], json!("expired"), "{row}");
+    assert!(
+        row["detail"]
+            .as_str()
+            .unwrap()
+            .contains("there is no refresh token in"),
+        "{row}"
+    );
+    assert_eq!(
+        codex_log(&world),
+        Vec::<String>::new(),
+        "the CLI is never started"
+    );
+
+    let mut world = World::new(&[]);
+    world.write_fleet(Vec::new(), None);
+    world.plant_listing(&[codex_row]);
+    write_codex_login(&world, &jwt(now() - 60), Some("refresh-codex"));
+    let without = world.path().join("bin-without-codex");
+    std::fs::create_dir_all(&without).unwrap();
+    std::os::unix::fs::symlink(fixtures().join("usage-curl/curl"), without.join("curl")).unwrap();
+    let git = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|dir| dir.join("git"))
+        .find(|git| std::fs::metadata(git).is_ok())
+        .expect("a git on this process's path");
+    std::os::unix::fs::symlink(git, without.join("git")).unwrap();
+    let mut command = world.command();
+    command.args(["accounts", "roster"]).env("PATH", &without);
+    let roster = World::reply(command);
+    let row = roster["rows"][0]["record"].clone();
+    assert_eq!(row["status"], json!("expired"), "{roster}");
+    assert!(
+        row["detail"]
+            .as_str()
+            .unwrap()
+            .contains("no codex command is on PATH"),
+        "{roster}"
+    );
+    assert_eq!(codex_log(&world), Vec::<String>::new());
+}

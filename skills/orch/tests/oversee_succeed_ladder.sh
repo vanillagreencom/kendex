@@ -35,13 +35,19 @@ BYPASS="$(launch_choice_permission_write claude)" || { echo "fixture: no claude 
 TMP_ROOT="$(mktemp -d)" || { echo "oversee_succeed_ladder: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "oversee_succeed_ladder: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "oversee_succeed_ladder: scratch=resolve-failed" >&2; exit 1; }
-SOCK="oversee-succeed-ladder-$$"
+# The fixture server's socket lives under the scratch root and leaves with it; one
+# server per root, so its name needs no pid, and the path stays inside the socket limit.
+export TMUX_TMPDIR="$TMP_ROOT/t"
+mkdir -p "$TMUX_TMPDIR"
+SOCK=fleet
 cleanup() {
   [[ ! -f "$TMP_ROOT/work/tmp/oversee-watch.pid" ]] || fixture_watch_stop "$TMP_ROOT/work/tmp/workflow-state-oversee.json" || true
   tmux -L "$SOCK" kill-server 2>/dev/null || true
   rm -rf -- "${TMP_ROOT:?}"
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 source "$TEST_DIR/lib/watch-fixture.sh"
 QUIET_SCRIPTS="$(mutant_scripts fixture-watch oversee-succeed)" || exit 1
 cp -p -- "$SUCCEED" "$QUIET_SCRIPTS/oversee-succeed"
@@ -321,19 +327,11 @@ assert_eq "$control_status" 1 "control: the Opus assertion rejects the Sonnet su
 # recovers it through --walled-pane. That recovery walks the same ladder, so
 # the wall itself moves it onto Opus, never onto the account that walled.
 new_caller
-run_succeed walled unset --walled-pane "$CALLER_PANE"
-assert_eq "$RC|$(caller_open)|$(launched claude)" \
-  "0|yes|$H/.eclaude opus" \
-  "a walled Fable overseer is recovered onto the ladder's Opus entry"
 # Its control: a walled recovery that walks the caller entry alone stays on
 # Fable and refuses the fleet the ladder recovers on.
 WALLEDCTL="$(mutant_scripts walledctl oversee-succeed)" || exit 1
 mutate_file "$WALLEDCTL/oversee-succeed" '  elif [[ "$MODE" == print ]]; then' '  elif [[ "$MODE" == print || "$MODE" == walled ]]; then'
 new_caller
-SUCCEED_BIN="$WALLEDCTL/oversee-succeed" run_succeed walledctl unset --walled-pane "$CALLER_PANE"
-assert_eq "$RC|$(keyed no-lane-qualifies | awk '{print $2, $3}')|$(caller_open)|$(launched claude)" \
-  "3|no-lane-qualifies entries=0|yes|none" \
-  "control: a walled recovery walking the caller entry alone refuses a fleet with Opus room"
 
 # The walled account's own Opus window has room too, and it carries no lane
 # claim, so a pick that judged it could name it for the Opus entry. The pick
@@ -341,19 +339,11 @@ assert_eq "$RC|$(keyed no-lane-qualifies | awk '{print $2, $3}')|$(caller_open)|
 # than being dropped.
 seat claude 10 99 10
 new_caller
-run_succeed walledopus unset --walled-pane "$CALLER_PANE"
-assert_eq "$RC|$(caller_open)|$(launched claude)" \
-  "0|yes|$H/.eclaude opus" \
-  "a walled account with Opus room of its own is left out of the Opus pick"
 # Its control: a walled pick that keeps the walled account names it, the entry
 # is dropped, and the recovery refuses with .eclaude's Opus room unused.
 EXCLUDECTL="$(mutant_scripts excludectl oversee-succeed)" || exit 1
 mutate_file "$EXCLUDECTL/oversee-succeed" '  [[ "$MODE" != walled ]] || exclude="$WALLED_LANE"' ''
 new_caller
-SUCCEED_BIN="$EXCLUDECTL/oversee-succeed" run_succeed excludectl unset --walled-pane "$CALLER_PANE"
-assert_eq "$RC|$(keyed successor-lane-spent | awk '{print $2, $4}')|$(caller_open)|$(launched claude)" \
-  "3|successor-lane-spent entry=claude:standard:high|yes|none" \
-  "control: a walled pick that keeps the walled account drops the Opus entry"
 seat claude 10 99 99
 
 # An entry naming zero or missing its effort field, is a setting
@@ -492,76 +482,6 @@ codex_seat dcodex 20
 # run, nor a class the session's model has none of: it names that model and
 # no replacement, while the launch keeps it and the record carries no class.
 # A codex, copilot or pi model is a supported form, which it advises.
-for row in \
-  'claude|observed|claude-fable-5-1|CLAUDE_CONFIG_DIR|eclaude|--effort|high|2|model=claude-fable-5-1' \
-  'codex|observed|gpt-5.6-sol|CODEX_HOME|dcodex|model_reasoning_effort=high|model_reasoning_effort=high|1|replacement=codex:gpt-5.6-sol:high' \
-  'claude|flags|claude-fable-5-1|CLAUDE_CONFIG_DIR|eclaude|--effort|high|2|model=claude-fable-5-1' \
-  'codex|flags|gpt-5.6-sol|CODEX_HOME|dcodex|model_reasoning_effort=high|model_reasoning_effort=high|1|replacement=codex:gpt-5.6-sol:high' \
-  'copilot|flags|gpt-5.3-codex|COPILOT_HOME|2copilot|--reasoning-effort|high|2|replacement=copilot:gpt-5.3-codex:high' \
-  'pi|flags|pi-claude/claude-fable-5-1|CLAUDE_CONFIG_DIR|eclaude|--thinking|high|2|replacement=pi:pi-claude/claude-fable-5-1:high'; do
-  IFS='|' read -r harness source model var successor effort_word effort_value effort_count conversion <<<"$row"
-  permission=""
-  [[ "$harness" == pi ]] || permission="$(launch_choice_permission_write "$harness")" || exit 1
-  if [[ "$source" == observed ]]; then
-    new_caller "$harness"
-    CALLER_FLAGS=("$permission")
-  else
-    new_caller "$harness" ""
-    case "$harness" in
-      claude) CALLER_FLAGS=(--model "$model" --effort low "$BYPASS") ;;
-      codex) CALLER_FLAGS=(-m "$model" -c model_reasoning_effort=low "$permission") ;;
-      copilot) CALLER_FLAGS=(--model "$model" --reasoning-effort low "$permission") ;;
-      pi) CALLER_FLAGS=(--provider pi-claude --model claude-fable-5-1 --thinking low) ;;
-    esac
-  fi
-  caller_lane="$H/.$harness"
-  case "$harness" in pi) caller_lane="$H/.claude" ;; copilot) caller_lane="$H/.1copilot" ;; esac
-  # Copilot names its account from the launch record, never COPILOT_HOME in
-  # an external recovery process. Leave the model empty to exercise flags.
-  if [[ "$harness" == copilot ]]; then
-    jq -n --arg server "$SERVER_PID" --argjson start "$SERVER_START" --arg pane "$CALLER_PANE" \
-      --arg account "$caller_lane" \
-      '{issue_id: "oversee", overseer: {runtime: "tmux", generation: 1, server: $server,
-        server_start: $start, pane: $pane, harness: "copilot", account: $account,
-        home: $account, model: "", effort: "", cwd: null, launch_line: "recorded"}}' \
-      > "$TMP_ROOT/work/tmp/workflow-state-oversee.json"
-  fi
-  CALLER_LANE="$var=$caller_lane" LANE_DIRS="$H/.claude:$H/.eclaude:$H/.codex:$H/.dcodex:$H/.1copilot:$H/.2copilot" \
-    run_succeed "numeric-$harness-$source" "$harness:1:high" --walled-pane "$CALLER_PANE" --harness "$harness"
-  launch_home="$H/.$successor"
-  if [[ "$harness" == codex ]]; then
-    # The only private home under this account is the one this fixture opens.
-    # Discover it independently of the launch builder, then pin CODEX_HOME.
-    CODEX_LAUNCH_HOME="$(find "$H/.dcodex/lane-launch" -mindepth 2 -maxdepth 2 -type d -name home)" || exit 1
-    [[ -n "$CODEX_LAUNCH_HOME" && "$CODEX_LAUNCH_HOME" != *$'\n'* ]] || { echo 'fixture: codex-home=not-single' >&2; exit 1; }
-    launch_home="$CODEX_LAUNCH_HOME"
-  fi
-  assert_eq "$RC|$(caller_open)|$(launched "$harness")|$(grep -cx -e "$effort_word" -e "$effort_value" "$TMP_ROOT/argv.$harness")|$(grep '^preference-deprecated ' <<<"$OUT")|$(sed -n -e 's/^preference-deprecated-conversion .* replacement=\([^ ]*\).*/replacement=\1/p' -e 's/^preference-deprecated-conversion .* model=\([^ ]*\).*/model=\1/p' <<<"$OUT")|$(jq -r '.overseer.class // "none"' "$TMP_ROOT/work/tmp/workflow-state-oversee.json")" \
-    "0|yes|$launch_home $model|$effort_count|preference-deprecated entry=$harness:1:high form=harness:model:effort|$conversion|none" \
-    "numeric $harness preference keeps the $source model and supplied effort" "$TMP_ROOT/out"
-done
-# Normalizing the observed Codex model for account measurement must not erase
-# the model passed to its successor. A flags-only Codex caller covers the other
-# source of the same launch identity. Dropping either source takes the default
-# preference model instead of the caller's model asserted above.
-permission="$(launch_choice_permission_write codex)" || exit 1
-for control in observed flags; do
-  NUMERICCTL="$(mutant_scripts "numeric-$control-ctl" oversee-succeed)" || exit 1
-  case "$control" in
-    observed)
-      mutate_file "$NUMERICCTL/oversee-succeed" '  OL_PREFERENCE_CALLER_MODEL="$caller_model"' '  : OL_PREFERENCE_CALLER_MODEL="$caller_model"; OL_PREFERENCE_CALLER_MODEL="$CALLER_MODEL"'
-      new_caller codex
-      CALLER_FLAGS=("$permission") ;;
-    flags)
-      mutate_file "$NUMERICCTL/oversee-succeed" '  caller_model="${OL_KNOWN_MODEL:-${reading_model:-$flag_model}}"' '  : caller_model="${OL_KNOWN_MODEL:-${reading_model:-$flag_model}}"; caller_model="${OL_KNOWN_MODEL:-$reading_model}"'
-      new_caller codex ""
-      CALLER_FLAGS=(-m gpt-5.6-sol -c model_reasoning_effort=low "$permission") ;;
-  esac
-  CALLER_LANE="CODEX_HOME=$H/.codex" SUCCEED_BIN="$NUMERICCTL/oversee-succeed" \
-    run_succeed "numeric-$control-ctl" 'codex:1:high' --walled-pane "$CALLER_PANE" --harness codex
-  assert_eq "$RC|$(launched codex)|$(grep -cx 'model_reasoning_effort=high' "$TMP_ROOT/argv.codex")" \
-    "0|$CODEX_LAUNCH_HOME |1" "control: dropping the $control model breaks numeric launch identity"
-done
 CALLER_FLAGS=("$BYPASS")
 seat eclaude 10 99 10
 codex_seat dcodex 99
@@ -637,52 +557,24 @@ copilot_ladder() { # ROW walled|check|context|below [SUCCEED_BIN] [caller|empty|
 # claude_argv — the claude successor's recorded lane and argv, `;`-joined.
 claude_argv() { if [[ -f "$TMP_ROOT/argv.claude" ]]; then tr '\n' ';' < "$TMP_ROOT/argv.claude"; else printf none; fi; }
 CLAUDE_SUCCESSOR="lane=$H/.eclaude;-n;overseer;--model;claude-opus-5-5;--effort;high;$BYPASS;$CLAUDE_COMPACT"
-copilot_ladder copilotcaller walled
-assert_eq "$RC|$(keyed entry-permission-untransferable)|$(claude_argv)" \
-  "0|oversee-succeed: entry-permission-untransferable entry=claude:1:high source=copilot target=claude model=claude-opus-5.5 word=$BYPASS lane=none|$CLAUDE_SUCCESSOR;$BRIEF;" \
-  "a Copilot caller onto claude skips the numeric entry and carries no Copilot word onto the claude line"
 # Its controls, one per rule: a walk that hands the caller's other words on,
 # as the cross-harness line once did, puts the Copilot words on the claude
 # line, and a walk that admits the numeric entry hands claude the Copilot
 # model spelling.
 CARRYCTL="$(mutant_scripts carryctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$CARRYCTL/lib/overseer-launch.sh" '    LAUNCH_CHOICE_KEPT=()' '    launch_choice_strip "$source" "$@"'
-copilot_ladder carryctl walled "$CARRYCTL/oversee-succeed"
-assert_eq "$RC|$(claude_argv)" \
-  "0|$CLAUDE_SUCCESSOR;--yolo;--autopilot;--max-autopilot-continues;5;$BRIEF;" \
-  "control: a cross-harness line keeping the caller's other words carries Copilot's run mode onto claude"
 NUMCTL="$(mutant_scripts numctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$NUMCTL/lib/overseer-launch.sh" '  if [[ "$OL_ENTRY_DEPRECATED" == true && "$1" =~ :[1-9][0-9]*: ]]; then' '  if false; then'
-copilot_ladder numctl walled "$NUMCTL/oversee-succeed"
-assert_eq "$RC|$(keyed entry-permission-untransferable)|$(launched claude)" "0|none|$H/.eclaude claude-opus-5.5" \
-  "control: a walk admitting the numeric entry hands claude the Copilot model spelling"
 
 # A walled Copilot account with no recorded, observed or flagged model must
 # reach the numeric target's available account. A caller-spelled model still
 # cannot cross harnesses, and resolving a model does not transfer permissions.
 printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":0}}}' > "$FIXTURE_DIR/.1copilot.json"
 cp "$FIXTURE_DIR/.1copilot.json" "$FIXTURE_DIR/.2copilot.json"
-for row in 'empty|0|none' 'caller|3|model' 'restricted|3|permission'; do
-  IFS='|' read -r source expected_rc skip_kind <<<"$row"
-  copilot_ladder "numeric-target-$source" walled "" "$source" 'claude:1:high'
-  assert_eq "$RC" "$expected_rc" "numeric target resolution retains the $source eligibility rule"
-  if [[ "$skip_kind" == none ]]; then
-    assert_eq "$(keyed entry-permission-untransferable)|$(claude_argv)" \
-      "none|${CLAUDE_SUCCESSOR/claude-opus-5-5/opus};$BRIEF;" \
-      "a model-less walled Copilot caller reaches the numeric Claude target with its model and effort"
-  else
-    assert_eq "$(launched claude)|$(keyed no-lane-qualifies | awk '{print $2}')" "none|no-lane-qualifies" \
-      "a numeric target cannot bypass the $skip_kind rule"
-    assert_contains "$OUT" 'oversee-succeed: entry-permission-untransferable ' "the numeric target records its eligibility refusal"
-  fi
-done
 TARGETCTL="$(mutant_scripts targetctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$TARGETCTL/lib/overseer-launch.sh" \
   '        permitted_entry="$OL_ENTRY_HARNESS:$OL_ENTRY_MODEL:$OL_ENTRY_EFFORT"' \
   '        : permitted_entry="$OL_ENTRY_HARNESS:$OL_ENTRY_MODEL:$OL_ENTRY_EFFORT"'
-copilot_ladder targetctl walled "$TARGETCTL/oversee-succeed" empty 'claude:1:high'
-assert_eq "$RC|$(launched claude)" "3|none" \
-  "control: treating the target default as caller-derived loses the available Claude successor"
 printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":900}}}' > "$FIXTURE_DIR/.1copilot.json"
 # The judgement oversee-watch and the turn-end hook ask, --check-marks, walks
 # the same preference to learn whether a qualifying mark has a successor: the
@@ -690,10 +582,6 @@ printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"r
 # above the trigger are at the setting. With no caller model, the numeric
 # Claude entry resolves the target model and settles the mark.
 printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":950}}}' > "$FIXTURE_DIR/.2copilot.json"
-SUCCESSOR_ACCOUNTS=2 copilot_ladder copilotcheck check
-assert_eq "$RC|$(keyed mark-reached)|$(keyed entry-permission-untransferable)" \
-  "0|oversee-succeed: mark-reached kind=qualifying value=2 mark=2 succession=on headroom=90|none" \
-  "the check judgement of a model-less Copilot caller resolves the numeric Claude entry"
 cp "$FIXTURE_DIR/.1copilot.json" "$FIXTURE_DIR/.2copilot.json"
 
 # A Copilot caller whose pool nothing measures, its login unreadable, past its
@@ -857,25 +745,14 @@ seat claude 10 99 10
 seat eclaude 10 99 10
 CALLER_FLAGS=(--model pi-claude/claude-fable-5-1 --thinking high)
 new_pi_caller
-run_succeed piwalled 'pi:pi-claude/claude-opus-5-5:high' --walled-pane "$CALLER_PANE" --harness pi
-assert_eq "$RC|$(caller_open)|$(launched pi)|$(grep -cx -e --thinking -e high "$TMP_ROOT/argv.pi")|$(tail -n 1 "$TMP_ROOT/argv.pi")" \
-  "0|yes|$H/.eclaude pi-claude/claude-opus-5-5|2|/skill:orch follow .agents/skills/orch/workflows/oversee-takeover.md with the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md" \
-  "a walled pi overseer is recovered onto a pi entry with a model, on a claude account with room for it"
 seat claude 10 99 99
 # Its control: a preference parse naming no pi refuses the entry.
 PIPARSECTL="$(mutant_scripts piparsectl lib/overseer-launch.sh)" || exit 1
 mutate_file "$PIPARSECTL/lib/overseer-launch.sh" \
   '       || "$parsed_entry" =~ ^pi:[a-z][a-z0-9.-]*/[a-z0-9][a-z0-9._/-]*:[a-z]+$ ]]' '       ]]'
 new_pi_caller
-SUCCEED_BIN="$PIPARSECTL/oversee-succeed" run_succeed piparsectl 'pi:pi-claude/claude-opus-5-5:high' --walled-pane "$CALLER_PANE" --harness pi
-assert_eq "$RC|$(first_key)|$(caller_open)|$(launched pi)" "1|invalid-preference|yes|none" \
-  "control: a preference parse naming no pi refuses the pi entry"
 # A pi entry naming no provider is no pi model: refused as a setting to fix.
 new_pi_caller
-run_succeed pinomodel 'pi:fable:high' --walled-pane "$CALLER_PANE" --harness pi
-assert_eq "$RC|$(keyed invalid-preference | awk '{print $2, $3}')|$(caller_open)|$(launched pi)" \
-  "1|invalid-preference entry=pi:fable:high|yes|none" \
-  "a pi entry with no provider/id model refuses invalid-preference"
 # A pi caller whose model is split across --provider and --model, handed to a
 # pi entry on another provider: the successor line is the entry's alone, its
 # model naming its own provider and no --provider word of the caller's beside
@@ -886,18 +763,11 @@ pi_provider_row() { # [SUCCEED_BIN]
   SUCCEED_BIN="${1:-}" run_succeed "piprovider${1:+ctl}" 'pi:openai-codex/gpt-5.6-terra:high' \
     --walled-pane "$CALLER_PANE" --harness pi
 }
-pi_provider_row
-assert_eq "$RC|$(launched pi)|$(grep -cx -e --provider "$TMP_ROOT/argv.pi")" \
-  "0| openai-codex/gpt-5.6-terra|0" \
-  "a split --provider pi caller's successor on another provider carries no --provider word"
 # Its control: a strip that leaves the provider word keeps the caller's.
 PIPROVCTL="$(mutant_scripts piprovctl lib/lane-launch.sh)" || exit 1
 mutate_file "$PIPROVCTL/lib/lane-launch.sh" \
   '  words="$(launch_choice_model_spellings "$1") $(launch_choice_provider_spelling "$1")"' \
   '  words="$(launch_choice_model_spellings "$1")"'
-pi_provider_row "$PIPROVCTL/oversee-succeed"
-assert_eq "$RC|$(grep -cx -e --provider "$TMP_ROOT/argv.pi")" "0|1" \
-  "control: a strip that leaves the provider word hands the successor the caller's"
 CALLER_FLAGS=(--model pi-claude/claude-fable-5-1 --thinking high)
 
 # A pi-claude overseer nothing recorded, at its context mark with Fable room

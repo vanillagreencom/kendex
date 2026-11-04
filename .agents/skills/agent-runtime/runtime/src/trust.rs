@@ -5,7 +5,11 @@
 //! "trusted"` in the config.toml of its `CODEX_HOME`; Claude reads
 //! `projects.<dir>.hasTrustDialogAccepted` in the `.claude.json` of its
 //! config dir; Copilot's trust is the launch line's `COPILOT_ALLOW_ALL=true`
-//! on a full bypass; Pi asks none.
+//! on a full bypass, and what its home must hold before a fleet session
+//! starts is the kendex context reader: the `kendex-lane-context` extension
+//! under `extensions/`, loaded only while `enabledFeatureFlags.EXTENSIONS`
+//! is true in its settings.json, and the directory the reader leaves each
+//! session's pending marker in; Pi asks none.
 //!
 //! A numbered Codex account's config.toml is a link the account shim repoints
 //! at every launch, so an entry written there is gone by the next one: the
@@ -18,13 +22,15 @@
 //! An answer already recorded for the directory that is not trust refuses
 //! on both arms: it is a decision somebody gave in the harness's own
 //! spelling, and overwriting it would run the launch at full trust against
-//! that answer.
+//! that answer. A Claude launch under the harness's default home, the
+//! operator's own config dir, writes nothing: only a named account's config
+//! is the launch's to prepare.
 
 use std::ffi::OsStr;
 use std::fs;
 use std::io::ErrorKind;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, symlink};
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -32,6 +38,15 @@ use serde_json::{Map, Value};
 
 use crate::error::{Error, Result};
 use crate::harness::Harness;
+use crate::session;
+
+/// The Copilot context reader a fleet session loads: the extension the
+/// launch installs into the lane's Copilot home.
+const EXTENSION: &str = include_str!("copilot-lane-context.mjs");
+
+/// The age past which a status-line session record is stale, in seconds,
+/// the bound the record's readers apply.
+const STATUS_LINE_MAX_AGE_S: u64 = 120;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -65,11 +80,12 @@ pub struct Prepared {
 pub fn prepare(harness: Harness, home: &Path, launch_dir: &Path) -> Result<Prepared> {
     match harness {
         Harness::Codex => codex(home, launch_dir),
-        Harness::Claude => claude(home, launch_dir),
-        Harness::Copilot => Ok(Prepared {
-            route: Route::AllowAllEnv,
-            home: home.to_path_buf(),
-        }),
+        Harness::Claude => claude(
+            home,
+            launch_dir,
+            session::default_home(Harness::Claude).as_deref(),
+        ),
+        Harness::Copilot => copilot(home, pending_dir().as_deref()),
         Harness::Pi => Ok(Prepared {
             route: Route::None,
             home: home.to_path_buf(),
@@ -417,8 +433,14 @@ fn without_table(text: &str, section: &str) -> String {
 // Claude
 // ---------------------------------------------------------------------------
 
-fn claude(lane: &Path, dir: &Path) -> Result<Prepared> {
+fn claude(lane: &Path, dir: &Path, default_home: Option<&Path>) -> Result<Prepared> {
     let h = Harness::Claude;
+    if default_home == Some(lane) {
+        return Ok(Prepared {
+            route: Route::None,
+            home: lane.to_path_buf(),
+        });
+    }
     let config = lane.join(".claude.json");
     let key = dir.display().to_string();
     let mut root = match present(&config) {
@@ -494,10 +516,242 @@ fn claude(lane: &Path, dir: &Path) -> Result<Prepared> {
     })
 }
 
+// ---------------------------------------------------------------------------
+// Copilot
+// ---------------------------------------------------------------------------
+
+/// The directory the context reader leaves each session's pending marker
+/// in, under the launcher's own home, which the lane's Copilot inherits;
+/// the extension spells it again from its own `os.homedir()`.
+fn pending_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".cache/lane-mail/copilot-usage"))
+}
+
+fn reader_refused(detail: &str, file: &Path, cause: Option<&str>) -> Error {
+    let file = file.display().to_string();
+    match cause {
+        Some(cause) => Error::refused(
+            "no-context-reader",
+            &[
+                ("harness", "copilot"),
+                ("file", &file),
+                ("detail", detail),
+                ("cause", cause),
+            ],
+        ),
+        None => Error::refused(
+            "no-context-reader",
+            &[("harness", "copilot"), ("file", &file), ("detail", detail)],
+        ),
+    }
+}
+
+/// Write `text` to `path` through a staged file in its own directory,
+/// renamed into place so Copilot never reads half of one.
+fn install_beside(path: &Path, text: &str, detail: &str) -> Result<()> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let staged = dir.join(format!(
+        ".{}.{}",
+        path.file_name().and_then(OsStr::to_str).unwrap_or("file"),
+        std::process::id()
+    ));
+    let written = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&staged)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, text.as_bytes()))
+        .and_then(|()| fs::rename(&staged, path));
+    if let Err(e) = written {
+        let _ = fs::remove_file(&staged);
+        return Err(reader_refused(detail, path, Some(&e.to_string())));
+    }
+    Ok(())
+}
+
+/// Make `home` run the context reader: the extension copied into
+/// `extensions/kendex-lane-context/`, rewritten only where its content
+/// differs, and `enabledFeatureFlags.EXTENSIONS` set true in settings.json,
+/// written through a link to its target so the link stays; then the pending
+/// directory made and proved writable. An `EXTENSIONS` flag set false is the
+/// operator's choice, never overridden: the launch is admitted only where
+/// the home's status line writes the fallback session record, else refused
+/// with that reader's own cause.
+fn copilot(home: &Path, pending: Option<&Path>) -> Result<Prepared> {
+    if !home.is_absolute() {
+        return Err(Error::refused(
+            "home-relative",
+            &[
+                ("harness", "copilot"),
+                ("home", &home.display().to_string()),
+            ],
+        ));
+    }
+    let dest = home.join("extensions/kendex-lane-context/extension.mjs");
+    let standing = match present(&dest) {
+        Present::File => Some(read_as(&dest, "unwritable")?),
+        Present::Absent => None,
+        Present::Unreadable(cause) => {
+            return Err(reader_refused("unwritable", &dest, Some(&cause)));
+        }
+    };
+    if standing.as_deref() != Some(EXTENSION) {
+        let dir = dest.parent().unwrap_or(home);
+        fs::create_dir_all(dir)
+            .map_err(|e| reader_refused("unwritable", &dest, Some(&e.to_string())))?;
+        install_beside(&dest, EXTENSION, "unwritable")?;
+    }
+    let settings = home.join("settings.json");
+    let target =
+        link_target(&settings).ok_or_else(|| reader_refused("unreadable", &settings, None))?;
+    let doc = match present(&target) {
+        Present::Absent => Value::Object(Map::new()),
+        Present::Unreadable(cause) => {
+            return Err(reader_refused("unreadable", &target, Some(&cause)));
+        }
+        Present::File => serde_json::from_str::<Value>(&read_as(&target, "unreadable")?)
+            .map_err(|e| reader_refused("unreadable", &target, Some(&e.to_string())))?,
+    };
+    let Value::Object(mut object) = doc else {
+        return Err(reader_refused(
+            "unreadable",
+            &target,
+            Some("the document is not an object"),
+        ));
+    };
+    match object
+        .get("enabledFeatureFlags")
+        .and_then(|f| f.get("EXTENSIONS"))
+    {
+        Some(Value::Bool(true)) => {}
+        Some(Value::Bool(false)) => {
+            return match status_line(home) {
+                Ok(()) => Ok(Prepared {
+                    route: Route::AllowAllEnv,
+                    home: home.to_path_buf(),
+                }),
+                Err(cause) => Err(reader_refused("disabled", &target, Some(cause))),
+            };
+        }
+        None | Some(Value::Null) => {
+            let flags = object
+                .entry("enabledFeatureFlags")
+                .or_insert_with(|| Value::Object(Map::new()));
+            let Some(flags) = flags.as_object_mut() else {
+                return Err(reader_refused(
+                    "unreadable",
+                    &target,
+                    Some("`enabledFeatureFlags` is not an object"),
+                ));
+            };
+            flags.insert("EXTENSIONS".to_owned(), Value::Bool(true));
+            let text = serde_json::to_string_pretty(&Value::Object(object))
+                .map_err(|e| reader_refused("unwritable", &target, Some(&e.to_string())))?;
+            install_beside(&target, &format!("{text}\n"), "unwritable")?;
+        }
+        Some(_) => {
+            return Err(reader_refused(
+                "unreadable",
+                &target,
+                Some("`EXTENSIONS` is not a boolean"),
+            ));
+        }
+    }
+    let Some(pending) = pending else {
+        return Err(reader_refused(
+            "pending-unwritable",
+            Path::new("$HOME/.cache/lane-mail/copilot-usage"),
+            Some("no HOME"),
+        ));
+    };
+    let probed = fs::create_dir_all(pending).and_then(|()| {
+        let probe = pending.join(format!(".probe.{}", std::process::id()));
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)
+            .and_then(|_| fs::remove_file(&probe))
+    });
+    if let Err(e) = probed {
+        return Err(reader_refused(
+            "pending-unwritable",
+            pending,
+            Some(&e.to_string()),
+        ));
+    }
+    Ok(Prepared {
+        route: Route::AllowAllEnv,
+        home: home.to_path_buf(),
+    })
+}
+
+/// The file a path names through its links, hop by hop, at most forty.
+fn link_target(path: &Path) -> Option<PathBuf> {
+    let mut target = path.to_path_buf();
+    for _ in 0..=40 {
+        match fs::symlink_metadata(&target) {
+            Ok(m) if m.file_type().is_symlink() => {
+                let link = fs::read_link(&target).ok()?;
+                target = if link.is_absolute() {
+                    link
+                } else {
+                    target.parent().map_or(link.clone(), |d| d.join(&link))
+                };
+            }
+            _ => return Some(target),
+        }
+    }
+    None
+}
+
+fn read_as(path: &Path, detail: &str) -> Result<String> {
+    fs::read_to_string(path).map_err(|e| reader_refused(detail, path, Some(&e.to_string())))
+}
+
+/// Whether `home` runs `copilot-statusline` as its status line often enough
+/// for the fallback session record to stay fresh: `statusLine` a command
+/// whose first word is that script, an executable file, with a whole-second
+/// `refreshInterval` above 0 and below the record's age bound. The first
+/// thing that fails names the cause.
+fn status_line(home: &Path) -> std::result::Result<(), &'static str> {
+    let settings = home.join("settings.json");
+    let text = match present(&settings) {
+        Present::File => fs::read_to_string(&settings).map_err(|_| "settings-unreadable")?,
+        Present::Absent | Present::Unreadable(_) => return Err("settings-missing"),
+    };
+    let doc: Value = serde_json::from_str(&text).map_err(|_| "settings-unreadable")?;
+    let line = &doc["statusLine"];
+    if !line.is_object() || line["type"] != "command" {
+        return Err("no-status-line");
+    }
+    let command = line["command"].as_str().unwrap_or("");
+    let first = command.split(' ').next().unwrap_or("");
+    if Path::new(first).file_name() != Some(OsStr::new("copilot-statusline")) {
+        return Err("other-command");
+    }
+    let resolved = if first.contains('/') {
+        Some(PathBuf::from(first))
+    } else {
+        std::env::var_os("PATH").and_then(|path| {
+            std::env::split_paths(&path)
+                .map(|dir| dir.join(first))
+                .find(|p| fs::metadata(p).is_ok_and(|m| m.is_file()))
+        })
+    };
+    let executable = resolved.is_some_and(|p| {
+        fs::metadata(&p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    });
+    if !executable {
+        return Err("command-missing");
+    }
+    let interval = line["refreshInterval"].as_f64().ok_or("refresh-interval")?;
+    if interval.fract() != 0.0 || interval <= 0.0 || interval >= STATUS_LINE_MAX_AGE_S as f64 {
+        return Err("refresh-interval");
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use std::os::unix::fs::PermissionsExt;
-
     use super::*;
 
     const HOOK_ENTRY: &str = "[hooks.state.\"/repo/.codex/hooks.json:pre_tool_use:0:0\"]";
@@ -550,12 +804,8 @@ mod tests {
         assert_eq!(cksum(b"a"), 1_220_704_766);
     }
 
-    /// Defect: a Codex launch into a directory its config does not trust
-    /// stops on the trust question. One row per shape the account's config
-    /// can be in; the effective config a launch would open is read back
-    /// through the production reader: trusted, private where a home was
-    /// built, the account's hook approvals carried, the directory's table
-    /// once, and a table that follows the directory's own kept.
+    /// The effective config a launch would open is read back through the
+    /// production reader, so a row measures what the launch will meet.
     #[test]
     fn a_codex_launch_runs_under_a_private_home_carrying_the_account_s_config_and_the_trust_table()
     {
@@ -669,11 +919,8 @@ mod tests {
         );
     }
 
-    /// Defect: a launch run at full trust against an answer somebody gave.
-    /// `untrusted` recorded in the account's config, or in the private
-    /// home's where Codex writes the answer given at the pane, refuses and
-    /// is left exactly as written; a config that exists and cannot be read
-    /// refuses rather than being rebuilt from nothing.
+    /// The private home is where Codex writes the answer given at the pane,
+    /// so it is read beside the account's config.
     #[test]
     fn an_answer_recorded_in_either_codex_config_refuses_and_is_left_as_written() {
         let root = tempfile::tempdir().unwrap();
@@ -713,10 +960,9 @@ mod tests {
         assert_eq!(key(&e), "config-unreadable");
     }
 
-    /// Defect: a real directory in the private home gains a link inside it
-    /// at every launch. Codex's own `plugins` directory, made under the home
-    /// before the account had the name, stays whole, and the preparation
-    /// repeats; any other real directory refuses `home-entry`.
+    /// Codex makes its `plugins` directory under the home before the account
+    /// has the name, so the sequence is reproduced from that home, as a
+    /// relaunch hands it.
     #[test]
     fn a_private_plugins_directory_is_kept_and_another_real_directory_refuses() {
         let root = tempfile::tempdir().unwrap();
@@ -749,13 +995,8 @@ mod tests {
         }
     }
 
-    /// Defect: a Claude launch into a directory its config dir has not
-    /// trusted stops on the folder question. One row per shape of the
-    /// config dir's `.claude.json`: the trust pair is written beside what
-    /// the file held (the user id, another project's and the directory's
-    /// own tool allowances), private whatever the caller's umask; a
-    /// recorded refusal refuses and is left as written; a file that is not
-    /// JSON refuses rather than being rebuilt.
+    /// The file holds the account's address, user id and every per-project
+    /// tool allowance, so each row reads back what else it held.
     #[test]
     fn a_claude_config_dir_gains_the_trust_pair_and_a_recorded_refusal_or_unreadable_file_refuses()
     {
@@ -851,21 +1092,189 @@ mod tests {
         }
     }
 
-    /// Copilot's trust rides the launch line and Pi asks none: neither arm
-    /// writes a file, and the home is the one given.
+    /// Pi asks no trust question and loads no reader: its arm writes
+    /// nothing, and the home is the one given.
     #[test]
     fn the_dispatcher_hands_each_harness_to_its_arm() {
         let root = tempfile::tempdir().unwrap();
         let dir = root.path().join("wt");
-        for (h, route) in [
-            (Harness::Copilot, Route::AllowAllEnv),
-            (Harness::Pi, Route::None),
-        ] {
-            let lane = root.path().join(format!(".1{h}"));
-            let prepared = prepare(h, &lane, &dir).unwrap();
-            assert_eq!(prepared.route, route);
-            assert_eq!(prepared.home, lane);
-            assert!(fs::symlink_metadata(&lane).is_err(), "{h}: nothing written");
+        let lane = root.path().join(".1pi");
+        let prepared = prepare(Harness::Pi, &lane, &dir).unwrap();
+        assert_eq!(prepared.route, Route::None);
+        assert_eq!(prepared.home, lane);
+        assert!(fs::symlink_metadata(&lane).is_err(), "nothing written");
+    }
+
+    /// The launch installs the catalog's reader and nothing else, so the
+    /// embedded copy and the catalog file are held equal while the Bash
+    /// installer ships beside this one.
+    #[test]
+    fn the_catalog_s_copilot_reader_is_the_embedded_one() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../orch/scripts/copilot-lane-context/extension.mjs"
+        );
+        let text = fs::read_to_string(path).unwrap_or_else(|e| panic!("{path}: {e}"));
+        assert_eq!(text, EXTENSION, "{path}");
+    }
+
+    fn field<'a>(e: &'a Error, name: &str) -> &'a str {
+        match e {
+            Error::Refused { fields, .. } => fields
+                .iter()
+                .find(|(k, _)| k == name)
+                .map(|(_, v)| v.as_str())
+                .unwrap_or(""),
+            other => panic!("{other}"),
         }
+    }
+
+    /// The pending directory is the row's own: the production one is under
+    /// the launcher's HOME, which a test never writes into.
+    #[test]
+    fn a_copilot_home_gains_the_context_reader_and_an_unwritable_home_refuses_by_name() {
+        let root = tempfile::tempdir().unwrap();
+        let pending = root.path().join("cache/copilot-usage");
+        let home = root.path().join(".1copilot");
+        fs::create_dir_all(&home).unwrap();
+        let prepared = copilot(&home, Some(&pending)).unwrap();
+        assert_eq!(prepared.route, Route::AllowAllEnv);
+        assert_eq!(prepared.home, home);
+        let dest = home.join("extensions/kendex-lane-context/extension.mjs");
+        assert_eq!(fs::read_to_string(&dest).unwrap(), EXTENSION);
+        let settings: Value =
+            serde_json::from_str(&fs::read_to_string(home.join("settings.json")).unwrap()).unwrap();
+        assert_eq!(
+            settings["enabledFeatureFlags"]["EXTENSIONS"],
+            Value::Bool(true)
+        );
+        assert!(fs::metadata(&pending).unwrap().is_dir());
+        // A stale copy is replaced; other settings stay; a linked settings
+        // file is written through and the link stands.
+        let linked = root.path().join(".2copilot");
+        fs::create_dir_all(linked.join("extensions/kendex-lane-context")).unwrap();
+        fs::write(
+            linked.join("extensions/kendex-lane-context/extension.mjs"),
+            "stale\n",
+        )
+        .unwrap();
+        let shared = root.path().join("shared-settings.json");
+        fs::write(
+            &shared,
+            "{\"theme\": \"dark\", \"enabledFeatureFlags\": {\"OTHER\": true}}\n",
+        )
+        .unwrap();
+        symlink(&shared, linked.join("settings.json")).unwrap();
+        copilot(&linked, Some(&pending)).unwrap();
+        assert_eq!(
+            fs::read_to_string(linked.join("extensions/kendex-lane-context/extension.mjs"))
+                .unwrap(),
+            EXTENSION
+        );
+        assert!(
+            fs::symlink_metadata(linked.join("settings.json"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        let settings: Value = serde_json::from_str(&fs::read_to_string(&shared).unwrap()).unwrap();
+        assert_eq!(settings["theme"], "dark");
+        assert_eq!(settings["enabledFeatureFlags"]["OTHER"], Value::Bool(true));
+        assert_eq!(
+            settings["enabledFeatureFlags"]["EXTENSIONS"],
+            Value::Bool(true)
+        );
+        // The operator's `false`: admitted on a working status line alone,
+        // and never overridden.
+        let off = root.path().join(".3copilot");
+        fs::create_dir_all(&off).unwrap();
+        fs::write(
+            off.join("settings.json"),
+            "{\"enabledFeatureFlags\": {\"EXTENSIONS\": false}}\n",
+        )
+        .unwrap();
+        let e = copilot(&off, Some(&pending)).unwrap_err();
+        assert_eq!(
+            (key(&e), field(&e, "detail"), field(&e, "cause")),
+            ("no-context-reader", "disabled", "no-status-line")
+        );
+        let script = root.path().join("copilot-statusline");
+        fs::write(&script, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::write(
+            off.join("settings.json"),
+            format!(
+                "{{\"enabledFeatureFlags\": {{\"EXTENSIONS\": false}}, \"statusLine\": {{\"type\": \"command\", \"command\": \"{} --fast\", \"refreshInterval\": 30}}}}\n",
+                script.display()
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            copilot(&off, Some(&pending)).unwrap().route,
+            Route::AllowAllEnv
+        );
+        let settings: Value =
+            serde_json::from_str(&fs::read_to_string(off.join("settings.json")).unwrap()).unwrap();
+        assert_eq!(
+            settings["enabledFeatureFlags"]["EXTENSIONS"],
+            Value::Bool(false)
+        );
+        // Settings that are no object refuse as unreadable.
+        let odd = root.path().join(".4copilot");
+        fs::create_dir_all(&odd).unwrap();
+        fs::write(odd.join("settings.json"), "[]\n").unwrap();
+        let e = copilot(&odd, Some(&pending)).unwrap_err();
+        assert_eq!(
+            (key(&e), field(&e, "detail")),
+            ("no-context-reader", "unreadable")
+        );
+        // A home that cannot be written, and a pending directory that
+        // cannot, each refuse by name with the file.
+        let sealed = root.path().join(".5copilot");
+        fs::create_dir_all(&sealed).unwrap();
+        fs::set_permissions(&sealed, fs::Permissions::from_mode(0o500)).unwrap();
+        let e = copilot(&sealed, Some(&pending)).unwrap_err();
+        fs::set_permissions(&sealed, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(
+            (key(&e), field(&e, "detail")),
+            ("no-context-reader", "unwritable")
+        );
+        assert_eq!(
+            field(&e, "file"),
+            sealed
+                .join("extensions/kendex-lane-context/extension.mjs")
+                .display()
+                .to_string()
+        );
+        let blocked = root.path().join("blocked-pending");
+        fs::write(&blocked, "").unwrap();
+        let e = copilot(&home, Some(&blocked)).unwrap_err();
+        assert_eq!(
+            (key(&e), field(&e, "detail")),
+            ("no-context-reader", "pending-unwritable")
+        );
+        assert_eq!(
+            key(&copilot(Path::new("rel/.copilot"), Some(&pending)).unwrap_err()),
+            "home-relative"
+        );
+    }
+
+    /// The default home is the row's own: the production one is the
+    /// operator's, which a test never names.
+    #[test]
+    fn an_accountless_claude_launch_writes_nothing_into_the_harness_s_default_home() {
+        let root = tempfile::tempdir().unwrap();
+        let default = root.path().join(".claude");
+        let dir = root.path().join("wt");
+        fs::create_dir_all(&dir).unwrap();
+        let prepared = claude(&default, &dir, Some(&default)).unwrap();
+        assert_eq!(prepared.route, Route::None);
+        assert!(fs::symlink_metadata(&default).is_err(), "nothing written");
+        let named = root.path().join(".1claude");
+        assert_eq!(
+            claude(&named, &dir, Some(&default)).unwrap().route,
+            Route::AccountConfig
+        );
+        assert!(fs::metadata(named.join(".claude.json")).unwrap().is_file());
     }
 }

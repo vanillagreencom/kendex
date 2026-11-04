@@ -122,7 +122,6 @@ fn recorded() -> Recorded {
         pane: "none".into(),
         script: "/w/orch-runtime".into(),
         cwd: "/w".into(),
-        args: vec!["watch".into(), "run".into()],
     }
 }
 

@@ -3,7 +3,8 @@
 # --output-format json` with the directive on stdin, through the real
 # `lane-mail`. It appends its argv, its CLAUDE_CONFIG_DIR and the stdin text
 # to $CLAUDE_CLOUD_LOG (one call is three lines, so a row counts the sends
-# the session took), copies $CLAUDE_CLOUD_SNAPSHOT_OF to
+# the session took), the nested-session marker it inherited to
+# $CLAUDE_CLOUD_PARENT_LOG where set, copies $CLAUDE_CLOUD_SNAPSHOT_OF to
 # $CLAUDE_CLOUD_SNAPSHOT where both are set (the fleet record as it stands
 # while the CLI runs, the barrier a row reads the owed stage through), makes
 # the directory $CLAUDE_CLOUD_SEAL read-only where set (the mark that
@@ -13,6 +14,7 @@
 # $CLAUDE_CLOUD_ANSWER, the `{ok: true}` answer where unset.
 set -u
 printf 'argv=%s\nconfig=%s\nstdin=%s\n' "$*" "${CLAUDE_CONFIG_DIR:-}" "$(cat)" >> "${CLAUDE_CLOUD_LOG:?}"
+[ -z "${CLAUDE_CLOUD_PARENT_LOG:-}" ] || printf 'parent-marker=%s\n' "${CLAUDECODE-}" >> "$CLAUDE_CLOUD_PARENT_LOG"
 [ -z "${CLAUDE_CLOUD_KILL:-}" ] || kill -KILL -- "$CLAUDE_CLOUD_KILL"
 if [ -n "${CLAUDE_CLOUD_SNAPSHOT:-}" ] && [ -n "${CLAUDE_CLOUD_SNAPSHOT_OF:-}" ]; then
   cp -- "$CLAUDE_CLOUD_SNAPSHOT_OF" "$CLAUDE_CLOUD_SNAPSHOT"

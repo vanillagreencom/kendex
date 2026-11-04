@@ -540,11 +540,10 @@ record_overseer_handoff
 launch 600000 Agent $(overseer_env)
 expect 0 - 'a standing handoff retains its escape'
 
-# The real supplied-context result crosses the process boundary into the
-# hook's existing workflow-state handoff argument, without a second judge.
+# The judged decision crosses the process boundary into the hook's existing
+# workflow-state handoff argument, without a second judge.
 new_overseer agent_native_decision
-rm -- "$LANE/.claude/skills/orch/scripts/oversee-succeed"
-ln -s "$REPO_ROOT/skills/orch/scripts/oversee-succeed" "$LANE/.claude/skills/orch/scripts/oversee-succeed"
+judge_says '{"key":"mark-reached","kind":"context","value":"600000","mark":"50","succession":"on","headroom":"unreadable","context_decision":{"tokens":600000,"window":1000000,"cap":400000,"mark_pct":50,"cap_mark":400000,"window_mark":500000,"reserve_applied":false,"reserve_tokens":0}}'
 write_transcript "$TRANSCRIPT" 600000
 # shellcheck disable=SC2046
 run_payload "$(jq -nc --arg p "$TRANSCRIPT" '{session_id:"s1",transcript_path:$p,stop_hook_active:false}')" $(overseer_env)
@@ -583,7 +582,7 @@ while IFS='|' read -r fields want unknown; do
   expect 2 'lane-mail-check: context=612000' 'a reached mark retains its refusal'
   assert_eq "rows=$(agent_rows) unknown=$(sed -n 's/^lane-mail-check: agent-unclassified=//p' "$ERR_FILE")" \
     "rows=$want unknown=$unknown" "native child list for $fields"
-  assert_eq "$(judge_argv)" '--check-marks --context 600000:1000000' "turn-end judge arguments for $fields"
+  assert_eq "$(judge_argv)" 'marks --fleet --context 600000:1000000' "turn-end judge arguments for $fields"
 done <<'ROWS'
 {"background_tasks":[]}||
 {"background_tasks":[{"id":"a1","type":"subagent","status":"running"}]}|a1 status=running output=unknown|
@@ -603,7 +602,7 @@ if [ "$SCAN_AVAILABLE" -eq 1 ]; then
   rm -f -- "${JUDGE_DIR:?}/args"
   agent_stop '{"background_tasks":[{"id":"a1","type":"subagent","status":"running"}]}'
   expect 0 - 'its turn end with that child running demands no hand-over below 400000'
-  assert_eq "$(judge_argv)" '--check-marks --context 260000:1000000' 'the turn-end judge takes the reading alone'
+  assert_eq "$(judge_argv)" 'marks --fleet --context 260000:1000000' 'the turn-end judge takes the reading alone'
   judge_says "$CONTEXT_MARK_LINE"
   write_transcript "$TRANSCRIPT" 600000
 fi

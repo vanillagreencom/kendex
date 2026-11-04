@@ -103,23 +103,6 @@ pub fn fixed_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Option
     }
 }
 
-/// Whether the destination home holds a session with the fixed id `id` for
-/// `cwd`, read three-valued so a relaunch tells absent from unreadable:
-/// `Live(())` present, `Gone` absent, `Unreadable` a read that failed. Pi
-/// resumes by file, not id, so it reads absent.
-pub fn resume_present(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Reading<()> {
-    match harness {
-        Harness::Claude | Harness::Codex | Harness::Copilot => {
-            match fixed_id_file(harness, home, cwd, id) {
-                Reading::Live(_) => Reading::Live(()),
-                Reading::Gone => Reading::Gone,
-                Reading::Unreadable { cause } => Reading::Unreadable { cause },
-            }
-        }
-        Harness::Pi => Reading::Gone,
-    }
-}
-
 /// The directory the session `id` under `home` was recorded in, read by
 /// the session's own file so a relaunch tells absent from unreadable and
 /// its own session from another directory's: `Live(cwd)` where the file
@@ -1144,12 +1127,7 @@ mod tests {
         );
     }
 
-    /// Defect: a relaunch resuming a transcript another directory's lane
-    /// recorded, where the store is keyed by id alone (Codex, Copilot), or
-    /// a session bound by the newest file for the directory. Each harness's
-    /// file is found by the path its id gives and answers the directory it
-    /// recorded; no file, or a file that is no lead, is absent; Pi is
-    /// absent by design.
+    /// Pi resumes by file, which no record carries, so it reads absent.
     #[test]
     fn a_bound_session_is_read_by_its_path_and_owned_by_its_recorded_directory() {
         let dir = tempfile::tempdir().unwrap();

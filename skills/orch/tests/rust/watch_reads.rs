@@ -567,7 +567,6 @@ fn the_quota_receipt_holds_tracker_reads_until_its_reset_and_nothing_else() {
             pane: "none".into(),
             script: "/w/orch-runtime".into(),
             cwd: "/w".into(),
-            args: vec![],
         },
     );
     let mail = Arc::new(AtomicUsize::new(0));
@@ -682,7 +681,6 @@ fn a_tracker_read_held_on_the_fifo_delays_no_mail_run() {
             pane: "none".into(),
             script: "/w/orch-runtime".into(),
             cwd: "/w".into(),
-            args: vec![],
         },
     );
     let mail = Arc::new(AtomicUsize::new(0));
@@ -716,9 +714,9 @@ fn a_tracker_read_held_on_the_fifo_delays_no_mail_run() {
             clock.pass(secs(20));
         }
         let mail_runs = mail.load(Ordering::SeqCst);
-        // Release the held read: open the writing end, then wait for the
-        // tracker to commit and sleep beside the mail thread.
-        std::fs::write(&fifo, b"").unwrap();
+        // Release the held read with its line, then wait for the tracker to
+        // commit and sleep beside the mail thread.
+        std::fs::write(&fifo, b"go\n").unwrap();
         assert!(
             mail_runs >= 4,
             "mail ran at start and at each of three intervals while the tracker was held: {mail_runs}"
@@ -2115,7 +2113,6 @@ fn a_github_refusal_leaves_the_trackers_triage_line_and_close_intact() {
             pane: "none".into(),
             script: "/w/orch-runtime".into(),
             cwd: "/w".into(),
-            args: vec![],
         },
     );
     let ctx = world.context(settings.clone(), Some(SINCE));

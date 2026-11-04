@@ -10,6 +10,12 @@
 # The first signal alone is held; the stop's later signals pass straight
 # through, so the row releases one hold.
 if [ -n "${KILL_HOLD_FIFO:-}" ] && [ -n "${KILL_HOLD_LOG:-}" ] && [ "$(wc -l < "$KILL_HOLD_LOG")" -eq 1 ]; then
-  cat "$KILL_HOLD_FIFO" >/dev/null
+  # The read-write open never blocks and the read gives up after
+  # HOLD_BOUND_SECS, so a row that dies before its release leaves no reader.
+  [ -p "$KILL_HOLD_FIFO" ] || { echo "kill-hold: hold-not-fifo path=$KILL_HOLD_FIFO" >&2; exit 2; }
+  exec 9<>"$KILL_HOLD_FIFO"
+  read -r -t "${HOLD_BOUND_SECS:-120}" -u 9 _ \
+    || { echo "kill-hold: hold-unreleased path=$KILL_HOLD_FIFO bound=${HOLD_BOUND_SECS:-120}" >&2; exit 124; }
+  exec 9<&-
 fi
 exit 0

@@ -3,8 +3,7 @@
 //! rows' `PATH`) and judged over accounts planted as the listing reads
 //! them (`support::plant_accounts`: local directories with their
 //! credentials and usage records, a provider's rows under its host), the
-//! host's line the `lane-host` fixture's. Each row names the defect it
-//! catches at its doc comment.
+//! host's line the `lane-host` fixture's.
 #![allow(
     clippy::disallowed_methods,
     reason = "the rows write the listings and the fleet they plant and read the fixtures' logs"
@@ -286,11 +285,6 @@ fn through_host(mut row: Value) -> Value {
 
 const BYPASS: &str = "--dangerously-skip-permissions";
 
-/// Defect: the `:last` mark not held: the marked final entry spent while an
-/// earlier entry still has room at the full bound, or while an earlier
-/// entry was unread; or the hold's full-bound question asked of a walk with
-/// no mark; or the mark admitted off the final entry or in an overseer
-/// walk.
 #[test]
 fn the_last_choice_mark_is_held_back_while_an_earlier_entry_has_room_at_the_full_bound() {
     let mut world = World::new(&[(
@@ -379,11 +373,6 @@ fn the_last_choice_mark_is_held_back_while_an_earlier_entry_has_room_at_the_full
     );
 }
 
-/// Defect: an entry's model not taken as the setting spells it: an exact
-/// id resolved to a class, a class not resolved through kendex (a Claude
-/// class to its managed alias with kendex's one warning, a Codex class to
-/// the native default), kendex's managed-launch form handed a runtime
-/// context, or a model kendex cannot classify launched anyway.
 #[test]
 fn an_explicit_model_is_taken_as_named_and_a_class_resolves_through_kendex() {
     for (preference, harness, model, class, warning, deprecated, call) in [
@@ -474,12 +463,6 @@ fn an_explicit_model_is_taken_as_named_and_a_class_resolves_through_kendex() {
     );
 }
 
-/// Defect: a numeric entry resolved to a model other than the caller's
-/// own (the harness default, or kendex's alias for the caller's class),
-/// its conversion unnamed or naming a replacement for an old exact id, a
-/// numeric entry of another harness handed the caller's spelling to that
-/// harness's CLI, or a numeric entry with no caller model left with no
-/// model where the harness's default entry names a class.
 #[test]
 fn a_deprecated_numeric_entry_runs_the_callers_model_and_names_its_conversion() {
     let mut world = World::new(&[("ORCH_OVERSEER_PREFERENCE", "claude:1:high")]);
@@ -587,11 +570,6 @@ fn a_deprecated_numeric_entry_runs_the_callers_model_and_names_its_conversion() 
     assert_eq!(chosen["kept"], json!(false));
 }
 
-/// Defect: the caller's own unmeasured account not kept at a context mark
-/// (a successor spends the account the caller already spends, so a
-/// refusal there protects nothing), or kept past the judge's word: a
-/// retired account kept because its unmeasured record was read as
-/// admission.
 #[test]
 fn an_unmeasured_caller_account_is_kept_at_a_context_mark_where_the_judge_still_reads_it_unmeasured()
  {
@@ -651,10 +629,6 @@ fn an_unmeasured_caller_account_is_kept_at_a_context_mark_where_the_judge_still_
     );
 }
 
-/// Defect: the succession walk ending on an entry no account of which
-/// qualifies instead of moving to the next, the passed-over accounts and
-/// their words lost from the reply, or the counts wrong where every entry
-/// refused.
 #[test]
 fn a_succession_walk_moves_past_a_no_candidate_entry_and_ends_where_every_entry_refused() {
     let mut world = World::new(&[(
@@ -706,9 +680,6 @@ fn a_succession_walk_moves_past_a_no_candidate_entry_and_ends_where_every_entry_
     assert_eq!(result["unmeasured"], json!(1));
 }
 
-/// Defect: the overseer walk's pick held to the launcher's bound instead of
-/// the headroom trigger, or a seat held to the overseer's reserve in a
-/// walk made for the overseer itself.
 #[test]
 fn the_overseer_walk_judges_at_the_trigger_and_a_seat_as_an_ordinary_account() {
     let mut world = World::new(&[
@@ -775,10 +746,6 @@ fn the_overseer_walk_judges_at_the_trigger_and_a_seat_as_an_ordinary_account() {
     );
 }
 
-/// Defect: an entry of another harness launched under a posture its
-/// source cannot hand it (a narrower permission word, two words, none), a
-/// harness with no permission word launched on a first launch, or a
-/// transferable posture refused.
 #[test]
 fn an_entry_of_another_harness_needs_the_sources_full_bypass_to_cross() {
     let mut world = World::new(&[
@@ -882,11 +849,6 @@ fn an_entry_of_another_harness_needs_the_sources_full_bypass_to_cross() {
     );
 }
 
-/// Defect: a lane whose launch replaces another sent to a cloud session
-/// (the cloud has no resume form), a cloud-task host walked as a lane
-/// surface, a non-Claude entry sent to the cloud, an entry's own host not
-/// the one its pick runs under, or an unread entry (the judge's 4, 5 or
-/// 7) ending the walk instead of being carried and named.
 #[test]
 fn a_cloud_session_entry_is_skipped_for_a_relaunch_and_a_cloud_task_host_always() {
     let mut world = World::new(&[
@@ -945,9 +907,6 @@ fn a_cloud_session_entry_is_skipped_for_a_relaunch_and_a_cloud_task_host_always(
     assert_eq!(strings(&result["unread"]), ["pi@local:openai/gpt-5:high"]);
 }
 
-/// Defect: a successor opened where the accounts it would read above the
-/// trigger stay at or under the bound, or an entry spending no measured
-/// account opened under a bound it can settle nothing for.
 #[test]
 fn a_successor_bound_skips_an_entry_that_leaves_too_few_accounts() {
     let mut world = World::new(&[("ORCH_OVERSEER_PREFERENCE", "codex:standard:high")]);
@@ -1005,8 +964,6 @@ fn a_successor_bound_skips_an_entry_that_leaves_too_few_accounts() {
     assert_eq!(result["chosen"]["account"], Value::Null);
 }
 
-/// Defect: a kept caller entry asked of the judge, or chosen on another
-/// lane than its own.
 #[test]
 fn a_kept_caller_entry_is_chosen_on_its_own_lane_without_a_pick() {
     let mut world = World::new(&[]);
@@ -1045,9 +1002,6 @@ fn a_kept_caller_entry_is_chosen_on_its_own_lane_without_a_pick() {
     );
 }
 
-/// Defect: a named lane walked past the judge's word (a retired or
-/// excluded lane launched for an entry), an alias not resolved to its
-/// directory, or a lane nobody lists launched unjudged.
 #[test]
 fn a_named_lane_walk_skips_the_entries_the_judge_refuses_by_word() {
     let mut world = World::new(&[

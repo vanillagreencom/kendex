@@ -438,22 +438,19 @@ pub fn stop(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<(),
 /// the lane's checkout before it answers.
 const PREPARE_BOUND: Duration = Duration::from_secs(1800);
 
-/// What `create` answered (`schemas/lane-host.md` § Provider protocol):
-/// the ssh target, the worktree path on the host, the prefix the launch
-/// line runs under, whether the preparation is still going, and a Pi
-/// lane's root where the provider names one.
+/// What `create` answered: the ssh target, the worktree path on the host,
+/// the prefix the launch line runs under, and whether the preparation is
+/// still going.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Created {
     pub target: String,
     pub path: String,
     pub prefix: String,
     pub preparing: bool,
-    pub pi_root: Option<String>,
 }
 
-/// `lane-host create --item ITEM --repo REPO --harness H --account DIR
-/// [--relaunch]`: the line parsed, or the cause. A `75` is an item another
-/// session owns, named `item-owned`; a `75` whose line carries
+/// The provider's `create` line parsed, or the cause. A `75` is an item
+/// another session owns, named `item-owned`; a `75` whose line carries
 /// `state=preparing` is an accepted preparation.
 pub fn create(
     scripts: &Path,
@@ -486,7 +483,6 @@ pub fn create(
         path: String::new(),
         prefix: String::new(),
         preparing: false,
-        pi_root: None,
     };
     for field in line.split('\t') {
         match field.split_once('=') {
@@ -494,7 +490,6 @@ pub fn create(
             Some(("path", v)) => created.path = v.to_owned(),
             Some(("remote-prefix", v)) => created.prefix = v.to_owned(),
             Some(("state", "preparing")) => created.preparing = true,
-            Some(("pi-root", v)) => created.pi_root = Some(v.to_owned()),
             Some(_) | None => {}
         }
     }
@@ -514,8 +509,7 @@ pub fn create(
     Ok(created)
 }
 
-/// `lane-host wait --item ITEM` after an accepted preparation: ready, or
-/// the cause the provider gave.
+/// After an accepted preparation: ready, or the cause the provider gave.
 pub fn wait(scripts: &Path, host: &str, item: &str) -> Result<(), String> {
     let out = call(
         scripts,
@@ -532,8 +526,7 @@ pub fn wait(scripts: &Path, host: &str, item: &str) -> Result<(), String> {
     }
 }
 
-/// `lane-host put --item ITEM PATH` with `bytes` on its stdin: written, or
-/// the cause.
+/// `bytes` written to the host's `path`, or the cause.
 #[allow(
     clippy::disallowed_methods,
     reason = "the launch's provider write through the one runner under the record's host, the bytes on the provider's stdin"
