@@ -557,12 +557,13 @@ class SessionContract(unittest.TestCase):
         script = patch.dict(globals(), {"SCRIPT": SKILLS / "jarvis/scripts/jarvis-session"})
         script.start()
         self.addCleanup(script.stop)
+        self.model_classes()
         reserved = Path(self.env["HOME"]) / ".3claude"
         reserved.mkdir()
         allowed = Path(self.env["HOME"]) / ".2claude"
         allowed.mkdir()
-        # Only the external usage meter is a fixture. The real selector must
-        # skip the reserved account despite its greater available headroom.
+        # The external meter and model classifier are fixtures. The real
+        # selector must skip the reserved account despite its greater room.
         meter = self.root / "bin/meter"
         meter.write_text("#!" + sys.executable + "\nimport sys\n"
             + "if sys.argv[1]=='capabilities':\n print('kind=ssh\\tlaunch=ssh\\tchannel=mailbox\\tfiles=verb\\tstatus=verb\\tstop=verb\\trelaunch=resume\\tpark=none\\taccounts=none\\tpool=plan\\tland=lane'); sys.exit(0)\n"
@@ -571,14 +572,15 @@ class SessionContract(unittest.TestCase):
             + " print('account='+account+'\\tharness=claude\\tsession-5h-pct='+str(pct)+'\\tweekly-pct='+str(pct)+'\\tmodel-pct='+str(pct)+'\\tmodel-label=Sonnet')\n")
         meter.chmod(0o755)
         (self.home / "kendex.settings.toml").write_text('[env]\nORCH_LANE_HOST = ' + json.dumps(str(meter))
-            + '\nORCH_OVERSEER_PREFERENCE = "claude:sonnet:high"\n')
+            + '\nORCH_OVERSEER_PREFERENCE = "claude:standard:high"\n')
         self.manager.write_text('{"ORCH_LANE_EXCLUDE":"3claude"}')
         self.call("start")
         self.wait()
         (self.home / "state").mkdir(exist_ok=True)
         (self.home / "state/handoff.md").write_text("handoff\n")
         answer, code = self.call("succeed")
-        self.assertEqual((answer["reason"], code), ("succession", 0))
+        self.assertEqual((answer["reason"], code), ("succession", 0),
+                         str(answer) + "\n" + self.stderr + "\n" + self.session_log())
         self.assertEqual(self.wait()["account"], str(allowed))
         self.assertEqual(self.started()[-1]["account"], str(allowed))
 
