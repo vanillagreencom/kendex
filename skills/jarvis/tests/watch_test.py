@@ -108,7 +108,13 @@ class Producer(unittest.TestCase):
         return [json.loads(row) for row in path.read_text().splitlines()] if path.exists() else []
 
     def initial_pass(self, side="local"):
-        result = self.command([BASH, self.scripts / "vm-watch.sh", "--home", self.home, "--side", side])
+        args = [BASH, self.scripts / "vm-watch.sh", "--home", self.home, "--side", side]
+        if side.startswith("ssh:"):
+            result = subprocess.run(["ssh", side.split(":", 1)[1], "bash -s"],
+                                    input=shlex.join(map(str, args)) + "\n", cwd=self.home, env=self.env,
+                                    capture_output=True, text=True, timeout=30)
+        else:
+            result = self.command(args)
         self.assertEqual(result.returncode, 0, result.stderr)
         path = self.root / (side.replace(":", "-") + ".pass")
         path.write_text(result.stdout)
@@ -178,9 +184,15 @@ class Producer(unittest.TestCase):
         for root in roots:
             self.mail(root, "notice", "before " + str(root), "--to", "owner")
         # The shim gives each destination the same full paths, as separate machine views.
-        captured = [self.initial_pass(side) for side in ("local", "ssh:alpha", "ssh:beta")]
+        captured = [self.initial_pass(side) for side in ("local", "ssh:alpha")]
+        for root in roots:
+            self.mail(root, "notice", "between alias captures " + str(root), "--to", "owner")
+        captured.append(self.initial_pass("ssh:beta"))
         expected_seeds = {json.loads(path.read_text().splitlines()[-1][8:])["side"]:
                           json.loads(path.read_text().splitlines()[-1][8:])["roots"] for path in captured}
+        for root in roots:
+            self.assertLess(expected_seeds["ssh:alpha"][str(root)]["to-overseer"]["count"],
+                            expected_seeds["ssh:beta"][str(root)]["to-overseer"]["count"])
         snapshots = []
         original_atomic = self.module.atomic_json
         def observe_save(path, state):
@@ -213,6 +225,8 @@ class Producer(unittest.TestCase):
             observed.append((destination, root, text.strip()))
         expected = [(side, str(root), "after " + str(root))
                     for side in ("local", "ssh:alpha", "ssh:beta", "ssh:gamma") for root in roots]
+        expected.extend((side, str(root), "between alias captures " + str(root))
+                        for side in ("local", "ssh:alpha", "ssh:gamma") for root in roots)
         expected.extend(("ssh:gamma", str(root), "before " + str(root)) for root in roots)
         expected.extend((side, str(new_root), "new root retained history")
                         for side in ("local", "ssh:alpha", "ssh:beta", "ssh:gamma"))
@@ -256,7 +270,9 @@ class Producer(unittest.TestCase):
                     elif name == "empty-log":
                         directory.joinpath("events.log").write_bytes(b"")
                     elif name == "footer-log":
-                        directory.joinpath("events.log").write_bytes(original)
+                        directory.joinpath("events.log").write_text(
+                            self.module.pass_output(footer["side"], footer["roots"], []))
+                        self.assertFalse(directory.joinpath("batch.json").exists())
                     elif name in ("established", "pending", "second-init"):
                         watch = (self.module.Watch(self.home, BASH, self.settings, [captured])
                                  if name == "second-init" else self.watch())
@@ -289,6 +305,8 @@ class Producer(unittest.TestCase):
                     if name in ("established", "pending", "second-init", "footer-log"):
                         resumed = self.watch()
                         self.assertEqual(resumed.cursors["local"], footer["roots"])
+                        if name == "footer-log":
+                            self.assertEqual(resumed.state["spans"], [])
                         if "batch.json" in files:
                             saved = json.loads(files["batch.json"])
                             self.assertEqual(resumed.state["generation"], saved["generation"])
