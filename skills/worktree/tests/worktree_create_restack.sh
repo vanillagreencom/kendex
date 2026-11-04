@@ -645,6 +645,60 @@ while IFS='|' read -r label fixture command rc out err want_state; do
   assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
 done <<<"$ROWS"
 
+echo
+echo "=== retained rebase state before detach relays subprocess output ==="
+
+# Git's reference-transaction hook rejects the detach after rebase creates
+# its metadata. The hook's bytes are the subprocess-result contract here,
+# independent of Git's diagnostic wording.
+retained_output() {
+  local label="$1" rc=0 observed=no action
+  build "$label" clean
+  mkdir -p "$ROOT/hooks"
+  cat >"$ROOT/hooks/reference-transaction" <<'HOOK'
+#!/bin/sh
+if [ "$1" = prepared ]; then
+  printf 'fixture-rebase-output: detach rejected\n' >&2
+  exit 1
+fi
+HOOK
+  chmod +x "$ROOT/hooks/reference-transaction"
+  git -C "$WT" config core.hooksPath "$ROOT/hooks"
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" create "$ISSUE" --restack >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+  assert_eq "$rc" 1 "$label: the restack fails"
+  assert_eq "$(git -C "$WT" rev-parse HEAD)" "$PRE" "$label: HEAD never detached"
+  assert_eq "$(git -C "$WT" branch --show-current)" "$ISSUE" "$label: branch identity remains"
+  assert_eq "$(git -C "$WT" diff --name-only --diff-filter=U)" "" "$label: no unmerged path"
+  assert_eq "$(restack_keys)" 'remote:origin,branch:topic,expected:pre,orig:pre,base:base,pending:true,token:bound' "$label: retained metadata binds the token without push authorization"
+  assert_eq "$(message_records <"$ROOT/err")" "worktree-rebase-conflicts: $WT" "$label: recovery diagnostic remains"
+  grep -Fxq '  fixture-rebase-output: detach rejected' "$ROOT/err" && observed=yes
+  rm -- "$ROOT/hooks/reference-transaction"
+  for action in continue skip; do
+    rc=0
+    (cd "$MAIN" && "$WORKTREE_SCRIPT" restack "$action" "$ISSUE" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+    assert_eq "$rc" 1 "$label: $action refuses the original head off the recorded base"
+    assert_eq "$(message_records <"$ROOT/err")" "worktree-restack-state: path=$WT reason=base-mismatch" "$label: $action keeps the base guard"
+  done
+  rc=0
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" restack abort "$ISSUE" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+  assert_eq "$rc" 0 "$label: guarded abort succeeds"
+  assert_eq "$(git -C "$WT" rev-parse HEAD)" "$PRE" "$label: abort preserves the original head"
+  assert_eq "$(restack_keys)" - "$label: abort clears authorization"
+  assert_eq "$observed" "$2" "$label: captured subprocess output is observed"
+}
+retained_output retained-output yes
+
+saved_script="$WORKTREE_SCRIPT"
+mkdir -p "$TMP_ROOT/output-control"
+cp -R "$PACKAGE_DIR" "$TMP_ROOT/output-control/worktree"
+WORKTREE_SCRIPT="$TMP_ROOT/output-control/worktree/scripts/worktree"
+output_line='sed '\''s/^/  /'\'' <<<"$REBASE_OUTPUT" >&2'
+assert_eq "$(grep -cF "$output_line" "$WORKTREE_SCRIPT")" 2 "output control finds both captured-output relays"
+F="$output_line" T=": # $output_line" perl -0pi -e 's/\Q$ENV{F}\E/$ENV{T}/g' -- "$WORKTREE_SCRIPT"
+assert_eq "$(grep -cF ": # $output_line" "$WORKTREE_SCRIPT")" 2 "output control changes only its private copy"
+retained_output retained-output-control no
+WORKTREE_SCRIPT="$saved_script"
+
 # A pushed handoff is prepared before main changes the shared file. The next
 # preparation aborts; guarded restack must retain the original remote lease.
 # The contained row reaches the fold without a rebase. A foreign head is
