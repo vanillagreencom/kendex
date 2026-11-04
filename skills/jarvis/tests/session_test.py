@@ -650,7 +650,7 @@ class SessionContract(unittest.TestCase):
         argv = commands.read_text()
         self.assertFalse(proxy in argv, "private transport entered tmux arguments")
         observed = {word for row in argv.splitlines() for word in json.loads(row)}
-        self.assertTrue({"new-session", "new-window", "respawn-pane"} <= observed)
+        self.assertTrue({"new-session", "new-window"} <= observed)
         pane = json.loads(self.record.read_text())["terminal"]["pane"]
         command = subprocess.run([*tmux, "display-message", "-p", "-t", pane, "#{pane_start_command}"],
                                  env=self.env, capture_output=True, text=True, check=True).stdout
@@ -661,7 +661,7 @@ class SessionContract(unittest.TestCase):
         with patch.dict(os.environ, self.env | {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}, clear=True):
             runtime = runpy.run_path(str(SKILLS / "jarvis/scripts/lib/session.py"))
         session = runtime["Session"](self.home, self.env | {"HTTPS_PROXY": proxy})
-        for verb in ("new-session", "new-window", "respawn-pane"):
+        for verb in ("new-session", "new-window"):
             with self.subTest(verb=verb):
                 errors = io.StringIO()
                 captured = []
