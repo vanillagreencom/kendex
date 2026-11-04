@@ -298,6 +298,8 @@ class SessionContract(unittest.TestCase):
             argv += ["--harness", harness, "--account", str(kwargs.get("account", self.account)), "--mode", mode, "--origin", origin]
         elif verb == "stop" and origin == "app-off":
             argv += ["--origin", origin]
+        elif verb == "succeed" and kwargs.get("account_walled"):
+            argv += ["--account-walled"]
         if kwargs.get("brief"):
             argv += ["--brief-file", str(kwargs["brief"])]
         if kwargs.get("adopt"):
@@ -447,7 +449,7 @@ class SessionContract(unittest.TestCase):
             if "worker" not in record:
                 return record
             time.sleep(0.05)
-        self.fail("the worker did not publish its final record")
+        self.fail("the worker did not publish its final record\n" + self.record.read_text() + "\n" + self.session_log())
 
     def await_rows(self, events, count):
         deadline = time.monotonic() + 10

@@ -385,6 +385,7 @@ os.execvpe(argv[0],argv,env)
         return record.get("history")
 
     def retain_live(self, record, live):
+        transfer = record.get("transfer") or {}
         # Request flags survive a refusal. Native ownership keeps its original
         # generation, even though the request generation has advanced.
         controller_state = live.get("controller_state", live["state"])
@@ -393,6 +394,10 @@ os.execvpe(argv[0],argv,env)
                         history=self.confirmed_history(live) or record.get("history"))
         retained.update(state="running" if controller_state == "running" else "starting",
                         reason="existing" if controller_state == "running" else "launching", detail="")
+        if record.get("intent") == "succeed" and transfer.get("spent_account") and transfer["phase"] != "complete":
+            # Consumers use the live controller's native identity; only the
+            # unfinished transfer keeps the spent account and saved handoff.
+            retained["transfer"] = transfer
         retained.pop("worker", None)
         return retained
 
@@ -560,7 +565,7 @@ os.execvpe(argv[0],argv,env)
             self.detach("start", next_record)
             return self.answer(next_record), 0
 
-    def succeed(self):
+    def succeed(self, account_walled=False):
         if not (BACKEND.parents[3] / "orch/scripts").is_dir():
             # Without the lifecycle owner, refuse before taking or ending control.
             raise Refusal("handover-failed", "Orch is not installed. The recorded account cannot start a successor.", "failed")
@@ -569,6 +574,10 @@ os.execvpe(argv[0],argv,env)
             if not record or record.get("app_off"):
                 raise Refusal("app-off" if record and record.get("app_off") else "record-unreadable")
             self.env = environment(record["harness"], policy=True)
+            spent_account = ""
+            transfer = record.get("transfer") or {}
+            if record.get("intent") == "succeed" and transfer.get("phase") != "complete":
+                spent_account = transfer.get("spent_account", "")
             if record.get("intent") == "succeed" and record["state"] != "running":
                 if self.worker_live(record):
                     return self.answer(record), 0
@@ -576,17 +585,24 @@ os.execvpe(argv[0],argv,env)
                 # Its predecessor remains the only possible controller.
                 self.end_owned(record, window=True)
                 predecessor = record.get("predecessor")
-                if not self.terminal(predecessor):
+                predecessor_live = bool(self.terminal(predecessor))
+                if not predecessor_live:
                     self.end_task_session()
                 saved_handoff = record["transfer"]["handoff"]
             else:
                 if record["state"] != "running" or not self.terminal(record):
                     raise Refusal("record-unreadable")
                 predecessor = record
-                saved_handoff = None
+                predecessor_live = True
+                saved_handoff = transfer["handoff"] if spent_account else None
+            if account_walled and not spent_account:
+                wall_controller = predecessor if predecessor_live else record
+                spent_account = wall_controller.get("account")
+                if not spent_account:
+                    raise Refusal("record-unreadable")
             choice = record.get("choice") or {}
             choice = json.loads(self.backend("select", record["harness"], record["account"], self.home,
-                                             choice.get("model", ""), choice.get("effort", "")).stdout)
+                                             choice.get("model", ""), choice.get("effort", ""), spent_account).stdout)
             if not shutil.which(choice["harness"]):
                 raise Refusal("app-missing")
             self.env.pop("CLAUDE_CONFIG_DIR", None)
@@ -613,6 +629,9 @@ os.execvpe(argv[0],argv,env)
         if saved.read_bytes() != contents:
             raise Refusal("record-unreadable")
         transfer = {"phase": "saved", "handoff": str(saved), "previous_handoff": saved_handoff}
+        spent_account = choice.pop("spent_account", "")
+        if spent_account:
+            transfer["spent_account"] = spent_account
         next_record = {"v": 1, "home": self.home, "harness": choice["harness"], "account": choice["account"], "choice": choice,
                        "report_started_at": record.get("report_started_at", int(time.time())),
                        "origin": record["origin"], "boot": record.get("boot"), "app_off": False,
@@ -1042,6 +1061,8 @@ def main():
             command.add_argument("--adopt-pid", type=int)
         elif verb == "stop":
             command.add_argument("--origin", choices=("app-off",))
+        elif verb == "succeed":
+            command.add_argument("--account-walled", action="store_true")
     args = parser.parse_args()
     if not clean(args.home) or (args.verb == "start" and not clean(args.account)):
         parser.error("path")
@@ -1073,7 +1094,7 @@ def main():
         elif args.verb == "stop":
             answer, code = session.stop(args.origin)
         elif args.verb == "succeed":
-            answer, code = session.succeed()
+            answer, code = session.succeed(args.account_walled)
         elif args.verb == "report-due":
             answer, code = session.report_due()
         else:

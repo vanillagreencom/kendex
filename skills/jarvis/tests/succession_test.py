@@ -35,6 +35,9 @@ row = json.loads(config.read_text())
 with Path(row["calls"]).open("a") as stream:
     stream.write(json.dumps(args) + "\\n")
 harness = args[args.index("--harness") + 1]
+if "--lane" in args and "read_rc" in row:
+    print(json.dumps({"config_dir": row["account"]}) if row["read_rc"] == 0 else "{}")
+    sys.exit(row["read_rc"])
 # A failing dependency answers every walk pick with an error exit.
 if row["harness"] == "fail" and "--lane" not in args:
     print("lanes: usage fetch failed", file=sys.stderr)
@@ -288,6 +291,292 @@ print(json.dumps({"config_dir": row["account"]}))
         self.assertEqual(json.loads(self.record.read_text())["choice"], started)
         argv = self.started()[-1]["argv"]
         self.assertEqual((argv[argv.index("--model") + 1], argv[argv.index("--effort") + 1]), ("sonnet", "low"))
+
+    def test_known_wall_selection(self):
+        # A separately established wall overrides room and both unavailable
+        # reading categories. An inventory returning A or its private launch
+        # home still reaches the native identity backstop.
+        self.model_classes()
+        brief, _, private = self.private_brief()
+        alternative = self.root / "alternative"
+        alternative.mkdir()
+        alias = self.account / "lane-launch/fixture/home"
+        alias.mkdir(parents=True)
+        for reading, target, picked, succeeds in (
+                (0, "none", alternative, False),
+                (0, "codex", alternative, True), (4, "codex", alternative, True),
+                (5, "codex", alternative, True), (0, "claude", self.account, False),
+                (0, "codex", alias, False),
+                (2, "codex", alternative, False)):
+            with self.subTest(reading=reading, target=target, picked=picked):
+                self.call("start", mode="new", brief=brief)
+                previous = self.wait()
+                contents = self.handoff()
+                saved = self.record.read_bytes()
+                count = len(self.started())
+                calls = self.root / "wall-picks"
+                calls.unlink(missing_ok=True)
+                (self.home / ".lane-fixture.json").write_text(json.dumps({
+                    "harness": target, "account": str(picked), "calls": str(calls), "headroom": 20, "read_rc": reading}))
+                (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = "codex:standard:high,claude:standard:high"\n')
+                answer, code = self.call("succeed", account_walled=True)
+                self.assertEqual(code, 0 if succeeds else 1, self.stderr)
+                queries = [json.loads(line) for line in calls.read_text().splitlines()]
+                for query in queries[1:]:
+                    self.assertIn("--exclude-lane", query)
+                    self.assertEqual(query[query.index("--exclude-lane") + 1], str(self.account))
+                if succeeds:
+                    current = self.wait()
+                    after = json.loads(self.record.read_text())
+                    self.assertEqual((current["home"], current["account"], current["harness"]),
+                                     (str(self.home), str(alternative), "codex"))
+                    self.assertTrue(after["identity_verified"])
+                    self.assertEqual(after["transfer"]["spent_account"], str(self.account))
+                    self.assertNotIn("spent_account", after["choice"])
+                    self.assertEqual(Path(after["transfer"]["handoff"]).read_text(), contents)
+                    self.assertEqual(self.prompts(after["pending"]["native_session_id"]), [private])
+                    self.assertEqual(len(self.started()), count + 1)
+                    # Completed A-to-B exclusion expires. Ordinary B keeps its
+                    # choice, and a new explicit wall binds B rather than A.
+                    if reading == 0:
+                        (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = ""\n')
+                        self.call("succeed")
+                        self.wait()
+                        ordinary = json.loads(self.record.read_text())
+                        self.assertEqual(ordinary["choice"], after["choice"])
+                        self.assertNotIn("spent_account", ordinary["transfer"])
+                        calls.write_text("")
+                        original = self.record.read_bytes()
+                        self.assertEqual(self.call("succeed", account_walled=True)[1], 1)
+                        self.assertEqual(self.record.read_bytes(), original)
+                        fresh = [json.loads(line) for line in calls.read_text().splitlines()]
+                        self.assertEqual(fresh[-1][fresh[-1].index("--exclude-lane") + 1], str(alternative))
+                else:
+                    self.assertEqual(self.record.read_bytes(), saved)
+                    self.assertEqual(self.call("status")[0]["terminal"], previous["terminal"])
+                    self.assertEqual(len(self.started()), count)
+                self.call("stop")
+                self.wait("stopped", persisted_stop=True)
+                (self.home / ".lane-fixture.json").unlink()
+
+    def test_pi_known_wall_selection(self):
+        self.model_classes()
+        alternative = self.root / "alternative"
+        alternative.mkdir()
+        for model in (None, "openai/gpt-5.5"):
+            for eligible in (True, False):
+                with self.subTest(model=model, eligible=eligible):
+                    choice = {"model": model, "effort": "high"} if model else {}
+                    self.call("start", harness="pi", mode="new", **choice)
+                    self.wait()
+                    self.handoff()
+                    (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = ""\n')
+                    self.call("succeed")
+                    self.assertEqual(self.wait()["account"], str(self.account))
+                    original = self.record.read_bytes()
+                    count = len(self.started())
+                    calls = self.root / "pi-wall-picks"
+                    calls.unlink(missing_ok=True)
+                    (self.home / ".lane-fixture.json").write_text(json.dumps({
+                        "harness": "pi" if eligible else "none", "account": str(alternative),
+                        "calls": str(calls), "headroom": 20}))
+                    (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = "pi:github-copilot/gpt-5.5:high,pi:openai/gpt-5.5:high"\n')
+                    self.assertEqual(self.call("succeed", account_walled=True)[1], 0 if eligible else 1, self.stderr)
+                    if eligible:
+                        current = self.wait()
+                        self.assertEqual((current["harness"], current["account"]), ("pi", str(alternative)))
+                    else:
+                        self.assertEqual(self.record.read_bytes(), original)
+                        self.assertEqual(len(self.started()), count)
+                    queries = [json.loads(line) for line in calls.read_text().splitlines()]
+                    self.assertTrue(queries)
+                    for query in queries:
+                        self.assertEqual(query[query.index("--exclude-lane") + 1], str(self.account))
+                    self.call("stop")
+                    self.wait("stopped", persisted_stop=True)
+                    (self.home / ".lane-fixture.json").unlink()
+
+    def test_known_wall_retry(self):
+        self.model_classes()
+        skills = self.instrumented()
+        script = skills / "jarvis/scripts/jarvis-session"
+        pause = self.home / ".succession-pause.json"
+        alternative = self.root / "alternative"
+        alternative.mkdir()
+        brief, _, private = self.private_brief()
+        with patch.object(session_test, "SCRIPT", script):
+            for phase, repeated, worker_failure in (("saved", False, ""), ("predecessor-ended", True, ""),
+                                                     ("waiting", True, "identity"), ("saved", False, "trust")):
+                with self.subTest(phase=phase, repeated=repeated, worker_failure=worker_failure):
+                    self.call("start", mode="new", brief=brief)
+                    previous = self.wait()
+                    original = json.loads(self.record.read_text())
+                    owned_identity = dict(original["process"])
+                    if worker_failure == "identity":
+                        # A stale recorded start refuses before signalling A.
+                        original["process"]["started_at"] = "a different start time"
+                        self.record.write_text(json.dumps(original))
+                    self.handoff()
+                    calls = self.root / "retry-picks"
+                    calls.write_text("")
+                    target = "claude" if worker_failure == "trust" else "codex"
+                    trust = alternative / ".claude.json"
+                    if worker_failure == "trust":
+                        trust.write_text(json.dumps({"projects": {str(self.home): {"hasTrustDialogAccepted": False}}}))
+                    fixture = {"harness": target, "account": str(alternative), "calls": str(calls), "headroom": 20, "read_rc": 0}
+                    (self.home / ".lane-fixture.json").write_text(json.dumps(fixture))
+                    (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = "' + target + ':standard:high"\n')
+                    identity, request = self.paused([str(script), "succeed", "--home", str(self.home), "--account-walled"],
+                                                    pause, phase, "after", self.env)
+                    with request:
+                        transfer = json.loads(self.record.read_text())
+                        self.assertEqual((transfer["account"], transfer["transfer"]["spent_account"]),
+                                         (str(alternative), str(self.account)))
+                        if worker_failure:
+                            (self.root / "release").touch()
+                            request.communicate(timeout=10)
+                        else:
+                            os.kill(identity["pid"], signal.SIGKILL)
+                            request.communicate(timeout=10)
+                    pause.unlink()
+                    if worker_failure:
+                        retained = self.await_worker_result()
+                        self.assertEqual(retained["transfer"]["spent_account"], str(self.account))
+                        self.assertEqual((retained["state"], retained["account"], retained["terminal"]),
+                                         ("running", str(self.account), previous["terminal"]))
+                        self.assertEqual(self.call("status")[0]["terminal"], previous["terminal"])
+                        self.assertTrue(self.process_live(owned_identity))
+                        retained["process"] = owned_identity
+                        self.record.write_text(json.dumps(retained))
+                        (self.root / "release").unlink()
+                        # These shipped consumers read the persisted owner,
+                        # rather than status's view of a live predecessor.
+                        native = subprocess.run([self.env["JARVIS_TEST_BASH"], "-c",
+                            'source "$1"; session_rows_jarvis_identity "$2" "$3" "$4" "$5"', "identity",
+                            str(skills / "orch/scripts/lib/session-rows.sh"), str(self.home), original["harness"],
+                            original["pending"]["native_session_id"], previous["terminal"]["pane"]],
+                            env=self.env | {"JARVIS_RECORD": str(self.record),
+                                "JARVIS_GENERATION": str(original["pending"]["generation"]),
+                                "TMUX": previous["terminal"]["server"] + ",0,0"},
+                            capture_output=True, text=True, timeout=15)
+                        self.assertEqual(native.returncode, 0, native.stderr)
+                        self.assertEqual(json.loads(native.stdout)["state"], "running")
+                        task_file = self.home / "task.md"
+                        task_file.write_text("Inspect the handoff.\n")
+                        # The session CLI fixture requires a controller hook;
+                        # a task's native CLI has no controller identity.
+                        task_bin = self.root / "task-bin"
+                        task_bin.mkdir(exist_ok=True)
+                        task_cli = task_bin / "codex"
+                        task_cli.write_text("#!/usr/bin/env python3\nimport signal\nwhile True: signal.pause()\n")
+                        task_cli.chmod(0o755)
+                        task = subprocess.run([str(skills / "jarvis/scripts/task"), "launch", "--home", str(self.home),
+                            "--name", "Refusal recovery", "--harness", "codex", "--model", "standard",
+                            "--account", str(alternative), "--task-file", str(task_file),
+                            "--result-file", str(self.home / "task-result.md")],
+                            env=self.env | {"PATH": str(task_bin) + os.pathsep + self.env["PATH"]},
+                            capture_output=True, text=True, timeout=60)
+                        self.assertEqual(task.returncode, 0, task.stderr)
+                        launched = json.loads(task.stdout)
+                        self.assertEqual((launched["state"], launched["terminal"]["server"]),
+                                         ("running", previous["terminal"]["server"]))
+                        for verb, arguments in (("complete", ["--outcome", "failed"]), ("cleanup", [])):
+                            closed = subprocess.run([str(skills / "jarvis/scripts/task"), verb, "--home", str(self.home),
+                                "--id", launched["id"], *arguments], env=self.env, capture_output=True, text=True, timeout=60)
+                            self.assertEqual(closed.returncode, 0, closed.stderr)
+                        if worker_failure == "trust":
+                            self.assertEqual(retained["transfer"]["phase"], "saved")
+                            trust.unlink()
+                    elif phase == "predecessor-ended":
+                        self.wait("failed", "handover-failed")
+                        self.successor_ended()
+                    else:
+                        self.wait("running")
+                    # B's own reader now reports walled: retained A still owns
+                    # the exclusion, and a qualifying B must remain eligible.
+                    fixture["read_rc"] = 3
+                    (self.home / ".lane-fixture.json").write_text(json.dumps(fixture))
+                    calls.write_text("")
+                    self.assertEqual(self.call("succeed", account_walled=repeated)[1], 0, self.stderr)
+                    self.assertEqual(self.wait()["account"], str(alternative))
+                    recovered = json.loads(self.record.read_text())
+                    self.assertEqual(recovered["transfer"]["spent_account"], str(self.account))
+                    if worker_failure:
+                        self.assertEqual(recovered["transfer"]["previous_handoff"], retained["transfer"]["handoff"])
+                    self.assertEqual(self.prompts(recovered["pending"]["native_session_id"]), [private])
+                    queries = [json.loads(line) for line in calls.read_text().splitlines()]
+                    for query in queries[1:]:
+                        self.assertEqual(query[query.index("--exclude-lane") + 1], str(self.account))
+                    self.call("stop")
+                    self.wait("stopped", persisted_stop=True)
+                    (self.home / ".lane-fixture.json").unlink()
+
+    def test_fresh_wall_controller(self):
+        # A new wall belongs to the controller that still owns the home,
+        # or the failed successor after its predecessor has ended.
+        self.model_classes()
+        skills = self.instrumented()
+        script = skills / "jarvis/scripts/jarvis-session"
+        pause = self.home / ".succession-pause.json"
+        alternative = self.root / "alternative"
+        alternative.mkdir()
+        with patch.object(session_test, "SCRIPT", script):
+            for adopted, phase in ((False, "predecessor-ended"), (True, "saved")):
+                with self.subTest(adopted=adopted, phase=phase):
+                    if not adopted:
+                        self.call("start", mode="new")
+                        self.wait()
+                        original = json.loads(self.record.read_text())
+                    self.handoff()
+                    calls = self.root / "fresh-wall-picks"
+                    calls.write_text("")
+                    (self.home / ".lane-fixture.json").write_text(json.dumps({
+                        "harness": "codex", "account": str(alternative), "calls": str(calls),
+                        "headroom": 20, "read_rc": 0}))
+                    (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = "codex:standard:high"\n')
+                    if adopted:
+                        consumer = self.unmanaged("claude")
+                        argv = [str(script), "start", "--home", str(self.home), "--harness", "codex",
+                                "--account", str(alternative), "--mode", "new", "--origin", "manual",
+                                "--adopt-pane", consumer["pane"], "--adopt-pid", str(consumer["process"]["pid"])]
+                        env = consumer["env"]
+                    else:
+                        argv = [str(script), "succeed", "--home", str(self.home)]
+                        env = self.env
+                    identity, request = self.paused(argv, pause, phase, "after", env)
+                    with request:
+                        transfer = json.loads(self.record.read_text())
+                        self.assertEqual(transfer["account"], str(alternative))
+                        self.assertNotIn("spent_account", transfer["transfer"])
+                        os.kill(identity["pid"], signal.SIGKILL)
+                        request.communicate(timeout=10)
+                    pause.unlink()
+                    if adopted:
+                        self.assertIsNone(transfer["predecessor"]["account"])
+                        self.assertTrue(self.process_live(consumer["harness"]))
+                    else:
+                        self.wait("failed", "handover-failed")
+                        self.successor_ended()
+                        self.assertFalse(self.process_live(original["process"]))
+                    saved = self.record.read_bytes()
+                    count = self.launched()
+                    calls.write_text("")
+                    answer, code = self.call("succeed", account_walled=True)
+                    self.assertEqual(code, 1, self.stderr)
+                    self.assertEqual(self.record.read_bytes(), saved)
+                    self.assertEqual(self.launched(), count)
+                    queries = [json.loads(line) for line in calls.read_text().splitlines()]
+                    if adopted:
+                        self.assertEqual(answer["reason"], "record-unreadable")
+                        self.assertEqual(queries, [])
+                        self.assertTrue(self.process_live(consumer["harness"]))
+                    else:
+                        self.assertTrue(queries)
+                        for query in queries[1:]:
+                            self.assertEqual(query[query.index("--exclude-lane") + 1], str(alternative))
+                self.call("stop")
+                self.wait("stopped", persisted_stop=True)
+                (self.home / ".lane-fixture.json").unlink()
 
     def test_pi_successor_skips_unlaunchable_entry(self):
         # A pi-claude/ entry's pick names a Claude account, which a Jarvis pi
@@ -772,4 +1061,5 @@ if __name__ == "__main__":
     with native_launcher() as native:
         session_test.HARNESS = native
         unittest.main(defaultTest=["SuccessionContract.test_succession_contract", "SuccessionContract.test_succession_identity", "SuccessionContract.test_succession_foreign_session", "SuccessionContract.test_succession_recovery", "SuccessionContract.test_account_succession", "SuccessionContract.test_started_choice_survives_succession", "SuccessionContract.test_pi_successor_skips_unlaunchable_entry", "SuccessionContract.test_missing_orch_keeps_predecessor",
+                                   "SuccessionContract.test_known_wall_selection", "SuccessionContract.test_pi_known_wall_selection", "SuccessionContract.test_known_wall_retry", "SuccessionContract.test_fresh_wall_controller",
                                    "SuccessionContract.test_adoption_contract", "SuccessionContract.test_adoption_refusals", "SuccessionContract.test_adoption_recovery"])
