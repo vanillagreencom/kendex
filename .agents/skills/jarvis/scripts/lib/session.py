@@ -1057,6 +1057,16 @@ def main():
             command.add_argument("--origin", choices=("app-off",))
         elif verb == "succeed":
             command.add_argument("--account-walled", action="store_true")
+    command = verbs.add_parser("owner-asks")
+    operations = command.add_subparsers(dest="action", required=True, parser_class=Arguments)
+    for action in ("list", "reply", "done", "later"):
+        operation = operations.add_parser(action)
+        operation.add_argument("--home", required=True)
+        if action == "list":
+            operation.add_argument("--view", choices=("active", "snoozed"), required=True)
+            operation.add_argument("--cursor")
+        else:
+            operation.add_argument("--id", required=True)
     args = parser.parse_args()
     if not clean(args.home) or (args.verb == "start" and args.account is not None and not clean(args.account)):
         parser.error("path")
@@ -1080,6 +1090,10 @@ def main():
         except OSError:
             parser.error("home")
         return init_home(args)
+    if args.verb == "owner-asks":
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import owner_asks
+        return owner_asks.main(args, Session, Refusal)
     if args.verb in ("forward", "forward-drain") or (args.verb == "status" and args.main):
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import forward

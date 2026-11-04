@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Jarvis consumes the same configuration judgement as owner-question posting.
+set -euo pipefail
+SCRIPT_DIR="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"
+source "$SCRIPT_DIR/lib/mailbox-append.sh"
+configured=false
+if owner_tracker_settings "$SCRIPT_DIR"; then configured=true; fi
+jq -cn --argjson configured "$configured" --arg email "$OWNER_TRACKER_EMAIL" \
+  --arg label "$OWNER_TRACKER_LABEL" --arg cause "$OWNER_TRACKER_SETTINGS_CAUSE" \
+  '{configured: $configured, email: $email, label: $label, cause: (if $configured then null else $cause end)}'
