@@ -22,6 +22,8 @@ import uuid
 
 
 BACKEND = Path(__file__).with_name("session-backend.sh")
+# The package's own command, which no install puts on PATH.
+ENTRY = Path(__file__).resolve().parent.parent / "jarvis-session"
 BASH = os.environ["JARVIS_BASH"]
 # VGS bounds each call at 60 seconds. Leave time to print its answer.
 CALL_SECONDS = 55
@@ -317,6 +319,44 @@ os.execvpe(argv[0],argv,env)
                 **{key: view.get(key) if view else None for key in ("home", "harness", "account", "origin")},
                 "boot": record.get("boot") if record else None,
                 "terminal": terminal, "detail": detail}
+
+    def attach(self):
+        # Lock-free, as status reads: the answer names the live controller,
+        # a predecessor's during succession included.
+        try:
+            terminal = self.answer(self.read())["terminal"]
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            raise Refusal("record-unreadable")
+        if not terminal:
+            raise Refusal("no-controller")
+        argv = ["tmux", "-S", terminal["server"], "attach-session", "-t", "=" + terminal["session"]]
+        # The caller's own environment holds its live desktop and its
+        # $TERMINAL. A window holding its TMUX or TMUX_PANE reads as a pane of
+        # the caller's server, so the terminal starts without them.
+        own = {key: value for key, value in os.environ.items() if key not in ("TMUX", "TMUX_PANE")}
+        if os.environ.get("TMUX"):
+            # A client inside the caller's pane would nest, so the user's
+            # terminal opens one in a window of its own and the caller's
+            # client stays where it is.
+            try:
+                opened = self.backend("open-window", terminal["server"], terminal["session"], check=False, env=own)
+            except (OSError, subprocess.TimeoutExpired) as failure:
+                raise Refusal("terminal-launch-failed", str(failure))
+            if opened.returncode == 4:
+                raise Refusal("terminal-unresolved", opened.stderr.strip())
+            if opened.returncode not in (0, 3):
+                raise Refusal("terminal-launch-failed", opened.stderr.strip())
+            print(opened.stderr, end="", file=sys.stderr)
+            if opened.returncode == 0:
+                return
+            print("No terminal is set in TERMINAL and xdg-terminal-exec is not on PATH, so Jarvis opens inside this tmux pane.",
+                  file=sys.stderr)
+        # tmux refuses a client only from a pane of the server it attaches to
+        # (server_client_check_nested), so the caller's TMUX stays: the nested
+        # client crosses servers, and a pane on the home's own server is
+        # refused rather than shown inside itself.
+        sys.stderr.flush()
+        os.execvp("tmux", argv)
 
     def _emit(self, answer):
         print(json.dumps(answer, separators=(",", ":")), flush=True)
@@ -824,9 +864,16 @@ os.execvpe(argv[0],argv,env)
                 if existing.returncode == 0:
                     if not succeeding or adopted or not self.terminal(predecessor):
                         raise Refusal("name-conflict")
-                # A prompt-free shell keeps the pane alive before SessionStart.
                 creation = ["new-window", "-d", "-t", "=jarvis"] if succeeding and existing.returncode == 0 else ["new-session", "-d", "-s", "jarvis"]
-                runner = [sys.executable, "-B", "-c", "import os,runpy,sys; sys.exit(runpy.run_path(sys.argv[1],run_name='jarvis_runner')['Session'](sys.argv[2], dict(os.environ)).successor(int(sys.argv[3])))", str(Path(__file__).resolve()), self.home, str(generation)] if succeeding else [BASH, "--noprofile", "--norc"]
+                # A first launch runs in the pane it creates, held on a tmux
+                # channel until the record owns that pane: replacing the pane
+                # would free its pty while opening another, which macOS can
+                # refuse with ENXIO. A wait that fails or is killed runs no
+                # launch. The account observer reads descendants of the pane
+                # shell, so the tail keeps that shell from exec-replacing itself.
+                channel = "jarvis-launch-" + str(generation)
+                runner = [sys.executable, "-B", "-c", "import os,runpy,sys; sys.exit(runpy.run_path(sys.argv[1],run_name='jarvis_runner')['Session'](sys.argv[2], dict(os.environ)).successor(int(sys.argv[3])))", str(Path(__file__).resolve()), self.home, str(generation)] if succeeding else [
+                    BASH, "--noprofile", "--norc", "-c", "tmux wait-for " + channel + " && { " + prepared["line"] + '; }; result=$?; exit "$result"']
                 with self.pane_command(runner) as command:
                     created = self.tmux(*creation, "-c", self.home,
                                         "-P", "-F", "#{socket_path}\t#{pid}\t#{start_time}\t#{window_id}\t#{pane_id}", command)
@@ -852,11 +899,7 @@ os.execvpe(argv[0],argv,env)
                     record.update(state="starting", reason="launching")
                     self.write(record)
                 else:
-                    command = prepared["line"]
-                    # The account observer reads descendants of the pane shell.
-                    # A tail keeps that shell from exec-replacing itself.
-                    with self.pane_command([BASH, "--noprofile", "--norc", "-c", command + '; result=$?; exit "$result"']) as command:
-                        self.tmux("respawn-pane", "-k", "-t", pane, "-c", self.home, command)
+                    self.tmux("wait-for", "-S", channel)
                     process = self.tmux("display-message", "-p", "-t", pane, "#{pane_pid}").stdout.strip()
                     record["process"] = json.loads(self.backend("process", process).stdout)
                     self.write(record)
@@ -1035,7 +1078,7 @@ exec "$3" -c 'import json, os, sys; print(json.dumps([sys.argv[1], os.environ["J
 def main():
     parser = Arguments()
     verbs = parser.add_subparsers(dest="verb", required=True, parser_class=Arguments)
-    for verb in ("start", "status", "stop", "succeed", "report-due", "forward", "forward-drain", "main-host"):
+    for verb in ("start", "status", "stop", "succeed", "report-due", "attach", "forward", "forward-drain", "main-host"):
         command = verbs.add_parser(verb)
         command.add_argument("--home", required=True)
         if verb == "status":
@@ -1088,6 +1131,16 @@ def main():
         session = Session(args.home)
     except OSError:
         parser.error("home")
+    if args.verb == "attach":
+        # Attach answers on stderr only: stdout is the terminal it hands over.
+        try:
+            session.attach()
+        except Refusal as failure:
+            print("jarvis-session: attach=refused cause=" + failure.reason, file=sys.stderr)
+            if failure.detail:
+                print(failure.detail, file=sys.stderr)
+            return 1
+        return 0
     try:
         if args.verb == "start":
             answer, code = session.start(args)
@@ -1099,6 +1152,9 @@ def main():
             answer, code = session.report_due()
         else:
             answer, code = session.answer(session.read()), 0
+            if answer["terminal"]:
+                print("jarvis-session: attach=" + shlex.quote(str(ENTRY)) + " attach --home " + shlex.quote(session.home),
+                      file=sys.stderr)
     except Refusal as failure:
         try:
             record = session.read()

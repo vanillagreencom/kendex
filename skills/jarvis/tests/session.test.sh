@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Surface: jarvis-session start/status/stop, native identity and exact resume.
 # Inputs: skills/jarvis/scripts/, skills/orch/scripts/, skills/mailbox/scripts/,
+# skills/github/scripts/lib/group-leader.sh,
 # skills/jarvis/tests/fixtures/, skills/orch/tests/fixtures/oversee-watch/,
 # rust-toolchain.toml.
 set -euo pipefail

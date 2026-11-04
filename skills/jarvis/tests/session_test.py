@@ -3,6 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stdout, redirect_stderr
 import io
 import errno
+import fcntl
 import runpy
 from unittest.mock import patch
 import hashlib
@@ -13,6 +14,9 @@ from pathlib import Path
 import shutil
 import signal
 import socket
+import struct
+import termios
+import threading
 from fixtures.harness import AUTH_MESSAGES, launch_prompt, main as harness_main, native_header, native_launcher
 import shlex
 import subprocess
@@ -648,7 +652,7 @@ class SessionContract(unittest.TestCase):
         argv = commands.read_text()
         self.assertFalse(proxy in argv, "private transport entered tmux arguments")
         observed = {word for row in argv.splitlines() for word in json.loads(row)}
-        self.assertTrue({"new-session", "new-window", "respawn-pane"} <= observed)
+        self.assertTrue({"new-session", "new-window"} <= observed)
         pane = json.loads(self.record.read_text())["terminal"]["pane"]
         command = subprocess.run([*tmux, "display-message", "-p", "-t", pane, "#{pane_start_command}"],
                                  env=self.env, capture_output=True, text=True, check=True).stdout
@@ -659,7 +663,7 @@ class SessionContract(unittest.TestCase):
         with patch.dict(os.environ, self.env | {"JARVIS_BASH": self.env["JARVIS_TEST_BASH"]}, clear=True):
             runtime = runpy.run_path(str(SKILLS / "jarvis/scripts/lib/session.py"))
         session = runtime["Session"](self.home, self.env | {"HTTPS_PROXY": proxy})
-        for verb in ("new-session", "new-window", "respawn-pane"):
+        for verb in ("new-session", "new-window"):
             with self.subTest(verb=verb):
                 errors = io.StringIO()
                 captured = []
@@ -734,6 +738,26 @@ class SessionContract(unittest.TestCase):
                 self.assertEqual(words, PERMISSION_WORDS[harness] if unattended else set())
                 self.call("stop")
                 self.wait("stopped", persisted_stop=True)
+
+    def test_first_launch_runs_in_its_created_pane(self):
+        # The process tmux creates for a first Start is the one the record
+        # owns and the native launch runs under: no second pane process.
+        created = self.root / "created-pane-pids"
+        real = shlex.quote(shutil.which("tmux"))
+        wrapper = self.root / "bin/tmux"
+        wrapper.write_text("#!" + self.env["JARVIS_TEST_BASH"] + "\nset -euo pipefail\n"
+            + 'if [[ " $* " == *" new-session "* ]]; then\n  created="$(' + real + ' "$@")"\n'
+            + "  printf '%s\\n' \"$created\"\n"
+            + "  " + real + " -S \"${created%%$'\\t'*}\" display-message -p -t \"${created##*$'\\t'}\" '#{pane_pid}' >> "
+            + shlex.quote(str(created)) + "\n  exit\nfi\nexec " + real + ' "$@"\n')
+        wrapper.chmod(0o755)
+        self.call("start")
+        self.wait()
+        record = json.loads(self.record.read_text())
+        pane = subprocess.run(["tmux", "-L", self.label, "display-message", "-p", "-t", record["terminal"]["pane"], "#{pane_pid}"],
+                              capture_output=True, text=True, check=True).stdout.split()
+        self.assertEqual(created.read_text().split(), [str(record["process"]["pid"])])
+        self.assertEqual(pane, [str(record["process"]["pid"])])
 
     def test_start_model_and_effort(self):
         # The stated pair is read as a preference entry reads it, launched in
@@ -1635,6 +1659,283 @@ class SessionContract(unittest.TestCase):
                 self.call("stop")
                 self.wait("off")
                 self.assertEqual(json.loads(self.record.read_text())["generation"], record["generation"] + 1)
+
+    # Attach rows drive real tmux clients on pseudo-terminals. A client
+    # outside tmux carries no TMUX; one the command runs inside sets both.
+    def outside_env(self):
+        return {key: value for key, value in self.env.items() if key not in ("TMUX", "TMUX_PANE")} | {"TERM": "xterm-256color"}
+
+    def tmux_read(self, socket, *args):
+        return subprocess.run(["tmux", "-S", socket, *args], env=self.outside_env(), capture_output=True, text=True, timeout=10)
+
+    def stand_in(self, *sessions):
+        # The owner's default server, played by a server of this fixture's own.
+        label = self.label + "-owner"
+        tmux = ["tmux", "-L", label, "-f", os.devnull]
+        for name in sessions:
+            subprocess.run([*tmux, "new-session", "-d", "-s", name, os.environ["JARVIS_TEST_BASH"], "--noprofile", "--norc"],
+                           check=True, env=self.outside_env())
+        self.addCleanup(subprocess.run, ["tmux", "-L", label, "kill-server"], capture_output=True, env=self.outside_env())
+        return subprocess.run([*tmux, "display-message", "-p", "#{socket_path}"], check=True, env=self.outside_env(),
+                              capture_output=True, text=True).stdout.strip()
+
+    def pane_of(self, socket, session):
+        return self.tmux_read(socket, "display-message", "-p", "-t", "=" + session + ":", "#{pane_id}").stdout.strip()
+
+    def inside_env(self, socket, session):
+        line = self.tmux_read(socket, "display-message", "-p", "-t", "=" + session + ":", "#{socket_path},#{pid},#{session_id}")
+        return self.outside_env() | {"TMUX": line.stdout.strip(), "TMUX_PANE": self.pane_of(socket, session)}
+
+    def pty_client(self, argv, sockets):
+        # The drain keeps the client's terminal writes from filling the pty.
+        # Cleanup detaches the client from whichever server holds it, before
+        # tearDown or a stand-in cleanup kills a server, then reaps it.
+        primary, secondary = os.openpty()
+        fcntl.ioctl(secondary, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+        client = subprocess.Popen(argv, stdin=secondary, stdout=secondary, stderr=secondary, env=self.outside_env(),
+                                  start_new_session=True)
+        os.close(secondary)
+        drain = threading.Thread(target=lambda: self.drain(primary), daemon=True)
+        drain.start()
+
+        def release():
+            for socket in sockets:
+                for line in self.tmux_read(socket, "list-clients", "-F", "#{client_pid} #{client_name}").stdout.splitlines():
+                    pid, name = line.split(" ", 1)
+                    if int(pid) == client.pid:
+                        self.tmux_read(socket, "detach-client", "-t", name)
+            try:
+                client.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                client.kill()
+                client.wait(timeout=5)
+            drain.join(timeout=5)
+            os.close(primary)
+        self.addCleanup(release)
+        return client
+
+    @staticmethod
+    def drain(fd):
+        try:
+            while os.read(fd, 4096):
+                pass
+        except OSError:
+            pass
+
+    def clients(self, socket, deadline=10, until=None):
+        # The client rows of one server, once they satisfy until.
+        limit = time.monotonic() + deadline
+        while True:
+            listed = self.tmux_read(socket, "list-clients", "-F", "#{client_pid} #{session_name}")
+            rows = listed.stdout.splitlines() if listed.returncode == 0 else []
+            if until is None or until(rows) or time.monotonic() >= limit:
+                return rows
+            time.sleep(0.05)
+
+    def attach(self, env):
+        # No terminal on stdin: a regressed exec of tmux attach-session then
+        # fails at once rather than drawing on the runner's terminal.
+        return subprocess.run([str(SCRIPT), "attach", "--home", str(self.home)], env=env, stdin=subprocess.DEVNULL,
+                              capture_output=True, text=True, timeout=60)
+
+    def test_attach_outside_tmux(self):
+        self.call("start")
+        terminal = self.wait()["terminal"]
+        # The command status prints runs as printed, from a PATH without it.
+        prefix = "jarvis-session: attach="
+        printed = [line[len(prefix):] for line in self.stderr.splitlines() if line.startswith(prefix)]
+        self.assertEqual(len(printed), 1)
+        command = shlex.split(printed[0])
+        self.assertTrue(os.path.isabs(command[0]), command)
+        self.assertEqual(command[1:], ["attach", "--home", str(self.home)])
+        client = self.pty_client(command, [terminal["server"]])
+        # The command execs the client: the attached client is its process.
+        rows = self.clients(terminal["server"], until=bool)
+        self.assertEqual(rows, [str(client.pid) + " jarvis"])
+        self.call("stop")
+        self.wait("stopped")
+        self.assertFalse([line for line in self.stderr.splitlines() if line.startswith("jarvis-session: attach=")])
+
+    # The terminals the rows put on PATH. fixture-term takes its command after
+    # -e, as a $TERMINAL does, and xdg-terminal-exec takes it bare; each runs
+    # it on a pseudo-terminal of its own and records what it was handed. fail
+    # exits 1 with a reason on stderr; idle exits 0 at once, as a launcher
+    # handing off to a server can.
+    TERMINAL_STUB = """#!/usr/bin/env python3
+import fcntl, json, os, pty, struct, sys, termios
+name = os.path.basename(sys.argv[0])
+if name == "fixture-fail":
+    sys.exit("fixture-fail: display unavailable")
+if name == "fixture-idle":
+    sys.exit(0)
+command = sys.argv[1:] if name == "xdg-terminal-exec" else sys.argv[2:]
+assert name == "xdg-terminal-exec" or sys.argv[1] == "-e", sys.argv
+assert command[:2] == ["bash", "-lc"], sys.argv
+with open(os.environ["FIXTURE_TERMINAL_RECORD"], "w") as stream:
+    json.dump({"pid": os.getpid(), "env": {key: os.environ.get(key) for key in ("TMUX", "TMUX_PANE", "WAYLAND_DISPLAY")}}, stream)
+pid, fd = pty.fork()
+if pid == 0:
+    fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
+    os.execvp(command[0], command)
+try:
+    while os.read(fd, 4096):
+        pass
+except OSError:
+    pass
+os.waitpid(pid, 0)
+"""
+
+    def terminal_stubs(self):
+        stubs = self.root / "terminals"
+        stubs.mkdir(exist_ok=True)
+        for name in ("fixture-term", "fixture-fail", "fixture-idle", "xdg-terminal-exec"):
+            (stubs / name).write_text(self.TERMINAL_STUB)
+            (stubs / name).chmod(0o755)
+        return str(stubs) + os.pathsep + self.env["PATH"]
+
+    def bare_path(self):
+        # Every command on PATH but xdg-terminal-exec, so no row resolves the
+        # developer's own terminal.
+        farm = self.root / "bare-path"
+        if farm.exists():
+            return str(farm)
+        farm.mkdir()
+        for directory in self.env["PATH"].split(os.pathsep):
+            if not os.path.isdir(directory):
+                continue
+            for entry in os.scandir(directory):
+                if entry.name != "xdg-terminal-exec" and not os.path.lexists(farm / entry.name):
+                    (farm / entry.name).symlink_to(entry.path)
+        self.assertIsNone(shutil.which("xdg-terminal-exec", path=str(farm)))
+        return str(farm)
+
+    # open-window's terminal choice, one row per branch: the $TERMINAL the
+    # caller sets (None for unset), whether xdg-terminal-exec is on PATH, and
+    # the outcome. A window row gives the stderr attach prints; a refusal row
+    # its cause and detail. The window, nested and refusal tests each run the
+    # rows of their outcome, so a branch without a row here has no test.
+    TERMINAL_CHOICE = (
+        ("TERMINAL on PATH", "fixture-term", True, ("window", "")),
+        ("TERMINAL names nothing, xdg-terminal-exec", "fixture-missing", True,
+         ("window", "jarvis-session: terminal=fallback requested=fixture-missing selected=xdg-terminal-exec\n")),
+        ("no TERMINAL, xdg-terminal-exec", None, True, ("window", "")),
+        ("no TERMINAL, no xdg-terminal-exec", None, False, ("nested",)),
+        ("TERMINAL names nothing, no xdg-terminal-exec", "fixture-missing", False,
+         ("refused", "terminal-unresolved", "jarvis-session: terminal=unresolved requested=fixture-missing")),
+    )
+
+    def choices(self, outcome):
+        # The rows of one outcome, each with the TERMINAL (None for unset)
+        # and PATH it runs under, and the rest of its outcome.
+        paths = {True: self.terminal_stubs(), False: self.bare_path()}
+        return [(label, terminal, paths[desktop], result[1:])
+                for label, terminal, desktop, result in self.TERMINAL_CHOICE if result[0] == outcome]
+
+    @staticmethod
+    def chosen(env, terminal, path):
+        return {key: value for key, value in env.items() if key != "TERMINAL"} | {"PATH": path} | (
+            {"TERMINAL": terminal} if terminal else {})
+
+    def test_attach_opens_a_terminal_window(self):
+        self.call("start")
+        home = self.wait()["terminal"]["server"]
+        owner = self.stand_in("owner")
+        original = self.pty_client(["tmux", "-S", owner, "attach-session", "-t", "=owner"], [owner, home])
+        before = [str(original.pid) + " owner"]
+        self.assertEqual(self.clients(owner, until=bool), before)
+        inside = self.inside_env(owner, "owner")
+
+        def release(handed):
+            # The terminal ends once its client leaves the home server.
+            self.tmux_read(home, "detach-client", "-s", "=jarvis")
+            if not handed.exists():
+                return
+            pid, limit = json.loads(handed.read_text())["pid"], time.monotonic() + 10
+            while time.monotonic() < limit:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.05)
+        for index, (label, terminal, path, (stderr,)) in enumerate(self.choices("window")):
+            with self.subTest(label):
+                handed = self.root / ("terminal-" + str(index) + ".json")
+                env = self.chosen(inside, terminal, path) | {"HOME": str(self.root), "FIXTURE_TERMINAL_RECORD": str(handed)}
+                result = self.attach(env)
+                try:
+                    self.assertEqual((result.returncode, result.stdout, result.stderr), (0, "", stderr))
+                    # The window's own client attached; the caller's client,
+                    # its server and its session are where they were.
+                    record = json.loads(handed.read_text())
+                    rows = self.clients(home)
+                    self.assertEqual([row.split(" ")[1] for row in rows], ["jarvis"])
+                    parent = subprocess.run(["ps", "-o", "ppid=", "-p", rows[0].split(" ")[0]], capture_output=True, text=True)
+                    self.assertEqual(parent.stdout.strip(), str(record["pid"]))
+                    self.assertEqual(self.clients(owner), before)
+                    self.assertEqual(self.tmux_read(owner, "has-session", "-t", "=owner").returncode, 0)
+                    self.assertEqual(record["env"], {"TMUX": None, "TMUX_PANE": None, "WAYLAND_DISPLAY": "fixture-wayland"})
+                finally:
+                    release(handed)
+
+    def test_attach_nests_without_a_terminal(self):
+        self.call("start")
+        home = self.wait()["terminal"]["server"]
+        owner = self.stand_in("owner")
+        for index, (label, terminal, path, _) in enumerate(self.choices("nested")):
+            with self.subTest(label):
+                errors, picker = self.root / ("attach-" + str(index) + ".err"), "picker-" + str(index)
+                line = ("exec env -u TERMINAL " + ("TERMINAL=" + shlex.quote(terminal) + " " if terminal else "")
+                        + "PATH=" + shlex.quote(path) + " " + shlex.quote(str(SCRIPT)) + " attach --home "
+                        + shlex.quote(str(self.home)) + " 2>" + shlex.quote(str(errors)))
+                self.tmux_read(owner, "new-session", "-d", "-s", picker, line)
+                pane = self.tmux_read(owner, "display-message", "-p", "-t", "=" + picker + ":", "#{pane_pid}").stdout.strip()
+                try:
+                    # The client runs in the picker's own pane: its process
+                    # is the pane's.
+                    self.assertEqual(self.clients(home, until=bool), [pane + " jarvis"])
+                    # The fallback explains itself in one line before the
+                    # nested client.
+                    self.assertEqual(len(errors.read_text().splitlines()), 1)
+                    self.assertEqual(self.tmux_read(owner, "has-session", "-t", "=owner").returncode, 0)
+                finally:
+                    self.tmux_read(home, "detach-client", "-s", "=jarvis")
+
+    def test_attach_refuses_a_terminal_that_does_not_open(self):
+        self.call("start")
+        home = self.wait()["terminal"]["server"]
+        owner = self.stand_in("owner")
+        stubs = self.terminal_stubs()
+        # Jarvis already open in another window: its client is no proof that
+        # this attach's window opened.
+        held = self.pty_client(["tmux", "-S", home, "attach-session", "-t", "=jarvis"], [home])
+        existing = [str(held.pid) + " jarvis"]
+        self.assertEqual(self.clients(home, until=bool), existing)
+        # A found terminal that does not open, and the choice's refusal rows,
+        # refuse rather than nest in the pane.
+        rows = [("launcher exits non-zero", "fixture-fail", stubs, ("terminal-launch-failed",
+                 "jarvis-session: terminal=fixture-fail exit=1\nfixture-fail: display unavailable")),
+                ("no client within the bound", "fixture-idle", stubs,
+                 ("terminal-launch-failed", "jarvis-session: terminal=fixture-idle client=none seconds=5")),
+                *self.choices("refused")]
+        for label, terminal, path, (cause, detail) in rows:
+            with self.subTest(label):
+                result = self.attach(self.chosen(self.inside_env(owner, "owner"), terminal, path))
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (1, "", "jarvis-session: attach=refused cause=" + cause + "\n" + detail + "\n"))
+                self.assertEqual(self.clients(home), existing)
+
+    def test_attach_refuses_without_a_controller(self):
+        for label in ("never started", "stopped"):
+            with self.subTest(label):
+                if label == "stopped":
+                    self.call("stop")
+                saved = self.record.read_bytes() if self.record.exists() else None
+                result = self.attach(self.outside_env())
+                self.assertEqual((result.returncode, result.stdout, result.stderr),
+                                 (1, "", "jarvis-session: attach=refused cause=no-controller\n"))
+                self.assertEqual(self.record.read_bytes() if self.record.exists() else None, saved)
+                self.assertNotEqual(subprocess.run(["tmux", "-L", self.label, "list-sessions"], capture_output=True,
+                                                   env=self.outside_env()).returncode, 0)
 
 
 if __name__ == "__main__":
