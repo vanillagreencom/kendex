@@ -316,20 +316,22 @@ class OwnerAsks:
         source["home"] = self.session.home
         rows, routes = source_rows(source)
         now = self.clock()
-        for key, delta in list(state["deltas"].items()):
+        closed_keys = []
+        for key, delta in state["deltas"].items():
             route = delta["route"]
-            if key not in rows and route["source"] == "linear":
-                # A label can disappear before the delegate verifies the ask.
-                # No source replica is kept to fill an unread request back in.
-                raise Unavailable("A changed tracker view no longer proves an acted-on request; ask the delegate to verify it.")
-            if key not in rows and route["source"] == "mailbox":
-                closed = any(row.get("mail_class") == "close" and row.get("re") == route["ask"]
-                             for box in source["mailboxes"] if box["destination"] == route["destination"] and box["root"] == route["root"]
-                             for row in box["inward"]["rows"])
-                if not closed:
-                    raise Unavailable("The original mailbox no longer proves this acted-on ask; ask the delegate to verify it.")
+            if key not in rows:
+                if route["source"] == "mailbox":
+                    closed = any(row.get("mail_class") == "close" and row.get("re") == route["ask"]
+                                 for box in source["mailboxes"] if box["destination"] == route["destination"] and box["root"] == route["root"]
+                                 for row in box["inward"]["rows"])
+                    if not closed:
+                        raise Unavailable("The original mailbox no longer proves this acted-on ask; ask the delegate to verify it.")
+                # A complete configured tracker view alone owns membership.
+                closed_keys.append(key)
+        if closed_keys:
+            for key in closed_keys:
                 del state["deltas"][key]
-                self.session.write(state)
+            self.session.write(state)
         for key, row in rows.items():
             delta = state["deltas"].get(key, {})
             snoozed = delta.get("until") is not None and instant(delta["until"]) > now
