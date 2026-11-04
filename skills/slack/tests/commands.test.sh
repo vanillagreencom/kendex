@@ -431,29 +431,33 @@ chmod +x "$CMD/output"
 # One shared boundary owns slash/Home secrecy and disclosure. Discarded
 # secrets are never claimed checked: even benign oversized success refuses.
 output_rows() {
-  local mode cause text
+  local mode cause text slash_text home_text surface selected="${1:-}"
   relay "$ALPHA" "SLACK_STATUS_COMMAND=$CMD/output" "SLACK_HOME_COMMAND=$CMD/output"
   while read -r mode cause; do
+    [ -z "$selected" ] || [ "$mode" = "$selected" ] || continue
     printf '%s\n' "$mode" > "$CMD/output.mode"
-    text="$(reply "$(slash /lanes U001)")"
+    slash_text="$(reply "$(slash /lanes U001)")"
     home_open U001
     reply "$(slash /deploy U001)" >/dev/null
-    text="$text|$(last_view)"
-    if [ "$cause" = success ]; then
-      assert_has "$text" safe-answer "$mode: complete safe stdout reaches slash and Home"
-    else
-      assert_has "$text" "($cause)" "$mode: the shared result owner keeps the observed cause"
-      assert_lacks "$text" prefix-sentinel "$mode: no retained prefix reaches slash or Home"
-    fi
-    case "$mode" in
-      oversize|boundary-secret|discard-secret|nonzero|stderr)
-        assert_has "$text" 'output cut at 52096 bytes' "$mode: the visible result discloses the capture cut" ;;
-    esac
-    assert_lacks "$text" local-only "$mode: stderr is never delivered to Slack"
-    if [ "$mode" = kill ]; then
-      assert_lacks "$text" OOM 'SIGKILL has no invented OOM attribution'
-      assert_lacks "$text" 'memory limit' 'SIGKILL has no invented configured-limit attribution'
-    fi
+    home_text="$(last_view)"
+    for surface in slash Home; do
+      if [ "$surface" = slash ]; then text="$slash_text"; else text="$home_text"; fi
+      if [ "$cause" = success ]; then
+        assert_has "$text" safe-answer "$mode/$surface: complete safe stdout reaches the result"
+      else
+        assert_has "$text" "($cause)" "$mode/$surface: the shared result owner keeps the observed cause"
+        assert_lacks "$text" prefix-sentinel "$mode/$surface: no retained prefix reaches the result"
+      fi
+      case "$mode" in
+        oversize|boundary-secret|discard-secret|nonzero|stderr)
+          assert_has "$text" 'output cut at 52096 bytes' "$mode/$surface: the visible result discloses the capture cut" ;;
+      esac
+      assert_lacks "$text" local-only "$mode/$surface: stderr is never delivered to Slack"
+      if [ "$mode" = kill ]; then
+        assert_lacks "$text" OOM "$mode/$surface: SIGKILL has no invented OOM attribution"
+        assert_lacks "$text" 'memory limit' "$mode/$surface: SIGKILL has no invented configured-limit attribution"
+      fi
+    done
   done <<'ROWS'
 clean success
 split-secret secret-value
@@ -469,6 +473,13 @@ ROWS
 }
 output_rows
 assert_has "$(cat "$SK_TMP/relay.err")" local-only 'retained command stderr keeps its local destination'
+sk_mutant home-cut relay.py 'text \+= withheld\("SLACK_HOME_COMMAND", cause\)' 'text = withheld("SLACK_HOME_COMMAND", cause)'
+CONTROL_FAIL="$SK_FAIL"
+CONTROL_RC=0
+CONTROL_OUT="$(output_rows nonzero; [ "$SK_FAIL" = "$CONTROL_FAIL" ])" || CONTROL_RC=$?
+assert_eq "$CONTROL_RC" 1 'control: overwriting Home annotations fails the existing output row'
+assert_has "$CONTROL_OUT" 'FAIL nonzero/Home: the visible result discloses the capture cut' 'the Home control reaches its own cut-disclosure assertion'
+sk_bin_reset
 # Real I/O failure and a missing Linux interface are distinct. These copies
 # alter only the interface path, never add a production fault-injection API.
 if [ "$SCORE_WANT" = 1000 ]; then

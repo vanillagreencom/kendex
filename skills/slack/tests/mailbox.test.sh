@@ -8,7 +8,7 @@ set -uo pipefail
 # The driver imports the production runner. Its parent bounds even a pump
 # that never yields; the target's completion marker proves excess was drained.
 cat > "$SK_TMP/runner-check.py" <<'PY'
-import json, os, pathlib, signal, subprocess, sys, tracemalloc
+import json, os, pathlib, signal, socket, subprocess, sys, tracemalloc
 sys.path.insert(0, sys.argv[1])
 from mailbox import LaneMail, RunTimeout, run_bounded
 import mailbox
@@ -75,20 +75,45 @@ elif row == "contracts":
     script.chmod(0o755)
     code, out, err = LaneMail(root)._run("events")
     assert code == 0 and len(out) > C and out.endswith("id=final\n") and err == ""
-    # A descendant holds both pipes after the leader exits. No reap precedes
-    # the TERM/KILL group cleanup, even though the leader is already a zombie.
-    program = '''import os, signal
+    # The configured command's descendant ignores TERM and holds both pipes
+    # after its leader exits. Its connection closes only on process exit;
+    # a one-byte release lets the test clean up a surviving control safely.
+    program = '''import os, signal, socket, sys
 if os.fork() == 0:
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    while True: signal.pause()
+    hold = socket.create_connection(('127.0.0.1', int(sys.argv[1])))
+    hold.sendall(b'R')
+    os.write(1, b'descendant-ready\\n')
+    os.write(2, b'descendant-ready\\n')
+    hold.recv(1)
+    os._exit(0)
 '''
     mailbox.LANE_MAIL_CLEANUP_SECONDS = .05
-    try:
-        run_bounded([sys.executable,"-c",program],root,.2,command_output_limit=C)
-    except RunTimeout as error:
-        assert isinstance(error.output,str) and isinstance(error.stderr,str)
-    else:
-        raise AssertionError("descendant pipe hold never timed out")
+    with socket.socket() as listener:
+        listener.bind(('127.0.0.1', 0))
+        listener.listen()
+        listener.settimeout(1)
+        timeout_error = None
+        try:
+            run_bounded([sys.executable,"-c",program,str(listener.getsockname()[1])],root,.2,command_output_limit=C)
+        except RunTimeout as error:
+            timeout_error = error
+        with listener.accept()[0] as hold:
+            hold.settimeout(1)
+            ended = False
+            try:
+                assert hold.recv(1) == b'R', "descendant readiness"
+                assert timeout_error is not None, "descendant pipe hold never timed out"
+                assert timeout_error.output == timeout_error.stderr == 'descendant-ready\n'
+                try:
+                    ended = hold.recv(1) == b''
+                except socket.timeout:
+                    pass
+                assert ended, "descendant survived runner cleanup"
+            finally:
+                if not ended:
+                    hold.sendall(b'x')
+                    assert hold.recv(1) == b'', "descendant fixture teardown"
 elif row == "deadline":
     # Inject setup elapsed time at prepared status, without a real-clock wait.
     clock = [0.0]
@@ -113,7 +138,7 @@ elif row == "deadline":
     print("contracts: passed")
 PY
 runner_check() {
-  python3 - "$SK_TMP/runner-check.py" "${SK_BIN%/*}/lib" "$SK_TMP/runner-$1" "$1" <<'PY'
+  python3 - "$SK_TMP/runner-check.py" "${SK_BIN%/*}/lib" "$SK_TMP/runner-${2:-$1}" "$1" <<'PY'
 import os, pathlib, signal, subprocess, sys
 pathlib.Path(sys.argv[3]).mkdir(exist_ok=True)
 proc = subprocess.Popen([sys.executable, *sys.argv[1:]], start_new_session=True)
@@ -131,6 +156,11 @@ runner_check contracts
 assert_eq "$?" 0 'runner preserves target inputs, direct receipts and exit evidence'
 runner_check deadline
 assert_eq "$?" 0 'bootstrap setup consumes the original execution deadline'
+sk_mutant cleanup-no-kill mailbox.py 'os\.killpg\(proc\.pid, sig\)' 'os.killpg(proc.pid, sig) if sig != signal.SIGKILL else None'
+runner_check contracts cleanup-control > "$SK_TMP/cleanup-control.out" 2>&1
+assert_eq "$?" 1 'control: omitting KILL fails the descendant cleanup assertion before test teardown'
+assert_has "$(cat "$SK_TMP/cleanup-control.out")" 'AssertionError: descendant survived runner cleanup' 'the cleanup control reaches the descendant EOF assertion'
+sk_bin_reset
 # A pump-only renewal is still refused by finish's entry-deadline check.
 # Give the mutant a fresh full budget after preparation at BOTH observations;
 # keep the real pump/exec operations and the same independent timeout assertion.
