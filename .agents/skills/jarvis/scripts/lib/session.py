@@ -585,16 +585,21 @@ os.execvpe(argv[0],argv,env)
                 # Its predecessor remains the only possible controller.
                 self.end_owned(record, window=True)
                 predecessor = record.get("predecessor")
-                if not self.terminal(predecessor):
+                predecessor_live = bool(self.terminal(predecessor))
+                if not predecessor_live:
                     self.end_task_session()
                 saved_handoff = record["transfer"]["handoff"]
             else:
                 if record["state"] != "running" or not self.terminal(record):
                     raise Refusal("record-unreadable")
                 predecessor = record
+                predecessor_live = True
                 saved_handoff = transfer["handoff"] if spent_account else None
             if account_walled and not spent_account:
-                spent_account = predecessor["account"] if predecessor else record["account"]
+                wall_controller = predecessor if predecessor_live else record
+                spent_account = wall_controller.get("account")
+                if not spent_account:
+                    raise Refusal("record-unreadable")
             choice = record.get("choice") or {}
             choice = json.loads(self.backend("select", record["harness"], record["account"], self.home,
                                              choice.get("model", ""), choice.get("effort", ""), spent_account).stdout)
