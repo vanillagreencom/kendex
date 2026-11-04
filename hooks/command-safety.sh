@@ -269,7 +269,7 @@ environment_head() { # command kind; updates pos, syntax_head and head_start
 # else and grants no permission.
 environment_main_evidence() {
   local value evidence continuation=$'\\\n'
-  local opaque_re='(^|[^A-Za-z0-9_.-])(env|printenv|export|declare|typeset|show-environment)([^A-Za-z0-9_.-]|$)|(^|[^A-Za-z0-9_-])set([^A-Za-z0-9_-]|$)|/proc/[^[:space:]]*/environ'
+  local opaque_re='(^|[^A-Za-z0-9_.-])(env|printenv|export|declare|typeset|set|show-environment)([^A-Za-z0-9_.-]|$)|/proc/[^[:space:]]*/environ'
   for value in "$@"; do
     evidence=${value//"$continuation"/}
     evidence=${evidence//[\'\"\\]/}

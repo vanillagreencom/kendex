@@ -1386,6 +1386,8 @@ environment_rows() {
 [0,"for f in hooks/*.sh; do wc -l \"$f\"; done; grep -n 'export' hooks/command-safety.sh","for-loop-then-export-pattern"]
 [0,"sh LAUNCH.sh WAIT TOOL --test 'tool env.sh'","waiter-quoted-env-path-data"]
 [0,"sh LAUNCH.sh WAIT TOOL --test 'tool --set-upstream'","waiter-quoted-set-option-data"]
+[0,"sh LAUNCH.sh WAIT sh -c 'exec TOOL -c shell_environment_policy.set.NAME=value' sh WAIT","waiter-named-variable-setting-data"]
+[0,"sh LAUNCH.sh WAIT TOOL --test 'tool package.set.option'","waiter-dotted-word-data"]
 [2,"sh LAUNCH.sh WAIT TOOL --test \"cd $DIR && env\"","waiter-expanded-string-dump"]
 [2,"bash wrapper.sh TOOL --test \"cd $DIR && cat ~/.fleet/env\"","private-waiter-expanded-string-read"]
 [2,"sh -c '\"$@\"' _ env","shell-string-positional-dump"]
@@ -1608,6 +1610,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     done
   done <<'ENVIRONMENT_CONTROLS'
 no-check|if environment_dump "$command_kind"; then|if false; then|exit=0 expected=2|incident
+dotted-word-boundary|  for value in "$@"; do|  opaque_re=${opaque_re//_.-/_-}; for value in "$@"; do|exit=2 expected=0|waiter-named-variable-setting-data waiter-dotted-word-data
 forwarded-word-test|        environment_producer shell|        environment_producer shell; if [ "$mode" = other ] && environment_main_evidence "${args[@]}"; then return 0; fi|exit=2 expected=0|vgs-waiter-unset-validation vgs-waiter-unset-validation-bash-lc fleet-waiter-timeout-empty-env-fixture fleet-waiter-timeout-empty-env-fixture-bash-lc
 ENVIRONMENT_CONTROLS
 fi
