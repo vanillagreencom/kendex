@@ -519,16 +519,20 @@ def complete_blocks(data, offset):
 
 
 class Watch:
-    def __init__(self, home, bash, settings):
+    def __init__(self, home, bash, settings, initial_passes=None):
         self.home, self.bash, self.settings = home, bash, settings
         self.directory = Path(os.path.expanduser(settings["JARVIS_LOG_DIR"]))
         self.directory.mkdir(parents=True, exist_ok=True)
         self.log = self.directory / "events.log"
         self.path = self.directory / "batch.json"
+        self.destinations = destinations(settings)
+        seeds = self.initial_cursors(initial_passes) if initial_passes is not None else None
         self.state = json.loads(self.path.read_text()) if self.path.exists() else {
             "generation": uuid.uuid4().hex, "offset": 0, "spans": [], "due": None, "pending": None}
         self._saved = json.loads(json.dumps(self.state)) if self.path.exists() else None
-        self.destinations = destinations(settings)
+        if seeds is not None:
+            # Include the whole vector in the first save, even the legacy binding save.
+            self.state["cursors"] = seeds
         if not self.state.get("legacy_control_host") and settings.get("JARVIS_CONTROL_HOST"):
             # Old host cursors contain no alias. Keep the original setting
             # through this first upgrade; the frozen binding owns old tails.
@@ -567,6 +571,37 @@ class Watch:
         self.forward_pending = None
         self.next_forward = 0
         self.mail_pending = {}
+
+    def initial_cursors(self, paths):
+        # Explicit adoption cannot enter ordinary migration or log recovery.
+        for path in (self.path, self.log):
+            if path.exists():
+                raise Failure("initial-pass", "refusal", "state-exists", str(path))
+        seeds = {}
+        for path in paths:
+            try:
+                data = Path(path).read_bytes()
+                _, _, records = decode_log(data, 0)
+                if len(records) != 1 or records[0][0] != len(data):
+                    raise ValueError("complete single pass required")
+                record = records[0][1]
+                if record.get("event_bytes") != data.rfind(b"\ncursor: ") + 1 or not isinstance(record.get("roots"), dict):
+                    raise ValueError("public pass footer required")
+                side, roots = record["side"], record["roots"]
+                if not isinstance(side, str):
+                    raise ValueError("destination key required")
+                if not all(isinstance(root, dict) for root in roots.values()):
+                    raise ValueError("root record required")
+            except (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError) as error:
+                raise Failure("initial-pass", "refusal", "pass-unread", "%s: %s" % (path, error)) from error
+            if side not in {target.key for target in self.destinations}:
+                raise Failure("initial-pass", "refusal", "destination-unknown", "%s: %s" % (path, side))
+            if side in seeds:
+                raise Failure("initial-pass", "refusal", "destination-repeated", "%s: %s" % (path, side))
+            if any("cause" in root for root in roots.values()):
+                raise Failure("initial-pass", "refusal", "root-failed", str(path))
+            seeds[side] = roots
+        return seeds
 
     def destination_key(self, side):
         host = self.state.get("legacy_control_host")
@@ -1043,7 +1078,12 @@ def main():
     parser.add_argument("--side", default="local")
     parser.add_argument("--cursor", default="{}")
     parser.add_argument("--presence", action="store_true")
+    parser.add_argument("--initial-pass", action="append", type=Path,
+                        help="initialize fresh loop state from a reconciled public pass, then exit; repeat per destination")
     args = parser.parse_args()
+    if args.initial_pass and args.mode != "loop":
+        parser.error("--initial-pass requires loop mode")
+    initial_passes = [path.absolute() for path in args.initial_pass] if args.initial_pass else None
     home = home_root(args.home)
     if args.mode == "pass":
         if args.presence:
@@ -1064,7 +1104,9 @@ def main():
         directory.mkdir(parents=True, exist_ok=True)
         with (directory / "watch.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            watch = Watch(home, args.bash, settings)
+            watch = Watch(home, args.bash, settings, initial_passes)
+            if initial_passes is not None:
+                return
             # Slow SSH and mailbox reads cannot extend an already-started
             # settle. Only this thread appends results or commits batch state.
             with ThreadPoolExecutor(max_workers=2 * len(watch.destinations) + 3) as passes:

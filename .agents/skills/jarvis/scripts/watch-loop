@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Usage: watch-loop [--home PATH]
+# Usage: watch-loop [--home PATH] [--initial-pass PATH ...]
+# --initial-pass accepts a reconciled public pass per destination, saves fresh
+# state and exits. Follow references/control-host-events.md before adoption.
 # Run this foreground command through Claude Monitor, or an orch job unit.
 set -euo pipefail
 SCRIPT_ROOT="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"
