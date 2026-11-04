@@ -40,7 +40,7 @@ Follow the skill's [widget tree consistency rule](../SKILL.md#widget-tree-consis
 
 ## Label and style
 
-`spacing` separates the box from its label. It does not add outer padding. `label` accepts the [IntoFragment contract](advanced-text.md).
+`spacing` separates the box from its label. It does not add outer padding. [`Checkbox::label`](https://raw.githubusercontent.com/iced-rs/iced/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/checkbox.rs) accepts `text::IntoFragment<'a>`.
 
 Status variants carry `is_checked`; `Status` has no `is_checked` field to access directly. Destructure `Active { is_checked }`, `Hovered { is_checked }` or `Disabled { is_checked }` in a custom style closure. The [Catalog reference](catalog.md) explains closure styling. `.class(...)` requires `advanced`.
 

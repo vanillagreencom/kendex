@@ -48,7 +48,7 @@ container(content)
     })
 ```
 
-`container::background(background)` takes a background value and returns a Style. It is not a theme callback. `text_color: None` inherits the incoming renderer text color; an explicit color overrides it. Both closure styling and `.class(...)` use the [Catalog contract](catalog.md); this container's class method does not require `advanced`.
+`container::background(background)` takes a background value and returns a Style. It is not a theme callback. `text_color: None` inherits the incoming renderer text color; an explicit color overrides it. Both closure styling and `.class(...)` use the pinned [`container::Catalog` contract](https://raw.githubusercontent.com/iced-rs/iced/3997291f318a8bc06fa522f5579836fb3feb94df/widget/src/container.rs); this container's class method does not require `advanced`.
 
 ## Clipping and operations
 
