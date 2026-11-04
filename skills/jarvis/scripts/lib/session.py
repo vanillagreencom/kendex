@@ -845,9 +845,16 @@ os.execvpe(argv[0],argv,env)
                 if existing.returncode == 0:
                     if not succeeding or adopted or not self.terminal(predecessor):
                         raise Refusal("name-conflict")
-                # A prompt-free shell keeps the pane alive before SessionStart.
                 creation = ["new-window", "-d", "-t", "=jarvis"] if succeeding and existing.returncode == 0 else ["new-session", "-d", "-s", "jarvis"]
-                runner = [sys.executable, "-B", "-c", "import os,runpy,sys; sys.exit(runpy.run_path(sys.argv[1],run_name='jarvis_runner')['Session'](sys.argv[2], dict(os.environ)).successor(int(sys.argv[3])))", str(Path(__file__).resolve()), self.home, str(generation)] if succeeding else [BASH, "--noprofile", "--norc"]
+                # A first launch runs in the pane it creates, held on a tmux
+                # channel until the record owns that pane: replacing the pane
+                # would free its pty while opening another, which macOS can
+                # refuse with ENXIO. A wait that fails or is killed runs no
+                # launch. The account observer reads descendants of the pane
+                # shell, so the tail keeps that shell from exec-replacing itself.
+                channel = "jarvis-launch-" + str(generation)
+                runner = [sys.executable, "-B", "-c", "import os,runpy,sys; sys.exit(runpy.run_path(sys.argv[1],run_name='jarvis_runner')['Session'](sys.argv[2], dict(os.environ)).successor(int(sys.argv[3])))", str(Path(__file__).resolve()), self.home, str(generation)] if succeeding else [
+                    BASH, "--noprofile", "--norc", "-c", "tmux wait-for " + channel + " && { " + prepared["line"] + '; }; result=$?; exit "$result"']
                 with self.pane_command(runner) as command:
                     created = self.tmux(*creation, "-c", self.home,
                                         "-P", "-F", "#{socket_path}\t#{pid}\t#{start_time}\t#{window_id}\t#{pane_id}", command)
@@ -873,11 +880,7 @@ os.execvpe(argv[0],argv,env)
                     record.update(state="starting", reason="launching")
                     self.write(record)
                 else:
-                    command = prepared["line"]
-                    # The account observer reads descendants of the pane shell.
-                    # A tail keeps that shell from exec-replacing itself.
-                    with self.pane_command([BASH, "--noprofile", "--norc", "-c", command + '; result=$?; exit "$result"']) as command:
-                        self.tmux("respawn-pane", "-k", "-t", pane, "-c", self.home, command)
+                    self.tmux("wait-for", "-S", channel)
                     process = self.tmux("display-message", "-p", "-t", pane, "#{pane_pid}").stdout.strip()
                     record["process"] = json.loads(self.backend("process", process).stdout)
                     self.write(record)

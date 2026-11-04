@@ -737,6 +737,26 @@ class SessionContract(unittest.TestCase):
                 self.call("stop")
                 self.wait("stopped", persisted_stop=True)
 
+    def test_first_launch_runs_in_its_created_pane(self):
+        # The process tmux creates for a first Start is the one the record
+        # owns and the native launch runs under: no second pane process.
+        created = self.root / "created-pane-pids"
+        real = shlex.quote(shutil.which("tmux"))
+        wrapper = self.root / "bin/tmux"
+        wrapper.write_text("#!" + self.env["JARVIS_TEST_BASH"] + "\nset -euo pipefail\n"
+            + 'if [[ " $* " == *" new-session "* ]]; then\n  created="$(' + real + ' "$@")"\n'
+            + "  printf '%s\\n' \"$created\"\n"
+            + "  " + real + " -S \"${created%%$'\\t'*}\" display-message -p -t \"${created##*$'\\t'}\" '#{pane_pid}' >> "
+            + shlex.quote(str(created)) + "\n  exit\nfi\nexec " + real + ' "$@"\n')
+        wrapper.chmod(0o755)
+        self.call("start")
+        self.wait()
+        record = json.loads(self.record.read_text())
+        pane = subprocess.run(["tmux", "-L", self.label, "display-message", "-p", "-t", record["terminal"]["pane"], "#{pane_pid}"],
+                              capture_output=True, text=True, check=True).stdout.split()
+        self.assertEqual(created.read_text().split(), [str(record["process"]["pid"])])
+        self.assertEqual(pane, [str(record["process"]["pid"])])
+
     def test_start_model_and_effort(self):
         # The stated pair is read as a preference entry reads it, launched in
         # the harness's own words and recorded as the session's choice, with
