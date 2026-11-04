@@ -20,7 +20,7 @@ Usage: slack setup [--root ROOT] [--name NAME | --take CHANNEL_ID]
        slack listen --root ROOT [--root ROOT]... [--once]
        slack listen --status --root ROOT [--root ROOT]...
        slack post [--root ROOT] [--channel ID] --text TEXT [--mention]
-                  [--file PATH] [--thread TS] [--update TS]
+                  [--file PATH]... [--thread TS] [--update TS]
        slack read --channel ID (--ts TS | --latest N)
        slack compact [--root ROOT]...
        slack thread TS [--root ROOT] [--limit N]
@@ -77,8 +77,8 @@ post      one message to the bound channel, or --channel for another, its
           after link expansion; larger text is refused;
           --mention prefixes every owner, unless the root's Jarvis session
           hold stands, which posts with no mention and prints mention-held
-          on stderr; --file uploads the file with the
-          text as its comment instead, in Slack's mrkdwn and outside the
+          on stderr; repeat --file to upload related files as one share with
+          the text as their comment instead, in Slack's mrkdwn and outside the
           12,000-character cap;
           --thread replies only in a thread; --update edits the message at that
           ts. Text and file bytes are refused when they match the
@@ -214,7 +214,7 @@ def build() -> Parser:
     p.add_argument("--root")
     p.add_argument("--channel")
     p.add_argument("--text")
-    p.add_argument("--file")
+    p.add_argument("--file", action="append")
     p.add_argument("--mention", action="store_true")
     p.add_argument("--thread")
 
