@@ -376,6 +376,39 @@ class PublicOwnerAsks(MailWorld):
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertEqual(page["activeCount"], 1)
 
+        marker = self.root / "executed-launch-setting"
+        helper = remote / "checkout-helper"
+        helper.write_text('#!' + BASH + '\ntouch "' + str(marker) + '"\nexit 91\n')
+        helper.chmod(0o755)
+        # Registered target settings reach the real carried Slack ask-links
+        # launch. Ordinary values and dead construction locals remain data.
+        cases = [
+            ("ordinary", {"SLACK_API_URL": "http://127.0.0.1:1", "SLACK_POLL_SECONDS": "7"}, True),
+            ("construction-inputs", {"here": "./checkout-helper", "_slack_python": "./checkout-helper",
+                                     "_slack_code": "./checkout-helper"}, True),
+            ("_slack_script", {"_slack_script": "./checkout-helper"}, False),
+            ("orch", {"orch": "./checkout-helper"}, False),
+            ("linear", {"linear": "./checkout-helper"}, False),
+            ("_slack_caller_env", {"_slack_caller_env": "{}"}, False),
+        ]
+        for setting, values, succeeds in cases:
+            with self.subTest(setting=setting):
+                (remote / "kendex.settings.toml").write_text(
+                    "[env]\n" + "".join(key + "=" + json.dumps(value) + "\n" for key, value in values.items()))
+                result, page = self.run_cli()
+                self.assertFalse(marker.exists(), "carried-launch-command-executed")
+                if succeeds:
+                    self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                    self.assertEqual(page["activeCount"], 1)
+                    self.assertEqual(page["rows"][0]["what"], "Remote original")
+                    self.assertTrue(page["rows"][0]["link"]["url"].startswith("https://workspace.slack.test/"))
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(page["kind"], "unavailable")
+                    record = json.loads(result.stderr.split("owner-asks-failure=", 1)[1])
+                    self.assertEqual(record["key"][:2], ["slack/slack", "exit"])
+                    self.assertEqual(record["destination"], "ssh:fixture:" + str(remote))
+
     def test_carried_presence_preserves_root_settings_and_permission(self):
         remote = make_project(self.root / "remote ' presence;$")
         marker = self.root / "executed-presence-checkout"
@@ -446,6 +479,24 @@ print(json.dumps(owner._presence('ssh:fixture')))
             self.assertIn("FAILED (failures=", result.stderr)
             self.assertIn("(checkout_code=True)", result.stderr)
             self.assertNotIn("(checkout_code=False)", result.stderr)
+
+            path.write_text(original)
+            launcher = skills / "slack/scripts/slack"
+            original = launcher.read_text()
+            old = "readonly -a _slack_script"
+            self.assertEqual(original.count(old), 1)
+            mutant = original.replace(old, ": # " + old)
+            self.assertNotEqual(mutant, original)
+            launcher.write_text(mutant)
+            result = subprocess.run([BASH, str(REPO / "skills/jarvis/tests/owner-asks.test.sh"),
+                                     "PublicOwnerAsks.test_remote_mailbox_only_worktree_and_untrusted_checkout_code"],
+                                    env=dict(os.environ, JARVIS_TEST_SKILLS=str(skills)),
+                                    capture_output=True, text=True, timeout=60)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("FAILED (failures=", result.stderr)
+            self.assertIn("carried-launch-command-executed", result.stderr)
+            self.assertNotIn("(checkout_code=False)", result.stderr)
+            self.assertNotIn("(checkout_code=True)", result.stderr)
 
     def slack_thread(self, home, ask):
         # Exercise Slack's public mapping/permalink owner against its existing
