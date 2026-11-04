@@ -279,7 +279,12 @@ fn replace(path: &Path, record: &Record) -> Result<(), String> {
 /// the returned notice and `f` runs without it: refusing an account on
 /// contention would report it unmeasured, the wall on every launch that
 /// serving a stale figure exists to prevent, while a doubled request is
-/// one notice.
+/// one notice. Where `flock(1)` is absent the shell readers take a `mkdir`
+/// mutex here instead, and this lock takes none: it is held across a
+/// request by processes a caller's ceiling ends, and a mutex directory
+/// outlives its killed holder, so every later refresh on the host would
+/// wait out the bound; a refresh a shell reader makes at the same moment
+/// costs one doubled request, which a timed-out wait already accepts.
 #[allow(
     clippy::disallowed_methods,
     reason = "the listing's own host-wide refresh lock beside its records, taken through agent-runtime's record lock so a shell reader's flock on the same file excludes it"
@@ -331,9 +336,6 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    /// Defect: a figure kept beside a refusal served under the refusal's
-    /// stamp, so a refused refresh reads as a fresh figure; or a figure
-    /// whose consumed bucket reset served as current.
     #[test]
     fn a_kept_figure_keeps_its_own_stamp_and_a_consumed_reset_is_a_miss() {
         let dir = tempfile::tempdir().unwrap();

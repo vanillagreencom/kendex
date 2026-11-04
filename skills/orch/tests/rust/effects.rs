@@ -27,8 +27,8 @@ use std::time::{Duration, Instant};
 use serde_json::{Value, json};
 use support::*;
 
-/// A close carrying the tracker's terminal verdict, the ground decision 83
-/// takes to end a lane whose harness still runs.
+/// A close carrying the tracker's terminal verdict, the ground that ends a
+/// lane whose harness still runs.
 fn terminal_close(item: &str) -> Value {
     json!({
         "op": "close-owned-resources",
@@ -66,11 +66,11 @@ fn a_launch_confirmed_records_the_running_lane_with_its_pane_identity() {
         "claude"
     );
     assert!(launch["start"].as_str().is_some());
-    // The lane's `window` is the legacy `session:title` form, the title the
-    // item (decision 56); the pane id stays in `launch.pane`.
+    // The lane's `window` is `session:title`, the title the item; the pane
+    // id stays in `launch.pane`.
     assert_eq!(report["lane"]["window"], "fleet:KEN-1");
     // The window the launch opened stands on the server, and the intent
-    // recorded it before the wait (decision 62).
+    // recorded it before the wait.
     assert!(
         server
             .panes()
@@ -140,9 +140,9 @@ fn a_launch_that_never_draws_its_composer_records_unconfirmed() {
     assert_eq!(again["intent"]["observation"]["state"]["state"], "unjudged");
 }
 
-/// Decision 60, R-U18 high 1: a pane whose screen carries the composer
-/// marker while a shell holds its terminal never reads idle, so the launch
-/// never confirms; a reconcile reads the same.
+/// A pane whose screen carries the composer marker while a shell holds its
+/// terminal never reads idle, so the launch never confirms; a reconcile
+/// reads the same.
 #[test]
 fn a_pane_whose_foreground_is_a_shell_never_reads_idle_whatever_it_draws() {
     let dir = tempfile::tempdir().unwrap();
@@ -6220,8 +6220,271 @@ fn a_hosted_relaunch_asks_the_provider_to_reuse_its_worktree() {
     effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
 }
 
+/// An accountless Claude lane runs under the operator's own config dir,
+/// which the launch never writes a trust pair into: only a named account's
+/// config is the launch's to prepare.
+#[test]
+fn an_accountless_claude_launch_writes_no_trust_pair_into_the_operator_s_home() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let mut request = launch_request("KEN-A", runner.state_dir());
+    request.as_object_mut().unwrap().remove("account");
+    let home_word = home.display().to_string();
+    let report = effect_report(&runner.op_fleet_env(&request, &[("HOME", home_word.as_str())]));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert!(
+        std::fs::symlink_metadata(home.join(".claude")).is_err(),
+        "nothing written under the operator's config dir: {report}"
+    );
+    effect_report(&runner.op_fleet(&terminal_close("KEN-A")));
+}
+
+/// The `kendex` fixture first on a row's tools path, answering `hooks-off`
+/// with `answer`; its calls are read back from `kendex.log` beside it.
+fn plant_hooks_off(tools: &Path, answer: Value) {
+    let link = tools.join("kendex");
+    if std::fs::symlink_metadata(&link).is_err() {
+        std::os::unix::fs::symlink(fixtures().join("kendex-hooks-off/kendex"), &link).unwrap();
+    }
+    std::fs::write(tools.join("hooks-off.json"), answer.to_string()).unwrap();
+    let _ = std::fs::remove_file(tools.join("kendex.log"));
+}
+
+/// The three lane-mail hooks registered under `dir`.
+fn plant_copilot_hooks(dir: &Path) {
+    std::fs::create_dir_all(dir).unwrap();
+    for name in ["lane-mail-check", "lane-mail-compact", "lane-mail-start"] {
+        for ext in ["sh", "json"] {
+            std::fs::write(dir.join(format!("{name}.{ext}")), "{}\n").unwrap();
+        }
+    }
+}
+
+/// A Copilot lane launches only where its turn-end, compaction and start
+/// hooks run: registered in its worktree or its home, and switched off by
+/// no settings layer, which `kendex hooks-off` judges. Each refusal comes
+/// before any window.
+#[test]
+fn a_copilot_lane_launches_only_where_its_lane_mail_hooks_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-record");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    let tools = dir.path().join("tools");
+    std::fs::create_dir_all(&tools).unwrap();
+    runner.tools = Some(tools.clone());
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let account = dir.path().join("copilot-account");
+    std::fs::create_dir_all(&account).unwrap();
+    let binaries = format!(
+        "copilot={}",
+        fixtures().join("stub-record").join("copilot").display()
+    );
+    let home_word = home.display().to_string();
+    let env = [
+        ("ORCH_HARNESS_BINARIES", binaries.as_str()),
+        ("HOME", home_word.as_str()),
+    ];
+    let answer = |stdout: &str| json!({"stdout": stdout});
+    type Case<'a> = (&'a str, Option<bool>, Value, Option<&'a str>);
+    let cases: [Case; 6] = [
+        (
+            "KEN-C1",
+            None,
+            answer(r#"{"switched_off_by": null}"#),
+            Some("no-context-hooks"),
+        ),
+        (
+            "KEN-C2",
+            Some(true),
+            answer(r#"{"switched_off_by": "/x/.copilot/settings.json"}"#),
+            Some("hooks-disabled file=/x/.copilot/settings.json"),
+        ),
+        (
+            "KEN-C3",
+            Some(false),
+            json!({"exit": 2, "stderr": "kendex: settings unreadable\n"}),
+            Some("hooks-unjudged exit=2"),
+        ),
+        (
+            "KEN-C4",
+            Some(true),
+            answer("[]"),
+            Some("hooks-unjudged exit=answer"),
+        ),
+        (
+            "KEN-C5",
+            Some(false),
+            answer(r#"{"switched_off_by": null}"#),
+            None,
+        ),
+        (
+            "KEN-C6",
+            None,
+            answer(r#"{"switched_off_by": null}"#),
+            Some("no-context-hooks"),
+        ),
+    ];
+    for (item, in_worktree, kendex, refused) in cases {
+        let worktree = dir.path().join(item);
+        std::fs::create_dir_all(&worktree).unwrap();
+        let init = program("git")
+            .args(["-C", &worktree.display().to_string(), "init", "-q"])
+            .output()
+            .unwrap();
+        assert!(init.status.success(), "{}", stderr(&init));
+        let _ = std::fs::remove_dir_all(account.join("hooks"));
+        let scope = match in_worktree {
+            Some(true) => Some(worktree.join(".github/hooks")),
+            Some(false) => Some(account.join("hooks")),
+            None => None,
+        };
+        if let Some(scope) = &scope {
+            plant_copilot_hooks(scope);
+        }
+        // One hook alone in the worktree is no scope the session runs.
+        if item == "KEN-C6" {
+            let half = worktree.join(".github/hooks");
+            std::fs::create_dir_all(&half).unwrap();
+            for ext in ["sh", "json"] {
+                std::fs::write(half.join(format!("lane-mail-check.{ext}")), "{}\n").unwrap();
+            }
+        }
+        plant_hooks_off(&tools, kendex);
+        let mut request = launch_request(item, &worktree);
+        request["harness"] = json!("copilot");
+        request["account"] = json!(account.display().to_string());
+        let panes_before = server.panes().len();
+        let report = effect_report(&runner.op_fleet_env(&request, &env));
+        let calls = std::fs::read_to_string(tools.join("kendex.log")).unwrap_or_default();
+        match refused {
+            Some(reason) => {
+                assert_eq!(report["intent"]["outcome"], "failed", "{item}: {report}");
+                let cause = report["intent"]["observation"]["cause"]
+                    .as_str()
+                    .unwrap_or("");
+                assert!(
+                    cause.starts_with(&format!(
+                        "unsupported-for-oversee harness=copilot reason={reason}"
+                    )),
+                    "{item}: {report}"
+                );
+                assert_eq!(server.panes().len(), panes_before, "{item}: no window");
+            }
+            None => {
+                assert_ne!(report["intent"]["outcome"], "failed", "{item}: {report}");
+                assert!(
+                    std::fs::metadata(worktree.join("launch-record.json")).is_ok(),
+                    "{item}: the harness started in its window"
+                );
+            }
+        }
+        match &scope {
+            None => assert_eq!(calls, "", "{item}: no hooks, nothing to ask"),
+            Some(scope) => {
+                let documents: Vec<String> =
+                    ["lane-mail-check", "lane-mail-compact", "lane-mail-start"]
+                        .iter()
+                        .map(|name| format!("--hook-document {}/{name}.json", scope.display()))
+                        .collect();
+                assert_eq!(
+                    calls,
+                    format!(
+                        "hooks-off --copilot-home {} --project {} {}\n",
+                        account.display(),
+                        worktree.display(),
+                        documents.join(" ")
+                    ),
+                    "{item}: the home, the worktree and the scope's registrations"
+                );
+            }
+        }
+    }
+}
+
+/// A hosted Copilot lane, whose home is on its host, and a hosted Pi lane
+/// billing a Claude seat are refused before the provider creates anything;
+/// a hosted Pi lane on its own root is judged on its host's files once
+/// `create` named that root.
+#[test]
+fn a_hosted_lane_is_gated_before_create_and_a_hosted_pi_lane_on_its_host_s_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+    let world = HostedLaunch::new(&server, dir.path(), record);
+    let account = world.runner.state_dir().display().to_string();
+    let host = world.host();
+    let answers_path = world.scripts.join("lane-host.json");
+    let mut answers: Value =
+        serde_json::from_str(&std::fs::read_to_string(&answers_path).unwrap()).unwrap();
+    // The record the refused launches leave stands, so this one re-enters
+    // it and asks the provider to reuse its worktree.
+    answers
+        [format!("create --item KEN-H --repo o/r --harness pi --account {account} --relaunch")] = json!({
+        "stdout": format!("ssh-target=lane.example\tpath={host}\tremote-prefix=exec bash -c\tpi-root=/srv/pi-root\n")
+    });
+    answers["cat --item KEN-H /srv/pi-root/settings.json"] =
+        json!({"stdout": r#"{"compaction": {"enabled": true}}"#});
+    answers[format!("cat --item KEN-H {host}/.pi/settings.json")] = json!({"exit": 2});
+    std::fs::write(&answers_path, answers.to_string()).unwrap();
+    for (harness, model, cause, created) in [
+        (
+            "copilot",
+            None,
+            "unsupported-for-oversee harness=copilot reason=hosted".to_owned(),
+            false,
+        ),
+        (
+            "pi",
+            Some("pi-claude/fable"),
+            format!("host-pi-claude-seat host={PROVIDER_PATH} model=pi-claude/fable"),
+            false,
+        ),
+        (
+            "pi",
+            Some("github-copilot/gpt-6"),
+            "compaction-on harness=pi file=/srv/pi-root/settings.json".to_owned(),
+            true,
+        ),
+    ] {
+        let _ = std::fs::remove_file(world.scripts.join("lane-host.log"));
+        let mut request = world.request();
+        request["harness"] = json!(harness);
+        if let Some(model) = model {
+            request["model"] = json!(model);
+        }
+        let panes_before = server.panes().len();
+        let report = effect_report(&world.runner.op_fleet(&request));
+        assert_eq!(report["intent"]["outcome"], "failed", "{harness}: {report}");
+        assert_eq!(
+            report["intent"]["observation"]["cause"], cause,
+            "{harness} {model:?}: {report}"
+        );
+        assert_eq!(server.panes().len(), panes_before, "{harness}: no window");
+        assert_eq!(
+            world.calls().iter().any(|c| c.contains(" create ")),
+            created,
+            "{harness} {model:?}: {:?}",
+            world.calls()
+        );
+        assert!(
+            std::fs::metadata(world.tools.join("ssh.log")).is_err(),
+            "nothing dialled"
+        );
+    }
+}
+
 /// A Pi lane billing a Claude seat runs under Pi's own root; the seat
-/// reaches the launch through its own variable alone.
+/// reaches the launch through its own variable alone. That root's settings
+/// and carrier are what the launch reads before any window: on Pi's default
+/// compaction it refuses, and with compaction off and a carrier that sends
+/// the window and wakes on mail it opens.
 #[test]
 fn a_pi_lane_on_a_claude_seat_keeps_pis_own_root_beside_the_seat() {
     let dir = tempfile::tempdir().unwrap();
@@ -6231,12 +6494,50 @@ fn a_pi_lane_on_a_claude_seat_keeps_pis_own_root_beside_the_seat() {
     runner.init_fleet();
     let seat = dir.path().join("claude-seat");
     std::fs::create_dir_all(&seat).unwrap();
-    let mut request = launch_request("KEN-PI", runner.state_dir());
+    let home = dir.path().join("home");
+    let pi_root = home.join(".pi/agent");
+    std::fs::create_dir_all(&pi_root).unwrap();
+    let home = home.display().to_string();
+    let binaries = format!("pi={}", fixtures().join("stub-record").join("pi").display());
+    let env = [
+        ("ORCH_HARNESS_BINARIES", binaries.as_str()),
+        ("HOME", home.as_str()),
+    ];
+    let mut request = launch_request("KEN-PI0", runner.state_dir());
     request["harness"] = json!("pi");
     request["model"] = json!("pi-claude/fable");
     request["account"] = json!(seat.display().to_string());
-    let binaries = format!("pi={}", fixtures().join("stub-record").join("pi").display());
-    let out = runner.op_fleet_env(&request, &[("ORCH_HARNESS_BINARIES", binaries.as_str())]);
+    let panes_before = server.panes().len();
+    let report = effect_report(&runner.op_fleet_env(&request, &env));
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["cause"],
+        format!(
+            "compaction-on harness=pi file={}/settings.json",
+            pi_root.display()
+        ),
+        "{report}"
+    );
+    assert_eq!(server.panes().len(), panes_before, "no window opened");
+    std::fs::write(
+        pi_root.join("settings.json"),
+        r#"{"compaction": {"enabled": false}}"#,
+    )
+    .unwrap();
+    let carrier = pi_root.join("packages/@vanillagreen/pi-hooks");
+    std::fs::create_dir_all(carrier.join("extensions")).unwrap();
+    std::fs::write(
+        carrier.join("package.json"),
+        r#"{"version": "1.4.0", "pi": {"extensions": ["./extensions/lane-mail-wake.ts"]}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        carrier.join("extensions/vocab.ts"),
+        "export const fields = { context_window: 0 };\n",
+    )
+    .unwrap();
+    request["item"] = json!("KEN-PI");
+    let out = runner.op_fleet_env(&request, &env);
     let report = effect_report(&out);
     assert!(
         matches!(

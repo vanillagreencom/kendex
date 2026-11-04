@@ -43,7 +43,9 @@ source "$SCRIPT_DIR/lib/lane-launch.sh"
 source "$SCRIPT_DIR/lib/overseer-launch.sh"
 cwd="$(jq -r '.controller.cwd' "$request")"
 line="$(jq -r '.controller.launch_line' "$request")"
-identity="$(jq -c '.controller | {harness, account, home, model, effort, cwd} + (if .class == null then {} else {class} end)' "$request")"
+# The home the runtime's launch prepares, the account on these harnesses.
+identity="$(jq -c '.controller | {harness, account, home: (.home // .account), model, effort, cwd}
+  + (if .class == null then {} else {class} end)' "$request")"
 ol_record_read || OL_PRIOR=""
 OL_OPEN_OUT="$("$SCRIPT_DIR/overseer-host" create --cwd "$cwd" --name overseer --session "${ORCH_TMUX_SESSION:?}" \
   --line "$(lane_single_quote "$SCRIPT_DIR/overseer-run") $line" 2>"$DEP_ERR")" \
@@ -66,7 +68,12 @@ EOF
 
 # fixture_runtime_stub DIR [RECORD_DIR] — write DIR/orch-runtime, replacing a
 # link to the real wrapper there (a mutant scripts directory links every
-# script), and the start performer beside it. RECORD_DIR is where the stub
+# script), the start performer beside it, and beside that the walk's
+# stand-in `oversee launch` asks for a first controller: `successor --fleet
+# --cwd DIR` answered by the shell walk beside the launcher
+# (lib/overseer-launch.sh § ol_walk) in the verb's reply shape, and `state
+# exists|init --fleet` and `state get --fleet POINTER` answered through the
+# store beside the stub over the oversee state. RECORD_DIR is where the stub
 # records and reads its files; left out, the stub takes $STUB_DIR from its
 # environment at each call, the watch harness's per-case directory. Every
 # call appends its argv to RECORD_DIR/runtime.args. `op --fleet --request
@@ -99,6 +106,52 @@ fixture_runtime_stub() { # DIR [RECORD_DIR]
   [[ "$dir" == "$TMP_ROOT/"* ]] || { echo 'runtime-stub: dir=not-private' >&2; return 1; }
   [[ ! -L "$dir/orch-runtime" ]] || rm -- "${dir:?}/orch-runtime"
   fixture_runtime_start_perform "$dir" || return 1
+  cat > "$dir/.orch-runtime-successor" <<'EOF'
+#!/usr/bin/env bash
+# argv: the successor verb's words, a first controller's alone.
+set -euo pipefail
+cwd="" predecessor="" handoff=tmp/handoffs/OVERSEER-HANDOFF.md
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --cwd) cwd="$2"; shift ;;
+    --predecessor) predecessor="$2"; shift ;;
+    --handoff) handoff="$2"; shift ;;
+  esac
+  shift
+done
+[[ -z "$predecessor" ]] || { printf 'orch-runtime: fixture-unexpected predecessor=%s\n' "$predecessor" >&2; exit 2; }
+: "${SCRIPT_DIR:?the launching script exports its scripts directory}"
+DEP_ERR="$(mktemp)" || exit 1
+trap 'rm -f -- "${DEP_ERR:?}"' EXIT
+export DEP_ERR
+source "$SCRIPT_DIR/lib/lane-context.sh"
+source "$SCRIPT_DIR/lib/lane-state.sh"
+source "$SCRIPT_DIR/lib/lane-launch.sh"
+source "$SCRIPT_DIR/lib/overseer-launch.sh"
+ol_preference_entries "$(ol_preference)" \
+  || { printf 'orch-runtime: preference-invalid entry=%s\n' "$OL_BAD_ENTRY" >&2; exit 1; }
+rc=0
+ol_walk "${ORCH_OVERSEER_HEADROOM_PCT:-5}" "" "${OL_ENTRIES[@]}" 2>/dev/null || rc=$?
+case "$rc" in
+  0) ol_brief "$OL_HARNESS" "$handoff"
+     jq -cn --arg harness "$OL_HARNESS" --arg account "$OL_LANE_DIR" --arg model "$OL_MODEL" \
+       --arg effort "$OL_EFFORT" --arg class "${OL_MODEL_CLASS:-}" --arg pick "$OL_PICK_MODEL" \
+       --arg entry "$OL_CHOSEN" --arg cwd "$cwd" --arg brief "$OL_BRIEF" --argjson entries "$OL_NAMED" '
+       {harness: $harness, account: $account, model: $model, effort: $effort, class: $class} as $chosen
+       | {protocol: "orch-runtime-v1", ok: true, result: {
+           walk: {answer: "lane", entries: $entries, chosen: ($chosen + {entry: $entry, pick_model: $pick}),
+             skipped: [], walled: 0, unmeasured: 0, deprecated: []},
+           successor: ($chosen + {cwd: $cwd, permission: "bypass"}
+             | with_entries(select(.value != ""))),
+           brief: $brief, expected: null}}' ;;
+  3) jq -cn --argjson entries "$OL_NAMED" --argjson walled "$OL_WALKED_WALLED" \
+       --argjson unmeasured "$OL_WALKED_UNMEASURED" '{protocol: "orch-runtime-v1", ok: true, result: {
+       walk: {answer: "none", entries: $entries, chosen: null, skipped: [], walled: $walled,
+         unmeasured: $unmeasured, deprecated: []}, successor: null, brief: null, expected: null}}' ;;
+  *) printf 'orch-runtime: account-unjudged cause=%s\n' "${OL_REASON:-walk-failed}" >&2; exit 1 ;;
+esac
+EOF
+  chmod +x "$dir/.orch-runtime-successor"
   lanes="$dir/lanes"
   [[ -e "$lanes" ]] || lanes="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../scripts" && pwd)/lanes"
   store="$dir/workflow-state"
@@ -154,7 +207,22 @@ case "\${1:-} \${2:-}" in
     open='[]'
     [[ ! -f "\$record/runtime.open-intents" ]] || open="\$(cat "\$record/runtime.open-intents")"
     printf '{"protocol":"orch-runtime-v1","ok":true,"result":{"kind":"fleet","open_intents":%s}}\\n' "\$open" ;;
+  "successor --fleet")
+    exec "\$(cd -- "\$(dirname -- "\$0")" && pwd -P)/.orch-runtime-successor" "\$@" ;;
+  "state exists")
+    exists=false
+    ! '$store' exists oversee >/dev/null 2>&1 || exists=true
+    jq -cn --arg path "\$('$store' path oversee)" --argjson exists "\$exists" \\
+      '{protocol: "orch-runtime-v1", ok: true, result: {issue_id: "oversee", path: \$path, exists: \$exists}}' ;;
+  "state init")
+    '$store' init oversee >/dev/null
+    printf '{"protocol":"orch-runtime-v1","ok":true,"result":{}}\\n' ;;
   "state get")
+    if [[ "\${3:-}" == --fleet ]]; then
+      jq -c --arg pointer "\${4:-}" '{protocol: "orch-runtime-v1", ok: true, result: {pointer: \$pointer,
+        value: getpath(\$pointer | split("/")[1:])}}' "\$('$store' path oversee)"
+      exit 0
+    fi
     [[ "\${3:-}" == --item && -n "\${4:-}" && \$# -le 5 ]] || { echo 'orch-runtime: usage' >&2; exit 2; }
     doc="\$('$store' get "\$4")"
     jq -c --arg pointer "\${5:-}" '{protocol: "orch-runtime-v1", ok: true, result: {pointer: \$pointer,

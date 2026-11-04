@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Tests for scripts/oversee: `launch`, a fleet's first overseer opened through
-# the overseer-host adapter from OUTSIDE tmux, and `register`, the session
-# record for a session a person opened by hand. Run over a real tmux
-# server at the person's default socket under a private TMUX_TMPDIR, so a run
-# with no $TMUX and ORCH_TMUX_SESSION set reaches it the way
-# lib/tmux-server.sh says a verb outside tmux reaches the person's own server.
-# claude, codex and copilot are stubs on PATH, and `lanes pick` answers from
-# the lanes-fixture usage bodies.
+# Tests for scripts/oversee: `launch`, the shell entry that asks the orch
+# runtime for an overseer and relays its answer, here against a runtime
+# stand-in that answers the successor the walk chose and performs a start as
+# the runtime's confirmed arm records it (lib/runtime-stub.sh), run from
+# OUTSIDE tmux; and `register`, the session record for a session a person
+# opened by hand. Run over a real tmux server at the person's default socket
+# under a private TMUX_TMPDIR, so a run with no $TMUX and ORCH_TMUX_SESSION set
+# reaches it the way lib/tmux-server.sh says a verb outside tmux reaches the
+# person's own server. claude, codex and copilot are stubs on PATH.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/named-process.sh"
@@ -253,17 +254,22 @@ QUIET_SCRIPTS="$(mutant_scripts fixture-watch oversee)" || exit 1
 OVERSEE="$QUIET_SCRIPTS/oversee"
 fixture_watch_neighbor "$OVERSEE"
 mkdir -p "$BIN/processes" "$TMP_ROOT/work/tmp"
-# The orch runtime a first launch hands its start-controller request to,
-# named through ORCH_RUNTIME_CLI, standing in for the binary these suites
-# cannot build. It appends every call's argv, the request and the brief
-# file's text to RUNTIME_LOG, so a row reads what the launcher composed;
-# answers the planted reply at OL_RUNTIME_REPLY where a row plants one;
-# refuses as the shipped wrapper does where OL_RUNTIME_SETUP_REQUIRED is set
-# (its `setup-required` line, exit 69); and otherwise hands the start to the
-# shared performer lib/runtime-stub.sh writes beside it, which performs it as
-# the runtime's confirmed arm records it (its header says how) and answers
-# `confirmed`. SCRIPT_DIR and PROJECT_ROOT are the launcher's exports, so a
-# mutant launcher's own libs and workflow-state answer for it.
+# The orch runtime the launcher asks, named through ORCH_RUNTIME_CLI, standing
+# in for the binary these suites cannot build. It appends every call's argv,
+# a request and its brief file's text to RUNTIME_LOG, so a row reads what the
+# launcher composed, and the successor reply it answered beside it. It refuses
+# as the shipped wrapper does where OL_RUNTIME_SETUP_REQUIRED is set (its
+# `setup-required` line, exit 69). `state exists|init|get --fleet` answer
+# through the store beside the launcher under test. `successor --fleet`
+# answers the reply planted at OL_RUNTIME_SUCCESSOR, else the walk's choice of
+# the suite's preference entry, claude:fable:high on the account `.claude`
+# under LANES_HOME, in the --cwd it is asked for, with the takeover brief in
+# its harness's form naming --handoff. `op --fleet` answers the
+# reply planted at OL_RUNTIME_REPLY, else hands a start to the shared
+# performer lib/runtime-stub.sh writes beside it, which performs it as the
+# runtime's confirmed arm records it and answers `confirmed`. SCRIPT_DIR and
+# PROJECT_ROOT are the launcher's exports, so a mutant launcher's own libs
+# and workflow-state answer for it.
 RUNTIME_LOG="$TMP_ROOT/runtime.log"
 # shellcheck source=lib/runtime-stub.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/runtime-stub.sh"
@@ -271,9 +277,12 @@ fixture_runtime_start_perform "$BIN"
 cat > "$BIN/orch-runtime" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
-request=""
+request="" cwd="" handoff=tmp/handoffs/OVERSEER-HANDOFF.md
 for ((i = 1; i <= $#; i++)); do
-  [[ "${!i}" != --request ]] || { j=$((i + 1)); request="${!j}"; }
+  j=$((i + 1))
+  [[ "${!i}" != --request ]] || request="${!j}"
+  [[ "${!i}" != --cwd ]] || cwd="${!j}"
+  [[ "${!i}" != --handoff ]] || handoff="${!j}"
 done
 if [[ -n "${OL_RUNTIME_LOG:-}" ]]; then
   printf 'argv %s\n' "$*" >> "$OL_RUNTIME_LOG"
@@ -287,25 +296,40 @@ if [[ -n "${OL_RUNTIME_SETUP_REQUIRED:-}" ]]; then
   printf 'orch-runtime: setup-required key=fixture run=%s/setup\n' "${SCRIPT_DIR:-.}" >&2
   exit 69
 fi
-# The account judge the walk asks (U8d): the reply planted at
-# OL_RUNTIME_PICK where a row plants one (the verb's real output on a
-# fixture, never one written by hand), else the legacy judge beside the
-# launcher under test asked the same question, its answer wrapped as the
-# verb's reply, as lib/runtime-stub.sh's stand-in wraps it.
-if [[ "${1:-} ${2:-}" == "accounts pick" ]]; then
-  if [[ -n "${OL_RUNTIME_PICK:-}" ]]; then cat -- "$OL_RUNTIME_PICK"; exit 0; fi
-  args=()
-  for arg in "$@"; do
-    case "$arg" in accounts | pick | --fleet) ;; *) args+=("$arg") ;; esac
-  done
-  rc=0
-  out="$("${SCRIPT_DIR:?}/lanes" pick ${args[@]+"${args[@]}"} --json)" || rc=$?
-  jq -cn --argjson rc "$rc" --arg out "$out" '{protocol: "orch-runtime-v1", ok: true, result: {
-    answer: ({"0": "lane", "3": "walled", "4": "no-record", "5": "unmeasured", "7": "cloud-repo-unset"}[$rc | tostring] // "unjudged"),
-    exit: $rc, record: (try ($out | fromjson) catch null)}}'
-  exit 0
-fi
-if [[ -n "${OL_RUNTIME_REPLY:-}" ]]; then cat -- "$OL_RUNTIME_REPLY"; exit 0; fi
+store="${SCRIPT_DIR:?}/workflow-state"
+case "$*" in
+  "state exists --fleet")
+    exists=false
+    ! "$store" exists oversee >/dev/null 2>&1 || exists=true
+    jq -cn --arg path "$("$store" path oversee)" --argjson exists "$exists" \
+      '{protocol: "orch-runtime-v1", ok: true, result: {issue_id: "oversee", path: $path, exists: $exists}}'
+    exit 0 ;;
+  "state init --fleet")
+    "$store" init oversee >/dev/null
+    printf '{"protocol":"orch-runtime-v1","ok":true,"result":{}}\n'
+    exit 0 ;;
+  "state get --fleet /overseer")
+    jq -c '{protocol: "orch-runtime-v1", ok: true, result: {pointer: "/overseer", value: .overseer}}' \
+      "$("$store" path oversee)"
+    exit 0 ;;
+  "successor --fleet --cwd "*)
+    if [[ -n "${OL_RUNTIME_SUCCESSOR:-}" ]]; then reply="$(cat -- "$OL_RUNTIME_SUCCESSOR")"; else
+      reply="$(jq -cn --arg account "${LANES_HOME:?}/.claude" --arg cwd "$cwd" '
+        {harness: "claude", account: $account, model: "fable", effort: "high", class: "top"} as $chosen
+        | {protocol: "orch-runtime-v1", ok: true, result: {
+            walk: {answer: "lane", walk: "claude:fable:high", entries: 1, chosen: ($chosen + {entry: "claude:fable:high"}),
+              skipped: [], walled: 0, unmeasured: 0, unread: [], last_choice: null, room: null, deprecated: []},
+            successor: ($chosen + {cwd: $cwd, permission: "bypass"}), expected: null}}')"
+    fi
+    reply="$(jq -c --arg handoff "$handoff" 'if .result | has("brief") then . else .result.brief =
+      (.result.successor.harness // null | if . == null then null
+        elif . == "pi" then "/skill:orch follow .agents/skills/orch/workflows/oversee-takeover.md with the overseer handoff at " + $handoff
+        else "Read .agents/skills/orch/SKILL.md and follow .agents/skills/orch/workflows/oversee-takeover.md with the overseer handoff at " + $handoff end) end' <<<"$reply")"
+    [[ -z "${OL_RUNTIME_LOG:-}" ]] || printf '%s\n' "$reply" > "$OL_RUNTIME_LOG.successor"
+    printf '%s\n' "$reply"
+    exit 0 ;;
+esac
+if [[ -n "${OL_RUNTIME_REPLY:-}" && -n "$request" ]]; then cat -- "$OL_RUNTIME_REPLY"; exit 0; fi
 [[ -n "$request" && "$(jq -r '.op' "$request")" == start-controller ]] \
   || { printf 'orch-runtime: fixture-unexpected argv=%s\n' "$*" >&2; exit 2; }
 exec "$(cd -- "$(dirname -- "$0")" && pwd -P)/.orch-runtime-start" "$request"
@@ -440,7 +464,7 @@ requested() { # FILTER
   [[ -n "$request" ]] || { printf 'none'; return; }
   jq -r "$1" <<<"$request"
 }
-requested_argv() { grep '^argv ' "$RUNTIME_LOG" | tail -n 1 | cut -d' ' -f2- | awk '{ print $1, $2, $3 }'; }
+requested_argv() { grep '^argv .* --request ' "$RUNTIME_LOG" | tail -n 1 | cut -d' ' -f2- | awk '{ print $1, $2, $3 }'; }
 requested_brief() { grep '^brief ' "$RUNTIME_LOG" | tail -n 1 | cut -d' ' -f2-; }
 BRIEF='Read .agents/skills/orch/SKILL.md and follow .agents/skills/orch/workflows/oversee-takeover.md with the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'
 
@@ -493,76 +517,30 @@ control_fail="$FAIL"
 FAIL="$saved_fail"
 assert_eq "$((control_fail > 0))" 1 'control: omitting account executable readback fails the producer rows' "$TMP_ROOT/readback-control.out"
 
-predecessor_permission_row() { # POSTURE [OVERSEE_BIN]
-  local posture="$1" pred before word launched=no
-  run_oversee -- launch --wait-secs 20
-  pred="$(recorded pane)"
-  jq --arg posture "$posture" --arg bypass "$BYPASS" '
-    .overseer.launch_line |= (if contains($bypass)
-      then sub($bypass; $posture) else error("permission fixture word absent") end)' \
-    "$FLEET_STATE" > "$TMP_ROOT/permission-state"
-  mv -- "$TMP_ROOT/permission-state" "$FLEET_STATE"
-  before="$(jq -c '.overseer' "$FLEET_STATE")"
-  printf '%s\n' '{"rate_limit":{"primary_window":{"used_percent":20,"reset_at":1785000000,"limit_window_seconds":18000},"secondary_window":null}}' > "$FIXTURE_DIR/.codex.json"
-  LAUNCH_PREF=codex:gpt-6-astra:high OVERSEE_BIN="${2:-}" run_oversee \
-    ORCH_LANE_DIRS="$H/.claude:$H/.codex" -- launch --predecessor "$pred" --wait-secs 20
-  [[ ! -s "$TMP_ROOT/argv.codex" ]] || launched=yes
-  local key=entry-permission-untransferable code=3
-  [[ -n "$posture" ]] || { key=launch-choice-failed; code=1; }
-  word="$(field "$(keyed "$key" "$OUT")" word)"
-  local want_word
-  want_word="$(launch_choice_permission_write codex)" || return 1
-  [[ -n "$posture" ]] || want_word="$BYPASS"
-  assert_eq "$RC|$word|$(listed "$pred")|$launched|$(jq -c '.overseer' "$FLEET_STATE")" \
-    "$code|$want_word|1|no|$before" "predecessor permission ${posture:-absent} refuses without replacement" "$TMP_ROOT/permission.out"
-  local active
-  active="$(recorded pane)"
-  [[ "$(listed "$active")" == 0 ]] || tm kill-window -t "$active"
-  rm -f -- "$FLEET_STATE"
-}
-for posture in '--permission-mode dontAsk' ''; do predecessor_permission_row "$posture"; done
-PREDPERMISSIONCTL="$(mutant_scripts predecessor-permissionctl oversee)" || exit 1
-mutate_file "$PREDPERMISSIONCTL/oversee" $'predecessor_flags=()\nif [[ -n "$PREDECESSOR" ]]; then' $'predecessor_flags=()\nif false; then'
-saved_fail="$FAIL"
-FAIL=0
-predecessor_permission_row '--permission-mode dontAsk' "$PREDPERMISSIONCTL/oversee" > "$TMP_ROOT/predecessor-permission-control.out"
-control_fail="$FAIL"
-FAIL="$saved_fail"
-assert_eq "$((control_fail > 0))" 1 'control: fresh-launch permission would replace the restricted predecessor' "$TMP_ROOT/predecessor-permission-control.out"
-if [[ -f "$H/.claude/.claude.json" ]]; then
-  jq --arg cwd "$TMP_ROOT/work" 'del(.projects[$cwd])' "$H/.claude/.claude.json" > "$TMP_ROOT/permission-trust"
-  mv -- "$TMP_ROOT/permission-trust" "$H/.claude/.claude.json"
-fi
-if [[ "${OVERSEE_PERMISSION_ROWS_ONLY:-0}" == 1 ]]; then
-  printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
-  [[ "$FAIL" -eq 0 ]]
-  exit
-fi
-
 echo "=== oversee ==="
 
-# A first launch from outside tmux is one start-controller request to the
-# runtime: the window the runtime opens at the end of the named session runs
-# the harness on the picked lane with the entry's model and effort and
-# claude's full-bypass, compaction and question-tool words (the line the
-# request carries, which a dead-pane relaunch replays), and the launcher
-# reports the record the runtime wrote with generation 1.
+# A first launch from outside tmux asks the runtime for the successor the
+# walk chose and hands it to one start-controller request: the stand-in opens
+# the window and records it, and the launcher reports the record the runtime
+# wrote with generation 1.
 WORK_REAL="$(cd "$TMP_ROOT/work" && pwd -P)"
 run_oversee FIXTURE_REPO=owner/fleet -- launch --wait-secs 20
 LAUNCHED="$(keyed overseer-launched "$OUT" | sed -n 1p)"
 SESSION="$(field "$LAUNCHED" session)"
-assert_eq "$RC|$(sed -n 's/window=@[0-9]*/window=@N/; s/session=%[0-9]*/session=%N/p' <<<"$LAUNCHED")|$(layout)|$(recorded_argv)" \
-  "0|oversee: overseer-launched session=%N window=@N server=$SOCKET generation=1 lane=$H/.claude|0 overseer;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
-  "a first launch from outside tmux opens the overseer at the base index and records it"
-# The request: the walk's pick and the launch identity as the controller,
-# with the line and its bypass posture; the brief file holding the takeover
-# brief; the watch words: the runtime wrapper beside the launcher, `watch run
-# --file` the fleet state, `--since` this launch's time (no lane record
-# stands) and the checkout's repository.
+assert_eq "$RC|$(sed -n 's/window=@[0-9]*/window=@N/; s/session=%[0-9]*/session=%N/p' <<<"$LAUNCHED")" \
+  "0|oversee: overseer-launched session=%N window=@N server=$SOCKET generation=1 lane=$H/.claude" \
+  "a first launch prints the record the runtime wrote"
+# The request: the runtime's successor as the controller, as the runtime
+# answered it, with the line the record keeps for the readers that replay it
+# (the stand-in runs that line); the brief file holding the takeover brief;
+# the watch words:
+# the runtime wrapper beside the launcher, `watch run --file` the fleet state,
+# `--since` this launch's time (no lane record stands) and the checkout's
+# repository.
 LAUNCH_LINE="$SCRUB_ENV CLAUDE_CONFIG_DIR='$H/.claude' CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT=1 CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT=1 CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1 claude -n overseer --model fable --effort high $BYPASS $(printf '%q' "$COMPACT") $(printf '%q' "$QUESTION_OFF") '$BRIEF'"
-assert_eq "$(requested_argv)|$(requested '.op')|$(requested '.controller | [.harness, .account, .home, .model, .effort, .cwd, .class, .permission] | join("|")')|$(requested '.controller.launch_line')|$(requested_brief)" \
-  "op --fleet --request|start-controller|claude|$H/.claude|$H/.claude|fable|high|$WORK_REAL|top|bypass|$LAUNCH_LINE|$BRIEF" \
-  "the request carries the walk's pick and identity, the line, the bypass posture and the takeover brief"
+assert_eq "$(requested_argv)|$(requested '.op')|$(requested '.controller | del(.launch_line)' | jq -cS .)|$(requested '.controller.launch_line')|$(requested_brief)" \
+  "op --fleet --request|start-controller|$(jq -cS .result.successor "$RUNTIME_LOG.successor")|$LAUNCH_LINE|$BRIEF" \
+  "the request carries the runtime's successor as its controller with the record's line, and the takeover brief"
 assert_eq "$(requested '.watch | join(" ")' | sed 's/--since [^ ]*/--since T/')" \
   "$BIN/orch-runtime watch run --file $WORK_REAL/tmp/workflow-state-oversee.json --interval 240 --since T --repo owner/fleet" \
   "the request's watch is the runtime's own words: the wrapper, the fleet state and the repository"
@@ -570,29 +548,6 @@ assert_eq "$(requested '.watch[] | select(startswith("20"))' | grep -cE '^[0-9]{
   "with no lane record the watch's --since is this launch's time"
 identity() { printf '%s|' "$(recorded harness)" "$(recorded account)" "$(recorded home)" "$(recorded model)" "$(recorded effort)" "$(recorded cwd)"; }
 
-# A second launch while that overseer is live is refused: two overseers never
-# act at once, and the record tells them apart.
-run_oversee -- launch --wait-secs 20
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded generation)" \
-  "1|oversee: overseer-live session=$SESSION server=$SOCKET generation=1|1|1" \
-  "a launch beside a live recorded overseer refuses naming it and opens nothing"
-# A record carrying no server start, the shape a writer that recorded none
-# left, names no session, but its pane live on the recorded server pid may be
-# the running overseer, so the launch refuses rather than open a second one.
-cp -- "$FLEET_STATE" "$TMP_ROOT/state.live"
-jq 'del(.overseer.server_start)' "$TMP_ROOT/state.live" > "$FLEET_STATE" || exit 1
-run_oversee -- launch --wait-secs 20
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded generation)" \
-  "1|oversee: overseer-live session=$SESSION server=$SOCKET generation=1|1|1" \
-  "a launch beside a live pane a record with no server start names refuses and opens nothing"
-# Yet that record names no predecessor: its pane may be one a later server
-# handed the same pid and pane id, so --predecessor on it refuses and the
-# succession stops nothing.
-run_oversee -- launch --predecessor "$SESSION" --wait-secs 20
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(listed "$SESSION")|$(recorded generation)" \
-  "1|oversee: predecessor-not-live session=$SESSION live=none server=$SOCKET|1|1|1" \
-  "a --predecessor naming the live pane a record with no server start names is refused and left running"
-mv -- "$TMP_ROOT/state.live" "$FLEET_STATE"
 # A tmux that answers every call but the server start read
 # (lib/tmux-server.sh § tmux_server_start) of the pane the nostart-pane file
 # names, for the rows where that read fails.
@@ -612,41 +567,16 @@ exec '$REAL_TMUX' "\$@"
 STUB
 chmod +x "$NOSTART_BIN/tmux"
 NOSTART_PATH="$NOSTART_BIN:$BIN:$PATH"
-printf '%s\n' "$SESSION" > "$TMP_ROOT/nostart-pane"
-# A live recorded pane whose server start cannot be read may be that
-# overseer, so the launch refuses rather than open a second one beside it.
-run_oversee PATH="$NOSTART_PATH" -- launch --wait-secs 20
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded generation)" \
-  "1|oversee: launch-failed step=server-start session=$SESSION server=$SOCKET|1|1" \
-  "a launch beside a live recorded pane whose server start cannot be read refuses and opens nothing"
-# The overseer stopped: the next launch takes the next generation.
+# The overseer stopped: the next launch takes the next generation, the one
+# the register rows below count on.
 tm kill-window -t "$SESSION"
 run_oversee -- launch --wait-secs 20
-assert_eq "$RC|$(field "$(keyed overseer-launched "$OUT" | sed -n 1p)" generation)|$(recorded generation)|$(overseers)" \
-  "0|2|2|1" \
-  "a launch after the recorded overseer's session is gone opens the next generation"
 tm kill-window -t "$(recorded window)"
-
-# The runtime's own record (R-U8-1d, the Anthropic lane's H1): the chooser's
-# reply the verb printed on a fixture (`tests/rust/accounts.rs`'s world, the
-# account's path the one difference), planted in place of the legacy wrap,
-# so the launch is proven on the record's own spelling: the walk reads its
-# `config_dir` and opens the overseer on it.
-jq -c --arg dir "$H/.eclaude" '.result.record.config_dir = $dir' > "$TMP_ROOT/pick-reply.json" <<'REPLY'
-{"protocol":"orch-runtime-v1","ok":true,"result":{"answer":"lane","exit":0,"record":{"alias":"eclaude","harness":"claude","config_dir":"/home/me/.eclaude","retire_date":null,"measured_through":"local","status":"ok","refreshable":false,"plan":"max","session_5h_pct":50,"weekly_pct":20,"model_pct":5,"model_label":"Opus","model_buckets":[{"label":"Opus","pct":5,"resets_at":"2026-11-05T04:04:03Z"}],"monthly_pct":null,"credits":null,"unlimited":false,"claims":0,"headroom_pct":50,"binding_bucket":"session","binding_resets_at":"2026-11-02T17:04:03Z","usage_age_s":0,"resets":{"session":"2026-11-02T17:04:03Z","weekly":"2026-11-05T04:04:03Z","model":"2026-11-05T04:04:03Z","monthly":null},"detail":null,"wall":50,"usage_rate_state":"one-sample","usage_rate_pct_per_min":null,"projected_wall_minutes":null,"burn_pct_per_lane_hour":5,"binding_projected_headroom_pct":50,"session_projected_headroom_pct":50,"session_burn_pct_per_lane_hour":5,"session_charge_hours":1,"projected_headroom_pct":45,"projected_window":{"bucket":"session","pct":50,"resets_at":"2026-11-02T17:04:03Z"},"verdict":"room","word":"pick","selection_score":67.5,"effective_headroom_pct":50,"qualifying_count":2,"seat":false}}}
-REPLY
-cp -- "$FLEET_STATE" "$TMP_ROOT/state.before-record"
-run_oversee OL_RUNTIME_PICK="$TMP_ROOT/pick-reply.json" -- launch --wait-secs 20
-assert_eq "$RC|$(recorded account)|$(recorded generation)|$(overseers)" \
-  "0|$H/.eclaude|3|1" \
-  "a launch on the runtime's own chooser record opens the overseer on the account the record names"
-tm kill-window -t "$(recorded window)"
-mv -- "$TMP_ROOT/state.before-record" "$FLEET_STATE"
 
 # A runtime that is not set up refuses the launch with the wrapper's own line
 # under the keyed one, and nothing is opened in its place: no window, the
-# record as it stood. The walk's pick meets the wrapper first (U8d: the
-# account judge is the runtime's), so no start request is composed.
+# record as it stood. The fleet state read meets the wrapper first, so no
+# start request is composed.
 run_oversee OL_RUNTIME_SETUP_REQUIRED=1 -- launch --wait-secs 5
 assert_eq "$RC|$(first_line)|$(grep -c '^orch-runtime: setup-required key=fixture run=' <<<"$OUT")|$(overseers)|$(recorded generation)|$(requested '.op')" \
   "1|oversee: start-refused key=setup-required exit=69|1|0|2|none" \
@@ -663,7 +593,7 @@ assert_eq "$RC|$(first_line)|$(overseers)" \
 # Control: a launcher whose request names no watch fails the watch-words row,
 # in a fleet of its own so the main record's generations stand.
 WATCHCTL="$(mutant_scripts watchctl oversee)" || exit 1
-mutate_file "$WATCHCTL/oversee" '     watch: $watch}' '     watch: null}'
+mutate_file "$WATCHCTL/oversee" 'brief_file: $brief, watch: $watch}' 'brief_file: $brief, watch: null}'
 RUN_DIR="$TMP_ROOT/watchctl-fleet"
 mkdir -p "$RUN_DIR"
 checkout_world "$RUN_DIR" || exit 1
@@ -699,65 +629,20 @@ tm kill-window -t "$DEFAULT_SESSION"
 RUN_DIR=""
 FLEET_STATE="$PRIOR_FLEET_STATE"
 
-# The refusals before anything opens.
-for row in \
-  "ORCH_OVERSEER_PREFERENCE=|preference-empty setting=ORCH_OVERSEER_PREFERENCE|an empty preference" \
-  "ORCH_OVERSEER_PREFERENCE=claude:Opus:high|invalid-preference entry=claude:Opus:high|an entry outside the shape" \
-  "ORCH_TMUX_SESSION=|tmux-session-missing session=work server=$SOCKET|the default repository session is absent" \
-  "ORCH_TMUX_SESSION=fleetz|tmux-session-missing session=fleetz server=$SOCKET|a session tmux does not hold" \
-  "ORCH_OVERSEER_HOST=$TMP_ROOT/other|runtime-unsupported host=$TMP_ROOT/other|a runtime other than tmux" \
-  "ORCH_OVERSEER_HEADROOM_PCT=101|invalid-headroom-trigger ORCH_OVERSEER_HEADROOM_PCT=101|a headroom trigger past 100" \
-  ; do
-  IFS='|' read -r row_env row_want row_what <<<"$row"
-  run_oversee "$row_env" -- launch --wait-secs 5
-  assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-    "1|oversee: $row_want|0" \
-    "$row_what: refused, nothing opened"
-done
-# A model kendex cannot classify refuses before anything opens, kendex's
-# words after the keyed line.
-mv -- "${BIN:?}/kendex-tier-model" "$BIN/kendex-tier-model.real"
-printf '#!/bin/sh\necho "Error: invalid manifest" >&2\nexit 1\n' >"$BIN/kendex-tier-model"
-chmod +x "$BIN/kendex-tier-model"
-LAUNCH_PREF=claude:standard:high run_oversee -- launch --wait-secs 5
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(tail -n 1 <<<"$OUT")|$(overseers)" \
-  "1|oversee: preference-class-unread entry=claude:standard:high|Error: invalid manifest|0" \
-  "a model kendex cannot classify: refused with kendex's words, nothing opened"
-mv -f -- "${BIN:?}/kendex-tier-model.real" "$BIN/kendex-tier-model"
-claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
-run_oversee -- launch --wait-secs 5
-# The refusal relays DEP_ERR after its keyed line; the pick's own model lines
-# never reach it.
-assert_eq "$RC|$(keyed no-lane-qualifies "$OUT" | sed -n 1p)|$(overseers)|$(keyed no-lane-qualifies "$OUT" | grep -c -e '^model-resolution: ' -e '^preference-deprecated' -e 'class ladder' || :)" \
-  "3|oversee: no-lane-qualifies entries=1 walled=2 unmeasured=0|0|0" \
-  "no lane above the trigger: refused at 3 with the walk's counts and no kendex words beside them"
-# Claude seats use the configured provider's reading while the overseer opens
-# locally. Run from a repository of its own, since lane-host takes its project
-# from the working directory.
-HOSTED_WORK="$TMP_ROOT/hosted-work"
-mkdir -p "$HOSTED_WORK/tmp"
-checkout_world "$HOSTED_WORK" || exit 1
-printf 'account=%s\tharness=claude\tsession-5h-pct=5\tweekly-pct=5\tmodel-pct=5\tmodel-label=Fable 5.1\n' "$H/.claude" > "$TMP_ROOT/accounts-room.tsv"
-HOSTED_ENV=(ORCH_LANE_HOST="$TEST_DIR/fixtures/lane-host" LANE_HOST_STUB_ACCOUNTS="$TMP_ROOT/accounts-room.tsv" LANE_HOST_STUB_LOG="$TMP_ROOT/host.log")
-RUN_DIR="$HOSTED_WORK" run_oversee "${HOSTED_ENV[@]}" -- launch --wait-secs 5
-HOSTED_STATE="$HOSTED_WORK/tmp/workflow-state-oversee.json"
-assert_eq "$RC|$(FLEET_STATE="$HOSTED_STATE" recorded runtime)|$(FLEET_STATE="$HOSTED_STATE" recorded account)|$(overseers)" \
-  "0|tmux|$H/.claude|1" \
-  "a provider-measured Claude account opens the overseer locally despite its walled local reading"
-[[ "$RC" != 0 ]] || tm kill-window -t "$(FLEET_STATE="$HOSTED_STATE" recorded window)"
-claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
-
-# A has-session answer that is not "can't find session" is the call failing,
-# not a missing session: pointed at a TMUX_TMPDIR with no server running, the
-# launch refuses tmux-failed naming that socket, not tmux-session-missing whose
-# advice is to start the session.
-EMPTY_TMUX="$TMP_ROOT/empty-tmux"
-mkdir -p "$EMPTY_TMUX"
-EMPTY_SOCKET="$EMPTY_TMUX/tmux-$(id -u)/default"
-run_oversee TMUX_TMPDIR="$EMPTY_TMUX" -- launch --wait-secs 5
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "1|oversee: tmux-failed operation=has-session server=$EMPTY_SOCKET|0" \
-  "launch against a socket with no server refuses tmux-failed, not a missing session"
+# A walk that chose none refuses at 3 with the walk's counts, and no start is
+# composed.
+jq -cn '{protocol: "orch-runtime-v1", ok: true, result: {walk: {answer: "none", walk: "claude:fable:high",
+  entries: 1, chosen: null, skipped: [], walled: 2, unmeasured: 0, unread: [], last_choice: null, room: null,
+  deprecated: []}, successor: null, expected: null}}' > "$TMP_ROOT/none-reply.json"
+run_oversee OL_RUNTIME_SUCCESSOR="$TMP_ROOT/none-reply.json" -- launch --wait-secs 5
+assert_eq "$RC|$(keyed no-lane-qualifies "$OUT" | sed -n 1p)|$(overseers)|$(requested '.op')" \
+  "3|oversee: no-lane-qualifies entries=1 walled=2 unmeasured=0|0|none" \
+  "a walk that chose none refuses at 3 with the walk's counts and composes no start"
+# --session beside --predecessor is refused before the runtime is asked.
+run_oversee -- launch --session fleet --predecessor %1 --wait-secs 5
+assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(requested '.op')" \
+  "2|oversee: option-conflict command=launch session=fleet predecessor=%1|0|none" \
+  "--session beside --predecessor is refused, nothing opened"
 
 # register: the record for a hand-opened pane, its generation one past the
 # record's, kept where the record already names that pane.
@@ -829,60 +714,9 @@ assert_eq "$RC|$(recorded generation)|$(elsewhere_state)|$(tm display-message -p
   "launch --cwd from outside the fleet directory records into that directory's state and starts there"
 tm kill-window -t "$(recorded window)"
 
-# ORCH_QUESTION_TOOL=overseer keeps the overseer's question tool: the launch
-# line carries no question-off word. With the default-off rows above, a
-# launcher that stops reading the setting fails one side.
-run_oversee ORCH_QUESTION_TOOL=overseer -- launch --wait-secs 20
-assert_eq "$RC|$(recorded_argv)" \
-  "0|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BYPASS;$COMPACT;$BRIEF;" \
-  "ORCH_QUESTION_TOOL=overseer launches the overseer with its question tool"
-tm kill-window -t "$(recorded window)"
 
-# A fleet whose settings name no preference: the first launch walks the default
-# order and opens on its standard Opus alias.
-LAUNCH_PREF=unset run_oversee -- launch --wait-secs 20
-assert_eq "$RC|$(recorded model)|$(recorded class)|$(recorded_argv)" \
-  "0|opus|standard|lane=$H/.claude;-n;overseer;--model;opus;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
-  "an unset preference launches the first overseer on the standard class, Opus, and records both"
-tm kill-window -t "$(recorded window)"
-DEFAULTCTL="$(mutant_scripts defaultctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$DEFAULTCTL/lib/overseer-launch.sh" \
-  'OL_DEFAULT_PREFERENCE="claude:standard:high,codex:standard:high"' 'OL_DEFAULT_PREFERENCE="claude:light:high,codex:standard:high"'
-OVERSEE_BIN="$DEFAULTCTL/oversee" LAUNCH_PREF=unset run_oversee -- launch --wait-secs 20
-assert_eq "$RC|$(recorded model)|$(recorded_argv)" \
-  "0|sonnet|lane=$H/.claude;-n;overseer;--model;sonnet;--effort;high;$BYPASS;$COMPACT;$QUESTION_OFF;$BRIEF;" \
-  "control: the Sonnet default breaks the unset launch's Opus contract"
-control_status=0
-(FAIL=0; assert_eq "$(recorded model)" opus "unset launch model"; [[ "$FAIL" -eq 0 ]]) \
-  > "$TMP_ROOT/default-control.log" || control_status=$?
-assert_eq "$control_status" 1 "control: the Opus assertion rejects the Sonnet launch"
-tm kill-window -t "$(recorded window)"
-
-# A pi entry ahead of a claude entry with room: the launch table names no
-# permission word to open pi unattended, so the first launch skips it before
-# its pick and opens on the claude entry.
-pi_first_row() { # [OVERSEE_BIN]
-  OVERSEE_BIN="${1:-}" LAUNCH_PREF='pi:openai/gpt-5:high,claude:fable:high' run_oversee -- launch --wait-secs 20
-  assert_eq "$RC|$(keyed entry-permission-unwritable "$OUT" | sed -n 1p)|$(recorded harness)|$(recorded model)" \
-  "0|oversee: entry-permission-unwritable entry=pi:openai/gpt-5:high harness=pi lane=none|claude|fable" \
-  "a first launch skips a pi entry and opens on the claude entry after it"
-}
-pi_first_row
-tm kill-window -t "$(recorded window)"
-# Its control bypasses eligibility and must fail the same skip assertion.
-PIFIRSTCTL="$(mutant_scripts pifirstctl lib/overseer-launch.sh)" || exit 1
-mutate_file "$PIFIRSTCTL/lib/overseer-launch.sh" '    [[ "$posture" != no-word ]] && launch_choice_permission_write "$OL_HARNESS" >/dev/null && return 0' '    return 0'
-PIFIRST_SAVED_FAIL="$FAIL"; FAIL=0
-pi_first_row "$PIFIRSTCTL/oversee" > "$TMP_ROOT/pi-first-control.out"
-PIFIRST_CONTROL="$FAIL"; FAIL="$PIFIRST_SAVED_FAIL"
-assert_eq "$PIFIRST_CONTROL" 1 "control: bypassing eligibility fails the first-launch skip assertion"
-[[ "$RC" != 0 ]] || tm kill-window -t "$(recorded window)"
-
-# A first launch on a copilot entry: `lanes pick --harness copilot` judges a
-# Copilot account on its monthly pool, so the overseer opens on the account
-# the pick names, under COPILOT_HOME, with the model and effort the entry
-# names and copilot's full-bypass word. The installed extension records the
-# overseer's context reading.
+# A Copilot overseer the runtime opened on its account, the record the turn
+# end below reads.
 cat > "$BIN/copilot" <<STUB
 #!/bin/sh
 { printf 'home=%s\n' "\${COPILOT_HOME:-}"; printf '%s\n' "\$@"; } > "$TMP_ROOT/argv.copilot"
@@ -893,19 +727,14 @@ chmod +x "$BIN/copilot"
 mkdir -p "$H/.1copilot"
 printf '{"copilot_tokens":"gho_fixture"}\n' > "$H/.1copilot/config.json"
 printf '{}\n' > "$H/.1copilot/settings.json"
-printf '%s\n' '{"quota_snapshots":{"premium_interactions":{"entitlement":1000,"remaining":900}}}' > "$FIXTURE_DIR/.1copilot.json"
-copilot_first_row() { # [OVERSEE_BIN]
-  OVERSEE_BIN="${1:-}" LAUNCH_PREF='copilot:gpt-5.3-codex:high' \
-    run_oversee ORCH_LANE_DIRS="$H/.claude:$H/.eclaude:$H/.1copilot" -- launch --wait-secs 20
-}
-copilot_first_row
-assert_eq "$RC|$(recorded harness)|$(recorded account)|$(recorded model)|$(recorded effort)|$(sed -n 1p "$TMP_ROOT/argv.copilot" 2>/dev/null)|$(grep -cx -e --model -e gpt-5.3-codex -e --reasoning-effort -e high -e "$(launch_choice_permission_write copilot)" "$TMP_ROOT/argv.copilot" 2>/dev/null)" \
-  "0|copilot|$H/.1copilot|gpt-5.3-codex|high|home=$H/.1copilot|5" \
-  "a first launch on a copilot entry opens on the picked copilot account with its model and effort"
-copilot_context_flow "$TMP_ROOT/work" "$H" "$H/.1copilot" "$SRC_DIR" \
-  TMUX="$TMUX_ADDR" TMUX_PANE="$(recorded pane)" TMUX_TMPDIR="$TMUX_DIR" \
-  ORCH_LANES_FETCH_CMD="$FETCHER" FIXTURE_DIR="$FIXTURE_DIR"
-assert_eq "$FLOW_RECORD" '199000:217600' "oversee launch records the first turn"
+jq -cn --arg account "$H/.1copilot" --arg cwd "$WORK_REAL" '
+  {harness: "copilot", account: $account, model: "gpt-5.3-codex", effort: "high"} as $chosen
+  | {protocol: "orch-runtime-v1", ok: true, result: {
+      walk: {answer: "lane", walk: "copilot:gpt-5.3-codex:high", entries: 1,
+        chosen: ($chosen + {entry: "copilot:gpt-5.3-codex:high"}), skipped: [], walled: 0, unmeasured: 0,
+        unread: [], last_choice: null, room: null, deprecated: []},
+      successor: ($chosen + {cwd: $cwd, permission: "bypass"}), expected: null}}' > "$TMP_ROOT/copilot-reply.json"
+run_oversee OL_RUNTIME_SUCCESSOR="$TMP_ROOT/copilot-reply.json" -- launch --wait-secs 20
 rm -rf -- "${H:?}/.1copilot/extensions"
 # A hand-opened Copilot session can lack both supported context readers.
 printf '{}\n' > "$H/.1copilot/settings.json"
@@ -932,9 +761,6 @@ assert_eq "$RC|$(recorded harness)|$(recorded account)|$(recorded home)" \
   "register on a codex pane records its account and its private CODEX_HOME apart"
 tm kill-window -t "$(recorded window)"
 run_oversee -- launch --wait-secs 20
-assert_eq "$RC|$(keyed overseer-launched "$OUT" | sed -n 1p | cut -d' ' -f1-2)|$(overseers)" \
-  "0|oversee: overseer-launched|1" \
-  "a session whose turn runs is up"
 # The launch line runs under overseer-run: a harness that ends, here killed
 # before any hook of its own could run, leaves its exit status on the record.
 harness_ended() { # -> the recorded exit status, once overseer-run wrote one
@@ -1078,274 +904,6 @@ done
 mv -- "$TMP_ROOT/state.before-preservation" "$FLEET_STATE"
 tm kill-window -t "$UNNAMED_PANE"
 
-# --- a succession through the launch verb --------------------------------
-# --predecessor names the live recorded overseer: the successor opens beside
-# it, takes its window slot once its turn runs, and the record names it one
-# generation on, with no pending successor left.
-prior_pane="$(recorded pane)"
-[[ "$(listed "$prior_pane")" == 0 ]] || tm kill-window -t "$prior_pane"
-run_oversee -- launch --wait-secs 20
-assert_eq "$RC" 0 'the succession fixture starts a fresh recorded predecessor'
-PRED="$(recorded pane)"
-PRED_GEN="$(recorded generation)"
-PRED_INDEX="$(tm show-options -Av -t fleet base-index)"
-run_oversee -- launch --predecessor "$PRED" --wait-secs 20
-SUCCEEDED="$(keyed overseer-launched "$OUT" | sed -n 1p)"
-SUCC="$(field "$SUCCEEDED" session)"
-assert_eq "$RC|$(sed 's/window=@[0-9]*/window=@N/; s/session=%[0-9]*/session=%N/' <<<"$SUCCEEDED")|$(overseers)|$(recorded pane)|$(recorded generation)|$(recorded pending)|$(tm display-message -p -t "$SUCC" '#{window_index}')|$(listed "$PRED")" \
-  "0|oversee: overseer-launched session=%N window=@N server=$SOCKET generation=$((PRED_GEN + 1)) lane=$H/.claude predecessor=$PRED|1|$SUCC|$((PRED_GEN + 1))|none|$PRED_INDEX|0" \
-  "a launch naming the live overseer as predecessor opens its successor at the base index, stops it and records the next generation"
-# A predecessor other than the live recorded overseer is refused before
-# anything opens, naming the live one, or none where none is recorded: a pane
-# the fleet never recorded, which the succession would otherwise stop.
-OTHER="$(tm new-window -d -t fleet -n other -P -F '#{pane_id}' 'exec sleep 100000')"
-run_oversee -- launch --predecessor "$OTHER" --wait-secs 20
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "1|oversee: predecessor-not-live session=$OTHER live=$SUCC server=$SOCKET|1" \
-  "a predecessor beside a live recorded overseer is refused naming the live one"
-tm kill-window -t "$(recorded window)"
-run_oversee -- launch --predecessor "$OTHER" --wait-secs 20
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(listed "$OTHER")" \
-  "1|oversee: predecessor-not-live session=$OTHER live=none server=$SOCKET|0|1" \
-  "a predecessor the fleet does not record as its live overseer is refused and left running"
-tm kill-window -t "$OTHER"
-run_oversee -- launch --session fleet --predecessor "$SUCC" --wait-secs 5
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-  "2|oversee: option-conflict command=launch session=fleet predecessor=$SUCC|0" \
-  "--session beside --predecessor is refused, nothing opened"
-
-# The successor is the record's pending member before its window opens, read
-# here while a tmux on the run's PATH holds the successor's new-window until
-# the row releases it, and gone with the abandoned launch, whose first turn
-# never comes.
-run_oversee -- launch --wait-secs 20
-PRED="$(recorded pane)"
-PRIOR_RECORD="$(jq -cS .overseer "$FLEET_STATE")"
-PRIOR_LINE="$(recorded launch_line)"
-PENDING_LINE="${PRIOR_LINE/ "$BYPASS"/}"
-PENDING_LINE="${PENDING_LINE%" '$BRIEF'"} $BYPASS '$BRIEF'"
-HOLD_BIN="$TMP_ROOT/hold-create-bin"
-mkdir -p "$HOLD_BIN"
-cat > "$HOLD_BIN/tmux" <<STUB
-#!/bin/sh
-if [ "\$1" = new-window ]; then
-  : > '$TMP_ROOT/create-held'
-  while [ ! -e '$TMP_ROOT/create-released' ]; do sleep 0.1; done
-fi
-exec '$REAL_TMUX' "\$@"
-STUB
-chmod +x "$HOLD_BIN/tmux"
-pending_seen() { # [OVERSEE_BIN] — the pending line a --predecessor launch writes
-  local pid seen=none
-  rm -f "$TMP_ROOT/create-held" "$TMP_ROOT/create-released"
-  touch "$TMP_ROOT/idle"
-  OVERSEE_BIN="${1:-}" run_oversee PATH="$HOLD_BIN:$BIN:$PATH" -- launch --predecessor "$PRED" --wait-secs 4 &
-  pid=$!
-  # A real wait, for the launch to reach the successor's new-window, where the
-  # held tmux keeps it until the release below; a launch that ends first
-  # never reached that point and leaves none read.
-  while [[ ! -e "$TMP_ROOT/create-held" ]] && kill -0 "$pid" 2>/dev/null; do sleep 0.1; done
-  [[ ! -e "$TMP_ROOT/create-held" ]] || seen="$(recorded pending.launch_line)"
-  touch "$TMP_ROOT/create-released"
-  wait "$pid" || true
-  rm -f "$TMP_ROOT/idle"
-  PENDING_SEEN="$seen"
-}
-pending_seen
-assert_eq "$PENDING_SEEN|$(jq -cS .overseer "$FLEET_STATE")|$(overseers)|$(listed "$PRED")|$(tm display-message -p -t "$PRED" '#{window_index}')" \
-  "$PENDING_LINE|$PRIOR_RECORD|1|1|0" \
-  "a --predecessor launch records its successor as pending before it opens, and the abandoned launch puts the record back"
-# A stop the host refuses at the commit point closes the successor and puts
-# the record back: the predecessor keeps running and stays the recorded
-# overseer, never two overseers and never a successor recorded beside it. A
-# tmux on the run's PATH refuses the swap `stop --successor` makes.
-STOP_BIN="$TMP_ROOT/stop-refused-bin"
-mkdir -p "$STOP_BIN"
-printf '#!/bin/sh\n[ "$1 $3" != "kill-window %s" ] || { echo "fixture: stop refused" >&2; exit 1; }\nexec %s "$@"\n' \
-  "$(recorded window)" "$(command -v tmux)" > "$STOP_BIN/tmux"
-chmod +x "$STOP_BIN/tmux"
-stop_refused() { # [OVERSEE_BIN]
-  PRED_GEN="$(recorded generation)"
-  OVERSEE_BIN="${1:-}" run_oversee PATH="$STOP_BIN:$BIN:$PATH" -- launch --predecessor "$PRED" --wait-secs 20
-}
-stop_refused
-assert_eq "$RC|$(keyed close-failed "$OUT" | sed -n 1p)|$(overseers)|$(listed "$PRED")|$(recorded pane)|$(recorded generation)|$(recorded pending)" \
-  "1|oversee: close-failed predecessor=$PRED|1|1|$PRED|$PRED_GEN|none" \
-  "a stop the host refuses closes the successor and keeps the predecessor running and recorded"
-# A pending write the state refuses stops the succession before anything
-# opens: the predecessor keeps running and stays the recorded overseer.
-pendfail_stub() { # SCRIPTS_DIR — a workflow-state there that refuses the pending write
-  rm -f -- "${1:?}/workflow-state"
-  cat > "$1/workflow-state" <<STUB
-#!/usr/bin/env bash
-if [[ "\${BASH_SOURCE[0]}" != "\$0" ]]; then source "$SRC_DIR/workflow-state"; return \$?; fi
-[[ "\$1 \$2 \$4 \$5 \$6" != "update-report oversee --arg operation pending" ]] || { echo 'fixture: pending write refused' >&2; exit 1; }
-exec "$SRC_DIR/workflow-state" "\$@"
-STUB
-  chmod +x "$1/workflow-state"
-}
-pending_refused() { # OVERSEE_BIN
-  PRED_GEN="$(recorded generation)"
-  OVERSEE_BIN="$1" run_oversee -- launch --predecessor "$PRED" --wait-secs 20
-}
-PENDFAIL="$(mutant_scripts pendfail workflow-state)" || exit 1
-pendfail_stub "$PENDFAIL"
-pending_refused "$PENDFAIL/oversee"
-assert_eq "$RC|$(first_line)|$(overseers)|$(listed "$PRED")|$(recorded pane)|$(recorded generation)" \
-  "1|oversee: record-unwritten field=overseer step=pending|1|1|$PRED|$PRED_GEN" \
-  "a pending write the state refuses stops the succession, the predecessor running and recorded"
-# A session record write the state refuses refuses the launch too: the stub
-# refuses the first write of the record and lets the put-back through. With
-# --predecessor the predecessor keeps running and stays recorded.
-recordfail_stub() { # SCRIPTS_DIR
-  rm -f -- "${1:?}/workflow-state" "${TMP_ROOT:?}/record-refused"
-  cat > "$1/workflow-state" <<STUB
-#!/usr/bin/env bash
-if [[ "\${BASH_SOURCE[0]}" != "\$0" ]]; then source "$SRC_DIR/workflow-state"; return \$?; fi
-if [[ ( "\$1 \$2 \$3" == "set oversee overseer" || "\$1 \$2 \$4 \$5 \$6" == "update-report oversee --arg operation current" ) && ! -e "$TMP_ROOT/record-refused" ]]; then
-  touch "$TMP_ROOT/record-refused"; echo 'fixture: record write refused' >&2; exit 1
-fi
-exec "$SRC_DIR/workflow-state" "\$@"
-STUB
-  chmod +x "$1/workflow-state"
-}
-RECFAIL="$(mutant_scripts recfail workflow-state)" || exit 1
-recordfail_stub "$RECFAIL"
-PRED_GEN="$(recorded generation)"
-OVERSEE_BIN="$RECFAIL/oversee" run_oversee -- launch --predecessor "$PRED" --wait-secs 20
-assert_eq "$RC|$(keyed record-unwritten "$OUT" | sed -n 1p)|$(overseers)|$(listed "$PRED")|$(recorded pane)|$(recorded generation)" \
-  "1|oversee: record-unwritten field=overseer step=write|1|1|$PRED|$PRED_GEN" \
-  "a record write the state refuses stops the succession, the predecessor running and recorded"
-tm kill-window -t "$(recorded window)"
-
-# A record from an earlier tmux server naming a pane id this server reuses is
-# no live overseer: the launch opens the next generation over it, and a
-# --predecessor naming that pane is refused, the pane left running. One row
-# per way the record tells that server from this one: another server pid, and
-# this pid bound to an earlier server's start, a server a restart handed the
-# same pid.
-STALE="$(tm new-window -d -t fleet -n stale -P -F '#{pane_id}' 'exec sleep 100000')"
-EARLIER_START=$((SERVER_START - 3600))
-stale_record() { # SERVER START
-  jq --arg pane "$STALE" --arg server "$1" --arg start "$2" '.overseer.pane = $pane | .overseer.server = $server
-    | .overseer.server_start = ($start | tonumber)' "$FLEET_STATE" > "$FLEET_STATE.tmp" \
-    && mv -- "$FLEET_STATE.tmp" "$FLEET_STATE"
-}
-for row in "1|$SERVER_START|another server pid" "$SERVER_PID|$EARLIER_START|this server pid bound to an earlier start"; do
-  IFS='|' read -r row_server row_start row_what <<<"$row"
-  stale_record "$row_server" "$row_start"
-  STALE_GEN="$(recorded generation)"
-  run_oversee -- launch --predecessor "$STALE" --wait-secs 20
-  assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(listed "$STALE")" \
-    "1|oversee: predecessor-not-live session=$STALE live=none server=$SOCKET|0|1" \
-    "a --predecessor naming a pane an earlier server's record names by $row_what is refused and left running"
-  run_oversee -- launch --wait-secs 20
-  assert_eq "$RC|$(recorded generation)|$(overseers)|$(listed "$STALE")" \
-    "0|$((STALE_GEN + 1))|1|1" \
-    "a launch over an earlier server's record naming $row_what opens the next generation"
-  tm kill-window -t "$(recorded window)"
-done
-tm kill-window -t "$STALE"
-
-# A first launch on a codex entry: the entry's model and effort, codex's
-# full-bypass words, its launch settings, its compaction words and its
-# question-tool words, under a folder-trust home built in the account.
-codex_usage() { # USED_PCT
-  jq -n --argjson u "$1" '{rate_limit: {primary_window: {used_percent: $u, reset_at: 1785000000, limit_window_seconds: 18000}, secondary_window: null}}' \
-    > "$FIXTURE_DIR/.codex.json"
-}
-codex_usage 20
-LAUNCH_PREF=codex:gpt-5.6-sol:high run_oversee ORCH_LANE_DIRS="$H/.claude:$H/.eclaude:$H/.codex" -- launch --wait-secs 20
-codex_words() { # the table's words for a codex launch, one per line
-  printf '%s\n' -m gpt-5.6-sol -c model_reasoning_effort=high
-  eval "printf '%s\n' $(launch_choice_permission_write codex)"
-  printf '%s\n' $(launch_choice_row codex | cut -d'|' -f8) $(launch_choice_compaction_off codex) \
-    $(launch_choice_question_off codex)
-}
-assert_eq "$RC|$(recorded harness)|$(recorded account)|$(sed -n 1p "$TMP_ROOT/argv.codex" | sed "s|^home=$H/.codex/.*|home=codex-account|")|$(sed 1d "$TMP_ROOT/argv.codex" | tr '\n' ';')" \
-  "0|codex|$H/.codex|home=codex-account|$(codex_words | tr '\n' ';')$BRIEF;" \
-  "a first launch on a codex entry carries the table's model, bypass, settings, compaction and question-tool words"
-tm kill-window -t "$(recorded window)"
-
-# Committed consumer settings still emit the numeric account form. Both
-# launch verbs use the same-harness default preference model, under either
-# account command form. Only the eclaude account has room in these rows.
-claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
-claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
-for row in 'prefix|fresh' 'prefix|predecessor' 'launcher|fresh' 'launcher|predecessor'; do
-  IFS='|' read -r form verb <<<"$row"
-  if [[ "$form" == launcher ]]; then
-    cat > "$BIN/eclaude" <<STUB
-#!/bin/sh
-export CLAUDE_CONFIG_DIR="$H/.eclaude"
-exec "$BIN/claude" "\$@"
-STUB
-    chmod +x "$BIN/eclaude"
-    want_form="launcher:$BIN/eclaude"
-  else
-    rm -f -- "$BIN/eclaude"
-    want_form=prefix
-  fi
-  predecessor=()
-  if [[ "$verb" == predecessor ]]; then
-    run_oversee -- launch --wait-secs 20
-    assert_eq "$RC" 0 "the numeric $form row has a live predecessor"
-    predecessor=(--predecessor "$(recorded pane)")
-  fi
-  permission_order="$BYPASS;$COMPACT;$QUESTION_OFF"
-  [[ "$verb" != predecessor ]] || permission_order="$COMPACT;$QUESTION_OFF;$BYPASS"
-  LAUNCH_PREF=claude:1:high run_oversee -- launch ${predecessor[@]+"${predecessor[@]}"} --wait-secs 20
-  assert_eq "$RC|$(overseers)|$(recorded harness)|$(recorded account)|$(recorded model)|$(recorded effort)|$(recorded_argv)" \
-    "0|1|claude|$H/.eclaude|opus|high|lane=$H/.eclaude;-n;overseer;--model;opus;--effort;high;$permission_order;$BRIEF;" \
-    "a numeric $verb preference uses the default preference model under $form"
-  conversion="$(grep '^preference-deprecated-conversion ' <<<"$OUT")"
-  # A succession's `overseer-launch` line names the form; a fresh launch
-  # prints none (the runtime opens its session), and the form shows in the
-  # line its request carries: the account's launcher, else the env prefix.
-  reported_form="$(field "$(keyed overseer-launch "$OUT")" form)"
-  if [[ "$verb" == fresh ]]; then
-    case "$(requested '.controller.launch_line')" in
-      *"$BIN/eclaude"*) reported_form="launcher:$BIN/eclaude" ;;
-      *CLAUDE_CONFIG_DIR=*) reported_form=prefix ;;
-      *) reported_form=none ;;
-    esac
-  fi
-  assert_eq "$(grep -c '^preference-deprecated ' <<<"$OUT")|$(field "$conversion" entry)|$(field "$conversion" replacement)|$reported_form" \
-    "1|claude:1:high|claude:standard:high|$want_form" \
-    "the numeric $verb warning names its conversion and the launch reports $form"
-  tm kill-window -t "$(recorded window)"
-done
-rm -- "$BIN/eclaude"
-# The migration diagnostic pairs the original consumer entry with its own
-# conversion before an account or permission refusal can skip that entry.
-for row in \
-  'later-account|claude:1:high,codex:2:high|95|20|0|codex|claude:1:high|claude:standard:high|' \
-  'all-walled|claude:1:high,codex:2:high|95|99|3|none|claude:1:high|claude:standard:high|' \
-  'permission-skip|pi:1:high,claude:2:high|60|99|0|claude|pi:1:high||harness-default'; do
-  IFS='|' read -r case_name preference claude_used codex_used expected_rc selected original replacement native_model <<<"$row"
-  claude_usage "$claude_used" 20 5 Opus > "$FIXTURE_DIR/.claude.json"
-  claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
-  codex_usage "$codex_used"
-  LAUNCH_PREF="$preference" run_oversee ORCH_LANE_DIRS="$H/.claude:$H/.eclaude:$H/.codex" -- launch --wait-secs 20
-  conversion="$(grep '^preference-deprecated-conversion ' <<<"$OUT")"
-  chosen_harness=none
-  if [[ "$RC" == 0 ]]; then chosen_harness="$(recorded harness)"; fi
-  assert_eq "$RC|$chosen_harness|$(grep -c '^preference-deprecated ' <<<"$OUT")|$(grep -c '^preference-deprecated-conversion ' <<<"$OUT")|$(field "$(grep '^preference-deprecated ' <<<"$OUT")" entry)|$(field "$conversion" entry)|$(field "$conversion" replacement)|$(field "$conversion" model)" \
-    "$expected_rc|$selected|1|1|$original|$original|$replacement|$native_model" \
-    "$case_name keeps the original and resolved conversion paired before the skip"
-  if [[ "$RC" == 0 ]]; then tm kill-window -t "$(recorded window)"; fi
-done
-codex_usage 20
-claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
-claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
-# A numeric Copilot entry has no same-harness default preference. It still
-# launches with effort and permission words and reports the harness default.
-LAUNCH_PREF=copilot:1:high run_oversee ORCH_LANE_DIRS="$H/.1copilot" -- launch --wait-secs 20
-conversion="$(grep '^preference-deprecated-conversion ' <<<"$OUT")"
-assert_eq "$RC|$(recorded harness)|$(recorded account)|$(recorded model)|$(recorded effort)|$(grep -cx -e --reasoning-effort -e high -e "$(launch_choice_permission_write copilot)" "$TMP_ROOT/argv.copilot")|$(grep -cxF -- --model "$TMP_ROOT/argv.copilot" || true)|$(field "$conversion" entry)|$(field "$conversion" harness)|$(field "$conversion" model)" \
-  "0|copilot|$H/.1copilot|none|high|3|0|copilot:1:high|copilot|harness-default" \
-  "a numeric Copilot preference launches and reports that the harness default model runs"
-tm kill-window -t "$(recorded window)"
 echo "=== the checkout a launch opens in ==="
 # A clean checkout of the base branch one commit behind its origin starts the
 # overseer at origin's head (lib/overseer-launch.sh § ol_checkout_sync).
@@ -1446,11 +1004,11 @@ test_register_live_holder() {
 test_register_live_holder
 
 test_recorded_server() {
-  local a_addr b_addr b_server holder candidate before verb mode="${1:-register}" decoy panes form snapshot fail_bin real_ps
+  local a_addr b_addr b_server holder candidate before form snapshot fail_bin real_ps
   local a_name b_name a_socket b_socket side
   cp -- "$FLEET_STATE" "$TMP_ROOT/two-server.saved"
   for side in a b; do
-    fixture_server_allocate "$side" "$mode" initial
+    fixture_server_allocate "$side" register initial
     fixture_server_start
     if [[ "$side" == a ]]; then
       a_name="$FIXTURE_NAME" a_socket="$FIXTURE_SOCKET"
@@ -1466,24 +1024,14 @@ test_recorded_server() {
   assert_eq "$holder" "$candidate" "the two servers reuse the same pane id"
   jq '.overseer = null' "$FLEET_STATE" > "$TMP_ROOT/two-server.state"
   mv -- "$TMP_ROOT/two-server.state" "$FLEET_STATE"
-  run_oversee TMUX="$a_addr" TMUX_PANE="$holder" -- "$mode" --wait-secs 20
+  run_oversee TMUX="$a_addr" TMUX_PANE="$holder" -- register --wait-secs 20
   holder="$(recorded pane)"
-  assert_eq "$RC|$(recorded server_socket)" "0|${a_addr%%,*}" "$mode stores the overseer's socket"
+  assert_eq "$RC|$(recorded server_socket)" "0|${a_addr%%,*}" "register stores the overseer's socket"
   before="$(cat "$FLEET_STATE")"
-  if [[ "$mode" == launch ]]; then
-    decoy="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L "$b_name" new-window -d -t fleet -n foreign-predecessor -P -F '#{pane_id}' 'exec sleep 100000')"
-    assert_eq "$decoy" "$holder" "B's unrelated pane repeats A's launched overseer number"
-    run_oversee TMUX="$b_addr" TMUX_PANE="$candidate" -- launch --predecessor "$holder" --wait-secs 20
-    panes="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L "$b_name" list-panes -a -F '#{pane_id}')"
-    assert_eq "$RC|$(field "$(keyed predecessor-not-live "$OUT")" live)|$(cat "$FLEET_STATE")|$(grep -cxF -- "$decoy" <<<"$panes" || true)" \
-      "1|none|$before|1" "a foreign recorded predecessor cannot authorize creation or stop on B"
-  fi
-  for verb in register launch; do
-    run_oversee TMUX="$b_addr" TMUX_PANE="$candidate" -- "$verb" --wait-secs 20
-    assert_eq "$RC|$(field "$(keyed overseer-live "$OUT")" session)|$(cat "$FLEET_STATE")" \
-      "1|$holder|$before" "$verb from B refuses while A lives and preserves the record"
-  done
-  fail_bin="$TMP_ROOT/process-fail-$mode"
+  run_oversee TMUX="$b_addr" TMUX_PANE="$candidate" -- register --wait-secs 20
+  assert_eq "$RC|$(field "$(keyed overseer-live "$OUT")" session)|$(cat "$FLEET_STATE")" \
+    "1|$holder|$before" "register from B refuses while A lives and preserves the record"
+  fail_bin="$TMP_ROOT/process-fail-register"
   mkdir -p "$fail_bin"
   real_ps="$(command -v ps)"
   cat > "$fail_bin/ps" <<STUB
@@ -1492,19 +1040,17 @@ case "\$*" in '-A -o pid= -o comm=') echo process-read=failed >&2; exit 2 ;; esa
 exec "$real_ps" "\$@"
 STUB
   chmod +x "$fail_bin/ps"
-  for verb in register launch; do
-    for form in legacy process-failed; do
-      snapshot="$before"
-      [[ "$form" != legacy ]] || snapshot="$(jq 'del(.overseer.server_socket)' <<<"$before")"
-      printf '%s\n' "$snapshot" > "$FLEET_STATE"
-      if [[ "$form" == legacy ]]; then
-        run_oversee TMUX="$b_addr" TMUX_PANE="$candidate" -- "$verb" --wait-secs 20
-      else
-        run_oversee PATH="$fail_bin:$BIN:$PATH" TMUX="$b_addr" TMUX_PANE="$candidate" -- "$verb" --wait-secs 20
-      fi
-      assert_eq "$RC|$(field "$(keyed launch-failed "$OUT")" step)|$(cat "$FLEET_STATE")" \
-        "1|inspect|$snapshot" "$verb from B preserves A's $form record when evidence cannot be read" "$OUT"
-    done
+  for form in legacy process-failed; do
+    snapshot="$before"
+    [[ "$form" != legacy ]] || snapshot="$(jq 'del(.overseer.server_socket)' <<<"$before")"
+    printf '%s\n' "$snapshot" > "$FLEET_STATE"
+    if [[ "$form" == legacy ]]; then
+      run_oversee TMUX="$b_addr" TMUX_PANE="$candidate" -- register --wait-secs 20
+    else
+      run_oversee PATH="$fail_bin:$BIN:$PATH" TMUX="$b_addr" TMUX_PANE="$candidate" -- register --wait-secs 20
+    fi
+    assert_eq "$RC|$(field "$(keyed launch-failed "$OUT")" step)|$(cat "$FLEET_STATE")" \
+      "1|inspect|$snapshot" "register from B preserves A's $form record when evidence cannot be read" "$OUT"
   done
   printf '%s\n' "$before" > "$FLEET_STATE"
   # A changed tmux start is a different server identity even at a live pid.
@@ -1512,35 +1058,26 @@ STUB
   run_oversee TMUX="$b_addr" TMUX_PANE="$candidate" -- register
   assert_eq "$RC|$(recorded server)" "0|$b_server" "a different recorded server start permits takeover"
   fixture_server_stop "$a_socket"
-  for verb in register launch; do
-    # A fresh B repeats A's launched pane number when it opens its overseer.
-    fixture_server_stop "$b_socket"
-    fixture_server_allocate b "$mode" "$verb"
-    fixture_server_start
-    b_name="$FIXTURE_NAME" b_socket="$FIXTURE_SOCKET"
-    b_addr="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L "$b_name" display-message -p '#{socket_path},#{pid},0')"
-    b_server="${b_addr#*,}" b_server="${b_server%%,*}"
-    candidate="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L "$b_name" display-message -p '#{pane_id}')"
-    for form in socket legacy; do
-      snapshot="$before"
-      [[ "$form" != legacy ]] || snapshot="$(jq 'del(.overseer.server_socket)' <<<"$before")"
-      printf '%s\n' "$snapshot" > "$FLEET_STATE"
-      run_oversee TMUX="$b_addr" TMUX_PANE="$candidate" -- "$verb" --wait-secs 20
-      assert_eq "$RC|$(recorded server)|$(recorded server_socket)" \
-        "0|$b_server|${b_addr%%,*}" "$verb from B succeeds after A's server stops with a $form record" "$OUT"
-      if [[ "$verb" == launch && "$RC" == 0 && "$form" == socket && "$mode" == launch ]]; then
-        assert_eq "$(recorded pane)" "$holder" "fresh launch verifies its own pane when the prior server used the same number"
-      fi
-      [[ "$verb" != launch || "$RC" != 0 || "$form" != socket ]] || TMUX_TMPDIR="$TMUX_DIR" tmux -L "$b_name" kill-window -t "$(recorded window)"
-    done
-    if [[ "$verb" == launch && "$RC" == 0 ]]; then
-      TMUX_TMPDIR="$TMUX_DIR" tmux -L "$b_name" kill-window -t "$(recorded window)"
-    fi
+  # A fresh B repeats A's recorded pane number.
+  fixture_server_stop "$b_socket"
+  fixture_server_allocate b register register
+  fixture_server_start
+  b_name="$FIXTURE_NAME" b_socket="$FIXTURE_SOCKET"
+  b_addr="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L "$b_name" display-message -p '#{socket_path},#{pid},0')"
+  b_server="${b_addr#*,}" b_server="${b_server%%,*}"
+  candidate="$(TMUX_TMPDIR="$TMUX_DIR" tmux -L "$b_name" display-message -p '#{pane_id}')"
+  for form in socket legacy; do
+    snapshot="$before"
+    [[ "$form" != legacy ]] || snapshot="$(jq 'del(.overseer.server_socket)' <<<"$before")"
+    printf '%s\n' "$snapshot" > "$FLEET_STATE"
+    run_oversee TMUX="$b_addr" TMUX_PANE="$candidate" -- register --wait-secs 20
+    assert_eq "$RC|$(recorded server)|$(recorded server_socket)" \
+      "0|$b_server|${b_addr%%,*}" "register from B succeeds after A's server stops with a $form record" "$OUT"
   done
   fixture_server_stop "$b_socket"
   mv -- "$TMP_ROOT/two-server.saved" "$FLEET_STATE"
 }
-for recorded_mode in register launch; do test_recorded_server "$recorded_mode"; done
+test_recorded_server
 
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

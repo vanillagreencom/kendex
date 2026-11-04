@@ -1,4 +1,4 @@
 #!/bin/bash
-# A `loginctl` reporting that the user manager lingers, so `job-unit.sh
-# launch` keeps its unit.
+# A `loginctl` reporting that the user manager lingers, so the runtime's job
+# launcher takes its unit route.
 echo yes

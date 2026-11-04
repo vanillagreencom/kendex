@@ -1,6 +1,6 @@
 #!/bin/bash
-# A `systemd-run --user` as the user manager `job-unit.sh launch` reaches on
-# a host whose manager lingers (R-U5h probe 1): the probe call answers 0; a
+# A `systemd-run --user` as the runtime's job launcher reaches the user
+# manager on a host whose manager lingers: the probe call answers 0; a
 # `--unit=NAME ... -- ARGV` start runs ARGV under setsid, the unit's own
 # group, with its pid recorded under units/NAME beside this fake and the
 # manager's `$$` escaping undone. Every call is appended to systemd.log

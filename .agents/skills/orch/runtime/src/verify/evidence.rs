@@ -1132,6 +1132,15 @@ pub(crate) struct Work {
     pub(crate) started_at: Option<String>,
 }
 
+/// Whether a timeline actor is Copilot: the REST login with its suffix, or
+/// the bare `Copilot` the request events name it by.
+pub(super) fn copilot_actor(value: Option<&serde_json::Value>) -> bool {
+    value
+        .and_then(|v| v.get("login"))
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|login| login == format!("{COPILOT_REVIEWER}[bot]") || login == "Copilot")
+}
+
 pub(super) fn copilot_work(gh: &Reader<'_>, repo: &str, pr: u64, head: &str) -> Read<Option<Work>> {
     let checks = gh.collection::<CheckRunsPage>(
         Endpoint::CheckRuns,
@@ -1158,17 +1167,11 @@ pub(super) fn copilot_work(gh: &Reader<'_>, repo: &str, pr: u64, head: &str) -> 
         &format!("repos/{repo}/issues/{pr}/timeline"),
     )?;
     let invalid = || Cause::ResponseInvalid(Endpoint::Timeline);
-    let copilot_login = |value: Option<&serde_json::Value>| {
-        value
-            .and_then(|v| v.get("login"))
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|login| login == format!("{COPILOT_REVIEWER}[bot]") || login == "Copilot")
-    };
     let mut pending: Option<Work> = None;
     for event in &events {
         let field = |key: &str| event.fields.get(key);
         match event.event.as_str() {
-            "review_requested" if copilot_login(field("requested_reviewer")) => {
+            "review_requested" if copilot_actor(field("requested_reviewer")) => {
                 let id = field("id")
                     .and_then(serde_json::Value::as_u64)
                     .ok_or_else(invalid)?;
@@ -1192,10 +1195,10 @@ pub(super) fn copilot_work(gh: &Reader<'_>, repo: &str, pr: u64, head: &str) -> 
                     started_at: Some(created.to_owned()),
                 });
             }
-            "review_request_removed" if copilot_login(field("requested_reviewer")) => {
+            "review_request_removed" if copilot_actor(field("requested_reviewer")) => {
                 pending = None;
             }
-            "reviewed" if copilot_login(field("user")) => {
+            "reviewed" if copilot_actor(field("user")) => {
                 let submitted = field("submitted_at")
                     .and_then(serde_json::Value::as_str)
                     .ok_or_else(invalid)?;

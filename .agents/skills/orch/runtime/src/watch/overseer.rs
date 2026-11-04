@@ -16,8 +16,8 @@
 //! command run in its place. The controller's own marks are judged here
 //! ([`judge_marks`]): the watch asks in-process every pass with the
 //! overseer's own context reading, and the turn-end hook asks through the
-//! `marks` verb; the successor of a walled or qualifying succession is the
-//! overseer walk's choice (`ops::walk`).
+//! `marks` verb; the successor of a walled succession is the overseer
+//! walk's choice (`ops::walk`).
 //!
 //! The overseer's context record (`watch::context`) is judged beside a
 //! live session: a reading that fills the window with no Stop row after it
@@ -161,7 +161,6 @@ pub enum MarkKind {
     Headroom,
     Rate,
     Memory,
-    Qualifying,
 }
 
 impl MarkKind {
@@ -171,7 +170,6 @@ impl MarkKind {
             MarkKind::Headroom => "headroom",
             MarkKind::Rate => "rate",
             MarkKind::Memory => "memory",
-            MarkKind::Qualifying => "qualifying",
         }
     }
 }
@@ -228,9 +226,6 @@ pub struct Marks {
     pub context: ContextRead,
     /// The judged reading as the handoff record carries it.
     pub decision: Option<Value>,
-    /// The entry the qualifying walk chose, which the transfer takes as its
-    /// successor with no second walk.
-    pub successor: Option<Pending>,
 }
 
 impl Marks {
@@ -248,7 +243,6 @@ impl Marks {
             headroom: String::new(),
             context: ContextRead::Unjudged,
             decision: None,
-            successor: None,
         }
     }
 
@@ -303,12 +297,6 @@ impl Marks {
         reply.insert("context".to_owned(), context);
         if let Some(decision) = &self.decision {
             reply.insert("context_decision".to_owned(), decision.clone());
-        }
-        if let Some(successor) = &self.successor {
-            reply.insert(
-                "successor".to_owned(),
-                serde_json::to_value(successor).unwrap_or(Value::Null),
-            );
         }
         Value::Object(reply)
     }
@@ -375,6 +363,8 @@ pub struct Caller {
     pub cwd: Option<String>,
     pub permission: Option<Permission>,
     pub extra_args: Vec<String>,
+    /// The handoff the controller's brief named, kept by its successor.
+    pub handoff: Option<String>,
     pub identity: Option<Identity>,
 }
 
@@ -396,6 +386,7 @@ impl Caller {
                 .get("extra_args")
                 .and_then(|a| serde_json::from_value(a.clone()).ok())
                 .unwrap_or_default(),
+            handoff: text(record.raw.get("handoff")),
             identity: record.identity.clone(),
         }
     }
@@ -425,21 +416,20 @@ impl Caller {
     /// The pending the walk's choice opens: its harness, account, model,
     /// effort and class, in this session's directory; a same-harness entry
     /// keeps this session's posture and words, another harness runs the
-    /// full bypass the walk admitted with none of them. The home is the
-    /// picked account where the harness's account is its home, and this
-    /// session's own root for a Pi successor, whose picked seat is the
-    /// account alone.
+    /// full bypass the walk admitted with none of them. The launch prepares
+    /// the home its harness and account run under; the one home named is
+    /// this session's own root, kept by a same-harness successor whose
+    /// account is not its home (a Pi seat).
     pub fn successor_of(&self, chosen: &walk::Chosen) -> Pending {
         let same = self.harness.is_some_and(|h| h.name() == chosen.harness);
-        let home = match Harness::parse(&chosen.harness) {
-            Some(h) if h.account_var(Some(&chosen.model)) == h.home_var() => chosen.account.clone(),
-            Some(_) | None => self.home.clone(),
-        };
         Pending {
             launch_line: None,
             harness: Some(chosen.harness.clone()),
             account: chosen.account.clone(),
-            home,
+            home: self
+                .harness
+                .filter(|h| same && h.account_var(Some(&chosen.model)) != h.home_var())
+                .and(self.home.clone()),
             model: Some(chosen.model.clone()).filter(|m| !m.is_empty()),
             effort: Some(chosen.effort.clone()).filter(|e| !e.is_empty()),
             cwd: self.cwd.clone(),
@@ -455,6 +445,7 @@ impl Caller {
             } else {
                 Vec::new()
             },
+            handoff: self.handoff.clone(),
             extra: serde_json::Map::new(),
         }
     }
@@ -567,12 +558,10 @@ pub struct MarksAsk<'a> {
 
 /// The controller's own marks, judged once: the context mark on the
 /// reading handed in, then the account marks on the account the session
-/// spends, the memory mark on its process, and the qualifying count for a
-/// caller with room. One answer names one mark; the account marks lead
-/// where several fire on one reading, since they name the account to
-/// leave. An unmeasured figure is its own answer, never a mark that
-/// lifted and never zero: an unmeasured caller account answers before the
-/// qualifying arm, which runs only on a measured caller with room.
+/// spends and the memory mark on its process. One answer names one mark;
+/// the account marks lead where several fire on one reading, since they
+/// name the account to leave. An unmeasured figure is its own answer, never
+/// a mark that lifted and never zero.
 pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
     let settings = ask.settings;
     let marks = &settings.marks;
@@ -726,98 +715,7 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
         m.decision = decision.clone();
         m
     };
-    // The qualifying count, for a caller measured with room alone: the
-    // accounts a successor could open on, this one counted in, against the
-    // setting; the walk that would open one decides whether it settles the
-    // mark, and its choice is the successor.
     let headroom_field = account.headroom_field();
-    if account.state == AccountState::HasRoom
-        && marks.successor_accounts >= 2
-        && let Some(caller_headroom) = account.headroom
-        && let Some(account_dir) = ask.caller.account.as_deref()
-    {
-        let capacity = accounts::pick_fleet(
-            settings,
-            ask.fleet_path,
-            ask.host,
-            &PickRequest {
-                harness: harness.name().to_owned(),
-                model: mark_model.clone(),
-                exclude: vec![account_dir.to_owned()],
-                for_overseer: true,
-                min_headroom_pct: Some(trigger),
-                ..PickRequest::default()
-            },
-            ask.now,
-        );
-        let counted = match capacity {
-            PickAnswer::Lane(j) => {
-                let record = j.record();
-                match (
-                    record.get("qualifying_count").and_then(Value::as_u64),
-                    whole_pct(&record, "effective_headroom_pct"),
-                ) {
-                    (Some(count), Some(headroom)) => Some((count, headroom)),
-                    (Some(0), None) => Some((0, 0)),
-                    (Some(_), None) | (None, _) => None,
-                }
-            }
-            PickAnswer::None { .. } => Some((0, 0)),
-            PickAnswer::Walled(_)
-            | PickAnswer::Reserved(_)
-            | PickAnswer::Retired { .. }
-            | PickAnswer::Excluded(_)
-            | PickAnswer::CloudRepoUnset(_)
-            | PickAnswer::Unmeasured(_)
-            | PickAnswer::NoRecord
-            | PickAnswer::ProviderUnmeasured { .. }
-            | PickAnswer::Unbilled { .. }
-            | PickAnswer::Unjudged { .. } => None,
-        };
-        let Some((count, successor_headroom)) = counted else {
-            return Ok(unmeasured(MarkKind::Qualifying, "unreadable".to_owned()));
-        };
-        let total = count + 1;
-        if count > 0
-            && total <= u64::from(marks.successor_accounts)
-            && successor_headroom > caller_headroom
-        {
-            let walked = walk::walk(
-                settings,
-                ask.fleet_path,
-                ask.host,
-                &WalkRequest {
-                    scope: walk::Scope::Overseer,
-                    preference: None,
-                    lane: None,
-                    exclude: vec![account_dir.to_owned()],
-                    replaces: None,
-                    max_pct: None,
-                    min_headroom_pct: Some(trigger),
-                    source: Some(walk::Source {
-                        harness: harness.name().to_owned(),
-                        flags: None,
-                    }),
-                    caller: Some(ask.caller.walk_entry(harness)),
-                    keep_unmeasured: false,
-                    successor_bound: marks.successor_accounts,
-                },
-                ask.now,
-            )?;
-            if let walk::WalkAnswer::Lane(chosen) = &walked.answer {
-                let mut m = reached(
-                    MarkKind::Qualifying,
-                    total.to_string(),
-                    marks.successor_accounts.to_string(),
-                );
-                m.account = String::new();
-                m.resets = String::new();
-                m.headroom = headroom_field.clone();
-                m.successor = Some(ask.caller.successor_of(chosen));
-                return Ok(m);
-            }
-        }
-    }
     // The unmeasured figures, each its own answer where no mark fired: a
     // caller holding a standing mark keeps it across a pass that could not
     // measure.
@@ -1117,8 +1015,10 @@ impl Record {
 
     /// The successor a dead session's recovery replays: the pending the
     /// fleet last chose, else this record's own launch fields, a fresh
-    /// session in the same place. The dead session's handoff is what its
-    /// successor reads, so no held successor resumes the dead session.
+    /// session in the same place on the home its launch prepares, its own
+    /// root kept where its account is not its home. The dead session's
+    /// handoff is what its successor reads, so no held successor resumes the
+    /// dead session.
     fn held_successor(&self) -> Option<Pending> {
         if let Some(pending) = &self.pending {
             return Some(pending.clone());
@@ -1129,7 +1029,9 @@ impl Record {
             launch_line: text(self.raw.get("launch_line")),
             harness: Some(harness.name().to_owned()),
             account: caller.account,
-            home: caller.home,
+            home: caller
+                .home
+                .filter(|_| harness.account_var(caller.model.as_deref()) != harness.home_var()),
             model: caller.model,
             effort: caller.effort,
             cwd: caller.cwd,
@@ -1137,32 +1039,17 @@ impl Record {
             resume: None,
             permission: caller.permission,
             extra_args: caller.extra_args,
+            handoff: caller.handoff,
             extra: serde_json::Map::new(),
         })
     }
 
-    /// The succession command of the owner that records this controller,
-    /// where the adoption named one.
     fn succession(&self) -> Option<Vec<String>> {
-        match self.raw.get("succession") {
-            Some(Value::Array(words)) => words
-                .iter()
-                .map(|w| w.as_str().map(str::to_owned))
-                .collect::<Option<Vec<String>>>()
-                .filter(|words| !words.is_empty()),
-            Some(
-                Value::Null
-                | Value::Bool(_)
-                | Value::Number(_)
-                | Value::String(_)
-                | Value::Object(_),
-            )
-            | None => None,
-        }
+        crate::state::succession_command(self.raw.get("succession"))
     }
 
     /// The compare-and-swap set the request carries: the record as read.
-    fn expected(&self) -> OverseerExpected {
+    pub(crate) fn expected(&self) -> OverseerExpected {
         let get = |key: &str| self.raw.get(key).cloned().unwrap_or(Value::Null);
         OverseerExpected {
             server: get("server"),
@@ -1809,13 +1696,9 @@ fn transfer(
                         replaces: None,
                         max_pct: None,
                         min_headroom_pct: None,
-                        source: Some(walk::Source {
-                            harness: harness.name().to_owned(),
-                            flags: Some(caller.extra_args.clone()),
-                        }),
+                        source: Some(crate::ops::successor::source(&caller, harness)),
                         caller: Some(caller.walk_entry(harness)),
                         keep_unmeasured: false,
-                        successor_bound: 0,
                     };
                     match (pass.judges.walk)(&request) {
                         Ok(walked) => match &walked.answer {
@@ -2084,7 +1967,9 @@ fn mark_check(record: &Record, key: &str, marks: Option<&Marks>, pass: &Pass, ou
         let sentence = match marks.succession {
             Succession::Off => "ORCH_OVERSEER_SUCCESSION is off, so no successor opens: rewrite the overseer handoff file and ask the user to start a fresh overseer session.".to_owned(),
             Succession::On => format!(
-                "Hand this session over at the next safe point: write the overseer handoff file, choose the successor with orch-runtime accounts walk --overseer (ORCH_OVERSEER_PREFERENCE={}) and ask orch-runtime op --fleet for request-transfer with it.",
+                "Hand this session over at the next safe point: write the overseer handoff file, choose the successor with orch-runtime successor --fleet --cwd {} --predecessor {} (it walks ORCH_OVERSEER_PREFERENCE={}) and ask orch-runtime op --fleet for request-transfer with cause live, its .result.successor as the successor and its .result.expected as the expected record.",
+                text(record.raw.get("cwd")).unwrap_or_else(|| "[CHECKOUT]".to_owned()),
+                record.pane,
                 if pass.preference.is_empty() {
                     "empty"
                 } else {
@@ -2158,8 +2043,10 @@ pub fn marks_verb(
     Ok(marks.reply())
 }
 
-/// The transfer as the `op` command runs it: admitted, applied through the
-/// store's entry with the host's facts, its effect started.
+/// The transfer as the `op` command runs it: its successor's posture the
+/// settings' where it carries none, as the `successor` verb fills it,
+/// admitted, applied through the store's entry with the host's facts, its
+/// effect started.
 #[allow(
     clippy::disallowed_methods,
     reason = "the overseer duty's one request, request-transfer with its cause: the same sequence the op command runs (admit, the store's entry with the kernel's readers, the effect's start), from the duty that read the session dead or walled"
@@ -2170,8 +2057,9 @@ pub fn run_transfer(
     env: &crate::ops::Env,
     locking: crate::state::Locking,
     clock: &dyn crate::schedule::Clock,
-    request: RequestTransfer,
+    mut request: RequestTransfer,
 ) -> crate::error::Result<()> {
+    crate::ops::successor::posture(&mut request.successor, settings);
     let request = crate::ops::Request::RequestTransfer(Box::new(request));
     crate::ops::admit(&request, settings)?;
     let host = crate::ops::Host::kernel(settings.lane_cap, Some(settings.claim_store.clone()));

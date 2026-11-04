@@ -20,6 +20,7 @@ use agent_runtime::launch::{Compaction, LaunchCommand, Permission, Resume};
 use agent_runtime::reading::Reading;
 use serde_json::{Value, json};
 
+use super::launch::{GATE_REFUSED, Unready};
 use super::operation::{
     self, Binding, EffectOutcome, Identity, Observed, OpenRefusal, Operation, Pane, Polled,
     ProcessRead, Proof, Published, Recovered, SessionFloor, State, Stop, TurnConfirm, WindowClose,
@@ -34,6 +35,7 @@ use crate::ops::{RequestTransfer, StartController, overseer_target};
 use crate::settings::Settings;
 use crate::state::{
     self, BoundSession, EffectOp, Intent, LaunchIdentity, OpenedPane, Overseer, Phase,
+    TransferCause,
 };
 
 /// Which controller lifetime a succession effect serves: a transfer retires
@@ -244,15 +246,18 @@ fn unconfirmed_after_retirement(
 
 /// What a succession resolved about its successor before anything opened,
 /// and what a reconcile rebuilds from the record: the harness, the home its
-/// native session is read under, the account it spends, its working
-/// directory and the typed launch fields the command is built from
-///. The pending line is kept for display alone.
+/// native session is read under, the home the launch names and the account
+/// it bills, its working directory and the typed launch fields the command
+/// is built from. The pending line is kept for display alone.
 #[derive(Clone)]
 struct Successor {
     harness: Harness,
     target: Target,
     home: PathBuf,
+    named: Option<PathBuf>,
     account: Option<PathBuf>,
+    /// The handoff the held brief names where the request names no brief.
+    handoff: Option<String>,
     cwd: PathBuf,
     model: Option<String>,
     effort: Option<String>,
@@ -266,11 +271,17 @@ struct Successor {
 
 impl Successor {
     /// The successor `pending` names, with every precondition a succession
-    /// reads before retirement: the harness word, the working
-    /// directory, the home its sessions are read under and the account it
-    /// spends, which must exist. The program and brief are checked by the
-    /// effect that builds the command.
-    fn from_pending(settings: &Settings, pending: &state::Pending) -> Result<Successor> {
+    /// reads before retirement: the harness word, the working directory and
+    /// the account it spends, which must exist, and the home it runs under,
+    /// prepared by the lane launch's own rule (`launch::launch_home`) with
+    /// its trust record, so a reconcile resolves the same home. The pending's
+    /// `home` is read only as the Pi root a successor on another provider's
+    /// seat keeps. The program and brief are checked by the effect that
+    /// builds the command.
+    fn from_pending(
+        settings: &Settings,
+        pending: &state::Pending,
+    ) -> std::result::Result<Successor, Unready> {
         let harness = pending
             .harness
             .as_deref()
@@ -284,41 +295,30 @@ impl Successor {
         // Pi continues a session by its file, which no record carries, so a
         // Pi controller has no resume form.
         if harness == Harness::Pi && pending.resume.is_some() {
-            return Err(refused(
-                "resume-unsupported",
-                &[("harness", harness.name())],
-            ));
+            return Err(refused("resume-unsupported", &[("harness", harness.name())]).into());
         }
         let cwd = PathBuf::from(pending.cwd.clone().unwrap_or_default());
         check_directory("cwd-missing", &cwd)?;
-        let account = match pending.account.as_deref() {
-            Some(account) => {
-                let account = PathBuf::from(account);
-                check_directory("account-missing", &account)?;
-                Some(account)
-            }
-            None => None,
-        };
-        // The home the harness reads its sessions under: the one named, else
-        // the account on a harness whose account is its home, else the
-        // harness's default. A Pi launch on another provider's seat names
-        // its own root here and the seat as the account.
-        let same_var = harness.account_var(pending.model.as_deref()) == harness.home_var();
-        let home = match (pending.home.as_deref(), &account) {
-            (Some(home), _) => {
-                let home = PathBuf::from(home);
-                check_directory("home-missing", &home)?;
-                home
-            }
-            (None, Some(account)) if same_var => account.clone(),
-            (None, _) => operation::default_home(harness)
-                .ok_or_else(|| refused("home-unresolved", &[("harness", harness.name())]))?,
-        };
+        if let Some(account) = pending.account.as_deref() {
+            check_directory("account-missing", Path::new(account))?;
+        }
+        let homes = super::launch::launch_home(
+            harness,
+            pending.account.as_deref(),
+            pending.model.as_deref(),
+            pending.home.as_deref().map(Path::new),
+            &cwd,
+        )?;
+        let home = homes
+            .sessions
+            .ok_or_else(|| refused("home-unresolved", &[("harness", harness.name())]))?;
         Ok(Successor {
             harness,
             target: Target::new(settings, harness),
             home,
-            account,
+            named: homes.named,
+            account: homes.account,
+            handoff: pending.handoff.clone(),
             cwd,
             model: pending.model.clone(),
             effort: pending.effort.clone(),
@@ -330,10 +330,9 @@ impl Successor {
     }
 
     /// The launch the successor runs, built from its typed fields through
-    /// agent-runtime's one builder: the effective home is passed for every
-    /// harness, the prepared Codex trust home and Pi's own root among them,
-    /// and the account routes billing only where its variable differs from
-    /// the home's; the caller's permission posture and words are kept, the
+    /// agent-runtime's one builder: the prepared home and the billed account
+    /// as the launch's rule resolved them; the caller's permission posture
+    /// and words are kept, the
     /// harness's own compaction off where it has a word for it, since orch's
     /// handoff mark judges the window, and the brief held for delivery after
     /// retirement. A resume continues the recorded session in the
@@ -343,18 +342,12 @@ impl Successor {
             Some(_) => Compaction::Off,
             None => Compaction::Native,
         };
-        let one_variable =
-            self.harness.account_var(self.model.as_deref()) == self.harness.home_var();
-        let account = match (&self.account, one_variable) {
-            (Some(_), true) | (None, _) => None,
-            (Some(account), false) => Some(account.as_path()),
-        };
         let (mut intent, command) = build_launch(
             settings,
             &Spec {
                 harness: self.harness,
-                home: Some(self.home.as_path()),
-                account,
+                home: self.named.as_deref(),
+                account: self.account.as_deref(),
                 model: self.model.as_deref(),
                 effort: self.effort.as_deref(),
                 cwd: &self.cwd,
@@ -430,13 +423,24 @@ enum Predecessor {
 /// the proven server, and proceeds over an empty record. A record that
 /// names a session nothing can resolve refuses `predecessor-unproven` under
 /// both: unproven is not absent, and the remedy is
-/// adoption from its pane.
+/// adoption from its pane. A `live` transfer refuses `predecessor-not-live`
+/// over a predecessor whose identity reads gone or that the proof shows
+/// ended: a controller that ended is the dead recovery's, never a live
+/// succession's. A stale or unreadable identity is the retirement's to
+/// read.
 fn resolve_predecessor(
     operation: &mut Operation,
     overseer: &Overseer,
     mode: Mode,
+    live: bool,
 ) -> Result<std::result::Result<Predecessor, (&'static str, Option<&'static str>)>> {
     Ok(match (mode, operation::predecessor_identity(overseer)) {
+        (Mode::Transfer, Some(identity)) if live => match operation.read_process(&identity)? {
+            ProcessRead::Gone => Err(("predecessor-not-live", None)),
+            ProcessRead::Live | ProcessRead::Stale { .. } | ProcessRead::Unreadable { .. } => {
+                Ok(Predecessor::Identity(identity))
+            }
+        },
         (Mode::Transfer, Some(identity)) => Ok(Predecessor::Identity(identity)),
         (Mode::Start, Some(identity)) => match operation.read_process(&identity)? {
             ProcessRead::Live => Err(("overseer-live", None)),
@@ -446,6 +450,7 @@ fn resolve_predecessor(
             ProcessRead::Unreadable { cause } => Err(("overseer-unreadable", Some(cause))),
         },
         (mode, None) => match operation.terminal_proof(overseer)? {
+            Proof::Proven { .. } if live => Err(("predecessor-not-live", None)),
             Proof::Proven { by } => Ok(Predecessor::Absent { by }),
             Proof::Standing { .. } => Err(match mode {
                 Mode::Transfer => ("predecessor-identity-missing", None),
@@ -565,7 +570,8 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
     // the predecessor in control, no waiting runner opened. ---
     // What there is to retire: an identity, or nothing proven to run. An
     // unknown stop cannot authorize a second controller.
-    let predecessor = match resolve_predecessor(&mut operation, &overseer, mode)? {
+    let live = mode == Mode::Transfer && intent.cause.unwrap_or_default() == TransferCause::Live;
+    let predecessor = match resolve_predecessor(&mut operation, &overseer, mode, live)? {
         Ok(predecessor) => predecessor,
         Err((note, None)) => return Ok(failed_before_retirement(operation, note)),
         Err((note, Some(cause))) => {
@@ -577,7 +583,14 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
     };
     let successor = match Successor::from_pending(run.settings, &pending) {
         Ok(successor) => successor,
-        Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
+        Err(Unready::Refused(e)) => return Ok(failed_before_retirement_refused(operation, &e)),
+        Err(Unready::Gate(cause)) => {
+            return Ok(failed_before_retirement_cause(
+                operation,
+                GATE_REFUSED,
+                &cause,
+            ));
+        }
     };
     let (server, session) = match operation.fleet_server(doc_session.as_deref()) {
         Ok(resolved) => resolved,
@@ -619,11 +632,26 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
         Ok(command) => command,
         Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
     };
-    if let Some(brief) = brief
-        && let Err(e) = read_brief(brief)
-    {
-        return Ok(failed_before_retirement_refused(operation, &e));
-    }
+    // A controller opens on the brief its request names, else on the
+    // takeover brief naming its handoff, held for this intent.
+    let held = match brief {
+        Some(brief) => match read_brief(brief) {
+            Ok(_) => brief.to_path_buf(),
+            Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
+        },
+        None => {
+            let handoff = successor
+                .handoff
+                .as_deref()
+                .unwrap_or(crate::ops::successor::HANDOFF);
+            let text = crate::ops::successor::brief(successor.harness, handoff);
+            match operation.hold_brief(&text) {
+                Ok(path) => path,
+                Err(e) => return Ok(failed_before_retirement_refused(operation, &Error::from(e))),
+            }
+        }
+    };
+    let brief = Some(held.as_path());
 
     // --- Prepare the waiting runner: open its window and bring it to its
     // composer. It has no controller-mail authority, since the fleet record
@@ -1226,6 +1254,7 @@ fn publish(
             server_start: Some(opened.server_start),
             server_socket: Some(opened.socket.clone()),
             launch_line: successor.launch_line.clone(),
+            home: Some(successor.home.display().to_string()),
             watch: watch_job,
             ..Wire::default()
         })),

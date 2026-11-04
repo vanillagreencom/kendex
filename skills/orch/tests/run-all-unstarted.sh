@@ -38,7 +38,7 @@ for phase, marker in (
     text = (source / "run-all.sh").read_text()
     if marker:
         assert text.count(marker) == 1
-        text = text.replace(marker, 'printf ready > "$ACK"\nread -r line < "$FIFO"\n' + marker)
+        text = text.replace(marker, 'printf ready > "$ACK"\nexec 9<>"$FIFO"; read -r -t 120 -u 9 line\n' + marker)
     if variant == "missing-report":
         needle = "    printf 'unstarted suite=%s\\n' \"$name\""
         assert text.count(needle) == 1
@@ -46,7 +46,7 @@ for phase, marker in (
     runner = battery / "run-all.sh"
     runner.write_text(text)
     ack = battery / "ready"
-    (battery / "a-block.sh").write_text('test -z "${RUN_ALL_PENDING_SUITES+x}" || exit 1\nprintf ready > "$ACK"\nread -r line < "$FIFO"\n')
+    (battery / "a-block.sh").write_text('test -z "${RUN_ALL_PENDING_SUITES+x}" || exit 1\nprintf ready > "$ACK"\nexec 9<>"$FIFO"; read -r -t 120 -u 9 line\n')
     (battery / "z-wait.sh").write_text('echo "pass: 1   fail: 0"\n')
     fifo = battery / "hold"
     os.mkfifo(fifo)

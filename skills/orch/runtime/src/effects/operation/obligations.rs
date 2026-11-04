@@ -32,7 +32,7 @@ use crate::state::{
 use super::super::{overseer_identity, pid_value};
 
 /// A pane by exact id on the server identity that holds it, pid and tmux
-/// start. A lane record the legacy launcher wrote names the server by pid
+/// start. A lane record the shell launcher wrote names the server by pid
 /// alone, so its start is `None` there and nowhere else.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct PaneRef {
@@ -69,7 +69,7 @@ pub(super) enum JobHandle {
     /// reader.
     Group(Identity),
     /// The job's group by its key alone, where the launcher never read the
-    /// leader's start (decision 124h (33)): read in the kernel's table.
+    /// leader's start: read in the kernel's table.
     Pgid(u32),
 }
 
@@ -157,7 +157,7 @@ pub(in crate::effects) enum KeptReason {
     /// The worktree holds a submodule by the reads of git's own unforced
     /// removal, its module store or a populated gitlink of its index: the
     /// worktree is never judged, as that removal refuses it and the reads
-    /// are data no setting changes (decision 169).
+    /// are data no setting changes.
     Submodules,
     /// `HEAD` carries commits no other local or remote ref reaches:
     /// removal would lose them.
@@ -202,7 +202,7 @@ impl KeptReason {
 /// the path read gone after it, or the worktree kept for a recorded reason;
 /// a path or a read that failed leaves the obligation standing. Under a
 /// lane that moved, the worktree is the new session's, released to it as
-/// the validation stop is (decision 124e (24)).
+/// the validation stop is.
 pub(super) enum WorktreeEnd {
     Gone,
     /// Removed by the worktree package, its lane mailboxes moved to the main
@@ -362,7 +362,7 @@ impl Obligations {
     /// The set the intent recorded, where it recorded one.
     /// The set the intent records, where it records one. A record with a
     /// row under no role is refused `role-missing`: the set alone selects
-    /// the harness, the pane and the wake by role (decision 124d (15)), and
+    /// the harness, the pane and the wake by role, and
     /// only an unreleased build of this runtime ever wrote one without.
     pub(super) fn recorded(intent: &Intent) -> Result<Option<Obligations>> {
         let Some(record) = intent.obligations.clone() else {
@@ -463,7 +463,7 @@ impl Obligations {
 
     /// What a lane's `launch` records, under the harness role with the
     /// harness kind the lane runs: the one reading of the launch record, at
-    /// the bootstrap (decision 124g (29)).
+    /// the bootstrap.
     pub(super) fn of_launch(
         launch: Option<&LaunchIdentity>,
         harness: Option<Harness>,
@@ -521,9 +521,8 @@ impl Obligations {
         }
     }
 
-    /// The harness kind recorded under the harness role (decision 124g
-    /// (29)): what names the processes below a recorded root that a stop on
-    /// this set may signal.
+    /// The harness kind recorded under the harness role: what names the
+    /// processes below a recorded root that a stop on this set may signal.
     pub(super) fn recorded_harness(&self) -> Option<Harness> {
         self.record.recorded_harness()
     }
@@ -570,7 +569,7 @@ impl Obligations {
     /// A detached job asked for again: the launcher's unread record at
     /// `record` is a fresh acquisition each time the launcher is asked, so
     /// it joins the standing set even where an earlier ask's record was
-    /// read. The path is recorded with the obligation (decision 184 (6)):
+    /// read. The path is recorded with the obligation:
     /// the reader of an unread sidecar reads that address and no other.
     pub(super) fn ask_job(&mut self, record: &Path) {
         let sidecar = Obligation::JobSidecar {
@@ -587,7 +586,7 @@ impl Obligations {
 
     /// The standing pane obligation `pane` on `server` is recorded under: the
     /// key with that id and server pid whose start is `server_start`, or, for
-    /// a lane record the legacy launcher wrote, unknown. `None` for
+    /// a lane record the shell launcher wrote, unknown. `None` for
     /// `server_start` takes the key at any start.
     pub(super) fn pane_key(
         &self,
@@ -642,7 +641,7 @@ impl Obligations {
 
     /// The harness identity the set recorded under the harness role,
     /// standing or discharged: what a lane close stops, selected from the
-    /// set and never from the lane's launch record (decision 124d (15)).
+    /// set and never from the lane's launch record.
     pub(super) fn harness_identity(&self) -> Option<Identity> {
         self.record
             .standing_obligations()
@@ -666,8 +665,8 @@ impl Obligations {
             })
     }
 
-    /// The standing pid-only obligation under the harness role: a legacy
-    /// lane record's harness, named with no start.
+    /// The standing pid-only obligation under the harness role: a shell
+    /// launcher's lane record's harness, named with no start.
     pub(super) fn harness_pid(&self) -> Option<u32> {
         self.record.standing_obligations().find_map(|o| match o {
             Obligation::Pid { pid } if self.record.role_of(o) == Some(Role::Harness) => Some(*pid),
@@ -686,8 +685,8 @@ impl Obligations {
         })
     }
 
-    /// The lane keys the set recorded under the harness role (decision 124d
-    /// (14)), with the stamp the intent was written at.
+    /// The lane keys the set recorded under the harness role, with the
+    /// stamp the intent was written at.
     pub(super) fn lane_keys(&self, lane_since: Option<String>) -> LaneKeys {
         self.record.lane_keys(lane_since)
     }
@@ -761,7 +760,7 @@ impl Obligations {
     }
 
     /// The standing addressable pane recorded under `role`: what a window
-    /// close names, selected from the set by role (decision 124d (15)).
+    /// close names, selected from the set by role.
     pub(super) fn pane(&self, role: Role) -> Option<PaneRef> {
         self.record.standing_obligations().find_map(|o| match o {
             Obligation::Pane {
@@ -789,7 +788,7 @@ impl Obligations {
     }
 
     /// The standing worktree path recorded under the worktree role: what a
-    /// close releases or keeps (decision 128 (9)).
+    /// close releases or keeps.
     pub(super) fn worktree(&self) -> Option<String> {
         self.record.standing_obligations().find_map(|o| match o {
             Obligation::Worktree { path } if self.record.role_of(o) == Some(Role::Worktree) => {
@@ -821,7 +820,7 @@ impl Obligations {
     }
 
     /// Every standing addressable pane key, in record order: what a retry on
-    /// the set alone closes (decision 124d (20)).
+    /// the set alone closes.
     pub(super) fn standing_panes(&self) -> Vec<PaneRef> {
         self.record
             .standing_obligations()
@@ -1108,6 +1107,9 @@ pub(in crate::effects) struct Wire {
     pub window: Option<String>,
     pub tmux_session: Option<String>,
     pub launch_line: Option<String>,
+    /// The home a confirmed controller runs under, as its launch prepared
+    /// it.
+    pub home: Option<String>,
     /// The fleet watch a confirmed start launched or found claimed.
     pub watch: Option<WatchJob>,
     /// The root a confirmed lane's files are read under, where its host
@@ -1120,11 +1122,11 @@ pub(in crate::effects) struct Wire {
 /// `while_owner` is the owner the writes are made
 /// under, where the writer may have lost the intent to a claimant;
 /// `lane_keys` are the keys a lane intent's terminal carries to the store's
-/// moved-lane judgement (decision 124d (14)).
+/// moved-lane judgement.
 pub(in crate::effects) struct EffectOutcome {
     pub(super) intent_id: String,
     /// The intent's operation, which decides what announcement the outcome
-    /// owes (decision 124f (28)).
+    /// owes.
     pub(super) op: EffectOp,
     pub(super) terminal: Terminal,
     pub(super) observation: Value,
@@ -1133,7 +1135,7 @@ pub(in crate::effects) struct EffectOutcome {
     pub(super) while_owner: Option<Owner>,
     pub(super) lane_keys: Option<LaneKeys>,
     /// The identities the handle read stale this run, for the stop the same
-    /// request reruns (decision 124e (22)).
+    /// request reruns.
     pub(super) stale: Vec<Identity>,
 }
 
@@ -1260,7 +1262,7 @@ impl EffectOutcome {
     }
 
     /// The owner the launcher-side writes of this outcome are made under; the
-    /// record is a no-op once another owner holds the intent (decision 124b).
+    /// record is a no-op once another owner holds the intent.
     pub(super) fn owned_by(self, while_owner: Option<Owner>) -> EffectOutcome {
         EffectOutcome {
             while_owner,
@@ -1268,7 +1270,7 @@ impl EffectOutcome {
         }
     }
 
-    /// The lane keys this outcome carries to the store (decision 124d (14)).
+    /// The lane keys this outcome carries to the store.
     pub(super) fn keyed(self, lane_keys: Option<LaneKeys>) -> EffectOutcome {
         EffectOutcome { lane_keys, ..self }
     }
@@ -1279,7 +1281,7 @@ impl EffectOutcome {
     }
 
     /// The identities this outcome's handle read stale, which the stop the
-    /// same request reruns counts no second time (decision 124e (22)).
+    /// same request reruns counts no second time.
     pub(in crate::effects) fn stale_read(&self) -> Vec<Identity> {
         self.stale.clone()
     }
@@ -1823,7 +1825,7 @@ mod tests {
         none.ask_job(record);
         none.discharge(at(SidecarRead::Absent));
         assert!(none.clone().settled().is_ok());
-        // A job asked for again extends the recorded set (decision 120 (5)):
+        // A job asked for again extends the recorded set:
         // the sidecar an earlier ask discharged is no bar to the next ask.
         none.ask_job(record);
         assert_eq!(standing(&none), vec![sidecar]);
@@ -1833,7 +1835,7 @@ mod tests {
     /// Decision 115 (A): a publication consumes the whole set. The runner's
     /// own pane and identity pass to the record it publishes; a predecessor
     /// handle still standing keeps the set unsettled, and so does the receipt
-    /// until its own read discharges it (decision 120 (2)).
+    /// until its own read discharges it.
     #[test]
     fn a_publication_consumes_the_runners_handles_and_needs_every_other_discharged() {
         let runner_pane = Obligation::Pane {
@@ -1867,7 +1869,7 @@ mod tests {
             .publish([runner_pane.clone(), runner.clone()])
             .expect_err("the predecessor's window and the receipt stand");
         // A failed publication discharges nothing: the runner's own handles
-        // stand too, consumed only by one that settles (decision 120 (1)).
+        // stand too, consumed only by one that settles.
         assert_eq!(
             standing(&held),
             vec![
@@ -1967,7 +1969,7 @@ mod tests {
         };
         assert!(Obligations::recorded(&fresh).unwrap().is_none());
         // The three refusal sites of the pane route hold the same way once
-        // signalled (R-U4g2 control (ii)'s row), and refuse before.
+        // signalled, and refuse before.
         for cause in ["identity-unrecorded", "ask-unanswered", "ask-check-failed"] {
             let mut signalled = pane_and_process();
             signalled.spend();
@@ -2046,11 +2048,11 @@ mod tests {
         assert!(matches!(judged.terminal, Terminal::Unconfirmed { .. }));
         assert_eq!(judged.observation.get("cause"), None);
     }
-    /// Decision 124d (15), R-U4g5 Codex `role-probe.rs`: the set records a
-    /// role per obligation, so a lane's launch record that names the recorded
-    /// wake does not make the wake the principal harness. The harness is
-    /// selected from the set by role, and a launch naming any other key is a
-    /// moved lane under the one judgement the store applies too.
+    /// The set records a role per obligation, so a lane's launch record that
+    /// names the recorded wake does not make the wake the principal harness.
+    /// The harness is selected from the set by role, and a launch naming any
+    /// other key is a moved lane under the one judgement the store applies
+    /// too.
     #[test]
     fn a_launch_naming_the_recorded_wake_does_not_make_the_wake_the_harness() {
         let harness = identity(11);

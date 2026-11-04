@@ -1,19 +1,14 @@
-//! The observation duty (decision 121 Q6, Q9-Q11; step5-map § A2, § A3;
-//! decisions 99, 105, 125 (1), 130): the lane classifier over three-valued
-//! reads of real panes on a private tmux server, the wall rule keyed to the
-//! live identity, a Pi lane's rows, the overseer's one verdict shared with
-//! the mail gate, the death counted on two passes and the succession asked
-//! for through the one request, and the stray sweep. Each row names the
-//! defect it catches at its doc comment. The rows drive the duties directly
-//! with the readers the production duty injects, applying each pass's
-//! changes to the baseline as the runner's commit would. U5d2's rows
-//! (decision 160 (1)): the reset the banner names and `usage-limit-passed`,
-//! the account wall record and the lane record's wall keyed to the
-//! identity, the wall relaunch through the route, `lane-long`'s counters
-//! and the mark line's payload. U7a's rows (step7-map § A1): the hosted
-//! readings over the `lane-host`, `lane-close` and `gh` fixtures linked
-//! into a row's world, the provider calls made by the production runner
-//! from that world's scripts directory.
+//! The observation duty: the lane classifier over three-valued reads of
+//! real panes on a private tmux server, the wall rule keyed to the live
+//! identity, a Pi lane's rows, the overseer's one verdict shared with the
+//! mail gate, the death counted on two passes and the succession asked for
+//! through the one request, the stray sweep, the reset the banner names, the
+//! account and lane wall records, the wall relaunch through the route,
+//! `lane-long`'s counters, the mark line's payload, and the hosted readings
+//! over the `lane-host`, `lane-close` and `gh` fixtures linked into a row's
+//! world. The rows drive the duties directly with the readers the
+//! production duty injects, applying each pass's changes to the baseline as
+//! the runner's commit would.
 #![allow(
     clippy::disallowed_methods,
     reason = "the rows hold a private tmux server, write the records they plant and read the panes they opened"
@@ -421,10 +416,6 @@ macro_rules! lane_driver {
     };
 }
 
-/// Defect: a window the server no longer has read as anything but gone, or
-/// gone read once and then forgotten. A lane whose recorded pane the server
-/// has not is `window-gone` on every pass, by its window name, and leaves
-/// no row behind.
 #[test]
 fn a_recorded_pane_the_server_has_not_is_window_gone_on_every_pass() {
     let dir = tempfile::tempdir().unwrap();
@@ -839,7 +830,7 @@ fn a_walled_lane_is_relaunched_once_under_auto_and_only_reported_under_ask() {
             vec![
                 "sh".to_owned(),
                 "-c".to_owned(),
-                "\"$1\" --state-dir \"$2\" op --fleet --request \"$3\" && \"$1\" --state-dir \"$2\" op --fleet --request \"$4\"".to_owned(),
+                "\"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$3\" && \"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$4\"".to_owned(),
                 "wall-relaunch".to_owned(),
                 "/nonexistent/orch-runtime".to_owned(),
                 driver.state_dir.display().to_string(),
@@ -875,11 +866,9 @@ fn a_walled_lane_is_relaunched_once_under_auto_and_only_reported_under_ask() {
         );
         let brief = std::fs::read_to_string(&brief_file).unwrap();
         assert!(
-            brief.starts_with("Resume the orch workflow for KEN-4 from where this session stopped.")
-                && brief.contains("lane-mail inbox --item KEN-4")
-                && brief.contains("lane-mail watch --item KEN-4")
+            brief.starts_with("/orch start KEN-4 This is an unattended orch lane")
                 && brief.ends_with("never as a question in chat. Never end a turn waiting on the person, and end none before a lane-mail ask or notice, or the lane status file, says where the work stands. Send a notice only when the work changed since your last notice, with a new head, PR, verdict, blocker, request or finish. A wait that continues updates the lane status file only. Where you would stop to ask, read lane-mail inbox and continue the workflow.\n"),
-            "the continuation closed by the unattended words: {brief:?}"
+            "the start brief closed by the unattended words: {brief:?}"
         );
         assert_eq!(
             relaunch.marker,
@@ -1302,7 +1291,6 @@ fn marks(key: MarkKey, value: &str, mark: &str, succession: Succession, account:
         headroom: String::new(),
         context: ContextRead::Unjudged,
         decision: None,
-        successor: None,
     }
 }
 
@@ -1350,6 +1338,14 @@ fn walk_b(_: &WalkRequest) -> Result<Walked, String> {
         unread: Vec::new(),
         deprecated: Vec::new(),
     })
+}
+
+/// The line under a reached mark for the session in `cwd` at `pane`.
+fn hand_over(cwd: &Path, pane: &str, preference: &str) -> String {
+    format!(
+        "Hand this session over at the next safe point: write the overseer handoff file, choose the successor with orch-runtime successor --fleet --cwd {} --predecessor {pane} (it walks ORCH_OVERSEER_PREFERENCE={preference}) and ask orch-runtime op --fleet for request-transfer with cause live, its .result.successor as the successor and its .result.expected as the expected record.",
+        cwd.display()
+    )
 }
 
 fn no_walk(_: &WalkRequest) -> Result<Walked, String> {
@@ -1602,8 +1598,8 @@ fn a_walled_overseer_is_transferred_with_cause_walled_and_the_spent_account_excl
             Some("/home/me/.bclaude")
         );
         assert_eq!(
-            asked[0].successor.home.as_deref(),
-            Some("/home/me/.bclaude")
+            asked[0].successor.home, None,
+            "the launch prepares the home"
         );
     }
     // The same rows wall with the account judgement reading room: lifted.
@@ -1648,7 +1644,11 @@ fn the_mark_line_carries_the_succession_s_handling_under_it() {
         lines(&first),
         vec![
             format!("EVENT overseer-mark {pane} kind=headroom value=50 mark=5 succession=on"),
-            "Hand this session over at the next safe point: write the overseer handoff file, choose the successor with orch-runtime accounts walk --overseer (ORCH_OVERSEER_PREFERENCE=claude:standard:high,codex:standard:high) and ask orch-runtime op --fleet for request-transfer with it.".to_owned(),
+            hand_over(
+                dir.path(),
+                &pane,
+                "claude:standard:high,codex:standard:high"
+            ),
         ]
     );
     assert_eq!(driver.slot.read().unwrap().verdict, Verdict::Live);
@@ -1666,9 +1666,7 @@ fn the_mark_line_carries_the_succession_s_handling_under_it() {
     let preferred = chosen.pass(&state);
     assert_eq!(
         lines(&preferred).get(1).map(String::as_str),
-        Some(
-            "Hand this session over at the next safe point: write the overseer handoff file, choose the successor with orch-runtime accounts walk --overseer (ORCH_OVERSEER_PREFERENCE=claude:fable:high) and ask orch-runtime op --fleet for request-transfer with it."
-        ),
+        Some(hand_over(dir.path(), &pane, "claude:fable:high").as_str()),
         "{:?}",
         lines(&preferred)
     );
@@ -1803,7 +1801,11 @@ fn the_context_reading_is_handed_to_the_judge_and_a_context_mark_is_said_once_pe
         lines(&first),
         vec![
             format!("EVENT overseer-mark {pane} kind=context value=910000 mark=90 succession=on"),
-            "Hand this session over at the next safe point: write the overseer handoff file, choose the successor with orch-runtime accounts walk --overseer (ORCH_OVERSEER_PREFERENCE=claude:standard:high,codex:standard:high) and ask orch-runtime op --fleet for request-transfer with it.".to_owned(),
+            hand_over(
+                dir.path(),
+                &pane,
+                "claude:standard:high,codex:standard:high"
+            ),
         ]
     );
     assert_eq!(
@@ -2631,16 +2633,20 @@ fn a_cloud_lane_whose_pull_request_stands_still_is_lane_stalled_and_a_ready_or_u
     lane_driver!(server, fleet, readers, driver);
     driver.scripts = world.scripts.clone();
     driver.gh = world.gh();
-    driver.roster = Roster::parse(
-        &json!([
-            {"alias": "a", "harness": "claude", "config_dir": "/a", "status": "ok", "verdict": "pick",
-             "credits": {"remaining_dollars": 12.5}},
-            {"alias": "b", "harness": "claude", "config_dir": "/b", "status": "ok", "verdict": "pick",
-             "credits": {"remaining_dollars": 0, "locked_reason": "spend-limit"}}
-        ])
-        .to_string(),
-        &driver.settings.accounts,
-    );
+    driver.roster = [
+        json!({"alias": "a", "harness": "claude", "config_dir": "/a", "status": "ok", "verdict": "pick",
+               "credits": {"remaining_dollars": 12.5}}),
+        json!({"alias": "b", "harness": "claude", "config_dir": "/b", "status": "ok", "verdict": "pick",
+               "credits": {"remaining_dollars": 0, "locked_reason": "spend-limit"}}),
+    ]
+    .iter()
+    .map(|raw| orch_runtime::ops::accounts::AccountRow::parse(raw, &driver.settings.accounts))
+    .collect::<Option<Vec<_>>>()
+    .map(|rows| Roster {
+        rows,
+        provider_failure: None,
+        notes: Vec::new(),
+    });
     assert!(driver.roster.is_some(), "the planted roster reads");
     let first = driver.pass(&state);
     assert_eq!(
@@ -3370,8 +3376,10 @@ fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_re
         );
         record["host"] = json!(PROVIDER);
         record["kind"] = json!("ssh");
-        // The lane's root is on its host; the checkout the launch ran from
-        // is where the relaunch runs again.
+        // A record the runtime's launch wrote: the lane's root is on its
+        // host, and the checkout the launch ran from, where the relaunch
+        // runs again, is the only local directory it names.
+        record.as_object_mut().unwrap().remove("recovery");
         let remote_root = dir.path().join("only-on-the-remote-host");
         record["mail_root"] = json!(remote_root.display().to_string());
         record["checkout"] = json!(dir.path().display().to_string());
@@ -3440,16 +3448,6 @@ fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_re
     }
 }
 
-/// `oversee-watch:2148` (`check_prepare`) over `PREPARE_ROWS_FILTER`
-/// (`:859`), the cases `744fd5727:skills/orch/tests/oversee_watch_prepare.sh`
-/// pinned as `stuck`, `ready`, `failed`. Defect: a hosted launch's
-/// background preparation that never ends left unsaid, or said on every
-/// pass; a preparation that ended never said ready or failed. A `prepare`
-/// record past `ORCH_WATCH_PREPARE_SECS` while `preparing` is
-/// `lane-prepare-stuck` with its age and log once, one whose lane runs
-/// `lane-ready` once, one whose lane stopped with a reason
-/// `lane-prepare-failed` with the reason and log once; the next pass says
-/// nothing, and a record that leaves takes its row.
 #[test]
 fn the_prepare_records_are_said_once_per_key() {
     let dir = tempfile::tempdir().unwrap();
@@ -3517,10 +3515,8 @@ fn the_prepare_records_are_said_once_per_key() {
     );
 }
 
-/// The wall route's two requests applied by the runtime's own entry from the
-/// lane's checkout, as the detached relaunch applies them: the walled
-/// harness retired through the close route, the replacement launched on
-/// the picked account with the continuation as its brief.
+/// The detached line run as its starter runs it, the entry's word first, in
+/// the lane's checkout with the runner's environment.
 #[test]
 fn the_wall_relaunch_retires_the_walled_harness_and_relaunches_it_through_the_runtime() {
     let dir = tempfile::tempdir().unwrap();
@@ -3567,14 +3563,7 @@ fn the_wall_relaunch_retires_the_walled_harness_and_relaunches_it_through_the_ru
         lines(&produced)
     );
     let relaunch = driver.relaunches.borrow()[0].clone();
-    // The detached line as the starter runs it: the entry's word first.
-    let mut command = program(&relaunch.args[0]);
-    command
-        .args(&relaunch.args[1..])
-        .current_dir(&relaunch.cwd)
-        .env("ORCH_TMUX_SESSION", &relaunch.session);
-    fleet.runner.apply_env(&mut command);
-    let out = command.output().unwrap();
+    let out = run_relaunch(&fleet, &relaunch);
     assert!(
         out.status.success(),
         "the relaunch's requests were refused: {}\n{}",
@@ -3594,17 +3583,10 @@ fn the_wall_relaunch_retires_the_walled_harness_and_relaunches_it_through_the_ru
     )
     .unwrap();
     assert!(
-        recorded["argv"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|a| a.as_str().is_some_and(|text| {
-                text.starts_with(
-                    "Resume the orch workflow for KEN-4 from where this session stopped.",
-                ) && text.contains("lane-mail inbox --item KEN-4")
-                    && text.contains("lane-mail watch --item KEN-4")
-            })),
-        "the replacement starts on the continuation: {recorded}"
+        recorded["argv"].as_array().unwrap().iter().any(|a| a
+            .as_str()
+            .is_some_and(|text| text.starts_with("/orch start KEN-4 This is an unattended"))),
+        "the fresh replacement starts on the start brief: {recorded}"
     );
     assert_eq!(
         recorded["env"]["CLAUDE_CONFIG_DIR"],
@@ -3615,6 +3597,170 @@ fn the_wall_relaunch_retires_the_walled_harness_and_relaunches_it_through_the_ru
         "item": "KEN-4",
         "terminal": {"verdict": "completed", "source": "test"},
     })));
+}
+
+/// The detached line as its starter runs it: the entry's word first, in the
+/// lane's checkout with the recorded session and the runner's environment.
+fn run_relaunch(fleet: &Fleet, relaunch: &Relaunch) -> std::process::Output {
+    let mut command = program(&relaunch.args[0]);
+    command
+        .args(&relaunch.args[1..])
+        .current_dir(&relaunch.cwd)
+        .env("ORCH_TMUX_SESSION", &relaunch.session);
+    fleet.runner.apply_env(&mut command);
+    command.output().unwrap()
+}
+
+/// The close retires the walled harness, then the replacement's effect
+/// fails: on a Claude account whose config answers no to the checkout's
+/// trust, and under a provider whose `create` fails after its `stop`. The
+/// wrapper's status file is written as the starter writes it, and the
+/// outcome reader runs on it.
+#[test]
+fn a_wall_relaunch_whose_replacement_effect_fails_is_said_failed_not_relaunched() {
+    for hosted in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut fleet = Fleet::new(&server);
+        fleet.runner.verify = Some(3);
+        let checkout = dir.path().join("checkout");
+        std::fs::create_dir_all(&checkout).unwrap();
+        let init = program("git")
+            .args(["-C", &checkout.display().to_string(), "init", "-q"])
+            .output()
+            .unwrap();
+        assert!(init.status.success(), "{}", stderr(&init));
+        let checkout = checkout.canonicalize().unwrap();
+        let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
+        let old_account = dir.path().join("old-account");
+        let new_account = dir.path().join("new-account");
+        std::fs::create_dir_all(&old_account).unwrap();
+        std::fs::create_dir_all(&new_account).unwrap();
+        let account = new_account.display().to_string();
+        let mut record = relaunchable(
+            lane_record(
+                "KEN-4",
+                "gh-4",
+                "claude",
+                &server,
+                &pane,
+                Some(&identity),
+                &checkout,
+            ),
+            &checkout,
+        );
+        record["account"] = json!(old_account.display().to_string());
+        let world = HostedWorld::new(dir.path());
+        std::os::unix::fs::symlink(binary(), world.scripts.join("orch-runtime")).unwrap();
+        if hosted {
+            // The launch finds its provider under the checkout's package.
+            let package = checkout.join(".agents/skills/orch");
+            std::fs::create_dir_all(&package).unwrap();
+            std::os::unix::fs::symlink(&world.scripts, package.join("scripts")).unwrap();
+            let remote = dir.path().join("remote-worktree").display().to_string();
+            record.as_object_mut().unwrap().remove("recovery");
+            record["host"] = json!(PROVIDER);
+            record["kind"] = json!("ssh");
+            record["repo"] = json!("o/r");
+            record["checkout"] = json!(checkout.display().to_string());
+            record["mail_root"] = json!(remote);
+            let status = format!("cat --item KEN-4 {remote}/tmp/lane-status-KEN-4.md");
+            let create = format!(
+                "create --item KEN-4 --repo o/r --harness claude --account {account} --relaunch"
+            );
+            world.plant_host(&[
+                (
+                    "capabilities",
+                    ok(&format!("{SSH_LINE}\tpane=local\tpool=plan\taccounts=none")),
+                ),
+                ("status --item KEN-4 --harness claude", ok("running\n")),
+                (status.as_str(), ok("Step: start\n")),
+                (
+                    "stop --item KEN-4 --harness claude",
+                    ok("stopped item=KEN-4 processes=1\n"),
+                ),
+                (
+                    create.as_str(),
+                    json!({"exit": 1, "stderr": "lane-host: create-failed item=KEN-4\n"}),
+                ),
+            ]);
+        } else {
+            std::fs::write(
+                new_account.join(".claude.json"),
+                json!({"projects": {checkout.display().to_string(): {"hasTrustDialogAccepted": false}}})
+                    .to_string(),
+            )
+            .unwrap();
+        }
+        fleet.set_lanes(vec![record]);
+        let state = fleet.read();
+        lane_driver!(server, fleet, readers, driver);
+        driver.scripts = world.scripts.clone();
+        driver.pick = Pick::Lane(account.clone());
+        let produced = driver.pass(&state);
+        assert_eq!(
+            driver.relaunches.borrow().len(),
+            1,
+            "hosted={hosted}: {:?}",
+            lines(&produced)
+        );
+        let relaunch = driver.relaunches.borrow()[0].clone();
+        let out = run_relaunch(&fleet, &relaunch);
+        let reply: Value = serde_json::from_str(
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .last()
+                .unwrap_or(""),
+        )
+        .unwrap_or(Value::Null);
+        let cause = reply["result"]["effect"]["report"]["intent"]["observation"]["cause"]
+            .as_str()
+            .unwrap_or("")
+            .to_owned();
+        let expected = if hosted {
+            "host-create-failed"
+        } else {
+            "trust-refused"
+        };
+        assert!(
+            cause.starts_with(expected),
+            "hosted={hosted}: the replacement's own failure: {reply}\n{}",
+            stderr(&out)
+        );
+        assert!(
+            !live(identity.pid),
+            "hosted={hosted}: the close retired the walled harness first"
+        );
+        assert_eq!(
+            fleet.runner.fleet()["lanes"][0]["status"],
+            "stopped",
+            "hosted={hosted}"
+        );
+        let code = out.status.code().unwrap();
+        assert_ne!(
+            code, 0,
+            "hosted={hosted}: a failed replacement is no success"
+        );
+        std::fs::write(
+            overseer::relaunch_exit_path(&relaunch.marker),
+            format!("{code}\n"),
+        )
+        .unwrap();
+        let outcomes = overseer::relaunch_outcomes(
+            lanes::watch_state_dir(&driver.settings.claim_store),
+            driver.settings.watch.prepare,
+            driver.now,
+            &driver.baseline,
+        );
+        assert_eq!(
+            lines(&outcomes),
+            vec![format!(
+                "EVENT lane-prepare-failed KEN-4 reason=relaunch-failed exit={code} log={}",
+                relaunch.log.display()
+            )],
+            "hosted={hosted}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3658,7 +3804,7 @@ fn a_dead_controller_is_replayed_from_its_records_own_fields_with_no_launch_line
     assert_eq!(successor.resume, None);
     assert_eq!(successor.harness.as_deref(), Some("claude"));
     assert_eq!(successor.account.as_deref(), Some("/home/me/.eclaude"));
-    assert_eq!(successor.home.as_deref(), Some("/home/me/.eclaude"));
+    assert_eq!(successor.home, None, "the launch prepares the home");
     assert_eq!(successor.model.as_deref(), Some("opus"));
     assert_eq!(successor.effort.as_deref(), Some("high"));
     assert_eq!(
@@ -3787,7 +3933,7 @@ fn a_walled_controller_is_held_where_the_walk_chooses_none_and_crosses_harness_o
     let successor = &asked[0].successor;
     assert_eq!(successor.harness.as_deref(), Some("codex"));
     assert_eq!(successor.account.as_deref(), Some("/home/me/.codex"));
-    assert_eq!(successor.home.as_deref(), Some("/home/me/.codex"));
+    assert_eq!(successor.home, None, "the launch prepares the home");
     assert_eq!(successor.model, None);
     assert_eq!(successor.effort.as_deref(), Some("high"));
     assert_eq!(successor.class.as_deref(), Some("standard"));

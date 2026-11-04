@@ -91,10 +91,6 @@ pub struct WalkRequest {
     /// pick finds none with room, keeps the caller's lane where the judge
     /// still reads it unmeasured.
     pub keep_unmeasured: bool,
-    /// A successor is not opened where the accounts it would read above the
-    /// trigger, the picked one counted in, stay at or under this count; 0
-    /// is no bound.
-    pub successor_bound: u32,
 }
 
 /// One preference entry as written, its mark stripped.
@@ -888,12 +884,6 @@ pub fn walk(
         if req.scope == Scope::Overseer && billed == "unmeasured" {
             // An entry spending no account the judge measures: nothing to
             // pick or refuse, its first turn the one reading of its room.
-            if req.successor_bound > 0 {
-                walked
-                    .skipped
-                    .push(skip(&text, "successor-count-unmeasured", None));
-                continue;
-            }
             walked.answer = chosen(None, None, false);
             return Ok(walked);
         }
@@ -1007,25 +997,6 @@ pub fn walk(
             }
             continue;
         };
-        if req.scope == Scope::Overseer && req.successor_bound > 0 && !kept_unmeasured {
-            let mut exclude = req.exclude.clone();
-            exclude.push(account.clone());
-            let count = match pick(&request(None, None, exclude)) {
-                PickAnswer::Lane(j) => j.qualifying.unwrap_or(0),
-                PickAnswer::None { .. } => 0,
-                PickAnswer::Unjudged { cause } => {
-                    return Err(unjudged(&text, "successor-count", &cause));
-                }
-                other => return Err(unjudged(&text, "successor-count", word(&other))),
-            };
-            if count > 0 && count < req.successor_bound {
-                let mut row = skip(&text, "successor-count-bound", Some(&account));
-                row["qualifying"] = json!(count + 1);
-                row["bound"] = json!(req.successor_bound);
-                walked.skipped.push(row);
-                continue;
-            }
-        }
         walked.answer = chosen(Some(account), Some(record), kept_unmeasured);
         return Ok(walked);
     }

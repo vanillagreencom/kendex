@@ -5,19 +5,25 @@
 //! `auth.json` read back. The credentials file is shared with the harness
 //! itself and with every other tool on the machine that reads or renews
 //! the login, and a refresh-token grant rotates the refresh token, so a
-//! renewal that raced another writer would leave the account on a retired
-//! token only a fresh login recovers: inside the lock the file is read
-//! again and a live token a peer wrote meanwhile is taken as it stands.
-//! The refresh token travels on `curl`'s stdin, never on an argument
-//! vector, which is world-readable on Linux.
+//! renewal that raced another writer, or stopped between the endpoint's
+//! answer and the file, would leave the account on a retired token only a
+//! fresh login recovers. So the renewal is a step of its own: the runtime
+//! re-executes itself for it, leading its own process group, and the step
+//! takes the lock, renews and writes the file, while the listing reads its
+//! answer. A caller's ceiling signals the listing's group and ends the
+//! listing, never a step the endpoint may already have answered. Inside
+//! the lock the file is read again and a live token a peer wrote meanwhile
+//! is taken as it stands. The refresh token travels on stdin, never on an
+//! argument vector, which is world-readable on Linux.
 
 use std::ffi::OsStr;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::Path;
 use std::time::Duration;
 
-use agent_runtime::host::{self, Place};
+use agent_runtime::host::{self, Hold, Place};
 use agent_runtime::record;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::TAG;
@@ -32,11 +38,19 @@ const CLAUDE_TOKEN_UA: &str = "claude-cli/2.1.278 (external, cli)";
 /// The POST's own bound is curl's `--max-time 25`; the runner's covers the
 /// start.
 const TOKEN_BOUND: Duration = Duration::from_secs(30);
-/// The CLI's run: it keeps running after its stdin closes while a refresh
-/// is in flight and its own request timeouts end it.
+/// The CLI keeps running after its stdin closes while a refresh is in
+/// flight, and its own request timeouts end it.
 const CODEX_BOUND: Duration = Duration::from_secs(60);
-/// A peer's renewal under the lock is one POST under its own bound.
+/// How long the CLI's stdin stays open for its answer to request 1: a
+/// server that reads the end of its input first may end before it answers.
+const CODEX_ANSWER_WAIT: Duration = Duration::from_secs(25);
+/// A peer's renewal under the lock is one renewal under its own bound.
 const LOCK_WAIT: Duration = Duration::from_secs(30);
+/// The step's whole run: the lock's wait and the longer of the two
+/// renewals, so the step answers before the listing gives up on it.
+const STEP_BOUND: Duration = Duration::from_secs(100);
+/// The first argument the runtime re-executes itself with for the step.
+const STEP_ARG: &str = "accounts-renewal-step";
 /// What `codex app-server` reads on stdin for a renewal: the handshake,
 /// then `account/read` with `refreshToken`, the request its protocol
 /// documents as asking the CLI to refresh its token before answering.
@@ -48,7 +62,7 @@ const CODEX_RENEW_REQUESTS: &str = concat!(
 
 /// Why a renewal did not happen: the status the lane reads, the HTTP code
 /// and Retry-After where an endpoint answered, and the cause.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Refused {
     pub status: String,
     pub code: Option<u16>,
@@ -68,12 +82,24 @@ impl Refused {
     }
 }
 
+/// What the step is asked: the account, the listing's instant, and the
+/// Claude grant's endpoint and client id as the listing's settings read
+/// them.
+#[derive(Debug, Serialize, Deserialize)]
+struct Step {
+    harness: String,
+    dir: String,
+    now: u64,
+    client_id: Option<String>,
+    token_url: String,
+}
+
 /// The live access token of the `harness` account at `dir`, whose stored
 /// token has expired: the one a peer wrote under the lock, else the one
-/// this renewal brought back. A held lock leaves the login untested.
+/// the step's renewal brought back. A held lock leaves the login untested.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the credentials lock every renewer of an account takes, through agent-runtime's record lock so a peer's flock on the same file excludes it; the one wait is the lock's"
+    reason = "the renewal step, this executable re-run apart from the caller's process group through the one runner under its tag, the request on its stdin"
 )]
 pub fn renew(
     accounts: &AccountSettings,
@@ -81,7 +107,76 @@ pub fn renew(
     dir: &str,
     now: u64,
 ) -> Result<String, Refused> {
-    let lock = Path::new(dir).join(".lanes-refresh");
+    let step = Step {
+        harness: harness.to_owned(),
+        dir: dir.to_owned(),
+        now,
+        client_id: accounts.claude_client_id.clone(),
+        token_url: accounts.claude_token_url.clone(),
+    };
+    let unrun = |cause: String| Refused::own("error", format!("the renewal step {cause}"));
+    let exe = std::env::current_exe().map_err(|e| unrun(format!("could not be found: {e}")))?;
+    let request = serde_json::to_string(&step).map_err(|e| unrun(e.to_string()))?;
+    let out = host::run_tagged_fed_own_group(
+        TAG,
+        "orch-runtime",
+        &exe,
+        "renew",
+        &[STEP_ARG],
+        Place::default(),
+        request.as_bytes(),
+        None,
+        STEP_BOUND,
+    )
+    .map_err(|e| unrun(format!("could not be run: {e}")))?;
+    serde_json::from_slice(&out.stdout).unwrap_or_else(|_| {
+        Err(unrun(format!(
+            "gave no answer: exit={} {}",
+            out.status.code().unwrap_or(-1),
+            host::stderr_text(&out)
+        )))
+    })
+}
+
+/// The step's own run, where `first` is the argument the runtime
+/// re-executes itself with for it: the request read from stdin, the
+/// answer printed on stdout as one JSON value. `false` for any other run.
+pub fn step(first: Option<&OsStr>) -> bool {
+    if first != Some(OsStr::new(STEP_ARG)) {
+        return false;
+    }
+    let mut request = String::new();
+    let answer = match std::io::stdin()
+        .read_to_string(&mut request)
+        .map_err(|e| e.to_string())
+        .and_then(|_| serde_json::from_str::<Step>(&request).map_err(|e| e.to_string()))
+    {
+        Ok(step) => renew_here(&step),
+        Err(cause) => Err(Refused::own(
+            "error",
+            format!("the renewal step's request could not be read: {cause}"),
+        )),
+    };
+    // The listing that asked may have ended at its ceiling, and the file is
+    // written by now: an answer nobody reads is no failure.
+    let _ = writeln!(
+        std::io::stdout().lock(),
+        "{}",
+        serde_json::to_string(&answer).unwrap_or_default()
+    );
+    true
+}
+
+/// The renewal under the credentials lock: agent-runtime's record lock,
+/// and where `flock(1)` is not on `PATH` the `mkdir` mutex the shell
+/// renewers take there instead, so either kind of renewer excludes the
+/// other.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the credentials lock every renewer of an account takes, through agent-runtime's record lock and, where flock(1) is absent, its mkdir mutex; the one wait is the lock's"
+)]
+fn renew_here(step: &Step) -> Result<String, Refused> {
+    let lock = Path::new(&step.dir).join(".lanes-refresh");
     let lock_file = record::lock_path(&lock);
     let mut guard = record::lock(&lock).map_err(|_| {
         Refused::own(
@@ -89,33 +184,49 @@ pub fn renew(
             format!("the lock file {} could not be opened", lock_file.display()),
         )
     })?;
-    let wait = record::Wait {
+    let deadline = record::Wait {
         limit: LOCK_WAIT,
         poll: Duration::from_millis(100),
         timer: &record::SystemTimer,
-    };
-    let held = guard.with_wait(&wait.start(), || {
-        Ok(match usage::credential(harness, dir) {
+    }
+    .start();
+    let mutex = !record::flock_on_path(std::env::var_os("PATH").as_deref());
+    let held = guard.with_wait(&deadline, || {
+        let _mutex = if mutex {
+            Some(record::mutex_lock(&lock, &deadline)?)
+        } else {
+            None
+        };
+        Ok(match usage::credential(&step.harness, &step.dir) {
             Credential::Token {
                 token, expires_ms, ..
-            } if !usage::expired(expires_ms, now) => Ok(token),
+            } if !usage::expired(expires_ms, step.now) => Ok(token),
             Credential::Token { .. }
             | Credential::Missing(_)
             | Credential::Invalid(_)
-            | Credential::NoToken { .. } => match harness {
-                "claude" => claude(accounts, dir, now),
-                _ => codex(dir, now),
+            | Credential::NoToken { .. } => match step.harness.as_str() {
+                "claude" => claude(step),
+                _ => codex(&step.dir, step.now),
             },
         })
     });
-    held.unwrap_or_else(|_| {
-        Err(Refused::own(
-            "unreachable",
-            format!(
-                "another tool holds the credentials lock {}",
-                lock_file.display()
+    held.unwrap_or_else(|e| {
+        Err(match e.key() {
+            "lock-timeout" => Refused::own(
+                "unreachable",
+                format!(
+                    "another tool holds the credentials lock {}",
+                    lock_file.display()
+                ),
             ),
-        ))
+            _ => Refused::own(
+                "error",
+                format!(
+                    "the credentials lock {} could not be taken: {e}",
+                    lock_file.display()
+                ),
+            ),
+        })
     })
 }
 
@@ -131,9 +242,10 @@ pub fn renew(
     clippy::disallowed_methods,
     reason = "the one refresh-token grant at the Claude token endpoint, `curl` as PATH finds it, through the one runner under its tag, the refresh token on its stdin"
 )]
-fn claude(accounts: &AccountSettings, dir: &str, now: u64) -> Result<String, Refused> {
-    let client_id = accounts
-        .claude_client_id
+fn claude(step: &Step) -> Result<String, Refused> {
+    let (dir, now) = (step.dir.as_str(), step.now);
+    let client_id = step
+        .client_id
         .as_deref()
         .filter(|id| !id.is_empty())
         .ok_or_else(|| {
@@ -168,7 +280,7 @@ fn claude(accounts: &AccountSettings, dir: &str, now: u64) -> Result<String, Ref
         "25",
         "-X",
         "POST",
-        accounts.claude_token_url.as_str(),
+        step.token_url.as_str(),
         "-A",
         CLAUDE_TOKEN_UA,
         "-H",
@@ -182,7 +294,7 @@ fn claude(accounts: &AccountSettings, dir: &str, now: u64) -> Result<String, Ref
         "--data-binary",
         "@-",
     ];
-    let out = host::run_tagged_fed_own_group(
+    let out = host::run_tagged_fed(
         TAG,
         "curl",
         Path::new("curl"),
@@ -320,7 +432,7 @@ fn write_whole(path: &Path, value: &Value) -> Result<(), String> {
 /// file read back is the verdict.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the one run of the Codex CLI's own renewal, `codex app-server` in the account's config dir through the one runner under its tag, the requests on its stdin; the CLI writes auth.json and this reads it back"
+    reason = "the one run of the Codex CLI's own renewal, `codex app-server` in the account's config dir through the one runner under its tag, the requests on its stdin held open for the answer; the CLI writes auth.json and this reads it back"
 )]
 fn codex(dir: &str, now: u64) -> Result<String, Refused> {
     let path = usage::credential_path("codex", dir);
@@ -357,6 +469,10 @@ fn codex(dir: &str, now: u64) -> Result<String, Refused> {
             env: &home,
         },
         CODEX_RENEW_REQUESTS.as_bytes(),
+        Some(Hold {
+            answered: answers_request_1,
+            limit: CODEX_ANSWER_WAIT,
+        }),
         CODEX_BOUND,
     );
     let (said, answer) = match &out {
@@ -424,7 +540,16 @@ fn codex_refusal(dir: &str, said: &str, answer: &str) -> Refused {
     )
 }
 
-/// The text after the last `Failed to refresh token: ` the CLI logged.
+/// Whether the CLI's output so far carries its answer to request 1.
+fn answers_request_1(stdout: &[u8]) -> bool {
+    String::from_utf8_lossy(stdout).lines().any(|line| {
+        serde_json::from_str::<Value>(line)
+            .ok()
+            .and_then(|reply| reply.get("id").and_then(Value::as_f64))
+            == Some(1.0)
+    })
+}
+
 fn last_failure(stderr: &str) -> String {
     stderr
         .lines()

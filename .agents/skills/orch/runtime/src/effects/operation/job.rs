@@ -453,7 +453,7 @@ impl Operation<'_> {
         self.obligations.ask_job(record);
         self.write()?;
         let runner = match probe_manager() {
-            Runner::Unit(_) => Runner::Unit(unit_name(name)),
+            Runner::Unit(_) => Runner::Unit(unit_name(name, self.intent_id())),
             setsid => setsid,
         };
         let runner = match runner {
@@ -569,40 +569,17 @@ impl Operation<'_> {
             Ok(out) => first_line(&host::stderr_text(&out)),
             Err(e) => e.to_string(),
         };
-        // The call failed after the probe answered. A client-side timeout
-        // reports that while the manager may still start the unit, so only
-        // a unit the manager has no record of did not start.
-        let load = host::run_tagged(
-            "job",
-            "systemctl",
-            Path::new("systemctl"),
-            "show",
-            &[
-                "--user",
-                "show",
-                "-p",
-                "LoadState",
-                "--value",
-                "--",
-                &service,
-            ],
-            UNIT_READ_TIMEOUT,
-        );
-        let load = match load {
-            Ok(out) if out.status.success() => host::stdout_text(&out),
-            Ok(_) | Err(_) => "unread".to_owned(),
-        };
-        match load.as_str() {
-            "loaded" => Ok(Launched {
-                read: SidecarRead::Present(JobHandle::Unit {
-                    unit: unit.to_owned(),
-                }),
-                line,
-                failed: None,
-            }),
-            "not-found" => Err(format!("unit-launch-failed detail={detail}")),
-            other => {
-                let status = format!("unit-{other}");
+        // The call failed after the probe answered. A lost reply or a
+        // client-side timeout leaves the manager free to have started the
+        // unit, so only the manager's own answer settles it, read as the
+        // reconcile reads a unit: no record of it falls to `setsid`, a unit
+        // read ended is a launch that ended, and anything else, an unread
+        // answer included, is the job, held by its unit until the claim or a
+        // reconcile reads it.
+        match unit_end(unit) {
+            Some(JobEnd::UnitGone) => Err(format!("unit-launch-failed detail={detail}")),
+            Some(JobEnd::UnitEnded { state }) => {
+                let status = format!("unit-{state}");
                 let ended = ended_record(record, "systemd", &status, None, &line);
                 Ok(Launched {
                     read: SidecarRead::Failed {
@@ -610,10 +587,20 @@ impl Operation<'_> {
                     },
                     line,
                     failed: Some(format!(
-                        "launch-failed unit={service} load={other} detail={detail}{ended}"
+                        "launch-failed unit={service} active={state} detail={detail}{ended}"
                     )),
                 })
             }
+            Some(end @ (JobEnd::Exited | JobEnd::Claimed)) => {
+                unreachable!("a unit's read answers no {end:?}")
+            }
+            None => Ok(Launched {
+                read: SidecarRead::Present(JobHandle::Unit {
+                    unit: unit.to_owned(),
+                }),
+                line: format!("{line} start-unconfirmed detail={detail}"),
+                failed: None,
+            }),
         }
     }
 
@@ -859,7 +846,6 @@ impl Operation<'_> {
         self.write()
     }
 
-    /// Whether nothing stands in the recorded set.
     pub(super) fn nothing_stands(&self) -> bool {
         self.obligations.record().standing.is_empty()
     }
@@ -1249,10 +1235,12 @@ fn probe_manager() -> Runner {
     }
 }
 
-/// `orch-NAME-PID`, PID this launcher's own, with anything a unit name
-/// cannot carry replaced by `_`.
-fn unit_name(name: &str) -> String {
-    format!("orch-{name}-{}", std::process::id())
+/// `orch-NAME-STAMP`, STAMP the intent id's last field, its clock and
+/// nonce, so two jobs one long-lived process launches never share a unit
+/// name; anything a unit name cannot carry is replaced by `_`.
+fn unit_name(name: &str, intent: &str) -> String {
+    let stamp = intent.rsplit(':').next().unwrap_or(intent);
+    format!("orch-{name}-{stamp}")
         .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-') {
@@ -1264,7 +1252,6 @@ fn unit_name(name: &str) -> String {
         .collect()
 }
 
-/// Whether an executable named `name` stands on `PATH`.
 fn on_path(name: &str) -> bool {
     use std::os::unix::fs::PermissionsExt;
     std::env::var_os("PATH").is_some_and(|path| {
@@ -1275,7 +1262,6 @@ fn on_path(name: &str) -> bool {
     })
 }
 
-/// This process's real uid, as `/proc/self/status` reports it.
 fn own_uid() -> Option<String> {
     std::fs::read_to_string("/proc/self/status")
         .ok()?
@@ -1707,6 +1693,20 @@ fn send_owner_notice(run: &Run, intent_id: &str, text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn two_launches_from_one_process_get_two_unit_names() {
+        let first = unit_name(
+            "transfer",
+            "request-transfer:overseer:1769700000123456789-4242",
+        );
+        let second = unit_name(
+            "transfer",
+            "request-transfer:overseer:1769700000987654321-77",
+        );
+        assert!(first.starts_with("orch-transfer-"), "{first}");
+        assert_ne!(first, second);
+    }
 
     /// The launcher's record names a unit or the setsid group the launcher
     /// read before it returned; a record that names

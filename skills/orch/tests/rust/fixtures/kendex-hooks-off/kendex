@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# The `kendex` a launch row puts first on its PATH for the Copilot hooks
+# gate. Every call appends its argv to `kendex.log` beside the path it was
+# invoked as (the rows link the fixture into their tools as `kendex`), and
+# `hooks-off` answers from `hooks-off.json` beside, `{exit?, stdout?,
+# stderr?}`, the status 0 when absent. Any other verb, or no answer
+# planted, is refused, exit 64, with its argv on stderr, so a read reaching
+# it is the row's failure, never the operator's install. Bash 3.2.
+set -u
+here="$(dirname "$0")"
+printf '%s\n' "$*" >> "$here/kendex.log"
+if [ "${1:-}" != hooks-off ] || [ ! -f "$here/hooks-off.json" ]; then
+  printf 'kendex-fixture: unplanned argv=[%s]\n' "$*" >&2
+  exit 64
+fi
+jq -rj '.stderr // empty' "$here/hooks-off.json" >&2
+jq -rj '.stdout // empty' "$here/hooks-off.json"
+exit "$(jq -r '.exit // 0' "$here/hooks-off.json")"

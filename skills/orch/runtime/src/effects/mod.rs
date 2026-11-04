@@ -10,23 +10,23 @@
 //! whose recorded identity no longer matches records `unconfirmed`, never a
 //! second effect.
 //!
-//! Every effect runs through one [`operation::Operation`] handle per intent
-//! (decision 120): the handle owns the intent's recorded obligation set and
+//! Every effect runs through one [`operation::Operation`] handle per intent:
+//! the handle owns the intent's recorded obligation set and
 //! every primitive that acts on the host, writes the record before each
-//! action and before each wait (decisions 62, 115 (A)), and is consumed by
+//! action and before each wait, and is consumed by
 //! the one terminal outcome the effect reaches. Nothing in `launch`, `stop`
 //! or `transfer` names an obligation, builds a set or calls a tmux, process,
 //! observe, session, receipt or job primitive: the set and its tokens are
 //! private to `operation`, and the compiler's `disallowed-methods` list
 //! (`clippy.toml`) refuses the primitives outside it. The pane an effect
-//! opens registers itself
-//! (decision 96); every process and pane read is three-valued (decision 99);
+//! opens registers itself;
+//! every process and pane read is three-valued;
 //! the identity a receipt proves, or the judge first reads, is the one
 //! identity every later read, publication and retirement of that attempt
 //! uses; the one reading that confirms a launch or lets a brief be delivered
 //! is the judge's `idle` or `working` with the harness itself in the pane's
-//! foreground (decision 60). A delivered brief is confirmed from the runner's
-//! own native session file, bound once before the paste (decision 65).
+//! foreground. A delivered brief is confirmed from the runner's
+//! own native session file, bound once before the paste.
 //!
 //! The outcomes follow the plan's effect contract. A launch confirms when
 //! the harness holds the pane and is drawn at its composer or working within
@@ -38,7 +38,7 @@
 //! retires the predecessor, so a failure there leaves the predecessor in
 //! control (`failed`); after retirement it delivers the held brief, confirms
 //! the runner recorded that turn in its own session file, reads the runner's
-//! identity and publishes it (decision 61), and a failure there is a
+//! identity and publishes it, and a failure there is a
 //! recoverable stopped transition (`unconfirmed` with the runner kept), never
 //! a second controller.
 //!
@@ -88,8 +88,8 @@ use operation::{EffectOutcome, Identity, Operation, ProcessReading, State, job};
 const POLL: Duration = Duration::from_millis(200);
 
 /// What one effect run or reconcile acts with: the record, the settings,
-/// the writer's stamp and lock policy, and the one clock every wait reads
-/// (decision 121, Q16), reached only through the operation handle.
+/// the writer's stamp and lock policy, and the one clock every wait reads,
+/// reached only through the operation handle.
 struct Run<'a> {
     path: &'a Path,
     settings: &'a Settings,
@@ -99,13 +99,13 @@ struct Run<'a> {
 }
 
 impl Run<'_> {
-    /// The one recording boundary (decision 111 (A) (4)): the effect's
+    /// The one recording boundary: the effect's
     /// outcome becomes the wire record in `operation` and nowhere else.
     fn apply_outcome(&self, outcome: EffectOutcome) -> Result<Applied> {
         operation::apply_outcome(self, outcome)
     }
 
-    /// Where the pane of `intent_id` registers itself (decision 96).
+    /// Where the pane of `intent_id` registers itself.
     fn receipt_path(&self, intent_id: &str) -> PathBuf {
         state::receipt_path(&self.settings.state_dir, intent_id)
     }
@@ -113,7 +113,7 @@ impl Run<'_> {
 
 /// How far a request's live effect got in this process: its outcome
 /// recorded here, or handed to the detached job that runs a transfer or a
-/// stop (decisions 76, 109 (3)), whose outcome a later read or reconcile
+/// stop, whose outcome a later read or reconcile
 /// sees. Serialized as the record-outcome transition or as the job's start,
 /// untagged, so a recorded effect reads as it always did.
 #[derive(Debug, Serialize)]
@@ -161,11 +161,11 @@ fn has_live_effect(request: &Request) -> bool {
 }
 
 /// Send the notices earlier outcomes still owe, before a request with a
-/// live effect is persisted (decision 124f (28)): the continuation a crash
+/// live effect is persisted: the continuation a crash
 /// between an outcome's write and its send left behind. It runs before the
 /// request's own transition, so its mark is a write of its own and never
 /// part of the request's; a mark the store refused is returned for the
-/// reply and never fails the request (decision 124i (36)). A request with
+/// reply and never fails the request. A request with
 /// no live effect walks nothing.
 pub fn send_owed_notices(
     path: &Path,
@@ -189,9 +189,8 @@ pub fn send_owed_notices(
 }
 
 /// What a reconcile answers: the committed outcome of every open intent it
-/// completed or marked, the open intents it could not (decision 124l
-/// (45)), and the owed notices of closed intents it sent whose mark the
-/// store refused (decision 124i (36)).
+/// completed or marked, the open intents it could not, and the owed
+/// notices of closed intents it sent whose mark the store refused.
 #[derive(Debug, Serialize)]
 pub struct ReconcileRun {
     pub reconciled: Vec<Applied>,
@@ -203,14 +202,11 @@ pub struct ReconcileRun {
     // ones no kept receipt could settle.
     #[serde(flatten)]
     pub directive_sends: crate::send::Settled,
-    /// The controller record's own binding, healed from its pane where a
-    /// write left it unbound, or the refusal that kept it unhealed; absent
-    /// where there was nothing to heal.
+    /// Absent where the controller record had nothing to heal.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub controller: Option<ControllerHeal>,
 }
 
-/// How the reconcile's heal of the controller record went.
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 pub enum ControllerHeal {
@@ -283,14 +279,13 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
             // recorded pane present, is a stop never completed. The request
             // asked for that stop, and the stop is exact on the identity it
             // reads, so the repeat runs it rather than leaving the target
-            // with no route (decisions 64, 67). A controller stop runs again
-            // in a detached job, as its first run did (decision 109 (3)):
+            // with no route. A controller stop runs again
+            // in a detached job, as its first run did:
             // the reconcile read the prior job's owner dead.
             if stop_route_open(&applied) {
                 let outcome = match request {
                     // The stop this request reruns takes the reconcile's stale
-                    // readings: one request counts each identity once
-                    // (decision 124e (22)).
+                    // readings: one request counts each identity once.
                     Request::CloseOwnedResources(_) => {
                         Some(stop::stop_effect(run, &intent.id, &stale)?)
                     }
@@ -336,7 +331,7 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
             }
             return Ok(Effected::Recorded(applied));
         }
-        // A close over an open launch intent (decision 67).
+        // A close over an open launch intent.
         Effect::Supersedes { intent } => {
             let Request::CloseOwnedResources(close) = request else {
                 unreachable!("only a close supersedes a launch")
@@ -350,7 +345,7 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
         Request::CloseOwnedResources(_) => stop::stop_effect(run, &intent.id, &[]),
         // A transfer's or a stop's effect ends the controller's pane, this
         // process's own as often as not: each runs in a detached job that
-        // takes the intent's lease (decisions 76, 109 (3)). A start retires
+        // takes the intent's lease. A start retires
         // nothing and stays here.
         Request::RequestTransfer(_) | Request::StopController(_) => {
             return job::start(run, &intent, request, job::Start::First).map(Effected::Started);
@@ -388,7 +383,7 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
     Ok(Effected::Recorded(applied))
 }
 
-/// The job's side of a transfer or a stop (decisions 76, 109 (3)): claim the
+/// The job's side of a transfer or a stop: claim the
 /// intent `intent_id` and run its effect from the request the caller wrote
 /// beside the record, recording the outcome as any effect does.
 pub fn run_job(
@@ -410,7 +405,7 @@ pub fn run_job(
 }
 
 /// Read the pane an adoption names and record the controller in it: the
-/// one read-then-record operation of the fleet (step4-map A3).
+/// one read-then-record operation of the fleet.
 pub fn adopt_controller(
     path: &Path,
     r: &AdoptController,
@@ -442,12 +437,12 @@ fn stop_route_open(applied: &Applied) -> bool {
         || read("pane").as_deref() == Some("present")
         // The harness ended but the worktree's validation runs could not be
         // stopped, or its detached wake turn still runs: the repeat runs
-        // that stop again (decision 108 (7)).
+        // that stop again.
         || read("validate").as_deref() == Some("stop-failed")
         || read("wake").as_deref() == Some("live")
 }
 
-/// A close asked for over an open launch intent (decision 67). The launch
+/// A close asked for over an open launch intent. The launch
 /// is reconciled first: an outcome of its own leaves the lane as any close
 /// finds it. One still unconfirmed with its pane present is closed `failed`
 /// with `superseded-by-close`, since a hung launch would otherwise have
@@ -487,7 +482,7 @@ fn supersede_launch(
             .and_then(|p| p.opened())
             .map(|o| o.pane.clone());
         // The pane passes to the close that follows, which stops what it
-        // holds (decision 67): nothing is closed or signalled here, so the
+        // holds: nothing is closed or signalled here, so the
         // launch intent ends refused with its handles untouched.
         let operation = Operation::open(run, &launch.intent)?;
         run.apply_outcome(operation.refuse(
@@ -512,7 +507,7 @@ fn supersede_launch(
 /// model, effort, working directory, opening brief, the permission posture
 /// and question-tool posture, its own compaction and the caller's own words,
 /// as a launch or a succession resolved them. The command is spelled from
-/// these by agent-runtime's one builder (decision 109 (5)); no recorded line
+/// these by agent-runtime's one builder; no recorded line
 /// is executed.
 struct Spec<'a> {
     harness: Harness,
@@ -559,8 +554,8 @@ impl Target {
 /// The intent the harness launches under, built from a spec and the settings
 /// posture. `program` is the configured executable for the harness, so a
 /// test selects its stub through the one binary-path setting. The caller's
-/// words and the judged posture must agree under the builder's table
-/// (decision 120, M1): a `native` posture whose words carry the harness's
+/// words and the judged posture must agree under the builder's table:
+/// a `native` posture whose words carry the harness's
 /// bypass word refuses `permission-mismatch` before any window; under
 /// `bypass` the words are preserved as given and the builder adds no
 /// duplicate permission word.
@@ -684,7 +679,7 @@ fn pending_observation(reading: &ProcessReading, state: &State) -> Value {
 /// intent still records owed. Nothing starts here that the intent did not
 /// already record as its next step. An intent whose reconcile refused or
 /// failed is reported in the reply by its cause and the walk goes on to
-/// the next (decision 124l (45)): one intent's refused write never fails
+/// the next: one intent's refused write never fails
 /// the verb or holds the others back.
 pub fn reconcile(
     path: &Path,
@@ -715,15 +710,13 @@ pub fn reconcile(
     }
     // The closed intents whose outcome still owes its notice are walked
     // too: the continuation a crash between the outcome's write and the
-    // send left behind is run once here (decision 124f (28)); a mark the
-    // store refused goes into the reply (decision 124i (36)).
+    // send left behind is run once here; a mark the
+    // store refused goes into the reply.
     let notices_unmarked = job::send_owed_notices(&run)?;
-    // U6d: a directive send whose mark the store refused stands owed with
+    // A directive send whose mark the store refused stands owed with
     // its receipt kept beside the state; it is stamped here, never sent
-    // again (step6-map § A6).
+    // again.
     let directive_sends = crate::send::settle(path, settings, env, locking)?;
-    // The controller record itself, bound from its own pane where a write
-    // left it without its native session, identity or server start.
     let controller = match operation::heal_controller(path, settings, locking) {
         Ok(None) => None,
         Ok(Some(applied)) => {
@@ -747,7 +740,7 @@ pub fn reconcile(
 }
 
 /// An open intent a reconcile could not complete or mark: the refusal's
-/// key and its message, recorded in the reply (decision 124l (45)). The
+/// key and its message, recorded in the reply. The
 /// intent stands as it was for the next reconcile.
 #[derive(Debug, Serialize)]
 pub struct IntentRefused {
@@ -758,7 +751,7 @@ pub struct IntentRefused {
 
 /// One intent reconciled: the committed outcome, and the identities the
 /// reconcile read stale, which the stop the same request reruns takes as
-/// already read (decision 124e (22)).
+/// already read.
 struct Reconciled {
     applied: Applied,
     stale: Vec<Identity>,
@@ -766,12 +759,12 @@ struct Reconciled {
 
 fn reconcile_intent(run: &Run, intent_id: &str) -> Result<Reconciled> {
     let intent = read_intent(run.path, intent_id)?;
-    // The owner the intent recorded at persist (decision 72): a reconcile
+    // The owner the intent recorded at persist: a reconcile
     // that finds that process still live defers to it and records only the
     // observation, so a contender racing the owner before its first phase
-    // never fails the intent out from under it (step4-map F1). One it
-    // cannot read defers the same way, with the cause (decision 99). A dead
-    // or absent owner (legacy intents have none) lets the reconcile proceed.
+    // never fails the intent out from under it. One it
+    // cannot read defers the same way, with the cause. A dead
+    // or absent owner (an intent may record none) lets the reconcile proceed.
     match operation::owner(&intent) {
         Reading::Live(_) => {
             return deferred(
@@ -812,8 +805,8 @@ fn reconcile_intent(run: &Run, intent_id: &str) -> Result<Reconciled> {
     })
 }
 
-/// The reply a reconcile gives when it defers to the owner (decisions 72, 99,
-/// 109 (4)): the intent as it stands, `unconfirmed` with `observation` on
+/// The reply a reconcile gives when it defers to the owner: the intent as
+/// it stands, `unconfirmed` with `observation` on
 /// it, and nothing written. The owner is live or unreadable, so the record
 /// is its to move; a reconcile that wrote even its observation would move
 /// the file under the owner for no change the owner made.
@@ -926,9 +919,9 @@ fn pane_harness(lane: &Lane, launch: Option<&Intent>) -> Option<Harness> {
         .and_then(Harness::parse)
 }
 
-/// The predecessor's identity the overseer record carries. The legacy
-/// `ol_record_start` wrote `harness_pid` as the string jq's `--arg` hands
-/// it; the runtime writes the number. Both are read (decision 63).
+/// The predecessor's identity the overseer record carries. The shell
+/// `ol_record_start` writes `harness_pid` as the string jq's `--arg` hands
+/// it; the runtime writes the number. Both are read.
 fn overseer_identity(overseer: &Overseer) -> Option<Identity> {
     let pid = overseer.extra.get("harness_pid").and_then(pid_value)?;
     let start = overseer
@@ -953,7 +946,8 @@ fn overseer_target_of(settings: &Settings, overseer: &Overseer) -> Option<Target
 }
 
 /// A pid a record carries as the number the runtime writes or the string a
-/// legacy jq `--arg` wrote (the overseer's `server` and `harness_pid`).
+/// shell writer's jq `--arg` writes (the overseer's `server` and
+/// `harness_pid`).
 fn pid_value(value: &Value) -> Option<u64> {
     match value {
         Value::Number(n) => n.as_u64(),

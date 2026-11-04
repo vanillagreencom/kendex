@@ -397,7 +397,6 @@ pub fn parse_copilot(body: &Value) -> Value {
     })
 }
 
-/// The buckets one usage body answers, by the harness that measured it.
 pub fn parse_body(harness: &str, body: &Value, rounding: Rounding) -> Value {
     match harness {
         "claude" => parse_claude(body, rounding),
@@ -424,7 +423,6 @@ pub fn utc_stamp(stamp: &str) -> String {
     text
 }
 
-/// [`utc_stamp`] over every reset in a bucket record.
 pub fn utc_resets(buckets: &mut Value) {
     if let Some(resets) = buckets.get_mut("resets").and_then(Value::as_object_mut) {
         for value in resets.values_mut() {
@@ -477,7 +475,6 @@ pub enum Credential {
     },
 }
 
-/// The credential file for `harness` under `dir`.
 pub fn credential_path(harness: &str, dir: &str) -> String {
     match harness {
         "claude" => format!("{dir}/.credentials.json"),
@@ -576,7 +573,6 @@ pub fn jwt_exp_ms(token: &str) -> u64 {
         .map_or(0, |exp| (exp.floor() * 1000.0) as u64)
 }
 
-/// Decode an unpadded base64url segment.
 fn base64url(text: &str) -> Option<Vec<u8>> {
     let mut bits: u32 = 0;
     let mut have = 0;
@@ -715,7 +711,6 @@ pub fn is_dir(dir: &Path) -> Result<bool, String> {
     }
 }
 
-/// Whether a path exists, read three-valued.
 pub fn exists(path: &Path) -> Result<bool, String> {
     match std::fs::metadata(path) {
         Ok(_) => Ok(true),
@@ -728,9 +723,6 @@ pub fn exists(path: &Path) -> Result<bool, String> {
 mod tests {
     use super::*;
 
-    /// Defect: a Retry-After an interim block carried read as the
-    /// refusal's own, or the real headers read as the body after a 1xx
-    /// block.
     #[test]
     fn the_capture_is_split_at_the_last_header_block_with_its_own_retry_after() {
         let got = answer(
@@ -749,9 +741,6 @@ mod tests {
         assert_eq!(answer("garbage").code, None);
     }
 
-    /// Defect: a percentage that does not read taken as 0, a readable
-    /// window beside it binding the lane, or an unread model window
-    /// leaving the shared windows measured.
     #[test]
     fn an_unreadable_percentage_unmeasures_the_whole_reading_and_an_absent_window_leaves_the_rest()
     {
@@ -774,9 +763,6 @@ mod tests {
         assert_eq!(got["session_5h_pct"], Value::Null);
     }
 
-    /// Defect: the used share rounded down (one credit left reads as
-    /// room), a pool past its grant reading past 100, or a string
-    /// `unlimited` taken for the boolean.
     #[test]
     fn the_copilot_pool_rounds_its_share_up_and_reads_only_a_boolean_unlimited() {
         let pool = |e: i64, r: i64| json!({"quota_snapshots": {"premium_interactions": {"entitlement": e, "remaining": r}}, "quota_reset_date_utc": "2099-10-01"});
@@ -803,8 +789,6 @@ mod tests {
         assert_eq!(parse_copilot(&zero)["monthly_pct"], json!(100.0));
     }
 
-    /// Defect: a JWT whose payload needs padding or holds `-` and `_`
-    /// read as no expiry.
     #[test]
     fn a_codex_tokens_expiry_is_its_exp_claim() {
         // {"exp":1700000000,"pad":"?????~~~~~"} in base64url, unpadded.

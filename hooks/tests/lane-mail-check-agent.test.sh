@@ -514,26 +514,25 @@ judge_says "$CONTEXT_MARK_LINE"
 # shellcheck disable=SC2046
 AGENTS=out launch 250000 Agent $(overseer_env)
 expect 2 "$(scan_key 'lane-mail-check: agent-reserve=Agent tokens=250000 reserve=150000')" 'the identified overseer meets the reserve'
-# Only a refusal at the plain mark names the succession, which oversee-succeed
-# judges by that same mark; a reserve refusal, with the roster read or not,
-# names none it would refuse.
-named_judge() { sed -n 's/.*oversee-succeed \(.*\) -- \[THE PERMISSION.*/\1/p' "$ERR_FILE" | head -n 1; }
-while IFS='|' read -r agents tokens rc key judge; do
+# Only a refusal at the plain mark names the runtime's succession; a reserve
+# refusal, with the roster read or not, names none.
+named_route() { grep -cF -- "/orch-runtime op --fleet --request [REQUEST FILE]" "$ERR_FILE"; }
+while IFS='|' read -r agents tokens rc key route; do
   case "$agents" in out | unclassified) ;; *) [ "$SCAN_AVAILABLE" -eq 1 ] || continue ;; esac
   key=$(scan_key "$key")
   # shellcheck disable=SC2046
   AGENTS=$agents launch "$tokens" Agent $(overseer_env)
   expect "$rc" "$key" "overseer Agent launch at $tokens with agents $agents"
-  [ "$rc" = 0 ] || assert_eq "$(named_judge)" "$judge" "overseer refusal at $tokens with agents $agents names its succession"
+  [ "$rc" = 0 ] || assert_eq "$(named_route)" "$route" "overseer refusal at $tokens with agents $agents names its succession"
 done <<'ROWS'
 out|240000|0|-|
-out|260000|2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000|
-out|300000|2|lane-mail-check: agent-reserve=Agent tokens=300000 reserve=150000|
-unclassified|300000|2|lane-mail-check: agent-unobserved=Agent tokens=300000 reserve=150000|
-out|400000|2|lane-mail-check: agent-launch=Agent tokens=400000|--context 400000:1000000
+out|260000|2|lane-mail-check: agent-reserve=Agent tokens=260000 reserve=150000|0
+out|300000|2|lane-mail-check: agent-reserve=Agent tokens=300000 reserve=150000|0
+unclassified|300000|2|lane-mail-check: agent-unobserved=Agent tokens=300000 reserve=150000|0
+out|400000|2|lane-mail-check: agent-launch=Agent tokens=400000|1
 returned|260000|0|-|
 none|260000|0|-|
-none|400000|2|lane-mail-check: agent-launch=Agent tokens=400000|--context 400000:1000000
+none|400000|2|lane-mail-check: agent-launch=Agent tokens=400000|1
 ROWS
 record_overseer_handoff
 # shellcheck disable=SC2046

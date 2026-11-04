@@ -22,9 +22,7 @@
 //! An answer already recorded for the directory that is not trust refuses
 //! on both arms: it is a decision somebody gave in the harness's own
 //! spelling, and overwriting it would run the launch at full trust against
-//! that answer. A Claude launch under the harness's default home, the
-//! operator's own config dir, writes nothing: only a named account's config
-//! is the launch's to prepare.
+//! that answer.
 
 use std::ffi::OsStr;
 use std::fs;
@@ -38,7 +36,6 @@ use serde_json::{Map, Value};
 
 use crate::error::{Error, Result};
 use crate::harness::Harness;
-use crate::session;
 
 /// The Copilot context reader a fleet session loads: the extension the
 /// launch installs into the lane's Copilot home.
@@ -80,11 +77,7 @@ pub struct Prepared {
 pub fn prepare(harness: Harness, home: &Path, launch_dir: &Path) -> Result<Prepared> {
     match harness {
         Harness::Codex => codex(home, launch_dir),
-        Harness::Claude => claude(
-            home,
-            launch_dir,
-            session::default_home(Harness::Claude).as_deref(),
-        ),
+        Harness::Claude => claude(home, launch_dir),
         Harness::Copilot => copilot(home, pending_dir().as_deref()),
         Harness::Pi => Ok(Prepared {
             route: Route::None,
@@ -215,13 +208,21 @@ fn read(path: &Path, harness: Harness) -> Result<String> {
         .map_err(|e| refused("config-unreadable", harness, path, Some(&e.to_string())))
 }
 
+/// The step of [`install`] that failed.
+enum Step {
+    Write,
+    Rename,
+}
+
 /// Write `text` to `path` through a staged file beside it, private whatever
-/// the caller's umask, renamed over the target so a harness reading the
-/// file meets the whole previous file or the whole new one.
-fn install(path: &Path, text: &str, harness: Harness) -> Result<()> {
+/// the caller's umask, since the files a launch prepares hold an account's
+/// state and the harnesses keep them 0600; renamed over the target so a
+/// harness reading the file meets the whole previous file or the whole new
+/// one.
+fn install(path: &Path, text: &str) -> std::result::Result<(), (Step, std::io::Error)> {
     let staged = path.with_file_name(format!(
         "{}.{}",
-        path.file_name().and_then(OsStr::to_str).unwrap_or("config"),
+        path.file_name().and_then(OsStr::to_str).unwrap_or("file"),
         std::process::id()
     ));
     let written = fs::OpenOptions::new()
@@ -232,18 +233,24 @@ fn install(path: &Path, text: &str, harness: Harness) -> Result<()> {
         .and_then(|mut f| std::io::Write::write_all(&mut f, text.as_bytes()));
     if let Err(e) = written {
         let _ = fs::remove_file(&staged);
-        return Err(refused("config-write", harness, path, Some(&e.to_string())));
+        return Err((Step::Write, e));
     }
     if let Err(e) = fs::rename(&staged, path) {
         let _ = fs::remove_file(&staged);
-        return Err(refused(
-            "config-install",
-            harness,
-            path,
-            Some(&e.to_string()),
-        ));
+        return Err((Step::Rename, e));
     }
     Ok(())
+}
+
+/// A trust config through [`install`], its failure the arm's refusal.
+fn install_config(path: &Path, text: &str, harness: Harness) -> Result<()> {
+    install(path, text).map_err(|(step, e)| {
+        let key = match step {
+            Step::Write => "config-write",
+            Step::Rename => "config-install",
+        };
+        refused(key, harness, path, Some(&e.to_string()))
+    })
 }
 
 fn private_dir(path: &Path, key: &'static str, harness: Harness) -> Result<()> {
@@ -358,7 +365,7 @@ fn codex(home_given: &Path, dir: &Path) -> Result<Prepared> {
         }
     };
     text.push_str(&format!("\n[{section}]\ntrust_level = \"trusted\"\n"));
-    install(&private, &text, h)?;
+    install_config(&private, &text, h)?;
     if codex_trusted(&private, dir, h)? != Some(true) {
         return Err(refused("entry-unreadable", h, &private, None));
     }
@@ -433,14 +440,8 @@ fn without_table(text: &str, section: &str) -> String {
 // Claude
 // ---------------------------------------------------------------------------
 
-fn claude(lane: &Path, dir: &Path, default_home: Option<&Path>) -> Result<Prepared> {
+fn claude(lane: &Path, dir: &Path) -> Result<Prepared> {
     let h = Harness::Claude;
-    if default_home == Some(lane) {
-        return Ok(Prepared {
-            route: Route::None,
-            home: lane.to_path_buf(),
-        });
-    }
     let config = lane.join(".claude.json");
     let key = dir.display().to_string();
     let mut root = match present(&config) {
@@ -504,7 +505,7 @@ fn claude(lane: &Path, dir: &Path, default_home: Option<&Path>) -> Result<Prepar
     entry.insert("hasTrustDialogAccepted".to_owned(), Value::Bool(true));
     let text = serde_json::to_string_pretty(&root)
         .map_err(|e| refused("config-write", h, &config, Some(&e.to_string())))?;
-    install(&config, &format!("{text}\n"), h)?;
+    install_config(&config, &format!("{text}\n"), h)?;
     let written: Value = serde_json::from_str(&read(&config, h)?)
         .map_err(|e| refused("entry-unreadable", h, &config, Some(&e.to_string())))?;
     if written["projects"][&key]["hasTrustDialogAccepted"] != Value::Bool(true) {
@@ -546,28 +547,6 @@ fn reader_refused(detail: &str, file: &Path, cause: Option<&str>) -> Error {
     }
 }
 
-/// Write `text` to `path` through a staged file in its own directory,
-/// renamed into place so Copilot never reads half of one.
-fn install_beside(path: &Path, text: &str, detail: &str) -> Result<()> {
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let staged = dir.join(format!(
-        ".{}.{}",
-        path.file_name().and_then(OsStr::to_str).unwrap_or("file"),
-        std::process::id()
-    ));
-    let written = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&staged)
-        .and_then(|mut f| std::io::Write::write_all(&mut f, text.as_bytes()))
-        .and_then(|()| fs::rename(&staged, path));
-    if let Err(e) = written {
-        let _ = fs::remove_file(&staged);
-        return Err(reader_refused(detail, path, Some(&e.to_string())));
-    }
-    Ok(())
-}
-
 /// Make `home` run the context reader: the extension copied into
 /// `extensions/kendex-lane-context/`, rewritten only where its content
 /// differs, and `enabledFeatureFlags.EXTENSIONS` set true in settings.json,
@@ -598,7 +577,8 @@ fn copilot(home: &Path, pending: Option<&Path>) -> Result<Prepared> {
         let dir = dest.parent().unwrap_or(home);
         fs::create_dir_all(dir)
             .map_err(|e| reader_refused("unwritable", &dest, Some(&e.to_string())))?;
-        install_beside(&dest, EXTENSION, "unwritable")?;
+        install(&dest, EXTENSION)
+            .map_err(|(_, e)| reader_refused("unwritable", &dest, Some(&e.to_string())))?;
     }
     let settings = home.join("settings.json");
     let target =
@@ -646,7 +626,8 @@ fn copilot(home: &Path, pending: Option<&Path>) -> Result<Prepared> {
             flags.insert("EXTENSIONS".to_owned(), Value::Bool(true));
             let text = serde_json::to_string_pretty(&Value::Object(object))
                 .map_err(|e| reader_refused("unwritable", &target, Some(&e.to_string())))?;
-            install_beside(&target, &format!("{text}\n"), "unwritable")?;
+            install(&target, &format!("{text}\n"))
+                .map_err(|(_, e)| reader_refused("unwritable", &target, Some(&e.to_string())))?;
         }
         Some(_) => {
             return Err(reader_refused(
@@ -1164,6 +1145,7 @@ mod tests {
             "{\"theme\": \"dark\", \"enabledFeatureFlags\": {\"OTHER\": true}}\n",
         )
         .unwrap();
+        fs::set_permissions(&shared, fs::Permissions::from_mode(0o600)).unwrap();
         symlink(&shared, linked.join("settings.json")).unwrap();
         copilot(&linked, Some(&pending)).unwrap();
         assert_eq!(
@@ -1178,6 +1160,11 @@ mod tests {
                 .is_symlink()
         );
         let settings: Value = serde_json::from_str(&fs::read_to_string(&shared).unwrap()).unwrap();
+        assert_eq!(
+            fs::metadata(&shared).unwrap().permissions().mode() & 0o777,
+            0o600,
+            "the operator's private settings stay private"
+        );
         assert_eq!(settings["theme"], "dark");
         assert_eq!(settings["enabledFeatureFlags"]["OTHER"], Value::Bool(true));
         assert_eq!(
@@ -1257,24 +1244,5 @@ mod tests {
             key(&copilot(Path::new("rel/.copilot"), Some(&pending)).unwrap_err()),
             "home-relative"
         );
-    }
-
-    /// The default home is the row's own: the production one is the
-    /// operator's, which a test never names.
-    #[test]
-    fn an_accountless_claude_launch_writes_nothing_into_the_harness_s_default_home() {
-        let root = tempfile::tempdir().unwrap();
-        let default = root.path().join(".claude");
-        let dir = root.path().join("wt");
-        fs::create_dir_all(&dir).unwrap();
-        let prepared = claude(&default, &dir, Some(&default)).unwrap();
-        assert_eq!(prepared.route, Route::None);
-        assert!(fs::symlink_metadata(&default).is_err(), "nothing written");
-        let named = root.path().join(".1claude");
-        assert_eq!(
-            claude(&named, &dir, Some(&default)).unwrap().route,
-            Route::AccountConfig
-        );
-        assert!(fs::metadata(named.join(".claude.json")).unwrap().is_file());
     }
 }

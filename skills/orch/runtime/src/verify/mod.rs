@@ -41,7 +41,7 @@ pub mod review;
 mod selection;
 pub mod wire;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent_runtime::host;
@@ -181,6 +181,7 @@ pub struct Verified {
 pub fn run(
     path: &Path,
     r: &VerifyHead,
+    gh: &Path,
     env: &Env,
     locking: Locking,
     caller: Caller,
@@ -201,7 +202,7 @@ pub fn run(
         checks,
         recorded,
     };
-    match evidence::read(&Gh, r).map(judge::judge) {
+    match evidence::read(&Gh::new(gh), r).map(judge::judge) {
         Ok(Judgement::Final {
             verdict,
             reason,
@@ -315,11 +316,15 @@ impl From<Cause> for Unreadable {
 /// an answer outside gh's documented shape, a head that is not a full
 /// lowercase 40-hex id or a base that is no branch name is `Unreadable`
 /// with its cause, never a pull request.
-pub fn pull_request(repo: &str, pr: u64) -> std::result::Result<wire::PullRequestView, Unreadable> {
+pub fn pull_request(
+    gh: &Path,
+    repo: &str,
+    pr: u64,
+) -> std::result::Result<wire::PullRequestView, Unreadable> {
     let endpoint = Endpoint::PullRequest;
     let number = pr.to_string();
     let read = || -> Read<wire::PullRequestView> {
-        let bytes = Gh
+        let bytes = Gh::new(gh)
             .call(
                 endpoint,
                 &[
@@ -512,21 +517,70 @@ impl Answer {
     }
 }
 
-/// `gh` through agent-runtime's one process runner, `gh` resolved on this
-/// process's PATH with its environment, so the caller's GitHub
+/// How GitHub answered an act: made, or refused with gh's exit status and
+/// what it said.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Acted {
+    Made,
+    Refused { exit: i32, detail: String },
+}
+
+/// `gh` through agent-runtime's one process runner: `program`, a bare
+/// `gh` resolved on this process's PATH, or the path the caller already
+/// runs `gh` by, with this process's environment, so the caller's GitHub
 /// authentication is the one used. One call is the arguments after the
 /// program, as `gh api PATH`, the GraphQL form `gh api graphql -f query=…`
 /// or `gh pr view N`, answered with what it printed and whether it exited
 /// zero (`Answer`). The runner's operation word is the call's first
 /// argument, `api` or `pr`.
-pub(crate) struct Gh;
+pub(crate) struct Gh {
+    program: PathBuf,
+}
 
 impl Gh {
+    pub(crate) fn new(program: &Path) -> Gh {
+        Gh {
+            program: program.to_path_buf(),
+        }
+    }
+
+    fn call(&self, endpoint: Endpoint, args: &[&str]) -> Read<Answer> {
+        let answer = self.run(endpoint, args)?;
+        if let Answer::Printed(bytes) = &answer
+            && bytes.iter().all(u8::is_ascii_whitespace)
+        {
+            return Err(Cause::ReadFailed {
+                endpoint,
+                detail: "empty answer".to_owned(),
+            });
+        }
+        Ok(answer)
+    }
+
+    /// One act, judged by gh's exit status alone: an act's success can
+    /// print nothing on stdout (`gh pr ready` writes its success line to
+    /// stderr, gh v2.103.3 `pkg/cmd/pr/ready`). A call that ended with no
+    /// exit status, killed by a signal, may or may not have reached
+    /// GitHub, so it is the read's failure, never a refusal.
+    fn act(&self, endpoint: Endpoint, args: &[&str]) -> Read<Acted> {
+        match self.run(endpoint, args)? {
+            Answer::Printed(_) => Ok(Acted::Made),
+            Answer::Failed {
+                exit: Some(exit),
+                detail,
+                ..
+            } => Ok(Acted::Refused { exit, detail }),
+            Answer::Failed {
+                exit: None, detail, ..
+            } => Err(Cause::ReadFailed { endpoint, detail }),
+        }
+    }
+
     #[allow(
         clippy::disallowed_methods,
         reason = "the verification reads GitHub through gh for one pinned head or one pull request's head, and the review gate asks Copilot for its one review through it; no effect on a lane or a controller"
     )]
-    fn call(&self, endpoint: Endpoint, args: &[&str]) -> Read<Answer> {
+    fn run(&self, endpoint: Endpoint, args: &[&str]) -> Read<Answer> {
         let failed = |detail: String| Cause::ReadFailed { endpoint, detail };
         let operation = match endpoint {
             Endpoint::PullRequest | Endpoint::Ready => "pr",
@@ -549,7 +603,7 @@ impl Gh {
             | Endpoint::ClassicProtection
             | Endpoint::RequestReview => "api",
         };
-        let output = host::run_tagged("verify", "gh", Path::new("gh"), operation, args, GH_TIMEOUT)
+        let output = host::run_tagged("verify", "gh", &self.program, operation, args, GH_TIMEOUT)
             .map_err(|e| failed(e.to_string()))?;
         if !output.status.success() {
             // gh writes an HTTP error's message to stderr and its body to
@@ -564,9 +618,6 @@ impl Gh {
                 detail,
                 exit: output.status.code(),
             });
-        }
-        if output.stdout.iter().all(u8::is_ascii_whitespace) {
-            return Err(failed("empty answer".to_owned()));
         }
         Ok(Answer::Printed(output.stdout))
     }

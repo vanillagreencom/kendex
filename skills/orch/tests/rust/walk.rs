@@ -908,53 +908,9 @@ fn a_cloud_session_entry_is_skipped_for_a_relaunch_and_a_cloud_task_host_always(
 }
 
 #[test]
-fn a_successor_bound_skips_an_entry_that_leaves_too_few_accounts() {
-    let mut world = World::new(&[("ORCH_OVERSEER_PREFERENCE", "codex:standard:high")]);
-    world.plant_listing(&[codex("codex", 20), codex("1codex", 20), codex("2codex", 20)]);
-    let result = world.answered(&[
-        "--overseer",
-        "--source-harness",
-        "codex",
-        "--successor-bound",
-        "3",
-    ]);
-    assert_eq!(result["answer"], json!("none"), "{result}");
-    assert_eq!(
-        skipped(&result),
-        [format!(
-            "codex:standard:high successor-count-bound {}",
-            world.dir("codex")
-        )]
-    );
-    assert_eq!(result["skipped"][0]["qualifying"], json!(3));
-    assert_eq!(result["skipped"][0]["bound"], json!(3));
-    let result = world.answered(&[
-        "--overseer",
-        "--source-harness",
-        "codex",
-        "--successor-bound",
-        "2",
-    ]);
-    assert_eq!(
-        result["chosen"]["account"],
-        json!(world.dir("codex")),
-        "{result}"
-    );
-    // An entry spending no account the judge measures settles no count.
+fn an_overseer_entry_spending_no_account_the_judge_measures_is_chosen_unpicked() {
     let mut pi = World::new(&[("ORCH_OVERSEER_PREFERENCE", "pi:openai/gpt-5:high")]);
     pi.plant_listing(&[codex("codex", 20)]);
-    let result = pi.answered(&[
-        "--overseer",
-        "--source-harness",
-        "pi",
-        "--successor-bound",
-        "3",
-    ]);
-    assert_eq!(result["answer"], json!("none"), "{result}");
-    assert_eq!(
-        skipped(&result),
-        ["pi:openai/gpt-5:high successor-count-unmeasured none"]
-    );
     let result = pi.answered(&["--overseer", "--source-harness", "pi"]);
     assert_eq!(
         result["chosen"]["entry"],

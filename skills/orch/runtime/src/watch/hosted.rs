@@ -447,6 +447,9 @@ pub struct Created {
     pub path: String,
     pub prefix: String,
     pub preparing: bool,
+    /// The Pi root a Pi lane runs under on the host, where the provider
+    /// named one.
+    pub pi_root: Option<String>,
 }
 
 /// The provider's `create` line parsed, or the cause. A `75` is an item
@@ -483,9 +486,11 @@ pub fn create(
         path: String::new(),
         prefix: String::new(),
         preparing: false,
+        pi_root: None,
     };
     for field in line.split('\t') {
         match field.split_once('=') {
+            Some(("pi-root", v)) => created.pi_root = Some(v.to_owned()),
             Some(("ssh-target", v)) => created.target = v.to_owned(),
             Some(("path", v)) => created.path = v.to_owned(),
             Some(("remote-prefix", v)) => created.prefix = v.to_owned(),

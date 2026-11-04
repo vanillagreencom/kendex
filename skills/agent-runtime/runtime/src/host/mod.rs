@@ -284,10 +284,12 @@ pub fn run_tagged_fed(
     .map_err(|failed| failed.into_error(caller))
 }
 
-/// `run_tagged_fed` with the child leading its own process group, so a
-/// ceiling that signals the runtime's group (a hook's `timeout`) leaves the
-/// child to finish what it already began: a renewal whose endpoint has
-/// answered lands its file. The same spawn site, bound and count.
+/// `run_tagged_fed` with the child leading its own process group: a group
+/// signal to the caller (a hook's `timeout` ending the runtime) does not
+/// reach the child, so what the child does runs to its own end whatever
+/// becomes of the caller. Where `hold` is given, the child's stdin stays
+/// open after `stdin` is written, for a server that stops at the end of
+/// its input before it answers. The same spawn site, bound and count.
 #[allow(clippy::too_many_arguments)]
 pub fn run_tagged_fed_own_group(
     tag: &'static str,
@@ -297,6 +299,7 @@ pub fn run_tagged_fed_own_group(
     args: &[&str],
     place: Place,
     stdin: &[u8],
+    hold: Option<Hold>,
     timeout: Duration,
 ) -> Result<Output> {
     let caller = Caller {
@@ -304,41 +307,74 @@ pub fn run_tagged_fed_own_group(
         operation,
         tag: Some(tag),
     };
-    start(
+    spawn(
         caller,
         executable.as_os_str(),
         args,
         place,
-        Some(stdin),
+        Some((stdin, hold)),
         true,
         timeout,
     )
     .map_err(|failed| failed.into_error(caller))
 }
 
+/// How long a fed child's stdin stays open once its bytes are written:
+/// until its standard output so far is `answered`, it closes that output
+/// or exits, or `limit` passes.
+#[derive(Debug, Clone, Copy)]
+pub struct Hold {
+    pub answered: fn(&[u8]) -> bool,
+    pub limit: Duration,
+}
+
 /// A child the runner started and does not wait on: its standard input
 /// and output are the null device, its standard error the file the caller
 /// opened for it or the null device, and no pipe of this process reaches
 /// it, so it outlives the caller. The caller reads it through the process
-/// identity reader and reaps it by this handle once it has exited; a handle
-/// dropped while the child runs leaves it running.
+/// identity reader and may reap it by this handle once it has exited; a
+/// handle dropped while the child runs leaves it running and hands it to a
+/// thread that reaps it when it exits, so a long-lived launcher keeps no
+/// zombie per job it started.
 pub struct Detached {
-    child: std::process::Child,
+    /// `None` only once the handle is dropped.
+    child: Option<std::process::Child>,
 }
 
 impl Detached {
+    fn child(&mut self) -> &mut std::process::Child {
+        self.child.as_mut().expect("a live handle holds its child")
+    }
+
     pub fn pid(&self) -> u32 {
-        self.child.id()
+        self.child
+            .as_ref()
+            .expect("a live handle holds its child")
+            .id()
     }
 
-    /// The child's exit status, reaped, or `None` while it runs.
     pub fn exited(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
-        self.child.try_wait()
+        self.child().try_wait()
     }
 
-    /// Wait for the child to exit and reap it.
     pub fn reap(&mut self) -> std::io::Result<std::process::ExitStatus> {
-        self.child.wait()
+        self.child().wait()
+    }
+}
+
+impl Drop for Detached {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.child.take()
+            && matches!(child.try_wait(), Ok(None))
+        {
+            // A thread that cannot be started leaves the child a zombie
+            // until this process exits, which is all a reap would end.
+            let _ = std::thread::Builder::new()
+                .name("detached-reap".to_owned())
+                .spawn(move || {
+                    let _ = child.wait();
+                });
+        }
     }
 }
 
@@ -381,7 +417,7 @@ pub fn start_detached(
         .spawn()
         .map_err(|e| Failed::Spawn(e).into_error(caller))?;
     count_start(executable.as_os_str(), caller.tag);
-    Ok(Detached { child })
+    Ok(Detached { child: Some(child) })
 }
 
 /// `cwd` as a directory a child can start in. Read three-valued through
@@ -398,14 +434,35 @@ fn enterable(cwd: &Path) -> std::result::Result<(), Failed> {
     )))
 }
 
-/// The one spawn site: start `executable` in `place`, count it, and read
-/// its whole answer within `timeout`.
+/// Start `executable` in `place`, count it, and read its whole answer
+/// within `timeout`; a fed child's stdin closes once its bytes are written.
 pub(crate) fn start(
     caller: Caller,
     executable: &OsStr,
     args: &[&str],
     place: Place,
     stdin: Option<&[u8]>,
+    own_group: bool,
+    timeout: Duration,
+) -> std::result::Result<Output, Failed> {
+    spawn(
+        caller,
+        executable,
+        args,
+        place,
+        stdin.map(|bytes| (bytes, None)),
+        own_group,
+        timeout,
+    )
+}
+
+/// The one spawn site.
+fn spawn(
+    caller: Caller,
+    executable: &OsStr,
+    args: &[&str],
+    place: Place,
+    stdin: Option<(&[u8], Option<Hold>)>,
     own_group: bool,
     timeout: Duration,
 ) -> std::result::Result<Output, Failed> {
@@ -438,13 +495,26 @@ pub(crate) fn start(
     // starts after exit would wait on a child waiting on it. The readers
     // hand their bytes back over channels so the wait below stays bounded
     // by the one timeout; the stdin writer runs apart for the same reason.
-    let stdout = drain(child.stdout.take());
-    let stderr = drain(child.stderr.take());
-    if let (Some(bytes), Some(mut pipe)) = (stdin, child.stdin.take()) {
+    // A held stdin is released by the stdout reader: on the answer, or by
+    // dropping its sender when the output ends.
+    let hold = stdin.and_then(|(_, hold)| hold);
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let stdout = drain(
+        child.stdout.take(),
+        hold.map(|hold| Release {
+            answered: hold.answered,
+            release,
+        }),
+    );
+    let stderr = drain(child.stderr.take(), None);
+    if let (Some((bytes, _)), Some(mut pipe)) = (stdin, child.stdin.take()) {
         let bytes = bytes.to_vec();
         std::thread::spawn(move || {
             use std::io::Write;
             let _ = pipe.write_all(&bytes);
+            if let Some(hold) = hold {
+                let _ = released.recv_timeout(hold.limit);
+            }
         });
     }
     let started = std::time::Instant::now();
@@ -478,18 +548,41 @@ pub(crate) fn start(
     })
 }
 
+/// What releases a held stdin from the output side: the bytes read so far
+/// `answered`, or the output's end, which drops `release`.
+struct Release {
+    answered: fn(&[u8]) -> bool,
+    release: std::sync::mpsc::Sender<()>,
+}
+
 /// Read one of the child's output pipes to its end on its own thread; the
 /// bytes arrive on the returned channel once the child closes the pipe.
 fn drain<R: std::io::Read + Send + 'static>(
     pipe: Option<R>,
+    watch: Option<Release>,
 ) -> std::sync::mpsc::Receiver<std::io::Result<Vec<u8>>> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
+        let mut watch = watch;
         let mut bytes = Vec::new();
         let read = match pipe {
-            Some(mut pipe) => pipe.read_to_end(&mut bytes).map(|_| bytes),
+            Some(mut pipe) => loop {
+                let mut chunk = [0u8; 8192];
+                match pipe.read(&mut chunk) {
+                    Ok(0) => break Ok(bytes),
+                    Ok(n) => {
+                        bytes.extend_from_slice(&chunk[..n]);
+                        if watch.as_ref().is_some_and(|w| (w.answered)(&bytes)) {
+                            let _ = watch.take().map(|w| w.release.send(()));
+                        }
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                    Err(e) => break Err(e),
+                }
+            },
             None => Ok(bytes),
         };
+        drop(watch);
         let _ = tx.send(read);
     });
     rx
@@ -590,6 +683,37 @@ mod tests {
             Some(Some(3)),
             "a reaped child answers its status again"
         );
+    }
+
+    #[test]
+    fn a_dropped_detached_child_is_reaped_once_it_exits() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = stub(dir.path(), "detached-dropped", "sleep 0.2\n");
+        let child = start_detached(
+            "row-z",
+            "detached-dropped",
+            &exe,
+            "noop",
+            &[],
+            Place::default(),
+            None,
+        )
+        .unwrap();
+        let pid = child.pid().to_string();
+        drop(child);
+        // `kill -0` answers for a zombie too: only a reaped pid refuses it.
+        let stands = || {
+            Command::new("kill")
+                .args(["-0", &pid])
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        };
+        let deadline = std::time::Instant::now() + BOUND;
+        while stands() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!stands(), "the dropped child {pid} stands unreaped");
     }
 
     /// An executable that never starts is no start. Defect: counting the
@@ -771,6 +895,7 @@ mod tests {
                 &[],
                 Place::default(),
                 b"",
+                None,
                 BOUND,
             )
             .unwrap(),

@@ -21,9 +21,10 @@
 //! The wall's record and route: the reset the banner names is read by the
 //! grammar (`lib/usage-reset.sh`) and the line is `usage-limit-passed` once
 //! the clock passes it; the account wall record and the lane record's own wall
-//! are written through `ops::wall`; the wall relaunch is `open-terminal
-//! --relaunch`, started detached through the one runner after the account
-//! walk's pick, under `ORCH_WALL_RELAUNCH=auto`; a window gone while that
+//! are written through `ops::wall`; the wall relaunch is the walled lane's
+//! close and its `launch-lane` on the account the walk picked, applied by the
+//! runtime's own entry, started detached through the one runner under
+//! `ORCH_WALL_RELAUNCH=auto`; a window gone while that
 //! relaunch is still opening its replacement is not `window-gone`
 //! (`wall_relaunch_pending`). A lane `ORCH_WATCH_LANE_AGE_SECS` past its
 //! launch is `lane-long` once per age interval with the counters its records
@@ -218,10 +219,10 @@ impl Readers<'static> {
     }
 }
 
-/// The relaunch the wall route starts: the runtime's own `launch-lane`
-/// request for the record, applied by `orch-runtime op --fleet` run
-/// detached in the launch's checkout with its session, its output at
-/// `log`, its exit status landing beside `marker`.
+/// The relaunch the wall route starts: the walled lane's close and its
+/// `launch-lane` on the picked account, run detached in the launch's
+/// checkout with its session, its output at `log`, its exit status landing
+/// beside `marker`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Relaunch {
     pub item: String,
@@ -232,7 +233,8 @@ pub struct Relaunch {
     pub spent: String,
     pub cwd: PathBuf,
     pub session: String,
-    /// The runtime's entry and its arguments, the entry first.
+    /// The detached command, `sh -c` over the two requests, the close
+    /// first.
     pub args: Vec<String>,
     pub marker: PathBuf,
     pub log: PathBuf,
@@ -1393,27 +1395,34 @@ struct Recovery {
     args: Vec<String>,
 }
 
-/// The words the walled lane's successor starts on, since it continues an
-/// item mid-workflow on another account: resume from where the session
-/// stopped and read the mailbox first, the harness's own monitor re-armed
-/// where it has one, closed by the unattended words every lane brief
-/// carries.
 const UNATTENDED_TEXT: &str = include_str!("unattended.txt");
 
-fn continuation(item: &str, harness: Harness) -> String {
-    let rearm = match harness {
-        Harness::Claude => format!(
-            ", then re-arm your mailbox monitor on .agents/skills/mailbox/scripts/lane-mail watch --item {item} through your harness background wake"
-        ),
-        Harness::Copilot => format!(
-            ", then re-arm your mailbox monitor on .agents/skills/mailbox/scripts/lane-mail watch --once --item {item} as a background command"
-        ),
-        Harness::Codex | Harness::Pi => String::new(),
+/// The words the walled lane's successor starts on. Its route is fresh by
+/// construction, another account than the one its session was recorded
+/// under, so it holds no transcript to resume: it gets the start brief for
+/// the record's harness and tracker, whose workflow reads the item's
+/// handoff record, closed by the unattended words every lane brief carries.
+/// A GitHub record names its issue as `issue-N` beside its repository.
+/// `Err` is the cause word.
+fn start_brief(lane: &Lane, harness: Harness) -> Result<String, String> {
+    let subject = match lane.tracker.as_deref() {
+        None | Some("linear") => lane.item.clone(),
+        Some("github") => match (lane.item.strip_prefix("issue-"), lane.repo.as_deref()) {
+            (Some(number), Some(repo)) if !number.is_empty() && !repo.is_empty() => {
+                format!("github {repo}#{number}")
+            }
+            _ => return Err("brief-unspelled tracker=github".to_owned()),
+        },
+        Some(other) => return Err(format!("tracker-unknown tracker={other}")),
     };
-    format!(
-        "Resume the orch workflow for {item} from where this session stopped. Run .agents/skills/mailbox/scripts/lane-mail inbox --item {item} first and act on every envelope it prints, answers and directives alike, as its text directs{rearm}. {}\n",
-        UNATTENDED_TEXT.trim_end_matches('\n')
-    )
+    let unattended = UNATTENDED_TEXT.trim_end_matches('\n');
+    Ok(match harness {
+        Harness::Claude => format!("/orch start {subject} {unattended}\n"),
+        Harness::Codex | Harness::Copilot => format!(
+            "Read .agents/skills/orch/SKILL.md and execute the orch start workflow for {subject}. {unattended}\n"
+        ),
+        Harness::Pi => format!("/skill:orch start {subject} {unattended}\n"),
+    })
 }
 
 /// The record's own relaunch as two requests the runtime's entry applies in
@@ -1422,7 +1431,7 @@ fn continuation(item: &str, harness: Harness) -> String {
 /// recorded identity, the item's work kept), then `launch-lane` on the
 /// picked account with the record's harness, model, effort, host, tracker
 /// and repository, its refresh word, the spent account excluded and the
-/// continuation as its brief. The checkout is the one the launch ran from
+/// start brief. The checkout is the one the launch ran from
 /// (`checkout` on a hosted record, whose `mail_root` is its host's; the
 /// `recovery.cwd` an earlier launcher recorded; else `mail_root`). A
 /// record whose checkout is gone, or whose provider is spelled relative to
@@ -1466,7 +1475,7 @@ fn relaunch_request(
         .display()
         .to_string();
     let brief = PathBuf::from(format!("{stem}.md"));
-    std::fs::write(&brief, continuation(&lane.item, harness))
+    std::fs::write(&brief, start_brief(lane, harness)?)
         .map_err(|e| format!("brief-unwritten path={} cause={e}", brief.display()))?;
     let close = PathBuf::from(format!("{stem}.close.json"));
     let retire = json!({
@@ -1501,13 +1510,15 @@ fn relaunch_request(
     let file = PathBuf::from(format!("{stem}.json"));
     std::fs::write(&file, request.to_string())
         .map_err(|e| format!("request-unwritten path={} cause={e}", file.display()))?;
-    // The two requests in order through the one shell word: the launch is
-    // asked only once the close request was admitted, and its own
-    // transition refuses a lane whose harness still runs.
+    // The two requests in order through the one shell word, each exiting by
+    // its effect's outcome, never by its admission alone: the launch is
+    // asked only once the close's effect did not fail, its own transition
+    // refuses a lane whose harness still runs, and a replacement whose
+    // effect failed leaves a non-zero status the outcome reader says.
     let args = vec![
         "sh".to_owned(),
         "-c".to_owned(),
-        "\"$1\" --state-dir \"$2\" op --fleet --request \"$3\" && \"$1\" --state-dir \"$2\" op --fleet --request \"$4\"".to_owned(),
+        "\"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$3\" && \"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$4\"".to_owned(),
         "wall-relaunch".to_owned(),
         pass.scripts.join("orch-runtime").display().to_string(),
         pass.state_dir.display().to_string(),

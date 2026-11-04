@@ -2,7 +2,8 @@
 //! window opens, write the launch record the lane's hook reads, open the
 //! lane's window on the fleet server through the operation handle (a local
 //! harness, or the ssh client carrying a hosted one), confirm the harness
-//! in it, and the launch cells of the reconcile matrix. A cloud session is
+//! in it, and the launch cells of the reconcile matrix. What a fleet lane's
+//! harness needs beyond its trust record is [`gate`]'s. A cloud session is
 //! created through the Claude CLI's own answer and opens no window. Every
 //! host read and write here goes through [`Operation`] or the one runner.
 
@@ -33,6 +34,8 @@ use crate::ops::{CLOUD_KIND, LaunchLane, Relaunch};
 use crate::settings::Settings;
 use crate::state::{self, Intent, Lane, LaunchIdentity, OpenedPane, Phase};
 use crate::watch::hosted::{self, Launch, PaneKind};
+
+mod gate;
 
 /// The words that close a cloud session's description, after the brief:
 /// the branch it cloned and how it publishes.
@@ -233,7 +236,8 @@ struct LaunchPrep {
 
 /// Resolve everything a local launch can refuse before it opens a window:
 /// the harness, the fleet server and session, the working directory, the
-/// program and the brief file, and the command. A failure here is knowable
+/// home with its trust record and harness gate, the program and the brief
+/// file, and the command. A failure here is knowable
 /// before the effect starts anything. A resumed session is the floor the
 /// outcome binds (its id is known), and the command continues it rather
 /// than fixing a fresh id.
@@ -243,7 +247,7 @@ fn prepare_launch(
     r: &LaunchLane,
     doc_session: Option<&str>,
     route: &Route,
-) -> Result<LaunchPrep> {
+) -> std::result::Result<LaunchPrep, Unready> {
     let harness = Harness::parse(&r.harness)
         .ok_or_else(|| refused("harness-unknown", &[("harness", &r.harness)]))?;
     let (server, session) = operation.fleet_server(doc_session)?;
@@ -252,40 +256,14 @@ fn prepare_launch(
     if let Some(brief) = &r.brief_file {
         read_brief(brief)?;
     }
-    // The home the launch names, never the cwd: the account where the
-    // account's variable is the harness's own home variable; a Pi lane on
-    // another provider's seat names none, so Pi keeps its own root and the
-    // seat rides in `account` alone. The trust record for the launch
-    // directory stands before the window opens under the named home, or
-    // under the default home of a harness that asks a trust question
-    // (Codex, Copilot); an accountless Claude launch leaves the operator's
-    // own config untouched. A private Codex home built under the account
-    // is then the home the launch runs under, its sessions linked from the
-    // account's.
-    let one_variable = harness.account_var(r.model.as_deref()) == harness.home_var();
-    let account = match (r.account.as_deref(), one_variable) {
-        (Some(_), true) | (None, _) => None,
-        (Some(account), false) => Some(Path::new(account)),
-    };
-    let named_home = match (r.account.as_deref(), one_variable) {
-        (Some(account), true) => Some(PathBuf::from(account)),
-        (Some(_), false) | (None, _) => None,
-    };
-    let trusted = match (&named_home, harness) {
-        (Some(home), _) => Some(prepare_trust(harness, home, &cwd)?),
-        (None, Harness::Codex | Harness::Copilot) => match operation::default_home(harness) {
-            Some(home) => Some(prepare_trust(harness, &home, &cwd)?),
-            None => None,
-        },
-        (None, Harness::Claude | Harness::Pi) => None,
-    };
-    // Where the sessions are read: the home the launch runs under, else the
-    // harness's own default root.
-    let home = trusted
-        .as_ref()
-        .map(|t| t.home.clone())
-        .or_else(|| operation::default_home(harness));
-    let floor = match (route, &home) {
+    let homes = launch_home(
+        harness,
+        r.account.as_deref(),
+        r.model.as_deref(),
+        None,
+        &cwd,
+    )?;
+    let floor = match (route, &homes.sessions) {
         (Route::Resume { session_id }, _) => SessionFloor::Fixed(session_id.clone()),
         (Route::Fresh { .. }, Some(home)) => operation.session_floor(harness, home, &cwd)?,
         (Route::Fresh { .. }, None) => SessionFloor::Baseline(Vec::new()),
@@ -297,8 +275,8 @@ fn prepare_launch(
         settings,
         &Spec {
             harness,
-            home: trusted.as_ref().map(|t| t.home.as_path()),
-            account,
+            home: homes.named.as_deref(),
+            account: homes.account.as_deref(),
             model: r.model.as_deref(),
             effort: r.effort.as_deref(),
             cwd: &cwd,
@@ -324,20 +302,117 @@ fn prepare_launch(
     check_program(&command)?;
     Ok(LaunchPrep {
         target: Target::new(settings, harness),
-        home,
+        home: homes.sessions,
         server,
         session,
         command,
         floor,
+        trust: homes.trust,
+    })
+}
+
+/// The key a harness gate's refusal stands under where its outcome names one
+/// word.
+pub(super) const GATE_REFUSED: &str = "launch-gate-refused";
+
+/// Why a launch cannot run where its preparation put it.
+pub(super) enum Unready {
+    /// A home, account, trust record or other precondition that refused.
+    Refused(crate::error::Error),
+    /// The harness gate's refusal, its key then its fields.
+    Gate(String),
+}
+
+impl Unready {
+    /// The refusal's key, a gate refusal's as one word.
+    pub(super) fn key(&self) -> &'static str {
+        match self {
+            Unready::Refused(e) => e.key(),
+            Unready::Gate(_) => GATE_REFUSED,
+        }
+    }
+}
+
+impl From<crate::error::Error> for Unready {
+    fn from(e: crate::error::Error) -> Unready {
+        Unready::Refused(e)
+    }
+}
+
+impl From<agent_runtime::Error> for Unready {
+    fn from(e: agent_runtime::Error) -> Unready {
+        Unready::Refused(e.into())
+    }
+}
+
+/// What a launch of `harness` runs under, a lane's or a controller's.
+pub(super) struct LaunchHome {
+    /// The home the launch names, prepared.
+    pub named: Option<PathBuf>,
+    /// The account the launch bills where its variable is not the home's.
+    pub account: Option<PathBuf>,
+    /// Where its sessions are read: the named home, else the harness's own
+    /// default root.
+    pub sessions: Option<PathBuf>,
+    /// How the launch directory came to be trusted, where a home was
+    /// prepared.
+    pub trust: Option<trust::Route>,
+}
+
+/// The home a launch of `harness` billing `account` on `model` names,
+/// never the cwd: the account where the account's variable is the
+/// harness's own home variable; a Pi launch on another provider's seat
+/// names `root`, the Pi root a controller's succession keeps, or none, so
+/// Pi keeps its own root and the seat rides in `account` alone. The trust
+/// record for `cwd` stands before the window opens under
+/// the named home, or under the default home of a harness that asks a
+/// trust question (Codex, Copilot); an accountless Claude launch leaves
+/// the operator's own config untouched. A private Codex home built under
+/// the account is then the home the launch runs under, its sessions linked
+/// from the account's. The harness gate then judges what the harness needs
+/// beyond its trust record under the home its sessions are read from.
+pub(super) fn launch_home(
+    harness: Harness,
+    account: Option<&str>,
+    model: Option<&str>,
+    root: Option<&Path>,
+    cwd: &Path,
+) -> std::result::Result<LaunchHome, Unready> {
+    let one_variable = harness.account_var(model) == harness.home_var();
+    let (named, billed) = match (account, one_variable) {
+        (Some(account), true) => (Some(PathBuf::from(account)), None),
+        (Some(account), false) => {
+            if let Some(root) = root {
+                check_directory("home-missing", root)?;
+            }
+            (root.map(Path::to_path_buf), Some(PathBuf::from(account)))
+        }
+        (None, _) => (None, None),
+    };
+    let trusted = match (&named, harness) {
+        (Some(home), _) => Some(prepare_trust(harness, home, cwd)?),
+        (None, Harness::Codex | Harness::Copilot) => match operation::default_home(harness) {
+            Some(home) => Some(prepare_trust(harness, &home, cwd)?),
+            None => None,
+        },
+        (None, Harness::Claude | Harness::Pi) => None,
+    };
+    let named = trusted.as_ref().map(|t| t.home.clone());
+    let sessions = named.clone().or_else(|| operation::default_home(harness));
+    gate::local(harness, sessions.as_deref(), cwd).map_err(Unready::Gate)?;
+    Ok(LaunchHome {
+        sessions,
+        named,
+        account: billed,
         trust: trusted.map(|t| t.route),
     })
 }
 
-/// The trust record a lane launch of `harness` under `home` needs for
-/// `cwd`, made before the window opens; its refusal is the launch's.
+/// The trust record a launch of `harness` under `home` needs for `cwd`,
+/// made before the window opens; its refusal is the launch's.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the lane's trust record, written before the window it serves opens, its refusal the launch's own"
+    reason = "the launch's trust record, written before the window it serves opens, its refusal the launch's own"
 )]
 fn prepare_trust(harness: Harness, home: &Path, cwd: &Path) -> Result<trust::Prepared> {
     Ok(trust::prepare(harness, home, cwd)?)
@@ -573,7 +648,12 @@ fn local_launch(
         Ok(prep) => prep,
         // A harness, session, directory, program or brief the effect cannot
         // resolve: `failed` before anything opens, never a bare refusal.
-        Err(e) => return Ok(operation.settle(Word::Failed, json!({"cause": e.key()}))),
+        Err(Unready::Refused(e)) => {
+            return Ok(operation.settle(Word::Failed, json!({"cause": e.key()})));
+        }
+        Err(Unready::Gate(cause)) => {
+            return Ok(operation.settle(Word::Failed, json!({"cause": cause})));
+        }
     };
     // The marker, the mailbox and the refresh record stand before any
     // window opens: the hook judges the lane by them from its first turn,
@@ -646,6 +726,9 @@ fn hosted_launch(
     let Some(harness) = Harness::parse(&r.harness) else {
         return failed(operation, "harness-unknown");
     };
+    if let Err(cause) = gate::before_create(harness, r.model.as_deref(), provider) {
+        return failed(operation, &cause);
+    }
     let (Some(account), Some(repo)) = (r.account.as_deref(), r.repo.as_deref()) else {
         return failed(operation, "host-request-incomplete");
     };
@@ -670,6 +753,17 @@ fn hosted_launch(
     };
     if created.preparing
         && let Err(cause) = hosted::wait(&scripts, provider, &r.item)
+    {
+        return failed(operation, &cause);
+    }
+    if let Harness::Pi = harness
+        && let Err(cause) = gate::hosted_pi(
+            &scripts,
+            provider,
+            &r.item,
+            created.pi_root.as_deref(),
+            &created.path,
+        )
     {
         return failed(operation, &cause);
     }

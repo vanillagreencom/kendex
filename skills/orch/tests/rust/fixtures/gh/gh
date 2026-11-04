@@ -31,12 +31,20 @@
 # R --json F`, the verify-pr rows' read of a pull request, answers from the
 # map's `pr view N` entry; with none it fails as gh does for a number the
 # repository lacks (exit 1, the GraphQL message on stderr). The review
-# gate's calls: `gh pr ready N --repo R` answers from `pr ready N` and, as
-# the act GitHub makes, rewrites the map's `pr view N` and `pulls/N`
-# entries to a ready pull request; `gh api PATH --method POST -f F`
-# answers from `POST PATH`; the GraphQL form with `-F number=N` (the
-# thread walk, its `cursor=` field empty on the first page) answers from
-# `graphql number=N cursor=C`, its body printed as it stands.
+# gate's calls: `gh pr ready N --repo R` answers from `pr ready N`; on a
+# zero exit it prints its success line on stderr and nothing on stdout,
+# as gh v2.103.3 `pkg/cmd/pr/ready` writes it. `gh api PATH --method POST
+# -f F` answers from `POST PATH`; an entry's `signal` kills the call by
+# that signal, a call that ended with no exit status. What an act left on
+# GitHub outlives the map a row rewrites between calls: it is kept in
+# `<map>.acts.json` beside the map and laid over every later answer, a
+# ready mark making `pr view N` and `pulls/N` read ready, a request a zero
+# exit on `pulls/N/requested_reviewers` made adding GitHub's record of it,
+# a `review_requested` event naming `Copilot`, to `issues/N/timeline`.
+# The GraphQL form
+# with `-F number=N` (the thread walk, its `cursor=` field empty on the
+# first page) answers from `graphql number=N cursor=C`, its body printed
+# as it stands.
 set -u
 here="$(dirname "${BASH_SOURCE[0]}")"
 if [ -z "${GH_FAKE_LOG:-}" ]; then
@@ -45,6 +53,16 @@ if [ -z "${GH_FAKE_LOG:-}" ]; then
 fi
 : "${GH_FAKE_REPLIES:=$here/gh.json}"
 printf '%s\n' "$*" >> "$GH_FAKE_LOG"
+acts="${GH_FAKE_REPLIES%.json}.acts.json"
+overlay="" number=""
+# act FILTER [ARGS...]: record what an act left on GitHub.
+act() {
+  local filter="$1" was='{}' now
+  shift
+  [ ! -f "$acts" ] || was=$(cat -- "$acts") || { echo "gh-fake: acts-unreadable" >&2; exit 65; }
+  now=$(jq -c "$@" "$filter" <<<"$was") || { echo "gh-fake: acts-unreadable" >&2; exit 65; }
+  printf '%s\n' "$now" > "$acts"
+}
 if [ "${1:-}" = repo ] && [ "${2:-}" = view ]; then
   reply=$(jq -c '."repo view" // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
   if [ -z "$reply" ]; then
@@ -52,6 +70,7 @@ if [ "${1:-}" = repo ] && [ "${2:-}" = view ]; then
     exit 1
   fi
 elif [ "${1:-}" = pr ] && [ "${2:-}" = view ]; then
+  overlay=view number="${3:-}"
   reply=$(jq -c --arg k "pr view ${3:-}" '.[$k] // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
   if [ -z "$reply" ]; then
     echo "GraphQL: Could not resolve to a PullRequest with the number of ${3:-}. (repository.pullRequest)" >&2
@@ -64,11 +83,9 @@ elif [ "${1:-}" = pr ] && [ "${2:-}" = ready ]; then
     exit 1
   fi
   if [ "$(jq -r '.exit // 0' <<<"$reply")" = 0 ]; then
-    ready=$(jq -c --arg n "${3:-}" 'with_entries(
-      if .key == ("pr view " + $n) then .value.body.isDraft = false
-      elif (.key | endswith("/pulls/" + $n)) then .value.body.draft = false
-      else . end)' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
-    printf '%s\n' "$ready" > "$GH_FAKE_REPLIES"
+    act '.ready = ((.ready // []) + [$n] | unique)' --arg n "${3:-}"
+    printf '✓ Pull request #%s is marked as "ready for review"\n' "${3:-}" >&2
+    exit 0
   fi
 elif [ "${1:-}" != api ]; then
   echo "gh-fake: unexpected-call args=[$*]" >&2
@@ -101,11 +118,42 @@ elif [ "${2:-}" = graphql ]; then
   fi
 elif [ "$#" -ge 4 ] && [ "${3:-}" = --method ] && [ "${4:-}" = POST ]; then
   reply=$(jq -c --arg k "POST $2" '.[$k] // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
+  signal=$(jq -r '.signal // empty' <<<"${reply:-null}")
+  [ -z "$signal" ] || kill -s "$signal" "$$"
+  case "$2" in
+    repos/*/pulls/*/requested_reviewers)
+      if [ -n "$reply" ] && [ "$(jq -r '.exit // 0' <<<"$reply")" = 0 ]; then
+        number="${2#*/pulls/}"
+        act '.events[$n] = ((.events[$n] // []) + [{event: "review_requested", id: (900 + (.events[$n] // [] | length)), created_at: $at, requested_reviewer: {login: "Copilot"}}])' \
+          --arg n "${number%/requested_reviewers}" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      fi
+      ;;
+  esac
 elif [ "$#" -ne 2 ]; then
   echo "gh-fake: unexpected-call args=[$*]" >&2
   exit 64
 else
+  case "$2" in
+    repos/*/pulls/*)
+      number="${2#*/pulls/}"
+      case "$number" in */*|*\?*) ;; *) overlay=pull ;; esac
+      ;;
+    repos/*/issues/*/timeline*)
+      number="${2#*/issues/}"
+      number="${number%%/*}"
+      overlay=timeline
+      ;;
+  esac
   reply=$(jq -c --arg p "$2" '.[$p] // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
+fi
+if [ -n "$overlay" ] && [ -n "$reply" ] && [ -f "$acts" ]; then
+  reply=$(jq -c --slurpfile acts "$acts" --arg kind "$overlay" --arg n "$number" '
+    $acts[0] as $a
+    | if (.exit // 0) != 0 then .
+      elif $kind == "view" and (($a.ready // []) | index($n)) then .body.isDraft = false
+      elif $kind == "pull" and (($a.ready // []) | index($n)) then .body.draft = false
+      elif $kind == "timeline" and (.body | type) == "array" then .body += ($a.events[$n] // [])
+      else . end' <<<"$reply") || { echo "gh-fake: acts-unreadable" >&2; exit 65; }
 fi
 if [ -z "$reply" ]; then
   echo "gh: HTTP 404: Not Found (https://api.github.com/${2:-graphql})" >&2

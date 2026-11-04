@@ -9,11 +9,14 @@
 # `copilot` (api.github.com) or `token` (Claude's token endpoint). The
 # answer for token T at
 # endpoint E is `<T>.<E>.json` as the body with `<T>.<E>.status` beside it
-# (`<code> [retry-after]`, 200 when absent); a token with no body file is a
-# request that could not be run (exit 1). Every call appends `<E> <T>` to
+# (`<code> [retry-after]`, 200 when absent), or `<T>.<E>.first` for the
+# first such request alone, which removes it; a token with no body file is
+# a request that could not be run (exit 1). Every call appends `<E> <T>` to
 # `curl.log` in that directory, so a row counts the requests posted. A
-# `delay` file holds every answer that many seconds, and `curl.argv` holds
-# each call's argument vector. Bash 3.2.
+# `delay` file holds every answer that many seconds; a `hold` fifo holds
+# the first request until a line arrives on it, at most 15 seconds, `held`
+# written as it starts to wait. `curl.argv` holds each call's argument
+# vector. Bash 3.2.
 set -u
 dir="${USAGE_FIXTURE_DIR:?}"
 config="$(cat)"
@@ -33,11 +36,20 @@ done
 printf '%s %s\n' "$endpoint" "$token" >> "$dir/curl.log"
 printf '%s\n' "$*" >> "$dir/curl.argv"
 [ ! -f "$dir/delay" ] || sleep "$(cat "$dir/delay")"
+if [ -p "$dir/hold" ] && [ ! -f "$dir/held" ]; then
+  : > "$dir/held"
+  exec 3<>"$dir/hold"
+  read -r -t 15 -u 3 _ || true
+  exec 3<&-
+fi
 body="$dir/$token.$endpoint.json"
 [ -f "$body" ] || exit 1
 code=200
 retry=""
-if [ -f "$dir/$token.$endpoint.status" ]; then
+if [ -f "$dir/$token.$endpoint.first" ]; then
+  read -r code retry < "$dir/$token.$endpoint.first"
+  rm -f -- "${dir:?}/$token.$endpoint.first"
+elif [ -f "$dir/$token.$endpoint.status" ]; then
   read -r code retry < "$dir/$token.$endpoint.status"
 fi
 printf 'HTTP/1.1 %s Fixture\r\nContent-Type: application/json\r\n' "$code"

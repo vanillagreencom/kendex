@@ -57,7 +57,23 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRATCH_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/run-all-parallel.XXXXXX")" ||
   { echo "mktemp failed" >&2; exit 1; }
-trap 'rm -rf -- "${SCRATCH_ROOT:?}"' EXIT
+# The fixture runner in flight (§ 5 and § 10's run_bounded) that this file
+# has not reaped yet, and the pid file its suite writes. The runner leads a
+# process group of its own and the suite may too, out of reach of a signal to
+# this file's group, so whatever ends this file kills both, by group and by
+# pid, and no fixture outlives it.
+LIVE_RUNNER=""
+LIVE_PIDFILE=""
+stop_fixture() {
+  local suite_pid=""
+  [ -z "$LIVE_PIDFILE" ] || suite_pid="$(cat "$LIVE_PIDFILE" 2>/dev/null)"
+  [ -z "$LIVE_RUNNER" ] || kill -KILL -- "-$LIVE_RUNNER" 2>/dev/null
+  [ -z "$suite_pid" ] || kill -KILL -- "-$suite_pid" "$suite_pid" 2>/dev/null
+}
+trap 'stop_fixture; rm -rf -- "${SCRATCH_ROOT:?}"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 # Copied runners resolve github two directories above their battery.
 TMP_ROOT="$SCRATCH_ROOT/fixture/tests"
 mkdir -p "$TMP_ROOT"
@@ -356,6 +372,7 @@ SH
   perl -e '$SIG{INT} = "DEFAULT"; exec @ARGV or die "exec: $!"' env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$B.bin:$PATH" HOME="$HOME" \
     TMPDIR="$B.tmp" PIDFILE="$B.pid" HOLDERFILE="$B.holder" bash "$B/run-all.sh" >"$B.out" 2>&1 &
   runner=$!
+  LIVE_RUNNER=$runner LIVE_PIDFILE="$B.pid"
   set +m
   tick=0
   until { [ -s "$B.pid" ] && [ -s "$B.holder" ]; } || [ "$tick" -ge 100 ]; do sleep 0.1; tick=$((tick + 1)); done
@@ -365,6 +382,7 @@ SH
   if [ "$target" = group ]; then kill -"$sig" -- "-$runner"; else kill -"$sig" "$runner"; fi
   RC=0
   wait "$runner" 2>/dev/null || RC=$?
+  LIVE_RUNNER=""
   # A suite orphaned by the runner's exit stays visible until it is reaped.
   tick=0
   while kill -0 "$suite_pid" 2>/dev/null && [ "$tick" -lt 50 ]; do sleep 0.1; tick=$((tick + 1)); done
@@ -387,6 +405,7 @@ SH
   if [[ "$state" == alive || "$holder_state" == alive ]]; then
     kill -KILL -- "-$suite_pid" 2>/dev/null
   fi
+  LIVE_PIDFILE=""
   expected="rc=$want suite=gone holder=gone"
   [[ "$variant" != hup-unhandled ]] || expected="rc=$want suite=alive holder=alive"
   [[ "$variant" != kill-skipped ]] || expected="rc=$want suite=gone holder=alive"
@@ -592,6 +611,7 @@ run_bounded() { # DIR [VAR=VALUE]...
   env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$dir.bin:$PATH" HOME="$HOME" TMPDIR="$dir.tmp" "$@" \
     PIDFILE="$dir.pid" MARK="$dir.mark" bash "$dir/run-all.sh" >"$dir.out" 2>&1 &
   runner=$!
+  LIVE_RUNNER=$runner LIVE_PIDFILE="$dir.pid"
   set +m
   while kill -0 "$runner" 2>/dev/null && [ "$SECONDS" -lt "$until" ]; do sleep 0.1; done
   RC=0
@@ -602,6 +622,7 @@ run_bounded() { # DIR [VAR=VALUE]...
   else
     wait "$runner" || RC=$?
   fi
+  LIVE_RUNNER=""
   OUT="$(cat "$dir.out")"
   child="$(cat "$dir.pid" 2>/dev/null)"
   CHILD=never-started
@@ -612,6 +633,7 @@ run_bounded() { # DIR [VAR=VALUE]...
       kill -KILL "$child" 2>/dev/null
     fi
   fi
+  LIVE_PIDFILE=""
 }
 
 # One line for a bounded run: its status, the red suites, each stop in report

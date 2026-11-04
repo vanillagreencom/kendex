@@ -1,13 +1,17 @@
 //! The `verify-review` operation: the review gate's verdict on a pull
 //! request's current head, read then recorded, one call per read set. The
 //! gate mode a base's rules set is resolved on the first call and recorded
-//! on the item as its floor; the Copilot request is the operation's one
-//! effect, claimed under the head's key before the POST and read after;
-//! Copilot's work in flight is bounded by `ORCH_COPILOT_HOLD_SECS` from
-//! that key's stamp, and the reviewer's silence by `PR_REVIEW_WAIT_SECS`
-//! per period, each `timeout` ending one period and counted. The workflow
-//! repeats the call under its own budget: `pending` and `unreadable` are
-//! results, never verdicts, as `verify-pr` answers them.
+//! on the item as its floor. The gate's acts, the ready mark and the
+//! Copilot request with its one error retry, are each claimed under the
+//! head's key before the act and read on a later call as absent, attempted
+//! or confirmed by GitHub's own record, so an act whose answer was lost is
+//! made once more. Copilot's work in flight is bounded by
+//! `ORCH_COPILOT_HOLD_SECS` from that key's stamp and holds every verdict
+//! that permits a merge; the reviewer's silence is bounded by
+//! `PR_REVIEW_WAIT_SECS` per period, each `timeout` ending one period and
+//! counted. The workflow repeats the call under its own budget: `pending`
+//! and `unreadable` are results, never verdicts, as `verify-pr` answers
+//! them.
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -19,7 +23,7 @@ use super::{Env, loaded, reread};
 use crate::error::{Error, Result, ShapeReason};
 use crate::settings::{self, ReviewSettings, Settings};
 use crate::state::{self, Document, Locking};
-use crate::verify::review::{self, Acted, CopilotReviews, GateMode, Work};
+use crate::verify::review::{self, Acted, CopilotReviews, GateMode, View, Work};
 use crate::verify::wire::{Nullable, PullRequestState};
 use crate::verify::{self, Gh, Status, Unreadable};
 
@@ -31,6 +35,10 @@ const REFRESH_AUTHOR_KEY: &str = "REVIEW_GATE_REFRESH_AUTHOR";
 /// The blocker kind the merge refuses on while one stands open on the
 /// item's escalated findings.
 const REGRESSION_KIND: &str = "regression-against-main";
+const REQUESTED: &str = "requested";
+const EXISTING: &str = "existing";
+const FALLBACK: &str = "fallback";
+const OFF: &str = "off";
 
 /// Verify the review gate on a pull request's current head and record the
 /// verdict. `repo` is `owner/name`, `pr` the number, `base_checkout` the
@@ -58,7 +66,7 @@ pub struct RequestReport {
     pub cause: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit: Option<i32>,
-    /// Whether this call wrote the record: the once-per-head cue the
+    /// Whether this call wrote the outcome: the once-per-head cue the
     /// fallback notice is sent on.
     pub recorded_now: bool,
 }
@@ -83,7 +91,6 @@ pub struct ReviewRecorded {
     pub replaced: bool,
 }
 
-/// The reply of one `verify-review` call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewVerified {
     pub pr: u64,
@@ -206,20 +213,45 @@ fn review_settings(settings: &ReviewSettings) -> Result<Review> {
     })
 }
 
-/// The head's record under `pr_review.heads`.
+/// The ready mark under the head: `marking` is written before `gh pr
+/// ready`, so a mark whose answer was refused or lost is made again while
+/// the pull request reads draft; `done` once the flag read after it is
+/// ready, so a draft a person restores is never marked over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Ready {
+    Marking,
+    Done,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct HeadRecord {
     at: String,
     period_started: String,
     timeouts: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    ready: Option<String>,
+    ready: Option<Ready>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     request: Option<RequestRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     retry: Option<RetryRecord>,
 }
 
+impl HeadRecord {
+    fn fresh(stamp: &str) -> HeadRecord {
+        HeadRecord {
+            at: stamp.to_owned(),
+            period_started: stamp.to_owned(),
+            timeouts: 0,
+            ready: None,
+            request: None,
+            retry: None,
+        }
+    }
+}
+
+/// `resent` marks a `requested` POST GitHub showed no sign of, sent once
+/// more: a second miss falls back as `unconfirmed`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct RequestRecord {
     outcome: String,
@@ -229,8 +261,13 @@ struct RequestRecord {
     cause: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     exit: Option<i32>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    resent: bool,
 }
 
+/// The one retry an error answer earns: `requested` (the POST made),
+/// `existing` (Copilot's work already in flight stood for it) or
+/// `fallback`; `resent` as on the request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct RetryRecord {
     review_id: u64,
@@ -239,34 +276,27 @@ struct RetryRecord {
     cause: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     exit: Option<i32>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    resent: bool,
 }
 
 impl RequestRecord {
-    fn requested() -> RequestRecord {
+    fn new(outcome: &str, reason: Option<&str>, cause: Option<&str>, exit: Option<i32>) -> Self {
         RequestRecord {
-            outcome: "requested".into(),
-            reason: None,
-            cause: None,
-            exit: None,
+            outcome: outcome.to_owned(),
+            reason: reason.map(str::to_owned),
+            cause: cause.map(str::to_owned),
+            exit,
+            resent: false,
         }
     }
 
     fn existing(reason: &str) -> RequestRecord {
-        RequestRecord {
-            outcome: "existing".into(),
-            reason: Some(reason.to_owned()),
-            cause: None,
-            exit: None,
-        }
+        RequestRecord::new(EXISTING, Some(reason), None, None)
     }
 
     fn fallback(cause: &str, exit: Option<i32>) -> RequestRecord {
-        RequestRecord {
-            outcome: "fallback".into(),
-            reason: None,
-            cause: Some(cause.to_owned()),
-            exit,
-        }
+        RequestRecord::new(FALLBACK, None, Some(cause), exit)
     }
 
     fn report(&self, recorded_now: bool) -> RequestReport {
@@ -280,15 +310,81 @@ impl RequestRecord {
     }
 }
 
+impl RetryRecord {
+    fn new(review_id: u64, outcome: &str) -> RetryRecord {
+        RetryRecord {
+            review_id,
+            outcome: outcome.to_owned(),
+            cause: None,
+            exit: None,
+            resent: false,
+        }
+    }
+
+    fn fallback(self, cause: &str, exit: Option<i32>) -> RetryRecord {
+        RetryRecord {
+            outcome: FALLBACK.into(),
+            cause: Some(cause.to_owned()),
+            exit,
+            ..self
+        }
+    }
+}
+
+/// Why a call ends without a verdict: the caller repeats on `pending` and
+/// `unreadable`; a refusal is the operation's error.
+enum Stop {
+    Pending(String),
+    Unreadable(Unreadable),
+    Refused(Error),
+}
+
+impl From<Error> for Stop {
+    fn from(error: Error) -> Stop {
+        Stop::Refused(error)
+    }
+}
+
+impl From<verify::Cause> for Stop {
+    fn from(cause: verify::Cause) -> Stop {
+        Stop::Unreadable(cause.into())
+    }
+}
+
+type Step<T> = std::result::Result<T, Stop>;
+
+/// What the locked read of an unconfirmed request found.
+enum Unconfirmed {
+    /// Its first miss: the `resent` mark written, the POST owed again.
+    Resend,
+    /// A miss after the resend: written `fallback cause=unconfirmed`.
+    FellBack,
+    /// Another writer moved the request since this call read it.
+    Moved,
+}
+
+struct Verdict {
+    word: &'static str,
+    reason: String,
+    /// A `timeout` ends the head's period.
+    period_ends: bool,
+}
+
+impl Verdict {
+    fn new(word: &'static str, reason: String) -> Verdict {
+        Verdict {
+            word,
+            reason,
+            period_ends: false,
+        }
+    }
+}
+
 /// Read the pull request, refuse one that is not open, resolve or read the
-/// gate mode, judge the reviewers' state on the head, make the one request
-/// the head still owes, and record the verdict on the item at `path`. The
+/// gate mode, judge the reviewers' state on the head, make the acts the
+/// head still owes, and record the verdict on the item at `path`. The
 /// request's forms refuse before any read; a missing record refuses before
 /// any network read.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the verify-review operation's one record read before GitHub, its reads of the pull request and its one request through gh, and its writes under the record's write check"
-)]
 pub fn run(
     path: &Path,
     r: &VerifyReview,
@@ -314,7 +410,7 @@ pub fn run(
     }
     let review = review_settings(&settings.review)?;
     let snapshot = loaded(path)?;
-    let gh = Gh;
+    let gh = Gh::new(Path::new("gh"));
     let reply = ReviewVerified::new(r);
     let view = match review::view(&gh, &r.repo, r.pr) {
         Ok(view) => view,
@@ -329,601 +425,671 @@ pub fn run(
             });
         }
     }
-    let mut reply = ReviewVerified {
+    let reply = ReviewVerified {
         head: Some(view.head.clone()),
         base: Some(view.base.clone()),
         ..reply
     };
-    let now = env.now_secs;
-    let stamp = env.iso();
-
-    // The gate mode: recorded once, read on every later call.
-    let mode = match recorded_mode(path, &snapshot.doc)? {
-        Some(mode) => mode,
-        None => {
-            let policy = policy(&r.base_checkout)?;
-            let mode = match policy.get(GATE_MODE_KEY).map(String::as_str) {
-                None | Some("enforce") => match review::gate_mode(&gh, &r.repo, &view.base) {
-                    Ok(mode) => mode,
-                    Err(cause) => return Ok(reply.unreadable(cause.into())),
-                },
-                Some("off") => GateMode::Off,
-                Some(other) => return Err(settings::value_refusal(GATE_MODE_KEY, other)),
-            };
-            let (base, at) = (view.base.clone(), stamp.clone());
-            write(path, locking, |doc| {
-                let record = review_mut(path, doc)?;
-                if let Some(standing) = record.get("mode").and_then(Value::as_str) {
-                    return GateMode::parse(standing).ok_or_else(|| shape(path, "mode"));
-                }
-                record.insert("mode".into(), json!(mode.word()));
-                record.insert("mode_at".into(), json!(at));
-                record.insert("base".into(), json!(base));
-                Ok(mode)
-            })?
-        }
+    let mut gate = Gate {
+        path,
+        locking,
+        r,
+        review,
+        gh,
+        view,
+        doc: snapshot.doc,
+        now: env.now_secs,
+        stamp: env.iso(),
+        reply,
+        reviews: None,
+        work: None,
+        asked: false,
+        note: None,
     };
-    reply.mode = Some(mode.word().to_owned());
+    match gate.judge() {
+        Ok(verdict) => gate.record_verdict(verdict),
+        Err(Stop::Pending(reason)) => Ok(gate.reply.pending(reason)),
+        Err(Stop::Unreadable(cause)) => Ok(gate.reply.unreadable(cause)),
+        Err(Stop::Refused(error)) => Err(error),
+    }
+}
 
-    // The ready mark comes under either mode: a push-first draft is made
-    // ready by its early request, which the gate's mode does not gate.
-    let mut record = head_record(path, &snapshot.doc, &view.head)?;
-    let mut draft = view.draft;
-    if record.is_none() && r.mark_ready && draft {
-        let fresh = HeadRecord {
-            at: stamp.clone(),
-            period_started: stamp.clone(),
-            timeouts: 0,
-            ready: Some("marking".into()),
-            request: None,
-            retry: None,
+/// One call's reads and acts on one head: the view, the item as the call
+/// found it, and Copilot's reviews and work, each read at most once.
+struct Gate<'a> {
+    path: &'a Path,
+    locking: Locking,
+    r: &'a VerifyReview,
+    review: Review,
+    gh: Gh,
+    view: View,
+    doc: Document,
+    now: u64,
+    stamp: String,
+    reply: ReviewVerified,
+    reviews: Option<CopilotReviews>,
+    work: Option<Option<Work>>,
+    /// Whether this call sent a POST, which no read in the same call can
+    /// yet confirm.
+    asked: bool,
+    /// The pending reason a refused request leaves while the period runs.
+    note: Option<String>,
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the verify-review operation's reads of the pull request and its acts through gh, and its writes under the record's write check"
+)]
+impl Gate<'_> {
+    fn judge(&mut self) -> Step<Verdict> {
+        let mode = self.mode()?;
+        self.reply.mode = Some(mode.word().to_owned());
+        let mut record = head_record(self.path, &self.doc, &self.view.head)?;
+        // The ready mark comes under either mode: a push-first draft is made
+        // ready by its early request, which the gate's mode does not gate.
+        let marked = self.mark_ready(&mut record)?;
+        if mode == GateMode::Off {
+            return self.permit(Verdict::new(OFF, "gate off".into()), record.as_ref());
+        }
+
+        // The reviewers' state on the head, routed before any request.
+        let unresolved = review::unresolved_threads(&self.gh, &self.r.repo, self.r.pr)?;
+        let copilot = if review::copilot_reviewed(&self.view) {
+            Some(self.reviews()?.clone())
+        } else {
+            None
         };
-        let head = view.head.clone();
-        let fresh = write(path, locking, |doc| {
-            let heads = heads_mut(path, doc)?;
-            match heads.get(&head) {
-                Some(standing) => serde_json::from_value::<HeadRecord>(standing.clone())
-                    .map_err(|_| shape(path, "heads")),
-                None => {
-                    heads.insert(head.clone(), serde_json::to_value(&fresh)?);
-                    Ok(fresh.clone())
-                }
+        let judged = review::judge(&self.view, copilot.as_ref());
+        self.reply.review_decision = Some(judged.decision.clone());
+        self.reply.approvals = Some(judged.approvals);
+        self.reply.changes_requested = Some(judged.changes_requested);
+        self.reply.unresolved_count = Some(unresolved);
+        if judged.approved && unresolved == 0 {
+            let reason = format!(
+                "decision={} approvals={} unresolved={unresolved}",
+                judged.decision, judged.approvals
+            );
+            return self.permit(Verdict::new("approved", reason), record.as_ref());
+        }
+        if !judged.approved
+            && (judged.decision == "CHANGES_REQUESTED" || judged.changes_requested > 0)
+        {
+            let reason = format!(
+                "changes_requested={} unresolved={unresolved}",
+                judged.changes_requested
+            );
+            return Ok(Verdict::new("changes_requested", reason));
+        }
+        if unresolved > 0 {
+            let reason = format!("unresolved={unresolved} decision={}", judged.decision);
+            return Ok(Verdict::new("comments", reason));
+        }
+
+        let draft = self.view.draft && !marked;
+        let record = self.request(record, draft, marked)?;
+        let error = copilot
+            .as_ref()
+            .and_then(|reviews| reviews.latest.as_ref())
+            .filter(|latest| latest.error);
+        if let Some(latest) = error
+            && self.review.copilot_requests
+            && let Some(verdict) = self.retry(&record, latest.id, &latest.submitted_at)?
+        {
+            return Ok(verdict);
+        }
+        self.period(&record, judged.engaged)
+    }
+
+    /// The gate mode: recorded once, read on every later call.
+    fn mode(&self) -> Step<GateMode> {
+        if let Some(mode) = recorded_mode(self.path, &self.doc)? {
+            return Ok(mode);
+        }
+        let policy = policy(&self.r.base_checkout)?;
+        let mode = match policy.get(GATE_MODE_KEY).map(String::as_str) {
+            None | Some("enforce") => review::gate_mode(&self.gh, &self.r.repo, &self.view.base)?,
+            Some("off") => GateMode::Off,
+            Some(other) => return Err(settings::value_refusal(GATE_MODE_KEY, other).into()),
+        };
+        let (path, base, at) = (self.path, &self.view.base, &self.stamp);
+        Ok(write(path, self.locking, |doc| {
+            let record = review_mut(path, doc)?;
+            if let Some(standing) = record.get("mode").and_then(Value::as_str) {
+                return GateMode::parse(standing).ok_or_else(|| shape(path, "mode"));
             }
+            record.insert("mode".into(), json!(mode.word()));
+            record.insert("mode_at".into(), json!(at));
+            record.insert("base".into(), json!(base));
+            Ok(mode)
+        })?)
+    }
+
+    /// Mark an open draft ready where the call asks: a mark recorded
+    /// `marking` and a view still draft is sent again. Answers whether this
+    /// call made the draft ready.
+    fn mark_ready(&mut self, record: &mut Option<HeadRecord>) -> Step<bool> {
+        let done = |head: &HeadRecord| head.ready == Some(Ready::Done);
+        if !self.r.mark_ready || !self.view.draft || record.as_ref().is_some_and(done) {
+            return Ok(false);
+        }
+        let stamp = &self.stamp;
+        let marking = self.update_head(|standing| {
+            let mut head = standing.unwrap_or_else(|| HeadRecord::fresh(stamp));
+            if !done(&head) {
+                head.ready = Some(Ready::Marking);
+            }
+            Ok((head.clone(), head))
         })?;
-        match review::mark_ready(&gh, &r.repo, r.pr) {
-            Ok(Acted::Made) => {}
-            Ok(Acted::Refused { detail, .. }) => {
-                return Ok(reply.unreadable(Unreadable {
+        if done(&marking) {
+            *record = Some(marking);
+            return Ok(false);
+        }
+        match review::mark_ready(&self.gh, &self.r.repo, self.r.pr)? {
+            Acted::Made => {}
+            Acted::Refused { detail, .. } => {
+                return Err(Stop::Unreadable(Unreadable {
                     reason: "ready-failed".into(),
                     detail: Some(detail),
                 }));
             }
-            Err(cause) => return Ok(reply.unreadable(cause.into())),
         }
-        let after = match review::view(&gh, &r.repo, r.pr) {
-            Ok(after) => after,
-            Err(cause) => return Ok(reply.unreadable(cause.into())),
-        };
-        if after.head != view.head {
-            return Ok(reply.pending(format!("ready-head-moved head={}", after.head)));
+        let after = review::view(&self.gh, &self.r.repo, self.r.pr)?;
+        if after.head != self.view.head {
+            return Err(Stop::Pending(format!(
+                "ready-head-moved head={}",
+                after.head
+            )));
         }
         if after.draft {
-            return Ok(reply.unreadable(Unreadable {
+            return Err(Stop::Unreadable(Unreadable {
                 reason: "ready-unconfirmed".into(),
                 detail: None,
             }));
         }
-        draft = false;
-        record = Some(fresh);
-    }
-    if mode == GateMode::Off {
-        return record_verdict(
-            path, locking, reply, &view.head, "off", "gate off", &stamp, None,
-        );
+        let path = self.path;
+        *record = Some(self.update_head(|standing| {
+            let mut head = standing.ok_or_else(|| shape(path, "heads"))?;
+            head.ready = Some(Ready::Done);
+            Ok((head.clone(), head))
+        })?);
+        Ok(true)
     }
 
-    // The reviewers' state on the head, routed before any request.
-    let unresolved = match review::unresolved_threads(&gh, &r.repo, r.pr) {
-        Ok(count) => count,
-        Err(cause) => return Ok(reply.unreadable(cause.into())),
-    };
-    let mut copilot: Option<CopilotReviews> = None;
-    if review::copilot_reviewed(&view) {
-        copilot = match review::copilot_reviews(&gh, &r.repo, r.pr, &view.head) {
-            Ok(reviews) => Some(reviews),
-            Err(cause) => return Ok(reply.unreadable(cause.into())),
+    /// The head's request, claimed once and read after: a standing
+    /// `requested` GitHub shows no sign of is sent once more, then falls
+    /// back `unconfirmed`. A `draft` fallback lapses once this call made
+    /// the draft ready.
+    fn request(
+        &mut self,
+        record: Option<HeadRecord>,
+        draft: bool,
+        marked: bool,
+    ) -> Step<HeadRecord> {
+        let stands = |head: &HeadRecord| {
+            head.request.as_ref().is_some_and(|request| {
+                !(marked
+                    && request.outcome == FALLBACK
+                    && request.cause.as_deref() == Some("draft"))
+            })
         };
-    }
-    let judged = review::judge(&view, copilot.as_ref());
-    reply.review_decision = Some(judged.decision.clone());
-    reply.approvals = Some(judged.approvals);
-    reply.changes_requested = Some(judged.changes_requested);
-    reply.unresolved_count = Some(unresolved);
-    let blocker = regression_blocker(path, &snapshot.doc)?;
-    let approved_or = |reply: ReviewVerified, verdict: &str, reason: String| match &blocker {
-        Some(location) => record_verdict(
-            path,
-            locking,
-            reply,
-            &view.head,
-            "blocked",
-            &format!("regression-open location={location}"),
-            &stamp,
-            None,
-        ),
-        None => record_verdict(
-            path, locking, reply, &view.head, verdict, &reason, &stamp, None,
-        ),
-    };
-    if judged.approved && unresolved == 0 {
-        let reason = format!(
-            "decision={} approvals={} unresolved={unresolved}",
-            judged.decision, judged.approvals
-        );
-        return approved_or(reply, "approved", reason);
-    }
-    if !judged.approved && (judged.decision == "CHANGES_REQUESTED" || judged.changes_requested > 0)
-    {
-        let reason = format!(
-            "changes_requested={} unresolved={unresolved}",
-            judged.changes_requested
-        );
-        return record_verdict(
-            path,
-            locking,
-            reply,
-            &view.head,
-            "changes_requested",
-            &reason,
-            &stamp,
-            None,
-        );
-    }
-    if unresolved > 0 {
-        let reason = format!("unresolved={unresolved} decision={}", judged.decision);
-        return record_verdict(
-            path, locking, reply, &view.head, "comments", &reason, &stamp, None,
-        );
-    }
-
-    // The head's record: the request the head owes, claimed once.
-    let mut work_read: Option<Option<Work>> = None;
-    let mut recorded_now = false;
-    let mut record = match record {
-        Some(record) if record.request.is_some() => record,
-        standing => {
-            let mut fresh = standing.unwrap_or(HeadRecord {
-                at: stamp.clone(),
-                period_started: stamp.clone(),
-                timeouts: 0,
-                ready: None,
-                request: None,
-                retry: None,
-            });
-            let policy = policy(&r.base_checkout)?;
-            let pull = match review::pull(&gh, &r.repo, r.pr) {
-                Ok(pull) => pull,
-                Err(cause) => return Ok(reply.unreadable(cause.into())),
-            };
-            if pull.head.sha != view.head {
-                return Ok(reply.pending(format!("head-moved head={}", pull.head.sha)));
-            }
-            let refresh = match policy.get(REFRESH_REVIEW_KEY).map(String::as_str) {
-                None | Some("copilot") => false,
-                Some("overseer") => {
-                    let declared = |key: &str| -> Result<String> {
-                        policy
-                            .get(key)
-                            .filter(|v| !v.is_empty())
-                            .cloned()
-                            .ok_or_else(|| settings::value_refusal(key, ""))
-                    };
-                    let (branch, author) =
-                        (declared(REFRESH_BRANCH_KEY)?, declared(REFRESH_AUTHOR_KEY)?);
-                    match &pull.user {
-                        Nullable::Present(user) => {
-                            pull.head.branch == branch && user.login == author && user.kind == "Bot"
-                        }
-                        Nullable::Absent | Nullable::Null => false,
+        if let Some(head) = record.as_ref().filter(|head| stands(head)) {
+            self.reply.request = head.request.as_ref().map(|q| q.report(false));
+            return self.confirm_request(head.clone());
+        }
+        let policy = policy(&self.r.base_checkout)?;
+        let pull = review::pull(&self.gh, &self.r.repo, self.r.pr)?;
+        if pull.head.sha != self.view.head {
+            return Err(Stop::Pending(format!("head-moved head={}", pull.head.sha)));
+        }
+        let refresh = match policy.get(REFRESH_REVIEW_KEY).map(String::as_str) {
+            None | Some("copilot") => false,
+            Some("overseer") => {
+                let declared = |key: &str| -> Result<String> {
+                    policy
+                        .get(key)
+                        .filter(|v| !v.is_empty())
+                        .cloned()
+                        .ok_or_else(|| settings::value_refusal(key, ""))
+                };
+                let (branch, author) =
+                    (declared(REFRESH_BRANCH_KEY)?, declared(REFRESH_AUTHOR_KEY)?);
+                match &pull.user {
+                    Nullable::Present(user) => {
+                        pull.head.branch == branch && user.login == author && user.kind == "Bot"
                     }
+                    Nullable::Absent | Nullable::Null => false,
                 }
-                Some(other) => return Err(settings::value_refusal(REFRESH_REVIEW_KEY, other)),
-            };
-            // An error answer standing on the head makes this request its
-            // one retry: claimed in the same write, so no second POST follows.
-            let mut retry = None;
-            let request = if refresh {
-                RequestRecord::fallback("refresh", None)
-            } else if !review.copilot_requests {
-                RequestRecord::fallback("off", None)
-            } else if draft || pull.draft {
-                RequestRecord::fallback("draft", None)
+            }
+            Some(other) => return Err(settings::value_refusal(REFRESH_REVIEW_KEY, other).into()),
+        };
+        // The released writer's retry is carried into the head's retry, so
+        // a head mid-wait at an upgrade spends no second retry; an error
+        // answer standing on the head makes this request its one retry,
+        // claimed in the same write, so no second POST follows.
+        let released = released_retry(self.path, &self.doc, &self.view.head)?;
+        let mut retry = released.clone();
+        let request = if refresh {
+            RequestRecord::fallback("refresh", None)
+        } else if !self.review.copilot_requests {
+            RequestRecord::fallback("off", None)
+        } else if draft || pull.draft {
+            RequestRecord::fallback("draft", None)
+        } else {
+            let reviews = self.reviews()?.clone();
+            let work = self.work()?.is_some();
+            let released = released.as_ref().map(|retry| retry.outcome.as_str());
+            if reviews
+                .latest
+                .as_ref()
+                .is_some_and(|latest| latest.no_files)
+            {
+                RequestRecord::fallback("no-files", None)
+            } else if released == Some(REQUESTED) {
+                RequestRecord::existing("existing-error-retry")
+            } else if released == Some(FALLBACK) {
+                RequestRecord::fallback("error", None)
+            } else if work {
+                RequestRecord::existing("existing-run")
+            } else if reviews.any_non_error {
+                RequestRecord::existing("existing-review")
             } else {
-                let reviews = match copilot.clone() {
-                    Some(reviews) => reviews,
-                    None => match review::copilot_reviews(&gh, &r.repo, r.pr, &view.head) {
-                        Ok(reviews) => reviews,
-                        Err(cause) => return Ok(reply.unreadable(cause.into())),
-                    },
-                };
-                let work = match review::copilot_work(&gh, &r.repo, r.pr, &view.head) {
-                    Ok(work) => work,
-                    Err(cause) => return Ok(reply.unreadable(cause.into())),
-                };
-                work_read = Some(work.clone());
-                let released = released_retry(path, &snapshot.doc, &view.head)?;
-                if reviews
+                retry = reviews
                     .latest
                     .as_ref()
-                    .is_some_and(|latest| latest.no_files)
-                {
-                    RequestRecord::fallback("no-files", None)
-                } else if released.as_deref() == Some("requested") {
-                    RequestRecord::existing("existing-error-retry")
-                } else if released.as_deref() == Some("fallback") {
-                    RequestRecord::fallback("error", None)
-                } else if work.is_some() {
-                    RequestRecord::existing("existing-run")
-                } else if reviews.any_non_error {
-                    RequestRecord::existing("existing-review")
-                } else {
-                    retry = reviews
-                        .latest
-                        .as_ref()
-                        .filter(|latest| latest.error)
-                        .map(|latest| RetryRecord {
-                            review_id: latest.id,
-                            outcome: "requested".into(),
-                            cause: None,
-                            exit: None,
-                        });
-                    RequestRecord::requested()
-                }
-            };
-            let post = request.outcome == "requested";
-            fresh.request = Some(request);
-            fresh.retry = retry;
-            let head = view.head.clone();
-            let claimed = write(path, locking, |doc| {
-                let heads = heads_mut(path, doc)?;
-                match heads.get(&head) {
-                    Some(standing) => {
-                        let standing: HeadRecord = serde_json::from_value(standing.clone())
-                            .map_err(|_| shape(path, "heads"))?;
-                        if standing.request.is_some() {
-                            return Ok((standing, false));
-                        }
-                        let merged = HeadRecord {
-                            request: fresh.request.clone(),
-                            retry: fresh.retry.clone(),
-                            ..standing
-                        };
-                        heads.insert(head.clone(), serde_json::to_value(&merged)?);
-                        Ok((merged, true))
-                    }
-                    None => {
-                        heads.insert(head.clone(), serde_json::to_value(&fresh)?);
-                        Ok((fresh.clone(), true))
-                    }
-                }
-            })?;
-            let (claimed, claimed_now) = claimed;
-            recorded_now = claimed_now;
-            if claimed_now && post {
-                match review::request_review(&gh, &r.repo, r.pr) {
-                    Ok(Acted::Made) => {}
-                    Ok(Acted::Refused { exit, .. }) => {
-                        let refused = RequestRecord::fallback("refused", exit);
-                        let head = view.head.clone();
-                        let standing = write(path, locking, |doc| {
-                            let heads = heads_mut(path, doc)?;
-                            let mut standing: HeadRecord = heads
-                                .get(&head)
-                                .cloned()
-                                .map(serde_json::from_value)
-                                .transpose()
-                                .map_err(|_| shape(path, "heads"))?
-                                .ok_or_else(|| shape(path, "heads"))?;
-                            standing.request = Some(refused.clone());
-                            heads.insert(head.clone(), serde_json::to_value(&standing)?);
-                            Ok(standing)
-                        })?;
-                        reply.request = standing.request.as_ref().map(|q| q.report(true));
-                        let reason = format!(
-                            "request-refused exit={}",
-                            exit.map_or("none".to_owned(), |e| e.to_string())
-                        );
-                        return finish(
-                            path, locking, reply, &view.head, &standing, &review, now, &stamp,
-                            &judged, reason, work_read, &gh, r,
-                        );
-                    }
-                    Err(cause) => return Ok(reply.unreadable(cause.into())),
-                }
+                    .filter(|latest| latest.error)
+                    .map(|latest| RetryRecord::new(latest.id, REQUESTED));
+                RequestRecord::new(REQUESTED, None, None, None)
             }
-            claimed
-        }
-    };
-    reply.request = record.request.as_ref().map(|q| q.report(recorded_now));
-
-    // Copilot's error answer: one retry per head, claimed before its request.
-    let error = copilot
-        .as_ref()
-        .and_then(|reviews| reviews.latest.as_ref())
-        .filter(|latest| latest.error)
-        .map(|latest| latest.id);
-    if let Some(error_id) = error
-        && review.copilot_requests
-    {
-        match &record.retry {
-            None => {
-                let retry = RetryRecord {
-                    review_id: error_id,
-                    outcome: "requested".into(),
-                    cause: None,
-                    exit: None,
+        };
+        let post = request.outcome == REQUESTED;
+        let stamp = &self.stamp;
+        let (claimed, claimed_now) = self.update_head(|standing| match standing {
+            Some(standing) if stands(&standing) => Ok((standing.clone(), (standing, false))),
+            standing => {
+                let base = standing.unwrap_or_else(|| HeadRecord::fresh(stamp));
+                let merged = HeadRecord {
+                    request: Some(request.clone()),
+                    retry: retry.clone().or(base.retry.clone()),
+                    ..base
                 };
-                let head = view.head.clone();
-                let claimed = write(path, locking, |doc| {
-                    let heads = heads_mut(path, doc)?;
-                    let mut standing: HeadRecord = heads
-                        .get(&head)
-                        .cloned()
-                        .map(serde_json::from_value)
-                        .transpose()
-                        .map_err(|_| shape(path, "heads"))?
-                        .ok_or_else(|| shape(path, "heads"))?;
-                    if standing.retry.is_some() {
-                        return Ok(false);
-                    }
-                    standing.retry = Some(retry.clone());
-                    heads.insert(head.clone(), serde_json::to_value(&standing)?);
-                    Ok(true)
-                })?;
-                if claimed {
-                    record.retry = Some(retry);
-                    match review::request_review(&gh, &r.repo, r.pr) {
-                        Ok(Acted::Made) => {}
-                        Ok(Acted::Refused { exit, .. }) => {
-                            let cause = format!(
-                                "refused exit={}",
-                                exit.map_or("none".to_owned(), |e| e.to_string())
-                            );
-                            record_retry_fallback(path, locking, &view.head, &cause, exit)?;
-                            let reason = format!("copilot-error cause={cause}");
-                            return record_verdict(
-                                path,
-                                locking,
-                                reply,
-                                &view.head,
-                                "copilot-error",
-                                &reason,
-                                &stamp,
-                                None,
-                            );
-                        }
-                        Err(cause) => return Ok(reply.unreadable(cause.into())),
-                    }
+                Ok((merged.clone(), (merged, true)))
+            }
+        })?;
+        self.reply.request = claimed.request.as_ref().map(|q| q.report(claimed_now));
+        if claimed_now && post {
+            return self.post_request(claimed);
+        }
+        Ok(claimed)
+    }
+
+    /// A standing `requested` read against GitHub's record of it: Copilot's
+    /// work, a request event for Copilot or a Copilot review on the head
+    /// confirms it; with none, it is sent once more under its `resent`
+    /// mark, and a second miss falls back `unconfirmed` so the fallback
+    /// notice goes out.
+    fn confirm_request(&mut self, head: HeadRecord) -> Step<HeadRecord> {
+        let Some(request) = head.request.clone() else {
+            return Ok(head);
+        };
+        if request.outcome != REQUESTED {
+            return Ok(head);
+        }
+        let reviews = self.reviews()?.clone();
+        let landed = self.work()?.is_some()
+            || reviews.requested_at.is_some()
+            || reviews.latest.is_some()
+            || reviews.any_non_error;
+        if landed {
+            return Ok(head);
+        }
+        let path = self.path;
+        let (head, read) = self.update_head(|standing| {
+            let mut head = standing.ok_or_else(|| shape(path, "heads"))?;
+            let read = match &mut head.request {
+                Some(request) if request.outcome == REQUESTED && !request.resent => {
+                    request.resent = true;
+                    Unconfirmed::Resend
                 }
+                Some(request) if request.outcome == REQUESTED => {
+                    *request = RequestRecord::fallback("unconfirmed", None);
+                    Unconfirmed::FellBack
+                }
+                Some(_) | None => Unconfirmed::Moved,
+            };
+            Ok((head.clone(), (head, read)))
+        })?;
+        match read {
+            Unconfirmed::Resend => self.post_request(head),
+            Unconfirmed::FellBack => {
+                self.reply.request = head.request.as_ref().map(|q| q.report(true));
+                Ok(head)
             }
-            Some(retry) if retry.outcome != "fallback" && retry.review_id != error_id => {
-                record_retry_fallback(path, locking, &view.head, "error", None)?;
-                return record_verdict(
-                    path,
-                    locking,
-                    reply,
-                    &view.head,
-                    "copilot-error",
-                    "copilot-error cause=error",
-                    &stamp,
-                    None,
-                );
+            Unconfirmed::Moved => {
+                self.reply.request = head.request.as_ref().map(|q| q.report(false));
+                Ok(head)
             }
-            Some(_) => {}
         }
     }
 
-    finish(
-        path,
-        locking,
-        reply,
-        &view.head,
-        &record,
-        &review,
-        now,
-        &stamp,
-        &judged,
-        String::new(),
-        work_read,
-        &gh,
-        r,
-    )
-}
+    /// The request's POST, its claim standing; a refusal rewrites the
+    /// request, and the retry claimed in the same write, as refused.
+    fn post_request(&mut self, claimed: HeadRecord) -> Step<HeadRecord> {
+        self.asked = true;
+        let exit = match review::request_review(&self.gh, &self.r.repo, self.r.pr)? {
+            Acted::Made => return Ok(claimed),
+            Acted::Refused { exit, .. } => exit,
+        };
+        let path = self.path;
+        let head = self.update_head(|standing| {
+            let mut head = standing.ok_or_else(|| shape(path, "heads"))?;
+            head.request = Some(RequestRecord::fallback("refused", Some(exit)));
+            if let Some(retry) = head.retry.take() {
+                head.retry = Some(if retry.outcome == REQUESTED {
+                    retry.fallback("refused", Some(exit))
+                } else {
+                    retry
+                });
+            }
+            Ok((head.clone(), head))
+        })?;
+        self.reply.request = head.request.as_ref().map(|q| q.report(true));
+        self.note = Some(format!("request-refused exit={exit}"));
+        Ok(head)
+    }
 
-/// Copilot's flight against the hold and the reviewer's silence against
-/// the period: `pending` while either budget runs, else the period's
-/// verdict, `proceeded` on a silent reviewer under `proceed`, `timeout`
-/// otherwise, which ends the period and counts it.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the one tail of the operation, called from its two exits"
-)]
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the verify-review operation's reads of Copilot's work through gh and its verdict write under the record's write check"
-)]
-fn finish(
-    path: &Path,
-    locking: Locking,
-    mut reply: ReviewVerified,
-    head: &str,
-    record: &HeadRecord,
-    review: &Review,
-    now: u64,
-    stamp: &str,
-    judged: &review::Judged,
-    refused: String,
-    work_read: Option<Option<Work>>,
-    gh: &Gh,
-    r: &VerifyReview,
-) -> Result<ReviewVerified> {
-    let since = clock::epoch_secs(&record.at).ok_or_else(|| shape(path, "heads"))?;
-    let work = match work_read {
-        Some(work) => work,
-        None => match review::copilot_work(gh, &r.repo, r.pr, head) {
-            Ok(work) => work,
-            Err(cause) => return Ok(reply.unreadable(cause.into())),
-        },
-    };
-    let hold = review.copilot_hold;
-    reply.copilot = Some(match work {
-        None => CopilotReport {
-            state: "none".into(),
-            run: None,
-            started_at: None,
-        },
-        Some(work) => CopilotReport {
-            state: if now.saturating_sub(since) < hold {
+    /// Copilot's error answer `error_id`: one retry per head, decided with
+    /// the request. A request the policy or the draft held back holds the
+    /// retry back too, its cause the verdict's; Copilot's work already in
+    /// flight stands for the retry; a retry the released writer recorded
+    /// is the head's; a `requested` retry GitHub shows no sign of is sent
+    /// once more; and a second error answer after the retry is the verdict.
+    fn retry(
+        &mut self,
+        record: &HeadRecord,
+        error_id: u64,
+        error_at: &str,
+    ) -> Step<Option<Verdict>> {
+        let released = released_retry(self.path, &self.doc, &self.view.head)?;
+        let standing = record.retry.clone().or(released.clone());
+        let Some(retry) = standing else {
+            let held = record
+                .request
+                .as_ref()
+                .filter(|request| request.outcome == FALLBACK)
+                .and_then(|request| request.cause.as_deref())
+                .filter(|cause| matches!(*cause, "refresh" | "draft"));
+            if let Some(cause) = held {
+                let fallback = RetryRecord {
+                    cause: Some(cause.to_owned()),
+                    ..RetryRecord::new(error_id, FALLBACK)
+                };
+                if self.set_retry(|standing| standing.is_none().then(|| fallback.clone()))? {
+                    return Ok(Some(Verdict::new(
+                        "copilot-error",
+                        format!("copilot-error cause={cause}"),
+                    )));
+                }
+                return Ok(None);
+            }
+            let fresh = if self.work()?.is_some() {
+                RetryRecord::new(error_id, EXISTING)
+            } else {
+                RetryRecord::new(error_id, REQUESTED)
+            };
+            let claimed = self.set_retry(|standing| standing.is_none().then(|| fresh.clone()))?;
+            if claimed && fresh.outcome == REQUESTED {
+                return self.post_retry(fresh);
+            }
+            return Ok(None);
+        };
+        if retry.outcome != FALLBACK && retry.review_id != error_id {
+            self.set_retry(|_| Some(retry.clone().fallback("error", None)))?;
+            return Ok(Some(Verdict::new(
+                "copilot-error",
+                "copilot-error cause=error".into(),
+            )));
+        }
+        if retry.outcome != REQUESTED || self.asked {
+            return Ok(None);
+        }
+        let landed = self.work()?.is_some()
+            || self
+                .reviews()?
+                .requested_at
+                .as_deref()
+                .is_some_and(|at| at >= error_at);
+        if landed {
+            return Ok(None);
+        }
+        let carried = |standing: Option<RetryRecord>| standing.or(released.clone());
+        if retry.resent {
+            let cause = "unconfirmed";
+            self.set_retry(|standing| carried(standing).map(|r| r.fallback(cause, None)))?;
+            return Ok(Some(Verdict::new(
+                "copilot-error",
+                format!("copilot-error cause={cause}"),
+            )));
+        }
+        let resent = RetryRecord {
+            resent: true,
+            ..retry.clone()
+        };
+        let claimed = self.set_retry(|standing| {
+            (carried(standing).as_ref() == Some(&retry)).then(|| resent.clone())
+        })?;
+        if claimed {
+            return self.post_retry(resent);
+        }
+        Ok(None)
+    }
+
+    /// The retry's POST, its claim standing; a refusal is the verdict.
+    fn post_retry(&mut self, retry: RetryRecord) -> Step<Option<Verdict>> {
+        self.asked = true;
+        let exit = match review::request_review(&self.gh, &self.r.repo, self.r.pr)? {
+            Acted::Made => return Ok(None),
+            Acted::Refused { exit, .. } => exit,
+        };
+        let cause = format!("refused exit={exit}");
+        self.set_retry(|_| Some(retry.clone().fallback(&cause, Some(exit))))?;
+        Ok(Some(Verdict::new(
+            "copilot-error",
+            format!("copilot-error cause={cause}"),
+        )))
+    }
+
+    /// Copilot's flight against the hold and the reviewer's silence against
+    /// the period: `pending` while the period runs, else the period's
+    /// verdict, `proceeded` on a silent reviewer under `proceed`, `timeout`
+    /// otherwise, which ends the period and counts it.
+    fn period(&mut self, record: &HeadRecord, engaged: usize) -> Step<Verdict> {
+        self.hold(Some(record))?;
+        let started =
+            clock::epoch_secs(&record.period_started).ok_or_else(|| shape(self.path, "heads"))?;
+        let spent = self.now.saturating_sub(started);
+        let wait = self.review.wait;
+        if spent < wait {
+            let state = self
+                .reply
+                .copilot
+                .as_ref()
+                .map_or("none", |c| c.state.as_str());
+            let reason = self.note.take().unwrap_or_else(|| {
+                format!("review-pending copilot={state} remaining={}", wait - spent)
+            });
+            return Err(Stop::Pending(reason));
+        }
+        if self.review.on_timeout == OnTimeout::Proceed && engaged == 0 {
+            let reason = format!("silent after {wait}s");
+            return self.permit(Verdict::new("proceeded", reason), Some(record));
+        }
+        Ok(Verdict {
+            word: "timeout",
+            reason: format!("engaged={engaged} after {wait}s"),
+            period_ends: true,
+        })
+    }
+
+    /// The one judgement before a verdict that permits a merge is
+    /// published: a regression blocker standing open refuses it, and
+    /// Copilot's work in flight within its hold keeps it `pending`. An
+    /// `off` gate awaits no Copilot work.
+    fn permit(&mut self, verdict: Verdict, record: Option<&HeadRecord>) -> Step<Verdict> {
+        if let Some(location) = regression_blocker(self.path, &loaded(self.path)?.doc)? {
+            return Ok(Verdict::new(
+                "blocked",
+                format!("regression-open location={location}"),
+            ));
+        }
+        if verdict.word != OFF
+            && let Some(remaining) = self.hold(record)?
+        {
+            let run = self
+                .reply
+                .copilot
+                .as_ref()
+                .and_then(|c| c.run)
+                .unwrap_or_default();
+            return Err(Stop::Pending(format!(
+                "copilot-pending run={run} remaining={remaining}"
+            )));
+        }
+        Ok(verdict)
+    }
+
+    /// Copilot's work in flight against the hold from the head record's
+    /// stamp, written to the reply: the seconds left while the hold runs.
+    /// Work on a head with no record yet stamps one, so the hold has a
+    /// start every later call reads.
+    fn hold(&mut self, record: Option<&HeadRecord>) -> Step<Option<u64>> {
+        let Some(work) = self.work()?.clone() else {
+            self.reply.copilot = Some(CopilotReport {
+                state: "none".into(),
+                run: None,
+                started_at: None,
+            });
+            return Ok(None);
+        };
+        let at = match record {
+            Some(record) => record.at.clone(),
+            None => {
+                let stamp = &self.stamp;
+                self.update_head(|standing| {
+                    let head = standing.unwrap_or_else(|| HeadRecord::fresh(stamp));
+                    Ok((head.clone(), head))
+                })?
+                .at
+            }
+        };
+        let since = clock::epoch_secs(&at).ok_or_else(|| shape(self.path, "heads"))?;
+        let held = self.now.saturating_sub(since);
+        let remaining = self
+            .review
+            .copilot_hold
+            .checked_sub(held)
+            .filter(|&r| r > 0);
+        self.reply.copilot = Some(CopilotReport {
+            state: if remaining.is_some() {
                 "pending".into()
             } else {
                 "expired".into()
             },
             run: Some(work.id),
             started_at: work.started_at,
-        },
-    });
-    let period = clock::epoch_secs(&record.period_started).ok_or_else(|| shape(path, "heads"))?;
-    if now.saturating_sub(period) < review.wait {
-        let reason = if refused.is_empty() {
-            format!(
-                "review-pending copilot={} remaining={}",
-                reply.copilot.as_ref().map_or("none", |c| c.state.as_str()),
-                review.wait - now.saturating_sub(period)
-            )
-        } else {
-            refused
-        };
-        return Ok(reply.pending(reason));
+        });
+        Ok(remaining)
     }
-    let silent = judged.engaged == 0;
-    if review.on_timeout == OnTimeout::Proceed && silent {
-        let blocker = regression_blocker(path, &loaded(path)?.doc)?;
-        return match blocker {
-            Some(location) => record_verdict(
-                path,
-                locking,
-                reply,
-                head,
-                "blocked",
-                &format!("regression-open location={location}"),
-                stamp,
-                None,
-            ),
-            None => record_verdict(
-                path,
-                locking,
-                reply,
-                head,
-                "proceeded",
-                &format!("silent after {}s", review.wait),
-                stamp,
-                None,
-            ),
-        };
-    }
-    let reason = format!("engaged={} after {}s", judged.engaged, review.wait);
-    record_verdict(
-        path,
-        locking,
-        reply,
-        head,
-        "timeout",
-        &reason,
-        stamp,
-        Some(head),
-    )
-}
 
-/// Record the verdict under `pr_review.verdict`; a `timeout` ends the
-/// head's period and counts it.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "the one verdict write, called from every complete exit"
-)]
-fn record_verdict(
-    path: &Path,
-    locking: Locking,
-    mut reply: ReviewVerified,
-    head: &str,
-    verdict: &str,
-    reason: &str,
-    stamp: &str,
-    period_ends: Option<&str>,
-) -> Result<ReviewVerified> {
-    let head = head.to_owned();
-    let period_ends = period_ends.map(str::to_owned);
-    let (verdict, reason, stamp) = (verdict.to_owned(), reason.to_owned(), stamp.to_owned());
-    let recorded = write(path, locking, |doc| {
-        let record = review_mut(path, doc)?;
-        let replaced = !matches!(record.get("verdict"), None | Some(Value::Null));
-        record.insert(
-            "verdict".into(),
-            json!({"head": head, "verdict": verdict, "reason": reason, "at": stamp}),
-        );
-        if let Some(ending) = &period_ends {
+    fn reviews(&mut self) -> Step<&CopilotReviews> {
+        let reviews = match self.reviews.take() {
+            Some(reviews) => reviews,
+            None => review::copilot_reviews(&self.gh, &self.r.repo, self.r.pr, &self.view.head)?,
+        };
+        Ok(self.reviews.insert(reviews))
+    }
+
+    fn work(&mut self) -> Step<&Option<Work>> {
+        let work = match self.work.take() {
+            Some(work) => work,
+            None => review::copilot_work(&self.gh, &self.r.repo, self.r.pr, &self.view.head)?,
+        };
+        Ok(self.work.insert(work))
+    }
+
+    /// One locked read-modify-write of the head's record: `f` takes the
+    /// standing record, absent where none is, and answers the record to
+    /// store beside its own answer.
+    fn update_head<T>(
+        &self,
+        f: impl Fn(Option<HeadRecord>) -> Result<(HeadRecord, T)>,
+    ) -> Result<T> {
+        let (path, head) = (self.path, self.view.head.as_str());
+        write(path, self.locking, |doc| {
             let heads = heads_mut(path, doc)?;
-            let mut standing: HeadRecord = heads
-                .get(ending)
+            let standing = heads
+                .get(head)
                 .cloned()
-                .map(serde_json::from_value)
+                .map(serde_json::from_value::<HeadRecord>)
                 .transpose()
-                .map_err(|_| shape(path, "heads"))?
-                .ok_or_else(|| shape(path, "heads"))?;
-            standing.period_started = stamp.clone();
-            standing.timeouts += 1;
-            heads.insert(ending.clone(), serde_json::to_value(&standing)?);
-        }
-        Ok(ReviewRecorded {
-            head: head.clone(),
-            verdict: verdict.clone(),
-            reason: reason.clone(),
-            at: stamp.clone(),
-            replaced,
+                .map_err(|_| shape(path, "heads"))?;
+            let (record, answer) = f(standing)?;
+            heads.insert(head.to_owned(), serde_json::to_value(&record)?);
+            Ok(answer)
         })
-    })?;
-    reply.status = Status::Complete;
-    reply.reason = recorded.reason.clone();
-    reply.verdict = Some(recorded.verdict.clone());
-    reply.recorded = Some(recorded);
-    Ok(reply)
-}
+    }
 
-fn record_retry_fallback(
-    path: &Path,
-    locking: Locking,
-    head: &str,
-    cause: &str,
-    exit: Option<i32>,
-) -> Result<()> {
-    let head = head.to_owned();
-    let cause = cause.to_owned();
-    write(path, locking, |doc| {
-        let heads = heads_mut(path, doc)?;
-        let mut standing: HeadRecord = heads
-            .get(&head)
-            .cloned()
-            .map(serde_json::from_value)
-            .transpose()
-            .map_err(|_| shape(path, "heads"))?
-            .ok_or_else(|| shape(path, "heads"))?;
-        if let Some(retry) = &mut standing.retry {
-            retry.outcome = "fallback".into();
-            retry.cause = Some(cause.clone());
-            retry.exit = exit;
-        }
-        heads.insert(head.clone(), serde_json::to_value(&standing)?);
-        Ok(())
-    })
+    /// Write the head's retry as `f` answers it from the standing one;
+    /// answers whether `f` wrote one.
+    fn set_retry(&self, f: impl Fn(Option<RetryRecord>) -> Option<RetryRecord>) -> Result<bool> {
+        let path = self.path;
+        self.update_head(|standing| {
+            let mut head = standing.ok_or_else(|| shape(path, "heads"))?;
+            let Some(retry) = f(head.retry.clone()) else {
+                return Ok((head, false));
+            };
+            head.retry = Some(retry);
+            Ok((head, true))
+        })
+    }
+
+    /// Record the verdict under `pr_review.verdict`; a `timeout` ends the
+    /// head's period and counts it.
+    fn record_verdict(mut self, verdict: Verdict) -> Result<ReviewVerified> {
+        let (path, head, stamp) = (self.path, self.view.head.as_str(), self.stamp.as_str());
+        let recorded = write(path, self.locking, |doc| {
+            let record = review_mut(path, doc)?;
+            let replaced = !matches!(record.get("verdict"), None | Some(Value::Null));
+            record.insert(
+                "verdict".into(),
+                json!({"head": head, "verdict": verdict.word, "reason": verdict.reason, "at": stamp}),
+            );
+            if verdict.period_ends {
+                let heads = heads_mut(path, doc)?;
+                let mut standing: HeadRecord = heads
+                    .get(head)
+                    .cloned()
+                    .map(serde_json::from_value)
+                    .transpose()
+                    .map_err(|_| shape(path, "heads"))?
+                    .ok_or_else(|| shape(path, "heads"))?;
+                standing.period_started = stamp.to_owned();
+                standing.timeouts += 1;
+                heads.insert(head.to_owned(), serde_json::to_value(&standing)?);
+            }
+            Ok(ReviewRecorded {
+                head: head.to_owned(),
+                verdict: verdict.word.to_owned(),
+                reason: verdict.reason.clone(),
+                at: stamp.to_owned(),
+                replaced,
+            })
+        })?;
+        self.reply.status = Status::Complete;
+        self.reply.reason = recorded.reason.clone();
+        self.reply.verdict = Some(recorded.verdict.clone());
+        self.reply.recorded = Some(recorded);
+        Ok(self.reply)
+    }
 }
 
 /// One locked read-modify-write of the item under the record's write
@@ -951,7 +1117,6 @@ fn shape(path: &Path, field: &str) -> Error {
     }
 }
 
-/// The `pr_review` object, made where absent.
 fn review_mut<'a>(path: &Path, doc: &'a mut Document) -> Result<&'a mut Document> {
     if matches!(doc.get(REVIEW_KEY), None | Some(Value::Null)) {
         doc.insert(REVIEW_KEY.into(), Value::Object(Map::new()));
@@ -1003,28 +1168,36 @@ fn head_record(path: &Path, doc: &Document, head: &str) -> Result<Option<HeadRec
 }
 
 /// The error retry the released writer recorded under
-/// `pr_approval.copilot_error_retries[head]`: its outcome word, where one
-/// stands, so a head mid-wait at an upgrade spends no second retry.
-fn released_retry(path: &Path, doc: &Document, head: &str) -> Result<Option<String>> {
+/// `pr_approval.copilot_error_retries[head]`, as `{review_id, outcome}`
+/// with the review id written as text, read as the head's retry.
+fn released_retry(path: &Path, doc: &Document, head: &str) -> Result<Option<RetryRecord>> {
     let Some(approval) = doc.get("pr_approval") else {
         return Ok(None);
     };
     let Some(retries) = approval.get("copilot_error_retries") else {
         return Ok(None);
     };
-    match retries.get(head) {
-        None | Some(Value::Null) => Ok(None),
-        Some(entry) => entry
-            .get("outcome")
-            .and_then(Value::as_str)
-            .map(|word| Some(word.to_owned()))
-            .ok_or_else(|| Error::Shape {
-                path: path.to_path_buf(),
-                field: "pr_approval/copilot_error_retries".into(),
-                reason: ShapeReason::TypeMismatch,
-                cause: "outcome is not a word".into(),
-            }),
+    let entry = match retries.get(head) {
+        None | Some(Value::Null) => return Ok(None),
+        Some(entry) => entry,
+    };
+    let refused = |cause: &str| Error::Shape {
+        path: path.to_path_buf(),
+        field: "pr_approval/copilot_error_retries".into(),
+        reason: ShapeReason::TypeMismatch,
+        cause: cause.into(),
+    };
+    let outcome = match entry.get("outcome").and_then(Value::as_str) {
+        Some(word @ (REQUESTED | FALLBACK)) => word,
+        _ => return Err(refused("outcome is not requested or fallback")),
+    };
+    let review_id = match entry.get("review_id") {
+        Some(Value::String(text)) => text.parse::<u64>().ok(),
+        Some(Value::Number(number)) => number.as_u64(),
+        _ => None,
     }
+    .ok_or_else(|| refused("review_id is not a review id"))?;
+    Ok(Some(RetryRecord::new(review_id, outcome)))
 }
 
 /// The location of a blocker of kind regression-against-main standing open

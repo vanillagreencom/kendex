@@ -69,7 +69,8 @@ pub mod listing;
 mod renewal;
 mod usage;
 
-pub use listing::{Listing, ProviderRead};
+pub use listing::Listing;
+pub use renewal::step as renewal_step;
 
 const BOUND: Duration = Duration::from_secs(60);
 
@@ -451,32 +452,17 @@ pub fn today(now_secs: u64) -> String {
     clock::iso_utc(now_secs)[..10].to_owned()
 }
 
-/// One listing under the judge's statement: its rows, how the provider's
-/// read ended, and the keyed lines the listing says beside the rows.
+/// One listing under the judge's statement: its rows, the cause the
+/// provider's read failed with, and the keyed lines the listing says
+/// beside the rows.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Roster {
     pub rows: Vec<AccountRow>,
-    pub provider: ProviderRead,
+    pub provider_failure: Option<String>,
     pub notes: Vec<String>,
 }
 
 impl Roster {
-    /// A listing given as one JSON array of records each carrying `status`
-    /// and `verdict`, or none: a record of another shape is a row that
-    /// failed to render, never a fleet with no accounts.
-    pub fn parse(text: &str, settings: &AccountSettings) -> Option<Roster> {
-        let rows: Vec<Value> = serde_json::from_str(text).ok()?;
-        let rows = rows
-            .iter()
-            .map(|raw| AccountRow::parse(raw, settings))
-            .collect::<Option<Vec<AccountRow>>>()?;
-        Some(Roster {
-            rows,
-            provider: ProviderRead::Local,
-            notes: Vec::new(),
-        })
-    }
-
     fn from_listing(listing: Listing, settings: &AccountSettings) -> Option<Roster> {
         let rows = listing
             .rows
@@ -485,7 +471,7 @@ impl Roster {
             .collect::<Option<Vec<AccountRow>>>()?;
         Some(Roster {
             rows,
-            provider: listing.provider,
+            provider_failure: listing.provider_failure,
             notes: listing.notes,
         })
     }
@@ -1886,7 +1872,7 @@ pub fn pick_fleet(
     let model = req.model.as_deref().unwrap_or("");
     let pool = pick_pool(&req.harness, model);
     if req.harness == "pi"
-        && let ProviderRead::Failed(cause) = &roster.provider
+        && let Some(cause) = &roster.provider_failure
     {
         let stated = roster
             .rows
@@ -1978,25 +1964,23 @@ mod tests {
         }
     }
 
-    /// A listing is one array of records each carrying `status` and
-    /// `verdict`; anything else is unread, never an empty roster. The
-    /// machine's stated end is matched on the alias, the directory name or
-    /// that name without its dot, and the provider's words are read from
+    /// The machine's stated end is matched on the alias, the directory name
+    /// or that name without its dot, and the provider's words are read from
     /// the row.
     #[test]
-    fn a_listing_reads_whole_or_not_at_all_and_the_words_are_matched_onto_its_rows() {
-        let s = settings();
-        assert!(Roster::parse("[]", &s).is_some_and(|l| l.rows.is_empty()));
-        assert!(Roster::parse("", &s).is_none());
-        assert!(Roster::parse("{}", &s).is_none());
-        assert!(Roster::parse(r#"[{"alias":"a","status":"ok"}]"#, &s).is_none());
-        let roster = Roster::parse(
-            r#"[{"alias":"a","harness":"claude","config_dir":"/h/.a","measured_through":"local","status":"ok","verdict":"room","headroom_pct":0,"binding_bucket":"weekly","binding_resets_at":"2026-10-01T00:00:00Z"},
-                {"alias":"oldclaude","harness":"claude","config_dir":"/h/.oldclaude","measured_through":"local","status":"ok","verdict":"room","headroom_pct":40,"binding_bucket":"weekly","binding_resets_at":null},
-                {"alias":"r","harness":"claude","config_dir":"/h/.r","measured_through":"host","status":"ok","verdict":"room","headroom_pct":90,"binding_bucket":"weekly","binding_resets_at":null,"reserved":1,"seat":"1","plan-ends":"2026-12-01"}]"#,
-            &s,
-        )
-        .unwrap();
+    fn the_words_are_matched_onto_the_rows_and_said_on_the_roster_lines() {
+        let roster = Roster {
+            rows: [
+                json!({"alias":"a","harness":"claude","config_dir":"/h/.a","measured_through":"local","status":"ok","verdict":"room","headroom_pct":0,"binding_bucket":"weekly","binding_resets_at":"2026-10-01T00:00:00Z"}),
+                json!({"alias":"oldclaude","harness":"claude","config_dir":"/h/.oldclaude","measured_through":"local","status":"ok","verdict":"room","headroom_pct":40,"binding_bucket":"weekly","binding_resets_at":null}),
+                json!({"alias":"r","harness":"claude","config_dir":"/h/.r","measured_through":"host","status":"ok","verdict":"room","headroom_pct":90,"binding_bucket":"weekly","binding_resets_at":null,"reserved":1,"seat":"1","plan-ends":"2026-12-01"}),
+            ]
+            .into_iter()
+            .map(row)
+            .collect(),
+            provider_failure: None,
+            notes: Vec::new(),
+        };
         assert_eq!(
             roster.lines("2026-10-19"),
             vec![

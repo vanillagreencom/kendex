@@ -268,7 +268,10 @@ impl<'a> Runner<'a> {
 
     /// Take the claim: refuse a live one (unless named for replacement, then
     /// stopped through the stop route), take over a gone one with the event
-    /// that says so, refuse an unreadable one. Linked into place before any
+    /// that says so, refuse an unreadable one. A start-less record whose
+    /// running pid is the one named for replacement is the repeat loop that
+    /// started this runner from its own pass and ends with that pass: its
+    /// release is waited out, never signalled. Linked into place before any
     /// duty runs; where another start links first, what it wrote is read.
     fn claim(&self) -> Result<Option<Event>> {
         let record = claim::Record {
@@ -278,6 +281,7 @@ impl<'a> Runner<'a> {
             script: &self.record.script,
             cwd: &self.record.cwd,
         };
+        let mut replaced = None;
         for _ in 0..CLAIM_TRIES {
             let mut takeover = None;
             if let Some(standing) = claim::read(&self.paths)? {
@@ -308,6 +312,18 @@ impl<'a> Runner<'a> {
                             reason: Takeover::Gone,
                         });
                     }
+                    Reading::Unreadable { cause }
+                        if cause == claim::START_MISSING
+                            && self.flags.replace == Some(standing.pid) =>
+                    {
+                        claim::await_release(&self.paths, standing.pid, self.clock)?;
+                        replaced = Some(Event::WatchTakenOver {
+                            pid: standing.pid,
+                            start: None,
+                            reason: Takeover::Replace,
+                        });
+                        continue;
+                    }
                     Reading::Unreadable { cause } => {
                         return Err(WatchError::ClaimUnreadable {
                             path: self.paths.pid.clone(),
@@ -324,7 +340,7 @@ impl<'a> Runner<'a> {
                     // A stop request left for the runner this one replaces
                     // is served.
                     claim::clear_stop(&self.paths)?;
-                    return Ok(takeover);
+                    return Ok(replaced.or(takeover));
                 }
                 claim::Written::Held => continue,
             }
@@ -657,4 +673,109 @@ pub fn status(paths: &Paths) -> Result<Status> {
         events: events::line_count(&paths.log)?,
         log: paths.log.clone(),
     })
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the row holds a child standing for the loop, writes the record it plants and reads the real instant"
+)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::AtomicU32;
+
+    /// A clock whose waits pass no time and stand for the loop's exit: its
+    /// first wait removes the loop's record, as the loop's trap does.
+    struct LoopExit<'a> {
+        record: &'a std::path::Path,
+        waits: AtomicU32,
+    }
+
+    impl Clock for LoopExit<'_> {
+        fn now(&self) -> Instant {
+            Instant::now()
+        }
+        fn wall(&self) -> std::time::SystemTime {
+            std::time::SystemTime::now()
+        }
+        fn sleep(&self, _: Duration) {
+            self.waits.fetch_add(1, Ordering::Relaxed);
+            let _ = std::fs::remove_file(self.record);
+        }
+    }
+
+    #[test]
+    fn a_replacement_reading_the_running_loops_start_less_record_waits_for_its_release_then_claims()
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = Paths::of(&dir.path().join(crate::state::FLEET_FILE_NAME)).unwrap();
+        let mut held = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .expect("the loop's stand-in");
+        let held_pid = held.id();
+        std::fs::write(
+            &paths.pid,
+            format!(
+                "pid={held_pid}\nstate={}\npane=%1\norigin=hand\nscript=/w/oversee-watch\ncwd=/w\n",
+                paths.state.display()
+            ),
+        )
+        .unwrap();
+        let settings = crate::settings::load(
+            &crate::settings::Roots {
+                project: dir.path().to_path_buf(),
+                common: dir.path().to_path_buf(),
+            },
+            &[],
+            &crate::settings::Flags {
+                state_dir: Some(dir.path().to_path_buf()),
+                private_env: false,
+            },
+        )
+        .unwrap();
+        let clock = LoopExit {
+            record: &paths.pid,
+            waits: AtomicU32::new(0),
+        };
+        let Reading::Live(identity) = agent_runtime::process::identity(std::process::id()) else {
+            panic!("this process's own identity")
+        };
+        let runner = Runner::new(
+            paths.clone(),
+            &clock,
+            &settings,
+            Flags {
+                interval: Duration::from_secs(240),
+                max_loops: 25,
+                since: None,
+                replace: Some(held_pid),
+            },
+            identity.clone(),
+            Recorded {
+                pane: "none".into(),
+                script: "/w/orch-runtime".into(),
+                cwd: "/w".into(),
+            },
+        );
+        let taken = runner.claim();
+        let loop_ran = matches!(held.try_wait(), Ok(None));
+        let _ = held.kill();
+        let _ = held.wait();
+        assert_eq!(
+            taken.unwrap(),
+            Some(Event::WatchTakenOver {
+                pid: held_pid,
+                start: None,
+                reason: Takeover::Replace,
+            })
+        );
+        assert_eq!(
+            clock.waits.load(Ordering::Relaxed),
+            1,
+            "held until the loop's exit released its record"
+        );
+        assert!(loop_ran, "the loop was never signalled");
+        assert!(claim::names_runner(&paths, &identity).unwrap());
+    }
 }

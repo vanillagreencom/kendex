@@ -23,10 +23,6 @@
 #                        checkout, written whole to CHECKOUT_STARTED.
 #   checkout_started     what the last harness to start recorded, or none
 #                        since checkout_started_clear.
-#   checkout_late_sync NAME
-#                        a mutant_scripts copy (growth-state.sh) whose
-#                        ol_session_open syncs after `create`, its scripts
-#                        directory printed.
 
 checkout_git() { git -c user.name=fixture -c user.email=fixture@example.com -c commit.gpgsign=false "$@"; }
 # Git's background maintenance is off in each repository the suite's exit
@@ -79,23 +75,3 @@ checkout_stub_line() {
 }
 checkout_started() { cat -- "$CHECKOUT_STARTED" 2>/dev/null || echo none; }
 checkout_started_clear() { rm -f -- "${CHECKOUT_STARTED:?}"; }
-
-# The sync moved after `create` first waits, up to 5 seconds, for the harness
-# to record its tree, so the harness reads the checkout before the sync moves
-# it on every run rather than by a race.
-checkout_late_sync() { # NAME
-  local dir lib
-  dir="$(mutant_scripts "$1" lib/overseer-launch.sh)" || return 1
-  lib="$dir/lib/overseer-launch.sh"
-  mutate_file "$lib" '  ol_checkout_sync "$1" || ol_checkout_notice
-' ''
-  mutate_file "$lib" '    || { OL_REASON=create-failed; return 1; }
-  ol_session_from_out
-' "    || { OL_REASON=create-failed; return 1; }
-  local waited=0
-  until [[ -f $(printf %q "$CHECKOUT_STARTED") ]] || (( waited++ >= 50 )); do sleep 0.1; done
-  ol_checkout_sync \"\$1\" || ol_checkout_notice
-  ol_session_from_out
-"
-  printf '%s\n' "$dir"
-}

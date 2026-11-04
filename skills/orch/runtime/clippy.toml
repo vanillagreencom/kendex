@@ -73,11 +73,11 @@ disallowed-methods = [
     # file through the store's reader
     { path = "agent_runtime::record::read_value", reason = "a record file is read only by the state module's load" },
     { path = "agent_runtime::record::read", reason = "a record file is read only by the state module's load" },
-    { path = "agent_runtime::record::flock_on_path", reason = "the lock tool is looked up only where the command resolves its locking" },
+    { path = "agent_runtime::record::flock_on_path", reason = "the lock tool is looked up only where the command resolves its locking and by the account renewal's credentials lock" },
     { path = "agent_runtime::record::write", reason = "a record is written only by the state module's store" },
     { path = "agent_runtime::record::replace_atomically", reason = "a record is written only by the state module's store" },
     { path = "agent_runtime::record::lock", reason = "a record's lock is taken only by the state module's store" },
-    { path = "agent_runtime::record::mutex_lock", reason = "the `mkdir` mutex is taken only by the state module's store" },
+    { path = "agent_runtime::record::mutex_lock", reason = "the `mkdir` mutex is taken only by the state module's store and the account renewal's credentials lock" },
     { path = "agent_runtime::record::Guard::with", reason = "a record's lock is held only by the state module's store" },
     { path = "agent_runtime::record::Guard::with_wait", reason = "a record's lock is held only by the state module's store" },
     { path = "agent_runtime::record::Wait::start", reason = "the lock wait's clock is read only by the state module's store" },

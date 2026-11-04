@@ -736,16 +736,33 @@ pub struct Pending {
     /// the walk carried over, as given.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_args: Vec<String>,
+    /// The overseer handoff the controller's brief names, the launch's own
+    /// `--handoff`; left out, the default handoff. The record keeps it, so a
+    /// recovery the watch asks names the same file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handoff: Option<String>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
 
+/// The command of the owner whose lifecycle keeps a controller record, as
+/// the record's `succession` names it: a list of words with at least one.
+/// The transfer's refusal and the watch read it here alike, so a value
+/// neither can run names no owner to either.
+pub fn succession_command(value: Option<&Value>) -> Option<Vec<String>> {
+    value?
+        .as_array()?
+        .iter()
+        .map(|word| word.as_str().map(str::to_owned))
+        .collect::<Option<Vec<String>>>()
+        .filter(|words| !words.is_empty())
+}
+
 /// The keys a confirmed succession writes from `pending` onto the overseer
 /// record, and nulls where the pending names none: the launch's identity
-/// object plus the launch line (`overseer-launch.sh`,
-/// `ol_record_write`'s `$identity | map_values(null)` then `$fresh`).
-/// `class` is not among them: the legacy identity carries it only where
-/// known, so the successor record has the key only when `pending` does.
+/// plus the launch line. `class` is not among them: a record carries it
+/// only where its launch knew it, so the successor record has the key only
+/// when `pending` does.
 pub const SUCCESSOR_IDENTITY_KEYS: &[&str] = &[
     "launch_line",
     "harness",

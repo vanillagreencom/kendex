@@ -1,9 +1,10 @@
 # shellcheck shell=bash
 #
 # The merge-queue disarm/dequeue GraphQL verb, owned by the github skill and
-# run by orch's queue-wait late-findings guard. A caller must disarm classic
-# auto-merge BEFORE dequeuing: an armed PR re-enters the queue the moment its
-# requirements go green, so a bare dequeue can be raced straight back in.
+# run through the router's `merge-queue-mutation` or sourced. A caller must
+# disarm classic auto-merge BEFORE dequeuing: an armed PR re-enters the queue
+# the moment its requirements go green, so a bare dequeue can be raced
+# straight back in.
 #
 # dequeuePullRequest's input field is named `id` but takes the PULL REQUEST
 # node id (schema-verified), not the mergeQueueEntry id; enqueue's is

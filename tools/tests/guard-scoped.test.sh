@@ -59,7 +59,7 @@ OUT="$(cd "$R" && SUITE_LOG="$SUITE_LOG" "$GUARD" --range "$BASE" 2>&1)" || RC=$
 
 # A real cancellation must also name suites in batteries not yet entered.
 # The first selected suite acknowledges its start before the parent sends TERM.
-printf 'source "$PWD/skills/orch/scripts/open-terminal"\nprintf ready > "$ACK"\nread -r line < "$FIFO"\n' > "$R/skills/orch/tests/direct.sh"
+printf 'source "$PWD/skills/orch/scripts/open-terminal"\nprintf ready > "$ACK"\nexec 9<>"$FIFO"; read -r -t 120 -u 9 line\n' > "$R/skills/orch/tests/direct.sh"
 printf '# Inputs: skills/orch/scripts/open-terminal\nprintf "later\\n" >> "$SUITE_LOG"\n' > "$R/tools/tests/later.sh"
 mkdir -p "$R/skills/orch/scripts/lib" "$R/skills/github/scripts/lib" "$TMP/serial-bin"
 cp "$REPO/skills/orch/tests/run-all.sh" "$R/skills/orch/tests/run-all.sh"
@@ -67,7 +67,7 @@ cp "$REPO/skills/orch/tests/lib/git-env.sh" "$R/skills/orch/tests/lib/git-env.sh
 cp "$REPO/skills/orch/tests/lib/suite-process.sh" "$R/skills/orch/tests/lib/suite-process.sh"
 cp "$REPO/skills/orch/scripts/lib/lane-state.sh" "$R/skills/orch/scripts/lib/lane-state.sh"
 cp "$REPO/skills/github/scripts/lib/group-leader.sh" "$R/skills/github/scripts/lib/group-leader.sh"
-printf '# Inputs: skills/orch/scripts/open-terminal\nif [ "$PHASE" = standalone ]; then printf ready > "$ACK"; read -r line < "$FIFO"; fi\nprintf "pass: 1 fail: 0\\n"\n' > "$R/hooks/tests/startup.sh"
+printf '# Inputs: skills/orch/scripts/open-terminal\nif [ "$PHASE" = standalone ]; then printf ready > "$ACK"; exec 9<>"$FIFO"; read -r -t 120 -u 9 line; fi\nprintf "pass: 1 fail: 0\\n"\n' > "$R/hooks/tests/startup.sh"
 printf '#!/bin/sh\necho 1\n' > "$TMP/serial-bin/nproc"
 chmod +x "$TMP/serial-bin/nproc"
 git -C "$R" add -A
@@ -105,7 +105,7 @@ elif [ "$PHASE" != npm ] && [ "$PHASE" != npm-missing-report ]; then
   exit 0
 fi
 printf ready > "$ACK"
-read -r line < "$FIFO"
+exec 9<>"$FIFO"; read -r -t 120 -u 9 line
 ''')
 npm.chmod(0o755)
 shell_suites = ["skills/orch/tests/direct.sh", "skills/orch/tests/helper.sh",
@@ -128,7 +128,7 @@ for phase, expected in (
   if phase == "loading":
     marker = 'source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"'
     assert text.count(marker) == 1
-    text = text.replace(marker, 'printf ready > "$ACK"\nread -r line < "$FIFO"\n' + marker)
+    text = text.replace(marker, 'printf ready > "$ACK"\nexec 9<>"$FIFO"; read -r -t 120 -u 9 line\n' + marker)
   runner.write_text(text)
   selected_guard = guard
   if phase == "npm-missing-report":

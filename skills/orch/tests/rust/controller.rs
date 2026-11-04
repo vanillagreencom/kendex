@@ -1904,7 +1904,7 @@ fn the_successor_is_launched_from_its_typed_fields_with_the_account_routed() {
     let seat = dir.path().join("seat");
     let pi_home = dir.path().join("pi-home");
     std::fs::create_dir_all(&seat).unwrap();
-    std::fs::create_dir_all(&pi_home).unwrap();
+    pi_root_marked(&pi_home);
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
     let mut pi = pending(runner.state_dir());
@@ -2026,6 +2026,7 @@ fn the_successor_is_launched_from_its_typed_fields_with_the_account_routed() {
     runner.init_fleet();
     let seat = dir.path().join("copilot-home");
     std::fs::create_dir_all(&seat).unwrap();
+    copilot_gate_passed(&mut runner, &seat);
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
     let mut copilot = pending(runner.state_dir());
@@ -2539,6 +2540,180 @@ fn a_job_is_a_setsid_group_where_no_manager_lingers_and_a_job_that_exits_before_
     assert!(live(predecessor.pid()), "nothing retired the predecessor");
 }
 
+#[test]
+fn a_unit_start_whose_reply_and_state_read_are_lost_keeps_the_unit_standing() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let (bin, env) = watch_world(runner.state_dir());
+    // The manager starts the unit and its reply is lost: the start answers
+    // a failure, and the manager refuses the state read that follows.
+    let launcher = bin.join("systemd-run");
+    let text = std::fs::read_to_string(&launcher).unwrap();
+    let started = text
+        .strip_suffix("exit 0\n")
+        .expect("the fake ends on its answer");
+    std::fs::write(&launcher, format!("{started}exit 1\n")).unwrap();
+    std::fs::write(bin.join("systemctl"), "#!/bin/bash\nexit 1\n").unwrap();
+    runner.tools = Some(bin.clone());
+    runner
+        .env
+        .push(("ORCH_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
+    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let report = effect_report(&runner.op_fleet_env(
+        &json!({
+            "op": "start-controller",
+            "controller": pending(runner.state_dir()),
+            "watch": ["sleep", "30"],
+        }),
+        &env,
+    ));
+    let units: Vec<std::path::PathBuf> = std::fs::read_dir(bin.join("units"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(units.len(), 1, "the manager started one unit: {units:?}");
+    let pid: u32 = std::fs::read_to_string(&units[0])
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    let unit_ran = live(pid);
+    end_sleeper(pid);
+    assert!(unit_ran, "the unit the manager started ran");
+    assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
+    let unit = units[0].file_name().unwrap().to_str().unwrap();
+    let standing = report["intent"]["obligations"]["standing"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        standing
+            .iter()
+            .any(|o| o["kind"] == "job-unit" && o["unit"] == unit),
+        "the unit stands as the job's obligation: {report}"
+    );
+}
+
+/// A released `oversee-watch` repeat loop the row runs, its process group
+/// killed on drop where it still runs; a row that fails also stops the
+/// runtime watch a pass of the loop started, so neither outlives the row.
+struct ReleasedLoop<'a> {
+    child: std::process::Child,
+    runner: &'a Runner,
+    state: std::path::PathBuf,
+}
+
+impl Drop for ReleasedLoop<'_> {
+    fn drop(&mut self) {
+        if matches!(self.child.try_wait(), Ok(None)) {
+            let _ = std::process::Command::new("kill")
+                .args(["-KILL", "--", &format!("-{}", self.child.id())])
+                .status();
+            let _ = self.child.wait();
+        }
+        if !std::thread::panicking() {
+            return;
+        }
+        let paths = orch_runtime::watch::claim::Paths::of(&self.state).unwrap();
+        let deadline = Instant::now() + SETTLE;
+        while Instant::now() < deadline {
+            if let Ok(Some(claim)) = orch_runtime::watch::claim::read(&paths)
+                && claim.start.is_some()
+                && live(claim.pid)
+            {
+                let _ = self.runner.run(&["watch", "stop", "--fleet"]);
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+}
+
+#[test]
+fn a_released_watch_loop_running_across_an_upgrade_hands_its_claim_to_one_runtime_watch() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::CommandExt;
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let (bin, env) = watch_world(runner.state_dir());
+    for fake in ["systemd-run", "systemctl", "loginctl"] {
+        std::fs::remove_file(bin.join(fake)).unwrap();
+    }
+    runner.tools = Some(bin);
+    runner.env.extend(env);
+    let state = runner
+        .state_dir()
+        .join(orch_runtime::state::FLEET_FILE_NAME);
+    let scripts = runner.state_dir().join("scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::os::unix::fs::symlink(shipped_scripts().join("lib"), scripts.join("lib")).unwrap();
+    std::os::unix::fs::symlink(
+        runner.state_dir().join("orch-runtime"),
+        scripts.join("orch-runtime"),
+    )
+    .unwrap();
+    let entry = scripts.join("oversee-watch");
+    std::fs::copy(fixtures().join("released-watch-loop/oversee-watch"), &entry).unwrap();
+    std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let err = runner.state_dir().join("loop.err");
+    let mut command = program(&entry);
+    runner.apply_env(&mut command);
+    command
+        .args(["--repeat", "1", "--state", &state.display().to_string()])
+        .args(["--since", "2026-01-01T00:00:00Z"])
+        .current_dir(runner.state_dir())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::fs::File::create(&err).unwrap())
+        .process_group(0);
+    let mut released = ReleasedLoop {
+        child: command.spawn().unwrap(),
+        runner: &runner,
+        state: state.clone(),
+    };
+    let loop_pid = released.child.id();
+    let paths = orch_runtime::watch::claim::Paths::of(&state).unwrap();
+    let claim = || orch_runtime::watch::claim::read(&paths).ok().flatten();
+    wait_until("the loop's start-less claim", SETTLE, || {
+        claim().is_some_and(|c| c.pid == loop_pid && c.start.is_none())
+    });
+    // The upgrade writes the shipped entry over the path the loop runs as
+    // each pass, renamed into place.
+    let next = scripts.join(".oversee-watch.next");
+    std::fs::copy(shipped_scripts().join("oversee-watch"), &next).unwrap();
+    std::fs::rename(&next, &entry).unwrap();
+    let deadline = Instant::now() + SETTLE;
+    let status = loop {
+        if let Some(status) = released.child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the released loop never ended: {}",
+            std::fs::read_to_string(&err).unwrap_or_default()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(
+        status.success(),
+        "{status:?}: {}",
+        std::fs::read_to_string(&err).unwrap_or_default()
+    );
+    wait_until("the runtime's claim", SETTLE, || {
+        claim().is_some_and(|c| c.start.is_some() && live(c.pid))
+    });
+    let job = std::fs::read_to_string(runner.state_dir().join("oversee-watch.runner")).unwrap();
+    let claimed = claim().unwrap();
+    assert!(
+        job.lines().any(|l| l == format!("pid={}", claimed.pid)),
+        "the claim is the relaunched job's: {claimed:?}, {job}"
+    );
+    stop_live_watch(&runner, &state);
+}
+
 /// Defect: the caller's words reshaped on the way to the launch, or a bypass
 /// word slipped under a `native` posture. The caller's argv reaches the
 /// launched command exactly as given, the judged posture travels as its own
@@ -2658,6 +2833,7 @@ fn the_callers_argv_reaches_the_launch_as_given_under_the_posture_it_spells() {
     runner.init_fleet();
     let seat = dir.path().join("copilot-home");
     std::fs::create_dir_all(&seat).unwrap();
+    copilot_gate_passed(&mut runner, &seat);
     let predecessor = Owned::sleep();
     plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
     let mut copilot = pending(runner.state_dir());
@@ -2824,6 +3000,7 @@ fn a_native_posture_keeps_a_narrower_permission_word_and_refuses_a_bypass_alias(
         runner.init_fleet();
         let seat = dir.path().join("seat");
         std::fs::create_dir_all(&seat).unwrap();
+        copilot_gate_passed(&mut runner, &seat);
         let predecessor = Owned::sleep();
         plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
         let mut native = pending(runner.state_dir());
@@ -3938,6 +4115,7 @@ fn a_controller_resume_continues_the_recorded_session_in_each_harness_s_own_form
             let session = home.join("session-state").join(id);
             std::fs::create_dir_all(&session).unwrap();
             std::fs::write(session.join("workspace.yaml"), "cwd: /r\n").unwrap();
+            copilot_gate_passed(&mut runner, &home);
         }
         let binaries = format!(
             "claude={},{harness}={}",
@@ -4093,28 +4271,26 @@ fn an_adopted_controller_with_its_own_succession_command_refuses_request_transfe
     );
 }
 
-/// Defect: a controller record standing unbound for good: written before
-/// its session's first turn, or by an adoption that knew no id, with no
-/// native session id, no process identity and no server start. The
-/// reconcile reads the pane the record names and heals the record in place
-/// from it: the id the one lead session under the recorded home for the
-/// recorded directory, the identity read in the pane, the server's start,
-/// the generation and the record's own words kept; a bound record is left
-/// as it is, and a second reconcile moves no bytes.
 #[test]
-fn the_reconcile_heals_a_controller_record_left_unbound_from_its_own_pane() {
+fn the_reconcile_heals_an_unbound_controllers_identity_and_never_binds_a_previous_sessions_file() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let home = runner.state_dir().to_path_buf();
+    let previous = project_dir(&home, &home).join("previous-session.jsonl");
+    std::fs::create_dir_all(previous.parent().unwrap()).unwrap();
+    std::fs::write(
+        &previous,
+        json!({
+            "type": "user", "sessionId": "previous-session", "cwd": home,
+            "message": {"role": "user", "content": "previous work"}
+        })
+        .to_string(),
+    )
+    .unwrap();
     let pane = server.open_stub("overseer", "stub-confirm", &home, &home);
     server.await_composer(&pane);
-    // The harness writes its session's directory row at its first turn.
-    server.send_line(&pane, "first turn");
-    wait_until("the stub recorded its first turn", secs(10), || {
-        runner.stub_turns(&home, &home) == vec!["first turn".to_owned()]
-    });
     let pid = server.pane_pid(&pane);
     let mut fleet = runner.fleet();
     fleet["overseer"] = json!({
@@ -4136,14 +4312,19 @@ fn the_reconcile_heals_a_controller_record_left_unbound_from_its_own_pane() {
     let answer = reply(&out);
     assert_eq!(answer["ok"], true, "{}", stderr(&out));
     assert_eq!(answer["result"]["controller"]["healed"], true, "{answer}");
-    assert_eq!(answer["result"]["controller"]["generation"], 2, "{answer}");
     let overseer = runner.fleet()["overseer"].clone();
-    assert_eq!(overseer["session_id"], format!("stub-{pid}"), "{overseer}");
+    assert_eq!(overseer["session_id"], "", "{overseer}");
     assert_eq!(overseer["harness_pid"], pid, "{overseer}");
     assert_eq!(overseer["harness_start"], start_of(pid), "{overseer}");
     assert_eq!(overseer["server_start"], server.start, "{overseer}");
     assert_eq!(overseer["generation"], 2, "{overseer}");
-    assert_eq!(overseer["model"], "opus", "the record's own words stand");
+    assert_eq!(overseer["model"], "opus", "{overseer}");
+    server.send_line(&pane, "first turn");
+    wait_until("the stub recorded its first turn", secs(10), || {
+        runner
+            .stub_turns(&home, &home)
+            .contains(&"first turn".to_owned())
+    });
     let state = runner
         .state_dir()
         .join(orch_runtime::state::FLEET_FILE_NAME);
@@ -4151,11 +4332,23 @@ fn the_reconcile_heals_a_controller_record_left_unbound_from_its_own_pane() {
     let out = runner.run(&["reconcile", "--fleet"]);
     let answer = reply(&out);
     assert_eq!(answer["ok"], true, "{}", stderr(&out));
-    assert!(
-        answer["result"].get("controller").is_none(),
-        "a bound record is left as it is: {answer}"
+    assert!(answer["result"].get("controller").is_none(), "{answer}");
+    assert_eq!(std::fs::read(&state).unwrap(), bytes);
+    // The session's own id, as the turn-end binding reads it from the
+    // session itself, binds where the record holds none.
+    let answer = reply(&runner.op_fleet(&json!({
+        "op": "adopt-controller",
+        "pane": pane,
+        "harness": "claude",
+        "session_id": format!("stub-{pid}"),
+        "account": home.display().to_string(),
+        "cwd": home.display().to_string(),
+    })));
+    assert_eq!(answer["result"]["report"]["healed"], true, "{answer}");
+    assert_eq!(
+        runner.fleet()["overseer"]["session_id"],
+        format!("stub-{pid}")
     );
-    assert_eq!(std::fs::read(&state).unwrap(), bytes, "the bytes stand");
 }
 
 // ---------------------------------------------------------------------------
@@ -4240,14 +4433,6 @@ impl MarksWorld {
             serde_json::to_string(&fleet).unwrap(),
         )
         .unwrap();
-    }
-
-    fn fleet(&self) -> Value {
-        serde_json::from_str(
-            &std::fs::read_to_string(self.path().join(orch_runtime::state::FLEET_FILE_NAME))
-                .unwrap(),
-        )
-        .unwrap()
     }
 
     fn environment(&self) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
@@ -4355,6 +4540,80 @@ fn the_marks_judge_reads_the_context_mark_before_the_account_and_the_rest_below_
     assert_eq!(alone["headroom"], json!("90"));
 }
 
+#[test]
+fn a_memory_mark_set_to_zero_is_no_mark_rather_than_one_every_pass_crosses() {
+    let dir = tempfile::tempdir().unwrap();
+    let roots = orch_runtime::settings::Roots {
+        project: dir.path().to_path_buf(),
+        common: dir.path().to_path_buf(),
+    };
+    let memory_pct = |value: Option<&str>| {
+        let mut environment: Vec<(std::ffi::OsString, std::ffi::OsString)> =
+            vec![("HOME".into(), dir.path().into())];
+        if let Some(value) = value {
+            environment.push(("ORCH_OVERSEER_MEMORY_PCT".into(), value.into()));
+        }
+        orch_runtime::settings::load(
+            &roots,
+            &environment,
+            &orch_runtime::settings::Flags {
+                state_dir: Some(dir.path().to_path_buf()),
+                private_env: false,
+            },
+        )
+        .unwrap()
+        .marks
+        .memory_pct
+    };
+    for (value, expected) in [(None, None), (Some("0"), None), (Some("80"), Some(80))] {
+        assert_eq!(memory_pct(value), expected, "{value:?}");
+    }
+}
+
+#[test]
+fn a_succession_key_naming_no_command_leaves_the_transfer_unowned_as_the_watch_reads_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let pane = server.open_stub(
+        "overseer",
+        "stub-confirm",
+        runner.state_dir(),
+        runner.state_dir(),
+    );
+    server.await_composer(&pane);
+    let answer = reply(&runner.op_fleet(&json!({
+        "op": "adopt-controller",
+        "pane": pane,
+        "harness": "claude",
+        "session_id": "by-hand-1",
+        "account": runner.state_dir().display().to_string(),
+        "cwd": runner.state_dir().display().to_string(),
+        "succession": [],
+    })));
+    assert_eq!(answer["ok"], true, "{answer}");
+    for succession in [json!([]), json!("jarvis-session"), json!([1])] {
+        let mut fleet = runner.fleet();
+        fleet["overseer"]["succession"] = succession.clone();
+        runner.write_fleet(&fleet);
+        let mut expected = expected_of(&fleet["overseer"]);
+        expected["generation"] = json!(99);
+        let out = runner.op_fleet(&json!({
+            "op": "request-transfer",
+            "cause": "live",
+            "expected": expected,
+            "successor": pending(runner.state_dir()),
+        }));
+        assert_eq!(
+            refusal_key(&out),
+            "overseer-changed",
+            "{succession}: {}",
+            stderr(&out)
+        );
+    }
+}
+
 /// Defect: a caller measured through the provider's row read as unmeasured,
 /// or an ended plan read as room. The provider's row with room supplies the
 /// caller's headroom; a `plan_ended` row reaches the headroom mark at zero
@@ -4415,13 +4674,8 @@ fn a_fast_burn_reaches_the_rate_mark_at_the_minutes_the_sample_projects() {
     assert_eq!(below["headroom"], json!("60"));
 }
 
-/// Defect: an unmeasured reading of the caller's own account compared as
-/// zero headroom, so one other account with room reached the qualifying
-/// mark on an account nothing read. The unmeasured caller answers
-/// `mark-unmeasured kind=headroom` before the qualifying arm runs, with
-/// the walk's fixtures standing by on the path.
 #[test]
-fn an_unmeasured_caller_answers_mark_unmeasured_headroom_before_the_qualifying_arm() {
+fn an_unmeasured_caller_answers_mark_unmeasured_headroom() {
     let mut world = MarksWorld::new();
     let mut unread = measured_account("eclaude", 10);
     unread["status"] = json!("unreachable");
@@ -4429,84 +4683,10 @@ fn an_unmeasured_caller_answers_mark_unmeasured_headroom_before_the_qualifying_a
     unread["wall"] = Value::Null;
     world.plant(None, &[unread, measured_account("bclaude", 10)]);
     world.write_fleet(&world.dir("eclaude"));
-    let answer = world.marks(&[], &[("ORCH_OVERSEER_SUCCESSOR_ACCOUNTS", "1")]);
+    let answer = world.marks(&[], &[]);
     assert_eq!(answer["key"], json!("mark-unmeasured"), "{answer}");
     assert_eq!(answer["kind"], json!("headroom"));
     assert_eq!(answer["reason"], json!("headroom-none"));
-    assert!(answer.get("successor").is_none(), "{answer}");
-}
-
-/// Defect: the transfer walking again after the mark's walk chose, and
-/// answering "no candidate" where the judgement had one. A caller with
-/// room beside one account with more room, at a qualifying setting of two,
-/// reaches the mark with the walk's choice as the reply's `successor`;
-/// `request-transfer` takes that entry as the pending it records, asking no
-/// walk and no classifier (none is on its path).
-#[test]
-fn the_qualifying_marks_successor_is_the_walks_choice_and_the_transfer_records_it_unwalked() {
-    let mut world = MarksWorld::new();
-    world.plant(
-        None,
-        &[
-            measured_account("eclaude", 10),
-            measured_account("bclaude", 5),
-        ],
-    );
-    world.write_fleet(&world.dir("eclaude"));
-    let reached = world.marks(&[], &[("ORCH_OVERSEER_SUCCESSOR_ACCOUNTS", "2")]);
-    assert_eq!(reached["key"], json!("mark-reached"), "{reached}");
-    assert_eq!(reached["kind"], json!("qualifying"));
-    assert_eq!(reached["value"], json!("2"));
-    assert_eq!(reached["mark"], json!("2"));
-    assert_eq!(reached["headroom"], json!("90"));
-    let successor = reached["successor"].clone();
-    assert_eq!(successor["harness"], json!("claude"), "{successor}");
-    assert_eq!(successor["account"], json!(world.dir("bclaude")));
-    assert_eq!(successor["home"], json!(world.dir("bclaude")));
-    assert_eq!(successor["cwd"], json!(world.path().display().to_string()));
-    assert_eq!(successor["permission"], json!("bypass"));
-    let before = world.fleet()["overseer"].clone();
-    let request = json!({
-        "op": "request-transfer",
-        "cause": "live",
-        "expected": {
-            "server": before["server"], "server_start": before["server_start"],
-            "pane": before["pane"], "generation": before["generation"],
-            "launch_line": before["launch_line"], "cwd": before["cwd"],
-        },
-        "successor": successor,
-    });
-    let file = world.path().join("request.json");
-    std::fs::write(&file, request.to_string()).unwrap();
-    // The job is held on the `setsid` route, a sleep the row owns standing in
-    // for it, so nothing runs the transfer and clears the pending first.
-    let (bin, log) = sleeper_world(world.path());
-    let out = world.run(
-        &["op", "--fleet", "--request", &file.display().to_string()],
-        &[
-            ("PATH", &tool_path(&[&bin])),
-            ("SETSID_LOG", &log.display().to_string()),
-            ("ORCH_JOB_CLAIM_SECS", "1"),
-        ],
-    );
-    let after = world.fleet();
-    let job = after["intents"][0]["obligations"]["standing"]
-        .as_array()
-        .and_then(|rows| rows.iter().find(|o| o["kind"] == "job-group"))
-        .and_then(|o| o["pid"].as_u64())
-        .unwrap_or_else(|| panic!("a job group stands: {after}")) as u32;
-    end_sleeper(job);
-    assert_eq!(
-        after["overseer"]["pending"],
-        reached["successor"],
-        "the pending is the reply's entry: {}",
-        stderr(&out)
-    );
-    assert!(
-        !stderr(&out).contains("preference-class-unread"),
-        "no second walk ran: {}",
-        stderr(&out)
-    );
 }
 
 /// Defect: a memory cap on the process's cgroup path read as absent, an
@@ -4529,25 +4709,27 @@ fn the_memory_mark_reads_the_cgroup_three_valued_and_fires_at_the_setting() {
     std::fs::create_dir_all(proc_root.join("4242")).unwrap();
     std::fs::write(proc_root.join("4242/cgroup"), "0::/a/b\n").unwrap();
     std::fs::create_dir_all(cgroup.join("a/b")).unwrap();
-    std::fs::write(cgroup.join("a/b/memory.current"), "900\n").unwrap();
+    std::fs::write(cgroup.join("a/b/memory.current"), "100\n").unwrap();
     std::fs::write(cgroup.join("a/b/memory.max"), "max\n").unwrap();
+    std::fs::write(cgroup.join("a/memory.current"), "900\n").unwrap();
     std::fs::write(cgroup.join("a/memory.max"), "1000\n").unwrap();
-    assert_eq!(
-        memory_of(&proc_root, &cgroup, 4242),
-        Reading::Live(Some(Memory {
-            current: 900,
-            max: 1000
-        }))
-    );
-    std::fs::write(cgroup.join("a/memory.max"), "max\n").unwrap();
-    assert_eq!(memory_of(&proc_root, &cgroup, 4242), Reading::Live(None));
-    std::fs::remove_file(cgroup.join("a/b/memory.current")).unwrap();
+    let parent = Reading::Live(Some(Memory {
+        current: 900,
+        max: 1000,
+    }));
+    assert_eq!(memory_of(&proc_root, &cgroup, 4242), parent);
+    std::fs::write(cgroup.join("a/b/memory.max"), "2000\n").unwrap();
+    assert_eq!(memory_of(&proc_root, &cgroup, 4242), parent);
+    std::fs::write(cgroup.join("a/b/memory.max"), "max\n").unwrap();
+    std::fs::remove_file(cgroup.join("a/memory.current")).unwrap();
     assert_eq!(
         memory_of(&proc_root, &cgroup, 4242),
         Reading::Unreadable {
             cause: "memory-current-unreadable"
         }
     );
+    std::fs::write(cgroup.join("a/memory.max"), "max\n").unwrap();
+    assert_eq!(memory_of(&proc_root, &cgroup, 4242), Reading::Live(None));
     assert_eq!(memory_of(&proc_root, &cgroup, 9999), Reading::Gone);
     let settings = |extra: &[(&str, &str)]| {
         let roots = orch_runtime::settings::Roots {
@@ -4576,6 +4758,7 @@ fn the_memory_mark_reads_the_cgroup_three_valued_and_fires_at_the_setting() {
         cwd: Some(world.path().display().to_string()),
         permission: None,
         extra_args: Vec::new(),
+        handoff: None,
         identity: Some(Identity {
             pid: 4242,
             start: "ticks:1".to_owned(),
@@ -4696,4 +4879,1063 @@ fn a_stale_start_less_claim_is_taken_over_by_the_starts_watch_with_one_line() {
     let intent = runner.fleet()["intents"][0].clone();
     assert_eq!(discharged_by(&intent, "watch-claimed").len(), 1, "{intent}");
     stop_live_watch(&runner, &state);
+}
+
+// ---------------------------------------------------------------------------
+// The launcher's walk and succession: `oversee launch` asking the runtime's
+// `successor` verb, its answer through the real `start-controller` and
+// `request-transfer`.
+// ---------------------------------------------------------------------------
+
+/// A running controller the row owns: on SIGTERM it copies the fleet state
+/// at `fleet` to `snapshot`, so a row reads what the record said when the
+/// controller was stopped, then exits.
+struct Stopped(std::process::Child);
+
+impl Stopped {
+    fn start(fleet: &Path, snapshot: &Path) -> Stopped {
+        let script = format!(
+            "trap 'cp -- \"{}\" \"{}\"; exit 0' TERM; while :; do sleep 0.1; done",
+            fleet.display(),
+            snapshot.display()
+        );
+        Stopped(
+            std::process::Command::new("bash")
+                .args(["-c", &script])
+                .spawn()
+                .expect("bash"),
+        )
+    }
+
+    fn pid(&self) -> u32 {
+        self.0.id()
+    }
+}
+
+impl Drop for Stopped {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// The launcher's world on the runner's server: the watch world's `bin` and
+/// environment, the checkout `oversee launch` runs from, the accounts `rows`
+/// planted for the walk's judge, and the work directory the launch starts
+/// in. Returns the scripts directory, `bin`, the environment and the work
+/// directory.
+fn walk_world(
+    runner: &Runner,
+    rows: &[Value],
+) -> (
+    std::path::PathBuf,
+    std::path::PathBuf,
+    Vec<(String, String)>,
+    std::path::PathBuf,
+) {
+    let (bin, mut env) = watch_world(runner.state_dir());
+    let work = runner.state_dir().join("work");
+    std::fs::create_dir(&work).unwrap();
+    github_skill_under(&work);
+    let unplanted = runner.state_dir().join("unplanted");
+    std::fs::create_dir(&unplanted).unwrap();
+    let scripts = launcher_checkout(runner, &bin, &mut env, &unplanted, "claude");
+    env.extend(plant_accounts(
+        &runner.state_dir().join("accounts"),
+        &runner.state_dir().join("watch-state"),
+        None,
+        rows,
+        now_secs(),
+    ));
+    env.push(("ORCH_LANE_BURN_PCT_PER_HOUR".to_owned(), "0".to_owned()));
+    (scripts, bin, env, work)
+}
+
+/// The directory `walk_world` planted the account `alias` at.
+fn planted(runner: &Runner, alias: &str) -> String {
+    runner
+        .state_dir()
+        .join("accounts/home")
+        .join(format!(".{alias}"))
+        .display()
+        .to_string()
+}
+
+/// The controller record a succession replaces: `pid` running on the
+/// account `alias` in `work`, under `permission` with `words`.
+fn recorded_on(
+    runner: &Runner,
+    server: &Server,
+    pid: u32,
+    alias: &str,
+    work: &Path,
+    permission: &str,
+    words: &[&str],
+) -> Value {
+    let mut record = overseer_record(pid, &start_of(pid), server, work);
+    record["account"] = json!(planted(runner, alias));
+    record["home"] = json!(planted(runner, alias));
+    record["permission"] = json!(permission);
+    record["extra_args"] = json!(words);
+    let mut fleet = runner.fleet();
+    fleet["overseer"] = record.clone();
+    runner.write_fleet(&fleet);
+    record
+}
+
+fn intents(runner: &Runner) -> usize {
+    runner.fleet()["intents"].as_array().map_or(0, Vec::len)
+}
+
+/// Defect: a first launch opening on an account the walk did not choose, or
+/// a walk that chose none opening anything. The real launcher asks the
+/// runtime's walk and hands its answer to the real `start-controller`: with
+/// the first entry's only account walled, that entry is passed over by name
+/// and the overseer opens on the second entry's account with the walk's
+/// model and the settings' posture recorded; with that walled entry alone,
+/// the launch refuses `no-lane-qualifies` at 3 with the walk's counts, and
+/// no window, intent or record is made.
+#[test]
+fn a_first_launch_opens_on_the_walks_choice_past_a_walled_entry_and_a_walk_choosing_none_opens_nothing()
+ {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let mut walled = measured_account("xcodex", 99);
+    walled["harness"] = json!("codex");
+    let (scripts, bin, env, work) = walk_world(&runner, &[walled, measured_account("aclaude", 5)]);
+    let launch = |preference: &str| {
+        let mut command = oversee_launch(
+            &server,
+            &scripts,
+            &bin,
+            &env,
+            &work,
+            "claude",
+            "fable",
+            &stub("stub-confirm"),
+        );
+        command
+            .env("ORCH_OVERSEER_PREFERENCE", preference)
+            .output()
+            .unwrap()
+    };
+    let none = launch("codex:gpt-6.1-sol:high");
+    assert_eq!(none.status.code(), Some(3), "{}", stderr(&none));
+    assert_eq!(
+        oversee_fields(&stderr(&none), "no-lane-qualifies"),
+        Some(vec![
+            "entries=1".to_owned(),
+            "walled=1".to_owned(),
+            "unmeasured=0".to_owned()
+        ]),
+        "{}",
+        stderr(&none)
+    );
+    assert_eq!(server.panes().len(), 1, "nothing opened");
+    assert_eq!(intents(&runner), 0, "no intent: {}", runner.fleet());
+    assert!(runner.fleet().get("overseer").is_none(), "no record");
+
+    let opened = launch("codex:gpt-6.1-sol:high,claude:fable:high");
+    let stdout = String::from_utf8_lossy(&opened.stdout).into_owned();
+    assert!(
+        opened.status.success(),
+        "stdout={stdout}\nstderr={}",
+        stderr(&opened)
+    );
+    let skipped = oversee_fields(&stderr(&opened), "entry-skipped")
+        .unwrap_or_else(|| panic!("no entry-skipped line: {}", stderr(&opened)));
+    for field in [
+        "entry=codex:gpt-6.1-sol:high".to_owned(),
+        "reason=walled".to_owned(),
+        format!("lane={}", planted(&runner, "xcodex")),
+    ] {
+        assert!(skipped.contains(&field), "{field} in {skipped:?}");
+    }
+    let launched = oversee_fields(&stdout, "overseer-launched")
+        .unwrap_or_else(|| panic!("no overseer-launched line: {stdout}"));
+    assert!(
+        launched.contains(&format!("lane={}", planted(&runner, "aclaude"))),
+        "{launched:?}"
+    );
+    let overseer = runner.fleet()["overseer"].clone();
+    assert_eq!(overseer["generation"], 1, "{overseer}");
+    assert_eq!(overseer["harness"], "claude", "{overseer}");
+    assert_eq!(
+        overseer["account"],
+        planted(&runner, "aclaude"),
+        "{overseer}"
+    );
+    assert_eq!(overseer["model"], "fable", "{overseer}");
+    assert_eq!(overseer["permission"], "bypass", "{overseer}");
+    assert_eq!(overseer["pane"], runner_pane(&server), "{overseer}");
+    stop_live_watch(
+        &runner,
+        &runner
+            .state_dir()
+            .join(orch_runtime::state::FLEET_FILE_NAME),
+    );
+}
+
+/// Defect: a succession that stops its predecessor before the successor
+/// stands recorded, that opens on the predecessor's own account where the
+/// walk chose another, or that drops the posture the predecessor ran under.
+/// The real launcher, named the live recorded controller, asks the runtime
+/// for the successor and hands it to the real `request-transfer`: when the
+/// predecessor is signalled the intent already records the successor's
+/// runner by its process identity; the successor is published on the
+/// account the walk chose, launched with the predecessor's own permission
+/// words and no bypass word, and its record carries that posture on.
+#[test]
+fn a_named_predecessor_is_succeeded_on_the_walks_choice_with_its_posture_once_the_successor_stands_recorded()
+ {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let (scripts, bin, env, work) = walk_world(
+        &runner,
+        &[
+            measured_account("eclaude", 50),
+            measured_account("bclaude", 5),
+        ],
+    );
+    let state = runner
+        .state_dir()
+        .join(orch_runtime::state::FLEET_FILE_NAME);
+    let snapshot = runner.state_dir().join("at-stop.json");
+    let predecessor = Stopped::start(&state, &snapshot);
+    let words = ["--permission-mode", "dontAsk"];
+    recorded_on(
+        &runner,
+        &server,
+        predecessor.pid(),
+        "eclaude",
+        &work,
+        "native",
+        &words,
+    );
+    let out = oversee_launch(
+        &server,
+        &scripts,
+        &bin,
+        &env,
+        &work,
+        "claude",
+        "fable",
+        &stub("stub-record"),
+    )
+    .args(["--predecessor", "%99"])
+    .output()
+    .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(
+        out.status.success(),
+        "stdout={stdout}\nstderr={}",
+        stderr(&out)
+    );
+    assert!(
+        oversee_fields(&stdout, "transfer-started").is_some(),
+        "{stdout}"
+    );
+    let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
+    let at_stop: Value = serde_json::from_str(
+        &std::fs::read_to_string(&snapshot)
+            .unwrap_or_else(|e| panic!("the predecessor was stopped by its signal: {e} {intent}")),
+    )
+    .unwrap();
+    let at_stop_intent = &at_stop["intents"][0];
+    let runner_pid = json!(server.pane_pid(&runner_pane(&server)));
+    assert_eq!(
+        at_stop_intent["phase"]["identity"]["pid"], runner_pid,
+        "the successor's runner was recorded by its identity before the stop: {at_stop}"
+    );
+    assert!(
+        at_stop_intent["obligations"]["standing"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|o| o["kind"] == "process" && o["role"] == "runner" && o["pid"] == runner_pid),
+        "the runner stands in the intent's set at the stop: {at_stop}"
+    );
+    assert_eq!(
+        at_stop["overseer"]["pending"]["account"],
+        planted(&runner, "bclaude"),
+        "{at_stop}"
+    );
+    assert_eq!(intent["outcome"], "confirmed", "{intent}");
+    assert!(!live(predecessor.pid()), "the predecessor was retired");
+    let overseer = runner.fleet()["overseer"].clone();
+    assert_eq!(overseer["generation"], 4, "{overseer}");
+    assert_eq!(
+        overseer["account"],
+        planted(&runner, "bclaude"),
+        "{overseer}"
+    );
+    assert_eq!(overseer["permission"], "native", "{overseer}");
+    assert_eq!(overseer["extra_args"], json!(words), "{overseer}");
+    let argv = argv_of(&launch_record(&work));
+    assert!(
+        argv.windows(2).any(|w| w == words),
+        "the predecessor's words reach the successor: {argv:?}"
+    );
+    assert!(
+        !argv.iter().any(|a| a == "--dangerously-skip-permissions"),
+        "no bypass word under a native posture: {argv:?}"
+    );
+}
+
+/// Defect: a succession that opens a successor for a pane the record does
+/// not name, or for a recorded controller that no longer runs, which is the
+/// dead recovery's. Named another pane than the recorded one, the transfer
+/// is refused before anything is written; named the recorded pane whose
+/// process has ended, the transfer fails `predecessor-not-live` before any
+/// window opens, the pending put back.
+#[test]
+fn a_predecessor_that_is_not_the_live_recorded_controller_is_refused_with_nothing_opened() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let (scripts, bin, env, work) = walk_world(&runner, &[measured_account("bclaude", 5)]);
+    let state = runner
+        .state_dir()
+        .join(orch_runtime::state::FLEET_FILE_NAME);
+    let launch = |pane: &str| {
+        oversee_launch(
+            &server,
+            &scripts,
+            &bin,
+            &env,
+            &work,
+            "claude",
+            "fable",
+            &stub("stub-confirm"),
+        )
+        .args(["--predecessor", pane])
+        .output()
+        .unwrap()
+    };
+    let running = Stopped::start(&state, &runner.state_dir().join("unused.json"));
+    let before = recorded_on(
+        &runner,
+        &server,
+        running.pid(),
+        "bclaude",
+        &work,
+        "bypass",
+        &[],
+    );
+    let other = launch("%98");
+    assert_eq!(other.status.code(), Some(1), "{}", stderr(&other));
+    let fields = oversee_fields(&stderr(&other), "transfer-refused")
+        .unwrap_or_else(|| panic!("no transfer-refused line: {}", stderr(&other)));
+    assert!(
+        fields.contains(&"key=overseer-changed".to_owned()),
+        "{fields:?}"
+    );
+    assert_eq!(intents(&runner), 0, "nothing written: {}", runner.fleet());
+    assert_eq!(runner.fleet()["overseer"], before);
+    assert!(live(running.pid()));
+
+    let ended = Stopped::start(&state, &runner.state_dir().join("unused.json"));
+    let gone = ended.pid();
+    let before = recorded_on(&runner, &server, gone, "bclaude", &work, "bypass", &[]);
+    drop(ended);
+    let dead = launch("%99");
+    assert!(dead.status.success(), "{}", stderr(&dead));
+    let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
+    assert_eq!(intent["outcome"], "failed", "{intent}");
+    assert_eq!(
+        intent["observation"]["note"], "predecessor-not-live",
+        "{intent}"
+    );
+    assert_eq!(server.panes().len(), 1, "nothing opened");
+    assert_eq!(
+        runner.fleet()["overseer"],
+        before,
+        "the pending is put back"
+    );
+}
+
+/// Defect: a predecessor stopped, or a record changed, for a successor that
+/// never came up. The successor's harness never draws its composer within
+/// the launcher's bound: the transfer fails before retirement, the runner's
+/// window is closed, the predecessor keeps running and the record is as it
+/// stood.
+#[test]
+fn a_successor_that_never_comes_up_leaves_the_predecessor_running_and_its_record_put_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let (scripts, bin, env, work) = walk_world(&runner, &[measured_account("bclaude", 5)]);
+    let state = runner
+        .state_dir()
+        .join(orch_runtime::state::FLEET_FILE_NAME);
+    let running = Stopped::start(&state, &runner.state_dir().join("unused.json"));
+    let before = recorded_on(
+        &runner,
+        &server,
+        running.pid(),
+        "bclaude",
+        &work,
+        "bypass",
+        &[],
+    );
+    let out = oversee_launch(
+        &server,
+        &scripts,
+        &bin,
+        &env,
+        &work,
+        "claude",
+        "fable",
+        &stub("stub-unconfirmed"),
+    )
+    .args(["--predecessor", "%99", "--wait-secs", "1"])
+    .output()
+    .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
+    assert_eq!(intent["outcome"], "failed", "{intent}");
+    assert_eq!(
+        intent["observation"]["note"], "successor-not-ready",
+        "{intent}"
+    );
+    assert_eq!(intent["observation"]["retired"], false, "{intent}");
+    assert!(live(running.pid()), "the predecessor keeps running");
+    assert_eq!(server.panes().len(), 1, "the runner's window is closed");
+    assert_eq!(runner.fleet()["overseer"], before, "the record as it stood");
+}
+
+/// Defect: a start opening anything where the tmux session it is named into
+/// is absent. The fleet's session the server does not hold fails the start
+/// `tmux-session-missing`, naming it, before any window opens, and nothing
+/// is published.
+#[test]
+fn a_start_into_a_tmux_session_the_server_lacks_fails_with_nothing_opened() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let report = effect_report(&runner.op_fleet_env(
+        &json!({"op": "start-controller", "controller": pending(runner.state_dir())}),
+        &[("ORCH_TMUX_SESSION", "nosuch")],
+    ));
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["note"], "tmux-session-missing",
+        "{report}"
+    );
+    assert_eq!(
+        report["intent"]["observation"]["fields"]["session"], "nosuch",
+        "{report}"
+    );
+    assert_eq!(server.panes().len(), 1, "nothing opened");
+    assert!(
+        runner.fleet()["overseer"].get("generation").is_none(),
+        "nothing published: {}",
+        runner.fleet()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The successor's launch prerequisites: the home and trust the launch's own
+// preparation makes, and the brief a controller opens on, for every
+// succession the watch asks.
+// ---------------------------------------------------------------------------
+
+/// The pending the watch's walled succession opens for the recorded
+/// controller when its walk chose `entry` on `account`: the watch's own
+/// `Caller::successor_of` over the record as the fleet state holds it.
+fn walled_successor(runner: &Runner, entry: &str, account: &Path) -> Value {
+    use orch_runtime::ops::walk::Chosen;
+    use orch_runtime::state::{FleetState, Record as _};
+    use orch_runtime::watch::overseer::{Caller, Record};
+    let path = runner
+        .state_dir()
+        .join(orch_runtime::state::FLEET_FILE_NAME);
+    let snapshot = orch_runtime::state::load(&path).unwrap().unwrap();
+    let fleet = FleetState::view(&path, &snapshot.doc).unwrap();
+    let record = Record::read(&fleet).expect("the recorded controller");
+    let mut words = entry.split(':');
+    let (harness, model, effort) = (
+        words.next().unwrap(),
+        words.next().unwrap(),
+        words.next().unwrap(),
+    );
+    let chosen = Chosen {
+        entry: entry.to_owned(),
+        harness: harness.to_owned(),
+        host: None,
+        model: model.to_owned(),
+        class: None,
+        effort: effort.to_owned(),
+        pick_model: model.to_owned(),
+        account: Some(account.display().to_string()),
+        record: None,
+        warning: None,
+        launch: None,
+        kept: false,
+        kept_unmeasured: false,
+    };
+    serde_json::to_value(Caller::of(&record).successor_of(&chosen)).unwrap()
+}
+
+/// A walled controller of `caller` on the account `spent` under `home`,
+/// running as a sleep the row owns, recorded under `runner`'s server; the
+/// predecessor is returned so it stands until the row ends.
+fn walled_on(runner: &Runner, server: &Server, caller: &str, spent: &Path, home: &Path) -> Owned {
+    std::fs::create_dir_all(spent).unwrap();
+    std::fs::create_dir_all(home).unwrap();
+    let predecessor = Owned::sleep();
+    let mut fleet = runner.fleet();
+    let mut record = overseer_record(
+        predecessor.pid(),
+        &predecessor.start(),
+        server,
+        runner.state_dir(),
+    );
+    record["harness"] = json!(caller);
+    record["account"] = json!(spent.display().to_string());
+    record["home"] = json!(home.display().to_string());
+    record["permission"] = json!("bypass");
+    fleet["overseer"] = record;
+    runner.write_fleet(&fleet);
+    predecessor
+}
+
+/// The watch's walled request for `successor` off the spent account,
+/// through the real `request-transfer` with the recording stubs as every
+/// harness; the settled intent, and the launch record the successor's stub
+/// wrote in the working directory.
+fn walled_transfer(runner: &Runner, spent: &Path, successor: &Value) -> (Value, Value) {
+    let before = runner.fleet()["overseer"].clone();
+    let binaries = ["claude", "codex", "pi"]
+        .map(|h| format!("{h}={}", fixtures().join("stub-record").join(h).display()))
+        .join(",");
+    runner.transfer_started_env(
+        &json!({
+            "op": "request-transfer",
+            "cause": "walled",
+            "exclude_account": spent.display().to_string(),
+            "expected": expected_of(&before),
+            "successor": successor,
+        }),
+        &[("ORCH_HARNESS_BINARIES", &binaries)],
+    );
+    let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
+    let launched = std::fs::read_to_string(runner.state_dir().join("launch-record.json"))
+        .unwrap_or_else(|e| panic!("the successor launched: {e} {intent}"));
+    (intent, serde_json::from_str(&launched).unwrap())
+}
+
+#[test]
+fn a_walled_successor_on_another_harness_runs_on_the_home_its_launch_prepared() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    let work = runner.state_dir().to_path_buf();
+    let spent = work.join("claude-a");
+    let codex = work.join("codex-b");
+    std::fs::create_dir_all(&codex).unwrap();
+    let _predecessor = walled_on(&runner, &server, "claude", &spent, &spent);
+    let successor = walled_successor(&runner, "codex:gpt-6.1-sol:high", &codex);
+    let (intent, launched) = walled_transfer(&runner, &spent, &successor);
+    let prepared = agent_runtime::trust::home_path(&codex, &work);
+    assert_eq!(
+        launched["env"]["CODEX_HOME"],
+        prepared.display().to_string(),
+        "the prepared home, not the account's root: {launched} {intent}"
+    );
+    let config = std::fs::read_to_string(prepared.join("config.toml")).unwrap_or_default();
+    assert!(
+        config.contains(&format!("[projects.\"{}\"]", work.display()))
+            && config.contains("trust_level = \"trusted\""),
+        "the checkout is trusted before the window opened: {config}"
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.verify = Some(5);
+    runner.init_fleet();
+    let work = runner.state_dir().to_path_buf();
+    let spent = work.join("codex-a");
+    let claude = work.join("claude-b");
+    std::fs::create_dir_all(&claude).unwrap();
+    let _predecessor = walled_on(&runner, &server, "codex", &spent, &spent);
+    let successor = walled_successor(&runner, "claude:fable:high", &claude);
+    let (intent, launched) = walled_transfer(&runner, &spent, &successor);
+    assert_eq!(intent["outcome"], "confirmed", "{intent}");
+    assert_eq!(
+        launched["env"]["CLAUDE_CONFIG_DIR"],
+        claude.display().to_string(),
+        "{launched}"
+    );
+    let state: Value = serde_json::from_str(
+        &std::fs::read_to_string(claude.join(".claude.json")).unwrap_or_default(),
+    )
+    .unwrap_or(Value::Null);
+    assert_eq!(
+        state["projects"][work.display().to_string()]["hasTrustDialogAccepted"],
+        true,
+        "the checkout is trusted before the window opened: {state}"
+    );
+    assert_eq!(
+        runner.fleet()["overseer"]["home"],
+        claude.display().to_string(),
+        "the record names the home the launch ran under"
+    );
+}
+
+#[test]
+fn a_pi_successor_keeps_pi_s_own_root_and_bills_the_chosen_seat() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    let work = runner.state_dir().to_path_buf();
+    let home = work.join("home");
+    std::fs::create_dir_all(home.join(".pi/agent")).unwrap();
+    runner
+        .env
+        .push(("HOME".to_owned(), home.display().to_string()));
+    let spent = work.join("claude-a");
+    let seat = work.join("claude-b");
+    std::fs::create_dir_all(&seat).unwrap();
+    let _predecessor = walled_on(&runner, &server, "claude", &spent, &spent);
+    let before = runner.fleet()["overseer"].clone();
+    let panes = server.panes().len();
+    let successor = walled_successor(&runner, "pi:pi-claude/claude-fable-5-1:high", &seat);
+    runner.transfer_started_env(
+        &json!({
+            "op": "request-transfer",
+            "cause": "walled",
+            "exclude_account": spent.display().to_string(),
+            "expected": expected_of(&before),
+            "successor": successor,
+        }),
+        &[(
+            "ORCH_HARNESS_BINARIES",
+            &format!("pi={}", fixtures().join("stub-record/pi").display()),
+        )],
+    );
+    let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
+    assert_eq!(intent["outcome"], "failed", "{intent}");
+    assert_eq!(
+        intent["observation"]["note"], "launch-gate-refused",
+        "{intent}"
+    );
+    assert_eq!(
+        intent["observation"]["cause"],
+        format!(
+            "compaction-on harness=pi file={}/.pi/agent/settings.json",
+            home.display()
+        ),
+        "{intent}"
+    );
+    assert_eq!(server.panes().len(), panes, "no window opened");
+    assert_eq!(runner.fleet()["overseer"], before, "the record as it stood");
+
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    let work = runner.state_dir().to_path_buf();
+    let home = work.join("home");
+    pi_root_marked(&home.join(".pi/agent"));
+    runner
+        .env
+        .push(("HOME".to_owned(), home.display().to_string()));
+    let spent = work.join("claude-a");
+    let seat = work.join("claude-b");
+    std::fs::create_dir_all(&seat).unwrap();
+    let _predecessor = walled_on(&runner, &server, "claude", &spent, &spent);
+    let successor = walled_successor(&runner, "pi:pi-claude/claude-fable-5-1:high", &seat);
+    let (intent, launched) = walled_transfer(&runner, &spent, &successor);
+    assert_eq!(
+        launched["env"]["PI_CODING_AGENT_DIR"], "",
+        "Pi's own root, never the caller's home: {launched} {intent}"
+    );
+    assert_eq!(
+        launched["env"]["CLAUDE_CONFIG_DIR"],
+        seat.display().to_string(),
+        "{launched}"
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    let work = runner.state_dir().to_path_buf();
+    let spent = work.join("claude-a");
+    let root = work.join("pi-root");
+    let seat = work.join("claude-b");
+    std::fs::create_dir_all(&seat).unwrap();
+    let _predecessor = walled_on(&runner, &server, "pi", &spent, &root);
+    pi_root_marked(&root);
+    let mut fleet = runner.fleet();
+    fleet["overseer"]["model"] = json!("pi-claude/claude-fable-5-1");
+    runner.write_fleet(&fleet);
+    let successor = walled_successor(&runner, "pi:pi-claude/claude-fable-5-1:high", &seat);
+    let (intent, launched) = walled_transfer(&runner, &spent, &successor);
+    assert_eq!(
+        launched["env"]["PI_CODING_AGENT_DIR"],
+        root.display().to_string(),
+        "a Pi caller's successor keeps its root: {launched} {intent}"
+    );
+    assert_eq!(
+        launched["env"]["CLAUDE_CONFIG_DIR"],
+        seat.display().to_string(),
+        "{launched}"
+    );
+}
+
+#[test]
+fn a_dead_controller_recovered_by_the_watch_opens_its_successor_on_the_takeover_brief() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let work = runner.state_dir().to_path_buf();
+    let (bin, env) = watch_world(&work);
+    runner.tools = Some(bin);
+    runner.env.extend(env);
+    let pane = server.open_window("overseer", &work, "bash --norc --noprofile");
+    let agent_runtime::reading::Reading::Live(fields) = agent_runtime::host::tmux::pane_fields(
+        &agent_runtime::host::tmux::server(&server.socket).unwrap(),
+        &pane,
+    ) else {
+        panic!("the overseer's pane reads")
+    };
+    let ended = Owned::sleep();
+    let mut record = overseer_record(ended.pid(), &ended.start(), &server, &work);
+    drop(ended);
+    record["pane"] = json!(pane);
+    record["window"] = json!(fields.pane.window);
+    record["server_start"] = json!(server.start);
+    record.as_object_mut().unwrap().remove("launch_line");
+    let mut fleet = runner.fleet();
+    fleet["overseer"] = record;
+    runner.write_fleet(&fleet);
+    let intent = watched_transfer(&runner);
+    assert_eq!(intent["cause"], "dead", "{intent}");
+    assert_eq!(intent["outcome"], "confirmed", "{intent}");
+    assert_eq!(
+        runner.stub_turns(&work, &work),
+        vec![
+            "Read .agents/skills/orch/SKILL.md and follow \
+             .agents/skills/orch/workflows/oversee-takeover.md with the overseer \
+             handoff at tmp/handoffs/OVERSEER-HANDOFF.md"
+                .to_owned()
+        ],
+        "the successor's first turn is the takeover brief"
+    );
+    let overseer = runner.fleet()["overseer"].clone();
+    assert_eq!(overseer["generation"], 4, "{overseer}");
+    assert_eq!(overseer["home"], work.display().to_string(), "{overseer}");
+    assert_eq!(
+        overseer["permission"], "bypass",
+        "the settings' posture, where the dead record named none: {overseer}"
+    );
+}
+
+/// A Copilot home holding the three lane-mail hooks, and on the runner's
+/// tools a `kendex` that reads none of them switched off: the harness
+/// gate's terms.
+fn copilot_gate_passed(runner: &mut Runner, home: &Path) {
+    let hooks = home.join("hooks");
+    std::fs::create_dir_all(&hooks).unwrap();
+    for name in ["lane-mail-check", "lane-mail-compact", "lane-mail-start"] {
+        for ext in ["sh", "json"] {
+            std::fs::write(hooks.join(format!("{name}.{ext}")), "").unwrap();
+        }
+    }
+    let tools = runner.state_dir().join("gate-tools");
+    std::fs::create_dir_all(&tools).unwrap();
+    std::os::unix::fs::symlink(
+        fixtures().join("kendex-hooks-off/kendex"),
+        tools.join("kendex"),
+    )
+    .unwrap();
+    std::fs::write(
+        tools.join("hooks-off.json"),
+        r#"{"stdout": "{\"switched_off_by\": null}"}"#,
+    )
+    .unwrap();
+    runner.tools = Some(tools);
+}
+
+/// A Pi root whose session will not compact and whose pi-hooks carrier
+/// sends the context window and wakes on mail, the harness gate's terms.
+fn pi_root_marked(root: &Path) {
+    let carrier = root.join("packages/@vanillagreen/pi-hooks");
+    std::fs::create_dir_all(carrier.join("extensions")).unwrap();
+    std::fs::write(
+        root.join("settings.json"),
+        r#"{"compaction": {"enabled": false}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        carrier.join("package.json"),
+        r#"{"version": "1.4.0", "pi": {"extensions": ["./extensions/lane-mail-wake.ts"]}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        carrier.join("extensions/vocab.ts"),
+        "export const fields = { context_window: 0 };\n",
+    )
+    .unwrap();
+}
+
+/// The real `watch run` on the runner's fleet state, its interval one
+/// second, until its overseer duty's transfer settles; the watch stopped
+/// and the settled intent returned.
+fn watched_transfer(runner: &Runner) -> Value {
+    let work = runner.state_dir();
+    let state = work.join(orch_runtime::state::FLEET_FILE_NAME);
+    let mut watch = isolated();
+    watch
+        .args(["--state-dir", &work.display().to_string()])
+        .args(["watch", "run", "--file", &state.display().to_string()])
+        .args(["--interval", "1", "--since", "2026-01-01T00:00:00Z"])
+        .current_dir(work)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::fs::File::create(work.join("watch.err")).unwrap());
+    runner.apply_env(&mut watch);
+    let mut watch = watch.spawn().expect("watch run");
+    let deadline = Instant::now() + SETTLE;
+    while runner.fleet()["intents"].as_array().is_none_or(|intents| {
+        !intents.iter().any(|i| {
+            i["id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("request-transfer:"))
+        })
+    }) {
+        if Instant::now() >= deadline {
+            let log = runner.run(&["watch", "log", "--fleet"]);
+            let _ = watch.kill();
+            let _ = watch.wait();
+            panic!(
+                "the watch asked no transfer: {} {}",
+                String::from_utf8_lossy(&log.stdout),
+                std::fs::read_to_string(work.join("watch.err")).unwrap_or_default()
+            );
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
+    stop_live_watch(runner, &state);
+    let _ = watch.wait();
+    intent
+}
+
+#[test]
+fn a_walled_bypass_controllers_watch_walk_crosses_harness_and_its_successor_runs_prepared() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    let mut codex = measured_account("xcodex", 5);
+    codex["harness"] = json!("codex");
+    let (_, bin, env, work) = walk_world(&runner, &[measured_account("eclaude", 99), codex]);
+    runner.tools = Some(bin);
+    runner.env.extend(env);
+    runner.env.push((
+        "ORCH_OVERSEER_PREFERENCE".to_owned(),
+        "claude:fable:high,codex:gpt-6.1-sol:high".to_owned(),
+    ));
+    runner.env.push((
+        "ORCH_HARNESS_BINARIES".to_owned(),
+        format!(
+            "claude={},codex={}",
+            stub("stub-confirm").display(),
+            fixtures().join("stub-record/codex").display()
+        ),
+    ));
+    let pane = server.open_stub("overseer", "stub-confirm", &work, &work);
+    server.await_composer(&pane);
+    let pid = server.pane_pid(&pane);
+    let agent_runtime::reading::Reading::Live(fields) = agent_runtime::host::tmux::pane_fields(
+        &agent_runtime::host::tmux::server(&server.socket).unwrap(),
+        &pane,
+    ) else {
+        panic!("the overseer's pane reads")
+    };
+    let rows = work.join("walled.jsonl");
+    std::fs::write(
+        &rows,
+        "{\"harness\":\"claude\",\"event\":\"StopFailure\",\"error\":\"rate_limit\"}\n",
+    )
+    .unwrap();
+    let mut record = overseer_record(pid, &start_of(pid), &server, &work);
+    record["pane"] = json!(pane);
+    record["window"] = json!(fields.pane.window);
+    record["server_start"] = json!(server.start);
+    record["account"] = json!(planted(&runner, "eclaude"));
+    record["home"] = json!(planted(&runner, "eclaude"));
+    record["permission"] = json!("bypass");
+    record["session_rows"] = json!(rows);
+    let mut fleet = runner.fleet();
+    fleet["overseer"] = record;
+    runner.write_fleet(&fleet);
+    let intent = watched_transfer(&runner);
+    assert_eq!(intent["cause"], "walled", "{intent}");
+    let launched: Value = serde_json::from_str(
+        &std::fs::read_to_string(work.join("launch-record.json"))
+            .unwrap_or_else(|e| panic!("the walk's Codex successor launched: {e} {intent}")),
+    )
+    .unwrap();
+    assert_eq!(
+        launched["env"]["CODEX_HOME"],
+        agent_runtime::trust::home_path(Path::new(&planted(&runner, "xcodex")), &work)
+            .display()
+            .to_string(),
+        "{launched}"
+    );
+}
+
+#[test]
+fn an_empty_overseer_preference_is_refused_before_any_walk() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let out = runner.run_env(
+        &[
+            "successor",
+            "--fleet",
+            "--cwd",
+            &runner.state_dir().display().to_string(),
+        ],
+        &[("ORCH_OVERSEER_PREFERENCE", "")],
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert_eq!(refusal_key(&out), "preference-empty", "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("setting=ORCH_OVERSEER_PREFERENCE"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn a_controller_started_on_its_own_handoff_is_recovered_dead_onto_a_brief_naming_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let work = runner.state_dir().to_path_buf();
+    let (bin, env) = watch_world(&work);
+    runner.tools = Some(bin);
+    runner.env.extend(env);
+    let handoff = "tmp/handoffs/FLEET-B.md";
+    let brief = format!(
+        "Read .agents/skills/orch/SKILL.md and follow .agents/skills/orch/workflows/oversee-takeover.md with the overseer handoff at {handoff}"
+    );
+    let mut controller = pending(&work);
+    controller["handoff"] = json!(handoff);
+    let report = effect_report(
+        &runner.op_fleet(&json!({"op": "start-controller", "controller": controller})),
+    );
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    let overseer = runner.fleet()["overseer"].clone();
+    assert_eq!(overseer["handoff"], handoff, "{overseer}");
+    assert_eq!(runner.stub_turns(&work, &work), vec![brief.clone()]);
+    let pid: u32 = match &overseer["harness_pid"] {
+        Value::String(text) => text.parse().unwrap(),
+        other => other.as_u64().unwrap() as u32,
+    };
+    // The harness ends and its pane stands holding a shell alone.
+    let respawned = tmux(
+        &server.socket,
+        &[
+            "respawn-pane",
+            "-k",
+            "-t",
+            overseer["pane"].as_str().unwrap(),
+            "bash --norc --noprofile",
+        ],
+    );
+    assert!(respawned.status.success(), "{}", stderr(&respawned));
+    wait_until("the controller's harness ended", secs(10), || !live(pid));
+    let intent = watched_transfer(&runner);
+    assert_eq!(intent["cause"], "dead", "{intent}");
+    assert_eq!(intent["outcome"], "confirmed", "{intent}");
+    assert_eq!(
+        runner.stub_turns(&work, &work),
+        vec![brief.clone(), brief],
+        "the recovered successor opens on the launch's own handoff"
+    );
+    assert_eq!(runner.fleet()["overseer"]["handoff"], handoff);
+}
+
+#[test]
+fn a_succession_by_hand_through_the_verb_keeps_the_predecessors_own_handoff() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let (_, bin, env, work) = walk_world(&runner, &[measured_account("bclaude", 5)]);
+    runner.tools = Some(bin);
+    runner.env.extend(env);
+    runner.env.push((
+        "ORCH_OVERSEER_PREFERENCE".to_owned(),
+        "claude:fable:high".to_owned(),
+    ));
+    let handoff = "tmp/handoffs/FLEET-B.md";
+    let brief = format!(
+        "Read .agents/skills/orch/SKILL.md and follow .agents/skills/orch/workflows/oversee-takeover.md with the overseer handoff at {handoff}"
+    );
+    let mut controller = pending(&work);
+    controller["handoff"] = json!(handoff);
+    let report = effect_report(
+        &runner.op_fleet(&json!({"op": "start-controller", "controller": controller})),
+    );
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    let pane = runner.fleet()["overseer"]["pane"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let out = runner.run(&[
+        "successor",
+        "--fleet",
+        "--cwd",
+        &work.display().to_string(),
+        "--predecessor",
+        &pane,
+    ]);
+    let answer = reply(&out);
+    let result = answer["result"].clone();
+    assert_eq!(result["successor"]["handoff"], handoff, "{answer}");
+    assert_eq!(result["brief"], brief.as_str(), "{answer}");
+    runner.transfer_started(&json!({
+        "op": "request-transfer",
+        "cause": "live",
+        "expected": result["expected"],
+        "successor": result["successor"],
+    }));
+    let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
+    assert_eq!(intent["outcome"], "confirmed", "{intent}");
+    let overseer = runner.fleet()["overseer"].clone();
+    assert_eq!(overseer["handoff"], handoff, "{overseer}");
+    assert_eq!(
+        overseer["account"],
+        planted(&runner, "bclaude"),
+        "{overseer}"
+    );
+    assert_eq!(
+        runner.stub_turns(Path::new(&planted(&runner, "bclaude")), &work),
+        vec![brief],
+        "the successor opens on the predecessor's own handoff"
+    );
 }

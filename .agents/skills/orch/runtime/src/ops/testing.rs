@@ -29,7 +29,7 @@ pub(super) const NOW_NANOS: u128 = 1_769_700_000_123_456_789;
 pub(super) const BASE_NONCE: u32 = 4242;
 pub(super) const LOCK: Locking = Locking::FLOCK;
 
-/// The owner every test op persists its intents with (decision 90): a
+/// The owner every test op persists its intents with: a
 /// synthetic identity, since the `ops` rows never judge an owner's liveness;
 /// that is the effects suite's, through the executable's own identity.
 pub(super) fn owner() -> Owner {
@@ -69,7 +69,7 @@ pub(super) fn no_pane(
 }
 
 /// The host every row judges against unless it plants its own: a cap of
-/// four, no legacy store, and a kernel that holds none of the fixtures'
+/// four, no store of the shell's, and a kernel that holds none of the fixtures'
 /// pids, so a fixture lane never charges and a close reads its lane exited.
 /// Rows about liveness hold their own children or plant their readings.
 pub(super) fn host() -> Host<'static> {
@@ -267,6 +267,7 @@ pub(super) fn outcome(id: &str, outcome: Outcome) -> Request {
         window: None,
         tmux_session: None,
         launch_line: None,
+        home: None,
         watch: None,
         mail_root: None,
         observation: None,
@@ -294,6 +295,7 @@ pub(super) fn confirmed_with(
         window: None,
         tmux_session: None,
         launch_line: None,
+        home: None,
         watch: None,
         mail_root: None,
         observation: None,
@@ -350,12 +352,13 @@ pub(super) fn successor() -> Pending {
         resume: None,
         permission: None,
         extra_args: Vec::new(),
+        handoff: None,
         extra: Default::default(),
     }
 }
 
 /// The fixture overseer as the requester saw it. `server` is the string
-/// the legacy writers hand jq through `--arg`; a lane's `launch.server`
+/// the shell writers hand jq through `--arg`; a lane's `launch.server`
 /// is the number `open-terminal` converts.
 pub(super) fn expected() -> OverseerExpected {
     OverseerExpected {

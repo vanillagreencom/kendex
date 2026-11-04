@@ -106,6 +106,8 @@ PI_AGENT="$H/.pi/agent"
 mkdir -p "$PI_AGENT/packages/@vanillagreen/pi-hooks/extensions"
 jq -n '{compaction: {enabled: false}}' > "$PI_AGENT/settings.json"
 printf 'payload.context_window = usage.contextWindow;\n' > "$PI_AGENT/packages/@vanillagreen/pi-hooks/extensions/stop.ts"
+printf 'export const fields = { context_window: 0 };\n' > "$PI_AGENT/packages/@vanillagreen/pi-hooks/extensions/vocab.ts"
+jq -n '{version: "1.4.0", pi: {extensions: ["./extensions/lane-mail-wake.ts"]}}' > "$PI_AGENT/packages/@vanillagreen/pi-hooks/package.json"
 
 env PATH="$BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/work/tmp" tmux -L "$SOCK" -f /dev/null new-session -d -s fleet -x 220 -y 50 'exec sleep 100000'
 KEEP_WINDOW="$(tm display-message -p -t fleet:0 '#{window_id}')"

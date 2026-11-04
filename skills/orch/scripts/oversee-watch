@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# A repeat loop a released `oversee-watch --repeat` started keeps running
+# across an upgrade and runs this path as each pass, with
+# OVERSEE_WATCH_REPEAT_OWNER its own pid. That pass is the one call this entry
+# serves: it starts `orch-runtime watch run --replace <loop pid>` detached
+# through lib/job-unit.sh, says watch-relaunched and exits 4, the pass status
+# on which the loop ends and its exit releases its claim; the runtime waits
+# that release out and claims the fleet. A relaunch that fails is
+# watch-relaunch-failed, exit 1, and the loop runs its next pass. Any other
+# call is refused, exit 2: the fleet watch is `orch-runtime watch run`.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+say() { # KEY FIELD=VALUE...
+  local key="$1"
+  shift
+  printf 'oversee-watch: %s%s\n' "$key" "${*:+ $*}" >&2
+}
+
+die() { # STATUS KEY FIELD=VALUE...
+  local status="$1"
+  shift
+  say "$@"
+  exit "$status"
+}
+
+OWNER="${OVERSEE_WATCH_REPEAT_OWNER:-}"
+unset OVERSEE_WATCH_REPEAT_OWNER
+[[ "$OWNER" =~ ^[1-9][0-9]*$ ]] || die 2 unsupported "run=orch-runtime watch run --file STATE"
+
+STATE=""
+RUN_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --) break ;;
+    --state) STATE="${2:-}"; shift 2 ;;
+    --interval | --max-loops | --since | --repo) RUN_ARGS+=("$1" "${2:-}"); shift 2 ;;
+    --repeat | --handoff | --harness | --item | --root | --hosted | --skip-lane) shift 2 ;;
+    -*) die 2 option-unknown "option=$1" ;;
+    *) shift ;;
+  esac
+done
+[[ -n "$STATE" ]] || die 2 state-required "option=--state"
+DIR="$(cd -- "$(dirname -- "$STATE")" && pwd -P)" || die 1 watch-relaunch-failed "pid=$OWNER" "error=state-dir-unresolved"
+
+# shellcheck source=lib/job-unit.sh
+source "$SCRIPT_DIR/lib/job-unit.sh"
+job_unit_launch "watch-$(date -u +%Y%m%dT%H%M%SZ)" "$DIR/oversee-watch.runner" -- \
+  sh -c 'err=$1; shift; exec "$@" 2>>"$err"' sh "$DIR/oversee-watch.err" \
+  "$SCRIPT_DIR/orch-runtime" watch run --file "$STATE" --replace "$OWNER" ${RUN_ARGS[@]+"${RUN_ARGS[@]}"} \
+  || die 1 watch-relaunch-failed "pid=$OWNER" "error=${JOB_UNIT_ERROR_KEY:-launch-failed}" "$JOB_UNIT_ERROR"
+say watch-relaunched "pid=$OWNER" "unit=$JOB_UNIT_LINE"
+exit 4

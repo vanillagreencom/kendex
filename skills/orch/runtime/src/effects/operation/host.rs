@@ -93,7 +93,7 @@ impl Stopped {
 /// what [`Operation::record_identity`] and [`Operation::publish`] take; or
 /// the adoption's pane read, what [`crate::ops::apply_adoption`] takes.
 /// Constructible here alone, so a transition that takes one takes no
-/// caller-supplied evidence (decisions 124 (1), 124i (37)).
+/// caller-supplied evidence.
 pub(crate) struct Recorded<T> {
     value: T,
 }
@@ -182,7 +182,7 @@ pub(in crate::effects) enum Binding {
 }
 
 /// Whether the process that persisted the intent still runs under its
-/// recorded start. A legacy intent carries no owner and reads `Gone`; so
+/// recorded start. An intent that records no owner reads `Gone`; so
 /// does an owner pid outside the kernel's range.
 pub(in crate::effects) fn owner(intent: &Intent) -> Reading<Identity> {
     let Some(owner) = &intent.owner else {
@@ -246,8 +246,8 @@ fn observe_pane(opened: &OpenedPane) -> Observed<Pane> {
     observe_fields(&server, &opened.pane)
 }
 
-/// The pane `key` names, on the caller's ambient server. A legacy lane
-/// record names the server by pid alone, so another server at the ambient
+/// The pane `key` names, on the caller's ambient server. A lane record may
+/// name the server by pid alone, so another server at the ambient
 /// socket, or none, is read against that pid's liveness; a key that records
 /// the server's start reads a server at that pid under another start as a
 /// reused pid, the recorded server gone with its panes.
@@ -536,12 +536,12 @@ impl Operation<'_> {
     }
 
     /// The harness identity the set recorded under the harness role, standing
-    /// or discharged: what a lane close reads and stops (decision 124d (15)).
+    /// or discharged: what a lane close reads and stops.
     pub(in crate::effects) fn harness_identity(&self) -> Option<Identity> {
         self.obligations.harness_identity()
     }
 
-    /// The standing pid-only harness a legacy lane record named with no start.
+    /// The standing pid-only harness a lane record named with no start.
     pub(in crate::effects) fn harness_pid(&self) -> Option<u32> {
         self.obligations.harness_pid()
     }
@@ -553,7 +553,7 @@ impl Operation<'_> {
     }
 
     /// Refuse `token-stale` where the process token's key no longer stands
-    /// in this handle's set (decision 124d (16)).
+    /// in this handle's set.
     fn check_process_token(
         &self,
         token: &Standing<Identity>,
@@ -575,7 +575,7 @@ impl Operation<'_> {
     }
 
     /// Refuse `token-stale` where the pane token's key no longer stands in
-    /// this handle's set (decision 124d (16)).
+    /// this handle's set.
     fn check_pane_token(
         &self,
         token: &Standing<Pane>,
@@ -624,7 +624,7 @@ impl Operation<'_> {
     /// sockets: one answering with the key's pid and, where the key records
     /// one, its start, is present; one answering with the key's pid under
     /// another start is a reused pid, the recorded server gone with every
-    /// pane it held, `server-unmatched` (decision 66, the rule `observe_key`
+    /// pane it held, `server-unmatched` (the rule `observe_key`
     /// applies); none answering with that pid is read by the pid alone
     /// through the one identity reader: dead, the server and its panes are
     /// gone; live or unreadable, the key stands.
@@ -1147,11 +1147,11 @@ impl Operation<'_> {
     }
 
     /// Stop every standing process of the set this run did not read stale,
-    /// each by its own token (decision 124c (11)); `wake` is the lane's
+    /// each by its own token; `wake` is the lane's
     /// current wake where one was just added, whose stale reading is a turn
     /// already over. `Some(cause)` where one outlived its grace or could not
-    /// be read. The one sweep a moved intent retries on its own set with
-    /// (decision 124d (20)): nothing the lane names now is read here.
+    /// be read. A moved intent retries this sweep on its own set alone:
+    /// nothing the lane names now is read here.
     pub(in crate::effects) fn stop_standing_processes(
         &mut self,
         owns: &dyn Fn(&str) -> bool,
@@ -1187,9 +1187,9 @@ impl Operation<'_> {
     }
 
     /// Close every standing addressable pane of the set by its full key, on
-    /// the server the key names at the caller's sockets (decision 124d (20)):
+    /// the server the key names at the caller's sockets:
     /// a pane present is killed by exact id through its token; one gone, or
-    /// on a server gone or replaced at the key's pid (decision 124g (30)),
+    /// on a server gone or replaced at the key's pid,
     /// is discharged by that read; one the host does not answer for stands.
     /// A pane id is never reused within a server's lifetime, so the key
     /// names the pane the set recorded and no other. The one close a moved
@@ -1364,14 +1364,14 @@ impl Operation<'_> {
 
     /// The worktree's validation runs under a lane that moved belong to the
     /// session that now holds the lane, which owes its own stop: the
-    /// obligation is discharged `lane-moved` where it stands (decision 124e
-    /// (24)); nothing of this close touches that worktree.
+    /// obligation is discharged `lane-moved` where it stands;
+    /// nothing of this close touches that worktree.
     pub(in crate::effects) fn release_validation_moved(&mut self) -> Result<()> {
         self.discharge(Discharge::Validation(ValidationEnd::LaneMoved))
     }
 
     /// Release the lane's worktree the set records, or keep it with its
-    /// reason (decision 128 (9)), by this method's own reads through the
+    /// reason, by this method's own reads through the
     /// handle's runner: the path gone discharges `worktree-gone`; a linked
     /// worktree (its `.git` a file, git-worktree(1) § DETAILS) with a dirty
     /// tree or commits no other ref reaches is kept `dirty` or `unmerged`;
@@ -1518,7 +1518,7 @@ impl Operation<'_> {
 
     /// Type `text` and Enter into the standing pane: the held brief delivered
     /// to the runner at its composer. The `delivering` phase is written
-    /// before the paste (decision 124e (23)), so a repeat after a crash reads
+    /// before the paste, so a repeat after a crash reads
     /// the brief as possibly delivered and never pastes twice. No obligation
     /// changes: the pane and its process stand as before. The inner `Err` is
     /// the host's refusal of the paste.
@@ -1533,7 +1533,7 @@ impl Operation<'_> {
         Ok(tmux::send_line(pane.key(), text))
     }
 
-    /// The user turns the session file `file` records (decision 61).
+    /// The user turns the session file `file` records.
     pub(in crate::effects) fn user_turns(&self, harness: Harness, file: &Path) -> Result<u64> {
         Ok(session::user_turns(harness, file)? as u64)
     }
@@ -1614,8 +1614,8 @@ fn read_worktree(path: &str) -> WorktreeRead {
 /// remote ref reaches (`git rev-list` with every ref but its own branch
 /// negated), which removal would lose. `Err` is a read that failed.
 ///
-/// A worktree holding a submodule is kept `submodules` and never judged
-/// (decision 169): git's own unforced `worktree remove` refuses it
+/// A worktree holding a submodule is kept `submodules` and never judged:
+/// git's own unforced `worktree remove` refuses it
 /// (git-worktree(1)), while the package's removal is forced and a
 /// submodule's tree and commits are read under settings the superproject's
 /// command line does not reach. The keep reads exactly what that refusal
@@ -2001,13 +2001,13 @@ fn run_validation_stop(settings: &Settings, root: &str) -> std::result::Result<(
 }
 
 /// Read the pane an adoption names and record the controller in it: the
-/// harness identity in the pane's foreground, through the one judge
-/// (decisions 60, 99), never the caller's word for it. A record naming
+/// harness identity in the pane's foreground, through the one judge,
+/// never the caller's word for it. A record naming
 /// another session refuses `overseer-live` while that session's identity
 /// reads live, or its pane stands on the proven server with no identity
 /// recorded; one it cannot read refuses `overseer-unreadable`; one nothing
-/// resolves refuses `predecessor-unproven` (decision 109 (1)). The one
-/// read-then-record operation of the fleet (step4-map A3): no intent, so no
+/// resolves refuses `predecessor-unproven`. The one
+/// read-then-record operation of the fleet: no intent, so no
 /// handle, and nothing it reads is an obligation.
 pub(in crate::effects) fn adopt_controller(
     path: &Path,
@@ -2076,8 +2076,8 @@ pub(in crate::effects) fn adopt_controller(
             None => match proof_of(recorded) {
                 Proof::Standing { pid } => return Err(live(pid as u64)),
                 Proof::Unreadable { cause } => return Err(unreadable(cause)),
-                // Nothing resolves the recorded session: it is not replaced
-                // (decision 109 (1)); adoption from its own pane heals it.
+                // Nothing resolves the recorded session: it is not replaced;
+                // adoption from its own pane heals it.
                 Proof::Unproven { cause } => {
                     return Err(Error::PredecessorUnproven {
                         path: path.to_path_buf(),
@@ -2117,17 +2117,14 @@ fn names_pane(overseer: &Overseer, server: u32, start: u64, pane: &str) -> bool 
             .is_none_or(|recorded| recorded == start)
 }
 
-/// The controller record's binding, filled from the pane it names where a
-/// write left it unbound: no native session id, no process identity or no
-/// server start, as a record stands between its write and its first turn
-/// or as an adoption that knew no id leaves it. The pane is read as an
-/// adoption reads it, with the record's own words, and only a record that
-/// names that pane on the answering server is healed, in place. A record
-/// that is bound, names no pane or harness, is off, stands under an open
-/// controller intent or names a pane that server does not hold is left as
-/// it is. The native id is the one lead session for the recorded directory
-/// under the recorded home; none or several bind nothing, and the rest is
-/// still healed.
+/// The controller record's process identity and server start, filled from
+/// the pane it names where a write left them out. Only a record that names
+/// that pane on the answering server is healed, in place, and only when it
+/// is not off and no controller intent is open. The native session id is
+/// never bound here: a session file found beside the process does not say
+/// which session the process runs, since an older session in the same
+/// directory reads the same. The adoption that names the id, or the
+/// turn-end hook reading its own session's id, binds it.
 pub(in crate::effects) fn heal_controller(
     path: &Path,
     settings: &Settings,
@@ -2148,9 +2145,7 @@ pub(in crate::effects) fn heal_controller(
     let (Some(pane), Some(harness_word)) = (word("pane"), word("harness")) else {
         return Ok(None);
     };
-    let session_id = overseer.session_id.clone().filter(|s| !s.is_empty());
-    let bound = session_id.is_some()
-        && super::super::overseer_identity(&overseer).is_some()
+    let bound = super::super::overseer_identity(&overseer).is_some()
         && overseer
             .extra
             .get("server_start")
@@ -2163,9 +2158,9 @@ pub(in crate::effects) fn heal_controller(
     if bound || off || open {
         return Ok(None);
     }
-    let Some(harness) = Harness::parse(&harness_word) else {
+    if Harness::parse(&harness_word).is_none() {
         return Ok(None);
-    };
+    }
     let socket = word("server_socket")
         .map(PathBuf::from)
         .unwrap_or_else(tmux::ambient_socket);
@@ -2173,27 +2168,16 @@ pub(in crate::effects) fn heal_controller(
     if !names_pane(&overseer, server.pid, server.start, &pane) {
         return Ok(None);
     }
-    let home = word("home").or_else(|| word("account"));
-    let cwd = word("cwd");
-    let session_id = session_id.or_else(|| match (&home, &cwd) {
-        (Some(home), Some(cwd)) => {
-            match session::lead_ids(harness, Path::new(home), Path::new(cwd)) {
-                Reading::Live(mut ids) if ids.len() == 1 => Some(ids.remove(0)),
-                Reading::Live(_) | Reading::Gone | Reading::Unreadable { .. } => None,
-            }
-        }
-        (None, _) | (_, None) => None,
-    });
     let request = AdoptController {
         pane,
         socket: Some(socket),
         harness: harness_word,
-        session_id,
+        session_id: None,
         account: word("account"),
-        home,
+        home: word("home").or_else(|| word("account")),
         model: word("model"),
         effort: word("effort"),
-        cwd,
+        cwd: word("cwd"),
         succession: None,
     };
     adopt_controller(path, &request, settings, locking).map(Some)

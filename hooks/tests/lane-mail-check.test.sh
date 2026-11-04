@@ -1795,8 +1795,13 @@ assert_eq "$(text_reads "${RENDERS[@]}")" "0" \
 
 overseer_transcript
 # The two commands an overseer's refusal names, counted in the stderr it wrote:
-# the succession is handed the reading this turn end took, as the judge was.
-overseer_route() { grep -cF -- "/oversee-succeed --context $OVERSEER_CONTEXT -- [THE PERMISSION" "$ERR_FILE"; }
+# the runtime's succession (the successor verb for this session's own pane,
+# its answer handed to request-transfer), and the record that clears a
+# succession that refuses.
+overseer_route() {
+  printf '%s%s' "$(grep -cE -- "/orch-runtime successor --fleet --cwd [^ ]+ --predecessor %[0-9]+$" "$ERR_FILE")" \
+    "$(grep -cF -- "/orch-runtime op --fleet --request [REQUEST FILE]" "$ERR_FILE")"
+}
 overseer_record_named() { grep -cF -- " set oversee handoff " "$ERR_FILE"; }
 
 # The refusal must explain the cap even on a window whose percentage leaves room.
@@ -1838,7 +1843,7 @@ judge_says "$CONTEXT_MARK_LINE"
 stop_at "$TRANSCRIPT" false $(overseer_env)
 expect 2 "lane-mail-check: context=612000" \
   "an overseer the judgement puts at the context mark is refused with the figure it read"
-assert_eq "route=$(overseer_route) record=$(overseer_record_named)" "route=1 record=1" \
+assert_eq "route=$(overseer_route) record=$(overseer_record_named)" "route=11 record=1" \
   "the refusal names the succession as the route, with the record that clears a succession that refuses"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" true $(overseer_env)
@@ -1876,19 +1881,19 @@ stop_at "$TRANSCRIPT" false $(overseer_env)
 expect 2 "lane-mail-check: headroom=4" \
   "an overseer the judgement puts at its account mark is refused with the headroom it read"
 assert_eq "named=$(grep -cF -- 'the ORCH_OVERSEER_HEADROOM_PCT mark of 10' "$ERR_FILE") route=$(overseer_route)" \
-  "named=1 route=1" "and the refusal names the judge's own setting and the succession"
+  "named=1 route=11" "and the refusal names the judge's own setting and the succession"
 
 # A session with compaction enabled has no managed handoff window. It passes that
-# window empty, to the judge and to the succession the refusal names alike, so
-# the judge reports the context unmeasured rather than judging a stored figure.
+# window empty to the judge, so the judge reports the context unmeasured rather
+# than judging a stored figure.
 new_overseer overseer_window_unread
 usage_line sonnet 999999 > "$TRANSCRIPT"
 judge_says "$HEADROOM_MARK_LINE"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env) DISABLE_AUTO_COMPACT=0
-assert_eq "argv=$(judge_argv | tail -n 1) route=$(grep -cF -- "/oversee-succeed --context 999999: -- [THE PERMISSION" "$ERR_FILE")" \
-  "argv=marks --fleet --context 999999: route=1" \
-  "an overseer reading with no window hands its judge and its succession the tokens and no window" "$ERR_FILE"
+assert_eq "argv=$(judge_argv | tail -n 1) route=$(overseer_route)" \
+  "argv=marks --fleet --context 999999: route=11" \
+  "an overseer reading with no window hands its judge the tokens and no window" "$ERR_FILE"
 variant no-context-arg -e 's|^    ${JUDGE_ARGS\[@\]+"${JUDGE_ARGS\[@\]}"} 2>|    2>|'
 install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 write_transcript "$TRANSCRIPT" 600000
@@ -2171,9 +2176,12 @@ assert_eq "argv=$(judge_argv | tail -n 1)" "argv=marks --fleet --context 600000:
   "control: without the ownership gate a session reads a transcript it does not own"
 install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 
+# The memory mark is judged by the runtime alone, so a refusal that named the
+# shell succession, which judges again without it, would open nothing.
+MEMORY_MARK_LINE='{"key":"mark-reached","kind":"memory","value":"90","mark":"80","succession":"on"}'
 for mark_row in \
   "rate|$RATE_MARK_LINE|30|ORCH_OVERSEER_WALL_MINUTES" \
-  "qualifying|$QUALIFYING_MARK_LINE|1|ORCH_OVERSEER_SUCCESSOR_ACCOUNTS"; do
+  "memory|$MEMORY_MARK_LINE|90|ORCH_OVERSEER_MEMORY_PCT"; do
   IFS='|' read -r mark_kind mark_line mark_value mark_setting <<<"$mark_row"
   new_overseer "overseer_$mark_kind"
   judge_says "$mark_line"
@@ -2181,14 +2189,9 @@ for mark_row in \
   stop_at "$TRANSCRIPT" false $(overseer_env)
   expect 2 "lane-mail-check: $mark_kind=$mark_value" \
     "an overseer at its $mark_kind mark is refused with the value it read"
-  assert_eq "setting=$(grep -cF -- "$mark_setting" "$ERR_FILE") route=$(overseer_route)" \
-    "setting=1 route=1" "and the refusal names the setting and succession route"
+  assert_eq "setting=$(grep -cF -- "$mark_setting" "$ERR_FILE") route=$(overseer_route) shell=$(grep -cF -- /oversee-succeed "$ERR_FILE")" \
+    "setting=1 route=11 shell=0" "and the $mark_kind refusal names the setting and the runtime's succession route"
 done
-# The qualifying mark fires where this session's own account was not measured
-# above the trigger, so its refusal carries the headroom the judgement read and
-# an unread account does not pass for a fleet down to one.
-assert_eq "$(grep -cF -- "reads headroom=unreadable" "$ERR_FILE")" "1" \
-  "the qualifying refusal carries the headroom the judgement read for this session"
 
 # What the marks cannot judge is reported and passed, never refused: an
 # overseer whose marks nothing could measure must still end a turn, exactly as
@@ -2394,17 +2397,6 @@ run_payload "$(jq -nc --arg p "$TRANSCRIPT" \
   $(overseer_env)
 assert_eq "RC=$RC first=$(first_line) judged=$(judge_calls)" "RC=0 first=- judged=0" \
   "a subagent of the overseer is judged on neither mark"
-
-# The qualifying refusal's headroom field: its parse gone, the refusal reads
-# the account as unmeasured whatever the judgement said.
-wake_mutant no-headroom "  MARK_HEADROOM=\${fields%%\$'\\037'*}; fields=\${fields#*\$'\\037'}" "  fields=\${fields#*\$'\\037'}"
-new_overseer control_headroom
-install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-judge_says '{"key":"mark-reached","kind":"qualifying","value":"1","mark":"1","succession":"on","headroom":"40"}'
-# shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(overseer_env)
-assert_eq "RC=$RC read=$(grep -cF -- "reads headroom=40" "$ERR_FILE")" "RC=2 read=0" \
-  "control: without the headroom parse the qualifying refusal drops the figure the judgement read"
 
 mutant no-block -e 's@^  refuse unread "\$COUNT"$@  acknowledge; exit 0@'
 BLOCK_MUTANT="$MUTANT_PATH"

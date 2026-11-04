@@ -2,9 +2,9 @@
 # A `systemctl --user` over the units the systemd-run fake beside it started:
 # `stop -- UNIT.service` sends TERM to the unit's group and waits for its
 # leader, as a unit stop does, whoever calls it (a caller inside the unit is
-# in that group and ends with it); `show -p LoadState` answers loaded or
-# not-found. Every call is appended to systemd.log beside this fake before
-# it acts.
+# in that group and ends with it); `show` answers loaded or not-found for
+# the unit's load state. Every call is appended to systemd.log beside this
+# fake before it acts.
 d="$(cd "$(dirname "$0")" && pwd)"
 printf 'systemctl %s\n' "$*" >> "$d/systemd.log"
 last="${!#}"

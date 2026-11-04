@@ -403,11 +403,11 @@ fn refuse_off(path: &Path, current: &Overseer) -> Result<()> {
 /// that owner's lifecycle: a transfer refuses `succession-owned` naming the
 /// command, so orch never opens a successor another owner records.
 fn refuse_owned(current: &Overseer) -> Result<()> {
-    match current.extra.get("succession") {
-        None | Some(Value::Null) => Ok(()),
+    match state::succession_command(current.extra.get("succession")) {
+        None => Ok(()),
         Some(command) => Err(agent_runtime::Error::refused(
             "succession-owned",
-            &[("command", &command.to_string())],
+            &[("command", &json!(command).to_string())],
         )
         .into()),
     }
@@ -971,15 +971,34 @@ fn record_transfer_outcome(
             if let Some(line) = &r.launch_line {
                 state::set(record, "launch_line", line.as_str());
             }
+            // The home the successor's launch prepared, which the request
+            // never decides.
+            if let Some(home) = &r.home {
+                state::set(record, "home", home.as_str());
+            }
+            // The handoff the successor's brief names, the default where the
+            // request named none, which the watch's recoveries name again.
+            let handoff = pending
+                .get("handoff")
+                .and_then(Value::as_str)
+                .unwrap_or(crate::ops::successor::HANDOFF)
+                .to_owned();
+            state::set(record, "handoff", handoff);
             // The watch a start launched or found claimed; a succession
             // carries none and the field stands as it was.
             if let Some(watch) = &r.watch {
                 state::set(record, "watch", serde_json::to_value(watch)?);
             }
-            match pending.get("class").filter(|v| !v.is_null()) {
-                Some(class) => state::set(record, "class", class.clone()),
-                None => {
-                    state::delete(record, "class");
+            // The class and the posture the successor launched under, its
+            // permission and its own words, where the pending names them:
+            // the next succession carries that posture, and a session
+            // inherits none of another's.
+            for key in ["class", "permission", "extra_args"] {
+                match pending.get(key).filter(|v| !v.is_null()) {
+                    Some(value) => state::set(record, key, value.clone()),
+                    None => {
+                        state::delete(record, key);
+                    }
                 }
             }
             state::set(record, "generation", generation + 1);
@@ -1723,6 +1742,7 @@ mod tests {
             window: None,
             tmux_session: None,
             launch_line: None,
+            home: None,
             watch: None,
             mail_root: None,
             observation: Some(json!({"note": "job-unclaimed"})),
@@ -2098,6 +2118,9 @@ mod tests {
             "effort": "high",
             "cwd": "/r",
             "launch_line": "cd /r && codex",
+            // The handoff the successor's brief named, the default where the
+            // pending named none.
+            "handoff": "tmp/handoffs/OVERSEER-HANDOFF.md",
             // The bound session the confirmation carries, as the heal appends
             // it: the predecessor's was dropped above, so the successor's own
             // takes the next place.
@@ -2532,8 +2555,9 @@ mod tests {
 
     /// A Pi successor's publication copies the typed Pi fields as the pending
     /// carries them: the harness word, the provider-bearing model, the seat
-    /// it spends and Pi's own home, so the next generation's judgement reads
-    /// the account the succession was chosen from.
+    /// it spends, Pi's own home and the posture it launched under, so the
+    /// next generation's judgement reads the account the succession was
+    /// chosen from and its succession carries the posture.
     #[test]
     fn a_confirmed_pi_transfer_publishes_the_pending_s_provider_bearing_fields() {
         let dir = tempfile::tempdir().unwrap();
@@ -2572,9 +2596,7 @@ mod tests {
         assert_eq!(after["home"], json!("/a/pi-home"));
         assert_eq!(after["effort"], json!("high"));
         assert!(after.get("pending").is_none());
-        assert!(
-            after.get("permission").is_none(),
-            "a launch field, not a record field"
-        );
+        assert_eq!(after["permission"], json!("native"));
+        assert_eq!(after["extra_args"], json!(["--thinking", "high"]));
     }
 }

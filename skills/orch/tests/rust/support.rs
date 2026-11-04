@@ -253,14 +253,6 @@ pub fn isolation_env(command: &mut Command) -> &mut Command {
     ] {
         command.env(name, value);
     }
-    // The user manager's bus: the session fact the detached job's launcher
-    // starts its unit through; a test row is the one place a
-    // unit starts, and without the bus the launcher falls to setsid.
-    for bus in ["XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"] {
-        if let Some(value) = std::env::var_os(bus) {
-            command.env(bus, value);
-        }
-    }
     command
 }
 
@@ -268,33 +260,42 @@ pub fn isolation_env(command: &mut Command) -> &mut Command {
 /// on `PATH` after a row's own prefixes: a `gh` that refuses, so a row that
 /// names no `gh` fixture never reaches the operator's real `gh` by omission
 /// (a real `gh` under the scratch home starts `gh send-telemetry` and
-/// connects out). Written once per process (the rows of one test binary
-/// start together on a cold temporary root) and published atomically under
-/// a temporary name no other process uses, so two test binaries writing it
-/// at once both read one whole file.
+/// connects out), and a `loginctl` answering that the user manager does not
+/// linger, so a detached job's launcher takes its `setsid` route and no row
+/// starts a unit on the operator's user manager; a row that wants the unit
+/// route plants its own manager fakes ahead of this directory. Each tool is
+/// written once per process where the file does not already hold its text
+/// (the rows of one test binary start together on a cold temporary root)
+/// and published atomically under a temporary name no other process uses,
+/// so two test binaries writing it at once both read one whole file.
 fn isolated_bin() -> PathBuf {
     static DIR: OnceLock<PathBuf> = OnceLock::new();
     DIR.get_or_init(|| {
         let dir = std::env::temp_dir().join("isolated-bin");
-        let gh = dir.join("gh");
-        if !gh.exists() {
-            std::fs::create_dir_all(&dir).expect("the isolated tools directory");
+        std::fs::create_dir_all(&dir).expect("the isolated tools directory");
+        for (name, text) in [
+            (
+                "gh",
+                "#!/bin/sh\nprintf 'gh: no fixture on PATH answers: %s\\n' \"$*\" >&2\nexit 4\n",
+            ),
+            ("loginctl", "#!/bin/sh\necho no\n"),
+        ] {
+            let path = dir.join(name);
+            if std::fs::read_to_string(&path).is_ok_and(|held| held == text) {
+                continue;
+            }
             let tmp = dir.join(format!(
-                ".gh.{}.{:?}",
+                ".{name}.{}.{:?}",
                 std::process::id(),
                 std::thread::current().id()
             ));
-            std::fs::write(
-                &tmp,
-                "#!/bin/sh\nprintf 'gh: no fixture on PATH answers: %s\\n' \"$*\" >&2\nexit 4\n",
-            )
-            .expect("the gh refusal");
+            std::fs::write(&tmp, text).expect("an isolated tool");
             std::fs::set_permissions(
                 &tmp,
                 <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
             )
-            .expect("the gh refusal's mode");
-            let _ = std::fs::rename(&tmp, &gh);
+            .expect("an isolated tool's mode");
+            let _ = std::fs::rename(&tmp, &path);
         }
         dir
     })
@@ -576,8 +577,14 @@ impl Drop for Server {
     }
 }
 
+/// A tmux client on the private server at `socket`, under [`isolation_env`]:
+/// a window a client outside every session opens takes that client's
+/// `PATH`, so a client with the test process's own would hand every such
+/// pane the operator's tools.
 pub fn tmux(socket: &Path, args: &[&str]) -> Output {
-    Command::new("tmux")
+    let mut command = Command::new("tmux");
+    isolation_env(&mut command);
+    command
         .arg("-S")
         .arg(socket)
         .args(args)

@@ -632,7 +632,6 @@ OFF_MARK_LINE='{"key":"mark-reached","kind":"context","value":"612000","mark":"5
 OFF_HEADROOM_LINE='{"key":"mark-reached","kind":"headroom","value":"4","mark":"10","succession":"off","account":"eclaude","resets":"2026-07-27T06:00:00Z"}'
 HEADROOM_MARK_LINE='{"key":"mark-reached","kind":"headroom","value":"4","mark":"10","succession":"on","account":"eclaude","resets":"2026-07-27T06:00:00Z"}'
 RATE_MARK_LINE='{"key":"mark-reached","kind":"rate","value":"30","mark":"30","succession":"on","account":"eclaude"}'
-QUALIFYING_MARK_LINE='{"key":"mark-reached","kind":"qualifying","value":"1","mark":"1","succession":"on","headroom":"unreadable"}'
 BELOW_MARK_LINE='{"key":"below-mark","context":"room","tokens":100000,"window":1000000,"mark":"500000","succession":"on","headroom":"80"}'
 
 # An overseer session: a repository on a branch no mailbox is named for, so the

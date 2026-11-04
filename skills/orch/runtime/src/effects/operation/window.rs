@@ -211,6 +211,30 @@ impl Operation<'_> {
         })
     }
 
+    /// Hold `text` as this intent's brief, `intents/<intent id>.brief`
+    /// beside its receipt, for the delivery after the window opens and for a
+    /// reconcile that delivers it later; a repeat of the intent writes the
+    /// same file again.
+    pub(in crate::effects) fn hold_brief(
+        &self,
+        text: &str,
+    ) -> std::result::Result<std::path::PathBuf, agent_runtime::Error> {
+        let path = self
+            .run
+            .settings
+            .state_dir
+            .join("intents")
+            .join(format!("{}.brief", self.intent_id));
+        let write = |path: &Path| {
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            std::fs::write(path, format!("{text}\n"))
+        };
+        write(&path).map_err(|e| agent_runtime::Error::io("write-brief", &path, e))?;
+        Ok(path)
+    }
+
     fn receipt_path(&self) -> std::path::PathBuf {
         super::host::receipt_path(self.run.settings, &self.intent_id)
     }

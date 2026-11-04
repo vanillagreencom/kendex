@@ -59,6 +59,10 @@ enum Verb {
         /// A JSON request tagged by `op`.
         #[arg(long)]
         request: PathBuf,
+        /// Exit 3 where the request's live effect ended `failed`, the reply
+        /// printed as ever, for a caller that reads the status alone.
+        #[arg(long)]
+        effect_exit: bool,
     },
     /// Re-observe every open intent by its recorded identity and complete or
     /// mark each, starting no new effect.
@@ -80,11 +84,10 @@ enum Verb {
         op: WatchOp,
     },
     /// Judge the recorded controller's own marks: the context reading handed
-    /// in, its account at the headroom trigger, the rate to its wall, its
-    /// process's memory against its cgroup cap where a mark is set, and the
-    /// qualifying count with the successor the walk chose. The reply names
-    /// one mark reached, one figure unmeasured, or every mark read and none
-    /// reached; nothing is launched or written.
+    /// in, its account at the headroom trigger, the rate to its wall, and its
+    /// process's memory against its cgroup cap where a mark is set. The reply
+    /// names one mark reached, one figure unmeasured, or every mark read and
+    /// none reached; nothing is launched or written.
     Marks {
         #[command(flatten)]
         target: Target,
@@ -98,6 +101,28 @@ enum Verb {
         /// The controller's account directory where its record names none.
         #[arg(long)]
         account: Option<String>,
+    },
+    /// The controller an overseer launch opens: the overseer walk's choice
+    /// for the fleet's first controller, or for the successor of the
+    /// recorded one, as the pending a `start-controller` or
+    /// `request-transfer` request carries, with the walk's own reply and,
+    /// for a succession, the record's compare-and-swap set. Nothing is
+    /// launched or written.
+    Successor {
+        #[command(flatten)]
+        target: Target,
+        /// The pane of the recorded controller this launch replaces; left
+        /// out, the fleet's first controller is chosen.
+        #[arg(long)]
+        predecessor: Option<String>,
+        /// The directory a first controller starts in, and a successor
+        /// whose predecessor's record names none.
+        #[arg(long)]
+        cwd: PathBuf,
+        /// The handoff the controller's brief names; left out, the
+        /// predecessor record's own, else the default.
+        #[arg(long)]
+        handoff: Option<String>,
     },
     /// Judge the paths a running lane adds, or a launch before its record
     /// stands, against the fleet's holders under the launch lock, and widen
@@ -376,10 +401,6 @@ enum AccountsOp {
         /// where the judge still reads it unmeasured.
         #[arg(long, requires = "caller_harness")]
         keep_unmeasured: bool,
-        /// Skip a pick where the accounts a successor would read above the
-        /// trigger, the picked one counted, stay at or under this count.
-        #[arg(long, default_value_t = 0)]
-        successor_bound: u32,
     },
     /// The listing under the judge's statement: each row with its status
     /// word, and the roster lines the heartbeat prints.
@@ -406,7 +427,9 @@ enum WatchOp {
         /// The stamp the heartbeat's `since=` carries.
         #[arg(long)]
         since: Option<String>,
-        /// A live runner's pid to stop and replace.
+        /// A live runner's pid to stop and replace, or the pid of a
+        /// start-less repeat loop whose own pass started this runner and
+        /// ends it, whose release is waited out.
         #[arg(long)]
         replace: Option<u32>,
         /// A repository (`owner/repo`) the GitHub inventories read beside the
@@ -832,7 +855,11 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             "agent_runtime_protocol": agent_runtime::protocol::PROTOCOL,
         }),
         Verb::State { op } => state_verb(op, &flags, locking)?,
-        Verb::Op { target, request } => {
+        Verb::Op {
+            target,
+            request,
+            effect_exit,
+        } => {
             let settings = resolve_settings(&flags)?;
             let path = target_path(&target, &settings);
             let request = read_request(&request)?;
@@ -853,7 +880,11 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             // judges and records it as verify-head does.
             if let Request::VerifyPr(r) = &request {
                 return Ok(serde_json::to_value(ops::verify_pr::run(
-                    &path, r, &env, locking,
+                    &path,
+                    r,
+                    Path::new("gh"),
+                    &env,
+                    locking,
                 )?)?);
             }
             // The review gate reads the pull request first, makes the one
@@ -918,12 +949,31 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &schedule::SystemClock,
             )? {
                 Some(outcome) => {
+                    // An admitted request whose effect failed is not a
+                    // success to a caller that reads the status alone.
+                    const EFFECT_FAILED_EXIT: i32 = 3;
+                    let failed = match &outcome {
+                        effects::Effected::Recorded(applied) => matches!(
+                            &applied.report,
+                            ops::Report::RecordOutcome(r)
+                                if r.intent.outcome == agent_runtime::protocol::Outcome::Failed
+                        ),
+                        effects::Effected::Started(_) => false,
+                    };
                     let mut reply = serde_json::json!({
                         "persisted": applied,
                         "effect": outcome,
                     });
                     if !notices_unmarked.is_empty() {
                         reply["notices_unmarked"] = serde_json::to_value(notices_unmarked)?;
+                    }
+                    if effect_exit && failed {
+                        let _ = writeln!(
+                            std::io::stdout().lock(),
+                            "{}",
+                            serde_json::to_string(&Reply::ok(reply)).unwrap_or_default()
+                        );
+                        std::process::exit(EFFECT_FAILED_EXIT);
                     }
                     reply
                 }
@@ -972,6 +1022,24 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 context.as_deref(),
                 harness.as_deref(),
                 account.as_deref(),
+                now,
+            )?
+        }
+        Verb::Successor {
+            target,
+            predecessor,
+            cwd,
+            handoff,
+        } => {
+            let settings = resolve_settings(&flags)?;
+            let path = target_path(&target, &settings);
+            let now = system_env()?.now_secs;
+            ops::successor::successor(
+                &settings,
+                &path,
+                predecessor.as_deref(),
+                &cwd,
+                handoff.as_deref(),
                 now,
             )?
         }
@@ -1391,7 +1459,6 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
             caller_pick_model,
             caller_keep,
             keep_unmeasured,
-            successor_bound,
         } => {
             let path = target_path(&target, &settings);
             let host = ops::Host::kernel(settings.lane_cap, Some(settings.claim_store.clone()));
@@ -1421,7 +1488,6 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
                     keep: caller_keep,
                 }),
                 keep_unmeasured,
-                successor_bound,
             };
             Ok(ops::walk::walk(&settings, &path, &host, &request, now)?.reply())
         }
@@ -1934,7 +2000,14 @@ fn verify_head(
     env: &Env,
     locking: Locking,
 ) -> Result<verify::Verified> {
-    verify::run(path, r, env, locking, verify::Caller::VerifyHead)
+    verify::run(
+        path,
+        r,
+        Path::new("gh"),
+        env,
+        locking,
+        verify::Caller::VerifyHead,
+    )
 }
 
 /// The command's one store entry: the request's transition committed, judged
@@ -1998,6 +2071,11 @@ fn admit(
 const USAGE_EXIT: i32 = 2;
 
 fn main() {
+    // The account renewal re-executes this program for its step, apart
+    // from the caller's process group.
+    if ops::accounts::renewal_step(std::env::args_os().nth(1).as_deref()) {
+        return;
+    }
     let stdout = std::io::stdout();
     let stderr = std::io::stderr();
     let cli = match Cli::try_parse() {

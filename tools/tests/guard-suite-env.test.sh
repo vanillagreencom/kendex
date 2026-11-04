@@ -129,7 +129,7 @@ while not Path(sys.argv[1]).exists():
 WAIT
 exit 9
 ''')
-(runner.parent / "dev-env-block.sh").write_text('trap \'printf stopped > "$STOPPED"; exit 0\' TERM\nprintf ready > "$READY"\nread -r line < "$FIFO"\nprintf done > "$DONE"\n')
+(runner.parent / "dev-env-block.sh").write_text('trap \'printf stopped > "$STOPPED"; exit 0\' TERM\nprintf ready > "$READY"\nexec 9<>"$FIFO"; read -r -t 120 -u 9 line\nprintf done > "$DONE"\n')
 (runner.parent / "open-terminal-env-fail.sh").write_text('printf "pass: 1 fail: 0\\n"\n')
 try:
     for variant in ("normal", "missing-stop"):

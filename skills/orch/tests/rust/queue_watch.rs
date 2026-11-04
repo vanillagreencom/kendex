@@ -1,7 +1,8 @@
 //! The merge-queue wait: `queue_watch::run` in-process on the fake clock,
 //! the fixture `gh` and `github.sh` answering from reply maps a row rewrites
-//! between polls, and through the built binary where the failed-check probe
-//! reaches `verify-pr`'s own reads of a recorded witness.
+//! between polls, the failed-check probe reaching `verify-pr`'s own reads of
+//! a recorded witness through the same `gh`, and the built binary where a
+//! row proves the command's own refusal.
 #![allow(
     clippy::disallowed_methods,
     reason = "the rows run the library on the fake clock, read the record they wrote and run the built binary"
@@ -18,7 +19,7 @@ use orch_runtime::ops::Env;
 use orch_runtime::ops::queue_watch::{Programs, QueueWatch, Reply, run};
 use orch_runtime::state::Locking;
 use serde_json::{Map, Value, json};
-use support::{FakeClock, fixtures, reply, tool_path};
+use support::{FakeClock, fixtures, tool_path};
 
 const ITEM: &str = include_str!("fixtures/workflow-state-KEN-4687.json");
 const ITEM_ID: &str = "KEN-4687";
@@ -87,6 +88,15 @@ fn out() -> Value {
         "mergeQueueEntry": null,
         "autoMergeRequest": null
     }))
+}
+
+/// `in_queue`'s entry under another arm: `enabled_at` a timestamp, or
+/// `None` for an entry enqueued directly, with no auto-merge request.
+fn in_queue_armed(enabled_at: Option<&str>) -> Value {
+    let mut body = in_queue(None);
+    body["body"]["data"]["repository"]["pullRequest"]["autoMergeRequest"] =
+        enabled_at.map_or(Value::Null, |at| json!({"enabledAt": at}));
+    body
 }
 
 fn held_behind(ahead: u64) -> Value {
@@ -233,10 +243,21 @@ impl World {
         doc.get("queue_watch").cloned().unwrap_or(Value::Null)
     }
 
+    /// The guard mutations the fake `gh` was asked to send.
+    fn mutations(&self) -> Vec<String> {
+        self.gh_log()
+            .into_iter()
+            .filter(|l| l.contains("query=mutation"))
+            .collect()
+    }
+
     /// Run the wait on the fake clock while `drive` rewrites the maps and
     /// passes time between polls; the wait's own thread answers. A wait
-    /// still polling after the drive is released to its deadline, so a
-    /// wrong route answers a wrong reply rather than hanging the row.
+    /// still polling after the drive is released to its deadline one poll
+    /// at a time, and only while it sleeps, so a poll's reads, however slow
+    /// the host, spend none of its budget; past a real-time bound it is
+    /// released regardless, so a wrong route answers a wrong reply rather
+    /// than hanging the row.
     fn wait(&mut self, request: &QueueWatch, drive: impl FnOnce(&mut World, &FakeClock)) -> Reply {
         self.write();
         let clock = FakeClock::new();
@@ -244,9 +265,11 @@ impl World {
         std::thread::scope(|s| {
             let handle = s.spawn(|| run(&item, request, &programs, &root, &clock, &env(), LOCK));
             drive(self, &clock);
-            let bound = std::time::Instant::now() + secs(10);
-            while !handle.is_finished() && std::time::Instant::now() < bound {
-                clock.release(request.poll);
+            let bound = std::time::Instant::now() + secs(60);
+            while !handle.is_finished() {
+                if clock.sleepers() > 0 || std::time::Instant::now() >= bound {
+                    clock.release(request.poll);
+                }
                 std::thread::sleep(Duration::from_millis(20));
             }
             handle
@@ -275,19 +298,6 @@ impl World {
             .output()
             .unwrap()
     }
-}
-
-/// The result object of a successful call of the binary.
-fn result(out: &Output) -> Value {
-    assert!(
-        out.status.success(),
-        "exit {:?}: {}",
-        out.status.code(),
-        support::stderr(out)
-    );
-    let envelope = reply(out);
-    assert_eq!(envelope["ok"], true, "{envelope}");
-    envelope["result"].clone()
 }
 
 /// A later run reads the membership an earlier run recorded on the item,
@@ -367,6 +377,80 @@ fn late_finding_while_queued_disarms_then_dequeues() {
             guard["dequeue"]["state"].as_str()
         ),
         (Some(1), Some("done"), Some("done"))
+    );
+}
+
+#[test]
+fn a_late_arm_is_bound_to_the_memory_so_a_re_arm_is_a_new_guard() {
+    let mut world = World::new();
+    world.queue(out());
+    let request = world.request(10, 30);
+    let first = world.wait(&request, |world, clock| {
+        clock.await_sleepers(1);
+        world
+            .queue(in_queue(None))
+            .threads(1)
+            .mutation("disablePullRequestAutoMerge", true)
+            .mutation("dequeuePullRequest", true)
+            .write();
+        clock.release(secs(10));
+    });
+    assert_eq!(first.verdict, "dequeued");
+    assert_eq!(
+        world.memory()["enabled_at"],
+        "2026-07-24T10:00:00Z",
+        "the first arm a poll read is bound"
+    );
+    world.queue(in_queue_armed(Some("2026-07-24T11:00:00Z")));
+    let second = world.wait(&request, |_, _| {});
+    assert_eq!(second.verdict, "dequeued");
+    assert_eq!(world.mutations().len(), 4, "{:?}", world.gh_log());
+}
+
+#[test]
+fn a_dequeue_an_earlier_run_landed_is_sent_again_for_a_direct_re_enqueue() {
+    let mut world = World::new();
+    world
+        .queue(in_queue(None))
+        .threads(1)
+        .mutation("disablePullRequestAutoMerge", true)
+        .mutation("dequeuePullRequest", true);
+    let request = world.request(10, 30);
+    assert_eq!(world.wait(&request, |_, _| {}).verdict, "dequeued");
+    world.queue(in_queue_armed(None));
+    let reply = world.wait(&request, |_, _| {});
+    assert_eq!(
+        (reply.status, reply.verdict),
+        ("complete", "dequeued"),
+        "{reply:?}"
+    );
+    let sent = world.mutations();
+    assert_eq!(sent.len(), 3, "{sent:?}");
+    assert!(sent[2].contains("dequeuePullRequest"), "{sent:?}");
+}
+
+#[test]
+fn an_owed_guard_whose_threads_were_resolved_since_sends_nothing() {
+    let mut world = World::new();
+    world.queue(in_queue(None)).threads(0);
+    let mut doc: Value = serde_json::from_str(&fs::read_to_string(&world.item).unwrap()).unwrap();
+    doc["queue_watch"] = json!({
+        "pr": PR, "head": HEAD, "enabled_at": "2026-07-24T10:00:00Z",
+        "was_queued": true, "was_in_queue": true,
+        "guard": {"threads": 1, "disarm": {"state": "owed"}, "dequeue": {"state": "owed"}}
+    });
+    fs::write(&world.item, serde_json::to_vec_pretty(&doc).unwrap()).unwrap();
+    let request = world.request(10, 10);
+    let reply = world.wait(&request, |_, _| {});
+    assert_eq!(reply.verdict, "queued", "{reply:?}");
+    assert!(world.mutations().is_empty(), "{:?}", world.gh_log());
+    let guard = &world.memory()["guard"];
+    assert_eq!(
+        (
+            guard["disarm"]["state"].as_str(),
+            guard["dequeue"]["state"].as_str()
+        ),
+        (Some("unneeded"), Some("unneeded"))
     );
 }
 
@@ -541,18 +625,28 @@ fn queue_errors_array_is_an_error_never_not_queued() {
     );
 }
 
-/// The probe rows run the binary: a failed required check on an armed,
-/// unenqueued pull request is `armed_blocked` through `verify-pr`, and a
-/// required check nothing reports yet leaves it `armed_awaiting_checks` at
-/// the deadline with that check named, never `progress_unobservable`.
+/// The probe's request: the failed-check probe on, the guard off.
+fn probe_request(world: &World, max_wait: u64) -> QueueWatch {
+    QueueWatch {
+        check_probe: true,
+        guard: false,
+        ..world.request(1, max_wait)
+    }
+}
+
+/// The probe rows run the wait in-process, its probe reading `verify-pr`
+/// through the wait's own `gh`: a failed required check on an armed,
+/// unenqueued pull request is `armed_blocked`, and a required check nothing
+/// reports yet leaves it `armed_awaiting_checks` at the deadline with that
+/// check named, never `progress_unobservable`.
 #[test]
 fn failed_required_check_on_an_armed_pr_is_armed_blocked() {
     let mut world = World::new();
     world
         .witness("bound-run-failed-own-check")
         .queue(armed_only());
-    let out = world.binary(&["--poll", "1", "--max-wait", "5", "--no-guard"]);
-    let value = result(&out);
+    let request = probe_request(&world, 2);
+    let value = serde_json::to_value(world.wait(&request, |_, _| {})).unwrap();
     assert_eq!(
         (
             value["status"].as_str(),
@@ -572,8 +666,8 @@ fn failed_required_check_on_an_armed_pr_is_armed_blocked() {
 fn pending_required_checks_await_never_progress_unobservable() {
     let mut world = World::new();
     world.witness("required-build-missing").queue(armed_only());
-    let out = world.binary(&["--poll", "1", "--max-wait", "2", "--no-guard"]);
-    let value = result(&out);
+    let request = probe_request(&world, 2);
+    let value = serde_json::to_value(world.wait(&request, |_, _| {})).unwrap();
     assert_eq!(
         (
             value["status"].as_str(),

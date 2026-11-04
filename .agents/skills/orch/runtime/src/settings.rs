@@ -276,10 +276,6 @@ pub const OVERSEER_HEADROOM_PCT_KEY: &str = "ORCH_OVERSEER_HEADROOM_PCT";
 /// The minutes to the account's wall, at the measured rate, the overseer
 /// hands off at; 0 is no rate mark.
 pub const OVERSEER_WALL_MINUTES_KEY: &str = "ORCH_OVERSEER_WALL_MINUTES";
-/// The count of accounts above the headroom trigger, the overseer's own
-/// among them, at or under which the overseer moves onto the one with more
-/// room; 0 is no qualifying mark.
-pub const OVERSEER_SUCCESSOR_ACCOUNTS_KEY: &str = "ORCH_OVERSEER_SUCCESSOR_ACCOUNTS";
 /// The percent of its cgroup's memory cap the overseer's harness process
 /// hands off at; unset is no memory mark.
 pub const OVERSEER_MEMORY_PCT_KEY: &str = "ORCH_OVERSEER_MEMORY_PCT";
@@ -287,7 +283,6 @@ pub const OVERSEER_MEMORY_PCT_KEY: &str = "ORCH_OVERSEER_MEMORY_PCT";
 /// to the judge's ceiling.
 pub const HANDOFF_CONTEXT_PCT_KEY: &str = "ORCH_HANDOFF_CONTEXT_PCT";
 const DEFAULT_OVERSEER_WALL_MINUTES: u32 = 20;
-const DEFAULT_OVERSEER_SUCCESSOR_ACCOUNTS: u32 = 1;
 const DEFAULT_HANDOFF_CONTEXT_PCT: u32 = 90;
 /// The Codex credit balance a window wall is lifted above (`lanes`'
 /// `ORCH_LANE_CODEX_CREDIT_FLOOR`).
@@ -412,7 +407,6 @@ const READ_KEYS: &[&str] = &[
     OVERSEER_MARK_REPEAT_KEY,
     OVERSEER_DEAD_PASSES_KEY,
     OVERSEER_WALL_MINUTES_KEY,
-    OVERSEER_SUCCESSOR_ACCOUNTS_KEY,
     OVERSEER_MEMORY_PCT_KEY,
     HANDOFF_CONTEXT_PCT_KEY,
     WATCH_TAIL_LINES_KEY,
@@ -433,6 +427,30 @@ const READ_KEYS: &[&str] = &[
     QUEUE_WAIT_PROBE_INTERVAL_KEY,
     REPORT_CLI_KEY,
     LANES_CLI_KEY,
+    // The account readers' keys: the listing, the renewal and the judge.
+    LANE_RETIRE_KEY,
+    LANE_CLOUD_REPOS_KEY,
+    LANE_COPILOT_POOL_KEY,
+    LANE_EXCLUDE_KEY,
+    LANE_ALIASES_KEY,
+    LANE_MAX_PCT_KEY,
+    LANE_BURN_PCT_KEY,
+    OVERSEER_HEADROOM_PCT_KEY,
+    CODEX_CREDIT_FLOOR_KEY,
+    CLOUD_CREDIT_FLOOR_KEY,
+    LANE_HOST_KEY,
+    HOME_KEY,
+    LANE_DIRS_KEY,
+    CODEX_HOME_KEY,
+    COPILOT_HOME_KEY,
+    USAGE_TTL_KEY,
+    USAGE_MAX_AGE_KEY,
+    HOST_ACCOUNTS_TIMEOUT_KEY,
+    HOST_BUSY_WAIT_KEY,
+    CLAUDE_USAGE_URL_KEY,
+    CODEX_USAGE_URL_KEY,
+    CLAUDE_TOKEN_URL_KEY,
+    CLAUDE_CLIENT_ID_KEY,
     COPILOT_HOLD_SECS_KEY,
     REVIEW_WAIT_SECS_KEY,
     REVIEW_ON_TIMEOUT_KEY,
@@ -704,12 +722,10 @@ pub struct Settings {
 }
 
 /// The controller's own marks beyond the headroom trigger: the rate mark
-/// in minutes, the qualifying count, the memory mark where set, and the
-/// context share.
+/// in minutes, the memory mark where set, and the context share.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarkSettings {
     pub wall_minutes: u32,
-    pub successor_accounts: u32,
     pub memory_pct: Option<u32>,
     pub context_pct: u32,
 }
@@ -1074,8 +1090,11 @@ pub fn load(
         delivery,
     };
     let scope_paths_cli = program(SCOPE_PATHS_CLI_KEY, SCOPE_PATHS_CLI_DEFAULT);
-    let overseer_preference = get(OVERSEER_PREFERENCE_KEY)
-        .unwrap_or(DEFAULT_OVERSEER_PREFERENCE)
+    // A preference set empty names no entry, which the overseer launch
+    // refuses; unset is the default.
+    let overseer_preference = values
+        .get(OVERSEER_PREFERENCE_KEY)
+        .map_or(DEFAULT_OVERSEER_PREFERENCE, String::as_str)
         .to_owned();
     let lane_preference = get(LANE_PREFERENCE_KEY).map(str::to_owned);
     let retention_days = count(RECORD_RETENTION_DAYS_KEY, DEFAULT_RECORD_RETENTION_DAYS)?;
@@ -1250,14 +1269,8 @@ pub fn load(
     };
     let marks = MarkSettings {
         wall_minutes: minutes(OVERSEER_WALL_MINUTES_KEY, DEFAULT_OVERSEER_WALL_MINUTES)?,
-        successor_accounts: minutes(
-            OVERSEER_SUCCESSOR_ACCOUNTS_KEY,
-            DEFAULT_OVERSEER_SUCCESSOR_ACCOUNTS,
-        )?,
-        memory_pct: match get(OVERSEER_MEMORY_PCT_KEY) {
-            None => None,
-            Some(_) => Some(pct(OVERSEER_MEMORY_PCT_KEY, 0)?),
-        },
+        // Unset or 0 is no memory mark, as 0 turns the other marks off.
+        memory_pct: Some(pct(OVERSEER_MEMORY_PCT_KEY, 0)?).filter(|&pct| pct > 0),
         context_pct: match pct(HANDOFF_CONTEXT_PCT_KEY, DEFAULT_HANDOFF_CONTEXT_PCT)? {
             0 => return Err(value_refusal(HANDOFF_CONTEXT_PCT_KEY, "0")),
             n => n,

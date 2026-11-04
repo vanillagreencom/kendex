@@ -3,7 +3,8 @@
 //! entry, what earlier polls saw is written on the item before the next
 //! poll, an unresolved review thread read while the pull request is queued
 //! or armed pulls the arm (the github skill's `pr-threads` is the one thread
-//! reader), a failed required check on an armed, unenqueued pull request is
+//! reader and its `merge-queue-mutation` the one sender of the disarm and
+//! the dequeue), a failed required check on an armed, unenqueued pull request is
 //! read through `verify-pr`, and the reply is the result object the merge
 //! workflow routes on its `verdict` and `cause` words.
 //!
@@ -11,8 +12,9 @@
 //! that never entered the queue: a run that starts after another ended, or
 //! after a crash between two polls, reads the membership the earlier polls
 //! recorded instead of starting from nothing. The memory belongs to one head
-//! and one arm: a new head, or a newer `autoMergeRequest.enabledAt` beside
-//! the recorded one, starts it afresh.
+//! and one arm: the first `autoMergeRequest.enabledAt` a poll reads is bound
+//! to it, and a new head, or another `enabledAt` beside the bound one,
+//! starts it afresh.
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -46,7 +48,6 @@ const RETRY_CAP_POLLS: u32 = 8;
 
 const MEMORY_KEY: &str = "queue_watch";
 
-/// Replace the item's queue memory with `memory`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RecordQueueWatch {
     pub memory: Memory,
@@ -125,7 +126,6 @@ pub(super) fn record(doc: &mut Document, r: &RecordQueueWatch) -> Result<QueueWa
 
 // --- the request and the reply --------------------------------------------------
 
-/// One wait: the pull request, its budget and the settings the loop reads.
 #[derive(Debug, Clone)]
 pub struct QueueWatch {
     pub repo: String,
@@ -179,7 +179,6 @@ impl Outcome {
     }
 }
 
-/// The verdict words the merge workflow routes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Verdict {
     Merged,
@@ -256,7 +255,6 @@ impl Cause {
     }
 }
 
-/// The result object, the merge workflow's routing input.
 #[derive(Debug, Clone, Serialize)]
 pub struct Reply {
     pub status: &'static str,
@@ -707,17 +705,27 @@ impl<'a> Wait<'a> {
         )
     }
 
-    /// The memory for `head` and `enabled_at`: the recorded one where it
-    /// belongs to the same head and arm, else a fresh one.
+    /// The memory for `head` and the arm `enabled_at` this poll read: the
+    /// recorded one where it belongs to the same head and arm, else a fresh
+    /// one. A memory no arm is bound to yet takes the first one read, so a
+    /// later arm under another timestamp is a new wait; a poll that reads
+    /// no arm keeps the bound one, so an arm GitHub cleared is still
+    /// remembered.
     fn memory_for(&self, head: &str, enabled_at: Option<&str>) -> Memory {
         if let Some(m) = &self.memory
             && m.pr == self.r.pr
             && m.head == head
-            && enabled_at
-                .zip(m.enabled_at.as_deref())
-                .is_none_or(|(live, recorded)| live == recorded)
         {
-            return m.clone();
+            match (enabled_at, m.enabled_at.as_deref()) {
+                (Some(live), Some(bound)) if live != bound => {}
+                (Some(live), None) => {
+                    return Memory {
+                        enabled_at: Some(live.to_owned()),
+                        ..m.clone()
+                    };
+                }
+                (_, _) => return m.clone(),
+            }
         }
         Memory {
             pr: self.r.pr,
@@ -1005,39 +1013,32 @@ impl<'a> Wait<'a> {
         }
     }
 
-    /// One guard mutation through `gh api graphql`, verified on its body:
-    /// an `errors` key or a missing payload fails it whatever the status.
+    /// One guard mutation through the github package's
+    /// `merge-queue-mutation`, which owns the mutation's form and judges it
+    /// on its body; a refusal's reason is what it printed.
     fn mutate(&self, what: &'static str, node_id: &str) -> std::result::Result<(), String> {
-        let Some(id) = literal(node_id) else {
-            return Err("pr-id-unusable".to_owned());
+        let repo = std::ffi::OsStr::new(&self.r.repo);
+        let place = Place {
+            cwd: Some(self.project),
+            env: &[("GH_REPO", repo)],
         };
-        let mutation = match what {
-            "disablePullRequestAutoMerge" => format!(
-                "mutation {{ disablePullRequestAutoMerge(input: {{pullRequestId: {id}}}) {{ clientMutationId }} }}"
-            ),
-            _ => format!(
-                "mutation {{ dequeuePullRequest(input: {{id: {id}}}) {{ mergeQueueEntry {{ id }} }} }}"
-            ),
-        };
-        let query = format!("query={mutation}");
-        let body = match self.gh("api", &["api", "graphql", "-f", &query]) {
-            Call::Printed(bytes) => bytes,
+        match call(
+            "github",
+            &self.programs.github,
+            "merge-queue-mutation",
+            &["merge-queue-mutation", what, node_id],
+            place,
+        ) {
+            Call::Printed(_) => Ok(()),
             Call::Failed { detail, stdout, .. } => {
-                let reason = serde_json::from_slice::<Value>(&stdout)
-                    .ok()
-                    .map(|v| messages(&v.get("errors").cloned()))
-                    .filter(|m| !m.is_empty())
-                    .unwrap_or_else(|| detail.chars().take(200).collect());
-                return Err(reason);
+                let printed = String::from_utf8_lossy(&stdout).trim().to_owned();
+                Err(if printed.is_empty() {
+                    detail.chars().take(200).collect()
+                } else {
+                    printed
+                })
             }
-        };
-        let value: Value =
-            serde_json::from_slice(&body).map_err(|_| "unreadable answer".to_owned())?;
-        let payload = value.get("data").and_then(|d| d.get(what));
-        if value.get("errors").is_some() || payload.is_none_or(Value::is_null) {
-            return Err(messages(&value.get("errors").cloned()));
         }
-        Ok(())
     }
 
     /// Pull the arm on `threads` unresolved review threads: the disarm
@@ -1051,9 +1052,12 @@ impl<'a> Wait<'a> {
             None => (None, false, false),
         };
         let standing = self.memory_ref().guard.clone();
+        // The live read decides a half: one an earlier run landed and the
+        // pull request's shape calls for again (armed or queued since) is
+        // owed again, never read as done.
         let half = |needed: bool, earlier: Option<&Mutation>| match earlier {
-            Some(Mutation::Done) => Mutation::Done,
             _ if needed => Mutation::Owed,
+            Some(Mutation::Done) => Mutation::Done,
             _ => Mutation::Unneeded,
         };
         let mut guard = Guard {
@@ -1131,9 +1135,12 @@ impl<'a> Wait<'a> {
         self.guard_fire(count).map(Some)
     }
 
-    /// A guard a crashed run left owed: the live arm settles it. Still armed
-    /// or queued, the mutations are sent again; gone, the guard landed and
-    /// the verdict is the one that run owed.
+    /// A guard a crashed run left owed: the live arm and a fresh thread read
+    /// settle it. Still armed or queued, the threads are read again: none
+    /// left settles the owed halves unneeded and the wait goes on, some are
+    /// pulled on that count, and an unread count leaves the halves owed for
+    /// the next poll; gone, the guard landed and the verdict is the one that
+    /// run owed.
     fn resume_guard(&mut self, queue: &QueueRead) -> Result<Option<Reply>> {
         let Some(guard) = self.memory_ref().guard.clone() else {
             return Ok(None);
@@ -1142,7 +1149,29 @@ impl<'a> Wait<'a> {
             return Ok(None);
         }
         if queue.armed() {
-            return self.guard_fire(guard.threads).map(Some);
+            return match self.unresolved_threads() {
+                None => Ok(None),
+                Some(0) => {
+                    self.unresolved = Some(0);
+                    self.guard_at = Some(self.now());
+                    let unneeded = |half: Mutation| {
+                        if half.owed() {
+                            Mutation::Unneeded
+                        } else {
+                            half
+                        }
+                    };
+                    let mut memory = self.memory_ref().clone();
+                    memory.guard = Some(Guard {
+                        threads: 0,
+                        disarm: unneeded(guard.disarm),
+                        dequeue: unneeded(guard.dequeue),
+                    });
+                    self.write_memory(memory)?;
+                    Ok(None)
+                }
+                Some(threads) => self.guard_fire(threads).map(Some),
+            };
         }
         self.unresolved = Some(guard.threads);
         let settled = Guard {
@@ -1173,7 +1202,13 @@ impl<'a> Wait<'a> {
             pr: self.r.pr,
             required_only: true,
         };
-        let Ok(verified) = verify_pr::run(self.path, &request, self.env, self.locking) else {
+        let Ok(verified) = verify_pr::run(
+            self.path,
+            &request,
+            &self.programs.gh,
+            self.env,
+            self.locking,
+        ) else {
             return false;
         };
         match verified.status {

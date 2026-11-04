@@ -36,6 +36,8 @@ pub(super) const CLAUDE_OAUTH_BETA: &str = "oauth-2025-04-20";
 /// A request's own bound is curl's `--max-time 10`; the runner's covers
 /// the start.
 const REQUEST_BOUND: Duration = Duration::from_secs(15);
+/// The longest wait before the one retry of a refused cold account.
+const RETRY_WAIT_MAX_S: u64 = 5;
 /// One `secret-tool search` before the Secret Service reads absent.
 const KEYRING_BOUND: Duration = Duration::from_secs(5);
 const WINDOWS: [(&str, &str); 4] = [
@@ -45,28 +47,15 @@ const WINDOWS: [(&str, &str); 4] = [
     ("session", "session_5h_pct"),
 ];
 
-/// How the provider's `accounts` read ended.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProviderRead {
-    /// No provider was asked: this machine's own reading alone.
-    Local,
-    /// The provider answered, rows or none.
-    Answered,
-    /// The provider implements no `accounts` verb.
-    Absent,
-    /// The verb failed, or could not be run, with the cause: the listing
-    /// is this machine's reading, and a pool only the provider measures is
-    /// unjudged.
-    Failed(String),
-}
-
 /// The listing: one row per account in the record shape the judge reads,
-/// how the provider read ended, and the lines a reader prints beside the
-/// rows.
+/// and the lines a reader prints beside the rows.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Listing {
     pub rows: Vec<Value>,
-    pub provider: ProviderRead,
+    /// The cause the provider's `accounts` verb failed with, or could not
+    /// be run with: the listing is this machine's reading, and a pool only
+    /// the provider measures is unjudged.
+    pub provider_failure: Option<String>,
     pub notes: Vec<String>,
 }
 
@@ -81,6 +70,8 @@ struct Ctx<'a> {
     now: u64,
     today: String,
     notes: Vec<String>,
+    /// Whether this listing spent its one retry of a refused cold account.
+    retry_spent: bool,
 }
 
 /// The listing under `host` (the provider, or none for this machine
@@ -106,6 +97,7 @@ pub fn list(settings: &Settings, host: Option<&str>, now: u64) -> Result<Listing
         now,
         today: super::today(now),
         notes: Vec::new(),
+        retry_spent: false,
     };
     let host_pool = match host {
         Some(host) => host_pool(&ctx, host)?,
@@ -119,13 +111,13 @@ pub fn list(settings: &Settings, host: Option<&str>, now: u64) -> Result<Listing
         finish(&ctx, &mut row, &pool);
         rows.push(row);
     }
-    let provider = match host {
+    let provider_failure = match host {
         Some(host) => {
-            let (provider_rows, read) = provider_rows(&mut ctx, host, &host_pool);
+            let (provider_rows, failure) = provider_rows(&mut ctx, host, &host_pool);
             rows.extend(provider_rows);
-            read
+            failure
         }
-        None => ProviderRead::Local,
+        None => None,
     };
     // A stated entry for a Copilot CLI home, this machine's or a
     // provider's, states that home's fallback reading and names no Pi root.
@@ -138,13 +130,13 @@ pub fn list(settings: &Settings, host: Option<&str>, now: u64) -> Result<Listing
         if copilot_homes.contains(&wall::canon(&entry.dir)) {
             continue;
         }
-        let mut row = stated_row(&ctx, &entry.dir, Some(entry));
+        let mut row = stated_row(&ctx, entry);
         finish(&ctx, &mut row, "copilot");
         rows.push(row);
     }
     Ok(Listing {
         rows,
-        provider,
+        provider_failure,
         notes: ctx.notes,
     })
 }
@@ -299,7 +291,6 @@ fn discovered(ctx: &Ctx, harness: &str) -> Result<Vec<String>, String> {
     Ok(dirs)
 }
 
-/// The pool a local account of `harness` spends on this host.
 fn local_pool(harness: &str, host_pool: &str) -> String {
     match harness {
         "claude" if host_pool == "cloud-credit" => "cloud-credit".to_owned(),
@@ -355,7 +346,6 @@ fn scripts(settings: &Settings) -> PathBuf {
 
 // --- one account measured ---------------------------------------------------------------------
 
-/// What a reading's windows come from.
 enum Usage {
     /// A usage body the endpoint answered, parsed by its harness.
     Body(Value),
@@ -365,7 +355,6 @@ enum Usage {
     Stated { used: u64, granted: u64 },
 }
 
-/// The reading of one account before the row is built.
 struct Reading {
     status: String,
     detail: String,
@@ -628,26 +617,17 @@ fn copilot_token(dir: &str) -> Result<String, String> {
 }
 
 /// The owner's stated Copilot pool for one Pi root as a row, measured
-/// through `stated`: neither this machine nor a provider read it. With no
-/// entry the root is `no_usage_data`: nothing measured, never room.
-fn stated_row(ctx: &Ctx, dir: &str, entry: Option<&CopilotPool>) -> Value {
-    let alias = alias(ctx.accounts, dir);
-    let reading = match entry {
-        Some(entry) => Reading::stated(entry, "no Copilot login is read for a Pi root"),
-        None => Reading::refused(
-            "no_usage_data",
-            "no lane host row and no ORCH_LANE_COPILOT_POOL entry reads a Copilot pool for this account"
-                .to_owned(),
-        ),
-    };
+/// through `stated`: neither this machine nor a provider read it.
+fn stated_row(ctx: &Ctx, entry: &CopilotPool) -> Value {
+    let alias = alias(ctx.accounts, &entry.dir);
     emit(
         ctx,
         &Emit {
             alias: &alias,
             harness: "pi",
-            dir,
+            dir: &entry.dir,
             through: "stated",
-            reading,
+            reading: Reading::stated(entry, "no Copilot login is read for a Pi root"),
             words: None,
         },
     )
@@ -708,8 +688,10 @@ fn refusal_window(retry_after: Option<&str>) -> u64 {
 /// The account's usage: its record's figure where fresh enough, its
 /// record's live refusal, else one request under the host-wide lock, the
 /// record read again inside it so a caller that waited takes what the
-/// holder brought back instead of posting its own. A login this listing
-/// renewed itself is the same account, so its record stands.
+/// holder brought back instead of posting its own. A credential newer than
+/// the record is another login's figure, judged at each read, since the
+/// holder's answer makes the record newer than the login it read; a login
+/// this listing renewed itself is the same account, so its record stands.
 fn usage_reading(
     ctx: &mut Ctx,
     harness: &str,
@@ -719,9 +701,8 @@ fn usage_reading(
     renewed: bool,
 ) -> Reading {
     let path = cache::record_path(&ctx.usage_dir, harness, dir);
-    let newer_credential = !renewed && credential_newer(harness, dir, &path);
     let record = |ctx: &mut Ctx| -> Option<Reading> {
-        if newer_credential {
+        if !renewed && credential_newer(harness, dir, &path) {
             return None;
         }
         let record = cache::read(&path, harness, dir)?;
@@ -811,10 +792,14 @@ fn refused_reading(
 
 /// One request to the usage endpoint: a refusal recorded in the account's
 /// record for its window, an answer recorded as the figure with the one it
-/// displaced beside it.
+/// displaced beside it. A 429 with no kept figure to answer from is asked
+/// once more, after its window or five seconds whichever is shorter, by the
+/// first such account of the listing alone: a cold account refused once
+/// leaves every caller with nothing to decide on, and the retry is the one
+/// request posted inside the window the refusal recorded.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the listing's one request to a usage endpoint, `curl` as PATH finds it, through the one runner under its tag, the bearer on its stdin; it acts on nothing"
+    reason = "the listing's one bounded wait before its one retry of a refused cold account, on the refusal's own window"
 )]
 fn fetch(
     ctx: &mut Ctx,
@@ -825,6 +810,68 @@ fn fetch(
     token: &str,
     account_id: &str,
 ) -> Reading {
+    let Some(mut answer) = request(harness, url, token, account_id) else {
+        return Reading::refused("unreachable", "usage query could not be run".to_owned());
+    };
+    if answer.code == Some(429) {
+        let refused = refused_answer(ctx, harness, dir, path, url, token, &answer);
+        if refused.usage.is_some() || ctx.retry_spent {
+            return refused;
+        }
+        ctx.retry_spent = true;
+        let window = refusal_window(answer.retry_after.as_deref());
+        std::thread::sleep(Duration::from_secs(window.min(RETRY_WAIT_MAX_S)));
+        answer = match request(harness, url, token, account_id) {
+            Some(answer) => answer,
+            None => {
+                let mut refused = refused;
+                refused
+                    .detail
+                    .push_str(", and the one retry could not be run");
+                return refused;
+            }
+        };
+    }
+    if answer.code.is_some_and(|c| !(200..300).contains(&c)) {
+        return refused_answer(ctx, harness, dir, path, url, token, &answer);
+    }
+    if answer.body.is_empty() {
+        return Reading::refused(
+            "unreachable",
+            format!(
+                "usage query answered HTTP {} with no body",
+                answer.code.unwrap_or(0)
+            ),
+        );
+    }
+    let Ok(usage) = serde_json::from_str::<Value>(&answer.body) else {
+        return Reading::refused("error", "usage response was not a JSON object".to_owned());
+    };
+    if !usage.is_object() {
+        return Reading::refused("error", "usage response was not a JSON object".to_owned());
+    }
+    let prior = cache::read(path, harness, dir).and_then(|r| {
+        let at = r.usage_fetched_at.unwrap_or(r.fetched_at);
+        r.usage.map(|u| (u, ctx.now.saturating_sub(at)))
+    });
+    cache::write_figure(path, harness, dir, usage.clone(), ctx.now);
+    Reading {
+        status: "ok".to_owned(),
+        detail: String::new(),
+        plan: String::new(),
+        usage: Some(Usage::Body(usage)),
+        age: Some(0),
+        prior,
+    }
+}
+
+/// The usage endpoint's answer for one account's credential, or `None`
+/// where the request could not be run.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the listing's one request to a usage endpoint, `curl` as PATH finds it, through the one runner under its tag, the bearer on its stdin; it acts on nothing"
+)]
+fn request(harness: &str, url: &str, token: &str, account_id: &str) -> Option<usage::Answer> {
     let mut args: Vec<&str> = vec![
         "-s",
         "--max-time",
@@ -863,79 +910,60 @@ fn fetch(
         Place::default(),
         config.as_bytes(),
         REQUEST_BOUND,
-    );
-    let out = match out {
-        Ok(out) if out.status.success() => out,
-        Ok(_) | Err(_) => {
-            return Reading::refused("unreachable", "usage query could not be run".to_owned());
-        }
-    };
-    let answer = usage::answer(&String::from_utf8_lossy(&out.stdout));
-    if let Some(code) = answer.code.filter(|c| !(200..300).contains(c)) {
-        let mut status = usage::refusal_status(code, "refused");
-        let mut detail = format!("usage query refused with HTTP {code}");
-        if harness == "claude"
-            && matches!(code, 401 | 403)
-            && let Some(ended) = plan_ended(url, token)
-        {
-            status = "plan_ended".to_owned();
-            detail = ended;
-        }
-        let window = refusal_window(answer.retry_after.as_deref());
-        let refusal = Refusal {
-            endpoint: "usage".to_owned(),
-            status: status.clone(),
-            code: Some(code.to_string()),
-            detail: detail.clone(),
-            expires_at: ctx.now + window,
-        };
-        if let Err(cause) = cache::write_refusal(path, harness, dir, refusal, ctx.now) {
-            ctx.notes.push(format!(
-                "refusal-unrecorded dir={} cause={cause}",
-                ctx.usage_dir.display()
-            ));
-        }
-        if status == "rate_limited"
-            && let Some(record) = cache::read(path, harness, dir)
-            && let FigureRead::Served(figure) =
-                cache::figure(&record, harness, Some(SESSION_WINDOW_S), ctx.now)
-        {
-            return served(
-                figure,
-                "rate_limited",
-                format!("{detail}; these are the last figures it gave"),
-            );
-        }
-        return Reading::refused(&status, detail);
+    )
+    .ok()
+    .filter(|out| out.status.success())?;
+    Some(usage::answer(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// An endpoint's refusal as the account's reading, recorded for its
+/// window: a 401 or 403 the profile confirms as an ended plan reads
+/// `plan_ended`, and a 429 is answered from the figure kept beside the
+/// record while that figure is younger than the session window.
+fn refused_answer(
+    ctx: &mut Ctx,
+    harness: &str,
+    dir: &str,
+    path: &Path,
+    url: &str,
+    token: &str,
+    answer: &usage::Answer,
+) -> Reading {
+    let code = answer.code.unwrap_or(0);
+    let mut status = usage::refusal_status(code, "refused");
+    let mut detail = format!("usage query refused with HTTP {code}");
+    if harness == "claude"
+        && matches!(code, 401 | 403)
+        && let Some(ended) = plan_ended(url, token)
+    {
+        status = "plan_ended".to_owned();
+        detail = ended;
     }
-    if answer.body.is_empty() {
-        return Reading::refused(
-            "unreachable",
-            format!(
-                "usage query answered HTTP {} with no body",
-                answer.code.unwrap_or(0)
-            ),
+    let refusal = Refusal {
+        endpoint: "usage".to_owned(),
+        status: status.clone(),
+        code: Some(code.to_string()),
+        detail: detail.clone(),
+        expires_at: ctx.now + refusal_window(answer.retry_after.as_deref()),
+    };
+    if let Err(cause) = cache::write_refusal(path, harness, dir, refusal, ctx.now) {
+        ctx.notes.push(format!(
+            "refusal-unrecorded dir={} cause={cause}",
+            ctx.usage_dir.display()
+        ));
+    }
+    if status == "rate_limited"
+        && let Some(record) = cache::read(path, harness, dir)
+        && let FigureRead::Served(figure) =
+            cache::figure(&record, harness, Some(SESSION_WINDOW_S), ctx.now)
+    {
+        return served(
+            figure,
+            "rate_limited",
+            format!("{detail}; these are the last figures it gave"),
         );
     }
-    let Ok(usage) = serde_json::from_str::<Value>(&answer.body) else {
-        return Reading::refused("error", "usage response was not a JSON object".to_owned());
-    };
-    if !usage.is_object() {
-        return Reading::refused("error", "usage response was not a JSON object".to_owned());
-    }
-    let prior = cache::read(path, harness, dir).and_then(|r| {
-        let at = r.usage_fetched_at.unwrap_or(r.fetched_at);
-        r.usage.map(|u| (u, ctx.now.saturating_sub(at)))
-    });
-    cache::write_figure(path, harness, dir, usage.clone(), ctx.now);
-    Reading {
-        status: "ok".to_owned(),
-        detail: String::new(),
-        plan: String::new(),
-        usage: Some(Usage::Body(usage)),
-        age: Some(0),
-        prior,
-    }
+    Reading::refused(&status, detail)
 }
 
 /// Whether Claude's profile confirms an ended plan behind a usage 401 or
@@ -1003,15 +1031,28 @@ fn plan_ended(usage_url: &str, token: &str) -> Option<String> {
     clippy::disallowed_methods,
     reason = "the listing's read of the provider's accounts, `lane-host accounts`, through the one runner under its tag, bounded; it acts on nothing"
 )]
-fn provider_rows(ctx: &mut Ctx, host: &str, host_pool: &str) -> (Vec<Value>, ProviderRead) {
+fn provider_rows(ctx: &mut Ctx, host: &str, host_pool: &str) -> (Vec<Value>, Option<String>) {
     let path = cache::record_path(&ctx.usage_dir, "lane-host", host);
-    let cached = |ctx: &Ctx| -> Option<(u64, String)> {
+    let cached = |ctx: &mut Ctx| -> Option<(u64, String)> {
         let record = cache::read(&path, "lane-host", host)?;
         let usage = record.usage.as_ref()?;
         let status = usage.get("status")?.as_u64()?;
         let rows = usage.get("rows")?.as_str()?.to_owned();
         let fresh = record.fetched_at <= ctx.now && ctx.now - record.fetched_at < ctx.serve_max_age;
-        fresh.then_some((status, rows))
+        if !fresh {
+            return None;
+        }
+        let reset = rows
+            .lines()
+            .filter_map(|line| provider_line(line).ok())
+            .find_map(|line| cache::consumed_reset(&line.buckets, ctx.now));
+        if let Some(reset) = reset {
+            ctx.notes.push(format!(
+                "usage-cache-reset account={host} resets-at={reset}"
+            ));
+            return None;
+        }
+        Some((status, rows))
     };
     let answer = match cached(ctx) {
         Some(answer) => Ok(answer),
@@ -1094,11 +1135,11 @@ fn provider_rows(ctx: &mut Ctx, host: &str, host_pool: &str) -> (Vec<Value>, Pro
         }
     };
     match answer {
-        Ok((2, _)) => (Vec::new(), ProviderRead::Absent),
-        Ok((_, rows)) => (host_rows(ctx, &rows, host_pool), ProviderRead::Answered),
+        Ok((2, _)) => (Vec::new(), None),
+        Ok((_, rows)) => (host_rows(ctx, &rows, host_pool), None),
         Err(cause) => {
             ctx.notes.push(cause.clone());
-            (Vec::new(), ProviderRead::Failed(cause))
+            (Vec::new(), Some(cause))
         }
     }
 }
@@ -1117,21 +1158,159 @@ fn dollars(text: &str) -> Option<f64> {
     text.parse().ok()
 }
 
-/// The provider's rows as records: `account` and `harness` required, the
-/// percentages whole numbers 0 to 100, the four credit fields together on
-/// a `harness=pi` row with no `monthly-pct`; a row a field of which cannot
-/// be read is left out with a note rather than listed on a guess, since a
+/// One provider `accounts` line read: its fields, and its windows in the
+/// bucket shape every reading takes.
+struct ProviderLine {
+    fields: Map<String, Value>,
+    account: String,
+    harness: String,
+    buckets: Value,
+    credit_fields: bool,
+}
+
+/// A provider line a field of which cannot be read.
+struct Unreadable {
+    account: String,
+    field: &'static str,
+}
+
+/// One provider line: `account` and `harness` required, the percentages
+/// whole numbers 0 to 100, the four credit fields together on a
+/// `harness=pi` row with no `monthly-pct`.
+fn provider_line(line: &str) -> Result<ProviderLine, Unreadable> {
+    let mut fields: Map<String, Value> = Map::new();
+    for field in line.split('\t').filter(|f| !f.is_empty()) {
+        let (key, value) = field.split_once('=').unwrap_or((field, ""));
+        fields.insert(key.to_owned(), Value::from(value));
+    }
+    let get = |key: &str| {
+        fields
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned()
+    };
+    let account = get("account");
+    let harness = get("harness");
+    let mut bad: Option<&'static str> = None;
+    let mut pcts: [(&'static str, Option<u64>); 4] = [
+        ("session-5h-pct", None),
+        ("weekly-pct", None),
+        ("model-pct", None),
+        ("monthly-pct", None),
+    ];
+    for (key, value) in &mut pcts {
+        let text = get(key);
+        if text.is_empty() {
+            continue;
+        }
+        match text.parse::<u64>() {
+            Ok(n) if text.len() <= 3 && n <= 100 => *value = Some(n),
+            Ok(_) | Err(_) => bad = bad.or(Some(key)),
+        }
+    }
+    if account.is_empty() {
+        bad = bad.or(Some("account"));
+    }
+    if !matches!(harness.as_str(), "claude" | "codex" | "copilot" | "pi") {
+        bad = bad.or(Some("harness"));
+    }
+    let credit_fields = [
+        "credit-limit",
+        "credit-spent",
+        "credit-remaining",
+        "credit-expires",
+    ]
+    .iter()
+    .any(|k| fields.contains_key(*k));
+    let limit = dollars(&get("credit-limit"));
+    let remaining = dollars(&get("credit-remaining"));
+    if credit_fields {
+        if harness != "pi"
+            || fields.contains_key("monthly-pct")
+            || limit.is_none_or(|l| l <= 0.0)
+            || remaining.is_none()
+            || clock::epoch_secs(&get("credit-expires")).is_none()
+        {
+            bad = bad.or(Some("credit-fields"));
+        }
+        if dollars(&get("credit-spent")).is_none() {
+            bad = bad.or(Some("credit-spent"));
+        }
+    }
+    if let Some(field) = bad {
+        return Err(Unreadable { account, field });
+    }
+    let nz = |key: &str| {
+        let v = get(key);
+        if v.is_empty() {
+            Value::Null
+        } else {
+            Value::from(v)
+        }
+    };
+    let [session, weekly, model, monthly] = pcts.map(|(_, v)| v);
+    let credits = credit_fields.then(|| {
+        json!({
+            "unit": "usd",
+            "limit_dollars": limit,
+            "used_dollars": dollars(&get("credit-spent")),
+            "remaining_dollars": remaining,
+            "resets_at": get("credit-expires"),
+            "locked_reason": Value::Null,
+        })
+    });
+    let buckets = json!({
+        "session_5h_pct": session,
+        "weekly_pct": weekly,
+        "model_pct": model,
+        "monthly_pct": monthly,
+        "credits": credits.unwrap_or(Value::Null),
+        "model_label": nz("model-label"),
+        "model_buckets": match model {
+            None => json!([]),
+            Some(pct) => json!([{"label": nz("model-label"), "pct": pct, "resets_at": nz("model-resets")}]),
+        },
+        "resets": {"session": nz("session-resets"), "weekly": nz("weekly-resets"),
+                   "model": nz("model-resets"), "monthly": nz("monthly-resets")},
+    });
+    Ok(ProviderLine {
+        fields,
+        account,
+        harness,
+        buckets,
+        credit_fields,
+    })
+}
+
+/// The provider's rows as records: a row a field of which cannot be read
+/// is left out with a note rather than listed on a guess, since a
 /// percentage nobody can parse must not be judged as room. The provider's
 /// words `plan-ends`, `reserved` and `seat` are carried as written where
 /// non-empty; this listing judges none of them.
 fn host_rows(ctx: &mut Ctx, rows: &str, host_pool: &str) -> Vec<Value> {
     let mut out = Vec::new();
     for line in rows.lines().filter(|l| !l.is_empty()) {
-        let mut fields: Map<String, Value> = Map::new();
-        for field in line.split('\t').filter(|f| !f.is_empty()) {
-            let (key, value) = field.split_once('=').unwrap_or((field, ""));
-            fields.insert(key.to_owned(), Value::from(value));
-        }
+        let ProviderLine {
+            fields,
+            account,
+            harness,
+            buckets,
+            credit_fields,
+        } = match provider_line(line) {
+            Ok(parsed) => parsed,
+            Err(Unreadable { account, field }) => {
+                let named = if account.is_empty() {
+                    "<unnamed>"
+                } else {
+                    account.as_str()
+                };
+                ctx.notes.push(format!(
+                    "host-account-invalid account={named} field={field}"
+                ));
+                continue;
+            }
+        };
         let get = |key: &str| {
             fields
                 .get(key)
@@ -1139,98 +1318,6 @@ fn host_rows(ctx: &mut Ctx, rows: &str, host_pool: &str) -> Vec<Value> {
                 .unwrap_or("")
                 .to_owned()
         };
-        let account = get("account");
-        let harness = get("harness");
-        let mut bad: Option<&str> = None;
-        let mut pcts: [(&str, Option<u64>); 4] = [
-            ("session-5h-pct", None),
-            ("weekly-pct", None),
-            ("model-pct", None),
-            ("monthly-pct", None),
-        ];
-        for (key, value) in &mut pcts {
-            let text = get(key);
-            if text.is_empty() {
-                continue;
-            }
-            match text.parse::<u64>() {
-                Ok(n) if text.len() <= 3 && n <= 100 => *value = Some(n),
-                Ok(_) | Err(_) => bad = bad.or(Some(key)),
-            }
-        }
-        if account.is_empty() {
-            bad = bad.or(Some("account"));
-        }
-        if !matches!(harness.as_str(), "claude" | "codex" | "copilot" | "pi") {
-            bad = bad.or(Some("harness"));
-        }
-        let credit_fields = [
-            "credit-limit",
-            "credit-spent",
-            "credit-remaining",
-            "credit-expires",
-        ]
-        .iter()
-        .any(|k| fields.contains_key(*k));
-        let limit = dollars(&get("credit-limit"));
-        let remaining = dollars(&get("credit-remaining"));
-        if credit_fields {
-            if harness != "pi"
-                || fields.contains_key("monthly-pct")
-                || limit.is_none_or(|l| l <= 0.0)
-                || remaining.is_none()
-                || clock::epoch_secs(&get("credit-expires")).is_none()
-            {
-                bad = bad.or(Some("credit-fields"));
-            }
-            if dollars(&get("credit-spent")).is_none() {
-                bad = bad.or(Some("credit-spent"));
-            }
-        }
-        if let Some(field) = bad {
-            let named = if account.is_empty() {
-                "<unnamed>"
-            } else {
-                account.as_str()
-            };
-            ctx.notes.push(format!(
-                "host-account-invalid account={named} field={field}"
-            ));
-            continue;
-        }
-        let nz = |key: &str| {
-            let v = get(key);
-            if v.is_empty() {
-                Value::Null
-            } else {
-                Value::from(v)
-            }
-        };
-        let [session, weekly, model, monthly] = pcts.map(|(_, v)| v);
-        let credits = credit_fields.then(|| {
-            json!({
-                "unit": "usd",
-                "limit_dollars": limit,
-                "used_dollars": dollars(&get("credit-spent")),
-                "remaining_dollars": remaining,
-                "resets_at": get("credit-expires"),
-                "locked_reason": Value::Null,
-            })
-        });
-        let buckets = json!({
-            "session_5h_pct": session,
-            "weekly_pct": weekly,
-            "model_pct": model,
-            "monthly_pct": monthly,
-            "credits": credits.unwrap_or(Value::Null),
-            "model_label": nz("model-label"),
-            "model_buckets": match model {
-                None => json!([]),
-                Some(pct) => json!([{"label": nz("model-label"), "pct": pct, "resets_at": nz("model-resets")}]),
-            },
-            "resets": {"session": nz("session-resets"), "weekly": nz("weekly-resets"),
-                       "model": nz("model-resets"), "monthly": nz("monthly-resets")},
-        });
         let status = match get("status") {
             s if s.is_empty() => "ok".to_owned(),
             s => s,
@@ -1289,7 +1376,6 @@ struct Emit<'a> {
     words: Option<Map<String, Value>>,
 }
 
-/// The buckets a reading carries.
 fn buckets_of(harness: &str, usage: &Usage) -> Value {
     match usage {
         Usage::Body(body) => usage::parse_body(harness, body, Rounding::Rounded),
@@ -1633,9 +1719,6 @@ mod tests {
         (dir, settings)
     }
 
-    /// Defect: a row dropped on a field the provider did not state, or
-    /// listed on a field nobody can read; a status one row names leaking
-    /// into the next; the words carried as a default.
     #[test]
     fn a_providers_row_is_read_field_by_field_and_dropped_on_one_nobody_can_parse() {
         let (dir, settings) = world();
@@ -1647,6 +1730,7 @@ mod tests {
             now: 1_800_000_000,
             today: "2027-01-15".to_owned(),
             notes: Vec::new(),
+            retry_spent: false,
         };
         let rows = host_rows(
             &mut ctx,
@@ -1681,8 +1765,6 @@ mod tests {
         );
     }
 
-    /// Defect: a tie between windows binding the shorter one, or a
-    /// displaced sample of another window rated as this window's.
     #[test]
     fn a_tie_binds_the_longer_window_and_the_rate_reads_the_same_window_alone() {
         let (_dir, settings) = world();
@@ -1694,6 +1776,7 @@ mod tests {
             now: 1_800_000_000,
             today: "2027-01-15".to_owned(),
             notes: Vec::new(),
+            retry_spent: false,
         };
         let body = |session: u64, weekly: u64| {
             json!({"five_hour": {"utilization": session, "resets_at": "2027-01-15T05:00:00Z"},

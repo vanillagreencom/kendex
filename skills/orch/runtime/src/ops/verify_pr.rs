@@ -1,5 +1,5 @@
-//! U6g: the `verify-pr` operation (step6-map § A11), the runtime's owner of
-//! a pull request's CI verdict, which the legacy `ci-wait <PR#>` poll gave.
+//! The `verify-pr` operation, the runtime's owner of a pull request's CI
+//! verdict.
 //! One `gh pr view` names the pull request by its number and answers its
 //! current head, base and state (`verify::pull_request`); a pull request
 //! that is closed or merged refuses before any verdict read; the head is
@@ -10,8 +10,8 @@
 //! older record replaced. `pending` and an unreadable read are results the
 //! caller repeats under its own budget, never verdicts, as `verify-head`
 //! answers them. The poll, its budget and the wait itself stay with the
-//! workflow's waiter launch; the legacy's `--item` mail nap is not here,
-//! since the lane's mail reaches it through the wake duty.
+//! workflow's waiter launch; no mail nap is here, since the lane's mail
+//! reaches it through the wake duty.
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -71,7 +71,13 @@ pub struct PrVerified {
     clippy::disallowed_methods,
     reason = "the verify-pr operation's one record read before GitHub and its one call of the verification, over the head the pull request answered"
 )]
-pub fn run(path: &Path, r: &VerifyPr, env: &Env, locking: Locking) -> Result<PrVerified> {
+pub fn run(
+    path: &Path,
+    r: &VerifyPr,
+    gh: &Path,
+    env: &Env,
+    locking: Locking,
+) -> Result<PrVerified> {
     verify::validate_repo(&r.repo)?;
     if r.pr == 0 {
         return Err(Error::VerifyRequestInvalid {
@@ -82,7 +88,7 @@ pub fn run(path: &Path, r: &VerifyPr, env: &Env, locking: Locking) -> Result<PrV
     state::load(path)?.ok_or_else(|| Error::RecordMissing {
         path: path.to_path_buf(),
     })?;
-    let pull = match verify::pull_request(&r.repo, r.pr) {
+    let pull = match verify::pull_request(gh, &r.repo, r.pr) {
         Ok(pull) => pull,
         Err(unreadable) => {
             return Ok(PrVerified {
@@ -114,7 +120,7 @@ pub fn run(path: &Path, r: &VerifyPr, env: &Env, locking: Locking) -> Result<PrV
         head: pull.head,
         required_only: r.required_only,
     };
-    let verified = verify::run(path, &head, env, locking, Caller::VerifyPr)?;
+    let verified = verify::run(path, &head, gh, env, locking, Caller::VerifyPr)?;
     Ok(PrVerified {
         pr: r.pr,
         repo: verified.repo,

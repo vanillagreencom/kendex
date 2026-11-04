@@ -1638,9 +1638,6 @@ fn an_unreadable_listing_is_a_counted_failure_that_keeps_the_previous_reading() 
     );
 }
 
-/// Defect: an owed item on this machine (`host=local`) in a fleet whose
-/// provider is set judged on the provider's reading: `dated` or unjudged
-/// while the local account has room.
 #[test]
 fn an_owed_local_item_under_a_fleet_provider_is_judged_on_the_local_listing() {
     let world = World::new();
@@ -1698,6 +1695,71 @@ fn an_owed_local_item_under_a_fleet_provider_is_judged_on_the_local_listing() {
             &"owed KEN-1 state=in-progress priority=2 lane=stopped verdict=queue".to_owned()
         ),
         "the local item is judged on the local account's room, not the provider's wall: {lines:?}"
+    );
+}
+
+#[test]
+fn an_owed_local_item_is_judged_on_the_local_listing_while_the_fleet_provider_cannot_be_read() {
+    let world = World::new();
+    let clock = FakeClock::new();
+    let wall = clock.wall_secs();
+    let mut baseline = Baseline::default();
+    let planted: Vec<(String, String)> = world
+        .plant_accounts(
+            Some("provider-x"),
+            &[account_record(
+                "claude",
+                "local",
+                "ok room 60 2026-10-01T00:00:00Z",
+            )],
+            wall,
+        )
+        .into_iter()
+        .chain([("ORCH_LANE_HOST".to_owned(), "provider-x".to_owned())])
+        .collect();
+    let map = world.path().join("lane-host.json");
+    let mut answers: Value = serde_json::from_str(&std::fs::read_to_string(&map).unwrap()).unwrap();
+    answers["provider-x capabilities"] =
+        json!({"exit": 1, "stderr": "lane-host-fixture: provider down\n"});
+    std::fs::write(&map, answers.to_string()).unwrap();
+    let shared = Shared::default();
+    shared.lock().unwrap().tracker = Some(TrackerInventory {
+        read_at: 0,
+        owed: vec![owed((
+            "KEN-1",
+            OwedState::InProgress,
+            "2",
+            "stopped",
+            "local",
+            "claude",
+            "-",
+            None,
+        ))],
+        verifying: Vec::new(),
+        open_unblocked: Vec::new(),
+    });
+    let mut body = heartbeat::body(heartbeat::Context {
+        settings: world.settings_with(&planted),
+        path: world.fleet_path(),
+        max_loops: 25,
+        interval: secs(240),
+        since: None,
+        repos: Vec::new(),
+        gh: world.path().join("gh"),
+        shared,
+        verifying: Lines::default(),
+    });
+    let produced = pass(Duty::Heartbeat, &mut body, &mut baseline, &clock, wall).unwrap();
+    let lines = rendered(&produced);
+    assert!(
+        lines.contains(&"account-roster unread".to_owned()),
+        "the fleet's roster under the provider is unread: {lines:?}"
+    );
+    assert!(
+        lines.contains(
+            &"owed KEN-1 state=in-progress priority=2 lane=stopped verdict=queue".to_owned()
+        ),
+        "the local item is judged on this machine's listing: {lines:?}"
     );
 }
 

@@ -8,6 +8,7 @@
 
 use serde_json::Value;
 
+pub(crate) use super::Acted;
 use super::evidence;
 pub(crate) use super::evidence::Work;
 use super::wire::{
@@ -15,7 +16,7 @@ use super::wire::{
     PullRequestParameters, PullRequestState, Review, ReviewView, Rule, RuleKind, ThreadsReply,
     TimelineEvent,
 };
-use super::{Answer, Cause, Endpoint, Gh, Read, Reader, head_form, segment};
+use super::{Cause, Endpoint, Gh, Read, Reader, head_form, segment};
 
 /// The GitHub login of the Copilot reviewer, as REST spells it with its
 /// `[bot]` suffix and as GraphQL actors spell it bare.
@@ -190,12 +191,17 @@ pub struct CopilotReviews {
     /// Whether any Copilot review on this head after its arrival is not an
     /// error answer: the standing work a request need not repeat.
     pub any_non_error: bool,
+    /// When Copilot was last asked for a review of this head: the latest
+    /// `review_requested` event naming Copilot at or after the head's
+    /// arrival, GitHub's own record that a request landed.
+    pub requested_at: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CopilotReview {
     pub id: u64,
     pub state: String,
+    pub submitted_at: String,
     pub error: bool,
     pub no_files: bool,
 }
@@ -251,13 +257,34 @@ pub(crate) fn copilot_reviews(gh: &Gh, repo: &str, pr: u64, head: &str) -> Read<
             CopilotReview {
                 id: review.id,
                 state: review.state.clone(),
+                submitted_at: match &review.submitted_at {
+                    Optional::Present(at) => at.clone(),
+                    Optional::Absent => String::new(),
+                },
                 error: review.state == "COMMENTED" && text.contains(COPILOT_ERROR_SENTENCE),
                 no_files: review.state == "COMMENTED" && text.contains(COPILOT_NO_FILES_SENTENCE),
             }
         });
+    let mut requested_at: Option<String> = None;
+    for event in &events {
+        if event.event != "review_requested"
+            || !evidence::copilot_actor(event.fields.get("requested_reviewer"))
+        {
+            continue;
+        }
+        let created = event
+            .fields
+            .get("created_at")
+            .and_then(Value::as_str)
+            .ok_or(Cause::ResponseInvalid(Endpoint::Timeline))?;
+        if created >= arrival.as_str() && requested_at.as_deref().is_none_or(|at| created > at) {
+            requested_at = Some(created.to_owned());
+        }
+    }
     Ok(CopilotReviews {
         latest,
         any_non_error,
+        requested_at,
     })
 }
 
@@ -361,37 +388,22 @@ pub(crate) fn unresolved_threads(gh: &Gh, repo: &str, pr: u64) -> Read<usize> {
     Err(invalid())
 }
 
-/// How GitHub answered an act: made, or refused with gh's exit status and
-/// what it said.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Acted {
-    Made,
-    Refused { exit: Option<i32>, detail: String },
-}
-
 /// Ask Copilot for a review of the pull request: the one POST the gate
 /// makes. A call that could not be made at all is the read's failure.
 pub(crate) fn request_review(gh: &Gh, repo: &str, pr: u64) -> Read<Acted> {
     let path = format!("repos/{repo}/pulls/{pr}/requested_reviewers");
     let reviewer = format!("reviewers[]={COPILOT_REVIEWER}[bot]");
-    acted(gh.call(
+    gh.act(
         Endpoint::RequestReview,
         &["api", &path, "--method", "POST", "-f", &reviewer],
-    )?)
+    )
 }
 
 /// Mark an open draft ready for review: GitHub exposes the transition
 /// through GraphQL alone, which `gh pr ready` sends.
 pub(crate) fn mark_ready(gh: &Gh, repo: &str, pr: u64) -> Read<Acted> {
     let number = pr.to_string();
-    acted(gh.call(Endpoint::Ready, &["pr", "ready", &number, "--repo", repo])?)
-}
-
-fn acted(answer: Answer) -> Read<Acted> {
-    Ok(match answer {
-        Answer::Printed(_) => Acted::Made,
-        Answer::Failed { exit, detail, .. } => Acted::Refused { exit, detail },
-    })
+    gh.act(Endpoint::Ready, &["pr", "ready", &number, "--repo", repo])
 }
 
 /// The verdict rule over the view, with Copilot's latest review on the head
@@ -551,6 +563,7 @@ mod tests {
         let stale = CopilotReviews {
             latest: None,
             any_non_error: false,
+            requested_at: None,
         };
         let judged = judge(
             &view_with("APPROVED", &[(COPILOT_REVIEWER, "APPROVED")]),
@@ -563,10 +576,12 @@ mod tests {
             latest: Some(CopilotReview {
                 id: 1,
                 state: "APPROVED".into(),
+                submitted_at: "2026-01-01T00:00:00Z".into(),
                 error: false,
                 no_files: false,
             }),
             any_non_error: true,
+            requested_at: None,
         };
         let judged = judge(
             &view_with("APPROVED", &[(COPILOT_REVIEWER, "APPROVED")]),

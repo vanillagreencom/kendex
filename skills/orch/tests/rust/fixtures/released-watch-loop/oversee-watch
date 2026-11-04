@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+# The repeat loop a released `oversee-watch --repeat SECS --state PATH` runs:
+# its start-less claim beside the fleet state, the traps that release it, and
+# the loop that runs this same path as each pass with
+# OVERSEE_WATCH_REPEAT_OWNER its own pid and ends on a pass status of 3 or 4.
+# The claim, the traps and the loop are the released script's own lines; the
+# reads a pass's arguments and the delay come from (the fleet merge, GitHub,
+# lane windows, the overseer's mailbox) answer nothing here. Run as a pass,
+# with OVERSEE_WATCH_REPEAT_OWNER set, it exits 0: a pass that found nothing.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+[[ -z "${OVERSEE_WATCH_REPEAT_OWNER:-}" ]] || exit 0
+
+ow_message() { # KEY FIELD=VALUE...
+  local key="$1"
+  shift
+  printf 'oversee-watch: %s%s\n' "$key" "${*:+ $*}"
+}
+die() { # REASON TOOL_DETAIL FIELD=VALUE...
+  local reason="$1" detail="$2"
+  shift 2
+  ow_message "$reason" "$@" >&2
+  [[ -z "$detail" ]] || printf '%s\n' "$detail" >&2
+  exit 2
+}
+
+REPEAT="" STATE_FILE="" INTERVAL=240 MAX_LOOPS=25 SINCE=""
+HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md OVERSEER_HARNESS=""
+REPOS=() GIVEN_HOSTED=() GIVEN_ROOTS=() GIVEN_ITEMS=() SKIP_LANES=()
+LANES=() GIVEN_LANES=() OVERSEER_FLAGS=()
+ARGV=("$@")
+ARGV_BASE_COUNT=$#
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --repeat) REPEAT="$2"; shift 2 ;;
+    --state) STATE_FILE="$2"; shift 2 ;;
+    --interval) INTERVAL="$2"; shift 2 ;;
+    --max-loops) MAX_LOOPS="$2"; shift 2 ;;
+    --since) SINCE="$2"; shift 2 ;;
+    --repo) REPOS+=("$2"); shift 2 ;;
+    *) die option-unknown "" "option=$1" ;;
+  esac
+done
+FLEET_STATE_DIR="${STATE_FILE%/*}"
+WATCH_SESSION=""
+MAIL_INTERVAL="${ORCH_WATCH_MAIL_INTERVAL:-20}"
+
+watch_pid_paths() { # STATE
+  local dir
+  dir="$(cd -- "$(dirname -- "$1")" 2>/dev/null && pwd -P)" || return 1
+  WATCH_STATE_CANON="$dir/$(basename -- "$1")"
+  WATCH_PID_FILE="$dir/oversee-watch.pid"
+  WATCH_ARGV_FILE="$dir/oversee-watch.argv"
+}
+
+watch_pid_write() { # STATE PANE ORIGIN SCRIPT [ARGS...]
+  local state="$1" pane="$2" origin="$3" script="$4"
+  shift 4
+  watch_pid_paths "$state" || return 1
+  printf '%s\0' watch-command-v1 "$script" "$PWD" ${@+"$@"} \
+    > "$WATCH_ARGV_FILE.$$" && mv -f -- "$WATCH_ARGV_FILE.$$" "$WATCH_ARGV_FILE" || return 1
+  printf 'pid=%s\nstate=%s\npane=%s\norigin=%s\nscript=%s\ncwd=%s\n' \
+    "$$" "$WATCH_STATE_CANON" "$pane" "$origin" "$script" "$PWD" \
+    > "$WATCH_PID_FILE.$$" && mv -f -- "$WATCH_PID_FILE.$$" "$WATCH_PID_FILE"
+}
+
+watch_pid_release() { # STATE
+  watch_pid_paths "$1" || return 0
+  grep -qxF -- "pid=$$" "$WATCH_PID_FILE" 2>/dev/null || return 0
+  rm -f -- "$WATCH_PID_FILE"
+}
+
+REPEAT_CHILD_PID=""
+BOX_POLL_PID=""
+repeat_stop() { # STATUS
+  trap '' TERM INT
+  watch_pid_release "$STATE_FILE"
+  [[ -z "$BOX_POLL_PID" ]] || kill -TERM "$BOX_POLL_PID" 2>/dev/null || :
+  if [[ -n "$REPEAT_CHILD_PID" ]]; then
+    kill -TERM "$REPEAT_CHILD_PID" 2>/dev/null || true
+    wait "$REPEAT_CHILD_PID" 2>/dev/null || true
+  fi
+  exit "$1"
+}
+
+watch_claim() { # ARGV...
+  watch_pid_write "$STATE_FILE" "${TMUX_PANE:-none}" "${OVERSEE_WATCH_ORIGIN:-hand}" \
+    "$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" "${@:1:$ARGV_BASE_COUNT}" \
+    || die watch-record-failed "" "path=${WATCH_PID_FILE:-$STATE_FILE}"
+  trap 'watch_pid_release "$STATE_FILE"' EXIT
+  trap 'repeat_stop 143' TERM
+  trap 'repeat_stop 130' INT
+}
+
+check_repo_set() { :; }
+fleet_merge() { :; }
+github_ready() { :; }
+overseer_command_record() { :; }
+overseer_box_size() { printf '0\n'; }
+lane_window_listed() { return 1; }
+box_wait() { return 0; }
+
+REPEAT_FIRST=1
+repeat_watch() { # ARGV...
+  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args line noted="" gone="" pending pass_rc delay
+  local box_seen
+  check_repo_set
+  while :; do
+    fleet_merge
+    if [[ -n "$REPEAT_FIRST" ]]; then
+      REPEAT_FIRST=""
+      ( github_ready ) || exit "$?"
+      watch_claim "$@"
+      overseer_command_record
+    fi
+    args=(--interval "$INTERVAL" --max-loops "$MAX_LOOPS" \
+          --handoff "$HANDOFF" --state "$STATE_FILE")
+    [[ -z "$OVERSEER_HARNESS" ]] || args+=(--harness "$OVERSEER_HARNESS")
+    [[ -z "$SINCE" ]] || args+=(--since "$SINCE")
+    for line in ${REPOS[@]+"${REPOS[@]}"}; do args+=(--repo "$line"); done
+    for line in ${GIVEN_HOSTED[@]+"${GIVEN_HOSTED[@]}"}; do args+=(--hosted "$line"); done
+    for line in ${GIVEN_ROOTS[@]+"${GIVEN_ROOTS[@]}"}; do args+=(--root "$line"); done
+    for line in ${GIVEN_ITEMS[@]+"${GIVEN_ITEMS[@]}"}; do args+=(--item "$line"); done
+    for line in ${SKIP_LANES[@]+"${SKIP_LANES[@]}"}; do args+=(--skip-lane "$line"); done
+    pending=""
+    for line in ${LANES[@]+"${LANES[@]}"}; do
+      if lane_window_listed "$line"; then
+        noted="$(grep -vxF -- "$line" <<<"$noted" || :)"
+        gone="$(grep -vxF -- "$line" <<<"$gone" || :)"
+      elif grep -qxF -- "$line" <<<"$gone"; then
+        args+=(--skip-lane "$line")
+      else
+        grep -qxF -- "$line" <<<"$noted" \
+          || { noted+=$'\n'"$line"; ow_message window-absent "lane=$line" >&2; }
+        pending+=$'\n'"$line"
+      fi
+    done
+    for line in ${GIVEN_LANES[@]+"${GIVEN_LANES[@]}"}; do args+=("$line"); done
+    [[ ${#OVERSEER_FLAGS[@]} -eq 0 ]] || args+=(-- "${OVERSEER_FLAGS[@]}")
+    pass_rc=0
+    box_seen="$(overseer_box_size)"
+    OVERSEE_WATCH_FLEET_STATE_DIR="$FLEET_STATE_DIR" \
+      OVERSEE_WATCH_REPEAT_OWNER="$$" \
+      OVERSEE_WATCH_SESSION="$WATCH_SESSION" \
+      "$self" "${args[@]}" &
+    REPEAT_CHILD_PID=$!
+    wait "$REPEAT_CHILD_PID" || pass_rc=$?
+    REPEAT_CHILD_PID=""
+    if [[ "$pass_rc" -eq 3 ]]; then
+      ow_message overseer-succeeded "pane=${TMUX_PANE:-none}" >&2
+      exit 0
+    fi
+    [[ "$pass_rc" -ne 4 ]] || exit 0
+    [[ "$pass_rc" -ne 0 ]] || gone+="$pending"
+    delay="$REPEAT"
+    [[ "$pass_rc" -eq 2 || "$MAIL_INTERVAL" -ge "$delay" ]] || delay="$MAIL_INTERVAL"
+    OVERSEE_WATCH_SLEEP=repeat sleep "$delay" &
+    REPEAT_CHILD_PID=$!
+    if [[ "$MAIL_INTERVAL" -eq 0 ]] || box_wait "$REPEAT_CHILD_PID" "$box_seen"; then
+      wait "$REPEAT_CHILD_PID" || die sleep-failed "" "secs=$delay"
+    fi
+    REPEAT_CHILD_PID=""
+  done
+}
+[[ -n "$REPEAT" && -n "$STATE_FILE" ]] || die state-required "" "option=--repeat"
+repeat_watch "${ARGV[@]}"

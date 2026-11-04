@@ -34,6 +34,7 @@ pub mod proof;
 pub mod prune;
 pub mod queue_watch;
 pub mod store;
+pub mod successor;
 #[cfg(test)]
 #[allow(
     clippy::disallowed_methods,
@@ -154,6 +155,10 @@ pub struct RecordOutcome {
     /// The line a confirmed successor ran, written over the pending one.
     #[serde(default)]
     pub launch_line: Option<String>,
+    /// The home a confirmed successor runs under, as its launch prepared it,
+    /// written over the pending's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home: Option<String>,
     /// The fleet watch a confirmed start launched or found claimed, written as
     /// the record's `overseer.watch`; a succession carries none and keeps the
     /// field as it stands.
@@ -1775,6 +1780,7 @@ mod tests {
                     window: None,
                     tmux_session: None,
                     launch_line: None,
+                    home: None,
                     watch: None,
                     mail_root: None,
                     observation: None,

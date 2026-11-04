@@ -1,42 +1,34 @@
-//! The heartbeat's body (decision 121 Q5, Q9; decisions 126 (1), 128 (5),
-//! 130; step5-map § A1): the one periodic line, due every `max-loops ×
+//! The heartbeat's body: the one periodic line, due every `max-loops ×
 //! interval` seconds from the last heartbeat on the runner's own schedule,
-//! and under it what the legacy `heartbeat` printed (`oversee-watch:5682-
-//! 5735`): every `--repo`'s open pull requests, a Dependabot one marked by
-//! the GitHub duty's `bot-fix` row; the account roster through the legacy
-//! `lanes list --json` (Q9); the `verifying` lines of the verification
-//! duty's last pass; the `owed` lines of the tracker duty's last pass with
-//! their wall verdicts through the accounts judge (`ops::accounts`, the
-//! chooser's answer by `lanes pick`'s exits, U7d); the standing tracker
-//! quota receipt; the reducer's standing attention; and one line naming
-//! the open unblocked items no lane holds (126 (1)). The body reads no
+//! and under it every `--repo`'s open pull requests, a Dependabot one
+//! marked by the GitHub duty's `bot-fix` row; the account roster through
+//! the accounts judge; the `verifying` lines of the verification duty's
+//! last pass; the `owed` lines of the tracker duty's last pass with their
+//! wall verdicts through the accounts judge's chooser; the standing
+//! tracker quota receipt; the reducer's standing attention; and one line
+//! naming the open unblocked items no lane holds. The body reads no
 //! inventory itself: the tracker, GitHub and verification duties' slots are
 //! its inputs, and it hands back `next_due: None`, so nothing it does moves
 //! its own due time.
 //!
-//! Where the legacy heartbeat died on a read it could not make (the open
-//! list, the roster) and so printed nothing, this body prints the line
+//! A read the body could not make (the open list, the roster) is its line
 //! with `unread` in that place: the one periodic line is never dropped.
 //! The owed list has the same word, `owed unread`, while the tracker duty
-//! has read nothing, a line the legacy never printed, since its owed read
-//! answered or killed the pass: a standing tracker failure never reads as
-//! nothing owed.
+//! has read nothing: a standing tracker failure never reads as nothing
+//! owed.
 //!
-//! The roster read also carries the legacy `check_accounts`
-//! (`oversee-watch:5190-5225`, decision 176 (1) (b)): each account's
-//! status, verdict and binding reset compared with the reading the
-//! baseline holds under the legacy's `account` row, an `account` event
-//! ahead of the heartbeat line when one changed, the row advanced after
-//! the line is durable. The legacy compared on every long pass; this body
-//! runs on the heartbeat's cadence, the one duty that reads the roster
-//! (decision 182 Q12). A roster that could not be read is the pass's
-//! partial failure (decision 156 (1)) and moves no row: the next readable
-//! pass compares against the last reading, never against nothing.
+//! The roster read also compares each account's status, verdict and
+//! binding reset with the reading the baseline holds under its `account`
+//! row: an `account` event ahead of the heartbeat line when one changed,
+//! the row advanced after the line is durable. This body is the one duty
+//! that reads the roster, so the comparison runs on the heartbeat's
+//! cadence. A roster that could not be read is the pass's partial failure
+//! and moves no row: the next readable pass compares against the last
+//! reading, never against nothing.
 //!
-//! The roster is the accounts judge's read (`ops::accounts`, U6h): the
-//! listing under the machine's own retirement statement, so a retired
-//! account keeps its figures in the roster and a stated end its credential
-//! contradicts is a line under it.
+//! The roster is the listing under the machine's own retirement
+//! statement, so a retired account keeps its figures in the roster and a
+//! stated end its credential contradicts is a line under it.
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -56,7 +48,7 @@ use crate::watch::tracker::{OwedItem, Shared};
 use crate::watch::verifying::Lines;
 use crate::watch::{Body, Change, Event, Produced, Runner, Tick};
 
-/// The host word of a lane record with no host (`oversee-watch:5409`).
+/// The host word of a lane record with no host.
 const LOCAL: &str = "local";
 
 /// What the duty runs with, fixed at registration.
@@ -65,7 +57,7 @@ pub struct Context {
     /// The fleet state the owed verdicts' judge reads its seats and live
     /// charges from.
     pub path: PathBuf,
-    /// The legacy `--max-loops`, `--interval` and `--since`, the line's
+    /// The watch's `--max-loops`, `--interval` and `--since`, the line's
     /// own fields.
     pub max_loops: u32,
     pub interval: Duration,
@@ -82,7 +74,7 @@ pub fn body<'a>(ctx: Context) -> Body<'a> {
     Box::new(move |tick: &Tick| Ok(run(&ctx, tick)))
 }
 
-/// Register the body on `runner` (decision 153), replacing the runner's
+/// Register the body on `runner`, replacing the runner's
 /// placeholder: the three flags the line carries, `repos` the watch's
 /// `--repo` names, `shared` the tracker and GitHub duties' slot,
 /// `verifying` the verification duty's lines.
@@ -139,8 +131,7 @@ struct Head {
     name: String,
 }
 
-/// The repository's open pull requests as the legacy printed them
-/// (`SECURITY_OPEN_JQ`, `security_mark_open`, `pw_prefix`): `<repo>\t<n>\t
+/// The repository's open pull requests: `<repo>\t<n>\t
 /// <head>\t<title>`, or `<repo>\tbot-fix pr=<n> alert=<alerts>` for one the
 /// GitHub duty's `bot-fix` row names. The list is read whole through the
 /// one paging reader; a list that could not be read whole is one `unread`
@@ -175,10 +166,10 @@ fn open_lines(ctx: &Context, repo: &str, bot_fix: &BTreeMap<String, String>) -> 
 
 // --- the roster -------------------------------------------------------------------------
 
-/// The baseline row kind the legacy kept each account's reading under.
+/// The baseline row kind each account's reading is kept under.
 const ACCOUNT_ROW: &str = "account";
 
-/// `check_accounts` (`oversee-watch:5190-5225`) over one listing: per
+/// The account comparison over one listing: per
 /// record the `status|verdict|resets` reading beside the row's
 /// `status|verdict|resets|unmeasured`, an `account` event where the
 /// status, the verdict or a passed reset changed from the row's, the row
@@ -187,8 +178,8 @@ const ACCOUNT_ROW: &str = "account";
 /// the reading before it unless its status is `expired` or `retired`,
 /// which need the operator, so each such status after a measured reading
 /// is news. A reset is news once the reset the row holds has passed
-/// (`to_epoch` against the pass's wall, `lanes` writing every reset as one
-/// whole-second UTC stamp, `:5150`) and the reading moved off it; one that
+/// (against the pass's wall, every reset written as one whole-second UTC
+/// stamp) and the reading moved off it; one that
 /// moved while still ahead is a different binding, not a reset; one no
 /// date can read settles no reset and is noted. An account the listing
 /// stops naming keeps its row.
@@ -270,13 +261,11 @@ fn check_accounts(listing: &Roster, tick: &Tick) -> (Vec<Event>, Vec<Change>) {
 
 // --- the owed verdict ------------------------------------------------------------------------
 
-/// `owed_wall` (`oversee-watch:5641`): the verdict of one host, harness and
-/// model, judged on that host's listing and the accounts judge's chooser
-/// (`ops::accounts::pick_fleet`, the call the legacy made as `lanes pick
-/// --harness H [--native-model M] --json` under `ORCH_LANE_HOST`): an
-/// account to spend is `queue`; no account, some walled, is `dated` until
-/// the earliest reset the judge names; anything else, an unjudged pick
-/// among it, is `unjudged`, never a verdict (decision 99).
+/// The verdict of one host, harness and model, judged on that host's
+/// listing and the accounts judge's chooser (`ops::accounts::pick_fleet`):
+/// an account to spend is `queue`; no account, some walled, is `dated`
+/// until the earliest reset the judge names; anything else, an unjudged
+/// pick among it, is `unjudged`, never a verdict.
 fn wall_verdict(
     ctx: &Context,
     host: &Host,
@@ -340,7 +329,7 @@ fn wall_verdict(
     }
 }
 
-/// The `owed` line (`:5455-5470`): the record's fields, then the verdict,
+/// The `owed` line: the record's fields, then the verdict,
 /// a merged delivery or a queue verdict needing no account read.
 fn owed_line(
     ctx: &Context,
@@ -386,12 +375,12 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
             latest.github.clone(),
         )
     };
-    // The roster, the local host's listing, read once through the accounts
-    // judge: the account events ahead of the heartbeat line, as the
-    // legacy's pass printed them, then the roster lines under it; the owed
-    // verdicts of local records reuse it. A roster that could not be read
-    // is the pass's partial failure with the legacy's `account-unread`
-    // fields, said by the runner.
+    // The roster, the listing under the fleet's own host (the provider
+    // `ORCH_LANE_HOST` names, else this machine), read once through the
+    // accounts judge: the account events ahead of the heartbeat line, then
+    // the roster lines under it; the owed verdicts of records on that same
+    // host reuse it. A roster that could not be read is the pass's partial
+    // failure with the `account-unread` fields, said by the runner.
     let roster = accounts::roster(&ctx.settings, None, tick.wall);
     let (mut events, changes, failed) = match &roster {
         Ok(listing) => {
@@ -432,7 +421,8 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
         }
     }
     let mut listings: BTreeMap<String, Option<Roster>> = BTreeMap::new();
-    listings.insert(LOCAL.to_owned(), roster.ok());
+    let roster_host = ctx.settings.accounts.host.as_deref().unwrap_or(LOCAL);
+    listings.insert(roster_host.to_owned(), roster.ok());
     for line in ctx
         .verifying
         .lock()
@@ -442,9 +432,7 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
         body(line.clone());
     }
     // The owed list, or `owed unread` while the tracker duty has read
-    // nothing (the legacy printed no owed line then: its heartbeat died
-    // with the failed read), so a standing tracker failure never reads
-    // as nothing owed.
+    // nothing, so a standing tracker failure never reads as nothing owed.
     match &owed {
         None => body("owed unread".to_owned()),
         Some(items) => {

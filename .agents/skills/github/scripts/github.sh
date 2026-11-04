@@ -38,6 +38,8 @@ Commands:
   pr-create          Create PR as bot account
   pr-edit-body       Update PR body from a file
   pr-merge           Merge PR as bot account (with safety checks)
+  merge-queue-mutation  Disarm a PR's auto-merge or take it out of the merge
+                     queue, by its node id, judged on the answer's body
   ci-classify-refusal  Name the cause of a pr-merge refusal (conflicts,
                      current vs superseded CI failures)
   check-review-replies  Judge what a PR's review replies say, read live
@@ -264,7 +266,7 @@ unset _help_route
 
 
 case "$command" in
-    pr-data|pr-view|pr-threads|pr-timeline|pr-list-ready|pr-list-failing|pr-create|pr-edit-body|pr-merge|ci-classify-refusal|check-review-replies|pr-cross-check|pr-issue|label-add|label-remove|ci-logs|ci-rerun|bot-token|dismiss-review|resolve-thread|unresolve-thread|post-reply|post-comment|find-comment|edit-comment|sticky-comment)
+    pr-data|pr-view|pr-threads|pr-timeline|pr-list-ready|pr-list-failing|pr-create|pr-edit-body|pr-merge|merge-queue-mutation|ci-classify-refusal|check-review-replies|pr-cross-check|pr-issue|label-add|label-remove|ci-logs|ci-rerun|bot-token|dismiss-review|resolve-thread|unresolve-thread|post-reply|post-comment|find-comment|edit-comment|sticky-comment)
         script="$SCRIPT_DIR/commands/${command}.sh"
         if [ -f "$script" ]; then
             if [ -n "$WORK_DIR" ]; then

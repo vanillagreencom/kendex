@@ -1,16 +1,15 @@
-//! The `verify-head` operation (decision 93) through the built binary
+//! The `verify-head` operation through the built binary
 //! against a fake `gh` on PATH: the pinned reads, the closed decoding and
 //! completeness of every reply, the decision rows the verdict pins, the
 //! required workflow's binding proof, the `none` route over every absence
 //! page, and the record written on `complete`. The fake answers from a
 //! JSON map the row builds, starting from the documented replies beside
 //! it, and logs every call, so a row can assert what was read and what
-//! never was. The legacy `ci-wait`'s verdict is the correctness floor
-//! (decision 135): its witnesses are recorded answer sets under
-//! `fixtures/gh/witnesses/`, one table row each
+//! never was. Recorded answer sets under `fixtures/gh/witnesses/` are
+//! the verdict's correctness floor, one table row each
 //! (`the_recorded_witnesses_keep_the_legacy_verdict`).
 //!
-//! The `verify-pr` operation (U6g) is the same verification over the head
+//! The `verify-pr` operation is the same verification over the head
 //! one `gh pr view` answers for a pull request; its rows at the end pin the
 //! read of the pull request, the refusal of one that is not open, and the
 //! head re-read on every call.
@@ -69,8 +68,8 @@ fn page(path: &str, n: usize) -> String {
     format!("{path}{join}per_page=100&page={n}")
 }
 
-/// Every check run on the commit, the set the legacy rollup carried, not
-/// GitHub's `latest` selection, which the suite read below consumes.
+/// Every check run on the commit, not GitHub's `latest` selection, which
+/// the suite read below consumes.
 fn check_runs(head: &str, n: usize) -> String {
     page(
         &format!("repos/{REPO}/commits/{head}/check-runs?filter=all"),
@@ -105,8 +104,7 @@ fn workflows(n: usize) -> String {
 }
 
 /// A required workflow candidate's suite as GitHub lists its check runs
-/// under the endpoint's default `filter=latest`: the bound-job list the
-/// legacy read (decision 117 (1)).
+/// under the endpoint's default `filter=latest`: the bound-job list.
 fn suite_check_runs(suite: u64, n: usize) -> String {
     page(&format!("repos/{REPO}/check-suites/{suite}/check-runs"), n)
 }
@@ -698,15 +696,14 @@ fn assert_pinned(log: &[String], head: &str) {
 
 /// Which checks a row judges by: every check on the head, or the base's
 /// required set under `required_only` with these rules (an empty list is
-/// the flag with nothing named, the legacy `all_checks` fallback).
+/// the flag with nothing named, which judges every check).
 enum Scope {
     All,
     RequiredOnly(Vec<Value>),
 }
 
-/// One verdict row: the head's evidence and the answer, structured
-/// (decision 107 (5)): the status, the verdict, the pending cause key and
-/// the reported members.
+/// One verdict row: the head's evidence and the answer, structured: the
+/// status, the verdict, the pending cause key and the reported members.
 struct Verdict {
     name: &'static str,
     check_runs: Vec<Value>,
@@ -792,7 +789,7 @@ fn assert_verdict(r: Verdict) {
 /// check-suites count is read beside the check runs, and the workflows
 /// beside the runs, for the name each run's workflow carries. The two
 /// documented check runs started alike, so the later-listed, higher id
-/// is reported first (decision 117 (3)).
+/// is reported first.
 #[test]
 fn a_passing_head_is_complete_pass_and_recorded() {
     let gh = Github::green();
@@ -837,11 +834,11 @@ fn a_passing_head_is_complete_pass_and_recorded() {
     assert_eq!(again["recorded"]["report"]["replaced"], true);
 }
 
-/// The decisions the verdict pins beyond the legacy's witnesses: decision
-/// 113's taxonomy, the wire's nullable run status, the empty head, the
-/// skipped-check flag (R-U4e6 H2), the substantive events (decision 107
-/// (4)) and the held failure's relabel. The legacy's own answers are the
-/// witness rows (`the_recorded_witnesses_keep_the_legacy_verdict`).
+/// The rules the verdict pins beyond the recorded witnesses: the check
+/// taxonomy, the wire's nullable run status, the empty head, the
+/// skipped-check flag, the substantive events and the held failure's
+/// relabel. The witnesses' own answers are the witness rows
+/// (`the_recorded_witnesses_keep_the_legacy_verdict`).
 #[test]
 fn verdicts_follow_the_check_and_run_states() {
     let aggregate = |context: &str, state: &str, run_id: u64| {
@@ -1047,10 +1044,10 @@ fn verdicts_follow_the_check_and_run_states() {
     }
 }
 
-/// One recorded witness of the legacy `ci-wait`'s verdict: the answers one
-/// head's reads gave, as one reply map under `fixtures/gh/witnesses/`, and
-/// what the legacy's own functions concluded from them under the recorded
-/// corrections. The row is named for the defect it catches.
+/// One recorded witness of the verdict: the answers one head's reads
+/// gave, as one reply map under `fixtures/gh/witnesses/`, and the verdict
+/// recorded over them under the recorded corrections. The row is named
+/// for the defect it catches.
 struct Witness {
     defect: &'static str,
     /// The reply map's name under `fixtures/gh/witnesses/`.
@@ -1063,19 +1060,16 @@ struct Witness {
     checks: Vec<Reported>,
 }
 
-/// Decision 135: the legacy `ci-wait`'s verdict is the correctness floor.
-/// Each row is a recorded witness: the legacy's fixtures and incidents
-/// (`ci-wait`'s and the correlation library's heads: superseded runs,
+/// The recorded verdict is the correctness floor. Each row is a recorded
+/// witness: a fixture or incident head (superseded runs,
 /// stale pre-approval failures, request-only rollups, rerun attempts and
 /// newer siblings, required sets and bound workflows) or a reviewer's
 /// counterexample (the suite join's omissions, the `latest` listing, gh's
 /// slash-joined key, the order among equal or absent starts, the run-less
 /// pick, the graph's null nodes and the startup-failure correction), with
-/// the status, verdict, cause key and reported members the legacy's own
-/// functions agreed with over the same answers, under the recorded
-/// corrections (decisions 107 (4), 113, 117, 119 (2), 122), run once at the
-/// oracle's retirement. A verdict that changes here is one named
-/// correction (decision 135a).
+/// the status, verdict, cause key and reported members recorded over the
+/// same answers under the recorded corrections. A verdict that changes
+/// here is one named correction.
 #[test]
 fn the_recorded_witnesses_keep_the_legacy_verdict() {
     let rows = [
@@ -1551,7 +1545,7 @@ fn the_recorded_witnesses_keep_the_legacy_verdict() {
 /// suite is a proved external failure, terminal at once; a check with no
 /// link whose node names a run GitHub does not identify (`databaseId`
 /// null) is unresolved, held while the push run is in flight, and records
-/// nothing (R-U4e10 H1).
+/// nothing.
 #[test]
 fn a_failed_check_is_associated_through_its_link_and_held_while_unresolved() {
     let in_flight = run(700, HEAD, "in_progress", Value::Null);
@@ -1744,8 +1738,7 @@ fn a_workflow_the_list_lacks_is_named_through_the_graph_then_by_id() {
     );
 
     // The graph request fails: a failed route for check runs REST already
-    // joined to the run, so the detail by id is still tried and names it
-    // (decision 119 (2)).
+    // joined to the run, so the detail by id is still tried and names it.
     let mut gh = Github::green();
     gh.answer(&runs(HEAD, 1), unlisted_run())
         .fail(GRAPHQL)
@@ -1763,8 +1756,7 @@ fn a_workflow_the_list_lacks_is_named_through_the_graph_then_by_id() {
     // The graph call fails having printed the complete answer with no
     // errors: its output is admitted through no error, so this is a failed
     // route for check runs REST already joined, and the detail by id is
-    // tried and names it, after the graph was asked (decision 123 (2);
-    // R-U4e15-codex M1).
+    // tried and names it, after the graph was asked.
     let mut gh = Github::green();
     gh.answer(&runs(HEAD, 1), unlisted_run())
         .failed_printing(
@@ -1785,8 +1777,7 @@ fn a_workflow_the_list_lacks_is_named_through_the_graph_then_by_id() {
     // GitHub cannot resolve one check's node and says so with a field
     // error at its path, a reply gh prints with a nonzero exit (the fake
     // exits 1 on it as gh does); the sibling node in the same reply names
-    // the workflow, so the detail, answering 404, is never asked
-    // (decisions 122 (4), 123 (2)).
+    // the workflow, so the detail, answering 404, is never asked.
     let mut gh = Github::green();
     let fixture_nodes = fixture_check_nodes(700, "Old CI");
     let errored = fixture_nodes[0]["id"].clone();
@@ -1927,15 +1918,14 @@ fn none_needs_every_absence_probe_read_to_its_last_page() {
     }
 }
 
-/// Decisions 87, 93, 106 and 107: a reply outside the documented shape or
-/// value set, a page set that does not add up, a collection at its
-/// endpoint's cap and a failed request each end `unreadable` with the
-/// endpoint's cause, never a verdict, whether or not the selection would
-/// have discarded the malformed member. The rows are R-U4e2's six
-/// replies, R-U4e's Actions replies, the snapshot's own, R-U4e5 H1's
-/// absent or null required fields, R-U4e6 H1's present nulls on fields
-/// documented optional and not nullable, and R-U4e7 H1's discarded
-/// members, non-object parameters and caps.
+/// A reply outside the documented shape or value set, a page set that does
+/// not add up, a collection at its endpoint's cap and a failed request
+/// each end `unreadable` with the endpoint's cause, never a verdict,
+/// whether or not the selection would have discarded the malformed
+/// member. The rows cover malformed replies, the Actions replies, the
+/// snapshot's own, absent or null required fields, present nulls on
+/// fields documented optional and not nullable, and discarded members,
+/// non-object parameters and caps.
 #[test]
 fn malformed_replies_are_unreadable_with_their_cause() {
     for r in malformed_rows() {
@@ -2178,7 +2168,7 @@ fn malformed_rows() -> Vec<Malformed> {
             cause: "workflows-total-mismatch",
             detail: None,
         },
-        // R-U4e5 H1: a required field that is absent or null is not an
+        // A required field that is absent or null is not an
         // empty requirement or an admissible member.
         Malformed {
             name: "classic protection whose required_status_checks is {}",
@@ -2343,11 +2333,10 @@ fn malformed_rows() -> Vec<Malformed> {
         // call's, the line it wrote to stderr), one without its nodes, a
         // repository answer for another name, and failed requests. The one
         // reply carrying errors that is read, a field error at a node's
-        // own path, leaves the candidate unproven instead (decisions 122
-        // (4), 123 (2); the binding test's unproven rows). A failed call
-        // that printed a complete, error-free answer is read through no
-        // error: its output is not admitted, and its failure is the cause
-        // with what it printed (R-U4e15-codex M1).
+        // own path, leaves the candidate unproven instead (the binding
+        // test's unproven rows). A failed call that printed a complete,
+        // error-free answer is read through no error: its output is not
+        // admitted, and its failure is the cause with what it printed.
         Malformed {
             name: "a suite-nodes answer carrying errors",
             required_only: true,
@@ -2452,8 +2441,8 @@ fn malformed_rows() -> Vec<Malformed> {
             cause: "source-repository-read-failed",
             detail: None,
         },
-        // R-U4e6 H1: a present null on a field documented optional and not
-        // nullable is not the legacy's default for omission.
+        // A present null on a field documented optional and not nullable
+        // is not the reading for omission.
         Malformed {
             name: "an Actions run whose run_attempt is null",
             required_only: false,
@@ -2526,7 +2515,7 @@ fn malformed_rows() -> Vec<Malformed> {
             cause: "rules-response-invalid",
             detail: None,
         },
-        // R-U4e7 H1: a member the selection would discard is validated
+        // A member the selection would discard is validated
         // first; a declared object is an object for every kind; a
         // collection at its endpoint's cap is not complete.
         Malformed {
@@ -2711,14 +2700,12 @@ fn malformed_rows() -> Vec<Malformed> {
             cause: "check-run-suites-read-failed",
             detail: Some("gh: x"),
         },
-        // Decisions 122 (4) and 123 (2): gh prints a reply carrying errors
-        // and exits nonzero; an error at a node's own path leaves that node
-        // null and the reply readable through that exit, and an error at
-        // any other path, or beside a present node, leaves the call's
-        // failure as the cause, as the legacy refused every error. A failed
+        // gh prints a reply carrying errors and exits nonzero; an error at
+        // a node's own path leaves that node null and the reply readable
+        // through that exit, and an error at any other path, or beside a
+        // present node, leaves the call's failure as the cause. A failed
         // call that printed a complete, error-free answer is read through
-        // no error, so for an unjoined check nothing names its suite
-        // (R-U4e15-codex M1).
+        // no error, so for an unjoined check nothing names its suite.
         Malformed {
             name: "a check-run nodes answer whose error names a path other than a node",
             required_only: false,
@@ -3195,9 +3182,8 @@ fn a_required_workflow_binds_only_through_its_proven_source() {
         Unproven {
             // GitHub cannot resolve the suite node and says so with a field
             // error at its path, a reply gh prints with a nonzero exit: the
-            // node is null and the candidate unproven, as the legacy held
-            // an unreadable required set pending (`ci-wait:897-905`;
-            // decisions 122 (4), 123 (2)).
+            // node is null and the candidate unproven, so an unreadable
+            // required set is held pending.
             name: "the proof's suite node is one the viewer cannot resolve, with its field error",
             set: |gh| {
                 gh.answer(
@@ -3248,15 +3234,14 @@ fn a_required_workflow_binds_only_through_its_proven_source() {
             },
         },
         Unproven {
-            // The legacy's `pending` for a bound run whose suite lists no
-            // check run (`ci-run-correlation.sh:500-503`).
+            // A bound run whose suite lists no check run is `pending`.
             name: "the bound run's suite lists no check run",
             set: |gh| {
                 gh.answer(&suite_check_runs(700, 1), check_runs_page(0, vec![]));
             },
         },
         Unproven {
-            // The legacy's `error` for a listed job without a page (`:492`).
+            // A listed job without a page is an `error`.
             name: "the bound run's suite lists a check run without a page",
             set: |gh| {
                 gh.answer(
@@ -3334,8 +3319,8 @@ fn a_required_workflow_binds_only_through_its_proven_source() {
     }
 }
 
-/// Decision 110 (2): the definitions are walked in the legacy's sorted
-/// order and the first that is not ready ends the read: an earlier
+/// The definitions are walked in sorted order and the first that is not
+/// ready ends the read: an earlier
 /// unresolved definition holds the requirement expected though a later one
 /// failed, and an earlier failed definition fails though a later one is
 /// bound; a failed commit status whose target is the bound job's URL is a
@@ -3425,7 +3410,7 @@ fn the_definition_walk_and_link_membership_follow_the_legacy() {
     );
 }
 
-/// R-U4e5 M1: every documented rule type decodes, and the four that gate on
+/// Every documented rule type decodes, and the four that gate on
 /// scanning results add nothing to the required set.
 #[test]
 fn documented_rule_kinds_outside_the_rollup_change_no_required_set() {
@@ -3454,8 +3439,8 @@ fn documented_rule_kinds_outside_the_rollup_change_no_required_set() {
     }
 }
 
-/// R-U4e6 H1: the selection fields documented optional keep the legacy's
-/// reading for omission (`run_attempt // 1`, `run_started_at //
+/// The selection fields documented optional keep their reading for
+/// omission (`run_attempt // 1`, `run_started_at //
 /// updated_at`); only a present null refuses (the malformed table). The
 /// bound run's own check runs carry the members, so each run here owns
 /// one, and each run's suite node proves the required file at the rule's
@@ -3573,7 +3558,7 @@ fn omitted_selection_fields_read_as_the_legacy_defaults() {
     );
 }
 
-/// R-U4e5 L1: the target's kind is checked before any read, so a
+/// The target's kind is checked before any read, so a
 /// verification aimed at the fleet refuses `op-kind` without reaching
 /// GitHub.
 #[test]
@@ -3643,7 +3628,7 @@ fn apply_refuses_the_verifications_as_transitions() {
     assert!(Path::new(&gh.item()).exists());
 }
 
-// --- verify-pr (U6g) ------------------------------------------------------------
+// --- verify-pr ------------------------------------------------------------------
 
 /// The pull request every `verify-pr` row names.
 const PR: u64 = 7;
@@ -3985,6 +3970,14 @@ impl Github {
         self.review_record()["heads"][HEAD].clone()
     }
 
+    /// A call to `path` killed by a signal: gh ended with no exit status,
+    /// whether or not the call reached GitHub.
+    fn killed(&mut self, path: &str) -> &mut Self {
+        self.replies
+            .insert(path.to_owned(), json!({"signal": "TERM"}));
+        self
+    }
+
     /// Rewrite one field of the head's record in the item file.
     fn set_head(&self, field: &str, value: Value) {
         let mut state = self.state();
@@ -4002,18 +3995,17 @@ fn stamp_ago(ago: u64) -> String {
     agent_runtime::clock::iso_utc(now - ago)
 }
 
-/// A spent period under `block`: the head record's period stamp moved past
-/// the budget before the call that reads the verdict.
 const BLOCK: &[(&str, &str)] = &[("PR_REVIEW_ON_TIMEOUT", "block")];
 
 /// Run the gate on a head whose period is spent: one call records the
-/// head, its period stamp is moved past the budget, and the second call
-/// reads the verdict on it.
+/// head, its stamps are moved past the review budget and Copilot's hold,
+/// as time passing moves both, and the second call reads the verdict.
 fn review_spent(gh: &Github, env: &[(&str, &str)]) -> Value {
     let first = ok_result(&gh.review(false, env));
     if first["status"] != "pending" {
         return first;
     }
+    gh.set_head("at", json!(stamp_ago(901)));
     gh.set_head("period_started", json!(stamp_ago(901)));
     ok_result(&gh.review(false, env))
 }
@@ -4369,33 +4361,43 @@ fn copilot_work_in_flight_holds_pending_within_the_bound_and_expires_past_it() {
 }
 
 /// A blocker of kind regression-against-main standing open on the item's
-/// escalated findings refuses the merge, by its location, whatever the
-/// reviewers say; once a fix clears it the approval stands.
+/// escalated findings refuses every verdict that permits a merge, by its
+/// location, whatever the reviewers say or the gate's mode: an approval, a
+/// silent reviewer's `proceeded` and an `off` gate alike; once a fix clears
+/// it the verdict stands.
 #[test]
 fn merge_is_refused_while_a_regression_blocker_stands_and_allowed_once_lifted() {
-    let mut gh = Github::review_world();
-    gh.answer(
-        &format!("pr view {PR}"),
-        review_view("APPROVED", &[("colleague", "APPROVED")], false),
-    );
-    let mut state = gh.state();
-    state["escalated_items"] = json!([
-        {"location": "src/x.rs", "description": "misreads a moved package", "kind": "regression-against-main", "outcome": "blocked"}
-    ]);
-    fs::write(gh.item(), serde_json::to_vec_pretty(&state).unwrap()).unwrap();
-    let result = ok_result(&gh.review(false, &[]));
-    assert_eq!(result["status"], "complete", "{result}");
-    assert_eq!(result["verdict"], "blocked");
-    assert_eq!(result["reason"], "regression-open location=src/x.rs");
-    assert_eq!(gh.review_record()["verdict"]["verdict"], "blocked");
-    let mut state = gh.state();
-    state["escalated_items"] = json!([]);
-    state["fixed_items"] =
-        json!([{"location": "src/x.rs", "description": "misreads a moved package"}]);
-    fs::write(gh.item(), serde_json::to_vec_pretty(&state).unwrap()).unwrap();
-    let result = ok_result(&gh.review(false, &[]));
-    assert_eq!(result["verdict"], "approved", "{result}");
-    assert_eq!(result["recorded"]["replaced"], true);
+    for verdict in ["approved", "proceeded", "off"] {
+        let mut gh = Github::review_world();
+        match verdict {
+            "approved" => {
+                gh.answer(
+                    &format!("pr view {PR}"),
+                    review_view("APPROVED", &[("colleague", "APPROVED")], false),
+                );
+            }
+            "off" => gh.policy("[env]\nREVIEW_GATE_MODE = \"off\"\n"),
+            _ => {}
+        }
+        let mut state = gh.state();
+        state["escalated_items"] = json!([
+            {"location": "src/x.rs", "description": "misreads a moved package", "kind": "regression-against-main", "outcome": "blocked"}
+        ]);
+        fs::write(gh.item(), serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+        let result = review_spent(&gh, &[]);
+        assert_eq!(result["status"], "complete", "{verdict}: {result}");
+        assert_eq!(result["verdict"], "blocked", "{verdict}: {result}");
+        assert_eq!(result["reason"], "regression-open location=src/x.rs");
+        assert_eq!(gh.review_record()["verdict"]["verdict"], "blocked");
+        let mut state = gh.state();
+        state["escalated_items"] = json!([]);
+        state["fixed_items"] =
+            json!([{"location": "src/x.rs", "description": "misreads a moved package"}]);
+        fs::write(gh.item(), serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+        let result = ok_result(&gh.review(false, &[]));
+        assert_eq!(result["verdict"], verdict, "{result}");
+        assert_eq!(result["recorded"]["replaced"], true);
+    }
 }
 
 /// The gate mode is resolved from the consumer's policy and the base's
@@ -4529,7 +4531,7 @@ fn a_request_falls_back_with_its_cause() {
 
 /// With `mark_ready`, an open draft is marked ready, the mark recorded
 /// under the head before the act and the flag read after, and the request
-/// then goes out on the confirmed head; a refused mark sends no request.
+/// then goes out on the confirmed head.
 #[test]
 fn a_draft_is_marked_ready_before_its_request() {
     let mut gh = Github::review_world();
@@ -4551,20 +4553,7 @@ fn a_draft_is_marked_ready_before_its_request() {
         ready.is_some() && request.is_some() && ready < request,
         "{log:?}"
     );
-    assert_eq!(gh.head_record()["ready"], "marking");
-
-    let mut gh = Github::review_world();
-    gh.answer(&format!("pr view {PR}"), review_view("", &[], true))
-        .answer(
-            &pull_path(),
-            rest_pull(true, "feat", "lane-app[bot]", "Bot"),
-        )
-        .fail(&format!("pr ready {PR}"));
-    let result = ok_result(&gh.review(true, &[]));
-    assert_eq!(result["status"], "unreadable", "{result}");
-    assert_eq!(result["reason"], "ready-failed");
-    assert_eq!(gh.requests(), 0, "{:?}", gh.log());
-    assert_eq!(gh.head_record()["ready"], "marking");
+    assert_eq!(gh.head_record()["ready"], "done");
 }
 
 /// A request outside the pinned forms, a pull request number of zero or a
@@ -4656,26 +4645,259 @@ fn a_review_setting_outside_its_form_refuses_the_review_gate_alone() {
     }
 }
 
-/// Under an `off` gate a draft with `mark_ready` is still marked ready, the
-/// mark recorded under the head, and the verdict is `off` with no request.
+/// A ready mark GitHub refused stands `marking` under the head, and the
+/// call the workflow repeats sends it again under either gate mode: the
+/// repeat marks the draft, records it `done`, and under `approval` requests
+/// the review. A head first seen without the mark is marked by a later
+/// call that asks, and its `draft` fallback gives way to the request.
 #[test]
-fn a_draft_is_marked_ready_under_an_off_gate_too() {
+fn a_refused_ready_mark_is_sent_again_and_its_request_follows() {
+    let ready = format!("pr ready {PR} --repo {REPO}");
+    let marks = |gh: &Github| gh.log().iter().filter(|line| **line == ready).count();
+    for (policy, status, requests) in [("enforce", "pending", 1), ("off", "complete", 0)] {
+        let mut gh = Github::review_world();
+        gh.policy(&format!("[env]\nREVIEW_GATE_MODE = \"{policy}\"\n"));
+        gh.answer(&format!("pr view {PR}"), review_view("", &[], true))
+            .answer(
+                &pull_path(),
+                rest_pull(true, "feat", "lane-app[bot]", "Bot"),
+            )
+            .fail(&format!("pr ready {PR}"));
+        let first = ok_result(&gh.review(true, &[]));
+        assert_eq!(first["status"], "unreadable", "{policy}: {first}");
+        assert_eq!(first["reason"], "ready-failed", "{policy}");
+        assert_eq!(gh.head_record()["ready"], "marking", "{policy}");
+        gh.answer(&format!("pr ready {PR}"), json!({}));
+        let second = ok_result(&gh.review(true, &[]));
+        assert_eq!(second["status"], status, "{policy}: {second}");
+        assert_eq!(marks(&gh), 2, "{policy}: {:?}", gh.log());
+        assert_eq!(gh.head_record()["ready"], "done", "{policy}");
+        assert_eq!(gh.requests(), requests, "{policy}: {:?}", gh.log());
+        if policy == "off" {
+            assert_eq!(second["verdict"], "off", "{second}");
+        } else {
+            assert_eq!(second["request"]["outcome"], "requested", "{second}");
+        }
+    }
+
     let mut gh = Github::review_world();
-    gh.policy("[env]\nREVIEW_GATE_MODE = \"off\"\n");
     gh.answer(&format!("pr view {PR}"), review_view("", &[], true))
         .answer(
             &pull_path(),
             rest_pull(true, "feat", "lane-app[bot]", "Bot"),
         )
         .answer(&format!("pr ready {PR}"), json!({}));
-    let result = ok_result(&gh.review(true, &[]));
-    assert_eq!(result["status"], "complete", "{result}");
-    assert_eq!(result["verdict"], "off");
-    assert!(
-        gh.log().contains(&format!("pr ready {PR} --repo {REPO}")),
-        "{:?}",
-        gh.log()
+    let first = ok_result(&gh.review(false, &[]));
+    assert_eq!(first["request"]["cause"], "draft", "{first}");
+    let second = ok_result(&gh.review(true, &[]));
+    assert_eq!(marks(&gh), 1, "{:?}", gh.log());
+    assert_eq!(second["request"]["outcome"], "requested", "{second}");
+    assert_eq!(second["request"]["recorded_now"], true, "{second}");
+    assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+}
+
+/// A POST that ended with no exit status, as a call killed or timed out
+/// leaves it, may or may not have reached GitHub: the request stands
+/// `requested`, and the next call reads GitHub's record of it. With no sign
+/// of it (no Copilot work, request event or review on the head) the request
+/// is sent once more under its `resent` mark; a request GitHub recorded is
+/// never sent again, and a second miss falls back `unconfirmed`, written on
+/// that call so the fallback notice goes out. The error retry reads the
+/// same way, and its second miss is the `copilot-error` verdict.
+#[test]
+fn a_request_whose_answer_was_lost_is_sent_once_more_then_falls_back_unconfirmed() {
+    let post = format!("POST repos/{REPO}/pulls/{PR}/requested_reviewers");
+
+    // The resend lands, and GitHub's record of it stands from then on.
+    let mut gh = Github::review_world();
+    gh.killed(&post);
+    let first = ok_result(&gh.review(false, &[]));
+    assert_eq!(first["status"], "unreadable", "{first}");
+    assert_eq!(first["reason"], "request-review-read-failed");
+    assert_eq!(gh.head_record()["request"]["outcome"], "requested");
+    gh.answer(&post, json!({}));
+    let second = ok_result(&gh.review(false, &[]));
+    assert_eq!(second["status"], "pending", "{second}");
+    assert_eq!(gh.requests(), 2, "{:?}", gh.log());
+    assert_eq!(gh.head_record()["request"]["resent"], true);
+    let third = ok_result(&gh.review(false, &[]));
+    assert_eq!(third["request"]["outcome"], "requested", "{third}");
+    assert_eq!(gh.requests(), 2, "{:?}", gh.log());
+
+    // The resend is lost too: the request falls back once.
+    let mut gh = Github::review_world();
+    gh.killed(&post);
+    for _ in 0..2 {
+        let lost = ok_result(&gh.review(false, &[]));
+        assert_eq!(lost["status"], "unreadable", "{lost}");
+    }
+    assert_eq!(gh.requests(), 2, "{:?}", gh.log());
+    let third = ok_result(&gh.review(false, &[]));
+    assert_eq!(third["request"]["outcome"], "fallback", "{third}");
+    assert_eq!(third["request"]["cause"], "unconfirmed");
+    assert_eq!(third["request"]["recorded_now"], true);
+    let fourth = ok_result(&gh.review(false, &[]));
+    assert_eq!(fourth["request"]["recorded_now"], false, "{fourth}");
+    assert_eq!(gh.requests(), 2, "{:?}", gh.log());
+
+    // The error retry: Copilot answered the first request with its error,
+    // so a request event older than the error is no sign of the retry.
+    for lands in [true, false] {
+        let mut gh = Github::review_world();
+        gh.answer(
+            &format!("pr view {PR}"),
+            review_view("", &[(COPILOT, "COMMENTED")], false),
+        )
+        .answer(
+            &reviews_path(),
+            json!([copilot_review(11, "COMMENTED", COPILOT_ERROR, "2026-01-01T00:05:00Z")]),
+        )
+        .answer(
+            &timeline_path(),
+            json!([
+                {"event": "review_requested", "id": 70, "created_at": "2026-01-01T00:00:00Z", "requested_reviewer": {"login": "Copilot"}},
+                {"event": "reviewed", "submitted_at": "2026-01-01T00:05:00Z", "user": {"login": COPILOT_REST}}
+            ]),
+        )
+        .killed(&post);
+        let first = ok_result(&gh.review(false, &[]));
+        assert_eq!(first["status"], "unreadable", "{lands}: {first}");
+        assert_eq!(gh.head_record()["retry"]["outcome"], "requested");
+        if lands {
+            gh.answer(&post, json!({}));
+        }
+        let second = ok_result(&gh.review(false, &[]));
+        assert_eq!(gh.requests(), 2, "{lands}: {:?}", gh.log());
+        assert_eq!(gh.head_record()["retry"]["resent"], true, "{lands}");
+        let third = ok_result(&gh.review(false, &[]));
+        assert_eq!(gh.requests(), 2, "{lands}: {:?}", gh.log());
+        if lands {
+            assert_eq!(second["status"], "pending", "{second}");
+            assert_eq!(third["status"], "pending", "{third}");
+        } else {
+            assert_eq!(third["verdict"], "copilot-error", "{third}");
+            assert_eq!(third["reason"], "copilot-error cause=unconfirmed");
+            assert_eq!(gh.head_record()["retry"]["outcome"], "fallback");
+        }
+    }
+}
+
+/// An error answer's retry is decided with the request: a request the
+/// policy held back holds the retry back, answering `copilot-error` with
+/// its cause once; Copilot's work already in flight stands for the retry;
+/// and a retry the released writer recorded under
+/// `pr_approval.copilot_error_retries` is the head's retry, carried into
+/// its record. None of them is requested again.
+#[test]
+fn an_error_retry_in_flight_or_released_is_not_requested_again() {
+    let error_world = || {
+        let mut gh = Github::review_world();
+        gh.answer(
+            &format!("pr view {PR}"),
+            review_view("", &[(COPILOT, "COMMENTED")], false),
+        )
+        .answer(
+            &reviews_path(),
+            json!([copilot_review(
+                11,
+                "COMMENTED",
+                COPILOT_ERROR,
+                "2026-01-01T00:05:00Z"
+            )]),
+        );
+        gh
+    };
+
+    let mut gh = error_world();
+    gh.answer(
+        &check_runs(HEAD, 1),
+        check_runs_page(1, vec![copilot_check(31, "queued")]),
     );
-    assert_eq!(gh.head_record()["ready"], "marking");
+    for _ in 0..2 {
+        let result = ok_result(&gh.review(false, &[]));
+        assert_eq!(result["status"], "pending", "{result}");
+        assert_eq!(gh.requests(), 0, "{:?}", gh.log());
+    }
+    assert_eq!(gh.head_record()["retry"]["outcome"], "existing");
+    assert_eq!(gh.head_record()["retry"]["review_id"], 11);
+
+    let gh = error_world();
+    gh.policy("[env]\nREVIEW_GATE_MODE = \"enforce\"\nREVIEW_GATE_REFRESH_REVIEW = \"overseer\"\nREVIEW_GATE_REFRESH_BRANCH = \"feat\"\nREVIEW_GATE_REFRESH_AUTHOR = \"lane-app[bot]\"\n");
+    let held = ok_result(&gh.review(false, &[]));
+    assert_eq!(held["verdict"], "copilot-error", "{held}");
+    assert_eq!(held["reason"], "copilot-error cause=refresh");
+    let again = ok_result(&gh.review(false, &[]));
+    assert_eq!(again["status"], "pending", "{again}");
     assert_eq!(gh.requests(), 0, "{:?}", gh.log());
+
+    // The released writer's retry: a `requested` one GitHub recorded after
+    // the error, and a `fallback` one.
+    for (outcome, request, timeline) in [
+        (
+            "requested",
+            "existing",
+            json!([{"event": "review_requested", "id": 71, "created_at": "2026-01-01T00:06:00Z", "requested_reviewer": {"login": "Copilot"}}]),
+        ),
+        ("fallback", "fallback", json!([])),
+    ] {
+        let mut gh = error_world();
+        gh.answer(&timeline_path(), timeline);
+        let mut state = gh.state();
+        state["pr_approval"] =
+            json!({"copilot_error_retries": {HEAD: {"review_id": "11", "outcome": outcome}}});
+        fs::write(gh.item(), serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+        for _ in 0..2 {
+            let result = ok_result(&gh.review(false, &[]));
+            assert_eq!(result["status"], "pending", "{outcome}: {result}");
+            assert_eq!(result["request"]["outcome"], request, "{outcome}: {result}");
+        }
+        assert_eq!(gh.requests(), 0, "{outcome}: {:?}", gh.log());
+        assert_eq!(gh.head_record()["retry"]["review_id"], 11, "{outcome}");
+        assert_eq!(gh.head_record()["retry"]["outcome"], outcome, "{outcome}");
+    }
+}
+
+/// Copilot's work in flight within its hold keeps every verdict that
+/// permits a merge `pending`: an approval while Copilot's check runs is
+/// recorded only once the hold is spent, and a review period shorter than
+/// the hold proceeds only once the hold is spent too.
+#[test]
+fn copilot_work_in_flight_holds_a_verdict_that_permits_a_merge() {
+    let mut gh = Github::review_world();
+    gh.answer(
+        &format!("pr view {PR}"),
+        review_view("APPROVED", &[("colleague", "APPROVED")], false),
+    )
+    .answer(
+        &check_runs(HEAD, 1),
+        check_runs_page(1, vec![copilot_check(31, "in_progress")]),
+    );
+    let held = ok_result(&gh.review(false, &[]));
+    assert_eq!(held["status"], "pending", "{held}");
+    assert_eq!(held["copilot"]["state"], "pending");
+    assert!(
+        gh.review_record()["verdict"].is_null(),
+        "{}",
+        gh.review_record()
+    );
+    gh.set_head("at", json!(stamp_ago(601)));
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["verdict"], "approved", "{result}");
+
+    let mut gh = Github::review_world();
+    gh.answer(
+        &check_runs(HEAD, 1),
+        check_runs_page(1, vec![copilot_check(31, "in_progress")]),
+    );
+    let short = &[("PR_REVIEW_WAIT_SECS", "300")];
+    let first = ok_result(&gh.review(false, short));
+    assert_eq!(first["status"], "pending", "{first}");
+    gh.set_head("at", json!(stamp_ago(301)));
+    gh.set_head("period_started", json!(stamp_ago(301)));
+    let held = ok_result(&gh.review(false, short));
+    assert_eq!(held["status"], "pending", "{held}");
+    assert_eq!(held["copilot"]["state"], "pending");
+    gh.set_head("at", json!(stamp_ago(601)));
+    let result = ok_result(&gh.review(false, short));
+    assert_eq!(result["verdict"], "proceeded", "{result}");
 }
