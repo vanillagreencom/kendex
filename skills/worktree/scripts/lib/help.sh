@@ -598,8 +598,23 @@ print_push_help() {
   worktree_message help push
   cat <<'EOF'
 Usage: worktree push [ID|/path] [--set-upstream|-u] [--no-rebase]
+       worktree push [ID|/path] --publish-candidate HEAD_OID BASE_OID [-u]
        worktree push [ID|/path] --prepare-base [--message-file FILE]
        worktree push [ID|/path] --to-base BASE_OID
+
+Candidate publication: --publish-candidate takes complete commit identities.
+HEAD_OID must be the current head of a materialized non-default item branch.
+BASE_OID must equal the freshly fetched origin/<default> commit and already
+be contained in that candidate, which may hold multiple commits. Any mismatch
+or failed base fetch/read refuses before transport, without rebasing or folding.
+It uses normal remote selection, authentication and native remote-work
+admission, then a target-specific pinned lease with the exact refspec
+HEAD_OID:refs/heads/<item>. Git atomically guards the item destination at update;
+this does not lock the base or prove the remote never moved between reads.
+Automatic first-push tracking and explicit -u install tracking after transport.
+A tracking setup failure reports that publication succeeded but tracking failed.
+Existing tracking is preserved otherwise. This form cannot combine with
+--no-rebase, --prepare-base or --to-base. It prints no rebase map.
 
 Base delivery: --prepare-base fetches origin/<default>, rebases onto it even
 with a merge queue, and folds all item commits into one normal commit with

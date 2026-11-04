@@ -254,6 +254,16 @@ done
 exec "$REAL_GIT" "\$@"
 EOF
       ;;
+    tracking-fails)
+      cat >"$ROOT/bin/git" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+for arg in "\$@"; do
+  [[ "\$arg" != branch.topic.remote ]] || exit 23
+done
+exec "$REAL_GIT" "\$@"
+EOF
+      ;;
     # A git that cannot reach origin for the default branch: the fetch of
     # refs/heads/main fails as an unreachable or rate-limited remote does,
     # leaving origin/main wherever it last was.
@@ -1311,6 +1321,118 @@ SH
   assert_eq "$(remote_oid origin)" "$fold_remote" "$fold_history: a refused fold preserves the remote branch"
   assert_eq "$(git --git-dir="$ROOT/origin.git" rev-parse main)" "$(git -C "$MAIN" rev-parse HEAD)" \
     "$fold_history: a refused fold publishes nothing"
+done
+
+echo "=== fixed candidate publication keeps declared history and native admission ==="
+# Each input is produced by a caller holding a validated candidate or by
+# concurrent Git activity. The control removes only the declared-base check;
+# native containment still passes, so the stale declaration must detect it.
+for candidate_case in first tracked explicit-upstream head-mismatch stale-base uncontained-base fetch-failed remote-work race equivalence authorized unmapped detached default claim short missing incompatible tracking-failed base-control; do
+  candidate_world='pair fix fix2'
+  case "$candidate_case" in
+    tracked|explicit-upstream) candidate_world='pair fix publish fix2' ;;
+    remote-work) candidate_world='pair fix publish fix2 move-remote observe' ;;
+    race) candidate_world='pair fix publish fix2 race-push' ;;
+    equivalence) candidate_world='pair fix publish advance hand-rebase fix2' ;;
+    authorized) candidate_world='pair fix publish advance refused-rebase fix2' ;;
+    unmapped) candidate_world='pair twins publish twins-main unmapped-push' ;;
+  esac
+  # shellcheck disable=SC2086
+  build "candidate-$candidate_case" $candidate_world
+  candidate_head="$(git -C "$WT" rev-parse HEAD)"
+  candidate_base="$BASE"
+  candidate_declared_head="$candidate_head"
+  candidate_declared_base="$candidate_base"
+  candidate_remote_before="$(remote_oid origin)"
+  candidate_script="$WORKTREE_SCRIPT"
+  candidate_options=()
+  candidate_rc_want=1
+  candidate_key=worktree-push-candidate-conflict
+  candidate_tracking=origin
+  case "$candidate_case" in
+    first) git_shim record; candidate_rc_want=0 ;;
+    tracked)
+      git -C "$WT" config "branch.$ISSUE.remote" origin
+      git -C "$WT" config "branch.$ISSUE.merge" refs/heads/other
+      candidate_rc_want=0 ;;
+    explicit-upstream)
+      step bot-remote
+      candidate_options=(-u)
+      candidate_tracking=bot
+      candidate_rc_want=0 ;;
+    head-mismatch) candidate_declared_head="$BASE" ;;
+    stale-base|base-control)
+      commit_main advanced.txt advanced
+      git -C "$WT" merge -q --no-edit origin/main
+      candidate_head="$(git -C "$WT" rev-parse HEAD)"
+      candidate_declared_head="$candidate_head"
+      candidate_key=worktree-push-candidate-base-conflict
+      if [[ "$candidate_case" == base-control ]]; then
+        step standalone
+        candidate_script="$ROW_SCRIPT"
+        candidate_from='"$CANDIDATE_BASE_NOW" != "$PUSH_CANDIDATE_BASE"'
+        candidate_to='"$CANDIDATE_BASE_NOW" != "$CANDIDATE_BASE_NOW"'
+        assert_eq "$(grep -cF "$candidate_from" "$candidate_script")" 1 "control: one declared-base comparison"
+        F="$candidate_from" T="$candidate_to" awk '
+          BEGIN { f = ENVIRON["F"]; t = ENVIRON["T"] }
+          { i = index($0, f); if (i) $0 = substr($0, 1, i - 1) t substr($0, i + length(f)); print }
+        ' "$candidate_script" >"$candidate_script.edit"
+        cat "$candidate_script.edit" >"$candidate_script"
+        assert_eq "$(grep -cF "$candidate_to" "$candidate_script")" 1 "control: the declared-base comparison changed"
+        candidate_rc_want=0
+      fi ;;
+    uncontained-base)
+      step queue
+      commit_main advanced.txt advanced
+      candidate_declared_base="$(git -C "$MAIN" rev-parse HEAD)"
+      candidate_key=worktree-push-candidate-base-conflict ;;
+    fetch-failed) git_shim base-fetch-fails; candidate_key=worktree-push-base-fetch-failed ;;
+    remote-work) candidate_key=worktree-push-remote-uncontained ;;
+    race) candidate_key=worktree-push-rejected ;;
+    equivalence|authorized) candidate_rc_want=0 ;;
+    unmapped) candidate_key=worktree-push-rebase-unmapped ;;
+    detached) git -C "$WT" switch -q --detach; candidate_key=worktree-push-candidate-branch ;;
+    default) WT="$MAIN"; candidate_head="$(git -C "$WT" rev-parse HEAD)"; candidate_declared_head="$candidate_head"; candidate_key=worktree-push-candidate-branch ;;
+    claim) git -C "$WT" config --worktree kendex-worktree.checkoutMode claim; candidate_key=worktree-push-candidate-checkout ;;
+    short) candidate_declared_head="${candidate_head:0:12}"; candidate_key=worktree-push-candidate-identities ;;
+    missing) candidate_declared_base=""; candidate_key=worktree-push-candidate-identities ;;
+    incompatible) candidate_options=(--no-rebase); candidate_key=worktree-push-candidate-options ;;
+    tracking-failed) git_shim tracking-fails; candidate_key=worktree-push-candidate-tracking-failed ;;
+  esac
+  candidate_tree="$(git -C "$WT" rev-parse 'HEAD^{tree}')"
+  candidate_parents="$(git -C "$WT" show -s --format=%P HEAD)"
+  candidate_rc=0
+  (cd "$MAIN" && PATH="${ROW_PATH:-$TMP_ROOT/bin}:$PATH" "$candidate_script" push "$WT" \
+    --publish-candidate "$candidate_declared_head" "$candidate_declared_base" ${candidate_options[@]+"${candidate_options[@]}"} \
+    >"$ROOT/candidate.out" 2>"$ROOT/candidate.err") || candidate_rc=$?
+  assert_eq "$candidate_rc" "$candidate_rc_want" "$candidate_case: publication result"
+  assert_eq "$(git -C "$WT" rev-parse HEAD)" "$candidate_head" "$candidate_case: candidate head unchanged"
+  assert_eq "$(git -C "$WT" rev-parse 'HEAD^{tree}')" "$candidate_tree" "$candidate_case: candidate tree unchanged"
+  assert_eq "$(git -C "$WT" show -s --format=%P HEAD)" "$candidate_parents" "$candidate_case: candidate parents unchanged"
+  assert_eq "$(grep -c '^rebase-map:' "$ROOT/candidate.out" || true)" 0 "$candidate_case: no rewrite map"
+  if [[ "$candidate_rc_want" == 0 || "$candidate_case" == tracking-failed ]]; then
+    assert_eq "$(remote_oid "$candidate_tracking")" "$candidate_head" "$candidate_case: exact declared candidate published"
+    if [[ "$candidate_case" != tracking-failed ]]; then
+      assert_eq "$(git -C "$WT" config "branch.$ISSUE.remote")" "$candidate_tracking" "$candidate_case: tracking remote"
+      candidate_merge="refs/heads/$ISSUE"
+      [[ "$candidate_case" != tracked ]] || candidate_merge=refs/heads/other
+      assert_eq "$(git -C "$WT" config "branch.$ISSUE.merge")" "$candidate_merge" "$candidate_case: tracking merge"
+      assert_eq "$(auth_state)" - "$candidate_case: successful publication consumes authorization"
+    fi
+    if [[ "$candidate_case" == first ]]; then
+      assert_eq "$(cat "$ROOT/push.args")" "-C $WT push --force-with-lease=refs/heads/$ISSUE: origin $candidate_head:refs/heads/$ISSUE" "first: transport pins the declared OID and absent destination"
+    fi
+  else
+    assert_eq "$(grep "^$candidate_key:" "$ROOT/candidate.err" | cut -d: -f1)" "$candidate_key" "$candidate_case: typed refusal"
+    candidate_remote_want="$candidate_remote_before"
+    [[ "$candidate_case" != race ]] || candidate_remote_want="$EXTERNAL"
+    assert_eq "$(remote_oid origin)" "$candidate_remote_want" "$candidate_case: remote work preserved"
+  fi
+  if [[ "$candidate_case" == tracking-failed ]]; then
+    assert_eq "$(grep "^$candidate_key:" "$ROOT/candidate.err" | cut -d: -f1)" "$candidate_key" "tracking failure reports publication already succeeded"
+  elif [[ "$candidate_case" == base-control ]]; then
+    assert_eq "$candidate_rc:$(remote_oid origin)" "0:$candidate_head" "must-fail: stale-base refusal assertion detects the changed comparison"
+  fi
 done
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
