@@ -28,6 +28,7 @@ The relay between one checkout's overseer mailbox and one private Slack channel.
 .agents/skills/slack/scripts/slack listen --status --root ROOT [--root ROOT]...
 .agents/skills/slack/scripts/slack post [--root ROOT] [--channel ID] --text TEXT [--mention] [--file PATH] [--thread TS] [--update TS]
 .agents/skills/slack/scripts/slack read --channel ID (--ts TS | --latest N)
+.agents/skills/slack/scripts/slack ask-links [--root ROOT]
 .agents/skills/slack/scripts/slack compact [--root ROOT]...
 .agents/skills/slack/scripts/slack install --root ROOT [--root ROOT]... [--print]
 ```

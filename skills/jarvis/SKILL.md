@@ -159,3 +159,4 @@ Read the linked workflow or reference for the task before acting.
 | Find sources, check a legal answer or audit work and documentation | [references/research.md](references/research.md) |
 | Report from, answer or instruct the agent in another of the user's repositories | [references/agent-reach.md](references/agent-reach.md) |
 | Run Jarvis on a second machine, or forward a request to the main Jarvis | [Agent reach: Main and satellites](references/agent-reach.md#main-and-satellites) |
+| List shared owner asks or send Reply, Done or Later from a console | [Owner asks](references/owner-asks.md) |

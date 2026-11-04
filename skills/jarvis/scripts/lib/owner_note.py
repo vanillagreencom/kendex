@@ -26,26 +26,34 @@ cd -- "$root"
 note="$(mktemp)"
 trap 'rm -f -- "$note"' EXIT
 cat >"$note"
-"$BASH" %(mail)s send --item overseer --directive --file "$note" ${1+"$@"}
+"$BASH" %(mail)s send --item overseer --file "$note" ${1+"$@"}
 """ % {"mail": LANE_MAIL}
 
 
 Refusal = watch.DestinationRefusal
 
 
-def send(bash, side, host, root, note):
+def send(bash, side, host, root, note, *, options=None, timeout=60, check=True):
     """The send's stdout; a timeout or a refusal of either side is a watch.Failure."""
+    options = ["--directive"] if options is None else options
+    operation = "host-send" if side == "host" else "local-send"
     if side == "host":
-        return watch.checked(["ssh", host, "bash -c " + shlex.quote(HOST_SEND) + " owner-note " + shlex.quote(root)],
-                             data=note, operation="host-send")
-    mail = Path(root) / LANE_MAIL
-    if not mail.is_file():
-        raise Refusal("mailbox-missing", root)
-    with tempfile.NamedTemporaryFile(mode="w", prefix="owner-note-", suffix=".md") as payload:
-        payload.write(note)
-        payload.flush()
-        return watch.checked([bash, mail, "send", "--item", "overseer", "--directive", "--file", payload.name],
-                             root, operation="local-send")
+        result = watch.run(["ssh", host,
+                            "bash -c " + shlex.quote(HOST_SEND) + " owner-note " +
+                            " ".join(map(shlex.quote, [str(root), *options]))],
+                           data=note, operation=operation, timeout=timeout)
+    else:
+        mail = Path(root) / LANE_MAIL
+        if not mail.is_file():
+            raise Refusal("mailbox-missing", root)
+        with tempfile.NamedTemporaryFile(mode="w", prefix="owner-note-", suffix=".md") as payload:
+            payload.write(note)
+            payload.flush()
+            result = watch.run([bash, mail, "send", "--item", "overseer", *options, "--file", payload.name],
+                               root, operation=operation, timeout=timeout)
+    if check and result.returncode:
+        raise watch.child_failure(operation, result)
+    return result.stdout if check else result
 
 
 def deliver(bash, repo, note, settings, host=None, local=False):

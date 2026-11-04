@@ -53,10 +53,10 @@ def destinations(settings):
     return (local, *(Destination("ssh:" + host, host) for host in hosts))
 
 
-def destination_roots(destination):
+def destination_roots(destination, timeout=60):
     if destination.host:
-        return listed_roots(checked(["ssh", destination.host, "kendex project list"], operation="project-list"))
-    return listed_roots(checked(["kendex", "project", "list"], operation="project-list"))
+        return listed_roots(checked(["ssh", destination.host, "kendex project list"], operation="project-list", timeout=timeout))
+    return listed_roots(checked(["kendex", "project", "list"], operation="project-list", timeout=timeout))
 
 
 def note_routes(settings, repo, host=None, local=False):

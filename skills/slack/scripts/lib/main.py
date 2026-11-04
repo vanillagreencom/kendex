@@ -24,6 +24,7 @@ Usage: slack setup [--root ROOT] [--name NAME | --take CHANNEL_ID]
        slack read --channel ID (--ts TS | --latest N)
        slack compact [--root ROOT]...
        slack thread TS [--root ROOT] [--limit N]
+       slack ask-links [--root ROOT]   # JSON ask-id array on stdin
        slack install --root ROOT [--root ROOT]... [--print]
 
 Relays one checkout's overseer mailbox to one private Slack channel and back,
@@ -95,6 +96,10 @@ thread    print the requested thread as plain text, oldest first, each
           Slack user id) and UTC time; TS names
           its root or a reply; --limit caps the messages printed, otherwise
           all cursor pages are read. No thread is read by default
+ask-links read confirmed ask/thread bindings and their server permalinks
+          for Jarvis's owner-ask list. Prints one JSON object keyed by ask
+          id, with null for an unposted or missing thread. Reads and sends
+          no mailbox message; an API or binding failure refuses the read
 compact   drop journal lines resolved or ignored longer ago than
           SLACK_THREAD_DAYS; open questions, positions and reader delivery
           marks stay. The relay runs
@@ -214,6 +219,8 @@ def build() -> Parser:
     p.add_argument("ts")
     p.add_argument("--root")
     p.add_argument("--limit", type=int)
+    p = verbs.add_parser("ask-links", add_help=False)
+    p.add_argument("--root")
     p = verbs.add_parser("install", add_help=False)
     p.add_argument("--root", action="append")
     p.add_argument("--print", action="store_true")
@@ -254,6 +261,8 @@ def run(argv: List[str]) -> int:
         if args.limit is not None and args.limit < 1:
             raise Refusal("usage", "--limit must be positive")
         return verbs.thread(roots_of([args.root] if args.root else [])[0], args.ts, args.limit)
+    if args.verb == "ask-links":
+        return verbs.ask_links(roots_of([args.root] if args.root else [])[0], sys.stdin.read())
     if args.verb == "install":
         if not args.root:
             raise Refusal("usage", "install needs at least one --root")

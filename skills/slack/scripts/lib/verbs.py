@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import json
 import os
 import re
 import shutil
@@ -19,7 +20,7 @@ from relay import LAUNCHER, RECONNECT_BOUND_SECONDS, author_of, jarvis_session_h
 from secret import check as secret_check
 from secret import checked_file
 from settings import CALLER_ENV, Settings, load, load_presence, user_handle
-from store import Binding, RelayLock, compact, format_at, journal_exists, parse_at, read_binding, read_status, write_binding
+from store import Binding, RelayLock, compact, format_at, journal_exists, parse_at, read_binding, read_journal, read_status, write_binding
 
 UNIT = "slack-listen.service"
 # Seconds between the restart and the read of the unit's state: long
@@ -294,6 +295,29 @@ def thread(root: Path, ts: str, limit: Optional[int]) -> int:
     for message in sorted(selected, key=lambda m: float(m["ts"])):
         author = author_of(message, binding.owner_ids.values()) or str(message.get("user", ""))
         print(f"[{author} {format_at(float(message['ts']))}] {plain(str(message.get('text') or ''), lambda user: user)}")
+    return 0
+
+
+def ask_links(root: Path, data: str) -> int:
+    """The relay owns ask/thread association; Jarvis consumes confirmed HTTP links."""
+    try:
+        ids = json.loads(data)
+        if not isinstance(ids, list) or any(not isinstance(key, str) or not key for key in ids):
+            raise ValueError("ask ids")
+    except ValueError as error:
+        raise Refusal("usage", "ask-links needs a JSON array of ask ids on stdin") from error
+    binding, state = read_binding(root), read_journal(root)
+    api = api_for(load(need_owners=False))
+    result = {}
+    for key in ids:
+        ts = state.post_thread(key)
+        thread = state.threads.get(ts)
+        if thread is None or thread.kind != "ask":
+            result[key] = None
+        else:
+            url = api.get("chat.getPermalink", channel=binding.channel, message_ts=ts)["permalink"]
+            result[key] = {"url": url, "thread": ts}
+    print(json.dumps(result))
     return 0
 
 
