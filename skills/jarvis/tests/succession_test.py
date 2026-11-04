@@ -36,7 +36,7 @@ with Path(row["calls"]).open("a") as stream:
     stream.write(json.dumps(args) + "\\n")
 harness = args[args.index("--harness") + 1]
 if "--lane" in args and "read_rc" in row:
-    print("{}")
+    print(json.dumps({"config_dir": row["account"]}) if row["read_rc"] == 0 else "{}")
     sys.exit(row["read_rc"])
 # A failing dependency answers every walk pick with an error exit.
 if row["harness"] == "fail" and "--lane" not in args:
@@ -405,23 +405,27 @@ print(json.dumps({"config_dir": row["account"]}))
         alternative.mkdir()
         brief, _, private = self.private_brief()
         with patch.object(session_test, "SCRIPT", script):
-            for phase, repeated, worker_failure in (("saved", False, False), ("predecessor-ended", True, False),
-                                                     ("waiting", True, True)):
+            for phase, repeated, worker_failure in (("saved", False, ""), ("predecessor-ended", True, ""),
+                                                     ("waiting", True, "identity"), ("saved", False, "trust")):
                 with self.subTest(phase=phase, repeated=repeated, worker_failure=worker_failure):
                     self.call("start", mode="new", brief=brief)
                     previous = self.wait()
                     original = json.loads(self.record.read_text())
                     owned_identity = dict(original["process"])
-                    if worker_failure:
+                    if worker_failure == "identity":
                         # A stale recorded start refuses before signalling A.
                         original["process"]["started_at"] = "a different start time"
                         self.record.write_text(json.dumps(original))
                     self.handoff()
                     calls = self.root / "retry-picks"
                     calls.write_text("")
-                    fixture = {"harness": "codex", "account": str(alternative), "calls": str(calls), "headroom": 20, "read_rc": 0}
+                    target = "claude" if worker_failure == "trust" else "codex"
+                    trust = alternative / ".claude.json"
+                    if worker_failure == "trust":
+                        trust.write_text(json.dumps({"projects": {str(self.home): {"hasTrustDialogAccepted": False}}}))
+                    fixture = {"harness": target, "account": str(alternative), "calls": str(calls), "headroom": 20, "read_rc": 0}
                     (self.home / ".lane-fixture.json").write_text(json.dumps(fixture))
-                    (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = "codex:standard:high"\n')
+                    (self.home / "kendex.settings.toml").write_text('[env]\nORCH_OVERSEER_PREFERENCE = "' + target + ':standard:high"\n')
                     identity, request = self.paused([str(script), "succeed", "--home", str(self.home), "--account-walled"],
                                                     pause, phase, "after", self.env)
                     with request:
@@ -438,12 +442,51 @@ print(json.dumps({"config_dir": row["account"]}))
                     if worker_failure:
                         retained = self.await_worker_result()
                         self.assertEqual(retained["transfer"]["spent_account"], str(self.account))
-                        self.assertEqual(retained["state"], "handing-over")
+                        self.assertEqual((retained["state"], retained["account"], retained["terminal"]),
+                                         ("running", str(self.account), previous["terminal"]))
                         self.assertEqual(self.call("status")[0]["terminal"], previous["terminal"])
                         self.assertTrue(self.process_live(owned_identity))
-                        retained["predecessor"]["process"] = owned_identity
+                        retained["process"] = owned_identity
                         self.record.write_text(json.dumps(retained))
                         (self.root / "release").unlink()
+                        # These shipped consumers read the persisted owner,
+                        # rather than status's view of a live predecessor.
+                        native = subprocess.run([self.env["JARVIS_TEST_BASH"], "-c",
+                            'source "$1"; session_rows_jarvis_identity "$2" "$3" "$4" "$5"', "identity",
+                            str(skills / "orch/scripts/lib/session-rows.sh"), str(self.home), original["harness"],
+                            original["pending"]["native_session_id"], previous["terminal"]["pane"]],
+                            env=self.env | {"JARVIS_RECORD": str(self.record),
+                                "JARVIS_GENERATION": str(original["pending"]["generation"]),
+                                "TMUX": previous["terminal"]["server"] + ",0,0"},
+                            capture_output=True, text=True, timeout=15)
+                        self.assertEqual(native.returncode, 0, native.stderr)
+                        self.assertEqual(json.loads(native.stdout)["state"], "running")
+                        task_file = self.home / "task.md"
+                        task_file.write_text("Inspect the handoff.\n")
+                        # The session CLI fixture requires a controller hook;
+                        # a task's native CLI has no controller identity.
+                        task_bin = self.root / "task-bin"
+                        task_bin.mkdir(exist_ok=True)
+                        task_cli = task_bin / "codex"
+                        task_cli.write_text("#!/usr/bin/env python3\nimport signal\nwhile True: signal.pause()\n")
+                        task_cli.chmod(0o755)
+                        task = subprocess.run([str(skills / "jarvis/scripts/task"), "launch", "--home", str(self.home),
+                            "--name", "Refusal recovery", "--harness", "codex", "--model", "standard",
+                            "--account", str(alternative), "--task-file", str(task_file),
+                            "--result-file", str(self.home / "task-result.md")],
+                            env=self.env | {"PATH": str(task_bin) + os.pathsep + self.env["PATH"]},
+                            capture_output=True, text=True, timeout=60)
+                        self.assertEqual(task.returncode, 0, task.stderr)
+                        launched = json.loads(task.stdout)
+                        self.assertEqual((launched["state"], launched["terminal"]["server"]),
+                                         ("running", previous["terminal"]["server"]))
+                        for verb, arguments in (("complete", ["--outcome", "failed"]), ("cleanup", [])):
+                            closed = subprocess.run([str(skills / "jarvis/scripts/task"), verb, "--home", str(self.home),
+                                "--id", launched["id"], *arguments], env=self.env, capture_output=True, text=True, timeout=60)
+                            self.assertEqual(closed.returncode, 0, closed.stderr)
+                        if worker_failure == "trust":
+                            self.assertEqual(retained["transfer"]["phase"], "saved")
+                            trust.unlink()
                     elif phase == "predecessor-ended":
                         self.wait("failed", "handover-failed")
                         self.successor_ended()
@@ -458,6 +501,8 @@ print(json.dumps({"config_dir": row["account"]}))
                     self.assertEqual(self.wait()["account"], str(alternative))
                     recovered = json.loads(self.record.read_text())
                     self.assertEqual(recovered["transfer"]["spent_account"], str(self.account))
+                    if worker_failure:
+                        self.assertEqual(recovered["transfer"]["previous_handoff"], retained["transfer"]["handoff"])
                     self.assertEqual(self.prompts(recovered["pending"]["native_session_id"]), [private])
                     queries = [json.loads(line) for line in calls.read_text().splitlines()]
                     for query in queries[1:]:

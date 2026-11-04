@@ -386,12 +386,6 @@ os.execvpe(argv[0],argv,env)
 
     def retain_live(self, record, live):
         transfer = record.get("transfer") or {}
-        if record.get("intent") == "succeed" and transfer.get("spent_account") and transfer["phase"] != "complete":
-            # A failed wall transfer must keep its original exclusion even
-            # when the predecessor still owns the home.
-            retained = dict(record)
-            retained.pop("worker", None)
-            return retained
         # Request flags survive a refusal. Native ownership keeps its original
         # generation, even though the request generation has advanced.
         controller_state = live.get("controller_state", live["state"])
@@ -400,6 +394,10 @@ os.execvpe(argv[0],argv,env)
                         history=self.confirmed_history(live) or record.get("history"))
         retained.update(state="running" if controller_state == "running" else "starting",
                         reason="existing" if controller_state == "running" else "launching", detail="")
+        if record.get("intent") == "succeed" and transfer.get("spent_account") and transfer["phase"] != "complete":
+            # Consumers use the live controller's native identity; only the
+            # unfinished transfer keeps the spent account and saved handoff.
+            retained["transfer"] = transfer
         retained.pop("worker", None)
         return retained
 
@@ -577,8 +575,10 @@ os.execvpe(argv[0],argv,env)
                 raise Refusal("app-off" if record and record.get("app_off") else "record-unreadable")
             self.env = environment(record["harness"], policy=True)
             spent_account = ""
+            transfer = record.get("transfer") or {}
+            if record.get("intent") == "succeed" and transfer.get("phase") != "complete":
+                spent_account = transfer.get("spent_account", "")
             if record.get("intent") == "succeed" and record["state"] != "running":
-                spent_account = record["transfer"].get("spent_account", "")
                 if self.worker_live(record):
                     return self.answer(record), 0
                 # End an abandoned waiting or native successor before retrying.
@@ -592,7 +592,7 @@ os.execvpe(argv[0],argv,env)
                 if record["state"] != "running" or not self.terminal(record):
                     raise Refusal("record-unreadable")
                 predecessor = record
-                saved_handoff = None
+                saved_handoff = transfer["handoff"] if spent_account else None
             if account_walled and not spent_account:
                 spent_account = predecessor["account"] if predecessor else record["account"]
             choice = record.get("choice") or {}
