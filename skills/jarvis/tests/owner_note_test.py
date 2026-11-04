@@ -1,4 +1,5 @@
-"""owner-note routes one directive through each side's own lane-mail, host first."""
+"""owner-note resolves registered routes without mail effects and sends directives."""
+import json
 from pathlib import Path
 import shutil
 import tempfile
@@ -28,6 +29,7 @@ class OwnerNote(MailWorld):
     def world(self, name, remote, local):
         """Scratch roots per side, each (path, overseer recorded[, mailbox installed]); returns their paths."""
         base = self.root / name
+        base.mkdir()
         sides = {}
         for side, rows in (("remote", remote), ("local", local)):
             sides[side] = []
@@ -43,25 +45,49 @@ class OwnerNote(MailWorld):
                                  str(self.root / "elsewhere") + " (folder not found)\n")
         return base, sides
 
-    def send(self, base, host):
+    def send(self, base, host, resolve=False):
         env = dict(self.env, SSH_LOG=str(base / "ssh.log"), REMOTE_HOME=str(base / "remote-home"),
                    REMOTE_REGISTRY=str(base / "remote-registry"), REMOTE_TMP=str(base / "remote-tmp"))
         if host:
             env["JARVIS_CONTROL_HOST"] = "host.example"
-        return self.command([BASH, self.scripts / "owner-note", "app", self.note], self.home, env)
+        operation = ["--resolve", "app"] if resolve else ["app", self.note]
+        return self.command([BASH, self.scripts / "owner-note", *operation], self.home, env)
+
+    def mailbox_snapshot(self, roots):
+        return {str(path): path.read_bytes() for root in roots
+                for path in (root / "tmp/lane-mail").rglob("*") if path.is_file()}
+
+    def assert_destination(self, result, destination, root):
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {
+            "destination": destination, "host": destination[4:] if destination.startswith("ssh:") else None,
+            "root": str(root), "mailbox": str(root / ".agents/skills/mailbox/scripts/lane-mail")})
 
     def test_routes(self):
-        # Each row: host set, host roots, local roots, exit, refusal key=value, the side that lands.
-        rows = (("host overseer", True, [("app", True)], [("app", True)], 0, None, "remote"),
-                ("host absent", True, [("app", False)], [("app", True)], 0, None, "local"),
-                ("host lists none", True, [], [("app", True)], 0, None, "local"),
-                ("host mailbox missing", True, [("app", True, False)], [("app", True)], 2, "send-failed=host", None),
-                ("neither", True, [("app", False)], [("app", False)], 2, "no-overseer=app", None),
-                ("ambiguous", False, [], [("a/app", True), ("b/app", True)], 2, "repo-ambiguous=app", None),
-                ("no host", False, [("app", True)], [("app", True)], 0, None, "local"))
-        for name, host, remote, local, code, key, lands in rows:
+        # Resolution names the first registered route; sending alone can fall
+        # back after overseer-absent or fail on a missing mailbox.
+        rows = (("host overseer", True, [("app", True)], [("app", True)], 0, None, "remote", "remote"),
+                ("host absent", True, [("app", False)], [("app", True)], 0, None, "local", "remote"),
+                ("host lists none", True, [], [("app", True)], 0, None, "local", "local"),
+                ("host mailbox missing", True, [("app", True, False)], [("app", True)], 2, "send-failed=host", None, "remote"),
+                ("neither", True, [("app", False)], [("app", False)], 2, "no-overseer=app", None, "remote"),
+                ("unregistered", True, [], [], 2, "no-overseer=app", None, None),
+                ("ambiguous", False, [], [("a/app", True), ("b/app", True)], 2, "repo-ambiguous=app", None, None),
+                ("no host", False, [("app", True)], [("app", True)], 0, None, "local", "local"))
+        for name, host, remote, local, code, key, lands, resolved in rows:
             with self.subTest(row=name):
                 base, sides = self.world(name.replace(" ", "-"), remote, local)
+                roots = [root for side in sides.values() for root in side]
+                before = self.mailbox_snapshot(roots)
+                resolution = self.send(base, host, resolve=True)
+                self.assertEqual(self.mailbox_snapshot(roots), before)
+                if resolved:
+                    destination = "ssh:host.example" if resolved == "remote" else "local"
+                    self.assert_destination(resolution, destination, sides[resolved][0])
+                else:
+                    self.assertEqual(resolution.returncode, 2, resolution.stderr)
+                    self.assertEqual(resolution.stdout, "")
+                    self.assertEqual(resolution.stderr.splitlines()[0], "owner-note: " + key)
                 result = self.send(base, host)
                 self.assertEqual(result.returncode, code, result.stderr)
                 if key is not None:
@@ -93,6 +119,28 @@ class OwnerNote(MailWorld):
         self.assertEqual([self.box(root, "to-lane") for roots in sides.values() for root in roots], [[], []])
         self.assertFalse((base / "ssh.log").exists())
         self.assertFalse(listed.exists())
+        resolution = self.send(base, True, resolve=True)
+        self.assert_destination(resolution, "local", sides["local"][0])
+        self.assertFalse((base / "ssh.log").exists())
+
+    def test_resolve_preserves_mailbox(self):
+        base, sides = self.world("read-only", [("app", True)], [("app", True)])
+        roots = [root for side in sides.values() for root in side]
+        for root in roots:
+            self.mail(root, "send", "Already delivered", "--directive")
+            self.mail(root, "notice", "Already reported", "--to", "owner")
+            for options in (("inbox",), ("events", "--box", "to-overseer", "--mark-read")):
+                result = self.command([root / ".agents/skills/mailbox/scripts/lane-mail", *options,
+                                       "--item", "overseer"], root)
+                self.assertEqual(result.returncode, 0, result.stderr)
+            self.mail(root, "send", "Still unread", "--directive")
+            self.mail(root, "notice", "Still unreported", "--to", "owner")
+        before = self.mailbox_snapshot(roots)
+        self.assertTrue(any(path.endswith("to-lane.cursor") for path in before))
+        self.assertTrue(any(path.endswith("to-overseer.seen") for path in before))
+        resolution = self.send(base, True, resolve=True)
+        self.assert_destination(resolution, "ssh:host.example", sides["remote"][0])
+        self.assertEqual(self.mailbox_snapshot(roots), before)
 
     def test_declared_destinations(self):
         # Each row: control/local/satellite names, selector, failed alias,
@@ -121,11 +169,20 @@ class OwnerNote(MailWorld):
                            FAIL_ALIAS=failed, REMOTE_HOME=str(base / "remote-home"),
                            REMOTE_TMP=str(base / "remote-tmp"), REMOTE_REGISTRY=str(base / "remote-registry"),
                            SATELLITE_REGISTRY=str(satellite_registry))
+                targets = {"control": sides["remote"][0], "local": sides["local"][0], "satellite": target}
+                before = self.mailbox_snapshot(targets.values())
+                resolution = self.command([BASH, self.scripts / "owner-note", "--resolve", *selector, "app"], self.home, env)
+                self.assertEqual(self.mailbox_snapshot(targets.values()), before)
+                self.assertEqual(resolution.returncode, code, resolution.stderr)
+                if landed:
+                    destination = "local" if landed == "local" else "ssh:" + landed
+                    self.assert_destination(resolution, destination, targets[landed])
                 result = self.command([BASH, self.scripts / "owner-note", *selector, "app", self.note], self.home, env)
                 self.assertEqual(result.returncode, code, result.stderr)
                 if refusal:
                     self.assertTrue(result.stderr.startswith("owner-note: "+refusal+"="), result.stderr)
-                targets = {"control": sides["remote"][0], "local": sides["local"][0], "satellite": target}
+                    self.assertEqual(resolution.stdout, "")
+                    self.assertEqual(resolution.stderr, result.stderr)
                 for label, root in targets.items():
                     written = self.box(root, "to-lane")
                     self.assertEqual([row["text"] for row in written],
@@ -157,6 +214,31 @@ class OwnerNote(MailWorld):
                     written = case.box(case.root / "host-overseer" / side / "app", "to-lane")
                     self.assertEqual([row["text"] for row in written],
                                      [NOTE.rstrip("\n") + "\n\n" + FOOTER], side)
+            finally:
+                case.doCleanups()
+
+    def test_resolve_instrument_control(self):
+        with tempfile.TemporaryDirectory() as folder:
+            copy = Path(folder) / "jarvis/scripts"
+            shutil.copytree(SCRIPTS, copy)
+            for name in ("mailbox", "orch"):
+                Path(folder, name).symlink_to(REPO / "skills" / name, target_is_directory=True)
+            path = copy / "lib/owner_note.py"
+            source = path.read_text()
+            old = '            print(json.dumps({"destination": target.key'
+            self.assertEqual(source.count(old), 1)
+            mutant = source.replace(old, '            send(args.bash, "host", target.host, root, "unwanted directive")\n' + old)
+            self.assertNotEqual(source, mutant)
+            compile(mutant, str(path), "exec")
+            path.write_text(mutant)
+            case = OwnerNote(methodName="test_resolve_preserves_mailbox")
+            case.scripts = copy
+            case.setUp()
+            try:
+                with self.assertRaises(AssertionError):
+                    case.test_resolve_preserves_mailbox()
+                written = case.box(case.root / "read-only/remote/app", "to-lane")
+                self.assertEqual(written[-1]["text"], "unwanted directive")
             finally:
                 case.doCleanups()
 

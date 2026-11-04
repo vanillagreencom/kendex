@@ -1,5 +1,6 @@
-"""Send an owner directive through watch's declared destination selection."""
+"""Resolve a registered destination or send an owner directive through watch."""
 import argparse
+import json
 from pathlib import Path
 import shlex
 import sys
@@ -66,29 +67,49 @@ def main():
         "Send FILE, then a blank line and the verify footer, as a directive to the overseer of REPO, "
         "the last path segment of a root `kendex project list` prints. JARVIS_REMOTE_HOSTS adds SSH aliases "
         "to local and JARVIS_CONTROL_HOST roots; bare selection must be unique across them. With no additional "
-        "alias, try JARVIS_CONTROL_HOST first, then this machine."), epilog=(
+        "alias, try JARVIS_CONTROL_HOST first, then this machine. "
+        "Read-only consumers use --resolve REPO without FILE. It prints one JSON object: destination "
+        "(local or ssh:ALIAS), host (SSH alias or null), root (registered checkout path), and mailbox "
+        "(the lane-mail path on that machine). It selects the first registered route without sending, "
+        "reading mail or changing read positions. It checks neither mailbox installation nor overseer "
+        "liveness and cannot predict a later send's overseer-absent fallback. A satellite resolves only "
+        "local roots; directive sending remains main-only."), epilog=(
         "A refusal prints `owner-note: KEY=VALUE` and its cause on stderr and exits 2. Keys: file-unreadable, "
         "settings-unreadable, setting-invalid, destination-unknown, project-list-failed (VALUE is the destination), repo-ambiguous, mailbox-missing "
         "(VALUE is the root), send-failed (VALUE is the side), no-overseer (no side lists a root named REPO whose "
-        "lane-mail has an overseer), role-satellite (VALUE is JARVIS_MAIN_HOST: a satellite instructs no "
+        "lane-mail has an overseer; with --resolve, no matching registered root), role-satellite "
+        "(VALUE is JARVIS_MAIN_HOST: a satellite instructs no "
         "overseer, so forward the request to the main instead)."))
     parser.add_argument("--bash", required=True, help=argparse.SUPPRESS)
     selector = parser.add_mutually_exclusive_group()
     selector.add_argument("--host", help="Select this declared SSH alias only; never fall back.")
     selector.add_argument("--local", action="store_true", help="Select this machine only; never fall back.")
+    parser.add_argument("--resolve", action="store_true", help="Print the selected registered route as JSON for read-only consumers.")
     parser.add_argument("repo")
-    parser.add_argument("file", type=Path)
+    parser.add_argument("file", type=Path, nargs="?")
     args = parser.parse_args()
+    if args.resolve and args.file is not None:
+        parser.error("--resolve takes no FILE")
+    if not args.resolve and args.file is None:
+        parser.error("FILE is required when sending")
     try:
-        try:
-            text = args.file.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as error:
-            raise Refusal("file-unreadable", args.file, str(error)) from error
+        if not args.resolve:
+            try:
+                text = args.file.read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as error:
+                raise Refusal("file-unreadable", args.file, str(error)) from error
         try:
             settings = watch.config(args.bash, watch.home_root(Path.cwd()))
-            host = settings["JARVIS_CONTROL_HOST"]
         except (OSError, ValueError, RuntimeError) as error:
             raise Refusal("settings-unreadable", "JARVIS_CONTROL_HOST", str(error)) from error
+        if args.resolve:
+            route = next(watch.note_routes(settings, args.repo, args.host, args.local), None)
+            if route is None:
+                raise Refusal("no-overseer", args.repo)
+            target, root, _ = route
+            print(json.dumps({"destination": target.key, "host": target.host, "root": root,
+                              "mailbox": str(Path(root) / LANE_MAIL)}))
+            return 0
         if watch.role(settings).kind != "main":
             raise Refusal("role-satellite", settings["JARVIS_MAIN_HOST"])
         note = text.rstrip("\n") + "\n\n" + FOOTER + "\n"
