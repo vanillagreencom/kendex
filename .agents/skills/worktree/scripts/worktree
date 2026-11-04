@@ -3345,6 +3345,7 @@ case "${1:-}" in
             fi
             if [[ "$RESTACK" == true ]]; then
               worktree_message rebase-conflicts "$WT_PATH" "Error: Rebase onto origin/$DEFAULT_BRANCH stopped on conflicts in $WT_PATH." >&2
+              sed 's/^/  /' <<<"$REBASE_OUTPUT" >&2
               echo "The rebase is paused in the worktree so the conflicts can be resolved." >&2
               report_restack_conflicts "$WT_PATH" "$CONFLICT_FILES"
               echo "To back out instead: $0 restack abort \"$WT_PATH\"" >&2
