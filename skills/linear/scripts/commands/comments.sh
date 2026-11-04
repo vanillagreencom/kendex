@@ -41,8 +41,9 @@ Owner Requests:
                         exact-email resolver, existing issues filters and
                         complete comment reader. Preserves every distinct
                         request mentioning that user's canonical profile URL.
-                        Includes full comment evidence for delivery recovery;
-                        label loss and ruling prose establish no completion.
+                        Includes full comment evidence for delivery recovery.
+                        A successful complete read defines current view
+                        membership; failed reads publish no partial result.
 
 Create Options:
   --body <text>         Comment body (required unless --body-file or --attach is set)
