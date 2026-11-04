@@ -1,0 +1,1 @@
+- Desktop app builds no longer leave generated Tauri schemas marked as changed in Git.
