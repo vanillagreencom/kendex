@@ -49,7 +49,9 @@ Read [CHECKS.md](CHECKS.md) before adding, tuning or debugging a check. It owns 
 
 ## Git hooks
 
-Obtain the repository owner's consent before setup runs repository scripts. Arm from the main checkout with `scripts/install-git-hooks`; use `--check` to inspect the arming. Arming and disarming affect the whole repository. Disarm before removing the skill.
+Obtain the repository owner's consent before setup runs repository scripts. Arming and disarming affect the whole repository. Disarm before removing the skill.
+
+Before installing, checking or repairing Git hooks, read `scripts/install-git-hooks --help` and [DEVELOPMENT.md § Git hook install contract](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/DEVELOPMENT.md#git-hook-install-contract).
 
 Before changing setup, hook order or the repo-local check, read [hooks and settings](references/hooks-and-settings.md). Before judging a push, read its [Pre-push scope](references/hooks-and-settings.md#pre-push-scope) contract. Refuse a push whose tip is not HEAD, whose index differs from HEAD or whose ref/index evidence cannot be read. The credential scan never runs at push; [CHECKS.md § secrets](CHECKS.md#secrets) owns the remaining CI boundary.
 

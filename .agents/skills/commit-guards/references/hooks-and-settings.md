@@ -4,9 +4,9 @@ Read before judging a push, changing hook setup or order, resolving settings, wr
 
 ## Hook layering
 
-The Git hooks run the committed skill scripts: `pre-commit` and `commit-msg` per commit, `pre-push` per branch. The harness pre-commit hook allows commits when these Git hooks are absent. It reports the missing setup with a consent route, or a main-checkout owner route for a linked worktree. Git checks run only after setup is armed.
+The Git hooks run the committed skill scripts: `pre-commit` and `commit-msg` per commit, `pre-push` per branch. The harness pre-commit hook allows commits when these Git hooks are absent and reports the setup route. Git checks run only after setup is armed.
 
-Setup consent and checkout ownership: [SKILL.md § Git hooks](../SKILL.md#git-hooks). An install from a linked worktree writes nothing and exits `0` when the main checkout's arming is in place, otherwise `1`. A worktree uses its own executable render of the scripts when it has one, otherwise the main checkout's copy. A pulled render does not re-arm the helper: `scripts/install-git-hooks --check` reports an outdated helper and names the installer to run from the main checkout. Install and removal boundaries: [DEVELOPMENT.md § Git hook install contract](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/DEVELOPMENT.md#git-hook-install-contract).
+Consent and repository-wide setup/removal boundaries: [SKILL.md § Git hooks](../SKILL.md#git-hooks). For installation, status checks, re-arming and script selection across checkouts, read `scripts/install-git-hooks --help` and [DEVELOPMENT.md § Git hook install contract](https://github.com/vanillagreencom/kendex/blob/main/skills/commit-guards/DEVELOPMENT.md#git-hook-install-contract).
 
 ## Commit chain
 
