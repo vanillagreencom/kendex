@@ -46,6 +46,24 @@ assert_contains "the --body-file payload carries the file's heading" "$body" "Co
 assert_contains "the --body-file payload carries the file's markdown verbatim" \
   "$body" '`code` and multi-line markdown.'
 
+for ending in '' $'\n' $'\n\n' nul; do
+    if [[ "$ending" == nul ]]; then
+        # The JSON text action can carry U+0000; a Bash variable cannot.
+        printf '%s\000%s' 'Owner action' '<!-- jarvis-owner-action:unique -->' >"$body_file"
+    else
+        printf '%s%s' '-n owner action\n<!-- jarvis-owner-action:unique -->' "$ending" >"$body_file"
+    fi
+    rc=0
+    PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam \
+        "$BASH" "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" comments create PROJ-1 \
+        --body-file "$body_file" >"$TMP_ROOT/exact.out" 2>"$TMP_ROOT/exact.err" || rc=$?
+    assert_eq "the exact-byte comment write succeeds" "$rc" 0
+    payload="$(sed -n 's/^data = //p' "$CURL_CONFIG_CAPTURE" | jq -r)"
+    assert_jq "the posted body preserves every file byte for recovery" \
+        "$(jq --rawfile expected "$body_file" '. + {expected: $expected}' <<<"$payload")" \
+        '.variables.input.body == .expected'
+done
+
 conflict_rc=0
 PATH="$TMP_ROOT/bin:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=TestTeam bash "$TMP_ROOT/.agents/skills/linear/scripts/linear.sh" comments create PROJ-1 --body inline --body-file "$body_file" >"$TMP_ROOT/conflict.out" 2>&1 || conflict_rc=$?
 

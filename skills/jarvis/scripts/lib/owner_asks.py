@@ -5,6 +5,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -20,13 +21,6 @@ import watch
 CALL_SECONDS = 14
 PAGE_ROWS = 32
 PAGE_BYTES = 16 * 1024
-REMOTE = '''set -euo pipefail
-cd -- "$1"
-shift
-script=$1
-shift
-exec "$BASH" "$script" "$@"
-'''
 MAIN = '''set -euo pipefail
 cd -- "$1"
 home=$1
@@ -37,6 +31,49 @@ exec env JARVIS_OWNER_ASK_MAIN=1 "$BASH" .agents/skills/jarvis/scripts/jarvis-se
 
 class Unavailable(ValueError):
     """The source, consistency or delivery evidence needed for an answer is unread."""
+    def __init__(self, cause, diagnostic=None):
+        super().__init__(cause)
+        self.diagnostic = diagnostic
+
+
+def source_failure(operation, destination, error, delivery=False):
+    record = watch.failure(operation, error).record
+    record = dict(record, destination=destination)
+    cause = ("Delivery is not confirmed; retain this request identity and reply draft." if delivery else
+             "The required " + operation + " evidence at " + destination + " could not be read.")
+    return Unavailable(cause, record)
+
+
+def diagnostic(error, operation):
+    record = error.diagnostic if isinstance(error, Unavailable) else watch.failure(operation, error).record
+    if record is None:
+        return
+    # Dependency diagnostics can quote private-file values. Redact inherited
+    # credentials and the shared shipped value patterns before any emission.
+    try:
+        lines = (watch.LIB.parents[2] / "orch/references/secret-value.ere").read_text().splitlines()
+        patterns = [line for line in lines if line.strip() and not line.lstrip().startswith("#")]
+        if len(patterns) != 1:
+            raise ValueError("secret-pattern-invalid")
+        pattern = re.compile(patterns[0], re.I | re.M)
+        secrets = [value for name, value in os.environ.items() if value and
+                   any(word in name.upper() for word in ("TOKEN", "SECRET", "PASSWORD", "API_KEY"))]
+
+        def sanitized(value):
+            if isinstance(value, dict):
+                return {key: sanitized(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [sanitized(item) for item in value]
+            if isinstance(value, str):
+                for secret in secrets:
+                    value = value.replace(secret, "[redacted]")
+                return pattern.sub("[redacted]", value)[:2048]
+            return value
+
+        detail = encoded(sanitized(record))
+    except (OSError, ValueError, re.error):
+        detail = encoded({"key": [operation, "diagnostic-redaction-unavailable"], "detail": "unavailable"})
+    print("jarvis-session: owner-asks-failure=" + detail, file=sys.stderr)
 
 
 def encoded(value):
@@ -75,22 +112,39 @@ class Sources:
         self.session, self.settings = session, settings
 
     def call(self, target, root, package, script, args=(), data=None, check=True):
-        relative = ".agents/skills/" + package + "/scripts/" + script
-        if target.host:
-            role = watch.Role("satellite", target.host, str(root))
-            cause, result = forward.host_call(role, self.session.deadline, REMOTE, [relative, *args], data)
-            if cause != "ok":
-                raise Unavailable("The original request host is unreachable.")
-        else:
-            path = watch.LIB.parents[2] / package / "scripts" / script
-            result = watch.run([self.session.env["JARVIS_BASH"], path, *args], root, data,
-                               operation="owner-asks-" + script, timeout=self.remaining())
-        if check and result.returncode:
-            print("jarvis-session: owner-source=" + package + "/" + script + " exit=" + str(result.returncode), file=sys.stderr)
-            if result.stderr:
-                print(result.stderr, file=sys.stderr, end="" if result.stderr.endswith("\n") else "\n")
-            raise Unavailable("The " + package + " request source could not be read.")
-        return result
+        operation = package + "/" + script
+        destination = target.key + ":" + str(root)
+        packages = watch.LIB.parents[2]
+        shell_args = (["-c", 'source "$1"; mailbox_common_root "$2"', "owner-asks"]
+                      if operation == "mailbox/lib/common-root.sh" else [])
+        try:
+            if target.host:
+                # All dependencies come from the caller's declared packages,
+                # including sibling reads made by Linear and Slack themselves.
+                files = {}
+                for name in ("mailbox", "linear", "slack"):
+                    directory = packages / name / "scripts"
+                    for path in directory.rglob("*"):
+                        if path.is_file() and "__pycache__" not in path.parts and path.suffix != ".pyc":
+                            files[str(path.relative_to(packages))] = base64.b64encode(path.read_bytes()).decode()
+                for name in ("orch/scripts/lib/kendex-env.sh", "orch/references/secret-value.ere"):
+                    files[name] = base64.b64encode((packages / name).read_bytes()).decode()
+                command, payload = watch.remote_command(files, package + "/scripts/" + script, args,
+                                                        data=data, stdin=True, shell_args=shell_args)
+                role = watch.Role("satellite", target.host, str(root))
+                cause, result = forward.host_call(role, self.session.deadline,
+                                                  'set -euo pipefail\ncd -- "$1"\n' + command, [], payload)
+                if cause != "ok":
+                    raise watch.Failure(operation, "transport", cause, result)
+            else:
+                path = packages / package / "scripts" / script
+                result = watch.run([self.session.env["JARVIS_BASH"], *shell_args, path, *args], root, data,
+                                   operation=operation, timeout=self.remaining())
+            if check and result.returncode:
+                raise watch.child_failure(operation, result)
+            return result
+        except (OSError, watch.Failure) as error:
+            raise source_failure(operation, destination, error) from error
 
     def remaining(self):
         remaining = self.session.deadline - time.monotonic()
@@ -99,7 +153,11 @@ class Sources:
         return remaining
 
     def value(self, target, root, package, script, args=(), data=None):
-        return json.loads(self.call(target, root, package, script, args, data).stdout)
+        result = self.call(target, root, package, script, args, data)
+        try:
+            return json.loads(result.stdout)
+        except ValueError as error:
+            raise source_failure(package + "/" + script, target.key + ":" + str(root), error) from error
 
     def events(self, target, root, box):
         result = self.call(target, root, "mailbox", "lane-mail", ["events", "--item", "overseer", "--box", box])
@@ -119,12 +177,15 @@ class Sources:
             raise Unavailable("The owner tracker settings could not be read.")
         mailboxes = []
         for target in watch.destinations(self.settings):
-            roots = watch.destination_roots(target, timeout=self.remaining())
+            try:
+                roots = watch.destination_roots(target, timeout=self.remaining(), complete=True)
+            except watch.Failure as error:
+                raise source_failure("project-list", target.key, error) from error
             if not target.host and self.session.home not in roots:
                 roots.append(self.session.home)
             canonical = set()
             for root in roots:
-                root = self.call(target, root, "jarvis", "lib/jarvis-env.sh", ["common-root", root]).stdout.strip()
+                root = self.call(target, root, "mailbox", "lib/common-root.sh", [root]).stdout.strip()
                 if root in canonical:
                     continue
                 canonical.add(root)
@@ -160,12 +221,22 @@ class Sources:
         return second
 
     def send(self, route, text, key):
+        try:
+            return self._send(route, text, key)
+        except (OSError, watch.Failure, watch.DestinationRefusal) as error:
+            raise source_failure(route["source"] + "-delivery", route["destination"] + ":" + route["root"],
+                                 error, delivery=True) from error
+
+    def _send(self, route, text, key):
         target = watch.Destination(route["destination"], route.get("host"))
         if route["source"] == "mailbox":
             result = forward.owner_note.send(self.session.env["JARVIS_BASH"], "host" if target.host else "local",
                                              target.host, route["root"], text,
                                              options=["--re", route["ask"], "--delivery-id", key],
                                              timeout=self.remaining(), check=False)
+            if result.returncode:
+                raise source_failure("mailbox-delivery", target.key + ":" + route["root"],
+                                     watch.child_failure("mailbox-delivery", result), delivery=True)
             receipt = watch.send_receipt(result, key)
             return receipt[0] if receipt else None
         with tempfile.NamedTemporaryFile(mode="w", dir=self.session.path.parent) as body:
@@ -175,7 +246,8 @@ class Sources:
                                ["comments", "create", route["issueUuid"], "--parent", route["thread"], "--body-file", body.name],
                                check=False)
         if result.returncode:
-            return None
+            raise source_failure("linear-delivery", target.key + ":" + route["root"],
+                                 watch.child_failure("linear-delivery", result), delivery=True)
         result = json.loads(result.stdout)
         return result.get("data", {}).get("comment", {}).get("id") if result.get("success") is True else None
 
@@ -413,10 +485,12 @@ def main(args, session_type, refusal_type):
                 argv += ["--id", args.id]
             cause, result = forward.host_call(role, session.deadline, MAIN, argv, data)
             if cause != "ok":
-                raise Unavailable("The main home is unreachable; this operation is not confirmed.")
+                raise source_failure("main-home", role.dest + ":" + role.home,
+                                     watch.Failure("main-home", "transport", cause, result))
             # The main prints the same bounded public response. No local
             # copy of its state or interpretation of its receipt is kept.
             sys.stdout.write(result.stdout)
+            sys.stderr.write(result.stderr)
             return result.returncode
         owner = OwnerAsks(session, Sources(session, settings))
         with session.locked():
@@ -431,6 +505,7 @@ def main(args, session_type, refusal_type):
         print(encoded(result))
         return 0
     except (OSError, ValueError, TypeError, KeyError, RuntimeError, OverflowError, watch.DestinationRefusal, refusal_type) as error:
+        diagnostic(error, "owner-asks-" + args.action)
         cause = str(error) if isinstance(error, Unavailable) else "The owner-ask operation could not read its required evidence."
         print(encoded({"v": 1, "kind": "unavailable", "cause": cause}))
         return 1
