@@ -90,7 +90,7 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
  result=subprocess.run(argv, input=payload.get('data'), text=True) if sys.argv[1] == 'stdin' else subprocess.run(argv)
  sys.exit(result.returncode)
 """
-    command = ("python3 -c " + shlex.quote(bootstrap) + " " + ("stdin" if stdin else "fd3") +
+    command = ("python3 -I -c " + shlex.quote(bootstrap) + " " + ("stdin" if stdin else "fd3") +
                " \"$BASH\" " + shlex.join([json.dumps(list(shell_args)), entry, *map(str, args)]))
     payload = json.dumps({"files": files, "data": data})
     if stdin:
