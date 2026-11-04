@@ -25,8 +25,14 @@ refuse() { # KEY=VALUE LINES...
 if ! command -v python3 >/dev/null 2>&1; then
   refuse "python3=missing" "python3 is not on PATH; the relay needs Python 3.8 or newer"
 fi
-if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 8) else 1)'; then
-  refuse "python3=$(python3 -V 2>&1 | tr ' ' '-')" "needs Python 3.8 or newer"
+_slack_code=(python3 -c)
+_slack_script=(python3 -B)
+if [ -n "${_KENDEX_JARVIS_PYTHON:-}" ]; then
+  _slack_code=("$_KENDEX_JARVIS_PYTHON" caller-code "")
+  _slack_script=("$_KENDEX_JARVIS_PYTHON" caller-script "$here/lib")
+fi
+if ! "${_slack_code[@]}" 'import sys; raise SystemExit(0 if sys.version_info >= (3, 8) else 1)'; then
+  refuse "python3=$("${_slack_code[@]}" 'import sys; print("Python " + sys.version.split()[0])' 2>&1 | tr ' ' '-')" "needs Python 3.8 or newer"
 fi
 if [ ! -f "$orch/scripts/lib/kendex-env.sh" ] || [ ! -f "$orch/references/secret-value.ere" ]; then
   refuse "orch-missing=$orch" \
@@ -37,7 +43,7 @@ fi
 # first, then that checkout's private env file and settings files. Presence
 # settings are root-local. Preserve the caller before this load so the root
 # reader cannot mistake the launch checkout's exports for caller overrides.
-if ! _slack_caller_env="$(python3 -c 'import json, os; print(json.dumps(dict(os.environ)))')"; then
+if ! _slack_caller_env="$("${_slack_code[@]}" 'import json, os; print(json.dumps(dict(os.environ)))')"; then
   refuse "settings-unreadable=caller-environment" "the caller environment could not be saved"
 fi
 # shellcheck source=../../orch/scripts/lib/kendex-env.sh
@@ -59,4 +65,4 @@ SLACK_LINEAR_DIR="$linear"
 export SLACK_LINEAR_DIR
 # Internal transport, consumed and removed by settings.py, not a setting.
 export _KENDEX_SLACK_CALLER_ENV="$_slack_caller_env"
-exec python3 -B "$here/lib/main.py" "$@"
+exec "${_slack_script[@]}" "$here/lib/main.py" "$@"

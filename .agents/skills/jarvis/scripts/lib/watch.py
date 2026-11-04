@@ -61,7 +61,19 @@ def destination_roots(destination, timeout=60, complete=False):
 
 def remote_command(files, entry, args, data=None, stdin=False, shell_args=()):
     """Transport caller-owned code; target checkouts supply only data/settings."""
-    bootstrap = """import base64,json,os,pathlib,subprocess,sys,tempfile
+    startup = """import runpy,sys
+operation,library,source,*args=sys.argv[1:]
+if library: sys.path.insert(0,library)
+if operation == 'caller-code':
+ sys.argv=['-c',*args]
+ exec(compile(source,'<string>','exec'),{'__name__':'__main__'})
+elif operation == 'caller-script':
+ sys.argv=[source,*args]
+ runpy.run_path(source,run_name='__main__')
+else:
+ raise ValueError('caller-startup-operation='+operation)
+"""
+    bootstrap = """import base64,json,os,pathlib,shlex,subprocess,sys,tempfile
 if sys.argv[1] == 'stdin':
  payload=json.load(sys.stdin)
 else:
@@ -70,10 +82,15 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
  root=pathlib.Path(folder)
  for name,value in payload['files'].items():
   path=root/name; path.parent.mkdir(parents=True,exist_ok=True); path.write_bytes(base64.b64decode(value)); path.chmod(0o700)
+ # Children share this extraction lifetime but start their own isolated Python.
+ startup=root/'caller-python'
+ startup.write_text('#!'+sys.argv[2]+'\\nexec '+shlex.join([sys.executable,'-I','-B','-c',%s])+' "$@"\\n')
+ startup.chmod(0o700)
+ env=dict(os.environ,_KENDEX_JARVIS_PYTHON=str(startup))
  argv=[sys.argv[2],*json.loads(sys.argv[3]),str(root/sys.argv[4]),*sys.argv[5:]]
- result=subprocess.run(argv, input=payload.get('data'), text=True) if sys.argv[1] == 'stdin' else subprocess.run(argv)
+ result=subprocess.run(argv, env=env, input=payload.get('data'), text=True) if sys.argv[1] == 'stdin' else subprocess.run(argv, env=env)
  sys.exit(result.returncode)
-"""
+""" % repr(startup)
     command = ("python3 -I -c " + shlex.quote(bootstrap) + " " + ("stdin" if stdin else "fd3") +
                " \"$BASH\" " + shlex.join([json.dumps(list(shell_args)), entry, *map(str, args)]))
     payload = json.dumps({"files": files, "data": data})
@@ -277,7 +294,9 @@ except Refusal as error:
  print(json.dumps({"failure":{"key":["presence-settings","refusal",error.key],"detail":str(error)}}))
 """
     try:
-        record = json.loads(checked([sys.executable, "-B", "-c", code, owner,
+        startup = os.environ.get("_KENDEX_JARVIS_PYTHON")
+        reader = [startup, "caller-code", str(owner)] if startup else [sys.executable, "-B", "-c"]
+        record = json.loads(checked([*reader, code, owner,
                                      packages / "orch", root], operation="presence-settings"))
         if "failure" in record:
             error = record["failure"]
