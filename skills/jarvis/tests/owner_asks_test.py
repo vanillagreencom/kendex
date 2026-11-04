@@ -1,5 +1,7 @@
 """Request identity, source evidence and the actual page/action operations."""
 import copy
+from contextlib import redirect_stderr
+import io
 import importlib.util
 import json
 import os
@@ -114,8 +116,8 @@ class OwnerAsksContract(unittest.TestCase):
         ids = []
         page = first
         while True:
-            self.assertLessEqual(len(page["rows"]), owner_asks.PAGE_ROWS)
-            self.assertLessEqual(len(owner_asks.encoded(page).encode()) + 1, owner_asks.PAGE_BYTES)
+            self.assertLessEqual(len(page["rows"]), 32)
+            self.assertLessEqual(len(owner_asks.encoded(page).encode()) + 1, 16 * 1024)
             self.assertEqual(page["activeCount"], 70)
             self.assertEqual(page["revision"], first["revision"])
             ids.extend(row["id"] for row in page["rows"])
@@ -131,7 +133,7 @@ class OwnerAsksContract(unittest.TestCase):
         with self.assertRaises(owner_asks.Unavailable):
             self.page(cursor=first["nextCursor"])
         self.source.data = projection(str(self.home))
-        self.source.data["tracker"]["requests"][0]["comment"]["body"] = "x" * owner_asks.PAGE_BYTES
+        self.source.data["tracker"]["requests"][0]["comment"]["body"] = "x" * (16 * 1024)
         with self.assertRaises(owner_asks.Unavailable):
             self.page()
 
@@ -203,7 +205,37 @@ class OwnerAsksContract(unittest.TestCase):
         self.assertEqual(failures, [])
         self.assertEqual(sorted(answer["kind"] for answer in answers), ["accepted", "refused"])
 
-    def test_control_rejects_lost_receipt_replay_guard(self):
+    def test_required_dependency_diagnostics_preserve_safe_cause(self):
+        session = self.owner.session
+        session.deadline = owner_asks.time.monotonic() + 10
+        sources = owner_asks.Sources(session, {})
+        secret = "sk-" + "a" * 30
+        failures = [
+            (None, owner_asks.watch.Failure("lane-mail", "timeout", None, "deadline")),
+            (None, OSError(13, "permission denied")),
+            ("remote", ("main-unreachable", "ssh: host refused " + secret)),
+            (None, subprocess.CompletedProcess([], 7, "", "lane-mail: mailbox-unreadable=" + secret)),
+        ]
+        for host, failure in failures:
+            with self.subTest(host=host, failure=type(failure).__name__):
+                target = owner_asks.watch.Destination("ssh:remote" if host else "local", host)
+                if host:
+                    dependency = patch.object(owner_asks.forward, "host_call", return_value=failure)
+                else:
+                    dependency = patch.object(owner_asks.watch, "run", **({"side_effect": failure} if isinstance(failure, Exception)
+                                                                       else {"return_value": failure}))
+                with dependency, self.assertRaises(owner_asks.Unavailable) as raised:
+                    sources.call(target, str(self.home), "mailbox", "lane-mail", ["pending"])
+                with redirect_stderr(io.StringIO()) as output:
+                    owner_asks.diagnostic(raised.exception, "owner-asks-list")
+                lines = output.getvalue().splitlines()
+                self.assertEqual(len(lines), 1)
+                record = json.loads(lines[0].split("=", 1)[1])
+                self.assertEqual(record["destination"], target.key + ":" + str(self.home))
+                self.assertTrue(record["key"])
+                self.assertNotIn(secret, lines[0])
+
+    def test_control_rejects_receipt_and_page_cap_regressions(self):
         # Keep the mutant outside the worktree and acquire only its own
         # scratch directory. The original suite supplies all test fixtures.
         directory = REPO.parent / "tmp"
@@ -214,17 +246,23 @@ class OwnerAsksContract(unittest.TestCase):
                 shutil.copytree(REPO / "skills" / package / "scripts", skills / package / "scripts")
             path = skills / "jarvis/scripts/lib/owner_asks.py"
             original = path.read_text()
-            old = 'previous = state["requests"].get(request["requestId"])'
-            self.assertEqual(original.count(old), 1)
-            mutant = original.replace(old, 'previous = None')
-            self.assertNotEqual(mutant, original)
-            path.write_text(mutant)
-            env = dict(os.environ, JARVIS_TEST_SKILLS=str(skills))
-            result = subprocess.run([BASH, str(REPO / "skills/jarvis/tests/owner-asks.test.sh"),
-                                     "OwnerAsksContract.test_receipt_replay_precedes_revision"],
-                                    env=env, capture_output=True, text=True, timeout=60)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn("FAILED (failures=", result.stderr)
+            mutations = [
+                ('previous = state["requests"].get(request["requestId"])', 'previous = None',
+                 "OwnerAsksContract.test_receipt_replay_precedes_revision"),
+                ('PAGE_BYTES = 16 * 1024', 'PAGE_BYTES = 32 * 1024',
+                 "OwnerAsksContract.test_complete_row_and_byte_paging_and_stale_cursors"),
+            ]
+            for old, replacement, case in mutations:
+                with self.subTest(case=case):
+                    self.assertEqual(original.count(old), 1)
+                    mutant = original.replace(old, replacement)
+                    self.assertNotEqual(mutant, original)
+                    path.write_text(mutant)
+                    env = dict(os.environ, JARVIS_TEST_SKILLS=str(skills))
+                    result = subprocess.run([BASH, str(REPO / "skills/jarvis/tests/owner-asks.test.sh"), case],
+                                            env=env, capture_output=True, text=True, timeout=60)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("FAILED (failures=", result.stderr)
 
 
 class PublicOwnerAsks(MailWorld):
@@ -249,13 +287,66 @@ class PublicOwnerAsks(MailWorld):
         result, page = self.run_cli()
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertEqual((page["activeCount"], page["snoozedCount"], page["rows"], page["complete"]), (0, 0, [], True))
-        self.executable("kendex", "#!/bin/sh\nexit 1\n")
+        self.executable("kendex", "#!/bin/sh\nprintf 'kendex: registry=unreadable\\n' >&2\nexit 1\n")
         result, error = self.run_cli()
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(error["kind"], "unavailable")
         self.assertNotIn("activeCount", error)
+        records = [json.loads(line.split("=", 1)[1]) for line in result.stderr.splitlines()
+                   if line.startswith("jarvis-session: owner-asks-failure=")]
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["key"], ["project-list", "refusal", "registry"])
+        self.assertEqual(records[0]["destination"], "local")
 
-    def test_real_mailbox_link_reply_checking_and_verified_close(self):
+    def test_complete_discovery_preserves_registration_outcomes(self):
+        for note in ("folder not found", "not a folder", "folder could not be read"):
+            with self.subTest(note=note):
+                self.registry.write_text(str(self.home) + "  (" + note + ")\n")
+                result, error = self.run_cli()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(error["kind"], "unavailable")
+                record = json.loads(result.stderr.split("owner-asks-failure=", 1)[1])
+                self.assertEqual(record["key"][:2], ["project-list", "registration-unreadable"])
+                self.assertNotIn("activeCount", error)
+
+    def test_remote_mailbox_only_worktree_and_untrusted_checkout_code(self):
+        remote = make_project(self.root / "remote (owner)")
+        self.command(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test",
+                      "commit", "--allow-empty", "-m", "fixture"], remote).check_returncode()
+        linked = self.root / "linked"
+        self.command(["git", "worktree", "add", "-q", "-b", "linked", linked], remote).check_returncode()
+        remote_registry = self.root / "remote-registry"
+        remote_registry.write_text(str(linked) + "  (worktree of " + str(remote) + ")\n" + str(remote) + "\n")
+        self.env["REMOTE_REGISTRY"] = str(remote_registry)
+        (self.home / "kendex.settings.toml").write_text('[env]\nJARVIS_REMOTE_HOSTS="fixture"\n')
+        self.executable("ssh", '#!' + BASH + '\nset -euo pipefail\n' +
+                        'if [[ $# == 2 && $2 == "kendex project list" ]]; then cat "$REMOTE_REGISTRY"; exit; fi\n' +
+                        'shift 4\nshift\nexec ' + BASH + ' -c "$1"\n')
+        ask = self.mail(remote, "ask", "Remote original", "--to", "owner", "--options", "a,b", "--reserved")
+        self.slack_thread(remote, ask)
+        for checkout_code in (False, True):
+            with self.subTest(checkout_code=checkout_code):
+                if checkout_code:
+                    for package, entry in (("jarvis", "lib/jarvis-env.sh"), ("mailbox", "lane-mail"),
+                                           ("linear", "linear.sh"), ("slack", "slack")):
+                        scripts = remote / ".agents/skills" / package / "scripts"
+                        if scripts.is_symlink():
+                            scripts.unlink()
+                        path = scripts / entry
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_text('#!' + BASH + '\ntouch "' + str(self.root / "executed-checkout-code") + '"\nexit 91\n')
+                        path.chmod(0o755)
+                result, page = self.run_cli()
+                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                self.assertEqual(page["activeCount"], 1)
+                self.assertEqual(page["rows"][0]["what"], "Remote original")
+                self.assertFalse((self.root / "executed-checkout-code").exists())
+        remote_registry.write_text(str(linked) + "  (worktree)\n")
+        result, page = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(page["activeCount"], 1)
+
+    def slack_thread(self, home, ask):
         # Exercise Slack's public mapping/permalink owner against its existing
         # API fixture; no product reader or HTTP transport is replaced.
         spec = importlib.util.spec_from_file_location("fake_slack", REPO / "skills/slack/tests/lib/fake_slack.py")
@@ -271,11 +362,14 @@ class PublicOwnerAsks(MailWorld):
         self.addCleanup(thread.join)
         self.addCleanup(server.shutdown)
         self.env["SLACK_API_URL"] = "http://127.0.0.1:" + str(server.server_port)
-        ask = self.mail(self.home, "ask", "Original owner ask", "--to", "owner", "--options", "a,b", "--reserved")
-        slack = self.home / "tmp/slack"
+        slack = home / "tmp/slack"
         slack.mkdir()
         (slack / "binding.json").write_text(json.dumps({"channel": "C1", "channel_name": "owner", "bound_at": "100", "owners": [], "owner_ids": {}}))
         (slack / "journal.jsonl").write_text(json.dumps({"t": "out", "id": ask, "kind": "ask", "state": "open", "thread": "100.000001", "at": "2026-11-01T00:00:00Z"}) + "\n")
+
+    def test_real_mailbox_link_reply_checking_and_verified_close(self):
+        ask = self.mail(self.home, "ask", "Original owner ask", "--to", "owner", "--options", "a,b", "--reserved")
+        self.slack_thread(self.home, ask)
         result, page = self.run_cli()
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         row = page["rows"][0]
@@ -308,6 +402,71 @@ class PublicOwnerAsks(MailWorld):
         closed = self.command([REPO / "skills/mailbox/scripts/lane-mail", "resolve", "--item", "overseer", "--id", ask], self.home)
         self.assertEqual(closed.returncode, 0, closed.stderr)
         self.assertEqual(self.run_cli()[1]["rows"], [])
+
+    def test_actual_tracker_writer_recovers_lost_acknowledgement(self):
+        (self.home / "kendex.settings.toml").write_text(
+            '[env]\nORCH_OWNER_EMAIL="owner@example.test"\nORCH_OWNER_ASK_LABEL="owner-waiting"\n')
+        database = self.root / "tracker.json"
+        original = request_comment("request", "https://linear.app/example/profiles/owner Question")
+        database.write_text(json.dumps([original]))
+        self.env.update(TRACKER_DATABASE=str(database), LINEAR_API_KEY_OVERRIDE="fixture")
+        self.executable("curl", '#!' + sys.executable + '\n' + r'''
+import json, os, sys
+from pathlib import Path
+config = sys.stdin.read()
+payload = json.loads(json.loads(next(line[7:] for line in config.splitlines() if line.startswith('data = '))))
+query = payload['query']
+path = Path(os.environ['TRACKER_DATABASE'])
+comments = json.loads(path.read_text())
+def connection(nodes):
+    return {'nodes': nodes, 'pageInfo': {'hasNextPage': False, 'endCursor': None}}
+def comment(row):
+    return dict(id=row['id'], body=row['body'], createdAt=row['created_at'], updatedAt=row['updated_at'],
+                user={'id': row['user_id'], 'name': row['user'], 'email': row['user_email']},
+                parent={'id': row['parent_id']} if row['parent_id'] else None, url=row['url'])
+if 'commentCreate' in query:
+    item = payload['variables']['input']
+    row = dict(comments[0], id='reply-'+str(len(comments)), body=item['body'],
+               user_id='posting-app', parent_id=item['parentId'])
+    comments.append(row)
+    path.write_text(json.dumps(comments))
+    # The real writer has posted; the transport loses its acknowledgement.
+    print('___HTTP_CODE___200', end='')
+    sys.exit(0)
+elif 'GetUserByEmail' in query:
+    data = {'users': connection([dict(id='owner-id', name='Owner', email='owner@example.test',
+                                     url='https://linear.app/example/profiles/owner')])}
+elif 'TeamKeys' in query:
+    data = {'organization': {'urlKey': 'example', 'teams': connection([])}}
+elif 'viewer' in query:
+    data = {'viewer': {'id': 'posting-app'}}
+elif 'ListIssues' in query:
+    data = {'issues': connection([dict(id='issue-uuid', identifier='KEN-1', url='https://linear.app/example/issue/KEN-1',
+                                      updatedAt='2026-11-01T01:00:00Z')])}
+elif 'comments' in query:
+    data = {'issues': connection([dict(id='issue-uuid', identifier='KEN-1', comments=connection(list(map(comment, comments))))])}
+else:
+    raise RuntimeError(query)
+print(json.dumps({'data': data})+'___HTTP_CODE___200', end='')
+''')
+        for action in ("reply", "done"):
+            with self.subTest(action=action):
+                result, page = self.run_cli()
+                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                row = page["rows"][0]
+                payload = json.dumps({"requestId": "actual-" + action, "expectedRevision": row["revision"],
+                                      "text": "Evidence\n\n"})
+                result, unknown = self.run_cli(action, None, payload, "--id", row["id"])
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(unknown["kind"], "unavailable")
+                record = json.loads(result.stderr.split("owner-asks-failure=", 1)[1])
+                self.assertEqual(record["destination"], "local:" + str(self.home))
+                self.assertEqual(record["key"][0], "linear-delivery")
+                result, receipt = self.run_cli(action, None, payload, "--id", row["id"])
+                self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                self.assertEqual((receipt["kind"], receipt["state"]),
+                                 ("accepted", "checking" if action == "done" else "open"))
+        self.assertEqual(len(json.loads(database.read_text())), 3)
 
     def test_satellite_uses_the_same_main_receipt_without_local_state(self):
         satellite = make_project(self.root / "satellite", overseer=False)

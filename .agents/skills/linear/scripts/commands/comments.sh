@@ -82,7 +82,18 @@ read_body_file() {
         echo "{\"error\": \"--body-file path not readable: $body_file\"}" >&2
         return 1
     fi
-    body=$(<"$body_file")
+    body=$(cat -- "$body_file" && printf '.') || return 1
+    body="${body%.}"
+}
+
+comment_body_json() {
+    # Recovery compares unmodified file bodies byte for byte. Inline and
+    # generated attachment bodies retain their final-newline contract.
+    if [[ -n "$2" && "${3:-0}" == 0 ]]; then
+        cat -- "$2"
+    else
+        printf '%s\n' "$1"
+    fi | jq -Rs '.'
 }
 
 list_comments() {
@@ -291,6 +302,10 @@ create_comment() {
     # attachmentCreate surface, so the link IS the attachment). An upload
     # failure refuses here, before the comment exists — nothing partial.
     local attach_path attach_info attach_sep=$'\n\n'
+    if [[ -n "$body_file" && ${#attach_paths[@]} -gt 0 ]]; then
+        # Attachment composition supplies the separators and final newline.
+        body=$(printf '%s' "$body") || return 1
+    fi
     for attach_path in ${attach_paths[@]+"${attach_paths[@]}"}; do
         attach_info=$(attach_upload_file "$attach_path") || return 1
         local attach_url attach_name attach_type
@@ -308,7 +323,7 @@ create_comment() {
 
     # Escape body for JSON (handle newlines and quotes)
     local escaped_body
-    escaped_body=$(echo "$body" | jq -Rs '.')
+    escaped_body=$(comment_body_json "$body" "$body_file" "${#attach_paths[@]}") || return 1
 
     local input_parts=("\"issueId\": \"$comment_issue_id\"" "\"body\": $escaped_body")
 
@@ -368,7 +383,7 @@ update_comment() {
     fi
 
     local escaped_body
-    escaped_body=$(echo "$body" | jq -Rs '.')
+    escaped_body=$(comment_body_json "$body" "$body_file") || return 1
 
     local mutation='
     mutation UpdateComment($id: String!, $input: CommentUpdateInput!) {
