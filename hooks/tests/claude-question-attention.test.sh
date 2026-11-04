@@ -6,6 +6,7 @@ TEST_DIR="$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P)"
 HOOK="${HOOK_UNDER_TEST:-$TEST_DIR/../claude-question-attention.sh}"
 PASS=0
 FAIL=0
+mkdir -p -- "$TEST_DIR/../../tmp" || { echo 'claude-question-attention-test: scratch=mkdir-failed' >&2; exit 1; }
 TMP_ROOT="$(mktemp -d "$TEST_DIR/../../tmp/claude-question-attention.XXXXXX")" || { echo 'claude-question-attention-test: scratch=mktemp-failed' >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "claude-question-attention-test: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'claude-question-attention-test: scratch=resolve-failed' >&2; exit 1; }
@@ -73,4 +74,5 @@ assert delivered.stderr == ""
 print("installed companion fixtures passed")
 PY
 assert_eq "$status" 0 'installed question companion contract'
+printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
