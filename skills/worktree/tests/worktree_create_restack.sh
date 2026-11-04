@@ -649,15 +649,15 @@ echo
 echo "=== retained rebase state before detach relays subprocess output ==="
 
 # Git's reference-transaction hook rejects the detach after rebase creates
-# its metadata. The hook's bytes are the subprocess-result contract here,
-# independent of Git's diagnostic wording.
+# its metadata, allowing the earlier ownership fetch to finish. The hook's
+# bytes are the subprocess-result contract here, independent of Git's wording.
 retained_output() {
   local label="$1" rc=0 observed=no action
   build "$label" clean
   mkdir -p "$ROOT/hooks"
   cat >"$ROOT/hooks/reference-transaction" <<'HOOK'
 #!/bin/sh
-if [ "$1" = prepared ]; then
+if [ "$1" = prepared ] && [ -d "$(git rev-parse --git-path rebase-merge)" ]; then
   printf 'fixture-rebase-output: detach rejected\n' >&2
   exit 1
 fi
