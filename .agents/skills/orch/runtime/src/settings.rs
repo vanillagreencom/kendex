@@ -197,12 +197,28 @@ pub const OWNER_ASK_LABEL_KEY: &str = "ORCH_OWNER_ASK_LABEL";
 pub const OVERSEER_PREFERENCE_KEY: &str = "ORCH_OVERSEER_PREFERENCE";
 /// The standard class on each harness (`OL_DEFAULT_PREFERENCE`).
 pub const DEFAULT_OVERSEER_PREFERENCE: &str = "claude:standard:high,codex:standard:high";
+/// The `harness[@host]:model:effort` entries a lane launch walks
+/// (`accounts walk`); unset, a launch takes the model it names.
+pub const LANE_PREFERENCE_KEY: &str = "ORCH_LANE_PREFERENCE";
 /// Days past a record's own recorded end before the retention duty removes
 /// it (the key `lane-mail compact` reads too): the event log's rotated
 /// segments, an ended lane's paths and every other unit of the state
 /// directory. A count of none is a misconfiguration: nothing would stand a
 /// day.
 pub const RECORD_RETENTION_DAYS_KEY: &str = "ORCH_RECORD_RETENTION_DAYS";
+/// Seconds `queue-watch` keeps polling a pull request no poll has seen queued
+/// or armed before answering `not_queued`: enqueue registration lags the
+/// merge call.
+pub const QUEUE_WAIT_ARM_GRACE_KEY: &str = "QUEUE_WAIT_ARM_GRACE";
+/// Consecutive polls a `conflicting`, `ejected` or `disarmed` reading must
+/// hold before `queue-watch` ends on it, so one blip starts no recovery.
+pub const QUEUE_WAIT_CONFIRM_POLLS_KEY: &str = "QUEUE_WAIT_CONFIRM_POLLS";
+/// The least seconds between two of `queue-watch`'s review-thread probes and
+/// between two of its check probes, each on its own clock.
+pub const QUEUE_WAIT_PROBE_INTERVAL_KEY: &str = "QUEUE_WAIT_PROBE_INTERVAL";
+const DEFAULT_QUEUE_WAIT_ARM_GRACE_SECS: u32 = 120;
+const DEFAULT_QUEUE_WAIT_CONFIRM_POLLS: u32 = 2;
+const DEFAULT_QUEUE_WAIT_PROBE_INTERVAL_SECS: u32 = 120;
 /// Where the prune and an item's close-out archive what they remove. A set
 /// value is an absolute path, else every archive write refuses it, while a
 /// verb that writes no archive runs; empty takes `archive/` under
@@ -281,6 +297,37 @@ pub const LANE_ALIASES_KEY: &str = "ORCH_LANE_ALIASES";
 /// The lane host a pick runs under; `local` or unset is this machine's
 /// own reading.
 pub const LANE_HOST_KEY: &str = "ORCH_LANE_HOST";
+/// The home whose `.<harness>` and `.*<harness>*` directories the listing
+/// discovers accounts in.
+pub const HOME_KEY: &str = "HOME";
+/// Colon-separated config directories, each an account of the harness
+/// whose credential it holds; the entries of a harness replace its
+/// discovery.
+pub const LANE_DIRS_KEY: &str = "ORCH_LANE_DIRS";
+/// A Codex home the CLI reads, joined to the Codex inventory as the account
+/// it names; a Copilot home likewise.
+pub const CODEX_HOME_KEY: &str = "CODEX_HOME";
+pub const COPILOT_HOME_KEY: &str = "COPILOT_HOME";
+/// Seconds a cached usage figure is served within; 0 declines every
+/// cached figure. The default outlasts the longest watch interval, since a
+/// window under it has every pass find the figure expired and post again.
+pub const USAGE_TTL_KEY: &str = "ORCH_LANES_USAGE_TTL";
+/// A caller's own pass interval, which widens the window and never
+/// narrows it.
+pub const USAGE_MAX_AGE_KEY: &str = "ORCH_LANES_USAGE_MAX_AGE";
+/// Seconds the provider's `accounts` verb may take; 0 asks for no bound.
+pub const HOST_ACCOUNTS_TIMEOUT_KEY: &str = "ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S";
+/// The dispatcher's slot wait on that verb, passed on as it stands and
+/// held under the bound.
+pub const HOST_BUSY_WAIT_KEY: &str = "ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS";
+/// The usage endpoints, for a host that reaches them through another
+/// address.
+pub const CLAUDE_USAGE_URL_KEY: &str = "ORCH_LANES_CLAUDE_USAGE_URL";
+pub const CODEX_USAGE_URL_KEY: &str = "ORCH_LANES_CODEX_USAGE_URL";
+const DEFAULT_USAGE_TTL: u64 = 300;
+const DEFAULT_HOST_ACCOUNTS_TIMEOUT: u64 = 30;
+const CLAUDE_USAGE_URL_DEFAULT: &str = "https://api.anthropic.com/api/oauth/usage";
+const CODEX_USAGE_URL_DEFAULT: &str = "https://chatgpt.com/backend-api/wham/usage";
 const DEFAULT_LANE_MAX_PCT: u32 = 95;
 const DEFAULT_LANE_BURN_PCT: u32 = 5;
 const DEFAULT_OVERSEER_HEADROOM_PCT: u32 = 5;
@@ -305,7 +352,7 @@ const DEFAULT_LANE_AGE_SECS: u64 = 12600;
 const GIT_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The keys this runtime reads from the private env file.
-const READ_KEYS: [&str; 50] = [
+const READ_KEYS: &[&str] = &[
     TRACKER_CLI_KEY,
     PR_WATCH_CLI_KEY,
     SECURITY_ALERTS_KEY,
@@ -353,9 +400,17 @@ const READ_KEYS: [&str; 50] = [
     MAIN_WORKFLOWS_KEY,
     LINEAR_TEAM_KEY,
     OVERSEER_PREFERENCE_KEY,
+    LANE_PREFERENCE_KEY,
     RECORD_RETENTION_DAYS_KEY,
+    QUEUE_WAIT_ARM_GRACE_KEY,
+    QUEUE_WAIT_CONFIRM_POLLS_KEY,
+    QUEUE_WAIT_PROBE_INTERVAL_KEY,
     REPORT_CLI_KEY,
     LANES_CLI_KEY,
+    COPILOT_HOLD_SECS_KEY,
+    REVIEW_WAIT_SECS_KEY,
+    REVIEW_ON_TIMEOUT_KEY,
+    COPILOT_REQUESTS_KEY,
 ];
 
 /// What the command line says about the settings: a state directory that
@@ -497,6 +552,16 @@ pub struct ValidateSettings {
     pub delivery: Delivery,
 }
 
+/// What `queue-watch` reads beside its request: the arming grace, the
+/// confirmation count and the probe interval, each a whole number above
+/// zero, refused by key and value otherwise.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QueueWatchSettings {
+    pub arm_grace: Duration,
+    pub confirm_polls: u32,
+    pub probe_interval: Duration,
+}
+
 /// One stated retirement, `<name>=<YYYY-MM-DD>`: the account whose
 /// alias or directory name is `name` ends its plan on that UTC day.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -528,6 +593,16 @@ pub struct AccountSettings {
     pub aliases: Vec<Alias>,
     /// The provider a pick runs under, `None` for this machine's own read.
     pub host: Option<String>,
+    pub home: Option<String>,
+    pub lane_dirs: Vec<String>,
+    pub codex_home: Option<String>,
+    pub copilot_home: Option<String>,
+    pub usage_ttl: u64,
+    pub usage_max_age: u64,
+    pub accounts_timeout: u64,
+    pub host_busy_wait: Option<String>,
+    pub claude_usage_url: String,
+    pub codex_usage_url: String,
 }
 
 /// One `ORCH_LANE_CLOUD_REPOS` entry, `<name>=<owner>/<repo>`: the
@@ -585,12 +660,17 @@ pub struct Settings {
     /// line's payload names; an empty value reads as the default, as this
     /// reader takes every key.
     pub overseer_preference: String,
+    /// A lane launch's preference entries; `None` where the setting
+    /// names none.
+    pub lane_preference: Option<String>,
     pub retention_days: u32,
+    pub queue_watch: QueueWatchSettings,
     pub archive_root: ArchiveRoot,
     pub report_cli: PathBuf,
     pub lanes_cli: PathBuf,
     pub accounts: AccountSettings,
     pub store: StoreSettings,
+    pub review: ReviewSettings,
 }
 
 /// The state verbs' settings: the takeover window and the row bound of the
@@ -606,6 +686,26 @@ pub struct StoreSettings {
     pub review_max_external_rounds: u64,
     pub ci_fix_max_cycles: u64,
 }
+
+/// The review gate's settings as read: the hold on Copilot's work in
+/// flight, the reviewer's period, what a spent period answers, and
+/// whether Copilot is asked at all. Each is carried as its text (the
+/// default where unset), since the review gate is the one verb that
+/// reads them and the one that refuses a value outside its form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewSettings {
+    pub copilot_hold: String,
+    pub wait: String,
+    pub on_timeout: String,
+    pub copilot_requests: String,
+}
+
+pub const COPILOT_HOLD_SECS_KEY: &str = "ORCH_COPILOT_HOLD_SECS";
+const DEFAULT_COPILOT_HOLD_SECS: &str = "600";
+pub const REVIEW_WAIT_SECS_KEY: &str = "PR_REVIEW_WAIT_SECS";
+const DEFAULT_REVIEW_WAIT_SECS: &str = "900";
+pub const REVIEW_ON_TIMEOUT_KEY: &str = "PR_REVIEW_ON_TIMEOUT";
+pub const COPILOT_REQUESTS_KEY: &str = "PR_COPILOT_REQUESTS";
 
 fn refused(key: &'static str, fields: &[(&str, &str)]) -> crate::Error {
     agent_runtime::Error::refused(key, fields).into()
@@ -936,7 +1036,22 @@ pub fn load(
     let overseer_preference = get(OVERSEER_PREFERENCE_KEY)
         .unwrap_or(DEFAULT_OVERSEER_PREFERENCE)
         .to_owned();
+    let lane_preference = get(LANE_PREFERENCE_KEY).map(str::to_owned);
     let retention_days = count(RECORD_RETENTION_DAYS_KEY, DEFAULT_RECORD_RETENTION_DAYS)?;
+    let queue_watch = QueueWatchSettings {
+        arm_grace: Duration::from_secs(u64::from(count(
+            QUEUE_WAIT_ARM_GRACE_KEY,
+            DEFAULT_QUEUE_WAIT_ARM_GRACE_SECS,
+        )?)),
+        confirm_polls: count(
+            QUEUE_WAIT_CONFIRM_POLLS_KEY,
+            DEFAULT_QUEUE_WAIT_CONFIRM_POLLS,
+        )?,
+        probe_interval: Duration::from_secs(u64::from(count(
+            QUEUE_WAIT_PROBE_INTERVAL_KEY,
+            DEFAULT_QUEUE_WAIT_PROBE_INTERVAL_SECS,
+        )?)),
+    };
     let archive_root = match get(ARCHIVE_ROOT_KEY) {
         Some(text) if Path::new(text).is_absolute() => ArchiveRoot::Configured(PathBuf::from(text)),
         Some(text) => ArchiveRoot::Invalid(text.to_owned()),
@@ -1096,6 +1211,25 @@ pub fn load(
         host: get(LANE_HOST_KEY)
             .filter(|h| *h != "local")
             .map(str::to_owned),
+        home: get(HOME_KEY).map(str::to_owned),
+        lane_dirs: get(LANE_DIRS_KEY)
+            .unwrap_or_default()
+            .split(':')
+            .filter(|d| !d.is_empty())
+            .map(str::to_owned)
+            .collect(),
+        codex_home: get(CODEX_HOME_KEY).map(str::to_owned),
+        copilot_home: get(COPILOT_HOME_KEY).map(str::to_owned),
+        usage_ttl: whole(USAGE_TTL_KEY, DEFAULT_USAGE_TTL)?,
+        usage_max_age: whole(USAGE_MAX_AGE_KEY, 0)?,
+        accounts_timeout: whole(HOST_ACCOUNTS_TIMEOUT_KEY, DEFAULT_HOST_ACCOUNTS_TIMEOUT)?,
+        host_busy_wait: get(HOST_BUSY_WAIT_KEY).map(str::to_owned),
+        claude_usage_url: get(CLAUDE_USAGE_URL_KEY)
+            .unwrap_or(CLAUDE_USAGE_URL_DEFAULT)
+            .to_owned(),
+        codex_usage_url: get(CODEX_USAGE_URL_KEY)
+            .unwrap_or(CODEX_USAGE_URL_DEFAULT)
+            .to_owned(),
     };
     // The read duties' keys; the connected repositories and the owner
     // tracker keep the shell's grammar (`orch_connected_repos`,
@@ -1151,11 +1285,19 @@ pub fn load(
         )?,
         ci_fix_max_cycles: whole(CI_FIX_MAX_CYCLES_KEY, DEFAULT_CI_FIX_MAX_CYCLES)?,
     };
+    let text = |key: &str, default: &str| get(key).unwrap_or(default).to_owned();
+    let review = ReviewSettings {
+        copilot_hold: text(COPILOT_HOLD_SECS_KEY, DEFAULT_COPILOT_HOLD_SECS),
+        wait: text(REVIEW_WAIT_SECS_KEY, DEFAULT_REVIEW_WAIT_SECS),
+        on_timeout: text(REVIEW_ON_TIMEOUT_KEY, "proceed"),
+        copilot_requests: text(COPILOT_REQUESTS_KEY, "on"),
+    };
     Ok(Settings {
         roots: roots.clone(),
         reads,
         state_dir,
         store,
+        review,
         tmux_session: get(TMUX_SESSION_KEY).map(str::to_owned),
         verify: secs(VERIFY_SECS_KEY, DEFAULT_VERIFY_SECS)?,
         close_grace: secs(CLOSE_SECS_KEY, DEFAULT_CLOSE_SECS)?,
@@ -1175,7 +1317,9 @@ pub fn load(
         validate,
         scope_paths_cli,
         overseer_preference,
+        lane_preference,
         retention_days,
+        queue_watch,
         archive_root,
         report_cli,
         lanes_cli,
@@ -1289,7 +1433,7 @@ fn decode_toml_value(raw: &str) -> Option<String> {
 
 /// The `[env]` assignments of one settings file, in file order; an absent
 /// file holds none.
-fn settings_file(path: &Path) -> Result<Vec<(String, String)>> {
+pub(crate) fn settings_file(path: &Path) -> Result<Vec<(String, String)>> {
     let Some(text) = read_text(path)? else {
         return Ok(Vec::new());
     };
@@ -1355,7 +1499,7 @@ fn decode_shell_value(raw: &str) -> Option<String> {
 /// The assignments of the private env file this runtime reads, in file
 /// order, read as data. A line that assigns nothing this runtime reads is
 /// the shell's alone.
-fn private_env_file(path: &Path) -> Result<Vec<(String, String)>> {
+pub(crate) fn private_env_file(path: &Path) -> Result<Vec<(String, String)>> {
     let Some(text) = read_text(path)? else {
         return Ok(Vec::new());
     };

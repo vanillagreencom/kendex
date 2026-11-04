@@ -141,6 +141,7 @@ fn has_live_effect(request: &Request) -> bool {
         | Request::RecordVerification(_)
         | Request::VerifyHead(_)
         | Request::VerifyPr(_)
+        | Request::VerifyReview(_)
         | Request::ReconcileRound(_)
         | Request::RecordHandoff(_)
         | Request::ResumeHandoff(_)
@@ -154,7 +155,8 @@ fn has_live_effect(request: &Request) -> bool {
         | Request::RecordWallPauses(_)
         | Request::AdmitPaths(_)
         | Request::PruneRecords(_)
-        | Request::Validate(_) => false,
+        | Request::Validate(_)
+        | Request::RecordQueueWatch(_) => false,
     }
 }
 
@@ -197,10 +199,23 @@ pub struct ReconcileRun {
     pub refused: Vec<IntentRefused>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub notices_unmarked: Vec<NoticeUnmarked>,
-    // U6d: the directive sends settled from their kept receipts, and the
-    // owed ones no kept receipt could settle (step6-map § A6).
+    // The directive sends settled from their kept receipts, and the owed
+    // ones no kept receipt could settle.
     #[serde(flatten)]
     pub directive_sends: crate::send::Settled,
+    /// The controller record's own binding, healed from its pane where a
+    /// write left it unbound, or the refusal that kept it unhealed; absent
+    /// where there was nothing to heal.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub controller: Option<ControllerHeal>,
+}
+
+/// How the reconcile's heal of the controller record went.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+pub enum ControllerHeal {
+    Healed(ops::ControllerAdopted),
+    Refused { refusal: String, detail: String },
 }
 
 /// Run the effect a just-persisted intent names and record its outcome, or
@@ -250,7 +265,8 @@ pub fn run(
         | Report::RecordWallPauses(_)
         | Report::AdmitPaths(_)
         | Report::PruneRecords(_)
-        | Report::Validate(_) => return Ok(None),
+        | Report::Validate(_)
+        | Report::RecordQueueWatch(_) => return Ok(None),
     };
     run_effect(&run, request, effect).map(Some)
 }
@@ -295,6 +311,7 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
                     | Request::RecordVerification(_)
                     | Request::VerifyHead(_)
                     | Request::VerifyPr(_)
+                    | Request::VerifyReview(_)
                     | Request::ReconcileRound(_)
                     | Request::RecordHandoff(_)
                     | Request::ResumeHandoff(_)
@@ -308,7 +325,8 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
                     | Request::RecordWallPauses(_)
                     | Request::AdmitPaths(_)
                     | Request::PruneRecords(_)
-                    | Request::Validate(_) => {
+                    | Request::Validate(_)
+                    | Request::RecordQueueWatch(_) => {
                         unreachable!("a request without a live effect reports no effect")
                     }
                 };
@@ -347,6 +365,7 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
         | Request::RecordVerification(_)
         | Request::VerifyHead(_)
         | Request::VerifyPr(_)
+        | Request::VerifyReview(_)
         | Request::ReconcileRound(_)
         | Request::RecordHandoff(_)
         | Request::ResumeHandoff(_)
@@ -360,7 +379,8 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
         | Request::RecordWallPauses(_)
         | Request::AdmitPaths(_)
         | Request::PruneRecords(_)
-        | Request::Validate(_) => {
+        | Request::Validate(_)
+        | Request::RecordQueueWatch(_) => {
             unreachable!("a request without a live effect reports no effect")
         }
     }?;
@@ -702,11 +722,27 @@ pub fn reconcile(
     // its receipt kept beside the state; it is stamped here, never sent
     // again (step6-map § A6).
     let directive_sends = crate::send::settle(path, settings, env, locking)?;
+    // The controller record itself, bound from its own pane where a write
+    // left it without its native session, identity or server start.
+    let controller = match operation::heal_controller(path, settings, locking) {
+        Ok(None) => None,
+        Ok(Some(applied)) => {
+            let Report::AdoptController(adopted) = applied.report else {
+                unreachable!("the heal reports its adoption")
+            };
+            Some(ControllerHeal::Healed(*adopted))
+        }
+        Err(e) => Some(ControllerHeal::Refused {
+            refusal: e.key().to_owned(),
+            detail: e.to_string(),
+        }),
+    };
     Ok(ReconcileRun {
         reconciled,
         refused,
         notices_unmarked,
         directive_sends,
+        controller,
     })
 }
 

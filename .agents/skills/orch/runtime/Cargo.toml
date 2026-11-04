@@ -95,12 +95,20 @@ name = "validate"
 path = "../tests/rust/validate.rs"
 
 [[test]]
+name = "queue_watch"
+path = "../tests/rust/queue_watch.rs"
+
+[[test]]
 name = "send"
 path = "../tests/rust/send.rs"
 
 [[test]]
 name = "accounts"
 path = "../tests/rust/accounts.rs"
+
+[[test]]
+name = "walk"
+path = "../tests/rust/walk.rs"
 
 [[test]]
 name = "state"

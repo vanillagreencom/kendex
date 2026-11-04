@@ -759,9 +759,9 @@ fn a_reset_behind_the_clock_is_usage_limit_passed_once() {
     assert!(lines(&again).is_empty(), "{:?}", lines(&again));
 }
 
-/// A lane record carrying what the relaunch needs (`lib/lane-relaunch.sh`,
-/// `lane_recovery_args`): the model the pick is asked for and the
-/// launcher's recorded choices.
+/// A lane record carrying what the relaunch needs: the model the pick is
+/// asked for and the checkout, session and refresh word an earlier
+/// launcher recorded under `recovery`.
 fn relaunchable(mut record: Value, cwd: &Path) -> Value {
     record["model"] = json!("opus");
     record["recovery"] = json!({
@@ -824,28 +824,36 @@ fn a_walled_lane_is_relaunched_once_under_auto_and_only_reported_under_ask() {
         assert_eq!(relaunch.cwd, dir.path().canonicalize().unwrap());
         assert_eq!(relaunch.session, "fleet");
         assert_eq!(relaunch.log, log);
+        // The relaunch is the runtime's own request, applied by its entry
+        // with no launcher script between: the record's harness and model,
+        // the picked account, the spent one excluded, the refresh word.
+        let request_file = driver.state_dir.join("wall-relaunch-KEN-4.json");
         assert_eq!(
             relaunch.args,
             vec![
-                "/nonexistent/open-terminal",
-                "--tmux",
-                "--relaunch",
-                "--continue-resume",
-                "--harness",
-                "claude",
-                "--launch-flags",
-                "--model opus",
-                "--state-dir",
-                &driver.state_dir.display().to_string(),
-                "--host",
-                "local",
-                "--tracker",
-                "",
-                "--lane-refresh",
-                "--lane",
-                "/home/me/.bclaude",
-                "KEN-4",
+                "/nonexistent/orch-runtime".to_owned(),
+                "--state-dir".to_owned(),
+                driver.state_dir.display().to_string(),
+                "op".to_owned(),
+                "--fleet".to_owned(),
+                "--request".to_owned(),
+                request_file.display().to_string(),
             ]
+        );
+        let request: Value =
+            serde_json::from_str(&std::fs::read_to_string(&request_file).unwrap()).unwrap();
+        assert_eq!(
+            request,
+            json!({
+                "op": "launch-lane",
+                "item": "KEN-4",
+                "harness": "claude",
+                "mail_root": dir.path().canonicalize().unwrap().display().to_string(),
+                "account": "/home/me/.bclaude",
+                "exclude_account": "/home/me/.eclaude",
+                "refresh": true,
+                "model": "opus",
+            })
         );
         assert_eq!(
             relaunch.marker,
@@ -3330,14 +3338,12 @@ fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_re
                 lines(&produced)
             );
             assert_eq!(started.len(), 1);
-            assert!(
-                started[0]
-                    .args
-                    .windows(2)
-                    .any(|w| w[0] == "--host" && w[1] == PROVIDER),
-                "{:?}",
-                started[0].args
-            );
+            let request: Value = serde_json::from_str(
+                &std::fs::read_to_string(started[0].args.last().unwrap()).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(request["host"], PROVIDER, "{request}");
+            assert_eq!(request["kind"], "ssh", "{request}");
         }
     }
 }

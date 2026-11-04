@@ -235,6 +235,14 @@ pub struct AdoptController {
     pub effort: Option<String>,
     #[serde(default)]
     pub cwd: Option<String>,
+    /// The command of the owner that replaces this controller where another
+    /// lifecycle keeps its record: a Jarvis session registers its own
+    /// `jarvis-session succeed --home HOME`. Carried on the record as
+    /// `succession`; a controller whose record names one is never
+    /// succeeded by `request-transfer`, so no second owner opens a
+    /// successor the first does not record.
+    #[serde(default)]
+    pub succession: Option<Vec<String>>,
 }
 
 /// What the effects read of the pane an adoption names, handed to the
@@ -392,6 +400,20 @@ fn refuse_off(path: &Path, current: &Overseer) -> Result<()> {
     Ok(())
 }
 
+/// A controller whose record names its own succession command belongs to
+/// that owner's lifecycle: a transfer refuses `succession-owned` naming the
+/// command, so orch never opens a successor another owner records.
+fn refuse_owned(current: &Overseer) -> Result<()> {
+    match current.extra.get("succession") {
+        None | Some(Value::Null) => Ok(()),
+        Some(command) => Err(agent_runtime::Error::refused(
+            "succession-owned",
+            &[("command", &command.to_string())],
+        )
+        .into()),
+    }
+}
+
 /// An account directory as `lane_claims_canon` compares two: resolved
 /// through the filesystem where it exists, else the spelling with its
 /// trailing slashes dropped.
@@ -474,6 +496,7 @@ pub(super) fn request_transfer(
     // first.
     no_other_controller_intent(&intents, EffectOp::RequestTransfer, &target)?;
     refuse_off(path, &current)?;
+    refuse_owned(&current)?;
     check_cause(r, &current)?;
     // A model recovery's binding, judged in the same transition that
     // installs the pending, so a recovery whose authorization no longer
@@ -820,6 +843,9 @@ fn adopt_controller(
         }
         state::set(record, "harness_pid", read.identity.pid);
         state::set(record, "harness_start", read.identity.start.as_str());
+        if let Some(command) = &r.succession {
+            state::set(record, "succession", json!(command));
+        }
         state::delete(record, "exit");
         state::delete(record, "off");
         return Ok(ControllerAdopted {
@@ -828,7 +854,7 @@ fn adopt_controller(
         });
     }
     let generation = prior_generation + 1;
-    let record = json!({
+    let mut record = json!({
         "runtime": "tmux",
         "generation": generation,
         "server": read.server.to_string(),
@@ -846,6 +872,9 @@ fn adopt_controller(
         "effort": string_or_null(&r.effort),
         "cwd": string_or_null(&r.cwd),
     });
+    if let Some(command) = &r.succession {
+        record["succession"] = json!(command);
+    }
     state::set(doc, "overseer", record);
     Ok(ControllerAdopted {
         generation,
@@ -1696,6 +1725,7 @@ mod tests {
             tmux_session: None,
             launch_line: None,
             watch: None,
+            mail_root: None,
             observation: Some(json!({"note": "job-unclaimed"})),
             while_owner: Some(owner()),
             lane_keys: None,
@@ -1939,6 +1969,7 @@ mod tests {
             model: Some("m".into()),
             effort: None,
             cwd: Some("/r".into()),
+            succession: None,
         };
         let read = |same: bool| {
             Recorded::planted(AdoptionRead {

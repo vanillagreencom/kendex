@@ -30,7 +30,13 @@
 # checkout whose remotes name no GitHub host (exit 1). `gh pr view N --repo
 # R --json F`, the verify-pr rows' read of a pull request, answers from the
 # map's `pr view N` entry; with none it fails as gh does for a number the
-# repository lacks (exit 1, the GraphQL message on stderr).
+# repository lacks (exit 1, the GraphQL message on stderr). The review
+# gate's calls: `gh pr ready N --repo R` answers from `pr ready N` and, as
+# the act GitHub makes, rewrites the map's `pr view N` and `pulls/N`
+# entries to a ready pull request; `gh api PATH --method POST -f F`
+# answers from `POST PATH`; the GraphQL form with `-F number=N` (the
+# thread walk, its `cursor=` field empty on the first page) answers from
+# `graphql number=N cursor=C`, its body printed as it stands.
 set -u
 here="$(dirname "${BASH_SOURCE[0]}")"
 if [ -z "${GH_FAKE_LOG:-}" ]; then
@@ -51,20 +57,36 @@ elif [ "${1:-}" = pr ] && [ "${2:-}" = view ]; then
     echo "GraphQL: Could not resolve to a PullRequest with the number of ${3:-}. (repository.pullRequest)" >&2
     exit 1
   fi
+elif [ "${1:-}" = pr ] && [ "${2:-}" = ready ]; then
+  reply=$(jq -c --arg k "pr ready ${3:-}" '.[$k] // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
+  if [ -z "$reply" ]; then
+    echo "GraphQL: Could not resolve to a PullRequest with the number of ${3:-}. (repository.pullRequest)" >&2
+    exit 1
+  fi
+  if [ "$(jq -r '.exit // 0' <<<"$reply")" = 0 ]; then
+    ready=$(jq -c --arg n "${3:-}" 'with_entries(
+      if .key == ("pr view " + $n) then .value.body.isDraft = false
+      elif (.key | endswith("/pulls/" + $n)) then .value.body.draft = false
+      else . end)' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
+    printf '%s\n' "$ready" > "$GH_FAKE_REPLIES"
+  fi
 elif [ "${1:-}" != api ]; then
   echo "gh-fake: unexpected-call args=[$*]" >&2
   exit 64
 elif [ "${2:-}" = graphql ]; then
-  ids='[]' owner="" name=""
+  ids='[]' owner="" name="" number="" cursor=""
   shift 2
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --paginate) ;;
-      -f) shift; case "$1" in ids\[\]=*) ids=$(jq -c --arg id "${1#ids[]=}" '. + [$id]' <<<"$ids") ;; owner=*) owner="${1#owner=}" ;; name=*) name="${1#name=}" ;; query=*) ;; *) echo "gh-fake: unexpected-field field=[$1]" >&2; exit 64 ;; esac ;;
+      -f|-F) shift; case "$1" in ids\[\]=*) ids=$(jq -c --arg id "${1#ids[]=}" '. + [$id]' <<<"$ids") ;; owner=*) owner="${1#owner=}" ;; name=*) name="${1#name=}" ;; number=*) number="${1#number=}" ;; cursor=*) cursor="${1#cursor=}" ;; query=*) ;; *) echo "gh-fake: unexpected-field field=[$1]" >&2; exit 64 ;; esac ;;
       *) echo "gh-fake: unexpected-call args=[$*]" >&2; exit 64 ;;
     esac
     shift
   done
+  if [ -n "$number" ]; then
+    reply=$(jq -c --arg k "graphql number=$number cursor=$cursor" '.[$k] // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
+  else
   reply=$(jq -c --argjson ids "$ids" --arg keyed "graphql owner=$owner name=$name" '
     (.[$keyed] // .graphql) // empty
     | if (.body | type) == "object" and (.body | has("nodes")) then
@@ -76,6 +98,9 @@ elif [ "${2:-}" = graphql ]; then
     | if (.body | type) == "object" and ((.body.errors // []) | length) > 0
       then .exit = 1 | .stderr = ("gh: " + ([.body.errors[] | .message // ""] | join("\n")))
       else . end' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
+  fi
+elif [ "$#" -ge 4 ] && [ "${3:-}" = --method ] && [ "${4:-}" = POST ]; then
+  reply=$(jq -c --arg k "POST $2" '.[$k] // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
 elif [ "$#" -ne 2 ]; then
   echo "gh-fake: unexpected-call args=[$*]" >&2
   exit 64

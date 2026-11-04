@@ -5729,3 +5729,327 @@ fn a_moved_close_owing_its_worktree_releases_it_lane_moved() {
     assert!(live(new_harness.pid()), "the new session stands");
     assert_eq!(runner.fleet()["lanes"][0]["status"], "running");
 }
+
+/// The marker the lane's hook reads, as the launch wrote it under the
+/// checkout's common git directory for `item`, read three-valued.
+fn marker_of(root: &Path, item: &str) -> Option<String> {
+    let path = root
+        .join(".git")
+        .join("lane-mail")
+        .join(item.to_ascii_lowercase());
+    match std::fs::read_to_string(path) {
+        Ok(text) => Some(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => panic!("the marker could not be read: {e}"),
+    }
+}
+
+/// Defect: a launch that opens its window before the lane's launch record
+/// stands, so a crash between the two, or a hook that fires before the
+/// record, leaves a lane its mail never reaches; and a launch that ended
+/// there answering nothing about the record. The effect is held at its
+/// `new-window` call: the marker, the lane's mailbox and the refresh
+/// record already stand; the process is killed there; the reconcile of
+/// the intent left at `opening` reads the marker back on its outcome.
+#[test]
+fn a_launch_writes_its_marker_and_mailbox_before_the_window_and_a_crash_between_reads_them_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-confirm");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    let root = std::fs::canonicalize(runner.state_dir()).unwrap();
+    let real_tmux = which_tmux();
+    let holddir = fixtures().join("tmux-hold");
+    let fifo = dir.path().join("hold.fifo");
+    mkfifo(&fifo);
+    let mark = dir.path().join("held");
+    let fifo_s = fifo.display().to_string();
+    let mark_s = mark.display().to_string();
+    let shim_env = [
+        ("TMUX_REAL", real_tmux.as_str()),
+        ("TMUX_HOLD_FIFO", fifo_s.as_str()),
+        ("TMUX_HOLD_VERB", "new-window"),
+        ("TMUX_HOLD_MARK", mark_s.as_str()),
+    ];
+    let mut request = launch_request("KEN-M", runner.state_dir());
+    request["refresh"] = json!(true);
+    let mut child = runner.spawn_op_fleet(&request, &shim_env, &holddir);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while std::fs::metadata(&mark).is_err() {
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "the launch ended before its window: {}",
+            stderr(&child.wait_with_output().unwrap())
+        );
+        assert!(
+            Instant::now() < deadline,
+            "the launch never reached new-window"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // Held before the window: the record stands.
+    assert_eq!(
+        marker_of(&root, "KEN-M").as_deref(),
+        Some(format!("{}\n", root.display()).as_str()),
+        "the marker holds the lane's root before any window"
+    );
+    assert!(
+        std::fs::metadata(root.join("tmp").join("lane-mail").join("KEN-M"))
+            .is_ok_and(|m| m.is_dir()),
+        "the lane's mailbox stands before any window"
+    );
+    assert_eq!(
+        std::fs::read_to_string(root.join(".git").join("lane-refresh")).unwrap(),
+        format!("{}\n", root.display()),
+        "the refresh record names the root for a refresh lane"
+    );
+    assert_eq!(server.panes().len(), 1, "no window yet");
+    // The crash between the record and the window.
+    child.kill().unwrap();
+    let _ = child.wait();
+    release_hold(&fifo, Duration::from_secs(5), || {
+        "the shim at new-window".to_owned()
+    });
+    // The launcher was asked and nothing registered: the window it may
+    // have opened stands as an obligation, the intent open, and the marker
+    // written before it is read back on the outcome.
+    let report = runner.reconcile_one();
+    assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["cause"], "pane-unrecorded",
+        "{report}"
+    );
+    assert_eq!(
+        report["intent"]["observation"]["marker"], "present",
+        "the marker is read back on the outcome: {report}"
+    );
+    // A launch that is no refresh lane removes the record, so a relaunch
+    // states it again.
+    let report = effect_report(&runner.op_fleet(&launch_request("KEN-N", runner.state_dir())));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert!(
+        std::fs::metadata(root.join(".git").join("lane-refresh")).is_err(),
+        "the refresh record left with the launch that did not ask for it"
+    );
+}
+
+/// The hosted launch's world: the provider fixture as the project's
+/// `lane-host`, its answers planted by argv, the ssh client fixture and the
+/// stub harness on the runtime's path, and a "host" worktree on this disk.
+struct HostedLaunch {
+    runner: Runner,
+    scripts: PathBuf,
+    tools: PathBuf,
+    host_path: PathBuf,
+}
+
+const PROVIDER_PATH: &str = "/w/provider";
+
+impl HostedLaunch {
+    fn new(server: &Server, dir: &Path, record: Value) -> HostedLaunch {
+        let mut runner = Runner::new(server, "stub-confirm");
+        runner.verify = Some(5);
+        runner.init_fleet();
+        let scripts = runner
+            .state_dir()
+            .join(".agents")
+            .join("skills")
+            .join("orch")
+            .join("scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        std::os::unix::fs::symlink(
+            fixtures().join("lane-host").join("lane-host"),
+            scripts.join("lane-host"),
+        )
+        .unwrap();
+        let tools = dir.join("tools");
+        std::fs::create_dir_all(&tools).unwrap();
+        std::os::unix::fs::symlink(fixtures().join("ssh").join("ssh"), tools.join("ssh")).unwrap();
+        std::os::unix::fs::symlink(stub("stub-confirm"), tools.join("claude")).unwrap();
+        runner.tools = Some(tools.clone());
+        let host_path = dir.join("host-wt");
+        std::fs::create_dir_all(&host_path).unwrap();
+        let world = HostedLaunch {
+            runner,
+            scripts,
+            tools,
+            host_path,
+        };
+        world.plant(record);
+        world
+    }
+
+    fn host(&self) -> String {
+        self.host_path.display().to_string()
+    }
+
+    /// The provider's answers for one launch of `KEN-H`: the static ssh
+    /// line with a local pane, a create naming this disk's worktree, the
+    /// worktree's `.git` naming a clone, no marker until the launch puts
+    /// one (its second read answers the root), and the launch record
+    /// `record`.
+    fn plant(&self, record: Value) {
+        let account = self.runner.state_dir().display().to_string();
+        let host = self.host();
+        let answers = json!({
+            "capabilities": {"stdout": "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tpane=local\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\n"},
+            format!("create --item KEN-H --repo o/r --harness claude --account {account}"):
+                {"stdout": format!("ssh-target=lane.example\tpath={host}\tremote-prefix=exec bash -c\n")},
+            format!("cat --item KEN-H {host}/.git"): {"stdout": "gitdir: /srv/clone/.git/worktrees/lane\n"},
+            "cat --item KEN-H /srv/clone/.git/lane-mail/ken-h": {"exit": 2},
+            "cat --item KEN-H /srv/clone/.git/lane-mail/ken-h#2": {"stdout": format!("{host}\n")},
+            "touch --item KEN-H": {},
+            "put --item KEN-H /srv/clone/.git/lane-mail/ken-h": {},
+            "cat --item KEN-H /srv/clone/.git/lane-launch/ken-h.json": {"stdout": record.to_string()},
+        });
+        std::fs::write(
+            self.scripts.join("lane-host.json"),
+            serde_json::to_string(&answers).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn calls(&self) -> Vec<String> {
+        std::fs::read_to_string(self.scripts.join("lane-host.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    fn request(&self) -> Value {
+        json!({
+            "op": "launch-lane",
+            "item": "KEN-H",
+            "harness": "claude",
+            "mail_root": self.runner.state_dir().display().to_string(),
+            "account": self.runner.state_dir().display().to_string(),
+            "host": PROVIDER_PATH,
+            "repo": "o/r",
+        })
+    }
+}
+
+/// Defect: a hosted lane launched by a window alone, its provider never
+/// asked to make the worktree, or its launch record on the host trusted
+/// rather than read; a marker the host lacks left unwritten. The launch
+/// runs the provider's verbs in order under the record's host, writes the
+/// marker where the host has none and reads it back, then opens the fleet
+/// window on the ssh client, whose one typed line starts the harness under
+/// the provider's prefix, and confirms the harness through it; the record
+/// runs with the host, its kind and the worktree the host named.
+#[test]
+fn a_hosted_launch_runs_the_providers_verbs_and_opens_its_window_over_ssh() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+    let world = HostedLaunch::new(&server, dir.path(), record);
+    let panes_before = server.panes().len();
+    let report = effect_report(&world.runner.op_fleet(&world.request()));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    let lane = &report["lane"];
+    assert_eq!(lane["status"], "running", "{lane}");
+    assert_eq!(lane["host"], PROVIDER_PATH);
+    assert_eq!(lane["kind"], "ssh");
+    assert_eq!(
+        lane["mail_root"],
+        world.host(),
+        "the worktree the host named"
+    );
+    assert_eq!(lane["window"], "fleet:KEN-H");
+    assert_eq!(lane["session_id"], Value::Null);
+    assert_eq!(report["intent"]["observation"]["note"], "session-hosted");
+    assert_eq!(server.panes().len(), panes_before + 1, "one window opened");
+    let account = world.runner.state_dir().display().to_string();
+    let host = world.host();
+    assert_eq!(
+        world.calls(),
+        vec![
+            format!("ORCH_LANE_HOST={PROVIDER_PATH} capabilities"),
+            format!(
+                "ORCH_LANE_HOST={PROVIDER_PATH} create --item KEN-H --repo o/r --harness claude --account {account}"
+            ),
+            format!("ORCH_LANE_HOST={PROVIDER_PATH} cat --item KEN-H {host}/.git"),
+            format!(
+                "ORCH_LANE_HOST={PROVIDER_PATH} cat --item KEN-H /srv/clone/.git/lane-mail/ken-h"
+            ),
+            format!("ORCH_LANE_HOST={PROVIDER_PATH} touch --item KEN-H"),
+            format!(
+                "ORCH_LANE_HOST={PROVIDER_PATH} put --item KEN-H /srv/clone/.git/lane-mail/ken-h"
+            ),
+            format!(
+                "ORCH_LANE_HOST={PROVIDER_PATH} cat --item KEN-H /srv/clone/.git/lane-mail/ken-h"
+            ),
+            format!(
+                "ORCH_LANE_HOST={PROVIDER_PATH} cat --item KEN-H /srv/clone/.git/lane-launch/ken-h.json"
+            ),
+        ],
+        "the provider's verbs in order, each under the record's host: the marker the host lacked is put and read back before the record is read"
+    );
+    let ssh = std::fs::read_to_string(world.tools.join("ssh.log")).unwrap();
+    assert!(
+        ssh.starts_with("-t lane.example exec bash -c "),
+        "the one typed line runs the provider's prefix over the client: {ssh}"
+    );
+    assert!(
+        ssh.contains(&format!(
+            "cd {} && exec",
+            agent_runtime::launch::shell_quote(&host)
+        )),
+        "the harness line enters the worktree the host named: {ssh}"
+    );
+    assert!(
+        !ssh.contains("CLAUDE_CONFIG_DIR"),
+        "no account variable reaches the host: {ssh}"
+    );
+    assert!(
+        ssh.contains(&format!(" KENDEX_LANE_ORIGIN={host} "))
+            && ssh.contains(" KENDEX_USER_EMAIL= "),
+        "the lane words name the worktree on the host and clear the owner's email: {ssh}"
+    );
+    // The identity the lane runs under is the harness the line started.
+    let pid = lane["launch"]["pid"].as_u64().unwrap() as u32;
+    assert_eq!(
+        std::fs::read_to_string(format!("/proc/{pid}/comm"))
+            .unwrap()
+            .trim(),
+        "claude"
+    );
+    effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
+}
+
+/// Defect: a hosted lane launched onto a host where nothing built the orch
+/// runtime its workflow calls, read as launched. The launch record the
+/// provider wrote names no runtime: the launch fails by name before any
+/// window, the provider's verbs having run up to that read.
+#[test]
+fn a_hosted_lane_whose_runtime_is_unbuilt_is_refused_before_any_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid"});
+    let world = HostedLaunch::new(&server, dir.path(), record);
+    let panes_before = server.panes().len();
+    let report = effect_report(&world.runner.op_fleet(&world.request()));
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    assert!(
+        report["intent"]["observation"]["cause"]
+            .as_str()
+            .is_some_and(|c| c.starts_with("host-runtime-unbuilt ")),
+        "{report}"
+    );
+    assert_eq!(report["lane"]["status"], "stopped");
+    assert_eq!(server.panes().len(), panes_before, "no window opened");
+    assert!(
+        world
+            .calls()
+            .iter()
+            .any(|c| c.ends_with("put --item KEN-H /srv/clone/.git/lane-mail/ken-h")),
+        "the marker the host lacked was put before the record was read: {:?}",
+        world.calls()
+    );
+    assert!(
+        std::fs::metadata(world.tools.join("ssh.log")).is_err(),
+        "nothing dialled"
+    );
+}

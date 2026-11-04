@@ -1,5 +1,5 @@
 //! GitHub's documented shapes at the wire boundary, and the one guard for
-//! how a field may be absent or null (decision 106).
+//! how a field may be absent or null.
 //!
 //! A wire struct's field takes exactly one of three forms:
 //!
@@ -15,7 +15,7 @@
 //! No bare `Option` appears here: serde's missing-field path answers an
 //! `Option` with `None`, which reads an absent key and an explicit null as
 //! one state, and a present value outside its documented type must not
-//! become the legacy's default for omission (R-U4e6 H1). Both wrappers
+//! become the default for omission. Both wrappers
 //! buffer through `serde_json::Value` for the same reason.
 //!
 //! A field documented `object` is declared `Object`, so an array, string
@@ -149,8 +149,7 @@ impl RunStatus {
 /// the REST schemas list without `stale` and `startup_failure`; the
 /// check-run prose documents `stale`, and `startup_failure` ("the check
 /// suite or run has failed at startup") is the state a run takes when its
-/// workflow file cannot be parsed, which the legacy accepted
-/// (`ci-run-correlation.sh:472`).
+/// workflow file cannot be parsed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(super) enum RunConclusion {
@@ -180,14 +179,13 @@ impl RunConclusion {
         }
     }
 
-    /// What a check's conclusion means: the legacy's reading through gh's
+    /// What a check's conclusion means: the reading through gh's
     /// bucket (gh v2.103.3 `aggregate.go:72-88`, which the lib read before
-    /// its own table, `ci-run-correlation.sh:86`), as decision 113 fixes
-    /// it: `neutral` is skipping beside `skipped`, never a failure; `stale`
+    /// its own table): `neutral` is skipping beside `skipped`, never a failure; `stale`
     /// is pending, a superseded suite's evidence that settles nothing;
     /// `startup_failure` is the one correction, a failure (GitHub documents
     /// it as a completed run's conclusion; gh's pending reading left the
-    /// legacy waiting forever on a workflow that could not start).
+    /// wait forever on a workflow that could not start).
     pub(super) fn check_bucket(self) -> Bucket {
         match self {
             RunConclusion::Success => Bucket::Pass,
@@ -201,8 +199,8 @@ impl RunConclusion {
         }
     }
 
-    /// What an Actions run's conclusion means: the legacy's run list
-    /// (`ci-wait:767`, `ci-run-correlation.sh:474`), where a `neutral` or
+    /// What an Actions run's conclusion means: the run list's reading,
+    /// where a `neutral` or
     /// `skipped` run fails nothing. A run's checks carry their own
     /// conclusions.
     pub(super) fn run_bucket(self) -> Bucket {
@@ -221,7 +219,7 @@ impl RunConclusion {
 }
 
 /// A check's or run's validated state: ended with its conclusion, or not.
-/// A workflow run's `status` is documented nullable; the legacy reads a
+/// A workflow run's `status` is documented nullable; the rollup reads a
 /// null status as not completed (`(.status // "") != "completed"`), so an
 /// unfinished run may carry no status word.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -292,7 +290,7 @@ pub(super) struct CheckSuiteRef {
 pub(super) struct CheckRun {
     /// Required (checks/runs, `id`: integer): the check run's identity,
     /// which orders two check runs started alike in the rollup
-    /// (`selection::eliminate_duplicates`, decision 117 (3)).
+    /// (`selection::eliminate_duplicates`).
     pub(super) id: u64,
     /// Required (checks/runs, `node_id`: string): the GraphQL id the suite
     /// of a check run is read through where REST omits the join
@@ -307,36 +305,34 @@ pub(super) struct CheckRun {
     /// Required, nullable (checks/runs, `check_suite`: object or null).
     pub(super) check_suite: Nullable<CheckSuiteRef>,
     /// Required, nullable (checks/runs, `started_at`: date-time or null).
-    /// The legacy ranked a run's jobs and deduplicated run-less checks by
-    /// this time (`scope_current_run`'s `startedAt`).
+    /// A run's jobs are ranked and run-less checks deduplicated by this
+    /// time.
     pub(super) started_at: Nullable<String>,
     /// Required, nullable (checks/runs, `completed_at`: date-time or null).
     /// The key GitHub's `latest` filter selects by ("Filters check runs by
     /// their completed_at timestamp. latest returns the most recent check
     /// runs.", rest/checks/runs, `filter`); that selection is the server's,
     /// read as it answers the suite's check runs (`evidence`), and nothing
-    /// here reduces by the field (decision 117 (1)).
+    /// here reduces by the field.
     #[allow(
         dead_code,
         reason = "documented required: its absence refuses the page"
     )]
     pub(super) completed_at: Nullable<String>,
     /// Required, nullable (checks/runs, `html_url`: string or null): the
-    /// check run's page on GitHub. The legacy's required suite read listed
-    /// a bound run's jobs by this field (`ci-run-correlation.sh:489-495`,
-    /// `map({name, link: .html_url})`) and matched the rollup's `link`
-    /// against it by equality (`:112`, `:119`), so the two fields are read
-    /// apart and compared as the legacy compared them, unequal included.
+    /// check run's page on GitHub. The required suite read lists a bound
+    /// run's jobs by this field and matches the rollup's `link` against it
+    /// by equality, so the two fields are read apart and compared, unequal
+    /// included.
     /// The same struct decodes the members of that suite read
     /// (`evidence::suite_jobs`).
     pub(super) html_url: Nullable<String>,
     /// Required, nullable (checks/runs, `details_url`: string or null): the
     /// URL the integrator set on the check run ("The URL of the
     /// integrator's site that has the full details of the check", checks
-    /// runs, create), the GraphQL `CheckRun.detailsUrl`. The legacy's
-    /// rollup `link` (gh v2.103.3 `pkg/cmd/pr/checks/aggregate.go:51-53`,
-    /// `link := c.DetailsURL`), which `runid` read the run out of
-    /// (`ci-run-correlation.sh:81-84`).
+    /// runs, create), the GraphQL `CheckRun.detailsUrl`: gh's rollup
+    /// `link` (gh v2.103.3 `pkg/cmd/pr/checks/aggregate.go:51-53`,
+    /// `link := c.DetailsURL`), which the run is read out of.
     pub(super) details_url: Nullable<String>,
 }
 
@@ -361,7 +357,7 @@ impl CheckRun {
     }
 
     /// The check run's page, where GitHub names one: the bound-job link of
-    /// the legacy's suite read.
+    /// the suite read.
     pub(super) fn page(&self) -> Option<&str> {
         match &self.html_url {
             Nullable::Absent | Nullable::Null => None,
@@ -369,7 +365,7 @@ impl CheckRun {
         }
     }
 
-    /// The integrator's details URL, where one is set: the legacy's rollup
+    /// The integrator's details URL, where one is set: gh's rollup
     /// `link`.
     pub(super) fn details(&self) -> Option<&str> {
         match &self.details_url {
@@ -453,14 +449,14 @@ pub(super) struct CommitStatus {
     /// Required, not nullable (commits/statuses, `state`: string).
     pub(super) state: StatusState,
     /// Required, nullable (commits/statuses, `target_url`: string or
-    /// null). The legacy read a status's Actions run out of its link
+    /// null). A status's Actions run is read out of its link
     /// (`ci-run-correlation.sh` `runid`); `evidence` reads it through
     /// `run_in_url`.
     pub(super) target_url: Nullable<String>,
 }
 
 /// The run id in an Actions link: the maximal digit run after
-/// `/actions/runs/`, the legacy `runid` capture.
+/// `/actions/runs/`.
 pub(super) fn run_in_url(url: &str) -> Option<u64> {
     let (_, after) = url.split_once("/actions/runs/")?;
     let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
@@ -496,7 +492,7 @@ impl Page for CombinedStatusPage {
 /// `check_suite_node_id` identify a required workflow's candidate
 /// execution (`ci-run-correlation.sh:372-376`). The run's own `name`
 /// (string or null, the run's display title, `run-name` where a workflow
-/// sets one) is read by nothing: the legacy's rollup `workflow` was the
+/// sets one) is read by nothing: gh's rollup `workflow` is the
 /// workflow object's name, not the run's.
 #[derive(Debug, Deserialize)]
 pub(super) struct WorkflowRun {
@@ -551,12 +547,12 @@ impl WorkflowRun {
         outcome(Endpoint::ActionsRuns, status, self.conclusion)
     }
 
-    /// The attempt, as the legacy reads it (`run_attempt // 1`).
+    /// The attempt, 1 where omitted.
     pub(super) fn attempt(&self) -> u64 {
         *self.run_attempt.present().unwrap_or(&1)
     }
 
-    /// When the current attempt started, as the legacy reads it
+    /// When the current attempt started
     /// (`run_started_at // updated_at`).
     pub(super) fn started(&self) -> &str {
         self.run_started_at
@@ -615,7 +611,7 @@ pub(super) enum WorkflowState {
 /// runs remain, and an organization ruleset workflow answers 404 by id, gh
 /// `pkg/cmd/run/shared/shared.go:460-470`), so a name the list lacks is
 /// read through the graph and then by id (`evidence::check_run_suites`,
-/// decision 117 (4)).
+/// above).
 #[derive(Debug, Deserialize)]
 pub(super) struct Workflow {
     /// Required (actions/workflows, `id`: integer).
@@ -709,9 +705,9 @@ pub(super) struct RequiredStatusChecksParameters {
 
 /// A required workflow: its path in the source repository, that
 /// repository's id and, where the rule pins one, the source commit it runs
-/// from. The four fields are the definition the legacy sorted and
+/// from. The four fields are the definition, sorted and
 /// deduplicated (`ci-run-correlation.sh:346`), so `ref` is read for that
-/// order alone: binding never resolves it (decision 87).
+/// order alone: binding never resolves it.
 #[derive(Debug, Clone, Deserialize)]
 pub(super) struct RequiredWorkflow {
     /// Required (repos/rules, workflow file reference `path`).
@@ -753,7 +749,7 @@ pub(super) struct Repository {
 /// check-suite nodes of the source proof (`ci-run-correlation.sh:384`) and
 /// the check-run nodes of the suite join (`CheckRunNode`). A GraphQL
 /// response carries `data`, null when the request failed as a whole, and
-/// `errors` when anything failed; the legacy refused any error (`:387`),
+/// `errors` when anything failed; any error refuses the reply,
 /// and `evidence::nodes_of` keeps the nodes a field error left null
 /// (`GraphError::node_index`).
 #[derive(Debug, Deserialize)]
@@ -839,7 +835,7 @@ pub(super) struct WorkflowRunOfSuite {
     /// Nullable (WorkflowRun `databaseId`: `Int`, "Identifies the primary
     /// key from the database"): the REST run `id`. A present run with a
     /// null id is a run the evidence cannot identify, never a suite without
-    /// one (`evidence::SuiteRun::RunUnidentified`, decision 114 (2)).
+    /// one (`evidence::SuiteRun::RunUnidentified`).
     #[serde(rename = "databaseId")]
     pub(super) database_id: Nullable<u64>,
     /// Required (WorkflowRun `event`: `String!`): the dispatch, one key of
@@ -887,7 +883,7 @@ pub(super) struct WorkflowRunNode {
 }
 
 /// The workflow file a run executed (graphql/reference, object
-/// WorkflowRunFile): the source proof the legacy matched a required
+/// WorkflowRunFile): the source proof a required
 /// definition against (`ci-run-correlation.sh:446-456`).
 #[derive(Debug, Deserialize)]
 pub(super) struct WorkflowRunFile {
@@ -940,7 +936,7 @@ pub(super) struct Branch {
 // --- gh pr view: the pull request ---------------------------------------------------
 
 /// A pull request as `gh pr view N --repo O/R --json headRefOid,baseRefName,state`
-/// exports it (U6g): gh's own JSON export, not a REST object. The three
+/// exports it: gh's own JSON export, not a REST object. The three
 /// are among the fields gh v2.103.3 lists for `pr view --json` (its usage
 /// text with an empty `--json`), each printed for every asked field, so
 /// each is required here. `headRefOid` is the head commit's id,
@@ -973,6 +969,209 @@ impl PullRequestState {
             PullRequestState::Merged => "MERGED",
         }
     }
+}
+
+// --- the review gate: gh pr view, pulls, reviews, the timeline, threads -------------
+
+/// A pull request as `gh pr view N --repo O/R --json
+/// headRefOid,baseRefName,state,isDraft,reviewDecision,latestReviews,author`
+/// exports it: gh prints every asked field, so each is required here.
+/// `reviewDecision` is GitHub's `PullRequestReviewDecision` or null where
+/// the base requires no review (`gh pr view --json reviewDecision` prints
+/// `""` for that null); `latestReviews` is the latest review per reviewer.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ReviewView {
+    #[serde(rename = "headRefOid")]
+    pub head: String,
+    #[serde(rename = "baseRefName")]
+    pub base: String,
+    pub state: PullRequestState,
+    #[serde(rename = "isDraft")]
+    pub draft: bool,
+    #[serde(rename = "reviewDecision")]
+    pub decision: Nullable<String>,
+    #[serde(rename = "latestReviews")]
+    pub latest: Vec<LatestReview>,
+    pub author: Actor,
+}
+
+/// One row of `latestReviews`: the reviewer as a GraphQL actor and the
+/// review's state.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct LatestReview {
+    pub author: Actor,
+    pub state: String,
+}
+
+/// A GraphQL actor as gh exports it: a bot's login is `app/<slug>`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Actor {
+    pub login: String,
+}
+
+/// The pull request object (pulls/pulls, "Get a pull request"): the
+/// fields the refresh route and the draft check compare.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Pull {
+    /// Required (pulls/pulls, `state`: `open` or `closed`).
+    pub state: String,
+    /// Required (pulls/pulls, `draft`: boolean).
+    pub draft: bool,
+    pub head: PullHead,
+    pub base: PullBase,
+    /// Required, nullable (pulls/pulls, `user`: simple-user or null).
+    pub user: Nullable<User>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PullHead {
+    pub sha: String,
+    #[serde(rename = "ref")]
+    pub branch: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct PullBase {
+    #[serde(rename = "ref")]
+    pub branch: String,
+}
+
+/// A simple user (pulls/pulls, `user`): the login REST spells an App as
+/// `<slug>[bot]`, and its `type`, `Bot` for an App.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct User {
+    pub login: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+}
+
+/// One review (pulls/reviews, "List reviews for a pull request").
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct Review {
+    /// Required (pulls/reviews, `id`: integer).
+    pub id: u64,
+    /// Required, nullable (pulls/reviews, `user`: simple-user or null).
+    pub user: Nullable<User>,
+    /// Required, nullable (pulls/reviews, `body`: string); null arrives
+    /// for a review with no text.
+    #[serde(default)]
+    pub body: Nullable<String>,
+    /// Required (pulls/reviews, `state`: string).
+    pub state: String,
+    /// Required, nullable (pulls/reviews, `commit_id`: string or null).
+    pub commit_id: Nullable<String>,
+    /// Optional (pulls/reviews, `submitted_at`: date-time, absent on a
+    /// pending review).
+    #[serde(default)]
+    pub submitted_at: Optional<String>,
+}
+
+/// One timeline event (issues/timeline). The documented shape differs by
+/// `event`, so every other field is read from the object where the event
+/// kind needs it and refused there when it is not the documented type.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct TimelineEvent {
+    /// Required (issues/timeline, `event`: string).
+    pub event: String,
+    #[serde(flatten)]
+    pub fields: Object,
+}
+
+/// The `reviewThreads` reply of the thread walk: the envelope `gh api
+/// graphql` prints, `data` nullable and `errors` present only on a
+/// partial reply, which the walk refuses whole.
+#[derive(Debug, Deserialize)]
+pub struct ThreadsReply {
+    pub data: Nullable<ThreadsData>,
+    #[serde(default)]
+    pub errors: Optional<Vec<serde_json::Value>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ThreadsData {
+    pub repository: Nullable<ThreadsRepository>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ThreadsRepository {
+    #[serde(rename = "pullRequest")]
+    pub pull_request: Nullable<ThreadsPullRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ThreadsPullRequest {
+    #[serde(rename = "reviewThreads")]
+    pub review_threads: Nullable<ReviewThreads>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReviewThreads {
+    #[serde(rename = "pageInfo")]
+    pub page_info: PageInfo,
+    pub nodes: Vec<ReviewThread>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PageInfo {
+    #[serde(rename = "hasNextPage")]
+    pub has_next_page: bool,
+    #[serde(rename = "endCursor")]
+    pub end_cursor: Nullable<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReviewThread {
+    #[serde(rename = "isResolved")]
+    pub is_resolved: bool,
+}
+
+/// A `pull_request` rule's parameters (repos/rules, `pull_request`): the
+/// approval requirements the gate mode reads. The flags and the team list
+/// are documented optional.
+#[derive(Debug, Deserialize)]
+pub(super) struct PullRequestParameters {
+    pub(super) required_approving_review_count: u64,
+    #[serde(default)]
+    pub(super) require_code_owner_review: Optional<bool>,
+    #[serde(default)]
+    pub(super) require_last_push_approval: Optional<bool>,
+    #[serde(default)]
+    pub(super) required_reviewers: Optional<Vec<TeamReviewer>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct TeamReviewer {
+    pub(super) minimum_approvals: u64,
+}
+
+/// The branch object read for its protection flag alone (branches/branches,
+/// `protection.enabled`: boolean).
+#[derive(Debug, Deserialize)]
+pub(super) struct BranchProtected {
+    pub(super) protection: ProtectionEnabled,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ProtectionEnabled {
+    pub(super) enabled: bool,
+}
+
+/// Classic branch protection (branches/branch-protection, "Get branch
+/// protection"): `required_pull_request_reviews` is an object where
+/// reviews are required and absent or null where none are.
+#[derive(Debug, Deserialize)]
+pub(super) struct ClassicProtection {
+    #[serde(default)]
+    pub(super) required_pull_request_reviews: Nullable<ClassicReviews>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct ClassicReviews {
+    #[allow(
+        dead_code,
+        reason = "documented required on the object: a count outside the whole numbers refuses the reply"
+    )]
+    pub(super) required_approving_review_count: u64,
 }
 
 #[cfg(test)]
@@ -1235,7 +1434,7 @@ mod tests {
         }
     }
 
-    /// The legacy `runid` capture: the digits after `/actions/runs/`,
+    /// The run capture: the digits after `/actions/runs/`,
     /// wherever the link puts them.
     #[test]
     fn a_run_is_read_out_of_an_actions_link_as_the_legacy_read_it() {

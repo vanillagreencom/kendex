@@ -1,17 +1,15 @@
 #!/usr/bin/env bash
-# The fake `kendex` for the controller rows that start the real `oversee
-# launch` (decisions 164, 175): the launcher's preference walk classifies
-# each entry's model through `kendex tier-model` (lib/overseer-launch.sh
-# `ol_model_class`), and with no fixture on the rows' PATH that call reached
-# the operator's installed kendex, which read this checkout's own
-# kendex.toml (the lead's isolation control over U7d2's rows). Every call
-# appends its argv to `kendex.log` beside the path it was invoked as (the
-# rows link the fixture into their world's bin as `kendex`). `tier-model`
-# answers through the one answer table the shell suites launch under,
-# tests/fixtures/tier-model/kendex (a managed alias for a Claude class word,
-# the native default for a Codex or Copilot word); every other verb is
-# refused, exit 64, with its argv on stderr, so a read reaching it is the
-# row's failure, never the operator's install. Bash 3.2.
+# The `kendex` the rows put first on their PATH: a preference walk classifies
+# each entry's model through `kendex tier-model`, and with no fixture there
+# that call would reach the operator's installed kendex and read this
+# checkout's own kendex.toml. Every call appends its argv to `kendex.log`
+# beside the path it was invoked as (the rows link the fixture into their
+# world's bin as `kendex`). `tier-model` answers through the one answer table
+# the shell suites launch under, tests/fixtures/tier-model/kendex (a managed
+# alias for a Claude class word, the native default for a Codex or Copilot
+# word); every other verb is refused, exit 64, with its argv on stderr, so a
+# read reaching it is the row's failure, never the operator's install. Bash
+# 3.2.
 set -u
 here="$(dirname "$0")"
 printf '%s\n' "$*" >> "$here/kendex.log"

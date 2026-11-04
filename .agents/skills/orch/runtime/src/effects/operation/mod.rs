@@ -70,9 +70,10 @@ pub(in crate::effects) use agent_runtime::observe::{ProcessReading, State};
 pub(in crate::effects) use agent_runtime::process::{Identity, Stop};
 pub(in crate::effects) use agent_runtime::reading::Reading;
 pub(crate) use host::Recorded;
+pub(in crate::effects) use host::session_owner;
 pub(in crate::effects) use host::{
     Binding, Foreground, Observed, ProcessRead, Proof, SessionFloor, WindowClose, WorktreeRelease,
-    adopt_controller, default_home, fixed_file, owner, session_present,
+    adopt_controller, default_home, fixed_file, fixed_id_file, heal_controller, owner,
 };
 pub(in crate::effects) use obligations::{EffectOutcome, Published, Wire, Word};
 pub(in crate::effects) use window::{
@@ -714,6 +715,7 @@ fn record(outcome: EffectOutcome) -> RecordOutcome {
         tmux_session: wire.tmux_session,
         launch_line: wire.launch_line,
         watch: wire.watch,
+        mail_root: wire.mail_root,
         observation: Some(observation),
         while_owner,
         lane_keys,

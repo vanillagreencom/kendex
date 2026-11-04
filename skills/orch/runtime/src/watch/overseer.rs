@@ -484,6 +484,7 @@ impl Record {
             effort: text(self.raw.get("effort")),
             cwd: text(self.raw.get("cwd")),
             class: text(self.raw.get("class")),
+            resume: None,
             permission: None,
             extra_args: Vec::new(),
             extra: serde_json::Map::new(),
@@ -1605,7 +1606,7 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
             // credit, and the connected repositories for a record naming no
             // repository of its own.
             let gh = std::path::PathBuf::from("gh");
-            let roster = || accounts::roster(&ctx.settings, None);
+            let roster = || accounts::roster(&ctx.settings, None, tick.wall);
             let hosted_reads = super::hosted::Reads {
                 gh: &gh,
                 roster: &roster,

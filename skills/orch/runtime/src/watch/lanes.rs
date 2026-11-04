@@ -54,13 +54,14 @@ use agent_runtime::process::Identity;
 use agent_runtime::reading::Reading;
 use agent_runtime::rows::{self, LaneVerdict};
 use jiff::tz::TimeZone;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::Produced;
 use super::baseline::{Baseline, Change};
 use super::events::Event;
 use super::hosted::{self, Answer, Capabilities, Files, HostStatus, Hosts, PaneKind, Status};
 use super::overseer::{Pick, RelaunchPending, relaunch_pending};
+use crate::ops::CLOUD_KIND;
 use crate::ops::wall::{
     self, AccountWallWrite, RecordWallPauses, WallChannel, WallObservation, WallReading,
 };
@@ -217,10 +218,10 @@ impl Readers<'static> {
     }
 }
 
-/// The relaunch the wall route starts: the record's own `open-terminal
-/// --relaunch` line from its `recovery` fields (`lib/lane-relaunch.sh`,
-/// `lane_recovery_args`), run detached in the launch's checkout with its
-/// session, its output at `log`, its exit status landing beside `marker`.
+/// The relaunch the wall route starts: the runtime's own `launch-lane`
+/// request for the record, applied by `orch-runtime op --fleet` run
+/// detached in the launch's checkout with its session, its output at
+/// `log`, its exit status landing beside `marker`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Relaunch {
     pub item: String,
@@ -231,7 +232,7 @@ pub struct Relaunch {
     pub spent: String,
     pub cwd: PathBuf,
     pub session: String,
-    /// The launcher and its arguments, the launcher first.
+    /// The runtime's entry and its arguments, the entry first.
     pub args: Vec<String>,
     pub marker: PathBuf,
     pub log: PathBuf,
@@ -453,7 +454,8 @@ pub struct Pass<'a> {
     /// The claim store, beside which the account wall records and the relaunch
     /// markers live (`lib/lane-claims.sh`, `lane_claims_dir`).
     pub claim_store: &'a Path,
-    /// The scripts directory, for the relaunch's `open-terminal`.
+    /// The scripts directory: the relaunch's `orch-runtime` entry and the
+    /// provider calls.
     pub scripts: &'a Path,
     /// The wall route's calls and setting.
     pub route: &'a WallRoute<'a>,
@@ -1327,8 +1329,8 @@ fn route(
     if wall::canon(&to) == wall::canon(account) {
         return refused(notes, "spent-account");
     }
-    let relaunch = match recovery_args(obs.lane, harness, &to, pass) {
-        Ok(args) => args,
+    let relaunch = match relaunch_request(obs.lane, harness, &to, account, pass) {
+        Ok(request) => request,
         Err(cause) => return refused(notes, &format!("context-unavailable cause={cause}")),
     };
     let host = hosted::host_of(obs.lane);
@@ -1383,76 +1385,94 @@ fn route(
     Routed::Relaunched
 }
 
-/// The recovery line's parts before the marker: the checkout, the session
-/// and the launcher's arguments.
+/// The relaunch's parts before the marker: the checkout, the session and
+/// the runtime's own argv.
 struct Recovery {
     cwd: PathBuf,
     session: String,
     args: Vec<String>,
 }
 
-/// The record's own relaunch line (`lib/lane-relaunch.sh`,
-/// `lane_recovery_args`, the local arm): `open-terminal` keeps the choices it
-/// can repeat in `recovery`, and a record without them, or whose checkout is
-/// gone, refuses before anything is stopped. `Err` is the cause word.
-fn recovery_args(lane: &Lane, harness: Harness, to: &str, pass: &Pass) -> Result<Recovery, String> {
+/// The record's own relaunch as a `launch-lane` request on the picked
+/// account: the record's harness, model, effort, host, tracker and
+/// repository, its checkout (the recorded `mail_root`, else the checkout
+/// an earlier launcher recorded under `recovery`), its refresh word and
+/// the spent account excluded, written beside the state for `orch-runtime
+/// op --fleet` to apply. A record whose checkout is gone, or whose provider
+/// is spelled relative to nothing, refuses before anything is stopped.
+/// `Err` is the cause word.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the wall relaunch's request file, the watch's own file beside the state, written before the detached relaunch starts"
+)]
+fn relaunch_request(
+    lane: &Lane,
+    harness: Harness,
+    to: &str,
+    spent: &str,
+    pass: &Pass,
+) -> Result<Recovery, String> {
     let recovery = lane.extra.get("recovery").and_then(Value::as_object);
     let field = |key: &str| recovery.and_then(|r| r.get(key));
-    let cwd = field("cwd").and_then(Value::as_str).unwrap_or("");
-    let (Some(flags), Some(refresh), false) = (
-        field("flags").and_then(Value::as_str),
-        field("refresh").and_then(Value::as_bool),
-        cwd.is_empty(),
-    ) else {
-        return Err("permission-choice-unrecorded".to_owned());
-    };
+    let cwd = lane
+        .mail_root
+        .as_deref()
+        .filter(|root| !root.is_empty())
+        .or_else(|| field("cwd").and_then(Value::as_str))
+        .unwrap_or("");
+    if cwd.is_empty() {
+        return Err("checkout-unrecorded".to_owned());
+    }
     let host = lane.host.as_deref().unwrap_or("local");
-    if !(host == "local" || host == "claude-cloud" || host.starts_with('/')) {
-        return Err("relative-provider-deferred:KEN-3996".to_owned());
+    if !(host == "local" || host == CLOUD_KIND || host.starts_with('/')) {
+        return Err("provider-relative".to_owned());
     }
     let cwd = std::fs::canonicalize(cwd).map_err(|_| "checkout-unavailable".to_owned())?;
-    let terminal = if host == "local" && lane.surface.as_deref() == Some("gui") {
-        "--ghostty"
-    } else {
-        "--tmux"
-    };
-    let mut args = vec![
-        pass.scripts.join("open-terminal").display().to_string(),
-        terminal.to_owned(),
-        "--relaunch".to_owned(),
-        "--continue-resume".to_owned(),
-        "--harness".to_owned(),
-        harness.name().to_owned(),
-        "--launch-flags".to_owned(),
-        flags.to_owned(),
+    let refresh = field("refresh")
+        .and_then(Value::as_bool)
+        .or_else(|| lane.extra.get("refresh").and_then(Value::as_bool))
+        .unwrap_or(false);
+    let mut request = json!({
+        "op": "launch-lane",
+        "item": lane.item,
+        "harness": harness.name(),
+        "mail_root": cwd.display().to_string(),
+        "account": to,
+        "exclude_account": spent,
+        "refresh": refresh,
+    });
+    for (key, value) in [
+        ("tracker", &lane.tracker),
+        ("repo", &lane.repo),
+        ("model", &lane.model),
+        ("effort", &lane.effort),
+        ("host", &lane.host),
+        ("kind", &lane.kind),
+    ] {
+        if let Some(value) = value.as_deref().filter(|v| !v.is_empty()) {
+            request[key] = json!(value);
+        }
+    }
+    let file = pass
+        .state_dir
+        .join(format!("wall-relaunch-{}.json", lane.item));
+    std::fs::write(&file, request.to_string())
+        .map_err(|e| format!("request-unwritten path={} cause={e}", file.display()))?;
+    let args = vec![
+        pass.scripts.join("orch-runtime").display().to_string(),
         "--state-dir".to_owned(),
         pass.state_dir.display().to_string(),
-        "--host".to_owned(),
-        host.to_owned(),
-        "--tracker".to_owned(),
-        lane.tracker.clone().unwrap_or_default(),
+        "op".to_owned(),
+        "--fleet".to_owned(),
+        "--request".to_owned(),
+        file.display().to_string(),
     ];
-    if let Some(repo) = lane.repo.as_deref().filter(|r| !r.is_empty()) {
-        args.push("--repo".to_owned());
-        args.push(repo.to_owned());
-    }
-    if refresh {
-        args.push("--lane-refresh".to_owned());
-    }
-    if lane.extra.get("live_display") == Some(&Value::Bool(true)) {
-        args.push("--live-display".to_owned());
-    }
-    args.push("--lane".to_owned());
-    args.push(to.to_owned());
-    let item = match lane.tracker.as_deref() {
-        Some("github") => lane.item.strip_prefix("issue-").unwrap_or(&lane.item),
-        Some(_) | None => &lane.item,
-    };
-    args.push(item.to_owned());
     Ok(Recovery {
         cwd,
         session: field("session")
             .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .or(pass.session)
             .unwrap_or("")
             .to_owned(),
         args,

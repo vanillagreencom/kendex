@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# The fake `curl` for the accounts rows: answers the usage endpoints as a
+# real `curl -s -D - -w '\n%{http_code}' URL -K -` capture reads, from
+# fixture files under USAGE_FIXTURE_DIR named by the token the request
+# carries. The token arrives on stdin in curl's config form (`header =
+# "Authorization: Bearer T"` or `token T`), never on argv; the URL on argv
+# names the endpoint: `usage` (Claude or Codex), `profile` (Claude's
+# profile) or `copilot` (api.github.com). The answer for token T at
+# endpoint E is `<T>.<E>.json` as the body with `<T>.<E>.status` beside it
+# (`<code> [retry-after]`, 200 when absent); a token with no body file is a
+# request that could not be run (exit 1). Every call appends `<E> <T>` to
+# `curl.log` in that directory, so a row counts the requests posted. A
+# `delay` file holds every answer that many seconds, and `curl.argv` holds
+# each call's argument vector. Bash 3.2.
+set -u
+dir="${USAGE_FIXTURE_DIR:?}"
+config="$(cat)"
+token="${config#*Authorization: Bearer }"
+[ "$token" != "$config" ] || token="${config#*Authorization: token }"
+token="${token%%\"*}"
+endpoint=unknown
+for arg in "$@"; do
+  case "$arg" in
+    */profile) endpoint=profile ;;
+    */usage) endpoint=usage ;;
+    *copilot_internal/user*) endpoint=copilot ;;
+  esac
+done
+printf '%s %s\n' "$endpoint" "$token" >> "$dir/curl.log"
+printf '%s\n' "$*" >> "$dir/curl.argv"
+[ ! -f "$dir/delay" ] || sleep "$(cat "$dir/delay")"
+body="$dir/$token.$endpoint.json"
+[ -f "$body" ] || exit 1
+code=200
+retry=""
+if [ -f "$dir/$token.$endpoint.status" ]; then
+  read -r code retry < "$dir/$token.$endpoint.status"
+fi
+printf 'HTTP/1.1 %s Fixture\r\nContent-Type: application/json\r\n' "$code"
+[ -z "$retry" ] || printf 'Retry-After: %s\r\n' "$retry"
+printf '\r\n'
+cat "$body"
+printf '\n%s' "$code"

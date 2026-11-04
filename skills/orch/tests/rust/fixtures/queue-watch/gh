@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# The fake gh for the queue-watch rows. It answers the queue read and the
+# guard's two mutations from the JSON map at $GH_FAKE_REPLIES (`gh.json`
+# beside the path this was invoked as, when unset), under the keys `queue`,
+# `mutation disablePullRequestAutoMerge` and `mutation dequeuePullRequest`,
+# each `{exit?, body?, text?, stderr?}` as the verify-head fake takes them:
+# `body` is printed as JSON, `text` as raw bytes, `stderr` to stderr, `exit`
+# is the status, 0 when absent; a key with no entry is a failed request.
+# Every other call (`pr view`, `gh api PATH`, the node queries) goes to the
+# verify-head fake with the same map and log, so a row whose probe reaches
+# `verify-pr` hands it one of its recorded witnesses. Every call appends its
+# arguments to $GH_FAKE_LOG (`gh.log` beside this path when unset).
+set -u
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+real="$(readlink -f "${BASH_SOURCE[0]}")"
+: "${GH_FAKE_REPLIES:=$here/gh.json}"
+: "${GH_FAKE_LOG:=$here/gh.log}"
+export GH_FAKE_REPLIES GH_FAKE_LOG
+if [ "${1:-}" = api ] && [ "${2:-}" = graphql ] && [ "${3:-}" = -f ] && [ "$#" -eq 4 ]; then
+  query="${4#query=}"
+  case "$query" in
+    "mutation { disablePullRequestAutoMerge"*) key="mutation disablePullRequestAutoMerge" ;;
+    "mutation { dequeuePullRequest"*) key="mutation dequeuePullRequest" ;;
+    *isInMergeQueue*) key="queue" ;;
+    *) key="" ;;
+  esac
+  if [ -n "$key" ]; then
+    printf '%s\n' "$*" >> "$GH_FAKE_LOG"
+    reply=$(jq -c --arg k "$key" '.[$k] // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
+    if [ -z "$reply" ]; then
+      echo "gh: HTTP 404: Not Found (https://api.github.com/graphql)" >&2
+      echo '{"message":"Not Found"}'
+      exit 1
+    fi
+    jq -r '.stderr // empty' <<<"$reply" >&2
+    if jq -e 'has("text")' <<<"$reply" >/dev/null; then
+      jq -rj '.text' <<<"$reply"
+    else
+      jq -c '.body' <<<"$reply"
+    fi
+    exit "$(jq -r '.exit // 0' <<<"$reply")"
+  fi
+fi
+exec "$(dirname "$(dirname "$real")")/gh/gh" "$@"

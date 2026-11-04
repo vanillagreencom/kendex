@@ -150,6 +150,10 @@ esac
         scripts.mkdir(parents=True)
         for name in ("resolve-base-branch", "sync-base", "lane-marker"):
             self.copy_file(PACKAGE / "scripts" / name, scripts / name)
+        # The runtime's setup on the host: the clone's binary already built.
+        self.executable(scripts / "setup", '''#!/usr/bin/env bash
+printf 'orch-runtime-setup: key=fixture binary=/cache/bin/orch-runtime-fixture\n'
+''')
         # append takes its lock through the clone's own installed lock library.
         self.copy_tree(PACKAGE / "scripts/lib", scripts / "lib")
         self.copy_tree(PACKAGE.parent / "mailbox/scripts", self.source / ".agents/skills/mailbox/scripts")
@@ -526,7 +530,8 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
         marker = Path(self.row["clone"]) / ".git/lane-mail/test-1"
         self.assertEqual(marker.read_bytes(), root)
         launch = Path(self.row["clone"]) / ".git/lane-launch/test-1.json"
-        self.assertEqual(json.loads(launch.read_text()), {"identity_file": self.row["clone"] + "/.git/lane-host-pid"})
+        self.assertEqual(json.loads(launch.read_text()), {"identity_file": self.row["clone"] + "/.git/lane-host-pid",
+                                                          "runtime": "/cache/bin/orch-runtime-fixture"})
         # The lane's own mailbox directory, in the item's own spelling: the
         # turn-end hook resolves the item by it, so a lane nobody has messaged
         # is still judged on its handoff marks.
@@ -569,7 +574,8 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
             self.assertEqual((reading.returncode, reading.stdout), (0, contents), reading.stderr)
         if not control:
             self.assertEqual(json.loads(reading.stdout), {"model": "claude-fable-5-1",
-                                                  "identity_file": self.row["clone"] + "/.git/lane-host-pid"})
+                                                  "identity_file": self.row["clone"] + "/.git/lane-host-pid",
+                                                  "runtime": "/cache/bin/orch-runtime-fixture"})
         stop_done = self.root / "stop-done"
         fault_reached = self.root / "fault-reached"
         if recovery_fault == "handoff":

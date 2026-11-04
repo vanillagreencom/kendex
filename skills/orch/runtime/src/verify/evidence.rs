@@ -1,12 +1,12 @@
-//! The evidence stage (decision 107 (1)): the GitHub boundary returns one
+//! The evidence stage: the GitHub boundary returns one
 //! validated, complete `Evidence` value or a refusal, and nothing else
 //! reaches the judgement. Every member of every reply is validated here,
 //! before any selection or reduction, so no member the selection would
-//! later discard escapes validation (R-U4e7 H1). The judgement's entry
+//! later discard escapes validation. The judgement's entry
 //! (`judge::judge`) takes an `Evidence` by value and nothing else: no page,
 //! no `Value`, no bare wire member. Every field of `Evidence` and of its
 //! member structs is private behind a read-only accessor, so `read` is the
-//! type's one constructor (decision 110 (1)); a test that needs one builds
+//! type's one constructor; a test that needs one builds
 //! it through a fake transport, as production does.
 //!
 //! Completeness is proven per endpoint, caps included. A reached cap is
@@ -18,14 +18,14 @@
 //! | `commits/{sha}/check-runs?filter=all` | every page; each page's `total_count` equal and the members adding up to it | The endpoint covers the ref's 1,000 most recent check suites (docs.github.com, checks/runs, "List check runs for a Git reference"), so its total alone proves only that window. The ref's check-suites count (next row) below `CHECK_SUITES_CAP` proves every suite of the ref is inside the window; then the total is the whole set. |
 //! | `commits/{sha}/check-suites` | the first page, for `total_count` | The count is the endpoint's own total over the ref. At or above `CHECK_SUITES_CAP` the check-runs read is not proven whole: `check-runs-capped`. |
 //! | `commits/{sha}/status` | every page; totals compared as above | The combined status is the latest status per context; GitHub documents no cap. |
-//! | `actions/runs?head_sha={sha}` | every page; totals compared as above | GitHub caps a filtered run search at 1,000 results (docs.github.com, actions/workflow-runs). At or above `ACTIONS_SEARCH_CAP` members unseen runs can remain: `actions-runs-capped`, as HEAD `ci-wait:732-740` refused. |
-//! | `actions/workflows` | every page; totals compared as above | Read on every call: the first route to the workflow name a job's run carries (the legacy rollup's `workflow`, `CheckRunEvidence::workflow`), by the run's `workflow_id`, and the absence probe's active count. The list is the repository's current workflows, not a cover of every run's (a deleted file's runs remain; an organization or enterprise ruleset workflow is never listed), so membership is never a prerequisite for judging a run (decision 114 (3)). |
-//! | graphql `nodes(ids:)` over check-run nodes | one query per 100 ids | Read for the check runs whose REST suite join is absent (a null `check_suite`, or a suite no run on the head carries as its `check_suite_id`): the suite, its run with its event and that run's workflow name, as `gh pr checks` read them (`wire::CheckRunNode`); a null node there is `check-run-suites-response-invalid`, and a failed query there refuses with its own cause, since nothing else names the check's suite. Read too for every joined check whose run's workflow the list lacks: the second route to its workflow name, `checkSuite.workflowRun.workflow.name`, the path gh read every name through; the names its validated answers give are collected per workflow id, for the run REST joins each node's check to and for the held run the node's `workflowRun.databaseId` identifies, so a readable sibling node names a held run's workflow; a reply carrying `data` and errors that each name one node, `["nodes", i]`, keeps its other nodes and leaves node `i` null (GraphQL specification § 6.4.4), read from the output of the nonzero exit gh gives every reply carrying errors (`nodes_of`, decision 123 (2)), and one carrying any other error is a failed query; a null node or a failed query is a failed route for a joined check, which continues to the route below (`check_run_suites`, decisions 117 (4), 119 (2) and 122 (3)-(4)). |
+//! | `actions/runs?head_sha={sha}` | every page; totals compared as above | GitHub caps a filtered run search at 1,000 results (docs.github.com, actions/workflow-runs). At or above `ACTIONS_SEARCH_CAP` members unseen runs can remain: `actions-runs-capped`. |
+//! | `actions/workflows` | every page; totals compared as above | Read on every call: the first route to the workflow name a job's run carries (gh's rollup `workflow`, `CheckRunEvidence::workflow`), by the run's `workflow_id`, and the absence probe's active count. The list is the repository's current workflows, not a cover of every run's (a deleted file's runs remain; an organization or enterprise ruleset workflow is never listed), so membership is never a prerequisite for judging a run. |
+//! | graphql `nodes(ids:)` over check-run nodes | one query per 100 ids | Read for the check runs whose REST suite join is absent (a null `check_suite`, or a suite no run on the head carries as its `check_suite_id`): the suite, its run with its event and that run's workflow name, as `gh pr checks` read them (`wire::CheckRunNode`); a null node there is `check-run-suites-response-invalid`, and a failed query there refuses with its own cause, since nothing else names the check's suite. Read too for every joined check whose run's workflow the list lacks: the second route to its workflow name, `checkSuite.workflowRun.workflow.name`, the path gh read every name through; the names its validated answers give are collected per workflow id, for the run REST joins each node's check to and for the held run the node's `workflowRun.databaseId` identifies, so a readable sibling node names a held run's workflow; a reply carrying `data` and errors that each name one node, `["nodes", i]`, keeps its other nodes and leaves node `i` null (GraphQL specification § 6.4.4), read from the output of the nonzero exit gh gives every reply carrying errors (`nodes_of`), and one carrying any other error is a failed query; a null node or a failed query is a failed route for a joined check, which continues to the route below (`check_run_suites`). |
 //! | `actions/workflows/{id}` | one object per workflow id no graph answer named | The last route (`workflow_by_id`, gh's `pkg/cmd/run/shared/shared.go:456-470`): "Get a workflow" by the run's `workflow_id`, decoded through `wire::Workflow`; an answer naming another id is `workflow-response-invalid`, a failed request `workflow-read-failed`. Only a name no route gave is `unreadable`, never pass or fail. |
-//! | `check-suites/{id}/check-runs` | every page; totals compared as above | One read per check suite of a required definition's candidate run, under the endpoint's default `filter`, `latest` ("Filters check runs by their completed_at timestamp. latest returns the most recent check runs.", rest/checks/runs): the legacy's bound-job list (`ci-run-correlation.sh:489-496`, which named no `filter`). The server's selection is consumed as it answers (`suite_jobs`, decision 117 (1)); each member decodes through `wire::CheckRun` and an empty name is `suite-check-runs-response-invalid`. |
+//! | `check-suites/{id}/check-runs` | every page; totals compared as above | One read per check suite of a required definition's candidate run, under the endpoint's default `filter`, `latest` ("Filters check runs by their completed_at timestamp. latest returns the most recent check runs.", rest/checks/runs): the bound-job list, which names no `filter`. The server's selection is consumed as it answers (`suite_jobs`); each member decodes through `wire::CheckRun` and an empty name is `suite-check-runs-response-invalid`. |
 //! | `rules/branches/{base}` | bare array pages until a short page | No total is documented; a page shorter than the page size is the last. |
 //! | `branches/{base}` | one object | A single object; absent or null protection refuses it. |
-//! | graphql `nodes(ids:)` over the candidate runs' check-suite nodes | one query | One node per id (docs.github.com/en/graphql, `nodes`); a null node, error-free or named by a field error at its path `["nodes", i]` (`nodes_of`, the same reading as the check-run nodes above), is an id the viewer cannot resolve and leaves its candidate unproven, the definition pending `expected` with no record, as the legacy held an unreadable required set (`ci-wait:897-905`); a reply carrying any other error is a failed query. Read only when a `workflows` rule names a definition some run on the head executed by path. |
+//! | graphql `nodes(ids:)` over the candidate runs' check-suite nodes | one query | One node per id (docs.github.com/en/graphql, `nodes`); a null node, error-free or named by a field error at its path `["nodes", i]` (`nodes_of`, the same reading as the check-run nodes above), is an id the viewer cannot resolve and leaves its candidate unproven, the definition pending `expected` with no record, an unreadable required set being no verdict; a reply carrying any other error is a failed query. Read only when a `workflows` rule names a definition some run on the head executed by path. |
 //! | `repos/{owner}/{name}` per source repository a proof names | one object | A single object whose `full_name` must be the name asked for; read only for the names the proofs of a fully proven definition carry. |
 //!
 //! Per-member validation, over every member of every reply: a check run
@@ -34,48 +34,48 @@
 //! status context is invalid; a run of another head is invalid; a rule's
 //! `parameters` is an object for every kind (`wire::Object`), and the two
 //! consumed kinds decode their shape from it; a required workflow without
-//! an explicit source sha is `workflow-source-unbound` (decision 87).
+//! an explicit source sha is `workflow-source-unbound`.
 //!
-//! The association of a check or status with an Actions run (decisions 112
-//! (2) and 114 (2)) is read here, as the legacy read it, and carried as one
+//! The association of a check or status with an Actions run is read
+//! here and carried as one
 //! of three states (`Association`): the link, the check run's `details_url`
 //! that `gh pr checks` printed (gh v2.103.3 `aggregate.go:51`), names the
 //! run (`ci-run-correlation.sh:81-84`), and the check's suite, where it
 //! names a run, is the agreeing second source; a link naming a run the
 //! evidence does not hold, a suite and link that disagree, or a suite whose
 //! run GitHub names but does not identify (`SuiteRun::RunUnidentified`) is
-//! `Unresolved`, a distinct state the selection places as the legacy placed
-//! the entry and the classification never reads as a proved external
+//! `Unresolved`, a distinct state the selection places where the entry
+//! stood and the classification never reads as a proved external
 //! failure while a substantive run is unfinished. A bound run's jobs are
 //! not derived from these joins: they are the suite's own listing
-//! (`suite_jobs`), whose `html_url` the legacy matched by equality
-//! (`:489-495`, `:112`).
+//! (`suite_jobs`), whose `html_url` is matched by equality.
 //!
-//! The required-definition binding proof (decision 110 (1), HEAD
-//! `ci-run-correlation.sh:363-465`): a definition is the complete rule the
-//! legacy read, `repository_id`, `path` and the pinned `sha` (its `ref`
+//! The required-definition binding proof: a definition is the complete
+//! rule, `repository_id`, `path` and the pinned `sha` (its `ref`
 //! orders the walk and binds nothing). Its candidates are the head's runs
-//! whose own workflow file is the definition's path (`:373`; the head and
+//! whose own workflow file is the definition's path (the head and
 //! the consumer repository are pinned by the runs endpoint). Each
 //! candidate's proof is the workflow file its check suite's run executed,
-//! read through the suite node (`:384-399`): the node must name the
+//! read through the suite node: the node must name the
 //! candidate's suite, run and attempt and a readable file whose repository
 //! is `owner/name`, else the candidate is unproven and the definition
 //! cannot bind (`selection::bind`). The repositories the proofs name are
-//! looked up for their ids (`:409-419`), so the rule's `repository_id` is
+//! looked up for their ids, so the rule's `repository_id` is
 //! matched against a repository the proof named, never assumed.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::ops::VerifyHead;
 
+use super::review::COPILOT_REVIEWER;
 use super::wire::{
     Branch, CheckRun, CheckRunNode, CheckRunsPage, CheckSuiteNode, CheckSuitesPage,
     CombinedStatusPage, Nullable, Optional, Outcome, Repository, RequiredStatusChecksParameters,
     Rule, RuleKind, RunsPage, StatusState, Workflow, WorkflowRun, WorkflowState, WorkflowsPage,
     WorkflowsParameters, run_in_url,
 };
-use super::{Cause, Endpoint, Read, Reader, Transport, segment};
+use super::wire::{RunStatus, TimelineEvent};
+use super::{Cause, Endpoint, Gh, Read, Reader, segment};
 
 /// GitHub's bound on a filtered run search: a `head_sha` search answers at
 /// most this many runs, so a set this large is not proven whole.
@@ -98,7 +98,7 @@ pub(super) struct Evidence {
     /// Every Actions run on the head.
     runs: Vec<RunEvidence>,
     /// The base's required set, read under `required_only`; `None` is the
-    /// legacy's default mode, where every check counts.
+    /// default mode, where every check counts.
     required: Option<RequiredEvidence>,
 }
 
@@ -125,14 +125,14 @@ impl Evidence {
 }
 
 /// How a check or status is associated with an Actions run on the head
-/// (decision 112 (2)).
+///
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Association {
     /// The link names a run the evidence holds, and the suite, where it
     /// names a run, names the same one.
     Run(u64),
     /// Neither the link nor the suite names a run: an external check or
-    /// status, the legacy's run-less member.
+    /// status, a run-less member.
     None,
     /// The link names a run the evidence does not hold, or the suite names
     /// a run while the link names another or none, or the suite's run is
@@ -142,7 +142,7 @@ pub(super) enum Association {
 }
 
 /// The run a check run's suite belongs to, as GitHub's graph names it
-/// (decision 114 (2)): none (`CheckSuite.workflowRun` null: no Actions
+/// : none (`CheckSuite.workflowRun` null: no Actions
 /// workflow made the suite), one the evidence identifies (the run whose
 /// `check_suite_id` is the suite, or the node's `workflowRun.databaseId`),
 /// or one GitHub names but does not identify (a `WorkflowRun` present whose
@@ -165,24 +165,24 @@ pub(super) struct CheckRunEvidence {
     name: String,
     outcome: Outcome,
     /// The suite's run's workflow name, `""` where the suite has no run
-    /// (an Actions workflow made none): the legacy rollup's `workflow`
+    /// (an Actions workflow made none): gh's rollup `workflow`
     /// (gh v2.103.3 `aggregate.go:68`, `CheckSuite.workflowRun.workflow.name`),
     /// which grouped a run's jobs. Resolved by `check_run_suites` through
-    /// the three routes of decision 117 (4).
+    /// the three routes below.
     workflow: String,
     /// The suite's run's dispatch event, `""` where the suite has no run:
     /// gh's `c.CheckSuite.WorkflowRun.Event` (`aggregate.go:67`), one key
     /// of its deduplication (`:110`).
     event: String,
-    /// When it started, where recorded (the legacy `startedAt`).
+    /// When it started, where recorded (gh's `startedAt`).
     started: Option<String>,
-    /// The `details_url`, the legacy's `link` (gh `aggregate.go:51`).
+    /// The `details_url`, gh's rollup `link` (`aggregate.go:51`).
     link: Option<String>,
-    /// The run the link names, as the legacy `runid` read it, whether or
+    /// The run the link names, whether or
     /// not the evidence holds that run.
     linked: Option<u64>,
     /// Whether the link names a run itself rather than a job of it (the
-    /// legacy `status_target`).
+    /// aggregate link).
     run_level: bool,
     association: Association,
 }
@@ -233,13 +233,13 @@ impl CheckRunEvidence {
 pub(super) struct StatusEvidence {
     context: String,
     state: StatusState,
-    /// The run the status's link names, as the legacy `runid` read it.
+    /// The run the status's link names.
     linked: Option<u64>,
     /// Whether the link names the run itself rather than a job of it (the
-    /// legacy `status_target`): only such an aggregate is held behind a
+    /// aggregate link): only such an aggregate is held behind a
     /// newer run of its workflow.
     run_level: bool,
-    /// The link itself, the legacy's `link`, matched by equality against a
+    /// The link itself, matched by equality against a
     /// required workflow's job links.
     target: Option<String>,
     association: Association,
@@ -280,9 +280,9 @@ pub(super) struct RunEvidence {
     path: String,
     event: String,
     outcome: Outcome,
-    /// `run_attempt // 1`, the legacy's reading of omission.
+    /// `run_attempt`, 1 where omitted.
     attempt: u64,
-    /// `run_started_at // updated_at`, the legacy's reading of omission.
+    /// `run_started_at`, `updated_at` where omitted.
     started: String,
     updated_at: String,
     suite: Option<u64>,
@@ -299,7 +299,7 @@ impl RunEvidence {
         self.workflow_id
     }
 
-    /// The workflow file without its ref, the legacy `path | split("@")[0]`.
+    /// The workflow file without its ref.
     pub(super) fn file(&self) -> &str {
         self.path.split('@').next().unwrap_or_default()
     }
@@ -334,7 +334,7 @@ impl RunEvidence {
 pub(super) struct RequiredEvidence {
     contexts: Vec<String>,
     /// The required workflow definitions, sorted and deduplicated as the
-    /// legacy's `unique` left them (`ci-run-correlation.sh:346`): the order
+    /// jq's `unique` leaves them: the order
     /// the selection walks them in.
     workflows: Vec<RequiredWorkflowEvidence>,
     /// The repositories the proofs named, each looked up by that name.
@@ -383,7 +383,7 @@ impl RequiredEvidence {
     }
 
     /// Whether the set names anything to judge by; an empty set falls back
-    /// to every check, as the legacy's `all_checks` does.
+    /// to every check.
     pub(super) fn names_anything(&self) -> bool {
         !self.contexts.is_empty() || !self.workflows.is_empty()
     }
@@ -394,7 +394,7 @@ impl RequiredEvidence {
 pub(super) struct RequiredWorkflowEvidence {
     repository_id: u64,
     path: String,
-    /// The source commit the rule pins (decision 87).
+    /// The source commit the rule pins.
     sha: String,
     /// The rule's `ref`, kept for the walk order alone.
     reference: Option<String>,
@@ -435,7 +435,7 @@ impl RequiredWorkflowEvidence {
 }
 
 /// One member of a check suite's listing under GitHub's `latest` filter:
-/// the legacy's `{name, link: .html_url}` (`ci-run-correlation.sh:495`),
+/// `{name, link: .html_url}`,
 /// the page nullable as the wire documents it.
 #[derive(Debug)]
 pub(super) struct SuiteJob {
@@ -520,7 +520,7 @@ impl SourceRepository {
 
 /// Read and validate everything the judgement may see for the request's
 /// pinned head and base. The first refusal ends the read set.
-pub(super) fn read(gh: &dyn Transport, r: &VerifyHead) -> Read<Evidence> {
+pub(super) fn read(gh: &Gh, r: &VerifyHead) -> Read<Evidence> {
     let gh = Reader { gh };
     let commit = format!("repos/{}/commits/{}", r.repo, r.head);
     let check_runs = gh.collection::<CheckRunsPage>(
@@ -592,7 +592,7 @@ pub(super) fn read(gh: &dyn Transport, r: &VerifyHead) -> Read<Evidence> {
 }
 
 /// The association of a member whose link names `linked` and whose suite's
-/// run is `suite_run` (decisions 112 (2) and 114 (2)): a run GitHub names
+/// run is `suite_run`: a run GitHub names
 /// but does not identify agrees with nothing and is never read as no run.
 fn association(linked: Option<u64>, suite_run: SuiteRun, runs: &[RunEvidence]) -> Association {
     let held = |id: u64| runs.iter().any(|run| run.id == id);
@@ -610,7 +610,7 @@ fn association(linked: Option<u64>, suite_run: SuiteRun, runs: &[RunEvidence]) -
     }
 }
 
-/// The last route to a run's workflow name (decision 117 (4)): "Get a
+/// The last route to a run's workflow name: "Get a
 /// workflow" by the run's `workflow_id`, which gh reads for a run its
 /// workflow list lacks (gh v2.103.3 `pkg/cmd/run/shared/shared.go:456-470`):
 ///
@@ -640,8 +640,7 @@ fn association(linked: Option<u64>, suite_run: SuiteRun, runs: &[RunEvidence]) -
 /// `GetWorkflow` is `GET repos/{owner}/{repo}/actions/workflows/{id}`
 /// (`pkg/cmd/workflow/shared/shared.go:151-173`). gh names a 404 workflow
 /// `""`, the organization or enterprise ruleset workflow its comment
-/// describes; the legacy never read this object, since `gh pr checks` took
-/// every name from the graph. This read is reached only after the graph
+/// describes; `gh pr checks` takes every name from the graph. This read is reached only after the graph
 /// gave no name, so its failure is a name no route gave: a failed request
 /// is `workflow-read-failed`, an answer naming another workflow than the
 /// one asked for `workflow-response-invalid`, and either is `unreadable`,
@@ -671,15 +670,14 @@ fn workflow_by_id(
 /// Every check run with its suite join and its workflow name. The join is
 /// REST's where the check names a suite some run on the head carries, else
 /// the check-run node's, as `gh pr checks` read it. The name is resolved in
-/// the order decision 117 (4) fixes: the repository's workflow list by the
+/// this order: the repository's workflow list by the
 /// run's `workflow_id`; the graph, `checkSuite.workflowRun.workflow.name`
 /// on the check's node (the path gh read every name through, gh v2.103.3
 /// `api/query_builder.go:297`), the names of every validated node
 /// collected per workflow id, for the run REST joins the node's check to
 /// and for the held run the node's `workflowRun.databaseId` identifies, so
-/// a readable sibling node names a held run's workflow (decision 122
-/// (3)); the REST detail by id (`workflow_by_id`); a refusal only when
-/// every route failed (decision 119 (2)). For a joined check a null node
+/// a readable sibling node names a held run's workflow; the REST detail
+/// by id (`workflow_by_id`); a refusal only when every route failed. For a joined check a null node
 /// (an error-free null, or one a field error names, `nodes_of`) and a
 /// failed query (the transport, or a reply carrying any other error or no
 /// data) are a failed route, and the detail is tried; for an unjoined
@@ -688,7 +686,7 @@ fn workflow_by_id(
 /// suite. A reply answering another count or another id than asked is not
 /// the documented shape and refuses. A node whose suite names no run while
 /// REST joins the check to one is not the documented answer. A run no
-/// check joins needs no name: the legacy's rollup never showed one.
+/// check joins needs no name: the rollup never shows one.
 fn check_run_suites(
     gh: &Reader<'_>,
     r: &VerifyHead,
@@ -735,7 +733,7 @@ fn check_run_suites(
     // The workflow names known per workflow id: the graph's validated
     // answers first, then each detail read. A validated node names the
     // workflow of the run REST joins its check to, and of the held run its
-    // own `workflowRun.databaseId` identifies (decision 122 (3)); a node
+    // own `workflowRun.databaseId` identifies; a node
     // whose run GitHub does not identify names nothing here.
     let mut names: BTreeMap<u64, String> = BTreeMap::new();
     for check in check_runs {
@@ -823,14 +821,12 @@ fn check_run_suites(
 }
 
 /// A check suite's check runs as GitHub lists them under the endpoint's
-/// default `filter`, `latest`: the legacy's suite read for a bound run
-/// (`ci-run-correlation.sh:489-496`, quoted at `selection::bound_jobs`),
-/// which named no `filter`. The server's selection is consumed as
+/// default `filter`, `latest`: the suite read for a bound run (quoted at
+/// `selection::bound_jobs`), which names no `filter`. The server's selection is consumed as
 /// answered, pages validated like every collection; each member decodes
 /// through `wire::CheckRun`, so a completed member without a conclusion
-/// refuses, and an empty name is not the documented shape (the legacy's
-/// own guard, `:492`). Nothing here selects among members (decision 117
-/// (1)).
+/// refuses, and an empty name is not the documented shape. Nothing here
+/// selects among members.
 fn suite_jobs(gh: &Reader<'_>, r: &VerifyHead, suite: u64) -> Read<Vec<SuiteJob>> {
     let members = gh.collection::<CheckRunsPage>(
         Endpoint::SuiteCheckRuns,
@@ -870,8 +866,8 @@ fn workflow_run(run: &WorkflowRun, head: &str) -> Read<RunEvidence> {
     })
 }
 
-/// Whether a link names a run itself: the legacy
-/// `test("/actions/runs/[0-9]+/?$")`.
+/// Whether a link names a run itself: `/actions/runs/<id>` with nothing
+/// after the id.
 fn run_level(url: &str) -> bool {
     let url = url.strip_suffix('/').unwrap_or(url);
     url.rsplit_once("/actions/runs/")
@@ -1022,7 +1018,7 @@ fn required_set(
 
 /// The source proof of every candidate, through one nodes query over the
 /// candidates' check-suite nodes, and the lookup of every repository the
-/// proofs of a fully proven definition name (`ci-run-correlation.sh:380-419`).
+/// proofs of a fully proven definition name.
 fn prove_candidates(
     gh: &Reader<'_>,
     runs: &[RunEvidence],
@@ -1059,8 +1055,8 @@ fn prove_candidates(
                 .and_then(|(run, node)| proof(run, node));
         }
     }
-    // The legacy looked a repository up only once every candidate of the
-    // definition had a readable proof (`:400`); an unproven candidate ends
+    // A repository is looked up only once every candidate of the
+    // definition has a readable proof; an unproven candidate ends
     // that definition's read before any lookup.
     let mut names: Vec<&str> = Vec::new();
     for workflow in workflows.iter() {
@@ -1090,7 +1086,7 @@ fn prove_candidates(
     Ok(sources)
 }
 
-/// The proof a suite node gives for its candidate (`ci-run-correlation.sh:393-399`):
+/// The proof a suite node gives for its candidate:
 /// the node names the candidate's suite, run and attempt, and a file the
 /// viewer can read in an `owner/name` repository. Anything less proves
 /// nothing.
@@ -1124,11 +1120,114 @@ fn proof(run: &RunEvidence, node: &CheckSuiteNode) -> Option<SourceProof> {
     })
 }
 
+/// Copilot's work in flight on a head: a queued or in-progress Copilot
+/// check run, by its id and start, else a pending request on the
+/// timeline. A request stays pending until a later Copilot review, a
+/// removal, or a completed Copilot check started at or after it; its
+/// start is the event's time, since the request names no head. A member
+/// outside its documented shape refuses the read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Work {
+    pub(crate) id: u64,
+    pub(crate) started_at: Option<String>,
+}
+
+pub(super) fn copilot_work(gh: &Reader<'_>, repo: &str, pr: u64, head: &str) -> Read<Option<Work>> {
+    let checks = gh.collection::<CheckRunsPage>(
+        Endpoint::CheckRuns,
+        &format!("repos/{repo}/commits/{head}/check-runs?filter=all"),
+    )?;
+    let copilot: Vec<&CheckRun> = checks
+        .iter()
+        .filter(|check| check.name == COPILOT_REVIEWER)
+        .collect();
+    if let Some(active) = copilot
+        .iter()
+        .find(|check| matches!(check.status, RunStatus::Queued | RunStatus::InProgress))
+    {
+        if active.id == 0 {
+            return Err(Cause::ResponseInvalid(Endpoint::CheckRuns));
+        }
+        return Ok(Some(Work {
+            id: active.id,
+            started_at: active.started().map(str::to_owned),
+        }));
+    }
+    let events: Vec<TimelineEvent> = gh.array(
+        Endpoint::Timeline,
+        &format!("repos/{repo}/issues/{pr}/timeline"),
+    )?;
+    let invalid = || Cause::ResponseInvalid(Endpoint::Timeline);
+    let copilot_login = |value: Option<&serde_json::Value>| {
+        value
+            .and_then(|v| v.get("login"))
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|login| login == format!("{COPILOT_REVIEWER}[bot]") || login == "Copilot")
+    };
+    let mut pending: Option<Work> = None;
+    for event in &events {
+        let field = |key: &str| event.fields.get(key);
+        match event.event.as_str() {
+            "review_requested" if copilot_login(field("requested_reviewer")) => {
+                let id = field("id")
+                    .and_then(serde_json::Value::as_u64)
+                    .ok_or_else(invalid)?;
+                let created = field("created_at")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(invalid)?;
+                pending = Some(Work {
+                    id,
+                    started_at: Some(created.to_owned()),
+                });
+            }
+            "copilot_work_started" => {
+                let id = field("id")
+                    .and_then(serde_json::Value::as_u64)
+                    .ok_or_else(invalid)?;
+                let created = field("created_at")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(invalid)?;
+                pending = Some(Work {
+                    id,
+                    started_at: Some(created.to_owned()),
+                });
+            }
+            "review_request_removed" if copilot_login(field("requested_reviewer")) => {
+                pending = None;
+            }
+            "reviewed" if copilot_login(field("user")) => {
+                let submitted = field("submitted_at")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(invalid)?;
+                if pending
+                    .as_ref()
+                    .and_then(|work| work.started_at.as_deref())
+                    .is_some_and(|started| submitted >= started)
+                {
+                    pending = None;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(request) = pending else {
+        return Ok(None);
+    };
+    let answered = copilot.iter().any(|check| {
+        matches!(check.status, RunStatus::Completed)
+            && check
+                .started()
+                .zip(request.started_at.as_deref())
+                .is_some_and(|(started, requested)| started >= requested)
+    });
+    Ok(if answered { None } else { Some(request) })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The legacy's run-level test: a link ending in the run id, with or
+    /// The run-level test: a link ending in the run id, with or
     /// without a trailing slash, names the run; a job link does not.
     #[test]
     fn a_run_level_link_ends_in_its_run_id() {

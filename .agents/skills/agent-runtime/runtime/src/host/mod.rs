@@ -236,6 +236,36 @@ pub fn run_tagged_in(
         .map_err(|failed| failed.into_error(caller))
 }
 
+/// `run_tagged_in` with `stdin` fed to the child: for a program that takes
+/// its subject on its standard input, such as a provider's `put`. The same
+/// spawn site, bound and count as every run.
+#[allow(clippy::too_many_arguments)]
+pub fn run_tagged_fed(
+    tag: &'static str,
+    program: &'static str,
+    executable: &Path,
+    operation: &'static str,
+    args: &[&str],
+    place: Place,
+    stdin: &[u8],
+    timeout: Duration,
+) -> Result<Output> {
+    let caller = Caller {
+        program,
+        operation,
+        tag: Some(tag),
+    };
+    start(
+        caller,
+        executable.as_os_str(),
+        args,
+        place,
+        Some(stdin),
+        timeout,
+    )
+    .map_err(|failed| failed.into_error(caller))
+}
+
 /// `cwd` as a directory a child can start in. Read three-valued through
 /// `metadata`: an unreadable directory is its own cause, never absent.
 fn enterable(cwd: &Path) -> std::result::Result<(), Failed> {

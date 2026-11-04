@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# The fake `lane-host` for the hosted lane rows (`tests/rust/watch_observe.rs`,
-# `watch_core.rs`). Every call appends `ORCH_LANE_HOST=<value|unset> <argv>`
-# to `lane-host.log` beside the path this was invoked as (the rows link the
-# fixture into their world as `lane-host`), so a row proves which host each
-# read ran under and in what order the calls came. It answers from the JSON
-# map `lane-host.json` beside, keyed by the argv joined with one space
-# (`capabilities`, `cat --item KEN-1 /w/tmp/lane-status-KEN-1.md`,
-# `touch --item KEN-1`, `status --item KEN-1 --harness claude`,
-# `stop --item KEN-1 --harness claude`, `list`), or by `<host> <argv>` where
-# two hosts of one fleet answer differently: `{exit?, stdout?, stderr?}`,
+# The fake `lane-host` for the hosted lane rows. Every call appends
+# `ORCH_LANE_HOST=<value|unset> <argv>` to `lane-host.log` beside the path
+# this was invoked as (the rows link the fixture into their world as
+# `lane-host`), so a row proves which host each read ran under and in what
+# order the calls came. It answers from the JSON map `lane-host.json`
+# beside, keyed by the argv joined with one space (`capabilities`, `cat
+# --item KEN-1 /w/tmp/lane-status-KEN-1.md`, `touch --item KEN-1`, `status
+# --item KEN-1 --harness claude`, `stop --item KEN-1 --harness claude`,
+# `list`), or by `<host> <argv>` where two hosts of one fleet answer
+# differently, or by either with `#N` appended for the Nth call of that
+# argv where a row answers a repeated read differently (a marker absent,
+# then present once the launch put it): `{exit?, stdout?, stderr?}`,
 # `stdout` the exact bytes printed, the status 0 when absent. A key the map
 # lacks is exit 64 with `lane-host-fixture: unplanned argv=[...]` on stderr,
 # so a row that forgot an answer reads an unreadable call, never a missing
@@ -16,9 +18,13 @@
 set -u
 here="$(dirname "${BASH_SOURCE[0]}")"
 host="${ORCH_LANE_HOST-unset}"
-printf 'ORCH_LANE_HOST=%s %s\n' "$host" "$*" >> "$here/lane-host.log"
+line="ORCH_LANE_HOST=$host $*"
+prior=0
+[ ! -f "$here/lane-host.log" ] || prior="$(grep -cxF -- "$line" "$here/lane-host.log")" || prior=0
+printf '%s\n' "$line" >> "$here/lane-host.log"
 key="$*"
-reply="$(jq -c --arg k "$key" --arg h "$host $key" '.[$h] // .[$k] // empty' -- "$here/lane-host.json" 2>/dev/null)" || reply=""
+nth="#$((prior + 1))"
+reply="$(jq -c --arg k "$key" --arg h "$host $key" --arg n "$nth" '.[$h + $n] // .[$k + $n] // .[$h] // .[$k] // empty' -- "$here/lane-host.json" 2>/dev/null)" || reply=""
 if [ -z "$reply" ]; then
   printf 'lane-host-fixture: unplanned argv=[%s]\n' "$key" >&2
   exit 64

@@ -5,7 +5,7 @@
 //! A start runs the same steps with no predecessor to retire. A predecessor
 //! with no recorded identity is proven terminal by the generation-bound exit
 //! record or by its pane gone on the proven recorded server, never by
-//! absence on a server that is not proven (decision 77). The explicit stop
+//! absence on a server that is not proven. The explicit stop
 //! retires the controller exactly by identity. A transfer's and a stop's
 //! effect run in the detached job of `operation::job`; the controller cells
 //! of the reconcile matrix complete any of them from the recorded phase. The
@@ -16,14 +16,14 @@
 use std::path::{Path, PathBuf};
 
 use agent_runtime::harness::Harness;
-use agent_runtime::launch::{Compaction, LaunchCommand, Permission};
+use agent_runtime::launch::{Compaction, LaunchCommand, Permission, Resume};
 use agent_runtime::reading::Reading;
 use serde_json::{Value, json};
 
 use super::operation::{
     self, Binding, EffectOutcome, Identity, Observed, OpenRefusal, Operation, Pane, Polled,
-    ProcessRead, Proof, Published, Recovered, State, Stop, TurnConfirm, WindowClose, Wire, Word,
-    opening_observation,
+    ProcessRead, Proof, Published, Recovered, SessionFloor, State, Stop, TurnConfirm, WindowClose,
+    Wire, Word, opening_observation,
 };
 use super::{
     Run, Spec, Target, build_launch, check_directory, check_program, fleet_tmux_session, idle,
@@ -246,7 +246,7 @@ fn unconfirmed_after_retirement(
 /// and what a reconcile rebuilds from the record: the harness, the home its
 /// native session is read under, the account it spends, its working
 /// directory and the typed launch fields the command is built from
-/// (decision 109 (5)). The pending line is kept for display alone.
+///. The pending line is kept for display alone.
 #[derive(Clone)]
 struct Successor {
     harness: Harness,
@@ -259,11 +259,14 @@ struct Successor {
     permission: Option<Permission>,
     extra_args: Vec<String>,
     launch_line: Option<String>,
+    /// The native session the launch continues, where the pending names
+    /// one: its file must stand under `home` before the window opens.
+    resume: Option<String>,
 }
 
 impl Successor {
     /// The successor `pending` names, with every precondition a succession
-    /// reads before retirement (decision 61): the harness word, the working
+    /// reads before retirement: the harness word, the working
     /// directory, the home its sessions are read under and the account it
     /// spends, which must exist. The program and brief are checked by the
     /// effect that builds the command.
@@ -278,6 +281,14 @@ impl Successor {
                     &[("harness", pending.harness.as_deref().unwrap_or_default())],
                 )
             })?;
+        // Pi continues a session by its file, which no record carries, so a
+        // Pi controller has no resume form.
+        if harness == Harness::Pi && pending.resume.is_some() {
+            return Err(refused(
+                "resume-unsupported",
+                &[("harness", harness.name())],
+            ));
+        }
         let cwd = PathBuf::from(pending.cwd.clone().unwrap_or_default());
         check_directory("cwd-missing", &cwd)?;
         let account = match pending.account.as_deref() {
@@ -314,6 +325,7 @@ impl Successor {
             permission: pending.permission,
             extra_args: pending.extra_args.clone(),
             launch_line: pending.launch_line.clone(),
+            resume: pending.resume.clone(),
         })
     }
 
@@ -324,7 +336,8 @@ impl Successor {
     /// the home's; the caller's permission posture and words are kept, the
     /// harness's own compaction off where it has a word for it, since orch's
     /// handoff mark judges the window, and the brief held for delivery after
-    /// retirement.
+    /// retirement. A resume continues the recorded session in the
+    /// harness's own resume form and fixes no fresh id.
     fn command(&self, settings: &Settings, session_id: Option<&str>) -> Result<LaunchCommand> {
         let compaction = match self.harness.compaction_off_words() {
             Some(_) => Compaction::Off,
@@ -336,7 +349,7 @@ impl Successor {
             (Some(_), true) | (None, _) => None,
             (Some(account), false) => Some(account.as_path()),
         };
-        build_launch(
+        let (mut intent, command) = build_launch(
             settings,
             &Spec {
                 harness: self.harness,
@@ -349,33 +362,55 @@ impl Successor {
                 permission: self.permission,
                 question_tool: settings.question_tool.for_overseer(),
                 compaction,
-                session_id,
+                session_id: match &self.resume {
+                    Some(_) => None,
+                    None => session_id,
+                },
                 extra_args: &self.extra_args,
             },
-        )
-        .map(|(_, command)| command)
+        )?;
+        let Some(id) = &self.resume else {
+            return Ok(command);
+        };
+        intent.resume = Some(Resume {
+            session_id: id.clone(),
+            session_file: None,
+        });
+        Ok(agent_runtime::launch::build(&intent)?)
     }
 
-    /// The runner's own native session file (decision 65): the file its
+    /// The runner's own native session file: the file its
     /// fixed id names, or the one lead session for its cwd that appeared
     /// since the window opened and stood in no baseline before it. A
     /// neighbour in the same home and directory is never a candidate.
     fn bind_session(&self, operation: &Operation, opened: &OpenedPane) -> Result<Binding> {
         if let Some(id) = &opened.session_id {
-            let file = operation::fixed_file(self.harness, &self.home, &self.cwd, id).ok_or_else(
-                || refused("session-id-unfixable", &[("harness", self.harness.name())]),
-            )?;
-            return Ok(Binding::Bound(BoundSession {
-                session_id: id.clone(),
-                file: file.display().to_string(),
-            }));
+            let bound = |file: PathBuf| {
+                Binding::Bound(BoundSession {
+                    session_id: id.clone(),
+                    file: file.display().to_string(),
+                })
+            };
+            // A harness that fixes the id names the file before it exists;
+            // one that does not names it only once the resumed session's
+            // own file is found by that id, read three-valued.
+            if let Some(file) = operation::fixed_file(self.harness, &self.home, &self.cwd, id) {
+                return Ok(bound(file));
+            }
+            return Ok(
+                match operation::fixed_id_file(self.harness, &self.home, &self.cwd, id) {
+                    Reading::Live(file) => bound(file),
+                    Reading::Gone => Binding::Absent,
+                    Reading::Unreadable { cause } => Binding::Unreadable { cause },
+                },
+            );
         }
         Ok(operation.appeared_session(self.harness, &self.home, &self.cwd, opened))
     }
 }
 
 // ---------------------------------------------------------------------------
-// The predecessor's terminal state (decision 77)
+// The predecessor's terminal state
 // ---------------------------------------------------------------------------
 
 /// What a succession has to retire, settled before anything opens.
@@ -389,12 +424,12 @@ enum Predecessor {
 
 /// The predecessor as `mode` needs it, or the note and cause the effect
 /// fails with before retirement. A transfer retires a recorded identity, or
-/// takes decision 77's proof; one with a standing pane and no identity is
+/// takes the terminal proof; one with a standing pane and no identity is
 /// an unknown stop, which cannot authorize a second controller. A start
 /// refuses `overseer-live` over an identity read live or a pane standing on
 /// the proven server, and proceeds over an empty record. A record that
 /// names a session nothing can resolve refuses `predecessor-unproven` under
-/// both (decision 109 (1)): unproven is not absent, and the remedy is
+/// both: unproven is not absent, and the remedy is
 /// adoption from its pane.
 fn resolve_predecessor(
     operation: &mut Operation,
@@ -430,7 +465,7 @@ fn resolve_predecessor(
 }
 
 /// What a reconcile reads of the predecessor's retirement: never asserted,
-/// always from the identity or decision 77's proof.
+/// always from the identity or the terminal proof.
 enum Retirement {
     Retired {
         by: &'static str,
@@ -441,7 +476,7 @@ enum Retirement {
     Stale {
         readings: u64,
     },
-    /// The record names a session nothing resolves (decision 109 (1)).
+    /// The record names a session nothing resolves.
     Unproven {
         cause: &'static str,
     },
@@ -450,7 +485,7 @@ enum Retirement {
     },
 }
 
-/// The predecessor's retirement as the identity or decision 77's proof reads
+/// The predecessor's retirement as the identity or the terminal proof reads
 /// it; a stale reading's count is written on `observation`.
 fn read_retirement(
     operation: &mut Operation,
@@ -491,8 +526,7 @@ fn read_retirement(
     })
 }
 
-/// The predecessor as retired, carried to the publication (decision 109
-/// (2)): what retired it, the record whose handles the publication settles,
+/// The predecessor as retired, carried to the publication: what retired it, the record whose handles the publication settles,
 /// and the close of its window where this run already attempted one. A
 /// reconcile closes the window at publication.
 struct Retired<'a> {
@@ -528,7 +562,7 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
     let doc_session = fleet_tmux_session(run.path)?;
 
     // --- Preconditions, all before retirement. A failure here is `failed`,
-    // the predecessor in control, no waiting runner opened (decision 61). ---
+    // the predecessor in control, no waiting runner opened. ---
     // What there is to retire: an identity, or nothing proven to run. An
     // unknown stop cannot authorize a second controller.
     let predecessor = match resolve_predecessor(&mut operation, &overseer, mode)? {
@@ -550,10 +584,31 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
         Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
     };
     // The runner's session is fixed, or the sessions that already stand
-    // are read, before the window opens (decision 65).
-    let floor = match operation.session_floor(successor.harness, &successor.home, &successor.cwd) {
-        Ok(floor) => floor,
-        Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
+    // are read, before the window opens. A resume's session is the fixed
+    // one, and its file must already stand under the home: a session the
+    // home never held fails here, nothing opened.
+    let floor = match &successor.resume {
+        Some(id) => {
+            match operation::fixed_id_file(successor.harness, &successor.home, &successor.cwd, id) {
+                Reading::Live(_) => SessionFloor::Fixed(id.clone()),
+                Reading::Gone => {
+                    return Ok(failed_before_retirement_refused(
+                        operation,
+                        &refused("session-missing", &[("session", id)]),
+                    ));
+                }
+                Reading::Unreadable { cause } => {
+                    return Ok(failed_before_retirement_refused(
+                        operation,
+                        &refused("session-store-unreadable", &[("cause", cause)]),
+                    ));
+                }
+            }
+        }
+        None => match operation.session_floor(successor.harness, &successor.home, &successor.cwd) {
+            Ok(floor) => floor,
+            Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
+        },
     };
     // The brief is held, not spelled into the launch: the waiting runner
     // opens at its prompt and is delivered the handoff after retirement.
@@ -575,7 +630,7 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
     // still publishes the predecessor's generation. ---
     // The server and floor are recorded before the window opens (decision
     // 73); a reconcile at `opening` with a dead owner adopts the runner by
-    // its receipt (decision 96), and before retirement that is still an
+    // its receipt, and before retirement that is still an
     // abandon.
     let opening = match operation.opening(&server, &floor, brief) {
         Ok(opening) => opening,
@@ -593,7 +648,7 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
             return Ok(failed_before_retirement_refused(operation, &Error::from(e)));
         }
         // The launcher was asked and did not answer: a window may stand
-        // that nothing registers (decision 111 (5)); the intent stays open
+        // that nothing registers; the intent stays open
         // with that obligation for the reconcile.
         Err(OpenRefusal::Unanswered { refusal }) => {
             return Ok(operation.hold(json!({
@@ -622,7 +677,7 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
     };
     let mut opened = opening.into_opened(pane.id.clone(), None);
     // The line is typed: the window-opened phase is recorded before the
-    // wait, the receipt standing until read (decisions 62, 115 (A), 120 (5)).
+    // wait, the receipt standing until read.
     operation.record_phase(Phase::WindowOpened {
         opened: opened.clone(),
     })?;
@@ -666,7 +721,7 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
             );
         }
     };
-    // The runner's identity is the attempt's from here (decision 99): every
+    // The runner's identity is the attempt's from here: every
     // later phase carries it, and the retirement and publication use no
     // other.
     operation.record_identity(&mut opened, &runner)?;
@@ -677,7 +732,7 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
     // The process that asked for the succession answers from the
     // predecessor's own pane as often as not; retiring that pane ends it.
     // It has only its reply left to make once the job holds the lease, so
-    // the job lets it exit first, within the bound (decision 76).
+    // the job lets it exit first, within the bound.
     operation.await_caller_gone()?;
     // The predecessor's recorded handles become obligations of the intent at
     // the start of its retirement, written before the first signal; the
@@ -763,7 +818,7 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
         }
     };
     // The predecessor's own window, closed by exact id on its proven server:
-    // a handle of the record the publication settles (decision 109 (2)).
+    // a handle of the record the publication settles.
     let window = operation.close_overseer_window(&overseer)?;
     operation.record_phase(Phase::Retired {
         opened: opened.clone(),
@@ -816,7 +871,7 @@ fn complete_transfer(
         Phase::WindowOpened { .. } | Phase::Retired { .. } => {
             let Some(brief) = &opened.brief else {
                 // No handoff to deliver: the runner idle at its composer
-                // under decision 60 is the successor once its identity is
+                // at its composer is the successor once its identity is
                 // read; a runner held at a dialog is not.
                 return publish(
                     operation,
@@ -832,7 +887,7 @@ fn complete_transfer(
                 );
             };
             // The runner must be at its composer, under the identity read
-            // before retirement where there is one (decision 60).
+            // before retirement where there is one.
             let identity =
                 match operation.await_state(pane, successor.harness, &owns, runner, &idle)? {
                     Polled::Ready { identity } => identity,
@@ -870,9 +925,9 @@ fn complete_transfer(
                     }
                 };
             // The runner's own session file, bound once before the paste
-            // (decision 65); a brief is never pasted without it. A store that
+            //; a brief is never pasted without it. A store that
             // could not be read whole holds the succession at this phase with
-            // the cause (decisions 95, 99): the runner is live, so this is no
+            // the cause: the runner is live, so this is no
             // refusal.
             let session = match successor.bind_session(&operation, opened)? {
                 Binding::Bound(session) => session,
@@ -975,7 +1030,7 @@ fn complete_transfer(
             // The last read before publication: the identity stands or the
             // runner is gone, and then its window, the runner's own, is
             // closed by exact id before the failure completes, the whole
-            // recorded set consumed (decision 115 (A)).
+            // recorded set consumed.
             let id = Identity {
                 pid: u32::try_from(*pid).unwrap_or(u32::MAX),
                 start: start.clone(),
@@ -1015,7 +1070,7 @@ fn complete_transfer(
     };
     // The delivery is confirmed by the harness's own record: a user turn
     // beyond the count before the paste, in the one file bound above
-    // (decisions 61 and 65). The runner then works that brief, so it is
+    //. The runner then works that brief, so it is
     // published idle or working, never held at a dialog.
     let file = Path::new(&session.file);
     match operation.await_delivered_turn(successor.harness, pane, file, turns_before)? {
@@ -1254,7 +1309,7 @@ fn stop_runner(
 }
 
 // ---------------------------------------------------------------------------
-// The explicit stop (decision 78)
+// The explicit stop
 // ---------------------------------------------------------------------------
 
 /// The controller's recorded identity ended, or proven terminal with none
@@ -1274,7 +1329,7 @@ fn controller_retired(
 
 /// Retire the recorded controller exactly: its handles acquired at the
 /// start, its identity stopped, or, with none recorded, proven terminal by
-/// decision 77, then its window closed. A stale identity, a timeout or an
+/// the terminal proof, then its window closed. A stale identity, a timeout or an
 /// unreadable read is `unconfirmed`, never a name-based kill; a standing
 /// pane with no identity is refused, since nothing names what to stop. Runs
 /// in the detached job: the process that asked answers from the controller's
@@ -1316,7 +1371,7 @@ pub(super) fn stop_controller_effect(run: &Run, intent_id: &str) -> Result<Effec
     }
 }
 
-/// The stop's outcome for a record with no identity: decision 77's proof
+/// The stop's outcome for a record with no identity: the terminal proof
 /// confirms it, a standing pane or a record nothing proves refuses it with
 /// nothing signalled, an unreadable read holds it.
 fn stop_without_identity(
@@ -1356,7 +1411,7 @@ fn stop_without_identity(
 /// The stop cell of the reconcile matrix: the recorded identity read gone
 /// confirms once its window is closed, live is a stop still to run (`stop:
 /// pending`, which a repeated request runs), unreadable holds; with no
-/// identity, decision 77's proof decides as the effect does. A generation
+/// identity, the terminal proof decides as the effect does. A generation
 /// moved past the intent's is `target-moved`.
 pub(super) fn reconcile_stop(run: &Run, intent: &Intent) -> Result<EffectOutcome> {
     let overseer = read_overseer(run.path)?;
@@ -1364,10 +1419,10 @@ pub(super) fn reconcile_stop(run: &Run, intent: &Intent) -> Result<EffectOutcome
     let mut operation = Operation::open(run, intent)?;
     operation.read_standing(Some(&overseer))?;
     if intent.target != overseer_target(generation) {
-        // The record the stop named has moved on (decision 44): before any
+        // The record the stop named has moved on: before any
         // signal it is refused; after one it retries on its own set alone
-        // (decision 124d (20)) and settles once every handle is read gone,
-        // else it holds (decision 124a (1)).
+        // and settles once every handle is read gone,
+        // else it holds.
         let observation = json!({"reconcile": "stop-controller", "generation": generation});
         return moved_target(operation, run, &overseer, observation);
     }
@@ -1432,7 +1487,7 @@ pub(super) fn reconcile_stop(run: &Run, intent: &Intent) -> Result<EffectOutcome
 /// start. The record moved past the intent's generation: refused before any
 /// signal, retried on the intent's own set after one. Otherwise `retired` is
 /// read from the
-/// predecessor's identity or decision 77's proof, never asserted. No phase,
+/// predecessor's identity or the terminal proof, never asserted. No phase,
 /// or a runner opened with the predecessor still live: `failed` before
 /// retirement, the runner stopped, the original pending restored. From
 /// `retired` on, the succession completes as the effect would: the runner's
@@ -1447,13 +1502,12 @@ pub(super) fn reconcile_transfer(run: &Run, intent: &Intent) -> Result<EffectOut
     let generation = overseer.generation.unwrap_or(0);
     let mode = Mode::of(intent.op);
     let mut operation = Operation::open(run, intent)?;
-    // Every standing handle is read by its own key first (decision 124a (2)).
+    // Every standing handle is read by its own key first.
     operation.read_standing(Some(&overseer))?;
-    // The record moved past the generation the intent named: decision 44, an
+    // The record moved past the generation the intent named, an
     // intent-stale reconciliation. Before any signal it is refused, nothing
-    // signalled; after one it retries on its own set alone (decision 124d
-    // (20)) and settles once every handle is read gone, else it holds with
-    // what stands (decision 124a (1)).
+    // signalled; after one it retries on its own set alone and settles once
+    // every handle is read gone, else it holds with what stands.
     if intent.target != overseer_target(generation) {
         let observation = unbound_transfer_observation(generation, json!({}));
         return moved_target(operation, run, &overseer, observation);
@@ -1522,7 +1576,7 @@ pub(super) fn reconcile_transfer(run: &Run, intent: &Intent) -> Result<EffectOut
     // At `opening` the runner's window may or may not have opened before
     // this process ended: adopt the pane the intent's receipt names and
     // record it `window-opened`, fail the recorded pane that never
-    // registered, or fail `nothing-opened` (decision 96). Before retirement
+    // registered, or fail `nothing-opened`. Before retirement
     // an adopted runner is abandoned below, as a `window-opened` reconcile
     // abandons it. A pending reading binds no runner: the pending and the
     // panes stand as found, whether or not the predecessor retired, since
@@ -1636,7 +1690,7 @@ fn unbound_transfer_observation(generation: u64, observation: Value) -> Value {
 /// case the predecessor's handles stand until they are read; from `retired`
 /// on the succession completes as the effect would, or stops the runner
 /// where nothing could publish it. `unproven` is the cause a record nothing
-/// resolves read with (decision 109 (1)), which abandons a runner opened
+/// resolves read with, which abandons a runner opened
 /// before retirement under it.
 #[allow(clippy::too_many_arguments)]
 fn judge_resolved(
@@ -1732,7 +1786,7 @@ fn judge_resolved(
         // Past `retired` the predecessor was confirmed terminal when the
         // phase was written; a reading that now finds a controller standing
         // is carried to the publication, which settles the record's handles
-        // (decision 109 (2)) and so publishes nothing over a live identity.
+        // and so publishes nothing over a live identity.
         (
             None,
             Phase::Opening { .. }
@@ -1862,7 +1916,7 @@ fn recorded_runner_of(intent: &Intent) -> Option<Identity> {
 
 /// The runner identity a phase recorded, once one was read: the last read
 /// before publication, else the one the pane carries since it was adopted or
-/// first judged (decision 99).
+/// first judged.
 fn recorded_runner(phase: &Phase) -> Option<Identity> {
     match phase {
         Phase::IdentityRead { pid, start, .. } => Some(Identity {

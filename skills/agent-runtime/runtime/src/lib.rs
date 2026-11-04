@@ -18,6 +18,7 @@ pub mod reading;
 pub mod record;
 pub mod rows;
 pub mod session;
+pub mod trust;
 
 pub use error::{Error, Result};
 pub use harness::Harness;

@@ -1,13 +1,12 @@
-//! The hosted readings of the lane duty (step7-map § A1; decisions 57, 176
-//! (1) (e)-(i), 192 Q1, Q2): the legacy loop's `check_prepare`,
-//! `check_lane_stall` with `cloud_stall_close`, the hosted arms of
-//! `check_start_stall` and `check_lane_long`, `check_lanes`' status verb and
-//! its finished-hosted close, ported over the fleet record's hosted lanes
-//! and run inside the lane duty's pass (`watch::lanes`).
+//! The hosted readings of the lane duty: the preparation, stall, start-stall
+//! and long-lane readings of a hosted lane, its status verb and its
+//! finished-hosted close, over the fleet record's hosted lanes and inside
+//! the lane duty's pass (`watch::lanes`); and the provider calls a hosted
+//! launch makes.
 //!
 //! Every provider read is one `lane-host` call through the one runner under
 //! `ORCH_LANE_HOST=<the record's host>`, from the scripts directory the pass
-//! carries, three-valued (decisions 99, 105): a `cat` that exits 2 is a
+//! carries, three-valued: a `cat` that exits 2 is a
 //! missing file only once a `touch` of the host answers, and every other
 //! status, the dispatcher's own refusals among them (`host-kind-verb`,
 //! `host-local`, `lane-host-busy`, a verb it does not know), is unreadable
@@ -16,7 +15,7 @@
 //! naming no host is the `local` kind, whose line the dispatcher answers for
 //! it, and asks nothing.
 //!
-//! The one close (decisions 120, 192 Q2, 194): `lane-close --state-dir
+//! The one close: `lane-close --state-dir
 //! [DIR] [ITEM]` is the irreversible step's owner and writes the lane
 //! record; the watch says it asked by a marker it creates exclusively under
 //! its own state directory before the program starts, beside the wall
@@ -25,11 +24,11 @@
 //! record out of flight. A marker standing beside a lane still in flight is
 //! a close whose end this runtime did not see: nothing is closed again, the
 //! pass names it as its failure each pass, and the lane is the operator's.
-//! The baseline rows keep the legacy's keys (`lane-stalled`,
-//! `start-stalled`, `lane-long`, `lane-prepare`, `close-pending`) and go
-//! through the runner's commit as every row does.
+//! The baseline rows (`lane-stalled`, `start-stalled`, `lane-long`,
+//! `lane-prepare`, `close-pending`) go through the runner's commit as every
+//! row does.
 
-// Every reading is matched variant by variant (decision 105).
+// Every reading is matched variant by variant.
 #![deny(clippy::wildcard_enum_match_arm)]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -68,12 +67,12 @@ const CLOSE_BOUND: Duration = Duration::from_secs(900);
 /// The two programs, under the scripts directory the pass carries.
 pub const LANE_HOST: &str = "lane-host";
 pub const LANE_CLOSE: &str = "lane-close";
-/// The rows this module keeps, by the legacy's keys.
+/// The rows this module keeps.
 pub const STALLED_ROW: &str = "lane-stalled";
 pub const PREPARE_ROW: &str = "lane-prepare";
 /// `close-pending<TAB><lane><TAB><row>|<key>`: a finished-hosted close the
 /// tracker's quota hold deferred, retried while the notification row still
-/// reads `<key>|reported` (`oversee-watch:341`, `:5100`).
+/// reads `<key>|reported`.
 pub const CLOSE_PENDING_ROW: &str = "close-pending";
 /// The row the GitHub duty writes for an item's merged pull requests, which
 /// admits the finished-hosted close (`finished_hosted_lane_eligible`).
@@ -89,11 +88,11 @@ pub struct Reads<'a> {
     /// only for a cloud lane whose pull request is a draft.
     pub roster: &'a dyn Fn() -> Result<Roster, String>,
     /// The fleet's repositories, in order; the first with an open pull
-    /// request on the lane's branch answers, as the legacy's `REPOS` did.
+    /// request on the lane's branch answers.
     pub repos: &'a [String],
 }
 
-/// A provider's answer about a file or a process on its host (decision 99):
+/// A provider's answer about a file or a process on its host:
 /// the subject read, a read that found none, or a read that failed, with
 /// the cause as one line.
 #[must_use]
@@ -139,7 +138,7 @@ pub struct Capabilities {
     pub pane: PaneKind,
     /// How the kind launches a lane (`launch=`); `None` where the line
     /// names none. The accounts judge admits a `cloud-session` host's
-    /// account only with repository access (U8d).
+    /// account only with repository access.
     pub launch: Option<Launch>,
 }
 
@@ -248,11 +247,10 @@ pub fn host_of(lane: &Lane) -> &str {
 /// capabilities` under its name. A line that could not be read or parsed
 /// keeps its cause, and every read of a lane on that host is then
 /// unreadable with it, never judged off the local kind. The caller hands
-/// the lanes the pass judges, the in-flight ones alone, as the legacy read
-/// the running rows' hosts (`fleet_merge`, `oversee-watch:959-969`): a
-/// `parked`, `done` or `stopped` record keeps its host, and a provider that
-/// is gone would otherwise be asked every pass and its failure said ahead
-/// of a live lane's (R-U7-1 L1, R-U7-2 L1).
+/// the lanes the pass judges, the in-flight ones alone: a `parked`, `done`
+/// or `stopped` record keeps its host, and a provider that is gone would
+/// otherwise be asked every pass and its failure said ahead of a live
+/// lane's.
 pub struct Hosts {
     lines: BTreeMap<String, Result<Capabilities, String>>,
 }
@@ -307,7 +305,7 @@ fn first_line(text: &str) -> &str {
 /// answer within the bound.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the lane duty's provider reads: `lane-host` from the scripts directory the pass carries through the one runner under the duty's tag, `ORCH_LANE_HOST` naming the record's host (decisions 94 (b), 192 Q1, 193 (c))"
+    reason = "the lane duty's provider reads: `lane-host` from the scripts directory the pass carries through the one runner under the duty's tag, `ORCH_LANE_HOST` naming the record's host"
 )]
 fn lane_host(
     scripts: &Path,
@@ -414,10 +412,8 @@ pub fn status(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<H
 }
 
 /// `lane-host stop --item ITEM --harness H` before a hosted `pane=local`
-/// relaunch (`wall_route`, `oversee-watch:4728`), confirmed by exit 0 and
-/// the one line `stopped item=ITEM processes=N`
-/// (`lane_recovery_stop_confirmed`, `lib/lane-relaunch.sh:78`); `Err` is
-/// the status the refusal names.
+/// relaunch, confirmed by exit 0 and the one line `stopped item=ITEM
+/// processes=N`; `Err` is the status the refusal names.
 pub fn stop(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<(), i32> {
     let out = lane_host(
         scripts,
@@ -436,9 +432,166 @@ pub fn stop(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<(),
     if confirmed { Ok(()) } else { Err(0) }
 }
 
+// --- the launch's calls --------------------------------------------------------
+
+/// The bound on `create` and `wait`: a provider clones, installs and builds
+/// the lane's checkout before it answers.
+const PREPARE_BOUND: Duration = Duration::from_secs(1800);
+
+/// What `create` answered (`schemas/lane-host.md` § Provider protocol):
+/// the ssh target, the worktree path on the host, the prefix the launch
+/// line runs under, whether the preparation is still going, and a Pi
+/// lane's root where the provider names one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Created {
+    pub target: String,
+    pub path: String,
+    pub prefix: String,
+    pub preparing: bool,
+    pub pi_root: Option<String>,
+}
+
+/// `lane-host create --item ITEM --repo REPO --harness H --account DIR
+/// [--relaunch]`: the line parsed, or the cause. A `75` is an item another
+/// session owns, named `item-owned`; a `75` whose line carries
+/// `state=preparing` is an accepted preparation.
+pub fn create(
+    scripts: &Path,
+    host: &str,
+    item: &str,
+    repo: &str,
+    harness: &str,
+    account: &str,
+    relaunch: bool,
+) -> Result<Created, String> {
+    let mut args = vec![
+        "create",
+        "--item",
+        item,
+        "--repo",
+        repo,
+        "--harness",
+        harness,
+        "--account",
+        account,
+    ];
+    if relaunch {
+        args.push("--relaunch");
+    }
+    let out = call(scripts, host, "create", &args, PREPARE_BOUND)
+        .map_err(|cause| format!("host-create-failed cause={cause}"))?;
+    let line = host::stdout_text(&out);
+    let mut created = Created {
+        target: String::new(),
+        path: String::new(),
+        prefix: String::new(),
+        preparing: false,
+        pi_root: None,
+    };
+    for field in line.split('\t') {
+        match field.split_once('=') {
+            Some(("ssh-target", v)) => created.target = v.to_owned(),
+            Some(("path", v)) => created.path = v.to_owned(),
+            Some(("remote-prefix", v)) => created.prefix = v.to_owned(),
+            Some(("state", "preparing")) => created.preparing = true,
+            Some(("pi-root", v)) => created.pi_root = Some(v.to_owned()),
+            Some(_) | None => {}
+        }
+    }
+    match exit_code(&out) {
+        0 => {}
+        75 if created.preparing => {}
+        75 => return Err("item-owned exit=75".to_owned()),
+        _ => return Err(format!("host-create-failed {}", cause_of("create", &out))),
+    }
+    if created.target.is_empty()
+        || created.path.is_empty()
+        || created.prefix.is_empty()
+        || line.contains('\n')
+    {
+        return Err("host-line-invalid".to_owned());
+    }
+    Ok(created)
+}
+
+/// `lane-host wait --item ITEM` after an accepted preparation: ready, or
+/// the cause the provider gave.
+pub fn wait(scripts: &Path, host: &str, item: &str) -> Result<(), String> {
+    let out = call(
+        scripts,
+        host,
+        "wait",
+        &["wait", "--item", item],
+        PREPARE_BOUND,
+    )
+    .map_err(|cause| format!("host-wait-failed cause={cause}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!("host-wait-failed {}", cause_of("wait", &out)))
+    }
+}
+
+/// `lane-host put --item ITEM PATH` with `bytes` on its stdin: written, or
+/// the cause.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the launch's provider write through the one runner under the record's host, the bytes on the provider's stdin"
+)]
+pub fn put(scripts: &Path, host: &str, item: &str, path: &str, bytes: &[u8]) -> Result<(), String> {
+    let env: [(&str, &OsStr); 1] = [("ORCH_LANE_HOST", OsStr::new(host))];
+    let out = host::run_tagged_fed(
+        TAG,
+        LANE_HOST,
+        &scripts.join(LANE_HOST),
+        "put",
+        &["put", "--item", item, path],
+        Place {
+            cwd: None,
+            env: &env,
+        },
+        bytes,
+        READ_BOUND,
+    )
+    .map_err(|e| format!("put {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(cause_of("put", &out))
+    }
+}
+
+/// One provider call under `bound`, for the launch's long verbs.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the launch's provider calls, `lane-host` through the one runner under the record's host, each verb's bound its own"
+)]
+fn call(
+    scripts: &Path,
+    host: &str,
+    operation: &'static str,
+    args: &[&str],
+    bound: Duration,
+) -> Result<std::process::Output, String> {
+    let env: [(&str, &OsStr); 1] = [("ORCH_LANE_HOST", OsStr::new(host))];
+    host::run_tagged_in(
+        TAG,
+        LANE_HOST,
+        &scripts.join(LANE_HOST),
+        operation,
+        args,
+        Place {
+            cwd: None,
+            env: &env,
+        },
+        bound,
+    )
+    .map_err(|e| e.to_string())
+}
+
 // --- the one close ------------------------------------------------------------
 
-/// How `lane-close` answered (`close_hosted_lane`, `oversee-watch:1420`).
+/// How `lane-close` answered.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Closed {
     /// Exit 0: the lane closed; `line` is the `kept=` or `closed=absent`
@@ -455,11 +608,11 @@ pub enum Closed {
 }
 
 /// `lane-close --state-dir [DIR] [ITEM]` through the one runner, both
-/// streams read as one as the legacy read them (`2>&1`). The legacy's
-/// `--if-terminal` arm has no caller among the ported functions.
+/// streams read as one (`2>&1`), since the program's refusal lines land on
+/// either.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the lane duty's one irreversible call, `lane-close` from the scripts directory the pass carries through the one runner under the duty's tag, its marker written first (decisions 94 (b), 120, 192 Q2)"
+    reason = "the lane duty's one irreversible call, `lane-close` from the scripts directory the pass carries through the one runner under the duty's tag, its marker written first"
 )]
 fn run_close(scripts: &Path, state_dir: &Path, item: &str) -> Closed {
     let dir = state_dir.display().to_string();
@@ -557,7 +710,7 @@ enum Written {
 /// whose end was not read.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the close marker, the watch's own file under its state directory, created exclusively before `lane-close` starts so a close whose end this runtime does not see is never asked again (decisions 120, 192 Q2)"
+    reason = "the close marker, the watch's own file under its state directory, created exclusively before `lane-close` starts so a close whose end this runtime does not see is never asked again"
 )]
 fn write_marker(path: &Path, marker: &CloseMarker) -> Result<Written, String> {
     if let Some(dir) = path.parent() {
@@ -635,7 +788,7 @@ fn close_markers(dir: &Path) -> Result<Vec<PathBuf>, String> {
 }
 
 /// The markers read against the fleet record at the start of every pass
-/// (decision 194): a marker whose item no in-flight lane carries with the
+/// a marker whose item no in-flight lane carries with the
 /// launch it recorded is a close whose record `lane-close` wrote (or a lane
 /// launched afresh), and leaves; a marker beside its in-flight lane is a
 /// close this runtime did not see end, named as the operator's lane as the
@@ -682,7 +835,7 @@ pub fn prune_close_markers(pass: &Pass, out: &mut Produced) {
 }
 
 /// Whether the tracker's quota hold stands over this lane's tracker
-/// (`lane_tracker_held`, `oversee-watch:1399`): the receipt the tracker duty
+/// the receipt the tracker duty
 /// recorded still holds at `now`, and the lane's tracker is linear (the
 /// record's word, else the item key's: `issue-N` is GitHub's).
 fn tracker_held(pass: &Pass, lane: &Lane) -> bool {
@@ -708,7 +861,7 @@ fn unconfirmed(item: &str, marker: &Path) -> String {
     )
 }
 
-/// The one close (decisions 120, 192 Q2, 194): the marker created
+/// The one close: the marker created
 /// exclusively before `lane-close` runs; an answer that closed nothing
 /// (refused, deferred, failed) removes it, since nothing irreversible
 /// happened and the next pass may ask again; a close that answered `closed`
@@ -783,8 +936,8 @@ fn say_closed(item: &str, closed: &Closed, out: &mut Produced) {
 
 // --- the stamps -------------------------------------------------------------
 
-/// The epoch second a record stamp names, a fractional second stripped as
-/// the legacy's `sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601` stripped it.
+/// The epoch second a record stamp names, a fractional second stripped, as
+/// every reader of a fleet stamp strips one.
 pub fn epoch_of(stamp: &str) -> Option<u64> {
     if let Some(whole) = stamp.strip_suffix('Z')
         && let Some((seconds, fraction)) = whole.rsplit_once('.')
@@ -815,8 +968,7 @@ enum Prepare {
     Failed,
 }
 
-/// `check_prepare` (`oversee-watch:2148`) over the hosted `prepare` records
-/// (`PREPARE_ROWS_FILTER`, `:859`): a lane record carrying a `prepare`
+/// The hosted `prepare` records: a lane record carrying a `prepare`
 /// object is `pending` while `preparing`, `ready` once `running`, `failed`
 /// once `stopped` with a `prepare.reason`. Past `ORCH_WATCH_PREPARE_SECS` a
 /// pending one is `lane-prepare-stuck` with its age and log, a ready one
@@ -969,7 +1121,8 @@ fn repos_of<'a>(pass: &'a Pass, lane: &'a Lane) -> Vec<&'a str> {
 /// holds one, through `gh` (`item_open_pr`): the branch is the item key in
 /// lower case, the list filtered to heads the repository's owner holds
 /// (`lane_own`: a fork's pull request on a guessable branch name stands for
-/// nothing), the body digested as the legacy's `cksum` digested it. With
+/// nothing), the body digested by the same POSIX `cksum` the record's
+/// account walls are keyed by. With
 /// none open, each repository's branch head and committed date. A list or a
 /// branch read that fails is the failure, never "none open".
 pub fn open_pr(pass: &Pass, lane: &Lane) -> PullRead {
@@ -1201,7 +1354,7 @@ fn cloud_stall_close(pass: &Pass, lane: &Lane, since: u64, out: &mut Produced) -
     }
 }
 
-/// `check_start_stall`'s cloud arm (`oversee-watch:2662-2740`): a running
+/// The start stall of a cloud lane: a running
 /// cloud lane with no pull request yet. A push since the launch starts the
 /// session and the row keeps it as `pushed`, so `start-stalled` never goes
 /// out for it: a branch head committed at or after the record's
@@ -1430,7 +1583,7 @@ pub fn counters(pass: &Pass, lane: &Lane, out: &mut Produced) -> Counters {
 
 // --- the finished-hosted close ------------------------------------------------
 
-/// `close_finished_hosted_lane` (`oversee-watch:1490`) at a hosted lane's
+/// The finished-hosted close at a hosted lane's
 /// `lane-exited` or `lane-idle` line: a lane whose item the GitHub duty read
 /// merged and whose worktree the host no longer has is closed through the
 /// one close; one whose worktree stands is inside its merge close-out or
@@ -1492,10 +1645,10 @@ pub fn close_finished(
     }
 }
 
-/// The retry of closes the tracker's hold deferred (`oversee-watch:5100`):
+/// The retry of closes the tracker's hold deferred:
 /// only one pending at the pass's entry and untouched by it, while its
 /// notification row still reads `<key>|reported`; a new pane or state ends
-/// the old pending close.
+/// the earlier pending close.
 pub fn retry_pending_closes(lanes: &[&Lane], pass: &Pass, hosts: &Hosts, out: &mut Produced) {
     for lane in lanes {
         let name = lane_name(lane);

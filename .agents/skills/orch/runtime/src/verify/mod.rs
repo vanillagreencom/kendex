@@ -1,4 +1,4 @@
-//! Verification of a published head where it stands (decision 93): the
+//! Verification of a published head where it stands: the
 //! `verify-head` operation reads GitHub for one pinned commit through
 //! `gh api`, decodes every reply into the closed types of `wire`, gathers
 //! them into one validated, complete `Evidence` (`evidence`), judges the
@@ -9,35 +9,35 @@
 //! its own id (the repository's workflows, a check suite's or check run's
 //! node, a source repository by the name a proof gave), never a branch
 //! head or a pull request, so a push that moved the branch after
-//! publication cannot change what is read (decision 87). A reply the types
+//! publication cannot change what is read. A reply the types
 //! cannot decode, a page set whose total disagrees with what arrived, a
 //! collection at an endpoint's documented cap, a failed request and a
 //! required workflow with no explicit source sha each end `unreadable`
 //! with a stable cause: a dependency failure is never a verdict, and
 //! `none` holds only once every absence probe was read to its last page.
-//! No type defaults a field GitHub documents as required (decisions 104,
-//! 106 and 107): an absent required key, a null where none is documented
+//! No type defaults a field GitHub documents as required: an absent required key, a null where none is documented
 //! and a word outside a documented set each refuse the reply, so malformed
 //! evidence cannot read as an empty requirement or an admissible member,
 //! and every member is validated before any selection reduces the set.
 //!
-//! The verdict is the legacy `ci-wait`'s, with the recorded corrections: a
-//! pushed base is judged (107), `startup_failure` fails (113), a tie of
-//! equal starts follows the port's listing order (117, 122). The legacy's
-//! witnesses are recorded rows (`tests/rust/verify.rs`); a verdict change
-//! is one named correction (decision 135a).
+//! The verdict's rules: a pushed base is judged, `startup_failure` fails,
+//! and a tie of equal starts follows the listing order. The verdict's
+//! witnesses are recorded rows (`tests/rust/verify.rs`).
 //!
 //! No polling loop runs here. One call is one read set; the caller repeats
 //! on `pending` under its own budget, so the budget and the retry stay with
 //! the workflow that owns them and a hung read never holds the record lock.
 //!
-//! The `verify-pr` operation (`ops::verify_pr`, U6g) is the one caller
-//! that names a pull request: [`pull_request`] reads its current head, base
-//! and state through `gh pr view`, by number, and [`run`] then judges that
-//! head exactly as above, recording under its own `source`.
+//! The `verify-pr` operation (`ops::verify_pr`) is the one caller that
+//! names a pull request: [`pull_request`] reads its current head, base and
+//! state through `gh pr view`, by number, and [`run`] then judges that
+//! head exactly as above, recording under its own `source`. The review
+//! gate's reads (`review`) name the pull request too: its verdict is the
+//! reviewers' state on the head the pull request answers.
 
 mod evidence;
 mod judge;
+pub mod review;
 mod selection;
 pub mod wire;
 
@@ -112,9 +112,8 @@ pub enum Source {
     Required,
 }
 
-/// What a check's state means for the verdict: the legacy's taxonomy as
-/// decision 113 fixes it, where `skipped` and `neutral` are skipping,
-/// counted as passed only under `required_only` (`ci-wait:812`), `stale`
+/// What a check's state means for the verdict: `skipped` and `neutral`
+/// are skipping, counted as passed only under `required_only`, `stale`
 /// is pending, and `cancelled`, `timed_out`, `action_required` and
 /// `startup_failure` read as failures.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,7 +128,7 @@ pub enum Bucket {
 impl Bucket {
     /// Whether a check in this bucket is a success the verdict counts: a
     /// skipped check counts only when the caller asked for the required set
-    /// (the legacy `$ro and bucket == "skipping"`).
+    /// (the required set is where a skipped check is the base's choice).
     fn counts_as_passed(self, required_only: bool) -> bool {
         match self {
             Bucket::Pass => true,
@@ -300,6 +299,15 @@ pub struct Unreadable {
     pub detail: Option<String>,
 }
 
+impl From<Cause> for Unreadable {
+    fn from(cause: Cause) -> Unreadable {
+        Unreadable {
+            reason: cause.key(),
+            detail: cause.detail(),
+        }
+    }
+}
+
 /// Read pull request `pr` of `repo` through one `gh pr view`: its current
 /// head, base and state, as gh exports them (`wire::PullRequestView`). The
 /// read names the pull request by its number and nothing else; the head it
@@ -332,10 +340,7 @@ pub fn pull_request(repo: &str, pr: u64) -> std::result::Result<wire::PullReques
         }
         Ok(pull)
     };
-    read().map_err(|cause| Unreadable {
-        reason: cause.key(),
-        detail: cause.detail(),
-    })
+    read().map_err(Unreadable::from)
 }
 
 /// The base as a URL path segment: every byte outside the unreserved set is
@@ -357,7 +362,7 @@ fn segment(base: &str) -> String {
 
 /// The GitHub reads, named as the cause keys name them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Endpoint {
+pub(crate) enum Endpoint {
     /// `commits/{sha}/check-runs`.
     CheckRuns,
     /// `commits/{sha}/check-suites`, read for its count.
@@ -390,8 +395,24 @@ enum Endpoint {
     /// `repos/{owner}/{name}`: a source proof's repository, for its id.
     SourceRepository,
     /// `gh pr view {number}`: the one read that names a pull request, for
-    /// the head `verify-pr` then pins every other read to (U6g).
+    /// the head `verify-pr` then pins every other read to.
     PullRequest,
+    /// `pulls/{number}`: the pull request object, for the refresh route's
+    /// author and branch and the draft flag.
+    Pull,
+    /// `pulls/{number}/reviews`: every review, for the Copilot head rule.
+    Reviews,
+    /// `issues/{number}/timeline`: the head's arrival and Copilot's
+    /// pending requests.
+    Timeline,
+    /// The GraphQL `reviewThreads` walk.
+    Threads,
+    /// `branches/{base}/protection`: classic review requirements.
+    ClassicProtection,
+    /// `pulls/{number}/requested_reviewers`, POST: the Copilot request.
+    RequestReview,
+    /// `gh pr ready {number}`: the draft marked ready.
+    Ready,
 }
 
 impl Endpoint {
@@ -410,13 +431,20 @@ impl Endpoint {
             Endpoint::WorkflowFiles => "workflow-files",
             Endpoint::SourceRepository => "source-repository",
             Endpoint::PullRequest => "pull-request",
+            Endpoint::Pull => "pull",
+            Endpoint::Reviews => "reviews",
+            Endpoint::Timeline => "timeline",
+            Endpoint::Threads => "threads",
+            Endpoint::ClassicProtection => "classic-protection",
+            Endpoint::RequestReview => "request-review",
+            Endpoint::Ready => "ready",
         }
     }
 }
 
 /// Why evidence is unreadable. `key` is the reply's `reason`.
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum Cause {
+pub(crate) enum Cause {
     /// The request did not answer: a non-zero exit, no output, or a program
     /// that could not be run or did not return in time.
     ReadFailed { endpoint: Endpoint, detail: String },
@@ -429,7 +457,7 @@ enum Cause {
     /// members can remain (`evidence`'s completeness table).
     Capped(Endpoint),
     /// A required workflow names no explicit source sha; binding it would
-    /// resolve a live ref (decision 87).
+    /// resolve a live ref.
     WorkflowSourceUnbound { path: String },
 }
 
@@ -455,18 +483,22 @@ impl Cause {
     }
 }
 
-type Read<T> = std::result::Result<T, Cause>;
+pub(crate) type Read<T> = std::result::Result<T, Cause>;
 
 /// What one `gh` call left: the bytes a call that exited zero printed, or
-/// the failure of one that did not, with the stdout it printed beside it.
-/// gh prints a GraphQL reply that carries `errors` and exits nonzero
-/// (v2.103.3 `pkg/cmd/api/api.go:492-556`, `:698`), so a failed call's
-/// stdout travels with its status to the one reader that may consume it,
-/// `nodes_of`, in the one shape that is an answer; every other read takes
-/// the failure as its own (`printed`; decision 123 (2)).
-enum Answer {
+/// the failure of one that did not, with the stdout it printed and its
+/// exit status beside it. gh prints a GraphQL reply that carries `errors`
+/// and exits nonzero (v2.103.3 `pkg/cmd/api/api.go:492-556`, `:698`), so a
+/// failed call's stdout travels with its status to the one reader that
+/// may consume it, `nodes_of`, in the one shape that is an answer; every
+/// other read takes the failure as its own (`printed`).
+pub(crate) enum Answer {
     Printed(Vec<u8>),
-    Failed { stdout: Vec<u8>, detail: String },
+    Failed {
+        stdout: Vec<u8>,
+        detail: String,
+        exit: Option<i32>,
+    },
 }
 
 impl Answer {
@@ -480,30 +512,24 @@ impl Answer {
     }
 }
 
-/// One `gh` call: the arguments after the program, as `gh api PATH`, the
-/// GraphQL form `gh api graphql -f query=… -f ids[]=…` or `gh pr view N`
-/// ([`pull_request`]), answered with what it printed and whether it exited
-/// zero (`Answer`). `Gh` is its one implementation, so `evidence::read`
-/// is the one constructor of an `Evidence`.
-trait Transport {
-    fn call(&self, endpoint: Endpoint, args: &[&str]) -> Read<Answer>;
-}
-
 /// `gh` through agent-runtime's one process runner, `gh` resolved on this
 /// process's PATH with its environment, so the caller's GitHub
-/// authentication is the one used. The runner's operation word is the
-/// call's first argument, `api` or `pr`.
-struct Gh;
+/// authentication is the one used. One call is the arguments after the
+/// program, as `gh api PATH`, the GraphQL form `gh api graphql -f query=…`
+/// or `gh pr view N`, answered with what it printed and whether it exited
+/// zero (`Answer`). The runner's operation word is the call's first
+/// argument, `api` or `pr`.
+pub(crate) struct Gh;
 
-impl Transport for Gh {
+impl Gh {
     #[allow(
         clippy::disallowed_methods,
-        reason = "the verification reads GitHub through gh for one pinned head or one pull request's head, no effect on a lane or a controller"
+        reason = "the verification reads GitHub through gh for one pinned head or one pull request's head, and the review gate asks Copilot for its one review through it; no effect on a lane or a controller"
     )]
     fn call(&self, endpoint: Endpoint, args: &[&str]) -> Read<Answer> {
         let failed = |detail: String| Cause::ReadFailed { endpoint, detail };
         let operation = match endpoint {
-            Endpoint::PullRequest => "pr",
+            Endpoint::PullRequest | Endpoint::Ready => "pr",
             Endpoint::CheckRuns
             | Endpoint::CheckSuites
             | Endpoint::Statuses
@@ -515,7 +541,13 @@ impl Transport for Gh {
             | Endpoint::CheckRunSuites
             | Endpoint::SuiteCheckRuns
             | Endpoint::WorkflowFiles
-            | Endpoint::SourceRepository => "api",
+            | Endpoint::SourceRepository
+            | Endpoint::Pull
+            | Endpoint::Reviews
+            | Endpoint::Timeline
+            | Endpoint::Threads
+            | Endpoint::ClassicProtection
+            | Endpoint::RequestReview => "api",
         };
         let output = host::run_tagged("verify", "gh", Path::new("gh"), operation, args, GH_TIMEOUT)
             .map_err(|e| failed(e.to_string()))?;
@@ -530,6 +562,7 @@ impl Transport for Gh {
             return Ok(Answer::Failed {
                 stdout: output.stdout,
                 detail,
+                exit: output.status.code(),
             });
         }
         if output.stdout.iter().all(u8::is_ascii_whitespace) {
@@ -539,9 +572,9 @@ impl Transport for Gh {
     }
 }
 
-/// The reads over a transport, decoding each answer into a wire type.
+/// The reads over `gh`, decoding each answer into a wire type.
 struct Reader<'a> {
-    gh: &'a dyn Transport,
+    gh: &'a Gh,
 }
 
 impl Reader<'_> {
@@ -550,7 +583,7 @@ impl Reader<'_> {
         serde_json::from_slice(&bytes).map_err(|_| Cause::ResponseInvalid(endpoint))
     }
 
-    /// The check-suite nodes query the legacy sent (`ci-run-correlation.sh:384`).
+    /// The check-suite nodes query: the source proof of a required run.
     fn suite_nodes(&self, ids: &[&str]) -> Read<Vec<wire::Nullable<wire::CheckSuiteNode>>> {
         self.nodes(
             Endpoint::WorkflowFiles,
@@ -641,16 +674,14 @@ impl Reader<'_> {
 /// specification § 6.4.4 Handling Field Errors), so a reply carrying
 /// `data` whose every error names one node, `["nodes", i]`, is the
 /// documented shape of ids the viewer cannot resolve: the other nodes are
-/// validated answers and node `i` is null (decision 122 (4)); a node
+/// validated answers and node `i` is null; a node
 /// present at a path an error names is not that shape. gh prints such a
 /// reply and exits nonzero, as it does for every reply carrying errors
 /// (`api.go:492-556`), so this is the one reader of a failed call's
-/// output, and it consumes that shape alone (decision 123 (2)): a failed
+/// output, and it consumes that shape alone: a failed
 /// call whose output is not that shape, unparseable, without `data`, with
 /// any other error or with no error at all, is the read's failure with
-/// what gh wrote, as the legacy refused every error
-/// (`ci-run-correlation.sh:387`; gh's client failed on any,
-/// `api/client.go:98`); a call that exited zero and printed anything but
+/// what gh wrote (gh's client fails on any error, `api/client.go:98`); a call that exited zero and printed anything but
 /// that shape answered outside the documented one. The errors are what
 /// admits a failed call's output: a reply with none is a success's shape,
 /// and a call that printed one yet failed did so for a cause the reply
@@ -663,7 +694,7 @@ fn nodes_of<N: for<'de> Deserialize<'de>>(
     let failed = matches!(answer, Answer::Failed { .. });
     let (bytes, refused) = match answer {
         Answer::Printed(bytes) => (bytes, Cause::ResponseInvalid(endpoint)),
-        Answer::Failed { stdout, detail } => (stdout, Cause::ReadFailed { endpoint, detail }),
+        Answer::Failed { stdout, detail, .. } => (stdout, Cause::ReadFailed { endpoint, detail }),
     };
     let Ok(reply) = serde_json::from_slice::<wire::NodesReply<N>>(&bytes) else {
         return Err(refused);

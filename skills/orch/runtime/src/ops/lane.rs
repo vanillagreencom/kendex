@@ -17,7 +17,7 @@ use serde_json::{Map, Value, json};
 
 use super::accounts::{self, PickAnswer, PickRequest};
 use super::admission::{self, Admission, ScopeRange};
-use super::occupancy::{self, Host, Identities, Occupancy, Read};
+use super::occupancy::{self, CLOUD_KIND, Host, Identities, Occupancy, Read};
 use super::{
     Effect, Env, OutcomeRecorded, RecordOutcome, Standing, intents, lane_at, lane_doc_mut, lanes,
     new_intent, no_open_intent, open_intent, push_intent, same_open_intent, string_or_null,
@@ -31,17 +31,21 @@ use crate::state::{
 /// Open a lane for an item: judge the fleet cap, write its record as
 /// `preparing` and the intent to launch it. On a relaunch every optional
 /// field left out keeps the record's value, and `harness`, `account`,
-/// `model` and `effort` reach the record only when the launch confirms, as
-/// the legacy launcher writes them at `running`; on a first launch the
-/// record carries them from the start, and `kind` and `surface` left out
-/// are `local` and `tmux`, the one launch route this runtime has.
-/// `exclude_account` is the account a wall spent (step4-map A11): a launch
-/// whose `account` canonicalizes to it is refused. `over_cap` admits the
-/// launch past the cap and is recorded, as the legacy `--over-cap` is.
-/// `judge_account` asks the accounts judge for the named account's room
-/// before the admission (step6-map A5), the legacy launcher's gate on a
-/// lane the caller named rather than one a pick answered; left out, the
-/// account is taken as a pick's answer, judged already.
+/// `model` and `effort` reach the record only when the launch confirms,
+/// since the session that runs is the one that confirmed; on a first
+/// launch the record carries them from the start. `host` names where the
+/// lane runs: nothing for a window on this machine, `claude-cloud` for a
+/// cloud session, else a provider's path; `kind` left out follows it
+/// (`local`, `claude-cloud`, `ssh`), and `surface` is `tmux`, the one
+/// surface a lane has. `exclude_account` is the account a wall spent: a
+/// launch whose `account` canonicalizes to it is refused. `over_cap` admits
+/// the launch past the cap and is recorded. `judge_account` asks the
+/// accounts judge for the named account's room before the admission, the
+/// gate on a lane the caller named rather than one a pick answered; left
+/// out, the account is taken as a pick's answer, judged already. `refresh`
+/// marks a refresh lane, whose brief runs `kendex refresh` or `kendex
+/// apply` with `--lane-refresh`: the launch writes the refresh record the
+/// drift hooks read.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LaunchLane {
     pub item: String,
@@ -60,6 +64,8 @@ pub struct LaunchLane {
     #[serde(default)]
     pub kind: Option<String>,
     #[serde(default)]
+    pub host: Option<String>,
+    #[serde(default)]
     pub surface: Option<String>,
     #[serde(default)]
     pub over_cap: Option<String>,
@@ -67,9 +73,11 @@ pub struct LaunchLane {
     pub exclude_account: Option<String>,
     #[serde(default)]
     pub judge_account: bool,
+    #[serde(default)]
+    pub refresh: bool,
     /// The opening instruction, read by the harness at its start. Not a
     /// record field: the effect carries it to the launch, and the
-    /// admission reads the paths it names (decision 118 (4)).
+    /// admission reads the paths it names.
     #[serde(default)]
     pub brief_file: Option<PathBuf>,
     /// The checkout the change-scope paths are read in, for `scope_range`.
@@ -85,6 +93,25 @@ pub struct LaunchLane {
 }
 
 impl LaunchLane {
+    /// Where the lane runs, as the record spells it: `host` empty or
+    /// `local` is a window on this machine, recorded as no host.
+    fn host(&self) -> Option<&str> {
+        self.host
+            .as_deref()
+            .filter(|h| !h.is_empty() && *h != "local")
+    }
+
+    /// The host kind the record carries: the request's word, else the one
+    /// its host implies.
+    fn kind(&self) -> &str {
+        match (self.kind.as_deref(), self.host()) {
+            (Some(kind), _) => kind,
+            (None, None) => "local",
+            (None, Some(CLOUD_KIND)) => CLOUD_KIND,
+            (None, Some(_)) => "ssh",
+        }
+    }
+
     /// The optional fields a relaunch writes at `preparing`, in the lane
     /// record's order.
     fn prepared(&self) -> [(&'static str, &Option<String>); 5] {
@@ -109,9 +136,9 @@ impl LaunchLane {
 }
 
 /// Bind a session this runtime did not launch to the item's lane record.
-/// A `launch` left out keeps the recorded identity, as the legacy wake does.
+/// A `launch` left out keeps the recorded identity.
 /// The identity bound, given or recorded, is confirmed live through the one
-/// identity reader before the lane reads `running` (decision 60); no name
+/// identity reader before the lane reads `running`; no name
 /// is read in its place.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AdoptSession {
@@ -124,7 +151,7 @@ pub struct AdoptSession {
 }
 
 /// The tracker's terminal verdict on the lane's item, carried as evidence
-/// by the package that read it (decision 83).
+/// by the package that read it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Terminal {
     pub verdict: TerminalVerdict,
@@ -132,7 +159,7 @@ pub struct Terminal {
 }
 
 /// An explicit disposition that ends the attempt with no landing while the
-/// item stays open (decision 98).
+/// item stays open.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NoLanding {
     pub reason: String,
@@ -142,7 +169,7 @@ pub struct NoLanding {
 /// Ask for a lane's owned processes and window to be closed. Without a
 /// ground the lane must read exited; `terminal` closes it whatever it reads;
 /// `no_landing` retires the attempt on idle-or-gone proof and keeps the
-/// item's work (decisions 83, 98).
+/// item's work.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CloseOwnedResources {
     pub item: String,
@@ -154,7 +181,7 @@ pub struct CloseOwnedResources {
 
 /// Record a hosted lane parked: its clean merge wait ended with its disk
 /// kept, as `lane-close --park` records it after the sandbox stop. The
-/// sandbox stop itself is the host adapter's (decision 57), so the lane
+/// sandbox stop itself is the host adapter's, so the lane
 /// must already read `stopped`; a local lane has no sandbox to park.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ParkLane {
@@ -168,13 +195,13 @@ pub struct ParkLane {
     #[serde(default)]
     pub until_repo: Option<String>,
     /// A finite hold on the lane's cap slot through the park, where the
-    /// caller wants one; parked disk alone charges nothing (decision 97).
+    /// caller wants one; parked disk alone charges nothing.
     #[serde(default)]
     pub reservation: Option<Reservation>,
 }
 
 /// Hold a lane's cap slot deliberately until `until`, an ISO 8601 UTC stamp
-/// after now (decision 97).
+/// after now.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReserveLane {
     pub item: String,
@@ -192,7 +219,7 @@ pub struct ReleaseLane {
 }
 
 /// Record how far an open effect has got: its phase and the pane it holds,
-/// written before the effect waits on its next step (decision 62). Refused
+/// written before the effect waits on its next step. Refused
 /// on an intent that has ended.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordPhase {
@@ -251,8 +278,9 @@ pub struct PhaseRecorded {
     pub intent: Intent,
 }
 
-/// The record a first launch appends, in `lane_record_write`'s key order
-/// with `null` where the launch knows no value, as that writer emits it.
+/// The record a first launch appends, in the lane record's key order with
+/// `null` where the launch knows no value, the order every reader of the
+/// fleet record meets.
 fn new_lane_record(r: &LaunchLane, at: &str) -> Value {
     json!({
         "item": r.item,
@@ -261,8 +289,8 @@ fn new_lane_record(r: &LaunchLane, at: &str) -> Value {
         "harness": r.harness,
         "window": Value::Null,
         "account": string_or_null(&r.account),
-        "host": Value::Null,
-        "kind": r.kind.as_deref().unwrap_or("local"),
+        "host": r.host().map_or(Value::Null, Value::from),
+        "kind": r.kind(),
         "mail_root": r.mail_root,
         "surface": r.surface.as_deref().unwrap_or("tmux"),
         "model": string_or_null(&r.model),
@@ -277,7 +305,7 @@ fn new_lane_record(r: &LaunchLane, at: &str) -> Value {
     })
 }
 
-/// The legacy `unpark($at)`: a standing `parked` moves into `pending_pr`
+/// Unpark at `at`: a standing `parked` moves into `pending_pr`
 /// (`{pr, repo, head}` plus `until_pr` and `until_repo` where set) and
 /// appends `{from: parked.at, to: $at, cause: "parked"}` to `pauses`; the
 /// `parked` key is removed either way.
@@ -319,7 +347,7 @@ fn unpark(path: &Path, lane: &mut Document, index: usize, at: &str) -> Result<()
     Ok(())
 }
 
-/// One spelling per account, as the legacy claim store compares them
+/// One spelling per account, as the claim store compares them
 /// (`lane_claims_canon`): the directory resolved physically, else its own
 /// spelling with trailing slashes off.
 fn canonical_account(account: &str) -> String {
@@ -345,7 +373,7 @@ fn recorded_harness(lane: &Lane, host: &Host) -> Option<Reading<Identity>> {
 /// Refuse to start a second harness over the lane's recorded execution,
 /// its launched harness or its detached wake turn, while either runs or
 /// cannot be read, whatever the status word says: a live wake is owned
-/// execution, and a relaunch beside it would be a second (decision 108).
+/// execution, and a relaunch beside it would be a second.
 fn no_live_harness(lane: &Lane, ids: &Identities) -> Result<()> {
     for read in [&ids.launch, &ids.wake].into_iter().flatten() {
         let Read { id, reading } = read;
@@ -369,17 +397,17 @@ fn no_live_harness(lane: &Lane, ids: &Identities) -> Result<()> {
     Ok(())
 }
 
-/// The account's room (step6-map A5; decision 168 (3), round 8 item 3): a
+/// The account's room: a
 /// launch that asks (`judge_account`) and names an account `lanes`
 /// measures is judged on that account's projection through the accounts
 /// judge, with the charge of the lane this relaunch replaces, its own
 /// record, left out, since the relaunch takes that record's slot (its
 /// reservation goes with the relaunch patch): a replacement adds no lane.
 /// A launch with no record is judged fresh. A host built without the
-/// judge's settings judges no account. The answers are the legacy
+/// judge's settings judges no account. The answers are the
 /// launcher's (`open-terminal`, `named_lane_judge`): room, or no row to
 /// judge, proceeds; walled, unmeasured and unjudged refuse with their
-/// cause, an unread window being no empty one (decision 99); an account
+/// cause, an unread window being no empty one; an account
 /// the word refuses, reserved, retired or excluded, refuses by its word
 /// with no window's figure. The walled line's figures are the record's as that
 /// launcher read them: the projected window where one was projected, else
@@ -489,9 +517,11 @@ pub(super) fn launch_lane(
     env: &Env,
     host: &Host,
 ) -> Result<LaneLaunched> {
-    // The one launch route is a local tmux window; a non-local kind or a
-    // non-tmux surface is refused before any intent persists (decision 57).
-    if let Some(kind) = r.kind.as_deref().filter(|k| *k != "local") {
+    // A lane runs in a tmux window, on this machine or over ssh, or as a
+    // cloud session; a kind nothing builds or another surface is refused
+    // before any intent persists.
+    let kind = r.kind();
+    if !matches!(kind, "local" | "ssh" | CLOUD_KIND) {
         return Err(Error::HostUnsupported {
             kind: kind.to_owned(),
             surface: r.surface.clone().unwrap_or_else(|| "tmux".to_owned()),
@@ -499,7 +529,7 @@ pub(super) fn launch_lane(
     }
     if let Some(surface) = r.surface.as_deref().filter(|s| *s != "tmux") {
         return Err(Error::HostUnsupported {
-            kind: r.kind.clone().unwrap_or_else(|| "local".to_owned()),
+            kind: kind.to_owned(),
             surface: surface.to_owned(),
         });
     }
@@ -511,9 +541,9 @@ pub(super) fn launch_lane(
     // relaunch is refused beside a harness that still runs.
     let own = position.map(|index| occupancy::read_identities(&lanes[index], host));
     // The cap as it stands, read once for the reply whether this request
-    // admits a launch or finds its own standing (decision 97): every local
+    // admits a launch or finds its own standing: every local
     // lane, the one a relaunch replaces counted for what the relaunch does
-    // not replace, plus the legacy rows no live record accounts for.
+    // not replace, plus the claim rows no live record accounts for.
     let claims = match &host.claim_store {
         Some(store) => occupancy::read_claims(store, &occupancy::canonical_fleet(path))?,
         None => Vec::new(),
@@ -536,8 +566,8 @@ pub(super) fn launch_lane(
             admission,
         });
     }
-    // The account boundary (step4-map A11): the account judge stays legacy
-    // (decision 75), and the one thing this op refuses is the account the
+    // The account boundary: the one thing this op refuses of the account is
+    // the one the
     // wall spent, compared the way the claim store compares accounts.
     if let (Some(account), Some(spent)) = (&r.account, &r.exclude_account)
         && canonical_account(account) == canonical_account(spent)
@@ -556,18 +586,18 @@ pub(super) fn launch_lane(
             });
         }
         // A returned turn alone does not end a live harness or its wake
-        // (decision 97): a relaunch over one would make a second.
+        // a relaunch over one would make a second.
         no_live_harness(previous, ids)?;
     }
     // The account's room, judged before the admission and the cap as the
-    // legacy launcher judged its named lane first; a relaunch is judged
+    // launcher judged its named lane first; a relaunch is judged
     // with its own record's charge left out.
     room(path, r, position.map(|_| r.item.as_str()), env, host)?;
-    // The admission judgement (decisions 118 (3), (4), (6)), under the
+    // The admission judgement, under the
     // same launch lock and before the cap, so one transition admits or
     // refuses with one cause: a first launch is judged on its item, its
     // brief and the range it names; a relaunch keeps the record's sets,
-    // as the legacy launcher passes a recorded lane's relaunch unjudged.
+    // since a recorded lane's relaunch was judged when it was admitted.
     let judged = match position {
         Some(_) => None,
         None => Some(admission::judge(
@@ -613,13 +643,22 @@ pub(super) fn launch_lane(
             // new attempt takes the slot itself; `running_at` and `launch`
             // are written empty until the launch confirms, and the selection
             // (harness, account, model, effort) waits on the intent until
-            // then, as the legacy writer records it at `running`.
+            // then, as the record reads it at `running`.
             let lane = lane_doc_mut(path, doc, index)?;
             state::set(lane, "mail_root", r.mail_root.as_str());
             for (key, value) in r.prepared() {
                 if let Some(value) = value {
                     state::set(lane, key, value.as_str());
                 }
+            }
+            if r.host.is_some() {
+                state::set(lane, "host", r.host().map_or(Value::Null, Value::from));
+                state::set(lane, "kind", kind);
+            }
+            if r.refresh {
+                state::set(lane, "refresh", true);
+            } else {
+                state::delete(lane, "refresh");
             }
             state::set(lane, "session_since", at.as_str());
             state::set(lane, "running_at", Value::Null);
@@ -633,7 +672,11 @@ pub(super) fn launch_lane(
         }
         None => {
             let rows = state::array_mut(path, doc, "lanes")?;
-            rows.push(new_lane_record(r, &at));
+            let mut record = new_lane_record(r, &at);
+            if r.refresh {
+                record["refresh"] = Value::Bool(true);
+            }
+            rows.push(record);
             let index = rows.len() - 1;
             if let Some(judged) = &judged {
                 admission::record(path, doc, index, judged)?;
@@ -736,7 +779,7 @@ pub(super) fn adopt_session(
     }
 }
 
-/// The ground a close request stands on (decisions 83, 98), judged on the
+/// The ground a close request stands on, judged on the
 /// lane's recorded harness through the one identity reader. Without a
 /// stated ground the harness must read gone; a recorded pane with no
 /// identity is a lane not known exited. A `no-landing` disposition needs a
@@ -832,7 +875,7 @@ pub(super) fn close_owned_resources(
     })
 }
 
-/// A reservation's term must be a stamp after the clock (decision 97).
+/// A reservation's term must be a stamp after the clock.
 fn check_reservation(item: &str, reservation: &Reservation, env: &Env) -> Result<()> {
     match clock::epoch_secs(&reservation.until) {
         Some(until) if until > env.now_secs => Ok(()),
@@ -875,8 +918,7 @@ pub(super) fn park_lane(
             parked_now: false,
         }),
         // The hosted harness stop and sandbox stop precede the park and are
-        // the host adapter's (decision 57); until it lands they stay with
-        // the legacy script, and this record moves only a lane they ended.
+        // the host adapter's, and this record moves only a lane they ended.
         LaneStatus::Preparing | LaneStatus::Running => Err(Error::LaneLive {
             item: r.item.clone(),
             status: lane.status,
@@ -974,19 +1016,19 @@ pub(super) fn release_lane(
 
 /// The lane an intent targets, as it stands, or the reading that its record
 /// moved under the intent: the lane is gone, moved under the intent's keys
-/// ([`lane_moved`]), or closed under a launch intent, which a legacy
+/// ([`lane_moved`]), or closed under a launch intent, which an earlier
 /// `lane-close` does from any status.
 pub(super) enum IntentTarget {
     Current { index: usize },
     Moved { observed: Option<LaneStatus> },
 }
 
-/// Whether `lane` moved under an intent written at `keys` (decision 124d
-/// (14)): its `session_since` is not the intent's, or its launch names a
+/// Whether `lane` moved under an intent written at `keys`: its
+/// `session_since` is not the intent's, or its launch names a
 /// pane or an identity the intent's set did not record under the harness
 /// role. The one judgement: the handle applies it before it acts, and the
 /// store applies it before it moves the lane, on the same inputs. A stamp
-/// alone never decides, since the legacy launcher writes whole seconds.
+/// alone never decides, since a record may carry whole seconds.
 pub fn lane_moved(lane: &Lane, keys: &LaneKeys) -> bool {
     lane.session_since != keys.lane_since
         || state::launch_obligations(lane.launch.as_ref())
@@ -997,7 +1039,7 @@ pub fn lane_moved(lane: &Lane, keys: &LaneKeys) -> bool {
 /// The target of `intent` under `keys`, the terminal's where it carries
 /// them, else the intent's own recorded set's; an intent with neither is
 /// judged by its stamp alone, the one reading a hand-written outcome
-/// (decision 111 (A) (4)) has.
+/// has.
 pub(super) fn intent_lane(
     path: &Path,
     doc: &Document,
@@ -1025,7 +1067,7 @@ pub(super) fn intent_lane(
     Ok(IntentTarget::Current { index })
 }
 
-/// Record the fleet's tmux session where none is recorded yet, the legacy
+/// Record the fleet's tmux session where none is recorded yet, the
 /// first launch's `.tmux.session //= $s`.
 fn record_tmux_session(path: &Path, doc: &mut Document, session: &str) -> Result<()> {
     if matches!(doc.get("tmux"), None | Some(Value::Null)) {
@@ -1087,7 +1129,7 @@ pub(super) fn record_launch_outcome(
             }
             let lane = lane_doc_mut(path, doc, index)?;
             // The whole selection, null where the request named none, as
-            // the legacy `running` write records it (`open-terminal`,
+            // the `running` write records it (`open-terminal`,
             // `lane_record_write`): the session that runs is this
             // request's, so no account, model or effort of the earlier
             // session survives into its record.
@@ -1103,6 +1145,11 @@ pub(super) fn record_launch_outcome(
             }
             if let Some(window) = &r.window {
                 state::set(lane, "window", window.as_str());
+            }
+            // The root a hosted or cloud lane's files are read under is
+            // known only once its host answered.
+            if let Some(mail_root) = &r.mail_root {
+                state::set(lane, "mail_root", mail_root.as_str());
             }
             state::set(lane, "status", LaneStatus::Running.word());
             state::set(lane, "running_at", at);
@@ -1136,9 +1183,9 @@ pub(super) fn record_launch_outcome(
 /// current by the caller. `confirmed` on an exited or terminal ground reads
 /// the lane done and drops the PR identities and the reservation a close
 /// ends, and records the reason the close kept the lane's worktree as
-/// `kept` where its set says it did (decision 128 (9)); on a `no-landing`
+/// `kept` where its set says it did; on a `no-landing`
 /// ground it reads the lane stopped and keeps everything else, the attempt
-/// retired with the item's work and history intact (decision 98). `failed`
+/// retired with the item's work and history intact. `failed`
 /// and `unconfirmed` move nothing.
 pub(super) fn record_close_outcome(
     path: &Path,
@@ -1319,7 +1366,7 @@ mod tests {
         assert_eq!(body.lanes.len(), 2);
     }
 
-    /// Finding 5, probe P12, and decision 37: a parked lane relaunches;
+    /// A parked lane relaunches;
     /// only `preparing` and `running` refuse.
     #[test]
     fn launch_lane_refuses_only_a_preparing_or_running_lane() {
@@ -1357,16 +1404,15 @@ mod tests {
         }
     }
 
-    /// Decision 57: a lane launch naming a non-local `kind` or a non-tmux
-    /// `surface` is refused before any intent persists; the one launch route
-    /// is a local tmux window.
+    /// A lane launch naming a kind nothing builds or a surface other than a
+    /// tmux window is refused before any intent persists.
     #[test]
-    fn launch_lane_refuses_a_non_local_kind_or_surface() {
+    fn launch_lane_refuses_an_unbuilt_kind_or_another_surface() {
         let dir = tempfile::tempdir().unwrap();
         let path = fleet_file(dir.path());
         let before = fs::read_to_string(&path).unwrap();
         let rows: [(Option<&str>, Option<&str>); 3] = [
-            (Some("ssh"), None),
+            (Some("codex-cloud"), None),
             (None, Some("gui")),
             (Some("managed-cloud"), Some("gui")),
         ];
@@ -1384,13 +1430,44 @@ mod tests {
             before,
             "no intent persisted on a refused host"
         );
-        // `local`/`tmux` named explicitly is admitted.
+        // `local`/`tmux` named explicitly is admitted; a provider host
+        // records `ssh` and the cloud host its own kind.
         let req = Request::LaunchLane(Box::new(LaunchLane {
             kind: Some("local".into()),
             surface: Some("tmux".into()),
             ..launch_fields("KEN-9")
         }));
         assert!(run(&path, &req).is_ok());
+        let Report::LaunchLane(hosted) = run(
+            &path,
+            &Request::LaunchLane(Box::new(LaunchLane {
+                host: Some("/opt/provider".into()),
+                refresh: true,
+                ..launch_fields("KEN-10")
+            })),
+        )
+        .unwrap()
+        .report
+        else {
+            panic!()
+        };
+        assert_eq!(hosted.lane.host.as_deref(), Some("/opt/provider"));
+        assert_eq!(hosted.lane.kind.as_deref(), Some("ssh"));
+        assert_eq!(hosted.lane.extra.get("refresh"), Some(&Value::Bool(true)));
+        let Report::LaunchLane(cloud) = run(
+            &path,
+            &Request::LaunchLane(Box::new(LaunchLane {
+                host: Some(CLOUD_KIND.into()),
+                ..launch_fields("KEN-11")
+            })),
+        )
+        .unwrap()
+        .report
+        else {
+            panic!()
+        };
+        assert_eq!(cloud.lane.kind.as_deref(), Some(CLOUD_KIND));
+        assert_eq!(cloud.lane.host.as_deref(), Some(CLOUD_KIND));
     }
 
     /// A child this test holds: its pid and start are a live identity the
@@ -1434,7 +1511,7 @@ mod tests {
         }
     }
 
-    /// The production host: the kernel's own readers, no legacy store.
+    /// The production host: the kernel's own readers, no claim store.
     fn kernel(cap: u32) -> Host<'static> {
         Host {
             lane_cap: cap,
@@ -1856,7 +1933,7 @@ mod tests {
         assert!(!lane_doc(&path, "KEN-W").contains_key("reservation"));
     }
 
-    /// The account boundary (step4-map A11, decision 75): a relaunch naming
+    /// The account boundary: a relaunch naming
     /// the account its wall spent is refused, compared on the resolved
     /// directory; another account is admitted and the intent records the
     /// spent one.
@@ -1894,12 +1971,12 @@ mod tests {
         assert_eq!(intent.exclude_account.as_deref(), Some(spent.as_str()));
     }
 
-    /// Finding 5, probe P13, and decision 37: a relaunch keeps every field
+    /// A relaunch keeps every field
     /// it does not write, drops `prepare` and `live_display`, and keeps the
-    /// key sequence of what it keeps. R-U10 finding 3: the harness, account,
+    /// key sequence of what it keeps. The harness, account,
     /// model and effort it was asked for reach the record when the launch
-    /// confirms, not at `preparing`. R-U13 finding 4: the confirmation
-    /// writes all four as the legacy `running` write does, null where the
+    /// confirms, not at `preparing`. The confirmation
+    /// writes all four, null where the
     /// request named none, so a claude session is never recorded on the
     /// earlier codex session's account.
     #[test]
@@ -2122,8 +2199,8 @@ mod tests {
         ));
     }
 
-    /// Finding 8, probe P14, and decision 37: adopting a parked lane runs
-    /// the legacy `unpark`, and adopting without `launch` keeps the recorded
+    /// Adopting a parked lane runs
+    /// the unpark, and adopting without `launch` keeps the recorded
     /// identity, which must read live.
     #[test]
     fn adopting_a_parked_lane_unparks_it_and_keeps_the_launch_when_none_is_passed() {
@@ -2395,7 +2472,7 @@ mod tests {
     }
 
     /// Finding 8, probe P15: a confirmed close removes `pending_pr`,
-    /// `parked` and the reservation, as the legacy `update_status done`
+    /// `parked` and the reservation, as a `done` status
     /// does; its fleet-log row carries the terminal verdict where one was
     /// the ground.
     #[test]

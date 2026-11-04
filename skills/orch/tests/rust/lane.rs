@@ -141,25 +141,44 @@ impl Fleet {
             .unwrap_or(Value::Null)
     }
 
-    /// The accounts judge's listing: the `lanes-listing` fixture symlinked
-    /// into the state directory as `lanes` (it prints `lanes.json` beside
-    /// the path it is invoked as) and named as the reader, with `rows`
-    /// planted.
+    /// The accounts judge's listing: `rows` planted as the provider's
+    /// `accounts` answer under `fleet-vm`, the host fixture linked into the
+    /// state directory, so the listing lists them under that host and
+    /// every row keeps the directory it names.
     fn plant_listing(&mut self, rows: &[Value]) {
-        let lanes = self.state_dir().join("lanes");
-        if std::fs::symlink_metadata(&lanes).is_err() {
-            std::os::unix::fs::symlink(fixtures().join("lanes-listing/lanes"), &lanes).unwrap();
+        let rows: Vec<Value> = rows
+            .iter()
+            .map(|row| {
+                let mut row = row.clone();
+                row["measured_through"] = json!("host");
+                row
+            })
+            .collect();
+        let env = plant_accounts(
+            self.state_dir(),
+            self.state_dir(),
+            Some("fleet-vm"),
+            &rows,
+            epoch_now(),
+        );
+        for (key, value) in env {
+            self.env.retain(|(name, _)| *name != key);
+            self.env.push((key, value));
         }
-        std::fs::write(
-            self.state_dir().join("lanes.json"),
-            serde_json::to_string(&Value::Array(rows.to_vec())).unwrap(),
-        )
-        .unwrap();
-        self.env.retain(|(name, _)| name != "OVERSEE_WATCH_LANES");
-        self.env.push((
-            "OVERSEE_WATCH_LANES".to_owned(),
-            lanes.display().to_string(),
-        ));
+    }
+
+    /// The listing made unreadable, or readable again: the host's
+    /// capability line refused.
+    fn refuse_listing(&self, refused: bool) {
+        let path = self.state_dir().join("lane-host.json");
+        let mut map: Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        map["fleet-vm capabilities"] = if refused {
+            json!({"exit": 1, "stderr": "lane-host-fixture: capabilities-refused\n"})
+        } else {
+            json!({"stdout": "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\tpool=plan\n"})
+        };
+        std::fs::write(path, map.to_string()).unwrap();
     }
 }
 
@@ -363,7 +382,7 @@ fn a_launch_with_no_record_is_judged_fresh_and_an_unread_listing_admits_nothing(
         "a refused launch writes no record"
     );
 
-    std::fs::write(fleet.state_dir().join("lanes.rc"), "1").unwrap();
+    fleet.refuse_listing(true);
     let out = fleet.op(&launch_on("KEN-3", fleet.state_dir()));
     let answer = reply(&out);
     assert_eq!(
@@ -373,7 +392,7 @@ fn a_launch_with_no_record_is_judged_fresh_and_an_unread_listing_admits_nothing(
         stderr(&out)
     );
     assert_eq!(fleet.fleet()["lanes"].as_array().unwrap().len(), 1);
-    std::fs::remove_file(fleet.state_dir().join("lanes.rc")).unwrap();
+    fleet.refuse_listing(false);
 
     let mut unlisted = launch_on("KEN-3", fleet.state_dir());
     unlisted["account"] = json!("/home/me/.other");

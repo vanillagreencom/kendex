@@ -366,16 +366,16 @@ pub(super) fn proof_of(overseer: &Overseer) -> Proof {
     }
 }
 
-/// Whether the destination home holds the session `id` for `cwd`, read
-/// three-valued through the session owner's fixed-id lookup (decision 115
-/// (G)).
-pub(in crate::effects) fn session_present(
+/// The directory the session `id` under `home` for `cwd` was recorded in,
+/// read three-valued through the session owner's fixed-id lookup: absent,
+/// unreadable, or the directory its own file names.
+pub(in crate::effects) fn session_owner(
     harness: Harness,
     home: &Path,
     cwd: &Path,
     id: &str,
-) -> Reading<()> {
-    session::resume_present(harness, home, cwd, id)
+) -> Reading<Option<PathBuf>> {
+    session::resume_owner(harness, home, cwd, id)
 }
 
 /// The harness's default home, where its sessions are read with no account
@@ -2117,7 +2117,101 @@ fn names_pane(overseer: &Overseer, server: u32, start: u64, pane: &str) -> bool 
             .is_none_or(|recorded| recorded == start)
 }
 
-/// The state module's receipt path for the operation (decision 96).
+/// The controller record's binding, filled from the pane it names where a
+/// write left it unbound: no native session id, no process identity or no
+/// server start, as a record stands between its write and its first turn
+/// or as an adoption that knew no id leaves it. The pane is read as an
+/// adoption reads it, with the record's own words, and only a record that
+/// names that pane on the answering server is healed, in place. A record
+/// that is bound, names no pane or harness, is off, stands under an open
+/// controller intent or names a pane that server does not hold is left as
+/// it is. The native id is the one lead session for the recorded directory
+/// under the recorded home; none or several bind nothing, and the rest is
+/// still healed.
+pub(in crate::effects) fn heal_controller(
+    path: &Path,
+    settings: &Settings,
+    locking: Locking,
+) -> Result<Option<Applied>> {
+    let body = super::super::fleet(path)?;
+    let Some(overseer) = body.overseer else {
+        return Ok(None);
+    };
+    let word = |key: &str| {
+        overseer
+            .extra
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+    };
+    let (Some(pane), Some(harness_word)) = (word("pane"), word("harness")) else {
+        return Ok(None);
+    };
+    let session_id = overseer.session_id.clone().filter(|s| !s.is_empty());
+    let bound = session_id.is_some()
+        && super::super::overseer_identity(&overseer).is_some()
+        && overseer
+            .extra
+            .get("server_start")
+            .is_some_and(|v| !v.is_null());
+    let off = overseer.extra.get("off").is_some_and(|v| !v.is_null());
+    let open = body
+        .intents
+        .iter()
+        .any(|i| i.open() && i.op.on_controller());
+    if bound || off || open {
+        return Ok(None);
+    }
+    let Some(harness) = Harness::parse(&harness_word) else {
+        return Ok(None);
+    };
+    let socket = word("server_socket")
+        .map(PathBuf::from)
+        .unwrap_or_else(tmux::ambient_socket);
+    let server = tmux::server(&socket)?;
+    if !names_pane(&overseer, server.pid, server.start, &pane) {
+        return Ok(None);
+    }
+    let home = word("home").or_else(|| word("account"));
+    let cwd = word("cwd");
+    let session_id = session_id.or_else(|| match (&home, &cwd) {
+        (Some(home), Some(cwd)) => {
+            match session::lead_ids(harness, Path::new(home), Path::new(cwd)) {
+                Reading::Live(mut ids) if ids.len() == 1 => Some(ids.remove(0)),
+                Reading::Live(_) | Reading::Gone | Reading::Unreadable { .. } => None,
+            }
+        }
+        (None, _) | (_, None) => None,
+    });
+    let request = AdoptController {
+        pane,
+        socket: Some(socket),
+        harness: harness_word,
+        session_id,
+        account: word("account"),
+        home,
+        model: word("model"),
+        effort: word("effort"),
+        cwd,
+        succession: None,
+    };
+    adopt_controller(path, &request, settings, locking).map(Some)
+}
+
+/// The file the harness holds the session `id` for `cwd` in under `home`,
+/// found by that id and read three-valued: absent is a session the home
+/// never held, unreadable is a store that could not be listed.
+pub(in crate::effects) fn fixed_id_file(
+    harness: Harness,
+    home: &Path,
+    cwd: &Path,
+    id: &str,
+) -> Reading<PathBuf> {
+    session::fixed_id_file(harness, home, cwd, id)
+}
+
+/// The state module's receipt path for the operation.
 pub(super) fn receipt_path(settings: &Settings, intent_id: &str) -> PathBuf {
     state::receipt_path(&settings.state_dir, intent_id)
 }

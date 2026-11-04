@@ -1076,3 +1076,137 @@ fn two_walkers_of_one_notice_make_one_send_the_later_reading_the_earliers_inside
         "the lane's record as the first walker left it"
     );
 }
+
+/// Defect: a cloud lane recorded launched on a session nothing created, or
+/// on a branch the session could not clone; a session created from a
+/// description that names no branch. The launch makes the item's worktree
+/// without a checkout, pushes its branch, creates the session through the
+/// CLI's own JSON answer under the lane's account with the brief closed by
+/// the session words, and records the session id with no window; the
+/// repositories the session needs access to are on the outcome.
+#[test]
+fn a_cloud_launch_pushes_the_branch_creates_the_session_through_the_cli_and_records_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap().join("repo");
+    std::fs::create_dir_all(&root).unwrap();
+    init_repo(&root);
+    git(
+        &root,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/Owner/Repo.git",
+        ],
+    );
+    std::fs::write(root.join("README.md"), "x\n").unwrap();
+    git(&root, &["add", "README.md"]);
+    git(
+        &root,
+        &["-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"],
+    );
+    let scripts = root.join(".agents").join("skills").join("orch");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::os::unix::fs::symlink(orch_scripts(), scripts.join("scripts")).unwrap();
+    let account = root.join(".eclaude");
+    std::fs::create_dir_all(&account).unwrap();
+    let brief = root.join("brief.md");
+    std::fs::write(&brief, "Do the thing for CC-9.\n").unwrap();
+    let worktree_log = dir.path().join("worktree.log");
+    let worktree = dir.path().join("worktree");
+    script(
+        &worktree,
+        &format!(
+            "#!/bin/bash\nprintf '%s\\n' \"$*\" >> {log}\ncase \"$1\" in\n  create) git -C {root} worktree add -q --no-checkout {root}/wt/$2 -b $2 >&2 || exit 1; printf '%s\\n' {root}/wt/$2 ;;\n  push) exit 0 ;;\n  *) exit 64 ;;\nesac\n",
+            log = worktree_log.display(),
+            root = root.display()
+        ),
+    );
+    let claude_log = dir.path().join("claude.log");
+    let request = root.join("request.json");
+    std::fs::write(
+        &request,
+        json!({
+            "op": "launch-lane",
+            "item": "CC-9",
+            "harness": "claude",
+            "mail_root": root.display().to_string(),
+            "account": account.display().to_string(),
+            "host": "claude-cloud",
+            "repo": "o/r",
+            "model": "opus",
+            "brief_file": brief.display().to_string(),
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let mut command = isolated();
+    command
+        .args(["--state-dir", &root.display().to_string()])
+        .args(["state", "init", "--fleet"])
+        .current_dir(&root);
+    let out = command.output().unwrap();
+    assert!(out.status.success(), "init: {}", stderr(&out));
+    let mut command = isolated();
+    command
+        .args(["--state-dir", &root.display().to_string()])
+        .args(["op", "--fleet", "--request", &request.display().to_string()])
+        .env("PATH", tool_path(&[&fixtures().join("claude-cloud")]))
+        .env("CLAUDE_CLOUD_LOG", &claude_log)
+        .env("WORKTREE_CLI", &worktree)
+        .current_dir(&root);
+    let report = effect_report(&command.output().unwrap());
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    let lane = &report["lane"];
+    assert_eq!(lane["status"], "running", "{lane}");
+    assert_eq!(lane["host"], "claude-cloud");
+    assert_eq!(lane["kind"], "claude-cloud");
+    assert_eq!(lane["session_id"], "session_01CLOUD");
+    assert_eq!(lane["window"], Value::Null, "a cloud session has no window");
+    assert_eq!(
+        lane["mail_root"],
+        root.join("wt").join("CC-9").display().to_string(),
+        "the worktree the launch made is the lane's root"
+    );
+    let observation = &report["intent"]["observation"];
+    assert_eq!(
+        observation["cloud_repo_access"]["url"],
+        "https://claude.ai/code/session_01CLOUD"
+    );
+    assert_eq!(
+        observation["cloud_repo_access"]["repositories"],
+        json!(["o/r", "owner/repo"]),
+        "the origin and the item's repository, as GitHub reads names"
+    );
+    let calls: Vec<String> = std::fs::read_to_string(&worktree_log)
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(
+        calls,
+        vec![
+            "create CC-9 --no-checkout".to_owned(),
+            "push CC-9 --set-upstream".to_owned()
+        ],
+        "the branch is pushed before the session clones it"
+    );
+    let cli = std::fs::read_to_string(&claude_log).unwrap();
+    // The fixture logs the argv whole, the description's own lines inside.
+    let argv = cli
+        .split_once("argv=")
+        .and_then(|(_, rest)| rest.split("\nconfig=").next())
+        .expect("the CLI ran");
+    assert!(
+        argv.starts_with("--model opus --cloud --output-format json -p Do the thing for CC-9.\n\n"),
+        "the description is the brief closed by the session words: {argv:?}"
+    );
+    assert!(
+        argv.contains("cloned the item branch CC-9:") && !argv.contains("{branch}"),
+        "the session words name the branch: {argv:?}"
+    );
+    assert!(
+        cli.contains(&format!("config={}", account.display())),
+        "the session is created under the lane's account: {cli}"
+    );
+}

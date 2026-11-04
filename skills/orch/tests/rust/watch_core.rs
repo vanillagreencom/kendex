@@ -1697,7 +1697,7 @@ fn a_cloud_stall_close_cut_by_a_crash_is_not_asked_again_by_the_next_run() {
             .collect()
     };
     // The entry names no `--state-dir`, so the runtime's is the default
-    // under the project root, as `recovery_args` hands it to `open-terminal`.
+    // under the project root.
     assert_eq!(
         calls(&close_log),
         vec![format!(

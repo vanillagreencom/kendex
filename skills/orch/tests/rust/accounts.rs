@@ -9,16 +9,17 @@
 //! shell callers read. Each row names the defect it catches at its doc
 //! comment.
 //!
-//! Two kinds of row: a pure judge case hands rows to
-//! `accounts::pick` in this process; a case whose production path starts a
-//! child (the reader, the host's capability line, `git` for the checkout's
-//! origin) asks the executable through `support::isolated`, so every child
-//! runs under the boundary's environment and never this process's. The
-//! reader is the `lanes-listing` fixture, which prints a planted listing,
-//! per host where one is planted, and a planted `host-accounts` answer,
-//! and logs what it was handed; the host's capability line is the
-//! `lane-host` fixture's; the fleet state and the live lanes are the
-//! row's own.
+//! Two kinds of row: a pure judge case hands rows to `accounts::pick` in
+//! this process; a case whose production path starts a child (the usage
+//! fixture `curl`, the host's provider, `git` for the checkout's origin)
+//! asks the executable through `support::isolated`, so every child runs
+//! under the boundary's environment and never this process's. The
+//! accounts are planted as the listing reads them (`support::plant_accounts`):
+//! a local account's directory, credential and usage record under the
+//! world's home, a provider's row in the host fixture's `accounts` answer;
+//! the usage endpoints are the `usage-curl` fixture, which answers from
+//! planted bodies and logs each request; the fleet state and the live
+//! lanes are the row's own.
 #![allow(
     clippy::disallowed_methods,
     reason = "the rows write the records they plant, hold the children whose identities they record, and read the fixture's log"
@@ -34,7 +35,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_runtime::clock;
 use orch_runtime::ops::accounts::{
-    self, AccountRow, EndSource, FleetFacts, PickAnswer, PickRequest, Roster, Word,
+    self, AccountRow, EndSource, FleetFacts, PickAnswer, PickRequest, ProviderRead, Roster, Word,
 };
 use orch_runtime::settings::{self, Flags as SettingsFlags, Roots, Settings};
 use orch_runtime::state::FLEET_FILE_NAME;
@@ -66,25 +67,25 @@ const SSH_LINE: &str =
 /// repository access.
 const CLOUD_LINE: &str = "kind=claude-cloud\tlaunch=cloud-session\tchannel=session\tfiles=none\tstatus=none\tstop=none\tpool=cloud-credit\n";
 
-/// One world: a state directory with the listing fixture symlinked as
-/// `lanes` and the host fixture as `lane-host`, the settings naming them
+/// One world: a state directory holding the host fixture as `lane-host`
+/// and the usage fixture as `bin/curl`, the accounts planted under its
+/// `home` with their usage records under it, the settings naming them
 /// under `extra` as the caller's environment, and the same environment
 /// handed to the executable.
 struct World {
     dir: tempfile::TempDir,
     settings: Settings,
     env: Vec<(String, String)>,
-    /// A home of the row's own for the executable, in place of the
-    /// boundary's scratch home.
-    home: Option<PathBuf>,
 }
 
 impl World {
     fn new(extra: &[(&str, &str)]) -> World {
         let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("bin")).unwrap();
+        std::fs::create_dir_all(dir.path().join("home")).unwrap();
         for (name, fixture) in [
-            ("lanes", "lanes-listing/lanes"),
             ("lane-host", "lane-host/lane-host"),
+            ("bin/curl", "usage-curl/curl"),
         ] {
             std::os::unix::fs::symlink(fixtures().join(fixture), dir.path().join(name)).unwrap();
         }
@@ -92,14 +93,32 @@ impl World {
             project: dir.path().to_path_buf(),
             common: dir.path().to_path_buf(),
         };
-        let lanes = dir.path().join("lanes").display().to_string();
-        let mut environment: Vec<(OsString, OsString)> =
-            vec![("OVERSEE_WATCH_LANES".into(), lanes.into())];
-        environment.extend(
+        let base = [
+            (
+                "OVERSEE_WATCH_LANES",
+                dir.path().join("lanes").display().to_string(),
+            ),
+            ("HOME", dir.path().join("home").display().to_string()),
+            ("OVERSEE_WATCH_STATE_DIR", dir.path().display().to_string()),
+            ("ORCH_STATE_DIR", dir.path().display().to_string()),
+            (
+                "USAGE_FIXTURE_DIR",
+                dir.path().join("fixtures").display().to_string(),
+            ),
+        ];
+        let mut env: Vec<(String, String)> = base
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), v.clone()))
+            .collect();
+        env.extend(
             extra
                 .iter()
-                .map(|(k, v)| (OsString::from(k), OsString::from(v))),
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned())),
         );
+        let environment: Vec<(OsString, OsString)> = env
+            .iter()
+            .map(|(k, v)| (OsString::from(k), OsString::from(v)))
+            .collect();
         let settings = settings::load(
             &roots,
             &environment,
@@ -109,15 +128,7 @@ impl World {
             },
         )
         .unwrap();
-        World {
-            dir,
-            settings,
-            env: extra
-                .iter()
-                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
-                .collect(),
-            home: None,
-        }
+        World { dir, settings, env }
     }
 
     fn path(&self) -> &Path {
@@ -128,36 +139,56 @@ impl World {
         self.path().join(FLEET_FILE_NAME)
     }
 
-    fn plant_listing(&self, rows: &[Value]) {
-        self.plant_listing_as("lanes.json", rows);
+    /// The directory a planted local account `alias` stands at.
+    fn dir(&self, alias: &str) -> String {
+        self.path()
+            .join("home")
+            .join(format!(".{alias}"))
+            .display()
+            .to_string()
     }
 
-    /// The listing the reader prints under one host (`lanes-<host>.json`).
-    fn plant_host_listing(&self, host: &str, rows: &[Value]) {
-        self.plant_listing_as(&format!("lanes-{host}.json"), rows);
+    /// The accounts the listing lists: the local rows as directories under
+    /// the home with their records, the provider's rows under `host` as
+    /// its `accounts` answer.
+    fn plant(&mut self, host: Option<&str>, rows: &[Value]) {
+        let env = plant_accounts(self.path(), self.path(), host, rows, now());
+        for (key, value) in env {
+            self.env.retain(|(k, _)| *k != key);
+            self.env.push((key, value));
+        }
     }
 
-    /// The provider's `host-accounts --harness pi --json` answer under one
-    /// host.
-    fn plant_host_accounts(&self, host: &str, rows: &[Value]) {
-        self.plant_listing_as(&format!("host-accounts-{host}.json"), rows);
+    fn plant_listing(&mut self, rows: &[Value]) {
+        self.plant(None, rows);
     }
 
-    fn plant_listing_as(&self, name: &str, rows: &[Value]) {
-        std::fs::write(
-            self.path().join(name),
-            serde_json::to_string(&Value::Array(rows.to_vec())).unwrap(),
-        )
-        .unwrap();
+    /// The listing under one host: the local rows and the provider's.
+    fn plant_host_listing(&mut self, host: &str, rows: &[Value]) {
+        self.plant(Some(host), rows);
     }
 
     /// The host fixture's capability line for `host`.
     fn plant_capabilities(&self, host: &str, line: &str) {
-        std::fs::write(
-            self.path().join("lane-host.json"),
-            json!({format!("{host} capabilities"): {"stdout": line}}).to_string(),
-        )
-        .unwrap();
+        let path = self.path().join("lane-host.json");
+        let mut map: Value = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_else(|| json!({}));
+        map[format!("{host} capabilities")] = json!({"stdout": line});
+        std::fs::write(path, map.to_string()).unwrap();
+    }
+
+    /// The host fixture's `accounts` answer for `host` refused at `exit`.
+    fn refuse_accounts(&self, host: &str, exit: i64) {
+        let path = self.path().join("lane-host.json");
+        let mut map: Value = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or_else(|| json!({}));
+        map[format!("{host} accounts")] =
+            json!({"exit": exit, "stderr": "lane-host-fixture: accounts-refused\n"});
+        std::fs::write(path, map.to_string()).unwrap();
     }
 
     fn write_fleet(&self, lanes: Vec<Value>, overseer_account: Option<&str>) {
@@ -170,8 +201,39 @@ impl World {
         std::fs::write(self.fleet_path(), serde_json::to_string(&fleet).unwrap()).unwrap();
     }
 
-    fn log(&self) -> Vec<String> {
-        std::fs::read_to_string(self.path().join("lanes.log"))
+    /// The body the usage fixture answers for `token` at `endpoint`
+    /// (`usage`, `profile` or `copilot`), and the status line beside it.
+    fn plant_answer(&self, token: &str, endpoint: &str, body: &Value, status: Option<&str>) {
+        let fixtures = self.path().join("fixtures");
+        std::fs::create_dir_all(&fixtures).unwrap();
+        std::fs::write(
+            fixtures.join(format!("{token}.{endpoint}.json")),
+            body.to_string(),
+        )
+        .unwrap();
+        let status_file = fixtures.join(format!("{token}.{endpoint}.status"));
+        match status {
+            Some(line) => std::fs::write(status_file, format!("{line}\n")).unwrap(),
+            None => {
+                let _ = std::fs::remove_file(status_file);
+            }
+        }
+    }
+
+    /// The usage record of a planted local account, under the world's
+    /// state directory.
+    fn record_path(&self, harness: &str, alias: &str) -> PathBuf {
+        let dir = self.dir(alias);
+        self.path().join("usage").join(format!(
+            "{harness}-{}-{}.json",
+            orch_runtime::ops::wall::cksum(dir.as_bytes()),
+            dir.len()
+        ))
+    }
+
+    /// The requests the usage fixture answered, `<endpoint> <token>` each.
+    fn curl_log(&self) -> Vec<String> {
+        std::fs::read_to_string(self.path().join("fixtures/curl.log"))
             .unwrap_or_default()
             .lines()
             .map(str::to_owned)
@@ -186,34 +248,26 @@ impl World {
             .collect()
     }
 
-    /// A home of this world's own whose `.gitconfig` rewrites the
-    /// checkout's origin from `owner/` to `canary/`: a production `git`
-    /// child that reads this home, and not the operator's, reads the
-    /// canary.
-    fn canary_home(&mut self) {
-        let home = self.path().join("home");
-        std::fs::create_dir_all(&home).unwrap();
+    /// The home's `.gitconfig` rewrites the checkout's origin from
+    /// `owner/` to `canary/`: a production `git` child that reads this
+    /// home, and not the operator's, reads the canary.
+    fn canary_home(&self) {
         std::fs::write(
-            home.join(".gitconfig"),
+            self.path().join("home/.gitconfig"),
             "[url \"https://github.com/canary/\"]\n\tinsteadOf = https://github.com/owner/\n",
         )
         .unwrap();
-        self.home = Some(home);
     }
 
-    /// The executable under the boundary, in this world,
-    /// with its environment.
+    /// The executable under the boundary, in this world, with its
+    /// environment and the usage fixture first on its path.
     fn command(&self) -> std::process::Command {
         let mut command = isolated();
         command
             .current_dir(self.path())
-            .env("OVERSEE_WATCH_LANES", self.path().join("lanes"))
-            .env("ORCH_STATE_DIR", self.path());
+            .env("PATH", tool_path(&[&self.path().join("bin")]));
         for (key, value) in &self.env {
             command.env(key, value);
-        }
-        if let Some(home) = &self.home {
-            command.env("HOME", home);
         }
         command
     }
@@ -269,7 +323,7 @@ impl World {
     }
 }
 
-/// One measured local row of `lanes list --json` for a Claude account at
+/// One measured local row of the listing for a Claude account at
 /// `alias`, `used` percent on its weekly window (the binding, resetting 60
 /// hours on), the session window at `session` percent four hours in and
 /// resetting one hour on.
@@ -340,6 +394,14 @@ fn lane_launched(item: &str, account: &str, pid: u32, start: &str, launched: u64
         "account": account, "launched_at": stamp(launched), "running_at": stamp(launched),
         "launch": {"pid": pid, "start": start, "pane": "%1", "server": 1}
     })
+}
+
+fn roster_of(rows: Vec<AccountRow>) -> Roster {
+    Roster {
+        rows,
+        provider: ProviderRead::Local,
+        notes: Vec::new(),
+    }
 }
 
 fn rows(listing: &[Value], settings: &Settings) -> Vec<AccountRow> {
@@ -466,7 +528,7 @@ fn a_reserve_account_is_never_picked_and_keeps_its_figures_in_the_roster() {
         exclusions(&alone),
         vec![("/home/me/.5claude".to_owned(), "reserved".to_owned())]
     );
-    let roster = Roster { rows };
+    let roster = roster_of(rows);
     assert_eq!(
         roster.lines(&accounts::today(now()))[0],
         format!(
@@ -481,15 +543,15 @@ fn a_reserve_account_is_never_picked_and_keeps_its_figures_in_the_roster() {
 /// the account, so a renewed, live account reads `retired` with no
 /// figures and nothing shows the contradiction. A `retired <date>` account
 /// is picked until the date; from the date on it is not picked, its row
-/// keeps the figures the reader measured, and its credential still
+/// keeps the figures the listing measured, and its credential still
 /// answering is one `account-end-contradicted` line under the roster. The
-/// reader is handed `ORCH_LANE_RETIRE` emptied, so it measures the
-/// account: the setting is the judge's to apply.
+/// listing measures the retired account like any other: the setting is
+/// the judge's to apply.
 #[test]
 fn a_retired_account_is_picked_until_its_date_and_measured_after_it_with_the_contradiction_said() {
     let today = accounts::today(now());
     let tomorrow = accounts::today(now() + 86_400);
-    let world = World::new(&[(
+    let mut world = World::new(&[(
         "ORCH_LANE_RETIRE",
         &format!("4claude={today},6claude={tomorrow}"),
     )]);
@@ -505,14 +567,13 @@ fn a_retired_account_is_picked_until_its_date_and_measured_after_it_with_the_con
     let answer = world.pick(&claude(None));
     assert_eq!(
         chosen(&answer).as_deref(),
-        Some("/home/me/.6claude"),
+        Some(world.dir("6claude").as_str()),
         "the account retiring tomorrow is picked, the one retired today is not: {answer}"
     );
-    let log = world.log();
     assert_eq!(
-        log,
-        vec!["ORCH_LANE_HOST=unset ORCH_LANE_RETIRE=emptied list --json"],
-        "the reader was asked to measure every account, the statement emptied"
+        world.roster()["rows"][0]["status"],
+        json!("ok"),
+        "the retired account is measured like any other"
     );
     let roster = world.roster();
     assert_eq!(roster["read"], json!(true));
@@ -520,20 +581,25 @@ fn a_retired_account_is_picked_until_its_date_and_measured_after_it_with_the_con
     assert_eq!(roster["rows"][0]["ended"], json!(true));
     assert_eq!(roster["rows"][1]["ended"], json!(false));
     let weekly = stamp(now() + 60 * 3600);
+    let (d4, d6, d7) = (
+        world.dir("4claude"),
+        world.dir("6claude"),
+        world.dir("7claude"),
+    );
     assert_eq!(
         roster["lines"],
         json!([
             format!(
-                "account 4claude config_dir=/home/me/.4claude harness=claude through=local status=ok verdict=room headroom_pct=90 binding_bucket=weekly binding_resets_at={weekly} word=retired:{today}"
+                "account 4claude config_dir={d4} harness=claude through=local status=ok verdict=room headroom_pct=90 binding_bucket=weekly binding_resets_at={weekly} word=retired:{today}"
             ),
             format!(
-                "account 6claude config_dir=/home/me/.6claude harness=claude through=local status=ok verdict=room headroom_pct=70 binding_bucket=weekly binding_resets_at={weekly} word=retired:{tomorrow}"
+                "account 6claude config_dir={d6} harness=claude through=local status=ok verdict=room headroom_pct=70 binding_bucket=weekly binding_resets_at={weekly} word=retired:{tomorrow}"
             ),
             format!(
-                "account 7claude config_dir=/home/me/.7claude harness=claude through=local status=ok verdict=room headroom_pct=40 binding_bucket=weekly binding_resets_at={weekly}"
+                "account 7claude config_dir={d7} harness=claude through=local status=ok verdict=room headroom_pct=40 binding_bucket=weekly binding_resets_at={weekly}"
             ),
             format!(
-                "account-end-contradicted 4claude config_dir=/home/me/.4claude ends={today} source=ORCH_LANE_RETIRE status=ok"
+                "account-end-contradicted 4claude config_dir={d4} ends={today} source=ORCH_LANE_RETIRE status=ok"
             ),
         ])
     );
@@ -545,9 +611,7 @@ fn a_retired_account_is_picked_until_its_date_and_measured_after_it_with_the_con
     provider["status"] = json!("expired");
     provider["headroom_pct"] = Value::Null;
     provider["verdict"] = json!("unmeasured");
-    let roster = Roster {
-        rows: rows(&[provider], &world.settings),
-    };
+    let roster = roster_of(rows(&[provider], &world.settings));
     assert_eq!(
         roster.rows[0].word(),
         Word::Retired {
@@ -562,43 +626,37 @@ fn a_retired_account_is_picked_until_its_date_and_measured_after_it_with_the_con
     );
 }
 
-/// Defect: a listing that could not be read
-/// taken as an empty fleet, so a pick answers `none` as if every account
-/// were walled, or the roster reads as no accounts. A reader that exits
-/// non-zero, or answers a shape that is no listing, is unjudged for the
+/// Defect: a listing that could not be read taken as an empty fleet, so
+/// a pick answers `none` as if every account were walled, or the roster
+/// reads as no accounts. A home discovery cannot list is unjudged for the
 /// pick and unread for the roster, each with the cause.
 #[test]
 fn an_unreadable_listing_admits_nothing() {
+    use std::os::unix::fs::PermissionsExt;
     let world = World::new(&[]);
     world.write_fleet(Vec::new(), None);
-    let req = claude(None);
-    std::fs::write(world.path().join("lanes.rc"), "1\n").unwrap();
-    let refused = world.pick(&req);
+    let home = world.path().join("home");
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let refused = world.pick(&claude(None));
+    let roster = world.roster();
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o755)).unwrap();
     assert_eq!(refused["answer"], json!("unjudged"), "{refused}");
     assert_eq!(refused["exit"], json!(1));
     assert!(
         refused["record"]["cause"]
             .as_str()
             .unwrap()
-            .starts_with("listing-unread host=local exit=1"),
+            .starts_with("listing-unread host=local home-unreadable path="),
         "{refused}"
     );
-    assert_eq!(world.roster()["read"], json!(false));
-    std::fs::remove_file(world.path().join("lanes.rc")).unwrap();
-    std::fs::write(
-        world.path().join("lanes.text"),
-        "{\"not\": \"a listing\"}\n",
-    )
-    .unwrap();
-    let unparsed = world.pick(&req);
-    assert_eq!(
-        unparsed["record"]["cause"],
-        json!("listing-unread host=local parse=failed"),
-        "{unparsed}"
-    );
-    let roster = world.roster();
     assert_eq!(roster["read"], json!(false));
-    assert_eq!(roster["cause"], json!("host=local parse=failed"));
+    assert!(
+        roster["cause"]
+            .as_str()
+            .unwrap()
+            .starts_with("host=local home-unreadable path="),
+        "{roster}"
+    );
 }
 
 /// Defect: a lane on model M judged on the fullest window on the
@@ -676,20 +734,16 @@ fn a_lane_on_a_model_is_judged_on_that_models_window_not_the_fullest() {
 /// is gone charges nothing.
 #[test]
 fn a_relaunch_replacing_a_lane_adds_no_lane_to_the_projection() {
-    let world = World::new(&[]);
+    let mut world = World::new(&[]);
     // The session window at 80 percent four hours in: the live lane's
     // observed 20 points an hour, charged for it and the candidate to the
     // reset an hour on, projects past 95; the candidate alone at the
     // setting's 5 leaves room.
     world.plant_listing(&[measured("aclaude", 20, 80)]);
+    let account = world.dir("aclaude");
     let child = Owned::sleep();
     world.write_fleet(
-        vec![lane(
-            "KEN-1",
-            "/home/me/.aclaude",
-            child.pid(),
-            &child.start(),
-        )],
+        vec![lane("KEN-1", &account, child.pid(), &child.start())],
         None,
     );
     let fresh = world.pick(&claude(None));
@@ -708,22 +762,15 @@ fn a_relaunch_replacing_a_lane_adds_no_lane_to_the_projection() {
     });
     assert_eq!(
         chosen(&relaunch).as_deref(),
-        Some("/home/me/.aclaude"),
+        Some(account.as_str()),
         "the replaced lane's charge is left out: {relaunch}"
     );
     assert_eq!(relaunch["record"]["claims"], json!(0));
     // A record whose identity is gone charges nothing, so a fresh launch
     // is admitted on it too.
-    world.write_fleet(
-        vec![lane("KEN-2", "/home/me/.aclaude", GONE_PID as u32, "1")],
-        None,
-    );
+    world.write_fleet(vec![lane("KEN-2", &account, GONE_PID as u32, "1")], None);
     let gone = world.pick(&claude(None));
-    assert_eq!(
-        chosen(&gone).as_deref(),
-        Some("/home/me/.aclaude"),
-        "{gone}"
-    );
+    assert_eq!(chosen(&gone).as_deref(), Some(account.as_str()), "{gone}");
     drop(child);
 }
 
@@ -739,19 +786,15 @@ fn a_relaunch_replacing_a_lane_adds_no_lane_to_the_projection() {
 /// is the lane.
 #[test]
 fn the_binding_window_is_charged_to_its_reset_not_for_one_hour() {
-    let world = World::new(&[]);
+    let mut world = World::new(&[]);
     let mut far = measured("aclaude", 90, 5);
     far["binding_resets_at"] = json!(stamp(now() + 144 * 3600));
     far["resets"]["weekly"] = json!(stamp(now() + 144 * 3600));
     world.plant_listing(&[far]);
+    let account = world.dir("aclaude");
     let child = Owned::sleep();
     world.write_fleet(
-        vec![lane(
-            "KEN-1",
-            "/home/me/.aclaude",
-            child.pid(),
-            &child.start(),
-        )],
+        vec![lane("KEN-1", &account, child.pid(), &child.start())],
         None,
     );
     let refused = world.pick(&claude(None));
@@ -765,12 +808,12 @@ fn the_binding_window_is_charged_to_its_reset_not_for_one_hour() {
     );
     assert_eq!(
         left_out(&refused),
-        vec![("/home/me/.aclaude".to_owned(), "walled".to_owned())]
+        vec![(account.clone(), "walled".to_owned())]
     );
     // The projected window is the weekly one, charged for the two lanes to
     // its reset: 2 × (5 × 5/168) × 144 hours, about 43 points, against
     // the 10 left.
-    let judged = world.pick(&named("/home/me/.aclaude", claude(None)));
+    let judged = world.pick(&named(&account, claude(None)));
     assert_eq!(judged["answer"], json!("walled"), "{judged}");
     assert_eq!(
         judged["record"]["projected_window"]["bucket"],
@@ -788,7 +831,7 @@ fn the_binding_window_is_charged_to_its_reset_not_for_one_hour() {
     let admitted = world.pick(&claude(None));
     assert_eq!(
         chosen(&admitted).as_deref(),
-        Some("/home/me/.aclaude"),
+        Some(account.as_str()),
         "a reset one hour away charges one hour: {admitted}"
     );
     drop(child);
@@ -807,13 +850,14 @@ fn the_binding_window_is_charged_to_its_reset_not_for_one_hour() {
 /// room the seat keeps), and judged as any account when the overseer asks.
 #[test]
 fn a_seat_is_held_to_the_overseers_headroom_beside_the_lane_limit_and_returned_last() {
-    let world = World::new(&[("ORCH_OVERSEER_HEADROOM_PCT", "50")]);
+    let mut world = World::new(&[("ORCH_OVERSEER_HEADROOM_PCT", "50")]);
     world.plant_listing(&[measured("seat", 10, 5), measured("worker", 60, 5)]);
-    world.write_fleet(Vec::new(), Some("/home/me/.seat"));
+    let seat_dir = world.dir("seat");
+    world.write_fleet(Vec::new(), Some(&seat_dir));
     let worker = world.pick(&claude(None));
     assert_eq!(
         chosen(&worker).as_deref(),
-        Some("/home/me/.worker"),
+        Some(world.dir("worker").as_str()),
         "{worker}"
     );
     // The seat at 55 used projects past 50 and under 95: refused under the
@@ -823,7 +867,7 @@ fn a_seat_is_held_to_the_overseers_headroom_beside_the_lane_limit_and_returned_l
     assert_eq!(reserved["answer"], json!("none"), "{reserved}");
     assert_eq!(
         left_out(&reserved),
-        vec![("/home/me/.seat".to_owned(), "seat-reserve".to_owned())]
+        vec![(seat_dir.clone(), "seat-reserve".to_owned())]
     );
     let seats = reserved["record"]["seats"].as_array().unwrap();
     assert_eq!(seats.len(), 1, "{reserved}");
@@ -832,7 +876,7 @@ fn a_seat_is_held_to_the_overseers_headroom_beside_the_lane_limit_and_returned_l
         json!(50),
         "the omitted seat names the room it keeps, spelled as the callers read it"
     );
-    let named = world.pick(&named("/home/me/.seat", claude(None)));
+    let named = world.pick(&named(&seat_dir, claude(None)));
     assert_eq!(named["answer"], json!("walled"), "{named}");
     assert_eq!(named["record"]["verdict"], json!("seat-reserve"));
     assert_eq!(named["record"]["need"], json!(50));
@@ -843,7 +887,7 @@ fn a_seat_is_held_to_the_overseers_headroom_beside_the_lane_limit_and_returned_l
     });
     assert_eq!(
         chosen(&overseer).as_deref(),
-        Some("/home/me/.seat"),
+        Some(seat_dir.as_str()),
         "{overseer}"
     );
     assert_eq!(
@@ -858,15 +902,15 @@ fn a_seat_is_held_to_the_overseers_headroom_beside_the_lane_limit_and_returned_l
 /// on this machine's rows, or handed to the reader as a `pick` the judge no
 /// longer asks; a provider's `seat=1` row spent past the overseer's
 /// headroom by a worker; a provider's `reserved=1` row picked for its
-/// room. Under `ORCH_LANE_HOST=fleet-vm` the reader lists the provider's
-/// rows: the seat with the most room is held to the headroom and comes
-/// last, the reserved row is never the lane, the ordinary row is; with
-/// the ordinary row excluded the seat is the lane while over its limit and
-/// `seat-reserve` under it; the reader is asked for the listing under the
-/// host and nothing else, and the host's capability line once.
+/// room. Under `ORCH_LANE_HOST=fleet-vm` the listing carries the
+/// provider's rows: the seat with the most room is held to the headroom
+/// and comes last, the reserved row is never the lane, the ordinary row
+/// is; with the ordinary row excluded the seat is the lane while over its
+/// limit and `seat-reserve` under it; the provider is asked for its
+/// capability line and its accounts under the host, and nothing else.
 #[test]
 fn a_hosted_pick_reads_the_providers_rows_seats_and_words_from_the_roster_under_its_host() {
-    let world = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
+    let mut world = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
     world.write_fleet(Vec::new(), None);
     world.plant_capabilities("fleet-vm", SSH_LINE);
     let mut seat = through_host(measured("seat", 10, 5));
@@ -877,14 +921,11 @@ fn a_hosted_pick_reads_the_providers_rows_seats_and_words_from_the_roster_under_
         "fleet-vm",
         &[seat, reserved, through_host(measured("worker", 60, 5))],
     );
-    // This machine's own listing names another account entirely: a pick
-    // judged on it would pick that.
-    world.plant_listing(&[measured("local", 0, 0)]);
     let chosen_row = world.pick(&claude(None));
     assert_eq!(
         chosen(&chosen_row).as_deref(),
         Some("/home/me/.worker"),
-        "the provider's ordinary row, not its seat or its reserved row, nor the local listing: {chosen_row}"
+        "the provider's ordinary row, not its seat or its reserved row: {chosen_row}"
     );
     let seat_last = world.pick(&PickRequest {
         exclude: vec!["/home/me/.worker".to_owned()],
@@ -910,7 +951,7 @@ fn a_hosted_pick_reads_the_providers_rows_seats_and_words_from_the_roster_under_
     );
     // The seat past the headroom under a tighter setting: omitted with its
     // need, never spent by a worker.
-    let tight = World::new(&[
+    let mut tight = World::new(&[
         ("ORCH_LANE_HOST", "fleet-vm"),
         ("ORCH_OVERSEER_HEADROOM_PCT", "40"),
     ]);
@@ -929,19 +970,19 @@ fn a_hosted_pick_reads_the_providers_rows_seats_and_words_from_the_roster_under_
     });
     assert_eq!(named["answer"], json!("reserved"), "{named}");
     assert_eq!(named["record"]["alias"], json!("held"));
-    let log = world.log();
+    let log = world.host_log();
     assert!(
         !log.is_empty()
-            && log
-                .iter()
-                .all(|l| l == "ORCH_LANE_HOST=fleet-vm ORCH_LANE_RETIRE=emptied list --json"),
-        "the reader lists under the host and is asked for no pick: {log:?}"
+            && log.iter().all(|l| {
+                l == "ORCH_LANE_HOST=fleet-vm capabilities"
+                    || l == "ORCH_LANE_HOST=fleet-vm accounts"
+            }),
+        "the provider is asked under the host for its line and its accounts, nothing else: {log:?}"
     );
     assert_eq!(
-        world.host_log().first().map(String::as_str),
+        log.first().map(String::as_str),
         Some("ORCH_LANE_HOST=fleet-vm capabilities"),
-        "{:?}",
-        world.host_log()
+        "{log:?}"
     );
 }
 
@@ -963,13 +1004,25 @@ fn a_hosted_pick_reads_the_providers_rows_seats_and_words_from_the_roster_under_
 /// measured reading in place.
 #[test]
 fn one_reading_per_billed_account_the_providers_eligible_reading_over_this_machines_copy() {
-    let world = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
+    let mut world = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
     world.write_fleet(Vec::new(), None);
     world.plant_capabilities("fleet-vm", SSH_LINE);
+    // The provider's row names the directory this machine's reading stands
+    // at, as a provider holding a copy of the same account does.
+    let at = |dir: &str, mut row: Value| {
+        row["config_dir"] = json!(dir);
+        row
+    };
+    let (aclaude, tclaude, uclaude, hclaude) = (
+        world.dir("aclaude"),
+        world.dir("tclaude"),
+        world.dir("uclaude"),
+        world.dir("hclaude"),
+    );
     let mut local = measured("aclaude", 0, 0);
     local["model_buckets"] =
         json!([{"label": "Opus", "pct": 0, "resets_at": stamp(now() + 60 * 3600)}]);
-    let mut provider = through_host(measured("aclaude", 99, 99));
+    let mut provider = at(&aclaude, through_host(measured("aclaude", 99, 99)));
     provider["seat"] = json!("1");
     provider["verdict"] = json!("walled");
     world.plant_host_listing("fleet-vm", &[local, provider]);
@@ -981,10 +1034,10 @@ fn one_reading_per_billed_account_the_providers_eligible_reading_over_this_machi
     );
     assert_eq!(
         left_out(&refused),
-        vec![("/home/me/.aclaude".to_owned(), "seat-reserve".to_owned())]
+        vec![(world.dir("aclaude"), "seat-reserve".to_owned())]
     );
     assert_eq!(refused["record"]["seats"][0]["need"], json!(5));
-    let named_seat = world.pick(&named("/home/me/.aclaude", claude(None)));
+    let named_seat = world.pick(&named(&world.dir("aclaude"), claude(None)));
     assert_eq!(named_seat["answer"], json!("walled"), "{named_seat}");
     assert_eq!(named_seat["record"]["verdict"], json!("seat-reserve"));
     assert_eq!(named_seat["record"]["measured_through"], json!("host"));
@@ -993,10 +1046,10 @@ fn one_reading_per_billed_account_the_providers_eligible_reading_over_this_machi
     let mut local = measured("tclaude", 10, 5);
     local["model_buckets"] =
         json!([{"label": "Fable 5.1", "pct": 95, "resets_at": stamp(now() + 60 * 3600)}]);
-    let provider = through_host(measured("tclaude", 20, 5));
+    let provider = at(&tclaude, through_host(measured("tclaude", 20, 5)));
     world.plant_host_listing("fleet-vm", &[local.clone(), provider.clone()]);
     let fable = claude(Some("claude-fable-5-1"));
-    let scoped = world.pick(&named("/home/me/.tclaude", fable.clone()));
+    let scoped = world.pick(&named(&world.dir("tclaude"), fable.clone()));
     assert_eq!(
         scoped["answer"],
         json!("walled"),
@@ -1007,12 +1060,12 @@ fn one_reading_per_billed_account_the_providers_eligible_reading_over_this_machi
     assert_eq!(scoped["record"]["wall"], json!(95));
     assert_eq!(
         left_out(&world.pick(&fable)),
-        vec![("/home/me/.tclaude".to_owned(), "walled".to_owned())]
+        vec![(world.dir("tclaude"), "walled".to_owned())]
     );
     let unscoped = world.pick(&claude(None));
     assert_eq!(
         chosen(&unscoped).as_deref(),
-        Some("/home/me/.tclaude"),
+        Some(world.dir("tclaude").as_str()),
         "{unscoped}"
     );
     assert_eq!(unscoped["record"]["measured_through"], json!("host"));
@@ -1020,7 +1073,7 @@ fn one_reading_per_billed_account_the_providers_eligible_reading_over_this_machi
     local["model_buckets"] = json!([]);
     world.plant_host_listing("fleet-vm", &[local, provider]);
     let unread = world.pick(&PickRequest {
-        lane: Some("/home/me/.tclaude".to_owned()),
+        lane: Some(world.dir("tclaude")),
         ..fable
     });
     assert_eq!(
@@ -1035,13 +1088,17 @@ fn one_reading_per_billed_account_the_providers_eligible_reading_over_this_machi
         json!("no fresh local model window for claude-fable-5-1")
     );
     // A provider row that read nothing leaves this machine's reading.
-    let mut unreachable = through_host(measured("uclaude", 10, 5));
+    let mut unreachable = at(&uclaude, through_host(measured("uclaude", 10, 5)));
     unreachable["status"] = json!("unreachable");
     unreachable["headroom_pct"] = Value::Null;
+    unreachable["weekly_pct"] = Value::Null;
+    unreachable["session_5h_pct"] = Value::Null;
     unreachable["verdict"] = json!("unmeasured");
-    let mut holding = through_host(measured("hclaude", 10, 5));
+    let mut holding = at(&hclaude, through_host(measured("hclaude", 10, 5)));
     holding["status"] = json!("no_usage_data");
     holding["headroom_pct"] = Value::Null;
+    holding["weekly_pct"] = Value::Null;
+    holding["session_5h_pct"] = Value::Null;
     holding["verdict"] = json!("unmeasured");
     world.plant_host_listing(
         "fleet-vm",
@@ -1053,7 +1110,11 @@ fn one_reading_per_billed_account_the_providers_eligible_reading_over_this_machi
         ],
     );
     let own = world.pick(&claude(None));
-    assert_eq!(chosen(&own).as_deref(), Some("/home/me/.uclaude"), "{own}");
+    assert_eq!(
+        chosen(&own).as_deref(),
+        Some(world.dir("uclaude").as_str()),
+        "{own}"
+    );
     assert_eq!(own["record"]["measured_through"], json!("local"));
     assert_eq!(
         own["record"]["qualifying_count"],
@@ -1372,13 +1433,14 @@ fn the_candidate_lane_is_charged_and_the_reset_bonus_orders_rooms_without_buying
 /// same sample; the same sample taken now counts every lane live now.
 #[test]
 fn a_cached_sample_keeps_the_occupancy_held_with_it_as_lanes_join() {
-    let world = World::new(&[]);
+    let mut world = World::new(&[]);
     let mut row = measured("aclaude", 70, 60);
     row["resets"]["session"] = json!(stamp(now() + 3360));
     row["binding_resets_at"] = json!(stamp(now() + 6 * 3600));
     row["resets"]["weekly"] = json!(stamp(now() + 6 * 3600));
     row["usage_age_s"] = json!(240);
     world.plant_listing(&[row.clone()]);
+    let account = world.dir("aclaude");
     let children: Vec<Owned> = (0..4).map(|_| Owned::sleep()).collect();
     let launched = [now() - 3600, now() - 180, now() - 120, now() - 60];
     world.write_fleet(
@@ -1389,7 +1451,7 @@ fn a_cached_sample_keeps_the_occupancy_held_with_it_as_lanes_join() {
             .map(|(i, (child, at))| {
                 lane_launched(
                     &format!("KEN-{}", i + 1),
-                    "/home/me/.aclaude",
+                    &account,
                     child.pid(),
                     &child.start(),
                     at,
@@ -1398,7 +1460,7 @@ fn a_cached_sample_keeps_the_occupancy_held_with_it_as_lanes_join() {
             .collect(),
         None,
     );
-    let fifth = world.pick(&named("/home/me/.aclaude", claude(None)));
+    let fifth = world.pick(&named(&account, claude(None)));
     assert_eq!(fifth["answer"], json!("walled"), "{fifth}");
     assert_eq!(
         fifth["record"]["projected_window"]["bucket"],
@@ -1419,7 +1481,7 @@ fn a_cached_sample_keeps_the_occupancy_held_with_it_as_lanes_join() {
     row["usage_age_s"] = json!(0);
     row["resets"]["session"] = json!(stamp(now() + 3600));
     world.plant_listing(&[row]);
-    let fresh = world.pick(&named("/home/me/.aclaude", claude(None)));
+    let fresh = world.pick(&named(&account, claude(None)));
     assert_eq!(fresh["answer"], json!("lane"), "{fresh}");
     let room = fresh["record"]["projected_headroom_pct"].as_f64().unwrap();
     assert!((room - 21.25).abs() < 0.01, "{room}");
@@ -1439,13 +1501,14 @@ fn a_cached_sample_keeps_the_occupancy_held_with_it_as_lanes_join() {
 /// fifth candidate's room is -35, `walled`.
 #[test]
 fn a_lane_relaunched_onto_the_account_after_the_sample_spent_none_of_it() {
-    let world = World::new(&[]);
+    let mut world = World::new(&[]);
     let mut row = measured("aclaude", 70, 60);
     row["resets"]["session"] = json!(stamp(now() + 3360));
     row["binding_resets_at"] = json!(stamp(now() + 6 * 3600));
     row["resets"]["weekly"] = json!(stamp(now() + 6 * 3600));
     row["usage_age_s"] = json!(240);
     world.plant_listing(&[row]);
+    let account = world.dir("aclaude");
     let children: Vec<Owned> = (0..4).map(|_| Owned::sleep()).collect();
     let since = [now() - 3600, now() - 180, now() - 120, now() - 60];
     world.write_fleet(
@@ -1457,7 +1520,7 @@ fn a_lane_relaunched_onto_the_account_after_the_sample_spent_none_of_it() {
                 let launched = if i == 0 { at } else { now() - 7200 };
                 let mut lane = lane_launched(
                     &format!("KEN-{}", i + 1),
-                    "/home/me/.aclaude",
+                    &account,
                     child.pid(),
                     &child.start(),
                     launched,
@@ -1469,7 +1532,7 @@ fn a_lane_relaunched_onto_the_account_after_the_sample_spent_none_of_it() {
             .collect(),
         None,
     );
-    let fifth = world.pick(&named("/home/me/.aclaude", claude(None)));
+    let fifth = world.pick(&named(&account, claude(None)));
     assert_eq!(fifth["answer"], json!("walled"), "{fifth}");
     let room = fifth["record"]["projected_headroom_pct"].as_f64().unwrap();
     assert!(
@@ -1498,7 +1561,7 @@ fn a_lane_relaunched_onto_the_account_after_the_sample_spent_none_of_it() {
 /// succession on.
 #[test]
 fn a_measured_binding_rate_is_the_per_lane_share_of_the_lanes_live_at_the_sample() {
-    let world = World::new(&[]);
+    let mut world = World::new(&[]);
     let reset = stamp(now() + 80 * 3600);
     let mut weekly = measured("acc", 50, 5);
     weekly["binding_resets_at"] = json!(reset);
@@ -1517,17 +1580,14 @@ fn a_measured_binding_rate_is_the_per_lane_share_of_the_lanes_live_at_the_sample
     model["usage_rate_pct_per_min"] = json!(0.005);
     model["projected_wall_minutes"] = json!(10_000);
     world.plant_listing(&[weekly, model]);
+    let (acc, bclaude) = (world.dir("acc"), world.dir("bclaude"));
     let children: Vec<Owned> = (0..4).map(|_| Owned::sleep()).collect();
     world.write_fleet(
         children
             .iter()
             .enumerate()
             .map(|(i, child)| {
-                let account = if i < 2 {
-                    "/home/me/.acc"
-                } else {
-                    "/home/me/.bclaude"
-                };
+                let account = if i < 2 { &acc } else { &bclaude };
                 lane(
                     &format!("KEN-{}", i + 1),
                     account,
@@ -1538,7 +1598,7 @@ fn a_measured_binding_rate_is_the_per_lane_share_of_the_lanes_live_at_the_sample
             .collect(),
         None,
     );
-    let shared = world.pick(&named("/home/me/.acc", claude(None)));
+    let shared = world.pick(&named(&acc, claude(None)));
     assert_eq!(shared["answer"], json!("lane"), "{shared}");
     let room = shared["record"]["projected_headroom_pct"].as_f64().unwrap();
     assert!(
@@ -1548,7 +1608,7 @@ fn a_measured_binding_rate_is_the_per_lane_share_of_the_lanes_live_at_the_sample
     assert_eq!(shared["record"]["burn_pct_per_lane_hour"], json!(0.15));
     assert_eq!(shared["record"]["usage_rate_state"], json!("measured"));
     assert_eq!(shared["record"]["projected_wall_minutes"], json!(10_000));
-    let opus = world.pick(&named("/home/me/.bclaude", claude(Some("claude-opus-5"))));
+    let opus = world.pick(&named(&bclaude, claude(Some("claude-opus-5"))));
     assert_eq!(opus["answer"], json!("walled"), "{opus}");
     let room = opus["record"]["projected_headroom_pct"].as_f64().unwrap();
     assert!(
@@ -1558,10 +1618,7 @@ fn a_measured_binding_rate_is_the_per_lane_share_of_the_lanes_live_at_the_sample
     assert_eq!(opus["record"]["usage_rate_state"], json!("measured"));
     // A window the reader did not rate: the Sonnet lane on bclaude is
     // judged on the weekly window, whose rate nobody measured.
-    let sonnet = world.pick(&named(
-        "/home/me/.bclaude",
-        claude(Some("claude-sonnet-5-5")),
-    ));
+    let sonnet = world.pick(&named(&bclaude, claude(Some("claude-sonnet-5-5"))));
     assert_eq!(
         sonnet["record"]["binding_bucket"],
         json!("weekly"),
@@ -1587,7 +1644,7 @@ fn a_measured_binding_rate_is_the_per_lane_share_of_the_lanes_live_at_the_sample
     split["projected_wall_minutes"] = json!(20);
     world.plant_listing(&[split]);
     let fable = world.pick(&PickRequest {
-        lane: Some("/home/me/.split".to_owned()),
+        lane: Some(world.dir("split")),
         for_overseer: true,
         ..claude(Some("claude-fable-5-1"))
     });
@@ -1600,7 +1657,7 @@ fn a_measured_binding_rate_is_the_per_lane_share_of_the_lanes_live_at_the_sample
     assert_eq!(fable["record"]["usage_rate_pct_per_min"], Value::Null);
     assert_eq!(fable["record"]["projected_wall_minutes"], Value::Null);
     let opus = world.pick(&PickRequest {
-        lane: Some("/home/me/.split".to_owned()),
+        lane: Some(world.dir("split")),
         for_overseer: true,
         ..claude(Some("claude-opus-5"))
     });
@@ -1631,7 +1688,7 @@ fn a_pi_copilot_pool_is_judged_from_the_providers_row_or_the_owners_statement() 
     let cli = "/home/me/.cli".to_owned();
     let excluded = "/home/me/.pi2".to_owned();
     let pool = format!("{root}=100000/1000000,{cli}=1/10,{excluded}=1/10");
-    let world = World::new(&[
+    let mut world = World::new(&[
         ("ORCH_LANE_HOST", "fleet-vm"),
         ("ORCH_LANE_COPILOT_POOL", &pool),
         ("ORCH_LANE_EXCLUDE", "pi2"),
@@ -1652,7 +1709,7 @@ fn a_pi_copilot_pool_is_judged_from_the_providers_row_or_the_owners_statement() 
         25.0,
         &stamp(now() + 86_400),
     );
-    world.plant_host_listing("fleet-vm", &[home, api]);
+    world.plant_host_listing("fleet-vm", &[home.clone(), api.clone()]);
     let copilot = PickRequest {
         harness: "pi".to_owned(),
         model: Some("github-copilot/claude-opus-5-5".to_owned()),
@@ -1686,12 +1743,11 @@ fn a_pi_copilot_pool_is_judged_from_the_providers_row_or_the_owners_statement() 
     assert_eq!(left_out["exit"], json!(3));
     assert_eq!(left_out["record"]["verdict"], json!("excluded"));
     assert!(
-        world.log().contains(
-            &"ORCH_LANE_HOST=fleet-vm ORCH_LANE_RETIRE=emptied host-accounts --harness pi --json"
-                .to_owned()
-        ),
-        "the provider's pool rows are asked for under the host: {:?}",
-        world.log()
+        world
+            .host_log()
+            .contains(&"ORCH_LANE_HOST=fleet-vm accounts".to_owned()),
+        "the provider's rows are asked for under the host: {:?}",
+        world.host_log()
     );
     // The provider's reading of the root replaces the statement.
     let mut provider = through_host(measured("pi1", 0, 0));
@@ -1705,7 +1761,7 @@ fn a_pi_copilot_pool_is_judged_from_the_providers_row_or_the_owners_statement() 
     provider["session_5h_pct"] = Value::Null;
     provider.as_object_mut().unwrap().remove("verdict");
     provider.as_object_mut().unwrap().remove("pool");
-    world.plant_host_accounts("fleet-vm", &[provider.clone()]);
+    world.plant_host_listing("fleet-vm", &[home.clone(), api.clone(), provider.clone()]);
     let read = world.pick(&copilot);
     assert_eq!(chosen(&read).as_deref(), Some(root.as_str()), "{read}");
     assert_eq!(read["record"]["measured_through"], json!("host"));
@@ -1715,7 +1771,7 @@ fn a_pi_copilot_pool_is_judged_from_the_providers_row_or_the_owners_statement() 
     provider["status"] = json!("no_usage_data");
     provider["monthly_pct"] = Value::Null;
     provider["headroom_pct"] = Value::Null;
-    world.plant_host_accounts("fleet-vm", &[provider]);
+    world.plant_host_listing("fleet-vm", &[home, api, provider]);
     let standing = world.pick(&copilot);
     assert_eq!(
         standing["record"]["measured_through"],
@@ -1724,7 +1780,7 @@ fn a_pi_copilot_pool_is_judged_from_the_providers_row_or_the_owners_statement() 
     );
     assert_eq!(standing["record"]["headroom_pct"], json!(90));
     // A failed read is answered by the statement; with none it is unread.
-    std::fs::write(world.path().join("host-accounts.rc"), "1\n").unwrap();
+    world.refuse_accounts("fleet-vm", 1);
     assert_eq!(
         world.pick(&copilot)["record"]["measured_through"],
         json!("stated")
@@ -1732,17 +1788,16 @@ fn a_pi_copilot_pool_is_judged_from_the_providers_row_or_the_owners_statement() 
     let bare = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
     bare.write_fleet(Vec::new(), None);
     bare.plant_capabilities("fleet-vm", SSH_LINE);
-    std::fs::write(bare.path().join("host-accounts.rc"), "1\n").unwrap();
+    bare.refuse_accounts("fleet-vm", 1);
     let unread = bare.pick(&copilot);
     assert_eq!(unread["answer"], json!("unjudged"), "{unread}");
     assert!(
-        unread["record"]["cause"]
-            .as_str()
-            .unwrap()
-            .starts_with("copilot-pool-unread host=fleet-vm exit=1"),
+        unread["record"]["cause"].as_str().unwrap().starts_with(
+            "copilot-pool-unread host=fleet-vm host-accounts-unreadable host=fleet-vm exit=1"
+        ),
         "{unread}"
     );
-    std::fs::write(bare.path().join("host-accounts.rc"), "2\n").unwrap();
+    bare.refuse_accounts("fleet-vm", 2);
     let unstated = bare.pick(&copilot);
     assert_eq!(unstated["answer"], json!("unmeasured"), "{unstated}");
     assert_eq!(unstated["exit"], json!(5));
@@ -1779,13 +1834,16 @@ fn a_cloud_session_host_admits_only_an_account_with_access_to_this_repository() 
     ]);
     world.write_fleet(Vec::new(), None);
     world.plant_capabilities("cloud-x", CLOUD_LINE);
-    world.plant_host_listing(
-        "cloud-x",
-        &[
-            through_host(measured("aclaude", 50, 5)),
-            through_host(measured("bclaude", 10, 5)),
-        ],
-    );
+    // The host's pool is its cloud credit, read from each account's own
+    // usage body: the account with access carries less of it.
+    let cloud = |alias: &str, remaining: f64| {
+        let expires = stamp(now() + 5 * 86_400);
+        let mut row = grant(alias, "claude", "cloud-credit", remaining, 100.0, &expires);
+        row["credits"]["used_dollars"] = json!(100.0 - remaining);
+        row
+    };
+    world.plant_host_listing("cloud-x", &[cloud("aclaude", 50.0), cloud("bclaude", 90.0)]);
+    let (aclaude, bclaude) = (world.dir("aclaude"), world.dir("bclaude"));
     // A repository of the row's own, with no origin yet: the world is
     // never read as the checkout it was made under.
     let git = |args: &[&str]| {
@@ -1802,14 +1860,8 @@ fn a_cloud_session_host_admits_only_an_account_with_access_to_this_repository() 
     assert_eq!(
         left_out(&no_origin),
         vec![
-            (
-                "/home/me/.aclaude".to_owned(),
-                "cloud-repo-unset".to_owned()
-            ),
-            (
-                "/home/me/.bclaude".to_owned(),
-                "cloud-repo-unset".to_owned()
-            ),
+            (aclaude.clone(), "cloud-repo-unset".to_owned()),
+            (bclaude.clone(), "cloud-repo-unset".to_owned()),
         ],
         "no origin to read, no account admitted: {no_origin}"
     );
@@ -1822,11 +1874,11 @@ fn a_cloud_session_host_admits_only_an_account_with_access_to_this_repository() 
     let admitted = world.pick(&claude(None));
     assert_eq!(
         chosen(&admitted).as_deref(),
-        Some("/home/me/.aclaude"),
+        Some(aclaude.as_str()),
         "the account with access, not the one with more room: {admitted}"
     );
     let named = world.pick(&PickRequest {
-        lane: Some("/home/me/.bclaude".to_owned()),
+        lane: Some(bclaude.clone()),
         ..claude(None)
     });
     assert_eq!(named["answer"], json!("cloud-repo-unset"), "{named}");
@@ -1837,11 +1889,11 @@ fn a_cloud_session_host_admits_only_an_account_with_access_to_this_repository() 
     let canary = world.pick(&claude(None));
     assert_eq!(
         chosen(&canary).as_deref(),
-        Some("/home/me/.bclaude"),
+        Some(bclaude.as_str()),
         "the origin read through the row's own home, rewritten to canary/repo: {canary}"
     );
     // The rule is the cloud-session host's alone.
-    let ssh = World::new(&[
+    let mut ssh = World::new(&[
         ("ORCH_LANE_HOST", "fleet-vm"),
         ("ORCH_LANE_CLOUD_REPOS", "aclaude=Owner/Repo"),
     ]);
@@ -1878,26 +1930,23 @@ fn a_cloud_session_host_admits_only_an_account_with_access_to_this_repository() 
 /// assignment.
 #[test]
 fn the_pick_verb_answers_the_judgement_with_the_legacy_exit_by_number() {
-    let world = World::new(&[]);
+    let mut world = World::new(&[]);
     world.plant_listing(&[measured("aclaude", 20, 5)]);
     world.write_fleet(Vec::new(), None);
-    let mut command = isolated();
-    command
-        .current_dir(world.path())
-        .env("OVERSEE_WATCH_LANES", world.path().join("lanes"))
-        .env("ORCH_STATE_DIR", world.path())
-        .args([
-            "accounts",
-            "pick",
-            "--fleet",
-            "--harness",
-            "claude",
-            "--native-model",
-            "claude-sonnet-5-5",
-            "--lane",
-            "/home/me/.aclaude",
-            "--projected",
-        ]);
+    let account = world.dir("aclaude");
+    let mut command = world.command();
+    command.args([
+        "accounts",
+        "pick",
+        "--fleet",
+        "--harness",
+        "claude",
+        "--native-model",
+        "claude-sonnet-5-5",
+        "--lane",
+        &account,
+        "--projected",
+    ]);
     let out = command.output().unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
     let text = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -1906,7 +1955,7 @@ fn the_pick_verb_answers_the_judgement_with_the_legacy_exit_by_number() {
     let result = &reply["result"];
     assert_eq!(result["answer"], json!("lane"));
     assert_eq!(result["exit"], json!(0));
-    assert_eq!(result["record"]["config_dir"], json!("/home/me/.aclaude"));
+    assert_eq!(result["record"]["config_dir"], json!(account));
     assert_eq!(result["record"]["binding_bucket"], json!("weekly"));
     assert_eq!(result["record"]["wall"], json!(20));
     assert_eq!(result["record"]["effective_headroom_pct"], json!(80));
@@ -1934,53 +1983,43 @@ fn the_pick_verb_answers_the_judgement_with_the_legacy_exit_by_number() {
     assert_eq!(reply["result"]["record"]["wall"], json!(96));
     // The chooser under the trigger: the count of rooms on the lane.
     world.plant_listing(&[measured("aclaude", 20, 5), measured("bclaude", 85, 5)]);
-    let mut chooser = isolated();
-    chooser
-        .current_dir(world.path())
-        .env("OVERSEE_WATCH_LANES", world.path().join("lanes"))
-        .env("ORCH_STATE_DIR", world.path())
-        .args([
-            "accounts",
-            "pick",
-            "--fleet",
-            "--harness",
-            "claude",
-            "--min-headroom-pct",
-            "20",
-            "--binding-floor",
-        ]);
+    let mut chooser = world.command();
+    chooser.args([
+        "accounts",
+        "pick",
+        "--fleet",
+        "--harness",
+        "claude",
+        "--min-headroom-pct",
+        "20",
+        "--binding-floor",
+    ]);
     let out = chooser.output().unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
     let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(
-        reply["result"]["record"]["config_dir"],
-        json!("/home/me/.aclaude")
-    );
+    assert_eq!(reply["result"]["record"]["config_dir"], json!(account));
     assert_eq!(
         reply["result"]["record"]["qualifying_count"],
         json!(1),
         "bclaude at 85 is under the trigger's bound of 80: {reply}"
     );
     // The room check: the prefix, then the keyed refusal at exit 3.
-    let mut room = isolated();
-    room.current_dir(world.path())
-        .env("OVERSEE_WATCH_LANES", world.path().join("lanes"))
-        .env("ORCH_STATE_DIR", world.path())
-        .args([
-            "accounts",
-            "pick",
-            "--env",
-            "--fleet",
-            "--harness",
-            "claude",
-            "--native-model",
-            "claude-opus-5-5",
-        ]);
+    let mut room = world.command();
+    room.args([
+        "accounts",
+        "pick",
+        "--env",
+        "--fleet",
+        "--harness",
+        "claude",
+        "--native-model",
+        "claude-opus-5-5",
+    ]);
     let out = room.output().unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "CLAUDE_CONFIG_DIR=/home/me/.aclaude\n"
+        format!("CLAUDE_CONFIG_DIR={account}\n")
     );
     world.plant_listing(&[measured("aclaude", 96, 5)]);
     let out = room.output().unwrap();
@@ -1991,10 +2030,8 @@ fn the_pick_verb_answers_the_judgement_with_the_legacy_exit_by_number() {
         "orch-runtime: account-none harness=claude exit=3"
     );
     // The roster verb: the rows with their words and the lines.
-    let mut roster = isolated();
+    let mut roster = world.command();
     roster
-        .current_dir(world.path())
-        .env("OVERSEE_WATCH_LANES", world.path().join("lanes"))
         .env("ORCH_LANE_RETIRE", "aclaude=2026-01-01")
         .args(["accounts", "roster"]);
     let out = roster.output().unwrap();
@@ -2026,18 +2063,22 @@ fn the_pick_verb_answers_the_judgement_with_the_legacy_exit_by_number() {
 #[test]
 fn a_named_reserved_or_retired_account_is_refused_by_its_word_not_the_walls_figures() {
     let today = accounts::today(now());
-    let world = World::new(&[("ORCH_LANE_RETIRE", &format!("oclaude={today}"))]);
+    let mut world = World::new(&[
+        ("ORCH_LANE_RETIRE", &format!("oclaude={today}")),
+        ("ORCH_LANE_HOST", "fleet-vm"),
+    ]);
     world.write_fleet(Vec::new(), None);
-    let mut reserved = measured("rclaude", 10, 5);
+    world.plant_capabilities("fleet-vm", SSH_LINE);
+    let mut reserved = through_host(measured("rclaude", 10, 5));
     reserved["reserved"] = json!(1);
-    world.plant_listing(&[reserved, measured("oclaude", 10, 5)]);
+    world.plant_host_listing("fleet-vm", &[reserved, measured("oclaude", 10, 5)]);
     let named_row = |dir: &str| world.pick(&named(dir, claude(Some("claude-sonnet-5-5"))));
     let reserved = named_row("/home/me/.rclaude");
     assert_eq!(reserved["answer"], json!("reserved"), "{reserved}");
     assert_eq!(reserved["exit"], json!(3));
     assert_eq!(reserved["record"]["verdict"], json!("reserved"));
     assert_eq!(reserved["record"]["word"], json!("reserve"));
-    let retired = named_row("/home/me/.oclaude");
+    let retired = named_row(&world.dir("oclaude"));
     assert_eq!(retired["answer"], json!("retired"), "{retired}");
     assert_eq!(retired["exit"], json!(3));
     assert_eq!(retired["record"]["word"], json!(format!("retired:{today}")));
@@ -2100,7 +2141,7 @@ fn a_plan_end_that_names_no_calendar_day_leaves_the_row_unpicked_with_its_figure
             cause: "plan-end-invalid alias=v value=2026-10-21T00:00:00Z".to_owned()
         }
     );
-    let roster = Roster { rows };
+    let roster = roster_of(rows);
     assert_eq!(
         roster.rows[0].word(),
         Word::PlanEndInvalid {
@@ -2236,26 +2277,14 @@ fn a_statement_nobody_can_read_is_refused_by_key_and_value() {
     );
 }
 
-/// The fetcher the shipped reader asks for a usage body (the shape of
-/// `tests/lib/lanes-fixture.sh`'s `make_fetcher` stub): the HTTP status on
-/// the first line and `$FIXTURE_DIR/<basename of the config dir>.json`
-/// under it.
-const FETCHER: &str = "#!/usr/bin/env bash
-name=\"$(basename \"$2\")\"
-printf '200 \\n'
-f=\"$FIXTURE_DIR/$name.json\"
-[[ -f \"$f\" ]] || exit 1
-cat -- \"$f\"
-";
-
-/// The shipped reader's world: a home with one Claude lane,
-/// `.aclaude`, whose usage the fetcher answers from a planted body, one
-/// Codex lane, `.acodex`, whose plan windows are spent and whose credits
-/// stand, and one Pi root, `.pi1`; a `tmux` that answers nothing and a `curl` that
-/// refuses first on `PATH`; the provider fixture `tests/fixtures/lane-host`
-/// with its rows planted per arm; a checkout of the row's own and a fleet
-/// of the row's own. The runtime is asked through the boundary with the
-/// shipped `scripts/lanes` as its reader.
+/// The producers' world: a home with one Claude lane, `.aclaude`, whose
+/// usage the usage fixture answers from a planted body, one Codex lane,
+/// `.acodex`, whose plan windows are spent and whose credits stand, and
+/// one Pi root, `.pi1`; a `tmux` that answers nothing and the usage
+/// fixture as `curl` first on `PATH`; the shipped `lane-host` dispatcher
+/// under the provider fixture `tests/fixtures/lane-host` with its rows
+/// planted per arm; a checkout of the row's own and a fleet of the row's
+/// own. The runtime is asked through the boundary.
 struct Producer {
     dir: tempfile::TempDir,
     lanes: PathBuf,
@@ -2291,8 +2320,8 @@ impl Producer {
             .unwrap();
         };
         executable("tmux", "#!/bin/sh\nexit 0\n");
-        executable("curl", "#!/bin/sh\nexit 1\n");
-        executable("fetch", FETCHER);
+        std::os::unix::fs::symlink(fixtures().join("usage-curl/curl"), root.join("bin/curl"))
+            .unwrap();
         let git = program("git")
             .args(["-C"])
             .arg(root.join("project"))
@@ -2356,9 +2385,13 @@ impl Producer {
         .unwrap();
     }
 
-    /// The usage body the fetcher answers for the Claude lane.
+    /// The usage body the usage fixture answers for the Claude lane.
     fn plant_usage(&self, body: &Value) {
-        std::fs::write(self.path().join("fixtures/.aclaude.json"), body.to_string()).unwrap();
+        std::fs::write(
+            self.path().join("fixtures/token-aclaude.usage.json"),
+            body.to_string(),
+        )
+        .unwrap();
     }
 
     fn plant_codex(&self) {
@@ -2378,7 +2411,11 @@ impl Producer {
             "credits": {"has_credits": true, "unlimited": false, "overage_limit_reached": false, "balance": 6000},
             "spend_control": {"reached": false}
         });
-        std::fs::write(self.path().join("fixtures/.acodex.json"), usage.to_string()).unwrap();
+        std::fs::write(
+            self.path().join("fixtures/token-acodex.usage.json"),
+            usage.to_string(),
+        )
+        .unwrap();
     }
 
     /// The provider's `accounts` rows.
@@ -2397,21 +2434,19 @@ impl Producer {
         .unwrap();
     }
 
-    /// The environment the reader and the runtime run under: the home,
-    /// the lane, the fetcher, the state and cache directories, the
+    /// The environment the runtime runs under: the home, the lane, the
+    /// usage fixture's bodies, the state and cache directories, the
     /// provider (`host`) or the local read, the caches off, and the arm's
     /// own settings.
     fn env(&self, host: bool, extra: &[(&str, &str)]) -> Vec<(String, String)> {
         let root = self.path();
         let mut env: Vec<(String, String)> = [
             ("HOME", self.home().display().to_string()),
-            ("LANES_HOME", self.home().display().to_string()),
             ("ORCH_LANE_DIRS", self.claude()),
             (
-                "ORCH_LANES_FETCH_CMD",
-                root.join("bin/fetch").display().to_string(),
+                "USAGE_FIXTURE_DIR",
+                root.join("fixtures").display().to_string(),
             ),
-            ("FIXTURE_DIR", root.join("fixtures").display().to_string()),
             ("ORCH_STATE_DIR", root.join("state").display().to_string()),
             (
                 "OVERSEE_WATCH_STATE_DIR",
@@ -2466,18 +2501,12 @@ impl Producer {
         World::reply(command)
     }
 
-    /// The reader's cache record of the Claude lane after one fresh
-    /// listing (the caches off), for an arm that plants a sample's age or
-    /// its prior before the runtime reads the record under a TTL.
+    /// The listing's record of the Claude lane after one fresh listing
+    /// (the caches off), for an arm that plants a sample's age or its
+    /// prior before the runtime reads the record under a TTL.
     fn cache_record(&self) -> PathBuf {
-        let mut listing = program(&self.lanes);
-        listing
-            .args(["list", "--json"])
-            .current_dir(self.path().join("project"))
-            .env("PATH", tool_path(&[&self.path().join("bin")]));
-        for (key, value) in self.env(false, &[]) {
-            listing.env(key, value);
-        }
+        let mut listing = self.command(&self.env(false, &[]));
+        listing.args(["accounts", "roster"]);
         let out = listing.output().unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
         let usage = self.path().join("claims/usage");
@@ -2493,13 +2522,11 @@ impl Producer {
             .unwrap_or_else(|| panic!("no cache record of {} under {usage:?}", self.claude()))
     }
 
-    /// The record rewritten by `edit`, its normalized block dropped so the
-    /// reader normalizes the planted body again.
+    /// The record rewritten by `edit`.
     fn edit_record(&self, path: &Path, edit: impl FnOnce(&mut Value)) {
         let mut record: Value =
             serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
         edit(&mut record);
-        record.as_object_mut().unwrap().remove("normalized");
         std::fs::write(path, record.to_string()).unwrap();
     }
 }
@@ -3638,13 +3665,19 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             ],
         },
         Arm {
-            name: "a local kind ORCH_LANE_EXCLUDE names is no record to the named form and no candidate to the chooser, the provider holding a row for it, as the retained pick answered",
+            name: "a local kind ORCH_LANE_EXCLUDE names is refused by its word in the named form, where the retained pick found no record, and no candidate to the chooser, the provider holding a row for it",
             usage: fresh.clone(),
             provider: Some(claude_row("\tsession-5h-pct=10\tweekly-pct=10")),
             env: vec![("ORCH_LANE_EXCLUDE", "aclaude")],
             asks: vec![
                 ask(claude_chooser(), "none", 3, Some(3), none(0, 0)),
-                ask(claude_named(), "no-record", 4, Some(4), vec![]),
+                ask(
+                    claude_named(),
+                    "excluded",
+                    3,
+                    Some(4),
+                    vec![("verdict", json!("excluded")), ("excluded", json!(true))],
+                ),
             ],
         },
         Arm {
@@ -3814,7 +3847,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             ],
         },
         Arm {
-            name: "an excluded Copilot root nobody measured, this machine's read, is a pool nobody measured to both forms, as the retained pick answered",
+            name: "an excluded Copilot root nobody measured, this machine's read, is a pool nobody measured to the chooser and refused by its word in the named form, where the retained pick found no reading",
             usage: fresh.clone(),
             provider: None,
             env: vec![("ORCH_LANE_EXCLUDE", "pi1")],
@@ -3828,10 +3861,10 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
                 ),
                 ask(
                     named_launch(pi_model, &pi_dir),
-                    "unmeasured",
-                    5,
+                    "excluded",
+                    3,
                     Some(5),
-                    copilot_word("unmeasured", "pi1"),
+                    copilot_word("excluded", "pi1"),
                 ),
             ],
         },
@@ -3858,7 +3891,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             ],
         },
         Arm {
-            name: "an excluded API grant root, this machine's read, is a grant nobody measured to both forms, as the retained pick answered",
+            name: "an excluded API grant root, this machine's read, is a grant nobody measured to the chooser and refused by its word in the named form, where the retained pick found no grant row",
             usage: fresh.clone(),
             provider: None,
             env: vec![("ORCH_LANE_EXCLUDE", "pi1")],
@@ -3872,14 +3905,13 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
                 ),
                 ask(
                     named_launch(api_model, &pi_dir),
-                    "unmeasured",
-                    5,
+                    "excluded",
+                    3,
                     Some(5),
                     vec![
-                        ("verdict", json!("unmeasured")),
+                        ("verdict", json!("excluded")),
                         ("alias", json!("pi1")),
                         ("pool", json!("api-credit")),
-                        ("refusal", api_refusal()),
                     ],
                 ),
             ],
@@ -4272,4 +4304,480 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
     );
     assert_eq!(opus["record"]["usage_rate_pct_per_min"], json!(0.5));
     assert_eq!(opus["record"]["projected_wall_minutes"], json!(20));
+}
+
+// --- the listing ------------------------------------------------------------------------------
+
+/// A Claude usage body as the endpoint answers it, with the windows given.
+fn claude_body(session: Value, weekly: Value, scoped: &[(&str, Value)]) -> Value {
+    json!({
+        "five_hour": {"utilization": session, "resets_at": stamp(now() + 1800)},
+        "seven_day": {"utilization": weekly, "resets_at": stamp(now() + 7 * 86_400)},
+        "limits": scoped.iter().map(|(label, pct)| json!({
+            "kind": "weekly_scoped", "percent": pct, "resets_at": stamp(now() + 7 * 86_400),
+            "scope": {"model": {"display_name": label}},
+        })).collect::<Vec<Value>>(),
+    })
+}
+
+/// Defect: a usage percentage that does not read taken as zero, so the
+/// account reads measured with full headroom and a pick launches onto it;
+/// or a readable window beside it binding the lane while the unreadable
+/// one may be exhausted. A Claude body whose 5-hour utilization is a
+/// string beside a readable weekly window, and a Codex body whose primary
+/// window is negative beside a readable secondary, each list the account
+/// `no_usage_data`, `unmeasured`, every window null, and the chooser picks
+/// neither; a window the body omits leaves the others measured.
+#[test]
+fn an_unreadable_percentage_reads_unmeasured_never_zero() {
+    let mut world = World::new(&[]);
+    world.write_fleet(Vec::new(), None);
+    let mut codex = measured("acodex", 20, 10);
+    codex["harness"] = json!("codex");
+    world.plant_listing(&[
+        measured("aclaude", 20, 10),
+        codex,
+        measured("bclaude", 20, 10),
+    ]);
+    for (harness, alias) in [
+        ("claude", "aclaude"),
+        ("codex", "acodex"),
+        ("claude", "bclaude"),
+    ] {
+        std::fs::remove_file(world.record_path(harness, alias)).unwrap();
+    }
+    world.plant_answer(
+        "token-aclaude",
+        "usage",
+        &claude_body(json!("12"), json!(20), &[("Opus", json!(30))]),
+        None,
+    );
+    world.plant_answer(
+        "token-acodex",
+        "usage",
+        &json!({"rate_limit": {
+            "primary_window": {"used_percent": -1, "reset_at": now() + 1800, "limit_window_seconds": 18_000},
+            "secondary_window": {"used_percent": 20, "reset_at": now() + 86_400, "limit_window_seconds": 604_800}}}),
+        None,
+    );
+    world.plant_answer(
+        "token-bclaude",
+        "usage",
+        &json!({"seven_day": {"utilization": 20, "resets_at": stamp(now() + 7 * 86_400)}}),
+        None,
+    );
+    let roster = world.roster();
+    let row = |alias: &str| {
+        roster["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["alias"] == json!(alias))
+            .map(|r| r["record"].clone())
+            .unwrap_or_else(|| panic!("{alias}: {roster}"))
+    };
+    for alias in ["aclaude", "acodex"] {
+        let row = row(alias);
+        assert_eq!(row["status"], json!("no_usage_data"), "{alias}: {row}");
+        assert_eq!(row["verdict"], json!("unmeasured"), "{alias}: {row}");
+        assert_eq!(row["headroom_pct"], Value::Null, "{alias}: {row}");
+    }
+    let absent = row("bclaude");
+    assert_eq!(absent["status"], json!("ok"), "{absent}");
+    assert_eq!(absent["headroom_pct"], json!(80), "{absent}");
+    let claude_pick = world.pick(&claude(None));
+    assert_eq!(
+        chosen(&claude_pick).as_deref(),
+        Some(world.dir("bclaude").as_str()),
+        "the account whose reading nobody could read is never the lane: {claude_pick}"
+    );
+    let codex_pick = world.pick(&PickRequest {
+        harness: "codex".to_owned(),
+        ..PickRequest::default()
+    });
+    assert_eq!(codex_pick["answer"], json!("none"), "{codex_pick}");
+    assert_eq!(codex_pick["record"]["unmeasured"], json!(1), "{codex_pick}");
+}
+
+/// Defect: a usage 429 reported as no reading, so every launch on the host
+/// walls for the length of a transient burst while the record holds good
+/// figures seconds old; a refused request posted again inside its window;
+/// a figure a day old served under a refusal it cannot say anything about.
+/// Under a TTL of 0 the first listing fetches and records the figure; the
+/// endpoint then refusing with 429 and a Retry-After of 0 lists the
+/// account `rate_limited` on the recorded figure with its own age under
+/// the default window, the refusal recorded; the next listing posts
+/// nothing; the figure aged past the session window is not served, the
+/// account carrying the refusal and no window.
+#[test]
+fn a_usage_429_keeps_the_cached_reading_with_its_age_and_the_window_posts_nothing() {
+    let mut world = World::new(&[("ORCH_LANES_USAGE_TTL", "0")]);
+    world.write_fleet(Vec::new(), None);
+    world.plant_listing(&[measured("aclaude", 20, 10)]);
+    world.plant_answer(
+        "token-aclaude",
+        "usage",
+        &claude_body(json!(10), json!(20), &[]),
+        None,
+    );
+    let first = world.roster();
+    assert_eq!(first["rows"][0]["status"], json!("ok"), "{first}");
+    assert_eq!(first["rows"][0]["record"]["headroom_pct"], json!(80));
+    assert_eq!(world.curl_log(), vec!["usage token-aclaude"]);
+    let record = world.record_path("claude", "aclaude");
+    let mut value: Value =
+        serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+    value["fetched_at"] = json!(now() - 45);
+    std::fs::write(&record, value.to_string()).unwrap();
+    world.plant_answer(
+        "token-aclaude",
+        "usage",
+        &claude_body(json!(60), json!(60), &[]),
+        Some("429 0"),
+    );
+    let refused = world.roster();
+    let row = &refused["rows"][0]["record"];
+    assert_eq!(row["status"], json!("rate_limited"), "{refused}");
+    assert_eq!(
+        row["headroom_pct"],
+        json!(80),
+        "the recorded figure, not the refusal's body: {refused}"
+    );
+    let age = row["usage_age_s"].as_u64().unwrap();
+    assert!((45..=60).contains(&age), "the figure's own age: {refused}");
+    assert_eq!(world.curl_log().len(), 2);
+    let value: Value = serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+    assert_eq!(value["refusal"]["code"], json!("429"));
+    assert_eq!(
+        value["refusal"]["expires_at"].as_u64().unwrap() - value["fetched_at"].as_u64().unwrap(),
+        300,
+        "a Retry-After of 0 takes the default window: {value}"
+    );
+    let again = world.roster();
+    assert_eq!(again["rows"][0]["status"], json!("rate_limited"), "{again}");
+    assert_eq!(again["rows"][0]["record"]["headroom_pct"], json!(80));
+    assert_eq!(world.curl_log().len(), 2, "nothing posts inside the window");
+    assert_eq!(
+        chosen(&world.pick(&claude(None))).as_deref(),
+        Some(world.dir("aclaude").as_str()),
+        "the served figure is judged, not a wall"
+    );
+    let mut value: Value =
+        serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+    value["usage_fetched_at"] = json!(now() - 86_400);
+    std::fs::write(&record, value.to_string()).unwrap();
+    let old = world.roster();
+    assert_eq!(old["rows"][0]["status"], json!("rate_limited"), "{old}");
+    assert_eq!(
+        old["rows"][0]["record"]["headroom_pct"],
+        Value::Null,
+        "a figure a day old is not served: {old}"
+    );
+    assert_eq!(world.curl_log().len(), 2);
+    assert_eq!(world.pick(&claude(None))["answer"], json!("none"));
+}
+
+/// Defect: two readers arriving together at a cold record each posting
+/// their own request, which is what put eleven accounts over the
+/// endpoint's rate at once. Two listings started together against one
+/// state directory and one account, the fixture holding each answer open
+/// a second: one request on the log, both listings carrying the figure.
+#[test]
+fn two_refreshers_under_the_lock_fetch_once() {
+    let mut world = World::new(&[]);
+    world.write_fleet(Vec::new(), None);
+    world.plant_listing(&[measured("aclaude", 20, 10)]);
+    std::fs::remove_file(world.record_path("claude", "aclaude")).unwrap();
+    world.plant_answer(
+        "token-aclaude",
+        "usage",
+        &claude_body(json!(10), json!(20), &[]),
+        None,
+    );
+    std::fs::write(world.path().join("fixtures/delay"), "1\n").unwrap();
+    let mut first = world.command();
+    first.args(["accounts", "roster"]);
+    let mut second = world.command();
+    second.args(["accounts", "roster"]);
+    let first = first.stdout(std::process::Stdio::piped()).spawn().unwrap();
+    let second = second.stdout(std::process::Stdio::piped()).spawn().unwrap();
+    let outputs = [
+        first.wait_with_output().unwrap(),
+        second.wait_with_output().unwrap(),
+    ];
+    for out in &outputs {
+        assert!(out.status.success(), "{}", stderr(out));
+        let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(reply["result"]["rows"][0]["status"], json!("ok"), "{reply}");
+        assert_eq!(
+            reply["result"]["rows"][0]["record"]["headroom_pct"],
+            json!(80),
+            "{reply}"
+        );
+    }
+    assert_eq!(
+        world.curl_log(),
+        vec!["usage token-aclaude"],
+        "the second reader took the first's figure inside the lock"
+    );
+}
+
+/// The three endpoint shapes, each read as its recorded body: Claude's
+/// windows, scoped windows and dollar credit; Codex's windows routed by
+/// duration and its credit balance; Copilot's monthly pool from the
+/// stored login. Defect: a window read off the wrong field or by
+/// position, a label hard-coded, a credit dropped.
+#[test]
+fn each_endpoint_shape_is_read_as_its_recorded_body() {
+    let mut world = World::new(&[]);
+    world.write_fleet(Vec::new(), None);
+    let mut codex = measured("acodex", 20, 10);
+    codex["harness"] = json!("codex");
+    let mut copilot = measured("acopilot", 20, 10);
+    copilot["harness"] = json!("copilot");
+    world.plant_listing(&[measured("aclaude", 20, 10), codex, copilot]);
+    for (harness, alias) in [
+        ("claude", "aclaude"),
+        ("codex", "acodex"),
+        ("copilot", "acopilot"),
+    ] {
+        std::fs::remove_file(world.record_path(harness, alias)).unwrap();
+    }
+    let mut claude_usage = claude_body(
+        json!(10),
+        json!(20),
+        &[("Opus", json!(5)), ("Fable 5.1", json!(40))],
+    );
+    claude_usage["iguana_necktie"] = json!({"limit_dollars": 50, "used_dollars": 20, "remaining_dollars": 30,
+        "resets_at": "2099-08-01T06:00:00Z", "locked_reason": null});
+    world.plant_answer("token-aclaude", "usage", &claude_usage, None);
+    world.plant_answer(
+        "token-acodex",
+        "usage",
+        &json!({"rate_limit": {
+            "primary_window": {"used_percent": 44, "reset_at": 1_785_000_000, "limit_window_seconds": 604_800},
+            "secondary_window": null},
+            "credits": {"has_credits": true, "unlimited": false, "overage_limit_reached": false, "balance": "6000"},
+            "spend_control": {"reached": false}}),
+        None,
+    );
+    world.plant_answer(
+        "token-acopilot",
+        "copilot",
+        &json!({"copilot_plan": "business", "quota_reset_date_utc": "2099-10-01",
+            "quota_snapshots": {"premium_interactions": {"entitlement": 1_000_000, "remaining": 900_000,
+                "credits_used": 318_085, "overage_permitted": true, "overage_count": 0, "unlimited": false}}}),
+        None,
+    );
+    let roster = world.roster();
+    let row = |alias: &str| {
+        roster["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["alias"] == json!(alias))
+            .map(|r| r["record"].clone())
+            .unwrap_or_else(|| panic!("{alias}: {roster}"))
+    };
+    let claude = row("aclaude");
+    assert_eq!(
+        (
+            &claude["session_5h_pct"],
+            &claude["weekly_pct"],
+            &claude["model_pct"],
+            &claude["model_label"]
+        ),
+        (&json!(10), &json!(20), &json!(40), &json!("Fable 5.1")),
+        "{claude}"
+    );
+    assert_eq!(claude["headroom_pct"], json!(60));
+    assert_eq!(claude["binding_bucket"], json!("model"));
+    assert_eq!(claude["credits"]["remaining_dollars"], json!(30));
+    assert_eq!(claude["credits"]["unit"], json!("usd"));
+    let codex = row("acodex");
+    assert_eq!(
+        codex["weekly_pct"],
+        json!(44),
+        "a 7-day primary window fills the weekly slot: {codex}"
+    );
+    assert_eq!(codex["session_5h_pct"], Value::Null);
+    assert_eq!(codex["headroom_pct"], json!(56));
+    assert_eq!(codex["resets"]["weekly"], json!("2026-07-25T17:20:00Z"));
+    assert_eq!(codex["credits"]["balance"], json!(6000));
+    assert_eq!(codex["credits"]["spend_control_reached"], json!(false));
+    let copilot = row("acopilot");
+    assert_eq!(copilot["monthly_pct"], json!(10), "{copilot}");
+    assert_eq!(copilot["headroom_pct"], json!(90));
+    assert_eq!(copilot["binding_bucket"], json!("monthly"));
+    assert_eq!(copilot["binding_resets_at"], json!("2099-10-01T00:00:00Z"));
+    assert_eq!(copilot["plan"], json!("business"));
+    assert_eq!(copilot["credits"]["used"], json!(100_000));
+    assert_eq!(copilot["credits_used"], json!(318_085));
+    assert_eq!(copilot["pool"], json!("copilot"));
+}
+
+/// The Copilot pool: the account's stored login asked for at the endpoint
+/// with its token in curl's config on stdin, a keyring login read through
+/// `secret-tool`, and the owner's stated reading where no login reads.
+/// Defect: a login another host issued sent to GitHub.com, a token on the
+/// argument vector, a keyring login never read, a home with no login
+/// judged on nothing where the owner stated its pool.
+#[test]
+fn the_copilot_login_is_read_from_the_config_or_the_keyring_and_the_statement_stands_in() {
+    use std::os::unix::fs::PermissionsExt;
+    let mut world = World::new(&[]);
+    world.write_fleet(Vec::new(), None);
+    let mut acopilot = measured("acopilot", 20, 10);
+    acopilot["harness"] = json!("copilot");
+    world.plant_listing(&[acopilot]);
+    let home = world.path().join("home");
+    for (name, config) in [
+        (
+            "kcopilot",
+            json!({"lastLoggedInUser": {"host": "https://github.com", "login": "probe"}}),
+        ),
+        (
+            "tcopilot",
+            json!({"copilotTokens": {"https://acme.ghe.com:a": "ghu_tenant"}}),
+        ),
+        ("scopilot", json!({})),
+    ] {
+        let dir = home.join(format!(".{name}"));
+        std::fs::create_dir_all(dir.join("session-state")).unwrap();
+        std::fs::write(dir.join("config.json"), config.to_string()).unwrap();
+    }
+    std::fs::remove_file(world.record_path("copilot", "acopilot")).unwrap();
+    let dirs = ["acopilot", "kcopilot", "tcopilot", "scopilot"]
+        .map(|n| world.dir(n))
+        .join(":");
+    world.env.retain(|(k, _)| k != "ORCH_LANE_DIRS");
+    world.env.push(("ORCH_LANE_DIRS".to_owned(), dirs));
+    world.env.push((
+        "ORCH_LANE_COPILOT_POOL".to_owned(),
+        format!("{}=250/1000", world.dir("scopilot")),
+    ));
+    let secret_tool = world.path().join("bin/secret-tool");
+    std::fs::write(
+        &secret_tool,
+        "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$USAGE_FIXTURE_DIR/secret-tool.log\"\ncase \"$5\" in *:github) printf '[/org/freedesktop/secrets/collection/login/7]\\nlabel = keyring:probe@copilot-cli\\nsecret = gho_keyring\\n' ;; esac\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&secret_tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let pool = |remaining: u64| {
+        json!({"quota_snapshots": {"premium_interactions": {"entitlement": 1000, "remaining": remaining}},
+               "quota_reset_date_utc": "2099-10-01"})
+    };
+    world.plant_answer("token-acopilot", "copilot", &pool(900), None);
+    world.plant_answer("gho_keyring", "copilot", &pool(600), None);
+    let roster = world.roster();
+    let row = |alias: &str| {
+        roster["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["alias"] == json!(alias))
+            .map(|r| r["record"].clone())
+            .unwrap_or_else(|| panic!("{alias}: {roster}"))
+    };
+    assert_eq!(row("acopilot")["monthly_pct"], json!(10), "{roster}");
+    assert_eq!(
+        row("kcopilot")["monthly_pct"],
+        json!(40),
+        "the keyring login's pool: {roster}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(world.path().join("fixtures/secret-tool.log")).unwrap(),
+        "search service copilot-cli username https://github.com:probe:github\n"
+    );
+    let tenant = row("tcopilot");
+    assert_eq!(tenant["status"], json!("no_credentials"), "{tenant}");
+    assert!(
+        tenant["detail"]
+            .as_str()
+            .unwrap()
+            .starts_with("copilot login unread: token-foreign-host"),
+        "{tenant}"
+    );
+    let stated = row("scopilot");
+    assert_eq!(stated["measured_through"], json!("stated"), "{stated}");
+    assert_eq!(stated["monthly_pct"], json!(25));
+    assert_eq!(stated["credits"]["remaining"], json!(750));
+    let log = world.curl_log();
+    assert_eq!(
+        log,
+        vec!["copilot token-acopilot", "copilot gho_keyring"],
+        "{log:?}"
+    );
+    let argv = std::fs::read_to_string(world.path().join("fixtures/curl.argv")).unwrap();
+    assert!(
+        !argv.contains("token-acopilot")
+            && !argv.contains("gho_keyring")
+            && !argv.contains("ghu_tenant"),
+        "no login on an argument vector: {argv}"
+    );
+    assert!(argv.contains("-K -"), "{argv}");
+}
+
+/// Defect: the listing applying the owner's exclusion or retirement, so an
+/// excluded local kind is no record to the named form and a retired one is
+/// never measured; or the judge reading neither. Both accounts are listed,
+/// the excluded one unread with `excluded` set and the retired one
+/// measured with `retired` set and its date; the judge refuses each by its
+/// word in the named form and leaves both out of the choice.
+#[test]
+fn an_excluded_and_a_retired_account_are_listed_with_their_flags_and_refused_by_name() {
+    let today = accounts::today(now());
+    let mut world = World::new(&[
+        ("ORCH_LANE_EXCLUDE", "xclaude"),
+        ("ORCH_LANE_RETIRE", &format!("rclaude={today}")),
+    ]);
+    world.write_fleet(Vec::new(), None);
+    world.plant_listing(&[
+        measured("xclaude", 0, 0),
+        measured("rclaude", 10, 5),
+        measured("aclaude", 60, 5),
+    ]);
+    std::fs::remove_file(world.record_path("claude", "xclaude")).unwrap();
+    let roster = world.roster();
+    let lines = roster["lines"].as_array().unwrap();
+    assert!(
+        lines[0]
+            .as_str()
+            .unwrap()
+            .contains(" status=excluded verdict=unmeasured "),
+        "the excluded account is listed unread: {lines:?}"
+    );
+    assert!(
+        lines[1]
+            .as_str()
+            .unwrap()
+            .ends_with(&format!(" word=retired:{today}")),
+        "{lines:?}"
+    );
+    assert!(
+        lines[1]
+            .as_str()
+            .unwrap()
+            .contains(" status=ok verdict=room headroom_pct=90 "),
+        "the retired account is measured: {lines:?}"
+    );
+    assert_eq!(
+        world.curl_log(),
+        Vec::<String>::new(),
+        "nothing inside the excluded account is read, and the retired record is served"
+    );
+    let chosen_row = world.pick(&claude(None));
+    assert_eq!(
+        chosen(&chosen_row).as_deref(),
+        Some(world.dir("aclaude").as_str()),
+        "neither the excluded nor the retired account, whatever their room: {chosen_row}"
+    );
+    let excluded = world.pick(&named(&world.dir("xclaude"), claude(None)));
+    assert_eq!(excluded["answer"], json!("excluded"), "{excluded}");
+    assert_eq!(excluded["exit"], json!(3));
+    assert_eq!(excluded["record"]["excluded"], json!(true));
+    let retired = world.pick(&named(&world.dir("rclaude"), claude(None)));
+    assert_eq!(retired["answer"], json!("retired"), "{retired}");
+    assert_eq!(retired["record"]["retired"], json!(true));
+    assert_eq!(retired["record"]["retire_date"], json!(today));
 }

@@ -785,6 +785,21 @@ fi''', row["clone"])
     if not path or "\n" in path or "\t" in path:
         notice("worktree-path-invalid", item=args.item)
         raise SystemExit(1)
+    # The orch runtime the lane's own workflow runs on this host, built
+    # here from the clone's sources through the runtime's own setup, keyed
+    # on them, so a lane never meets setup-required at its first turn; a
+    # host that already holds the binary builds nothing. Its path goes into
+    # the launch record for the launcher to read before it opens a window.
+    runtime = remote(row, '''setup="$1/.agents/skills/orch/scripts/setup"
+if [ ! -x "$setup" ]; then
+  printf 'lane-host-ssh: runtime-setup-missing path=%s\\n' "$setup" >&2
+  exit 1
+fi
+line=$("$setup") || exit 1
+case "$line" in
+  *" binary=/"*) printf '%s\\n' "${line##* binary=}" ;;
+  *) printf 'lane-host-ssh: runtime-unbuilt output=%s\\n' "$line" >&2; exit 1 ;;
+esac''', row["clone"]).stdout.decode().strip()
     prefix = "exec env " + shlex.quote("ORCH_STATE_DIR=" + path + "/tmp") + " " + prefix
     # The item marker is local to this clone; it is not part of the install record.
     remote(row, 'printf "%s\\n" "$2" > "$1/.git/lane-host-item"', row["clone"], args.item)
@@ -802,7 +817,7 @@ if [ ! -x "$marker" ]; then
   exit 1
 fi
 exec "$marker" --launch-record "$4" "$2" "$3"''', row["clone"], path, args.item,
-           json.dumps({"identity_file": row["clone"] + IDENTITY_FILE}))
+           json.dumps({"identity_file": row["clone"] + IDENTITY_FILE, "runtime": runtime}))
     pi_root = f"\tpi-root={remote_account}" if args.harness == "pi" else ""
     lifecycle_output(row, f"ssh-target={row['target']}\tpath={path}\tremote-prefix={prefix}{pi_root}\n".encode())
 

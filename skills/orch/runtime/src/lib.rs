@@ -26,6 +26,7 @@ pub mod archive;
 pub mod effects;
 pub mod error;
 pub mod mailbox;
+pub mod marker;
 pub mod ops;
 pub mod proof;
 pub mod protocol;

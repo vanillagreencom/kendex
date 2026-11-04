@@ -39,6 +39,7 @@ disallowed-methods = [
     { path = "agent_runtime::host::run", reason = "a program is run only by the operation handle or a named non-effect module for its own work" },
     { path = "agent_runtime::host::run_tagged", reason = "a program is run under a duty's tag only by a watch duty for its own work, each call site carrying its reason" },
     { path = "agent_runtime::host::run_tagged_in", reason = "a program is run in a working directory or with added variables only by the operation handle or a watch duty for its own work, each call site carrying its reason" },
+    { path = "agent_runtime::host::run_tagged_fed", reason = "a program is fed its stdin only by the operation handle or a watch duty for its own work, each call site carrying its reason" },
     { path = "agent_runtime::harness::probe", reason = "the harness binary is run only by the operation handle" },
     { path = "std::process::Command::new", reason = "a program is run only through agent-runtime's one runner, from the operation handle or a named non-effect function" },
     { path = "std::process::Command::spawn", reason = "a program is run only through agent-runtime's one runner" },
@@ -48,6 +49,7 @@ disallowed-methods = [
     { path = "std::process::Child::try_wait", reason = "a child is read only inside agent-runtime's one runner" },
     # the native session stores
     { path = "agent_runtime::session::resume_present", reason = "a session store is read only through the operation handle" },
+    { path = "agent_runtime::session::resume_owner", reason = "a session store is read only through the operation handle" },
     { path = "agent_runtime::session::lead_ids", reason = "a session store is read only through the operation handle" },
     { path = "agent_runtime::session::new_leads", reason = "a session store is read only through the operation handle" },
     { path = "agent_runtime::session::user_turns", reason = "a session file is read only through the operation handle" },

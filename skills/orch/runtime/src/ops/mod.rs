@@ -32,6 +32,7 @@ pub mod mail;
 mod occupancy;
 pub mod proof;
 pub mod prune;
+pub mod queue_watch;
 pub mod store;
 #[cfg(test)]
 #[allow(
@@ -41,7 +42,9 @@ pub mod store;
 mod testing;
 pub mod validate;
 pub mod verify_pr;
+pub mod verify_review;
 pub mod wake;
+pub mod walk;
 pub mod wall;
 
 pub use accept::{SummaryPost, accept};
@@ -60,6 +63,7 @@ pub use item::{
 };
 // The stop's bounded wait reads the job by the item transitions' one identity
 // reader.
+pub(crate) use admission::origin_slug;
 pub(crate) use item::job_ended;
 pub use lane::{
     AdoptSession, CloseOwnedResources, CloseRequested, LaneAdopted, LaneLaunched, LaneParked,
@@ -69,6 +73,7 @@ pub use lane::{
 pub(crate) use occupancy::CLOUD_KIND;
 pub use occupancy::{Charge, ChargeReason, ChargeSource, Host, Occupancy};
 pub use verify_pr::{PrVerified, VerifyPr};
+pub use verify_review::{ReviewVerified, VerifyReview};
 
 use std::path::Path;
 
@@ -154,6 +159,11 @@ pub struct RecordOutcome {
     /// field as it stands.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub watch: Option<crate::state::WatchJob>,
+    /// The root a confirmed lane's files are read under, where its host
+    /// named one: a hosted lane's worktree on its host, a cloud lane's
+    /// worktree the launch made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mail_root: Option<String>,
     /// What the effect observed, kept on the intent for a reconciliation.
     #[serde(default)]
     pub observation: Option<Value>,
@@ -210,6 +220,10 @@ pub enum Request {
     /// does; `ops::verify_pr` runs it, since the reads come before the one
     /// transition it makes.
     VerifyPr(VerifyPr),
+    /// Read a pull request's review state, make the one request its
+    /// head owes, then record; `ops::verify_review` runs it, since the
+    /// reads and the request come before its writes.
+    VerifyReview(VerifyReview),
     ReconcileRound(ReconcileRound),
     RecordHandoff(Box<RecordHandoff>),
     ResumeHandoff(ResumeHandoff),
@@ -233,6 +247,9 @@ pub enum Request {
     PruneRecords(prune::PruneRecords),
     /// The validation run's steps, tagged by `step`.
     Validate(validate::Validate),
+    /// The queue wait's memory, replaced whole on the item before its next
+    /// poll.
+    RecordQueueWatch(queue_watch::RecordQueueWatch),
 }
 
 impl Request {
@@ -254,6 +271,7 @@ impl Request {
             Request::RecordVerification(_) => "record-verification",
             Request::VerifyHead(_) => "verify-head",
             Request::VerifyPr(_) => "verify-pr",
+            Request::VerifyReview(_) => "verify-review",
             Request::ReconcileRound(_) => "reconcile-round",
             Request::RecordHandoff(_) => "record-handoff",
             Request::ResumeHandoff(_) => "resume-handoff",
@@ -266,6 +284,7 @@ impl Request {
             Request::AdmitPaths(_) => "admit-paths",
             Request::PruneRecords(_) => "prune-records",
             Request::Validate(_) => "validate",
+            Request::RecordQueueWatch(_) => "record-queue-watch",
         }
     }
 
@@ -278,10 +297,12 @@ impl Request {
             | Request::RecordVerification(_)
             | Request::VerifyHead(_)
             | Request::VerifyPr(_)
+            | Request::VerifyReview(_)
             | Request::ReconcileRound(_)
             | Request::RecordHandoff(_)
             | Request::ResumeHandoff(_)
-            | Request::Validate(_) => Kind::Item,
+            | Request::Validate(_)
+            | Request::RecordQueueWatch(_) => Kind::Item,
             Request::LaunchLane(_)
             | Request::AdoptSession(_)
             | Request::RequestTransfer(_)
@@ -368,6 +389,7 @@ pub enum Report {
     PruneRecords(prune::RecordsPruned),
     /// The validation run's step reports, tagged by `step`.
     Validate(Box<validate::Validated>),
+    RecordQueueWatch(queue_watch::QueueWatchRecorded),
 }
 
 /// What `apply` returns: the report of the transition the write committed.
@@ -419,7 +441,7 @@ const REREADS: u32 = 8;
 /// [`REREADS`] times. Each attempt reads the record afresh and re-applies its
 /// transition, so a write another writer committed between the read and the
 /// store is kept, never overwritten.
-fn reread<R>(attempt: impl Fn() -> Result<R>) -> Result<R> {
+pub(crate) fn reread<R>(attempt: impl Fn() -> Result<R>) -> Result<R> {
     let mut attempts = 0;
     loop {
         match attempt() {
@@ -451,6 +473,7 @@ fn owner_conditional(request: &Request) -> bool {
         | Request::RecordVerification(_)
         | Request::VerifyHead(_)
         | Request::VerifyPr(_)
+        | Request::VerifyReview(_)
         | Request::ReconcileRound(_)
         | Request::RecordHandoff(_)
         | Request::ResumeHandoff(_)
@@ -463,7 +486,8 @@ fn owner_conditional(request: &Request) -> bool {
         | Request::RecordWallPauses(_)
         | Request::AdmitPaths(_)
         | Request::PruneRecords(_)
-        | Request::Validate(_) => false,
+        | Request::Validate(_)
+        | Request::RecordQueueWatch(_) => false,
     }
 }
 
@@ -540,7 +564,7 @@ pub fn target_kind(path: &Path, request: &Request) -> Result<Kind> {
     clippy::disallowed_methods,
     reason = "the transitions' one read of a state file, whose snapshot the write check commits against"
 )]
-fn loaded(path: &Path) -> Result<Snapshot> {
+pub(crate) fn loaded(path: &Path) -> Result<Snapshot> {
     state::load(path)?.ok_or_else(|| Error::RecordMissing {
         path: path.to_path_buf(),
     })
@@ -586,7 +610,8 @@ pub fn item_transition(
         Request::Validate(r) => Ok(Report::Validate(Box::new(validate::apply(
             path, doc, r, env,
         )?))),
-        Request::VerifyHead(_) | Request::VerifyPr(_) => {
+        Request::RecordQueueWatch(r) => Ok(Report::RecordQueueWatch(queue_watch::record(doc, r)?)),
+        Request::VerifyHead(_) | Request::VerifyPr(_) | Request::VerifyReview(_) => {
             Err(Error::OpNotTransition { op: request.name() })
         }
         Request::LaunchLane(_)
@@ -692,10 +717,12 @@ pub fn fleet_transition(
         | Request::RecordVerification(_)
         | Request::VerifyHead(_)
         | Request::VerifyPr(_)
+        | Request::VerifyReview(_)
         | Request::ReconcileRound(_)
         | Request::RecordHandoff(_)
         | Request::ResumeHandoff(_)
-        | Request::Validate(_) => Err(kind_error(request, path, Kind::Fleet)),
+        | Request::Validate(_)
+        | Request::RecordQueueWatch(_) => Err(kind_error(request, path, Kind::Fleet)),
     }
 }
 
@@ -1749,6 +1776,7 @@ mod tests {
                     tmux_session: None,
                     launch_line: None,
                     watch: None,
+                    mail_root: None,
                     observation: None,
                     while_owner: None,
                     lane_keys: None,

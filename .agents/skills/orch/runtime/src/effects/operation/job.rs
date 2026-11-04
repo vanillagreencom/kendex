@@ -134,6 +134,7 @@ impl Op {
             | Request::RecordVerification(_)
             | Request::VerifyHead(_)
             | Request::VerifyPr(_)
+            | Request::VerifyReview(_)
             | Request::ReconcileRound(_)
             | Request::RecordHandoff(_)
             | Request::ResumeHandoff(_)
@@ -147,7 +148,8 @@ impl Op {
             | Request::RecordWallPauses(_)
             | Request::AdmitPaths(_)
             | Request::PruneRecords(_)
-            | Request::Validate(_) => None,
+            | Request::Validate(_)
+            | Request::RecordQueueWatch(_) => None,
         }
     }
 

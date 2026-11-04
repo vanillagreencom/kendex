@@ -1110,6 +1110,9 @@ pub(in crate::effects) struct Wire {
     pub launch_line: Option<String>,
     /// The fleet watch a confirmed start launched or found claimed.
     pub watch: Option<WatchJob>,
+    /// The root a confirmed lane's files are read under, where its host
+    /// named one the request could not know.
+    pub mail_root: Option<String>,
 }
 
 /// An effect's result: the one type `apply_outcome` records. `record` is the

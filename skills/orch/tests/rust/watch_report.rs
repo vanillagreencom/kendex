@@ -88,6 +88,8 @@ echo "compacted item=overseer to-lane=0 to-overseer=0"
 struct World {
     dir: tempfile::TempDir,
     settings: Settings,
+    /// The caller's environment the settings were loaded under.
+    env: Vec<(String, String)>,
 }
 
 impl World {
@@ -97,7 +99,6 @@ impl World {
         for (name, fixture) in [
             ("linear", "linear-fixture/linear.sh"),
             ("gh", "gh/gh"),
-            ("lanes", "lanes-listing/lanes"),
             ("lane-host", "lane-host/lane-host"),
             ("oversee-report", "oversee-report-fixture/oversee-report"),
             ("github.sh", "github-fixture/github.sh"),
@@ -107,30 +108,88 @@ impl World {
         let mail = dir.path().join("lane-mail-fixture");
         std::fs::write(&mail, LANE_MAIL_FIXTURE).unwrap();
         std::fs::set_permissions(&mail, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let roots = Roots {
-            project: dir.path().to_path_buf(),
-            common: dir.path().to_path_buf(),
-        };
         let at = |name: &str| dir.path().join(name).display().to_string();
-        let settings = settings::load(
+        // The accounts the listing lists are planted under `home` with
+        // their records, served for a day of the fake clock; no usage
+        // endpoint is ever reached, and a request that slipped past the
+        // records would open no socket.
+        let env: Vec<(String, String)> = [
+            ("ORCH_WATCH_MAIL_INTERVAL", "5".to_owned()),
+            ("FLEET_DIR", at("fleet")),
+            ("OVERSEE_WATCH_TRACKER", at("linear")),
+            ("OVERSEE_WATCH_LANES", at("lanes")),
+            ("OVERSEE_WATCH_REPORT", at("oversee-report")),
+            ("LANE_MAIL_CLI", mail.display().to_string()),
+            ("HOME", at("home")),
+            ("OVERSEE_WATCH_STATE_DIR", at("")),
+            ("ORCH_LANES_USAGE_TTL", "86400".to_owned()),
+            (
+                "ORCH_LANES_CLAUDE_USAGE_URL",
+                "file:///nonexistent/usage".to_owned(),
+            ),
+            (
+                "ORCH_LANES_CODEX_USAGE_URL",
+                "file:///nonexistent/usage".to_owned(),
+            ),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_owned(), v))
+        .collect();
+        let settings = World::load(dir.path(), &env, &[]);
+        let world = World { dir, settings, env };
+        world.write_fleet(&json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "lanes": [], "fleet_log": []}));
+        world
+    }
+
+    fn load(dir: &Path, env: &[(String, String)], extra: &[(String, String)]) -> Settings {
+        let roots = Roots {
+            project: dir.to_path_buf(),
+            common: dir.to_path_buf(),
+        };
+        let environment: Vec<(std::ffi::OsString, std::ffi::OsString)> = env
+            .iter()
+            .chain(extra.iter())
+            .map(|(k, v)| (k.into(), v.into()))
+            .collect();
+        settings::load(
             &roots,
-            &[
-                ("ORCH_WATCH_MAIL_INTERVAL".into(), "5".into()),
-                ("FLEET_DIR".into(), at("fleet").into()),
-                ("OVERSEE_WATCH_TRACKER".into(), at("linear").into()),
-                ("OVERSEE_WATCH_LANES".into(), at("lanes").into()),
-                ("OVERSEE_WATCH_REPORT".into(), at("oversee-report").into()),
-                ("LANE_MAIL_CLI".into(), mail.display().to_string().into()),
-            ],
+            &environment,
             &SettingsFlags {
-                state_dir: Some(dir.path().to_path_buf()),
+                state_dir: Some(dir.to_path_buf()),
                 private_env: false,
             },
         )
-        .unwrap();
-        let world = World { dir, settings };
-        world.write_fleet(&json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "lanes": [], "fleet_log": []}));
-        world
+        .unwrap()
+    }
+
+    /// The settings under the world's environment with `extra` over it:
+    /// the directories a pass plants, which discovery cannot name.
+    fn settings_with(&self, extra: &[(String, String)]) -> Settings {
+        World::load(self.path(), &self.env, extra)
+    }
+
+    /// The accounts a pass lists, planted as the listing reads them at
+    /// `now`; the environment naming them, less the provider, which the
+    /// owed record names for its own read.
+    fn plant_accounts(
+        &self,
+        host: Option<&str>,
+        rows: &[Value],
+        now: u64,
+    ) -> Vec<(String, String)> {
+        plant_accounts(self.path(), self.path(), host, rows, now)
+            .into_iter()
+            .filter(|(k, _)| k != "ORCH_LANE_HOST")
+            .collect()
+    }
+
+    /// The directory a planted local account `/home/u/.<alias>` stands at.
+    fn home_dir(&self, alias: &str) -> String {
+        self.path()
+            .join("home")
+            .join(format!(".{alias}"))
+            .display()
+            .to_string()
     }
 
     fn path(&self) -> &Path {
@@ -736,57 +795,54 @@ fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
                "resets": {"session": "2026-10-01T04:00:00Z", "weekly": weekly_resets},
                "model_buckets": [{"label": "Opus", "pct": 100, "resets_at": "2026-10-04T00:00:00Z"}]})
     };
-    world.plant(
-        "lanes.json",
-        &json!([
+    // The hosted record is judged on the provider's listing, read under
+    // its host: one codex account with room, so the verdict is `queue`
+    // where the local codex accounts are walled.
+    let mut hosted = account(
+        "codex",
+        "codex",
+        "room",
+        "2026-10-05T00:00:00Z",
+        json!({"headroom_pct": 60, "session_5h_pct": 10, "weekly_pct": 40,
+               "resets": {"session": "2026-10-01T04:00:00Z", "weekly": "2026-10-05T00:00:00Z"},
+               "model_buckets": []}),
+    );
+    hosted["measured_through"] = json!("host");
+    let clock = FakeClock::new();
+    let planted = world.plant_accounts(
+        Some("provider-x"),
+        &[
             account(
                 "claude",
                 "claude",
                 "room",
                 "2026-10-01T00:00:00Z",
-                opus_walled(10, "2026-10-01T00:00:00Z")
+                opus_walled(10, "2026-10-01T00:00:00Z"),
             ),
             account(
                 "claude2",
                 "claude",
                 "walled",
                 "2026-10-02T00:00:00Z",
-                opus_walled(60, "2026-10-02T00:00:00Z")
+                opus_walled(60, "2026-10-02T00:00:00Z"),
             ),
             account(
                 "codex",
                 "codex",
                 "walled",
                 "2026-10-05T00:00:00Z",
-                json!({})
+                json!({}),
             ),
             account(
                 "codex2",
                 "codex",
                 "walled",
                 "2026-10-03T00:00:00Z",
-                json!({})
+                json!({}),
             ),
-        ]),
-    );
-    // The hosted record is judged on the provider's listing, read under
-    // its host: one codex account with room, so the verdict is `queue`
-    // where the local codex accounts are walled.
-    world.plant(
-        "lanes-provider-x.json",
-        &json!([account(
-            "codex",
-            "codex",
-            "room",
-            "2026-10-05T00:00:00Z",
-            json!({"headroom_pct": 60, "session_5h_pct": 10, "weekly_pct": 40,
-                   "resets": {"session": "2026-10-01T04:00:00Z", "weekly": "2026-10-05T00:00:00Z"},
-                   "model_buckets": []})
-        )]),
-    );
-    world.plant(
-        "lane-host.json",
-        &json!({"provider-x capabilities": {"stdout": "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\tpool=plan\n"}}),
+            hosted,
+        ],
+        clock.wall_secs(),
     );
     world.plant(
         "gh.json",
@@ -911,7 +967,6 @@ fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
     }
     let verifying = Lines::default();
     *verifying.lock().unwrap() = recorded_lines("verifying-deadline.lines");
-    let clock = FakeClock::new();
     let start_wall = clock.wall_secs();
     let mail = Counting::new();
     let mut runner = runner(&world, &clock);
@@ -928,7 +983,7 @@ fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
     runner.register(
         Duty::Heartbeat,
         heartbeat::body(heartbeat::Context {
-            settings: world.settings.clone(),
+            settings: world.settings_with(&planted),
             path: world.fleet_path(),
             max_loops: 25,
             interval: secs(240),
@@ -969,7 +1024,14 @@ fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
     // The recording ran the recorded watch with `--max-loops 1 --interval 0`;
     // its first line is the flags', every line under it the body's.
     let mut want = vec!["EVENT heartbeat loops=25 interval=240s since=none".to_owned()];
-    want.extend(recorded_lines("heartbeat.out").into_iter().skip(1));
+    // The accounts stand where the world planted them.
+    let home = format!("{}/home/", world.path().display());
+    want.extend(
+        recorded_lines("heartbeat.out")
+            .into_iter()
+            .skip(1)
+            .map(|line| line.replace("config_dir=/home/u/", &format!("config_dir={home}"))),
+    );
     want.extend([
         "tracker-quota status=future reset=2026-10-01T00:10:00Z limit=requests".to_owned(),
         "pr-watch rc=1".to_owned(),
@@ -989,31 +1051,23 @@ fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
             && log[at + want.len()].starts_with("EVENT directive-read KEN-1 "),
         "mail ran on both sides of the heartbeat"
     );
-    // What the judge asked the reader: the listing under no host and under
-    // the hosted record's host, and no pick under either: every record's
-    // verdict is judged here.
-    let calls = lines(&world.path().join("lanes.log"));
-    let hosts_listed: std::collections::BTreeSet<&str> = calls
-        .iter()
-        .filter(|c| c.ends_with(" list --json"))
-        .map(|c| c.split(' ').next().unwrap())
-        .collect();
-    assert_eq!(
-        hosts_listed,
-        ["ORCH_LANE_HOST=unset", "ORCH_LANE_HOST=provider-x"]
-            .into_iter()
-            .collect(),
-        "{calls:?}"
-    );
-    assert!(
-        calls.iter().all(|c| c.ends_with(" list --json")),
-        "the reader is asked for listings alone: {calls:?}"
-    );
+    // What the judge asked the provider: its capability line and its
+    // accounts under the hosted record's host, once each for the listing
+    // and the line again for the repository rule; nothing under no host.
     let hosts = lines(&world.path().join("lane-host.log"));
     assert_eq!(
-        hosts,
-        vec!["ORCH_LANE_HOST=provider-x capabilities"],
-        "the hosted pick reads the host's capability line once for the repository rule"
+        hosts
+            .iter()
+            .filter(|h| *h == "ORCH_LANE_HOST=provider-x accounts")
+            .count(),
+        1,
+        "{hosts:?}"
+    );
+    assert!(
+        hosts
+            .iter()
+            .all(|h| h.starts_with("ORCH_LANE_HOST=provider-x ")),
+        "the provider is asked under its host alone: {hosts:?}"
     );
 }
 
@@ -1025,7 +1079,6 @@ fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
 #[test]
 fn the_heartbeat_body_says_unread_for_every_list_no_duty_has_read() {
     let world = World::new();
-    std::fs::write(world.path().join("lanes.rc"), "1\n").unwrap();
     let clock = FakeClock::new();
     let mut body = heartbeat::body(heartbeat::Context {
         settings: world.settings.clone(),
@@ -1052,16 +1105,15 @@ fn the_heartbeat_body_says_unread_for_every_list_no_duty_has_read() {
         vec![
             "EVENT heartbeat loops=25 interval=240s since=none".to_owned(),
             "owner/repo\topen-prs unread".to_owned(),
-            "account-roster unread".to_owned(),
+            "account-roster accounts=0".to_owned(),
             "owed unread".to_owned(),
             "open-unblocked count=unread items=-".to_owned(),
         ]
     );
 }
 
-/// One `lanes list --json` record as the recorded accounts world wrote it:
-/// `-` for the headroom or the reset is the null an
-/// unmeasured account carries.
+/// One listing record as the recorded accounts world wrote it: `-` for
+/// the headroom or the reset is the null an unmeasured account carries.
 fn account_record(alias: &str, through: &str, reading: &str) -> Value {
     let words: Vec<&str> = reading.split_whitespace().collect();
     let [status, verdict, headroom, resets] = words[..] else {
@@ -1078,9 +1130,9 @@ fn account_record(alias: &str, through: &str, reading: &str) -> Value {
 
 /// The heartbeat body with every slot empty and no open list: the roster
 /// and its account events are what the pass produces.
-fn roster_body(world: &World) -> watch::Body<'static> {
+fn roster_body(world: &World, planted: &[(String, String)]) -> watch::Body<'static> {
     heartbeat::body(heartbeat::Context {
-        settings: world.settings.clone(),
+        settings: world.settings_with(planted),
         path: world.fleet_path(),
         max_loops: 25,
         interval: secs(240),
@@ -1112,7 +1164,11 @@ fn account_events(produced: &Produced) -> Vec<String> {
     events
 }
 
-const CLAUDE_KEY: &str = "claude|local|/home/u/.claude";
+/// The baseline row key of the local `claude` account where the world
+/// plants it.
+fn claude_key(world: &World) -> String {
+    format!("claude|local|{}", world.home_dir("claude"))
+}
 
 /// The recorded accounts world's `renewal`, `crossing`, `reset`, `dropped`,
 /// `reset_unparsed` and `shared_alias` cases. Defect: an account's change said twice while unchanged (the row
@@ -1286,11 +1342,27 @@ fn an_account_change_is_said_once_with_what_changed_from_what_and_again_on_the_n
     ];
     let world = World::new();
     let clock = FakeClock::new();
+    // The readings are a provider's rows under `fleet-vm`: a reading the
+    // provider states is served as stated, where this machine's own
+    // record of a window whose reset has passed is read again.
     for (name, passes) in sequences {
-        let mut body = roster_body(&world);
         let mut baseline = Baseline::default();
         for (n, (wall, listing, want)) in passes.into_iter().enumerate() {
-            world.plant("lanes.json", &Value::Array(listing.clone()));
+            let listing: Vec<Value> = listing
+                .iter()
+                .map(|row| {
+                    let mut row = row.clone();
+                    row["measured_through"] = json!("host");
+                    row
+                })
+                .collect();
+            let mut planted = world.plant_accounts(Some("fleet-vm"), &listing, wall);
+            planted.push(("ORCH_LANE_HOST".to_owned(), "fleet-vm".to_owned()));
+            let mut body = roster_body(&world, &planted);
+            let want: Vec<String> = want
+                .iter()
+                .map(|w| w.replace("through=local", "through=host"))
+                .collect();
             let produced = pass(Duty::Heartbeat, &mut body, &mut baseline, &clock, wall).unwrap();
             assert_eq!(produced.failed, None, "{name} pass {}", n + 1);
             assert_eq!(account_events(&produced), want, "{name} pass {}", n + 1);
@@ -1471,14 +1543,19 @@ fn an_unmeasured_reading_keeps_the_row_and_a_terminal_status_is_news() {
     let mut want = Vec::new();
     let mut current: Option<(&str, watch::Body<'static>, Baseline)> = None;
     for &(name, reading, expected, saved) in SEQUENCES {
+        let planted = world.plant_accounts(
+            Some("fleet-vm"),
+            &[account_record("claude", "host", reading)],
+            wall,
+        );
+        let planted: Vec<(String, String)> = planted
+            .into_iter()
+            .chain([("ORCH_LANE_HOST".to_owned(), "fleet-vm".to_owned())])
+            .collect();
         if current.as_ref().is_none_or(|(c, _, _)| *c != name) {
-            current = Some((name, roster_body(&world), Baseline::default()));
+            current = Some((name, roster_body(&world, &planted), Baseline::default()));
         }
         let (_, body, baseline) = current.as_mut().unwrap();
-        world.plant(
-            "lanes.json",
-            &json!([account_record("claude", "host", reading)]),
-        );
         let produced = pass(Duty::Heartbeat, body, baseline, &clock, wall).unwrap();
         assert_eq!(produced.failed, None, "{name}: {reading}");
         let events = account_events(&produced);
@@ -1496,84 +1573,68 @@ fn an_unmeasured_reading_keeps_the_row_and_a_terminal_status_is_news() {
     assert_eq!(got, want);
 }
 
-/// The accounts suite's
-/// `unread`, `empty_listing` and `missing_status`/`missing_verdict` cases.
-/// Defect: a listing that could not be read, or one the watch cannot
-/// compare (an empty answer at exit 0, a record with no status or
-/// verdict), read as a fleet with no accounts or as no change: the pass
-/// not counted a failure, the roster printed as accounts, the row moved,
-/// so the next readable pass says the change against nothing. Each
-/// unreadable form is a counted failure with `account-roster unread` and
-/// the row as it stood; the readable pass after them says the change
-/// against the reading before them.
+/// Defect: a listing that could not be read, read as a fleet with no
+/// accounts or as no change: the pass not counted a failure, the roster
+/// printed as accounts, the row moved, so the next readable pass says the
+/// change against nothing. A home discovery cannot list is a counted
+/// failure with `account-roster unread` and the row as it stood; the
+/// readable pass after it says the change against the reading before it.
 #[test]
 fn an_unreadable_listing_is_a_counted_failure_that_keeps_the_previous_reading() {
+    use std::os::unix::fs::PermissionsExt;
     let world = World::new();
     let clock = FakeClock::new();
     let wall = clock.wall_secs();
-    let mut body = roster_body(&world);
     let mut baseline = Baseline::default();
-    let claude = |reading: &str| json!([account_record("claude", "local", reading)]);
-    world.plant("lanes.json", &claude("ok walled 2 2026-10-01T00:00:00Z"));
+    let claude = |reading: &str| vec![account_record("claude", "local", reading)];
+    let planted = world.plant_accounts(None, &claude("ok walled 2 2026-10-01T00:00:00Z"), wall);
+    // The planted directory is named to discovery alone: the listing
+    // reads the home for every other account.
+    let planted: Vec<(String, String)> = planted
+        .into_iter()
+        .filter(|(k, _)| k != "ORCH_LANE_DIRS")
+        .collect();
+    let mut body = roster_body(&world, &planted);
     let produced = pass(Duty::Heartbeat, &mut body, &mut baseline, &clock, wall).unwrap();
     assert_eq!(produced.failed, None);
     assert_eq!(account_events(&produced), Vec::<String>::new());
     let held = "ok|walled|2026-10-01T00:00:00Z|-";
-    assert_eq!(baseline.get("account", CLAUDE_KEY), Some(held));
-    // Each unreadable form, planted beside the fixture and removed after.
-    let unreadable: Vec<(&str, &str, Value)> = vec![
-        ("refused", "lanes.rc", json!("1\n")),
-        ("empty at exit 0", "lanes.text", json!("")),
-        (
-            "no status",
-            "lanes.json",
-            json!([{"alias": "claude", "harness": "claude", "config_dir": "/home/u/.claude", "measured_through": "local", "verdict": "room", "headroom_pct": 80}]),
-        ),
-        (
-            "no verdict",
-            "lanes.json",
-            json!([{"alias": "claude", "harness": "claude", "config_dir": "/home/u/.claude", "measured_through": "local", "status": "ok", "headroom_pct": 80}]),
-        ),
-    ];
-    for (form, file, content) in unreadable {
-        match &content {
-            Value::String(text) => std::fs::write(world.path().join(file), text).unwrap(),
-            other => world.plant(file, other),
-        }
-        let produced = pass(Duty::Heartbeat, &mut body, &mut baseline, &clock, wall).unwrap();
-        assert!(
-            produced
-                .failed
-                .as_deref()
-                .is_some_and(|c| c.starts_with("account-unread path=")),
-            "{form}: {:?}",
-            produced.failed
-        );
-        let lines = rendered(&produced);
-        assert_eq!(account_events(&produced), Vec::<String>::new(), "{form}");
-        assert!(
-            lines.contains(&"account-roster unread".to_owned())
-                && !lines.iter().any(|l| l.starts_with("account ")),
-            "{form}: {lines:?}"
-        );
-        assert_eq!(produced.changes, Vec::new(), "{form}: no row moves");
-        assert_eq!(baseline.get("account", CLAUDE_KEY), Some(held), "{form}");
-        if file != "lanes.json" {
-            std::fs::remove_file(world.path().join(file)).unwrap();
-        }
-    }
-    world.plant("lanes.json", &claude("ok room 30 2026-10-01T00:00:00Z"));
+    assert_eq!(baseline.get("account", &claude_key(&world)), Some(held));
+    let home = world.path().join("home");
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let produced = pass(Duty::Heartbeat, &mut body, &mut baseline, &clock, wall);
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let produced = produced.unwrap();
+    assert!(
+        produced
+            .failed
+            .as_deref()
+            .is_some_and(|c| c.starts_with("account-unread path=")),
+        "{:?}",
+        produced.failed
+    );
+    let lines = rendered(&produced);
+    assert_eq!(account_events(&produced), Vec::<String>::new());
+    assert!(
+        lines.contains(&"account-roster unread".to_owned())
+            && !lines.iter().any(|l| l.starts_with("account ")),
+        "{lines:?}"
+    );
+    assert_eq!(produced.changes, Vec::new(), "no row moves");
+    assert_eq!(baseline.get("account", &claude_key(&world)), Some(held));
+    world.plant_accounts(None, &claude("ok room 30 2026-10-01T00:00:00Z"), wall);
     let produced = pass(Duty::Heartbeat, &mut body, &mut baseline, &clock, wall).unwrap();
     assert_eq!(produced.failed, None);
     assert_eq!(
         account_events(&produced),
-        vec![
-            "EVENT account claude config_dir=/home/u/.claude harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/walled".to_owned()
-        ],
-        "the change is said against the reading before the unreadable passes"
+        vec![format!(
+            "EVENT account claude config_dir={} harness=claude through=local status=ok verdict=room headroom_pct=30 binding_bucket=weekly binding_resets_at=2026-10-01T00:00:00Z change=headroom was=ok/walled",
+            world.home_dir("claude")
+        )],
+        "the change is said against the reading before the unreadable pass"
     );
     assert_eq!(
-        baseline.get("account", CLAUDE_KEY),
+        baseline.get("account", &claude_key(&world)),
         Some("ok|room|2026-10-01T00:00:00Z|-")
     );
 }

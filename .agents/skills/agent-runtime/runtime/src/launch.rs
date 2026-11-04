@@ -1,7 +1,9 @@
 //! Launch intent and the one command builder.
 //!
 //! A caller states what it wants (harness, home, model, effort, posture,
-//! brief) and this module spells the command once. Nothing outside it
+//! brief) and this module spells the command once: the permission word, the
+//! prompt switches, the launch settings, the resume form, the environment a
+//! lane must not inherit and the one it must carry. Nothing outside it
 //! writes a harness flag. The brief travels as a file: the shell line reads
 //! it at run time, so brief newlines never cross terminal input.
 
@@ -11,7 +13,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::harness::Harness;
+use crate::harness::{Harness, PermissionMeaning};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
@@ -130,23 +132,69 @@ pub struct LaunchCommand {
     pub brief_path: Option<PathBuf>,
 }
 
-/// The display names every unattended launch clears, so a lane cannot
-/// open windows on the person's desktop.
-pub const DISPLAY_SCRUB: [&str; 3] = ["WAYLAND_DISPLAY", "DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE"];
+/// The names every launch clears, so the child never writes the launching
+/// session's records or answers as it, and finds no desktop through them: a
+/// tmux window takes the server's environment, so the scrub rides in the
+/// rendered line and not in the launcher's process. Claude Code's nested
+/// marker, session ids and project root; Codex's thread and sandbox
+/// markers; Pi's subagent role and parent session; the model a Pi lane
+/// declares to second-opinion (set again below for a Pi launch); the
+/// Jarvis runtime record; the desktop session's display names, through
+/// which a key, pointer or capture tool would find the owner's screen; the
+/// model-line hold a launcher exports to its own children. Account and
+/// home variables are not listed: the launch sets the child's own after
+/// the scrub.
+pub const LAUNCH_SCRUB: [&str; 17] = [
+    "CLAUDECODE",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_SESSION_ID",
+    "CLAUDE_PROJECT_DIR",
+    "CODEX_THREAD_ID",
+    "CODEX_SANDBOX",
+    "CODEX_SANDBOX_NETWORK_DISABLED",
+    "PI_SUBAGENT_CHILD_AGENT",
+    "PI_SUBAGENT_PARENT_SESSION_ID",
+    "PI_BRIDGE_PARENT_SESSION_ID",
+    "SECOND_OPINION_CURRENT_MODEL",
+    "JARVIS_RECORD",
+    "JARVIS_GENERATION",
+    "WAYLAND_DISPLAY",
+    "DISPLAY",
+    "HYPRLAND_INSTANCE_SIGNATURE",
+    "ORCH_MODEL_LINES_HELD",
+];
 
 /// Claude's prompt switches a full-bypass launch sets to `1` in the
 /// environment, which the provider reads from the launch environment only
 /// (its permission-modes and env-vars pages): the inline-shell and
 /// substitution critical-path prompts and, from Claude Code v2.1.311, the
-/// whole critical-path removal prompt in bypassPermissions mode. The legacy
-/// launcher renders the same list for the lines open-terminal lanes execute
-/// (`lane_launch_rm_prompt_env` in `skills/orch/scripts/lib/lane-launch.sh`);
-/// a row below holds the two equal.
+/// whole critical-path removal prompt in bypassPermissions mode. The
+/// provider leaves the third without effect while a PermissionRequest
+/// hook, a Bash deny or ask rule, or a nested session stands.
 pub const CLAUDE_BYPASS_ENV: [&str; 3] = [
     "CLAUDE_CODE_DISABLE_INLINE_SHELL_RM_PROMPT",
     "CLAUDE_CODE_DISABLE_SUBSTITUTION_RM_PROMPT",
     "CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS",
 ];
+
+/// The variable a Codex launch hands the hook's context reader: the
+/// compaction settings the command itself carries, as JSON, so the reader
+/// judges the window the session runs under and never a stored default.
+/// Empty for a command carrying none, which also clears an inherited value.
+pub const CODEX_COMPACTION_OVERRIDES: &str = "ORCH_COMPACTION_OVERRIDES";
+
+/// The Codex config keys the context reader judges compaction by.
+const CODEX_COMPACTION_KEYS: [&str; 3] = [
+    "model_auto_compact_token_limit",
+    "model_auto_compact_token_limit_scope",
+    "model_post_turn_compact_threshold_percent",
+];
+
+/// The shared skills tree a Copilot launch names back: any `COPILOT_HOME`
+/// value turns it off. The pane's own shell expands `$HOME` when the line
+/// runs (`LaunchCommand::shell_line`), so the same text serves a lane on
+/// another machine.
+pub const COPILOT_SKILLS_DIRS: &str = "$HOME/.agents/skills";
 
 /// Spell the command for an intent. Refuses an intent the harness cannot
 /// honour: compaction off where it has no word, a model-free lane launch is
@@ -156,7 +204,7 @@ pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
     let mut args: Vec<String> = Vec::new();
     let mut env = intent.env.clone();
     let mut env_remove = intent.env_remove.clone();
-    for name in DISPLAY_SCRUB {
+    for name in LAUNCH_SCRUB {
         if !env_remove.iter().any(|n| n == name) {
             env_remove.push(name.to_owned());
         }
@@ -220,41 +268,54 @@ pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
     } else if let Some(effort) = &intent.effort {
         args.extend(h.effort_words(effort));
     }
-    match intent.permission {
-        Permission::Native => {}
-        Permission::Bypass => {
-            // The caller's own words may already carry a permission word, in
-            // any supported spelling (a same-harness succession keeps the
-            // caller's argv as given, decision 120): the canonical word is
-            // added only where none stands, the legacy's rule (decision 124a
-            // (4)), so it is never doubled under an alias such as `--yolo` and
-            // never added beside a narrower grant the caller chose.
-            if h.permission_word_in(&intent.extra_args).is_none() {
-                args.extend(h.bypass_words().into_iter().map(str::to_owned));
-            }
-            if h == Harness::Copilot {
-                // `true` also trusts the folder and loads its hooks; every
-                // other command carries it empty so an inherited value does
-                // not reach the lane.
-                env.insert("COPILOT_ALLOW_ALL".to_owned(), "true".to_owned());
-            }
-            if h == Harness::Claude {
+    // The caller's own words may already carry a permission word, in any
+    // supported spelling (a same-harness succession keeps the caller's argv
+    // as given): the canonical word is added only where none stands, so it
+    // is never doubled under an alias such as `--yolo` and never added
+    // beside a narrower grant the caller chose. The prompt switches and the
+    // Copilot trust grant ride a full bypass alone: a narrower grant keeps
+    // its prompts, and the provider gives the switches no effect outside
+    // bypassPermissions mode.
+    let full_bypass = match (intent.permission, h.permission_word_in(&intent.extra_args)) {
+        (Permission::Native, _) => false,
+        (Permission::Bypass, None) => {
+            args.extend(h.bypass_words().into_iter().map(str::to_owned));
+            true
+        }
+        (Permission::Bypass, Some((_, PermissionMeaning::FullBypass))) => true,
+        (Permission::Bypass, Some((_, PermissionMeaning::Narrower))) => false,
+    };
+    match h {
+        Harness::Claude => {
+            if full_bypass {
                 for name in CLAUDE_BYPASS_ENV {
                     env.insert(name.to_owned(), "1".to_owned());
                 }
             }
         }
-    }
-    if h == Harness::Copilot && intent.permission == Permission::Native {
-        env.insert("COPILOT_ALLOW_ALL".to_owned(), String::new());
-    }
-    if h == Harness::Copilot {
-        // Copilot reads a token from the environment ahead of its stored
-        // login, and refuses a placeholder, so the lane's own identity is
-        // the stored login.
-        env_remove.push("COPILOT_GITHUB_TOKEN".to_owned());
-        env.entry("COPILOT_SKILLS_DIRS".to_owned())
-            .or_insert_with(|| "~/.agents/skills".to_owned());
+        Harness::Copilot => {
+            // `true` also trusts the folder and loads its hooks; every
+            // other command carries it empty so an inherited value does
+            // not reach the lane. Copilot reads a token from the
+            // environment ahead of its stored login and refuses a
+            // placeholder, so the lane's own identity is the stored login.
+            env.insert(
+                "COPILOT_ALLOW_ALL".to_owned(),
+                if full_bypass { "true" } else { "" }.to_owned(),
+            );
+            env_remove.push("COPILOT_GITHUB_TOKEN".to_owned());
+            env.entry("COPILOT_SKILLS_DIRS".to_owned())
+                .or_insert_with(|| COPILOT_SKILLS_DIRS.to_owned());
+        }
+        Harness::Pi => {
+            // Pi fronts a selectable model that second-opinion cannot
+            // detect, so a Pi lane declares it; the scrub above cleared the
+            // launching session's own declaration.
+            if let Some(model) = &intent.model {
+                env.insert("SECOND_OPINION_CURRENT_MODEL".to_owned(), model.clone());
+            }
+        }
+        Harness::Codex => {}
     }
     match intent.question_tool {
         QuestionTool::Off => args.extend(h.question_off_words().into_iter().map(str::to_owned)),
@@ -303,6 +364,12 @@ pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
         }
     }
     args.extend(intent.extra_args.iter().cloned());
+    if h == Harness::Codex {
+        env.insert(
+            CODEX_COMPACTION_OVERRIDES.to_owned(),
+            codex_compaction_overrides(&args),
+        );
+    }
     let mut brief_arg = None;
     let mut brief_path = None;
     match &intent.brief {
@@ -340,6 +407,46 @@ pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
     })
 }
 
+/// The compaction settings a Codex argv carries, in the JSON the hook's
+/// reader parses (`{"harness":"codex","settings":{key: value}}`, keys
+/// sorted), or empty where it carries none. A setting is a `-c`, `--config`
+/// or attached `-c<key>=<value>` word, read up to a bare `--`; the value is
+/// trimmed and loses one layer of double quotes.
+fn codex_compaction_overrides(args: &[String]) -> String {
+    let mut settings: BTreeMap<String, String> = BTreeMap::new();
+    let mut words = args.iter();
+    while let Some(word) = words.next() {
+        let assignment = match word.as_str() {
+            "--" => break,
+            "-c" | "--config" => match words.next() {
+                Some(next) => next.as_str(),
+                None => break,
+            },
+            w => match w.strip_prefix("--config=").or_else(|| w.strip_prefix("-c")) {
+                Some(rest) if !rest.is_empty() => rest,
+                _ => continue,
+            },
+        };
+        let Some((key, value)) = assignment.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if !CODEX_COMPACTION_KEYS.contains(&key) {
+            continue;
+        }
+        let value = value.trim();
+        let value = value
+            .strip_prefix('"')
+            .and_then(|v| v.strip_suffix('"'))
+            .unwrap_or(value);
+        settings.insert(key.to_owned(), value.to_owned());
+    }
+    if settings.is_empty() {
+        return String::new();
+    }
+    serde_json::json!({"harness": "codex", "settings": settings}).to_string()
+}
+
 /// Quote one word for a POSIX shell.
 pub fn shell_quote(word: &str) -> String {
     if !word.is_empty()
@@ -361,6 +468,16 @@ pub fn shell_quote(word: &str) -> String {
     out
 }
 
+/// One `NAME=VALUE` word for `env`. A value opening with `$HOME/` names a
+/// path under the pane's own home, which that shell expands: the one place
+/// the builder names a directory of the person rather than of the harness.
+fn env_word(name: &str, value: &str) -> String {
+    match value.strip_prefix("$HOME/") {
+        Some(rest) => format!("{}=\"$HOME\"/{}", shell_quote(name), shell_quote(rest)),
+        None => shell_quote(&format!("{name}={value}")),
+    }
+}
+
 impl LaunchCommand {
     /// The one-line shell form a pane runs: `cd DIR && exec env -u ...
     /// NAME=VALUE ... PROGRAM ARGS`, with the brief read from its file at
@@ -380,7 +497,7 @@ impl LaunchCommand {
             }
             for (name, value) in &self.env {
                 line.push(' ');
-                line.push_str(&shell_quote(&format!("{name}={value}")));
+                line.push_str(&env_word(name, value));
             }
             line.push(' ');
         } else {
@@ -411,6 +528,10 @@ impl LaunchCommand {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Command;
+
     use super::*;
 
     fn intent(h: Harness) -> LaunchIntent {
@@ -434,6 +555,46 @@ mod tests {
             extra_args: Vec::new(),
             program: None,
         }
+    }
+
+    /// An intent on `h` under its own home, no brief.
+    fn bare(h: Harness) -> LaunchIntent {
+        let mut i = intent(h);
+        i.home = Some(PathBuf::from(format!("/home/x/.1{h}")));
+        i.brief = Brief::None;
+        i
+    }
+
+    /// The environment a child of the rendered line sees: the line is run
+    /// by `sh` in `dir` with a recorder as the harness, every scrubbed name,
+    /// a Copilot token and `HOME` set on the child shell; the recorder
+    /// prints its environment one `NAME=VALUE` a line.
+    fn child_env(dir: &Path, mut i: LaunchIntent) -> BTreeMap<String, String> {
+        let recorder = dir.join("show-env");
+        fs::write(&recorder, "#!/bin/sh\nexec env\n").unwrap();
+        fs::set_permissions(&recorder, fs::Permissions::from_mode(0o755)).unwrap();
+        i.cwd = dir.to_path_buf();
+        i.program = Some(recorder);
+        let line = build(&i).unwrap().shell_line();
+        let mut sh = Command::new("sh");
+        sh.args(["-c", &line])
+            .env_clear()
+            .env("HOME", dir)
+            .env("COPILOT_GITHUB_TOKEN", "ghp_placeholder");
+        for name in LAUNCH_SCRUB {
+            sh.env(name, "parent");
+        }
+        let out = sh.output().unwrap();
+        assert!(
+            out.status.success(),
+            "{line}\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .filter_map(|l| l.split_once('=').map(|(k, v)| (k.to_owned(), v.to_owned())))
+            .collect()
     }
 
     /// The fixed session id goes before the brief, so a harness that reads
@@ -465,40 +626,351 @@ mod tests {
         }
     }
 
+    /// Defect: a permission word missing for its posture, or a launch
+    /// setting dropped, leaves an unattended lane at a prompt nobody
+    /// answers. One row per harness: the bypass word once, the launch
+    /// settings first and the question-tool words present, under the
+    /// bypass posture with no caller word.
     #[test]
-    fn a_claude_bypass_launch_carries_its_home_posture_and_brief() {
-        let cmd = build(&intent(Harness::Claude)).unwrap();
-        assert_eq!(cmd.program, "claude");
-        assert_eq!(
-            cmd.env.get("CLAUDE_CONFIG_DIR").unwrap(),
-            "/home/x/.1claude"
-        );
-        assert!(
-            cmd.args
-                .contains(&"--disallowedTools=AskUserQuestion,EnterPlanMode".to_owned())
-        );
-        assert_eq!(cmd.args.last().unwrap(), "{brief}");
-        // The critical-path removal prompt switch, by name: a typed bypass
-        // launch without it walls an unattended lane at the first flagged rm.
-        assert_eq!(
-            cmd.env
-                .get("CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS")
-                .unwrap(),
-            "1"
-        );
-        let line = cmd.shell_line();
-        assert!(line.starts_with(
-            "cd /work/tree && exec env -u WAYLAND_DISPLAY -u DISPLAY -u HYPRLAND_INSTANCE_SIGNATURE"
-        ));
-        assert!(line.ends_with("\"$(cat /work/tree/tmp/brief.md)\""));
+    fn every_harness_s_bypass_launch_carries_its_permission_word_and_settings() {
+        type Row<'a> = (Harness, Option<&'a str>, &'a [&'a str], &'a [&'a str]);
+        let rows: [Row; 4] = [
+            (
+                Harness::Claude,
+                Some("--dangerously-skip-permissions"),
+                &[],
+                &["--disallowedTools=AskUserQuestion,EnterPlanMode"],
+            ),
+            (
+                Harness::Codex,
+                Some("--dangerously-bypass-approvals-and-sandbox"),
+                &[
+                    "-c",
+                    "check_for_update_on_startup=false",
+                    "-c",
+                    "features.daemon_auto_start=false",
+                    "-c",
+                    "notice.hide_rate_limit_model_nudge=true",
+                    "--dangerously-bypass-hook-trust",
+                ],
+                &["-c", "features.default_mode_request_user_input=false"],
+            ),
+            (
+                Harness::Copilot,
+                Some("--allow-all"),
+                &[
+                    "--autopilot",
+                    "--max-autopilot-continues",
+                    "3",
+                    "--context",
+                    "long_context",
+                    "--no-auto-update",
+                ],
+                &["--no-ask-user"],
+            ),
+            (Harness::Pi, None, &[], &["--exclude-tools", "question"]),
+        ];
+        for (h, word, settings, question) in rows {
+            let args = build(&bare(h)).unwrap().args;
+            match word {
+                Some(word) => assert_eq!(
+                    args.iter().filter(|a| *a == word).count(),
+                    1,
+                    "{h}: the bypass word once: {args:?}"
+                ),
+                None => assert!(
+                    h.permission_word_in(&args).is_none(),
+                    "{h}: no permission word: {args:?}"
+                ),
+            }
+            assert_eq!(&args[..settings.len()], settings, "{h}: the settings lead");
+            assert!(
+                args.windows(question.len()).any(|w| w == question),
+                "{h}: the question-tool words: {args:?}"
+            );
+        }
     }
 
-    /// The legacy launcher spells Claude's prompt switches for the lines
-    /// open-terminal lanes execute from a list of its own; two copies of one
-    /// list drift (a switch added to one and not the other), so the shipped
-    /// `printf` is read row for row against `CLAUDE_BYPASS_ENV`: a name changes
-    /// in one commit or this row refuses. A consistency check, not a second
-    /// implementation (decision 202).
+    /// Defect: a prompt switch absent from a full-bypass Claude launch, a
+    /// resumed one included, walls the lane at its first flagged removal;
+    /// one present on a narrower grant or a native launch is a claim the
+    /// posture does not make. The switches follow the full bypass, not the
+    /// posture word alone.
+    #[test]
+    fn claude_s_prompt_switches_ride_a_full_bypass_launch_alone() {
+        let rows: [(&str, Permission, &[&str], bool, bool); 5] = [
+            ("bypass", Permission::Bypass, &[], false, true),
+            (
+                "bypass alias",
+                Permission::Bypass,
+                &["--permission-mode=bypassPermissions"],
+                false,
+                true,
+            ),
+            ("resumed bypass", Permission::Bypass, &[], true, true),
+            (
+                "narrower grant",
+                Permission::Bypass,
+                &["--permission-mode=dontAsk"],
+                false,
+                false,
+            ),
+            ("native", Permission::Native, &[], false, false),
+        ];
+        for (name, permission, words, resumed, switched) in rows {
+            let mut i = intent(Harness::Claude);
+            i.permission = permission;
+            i.extra_args = words.iter().map(|w| (*w).to_owned()).collect();
+            if resumed {
+                i.resume = Some(Resume {
+                    session_id: "0f6e".into(),
+                    session_file: None,
+                });
+            }
+            let cmd = build(&i).unwrap();
+            for switch in CLAUDE_BYPASS_ENV {
+                assert_eq!(
+                    cmd.env.get(switch).map(String::as_str),
+                    switched.then_some("1"),
+                    "{name}: {switch}"
+                );
+            }
+            if resumed {
+                let at = cmd.args.iter().position(|a| a == "--resume").unwrap();
+                assert_eq!(cmd.args[at + 1], "0f6e");
+                assert_eq!(cmd.args.last().unwrap(), "{brief}", "{name}");
+            }
+        }
+        for h in [Harness::Codex, Harness::Copilot, Harness::Pi] {
+            let cmd = build(&bare(h)).unwrap();
+            assert!(
+                CLAUDE_BYPASS_ENV.iter().all(|s| !cmd.env.contains_key(*s)),
+                "{h}: no Claude switch"
+            );
+        }
+    }
+
+    /// Defect: a scrub leaving one identity name lets the child answer as
+    /// the launching session or find its desktop. The rendered line is run
+    /// with every name set on the child shell; none reaches the harness,
+    /// and a Pi launch's own model declaration is set again after the
+    /// clearing.
+    #[test]
+    fn every_launch_clears_the_launching_session_s_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        for h in Harness::ALL {
+            let mut i = bare(h);
+            i.home = Some(dir.path().join(format!(".1{h}")));
+            i.model = Some("pi-claude/claude-fable-5-1".into());
+            i.effort = None;
+            let env = child_env(dir.path(), i);
+            for name in LAUNCH_SCRUB {
+                let left = env.get(name);
+                assert!(
+                    left.is_none() || (h == Harness::Pi && name == "SECOND_OPINION_CURRENT_MODEL"),
+                    "{h}: {name} reached the child as {left:?}"
+                );
+            }
+            if h == Harness::Pi {
+                assert_eq!(
+                    env.get("SECOND_OPINION_CURRENT_MODEL").map(String::as_str),
+                    Some("pi-claude/claude-fable-5-1")
+                );
+            }
+        }
+    }
+
+    /// Defect: a Copilot lane with the shared skills tree off, a placeholder
+    /// token ahead of its stored login, or a folder-trust grant on a command
+    /// that grants no full bypass. The child's environment is read after the
+    /// pane's shell expanded the line, under the HOME the row gives it.
+    #[test]
+    fn copilot_s_environment_names_the_shared_skills_tree_clears_the_token_and_grants_trust_on_a_full_bypass_alone()
+     {
+        let dir = tempfile::tempdir().unwrap();
+        let rows: [(&str, Permission, &[&str], &str); 4] = [
+            ("allow-all", Permission::Bypass, &[], "true"),
+            ("yolo", Permission::Bypass, &["--yolo"], "true"),
+            ("tools only", Permission::Bypass, &["--allow-all-tools"], ""),
+            ("native", Permission::Native, &[], ""),
+        ];
+        for (name, permission, words, allow) in rows {
+            let mut i = bare(Harness::Copilot);
+            i.home = Some(dir.path().join(".1copilot"));
+            i.permission = permission;
+            i.extra_args = words.iter().map(|w| (*w).to_owned()).collect();
+            let cmd = build(&i).unwrap();
+            assert_eq!(
+                cmd.env.get("COPILOT_ALLOW_ALL").map(String::as_str),
+                Some(allow),
+                "{name}"
+            );
+            assert!(cmd.env_remove.contains(&"COPILOT_GITHUB_TOKEN".to_owned()));
+            let env = child_env(dir.path(), i);
+            assert_eq!(
+                env.get("COPILOT_SKILLS_DIRS").map(String::as_str),
+                Some(dir.path().join(".agents/skills").to_str().unwrap()),
+                "{name}: the tree under the child's HOME"
+            );
+            assert_eq!(
+                env.get("COPILOT_ALLOW_ALL").map(String::as_str),
+                Some(allow),
+                "{name}"
+            );
+            assert!(!env.contains_key("COPILOT_GITHUB_TOKEN"), "{name}");
+        }
+    }
+
+    /// Defect: a Codex lane whose compaction words the hook's reader never
+    /// sees judges the window against a stored default. The variable
+    /// carries the command's own settings as the reader parses them, the
+    /// caller's spelling included, and is empty where the command carries
+    /// none; no other harness carries it.
+    #[test]
+    fn a_codex_launch_hands_its_compaction_overrides_to_the_hook_s_reader() {
+        let mut off = bare(Harness::Codex);
+        off.compaction = Compaction::Off;
+        assert_eq!(
+            build(&off)
+                .unwrap()
+                .env
+                .get(CODEX_COMPACTION_OVERRIDES)
+                .unwrap(),
+            r#"{"harness":"codex","settings":{"model_auto_compact_token_limit":"9223372036854775807","model_auto_compact_token_limit_scope":"body_after_prefix","model_post_turn_compact_threshold_percent":"0"}}"#
+        );
+        let mut own = bare(Harness::Codex);
+        own.extra_args = vec![
+            "--config=model_post_turn_compact_threshold_percent= 5 ".into(),
+            "-cmodel_auto_compact_token_limit=\"300000\"".into(),
+            "--".into(),
+            "-c".into(),
+            "model_auto_compact_token_limit_scope=body_after_prefix".into(),
+        ];
+        assert_eq!(
+            build(&own)
+                .unwrap()
+                .env
+                .get(CODEX_COMPACTION_OVERRIDES)
+                .unwrap(),
+            r#"{"harness":"codex","settings":{"model_auto_compact_token_limit":"300000","model_post_turn_compact_threshold_percent":"5"}}"#
+        );
+        assert_eq!(
+            build(&bare(Harness::Codex))
+                .unwrap()
+                .env
+                .get(CODEX_COMPACTION_OVERRIDES)
+                .unwrap(),
+            ""
+        );
+        for h in [Harness::Claude, Harness::Copilot, Harness::Pi] {
+            let mut i = bare(h);
+            i.compaction = Compaction::Native;
+            assert!(
+                !build(&i)
+                    .unwrap()
+                    .env
+                    .contains_key(CODEX_COMPACTION_OVERRIDES),
+                "{h}"
+            );
+        }
+    }
+
+    /// Defect: a brief path holding a space, an apostrophe or `$` quoted
+    /// twice or not at all reaches the harness as several words, or with
+    /// the shell's expansion in place of the file's text. The line is run
+    /// through a recorder that prints its argv; the last word is the file's
+    /// text, whatever it holds.
+    #[test]
+    fn the_brief_path_is_quoted_once_whatever_it_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        let brief_dir = dir.path().join("my tree (2)");
+        fs::create_dir(&brief_dir).unwrap();
+        let brief = brief_dir.join("it's $x.md");
+        fs::write(&brief, "line one 'quoted' $HOME `x`\nline two\n").unwrap();
+        let recorder = dir.path().join("record-args");
+        fs::write(&recorder, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n").unwrap();
+        fs::set_permissions(&recorder, fs::Permissions::from_mode(0o755)).unwrap();
+        let mut i = intent(Harness::Codex);
+        i.home = Some(dir.path().join(".1codex"));
+        i.cwd = dir.path().to_path_buf();
+        i.brief = Brief::File {
+            path: brief.clone(),
+        };
+        i.program = Some(recorder);
+        let cmd = build(&i).unwrap();
+        let line = cmd.shell_line();
+        assert!(
+            line.ends_with(&format!(
+                "\"$(cat {})\"",
+                shell_quote(&brief.display().to_string())
+            )),
+            "{line}"
+        );
+        let out = Command::new("sh")
+            .args(["-c", &line])
+            .env_clear()
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let words = String::from_utf8(out.stdout).unwrap();
+        assert!(
+            words.ends_with("--dangerously-bypass-approvals-and-sandbox\n-c\nfeatures.default_mode_request_user_input=false\nline one 'quoted' $HOME `x`\nline two\n"),
+            "{words}"
+        );
+    }
+
+    /// Defect: a resume that opens a fresh session, or a Copilot resume
+    /// whose line is read as the session id. Each harness's own resume
+    /// form, the brief after it; Copilot's brief behind `-i` on a fresh
+    /// launch too.
+    #[test]
+    fn the_resume_forms_continue_each_harness_s_own_session_with_the_brief_after() {
+        let rows: [(Harness, &[&str]); 4] = [
+            (Harness::Claude, &["--resume", "0f6e", "{brief}"]),
+            (Harness::Codex, &["resume", "0f6e", "{brief}"]),
+            (Harness::Copilot, &["--resume=0f6e", "-i", "{brief}"]),
+            (
+                Harness::Pi,
+                &["--session", "/home/x/.1pi/sessions/s.jsonl", "{brief}"],
+            ),
+        ];
+        for (h, tail) in rows {
+            let mut i = intent(h);
+            i.home = Some(PathBuf::from(format!("/home/x/.1{h}")));
+            i.resume = Some(Resume {
+                session_id: "0f6e".into(),
+                session_file: (h == Harness::Pi)
+                    .then(|| PathBuf::from("/home/x/.1pi/sessions/s.jsonl")),
+            });
+            let args = build(&i).unwrap().args;
+            assert_eq!(&args[args.len() - tail.len()..], tail, "{h}: {args:?}");
+        }
+        let fresh = build(&intent(Harness::Copilot)).unwrap();
+        let brief = fresh.brief_arg.unwrap();
+        assert_eq!(fresh.args[brief - 1], "-i");
+        let mut pi = intent(Harness::Pi);
+        pi.resume = Some(Resume {
+            session_id: "0f6e".into(),
+            session_file: None,
+        });
+        assert!(matches!(
+            build(&pi),
+            Err(Error::Refused {
+                key: "resume-file-missing",
+                ..
+            })
+        ));
+    }
+
+    /// Two copies of one list drift (a switch added to one and not the
+    /// other), so the shipped `printf` of `lane_launch_rm_prompt_env` is
+    /// read row for row against `CLAUDE_BYPASS_ENV` while that function
+    /// stands: a name changes in one commit or this row refuses. A
+    /// consistency check, not a second implementation.
     #[test]
     fn the_launchers_prompt_switch_line_spells_this_list_row_for_row() {
         let path = concat!(
@@ -526,10 +998,10 @@ mod tests {
         assert_eq!(spelled, CLAUDE_BYPASS_ENV, "{path}");
     }
 
-    /// Decision 120, M3: under the bypass posture the canonical bypass word is
-    /// added only where no full-bypass spelling already stands, so an alias the
-    /// caller gave (`--yolo`, `--permission-mode=bypassPermissions`) is never
-    /// doubled; a caller word that is not a full bypass still gets the word.
+    /// Under the bypass posture the canonical bypass word is added only
+    /// where no full-bypass spelling already stands, so an alias the caller
+    /// gave (`--yolo`, `--permission-mode=bypassPermissions`) is never
+    /// doubled; a caller word that is not a full bypass still gets no word.
     #[test]
     fn a_bypass_launch_adds_no_second_word_under_an_alias() {
         let bypass = |h: Harness, words: &[&str]| {
@@ -555,7 +1027,7 @@ mod tests {
         );
         assert!(!claude.contains(&"--dangerously-skip-permissions".to_owned()));
         // A narrower permission word the caller chose stands alone: no word
-        // is added beside it (decision 124a (4)).
+        // is added beside it.
         let dont_ask = bypass(Harness::Claude, &["--permission-mode=dontAsk"]);
         assert!(!dont_ask.contains(&"--dangerously-skip-permissions".to_owned()));
         assert!(dont_ask.contains(&"--permission-mode=dontAsk".to_owned()));
@@ -580,11 +1052,11 @@ mod tests {
         ));
     }
 
-    /// The account routing is the builder's (decision 109 (5)): a Pi launch
-    /// on a `pi-claude/` model carries Pi's root in `PI_CODING_AGENT_DIR`
-    /// and the chosen Claude seat in `CLAUDE_CONFIG_DIR`; a Pi launch on the
-    /// Copilot pool routes the account through Pi's own variable; a Claude
-    /// account is its home; and two directories for one variable refuse.
+    /// The account routing is the builder's: a Pi launch on a `pi-claude/`
+    /// model carries Pi's root in `PI_CODING_AGENT_DIR` and the chosen
+    /// Claude seat in `CLAUDE_CONFIG_DIR`; a Pi launch on the Copilot pool
+    /// routes the account through Pi's own variable; a Claude account is
+    /// its home; and two directories for one variable refuse.
     #[test]
     fn the_account_is_routed_through_the_provider_s_variable() {
         let mut i = intent(Harness::Pi);
@@ -636,17 +1108,6 @@ mod tests {
                 ..
             })
         ));
-    }
-
-    #[test]
-    fn copilot_puts_the_brief_behind_i_and_clears_its_token() {
-        let mut i = intent(Harness::Copilot);
-        i.home = Some(PathBuf::from("/home/x/.1copilot"));
-        let cmd = build(&i).unwrap();
-        let brief = cmd.brief_arg.unwrap();
-        assert_eq!(cmd.args[brief - 1], "-i");
-        assert!(cmd.env_remove.contains(&"COPILOT_GITHUB_TOKEN".to_owned()));
-        assert_eq!(cmd.env.get("COPILOT_ALLOW_ALL").unwrap(), "true");
     }
 
     #[test]

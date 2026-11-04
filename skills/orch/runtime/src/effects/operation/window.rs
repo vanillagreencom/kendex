@@ -24,11 +24,10 @@ use crate::state::{Obligation, Opening, Phase, Role};
 /// How often a poll re-reads the pane within its bound.
 const POLL: std::time::Duration = std::time::Duration::from_millis(200);
 
-/// Why a window did not open with its line typed (decision 105: a tagged
-/// result, never a dropped one). `Refused` is a host refusal before the
+/// Why a window did not open with its line typed. `Refused` is a host refusal before the
 /// launcher was asked, nothing of the effect's standing; `Unanswered` is a
 /// `new-window` the host did not answer for after it was asked, a window
-/// possibly opened that the record names as such (decision 111 (5));
+/// possibly opened that the record names as such;
 /// `LineUnsent` is a window that opened, recorded at `opening`, whose line
 /// could not be typed, its one pane closed again by exact id and that close
 /// discharged by its own answer, so the caller judges what stands.
@@ -58,7 +57,7 @@ pub(in crate::effects) enum Polled {
 }
 
 /// What a wait for the runner to record the delivered turn settled on
-/// (decision 61): the user turn appeared in its session file, its pane went
+///: the user turn appeared in its session file, its pane went
 /// (the harness exited), the pane could not be read, or the bound passed.
 pub(in crate::effects) enum TurnConfirm {
     Recorded,
@@ -67,12 +66,12 @@ pub(in crate::effects) enum TurnConfirm {
     Pending,
 }
 
-/// What a reconcile at `opening` settled on (decision 96), the same reading
+/// What a reconcile at `opening` settled on, the same reading
 /// for a launch and a succession.
 pub(in crate::effects) enum Recovered {
     /// The pane the receipt names, its registered pid live under `identity`
     /// read from the kernel: adopt it and continue as from `window-opened`
-    /// under that identity alone (decision 99). `registered` is the receipt
+    /// under that identity alone. `registered` is the receipt
     /// as read, for the record.
     Adopted {
         pane: Pane,
@@ -87,7 +86,7 @@ pub(in crate::effects) enum Recovered {
     },
     /// The effect failed before any harness held a pane this record names:
     /// `note` says how, every obligation the phase recorded discharged
-    /// (decision 111 (A)).
+    ///.
     Failed {
         note: &'static str,
         cause: Option<&'static str>,
@@ -116,7 +115,7 @@ fn within_bound(opening: &Opening, now: SystemTime, verify: std::time::Duration)
 }
 
 /// A recovery that failed `note` once every obligation is discharged; one
-/// that stands is held open with its cause instead (decision 111 (A)).
+/// that stands is held open with its cause instead.
 fn recovered_failed(
     note: &'static str,
     cause: Option<&'static str>,
@@ -137,7 +136,7 @@ fn recovered_failed(
     }
 }
 
-/// The receipt the server's end leaves unread (decision 120 (5)): read it,
+/// The receipt the server's end leaves unread: read it,
 /// and where it names a pid, read that identity. A live pid is an
 /// obligation the server's end cannot discharge; a gone one is settled by
 /// that read; an unreadable one, or an invalid receipt, stands.
@@ -174,10 +173,10 @@ fn read_receipt_on_gone_server(
 }
 
 impl Operation<'_> {
-    /// What an effect records before it opens its window (decision 73): the
+    /// What an effect records before it opens its window: the
     /// server the window will open on, with its process identity so a socket
     /// that stops answering can later be told from a server that is gone
-    /// (decision 66), and the floor its native session is read above, the
+    ///, and the floor its native session is read above, the
     /// pane not yet known. The server just answered, so its process is read
     /// live; one that reads gone or unreadable refuses the open with that
     /// cause rather than recording a server identity it does not have. The
@@ -216,7 +215,7 @@ impl Operation<'_> {
         super::host::receipt_path(self.run.settings, &self.intent_id)
     }
 
-    /// The end a read of the pane's receipt settles (decision 120 (2)): read
+    /// The end a read of the pane's receipt settles: read
     /// discharges it, absent discharges it, an invalid or unreadable file
     /// leaves it standing.
     pub(super) fn read_receipt_end(&self) -> Result<ReceiptEnd> {
@@ -231,17 +230,16 @@ impl Operation<'_> {
     }
 
     /// Open the effect's window and type its launch line, every acquisition
-    /// recorded before the action that creates it (decisions 96, 111 (5),
-    /// 115 (A)): the receipt's directory made only after the handle's
+    /// recorded before the action that creates it: the receipt's directory made only after the handle's
     /// owner-conditional write, which proves the intent still this
     /// writer's and its set the record's and stops on a yield before any
-    /// file effect (decision 124k (40)); the receipt armed and the window
+    /// file effect; the receipt armed and the window
     /// possibly opened before
     /// `new-window` runs; the pane id the creating call printed, with the
     /// server's pid and start, before anything is typed into it; then the
     /// line, which registers the pane by its receipt and `exec`s the harness.
     /// The `window-opened` phase written after the line is typed carries the
-    /// receipt as standing until it is read (decision 120 (5)). A window
+    /// receipt as standing until it is read. A window
     /// whose line could not be typed has its one pane closed again by exact
     /// id and that close discharged by its own answer.
     pub(in crate::effects) fn open_window(
@@ -320,7 +318,7 @@ impl Operation<'_> {
         Ok(Ok(pane))
     }
 
-    /// Read the pane's receipt where it still stands (decision 120 (2)): a
+    /// Read the pane's receipt where it still stands: a
     /// receipt read discharges it, and a pid it registers that the record
     /// does not account for yet is an obligation read through the one
     /// identity reader, gone or standing; an absent receipt is discharged as
@@ -403,7 +401,7 @@ impl Operation<'_> {
     }
 
     /// Wait for the runner to record a user turn beyond `turns_before` in its
-    /// own session file `file` (decision 61), within the launch bound: the
+    /// own session file `file`, within the launch bound: the
     /// delivered brief confirmed by the harness's own record. The pane gone is
     /// the harness exited; a pane the host does not answer for is retried and
     /// reported past the bound; the bound passed is `Pending`. The wait is a
@@ -437,16 +435,16 @@ impl Operation<'_> {
     }
 
     /// Recover an effect interrupted at `opening`, the owner already read
-    /// dead (decision 72). The recorded server is judged first (decision
+    /// dead. The recorded server is judged first (decision
     /// 66): one gone or replaced took every pane with it, and the receipt is
-    /// read before anything is discharged (decision 120 (5)), its pid read
+    /// read before anything is discharged, its pid read
     /// through the one identity reader; one unanswering whose process runs is
     /// unobservable. Then, in order: the pane's receipt, whose pid is read
     /// before its pane is adopted by exact id; else the recorded pane, which
     /// a reconcile within the bound leaves to register and one past it
     /// closes by that exact id; else nothing opened. No pane is enumerated
     /// and no window's name, option or environment is read. Every read here
-    /// is three-valued (decision 99); an adopted pane is recorded as
+    /// is three-valued; an adopted pane is recorded as
     /// `window-opened` under the registered identity before the caller goes
     /// on.
     pub(in crate::effects) fn recover_opening(&mut self, opening: &Opening) -> Result<Recovered> {
@@ -494,9 +492,9 @@ impl Operation<'_> {
                 // No pane recorded and no receipt. A launcher never asked
                 // opened nothing. One asked may have opened a window that
                 // stands unregistered on a server that answers, and no pane
-                // is enumerated to find it (decision 96), so that obligation
+                // is enumerated to find it, so that obligation
                 // stands until the operator's own close or the server's end
-                // (decision 111 (5)).
+                //.
                 let Some(pane_id) = &opening.pane else {
                     let recovered = if opening.asked {
                         Recovered::Pending {
@@ -561,10 +559,10 @@ impl Operation<'_> {
         Ok(recovered)
     }
 
-    /// What the receipt's registered pid settles (decisions 96, 99, 120 (2)),
+    /// What the receipt's registered pid settles,
     /// read through the one identity reader, over the recorded set. The receipt
     /// was read and the registered pane adopted, written before any close
-    /// (decision 120 (5)), so a run killed at the close has the adopted pane
+    ///, so a run killed at the close has the adopted pane
     /// and the receipt-read durable. Live: the pane, read by exact id, is
     /// adopted under that identity and no other; its pane gone leaves that live
     /// pid an obligation the failure cannot discharge, held `pid-live`. Gone:
@@ -591,7 +589,7 @@ impl Operation<'_> {
         Ok(match identity {
             Reading::Live(identity) => match tmux::pane_fields(server, &registered.pane) {
                 // The pane stands: adopted under the registered identity, which
-                // becomes an obligation of the attempt (decision 99).
+                // becomes an obligation of the attempt.
                 Reading::Live(fields) => {
                     self.add(Obligation::Process(identity.clone()))?;
                     Recovered::Adopted {
@@ -605,7 +603,7 @@ impl Operation<'_> {
                     }
                 }
                 // The pane is gone but the registered pid reads live: the
-                // process survived its pane (decision 111 (A) (2)), a pid
+                // process survived its pane, a pid
                 // obligation the pane's disappearance cannot discharge.
                 Reading::Gone => {
                     self.discharge(Discharge::Pane {
@@ -664,8 +662,8 @@ impl Operation<'_> {
     }
 
     /// The server gone or replaced took every pane and window it held
-    /// (decision 66): the receipt is read first, and a pid it names is read
-    /// through the one identity reader (decision 120 (5)); then what the set
+    ///: the receipt is read first, and a pid it names is read
+    /// through the one identity reader; then what the set
     /// names on the server is discharged by that read.
     fn server_gone(&mut self, opening: &Opening, cause: &'static str) -> Result<Recovered> {
         let role = self.principal_role();

@@ -699,11 +699,11 @@ impl Lane {
 }
 
 /// The successor a succession is about to open, `overseer.pending`: the
-/// identity fields the legacy `ol_identity` names, the launch line it
-/// judged, and the typed launch fields the runtime builds the command from
-/// (decision 109 (5)): the permission posture and the caller's own words.
-/// The line is recorded for display and a dead-pane replay's identity read;
-/// the runtime never executes it.
+/// identity fields the record carries, the launch line it judged, the typed
+/// launch fields the runtime builds the command from (the permission posture
+/// and the caller's own words) and the native session it continues where it
+/// resumes one. The line is recorded for display and a dead-pane replay's
+/// identity read; the runtime never executes it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Pending {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -722,6 +722,10 @@ pub struct Pending {
     pub cwd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub class: Option<String>,
+    /// The native session the launch continues in place of starting one:
+    /// its file must stand under `home` for `cwd`, and Pi has no form for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume: Option<String>,
     /// The permission posture the launch runs under: `bypass`, or `native`
     /// with the caller's own permission words among `extra_args`. Left out,
     /// the runtime's launch permission setting decides.
@@ -729,7 +733,7 @@ pub struct Pending {
     pub permission: Option<Permission>,
     /// The caller's own launch words beyond what the builder spells from the
     /// typed fields: its permission words under `native`, and whatever else
-    /// the legacy walk carried over, as given.
+    /// the walk carried over, as given.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra_args: Vec<String>,
     #[serde(flatten)]
@@ -737,8 +741,8 @@ pub struct Pending {
 }
 
 /// The keys a confirmed succession writes from `pending` onto the overseer
-/// record, and nulls where the pending names none: the legacy launch's
-/// identity object plus the launch line (`overseer-launch.sh`,
+/// record, and nulls where the pending names none: the launch's identity
+/// object plus the launch line (`overseer-launch.sh`,
 /// `ol_record_write`'s `$identity | map_values(null)` then `$fresh`).
 /// `class` is not among them: the legacy identity carries it only where
 /// known, so the successor record has the key only when `pending` does.
@@ -762,9 +766,10 @@ pub const SUCCESSOR_IDENTITY_KEYS: &[&str] = &[
 /// start keeps it.
 pub const SUCCESSOR_BINDING_KEYS: &[&str] = &["window", "session_rows"];
 
-/// The keys of the session that ended, which `ol_record_write` leaves out of
-/// a different session's record: the native session id, the harness process
-/// and its model check, the recorded exit, and the pending it just opened.
+/// The keys of the session that ended, which a different session's record
+/// leaves out: the native session id, the harness process and its model
+/// check, the recorded exit, the pending it just opened, and the succession
+/// command of the owner that recorded it.
 pub const PREDECESSOR_SESSION_KEYS: &[&str] = &[
     "session_id",
     "harness_pid",
@@ -772,6 +777,7 @@ pub const PREDECESSOR_SESSION_KEYS: &[&str] = &[
     "model_check",
     "exit",
     "pending",
+    "succession",
 ];
 
 /// The keys the legacy succession compare-and-swap requires equal, less

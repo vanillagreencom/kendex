@@ -3842,3 +3842,840 @@ fn an_unreadable_pull_request_is_a_result_with_its_cause_and_an_invalid_request_
     assert!(gh.log().is_empty(), "{:?}", gh.log());
     assert!(gh.state().get("verification").is_none());
 }
+
+// --- verify-review: the review gate --------------------------------------------
+
+/// The review gate's reviewer: the GraphQL actor login its `latestReviews`
+/// rows carry, and the REST login with its suffix.
+const COPILOT: &str = "copilot-pull-request-reviewer";
+const COPILOT_REST: &str = "copilot-pull-request-reviewer[bot]";
+const COPILOT_ERROR: &str =
+    "Copilot encountered an error and was unable to review this pull request.";
+/// The POST the gate makes once per head, as the fake logs it.
+const REQUEST_LINE: &str = "api repos/owner/repo/pulls/7/requested_reviewers --method POST -f reviewers[]=copilot-pull-request-reviewer[bot]";
+
+fn reviews_path() -> String {
+    page(&format!("repos/{REPO}/pulls/{PR}/reviews"), 1)
+}
+
+fn timeline_path() -> String {
+    page(&format!("repos/{REPO}/issues/{PR}/timeline"), 1)
+}
+
+fn pull_path() -> String {
+    format!("repos/{REPO}/pulls/{PR}")
+}
+
+fn classic_path() -> String {
+    format!("repos/{REPO}/branches/{BASE}/protection")
+}
+
+const THREADS: &str = "graphql number=7 cursor=";
+
+/// The pull request as `pr view` exports it for the gate.
+fn review_view(decision: &str, latest: &[(&str, &str)], draft: bool) -> Value {
+    let latest: Vec<Value> = latest
+        .iter()
+        .map(|(login, state)| json!({"author": {"login": login}, "state": state}))
+        .collect();
+    json!({"headRefOid": HEAD, "baseRefName": BASE, "state": "OPEN", "isDraft": draft, "reviewDecision": decision, "latestReviews": latest, "author": {"login": "app/lane-app"}})
+}
+
+fn threads_page(unresolved: usize) -> Value {
+    let nodes: Vec<Value> = (0..unresolved)
+        .map(|_| json!({"isResolved": false}))
+        .collect();
+    json!({"data": {"repository": {"pullRequest": {"reviewThreads": {"pageInfo": {"hasNextPage": false, "endCursor": null}, "nodes": nodes}}}}})
+}
+
+fn rest_pull(draft: bool, branch: &str, login: &str, kind: &str) -> Value {
+    json!({"state": "open", "draft": draft, "head": {"sha": HEAD, "ref": branch}, "base": {"ref": BASE}, "user": {"login": login, "type": kind}})
+}
+
+/// One review by Copilot on the head.
+fn copilot_review(id: u64, state: &str, body: &str, submitted: &str) -> Value {
+    json!({"id": id, "user": {"login": COPILOT_REST, "type": "Bot"}, "body": body, "state": state, "commit_id": HEAD, "submitted_at": submitted})
+}
+
+/// A Copilot check run on the head in `status`.
+fn copilot_check(id: u64, status: &str) -> Value {
+    let conclusion = if status == "completed" {
+        json!("success")
+    } else {
+        Value::Null
+    };
+    check_run_in(None, id, json!(COPILOT), status, conclusion)
+}
+
+impl Github {
+    /// The gate's world: an open, ready pull request with no review, no
+    /// thread, no Copilot work, a base whose rules require one approval,
+    /// and a consumer base checkout under `enforce`.
+    fn review_world() -> Self {
+        let mut gh = Github::empty();
+        fs::create_dir_all(gh.base()).unwrap();
+        fs::write(
+            gh.base().join("kendex.settings.toml"),
+            "[env]\nREVIEW_GATE_MODE = \"enforce\"\n",
+        )
+        .unwrap();
+        gh.answer(&format!("pr view {PR}"), review_view("", &[], false))
+            .answer(THREADS, threads_page(0))
+            .answer(
+                &rules(1),
+                json!([{"type": "pull_request", "parameters": {"required_approving_review_count": 1}}]),
+            )
+            .answer(&pull_path(), rest_pull(false, "feat", "lane-app[bot]", "Bot"))
+            .answer(&reviews_path(), json!([]))
+            .answer(&timeline_path(), json!([]))
+            .answer(&check_runs(HEAD, 1), check_runs_page(0, vec![]))
+            .answer(&format!("POST repos/{REPO}/pulls/{PR}/requested_reviewers"), json!({}));
+        gh
+    }
+
+    fn base(&self) -> PathBuf {
+        self.dir.path().join("base")
+    }
+
+    fn policy(&self, text: &str) {
+        fs::write(self.base().join("kendex.settings.toml"), text).unwrap();
+    }
+
+    /// One `verify-review` call with `env` over the isolated environment.
+    fn review(&self, mark_ready: bool, env: &[(&str, &str)]) -> Output {
+        let replies = self.dir.path().join("replies.json");
+        fs::write(&replies, serde_json::to_vec(&self.replies).unwrap()).unwrap();
+        let request = self.dir.path().join("request.json");
+        fs::write(
+            &request,
+            json!({"op": "verify-review", "repo": REPO, "pr": PR, "base_checkout": self.base(), "mark_ready": mark_ready}).to_string(),
+        )
+        .unwrap();
+        let mut command = support::isolated();
+        command
+            .args(["--state-dir", &self.dir.path().display().to_string()])
+            .arg("op")
+            .args(["--item", "KEN-4687"])
+            .arg("--request")
+            .arg(&request)
+            .env("PATH", support::tool_path(&[fixtures().as_path()]))
+            .env("GH_FAKE_REPLIES", &replies)
+            .env("GH_FAKE_LOG", self.dir.path().join("gh.log"))
+            .current_dir(self.dir.path());
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        command.output().unwrap()
+    }
+
+    /// The log lines since `from`.
+    fn log_since(&self, from: usize) -> Vec<String> {
+        self.log()[from..].to_vec()
+    }
+
+    fn requests(&self) -> usize {
+        self.log().iter().filter(|l| *l == REQUEST_LINE).count()
+    }
+
+    fn review_record(&self) -> Value {
+        self.state()["pr_review"].clone()
+    }
+
+    fn head_record(&self) -> Value {
+        self.review_record()["heads"][HEAD].clone()
+    }
+
+    /// Rewrite one field of the head's record in the item file.
+    fn set_head(&self, field: &str, value: Value) {
+        let mut state = self.state();
+        state["pr_review"]["heads"][HEAD][field] = value;
+        fs::write(self.item(), serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+    }
+}
+
+/// The ISO stamp `ago` seconds before now, the record's own clock.
+fn stamp_ago(ago: u64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    agent_runtime::clock::iso_utc(now - ago)
+}
+
+/// A spent period under `block`: the head record's period stamp moved past
+/// the budget before the call that reads the verdict.
+const BLOCK: &[(&str, &str)] = &[("PR_REVIEW_ON_TIMEOUT", "block")];
+
+/// Run the gate on a head whose period is spent: one call records the
+/// head, its period stamp is moved past the budget, and the second call
+/// reads the verdict on it.
+fn review_spent(gh: &Github, env: &[(&str, &str)]) -> Value {
+    let first = ok_result(&gh.review(false, env));
+    if first["status"] != "pending" {
+        return first;
+    }
+    gh.set_head("period_started", json!(stamp_ago(901)));
+    ok_result(&gh.review(false, env))
+}
+
+/// The request is the gate's one effect, claimed under the head's key before
+/// the POST: a second call on the same head finds the key and asks nothing,
+/// Copilot's work already in flight is recorded as existing and asked
+/// nothing, and an error answer standing on the head makes the one request
+/// its retry, claimed in the same write.
+#[test]
+fn a_second_run_requests_no_second_review() {
+    let gh = Github::review_world();
+    let first = ok_result(&gh.review(false, &[]));
+    assert_eq!(first["status"], "pending", "{first}");
+    assert_eq!(first["mode"], "approval");
+    assert_eq!(first["request"]["outcome"], "requested", "{first}");
+    assert_eq!(first["request"]["recorded_now"], true);
+    assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+    assert_eq!(gh.head_record()["request"]["outcome"], "requested");
+    let second = ok_result(&gh.review(false, &[]));
+    assert_eq!(second["status"], "pending", "{second}");
+    assert_eq!(second["request"]["outcome"], "requested");
+    assert_eq!(second["request"]["recorded_now"], false);
+    assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+
+    // Copilot's work already in flight on the head is the standing request.
+    let mut gh = Github::review_world();
+    gh.answer(
+        &check_runs(HEAD, 1),
+        check_runs_page(1, vec![copilot_check(31, "queued")]),
+    );
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["request"]["outcome"], "existing", "{result}");
+    assert_eq!(result["request"]["reason"], "existing-run");
+    assert_eq!(gh.requests(), 0, "{:?}", gh.log());
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["request"]["recorded_now"], false, "{result}");
+    assert_eq!(gh.requests(), 0);
+
+    // An error answer standing on the head: the one request is its retry.
+    let mut gh = Github::review_world();
+    gh.answer(
+        &format!("pr view {PR}"),
+        review_view("", &[(COPILOT, "COMMENTED")], false),
+    )
+    .answer(
+        &reviews_path(),
+        json!([copilot_review(
+            11,
+            "COMMENTED",
+            COPILOT_ERROR,
+            "2026-01-01T00:00:00Z"
+        )]),
+    );
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["status"], "pending", "{result}");
+    assert_eq!(result["request"]["outcome"], "requested");
+    assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+    assert_eq!(gh.head_record()["retry"]["review_id"], 11);
+    assert_eq!(gh.head_record()["retry"]["outcome"], "requested");
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["status"], "pending", "{result}");
+    assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+}
+
+/// Each verdict word is read from the head's reviews, threads and the
+/// period's budget, and recorded under `pr_review.verdict`: the aggregate
+/// approval or a latest approval with no objection, an objection, an open
+/// thread, a spent period under `block` or with a reviewer engaged, a spent
+/// period on a silent reviewer under `proceed`, an off gate, a second Copilot
+/// error after the retry, and a Copilot approval GitHub re-pointed to a
+/// force-pushed head, which carries no verdict until a review follows the
+/// head's arrival.
+#[test]
+fn each_verdict_word_is_read_from_the_head() {
+    struct Row {
+        name: &'static str,
+        view: Value,
+        unresolved: usize,
+        env: &'static [(&'static str, &'static str)],
+        /// Whether the verdict is read on a spent period.
+        spent: bool,
+        verdict: &'static str,
+    }
+    let rows = [
+        Row {
+            name: "the aggregate approval",
+            view: review_view("APPROVED", &[("colleague", "APPROVED")], false),
+            unresolved: 0,
+            env: &[],
+            spent: false,
+            verdict: "approved",
+        },
+        Row {
+            name: "a latest approval with no decision",
+            view: review_view("", &[("colleague", "APPROVED")], false),
+            unresolved: 0,
+            env: &[],
+            spent: false,
+            verdict: "approved",
+        },
+        Row {
+            name: "an objection beside an approval",
+            view: review_view(
+                "",
+                &[("colleague", "APPROVED"), ("other", "CHANGES_REQUESTED")],
+                false,
+            ),
+            unresolved: 0,
+            env: &[],
+            spent: false,
+            verdict: "changes_requested",
+        },
+        Row {
+            name: "an objection outranks open threads",
+            view: review_view(
+                "CHANGES_REQUESTED",
+                &[("other", "CHANGES_REQUESTED")],
+                false,
+            ),
+            unresolved: 2,
+            env: &[],
+            spent: false,
+            verdict: "changes_requested",
+        },
+        Row {
+            name: "an open thread beside an approval",
+            view: review_view("APPROVED", &[("colleague", "APPROVED")], false),
+            unresolved: 1,
+            env: &[],
+            spent: false,
+            verdict: "comments",
+        },
+        Row {
+            name: "a required review keeps a latest approval from approving",
+            view: review_view("REVIEW_REQUIRED", &[("colleague", "APPROVED")], false),
+            unresolved: 0,
+            env: BLOCK,
+            spent: true,
+            verdict: "timeout",
+        },
+        Row {
+            name: "a silent reviewer under block",
+            view: review_view("", &[], false),
+            unresolved: 0,
+            env: BLOCK,
+            spent: true,
+            verdict: "timeout",
+        },
+        Row {
+            name: "a reviewer who commented is engaged, not silent",
+            view: review_view("", &[("colleague", "COMMENTED")], false),
+            unresolved: 0,
+            env: &[],
+            spent: true,
+            verdict: "timeout",
+        },
+        Row {
+            name: "the author's own comment is silence",
+            view: review_view("", &[("lane-app", "COMMENTED")], false),
+            unresolved: 0,
+            env: &[],
+            spent: true,
+            verdict: "proceeded",
+        },
+        Row {
+            name: "a silent reviewer under proceed",
+            view: review_view("", &[], false),
+            unresolved: 0,
+            env: &[],
+            spent: true,
+            verdict: "proceeded",
+        },
+    ];
+    for row in rows {
+        let mut gh = Github::review_world();
+        gh.answer(&format!("pr view {PR}"), row.view)
+            .answer(THREADS, threads_page(row.unresolved));
+        let result = if row.spent {
+            review_spent(&gh, row.env)
+        } else {
+            ok_result(&gh.review(false, row.env))
+        };
+        assert_eq!(result["status"], "complete", "{}: {result}", row.name);
+        assert_eq!(result["verdict"], row.verdict, "{}: {result}", row.name);
+        assert_eq!(result["unresolved_count"], row.unresolved, "{}", row.name);
+        let record = gh.review_record()["verdict"].clone();
+        assert_eq!(record["verdict"], row.verdict, "{}: {record}", row.name);
+        assert_eq!(record["head"], HEAD, "{}", row.name);
+        assert_eq!(result["recorded"]["replaced"], false, "{}", row.name);
+    }
+
+    // An off gate is the verdict before any review read.
+    let gh = Github::review_world();
+    gh.policy("[env]\nREVIEW_GATE_MODE = \"off\"\n");
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["status"], "complete", "{result}");
+    assert_eq!(result["verdict"], "off");
+    assert_eq!(result["mode"], "off");
+    assert_eq!(gh.review_record()["mode"], "off");
+    assert_eq!(
+        gh.log(),
+        vec![format!(
+            "pr view {PR} --repo {REPO} --json headRefOid,baseRefName,state,isDraft,reviewDecision,latestReviews,author"
+        )]
+    );
+
+    // A second error after the retry is the fallback cause the overseer
+    // approves on; the same error keeps waiting.
+    let mut gh = Github::review_world();
+    gh.answer(
+        &format!("pr view {PR}"),
+        review_view("", &[(COPILOT, "COMMENTED")], false),
+    )
+    .answer(
+        &reviews_path(),
+        json!([copilot_review(
+            11,
+            "COMMENTED",
+            COPILOT_ERROR,
+            "2026-01-01T00:00:00Z"
+        )]),
+    );
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["status"], "pending", "{result}");
+    assert_eq!(gh.head_record()["retry"]["review_id"], 11);
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["status"], "pending", "{result}");
+    gh.answer(
+        &reviews_path(),
+        json!([
+            copilot_review(11, "COMMENTED", COPILOT_ERROR, "2026-01-01T00:00:00Z"),
+            copilot_review(12, "COMMENTED", COPILOT_ERROR, "2026-01-01T00:01:00Z")
+        ]),
+    );
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["status"], "complete", "{result}");
+    assert_eq!(result["verdict"], "copilot-error");
+    assert_eq!(result["reason"], "copilot-error cause=error");
+    assert_eq!(gh.head_record()["retry"]["outcome"], "fallback");
+    assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+
+    // A Copilot approval re-pointed to the pushed head carries no verdict;
+    // one submitted after the head arrived does.
+    for (name, submitted, verdict) in [
+        ("re-pointed", "2026-01-01T00:00:00Z", "timeout"),
+        ("after the push", "2026-01-03T00:00:00Z", "approved"),
+    ] {
+        let mut gh = Github::review_world();
+        gh.answer(
+            &format!("pr view {PR}"),
+            review_view("APPROVED", &[(COPILOT, "APPROVED")], false),
+        )
+        .answer(
+            &reviews_path(),
+            json!([copilot_review(5, "APPROVED", "Looks good.", submitted)]),
+        )
+        .answer(
+            &timeline_path(),
+            json!([{"event": "head_ref_force_pushed", "commit_id": HEAD, "created_at": "2026-01-02T00:00:00Z"}]),
+        );
+        let result = review_spent(&gh, BLOCK);
+        assert_eq!(result["verdict"], verdict, "{name}: {result}");
+        if verdict == "timeout" {
+            assert_eq!(result["review_decision"], "REVIEW_REQUIRED", "{name}");
+        }
+    }
+}
+
+/// The period is judged on the head record's own stamp, the caller's clock
+/// against it: a fresh period is `pending`, a stamp older than the budget is
+/// `timeout`, which ends the period and counts it, and the next call runs a
+/// new period.
+#[test]
+fn the_timeout_is_judged_on_the_recorded_stamp() {
+    let gh = Github::review_world();
+    let first = ok_result(&gh.review(false, &[]));
+    assert_eq!(first["status"], "pending", "{first}");
+    assert!(
+        first["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("review-pending"),
+        "{first}"
+    );
+    assert_eq!(gh.head_record()["timeouts"], 0);
+    let started = gh.head_record()["period_started"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    gh.set_head("period_started", json!(stamp_ago(901)));
+    let second = ok_result(&gh.review(false, &[("PR_REVIEW_ON_TIMEOUT", "block")]));
+    assert_eq!(second["status"], "complete", "{second}");
+    assert_eq!(second["verdict"], "timeout");
+    assert_eq!(gh.head_record()["timeouts"], 1);
+    assert!(gh.head_record()["period_started"].as_str().unwrap() >= started.as_str());
+    let third = ok_result(&gh.review(false, &[("PR_REVIEW_ON_TIMEOUT", "block")]));
+    assert_eq!(third["status"], "pending", "{third}");
+    assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+}
+
+/// Copilot's work in flight holds the call `pending` with its run while the
+/// hold runs from the head record's stamp and reads `expired` past it; a
+/// pending timeline request is work until a later Copilot review answers it;
+/// a failed check-runs read is unreadable, never no work.
+#[test]
+fn copilot_work_in_flight_holds_pending_within_the_bound_and_expires_past_it() {
+    let mut gh = Github::review_world();
+    gh.answer(
+        &check_runs(HEAD, 1),
+        check_runs_page(1, vec![copilot_check(31, "in_progress")]),
+    );
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["status"], "pending", "{result}");
+    assert_eq!(result["copilot"]["state"], "pending");
+    assert_eq!(result["copilot"]["run"], 31);
+    gh.set_head("at", json!(stamp_ago(601)));
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["status"], "pending", "{result}");
+    assert_eq!(result["copilot"]["state"], "expired");
+    let result = ok_result(&gh.review(false, &[("ORCH_COPILOT_HOLD_SECS", "1000")]));
+    assert_eq!(result["copilot"]["state"], "pending", "{result}");
+
+    let mut gh = Github::review_world();
+    gh.answer(
+        &timeline_path(),
+        json!([{"event": "review_requested", "id": 77, "created_at": "2026-01-01T00:00:00Z", "requested_reviewer": {"login": COPILOT_REST}}]),
+    );
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["copilot"]["state"], "pending", "{result}");
+    assert_eq!(result["copilot"]["run"], 77);
+    assert_eq!(result["request"]["reason"], "existing-run");
+    gh.answer(
+        &timeline_path(),
+        json!([
+            {"event": "review_requested", "id": 77, "created_at": "2026-01-01T00:00:00Z", "requested_reviewer": {"login": COPILOT_REST}},
+            {"event": "reviewed", "submitted_at": "2026-01-01T00:05:00Z", "user": {"login": COPILOT_REST}}
+        ]),
+    );
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["copilot"]["state"], "none", "{result}");
+
+    let mut gh = Github::review_world();
+    gh.fail(&check_runs(HEAD, 1));
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["status"], "unreadable", "{result}");
+    assert_eq!(result["reason"], "check-runs-read-failed");
+    assert!(
+        gh.review_record()["heads"].is_null(),
+        "{}",
+        gh.review_record()
+    );
+}
+
+/// A blocker of kind regression-against-main standing open on the item's
+/// escalated findings refuses the merge, by its location, whatever the
+/// reviewers say; once a fix clears it the approval stands.
+#[test]
+fn merge_is_refused_while_a_regression_blocker_stands_and_allowed_once_lifted() {
+    let mut gh = Github::review_world();
+    gh.answer(
+        &format!("pr view {PR}"),
+        review_view("APPROVED", &[("colleague", "APPROVED")], false),
+    );
+    let mut state = gh.state();
+    state["escalated_items"] = json!([
+        {"location": "src/x.rs", "description": "misreads a moved package", "kind": "regression-against-main", "outcome": "blocked"}
+    ]);
+    fs::write(gh.item(), serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["status"], "complete", "{result}");
+    assert_eq!(result["verdict"], "blocked");
+    assert_eq!(result["reason"], "regression-open location=src/x.rs");
+    assert_eq!(gh.review_record()["verdict"]["verdict"], "blocked");
+    let mut state = gh.state();
+    state["escalated_items"] = json!([]);
+    state["fixed_items"] =
+        json!([{"location": "src/x.rs", "description": "misreads a moved package"}]);
+    fs::write(gh.item(), serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["verdict"], "approved", "{result}");
+    assert_eq!(result["recorded"]["replaced"], true);
+}
+
+/// The gate mode is resolved from the consumer's policy and the base's
+/// rules on the first call and recorded as the item's floor: a later call
+/// reads the record and no rule, so a rules read that then fails changes
+/// nothing. Classic protection decides where no rule requires an approval.
+#[test]
+fn the_gate_mode_is_recorded_once() {
+    let mut gh = Github::review_world();
+    let first = ok_result(&gh.review(false, &[]));
+    assert_eq!(first["mode"], "approval", "{first}");
+    assert!(
+        gh.log().iter().any(|l| l.contains("/rules/branches/")),
+        "{:?}",
+        gh.log()
+    );
+    assert_eq!(gh.review_record()["mode"], "approval");
+    let lines = gh.log().len();
+    gh.fail(&rules(1));
+    let second = ok_result(&gh.review(false, &[]));
+    assert_eq!(second["mode"], "approval", "{second}");
+    assert_eq!(second["status"], "pending");
+    assert!(
+        !gh.log_since(lines)
+            .iter()
+            .any(|l| l.contains("/rules/branches/")),
+        "{:?}",
+        gh.log()
+    );
+
+    for (name, enabled, classic, mode) in [
+        ("no protection", false, Value::Null, "off"),
+        (
+            "classic reviews",
+            true,
+            json!({"required_pull_request_reviews": {"required_approving_review_count": 0}}),
+            "approval",
+        ),
+        (
+            "classic without reviews",
+            true,
+            json!({"required_pull_request_reviews": null}),
+            "off",
+        ),
+    ] {
+        let mut gh = Github::review_world();
+        gh.answer(&rules(1), json!([])).answer(
+            &branch(),
+            json!({"protected": enabled, "protection": {"enabled": enabled}}),
+        );
+        if !classic.is_null() {
+            gh.answer(&classic_path(), classic);
+        }
+        let result = ok_result(&gh.review(false, &[]));
+        assert_eq!(result["mode"], mode, "{name}: {result}");
+    }
+
+    // A failed rules read on the first call is no mode: unreadable, nothing
+    // recorded, never off.
+    let mut gh = Github::review_world();
+    gh.fail(&rules(1));
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["status"], "unreadable", "{result}");
+    assert_eq!(result["reason"], "rules-read-failed");
+    assert!(gh.state().get("pr_review").is_none());
+}
+
+/// A request that sends nothing records why under the head, once: the
+/// consumer's declared refresh head, Copilot requests off, a draft without
+/// the ready mark, Copilot's no-files answer, and a refused POST with its
+/// exit.
+#[test]
+fn a_request_falls_back_with_its_cause() {
+    let refresh_policy = "[env]\nREVIEW_GATE_MODE = \"enforce\"\nREVIEW_GATE_REFRESH_REVIEW = \"overseer\"\nREVIEW_GATE_REFRESH_BRANCH = \"feat\"\nREVIEW_GATE_REFRESH_AUTHOR = \"lane-app[bot]\"\n";
+    let no_files = "Copilot wasn't able to review any files in this pull request.";
+    for (name, cause, requests) in [
+        ("refresh", "refresh", 0),
+        ("off", "off", 0),
+        ("draft", "draft", 0),
+        ("no-files", "no-files", 0),
+        ("refused", "refused", 1),
+    ] {
+        let mut gh = Github::review_world();
+        let mut env: Vec<(&str, &str)> = Vec::new();
+        match name {
+            "refresh" => gh.policy(refresh_policy),
+            "off" => env.push(("PR_COPILOT_REQUESTS", "off")),
+            "draft" => {
+                gh.answer(&format!("pr view {PR}"), review_view("", &[], true))
+                    .answer(
+                        &pull_path(),
+                        rest_pull(true, "feat", "lane-app[bot]", "Bot"),
+                    );
+            }
+            "no-files" => {
+                gh.answer(
+                    &format!("pr view {PR}"),
+                    review_view("", &[(COPILOT, "COMMENTED")], false),
+                )
+                .answer(
+                    &reviews_path(),
+                    json!([copilot_review(
+                        9,
+                        "COMMENTED",
+                        no_files,
+                        "2026-01-01T00:00:00Z"
+                    )]),
+                );
+            }
+            "refused" => {
+                gh.fail(&format!("POST repos/{REPO}/pulls/{PR}/requested_reviewers"));
+            }
+            _ => unreachable!(),
+        }
+        let result = ok_result(&gh.review(false, &env));
+        assert_eq!(result["status"], "pending", "{name}: {result}");
+        assert_eq!(result["request"]["outcome"], "fallback", "{name}: {result}");
+        assert_eq!(result["request"]["cause"], cause, "{name}: {result}");
+        assert_eq!(result["request"]["recorded_now"], true, "{name}");
+        assert_eq!(gh.requests(), requests, "{name}: {:?}", gh.log());
+        let record = gh.head_record()["request"].clone();
+        assert_eq!(record["cause"], cause, "{name}: {record}");
+        if name == "refused" {
+            assert_eq!(record["exit"], 1, "{record}");
+        }
+        let again = ok_result(&gh.review(false, &env));
+        assert_eq!(again["request"]["recorded_now"], false, "{name}: {again}");
+        assert_eq!(gh.requests(), requests, "{name}: {:?}", gh.log());
+    }
+}
+
+/// With `mark_ready`, an open draft is marked ready, the mark recorded
+/// under the head before the act and the flag read after, and the request
+/// then goes out on the confirmed head; a refused mark sends no request.
+#[test]
+fn a_draft_is_marked_ready_before_its_request() {
+    let mut gh = Github::review_world();
+    gh.answer(&format!("pr view {PR}"), review_view("", &[], true))
+        .answer(
+            &pull_path(),
+            rest_pull(true, "feat", "lane-app[bot]", "Bot"),
+        )
+        .answer(&format!("pr ready {PR}"), json!({}));
+    let result = ok_result(&gh.review(true, &[]));
+    assert_eq!(result["status"], "pending", "{result}");
+    assert_eq!(result["request"]["outcome"], "requested");
+    let log = gh.log();
+    let ready = log
+        .iter()
+        .position(|l| l == &format!("pr ready {PR} --repo {REPO}"));
+    let request = log.iter().position(|l| l == REQUEST_LINE);
+    assert!(
+        ready.is_some() && request.is_some() && ready < request,
+        "{log:?}"
+    );
+    assert_eq!(gh.head_record()["ready"], "marking");
+
+    let mut gh = Github::review_world();
+    gh.answer(&format!("pr view {PR}"), review_view("", &[], true))
+        .answer(
+            &pull_path(),
+            rest_pull(true, "feat", "lane-app[bot]", "Bot"),
+        )
+        .fail(&format!("pr ready {PR}"));
+    let result = ok_result(&gh.review(true, &[]));
+    assert_eq!(result["status"], "unreadable", "{result}");
+    assert_eq!(result["reason"], "ready-failed");
+    assert_eq!(gh.requests(), 0, "{:?}", gh.log());
+    assert_eq!(gh.head_record()["ready"], "marking");
+}
+
+/// A request outside the pinned forms, a pull request number of zero or a
+/// base checkout that is no directory refuses on the keyed line before
+/// any read; a closed pull request refuses after the one view.
+#[test]
+fn an_invalid_review_request_refuses_before_any_read() {
+    let gh = Github::review_world();
+    for (field, body) in [
+        (
+            "pr",
+            json!({"op": "verify-review", "repo": REPO, "pr": 0, "base_checkout": gh.base()}),
+        ),
+        (
+            "repo",
+            json!({"op": "verify-review", "repo": "owner", "pr": PR, "base_checkout": gh.base()}),
+        ),
+        (
+            "base_checkout",
+            json!({"op": "verify-review", "repo": REPO, "pr": PR, "base_checkout": gh.dir.path().join("absent")}),
+        ),
+    ] {
+        let out = gh.op(&["--item", "KEN-4687"], body);
+        assert_eq!(out.status.code(), Some(1), "{field}");
+        assert_eq!(
+            reply(&out)["refusal"]["key"],
+            "verify-request-invalid",
+            "{field}"
+        );
+        let line = String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_owned();
+        assert_eq!(
+            line,
+            format!("orch-runtime: verify-request-invalid field={field}")
+        );
+    }
+    assert!(gh.log().is_empty(), "{:?}", gh.log());
+    assert!(gh.state().get("pr_review").is_none());
+
+    let mut gh = Github::review_world();
+    gh.answer(
+        &format!("pr view {PR}"),
+        with(review_view("", &[], false), "state", json!("MERGED")),
+    );
+    let out = gh.review(false, &[]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(reply(&out)["refusal"]["key"], "pr-not-open");
+    assert_eq!(gh.log().len(), 1, "{:?}", gh.log());
+    assert!(gh.state().get("pr_review").is_none());
+}
+
+/// The review settings are read by the review gate alone: a value outside
+/// its form leaves every other verb running and refuses `verify-review`
+/// by key and value, before any read.
+#[test]
+fn a_review_setting_outside_its_form_refuses_the_review_gate_alone() {
+    for (key, value) in [
+        ("PR_COPILOT_REQUESTS", "junk"),
+        ("PR_REVIEW_ON_TIMEOUT", "bogus"),
+        ("PR_REVIEW_WAIT_SECS", "soon"),
+        ("ORCH_COPILOT_HOLD_SECS", "-1"),
+    ] {
+        let gh = Github::review_world();
+        let got = support::isolated()
+            .args(["--state-dir", &gh.dir.path().display().to_string()])
+            .args(["state", "get", "--item", "KEN-4687", "/tier"])
+            .env("PATH", support::tool_path(&[fixtures().as_path()]))
+            .env(key, value)
+            .current_dir(gh.dir.path())
+            .output()
+            .unwrap();
+        assert_eq!(ok_result(&got)["value"], "standard", "{key}");
+        let out = gh.review(false, &[(key, value)]);
+        assert_eq!(out.status.code(), Some(1), "{key}");
+        assert_eq!(reply(&out)["refusal"]["key"], "setting-invalid", "{key}");
+        let line = String::from_utf8_lossy(&out.stderr)
+            .lines()
+            .next()
+            .unwrap_or_default()
+            .to_owned();
+        assert_eq!(
+            line,
+            format!("orch-runtime: setting-invalid key={key} value={value}")
+        );
+        assert!(gh.log().is_empty(), "{key}: {:?}", gh.log());
+    }
+}
+
+/// Under an `off` gate a draft with `mark_ready` is still marked ready, the
+/// mark recorded under the head, and the verdict is `off` with no request.
+#[test]
+fn a_draft_is_marked_ready_under_an_off_gate_too() {
+    let mut gh = Github::review_world();
+    gh.policy("[env]\nREVIEW_GATE_MODE = \"off\"\n");
+    gh.answer(&format!("pr view {PR}"), review_view("", &[], true))
+        .answer(
+            &pull_path(),
+            rest_pull(true, "feat", "lane-app[bot]", "Bot"),
+        )
+        .answer(&format!("pr ready {PR}"), json!({}));
+    let result = ok_result(&gh.review(true, &[]));
+    assert_eq!(result["status"], "complete", "{result}");
+    assert_eq!(result["verdict"], "off");
+    assert!(
+        gh.log().contains(&format!("pr ready {PR} --repo {REPO}")),
+        "{:?}",
+        gh.log()
+    );
+    assert_eq!(gh.head_record()["ready"], "marking");
+    assert_eq!(gh.requests(), 0, "{:?}", gh.log());
+}

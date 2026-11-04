@@ -1,14 +1,23 @@
 //! The launch effect: resolve everything a launch can refuse before a
-//! window opens, open the lane's window on the fleet server through the
-//! operation handle, confirm the harness in it, and the launch cells of the
-//! reconcile matrix. Every host read and write here goes through
-//! [`Operation`].
+//! window opens, write the launch record the lane's hook reads, open the
+//! lane's window on the fleet server through the operation handle (a local
+//! harness, or the ssh client carrying a hosted one), confirm the harness
+//! in it, and the launch cells of the reconcile matrix. A cloud session is
+//! created through the Claude CLI's own answer and opens no window. Every
+//! host read and write here goes through [`Operation`] or the one runner.
 
+use std::collections::BTreeSet;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use agent_runtime::harness::Harness;
-use agent_runtime::launch::{Compaction, LaunchCommand, QuestionTool, Resume};
+use agent_runtime::host::{self, Place};
+use agent_runtime::launch::{
+    Compaction, LaunchCommand, LaunchIntent, Permission, QuestionTool, Resume, shell_quote,
+};
 use agent_runtime::reading::Reading;
+use agent_runtime::trust;
 use serde_json::{Value, json};
 
 use super::operation::{
@@ -20,15 +29,25 @@ use super::{
     lane_for_intent, pane_harness, pending_observation, read_brief, refused, up,
 };
 use crate::error::Result;
-use crate::ops::{LaunchLane, Relaunch};
+use crate::marker;
+use crate::ops::{CLOUD_KIND, LaunchLane, Relaunch};
 use crate::settings::Settings;
 use crate::state::{self, Intent, Lane, LaunchIdentity, OpenedPane, Phase};
+use crate::watch::hosted::{self, Launch, PaneKind};
 
-/// The session a launch opens (step4-map A1): the lane's bound native
-/// session resumed, or a fresh one, with why where a relaunch could not
-/// resume. The route is judged from the records alone (decision 92): the
-/// bound session id, the harness word and the item's standing handoff; no
-/// session file is looked up by its age.
+/// The words that close a cloud session's description, after the brief:
+/// the branch it cloned and how it publishes.
+const CLOUD_SESSION_TEXT: &str = include_str!("cloud-session.txt");
+/// The bound on the Claude CLI creating a cloud session.
+const CLOUD_BOUND: Duration = Duration::from_secs(600);
+/// The bound on the worktree package and git during a cloud launch.
+const CLOUD_PREPARE_BOUND: Duration = Duration::from_secs(900);
+
+/// The session a launch opens: the lane's bound native session resumed, or
+/// a fresh one, with why where a relaunch could not resume. The route is
+/// judged from the records alone: the bound session id, the harness word
+/// and the item's standing handoff; no session file is looked up by its
+/// age.
 enum Route {
     Fresh {
         cause: Option<&'static str>,
@@ -36,10 +55,10 @@ enum Route {
     Resume {
         session_id: String,
     },
-    /// The destination home's session store could not be read (decision 115
-    /// (G)): the launch refuses before any window rather than resuming a
-    /// session it cannot prove present or starting fresh over one that may
-    /// stand.
+    /// The destination home's session store could not be read, or the bound
+    /// session belongs to another directory: the launch refuses before any
+    /// window rather than resuming a session it cannot prove its own or
+    /// starting fresh over one that may stand.
     Refuse {
         cause: &'static str,
     },
@@ -63,19 +82,19 @@ impl Route {
     }
 }
 
-/// The fixed-id lookup a route reads the destination store with.
-type Present<'a> = &'a dyn Fn(Harness, &Path, &Path, &str) -> Reading<()>;
+/// The fixed-id lookup a route reads the destination store with: the
+/// directory the session's own file records, where the file stands.
+type Owner<'a> = &'a dyn Fn(Harness, &Path, &Path, &str) -> Reading<Option<PathBuf>>;
 
 /// The route a launch of `lane` takes under `r`: a lane bound to no
 /// session, or whose harness word differs, or whose item holds a standing
-/// handoff that says `fresh` (the legacy `session-retired`, decision 100),
-/// starts fresh; a bound session under the same harness and account resumes.
-/// Pi resumes by session file, which the record does not carry, so a Pi lane
-/// starts fresh and says so. A relaunch on another account than the one the
-/// bound session was recorded under, or whose session file is absent from
-/// the destination home by its fixed id, starts fresh with
-/// `account-switched` (decision 108 (4)): the context continues through the
-/// handoff record, never a transcript another account cannot read.
+/// handoff that says `fresh`, starts fresh; a bound session under the same
+/// harness and account resumes. Pi resumes by session file, which the
+/// record does not carry, so a Pi lane starts fresh and says so. A relaunch
+/// on another account than the one the bound session was recorded under,
+/// or whose session file is absent from the destination home by its fixed
+/// id, starts fresh with `account-switched`: the context continues through
+/// the handoff record, never a transcript another account cannot read.
 fn relaunch_route(run: &Run, lane: &Lane, r: &LaunchLane) -> Result<Route> {
     let handoff = standing_handoff(run, &lane.item)?;
     let destination = r
@@ -88,22 +107,24 @@ fn relaunch_route(run: &Run, lane: &Lane, r: &LaunchLane) -> Result<Route> {
         r,
         handoff,
         destination.as_deref(),
-        &operation::session_present,
+        &operation::session_owner,
     ))
 }
 
-/// The route from the records alone (decision 92): `handoff` is the item's
-/// standing handoff route, `destination` the home the relaunch reads its
-/// sessions under through `present`, the session owner's fixed-id lookup.
-/// The working directory is the Claude arm's alone (decision 120, L3): the
-/// Codex and Copilot stores are keyed by id, so a lane with no recorded
-/// `mail_root` is still looked up there.
+/// The route from the records alone: `handoff` is the item's standing
+/// handoff route, `destination` the home the relaunch reads its sessions
+/// under through `owner`, the session owner's fixed-id lookup, which
+/// answers the directory the session's file records. A file recording
+/// another directory than the lane's is another lane's session, refused:
+/// the Codex and Copilot stores are keyed by id alone, so nothing else
+/// tells one directory's transcript from another's. The working directory
+/// reaches the Claude arm alone, whose store is keyed by it.
 fn route_of(
     lane: &Lane,
     r: &LaunchLane,
     handoff: Option<Relaunch>,
     destination: Option<&Path>,
-    present: Present,
+    owner: Owner,
 ) -> Route {
     let Some(session_id) = lane.session_id.clone() else {
         return Route::Fresh { cause: None };
@@ -130,16 +151,22 @@ fn route_of(
     }
     // A session the destination home does not hold by its fixed id cannot
     // be resumed there, whatever the record says of the account; a store
-    // that cannot be read refuses before any window (decision 115 (G)),
-    // never a resume of an unproven session nor a fresh start over one that
-    // may stand.
+    // that cannot be read refuses before any window, never a resume of an
+    // unproven session nor a fresh start over one that may stand.
     let cwd = match harness {
         Harness::Claude => lane.mail_root.as_deref().map(Path::new),
         Harness::Codex | Harness::Copilot | Harness::Pi => Some(Path::new("")),
     };
     if let (Some(home), Some(cwd)) = (destination, cwd) {
-        match present(harness, home, cwd, &session_id) {
-            Reading::Live(()) => {}
+        match owner(harness, home, cwd, &session_id) {
+            Reading::Live(None) => {}
+            Reading::Live(Some(recorded)) => {
+                if !same_directory(&recorded, Path::new(&r.mail_root)) {
+                    return Route::Refuse {
+                        cause: "session-owned-elsewhere",
+                    };
+                }
+            }
             Reading::Gone => {
                 return Route::Fresh {
                     cause: Some("account-switched"),
@@ -156,10 +183,21 @@ fn route_of(
     }
 }
 
+/// Whether two directory spellings name one directory: resolved where both
+/// resolve, else compared as spelled with trailing separators off.
+fn same_directory(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => {
+            let trimmed = |p: &Path| p.display().to_string().trim_end_matches('/').to_owned();
+            trimmed(a) == trimmed(b)
+        }
+    }
+}
+
 /// The item's standing handoff route, where its state file holds a
-/// `handoff` record no session has resumed (`resumed_at` unset, decision
-/// 100): the record's `relaunch` word, `fresh` where it names none, as the
-/// legacy `handoff-standing` judges a standing handoff. `None` with no
+/// `handoff` record no session has resumed (`resumed_at` unset): the
+/// record's `relaunch` word, `fresh` where it names none. `None` with no
 /// state file, no record, or a consumed one.
 fn standing_handoff(run: &Run, item: &str) -> Result<Option<Relaunch>> {
     let path = state::item_path(&run.settings.state_dir, item);
@@ -189,10 +227,13 @@ struct LaunchPrep {
     session: String,
     command: LaunchCommand,
     floor: SessionFloor,
+    /// How the launch directory came to be trusted, where a home was
+    /// prepared.
+    trust: Option<trust::Route>,
 }
 
-/// Resolve everything a launch can refuse before it opens a window: the
-/// harness, the fleet server and session, the working directory, the
+/// Resolve everything a local launch can refuse before it opens a window:
+/// the harness, the fleet server and session, the working directory, the
 /// program and the brief file, and the command. A failure here is knowable
 /// before the effect starts anything. A resumed session is the floor the
 /// outcome binds (its id is known), and the command continues it rather
@@ -226,16 +267,25 @@ fn prepare_launch(
             unreachable!("a refuse route fails before prepare_launch")
         }
     };
-    // A lane's account is its home on every harness but Pi, whose lane
-    // launches route the account by the model's provider; the home the
-    // sessions are read under is the account where the two share a
-    // variable, else the harness's default.
-    let account = r.account.as_deref().map(Path::new);
-    let (mut intent, mut command) = build_launch(
+    // The trust record for the launch directory stands before the window
+    // opens, under the home the harness reads: the account's own config,
+    // or a private Codex home built under the account, which is then the
+    // home the launch runs under. The account routes billing only where
+    // its variable differs from the home's.
+    let trusted = match &home {
+        Some(home) => Some(prepare_trust(harness, home, &cwd)?),
+        None => None,
+    };
+    let one_variable = harness.account_var(r.model.as_deref()) == harness.home_var();
+    let account = match (r.account.as_deref(), one_variable) {
+        (Some(_), true) | (None, _) => None,
+        (Some(account), false) => Some(Path::new(account)),
+    };
+    let (mut intent, _) = build_launch(
         settings,
         &Spec {
             harness,
-            home: None,
+            home: trusted.as_ref().map(|t| t.home.as_path()),
             account,
             model: r.model.as_deref(),
             effort: r.effort.as_deref(),
@@ -243,7 +293,7 @@ fn prepare_launch(
             brief: r.brief_file.as_deref(),
             permission: None,
             question_tool: QuestionTool::Off,
-            compaction: Compaction::Native,
+            compaction: lane_compaction(harness),
             session_id: match route {
                 Route::Fresh { .. } => floor.session_id(),
                 Route::Resume { .. } | Route::Refuse { .. } => None,
@@ -251,13 +301,14 @@ fn prepare_launch(
             extra_args: &[],
         },
     )?;
+    lane_words(&mut intent, &cwd);
     if let Route::Resume { session_id } = route {
         intent.resume = Some(Resume {
             session_id: session_id.clone(),
             session_file: None,
         });
-        command = agent_runtime::launch::build(&intent)?;
     }
+    let command = agent_runtime::launch::build(&intent)?;
     check_program(&command)?;
     Ok(LaunchPrep {
         target: Target::new(settings, harness),
@@ -266,7 +317,39 @@ fn prepare_launch(
         session,
         command,
         floor,
+        trust: trusted.map(|t| t.route),
     })
+}
+
+/// The trust record a lane launch of `harness` under `home` needs for
+/// `cwd`, made before the window opens; its refusal is the launch's.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the lane's trust record, written before the window it serves opens, its refusal the launch's own"
+)]
+fn prepare_trust(harness: Harness, home: &Path, cwd: &Path) -> Result<trust::Prepared> {
+    Ok(trust::prepare(harness, home, cwd)?)
+}
+
+/// A lane runs with the harness's own compaction off where it has a word
+/// for it, since orch's handoff mark judges the window.
+fn lane_compaction(harness: Harness) -> Compaction {
+    match harness.compaction_off_words() {
+        Some(_) => Compaction::Off,
+        None => Compaction::Native,
+    }
+}
+
+/// The lane's two kendex variables: the owner's email cleared, so a lane
+/// never writes as the owner, and the lane's origin, the directory the
+/// hook and the mailbox read the lane by.
+fn lane_words(intent: &mut LaunchIntent, cwd: &Path) {
+    intent
+        .env
+        .insert("KENDEX_USER_EMAIL".to_owned(), String::new());
+    intent
+        .env
+        .insert("KENDEX_LANE_ORIGIN".to_owned(), cwd.display().to_string());
 }
 
 /// An outcome once the window exists: the pane is carried on `launch` so a
@@ -330,41 +413,77 @@ fn launch_pane_gone(
     ))
 }
 
+/// The host a request names: none for a local window, the cloud kind, or a
+/// provider's path.
+enum Surface<'a> {
+    Local,
+    Cloud,
+    Hosted(&'a str),
+}
+
+fn surface_of(r: &LaunchLane) -> Surface<'_> {
+    match r.host.as_deref() {
+        None | Some("") | Some("local") => Surface::Local,
+        Some(CLOUD_KIND) => Surface::Cloud,
+        Some(provider) => Surface::Hosted(provider),
+    }
+}
+
+/// The scripts directory the provider and the worktree package run from.
+fn scripts_dir(settings: &Settings) -> PathBuf {
+    crate::watch::overseer::scripts_dir(&settings.roots.project)
+}
+
 pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Result<EffectOutcome> {
-    let mut operation = Operation::open(run, intent)?;
-    let doc_session = fleet_tmux_session(run.path)?;
-    let cwd = PathBuf::from(&r.mail_root);
+    let operation = Operation::open(run, intent)?;
     let (lane, _) = lane_for_intent(run.path, &intent.id)?;
     let route = relaunch_route(run, &lane, r)?;
-    // A destination session store that could not be read refuses before any
-    // window opens (decision 115 (G)), nothing recorded.
+    // A destination session store that could not be read, or a bound
+    // session another directory owns, refuses before any window opens,
+    // nothing recorded.
     if let Route::Refuse { cause } = &route {
         return Ok(operation.settle(Word::Failed, json!({"cause": cause})));
     }
-    let prep = match prepare_launch(&operation, run.settings, r, doc_session.as_deref(), &route) {
-        Ok(prep) => prep,
-        // A harness, session, directory, program or brief the effect cannot
-        // resolve: `failed` before anything opens, never a bare refusal.
-        Err(e) => return Ok(operation.settle(Word::Failed, json!({"cause": e.key()}))),
+    let mut outcome = match surface_of(r) {
+        Surface::Local => local_launch(run, operation, r, &route)?,
+        Surface::Hosted(provider) => hosted_launch(run, operation, r, &route, provider)?,
+        Surface::Cloud => cloud_launch(run, operation, &lane, r)?,
     };
+    outcome.annotate("route", json!(route.word()));
+    if let Some(cause) = route.cause() {
+        outcome.annotate("route_cause", json!(cause));
+    }
+    Ok(outcome)
+}
+
+/// The window on the fleet server and the wait for the harness in it: the
+/// one route a local lane and the ssh client of a hosted one share. The
+/// phases are recorded before each wait, so a crash leaves a step a
+/// reconcile can resume from.
+#[allow(clippy::too_many_arguments)]
+fn open_and_confirm(
+    mut operation: Operation,
+    r: &LaunchLane,
+    server: &Server,
+    session: &str,
+    floor: &SessionFloor,
+    command: &LaunchCommand,
+    harness: Harness,
+    owns: &dyn Fn(&str) -> bool,
+    sessions: Sessions,
+) -> Result<EffectOutcome> {
     // The server and floor are recorded before the window opens, so a crash
     // in the open leaves a phase a reconcile can resume: it adopts the pane
     // this launch's receipt names, fails the recorded pane that never
     // registered, or fails `nothing-opened`.
-    let opening = match operation.opening(&prep.server, &prep.floor, None) {
+    let opening = match operation.opening(server, floor, None) {
         Ok(opening) => opening,
         Err(e) => return Ok(operation.settle(Word::Failed, json!({"cause": e.key()}))),
     };
     operation.record_phase(Phase::Opening {
         opening: opening.clone(),
     })?;
-    let pane = match operation.open_window(
-        &prep.server,
-        &prep.session,
-        &r.item,
-        &prep.command,
-        &opening,
-    )? {
+    let pane = match operation.open_window(server, session, &r.item, command, &opening)? {
         Ok(pane) => pane,
         // Refused before the launcher was asked: `arm` failed before the
         // receipt or window was recorded, so nothing stands and the launch
@@ -407,13 +526,7 @@ pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Resul
     operation.record_phase(Phase::WindowOpened {
         opened: opened.clone(),
     })?;
-    let polled = operation.await_state(
-        &pane,
-        prep.target.harness,
-        &|name| prep.target.owns(name),
-        None,
-        &up,
-    )?;
+    let polled = operation.await_state(&pane, harness, owns, None, &up)?;
     // The identity the judge read is the attempt's from here: written into
     // the phase with the receipt read, so a reconcile of an intent left open
     // confirms that process and no other.
@@ -425,32 +538,627 @@ pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Resul
     {
         operation.record_identity(&mut opened, identity)?;
     }
-    let mut outcome = launch_outcome(
+    launch_outcome(
+        operation, harness, sessions, session, &r.item, &opened, polled,
+    )
+}
+
+/// A local lane: the launch record written before the window, then the
+/// window and the harness in it.
+fn local_launch(
+    run: &Run,
+    operation: Operation,
+    r: &LaunchLane,
+    route: &Route,
+) -> Result<EffectOutcome> {
+    let doc_session = fleet_tmux_session(run.path)?;
+    let cwd = PathBuf::from(&r.mail_root);
+    let prep = match prepare_launch(&operation, run.settings, r, doc_session.as_deref(), route) {
+        Ok(prep) => prep,
+        // A harness, session, directory, program or brief the effect cannot
+        // resolve: `failed` before anything opens, never a bare refusal.
+        Err(e) => return Ok(operation.settle(Word::Failed, json!({"cause": e.key()}))),
+    };
+    // The marker, the mailbox and the refresh record stand before any
+    // window opens: the hook judges the lane by them from its first turn,
+    // and a crash between here and the window leaves a marker the next
+    // launch rewrites, never a lane with no mail.
+    let resumed = match route {
+        Route::Resume { session_id } => Some(marker::Resumed {
+            harness: &r.harness,
+            session_id,
+        }),
+        Route::Fresh { .. } | Route::Refuse { .. } => None,
+    };
+    if let Err(e) = marker::write(&cwd, &r.item, r.refresh, resumed) {
+        return Ok(operation.settle(Word::Failed, json!({"cause": e.key()})));
+    }
+    let target = prep.target.clone();
+    let mut outcome = open_and_confirm(
         operation,
-        prep.target.harness,
-        prep.home.as_deref(),
+        r,
+        &prep.server,
         &prep.session,
-        &r.item,
-        &opened,
-        &cwd,
-        polled,
+        &prep.floor,
+        &prep.command,
+        prep.target.harness,
+        &|name| target.owns(name),
+        Sessions::Store {
+            home: prep.home.as_deref(),
+            cwd: &cwd,
+            mail_root: None,
+        },
     )?;
-    outcome.annotate("route", json!(route.word()));
-    if let Some(cause) = route.cause() {
-        outcome.annotate("route_cause", json!(cause));
+    if let Some(route) = prep.trust {
+        outcome.annotate("trust", json!(route));
     }
     Ok(outcome)
 }
 
-#[allow(clippy::too_many_arguments)]
+/// A hosted lane: the provider's `create` (and `wait`), the launch record
+/// verified on the host, then the fleet window running the ssh client
+/// whose one typed line starts the harness under the provider's prefix.
+fn hosted_launch(
+    run: &Run,
+    operation: Operation,
+    r: &LaunchLane,
+    route: &Route,
+    provider: &str,
+) -> Result<EffectOutcome> {
+    let failed = |operation: Operation, cause: &str| {
+        Ok(operation.settle(Word::Failed, json!({"cause": cause})))
+    };
+    let scripts = scripts_dir(run.settings);
+    let caps = match hosted::capabilities(&scripts, provider) {
+        Ok(caps) => caps,
+        Err(cause) => return failed(operation, &cause),
+    };
+    match caps.launch {
+        Some(Launch::Ssh) => {}
+        Some(Launch::CloudTask) => return failed(operation, "kind-unbuilt kind=codex-cloud"),
+        Some(Launch::CloudSession) => {
+            return failed(operation, "cloud-session-invalid host=provider");
+        }
+        Some(Launch::Window) | None => {
+            return failed(operation, "host-capabilities-failed launch=window");
+        }
+    }
+    // A provider that owns the harness's session itself opens no window
+    // this effect could register: no route here starts it.
+    if caps.pane == PaneKind::Verb {
+        return failed(operation, "host-pane-verb");
+    }
+    let Some(harness) = Harness::parse(&r.harness) else {
+        return failed(operation, "harness-unknown");
+    };
+    let (Some(account), Some(repo)) = (r.account.as_deref(), r.repo.as_deref()) else {
+        return failed(operation, "host-request-incomplete");
+    };
+    let doc_session = fleet_tmux_session(run.path)?;
+    let (server, session) = match operation.fleet_server(doc_session.as_deref()) {
+        Ok(found) => found,
+        Err(e) => return failed(operation, e.key()),
+    };
+    let cwd = PathBuf::from(&r.mail_root);
+    if let Err(e) = check_directory("cwd-missing", &cwd) {
+        return failed(operation, e.key());
+    }
+    let brief = match r.brief_file.as_deref().map(read_brief).transpose() {
+        Ok(text) => text,
+        Err(e) => return failed(operation, e.key()),
+    };
+    let relaunch = matches!(route, Route::Resume { .. })
+        || matches!(
+            route,
+            Route::Fresh {
+                cause: Some("harness-switched" | "account-switched" | "session-retired")
+            }
+        );
+    let created = match hosted::create(
+        &scripts, provider, &r.item, repo, &r.harness, account, relaunch,
+    ) {
+        Ok(created) => created,
+        Err(cause) => return failed(operation, &cause),
+    };
+    if created.preparing
+        && let Err(cause) = hosted::wait(&scripts, provider, &r.item)
+    {
+        return failed(operation, &cause);
+    }
+    if let Err(cause) = hosted_marker(&scripts, provider, &r.item, &created.path, r.refresh) {
+        return failed(operation, &cause);
+    }
+    let command = match hosted_command(run.settings, r, route, harness, &created, brief.as_deref())
+    {
+        Ok(command) => command,
+        Err(e) => return failed(operation, e.key()),
+    };
+    if let Err(e) = check_program(&command) {
+        return failed(operation, e.key());
+    }
+    let target = Target::new(run.settings, harness);
+    let floor = match route {
+        Route::Resume { session_id } => SessionFloor::Fixed(session_id.clone()),
+        Route::Fresh { .. } | Route::Refuse { .. } => SessionFloor::Baseline(Vec::new()),
+    };
+    open_and_confirm(
+        operation,
+        r,
+        &server,
+        &session,
+        &floor,
+        &command,
+        harness,
+        &|name| name == "ssh" || target.owns(name),
+        Sessions::Hosted {
+            mail_root: created.path.clone(),
+        },
+    )
+}
+
+/// The launch record on the host, verified rather than trusted: the
+/// worktree's `.git` names the clone's common git directory; the marker
+/// there holds the worktree path, written where it does not; the
+/// launch-fields record names the runtime the provider built, since the
+/// lane's own workflow calls it on the host; a refresh lane's record holds
+/// the path. `Err` is the cause.
+fn hosted_marker(
+    scripts: &Path,
+    host: &str,
+    item: &str,
+    path: &str,
+    refresh: bool,
+) -> std::result::Result<(), String> {
+    let gitfile_path = format!("{path}/.git");
+    let gitfile = match hosted::fetch(scripts, host, item, &gitfile_path) {
+        hosted::Answer::Live(text) => text,
+        hosted::Answer::Gone => return Err(format!("host-gitfile-unread path={gitfile_path}")),
+        hosted::Answer::Unreadable { cause } => {
+            return Err(format!(
+                "host-gitfile-unread path={gitfile_path} cause={cause}"
+            ));
+        }
+    };
+    let Some((git_dir, common)) = marker::git_dirs_of(&gitfile) else {
+        return Err(format!(
+            "host-gitfile-invalid path={gitfile_path} value={}",
+            gitfile.trim_end()
+        ));
+    };
+    let name = marker::item_name(item).map_err(|e| e.key().to_owned())?;
+    let marker = marker::marker_path(&common, name).display().to_string();
+    let root_line = format!("{path}\n");
+    let standing = match hosted::fetch(scripts, host, item, &marker) {
+        hosted::Answer::Live(text) => text == root_line,
+        hosted::Answer::Gone => false,
+        hosted::Answer::Unreadable { cause } => {
+            return Err(format!("marker-failed path={marker} cause={cause}"));
+        }
+    };
+    if !standing {
+        hosted::put(scripts, host, item, &marker, root_line.as_bytes())
+            .map_err(|cause| format!("marker-failed path={marker} cause={cause}"))?;
+        match hosted::fetch(scripts, host, item, &marker) {
+            hosted::Answer::Live(text) if text == root_line => {}
+            hosted::Answer::Live(_) | hosted::Answer::Gone => {
+                return Err(format!("marker-failed path={marker} cause=read-back"));
+            }
+            hosted::Answer::Unreadable { cause } => {
+                return Err(format!("marker-failed path={marker} cause={cause}"));
+            }
+        }
+    }
+    let launch = marker::launch_path(&common, name).display().to_string();
+    let record = match hosted::fetch(scripts, host, item, &launch) {
+        hosted::Answer::Live(text) => text,
+        hosted::Answer::Gone => {
+            return Err(format!(
+                "host-runtime-unbuilt path={launch} cause=record-missing"
+            ));
+        }
+        hosted::Answer::Unreadable { cause } => {
+            return Err(format!("marker-failed path={launch} cause={cause}"));
+        }
+    };
+    let fields: Value = serde_json::from_str(&record)
+        .map_err(|e| format!("marker-failed path={launch} cause={e}"))?;
+    let built = fields
+        .get("runtime")
+        .and_then(Value::as_str)
+        .is_some_and(|binary| binary.starts_with('/'));
+    if !built {
+        return Err(format!(
+            "host-runtime-unbuilt path={launch} cause=runtime-unnamed"
+        ));
+    }
+    if refresh {
+        let record = marker::refresh_path(&git_dir).display().to_string();
+        hosted::put(scripts, host, item, &record, root_line.as_bytes())
+            .map_err(|cause| format!("marker-failed path={record} cause={cause}"))?;
+    }
+    Ok(())
+}
+
+/// The ssh client's command for the fleet window: one typed line, `ssh -t
+/// TARGET LINE`, where LINE is the provider's prefix followed by the
+/// harness line the builder spells for the worktree on the host, quoted as
+/// one word. The brief travels inline, since the file is on this machine;
+/// the harness is the host's own program by name; no account variable
+/// reaches the host, whose prefix carries the credential it placed.
+fn hosted_command(
+    settings: &Settings,
+    r: &LaunchLane,
+    route: &Route,
+    harness: Harness,
+    created: &hosted::Created,
+    brief: Option<&str>,
+) -> Result<LaunchCommand> {
+    let remote_cwd = PathBuf::from(&created.path);
+    let (mut intent, _) = build_launch(
+        settings,
+        &Spec {
+            harness,
+            home: None,
+            account: None,
+            model: r.model.as_deref(),
+            effort: r.effort.as_deref(),
+            cwd: &remote_cwd,
+            brief: r.brief_file.as_deref(),
+            permission: None,
+            question_tool: QuestionTool::Off,
+            compaction: lane_compaction(harness),
+            session_id: None,
+            extra_args: &[],
+        },
+    )?;
+    intent.program = None;
+    lane_words(&mut intent, &remote_cwd);
+    if let Route::Resume { session_id } = route {
+        intent.resume = Some(Resume {
+            session_id: session_id.clone(),
+            session_file: None,
+        });
+    }
+    let mut remote = agent_runtime::launch::build(&intent)?;
+    if let (Some(index), Some(text)) = (remote.brief_arg, brief) {
+        remote.args[index] = text.to_owned();
+        remote.brief_arg = None;
+        remote.brief_path = None;
+    }
+    let line = format!("{} {}", created.prefix, shell_quote(&remote.shell_line()));
+    // The client by the path this process finds it at: the pane's shell
+    // runs it, and its search path is the fleet server's, not this one's.
+    let program = on_path("ssh")
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "ssh".to_owned());
+    Ok(LaunchCommand {
+        program,
+        args: vec!["-t".to_owned(), created.target.clone(), line],
+        env: Default::default(),
+        env_remove: Vec::new(),
+        cwd: PathBuf::from(&r.mail_root),
+        brief_arg: None,
+        brief_path: None,
+    })
+}
+
+/// The file `name` resolves to on this process's search path, if any.
+fn on_path(name: &str) -> Option<PathBuf> {
+    std::env::var_os("PATH").and_then(|path| {
+        std::env::split_paths(&path)
+            .map(|dir| dir.join(name))
+            .find(|candidate| std::fs::metadata(candidate).is_ok_and(|m| m.is_file()))
+    })
+}
+
+/// A cloud session: the item's branch pushed from its worktree, the session
+/// created through the Claude CLI's own answer under the lane's account,
+/// its id the record. No window opens; the overseer reaches the session
+/// through `send`.
+fn cloud_launch(
+    run: &Run,
+    operation: Operation,
+    lane: &Lane,
+    r: &LaunchLane,
+) -> Result<EffectOutcome> {
+    let failed = |operation: Operation, cause: &str| {
+        Ok(operation.settle(Word::Failed, json!({"cause": cause})))
+    };
+    if r.refresh {
+        return failed(operation, "cloud-refresh-unsupported");
+    }
+    if Harness::parse(&r.harness) != Some(Harness::Claude) {
+        return failed(operation, "cloud-session-invalid cause=harness");
+    }
+    if lane.session_id.is_some() || lane.running_at.is_some() {
+        return failed(operation, "cloud-session-invalid cause=relaunch");
+    }
+    let Some(brief_file) = r.brief_file.as_deref() else {
+        return failed(operation, "cloud-brief-missing");
+    };
+    let brief = match read_brief(brief_file) {
+        Ok(text) => text,
+        Err(e) => return failed(operation, e.key()),
+    };
+    let Some(account) = r.account.as_deref() else {
+        return failed(operation, "host-request-incomplete");
+    };
+    let scripts = scripts_dir(run.settings);
+    match hosted::capabilities(&scripts, CLOUD_KIND) {
+        Ok(caps) if caps.launch == Some(Launch::CloudSession) => {}
+        Ok(_) => return failed(operation, "host-capabilities-failed launch=cloud-session"),
+        Err(cause) => return failed(operation, &cause),
+    }
+    let claim_root = PathBuf::from(&r.mail_root);
+    for file in [
+        Path::new(account).join("settings.json"),
+        claim_root.join(".claude").join("settings.json"),
+    ] {
+        if bundle_forced(&file) {
+            return failed(
+                operation,
+                &format!("cloud-bundle-risk cause=settings path={}", file.display()),
+            );
+        }
+    }
+    let origin = git_line(&claim_root, "origin-url", &["remote", "get-url", "origin"])
+        .ok()
+        .and_then(|url| crate::ops::origin_slug(&url));
+    let Some(origin) = origin else {
+        return failed(operation, "cloud-bundle-risk cause=remote");
+    };
+    let worktree = run.settings.worktree_cli.clone();
+    let wt = match package(
+        &worktree,
+        &claim_root,
+        "create",
+        &["create", &r.item, "--no-checkout"],
+    ) {
+        Ok(path) => PathBuf::from(path),
+        Err(Package::Owned) => return failed(operation, "item-owned exit=75"),
+        Err(Package::Failed(cause)) => {
+            return failed(operation, &format!("worktree-failed {cause}"));
+        }
+    };
+    let Ok(branch) = git_line(&wt, "branch", &["symbolic-ref", "--short", "HEAD"]) else {
+        return failed(operation, "cloud-branch-unread");
+    };
+    let prompt = format!(
+        "{brief}\n\n{}",
+        CLOUD_SESSION_TEXT
+            .trim_end_matches('\n')
+            .replace("{branch}", &branch)
+    );
+    if let Err(cause) = package(
+        &worktree,
+        &claim_root,
+        "push",
+        &["push", &r.item, "--set-upstream"],
+    ) {
+        let cause = match cause {
+            Package::Owned => "exit=75".to_owned(),
+            Package::Failed(cause) => cause,
+        };
+        return failed(operation, &format!("cloud-push-failed {cause}"));
+    }
+    let (_, command) = build_launch(
+        run.settings,
+        &Spec {
+            harness: Harness::Claude,
+            home: None,
+            account: Some(Path::new(account)),
+            model: r.model.as_deref(),
+            effort: r.effort.as_deref(),
+            cwd: &wt,
+            brief: None,
+            permission: Some(Permission::Native),
+            question_tool: QuestionTool::Keep,
+            compaction: Compaction::Native,
+            session_id: None,
+            extra_args: &[],
+        },
+    )?;
+    let session = match cloud_create(&command, &prompt) {
+        Ok(id) => id,
+        Err(cause) => return failed(operation, &cause),
+    };
+    let mut repositories: BTreeSet<String> = BTreeSet::new();
+    repositories.insert(origin.to_ascii_lowercase());
+    if let Some(repo) = r.repo.as_deref() {
+        repositories.insert(repo.to_ascii_lowercase());
+    }
+    repositories.extend(
+        run.settings
+            .reads
+            .connected_repos
+            .iter()
+            .map(|r| r.to_ascii_lowercase()),
+    );
+    let url = format!("https://claude.ai/code/{session}");
+    let outcome = operation.settle(
+        Word::Confirmed,
+        json!({
+            "cloud_session": session,
+            "cloud_repo_access": {"repositories": repositories, "url": url},
+        }),
+    );
+    Ok(outcome.with_wire(Wire {
+        session_id: Some(session),
+        mail_root: Some(wt.display().to_string()),
+        ..Wire::default()
+    }))
+}
+
+/// Whether a Claude settings file forces a bundled checkout
+/// (`env.CCR_FORCE_BUNDLE` set to `1`); a file that stands and cannot be
+/// read is read as one that sets it, since the session could then push
+/// nothing.
+fn bundle_forced(file: &Path) -> bool {
+    match std::fs::read_to_string(file) {
+        Ok(text) => serde_json::from_str::<Value>(&text).map_or(true, |settings| {
+            settings
+                .get("env")
+                .and_then(|env| env.get("CCR_FORCE_BUNDLE"))
+                .is_some_and(|v| match v {
+                    Value::String(s) => s == "1",
+                    Value::Number(n) => n.as_u64() == Some(1),
+                    Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_) => false,
+                })
+        }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(_) => true,
+    }
+}
+
+/// One line of `git -C dir ARGS`, or `Err` with git's first stderr line.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the cloud launch's reads of the checkout's origin and the worktree's branch, through the one runner; they act on nothing"
+)]
+fn git_line(
+    dir: &Path,
+    operation: &'static str,
+    args: &[&str],
+) -> std::result::Result<String, String> {
+    let dir = dir.display().to_string();
+    let mut argv = vec!["-C", dir.as_str()];
+    argv.extend_from_slice(args);
+    let out = host::run_tagged_in(
+        "launch",
+        "git",
+        Path::new("git"),
+        operation,
+        &argv,
+        Place {
+            cwd: None,
+            env: &[],
+        },
+        CLOUD_PREPARE_BOUND,
+    )
+    .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(host::stderr_text(&out)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .to_owned());
+    }
+    Ok(host::stdout_text(&out))
+}
+
+/// How the worktree package answered: the item is another session's (75),
+/// or a failure with its status and first stderr line.
+enum Package {
+    Owned,
+    Failed(String),
+}
+
+/// `worktree VERB ARGS` in `dir` through the one runner: its stdout, or how
+/// it refused.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the cloud launch's worktree creation and push through the worktree package, the one runner under the launch's tag"
+)]
+fn package(
+    cli: &Path,
+    dir: &Path,
+    operation: &'static str,
+    args: &[&str],
+) -> std::result::Result<String, Package> {
+    let out = host::run_tagged_in(
+        "launch",
+        "worktree",
+        cli,
+        operation,
+        args,
+        Place {
+            cwd: Some(dir),
+            env: &[],
+        },
+        CLOUD_PREPARE_BOUND,
+    )
+    .map_err(|e| Package::Failed(e.to_string()))?;
+    match out.status.code() {
+        Some(0) => Ok(host::stdout_text(&out)),
+        Some(75) => Err(Package::Owned),
+        code => Err(Package::Failed(format!(
+            "exit={} {}",
+            code.map_or_else(|| "signal".to_owned(), |c| c.to_string()),
+            host::stderr_text(&out).lines().next().unwrap_or("")
+        ))),
+    }
+}
+
+/// `claude [model words] --cloud --output-format json -p PROMPT` under the
+/// account the command's environment names, with the bundling switch
+/// cleared and the nonessential-traffic switch set, as the session send
+/// runs the CLI; the `session_id` its JSON answer carries. `Err` is the
+/// cause: a CLI that exited non-zero, or an answer naming no session.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the cloud session's creation through the Claude CLI, the one runner under the launch's tag; the record is written only once the CLI answered"
+)]
+fn cloud_create(command: &LaunchCommand, prompt: &str) -> std::result::Result<String, String> {
+    let mut args: Vec<&str> = command.args.iter().map(String::as_str).collect();
+    args.extend(["--cloud", "--output-format", "json", "-p", prompt]);
+    let mut env: Vec<(&str, &OsStr)> = command
+        .env
+        .iter()
+        .map(|(k, v)| (k.as_str(), OsStr::new(v.as_str())))
+        .collect();
+    env.push(("CCR_FORCE_BUNDLE", OsStr::new("")));
+    env.push(("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", OsStr::new("1")));
+    let out = host::run_tagged_in(
+        "launch",
+        "claude",
+        Path::new(&command.program),
+        "cloud-create",
+        &args,
+        Place {
+            cwd: Some(&command.cwd),
+            env: &env,
+        },
+        CLOUD_BOUND,
+    )
+    .map_err(|e| format!("cloud-create-refused cause={e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "cloud-create-refused exit={} cause={}",
+            out.status.code().unwrap_or(-1),
+            host::stderr_text(&out).lines().next().unwrap_or("")
+        ));
+    }
+    let answer: Value = serde_json::from_str(&host::stdout_text(&out))
+        .map_err(|e| format!("cloud-session-unread cause={e}"))?;
+    answer
+        .get("session_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| "cloud-session-unread cause=no-session-id".to_owned())
+}
+
+/// Where a confirmed launch binds the lane's session: the native store under
+/// the home for the directory, or none for a lane whose sessions live on
+/// its host.
+enum Sessions<'a> {
+    Store {
+        home: Option<&'a Path>,
+        cwd: &'a Path,
+        mail_root: Option<String>,
+    },
+    Hosted {
+        mail_root: String,
+    },
+}
+
 fn launch_outcome(
     operation: Operation,
     harness: Harness,
-    home: Option<&Path>,
+    sessions: Sessions,
     tmux_session: &str,
     item: &str,
     opened: &OpenedPane,
-    cwd: &Path,
     polled: Polled,
 ) -> Result<EffectOutcome> {
     Ok(match polled {
@@ -458,43 +1166,63 @@ fn launch_outcome(
             let mut observation = json!({"pane": opened.pane, "server": opened.server});
             // The id the launch fixed, else the one lead session that
             // appeared for the cwd since the window opened, under the
-            // account home or the harness's default home (decision 71).
-            // Zero or several bind none, noted as a succession notes them:
-            // a lane without a session id never runs under a neighbour's.
-            let session_id = match &opened.session_id {
-                Some(id) => Some(id.clone()),
-                None => {
-                    let home = home
-                        .map(Path::to_path_buf)
-                        .or_else(|| operation::default_home(harness));
-                    match home {
+            // account home or the harness's default home. Zero or several
+            // bind none, noted as a succession notes them: a lane without a
+            // session id never runs under a neighbour's. A hosted lane's
+            // sessions are on its host and bind nothing here.
+            let (session_id, mail_root) = match sessions {
+                Sessions::Hosted { mail_root } => {
+                    observation["note"] = json!("session-hosted");
+                    (None, Some(mail_root))
+                }
+                Sessions::Store {
+                    home,
+                    cwd,
+                    mail_root,
+                } => {
+                    let session_id = match &opened.session_id {
+                        Some(id) => Some(id.clone()),
                         None => {
-                            observation["note"] = json!("home-unresolved");
-                            None
+                            let home = home
+                                .map(Path::to_path_buf)
+                                .or_else(|| operation::default_home(harness));
+                            match home {
+                                None => {
+                                    observation["note"] = json!("home-unresolved");
+                                    None
+                                }
+                                Some(home) => {
+                                    match operation.appeared_session(harness, &home, cwd, opened) {
+                                        Binding::Bound(session) => Some(session.session_id),
+                                        Binding::Absent => {
+                                            observation["note"] = json!("session-unbound");
+                                            None
+                                        }
+                                        Binding::Ambiguous(sessions) => {
+                                            observation["note"] = json!("session-ambiguous");
+                                            observation["sessions"] = json!(sessions);
+                                            None
+                                        }
+                                        // The harness is up in its pane and its
+                                        // store could not be read whole: the
+                                        // launch is held at this phase with the
+                                        // cause, the pane kept, and the
+                                        // reconcile reads again.
+                                        Binding::Unreadable { cause } => {
+                                            observation["note"] = json!("session-store-unreadable");
+                                            observation["cause"] = json!(cause);
+                                            return Ok(launch_pane_unconfirmed(
+                                                operation,
+                                                opened,
+                                                observation,
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
                         }
-                        Some(home) => match operation.appeared_session(harness, &home, cwd, opened)
-                        {
-                            Binding::Bound(session) => Some(session.session_id),
-                            Binding::Absent => {
-                                observation["note"] = json!("session-unbound");
-                                None
-                            }
-                            Binding::Ambiguous(sessions) => {
-                                observation["note"] = json!("session-ambiguous");
-                                observation["sessions"] = json!(sessions);
-                                None
-                            }
-                            // The harness is up in its pane and its store
-                            // could not be read whole (decisions 95, 99): the
-                            // launch is held at this phase with the cause,
-                            // the pane kept, and the reconcile reads again.
-                            Binding::Unreadable { cause } => {
-                                observation["note"] = json!("session-store-unreadable");
-                                observation["cause"] = json!(cause);
-                                return Ok(launch_pane_unconfirmed(operation, opened, observation));
-                            }
-                        },
-                    }
+                    };
+                    (session_id, mail_root)
                 }
             };
             // The lane launch publishes: its pane and identity pass to the
@@ -513,6 +1241,7 @@ fn launch_outcome(
                     session_id,
                     window: Some(format!("{tmux_session}:{item}")),
                     tmux_session: Some(tmux_session.to_owned()),
+                    mail_root,
                     ..Wire::default()
                 }),
                 Err(operation) => {
@@ -533,13 +1262,25 @@ fn launch_outcome(
     })
 }
 
+/// The marker as it stands for a local lane whose launch ended before its
+/// window: read back three-valued, so the outcome says whether the hook
+/// will find the lane.
+fn marker_reading(lane: &Lane) -> Option<Value> {
+    let root = lane.mail_root.as_deref()?;
+    Some(json!(match marker::read(Path::new(root), &lane.item) {
+        Reading::Live(_) => "present",
+        Reading::Gone => "absent",
+        Reading::Unreadable { .. } => "unreadable",
+    }))
+}
+
 /// The launch cells of the reconcile matrix: no phase means nothing opened,
 /// `failed`; a recorded pane gone, or its server
 /// replaced or gone, is `failed`; one an unanswering server still holds is
 /// `unconfirmed`; one the harness holds at its composer or working is
 /// `confirmed` with the identity read; any other reading is `unconfirmed`
 /// with that reading and the pane marked present, which a close may
-/// supersede (decision 67).
+/// supersede.
 pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutcome> {
     let (lane, item) = lane_for_intent(run.path, &intent.id)?;
     let mut operation = Operation::open(run, intent)?;
@@ -557,7 +1298,9 @@ pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutco
     // adopted pane is recorded as `window-opened` under the identity the
     // receipt proved and judged as any other, its receipt noted on the
     // outcome; a pending reading binds no pane and leaves the lane as found
-    // for the next reconcile.
+    // for the next reconcile. The marker written before the window is read
+    // back on the outcome of a launch that ended there.
+    let local = matches!(surface_of_lane(&lane), Surface::Local);
     let (opened, registered) = match phase {
         Phase::Opening { opening } => match operation.recover_opening(opening)? {
             Recovered::Adopted {
@@ -572,12 +1315,20 @@ pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutco
                 (opened, Some(registered))
             }
             Recovered::Pending { note, cause } => {
-                return Ok(operation.hold(opening_observation("launch", note, cause.as_deref())));
+                let mut outcome =
+                    operation.hold(opening_observation("launch", note, cause.as_deref()));
+                if local && let Some(marker) = marker_reading(&lane) {
+                    outcome.annotate("marker", marker);
+                }
+                return Ok(outcome);
             }
             Recovered::Failed { note, cause } => {
-                return Ok(
-                    operation.settle(Word::Failed, opening_observation("launch", note, cause))
-                );
+                let mut outcome =
+                    operation.settle(Word::Failed, opening_observation("launch", note, cause));
+                if local && let Some(marker) = marker_reading(&lane) {
+                    outcome.annotate("marker", marker);
+                }
+                return Ok(outcome);
             }
         },
         Phase::WindowOpened { opened }
@@ -591,6 +1342,15 @@ pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutco
         outcome.annotate("registered", registered);
     }
     Ok(outcome)
+}
+
+/// The surface a lane record names, by its `host`.
+fn surface_of_lane(lane: &Lane) -> Surface<'_> {
+    match lane.host.as_deref() {
+        None | Some("") | Some("local") => Surface::Local,
+        Some(CLOUD_KIND) => Surface::Cloud,
+        Some(provider) => Surface::Hosted(provider),
+    }
 }
 
 /// Judge the pane a launch intent names past `opening`: gone, or its server
@@ -634,29 +1394,27 @@ fn judge_opened(
         ));
     };
     let target = Target::new(run.settings, harness);
-    let (foreground, state) = match operation.read_pane(
-        &pane,
-        harness,
-        &|name| target.owns(name),
-        opened.identity.as_ref(),
-    )? {
-        Reading::Live(read) => read,
-        Reading::Gone => {
-            return launch_pane_gone(
-                operation,
-                opened,
-                "pane-gone",
-                json!({"reconcile": "launch", "observed": "gone"}),
-            );
-        }
-        Reading::Unreadable { cause } => {
-            return Ok(launch_pane_unconfirmed(
-                operation,
-                opened,
-                json!({"reconcile": "launch", "observed": "unobservable", "cause": cause}),
-            ));
-        }
-    };
+    let hosted = matches!(surface_of_lane(lane), Surface::Hosted(_));
+    let owns = |name: &str| (hosted && name == "ssh") || target.owns(name);
+    let (foreground, state) =
+        match operation.read_pane(&pane, harness, &owns, opened.identity.as_ref())? {
+            Reading::Live(read) => read,
+            Reading::Gone => {
+                return launch_pane_gone(
+                    operation,
+                    opened,
+                    "pane-gone",
+                    json!({"reconcile": "launch", "observed": "gone"}),
+                );
+            }
+            Reading::Unreadable { cause } => {
+                return Ok(launch_pane_unconfirmed(
+                    operation,
+                    opened,
+                    json!({"reconcile": "launch", "observed": "unobservable", "cause": cause}),
+                ));
+            }
+        };
     let Foreground {
         reading,
         harness: read,
@@ -683,14 +1441,24 @@ fn judge_opened(
             .as_deref()
             .map(PathBuf::from)
             .unwrap_or_default();
+        let sessions = if hosted {
+            Sessions::Hosted {
+                mail_root: cwd.display().to_string(),
+            }
+        } else {
+            Sessions::Store {
+                home: home.as_deref(),
+                cwd: &cwd,
+                mail_root: None,
+            }
+        };
         let mut outcome = launch_outcome(
             operation,
             harness,
-            home.as_deref(),
+            sessions,
             &pane.session,
             item,
             opened,
-            &cwd,
             Polled::Ready { identity },
         )?;
         outcome.annotate("reconcile", json!("launch"));
@@ -753,10 +1521,12 @@ mod tests {
             model: None,
             effort: None,
             kind: None,
+            host: None,
             surface: None,
             over_cap: None,
             exclude_account: None,
             judge_account: false,
+            refresh: false,
             brief_file: None,
             repo_dir: None,
             scope_range: None,
@@ -764,11 +1534,11 @@ mod tests {
         }
     }
 
-    /// Decision 108 (4): the relaunch router. A bound session resumes under
-    /// the same harness and account when the destination home holds its
-    /// file; a request on another account, or a destination with no file
-    /// for the fixed id, starts fresh with `account-switched`; a standing
-    /// handoff that says `fresh` and a changed harness keep their causes.
+    /// The relaunch router. A bound session resumes under the same harness
+    /// and account when the destination home holds its file; a request on
+    /// another account, or a destination with no file for the fixed id,
+    /// starts fresh with `account-switched`; a standing handoff that says
+    /// `fresh` and a changed harness keep their causes.
     #[test]
     fn a_relaunch_on_another_account_or_without_its_session_file_starts_fresh() {
         let dir = tempfile::tempdir().unwrap();
@@ -783,17 +1553,17 @@ mod tests {
         let lane = bound_lane(&a.display().to_string(), Some(&cwd));
         let same = request(&a.display().to_string(), &cwd);
         let other = request(&b.display().to_string(), &cwd);
-        let present = &operation::session_present;
+        let owner = &operation::session_owner;
         assert!(matches!(
-            route_of(&lane, &same, None, Some(&a), present),
+            route_of(&lane, &same, None, Some(&a), owner),
             Route::Resume { session_id } if session_id == id
         ));
         assert!(matches!(
-            route_of(&lane, &same, Some(Relaunch::Resume), Some(&a), present),
+            route_of(&lane, &same, Some(Relaunch::Resume), Some(&a), owner),
             Route::Resume { .. }
         ));
         assert!(matches!(
-            route_of(&lane, &other, None, Some(&b), present),
+            route_of(&lane, &other, None, Some(&b), owner),
             Route::Fresh {
                 cause: Some("account-switched")
             }
@@ -801,14 +1571,14 @@ mod tests {
         // The same account recorded, the file gone from the destination.
         fs::remove_file(&file).unwrap();
         assert!(matches!(
-            route_of(&lane, &same, None, Some(&a), present),
+            route_of(&lane, &same, None, Some(&a), owner),
             Route::Fresh {
                 cause: Some("account-switched")
             }
         ));
         fs::write(&file, "{}\n").unwrap();
         assert!(matches!(
-            route_of(&lane, &same, Some(Relaunch::Fresh), Some(&a), present),
+            route_of(&lane, &same, Some(Relaunch::Fresh), Some(&a), owner),
             Route::Fresh {
                 cause: Some("session-retired")
             }
@@ -816,7 +1586,7 @@ mod tests {
         let mut codex = same.clone();
         codex.harness = "codex".to_owned();
         assert!(matches!(
-            route_of(&lane, &codex, None, Some(&a), present),
+            route_of(&lane, &codex, None, Some(&a), owner),
             Route::Fresh {
                 cause: Some("harness-switched")
             }
@@ -824,17 +1594,17 @@ mod tests {
         let mut unbound = lane.clone();
         unbound.session_id = None;
         assert!(matches!(
-            route_of(&unbound, &same, None, Some(&a), present),
+            route_of(&unbound, &same, None, Some(&a), owner),
             Route::Fresh { cause: None }
         ));
     }
 
-    /// Decision 115 (G): the relaunch route reads the destination session
-    /// store for the bound id through the session owner's fixed-id lookup,
-    /// for every resumable harness and three-valued: absent starts fresh
-    /// `account-switched`, present resumes, unreadable refuses before any
-    /// window. The working directory reaches the Claude arm alone (decision
-    /// 120, L3): a Codex lane with no `mail_root` is still looked up.
+    /// The relaunch route reads the destination session store for the bound
+    /// id through the session owner's fixed-id lookup, for every resumable
+    /// harness and three-valued: absent starts fresh `account-switched`,
+    /// present resumes, unreadable refuses before any window. The working
+    /// directory reaches the Claude arm alone: a Codex lane with no
+    /// `mail_root` is still looked up.
     #[test]
     fn a_relaunch_reads_the_destination_store_for_each_resumable_harness() {
         let dir = tempfile::tempdir().unwrap();
@@ -858,7 +1628,7 @@ mod tests {
         // working directory the route handed it.
         let asked: std::cell::RefCell<Vec<(Harness, PathBuf)>> = Default::default();
         let answer = std::cell::RefCell::new(Reading::Gone);
-        let present = |harness: Harness, _: &Path, cwd: &Path, _: &str| {
+        let owner = |harness: Harness, _: &Path, cwd: &Path, _: &str| {
             asked.borrow_mut().push((harness, cwd.to_path_buf()));
             answer.borrow().clone()
         };
@@ -868,7 +1638,7 @@ mod tests {
                 &request("codex"),
                 None,
                 Some(&home),
-                &present
+                &owner
             ),
             Route::Fresh {
                 cause: Some("account-switched")
@@ -880,7 +1650,7 @@ mod tests {
                 &request("copilot"),
                 None,
                 Some(&home),
-                &present
+                &owner
             ),
             Route::Fresh {
                 cause: Some("account-switched")
@@ -892,7 +1662,7 @@ mod tests {
                 &request("claude"),
                 None,
                 Some(&home),
-                &present
+                &owner
             ),
             Route::Resume { .. }
         ));
@@ -905,9 +1675,9 @@ mod tests {
             "Codex and Copilot are looked up with no directory; Claude with none recorded is not"
         );
         asked.borrow_mut().clear();
-        *answer.borrow_mut() = Reading::Live(());
+        *answer.borrow_mut() = Reading::Live(None);
         assert!(matches!(
-            route_of(&bound("claude", Some(&cwd)), &request("claude"), None, Some(&home), &present),
+            route_of(&bound("claude", Some(&cwd)), &request("claude"), None, Some(&home), &owner),
             Route::Resume { session_id } if session_id == id
         ));
         assert!(matches!(
@@ -916,7 +1686,7 @@ mod tests {
                 &request("codex"),
                 None,
                 Some(&home),
-                &present
+                &owner
             ),
             Route::Resume { .. }
         ));
@@ -938,11 +1708,111 @@ mod tests {
                     &request("copilot"),
                     None,
                     Some(&home),
-                    &present
+                    &owner
                 ),
                 Route::Refuse { .. }
             ),
             "an unreadable store refuses before any window"
         );
+    }
+
+    /// Defect: a lane line that leaves the harness's own compaction on,
+    /// so orch's handoff mark reads a window the harness has already
+    /// folded, or that refuses a harness with no such word; a lane that
+    /// writes as the owner or names no origin. Each harness's lane line
+    /// carries its compaction-off words where it has them and the two lane
+    /// variables.
+    #[test]
+    fn a_lane_line_turns_compaction_off_where_the_harness_can_and_carries_the_lane_words() {
+        for harness in [
+            Harness::Claude,
+            Harness::Codex,
+            Harness::Copilot,
+            Harness::Pi,
+        ] {
+            let mut intent = LaunchIntent {
+                harness,
+                home: None,
+                account: None,
+                cwd: PathBuf::from("/w/KEN-7"),
+                model: None,
+                effort: None,
+                permission: Permission::Native,
+                question_tool: QuestionTool::Off,
+                compaction: lane_compaction(harness),
+                brief: agent_runtime::launch::Brief::None,
+                resume: None,
+                session_id: None,
+                env: Default::default(),
+                env_remove: Vec::new(),
+                extra_args: Vec::new(),
+                program: None,
+            };
+            let cwd = intent.cwd.clone();
+            lane_words(&mut intent, &cwd);
+            let command = agent_runtime::launch::build(&intent).unwrap();
+            match harness.compaction_off_words() {
+                Some(words) => assert!(
+                    words.iter().all(|w| command.args.iter().any(|a| a == w)),
+                    "{harness:?}: {:?}",
+                    command.args
+                ),
+                None => assert!(
+                    !command.args.iter().any(|a| a.contains("compact")),
+                    "{harness:?}: {:?}",
+                    command.args
+                ),
+            }
+            assert_eq!(
+                command.env.get("KENDEX_USER_EMAIL").map(String::as_str),
+                Some("")
+            );
+            assert_eq!(
+                command.env.get("KENDEX_LANE_ORIGIN").map(String::as_str),
+                Some("/w/KEN-7")
+            );
+        }
+    }
+
+    /// Defect: a relaunch into one worktree resuming the transcript another
+    /// worktree's lane recorded under the same account, where the store is
+    /// keyed by id alone, so the lane continues the other item's context.
+    /// A bound session whose file records another directory refuses
+    /// `session-owned-elsewhere` before any window; one recording the lane's
+    /// own directory, or none, resumes.
+    #[test]
+    fn a_relaunch_refuses_a_bound_session_another_directory_owns() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().join("w");
+        let other = dir.path().join("other");
+        fs::create_dir_all(&cwd).unwrap();
+        fs::create_dir_all(&other).unwrap();
+        let home = dir.path().join("home");
+        let account = home.display().to_string();
+        let mut lane = bound_lane(&account, Some(&cwd));
+        lane.harness = Some("codex".to_owned());
+        let mut r = request(&account, &cwd);
+        r.harness = "codex".to_owned();
+        let elsewhere =
+            |_: Harness, _: &Path, _: &Path, _: &str| Reading::Live(Some(other.clone()));
+        assert!(matches!(
+            route_of(&lane, &r, None, Some(&home), &elsewhere),
+            Route::Refuse {
+                cause: "session-owned-elsewhere"
+            }
+        ));
+        let own = |_: Harness, _: &Path, _: &Path, _: &str| Reading::Live(Some(cwd.clone()));
+        assert!(matches!(
+            route_of(&lane, &r, None, Some(&home), &own),
+            Route::Resume { .. }
+        ));
+        // A spelling that resolves to the lane's directory is its own.
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&cwd, &link).unwrap();
+        let linked = |_: Harness, _: &Path, _: &Path, _: &str| Reading::Live(Some(link.clone()));
+        assert!(matches!(
+            route_of(&lane, &r, None, Some(&home), &linked),
+            Route::Resume { .. }
+        ));
     }
 }

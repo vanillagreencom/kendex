@@ -287,7 +287,7 @@ fn wall_verdict(
     let unjudged = format!("verdict=unjudged harness={}", owed.harness);
     let lane_host = (owed.host != LOCAL).then_some(owed.host.as_str());
     let listing = listings.entry(owed.host.clone()).or_insert_with(|| {
-        accounts::roster(&ctx.settings, lane_host)
+        accounts::roster(&ctx.settings, lane_host, now)
             .map_err(|cause| note("accounts", &cause))
             .ok()
     });
@@ -391,7 +391,7 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
     // verdicts of local records reuse it. A roster that could not be read
     // is the pass's partial failure with the legacy's `account-unread`
     // fields, said by the runner.
-    let roster = accounts::roster(&ctx.settings, None);
+    let roster = accounts::roster(&ctx.settings, None, tick.wall);
     let (mut events, changes, failed) = match &roster {
         Ok(listing) => {
             let (events, changes) = check_accounts(listing, tick);

@@ -104,13 +104,9 @@ pub fn fixed_file(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Option
 }
 
 /// Whether the destination home holds a session with the fixed id `id` for
-/// `cwd`, read three-valued so a relaunch tells absent from unreadable.
-/// `Live(())` is present, `Gone` absent, `Unreadable`
-/// a read that failed. Every resumable harness has a lookup: Claude by the
-/// file its fixed id names; Codex by the rollout under its store whose name
-/// ends in the id; Copilot by its session-state directory for the id; Pi
-/// resumes by file, not id, so it reads absent and the relaunch starts
-/// fresh.
+/// `cwd`, read three-valued so a relaunch tells absent from unreadable:
+/// `Live(())` present, `Gone` absent, `Unreadable` a read that failed. Pi
+/// resumes by file, not id, so it reads absent.
 pub fn resume_present(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Reading<()> {
     match harness {
         Harness::Claude | Harness::Codex | Harness::Copilot => {
@@ -121,6 +117,43 @@ pub fn resume_present(harness: Harness, home: &Path, cwd: &Path, id: &str) -> Re
             }
         }
         Harness::Pi => Reading::Gone,
+    }
+}
+
+/// The directory the session `id` under `home` was recorded in, read by
+/// the session's own file so a relaunch tells absent from unreadable and
+/// its own session from another directory's: `Live(cwd)` where the file
+/// the id names is a lead session recording `cwd` (`None` where it records
+/// none), `Gone` where the home holds no file for the id or a file that is
+/// no lead, `Unreadable` where the store or the file could not be read.
+/// Every resumable harness is read by the path its id gives
+/// ([`fixed_id_file`]); Pi resumes by file, not id, so it reads absent.
+pub fn resume_owner(
+    harness: Harness,
+    home: &Path,
+    cwd: &Path,
+    id: &str,
+) -> Reading<Option<PathBuf>> {
+    if harness == Harness::Pi {
+        return Reading::Gone;
+    }
+    let file = match fixed_id_file(harness, home, cwd, id) {
+        Reading::Live(file) => file,
+        Reading::Gone => return Reading::Gone,
+        Reading::Unreadable { cause } => return Reading::Unreadable { cause },
+    };
+    match identify(harness, &file, None) {
+        Ok(Some(lead)) => Reading::Live(Some(lead.cwd)),
+        Ok(None) => match harness {
+            // A Claude file under the project's directory records its
+            // directory in its rows; one too short to carry a row yet is
+            // the directory's own.
+            Harness::Claude => Reading::Live(None),
+            Harness::Codex | Harness::Copilot | Harness::Pi => Reading::Gone,
+        },
+        Err(_) => Reading::Unreadable {
+            cause: FILE_UNREADABLE.cause,
+        },
     }
 }
 
@@ -1108,6 +1141,82 @@ mod tests {
             identify(Harness::Claude, &sub, Some(Path::new("/w")))
                 .unwrap()
                 .is_none()
+        );
+    }
+
+    /// Defect: a relaunch resuming a transcript another directory's lane
+    /// recorded, where the store is keyed by id alone (Codex, Copilot), or
+    /// a session bound by the newest file for the directory. Each harness's
+    /// file is found by the path its id gives and answers the directory it
+    /// recorded; no file, or a file that is no lead, is absent; Pi is
+    /// absent by design.
+    #[test]
+    fn a_bound_session_is_read_by_its_path_and_owned_by_its_recorded_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let cwd = Path::new("/w/KEN-7");
+        let id = "0f6e2c1a-7d1b-4a0e-9f3c-2b5d8e1f4a6c";
+        let claude = home.join("projects").join(claude_slug(cwd));
+        fs::create_dir_all(&claude).unwrap();
+        fs::write(
+            claude.join(format!("{id}.jsonl")),
+            format!(r#"{{"type":"user","sessionId":"{id}","cwd":"/w/KEN-7"}}"#),
+        )
+        .unwrap();
+        let day = home.join("sessions").join("2026").join("11").join("03");
+        fs::create_dir_all(&day).unwrap();
+        fs::write(
+            day.join(format!("rollout-a-{id}.jsonl")),
+            format!(
+                r#"{{"type":"session_meta","payload":{{"id":"{id}","cwd":"/w/OTHER","parent_thread_id":null,"source":"cli"}}}}"#
+            ),
+        )
+        .unwrap();
+        let copilot = home.join("session-state").join(id);
+        fs::create_dir_all(&copilot).unwrap();
+        fs::write(
+            copilot.join("workspace.yaml"),
+            format!("id: {id}\ncwd: /w/KEN-7\n"),
+        )
+        .unwrap();
+        fs::write(
+            copilot.join("events.jsonl"),
+            "{\"type\":\"user.message\"}\n",
+        )
+        .unwrap();
+        assert_eq!(
+            resume_owner(Harness::Claude, &home, cwd, id),
+            Reading::Live(Some(cwd.to_path_buf()))
+        );
+        assert_eq!(
+            resume_owner(Harness::Codex, &home, Path::new(""), id),
+            Reading::Live(Some(PathBuf::from("/w/OTHER"))),
+            "the rollout names the directory that owns it"
+        );
+        assert_eq!(
+            resume_owner(Harness::Copilot, &home, Path::new(""), id),
+            Reading::Live(Some(cwd.to_path_buf()))
+        );
+        assert_eq!(resume_owner(Harness::Pi, &home, cwd, id), Reading::Gone);
+        assert_eq!(
+            resume_owner(Harness::Codex, &home, Path::new(""), "other-id"),
+            Reading::Gone
+        );
+        fs::write(
+            day.join("rollout-b-child.jsonl"),
+            r#"{"type":"session_meta","payload":{"id":"child","cwd":"/w/KEN-7","parent_thread_id":"L","source":"cli"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            resume_owner(Harness::Codex, &home, Path::new(""), "child"),
+            Reading::Gone,
+            "a file that is no lead is no session to resume"
+        );
+        fs::write(claude.join("short.jsonl"), "{}\n").unwrap();
+        assert_eq!(
+            resume_owner(Harness::Claude, &home, cwd, "short"),
+            Reading::Live(None),
+            "a Claude file with no row yet is the directory's own"
         );
     }
 }

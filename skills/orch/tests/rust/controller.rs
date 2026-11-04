@@ -3578,18 +3578,20 @@ fn shipped_scripts() -> std::path::PathBuf {
 /// The checkout the real `oversee launch` runs from, under the runner's
 /// state directory: `skills/orch/scripts` links every shipped script but
 /// the three this world answers for (`orch-runtime` is the wrapper
-/// `watch_world` wrote around the test binary, `lanes` the listing fixture
-/// whose `lanes.json` lists `account` on `harness` as the one measured
-/// account, with room, so the launcher's pick through the runtime's judge
-/// names it, `lane-host` the host fixture answering the local
-/// capabilities), and the
-/// sibling skills the scripts source are linked beside `orch`. The walk's
-/// `kendex tier-model` finds the `kendex-launch` fixture in `bin`, the
-/// watch world's directory first on the rows' `PATH`, never the operator's
-/// install. Returns the scripts directory the launcher is started from.
+/// `watch_world` wrote around the test binary, `lanes` nothing, `lane-host`
+/// the host fixture answering the local capabilities), and the sibling
+/// skills the scripts source are linked beside `orch`. The listing the
+/// launcher's pick reads through the runtime's judge lists `account` on
+/// `harness` as the one measured account, with room: its credential under
+/// the account and its usage from the usage fixture as `curl` in `bin`,
+/// named to the launcher through `env`. The walk's `kendex tier-model`
+/// finds the `kendex-launch` fixture in `bin`, the watch world's directory
+/// first on the rows' `PATH`, never the operator's install. Returns the
+/// scripts directory the launcher is started from.
 fn launcher_checkout(
     runner: &Runner,
     bin: &Path,
+    env: &mut Vec<(String, String)>,
     account: &Path,
     harness: &str,
 ) -> std::path::PathBuf {
@@ -3619,11 +3621,6 @@ fn launcher_checkout(
     }
     symlink(dir.join("orch-runtime"), scripts.join("orch-runtime")).unwrap();
     symlink(
-        fixtures().join("lanes-listing/lanes"),
-        scripts.join("lanes"),
-    )
-    .unwrap();
-    symlink(
         fixtures().join("lane-host/lane-host"),
         scripts.join("lane-host"),
     )
@@ -3636,29 +3633,37 @@ fn launcher_checkout(
         .to_string(),
     )
     .unwrap();
-    std::fs::write(
-        scripts.join("lanes.json"),
-        json!([{
-            "config_dir": account.display().to_string(),
-            "harness": harness,
-            "alias": "fixture",
-            "measured_through": "local",
-            "status": "ok",
-            "verdict": "room",
-            "headroom_pct": 80,
-            "wall": 20,
-            "binding_bucket": "weekly",
-            "binding_resets_at": "2027-01-01T00:00:00Z",
-            "session_5h_pct": 5,
-            "weekly_pct": 20,
-            "monthly_pct": null,
-            "model_buckets": [],
-            "resets": {"session": "2027-01-01T00:00:00Z", "weekly": "2027-01-01T00:00:00Z"},
-            "pool": "plan",
-        }])
-        .to_string(),
-    )
-    .unwrap();
+    symlink(fixtures().join("usage-curl/curl"), bin.join("curl")).unwrap();
+    let usage = dir.join("usage-fixtures");
+    std::fs::create_dir_all(&usage).unwrap();
+    let (credential, body) = if harness == "codex" {
+        (
+            json!({"tokens": {"access_token": "token-fixture", "account_id": "acct-fixture"}}),
+            json!({"rate_limit": {
+                "primary_window": {"used_percent": 5, "reset_at": 1_798_761_600, "limit_window_seconds": 18_000},
+                "secondary_window": {"used_percent": 20, "reset_at": 1_798_761_600, "limit_window_seconds": 604_800}}}),
+        )
+    } else {
+        (
+            json!({"claudeAiOauth": {"accessToken": "token-fixture", "refreshToken": "refresh-fixture",
+                "expiresAt": 4_102_444_800_000u64, "subscriptionType": "max"}}),
+            json!({"five_hour": {"utilization": 5, "resets_at": "2027-01-01T00:00:00Z"},
+                "seven_day": {"utilization": 20, "resets_at": "2027-01-01T00:00:00Z"}}),
+        )
+    };
+    let file = if harness == "codex" {
+        "auth.json"
+    } else {
+        ".credentials.json"
+    };
+    std::fs::write(account.join(file), credential.to_string()).unwrap();
+    std::fs::write(usage.join("token-fixture.usage.json"), body.to_string()).unwrap();
+    env.push(("ORCH_LANE_DIRS".to_owned(), account.display().to_string()));
+    env.push(("USAGE_FIXTURE_DIR".to_owned(), usage.display().to_string()));
+    env.push((
+        "OVERSEE_WATCH_STATE_DIR".to_owned(),
+        dir.join("watch-state").display().to_string(),
+    ));
     scripts
 }
 
@@ -3815,7 +3820,7 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
     let server = Server::start(dir.path(), "fleet");
     let mut runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
-    let (bin, env) = watch_world(runner.state_dir());
+    let (bin, mut env) = watch_world(runner.state_dir());
     let work = runner.state_dir().join("work");
     let account = runner.state_dir().join("codex-account");
     std::fs::create_dir(&work).unwrap();
@@ -3832,7 +3837,7 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
     .unwrap();
     let gate = account.join("rollout-gate");
     mkfifo(&gate);
-    let scripts = launcher_checkout(&runner, &bin, &account, "codex");
+    let scripts = launcher_checkout(&runner, &bin, &mut env, &account, "codex");
     let codex = fixtures().join("stub-codex-gated/codex");
     let mut launch = oversee_launch(
         &server,
@@ -3945,12 +3950,12 @@ fn a_first_launch_confirmed_in_its_call_records_the_launchers_identity() {
     let server = Server::start(dir.path(), "fleet");
     let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
-    let (bin, env) = watch_world(runner.state_dir());
+    let (bin, mut env) = watch_world(runner.state_dir());
     let work = runner.state_dir().join("work");
     let account = runner.state_dir().join("claude-account");
     std::fs::create_dir(&work).unwrap();
     std::fs::create_dir(&account).unwrap();
-    let scripts = launcher_checkout(&runner, &bin, &account, "claude");
+    let scripts = launcher_checkout(&runner, &bin, &mut env, &account, "claude");
     let launched = oversee_launch(
         &server,
         &scripts,
@@ -4008,4 +4013,331 @@ fn a_first_launch_confirmed_in_its_call_records_the_launchers_identity() {
         .state_dir()
         .join(orch_runtime::state::FLEET_FILE_NAME);
     stop_live_watch(&runner, &state);
+}
+
+// ---------------------------------------------------------------------------
+// The controller's resume, an adopted controller's own succession owner and
+// the record heal.
+// ---------------------------------------------------------------------------
+
+/// The Claude session file `id` names under `home` for `cwd`, laid out as
+/// the harness lays it out, holding its permission row.
+fn plant_claude_session(home: &Path, cwd: &Path, id: &str) -> std::path::PathBuf {
+    let dir = project_dir(home, cwd);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join(format!("{id}.jsonl"));
+    std::fs::write(
+        &file,
+        format!(
+            "{{\"type\":\"permission-mode\",\"permissionMode\":\"bypassPermissions\",\"sessionId\":\"{id}\"}}\n"
+        ),
+    )
+    .unwrap();
+    file
+}
+
+/// A `start-controller` request continuing the native session `id` in
+/// `harness` under `home`, from `cwd`.
+fn resume_request(cwd: &Path, harness: &str, home: &Path, id: &str) -> Value {
+    let mut controller = pending(cwd);
+    controller["harness"] = json!(harness);
+    controller["home"] = json!(home.display().to_string());
+    controller["account"] = json!(home.display().to_string());
+    controller["resume"] = json!(id);
+    json!({"op": "start-controller", "controller": controller})
+}
+
+/// Defect: a controller's resume opening a fresh session in place of the
+/// recorded one, or a session the home never held. The start continues the
+/// recorded native session in each harness's own resume form: the Claude
+/// stub refuses a resume of a file the home lacks, so a confirmed start, the
+/// bound id and the brief typed into that id's own file prove the line;
+/// Codex and Copilot draw no composer, so their words are read off the
+/// launch record; an id the home never held fails before anything opens.
+#[test]
+fn a_controller_resume_continues_the_recorded_session_in_each_harness_s_own_form() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-resume");
+    runner.init_fleet();
+    let home = runner.state_dir().to_path_buf();
+    let id = "0f6e2c1a-7d1b-4a0e-9f3c-2b5d8e1f4a6c";
+    let file = plant_claude_session(&home, &home, id);
+    let brief = home.join("brief.md");
+    std::fs::write(&brief, "RESUME HERE\n").unwrap();
+    let mut request = resume_request(&home, "claude", &home, id);
+    request["brief_file"] = json!(brief.display().to_string());
+    let report = effect_report(&runner.op_fleet(&request));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    let overseer = runner.fleet()["overseer"].clone();
+    assert_eq!(overseer["session_id"], id, "{overseer}");
+    assert_eq!(overseer["generation"], 1, "{overseer}");
+    assert_eq!(
+        file_turns(&file),
+        vec!["RESUME HERE".to_owned()],
+        "the brief went into the resumed session's own file"
+    );
+    assert!(
+        overseer.get("resume").is_none(),
+        "a launch field, not a record field: {overseer}"
+    );
+
+    // An id the home never held: nothing opens, the record names nothing.
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-resume");
+    runner.init_fleet();
+    let home = runner.state_dir().to_path_buf();
+    let report =
+        effect_report(&runner.op_fleet(&resume_request(&home, "claude", &home, "never-held")));
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["note"], "session-missing",
+        "{report}"
+    );
+    assert_eq!(server.panes().len(), 1, "nothing opened");
+
+    // Codex and Copilot: the harness's own resume word on the line, no
+    // fresh id fixed, read off the record the stub writes.
+    for harness in ["codex", "copilot"] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner = suite_runner(&server, "stub-resume");
+        runner.verify = Some(1);
+        runner.init_fleet();
+        let cwd = runner.state_dir().to_path_buf();
+        let home = dir.path().join(format!("{harness}-home"));
+        if harness == "codex" {
+            let day = home.join("sessions/2026/01/01");
+            std::fs::create_dir_all(&day).unwrap();
+            std::fs::write(
+                day.join(format!("rollout-2026-01-01T00-00-00-{id}.jsonl")),
+                format!(
+                    "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"cwd\":\"{}\",\"parent_thread_id\":null,\"source\":\"cli\"}}}}\n",
+                    cwd.display()
+                ),
+            )
+            .unwrap();
+        } else {
+            let session = home.join("session-state").join(id);
+            std::fs::create_dir_all(&session).unwrap();
+            std::fs::write(session.join("workspace.yaml"), "cwd: /r\n").unwrap();
+        }
+        let binaries = format!(
+            "claude={},{harness}={}",
+            stub("stub-resume").display(),
+            fixtures().join("stub-record").join(harness).display()
+        );
+        let report = effect_report(&runner.op_fleet_env(
+            &resume_request(&cwd, harness, &home, id),
+            &[("ORCH_HARNESS_BINARIES", &binaries)],
+        ));
+        assert_eq!(report["intent"]["outcome"], "failed", "{harness}: {report}");
+        assert_eq!(
+            report["intent"]["observation"]["note"], "successor-not-ready",
+            "{harness}: {report}"
+        );
+        let argv = argv_of(&launch_record(&cwd));
+        let resumed = match harness {
+            "codex" => argv.windows(2).any(|w| w[0] == "resume" && w[1] == id),
+            _ => argv.iter().any(|a| *a == format!("--resume={id}")),
+        };
+        assert!(resumed, "{harness}: {argv:?}");
+        assert!(
+            !argv.iter().any(|a| a == "--session-id"),
+            "{harness}: no fresh id beside a resume: {argv:?}"
+        );
+    }
+}
+
+/// Defect: a Pi controller's resume reaching a window. Pi continues a
+/// session by its file, which no record carries, so the start refuses
+/// `resume-unsupported` by name before anything opens.
+#[test]
+fn a_pi_controller_resume_is_refused_unsupported_before_anything_opens() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let home = dir.path().join("pi-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let mut request = resume_request(runner.state_dir(), "pi", &home, "abc");
+    request["controller"]["model"] = json!("pi-claude/claude-fable-5-1");
+    let report = effect_report(&runner.op_fleet(&request));
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["note"], "resume-unsupported",
+        "{report}"
+    );
+    assert_eq!(
+        report["intent"]["observation"]["fields"]["harness"], "pi",
+        "{report}"
+    );
+    assert_eq!(server.panes().len(), 1, "nothing opened");
+    assert!(
+        runner.fleet()["overseer"].get("pending").is_none(),
+        "the pending is gone again"
+    );
+}
+
+/// The compare-and-swap set of `record`, with no pending standing.
+fn expected_of(record: &Value) -> Value {
+    json!({
+        "server": record["server"],
+        "server_start": record["server_start"],
+        "pane": record["pane"],
+        "generation": record["generation"],
+        "launch_line": record["launch_line"],
+        "cwd": record["cwd"],
+        "pending": Value::Null,
+    })
+}
+
+/// Defect: orch opening a successor for a controller whose record another
+/// lifecycle keeps. An adoption carrying the controller's own succession
+/// command writes it on the record; `request-transfer` under any cause
+/// refuses `succession-owned` naming the command and writes nothing; the
+/// same pane adopted again keeps it; once that controller is gone, another
+/// session's adoption replaces the record, the command with it.
+#[test]
+fn an_adopted_controller_with_its_own_succession_command_refuses_request_transfer() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let pane = server.open_stub(
+        "overseer",
+        "stub-confirm",
+        runner.state_dir(),
+        runner.state_dir(),
+    );
+    server.await_composer(&pane);
+    let command = json!(["jarvis-session", "succeed", "--home", "/h/jarvis"]);
+    let mut adopt = json!({
+        "op": "adopt-controller",
+        "pane": pane,
+        "harness": "claude",
+        "session_id": "by-hand-1",
+        "account": runner.state_dir().display().to_string(),
+        "cwd": runner.state_dir().display().to_string(),
+        "succession": command,
+    });
+    let answer = reply(&runner.op_fleet(&adopt));
+    assert_eq!(answer["ok"], true, "{answer}");
+    let overseer = runner.fleet()["overseer"].clone();
+    assert_eq!(overseer["succession"], command, "{overseer}");
+    let before = runner.fleet();
+    for cause in ["live", "dead"] {
+        let request = json!({
+            "op": "request-transfer",
+            "cause": cause,
+            "expected": expected_of(&overseer),
+            "successor": pending(runner.state_dir()),
+        });
+        let out = runner.op_fleet(&request);
+        assert_eq!(
+            refusal_key(&out),
+            "succession-owned",
+            "{cause}: {}",
+            stderr(&out)
+        );
+        assert!(
+            stderr(&out).contains("jarvis-session"),
+            "{cause}: the refusal names the command: {}",
+            stderr(&out)
+        );
+        assert_eq!(runner.fleet(), before, "{cause}: nothing written");
+    }
+    // The same pane again, naming no command: healed, the command kept.
+    adopt.as_object_mut().unwrap().remove("succession");
+    let answer = reply(&runner.op_fleet(&adopt));
+    assert_eq!(answer["result"]["report"]["healed"], true, "{answer}");
+    assert_eq!(runner.fleet()["overseer"]["succession"], command);
+    // That controller gone: another session's adoption replaces the record
+    // at the next generation, with no command.
+    let pid = server.pane_pid(&pane);
+    tmux(&server.socket, &["kill-window", "-t", &pane]);
+    wait_until("the adopted controller ended", secs(10), || !live(pid));
+    let other = server.open_stub(
+        "overseer",
+        "stub-confirm",
+        runner.state_dir(),
+        runner.state_dir(),
+    );
+    server.await_composer(&other);
+    adopt["pane"] = json!(other);
+    let answer = reply(&runner.op_fleet(&adopt));
+    assert_eq!(answer["ok"], true, "{answer}");
+    assert_eq!(answer["result"]["report"]["generation"], 2, "{answer}");
+    let overseer = runner.fleet()["overseer"].clone();
+    assert_eq!(overseer["pane"], other, "{overseer}");
+    assert!(
+        overseer.get("succession").is_none(),
+        "another owner's command does not carry over: {overseer}"
+    );
+}
+
+/// Defect: a controller record standing unbound for good: written before
+/// its session's first turn, or by an adoption that knew no id, with no
+/// native session id, no process identity and no server start. The
+/// reconcile reads the pane the record names and heals the record in place
+/// from it: the id the one lead session under the recorded home for the
+/// recorded directory, the identity read in the pane, the server's start,
+/// the generation and the record's own words kept; a bound record is left
+/// as it is, and a second reconcile moves no bytes.
+#[test]
+fn the_reconcile_heals_a_controller_record_left_unbound_from_its_own_pane() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let home = runner.state_dir().to_path_buf();
+    let pane = server.open_stub("overseer", "stub-confirm", &home, &home);
+    server.await_composer(&pane);
+    // The harness writes its session's directory row at its first turn.
+    server.send_line(&pane, "first turn");
+    wait_until("the stub recorded its first turn", secs(10), || {
+        runner.stub_turns(&home, &home) == vec!["first turn".to_owned()]
+    });
+    let pid = server.pane_pid(&pane);
+    let mut fleet = runner.fleet();
+    fleet["overseer"] = json!({
+        "runtime": "tmux",
+        "generation": 2,
+        "server": server.pid.to_string(),
+        "server_socket": server.socket.display().to_string(),
+        "pane": pane,
+        "window": "@9",
+        "harness": "claude",
+        "account": home.display().to_string(),
+        "home": home.display().to_string(),
+        "model": "opus",
+        "cwd": home.display().to_string(),
+        "session_id": "",
+    });
+    runner.write_fleet(&fleet);
+    let out = runner.run(&["reconcile", "--fleet"]);
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{}", stderr(&out));
+    assert_eq!(answer["result"]["controller"]["healed"], true, "{answer}");
+    assert_eq!(answer["result"]["controller"]["generation"], 2, "{answer}");
+    let overseer = runner.fleet()["overseer"].clone();
+    assert_eq!(overseer["session_id"], format!("stub-{pid}"), "{overseer}");
+    assert_eq!(overseer["harness_pid"], pid, "{overseer}");
+    assert_eq!(overseer["harness_start"], start_of(pid), "{overseer}");
+    assert_eq!(overseer["server_start"], server.start, "{overseer}");
+    assert_eq!(overseer["generation"], 2, "{overseer}");
+    assert_eq!(overseer["model"], "opus", "the record's own words stand");
+    let state = runner
+        .state_dir()
+        .join(orch_runtime::state::FLEET_FILE_NAME);
+    let bytes = std::fs::read(&state).unwrap();
+    let out = runner.run(&["reconcile", "--fleet"]);
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{}", stderr(&out));
+    assert!(
+        answer["result"].get("controller").is_none(),
+        "a bound record is left as it is: {answer}"
+    );
+    assert_eq!(std::fs::read(&state).unwrap(), bytes, "the bytes stand");
 }

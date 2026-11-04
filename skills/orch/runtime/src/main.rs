@@ -91,6 +91,33 @@ enum Verb {
         #[arg(long)]
         request: PathBuf,
     },
+    /// Wait for a pull request's merge-queue outcome: its state and queue
+    /// entry polled under a budget, what earlier polls saw recorded on the
+    /// item before each next poll, an unresolved review thread while queued
+    /// or armed disarmed and dequeued, a failed required check read through
+    /// `verify-pr`. The reply is the result object the merge workflow routes.
+    QueueWatch {
+        /// The item whose record keeps the memory.
+        #[arg(long)]
+        item: String,
+        /// `owner/name`.
+        #[arg(long)]
+        repo: String,
+        #[arg(long)]
+        pr: u64,
+        /// Seconds between polls.
+        #[arg(long, default_value_t = 180)]
+        poll: u64,
+        /// The budget in seconds, an upper bound.
+        #[arg(long, default_value_t = 2400)]
+        max_wait: u64,
+        /// Read no check rollup for an armed, unenqueued pull request.
+        #[arg(long)]
+        no_check_probe: bool,
+        /// Read no review threads and pull no arm.
+        #[arg(long)]
+        no_guard: bool,
+    },
     /// Send a directive to a cloud session lane of the fleet: the send
     /// recorded owed on the lane first, made once through `lane-mail`, and its
     /// receipt stamped after.
@@ -268,6 +295,71 @@ enum AccountsOp {
         /// `SECOND_OPINION_<NAME>_ROOM_CMD` runs.
         #[arg(long)]
         env: bool,
+    },
+    /// The preference walk: `ORCH_LANE_PREFERENCE`'s entries for a lane, or
+    /// `ORCH_OVERSEER_PREFERENCE`'s for an overseer's session, in order,
+    /// each classified through `kendex tier-model` and judged by `pick`'s
+    /// rule; the reply names the entry taken and every entry skipped with
+    /// the judge's word.
+    Walk {
+        #[command(flatten)]
+        target: Target,
+        /// Walk the overseer preference for an overseer's session: seats
+        /// judged as ordinary accounts, the headroom trigger as the bound,
+        /// the caller's own entry last.
+        #[arg(long, conflicts_with_all = ["lane", "max_pct"])]
+        overseer: bool,
+        /// A named lane (a directory or a listed alias) every entry is
+        /// judged on.
+        #[arg(long)]
+        lane: Option<String>,
+        /// A config dir every pick omits before judging.
+        #[arg(long = "exclude-lane")]
+        exclude: Vec<String>,
+        /// The item of the lane this launch replaces: its charge is left
+        /// out, and no cloud session is taken.
+        #[arg(long)]
+        replaces: Option<String>,
+        /// The bound in percent used; `ORCH_LANE_MAX_PCT` where unset.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(0..=100), conflicts_with = "min_headroom_pct")]
+        max_pct: Option<u32>,
+        /// The headroom the caller's own judgement triggers at;
+        /// `ORCH_OVERSEER_HEADROOM_PCT` for an overseer where unset.
+        #[arg(long, value_parser = clap::value_parser!(u32).range(0..=100))]
+        min_headroom_pct: Option<u32>,
+        /// The harness of the session the walk is asked for, whose
+        /// permission posture an entry of another harness must take.
+        #[arg(long)]
+        source_harness: Option<String>,
+        /// That session's launch words; left out, the harness's row alone
+        /// answers.
+        #[arg(long, requires = "source_harness", allow_hyphen_values = true)]
+        source_flags: Option<String>,
+        /// The predecessor's harness: its own entry walks last.
+        #[arg(long)]
+        caller_harness: Option<String>,
+        #[arg(long, requires = "caller_harness")]
+        caller_lane: Option<String>,
+        /// The model the successor runs; a numeric entry's model too.
+        #[arg(long, requires = "caller_harness")]
+        caller_model: Option<String>,
+        #[arg(long, requires = "caller_harness")]
+        caller_effort: Option<String>,
+        /// The model the caller's account is judged on.
+        #[arg(long, requires = "caller_harness")]
+        caller_pick_model: Option<String>,
+        /// Keep the caller's own lane without a pick.
+        #[arg(long, requires = "caller_harness")]
+        caller_keep: bool,
+        /// At a context mark with the caller's account unmeasured: an entry
+        /// of its harness whose pick finds none keeps the caller's lane
+        /// where the judge still reads it unmeasured.
+        #[arg(long, requires = "caller_harness")]
+        keep_unmeasured: bool,
+        /// Skip a pick where the accounts a successor would read above the
+        /// trigger, the picked one counted, stay at or under this count.
+        #[arg(long, default_value_t = 0)]
+        successor_bound: u32,
     },
     /// The listing under the judge's statement: each row with its status
     /// word, and the roster lines the heartbeat prints.
@@ -740,6 +832,13 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     &path, r, &env, locking,
                 )?)?);
             }
+            // The review gate reads the pull request first, makes the one
+            // request its head owes and records the verdict.
+            if let Request::VerifyReview(r) = &request {
+                return Ok(serde_json::to_value(ops::verify_review::run(
+                    &path, r, &settings, &env, locking,
+                )?)?);
+            }
             // An adoption reads the pane first and makes its one transition
             // on what it read.
             if let Request::AdoptController(r) = &request {
@@ -916,6 +1015,41 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 round,
             };
             serde_json::to_value(orch_runtime::proof::run(&settings, &item, &request)?)?
+        }
+        Verb::QueueWatch {
+            item,
+            repo,
+            pr,
+            poll,
+            max_wait,
+            no_check_probe,
+            no_guard,
+        } => {
+            let settings = resolve_settings(&flags)?;
+            let path = state::item_path(&settings.state_dir, &item);
+            let env = system_env()?;
+            let request = orch_runtime::ops::queue_watch::QueueWatch {
+                repo,
+                pr,
+                poll: std::time::Duration::from_secs(poll),
+                max_wait: std::time::Duration::from_secs(max_wait),
+                arm_grace: settings.queue_watch.arm_grace,
+                confirm_polls: settings.queue_watch.confirm_polls,
+                probe_interval: settings.queue_watch.probe_interval,
+                check_probe: !no_check_probe,
+                guard: !no_guard,
+            };
+            let programs =
+                orch_runtime::ops::queue_watch::Programs::installed(&settings.roots.project);
+            serde_json::to_value(orch_runtime::ops::queue_watch::run(
+                &path,
+                &request,
+                &programs,
+                &settings.roots.project,
+                &schedule::SystemClock,
+                &env,
+                locking,
+            )?)?
         }
         Verb::Send { item, file } => {
             let settings = resolve_settings(&flags)?;
@@ -1122,26 +1256,79 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
             }
             Ok(answer.reply())
         }
+        AccountsOp::Walk {
+            target,
+            overseer,
+            lane,
+            exclude,
+            replaces,
+            max_pct,
+            min_headroom_pct,
+            source_harness,
+            source_flags,
+            caller_harness,
+            caller_lane,
+            caller_model,
+            caller_effort,
+            caller_pick_model,
+            caller_keep,
+            keep_unmeasured,
+            successor_bound,
+        } => {
+            let path = target_path(&target, &settings);
+            let host = ops::Host::kernel(settings.lane_cap, Some(settings.claim_store.clone()));
+            let request = ops::walk::WalkRequest {
+                scope: if overseer {
+                    ops::walk::Scope::Overseer
+                } else {
+                    ops::walk::Scope::Lane
+                },
+                preference: None,
+                lane,
+                exclude,
+                replaces,
+                max_pct,
+                min_headroom_pct,
+                source: source_harness.map(|harness| ops::walk::Source {
+                    harness,
+                    flags: source_flags
+                        .map(|text| text.split_whitespace().map(str::to_owned).collect()),
+                }),
+                caller: caller_harness.map(|harness| ops::walk::Caller {
+                    harness,
+                    lane: caller_lane,
+                    model: caller_model,
+                    effort: caller_effort,
+                    pick_model: caller_pick_model,
+                    keep: caller_keep,
+                }),
+                keep_unmeasured,
+                successor_bound,
+            };
+            Ok(ops::walk::walk(&settings, &path, &host, &request, now)?.reply())
+        }
         AccountsOp::Roster { host } => {
             let today = ops::accounts::today(now);
-            Ok(match ops::accounts::roster(&settings, host.as_deref()) {
-                Ok(roster) => serde_json::json!({
-                    "read": true,
-                    "accounts": roster.rows.len(),
-                    "lines": roster.lines(&today),
-                    "rows": roster.rows.iter().map(|r| serde_json::json!({
-                        "alias": r.alias,
-                        "config_dir": r.config_dir,
-                        "harness": r.harness,
-                        "measured_through": r.measured_through,
-                        "status": r.status,
-                        "word": r.word().text(),
-                        "ended": r.ended(&today),
-                        "record": r.raw,
-                    })).collect::<Vec<serde_json::Value>>(),
-                }),
-                Err(cause) => serde_json::json!({"read": false, "cause": cause}),
-            })
+            Ok(
+                match ops::accounts::roster(&settings, host.as_deref(), now) {
+                    Ok(roster) => serde_json::json!({
+                        "read": true,
+                        "accounts": roster.rows.len(),
+                        "lines": roster.lines(&today),
+                        "rows": roster.rows.iter().map(|r| serde_json::json!({
+                            "alias": r.alias,
+                            "config_dir": r.config_dir,
+                            "harness": r.harness,
+                            "measured_through": r.measured_through,
+                            "status": r.status,
+                            "word": r.word().text(),
+                            "ended": r.ended(&today),
+                            "record": r.raw,
+                        })).collect::<Vec<serde_json::Value>>(),
+                    }),
+                    Err(cause) => serde_json::json!({"read": false, "cause": cause}),
+                },
+            )
         }
     }
 }
