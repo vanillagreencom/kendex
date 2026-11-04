@@ -9,7 +9,7 @@ A relay between an overseer's mailbox and one private Slack channel. Session own
 - Send other owner messages and files to the overseer, including live replies in old threads.
 - Read a requested thread as plain text and send a reply only to its thread.
 - Receive the overseer's notices, rulings and progress reports.
-- Post an alert or file to another channel from a script.
+- Post an alert or related files together to another channel from a script.
 - Refuse outgoing text or files that match the secret-value pattern.
 - Optionally use `/lanes`, `/asks`, `/report` and the app's Home tab.
 
@@ -74,6 +74,8 @@ The overseer records its ruling and closes the question. A reserved question wai
 A request forwarded by a satellite's Jarvis appears with the request and its cited confirmation in a new channel message; the overseer's notices follow in that thread. The overseer judges the confirmation words. If the root post is refused before sending or its response is lost, notices can appear top-level. The relay does not turn an ambiguous send into a repeated post.
 
 Send text as standard Markdown and file comments as Slack's mrkdwn. [Message standard](SKILL.md#message-standard) explains the difference. Use `slack thread` for an explicit thread read and `slack post --thread TS` for a reply confined to that thread.
+
+Repeat `--file` on one `slack post` to share related files with one comment: `slack post --thread TS --file A --file B --text T`. A rejected file or failed upload shares no partial group. Slack's recipient settings decide notifications.
 
 ## Slash commands and the Home tab
 

@@ -31,7 +31,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import deque
-from typing import BinaryIO, Callable, Deque, Dict, Optional
+from typing import BinaryIO, Callable, Deque, Dict, List, Optional, Tuple
 
 from refusals import Refusal
 
@@ -216,20 +216,30 @@ class Slack:
 
 
     def upload(self, filename: str, data: bytes, channel: str, comment: str, thread_ts: Optional[str]) -> str:
-        """The three-step external upload; returns the file id."""
-        ticket = self.get("files.getUploadURLExternal", filename=filename, length=len(data))
-        req = urllib.request.Request(ticket["upload_url"], data=data, method="POST")
-        req.add_header("Content-Type", "application/octet-stream")
-        try:
-            self._open(req, "upload")
-        except urllib.error.HTTPError as err:
-            raise Refusal("slack-api-failed", f"upload http={err.code}") from err
+        """One-file relay callers keep the scalar file id."""
+        return self.upload_files([(filename, data)], channel, comment, thread_ts)[0]
+
+    def upload_files(
+        self, files: List[Tuple[str, bytes]], channel: str, comment: str, thread_ts: Optional[str],
+    ) -> List[str]:
+        """Upload every file before sharing the group in one completion."""
+        uploaded = []
+        # Without completion Slack discards uploads, so a failed member cannot
+        # share a partial group: https://docs.slack.dev/reference/methods/files.completeUploadExternal/
+        for filename, data in files:
+            ticket = self.get("files.getUploadURLExternal", filename=filename, length=len(data))
+            req = urllib.request.Request(ticket["upload_url"], data=data, method="POST")
+            req.add_header("Content-Type", "application/octet-stream")
+            try:
+                self._open(req, "upload")
+            except urllib.error.HTTPError as err:
+                raise Refusal("slack-api-failed", f"upload http={err.code}") from err
+            uploaded.append({"id": ticket["file_id"], "title": filename})
         done = self.post(
             "files.completeUploadExternal",
-            files=[{"id": ticket["file_id"], "title": filename}],
+            files=uploaded,
             channel_id=channel,
             initial_comment=comment,
             thread_ts=thread_ts,
         )
-        files = done.get("files") or [{"id": ticket["file_id"]}]
-        return str(files[0]["id"])
+        return [str(file["id"]) for file in done.get("files") or uploaded]

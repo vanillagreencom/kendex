@@ -23,7 +23,7 @@ The relay between one checkout's overseer mailbox and one private Slack channel.
 .agents/skills/slack/scripts/slack setup [--root ROOT] [--name NAME | --take CHANNEL_ID]
 .agents/skills/slack/scripts/slack listen --root ROOT [--root ROOT]... [--once]
 .agents/skills/slack/scripts/slack listen --status --root ROOT [--root ROOT]...
-.agents/skills/slack/scripts/slack post [--root ROOT] [--channel ID] --text TEXT [--mention] [--file PATH] [--thread TS] [--update TS]
+.agents/skills/slack/scripts/slack post [--root ROOT] [--channel ID] --text TEXT [--mention] [--file PATH]... [--thread TS] [--update TS]
 .agents/skills/slack/scripts/slack read --channel ID (--ts TS | --latest N)
 .agents/skills/slack/scripts/slack compact [--root ROOT]...
 .agents/skills/slack/scripts/slack install --root ROOT [--root ROOT]... [--print]
@@ -56,6 +56,7 @@ What each verb does, every setting, and every keyed line: `slack --help`. Python
 - Slack takes at most 12,000 characters of standard Markdown. `slack post` refuses a final linked body past that cap as `text-too-long`; send the long part as a file. The relay also refuses oversized new and overdue questions after expansion and secret checks, before sending. Shorten the question or link its detail in a file, issue or report. Reports and answers keep ordered Markdown continuations in the same thread, with visible part numbers.
 - After confirmed tracker posting, an ask carries its draft on the item. Other asks post their draft, the text the owner approves, in literal code blocks, never linked. The complete question, including its draft, options and deadline, must fit the cap.
 - A file's comment, the text beside `--file` or a notice's `--attach`, renders as Slack's own mrkdwn markup, not standard Markdown. It is outside the 12,000-character cap, and Slack's own message limits still bound it. How to write it: [communication § References and markup](../communication/references/messages.md#references-and-markup).
+- Repeat `post --file` for related files in one share with one comment. Every file passes the file and secret checks before upload. An input or upload failure shares no partial group. Slack's recipient settings decide notifications.
 - The words and markup of every post follow [communication](../communication/references/messages.md).
 
 ## Doctor row

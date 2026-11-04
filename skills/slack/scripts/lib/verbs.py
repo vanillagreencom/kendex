@@ -217,7 +217,7 @@ def post(
     root: Path,
     channel: Optional[str],
     text: Optional[str],
-    file: Optional[str],
+    file: Optional[List[str]],
     mention_owners: bool,
     thread: Optional[str],
     update: Optional[str],
@@ -244,13 +244,13 @@ def post(
         else:
             owners = load().owners
             prefix = " ".join(f"<@{i}>" for i in resolve_owner_ids(api, owners).values()) + " "
-    body = prefix + (text or (Path(file).name if file else ""))
+    body = prefix + (text or ", ".join(Path(path).name for path in file or []))
     body, body_arg = outbound(root, body, file_comment=bool(file), fallback=False)
     secret_check(body.encode(), "text")
     if file:
-        data = checked_file(file, f"file={file}")
-        file_id = api.upload(Path(file).name, data, channel, body, thread)
-        notice("uploaded", f"{file_id} channel={channel}")
+        files = [(Path(path).name, checked_file(path, f"file={path}")) for path in file]
+        file_ids = api.upload_files(files, channel, body, thread)
+        notice("uploaded", f"{','.join(file_ids)} channel={channel}")
         return 0
     if body_arg == "markdown_text":
         markdown_checked(body, "text")

@@ -21,7 +21,7 @@ its first chunk, or with `chunked: true` the whole file in two chunks and
 no Content-Length. API cuts run the method before cutting its response.
 An optional `ts` limits a fault to that thread, and an optional `after` lets
 that many matching calls through first, Slack's allowance for a window. A
-download's method is `download`.
+download's method is `download`; an upload's method is `upload`.
 POST /_test/delete removes a parent and its replies by channel and ts.
 
 Socket Mode: apps.connections.open, called with the app token, answers the
@@ -347,13 +347,10 @@ class Handler(BaseHTTPRequestHandler):
                 self.ws.responses.setdefault(path[len("/_respond/") :], []).append(json.loads(raw))
                 self.ws.calls.append("response_url")
                 return self.send_bytes(b"ok", "text/plain")
-            if path.startswith("/_upload/"):
-                self.ws.uploads[path[len("/_upload/") :]] = raw
-                self.ws.calls.append("upload")
-                return self.send_json({"ok": True})
             if raw and self.headers.get("Content-Type", "").startswith("application/json"):
                 params.update(json.loads(raw))
-            method = "download" if path.startswith("/_files/") else path.lstrip("/")
+            method = ("upload" if path.startswith("/_upload/") else
+                      "download" if path.startswith("/_files/") else path.lstrip("/"))
             token = self.ws.app_token if method == "apps.connections.open" else self.ws.token
             self.ws.calls.append(method)
             for fault in list(self.ws.faults):
@@ -382,6 +379,9 @@ class Handler(BaseHTTPRequestHandler):
                     if fault.get("status"):
                         return self.send_json({"ok": False}, fault["status"], {"Retry-After": str(fault.get("retry_after", 0))})
                     return self.send_json({"ok": False, "error": fault["error"]})
+            if method == "upload":
+                self.ws.uploads[path[len("/_upload/") :]] = raw
+                return self.send_json({"ok": True})
             auth = self.headers.get("Authorization", "")
             if auth in (f"Bearer {self.ws.token}", f"Bearer {self.ws.app_token}") and auth != f"Bearer {token}":
                 return self.send_json({"ok": False, "error": "not_allowed_token_type"})
