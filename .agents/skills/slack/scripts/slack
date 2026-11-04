@@ -22,11 +22,15 @@ refuse() { # KEY=VALUE LINES...
   exit 2
 }
 
-if ! command -v python3 >/dev/null 2>&1; then
+if ! _slack_python="$(command -v python3)"; then
   refuse "python3=missing" "python3 is not on PATH; the relay needs Python 3.8 or newer"
 fi
-_slack_code=(python3 -c)
-_slack_script=(python3 -B)
+case "$_slack_python" in
+  /*) ;;
+  *) _slack_python="$PWD/$_slack_python" ;;
+esac
+_slack_code=("$_slack_python" -c)
+_slack_script=("$_slack_python" -B)
 if [ -n "${_KENDEX_JARVIS_PYTHON:-}" ]; then
   _slack_code=("$_KENDEX_JARVIS_PYTHON" caller-code "")
   _slack_script=("$_KENDEX_JARVIS_PYTHON" caller-script "$here/lib")
@@ -46,6 +50,11 @@ fi
 if ! _slack_caller_env="$("${_slack_code[@]}" 'import json, os; print(json.dumps(dict(os.environ)))')"; then
   refuse "settings-unreadable=caller-environment" "the caller environment could not be saved"
 fi
+_slack_script+=("$here/lib/main.py")
+# Target settings cannot replace the caller's interpreter, library, script
+# or sibling packages. Bash refuses assignments to these native bindings.
+readonly -a _slack_script
+readonly orch linear _slack_caller_env
 # shellcheck source=../../orch/scripts/lib/kendex-env.sh
 source "$orch/scripts/lib/kendex-env.sh"
 project="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P)"
@@ -65,4 +74,4 @@ SLACK_LINEAR_DIR="$linear"
 export SLACK_LINEAR_DIR
 # Internal transport, consumed and removed by settings.py, not a setting.
 export _KENDEX_SLACK_CALLER_ENV="$_slack_caller_env"
-exec "${_slack_script[@]}" "$here/lib/main.py" "$@"
+exec "${_slack_script[@]}" "$@"
