@@ -109,3 +109,12 @@ COMMIT_GUARDS_PRE_COMMIT_LOCAL_PATHS = ""
 # build into a kernel allocation failure that left a host's root volume
 # read-only. "^$" turns matching off; unreadable settings warn and allow.
 COMMAND_SAFETY_DENY_PATTERN = "(^|[^[:alnum:]_-])systemd-run[[:space:]][^&;|]*Memory(Max|High)=[[:punct:]]?[0-9]+[KkMm]([^[:alnum:]]|$)"
+
+# Select command-safety's native Git history fence. Off preserves ordinary
+# reads. no-lazy-fetch requires literal global --no-lazy-fetch before reached
+# history/diff subcommands, metadata and worktree diffs included. Supporting
+# Git reads local objects or fails without implicit fetching; older Git can
+# reject the option. This changes no clone/promisor or fetch configuration.
+# Unreadable settings/support warn and leave this advisory check unavailable.
+# values: off | no-lazy-fetch
+COMMAND_SAFETY_HISTORY_POLICY = "off"

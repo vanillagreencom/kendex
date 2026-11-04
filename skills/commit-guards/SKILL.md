@@ -61,6 +61,8 @@ For installer maintenance or ref/scope collection mechanics, read [DEVELOPMENT.m
 
 Before resolving a setting, writing a settings file, exclusions or a baseline, or enabling release collation, read [hooks and settings](references/hooks-and-settings.md#settings-resolution). That reference owns settings resolution, grammar and exclusion/baseline formats. Use [kendex.settings.toml.example](kendex.settings.toml.example) for project declarations and the matching [CHECKS.md](CHECKS.md) section for check-specific semantics. Each check's script owns its defaults.
 
+The settings template also declares `COMMAND_SAFETY_HISTORY_POLICY` for the command-safety hook. Select its native Git history fence only with a Git build that supports the global `--no-lazy-fetch` option.
+
 ## Generated-file exclusions
 
 Before changing render exclusions or handling an unread inventory, read [Generated-file exclusions](references/hooks-and-settings.md#generated-file-exclusions). Keep inventory repair with the refresh owner and non-render exceptions in the reasoned excludes list.

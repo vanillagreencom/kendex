@@ -1,6 +1,6 @@
 # Command safety hook
 
-The `command-safety` bundle refuses recognized whole-environment reads in submitted shell command text unless a proven direct pipe filters named variables. It also refuses supported relative destructive targets reachable after a failed directory change in a flat literal command list, and applies a project command pattern. The bundle includes the hook and the commit-guards settings loader. It does not inspect a desktop session or process list.
+The `command-safety` bundle refuses recognized whole-environment reads in submitted shell command text unless a proven direct pipe filters named variables. It also refuses supported relative destructive targets reachable after a failed directory change in a flat literal command list, applies a project command pattern, and offers an opt-in Git history policy. The bundle includes the hook and the commit-guards settings loader. It does not inspect a desktop session or process list.
 
 Install the `command-safety` bundle; its environment-dump check needs no setting and cannot be disabled by the project pattern. The pattern defaults to the host-safety rule below. To replace that pattern, set `COMMAND_SAFETY_DENY_PATTERN` in `kendex.settings.toml` under `[env]`, or in the install with `kendex add --bundle command-safety --setting COMMAND_SAFETY_DENY_PATTERN=<pattern>`; the bundle's commit-guards skill declares the key. The value is a nonempty POSIX extended regular expression. The shared settings grammar and precedence are documented in [the commit-guards skill](../../skills/commit-guards/SKILL.md#configuration).
 
@@ -40,7 +40,7 @@ An absent setting applies the shipped host-safety pattern, so a fresh install re
 
 A cap that small starved a build's cgroup into a kernel allocation failure inside a filesystem transaction, and the host's root volume went read-only. A cap in gigabytes, or a run with no cap, passes. A project that sets the key replaces this pattern, so its own pattern keeps this rule where it still wants it; `^$` turns only project-pattern matching off. The project-pattern part stays inactive outside a Git worktree. An explicitly empty value, invalid pattern, missing policy tool or unreadable setting produces one keyed warning and allows that pattern check. These conditions do not disable the earlier fixed check.
 
-A malformed value on any `[env]` key produces one keyed warning and allows the pattern check, not only a malformed pattern. The settings loader reads the file whole, like every kendex settings reader, so a policy read past the bad line would come from a file the rest of the toolchain rejects. The warning replays the loader's line naming the file, the line and the key to rewrite.
+A malformed value on any `[env]` key produces one keyed warning and leaves both project checks unavailable, not only a malformed pattern. The settings loader reads the file whole, like every kendex settings reader, so a policy read past the bad line would come from a file the rest of the toolchain rejects. The warning replays the loader's line naming the file, the line and the key to rewrite.
 
 The project pattern matches tool command text both as received and with backslash-newline pairs removed. For that pattern alone, an argument array is joined with spaces. Quotes and comments remain text, so a matching literal example is also refused. Put isolated validation behind a script whose invocation does not match the pattern.
 
@@ -51,4 +51,18 @@ For a Quickshell project, this example blocks direct `qs -c vshell`, `qs -p quic
 COMMAND_SAFETY_DENY_PATTERN = "(^|[[:space:];|&])qs[[:space:]]+(-c[[:space:]]+vshell|-p[[:space:]]+quickshell/vshell)([[:space:];|&]|$)|(^|[[:space:];|&])pkill([[:space:]]+-[^[:space:];|&]+)*[[:space:]]+quickshell([[:space:];|&]|$)"
 ```
 
-Missing settings support produces one keyed warning and allows the pattern check because the hook cannot determine whether a policy exists. Repair the installed commit-guards support. Keep the pattern specific to the commands the project must prohibit. The hook does not classify commands hidden inside scripts.
+Missing settings support produces one keyed warning and leaves both project checks unavailable because the hook cannot determine whether a policy exists. Repair the installed commit-guards support. Keep the pattern specific to the commands the project must prohibit. The hook does not classify commands hidden inside scripts.
+
+## Git history policy
+
+Set `COMMAND_SAFETY_HISTORY_POLICY = "no-lazy-fetch"` under `[env]` in `kendex.settings.toml` to select the native Git fence. An absent value or `off` preserves ordinary history reads. Selection uses the same settings loader as the project pattern. The hook does not detect partial clones or change clone, promisor, fetch or update configuration. The selected policy applies within the Git-project settings boundary, including full clones.
+
+Each reached `log`, `show`, `whatchanged`, `rev-list`, `diff`, `diff-tree`, `diff-index`, `diff-files`, `range-diff`, `format-patch` or `cherry` invocation requires the exact literal global `--no-lazy-fetch` before its subcommand. Metadata-only log and worktree-only diff need the same fence. Counts, refs, paths, formats and `GIT_NO_LAZY_FETCH=1` alone grant no exception. For bounded commit inspection, use `git --no-lazy-fetch log -1 --oneline HEAD` or `git --no-lazy-fetch show HEAD`. On a supporting Git build, Git reads local objects or fails without fetching missing objects on demand.
+
+Use a Git build that supports the native option before selecting this policy for useful history inspection. The examined [Git 2.46 source](https://github.com/git/git/blob/v2.46.0/git.c) supports it; upstream Git 2.43.0 rejects it. Earliest support and vendor backports are unknown. This opt-in cost adds no kendex engine minimum version. Source evidence alone does not prove an installed build or a consumer's missing-blob behavior.
+
+The existing executable-argument matcher selects the Git invocation. Supported prefixes, nested shell source and forwarded arguments keep their existing reach and limits described above. A quoted example, an option operand, a path, an option after the subcommand or an unrelated later command supplies no native fence. An unknown or expanding Git global option position refuses under selection because it cannot establish the subcommand boundary. Unseen programs, aliases, unsupported launchers and runtime-built executable names remain outside the guarantee.
+
+History refusal uses `command-safety: refused=history-policy`, followed by `reason=missing-no-lazy-fetch` or `reason=unresolved-git-argv`. The fixed environment check still runs first. History admission runs before the independent project pattern, so `^$` or an invalid pattern cannot clear a history refusal. A fenced read can still match the project pattern.
+
+An empty or unknown history value reports `settings=invalid-history-policy` and leaves this check unavailable while the project pattern still runs. Unreadable payloads, support or settings retain the advisory warning-and-allow contract; none proves protection. Consumer enablement and private-guard removal require the consumer owner's installation and actual supporting-Git evidence.

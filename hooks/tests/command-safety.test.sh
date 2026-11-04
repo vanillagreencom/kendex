@@ -27,7 +27,7 @@ cp -R "$ROOT/skills/commit-guards/scripts/lib" "$repo/.agents/skills/commit-guar
 }
 prepare_project "$hook_source"
 hook="$repo/.claude/hooks/command-safety.sh"
-unset COMMAND_SAFETY_DENY_PATTERN COMMIT_GUARDS_SETTINGS_FILE
+unset COMMAND_SAFETY_DENY_PATTERN COMMAND_SAFETY_HISTORY_POLICY COMMIT_GUARDS_SETTINGS_FILE
 
 settings() { # [SOURCE_FILE]: the file whose one COMMAND_SAFETY_DENY_PATTERN line becomes the policy
   local source="${1:-$ROOT/docs/authoring/command-safety.md}"
@@ -1610,6 +1610,154 @@ PY
   [ "$((passed + failed))" -gt "$before" ] || { echo 'FAIL environment table has no rows'; failed=$((failed + 1)); }
   settings
 }
+history_rows() {
+  local selected_rows=("$@") selected_seen=() label policy pattern shape command_json expected key reason payload command status output
+  while IFS='|' read -r label policy pattern shape command_json expected key reason; do
+    row_selected "$label" || continue
+    printf '[env]\nCOMMAND_SAFETY_DENY_PATTERN = "%s"\n' "$pattern" >"$repo/kendex.settings.toml"
+    case "$policy" in
+      absent) ;;
+      malformed) printf 'OTHER = false\n' >>"$repo/kendex.settings.toml" ;;
+      *) printf 'COMMAND_SAFETY_HISTORY_POLICY = "%s"\n' "$policy" >>"$repo/kendex.settings.toml" ;;
+    esac
+    command=$(jq -nc "$command_json") || exit 1
+    case "$shape" in
+      copilot-object) payload=$(jq -nc --argjson command "$command" --arg cwd "$repo" '{cwd:$cwd,toolArgs:{command:$command}}') ;;
+      copilot-string) payload=$(jq -nc --argjson command "$command" --arg cwd "$repo" '{cwd:$cwd,toolArgs:({command:$command}|tojson)}') ;;
+      *) payload=$(jq -nc --argjson command "$command" --arg cwd "$repo" '{cwd:$cwd,tool_input:{command:$command}}') ;;
+    esac
+    if [ "$shape" = absent-support ]; then
+      mv "$repo/.agents/skills/commit-guards/scripts/lib" "$scratch/history-lib"
+    fi
+    status=0
+    output=$("$BASH" "$hook" <<<"$payload" 2>"$scratch/stderr") || status=$?
+    if [ "$shape" = absent-support ]; then
+      mv "$scratch/history-lib" "$repo/.agents/skills/commit-guards/scripts/lib"
+    fi
+    if [ "$status" -eq "$expected" ]; then
+      printf 'PASS history: %s\n' "$label"; passed=$((passed + 1))
+    else
+      printf 'FAIL history: %s: exit=%s expected=%s\n' "$label" "$status" "$expected"; failed=$((failed + 1))
+      cat "$scratch/stderr"
+    fi
+    first=$(first_line "$scratch/stderr")
+    if [ "$key" = silent ]; then key=-; else key="command-safety: $key"; fi
+    assert_first "$key" "history: $label key"
+    if [ "$reason" != - ]; then
+      if grep -Fx -- "command-safety: reason=$reason" "$scratch/stderr" >/dev/null; then
+        printf 'PASS history: %s reason\n' "$label"; passed=$((passed + 1))
+      else
+        printf 'FAIL history: %s reason\n' "$label"; failed=$((failed + 1))
+      fi
+    fi
+  done <<'HISTORY_ROWS'
+absent|absent|^$|shell|"git log -p --all"|0|silent|-
+off|off|^$|shell|"git log -p --all"|0|silent|-
+broad-log|no-lazy-fetch|^$|shell|"git log -p --all"|2|refused=history-policy|missing-no-lazy-fetch
+metadata|no-lazy-fetch|^$|shell|"git log -1 --no-patch --no-notes --format=fuller HEAD"|2|refused=history-policy|missing-no-lazy-fetch
+oneline|no-lazy-fetch|^$|shell|"git log --oneline -n20 HEAD"|2|refused=history-policy|missing-no-lazy-fetch
+pickaxe|no-lazy-fetch|^$|shell|"git log -1 -s -Sneedle HEAD -- one-path"|2|refused=history-policy|missing-no-lazy-fetch
+stat|no-lazy-fetch|^$|shell|"git log --stat --max-count=1 A..B"|2|refused=history-policy|missing-no-lazy-fetch
+names|no-lazy-fetch|^$|shell|"git log --name-only -Gexpr HEAD -- one-path"|2|refused=history-policy|missing-no-lazy-fetch
+show|no-lazy-fetch|^$|shell|"git show -s HEAD"|2|refused=history-policy|missing-no-lazy-fetch
+whatchanged|no-lazy-fetch|^$|shell|"git whatchanged -1"|2|refused=history-policy|missing-no-lazy-fetch
+rev-list|no-lazy-fetch|^$|shell|"git rev-list --objects --all"|2|refused=history-policy|missing-no-lazy-fetch
+worktree-diff|no-lazy-fetch|^$|shell|"git diff"|2|refused=history-policy|missing-no-lazy-fetch
+diff-tree|no-lazy-fetch|^$|shell|"git diff-tree HEAD"|2|refused=history-policy|missing-no-lazy-fetch
+diff-index|no-lazy-fetch|^$|shell|"git diff-index HEAD"|2|refused=history-policy|missing-no-lazy-fetch
+diff-files|no-lazy-fetch|^$|shell|"git diff-files"|2|refused=history-policy|missing-no-lazy-fetch
+range-diff|no-lazy-fetch|^$|shell|"git range-diff A..B C..D"|2|refused=history-policy|missing-no-lazy-fetch
+format-patch|no-lazy-fetch|^$|shell|"git format-patch -1 HEAD"|2|refused=history-policy|missing-no-lazy-fetch
+cherry|no-lazy-fetch|^$|shell|"git cherry HEAD"|2|refused=history-policy|missing-no-lazy-fetch
+fenced-log|no-lazy-fetch|^$|shell|"git --no-lazy-fetch log -p --all"|0|silent|-
+fenced-metadata|no-lazy-fetch|^$|shell|"git --no-lazy-fetch log -1 --oneline HEAD"|0|silent|-
+fenced-show|no-lazy-fetch|^$|shell|"git --no-lazy-fetch show HEAD:path"|0|silent|-
+fenced-whatchanged|no-lazy-fetch|^$|shell|"git --no-lazy-fetch whatchanged -1"|0|silent|-
+fenced-rev-list|no-lazy-fetch|^$|shell|"git --no-lazy-fetch rev-list --objects --all"|0|silent|-
+fenced-diff|no-lazy-fetch|^$|shell|"git --no-lazy-fetch diff"|0|silent|-
+fenced-diff-tree|no-lazy-fetch|^$|shell|"git --no-lazy-fetch diff-tree HEAD"|0|silent|-
+fenced-diff-index|no-lazy-fetch|^$|shell|"git --no-lazy-fetch diff-index HEAD"|0|silent|-
+fenced-diff-files|no-lazy-fetch|^$|shell|"git --no-lazy-fetch diff-files"|0|silent|-
+fenced-range-diff|no-lazy-fetch|^$|shell|"git --no-lazy-fetch range-diff A..B C..D"|0|silent|-
+fenced-format-patch|no-lazy-fetch|^$|shell|"git --no-lazy-fetch format-patch -1 HEAD"|0|silent|-
+fenced-cherry|no-lazy-fetch|^$|shell|"git --no-lazy-fetch cherry HEAD"|0|silent|-
+global-operands|no-lazy-fetch|^$|shell|"git -C repo -c x=y --git-dir meta --work-tree tree --namespace ns --config-env x=VAR --no-pager --no-lazy-fetch log -p"|0|silent|-
+attached-operands|no-lazy-fetch|^$|shell|"git -Crepo -cx=y --git-dir=meta --work-tree=tree --namespace=ns --config-env=x=VAR --no-lazy-fetch log -p"|0|silent|-
+option-operand|no-lazy-fetch|^$|shell|"git -C --no-lazy-fetch log -p"|2|refused=history-policy|missing-no-lazy-fetch
+config-operand|no-lazy-fetch|^$|shell|"git -c x=--no-lazy-fetch log -p"|2|refused=history-policy|missing-no-lazy-fetch
+late-flag|no-lazy-fetch|^$|shell|"git log --no-lazy-fetch -p"|2|refused=history-policy|missing-no-lazy-fetch
+path-flag|no-lazy-fetch|^$|shell|"git log -p -- --no-lazy-fetch"|2|refused=history-policy|missing-no-lazy-fetch
+later-command|no-lazy-fetch|^$|shell|"git log -p; echo --no-lazy-fetch"|2|refused=history-policy|missing-no-lazy-fetch
+multiple|no-lazy-fetch|^$|shell|"git --no-lazy-fetch log -1; git log --oneline"|2|refused=history-policy|missing-no-lazy-fetch
+unknown-global|no-lazy-fetch|^$|shell|"git --unknown log"|2|refused=history-policy|unresolved-git-argv
+expanding-global|no-lazy-fetch|^$|shell|"git \"$OPTIONS\" log"|2|refused=history-policy|unresolved-git-argv
+expanding-operand|no-lazy-fetch|^$|shell|"git -C \"$@\" --no-lazy-fetch log"|2|refused=history-policy|unresolved-git-argv
+env-only|no-lazy-fetch|^$|shell|"GIT_NO_LAZY_FETCH=1 git log -p"|2|refused=history-policy|missing-no-lazy-fetch
+env-prefix|no-lazy-fetch|^$|shell|"env GIT_NO_LAZY_FETCH=1 git log -p"|2|refused=history-policy|missing-no-lazy-fetch
+command-prefix|no-lazy-fetch|^$|shell|"command -p git log -p"|2|refused=history-policy|missing-no-lazy-fetch
+sudo-path|no-lazy-fetch|^$|shell|"sudo -u user /usr/bin/git log --stat"|2|refused=history-policy|missing-no-lazy-fetch
+shell-source|no-lazy-fetch|^$|shell|"bash -c 'git log -p'"|2|refused=history-policy|missing-no-lazy-fetch
+eval-source|no-lazy-fetch|^$|shell|"eval 'git log -p'"|2|refused=history-policy|missing-no-lazy-fetch
+split-source|no-lazy-fetch|^$|shell|"env -S 'git log -p'"|2|refused=history-policy|missing-no-lazy-fetch
+forwarded|no-lazy-fetch|^$|shell|"bash wrapper.sh git log -p"|2|refused=history-policy|missing-no-lazy-fetch
+heredoc|no-lazy-fetch|^$|shell|"bash <<'EOF'\ngit log -p\nEOF"|2|refused=history-policy|missing-no-lazy-fetch
+substitution|no-lazy-fetch|^$|shell|"echo $(git log -p)"|2|refused=history-policy|missing-no-lazy-fetch
+filtered-history|no-lazy-fetch|^$|shell|"git log -p \u007c grep '^NAME='"|2|refused=history-policy|missing-no-lazy-fetch
+quoted-example|no-lazy-fetch|^$|shell|"printf '%s' 'git log -p --all'"|0|silent|-
+quoted-heredoc|no-lazy-fetch|^$|shell|"cat <<'EOF'\ngit log -p\nEOF"|0|silent|-
+later-option|no-lazy-fetch|^$|shell|"git status; echo --stat -Sneedle"|0|silent|-
+unseen-program|no-lazy-fetch|^$|shell|"wrapper.sh git log -p"|0|silent|-
+unknown-launcher|no-lazy-fetch|^$|shell|"timeout 5 git log -p"|0|silent|-
+fetch|no-lazy-fetch|^$|shell|"git fetch --all"|0|silent|-
+argv-refusal|no-lazy-fetch|^$|argv|["git","log","-p"]|2|refused=history-policy|missing-no-lazy-fetch
+argv-fenced|no-lazy-fetch|^$|argv|["git","--no-lazy-fetch","log","-p"]|0|silent|-
+argv-data|no-lazy-fetch|^$|argv|["printf","git log -p"]|0|silent|-
+copilot-object|no-lazy-fetch|^$|copilot-object|"git log -p"|2|refused=history-policy|missing-no-lazy-fetch
+copilot-string|no-lazy-fetch|^$|copilot-string|"git --no-lazy-fetch log -p"|0|silent|-
+empty-selection||^$|shell|"git log -p"|0|settings=invalid-history-policy|-
+unknown-selection|unknown|^$|shell|"git log -p"|0|settings=invalid-history-policy|-
+invalid-pattern|no-lazy-fetch|[|shell|"git log -p"|2|refused=history-policy|missing-no-lazy-fetch
+independent-pattern|no-lazy-fetch|blocked|shell|"git --no-lazy-fetch log blocked"|2|refused=policy|-
+invalid-selection-pattern|unknown|blocked|shell|"git log blocked"|2|settings=invalid-history-policy|-
+environment-first|no-lazy-fetch|^$|shell|"env; git --no-lazy-fetch log -1"|2|refused=environment-dump|-
+malformed-settings|malformed|^$|shell|"git log -p"|0|settings=unreadable|-
+absent-support|no-lazy-fetch|^$|absent-support|"git log -p"|0|settings=no-loader|-
+HISTORY_ROWS
+  selection_complete
+  settings
+}
+
+if [ "${1:-}" = --history-rows ]; then
+  shift
+  history_rows "$@"
+  printf '%s passed, %s failed\n' "$passed" "$failed"
+  [ "$failed" -eq 0 ]
+  exit
+fi
+if [ "${1:-}" != --environment-rows ]; then
+  history_rows
+
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  mutant="$scratch/history-no-check.sh"
+  awk '
+    /no-lazy-fetch\) \[ -z "\$history_reason" \] \|\| refuse refused history-policy ;;/ {
+      sub(/\[ -z "\$history_reason" \]/, "[ 1 = 1 ]"); changed++
+    }
+    { print }
+    END { if (changed != 1) exit 1 }
+  ' "$hook_source" >"$mutant" || exit 1
+  if cmp -s -- "$hook_source" "$mutant"; then echo 'FAIL history control changed no bytes'; exit 1; fi
+  control_status=0
+  HOOK_UNDER_TEST="$mutant" "$BASH" "${BASH_SOURCE[0]}" --history-rows broad-log >"$scratch/history-control.log" 2>&1 || control_status=$?
+  if [ "$control_status" -eq 1 ] && grep -Fx -- 'FAIL history: broad-log: exit=0 expected=2' "$scratch/history-control.log" >/dev/null; then
+    echo 'PASS history control fails broad-log'; passed=$((passed + 1))
+  else
+    echo 'FAIL history control did not detect the missing admission decision'; failed=$((failed + 1))
+    cat "$scratch/history-control.log"
+  fi
+fi
+fi
+
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   for rendered in .claude/hooks/command-safety.sh .codex/hooks/command-safety.sh .github/hooks/command-safety.sh .pi/kendex/hooks/command-safety.sh; do
     if cmp -s -- "$hook_source" "$ROOT/$rendered"; then

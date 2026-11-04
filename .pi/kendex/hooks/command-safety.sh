@@ -3,14 +3,43 @@
 # name: command-safety
 # event: PreToolUse
 # matcher: Bash
-# description: On harnesses that execute hooks, refuse supported relative recursive deletes, git init and .git output writes reachable after a failed cd in a flat literal list. Refuse cat reads of the known ~/.fleet/env spellings. Refuse a recognized whole-environment read where the shell runs it, unless a proven direct pipe filters named variables: at a command head, among the forwarded operands of a shell or source script, a shell or env -S command string, exec or builtin, in selected shell, eval or env -S source, in literal input a shell, exec or builtin gets, and in heredoc bodies an unknown receiver gets. Words elsewhere are data. This fixed check runs outside Git and before project policy. Nested dumps can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check.
-# summary: Refuses cat reads of the known private environment file and offers the named non-secret settings reader. Refuses whole-environment reads where the shell would run them and gives a filter that names a variable; the same words as an argument, or in one quoted `<<` cat heredoc whose output goes to the terminal or a file, pass. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow the call; unreadable policy support affects only the pattern check.
-# safety: The targeting check uses existing flat stages, literal executable/operand roles and list separators; a failed cd can reach a relative recursive rm, direct git init or .git output redirect only on an executing path. Earlier cd failures remain possible after later changes. Unknown, nested, forwarded, assignment, glob/brace/tilde and unsupported invocation forms provide no targeting proof; independent environment checks still run. Classify literal command producers at executable positions, with one producer grammar: command heads, each forwarded operand of a shell or source script, a shell or env -S command string, exec or builtin, selected shell, eval and env -S source, each literal body a shell, exec or builtin gets, and each heredoc body an unknown receiver gets, judged alone as shell source. Known interpreters at a stage's own head use language-specific whole-environment evidence, which also judges input to exec, builtin and syntax-only stages, piped input included; literal cat bodies retain their data contract. Text a waiter launcher forwards keeps a conservative word test. Unquoted body expansions are checked independently. Known private-file cat reads cannot be filtered into permission. Only proven direct named-variable filters grant environment-producer dump permission; project-pattern matching remains independent and reads the submitted text. Not reached: unseen programs and runtime-built names; an unknown launcher or non-producer reader inside reserved-word syntax, such as if true; then timeout 5 env; fi; the same command as a quoted forwarded argument when the launcher stage redirects its output; the same command inside a body an unknown receiver gets; here-string input to any stage other than a shell, eval or source and an exec, builtin or syntax-only stage, an unknown program and a Python, Node, Ruby or Perl head alike, such as ssh host <<< env or python3 <<< os.environ; an interpreter body that is forwarded or nested in shell source, such as bash wrapper.sh python3 <<'EOF'; and a trap action word, such as trap 'env' EXIT. An undecoded ANSI-C escape refuses with reason=undecoded-ansi-escape under the keyed line in a command head or a producer argument or input; an ANSI-C escaped word judged as shell source, or redirected as input to a shell, source, eval, exec, builtin, script-operand or compound shell stage, refuses with no producer in it and even where that stage reads it as data, such as while read -r a b; do :; done <<< $'x 1\ny 2' or { cat; } <<< $'a\tb'; piped, it refuses only for a shell, source or eval receiver, and an exec, builtin or compound receiver reads it as data. Unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>.
+# description: On harnesses that execute hooks, refuse supported relative recursive deletes, git init and .git output writes reachable after a failed cd in a flat literal list. Refuse cat reads of the known ~/.fleet/env spellings. Refuse a recognized whole-environment read where the shell runs it, unless a proven direct pipe filters named variables: at a command head, among the forwarded operands of a shell or source script, a shell or env -S command string, exec or builtin, in selected shell, eval or env -S source, in literal input a shell, exec or builtin gets, and in heredoc bodies an unknown receiver gets. Words elsewhere are data. This fixed check runs outside Git and before project policy. Nested dumps can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_HISTORY_POLICY=no-lazy-fetch optionally requires literal global --no-lazy-fetch before reached Git history/diff subcommands, metadata and worktree diff included; off or absent preserves ordinary reads. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check.
+# summary: Refuses cat reads of the known private environment file and offers the named non-secret settings reader. Refuses whole-environment reads where the shell would run them and gives a filter that names a variable; the same words as an argument, or in one quoted `<<` cat heredoc whose output goes to the terminal or a file, pass. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow the call; unreadable policy support leaves both project checks unavailable. An optional selected Git history policy requires its native fetch fence.
+# safety: The targeting check uses existing flat stages, literal executable/operand roles and list separators; a failed cd can reach a relative recursive rm, direct git init or .git output redirect only on an executing path. Earlier cd failures remain possible after later changes. Unknown, nested, forwarded, assignment, glob/brace/tilde and unsupported invocation forms provide no targeting proof; independent environment checks still run. Classify literal command producers at executable positions, with one producer grammar: command heads, each forwarded operand of a shell or source script, a shell or env -S command string, exec or builtin, selected shell, eval and env -S source, each literal body a shell, exec or builtin gets, and each heredoc body an unknown receiver gets, judged alone as shell source. Known interpreters at a stage's own head use language-specific whole-environment evidence, which also judges input to exec, builtin and syntax-only stages, piped input included; literal cat bodies retain their data contract. Text a waiter launcher forwards keeps a conservative word test. Unquoted body expansions are checked independently. Known private-file cat reads cannot be filtered into permission. Only proven direct named-variable filters grant environment-producer dump permission; project-pattern matching remains independent and reads the submitted text. Selected Git history admission consumes decoded executable argv through one Git decision; it grants no count, ref, path, format or environment-only exception. Not reached: unseen programs and runtime-built names; an unknown launcher or non-producer reader inside reserved-word syntax, such as if true; then timeout 5 env; fi; the same command as a quoted forwarded argument when the launcher stage redirects its output; the same command inside a body an unknown receiver gets; here-string input to any stage other than a shell, eval or source and an exec, builtin or syntax-only stage, an unknown program and a Python, Node, Ruby or Perl head alike, such as ssh host <<< env or python3 <<< os.environ; an interpreter body that is forwarded or nested in shell source, such as bash wrapper.sh python3 <<'EOF'; and a trap action word, such as trap 'env' EXIT. An undecoded ANSI-C escape refuses with reason=undecoded-ansi-escape under the keyed line in a command head or a producer argument or input; an ANSI-C escaped word judged as shell source, or redirected as input to a shell, source, eval, exec, builtin, script-operand or compound shell stage, refuses with no producer in it and even where that stage reads it as data, such as while read -r a b; do :; done <<< $'x 1\ny 2' or { cat; } <<< $'a\tb'; piped, it refuses only for a shell, source or eval receiver, and an exec, builtin or compound receiver reads it as data. Unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
 
 set -euo pipefail
+
+# Git owns object access. A harness permission pattern cannot distinguish a
+# global native fence from a path or option operand. Consume only the argv
+# the existing producer selected; never search shell text for history words.
+# Native option semantics: Git v2.46.0 Documentation/git.txt and git.c.
+history_git_argv() {
+  local cursor=$pos value fenced=""
+  while [ "$cursor" -lt "${#args[@]}" ]; do
+    value=${args[$cursor]}
+    [ "${arg_kinds[$cursor]}" = literal ] || { history_reason=unresolved-git-argv; return; }
+    case "$value" in
+      --no-lazy-fetch) fenced=1 ;;
+      -C | -c | --git-dir | --work-tree | --namespace | --config-env)
+        cursor=$((cursor + 1))
+        [ "${arg_kinds[$cursor]:-}" = literal ] || { history_reason=unresolved-git-argv; return; } ;;
+      -C?* | -c?* | --git-dir=* | --work-tree=* | --namespace=* | --config-env=* | --exec-path=*) ;;
+      -p | --paginate | -P | --no-pager | --bare | --no-replace-objects | --no-optional-locks | --no-advice | --literal-pathspecs | --glob-pathspecs | --noglob-pathspecs | --icase-pathspecs) ;;
+      --version | -v | --help | -h | --exec-path | --html-path | --man-path | --info-path) return ;;
+      -*) history_reason=unresolved-git-argv; return ;;
+      *)
+        case "$value" in
+          log | show | whatchanged | rev-list | diff | diff-tree | diff-index | diff-files | range-diff | format-patch | cherry)
+            [ -n "$fenced" ] || history_reason=missing-no-lazy-fetch ;;
+        esac
+        return ;;
+    esac
+    cursor=$((cursor + 1))
+  done
+}
 
 # The reported private file is checked as text, without opening it or
 # evaluating submitted expansions. Filtering cannot make that read safe.
@@ -99,6 +128,7 @@ environment_producer() { # command kind
       esac
     done
     producer_end=$pos
+    [ "${program:-}" != git ] || history_git_argv
     # Bash expands ANSI-C escapes after the harness submits command text.
     # These producer operands cannot prove a safe name, flag or input path.
     case "${program:-}" in
@@ -1079,7 +1109,8 @@ refuse() { # KEY VALUE [CAUSE]
       hook=unlocatable) echo "this hook's own directory could not be read, so its installed dependencies cannot be found" ;;
       settings=no-loader) echo "the command-safety bundle requires the installed commit-guards settings loader" ;;
       support=unreadable) echo "the installed commit-guards support could not be loaded; repair that installation; its diagnostic follows" ;;
-      settings=unreadable) echo "the project settings could not be read, so COMMAND_SAFETY_DENY_PATTERN is unknown; the loader's line below names what to fix" ;;
+      settings=unreadable) echo "the project settings could not be read, so the project command policies are unknown; the loader's line below names what to fix" ;;
+      settings=invalid-history-policy) echo "COMMAND_SAFETY_HISTORY_POLICY must be off or no-lazy-fetch; the history check is unavailable" ;;
       settings=empty) echo "COMMAND_SAFETY_DENY_PATTERN must be configured" ;;
       settings=invalid-pattern) echo "COMMAND_SAFETY_DENY_PATTERN is not a readable POSIX ERE" ;;
       refused=policy) echo "the command text matches this project's COMMAND_SAFETY_DENY_PATTERN" ;;
@@ -1087,6 +1118,11 @@ refuse() { # KEY VALUE [CAUSE]
         echo "a failed directory change can reach a relative recursive delete, git init or .git write in this literal command list"
         echo "make the target depend on a successful directory change with &&, stop on failure, or use a verified literal absolute target"
         echo "earlier failed directory changes remain possible even after a later cd; nested, dynamic and unsupported forms have no targeting proof" ;;
+      refused=history-policy)
+        printf 'command-safety: reason=%s\n' "$history_reason"
+        echo "COMMAND_SAFETY_HISTORY_POLICY requires the literal global --no-lazy-fetch option before each reached Git history or diff subcommand"
+        echo "submit literal Git global options and put --no-lazy-fetch before the subcommand, for example: git --no-lazy-fetch log -1 --oneline HEAD"
+        echo "use a Git build that supports that native option; counts, refs, paths, formats and GIT_NO_LAZY_FETCH alone grant no exception" ;;
       refused=environment-dump)
         # An undecoded escape is refused as unknown, not as a recognized read,
         # so it gets its own reason and remedy.
@@ -1110,6 +1146,7 @@ refuse() { # KEY VALUE [CAUSE]
     # replayed here: under the keyed line, never ahead of it.
     [ -z "${3:-}" ] || printf '%s\n' "$3"
   } >&2 || :
+  [ "$1=$2" != settings=invalid-history-policy ] || return 0
   case "$1" in
     refused | path) exit 2 ;;
     *)
@@ -1191,6 +1228,7 @@ fields="$(jq -er '
 } <<<"$fields"$'\t'
 # Set by the escape arms, which refuse what they cannot decode.
 dump_reason=""
+history_reason=""
 if environment_dump "$command_kind"; then
   refuse refused environment-dump
 fi
@@ -1281,6 +1319,15 @@ cd -- "$root" || refuse cwd "$root"
 # left a host's root volume read-only. skills/commit-guards'
 # kendex.settings.toml.example declares the same value.
 default_pattern='(^|[^[:alnum:]_-])systemd-run[[:space:]][^&;|]*Memory(Max|High)=[[:punct:]]?[0-9]+[KkMm]([^[:alnum:]]|$)'
+history_policy="$(gg_setting COMMAND_SAFETY_HISTORY_POLICY off 2>&1)" || refuse settings unreadable "$history_policy"
+case "$history_policy" in
+  off) ;;
+  no-lazy-fetch) [ -z "$history_reason" ] || refuse refused history-policy ;;
+  *)
+    # An invalid selection leaves only this advisory check unavailable. The
+    # independently readable project pattern must still get its decision.
+    refuse settings invalid-history-policy ;;
+esac
 pattern="$(gg_setting COMMAND_SAFETY_DENY_PATTERN "$default_pattern" 2>&1)" || refuse settings unreadable "$pattern"
 [ -n "$pattern" ] || refuse settings empty
 [ "$pattern" != '^$' ] || exit 0
