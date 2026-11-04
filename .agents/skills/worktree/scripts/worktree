@@ -990,12 +990,22 @@ parse_push_args() {
   PUSH_PREPARE_BASE=false
   PUSH_MESSAGE_FILE=""
   PUSH_TO_BASE=""
+  PUSH_CANDIDATE_HEAD=""
+  PUSH_CANDIDATE_BASE=""
   local arg_seen=false
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -u|--set-upstream) PUSH_SET_UPSTREAM="-u"; shift ;;
       --no-rebase) PUSH_AUTO_REBASE=false; shift ;;
       --prepare-base) PUSH_PREPARE_BASE=true; shift ;;
+      --publish-candidate)
+        if [[ -n "$PUSH_CANDIDATE_HEAD" || $# -lt 3 || ! "$2" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ || ! "$3" =~ ^([0-9a-f]{40}|[0-9a-f]{64})$ ]]; then
+          worktree_message push-candidate-identities "${2:-missing}" "Pass complete head and base commit identities once for candidate publication." >&2
+          return 1
+        fi
+        PUSH_CANDIDATE_HEAD="$2"
+        PUSH_CANDIDATE_BASE="$3"
+        shift 3 ;;
       --message-file)
         if [[ $# -lt 2 || -z "$2" ]]; then
           worktree_message push-message-file missing "Pass a commit message file for base preparation." >&2
@@ -1037,6 +1047,10 @@ parse_push_args() {
         ;;
     esac
   done
+  if [[ -n "$PUSH_CANDIDATE_HEAD" && ( "$PUSH_AUTO_REBASE" != true || "$PUSH_PREPARE_BASE" == true || -n "$PUSH_TO_BASE" ) ]]; then
+    worktree_message push-candidate-options "$PUSH_ARG" "Candidate publication cannot combine with no-rebase or base delivery." >&2
+    return 1
+  fi
   if [[ -n "$PUSH_MESSAGE_FILE" && "$PUSH_PREPARE_BASE" != true ]]; then
     worktree_message push-message-file unused "The message file requires --prepare-base." >&2
     return 1
@@ -4136,6 +4150,10 @@ case "${1:-}" in
       exit 1
     fi
     PUSH_CHECKOUT_MODE="$(worktree_checkout_mode "$WT_PATH")" || exit 1
+    if [[ -n "$PUSH_CANDIDATE_HEAD" && "$PUSH_CHECKOUT_MODE" == claim ]]; then
+      worktree_message push-candidate-checkout "$WT_PATH" "Materialize the item checkout before candidate publication." >&2
+      exit 1
+    fi
     # A remote-work claim publishes its creation snapshot. Rebasing it needs
     # a local checkout, which create --reuse/--restack materializes first.
     if [[ "$PUSH_CHECKOUT_MODE" == claim ]]; then AUTO_REBASE=false; fi
@@ -4181,6 +4199,18 @@ case "${1:-}" in
     if ! CURRENT_BRANCH="$(git -C "$WT_PATH" branch --show-current 2>/dev/null)"; then
       worktree_message push-branch-read-failed "$WT_PATH" "Error: could not read the current branch of $WT_PATH; refusing to push." >&2
       exit 1
+    fi
+    if [[ -n "$PUSH_CANDIDATE_HEAD" ]]; then
+      if [[ -z "$CURRENT_BRANCH" || "$CURRENT_BRANCH" == "$DEFAULT_BRANCH" ]]; then
+        worktree_message push-candidate-branch "$WT_PATH" "Candidate publication requires an item branch." >&2
+        exit 1
+      fi
+      CANDIDATE_HEAD_NOW="$(git -C "$WT_PATH" rev-parse --verify HEAD)" || exit 1
+      CANDIDATE_BASE_COMMIT="$(git -C "$WT_PATH" rev-parse --verify "${PUSH_CANDIDATE_BASE}^{commit}")" || exit 1
+      if [[ "$CANDIDATE_HEAD_NOW" != "$PUSH_CANDIDATE_HEAD" || "$CANDIDATE_BASE_COMMIT" != "$PUSH_CANDIDATE_BASE" ]]; then
+        worktree_message push-candidate-conflict "$CURRENT_BRANCH" "The declared candidate identities do not match this checkout. Review and validate again before publication." >&2
+        exit 1
+      fi
     fi
     if ! read_committed_unexport; then
       worktree_message push-settings-unread "$PROJECT_ROOT" "Error: could not read the main checkout's committed settings to keep them out of the commit and pre-push hooks; refusing to push." >&2
@@ -4228,7 +4258,13 @@ case "${1:-}" in
           fi
         fi
         base_reading "$WT_PATH" "$DEFAULT_BRANCH" "origin/$DEFAULT_BRANCH"
-        if [[ -n "$PUSH_TO_BASE" ]]; then
+        if [[ -n "$PUSH_CANDIDATE_HEAD" ]]; then
+          CANDIDATE_BASE_NOW="$(git -C "$WT_PATH" rev-parse --verify "origin/$DEFAULT_BRANCH")" || exit 1
+          if [[ "$CANDIDATE_BASE_NOW" != "$PUSH_CANDIDATE_BASE" || "$BASE_READING" != contained ]]; then
+            worktree_message push-candidate-base-conflict "origin/$DEFAULT_BRANCH" "The fetched base differs from the declared base or is absent from the candidate. Review and validate again before publication." >&2
+            exit 1
+          fi
+        elif [[ -n "$PUSH_TO_BASE" ]]; then
           PUSH_BASE_NOW="$(git -C "$WT_PATH" rev-parse "origin/$DEFAULT_BRANCH")" || exit 1
           if [[ "$PUSH_BASE_NOW" != "$PUSH_TO_BASE" || "$BASE_READING" != contained ]]; then
             worktree_message push-base-conflict "origin/$DEFAULT_BRANCH" "The base changed after preparation. Restack, prepare and validate again before publication." >&2
@@ -4386,7 +4422,17 @@ case "${1:-}" in
       fi
     fi
 
-    CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
+    if [[ -n "$PUSH_CANDIDATE_HEAD" ]]; then
+      CANDIDATE_BRANCH_NOW="$(git -C "$WT_PATH" branch --show-current)" || exit 1
+      CANDIDATE_HEAD_NOW="$(git -C "$WT_PATH" rev-parse --verify HEAD)" || exit 1
+      if [[ "$CANDIDATE_BRANCH_NOW" != "$CURRENT_BRANCH" || "$CANDIDATE_HEAD_NOW" != "$PUSH_CANDIDATE_HEAD" ]]; then
+        worktree_message push-candidate-conflict "$CURRENT_BRANCH" "The candidate checkout changed before transport. Review and validate again before publication." >&2
+        exit 1
+      fi
+    elif ! CURRENT_BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null); then
+      worktree_message push-branch-read-failed "$WT_PATH" "Error: could not read the current branch of $WT_PATH; refusing to push." >&2
+      exit 1
+    fi
     if [[ -z "$SET_UPSTREAM" && -n "$CURRENT_BRANCH" ]]; then
       UPSTREAM=$(git -C "$WT_PATH" config "branch.${CURRENT_BRANCH}.remote" 2>/dev/null || true)
       [[ -z "$UPSTREAM" ]] && SET_UPSTREAM="-u"
@@ -4397,6 +4443,12 @@ case "${1:-}" in
     if [[ -n "$SET_UPSTREAM" ]]; then
       PUSH_UPSTREAM_ARGS=("$SET_UPSTREAM")
       PUSH_REF="HEAD:refs/heads/${CURRENT_BRANCH}"
+    fi
+    if [[ -n "$PUSH_CANDIDATE_HEAD" ]]; then
+      # Git cannot install tracking from an OID source; do so after transport.
+      # This local Git integration choice needs no architectural decision.
+      PUSH_UPSTREAM_ARGS=()
+      PUSH_REF="$PUSH_CANDIDATE_HEAD:refs/heads/$CURRENT_BRANCH"
     fi
     if [[ -n "$PUSH_TO_BASE" ]]; then
       PUSH_UPSTREAM_ARGS=()
@@ -4429,6 +4481,13 @@ case "${1:-}" in
     fi
     if [[ "$(restack_state_get "$WT_PATH" branch)" == "$CURRENT_BRANCH" ]]; then
       clear_restack_push_authorization "$WT_PATH"
+    fi
+    if [[ -n "$PUSH_CANDIDATE_HEAD" && -n "$SET_UPSTREAM" ]]; then
+      if ! git -C "$WT_PATH" config "branch.$CURRENT_BRANCH.remote" "$REMOTE" ||
+         ! git -C "$WT_PATH" config "branch.$CURRENT_BRANCH.merge" "refs/heads/$CURRENT_BRANCH"; then
+        worktree_message push-candidate-tracking-failed "$REMOTE/$CURRENT_BRANCH" "The candidate was published, but Git tracking setup failed. Repair the branch tracking configuration." >&2
+        exit 1
+      fi
     fi
     if [[ -n "$PUSH_TO_BASE" ]]; then
       BASE_PUSH_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || exit 1
