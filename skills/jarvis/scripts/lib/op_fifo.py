@@ -433,6 +433,11 @@ def broker(args):
             check_own_entries(directory)
         lock = lock_directory(directory)
         env, route = session(op, args.account or os.environ.get("OP_ACCOUNT"))
+        if keepalive is not None and route == "app-integration":
+            # Each app call leads its own terminal session, which needs its own native authorization.
+            raise Refusal("keepalive=unsupported cause=per-terminal-authorization\n"
+                          "JARVIS_OP_KEEPALIVE_SECS cannot renew app integration authorization: "
+                          "each call has its own terminal session. Leave the setting unset for this route.")
         try:
             os.unlink("requests", dir_fd=directory)
         except FileNotFoundError:
@@ -550,12 +555,12 @@ def main(kind):
         epilog="The broker takes OP_SESSION from its environment, or starts op signin --raw when its stdin is a "
                "terminal; those calls disable desktop integration, so they raise no desktop approval prompt. With "
                "JARVIS_OP_APP_INTEGRATION=1 and no OP_SESSION, calls go through the 1Password desktop app instead: "
-               "one approval covers every call until 10 minutes pass with no call, 12 hours pass, or the app "
-               "locks. Setting both refuses. Calls never print secrets. When JARVIS_OP_KEEPALIVE_SECS is set, the "
+               "each call keeps its native approval route. On Linux each call has its own terminal session, "
+               "which needs its own authorization. Setting both refuses. Calls never print secrets. "
+               "When JARVIS_OP_KEEPALIVE_SECS is set, the "
                "broker renews whenever it has been idle that many seconds after a successful call, with op whoami "
-               "for OP_SESSION or op vault list for the app integration, which keeps the approval past 1Password's "
-               "idle expiry; unset, it never renews. "
-               "Under the app integration, a failed renewal stops renewal until a caller's next successful call. "
+               "for OP_SESSION; unset, it never renews. App integration with a selected keepalive refuses at "
+               "startup with keepalive=unsupported cause=per-terminal-authorization. "
                "Clients need Python 3, not op. read writes the raw value to --output; op and @SCRIPT write one "
                "JSON record {\"exit\": N, \"stdout\": BASE64}. After an op or @SCRIPT request was sent, "
                "request=timeout or request=cancelled leaves its outcome unknown: check before retrying a write. "
