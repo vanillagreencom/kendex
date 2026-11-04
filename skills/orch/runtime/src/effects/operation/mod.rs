@@ -77,6 +77,7 @@ pub(in crate::effects) use host::{
 };
 pub(in crate::effects) use host::{server_codex_home, session_owner};
 pub(in crate::effects) use obligations::{EffectOutcome, Published, Wire, Word};
+pub(crate) use obligations::{JobHandle, SidecarRead};
 pub(in crate::effects) use window::{
     OpenRefusal, Polled, Recovered, TurnConfirm, opening_observation,
 };

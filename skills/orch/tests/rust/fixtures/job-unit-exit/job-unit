@@ -1,0 +1,6 @@
+#!/bin/bash
+# A job launcher that answers the status its argv's last word names and
+# starts nothing: `launch NAME RECORD -- ARGV... STATUS` exits STATUS. A
+# file of the tree, never written while a row runs, so no other row's child
+# between its fork and its exec holds it open for writing when it is run.
+exit "${!#}"

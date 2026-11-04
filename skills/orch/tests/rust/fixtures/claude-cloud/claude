@@ -11,10 +11,16 @@
 # follows the answer then cannot be written), ends the process
 # $CLAUDE_CLOUD_KILL names where set (the mailbox program, killed after the
 # directive was taken and before any receipt; `parent`, the process that
-# started the CLI), and prints
+# started the CLI), waits for one line on the fifo $CLAUDE_CLOUD_HOLD where
+# set (read with a bound, so a row that fails before it writes the line
+# leaves no CLI standing), and prints
 # $CLAUDE_CLOUD_ANSWER, the `{ok: true}` answer where unset.
 set -u
 printf 'argv=%s\nconfig=%s\nstdin=%s\n' "$*" "${CLAUDE_CONFIG_DIR:-}" "$(cat)" >> "${CLAUDE_CLOUD_LOG:?}"
+if [ -n "${CLAUDE_CLOUD_HOLD:-}" ]; then
+  exec 3<>"$CLAUDE_CLOUD_HOLD"
+  read -r -t 30 -u 3 _ || :
+fi
 [ -z "${CLAUDE_CLOUD_PARENT_LOG:-}" ] || printf 'parent-marker=%s\n' "${CLAUDECODE-}" >> "$CLAUDE_CLOUD_PARENT_LOG"
 [ "${CLAUDE_CLOUD_KILL:-}" != parent ] || CLAUDE_CLOUD_KILL=$PPID
 [ -z "${CLAUDE_CLOUD_KILL:-}" ] || kill -KILL -- "$CLAUDE_CLOUD_KILL"

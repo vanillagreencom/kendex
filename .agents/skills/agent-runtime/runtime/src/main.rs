@@ -805,8 +805,21 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &Map::new(),
                 Expect::Absent,
             ) {
-                let _ = tmux::kill_window(&rec.pane);
-                return Err(e);
+                // A window whose close cannot be read may stand holding only
+                // its shell, which no record names: the refusal names it.
+                return Err(match tmux::kill_window(&rec.pane) {
+                    Close::Closed | Close::AlreadyGone => e,
+                    Close::Unreadable { cause } => Error::refused(
+                        "launch-window-unclosed",
+                        &[
+                            ("cause", e.key()),
+                            ("close", &cause),
+                            ("session", &rec.pane.session),
+                            ("window", &rec.pane.window),
+                            ("pane", &rec.pane.id),
+                        ],
+                    ),
+                });
             }
             let loaded = match tmux::load_line(&rec.pane, &rec.command_line) {
                 Ok(loaded) => loaded,

@@ -1,8 +1,7 @@
-//! The mail duty (step5-map § A7, § A8, § B rows 1, 2 and 4; decisions 31,
-//! 121 Q1, Q2, 141 (4), 142 (1)): the real mailbox program on a temporary
-//! checkout, read through the duty on the runner and its fake clock, and a
-//! stand-in that dies between its append and its receipt. Each row names
-//! the defect it catches at its doc comment.
+//! The mail duty: the real mailbox program on a temporary checkout, read
+//! through the duty on the runner and its fake clock, and a stand-in that
+//! dies between its append and its receipt. Each row names the defect it
+//! catches at its doc comment.
 #![allow(
     clippy::disallowed_methods,
     reason = "the rows plant mailboxes and records, run the real mailbox program and drive the one fake clock"
@@ -44,6 +43,65 @@ fn real_lane_mail() -> PathBuf {
 /// to the client in-process.
 fn hold() -> PathBuf {
     isolated_program(&fixtures().join("lane-mail-hold/lane-mail"))
+}
+
+/// Defect: a program a row hands the client in-process inherits this test
+/// process's environment, so a `git` it runs reads the operator's own
+/// configuration. Each route by which an inherited environment names a
+/// configuration is planted alone in a stand-in for that environment:
+/// `git` started plainly reads the planted key; behind
+/// [`isolated_program`], which [`hold`] wraps the mailbox program with, it
+/// never does.
+#[test]
+fn a_program_run_in_process_reads_no_git_configuration_its_environment_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = std::fs::canonicalize(dir.path()).unwrap();
+    let (home, cwd) = (root.join("home"), root.join("cwd"));
+    for dir in [&home, &cwd] {
+        std::fs::create_dir_all(dir).unwrap();
+    }
+    let wrapped = isolated_program(Path::new("git"));
+    for (route, named, file) in [
+        ("home", None, home.join(".gitconfig")),
+        (
+            "xdg",
+            Some(("XDG_CONFIG_HOME", root.join("xdg"))),
+            root.join("xdg/git/config"),
+        ),
+        (
+            "global",
+            Some(("GIT_CONFIG_GLOBAL", root.join("global"))),
+            root.join("global"),
+        ),
+        (
+            "system",
+            Some(("GIT_CONFIG_SYSTEM", root.join("system"))),
+            root.join("system"),
+        ),
+    ] {
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "[probe]\n\toperator = planted\n").unwrap();
+        let read = |program: &Path| {
+            let mut command = Command::new(program);
+            command
+                .env_clear()
+                .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+                .env("HOME", &home)
+                .env("GIT_CEILING_DIRECTORIES", &root)
+                .current_dir(&cwd)
+                .args(["config", "--get", "probe.operator"]);
+            if let Some((name, value)) = &named {
+                command.env(name, value);
+            }
+            command.output().unwrap()
+        };
+        let plain = read(Path::new("git"));
+        assert_eq!(plain.stdout, b"planted\n", "{route}: {plain:?}");
+        let isolated = read(&wrapped);
+        assert_eq!(isolated.status.code(), Some(1), "{route}: {isolated:?}");
+        assert!(isolated.stdout.is_empty(), "{route}: {isolated:?}");
+        std::fs::remove_file(&file).unwrap();
+    }
 }
 
 /// One checkout holding the fleet state, its running lanes rooted at the
@@ -247,12 +305,11 @@ fn notice(id: &str, item: &str, text: &str) -> Value {
     json!({"id": id, "kind": "notice", "at": "2026-01-29T15:20:00Z", "from": item, "text": text})
 }
 
-/// § B rows 1 and 2. Defect: the scheduler acknowledging the overseer's box
-/// on announcing (the legacy `inbox --ack`), so a note announced to a
-/// controller that never handled it is read; or a directive reported read
-/// on the overseer's send rather than the lane's own read. A log the
-/// handoff left at line 3; a note in the overseer's box and a directive
-/// 400 s old in the lane's. The first turn appends the directive's
+/// Defect: the scheduler acknowledging the overseer's box on announcing, so a
+/// note announced to a controller that never handled it is read; or a
+/// directive reported read on the overseer's send rather than the lane's own
+/// read. A log the handoff left at line 3; a note in the overseer's box and a
+/// directive 400 s old in the lane's. The first turn appends the directive's
 /// `directive-unread` and the note with its text past line 3 and moves no
 /// cursor of either box; a poll with nothing landed appends nothing; the
 /// handler's own `inbox` acknowledges the note and the lane's reads its
@@ -465,16 +522,15 @@ fn a_send_that_dies_before_its_receipt_repeated_under_its_operation_id_lands_one
     assert_eq!(rows(&mailbox).len(), 2);
 }
 
-/// Decision 142 (1). Defect: a refused read taken as a lane with nothing
-/// new, or as an empty box. A program that exits nonzero, one whose header
-/// is not one, one that stops short of its receipts, one naming another
-/// lane, one that never answers and one that never starts each refuse the
-/// batched read by its typed cause with no lane drained, the last two
-/// apart; one that prints the first lane whole
-/// and exits on the second answers for the first alone. Through the duty
-/// on the runner the nonzero exit is `watch-step-failed step=mail` once,
-/// the next refused turn under the runner's repeat rule (decision 156 (1),
-/// `watch_core`'s row), with no row written.
+/// Defect: a refused read taken as a lane with nothing new, or as an empty
+/// box. A program that exits nonzero, one whose header is not one, one that
+/// stops short of its receipts, one naming another lane, one that never
+/// answers and one that never starts each refuse the batched read by its
+/// typed cause with no lane drained, the last two apart; one that prints the
+/// first lane whole and exits on the second answers for the first alone.
+/// Through the duty on the runner the nonzero exit is `watch-step-failed
+/// step=mail` once, the next refused turn under the runner's repeat rule
+/// (`watch_core`'s row), with no row written.
 #[test]
 fn a_refused_read_stops_the_turn_with_its_cause_and_reads_no_box_as_empty() {
     let w = world(&hold(), 20);
@@ -603,11 +659,11 @@ fn a_refused_read_stops_the_turn_with_its_cause_and_reads_no_box_as_empty() {
     assert_eq!(w.baseline().rows, Vec::new(), "no box read, no row moved");
 }
 
-/// Decision 141 (4). Defect: a box with nothing new emitting a line or
-/// moving a row each turn, waking the session for nothing. A lane's notice
-/// is one line with its text and the two rows on the first turn; the next
-/// full turn with the same box is no line and no change; a second notice
-/// is one more line and the row moved to it.
+/// Defect: a box with nothing new emitting a line or moving a row each turn,
+/// waking the session for nothing. A lane's notice is one line with its text
+/// and the two rows on the first turn; the next full turn with the same box
+/// is no line and no change; a second notice is one more line and the row
+/// moved to it.
 #[test]
 fn an_unchanged_box_emits_no_line_and_asks_no_change() {
     let w = world(&hold(), 20);
@@ -729,17 +785,16 @@ fn a_due_owner_ask_is_closed_with_its_recommendation_and_announced_from_the_box(
     );
 }
 
-/// Decision 159, the wake's slot. Defect: the `unread` row set from the
-/// box's count alone, so it stands after the target's own read, and the
-/// wake nudges a lead or lane that has read its mail; or the lead's row
-/// waiting the mail interval instead of the box poll. The real program on
-/// the fixture: a directive in the lane's box and a note in the lead's set
-/// one row each with the newest id on the first turn; a poll and a full
-/// turn with no news change nothing; a note landing between full turns
-/// moves the lead's row on the poll, a second directive the lane's on the
-/// next full turn; the handler's and the lane's own `inbox` move the
-/// cursors, which the next full turn reads and clears both rows; the box
-/// itself is never written by the duty.
+/// The wake's slot. Defect: the `unread` row set from the box's count alone,
+/// so it stands after the target's own read, and the wake nudges a lead or
+/// lane that has read its mail; or the lead's row waiting the mail interval
+/// instead of the box poll. The real program on the fixture: a directive in
+/// the lane's box and a note in the lead's set one row each with the newest
+/// id on the first turn; a poll and a full turn with no news change nothing;
+/// a note landing between full turns moves the lead's row on the poll, a
+/// second directive the lane's on the next full turn; the handler's and the
+/// lane's own `inbox` move the cursors, which the next full turn reads and
+/// clears both rows; the box itself is never written by the duty.
 #[test]
 fn the_unread_row_stands_with_the_newest_id_until_the_target_s_own_read_clears_it() {
     let w = world(&hold(), 20);
@@ -840,14 +895,14 @@ fn the_unread_row_stands_with_the_newest_id_until_the_target_s_own_read_clears_i
     assert_eq!(w.cursor("overseer").as_deref(), Some("2\n"));
 }
 
-/// Decision 133. Defect: one unreadable mailbox holding every lane's mail,
-/// or the refused lane's row moved so its mail is skipped once it reads
-/// again. Three lanes with a notice each, the second's cursor file holding
-/// no count: the turn names the second alone with the program's own key,
-/// delivers the first and third with their rows and no row of the second;
-/// on the runner the two lanes' lines precede `watch-step-failed step=mail
-/// count=1`; with the cursor file gone the next full turn delivers the
-/// second lane's notice with no failure line.
+/// Defect: one unreadable mailbox holding every lane's mail, or the refused
+/// lane's row moved so its mail is skipped once it reads again. Three lanes
+/// with a notice each, the second's cursor file holding no count: the turn
+/// names the second alone with the program's own key, delivers the first and
+/// third with their rows and no row of the second; on the runner the two
+/// lanes' lines precede `watch-step-failed step=mail count=1`; with the
+/// cursor file gone the next full turn delivers the second lane's notice with
+/// no failure line.
 #[test]
 fn one_refused_lane_among_three_delivers_the_other_two_and_is_read_again_next_turn() {
     let w = world_of(&hold(), 20, &[ITEM, "KEN-2", "KEN-3"]);
@@ -935,14 +990,14 @@ fn one_refused_lane_among_three_delivers_the_other_two_and_is_read_again_next_tu
     assert_eq!(w.baseline().get("lane-mail", "KEN-2"), Some("1 n-2"));
 }
 
-/// R-RECON F4, decision 156 (1). Defect: the one-second poll between full
-/// turns, which reads the overseer box alone, ending the failure count, so
-/// a lane whose read stands refused is said as a first failure on every
-/// full turn (every 20 s) instead of on the first and every Nth. Three
-/// lanes, the second's cursor holding no count, 60 one-second slices under
-/// `ORCH_OVERSEER_MARK_REPEAT=3`: the full turns at 0, 20, 40 and 60 s are
-/// failures 1 to 4, said at the first and the third; the polls between them
-/// judge no lane and move the count neither way.
+/// Defect: the one-second poll between full turns, which reads the overseer
+/// box alone, ending the failure count, so a lane whose read stands refused
+/// is said as a first failure on every full turn (every 20 s) instead of on
+/// the first and every Nth. Three lanes, the second's cursor holding no
+/// count, 60 one-second slices under `ORCH_OVERSEER_MARK_REPEAT=3`: the full
+/// turns at 0, 20, 40 and 60 s are failures 1 to 4, said at the first and the
+/// third; the polls between them judge no lane and move the count neither
+/// way.
 #[test]
 fn a_standing_refused_lane_is_said_on_the_mark_repeat_rule_across_polls() {
     let w = world_with(

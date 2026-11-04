@@ -6011,55 +6011,100 @@ fn a_hosted_launch_runs_the_providers_verbs_and_opens_its_window_over_ssh() {
     effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
 }
 
-/// Defect: a provider create that may have acted settled failed. The
-/// provider's `create` ends on a signal with no answer: the launch is held
-/// `host-create-unknown` naming the host, the lane preparing and no window
-/// opened; a reconcile holds it again from the phase recorded before the
-/// create; and a close settles it, naming the step and the host.
+/// Defect: a hosted create whose answer is lost held for a person, or read
+/// as a refused create, where the provider's next create reuses what it
+/// holds. Through the real `lane-host`: a launch whose `op` ends inside
+/// the create is failed by the reconcile from the phase the launch
+/// recorded before it; a provider a signal ends mid-create fails the launch
+/// `host-create-unknown` with no window, never `host-create-failed`; each
+/// leaves the lane out of `preparing`, and the next launch asks the
+/// provider's create again, reusing the item it holds, and opens.
 #[test]
-fn a_hosted_create_with_no_answer_is_held_until_a_close_settles_it() {
+fn a_hosted_create_whose_answer_is_lost_fails_and_the_next_create_reuses_what_it_holds() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
     let world = HostedLaunch::new(&server, dir.path(), record);
+    // The shipped dispatcher in the fixture's place, its libraries beside
+    // it as an install lays them out; the fixture is the provider it runs.
+    let shipped = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts");
+    let provider = dir.path().join("provider");
+    std::fs::create_dir_all(&provider).unwrap();
+    std::fs::rename(
+        world.scripts.join("lane-host.json"),
+        provider.join("lane-host.json"),
+    )
+    .unwrap();
+    std::fs::remove_file(world.scripts.join("lane-host")).unwrap();
+    std::os::unix::fs::symlink(shipped.join("lane-host"), world.scripts.join("lane-host")).unwrap();
+    std::os::unix::fs::symlink(shipped.join("lib"), world.scripts.join("lib")).unwrap();
+    std::os::unix::fs::symlink(
+        shipped.join("../../mailbox"),
+        world.scripts.join("../../mailbox"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        fixtures().join("lane-host/lane-host"),
+        provider.join("lane-host"),
+    )
+    .unwrap();
+    let host = provider.join("lane-host").display().to_string();
     let account = world.runner.state_dir().display().to_string();
-    let answers_path = world.scripts.join("lane-host.json");
+    let first = format!("create --item KEN-H --repo o/r --harness claude --account {account}");
+    let create = format!("{first} --relaunch");
+    let answers_path = provider.join("lane-host.json");
     let mut answers: Value =
         serde_json::from_str(&std::fs::read_to_string(&answers_path).unwrap()).unwrap();
-    answers[format!("create --item KEN-H --repo o/r --harness claude --account {account}")] =
-        json!({"signal": "KILL"});
+    answers[first.as_str()] = json!({"kill_ancestor": 2});
+    answers[format!("{create}#1")] = json!({"signal": "KILL"});
+    answers[format!("{create}#2")] = json!({"stdout": format!(
+        "ssh-target=lane.example\tpath={}\tremote-prefix=exec bash -c\n",
+        world.host()
+    )});
     std::fs::write(&answers_path, answers.to_string()).unwrap();
-    let panes_before = server.panes().len();
-    let report = effect_report(&world.runner.op_fleet(&world.request()));
-    assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
-    let observation = &report["intent"]["observation"];
-    assert_eq!(observation["note"], "host-create-unknown", "{report}");
-    assert_eq!(observation["at"], PROVIDER_PATH, "{report}");
-    assert_eq!(server.panes().len(), panes_before, "no window opened");
+    let mut request = world.request();
+    request["host"] = json!(host);
+    let ended = world.runner.op_fleet(&request);
+    assert!(!ended.status.success(), "the asking op ended");
     let reconciled = world.runner.reconcile_one();
-    assert_eq!(
-        reconciled["intent"]["outcome"], "unconfirmed",
-        "{reconciled}"
-    );
+    assert_eq!(reconciled["intent"]["outcome"], "failed", "{reconciled}");
     assert_eq!(
         reconciled["intent"]["observation"]["note"], "host-create-unknown",
         "{reconciled}"
     );
-    assert_eq!(world.runner.fleet()["lanes"][0]["status"], "preparing");
-    let closed = world.runner.op_fleet(&terminal_close("KEN-H"));
-    let launch = world.runner.fleet()["intents"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|i| i["op"] == "launch-lane")
-        .cloned()
-        .unwrap();
-    assert_eq!(launch["outcome"], "failed", "{launch} {}", stderr(&closed));
-    assert_eq!(
-        launch["observation"]["preparing"],
-        json!({"step": "host-create", "at": PROVIDER_PATH}),
-        "{launch}"
+    assert_ne!(world.runner.fleet()["lanes"][0]["status"], "preparing");
+    let panes_before = server.panes().len();
+    let report = effect_report(&world.runner.op_fleet(&request));
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    let observation = &report["intent"]["observation"];
+    assert_eq!(observation["note"], "host-create-unknown", "{report}");
+    assert_eq!(observation["at"], host, "{report}");
+    assert!(
+        observation["cause"]
+            .as_str()
+            .is_some_and(|c| c.starts_with("host-create-unanswered ")),
+        "the dispatcher's 137 is no answer: {report}"
     );
+    assert_eq!(server.panes().len(), panes_before, "no window opened");
+    assert_ne!(world.runner.fleet()["lanes"][0]["status"], "preparing");
+    let again = effect_report(&world.runner.op_fleet(&request));
+    assert_eq!(again["intent"]["outcome"], "confirmed", "{again}");
+    let creates: Vec<String> = std::fs::read_to_string(provider.join("lane-host.log"))
+        .unwrap()
+        .lines()
+        .filter(|l| l.contains(" create "))
+        .map(str::to_owned)
+        .collect();
+    assert_eq!(
+        creates,
+        vec![
+            format!("ORCH_LANE_HOST={host} {first}"),
+            format!("ORCH_LANE_HOST={host} {create}"),
+            format!("ORCH_LANE_HOST={host} {create}"),
+        ],
+        "the provider's create asked again, reusing what it holds"
+    );
+    effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
 }
 
 #[test]
@@ -6911,60 +6956,109 @@ fn a_reconciled_pi_lane_on_a_seat_binds_its_session_under_pis_root_not_the_seat(
     );
 }
 
+/// Defect: a relaunch that proves its session under one home and resumes it
+/// under another. A stopped lane with no account recorded the home its
+/// bound session stands in; whatever the fleet server or the settings now
+/// hand the harness, the relaunch resumes the session and the harness runs
+/// on a home whose store is the recorded one.
 #[test]
-fn a_codex_lane_with_no_account_resumes_the_session_its_served_home_holds() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-record");
-    runner.verify = Some(1);
-    runner.init_fleet();
-    let home = dir.path().join("home");
-    std::fs::create_dir_all(home.join(".codex")).unwrap();
-    let served = dir.path().join("served-codex");
-    runner
-        .env
-        .push(("HOME".to_owned(), home.display().to_string()));
-    runner.env.push((
-        "ORCH_HARNESS_BINARIES".to_owned(),
-        format!("codex={}", fixtures().join("stub-record/codex").display()),
-    ));
-    let work = runner.state_dir().to_path_buf();
-    let out = tmux(
-        &server.socket,
-        &[
-            "set-environment",
-            "-g",
-            "CODEX_HOME",
-            &served.display().to_string(),
-        ],
-    );
-    assert!(out.status.success(), "{}", stderr(&out));
-    // The lane's bound session, in the store of the home the server hands
-    // its panes, where the launch's private home links it.
-    let day = served.join("sessions/2026/11/04");
-    std::fs::create_dir_all(&day).unwrap();
-    std::fs::write(
-        day.join("rollout-a-codex-session-1.jsonl"),
-        format!(
-            "{}\n",
-            json!({"type": "session_meta", "payload": {"id": "codex-session-1", "cwd": work.display().to_string(), "source": "cli"}})
-        ),
-    )
-    .unwrap();
-    let mut stopped = lane("KEN-CXR", "stopped", &runner, Value::Null);
-    stopped["harness"] = json!("codex");
-    stopped["session_id"] = json!("codex-session-1");
-    stopped["home"] = json!(served.display().to_string());
-    stopped.as_object_mut().unwrap().remove("account");
-    let mut fleet = runner.fleet();
-    fleet["lanes"] = json!([stopped]);
-    runner.write_fleet(&fleet);
-    let mut request = launch_request("KEN-CXR", &work);
-    request["harness"] = json!("codex");
-    request.as_object_mut().unwrap().remove("account");
-    let report = effect_report(&runner.op_fleet(&request));
-    assert_eq!(
-        report["intent"]["observation"]["route"], "resume",
-        "{report}"
-    );
+fn a_resumed_lane_with_no_account_runs_under_the_home_its_session_was_found_under() {
+    // The case, the harness, and the home the launch would take of itself.
+    let cases = [
+        ("the server hands the recorded home", "codex", "recorded"),
+        ("the server now hands another home", "codex", "current"),
+        ("the settings now name another home", "copilot", "current"),
+    ];
+    for (case, harness, current) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner = Runner::new(&server, "stub-record");
+        runner.verify = Some(1);
+        runner.init_fleet();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(home.join(".codex")).unwrap();
+        let recorded = dir.path().join("recorded");
+        let current = dir.path().join(current);
+        std::fs::create_dir_all(&current).unwrap();
+        runner
+            .env
+            .push(("HOME".to_owned(), home.display().to_string()));
+        runner.env.push((
+            "ORCH_HARNESS_BINARIES".to_owned(),
+            format!(
+                "{harness}={}",
+                fixtures().join("stub-record").join(harness).display()
+            ),
+        ));
+        let work = runner.state_dir().to_path_buf();
+        let id = format!("{harness}-session-1");
+        if harness == "codex" {
+            let out = tmux(
+                &server.socket,
+                &[
+                    "set-environment",
+                    "-g",
+                    "CODEX_HOME",
+                    &current.display().to_string(),
+                ],
+            );
+            assert!(out.status.success(), "{case}: {}", stderr(&out));
+            let day = recorded.join("sessions/2026/11/04");
+            std::fs::create_dir_all(&day).unwrap();
+            std::fs::write(
+                day.join(format!("rollout-a-{id}.jsonl")),
+                format!(
+                    "{}\n",
+                    json!({"type": "session_meta", "payload": {"id": id, "cwd": work.display().to_string(), "source": "cli"}})
+                ),
+            )
+            .unwrap();
+        } else {
+            let tools = dir.path().join("tools");
+            std::fs::create_dir_all(&tools).unwrap();
+            runner.tools = Some(tools.clone());
+            plant_copilot_hooks(&work.join(".github/hooks"));
+            plant_hooks_off(&tools, json!({"stdout": r#"{"switched_off_by": null}"#}));
+            runner
+                .env
+                .push(("COPILOT_HOME".to_owned(), current.display().to_string()));
+            let state = recorded.join("session-state").join(&id);
+            std::fs::create_dir_all(&state).unwrap();
+            std::fs::write(
+                state.join("workspace.yaml"),
+                format!("id: {id}\ncwd: {}\n", work.display()),
+            )
+            .unwrap();
+            std::fs::write(state.join("events.jsonl"), "{}\n").unwrap();
+        }
+        let mut stopped = lane("KEN-R", "stopped", &runner, Value::Null);
+        stopped["harness"] = json!(harness);
+        stopped["session_id"] = json!(id);
+        stopped["home"] = json!(recorded.display().to_string());
+        stopped.as_object_mut().unwrap().remove("account");
+        let mut fleet = runner.fleet();
+        fleet["lanes"] = json!([stopped]);
+        runner.write_fleet(&fleet);
+        let mut request = launch_request("KEN-R", &work);
+        request["harness"] = json!(harness);
+        request.as_object_mut().unwrap().remove("account");
+        let report = effect_report(&runner.op_fleet(&request));
+        assert_eq!(
+            report["intent"]["observation"]["route"], "resume",
+            "{case}: {report}"
+        );
+        let launched: Value =
+            serde_json::from_slice(&std::fs::read(work.join("launch-record.json")).unwrap())
+                .unwrap();
+        let (variable, store) = match harness {
+            "codex" => ("CODEX_HOME", "sessions"),
+            _ => ("COPILOT_HOME", "session-state"),
+        };
+        let launched_home = Path::new(launched["env"][variable].as_str().unwrap());
+        assert_eq!(
+            std::fs::canonicalize(launched_home.join(store)).ok(),
+            Some(std::fs::canonicalize(recorded.join(store)).unwrap()),
+            "{case}: the resumed id stands in the store of the home the harness runs on: {launched}"
+        );
+    }
 }

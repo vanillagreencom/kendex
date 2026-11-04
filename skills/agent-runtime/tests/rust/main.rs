@@ -1077,6 +1077,93 @@ fn a_launch_whose_line_never_reached_its_window_closes_it_and_one_whose_paste_we
     }
 }
 
+/// Defect: a window left standing, holding only its shell, by a launch whose
+/// record could not be written and whose close went unread, with a refusal
+/// that names no window. Through the real binary on a private server, the
+/// record path already holding a record, so the launch's write is refused
+/// after its window opened: a close tmux answers leaves no window and the
+/// write's own refusal; a `kill-window` tmux refuses leaves the window, and
+/// the refusal names it.
+#[test]
+#[cfg(unix)]
+fn a_launch_whose_record_cannot_be_written_closes_its_window_or_names_the_one_it_could_not_close() {
+    let real = std::env::var_os("PATH")
+        .and_then(|path| {
+            std::env::split_paths(&path)
+                .map(|d| d.join("tmux"))
+                .find(|p| p.is_file())
+        })
+        .expect("tmux on PATH");
+    let shims = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../tests/rust/fixtures/tmux-refusing");
+    // (the verb the tmux on PATH refuses, the refusal, whether the window stands)
+    for (refuse, key, stands) in [
+        ("", "revision-mismatch", false),
+        ("kill-window", "launch-window-unclosed", true),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let pane = PrivatePane::start(&root);
+        let intent = root.join("intent.json");
+        std::fs::write(
+            &intent,
+            serde_json::json!({"harness": "claude", "home": root.join("home"), "cwd": root})
+                .to_string(),
+        )
+        .unwrap();
+        let record = root.join("launch-record.json");
+        let standing = serde_json::json!({"version": 1, "revision": 1}).to_string();
+        std::fs::write(&record, &standing).unwrap();
+        let path = std::env::join_paths(std::iter::once(shims.clone()).chain(
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+        ))
+        .unwrap();
+        let out = Command::new(binary())
+            .args(["launch", "--intent"])
+            .arg(&intent)
+            .arg("--record")
+            .arg(&record)
+            .arg("--socket")
+            .arg(&pane.socket)
+            .args(["--session", &pane.session, "--window-name", "launched"])
+            .env("PATH", &path)
+            .env("TMUX_REAL", &real)
+            .env("TMUX_REFUSE", refuse)
+            .output()
+            .unwrap();
+        let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_default();
+        assert_eq!(reply["refusal"]["key"], key, "{key}: {reply}");
+        let windows = pane.tmux(&[
+            "list-windows",
+            "-t",
+            &pane.session,
+            "-F",
+            "#{window_id} #{window_name}",
+        ]);
+        let window = windows
+            .lines()
+            .find_map(|w| w.strip_suffix(" launched"))
+            .map(str::to_owned);
+        assert_eq!(window.is_some(), stands, "{key}: the window: {windows}");
+        assert_eq!(
+            std::fs::read_to_string(&record).unwrap(),
+            standing,
+            "{key}: the standing record is untouched"
+        );
+        if let Some(window) = window {
+            let named = reply["refusal"]["fields"]
+                .as_array()
+                .and_then(|fields| fields.iter().find(|field| field[0] == "window"))
+                .map(|field| field[1].clone());
+            assert_eq!(
+                named,
+                Some(serde_json::json!(window)),
+                "the refusal names the window: {reply}"
+            );
+        }
+    }
+}
+
 /// Defect: a timed-out `new-window` read as a refusal, and a tmux refusal
 /// read as no answer. Through the real binary on a private server, with a
 /// `tmux` on `PATH` that answers one verb its own way: a `new-window` tmux

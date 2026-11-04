@@ -4331,58 +4331,75 @@ fn codex_turns(home: &Path) -> Vec<String> {
     turns
 }
 
-/// Defect: a unit start whose answer was lost launched again under setsid.
-/// The fake user manager starts the watch's unit and then its
-/// `systemd-run` ends by a signal, so the start gave no answer, and the
-/// manager reads the unit `not-found`, as `--collect` leaves a unit that
-/// ran and ended. The launch holds the job by its unit, never a second
-/// watch beside it: the record names the unit the manager started, one
-/// unit stands, and no `setsid` route ran.
+/// Defect: a unit start whose answer was lost, or that failed after the
+/// manager acted, launched again under setsid. The fake user manager starts
+/// the watch's unit and then its `systemd-run` ends by a signal, or exits 1
+/// with the real client's line for a reply the bus dropped
+/// (`Connection reset by peer`) or for its own method timeout
+/// (`Connection timed out`), and the manager reads the unit `not-found`,
+/// as `--collect` leaves a unit that ran and ended. The launch holds the job
+/// by its unit, never a second watch beside it: the record names the unit
+/// the manager started, one unit stands, and no `setsid` route ran.
 #[test]
-fn a_unit_start_whose_answer_was_lost_is_held_by_its_unit_and_never_launched_again() {
+fn a_unit_start_whose_answer_was_lost_or_failed_after_the_manager_acted_is_held_by_its_unit_and_never_launched_again()
+ {
     use std::os::unix::fs::PermissionsExt;
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let mut runner = suite_runner(&server, "stub-confirm");
-    runner.init_fleet();
-    let (bin, env) = watch_world(runner.state_dir());
-    let fake = std::fs::read_to_string(bin.join("systemd-run")).unwrap();
-    let lost = fake
-        .strip_suffix("exit 0\n")
-        .expect("the fake ends its start with exit 0")
-        .to_owned()
-        + "kill -KILL $$\n";
-    std::fs::write(bin.join("systemd-run"), lost).unwrap();
-    let show_gone = "#!/bin/bash\nd=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\nprintf 'systemctl %s\\n' \"$*\" >> \"$d/systemd.log\"\ncase \" $* \" in\n  *\" show \"*) echo not-found; echo inactive; exit 0 ;;\nesac\nlast=\"${!#}\"\nunit=\"${last%.service}\"\n[[ -f \"$d/units/$unit\" ]] || exit 5\npid=\"$(<\"$d/units/$unit\")\"\nrm -f \"$d/units/$unit\"\nkill -TERM -- \"-$pid\" 2>/dev/null || true\nexit 0\n";
-    std::fs::write(bin.join("systemctl"), show_gone).unwrap();
-    for fake in ["systemd-run", "systemctl"] {
-        std::fs::set_permissions(bin.join(fake), std::fs::Permissions::from_mode(0o755)).unwrap();
+    // (the case, how the fake `systemd-run` ends once the unit started)
+    for (case, ending) in [
+        ("signal", "kill -KILL $$\n"),
+        (
+            "bus-reset",
+            "echo 'Failed to start transient service unit: Connection reset by peer' >&2\nexit 1\n",
+        ),
+        (
+            "client-timeout",
+            "echo 'Failed to start transient service unit: Connection timed out' >&2\nexit 1\n",
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner = suite_runner(&server, "stub-confirm");
+        runner.init_fleet();
+        let (bin, env) = watch_world(runner.state_dir());
+        let fake = std::fs::read_to_string(bin.join("systemd-run")).unwrap();
+        let lost = fake
+            .strip_suffix("exit 0\n")
+            .expect("the fake ends its start with exit 0")
+            .to_owned()
+            + ending;
+        std::fs::write(bin.join("systemd-run"), lost).unwrap();
+        let show_gone = "#!/bin/bash\nd=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\nprintf 'systemctl %s\\n' \"$*\" >> \"$d/systemd.log\"\ncase \" $* \" in\n  *\" show \"*) echo not-found; echo inactive; exit 0 ;;\nesac\nlast=\"${!#}\"\nunit=\"${last%.service}\"\n[[ -f \"$d/units/$unit\" ]] || exit 5\npid=\"$(<\"$d/units/$unit\")\"\nrm -f \"$d/units/$unit\"\nkill -TERM -- \"-$pid\" 2>/dev/null || true\nexit 0\n";
+        std::fs::write(bin.join("systemctl"), show_gone).unwrap();
+        for fake in ["systemd-run", "systemctl"] {
+            std::fs::set_permissions(bin.join(fake), std::fs::Permissions::from_mode(0o755))
+                .unwrap();
+        }
+        runner.tools = Some(bin.clone());
+        let state = runner
+            .state_dir()
+            .join(orch_runtime::state::FLEET_FILE_NAME);
+        let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let report = effect_report(&runner.op_fleet_env(
+            &json!({
+                "op": "start-controller",
+                "controller": pending(runner.state_dir()),
+                "watch": watch_words(&state),
+            }),
+            &env,
+        ));
+        let overseer = runner.fleet()["overseer"].clone();
+        let units = units_started(&bin);
+        let record = std::fs::read_to_string(runner.state_dir().join("oversee-watch.runner"))
+            .unwrap_or_default();
+        stop_live_watch(&runner, &state);
+        assert_eq!(report["intent"]["outcome"], "confirmed", "{case}: {report}");
+        assert_eq!(overseer["watch"]["runner"], "systemd", "{case}: {overseer}");
+        assert_eq!(units, 1, "{case}: one unit, no second launch: {record}");
+        assert!(
+            record.contains("runner=systemd") && !record.contains("runner=setsid"),
+            "{case}: the launcher's record names the unit alone: {record}"
+        );
     }
-    runner.tools = Some(bin.clone());
-    let state = runner
-        .state_dir()
-        .join(orch_runtime::state::FLEET_FILE_NAME);
-    let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
-    let report = effect_report(&runner.op_fleet_env(
-        &json!({
-            "op": "start-controller",
-            "controller": pending(runner.state_dir()),
-            "watch": watch_words(&state),
-        }),
-        &env,
-    ));
-    let overseer = runner.fleet()["overseer"].clone();
-    let units = units_started(&bin);
-    let record = std::fs::read_to_string(runner.state_dir().join("oversee-watch.runner"))
-        .unwrap_or_default();
-    stop_live_watch(&runner, &state);
-    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
-    assert_eq!(overseer["watch"]["runner"], "systemd", "{overseer}");
-    assert_eq!(units, 1, "one unit, no second launch: {record}");
-    assert!(
-        record.contains("runner=systemd") && !record.contains("runner=setsid"),
-        "the launcher's record names the unit alone: {record}"
-    );
 }
 
 /// The number of units the fake user manager started under `bin`: the fleet
@@ -5885,9 +5902,10 @@ fn a_predecessor_that_is_not_the_live_recorded_controller_is_refused_with_nothin
 /// Defect: a succession the runtime recorded, then refused, read as
 /// refused with nothing opened. The transfer's detached job never claims
 /// within its bound, so `op` refuses `job-unclaimed` after the intent was
-/// persisted and names it: the launcher says `transfer-unconfirmed` with
-/// that intent and the runtime's key, exits nonzero, and never says
-/// `transfer-refused` or `transfer-started`.
+/// persisted and names it, on the line after the notice the settings load
+/// prints for a private key it passes over: the launcher says
+/// `transfer-unconfirmed` with that intent and the runtime's key, exits
+/// nonzero, and never says `transfer-refused` or `transfer-started`.
 #[test]
 fn a_succession_refused_after_its_intent_persisted_is_said_unconfirmed_naming_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -5895,6 +5913,19 @@ fn a_succession_refused_after_its_intent_persisted_is_said_unconfirmed_naming_it
     let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let (scripts, bin, mut env, work) = walk_world(&runner, &[measured_account("bclaude", 5)]);
+    // The runtime as the shipped wrapper runs it, the private file read.
+    let wrapper = runner.state_dir().join("orch-runtime");
+    std::fs::remove_file(&wrapper).unwrap();
+    std::os::unix::fs::symlink(binary(), &wrapper).unwrap();
+    std::fs::write(
+        runner.state_dir().join(".env.local"),
+        "ORCH_LANE_EXCLUDE=\"$XDG_STATE_HOME/x\"\n",
+    )
+    .unwrap();
+    env.push((
+        "XDG_STATE_HOME".to_owned(),
+        runner.state_dir().join("xdg-state").display().to_string(),
+    ));
     let state = runner
         .state_dir()
         .join(orch_runtime::state::FLEET_FILE_NAME);
@@ -5932,6 +5963,10 @@ fn a_succession_refused_after_its_intent_persisted_is_said_unconfirmed_naming_it
         .expect("the transfer's intent")
         .to_owned();
     assert!(!out.status.success(), "{said}");
+    assert!(
+        said.contains("settings-skipped "),
+        "the notice stands before the runtime's line: {said}"
+    );
     assert_eq!(
         oversee_fields(&said, "transfer-unconfirmed"),
         Some(vec![

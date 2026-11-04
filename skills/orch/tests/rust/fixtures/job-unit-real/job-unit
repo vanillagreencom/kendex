@@ -9,7 +9,13 @@
 # before anything starts: what the record held when the launch began. With
 # $JOB_UNIT_RECORD_ONLY set the record is written and nothing is launched:
 # a row then runs the job itself; with $JOB_UNIT_ANSWER_LOST set beside it
-# the launcher then ends by a signal before it answers. Every other verb (`stop-job RECORD PID
+# the launcher then ends by a signal before it answers. With
+# $JOB_UNIT_UNWOUND_FAILED set, `identity` or `key`, the launch pre-writes the
+# record, forks ARGV under setsid and reports it through the library's own
+# ended-launch path as a launch whose group could not be read empty: the
+# record and the answer the real launcher gives that branch, naming the
+# leader's start (`identity`) or the group's key alone (`key`), over a job
+# left running. Every other verb (`stop-job RECORD PID
 # ARGV_GLOB`, the stop's) runs the real library's as it stands. Every call
 # is appended to $JOB_UNIT_LOG when set.
 [ -z "${JOB_UNIT_LOG:-}" ] || printf '%s\n' "$*" >> "$JOB_UNIT_LOG"
@@ -28,4 +34,23 @@ d="$(cd "$(dirname "$0")" && pwd)"
 export PATH="$d:$PATH"
 # shellcheck source=/dev/null
 . "${JOB_UNIT_REAL:?}"
+if [ "${1:-}" = launch ] && [ -n "${JOB_UNIT_UNWOUND_FAILED:-}" ]; then
+  record="$3"
+  shift 3
+  while [ "$#" -gt 0 ] && [ "$1" != -- ]; do shift; done
+  shift
+  JOB_UNIT_RUNNER=setsid
+  JOB_UNIT_LINE="runner=setsid reason=no-linger"
+  job_unit_record "$record" || exit 1
+  setsid "$@" </dev/null >/dev/null 2>&1 &
+  JOB_UNIT_PID=$!
+  if [ "$JOB_UNIT_UNWOUND_FAILED" = identity ]; then
+    identity="$(job_unit_proc_identity "$JOB_UNIT_PID")" || exit 1
+    JOB_UNIT_START="${identity#* }"
+  fi
+  rc=0
+  job_unit_launch_ended "$record" unwound-failed unwound-failed launch-failed 4 || rc=$?
+  printf 'job-unit: %s %s\n' "$JOB_UNIT_ERROR_KEY" "$JOB_UNIT_ERROR" >&2
+  exit "$rc"
+fi
 job_unit_main "$@"

@@ -1,0 +1,10 @@
+#!/bin/bash
+# A `tmux` placed first on a launch's PATH: a call naming the verb
+# $TMUX_REFUSE names is refused as tmux refuses a command, with nothing
+# done; every other call runs through the real tmux at $TMUX_REAL. A file of
+# the tree, never written while rows run, so no other row's child holds it
+# open for writing when it is run.
+for arg in "$@"; do
+  [ "$arg" != "${TMUX_REFUSE:-}" ] || { echo "refused $arg" >&2; exit 1; }
+done
+exec "${TMUX_REAL:?}" "$@"

@@ -1535,17 +1535,16 @@ fn the_recorded_witnesses_keep_the_legacy_verdict() {
     }
 }
 
-/// Decisions 112 (2) and 114 (2): a failed job's run is read from its
-/// link, the check run's `details_url`, with the suite as the agreeing
-/// second source. With the check's REST `check_suite` null the suite is
-/// read through the check-run node and the failure is still held by its
-/// in-progress run; a failed check whose link names a run the head does
-/// not hold is unresolved and held while a substantive run is in flight,
-/// and terminal once none is; a check with no link at all in an external
-/// suite is a proved external failure, terminal at once; a check with no
-/// link whose node names a run GitHub does not identify (`databaseId`
-/// null) is unresolved, held while the push run is in flight, and records
-/// nothing.
+/// A failed job's run is read from its link, the check run's `details_url`,
+/// with the suite as the agreeing second source. With the check's REST
+/// `check_suite` null the suite is read through the check-run node and the
+/// failure is still held by its in-progress run; a failed check whose link
+/// names a run the head does not hold is unresolved and held while a
+/// substantive run is in flight, and terminal once none is; a check with no
+/// link at all in an external suite is a proved external failure, terminal at
+/// once; a check with no link whose node names a run GitHub does not identify
+/// (`databaseId` null) is unresolved, held while the push run is in flight,
+/// and records nothing.
 #[test]
 fn a_failed_check_is_associated_through_its_link_and_held_while_unresolved() {
     let in_flight = run(700, HEAD, "in_progress", Value::Null);
@@ -2767,11 +2766,11 @@ fn malformed_rows() -> Vec<Malformed> {
             cause: "check-run-suites-read-failed",
             detail: None,
         },
-        // Decisions 117 (4) and 119 (2): a job's workflow name the list
-        // lacks is read through the graph, then by id; the detail is
-        // reached once the graph did not resolve the check's node or the
-        // graph request failed, and a detail that fails or answers another
-        // shape leaves the name unreadable by every route.
+        // A job's workflow name the list lacks is read through the graph,
+        // then by id; the detail is reached once the graph did not resolve
+        // the check's node or the graph request failed, and a detail that
+        // fails or answers another shape leaves the name unreadable by every
+        // route.
         Malformed {
             name: "a joined check run whose workflow the list lacks, its node unresolved and the fetch by id failing",
             required_only: false,
@@ -2995,13 +2994,12 @@ fn a_moved_branch_head_is_never_read() {
     assert!(gh.state().get("verification").is_none());
 }
 
-/// Decisions 87 and 110 (1): a required workflow binds to a run only when
-/// the run's own workflow file is the rule's path and its suite node proves
-/// that file at the rule's explicit source sha in the repository whose id
-/// the rule names; never through a resolved ref. Its members are the bound
-/// run's check runs as its suite's `latest` listing names them (decisions
-/// 107 (2), 117 (1)). Every unproven part leaves the requirement expected,
-/// never passed and never failed.
+/// A required workflow binds to a run only when the run's own workflow file
+/// is the rule's path and its suite node proves that file at the rule's
+/// explicit source sha in the repository whose id the rule names; never
+/// through a resolved ref. Its members are the bound run's check runs as its
+/// suite's `latest` listing names them. Every unproven part leaves the
+/// requirement expected, never passed and never failed.
 #[test]
 fn a_required_workflow_binds_only_through_its_proven_source() {
     // Bound: the run's path, its proof's path, repository and sha match the
@@ -3026,10 +3024,10 @@ fn a_required_workflow_binds_only_through_its_proven_source() {
         "{log:?}"
     );
 
-    // Decisions 114 (2) and 117 (1): the bound run's jobs are its suite's
-    // own listing, so a check run whose suite the ref's listing nulls is
-    // the bound run's job whether its node identifies the run or names it
-    // without an id; the member is the job the rollup links to the run.
+    // The bound run's jobs are its suite's own listing, so a check run whose
+    // suite the ref's listing nulls is the bound run's job whether its node
+    // identifies the run or names it without an id; the member is the job the
+    // rollup links to the run.
     for run_id in [json!(700), Value::Null] {
         let unsuited = check_run_in(None, 9, json!("request"), "completed", json!("success"));
         let mut gh = bound_world();
@@ -3665,12 +3663,11 @@ fn green_evidence(gh: &mut Github, head: &str) {
     .answer(&runs(head, 1), rehead(fixture("actions-runs.json"), head));
 }
 
-/// Step6-map § A11 row (1): the head is read from the pull request on
-/// every call, so a head that moved between two calls is judged on the
-/// newer one and the older verdict is replaced (`item.rs`
-/// `record_verification`'s `replaced`). The defect: a verification that
-/// keeps judging the head its first call read, or a record that keeps the
-/// older head's verdict beside a newer head.
+/// The head is read from the pull request on every call, so a head that moved
+/// between two calls is judged on the newer one and the older verdict is
+/// replaced (`item.rs` `record_verification`'s `replaced`). The defect: a
+/// verification that keeps judging the head its first call read, or a record
+/// that keeps the older head's verdict beside a newer head.
 #[test]
 fn a_pull_requests_moved_head_is_judged_on_the_newer_head_and_the_older_verdict_replaced() {
     let mut gh = Github::green();
@@ -3712,10 +3709,10 @@ fn a_pull_requests_moved_head_is_judged_on_the_newer_head_and_the_older_verdict_
     );
 }
 
-/// Step6-map § A11 row (2): a closed or merged pull request refuses
-/// `pr-not-open` after the one `pr view` and before any verdict read, and
-/// records nothing. The defect: a merged pull request's old head verified
-/// and recorded as if the wait were still open.
+/// A closed or merged pull request refuses `pr-not-open` after the one `pr
+/// view` and before any verdict read, and records nothing. The defect: a
+/// merged pull request's old head verified and recorded as if the wait were
+/// still open.
 #[test]
 fn a_closed_or_merged_pull_request_refuses_before_any_verdict_read() {
     for state in ["CLOSED", "MERGED"] {
@@ -4862,6 +4859,52 @@ fn a_draft_fallback_released_past_the_budget_starts_its_period_with_the_request(
         let head = gh.head_record();
         assert_ne!(head["period_started"], aged, "{route}: {head}");
         assert_ne!(head["at"], aged, "{route}: {head}");
+    }
+}
+
+/// Defect: a head held as a `draft` fallback past the review budget gets a
+/// spent period's verdict (`proceeded` with no request ever made, or a
+/// counted `timeout`) on a call that cannot release it: the head still
+/// draft, or the view reading it ready while `pulls/N` still reads draft.
+/// Under either timeout answer each such call is `pending` with the draft
+/// cause and records no verdict; the call where both reads agree releases
+/// it, and its request starts the period.
+#[test]
+fn a_draft_fallback_past_the_budget_takes_no_period_verdict_until_both_reads_release_it() {
+    for on_timeout in ["proceed", "block"] {
+        let env = [("PR_REVIEW_ON_TIMEOUT", on_timeout)];
+        let mut gh = Github::review_world();
+        gh.answer(&format!("pr view {PR}"), review_view("", &[], true))
+            .answer(
+                &pull_path(),
+                rest_pull(true, "feat", "lane-app[bot]", "Bot"),
+            );
+        let held = ok_result(&gh.review(false, &env));
+        assert_eq!(held["request"]["cause"], "draft", "{on_timeout}: {held}");
+        let aged = json!(stamp_ago(1000));
+        gh.set_head("at", aged.clone());
+        gh.set_head("period_started", aged.clone());
+        let still_draft = ok_result(&gh.review(false, &env));
+        gh.answer(&format!("pr view {PR}"), review_view("", &[], false));
+        let lagging = ok_result(&gh.review(false, &env));
+        for (call, result) in [("still-draft", &still_draft), ("lagging", &lagging)] {
+            assert_eq!(result["status"], "pending", "{on_timeout} {call}: {result}");
+            assert_eq!(key(result), "request-fallback", "{on_timeout} {call}");
+            assert_eq!(result["request"]["cause"], "draft", "{on_timeout} {call}");
+        }
+        assert_eq!(gh.requests(), 0, "{on_timeout}: {:?}", gh.log());
+        assert!(gh.review_record()["verdict"].is_null(), "{on_timeout}");
+        assert_eq!(gh.head_record()["timeouts"], 0, "{on_timeout}");
+        gh.answer(
+            &pull_path(),
+            rest_pull(false, "feat", "lane-app[bot]", "Bot"),
+        );
+        let released = ok_result(&gh.review(false, &env));
+        assert_eq!(released["status"], "pending", "{on_timeout}: {released}");
+        assert_eq!(key(&released), "review-pending", "{on_timeout}");
+        assert_eq!(released["request"]["outcome"], "requested", "{on_timeout}");
+        assert_eq!(gh.requests(), 1, "{on_timeout}: {:?}", gh.log());
+        assert_ne!(gh.head_record()["period_started"], aged, "{on_timeout}");
     }
 }
 

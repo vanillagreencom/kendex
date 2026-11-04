@@ -62,7 +62,7 @@ impl PaneRef {
 /// The detached job a transfer or a stop was handed to, by the identity its
 /// launcher's record names.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum JobHandle {
+pub(crate) enum JobHandle {
     /// The job runs as this transient user unit, read through its manager.
     Unit { unit: String },
     /// The job leads this process group, read through the one identity
@@ -85,7 +85,7 @@ impl JobHandle {
 
 /// What a read of the job launcher's record found.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum SidecarRead {
+pub(crate) enum SidecarRead {
     /// No record: the launcher refused before it asked anything.
     Absent,
     Present(JobHandle),

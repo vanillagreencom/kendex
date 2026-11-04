@@ -62,21 +62,21 @@
 #       only where the manager has no unit of that name: its call can time out
 #       while the manager still starts the unit, which is then the job.
 #       Exit 0 launched; 1 RECORD could not be written (record-unwritable,
-#       with `status=WORD` once a forked child was unwound, and
-#       `record=unwritable` where the ended record could not be written
-#       either, so the reply alone carries the status); 2 no setsid where the
-#       fallback needs it (missing-command); 3 usage; 4 the job was not
-#       started (launch-failed with the same `status=WORD` and
-#       `record=unwritable` fields: `status=N`, the child's exit status, where
-#       it exited before its row was read and the record says `exited-N`,
-#       `status=identity-unread` where its row could not be read,
-#       `status=unwound-failed` where its group could not be read empty; or a
-#       unit the manager reports in no running state); 5 --memory-max
-#       where the job would run under setsid (memory-max-unheld, with the
-#       runner line); 6 the job may have started and nothing could say
-#       (launch-unconfirmed): the manager lost the start's answer and could
-#       not be asked of the unit, which RECORD names, or a forked child's
-#       group could not be read empty (`status=unwound-failed`).
+#       with `status=record-unwritable` once a forked child was unwound and
+#       its group read empty, and `record=unwritable` where the ended record
+#       could not be written either, so the reply alone carries the status);
+#       2 no setsid where the fallback needs it (missing-command); 3 usage;
+#       4 the job was not started (launch-failed with the same `status=WORD`
+#       and `record=unwritable` fields, once the child's group read empty:
+#       `status=N`, the child's exit status, where it exited before its row
+#       was read and the record says `exited-N`, `status=identity-unread`
+#       where its row could not be read; or a unit the manager reports in no
+#       running state); 5 --memory-max where the job would run under setsid
+#       (memory-max-unheld, with the runner line); 6 the job may have started
+#       and nothing could say (launch-unconfirmed): the manager lost the
+#       start's answer and could not be asked of the unit, which RECORD
+#       names, or a forked child's group could not be read empty on any of
+#       the paths of 1 and 4 (`status=unwound-failed`).
 #   job-unit.sh attach RECORD -- ARGV...
 #       Run ARGV attached: a child of this process, in its session, working
 #       directory and environment, that leads a process group of its own,
@@ -216,16 +216,15 @@ job_unit_record() { # RECORD
 }
 
 # Rewrite the pre-written record with the launch's ended STATUS, the value
-# the runtime reads as nothing started (decision 120): a launch-failed path
-# after the record's pre-write names no identity, so a later read settles the
-# job by this word rather than holding it unread. An `unwound-failed` status
-# keeps the group's key on every post-fork path, `pgid=` (the child's pid,
-# which its group carries while any member runs), and the leader's pid and
-# start where the launcher read them: the runtime reads that group by the
-# identity, else by the key alone, on every reconcile until it empties
-# (decisions 124g (31), 124h (33)). Status 1 where the record could not be
-# written; the caller then carries the status on its reply, the one place the
-# runtime can read it from.
+# the runtime reads as nothing started: a launch-failed path after the
+# record's pre-write names no identity, so a later read settles the job by
+# this word rather than holding it unread. An `unwound-failed` status keeps
+# the group's key on every post-fork path, `pgid=` (the child's pid, which its
+# group carries while any member runs), and the leader's pid and start where
+# the launcher read them: the runtime reads the job by the identity, else by
+# the key alone, on every reconcile until it reads ended. Status 1 where the
+# record could not be written; the caller then carries the status on its
+# reply, the one place the runtime can read it from.
 job_unit_record_ended() { # RECORD STATUS
   {
     printf 'runner=%s\n' "$JOB_UNIT_RUNNER"
@@ -238,7 +237,7 @@ job_unit_record_ended() { # RECORD STATUS
 
 # Whether the process group PGID reads empty in the kernel's own table: no
 # running process names it as its group, zombies left out, since they run
-# nothing and their parents reap them. Three answers (decision 124f (27)):
+# nothing and their parents reap them. Three answers:
 # status 0 where every row read and none is a running member; 1 where a
 # member still runs; 2 where the table, or a row of a process that still
 # stands, cannot be read or parsed, so an unreadable row is unknown and
@@ -406,7 +405,7 @@ job_unit_launch() { # NAME RECORD [--cap SECS] [--memory-max MIB] -- ARGV...
   # it in a session of its own without forking (no -f), so $! is the job's
   # pid. The launcher reads the child's start from the kernel table itself
   # and records the identity, pid and `/proc` start in clock ticks as the
-  # runtime's identity reader records it, before it returns (decision 120):
+  # runtime's identity reader records it, before it returns:
   # no child writes its own identity and none is manufactured. A child that
   # has already exited when its row is read is a launch that failed, by its
   # status; a row that cannot be read ends the child and refuses the launch,

@@ -1820,7 +1820,7 @@ fn the_context_reading_is_handed_to_the_judge_and_a_context_mark_is_said_once_pe
                 dir.path(),
                 &pane,
                 "context",
-                "this session's own entry alone, ORCH_OVERSEER_PREFERENCE being unset"
+                "this session's own entry alone, ORCH_OVERSEER_PREFERENCE being unset; where this session's account has reached its headroom or rate mark, ORCH_OVERSEER_PREFERENCE=claude:standard:high,codex:standard:high without that account"
             ),
         ]
     );
@@ -3970,33 +3970,35 @@ fn an_unconfirmed_wall_replacement_keeps_its_marker_until_its_launch_settles_and
 #[test]
 fn a_relaunch_the_launcher_answers_possibly_started_is_read_as_started_and_one_never_started_as_refused()
  {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
-    let relaunch = Relaunch {
-        item: "KEN-4".to_owned(),
-        window: "gh-4".to_owned(),
-        to: "/a".to_owned(),
-        spent: "/b".to_owned(),
-        cwd: dir.path().to_path_buf(),
-        session: "fleet".to_owned(),
-        args: vec!["true".to_owned()],
-        marker: dir.path().join("wall-relaunch.gh-4"),
-        log: dir.path().join("wall-relaunch-KEN-4.log"),
-    };
-    // (the launcher's status, the file's mode, read as started)
-    for (status, mode, started) in [
-        (0, 0o755, true),
-        (6, 0o755, true),
-        (4, 0o755, false),
-        (0, 0o644, false),
+    // A launcher of the tree that exits with the relaunch's last word: no
+    // launcher is written while rows run, since another row's child between
+    // its fork and its exec would hold a file just written open (ETXTBSY).
+    let answering = fixtures().join("job-unit-exit/job-unit");
+    let absent = dir.path().join("job-unit-absent");
+    // (the launcher, the status it answers, read as started)
+    for (launcher, status, started) in [
+        (&answering, 0, true),
+        (&answering, 6, true),
+        (&answering, 4, false),
+        (&absent, 0, false),
     ] {
-        let launcher = dir.path().join(format!("job-unit-{status}-{mode:o}"));
-        std::fs::write(&launcher, format!("#!/bin/bash\nexit {status}\n")).unwrap();
-        std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(mode)).unwrap();
+        let relaunch = Relaunch {
+            item: "KEN-4".to_owned(),
+            window: "gh-4".to_owned(),
+            to: "/a".to_owned(),
+            spent: "/b".to_owned(),
+            cwd: dir.path().to_path_buf(),
+            session: "fleet".to_owned(),
+            args: vec![status.to_string()],
+            marker: dir.path().join("wall-relaunch.gh-4"),
+            log: dir.path().join("wall-relaunch-KEN-4.log"),
+        };
         assert_eq!(
-            overseer::relaunch_through_launcher(&launcher, &relaunch).is_ok(),
+            overseer::relaunch_through_launcher(launcher, &relaunch).is_ok(),
             started,
-            "status={status} mode={mode:o}"
+            "launcher={} status={status}",
+            launcher.display()
         );
     }
 }

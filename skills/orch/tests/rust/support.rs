@@ -272,10 +272,8 @@ pub fn isolation_env(command: &mut Command) -> &mut Command {
 /// linger, so a detached job's launcher takes its `setsid` route and no row
 /// starts a unit on the operator's user manager; a row that wants the unit
 /// route plants its own manager fakes ahead of this directory. Each tool is
-/// written once per process where the file does not already hold its text
-/// (the rows of one test binary start together on a cold temporary root)
-/// and published atomically under a temporary name no other process uses,
-/// so two test binaries writing it at once both read one whole file.
+/// written once per process through [`publish`] (the rows of one test
+/// binary start together on a cold temporary root).
 fn isolated_bin() -> PathBuf {
     static DIR: OnceLock<PathBuf> = OnceLock::new();
     DIR.get_or_init(|| {
@@ -288,26 +286,35 @@ fn isolated_bin() -> PathBuf {
             ),
             ("loginctl", "#!/bin/sh\necho no\n"),
         ] {
-            let path = dir.join(name);
-            if std::fs::read_to_string(&path).is_ok_and(|held| held == text) {
-                continue;
-            }
-            let tmp = dir.join(format!(
-                ".{name}.{}.{:?}",
-                std::process::id(),
-                std::thread::current().id()
-            ));
-            std::fs::write(&tmp, text).expect("an isolated tool");
-            std::fs::set_permissions(
-                &tmp,
-                <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
-            )
-            .expect("an isolated tool's mode");
-            let _ = std::fs::rename(&tmp, &path);
+            publish(&dir, name, text);
         }
         dir
     })
     .clone()
+}
+
+/// `text` as the executable `dir/name`, kept where the file already holds
+/// it, else written under a name no other process or thread uses and
+/// renamed into place, so test binaries writing it at once all read one
+/// whole file.
+fn publish(dir: &Path, name: &str, text: &str) -> PathBuf {
+    let path = dir.join(name);
+    if std::fs::read_to_string(&path).is_ok_and(|held| held == text) {
+        return path;
+    }
+    let tmp = dir.join(format!(
+        ".{name}.{}.{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    std::fs::write(&tmp, text).expect("a published executable");
+    std::fs::set_permissions(
+        &tmp,
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
+    )
+    .expect("a published executable's mode");
+    std::fs::rename(&tmp, &path).expect("a published executable in place");
+    path
 }
 
 /// `program` behind a wrapper that runs it with the scratch home and no
@@ -315,9 +322,10 @@ fn isolated_bin() -> PathBuf {
 /// runtime in-process: the one runner starts it with this test process's
 /// own environment, so a `git` it runs would read the operator's
 /// configuration. The rest of the environment passes through, so a row's
-/// own wrapper that exports a fixture's variables still reaches it. For a
-/// fixture of the tree, whose path outlives the run: each wrapper is written
-/// once under the temporary root, named by its text.
+/// own wrapper that exports a fixture's variables still reaches it. The
+/// wrapper names the program's path, which differs per checkout, so it is
+/// published once per text under this build's own temporary directory,
+/// which goes with the build, never under the shared temporary root.
 pub fn isolated_program(program: &Path) -> PathBuf {
     use std::hash::{Hash, Hasher};
     let home = std::env::temp_dir().join("isolated-home");
@@ -330,26 +338,10 @@ pub fn isolated_program(program: &Path) -> PathBuf {
     );
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     text.hash(&mut hasher);
-    let dir = std::env::temp_dir().join("isolated-programs");
+    let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("isolated-programs");
     std::fs::create_dir_all(&dir).expect("the isolated programs directory");
     let name = program.file_name().unwrap_or_default().to_string_lossy();
-    let path = dir.join(format!("{:016x}-{name}", hasher.finish()));
-    if std::fs::read_to_string(&path).is_ok_and(|held| held == text) {
-        return path;
-    }
-    let tmp = dir.join(format!(
-        ".{name}.{}.{:?}",
-        std::process::id(),
-        std::thread::current().id()
-    ));
-    std::fs::write(&tmp, &text).expect("an isolated program");
-    std::fs::set_permissions(
-        &tmp,
-        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
-    )
-    .expect("an isolated program's mode");
-    let _ = std::fs::rename(&tmp, &path);
-    path
+    publish(&dir, &format!("{:016x}-{name}", hasher.finish()), &text)
 }
 
 /// A test child's `PATH`: a row's own `prefixes` first, then the isolated

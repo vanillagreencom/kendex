@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::Env;
+use crate::effects::{self, JobHandle, SidecarRead};
 use crate::error::{Error, Result};
 use crate::state::{
     self, Authorization, AuthorizedBy, Document, ItemState, Record, Stage, StageKind, StageOutcome,
@@ -890,8 +891,10 @@ fn unit_ended(load: &str, active: &str) -> Option<bool> {
 /// the user manager, or the process by pid and
 /// start, so a pid the system reused reads gone under another start and
 /// never keeps a dead run open. A job whose launcher never answered is
-/// read from the launcher's record beside the run; one that records no
-/// identity at all is unreadable, never gone.
+/// read from the launcher's record beside the run, through the one reader
+/// of that record: an ended launch is nothing started, a group the launcher
+/// could not read empty is read by its key, and a record that names no
+/// identity is unreadable, never gone.
 #[allow(
     clippy::disallowed_methods,
     reason = "a started validation run's job is read by its recorded identity for the stage's reconcile, the unit through the user manager, the process through the one reader; nothing is signalled here"
@@ -906,30 +909,44 @@ fn read_job(job: &ValidateJob) -> RunRead {
         ),
         // The launcher was asked and the start never wrote its answer: the
         // record it writes before the fork is the job's own statement.
-        None => {
-            let text = match fs::read_to_string(&job.record) {
-                Ok(text) => text,
-                Err(e) if e.kind() == ErrorKind::NotFound => {
-                    return RunRead::Gone {
-                        outcome: StageOutcome::Lost,
-                        cause: RunCause::PidUnrecorded,
-                    };
-                }
-                Err(e) => return RunRead::Unreadable(format!("job record: {e}")),
-            };
-            if record_field(&text, "status").is_some() {
+        None => match effects::read_handle(Path::new(&job.record)) {
+            SidecarRead::Absent => {
+                return RunRead::Gone {
+                    outcome: StageOutcome::Lost,
+                    cause: RunCause::PidUnrecorded,
+                };
+            }
+            SidecarRead::Failed { .. } => {
                 return RunRead::Gone {
                     outcome: StageOutcome::Stopped,
                     cause: RunCause::LaunchFailed,
                 };
             }
-            (
-                record_field(&text, "runner").unwrap_or_default(),
-                record_field(&text, "unit"),
-                record_field(&text, "pid").and_then(|p| p.parse().ok()),
-                record_field(&text, "start"),
-            )
-        }
+            SidecarRead::Unreadable { cause } => {
+                return RunRead::Unreadable(format!("job record: {cause}"));
+            }
+            SidecarRead::Present(JobHandle::Unit { unit }) => {
+                ("systemd".to_owned(), Some(unit), None, None)
+            }
+            SidecarRead::Present(JobHandle::Group(identity)) => (
+                "setsid".to_owned(),
+                None,
+                Some(identity.pid),
+                Some(identity.start),
+            ),
+            SidecarRead::Present(JobHandle::Pgid(pgid)) => {
+                return match effects::pgid_reading(pgid) {
+                    Reading::Live(()) => RunRead::Live { pid: pgid },
+                    Reading::Gone => RunRead::Gone {
+                        outcome: StageOutcome::Lost,
+                        cause: RunCause::ProcessGone,
+                    },
+                    Reading::Unreadable { cause } => {
+                        RunRead::Unreadable(format!("job group {pgid}: {cause}"))
+                    }
+                };
+            }
+        },
     };
     match (runner.as_str(), unit, pid, start) {
         ("systemd", Some(unit), _, _) => {

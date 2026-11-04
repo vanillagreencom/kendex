@@ -2214,11 +2214,14 @@ fn mark_check(record: &Record, key: &str, marks: Option<&Marks>, pass: &Pass, ou
         });
         // The handling under the line: the succession's own words, naming
         // the walk the verb takes for this mark: at a context mark with no
-        // preference set, the session's own entry alone.
+        // preference set, the session's own entry alone, unless the
+        // session's account has reached its own mark: the verb reads the
+        // account, which the watch does not, and walks as that mark.
         let walks = match (marks.key, pass.preference) {
-            (MarkKey::Reached(MarkKind::Context), None) => {
-                "this session's own entry alone, ORCH_OVERSEER_PREFERENCE being unset".to_owned()
-            }
+            (MarkKey::Reached(MarkKind::Context), None) => format!(
+                "this session's own entry alone, ORCH_OVERSEER_PREFERENCE being unset; where this session's account has reached its headroom or rate mark, ORCH_OVERSEER_PREFERENCE={} without that account",
+                crate::settings::DEFAULT_OVERSEER_PREFERENCE
+            ),
             (_, Some("")) => "ORCH_OVERSEER_PREFERENCE=empty".to_owned(),
             (_, preference) => format!(
                 "ORCH_OVERSEER_PREFERENCE={}",

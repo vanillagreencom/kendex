@@ -1,16 +1,15 @@
-//! The validation job (U6a, step6-map § A1): the detached process the
-//! launcher started for one run. It runs the kept executor, `dev-validate-run
-//! --child --run-dir D`, as its bounded child through the one runner, reads
-//! the sentinel the child wrote, closes the stage once with the lane's end
-//! notice recorded `owed` in the same write, sends the notice through the
-//! mailbox program and marks it `sent` or `unsent:<cause>`. A second run of
-//! the same job changes nothing: the close is recorded and the notice's
-//! mark is what it was. `deliver_owed` is the continuation a crash between
-//! the close and the send left behind, run by the item's next
-//! `reconcile-round` (decision 124f (28)). `stop` is the job's counterpart
-//! (decision 188 (c)): the intentional stop recorded on the stage before
-//! the job is ended, so the job's own close and the reconcile's both read
-//! the run as `stopped`, never `lost`.
+//! The validation job: the detached process the launcher started for one run.
+//! It runs the kept executor, `dev-validate-run --child --run-dir D`, as its
+//! bounded child through the one runner, reads the sentinel the child wrote,
+//! closes the stage once with the lane's end notice recorded `owed` in the
+//! same write, sends the notice through the mailbox program and marks it
+//! `sent` or `unsent:<cause>`. A second run of the same job changes nothing:
+//! the close is recorded and the notice's mark is what it was. `deliver_owed`
+//! is the continuation a crash between the close and the send left behind,
+//! run by the item's next `reconcile-round`. `stop` is the job's counterpart:
+//! the intentional stop recorded on the stage before the job is ended, so the
+//! job's own close and the reconcile's both read the run as `stopped`, never
+//! `lost`.
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -59,10 +58,13 @@ pub struct RunReply {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub seconds: Option<u64>,
     /// The notice's owner word after this run: `sent`, `unsent:<cause>`,
-    /// `owed` where the send is held (a session send whose outcome is not
-    /// yet known, or one the lane's record refuses for now), or the mark
-    /// an earlier run left.
+    /// `owed` where this run's send is held, or the mark an earlier run
+    /// left.
     pub notice: Option<String>,
+    /// Why this run's send is held: the fleet record's read error, or the
+    /// send whose answer is not known.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub held: Option<String>,
 }
 
 /// The transition environment at this moment: the command's stamp re-read
@@ -114,9 +116,9 @@ fn start_field(run_dir: &Path, key: &str) -> Option<String> {
 /// Run the executor as this job's bounded child, in a session of its own
 /// so it leads its own process group: the group the child's own
 /// `job_unit_end` tears down, and the one `validate stop` ends by its
-/// recorded pid through the launcher, as under the legacy launcher. The
-/// bound is the cap plus the child's own teardown grace; a child the bound
-/// ends leaves no sentinel, which reads as lost.
+/// recorded pid through the launcher. The bound is the cap plus the
+/// child's own teardown grace; a child the bound ends leaves no sentinel,
+/// which reads as lost.
 #[allow(
     clippy::disallowed_methods,
     reason = "the validation job's one run of the kept executor through the one runner, bounded by the run's cap"
@@ -153,7 +155,7 @@ struct Left {
 }
 
 /// Read the run directory once the child ended, `stopped` being whether the
-/// stage records a `validate stop` (decision 188 (c)).
+/// stage records a `validate stop`.
 fn read_left(run_dir: &Path, stopped: bool) -> Left {
     let log = run_dir.join("log");
     let sentinel = match fs::read_to_string(run_dir.join("exit")) {
@@ -192,34 +194,33 @@ fn read_left(run_dir: &Path, stopped: bool) -> Left {
 }
 
 /// How a notice's send went: the owner word to mark the stage with, or a
-/// send held, the stage left owed for the next walk (a send whose outcome
-/// is not known, one the lane's record refuses for now, or a fleet record
-/// that cannot be read to route it).
+/// send held with its cause, the stage left owed for the next walk (a send
+/// whose outcome is not known, one the lane's record refuses for now, or a
+/// fleet record that cannot be read to route it).
 enum NoticeSend {
     Marked(String),
-    Held,
+    Held(String),
 }
 
 /// Send the end notice `text` to the lane of `item` and answer the word its
-/// mark records. A session lane takes U6d's `orch-runtime send` owner, which
-/// records the directive owed before the CLI and settles it under its own
-/// reconcile (an irreversible send is never retried blindly); every other
-/// lane takes the mailbox's outbound directive route, `lane-mail send --item
-/// ITEM --directive --file F --delivery-id <key>` (decision 184 (1)), which
-/// writes the lane's own inbox (`to-lane.jsonl`) and is judged by the key
-/// under the lock, so a replay after a lost mark lands once and reads
-/// `duplicate` = delivered. `sent` on a delivered or duplicate receipt;
-/// `unsent:<cause>` where the route refused or never started, recorded,
-/// never a reason to hold the close; held where its answer is not known,
-/// the replay under the key landing at most once. The fleet record picks
-/// the route, so one that cannot be read holds the notice: the mailbox
+/// mark records. The fleet record picks the route. A session lane takes the
+/// `orch-runtime send` owner, which records the directive owed before the
+/// CLI and settles it under its own reconcile, so an irreversible send is
+/// never retried blindly. Every other lane takes the mailbox's outbound
+/// directive route, `lane-mail send --item ITEM --directive --file F
+/// --delivery-id <key>`, which writes the lane's own inbox (`to-lane.jsonl`)
+/// and judges the key under the lock, so a replay after a lost mark lands
+/// once and answers `delivery-repeated`. The mark is `sent` on a receipt or
+/// a repeated delivery, and `unsent:<cause>` where the route refused or
+/// never started: recorded, never a reason to hold the close. The send is
+/// held where its answer is not known, the replay under the key landing at
+/// most once, and where the fleet record cannot be read, since the mailbox
 /// route would send to a session lane with no owed record. The file the
-/// program reads the notice from
-/// is this walker's own scratch, `<key>.<the request's stamp>.notice`,
-/// created exclusively and removed by this walker alone, so a second walker
-/// of the same notice (the owed walk meeting the job's send in flight)
-/// never removes the file the first's program is about to read; the record
-/// carries the key, never the file.
+/// program reads the notice from is this walker's own scratch,
+/// `<key>.<the request's stamp>.notice`, created exclusively and removed by
+/// this walker alone, so a second walker of the same notice (the owed walk
+/// meeting the job's send in flight) never removes the file the first's
+/// program is about to read; the record carries the key, never the file.
 #[allow(
     clippy::disallowed_methods,
     reason = "the end notice's file, this walker's own under the state directory, created exclusively for the mailbox program to read and removed by this walker after its send"
@@ -251,7 +252,7 @@ fn send_notice(
             send_session(settings, &lane, key, &path, env, locking)
         }
         Ok(Some(_) | None) => send_directive(settings, item, key, &path),
-        Err(()) => NoticeSend::Held,
+        Err(e) => NoticeSend::Held(format!("fleet:{}: {e}", e.key())),
     };
     let _ = fs::remove_file(&path);
     mark
@@ -265,12 +266,12 @@ fn send_notice(
     clippy::disallowed_methods,
     reason = "the notice send's one read of the fleet record, to route a cloud session lane to its own send owner"
 )]
-fn lane_record(settings: &Settings, item: &str) -> std::result::Result<Option<Lane>, ()> {
+fn lane_record(settings: &Settings, item: &str) -> Result<Option<Lane>> {
     let fleet = state::fleet_path(&settings.state_dir);
-    let Some(snapshot) = state::load(&fleet).map_err(|_| ())? else {
+    let Some(snapshot) = state::load(&fleet)? else {
         return Ok(None);
     };
-    let fleet = FleetState::view(&fleet, &snapshot.doc).map_err(|_| ())?;
+    let fleet = FleetState::view(&fleet, &snapshot.doc)?;
     Ok(fleet.lanes.into_iter().find(|l| l.item == item))
 }
 
@@ -300,9 +301,9 @@ fn send_directive(settings: &Settings, item: &str, key: &str, file: &Path) -> No
         ) => NoticeSend::Marked(format!("unsent:{refusal}")),
         // No answer, a signal, an exit with no keyed line or a receipt that
         // does not decode: the append may stand.
-        Err(Refusal::Unanswered { .. } | Refusal::Exit { .. } | Refusal::Reply { .. }) => {
-            NoticeSend::Held
-        }
+        Err(
+            refusal @ (Refusal::Unanswered { .. } | Refusal::Exit { .. } | Refusal::Reply { .. }),
+        ) => NoticeSend::Held(refusal.to_string()),
     }
 }
 
@@ -318,22 +319,21 @@ fn session_mark(result: SendResult) -> String {
     }
 }
 
-/// The session send owner (U6d) for a cloud lane, keyed by the notice
-/// (decision 188 (d)): `send::run_keyed` reads the lane's `directive_send`
-/// under this key inside its owed write, under the store's lock (decision
-/// 193 (a)), so a replay (the stage still owed when the owed walk or the
-/// job's own retry meets it) takes what this notice's own send already
-/// settled, with no CLI call, whichever walker's settle it was: a send made
-/// `sent` and a found `sent` both mark `sent`; `archived` or `failed`, made
-/// or found, takes the terminal mark; a send found owed under this key is
-/// held until it settles (the verb's reconcile, or the operator's mark
-/// after the watch's `directive-send-unsettled` line), and one found
-/// unreadable is held too, never a reason to act. A refusal (the send's
-/// outcome unknown, another send still owed on the lane, the lane's record
-/// moved) holds the stage owed and sends nothing. The residual, stated and
-/// not claimed exactly-once: a crash after this send's settle, then another
-/// send to the same lane, then the replay, sends the notice twice, a
-/// repeated line in the session and not a harm.
+/// The session send owner for a cloud lane, keyed by the notice:
+/// `send::run_keyed` reads the lane's `directive_send` under this key inside
+/// its owed write, under the store's lock, so a replay (the stage still owed
+/// when the owed walk or the job's own retry meets it) takes what this
+/// notice's own send already settled, with no CLI call, whichever walker's
+/// settle it was: a send made `sent` and a found `sent` both mark `sent`;
+/// `archived` or `failed`, made or found, takes the terminal mark; a send
+/// found owed under this key is held until it settles (the verb's reconcile,
+/// or the operator's mark after the watch's `directive-send-unsettled` line),
+/// and one found unreadable is held too, never a reason to act. A refusal
+/// (the send's outcome unknown, another send still owed on the lane, the
+/// lane's record moved) holds the stage owed and sends nothing. The residual,
+/// stated and not claimed exactly-once: a crash after this send's settle,
+/// then another send to the same lane, then the replay, sends the notice
+/// twice, a repeated line in the session and not a harm.
 fn send_session(
     settings: &Settings,
     lane: &Lane,
@@ -346,7 +346,11 @@ fn send_session(
     match crate::send::run_keyed(&fleet, &lane.item, file, settings, env, locking, key) {
         Ok(Keyed::Sent(sent)) => NoticeSend::Marked(session_mark(sent.send.result)),
         Ok(Keyed::Found(KeyedSend::Settled(result))) => NoticeSend::Marked(session_mark(result)),
-        Ok(Keyed::Found(KeyedSend::Owed | KeyedSend::Unreadable)) | Err(_) => NoticeSend::Held,
+        Ok(Keyed::Found(KeyedSend::Owed)) => NoticeSend::Held("session:owed".to_owned()),
+        Ok(Keyed::Found(KeyedSend::Unreadable)) => {
+            NoticeSend::Held("session:unreadable".to_owned())
+        }
+        Err(e) => NoticeSend::Held(format!("session:{}: {e}", e.key())),
     }
 }
 
@@ -360,7 +364,8 @@ fn run_id_of(run_dir: &str) -> &str {
 }
 
 /// Send the stage's owed notice and mark it: the owner word written, or
-/// `owed` where the send is held and the stage left for the next walk.
+/// `owed` with the hold's cause where the send is held and the stage left
+/// for the next walk.
 fn send_and_mark(
     path: &Path,
     settings: &Settings,
@@ -368,16 +373,16 @@ fn send_and_mark(
     stage: &Stage,
     env: &Env,
     locking: Locking,
-) -> Result<String> {
+) -> Result<(String, Option<String>)> {
     let (Some(notice), Some(run_dir), Some(round_id)) =
         (&stage.notice, &stage.run_dir, &stage.round_id)
     else {
-        return Ok(String::new());
+        return Ok((String::new(), None));
     };
     let to = notice.to.as_deref().unwrap_or(item);
     let mark = match send_notice(settings, to, &notice.key, &notice.text, env, locking) {
         NoticeSend::Marked(mark) => mark,
-        NoticeSend::Held => return Ok(state::NOTICE_OWED.to_owned()),
+        NoticeSend::Held(cause) => return Ok((state::NOTICE_OWED.to_owned(), Some(cause))),
     };
     let marked = apply(
         path,
@@ -390,9 +395,9 @@ fn send_and_mark(
         locking,
     )?;
     Ok(match marked {
-        Validated::Mark(m) => m.owner,
+        Validated::Mark(m) => (m.owner, None),
         Validated::Start(_) | Validated::Launch(_) | Validated::End(_) | Validated::Stop(_) => {
-            String::new()
+            (String::new(), None)
         }
     })
 }
@@ -424,6 +429,7 @@ pub fn run(
             closed_now: false,
             seconds: None,
             notice: stage.notice.as_ref().map(|n| n.owner.clone()),
+            held: None,
         });
     }
     let run_dir_path = PathBuf::from(run_dir);
@@ -470,11 +476,12 @@ pub fn run(
             closed_now: false,
             seconds: None,
             notice: ended.notice_owner,
+            held: None,
         });
     }
     // The notice is on disk as `owed`; the send follows and the mark after.
     let (stages, index) = stage_of(&path, run_dir)?;
-    let notice = send_and_mark(&path, settings, item, &stages[index], env, locking)?;
+    let (notice, held) = send_and_mark(&path, settings, item, &stages[index], env, locking)?;
     Ok(RunReply {
         item: item.to_owned(),
         round_id: round.to_owned(),
@@ -483,6 +490,7 @@ pub fn run(
         closed_now: true,
         seconds: ended.seconds,
         notice: Some(notice),
+        held,
     })
 }
 
@@ -565,11 +573,11 @@ pub enum JobState {
 }
 
 /// End the run's job through the launcher's own stop, `job-unit stop-job
-/// RECORD PID ARGV_GLOB`, the call the legacy `--stop` made for each run:
-/// the unit by the exact name its record carries, the setsid group by the
-/// child's pid while that pid still runs this run's executor (a pid the
-/// system reused is left alone). Exit 0 ended it, 1 found nothing to end;
-/// anything else is the launcher's keyed line, refused `stop-failed`.
+/// RECORD PID ARGV_GLOB`: the unit by the exact name its record carries, the
+/// setsid group by the child's pid while that pid still runs this run's
+/// executor (a pid the system reused is left alone). Exit 0 ended it, 1 found
+/// nothing to end; anything else is the launcher's keyed line, refused
+/// `stop-failed`.
 #[allow(
     clippy::disallowed_methods,
     reason = "the stop's one ask of the job launcher to end the run's job by its recorded identity, after the stop was recorded on the stage"
@@ -649,8 +657,8 @@ fn reconcile(path: &Path, round_id: &str, env: &Env, locking: Locking) -> Result
     Ok(())
 }
 
-/// Stop a started run (decision 188 (c)): the stop recorded on its open
-/// stage first (a record before the effect, decision 120; refused
+/// Stop a started run: the stop recorded on its open stage first (a
+/// record before the effect; refused
 /// `run-closed` on a closed stage, `run-unstarted` on one with no runtime
 /// job), the job ended by its recorded identity through the launcher, a
 /// bounded wait for the job to read gone, then the finishing transition and
@@ -658,8 +666,7 @@ fn reconcile(path: &Path, round_id: &str, env: &Env, locking: Locking) -> Result
 /// child, so the reconcile closes the stage `stopped` with the notice owed
 /// and the walk sends it; on the setsid route the job outlives its child's
 /// group and makes the same close itself, the first closer winning. `item`
-/// names the record, or the run directory finds it as the legacy stop
-/// forwards.
+/// names the record; with none, the run directory finds it.
 pub fn stop(
     settings: &Settings,
     item: Option<&str>,

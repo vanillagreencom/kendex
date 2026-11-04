@@ -445,7 +445,7 @@ pub enum Asked {
     /// never started.
     Failed(String),
     /// The call started and gave no answer within its bound, or a signal
-    /// ended it: the provider may hold the item.
+    /// ended it or the provider under it: the provider may hold the item.
     Unknown(String),
 }
 
@@ -582,7 +582,9 @@ pub fn put(scripts: &Path, host: &str, item: &str, path: &str, bytes: &[u8]) -> 
 /// One provider call under `bound`, for the launch's long verbs, its
 /// answer read by the runner's three values: a `lane-host` that never
 /// started made nothing (`<key>-failed`); one whose bound passed, or that a
-/// signal ended, may have acted (`<key>-unanswered`).
+/// signal ended, may have acted (`<key>-unanswered`). `lane-host` exits
+/// with the provider's own status, so 128 and above is a provider a signal
+/// ended, which gave no answer either.
 #[allow(
     clippy::disallowed_methods,
     reason = "the launch's provider calls, `lane-host` through the one runner under the record's host, each verb's bound its own"
@@ -615,7 +617,7 @@ fn call(
             Asked::Unknown(format!("{key}-unanswered cause={e}"))
         }
     })?;
-    if out.status.code().is_none() {
+    if out.status.code().is_none_or(|code| code >= 128) {
         return Err(Asked::Unknown(format!(
             "{key}-unanswered {}",
             cause_of(operation, &out)
@@ -638,7 +640,8 @@ pub enum Closed {
     /// A tracker quota receipt on the output: nothing closed, asked again
     /// once the hold ends.
     Deferred,
-    /// Any other end: the status and the output's first line.
+    /// Any other exit, its status and the output's first line, or a close
+    /// that never started, the start's failure.
     Failed { cause: String },
     /// No answer: the close started and its bound passed, or a signal ended
     /// it, so it may have happened. Its marker stands for the next pass,

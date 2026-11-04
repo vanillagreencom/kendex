@@ -432,12 +432,11 @@ fn fail(
     })
 }
 
-/// What a launch's fork left: the group its child leads, the child's
-/// identity where it was read, and whether the child itself reads ended.
+/// What a launch's fork left: the group its child leads and the child's
+/// identity where it was read.
 struct Forked {
     pgid: u32,
     leader: Option<Identity>,
-    ended: bool,
 }
 
 impl Operation<'_> {
@@ -482,14 +481,15 @@ impl Operation<'_> {
     /// open-file limits and, where the caller runs in a user-manager slice,
     /// that slice with its task and memory caps, so a warden that reads
     /// units outside an agent's slice as escaped work sees the job inside
-    /// it. A start the manager answered with a failure is read back as the
-    /// reconcile reads a unit: one it has no record of falls to `setsid`
-    /// (`Err` with the reason), one read ended ends the launch, and any
-    /// other answer, an unread one included, is the job, held by its unit.
-    /// A start whose answer was lost never falls to `setsid`: `--collect`
-    /// unloads a unit once it ends, so the manager's having no record of
-    /// it may be a job that ran, and the unit holds the job until its
-    /// claim or a reconcile reads it.
+    /// it. Only a `systemd-run` that never started proves no unit was asked
+    /// for, and falls to `setsid` (`Err` with the reason). Every other
+    /// failure is read back as the reconcile reads a unit: one read ended
+    /// ends the launch, and any other answer is the job, held by its unit
+    /// until its claim or a reconcile reads it. `systemd-run`'s exit status
+    /// does not tell a refusal the manager answered from a bus error or a
+    /// client timeout after the manager acted, and `--collect` unloads a
+    /// unit once it ends, so the manager's having no record of the unit may
+    /// be a job that ran.
     fn launch_unit(
         &self,
         record: &Path,
@@ -561,7 +561,7 @@ impl Operation<'_> {
         // is its spelling of one literal `$`.
         words.extend(argv.iter().map(|word| word.replace('$', "$$")));
         let args: Vec<&str> = words.iter().map(String::as_str).collect();
-        let (detail, answered) = match host::run_tagged(
+        let detail = match host::run_tagged(
             "job",
             "systemd-run",
             Path::new("systemd-run"),
@@ -579,20 +579,15 @@ impl Operation<'_> {
                 });
             }
             Ok(out) => match out.status.code() {
-                Some(_) => (first_line(&host::stderr_text(&out)), true),
-                None => ("signal".to_owned(), false),
+                Some(_) => first_line(&host::stderr_text(&out)),
+                None => "signal".to_owned(),
             },
-            Err(e @ agent_runtime::Error::NotStarted { .. }) => (e.to_string(), true),
-            Err(e) => (e.to_string(), false),
-        };
-        // The call failed after the probe answered. A lost reply or a
-        // client-side timeout leaves the manager free to have started the
-        // unit, so only the manager's own answer settles it; a unit held
-        // as the job stands until the claim or a reconcile reads it.
-        match unit_end(unit) {
-            Some(JobEnd::UnitGone) if answered => {
-                Err(format!("unit-launch-failed detail={detail}"))
+            Err(e @ agent_runtime::Error::NotStarted { .. }) => {
+                return Err(format!("unit-launch-failed detail={e}"));
             }
+            Err(e) => e.to_string(),
+        };
+        match unit_end(unit) {
             Some(JobEnd::UnitEnded { state }) => {
                 let status = format!("unit-{state}");
                 let ended = ended_record(record, "systemd", &status, None, &line);
@@ -704,13 +699,12 @@ impl Operation<'_> {
                 let forked = Forked {
                     pgid: pid,
                     leader: None,
-                    ended: true,
                 };
                 return self.unwound(record, &line, &status, None, forked);
             }
             Reading::Unreadable { cause } => {
                 let status = "identity-unread";
-                let ended = self.end_child(&mut child, None);
+                self.end_child(&mut child, None);
                 return self.unwound(
                     record,
                     &line,
@@ -719,7 +713,6 @@ impl Operation<'_> {
                     Forked {
                         pgid: pid,
                         leader: None,
-                        ended,
                     },
                 );
             }
@@ -735,7 +728,7 @@ impl Operation<'_> {
             // The identity was read but could not be recorded: the child is
             // ended the same way, so nothing runs unrecorded.
             let status = "record-unwritable";
-            let ended = self.end_child(&mut child, Some(&identity));
+            self.end_child(&mut child, Some(&identity));
             return self.unwound(
                 record,
                 &line,
@@ -744,7 +737,6 @@ impl Operation<'_> {
                 Forked {
                     pgid: pid,
                     leader: Some(identity),
-                    ended,
                 },
             );
         }
@@ -759,11 +751,11 @@ impl Operation<'_> {
     /// have run its own `setsid` yet, so it leads no process group and a
     /// group teardown alone would miss it. TERM, the grace, then KILL; by
     /// identity through the one stop where its start was read, by the
-    /// `kill` program otherwise. The answer is the child's own wait status,
-    /// never the signal's: `true` once it reads exited and is reaped, `false`
-    /// where it still runs or its status cannot be read after the KILL's
-    /// grace, the child then left to its handle's drop and the launch held.
-    fn end_child(&self, child: &mut host::Detached, identity: Option<&Identity>) -> bool {
+    /// `kill` program otherwise. Neither the signal's answer nor the wait is
+    /// the launch's answer: `unwound` reads the child by its key after this.
+    /// A child that still runs after the KILL's grace is never waited for; its
+    /// handle's drop reaps it.
+    fn end_child(&self, child: &mut host::Detached, identity: Option<&Identity>) {
         let exited = |child: &mut host::Detached| matches!(child.exited(), Ok(Some(_)));
         if let Some(identity) = identity {
             let _ = process::stop_identities(std::slice::from_ref(identity), KILL_GRACE);
@@ -791,7 +783,6 @@ impl Operation<'_> {
         while !exited(child) && self.now() < deadline {
             self.sleep(POLL);
         }
-        exited(child) && child.reap().is_ok()
     }
 
     /// A launch ended after its fork: the group the child led (its pgid
@@ -800,9 +791,9 @@ impl Operation<'_> {
     /// launch reported with its cause. A group that reads empty is nothing
     /// started; one that does not, or a table that cannot be read, holds
     /// the job `unwound-failed` by the leader's identity where it was read,
-    /// else by the group key alone, which every post-fork path holds. A
-    /// child not read ended holds the job the same way, whatever its group
-    /// reads: one that never ran its own `setsid` is in no group of its own.
+    /// else by the group key alone, which every post-fork path holds. Both
+    /// keys read the child itself as well as its group, so a child its launch
+    /// could not end holds the job though it never ran its own `setsid`.
     fn unwound(
         &self,
         record: &Path,
@@ -811,11 +802,7 @@ impl Operation<'_> {
         detail: Option<String>,
         forked: Forked,
     ) -> Launched {
-        let Forked {
-            pgid,
-            leader,
-            ended: child_ended,
-        } = forked;
+        let Forked { pgid, leader } = forked;
         let mut members = Vec::new();
         if let Ok(rows) = process::table() {
             for row in rows.iter().filter(|row| row.pgrp == pgid) {
@@ -831,7 +818,7 @@ impl Operation<'_> {
             Some(detail) => format!("launch-failed status={status} {detail}"),
             None => format!("launch-failed status={status}"),
         };
-        if child_ended && pgid_end(pgid).is_some() {
+        if pgid_end(pgid).is_some() {
             let noted = ended_record(record, "setsid", status, None, line);
             return Launched {
                 read: SidecarRead::Failed {
@@ -1128,18 +1115,26 @@ fn group_end(leader: &Identity) -> Option<JobEnd> {
     pgid_end(leader.pid)
 }
 
-/// The end of the job group `pgid`, read by the group key alone: the
-/// kernel's table for any live member naming it as its group. A pgid is not
-/// reallocated while its group has a member, so this read can hold too long
-/// and never discharge a running group. `None` while a member lives or
-/// where the table cannot be read, which the table reader answers for an
-/// unreadable row too. A zombie is no member: the table reader leaves an
-/// exited process its parent has not reaped out of every row, so a
-/// reaped-late member never holds the group.
+/// The end of the job group `pgid`, read by the group key alone.
 fn pgid_end(pgid: u32) -> Option<JobEnd> {
-    let rows = process::table().ok()?;
-    let member = rows.iter().any(|row| row.pgrp == pgid);
-    (!member).then_some(JobEnd::Exited)
+    matches!(pgid_reading(pgid), Reading::Gone).then_some(JobEnd::Exited)
+}
+
+/// The job a group key names, read in the kernel's table: the child whose
+/// pid the key is, and any member naming it as its group, since a child that
+/// has not yet run its own `setsid` is in its parent's group. A pid and a
+/// pgid are not reallocated while that process or a member of that group
+/// runs, so this read can hold too long and never ends a running job.
+/// `Unreadable` where the table cannot be read, which the table reader
+/// answers for an unreadable row too. A zombie is no member: the table
+/// reader leaves an exited process its parent has not reaped out of every
+/// row, so a reaped-late process never holds the job.
+pub(crate) fn pgid_reading(pgid: u32) -> Reading<()> {
+    match process::table() {
+        Ok(rows) if rows.iter().any(|row| row.pid == pgid || row.pgrp == pgid) => Reading::Live(()),
+        Ok(_) => Reading::Gone,
+        Err(e) => Reading::Unreadable { cause: e.cause },
+    }
 }
 
 /// The job the launcher's record names, in its `runner=`, `unit=`, `pid=`,
@@ -1151,8 +1146,10 @@ fn pgid_end(pgid: u32) -> Option<JobEnd> {
 /// `unwound-failed` names the group the launcher could not read empty, read
 /// on every reconcile from here: by the leader's identity where the
 /// launcher read its start, else by the group key `pgid=` alone, which
-/// every post-fork path holds; no start is ever made up for it.
-fn read_handle(record: &Path) -> SidecarRead {
+/// every post-fork path holds; no start is ever made up for it. The one
+/// reader of the record, the runtime's launcher's and `lib/job-unit.sh`'s
+/// alike, so every consumer reads one launch three-valued the same way.
+pub(crate) fn read_handle(record: &Path) -> SidecarRead {
     let text = match std::fs::read_to_string(record) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return SidecarRead::Absent,
@@ -2016,14 +2013,16 @@ mod tests {
     }
 
     /// Defect: a launch that waits without bound on a child its stop could
-    /// not end, and reads that child's empty group as nothing started. The
-    /// stop names a start that is not the child's, so it signals nothing and
-    /// the child runs on: the launch stops waiting once the KILL's grace has
-    /// passed, says the child is not ended, and holds the job by its group's
-    /// key though that group reads empty, the child never having run its
-    /// own `setsid`.
+    /// not end, reads that child's empty group as nothing started, or holds
+    /// it by a key the next read releases while the child runs. The stop
+    /// names a start that is not the child's, so it signals nothing and the
+    /// child runs on: the launch stops waiting once the KILL's grace has
+    /// passed and holds the job by its group's key though that group reads
+    /// empty, the child never having run its
+    /// own `setsid`; the next read holds the job while the child runs and
+    /// discharges it once the child has ended.
     #[test]
-    fn a_child_its_launch_cannot_end_is_never_waited_for_and_holds_the_job() {
+    fn a_child_its_launch_cannot_end_is_never_waited_for_and_holds_the_job_until_it_ends() {
         let dir = tempfile::tempdir().unwrap();
         let roots = crate::settings::Roots {
             project: dir.path().into(),
@@ -2066,7 +2065,7 @@ mod tests {
             locking: state::Locking::FLOCK,
             clock: &clock,
         };
-        let operation = Operation::open(&run, &intent).unwrap();
+        let mut operation = Operation::open(&run, &intent).unwrap();
         let mut child = host::start_detached(
             "job",
             "sleep",
@@ -2083,7 +2082,7 @@ mod tests {
             start: "ticks:1".to_owned(),
         };
         let asked = std::time::Instant::now();
-        let ended = operation.end_child(&mut child, Some(&not_its_start));
+        operation.end_child(&mut child, Some(&not_its_start));
         let waited = asked.elapsed();
         let running = matches!(process::identity(pid), Reading::Live(_));
         let launched = operation.unwound(
@@ -2094,20 +2093,37 @@ mod tests {
             Forked {
                 pgid: pid,
                 leader: None,
-                ended,
             },
         );
+        operation
+            .read_sidecar(&record, Some(launched.read.clone()))
+            .unwrap();
+        // The next read of the set, as a reconcile makes it.
+        let next_read = || {
+            let current = read_intent(&path, id).unwrap();
+            let mut operation = Operation::open(&run, &current).unwrap();
+            operation.read_standing_jobs().unwrap();
+            operation.obligations.jobs()
+        };
+        let held = next_read();
         let _ = std::process::Command::new("kill")
             .args(["-KILL", &pid.to_string()])
             .status();
         let _ = child.reap();
-        assert!(!ended && running, "the child runs on, read not ended");
+        let after_end = next_read();
+        assert!(running, "the child runs on");
         assert!(waited < Duration::from_secs(5), "no wait on it: {waited:?}");
         assert_eq!(
             launched.read,
             SidecarRead::Present(JobHandle::Pgid(pid)),
             "the job held by its group's key"
         );
+        assert_eq!(
+            held,
+            vec![Obligation::JobPgid { pgid: pid }],
+            "the next read holds the job while the child runs"
+        );
+        assert!(after_end.is_empty(), "the child ended: {after_end:?}");
     }
 
     /// Defect: a start made up for a leader that exited before its start was

@@ -56,6 +56,9 @@ enum Route {
     },
     Resume {
         session_id: String,
+        /// The home the session's file was found under: the resumed
+        /// launch runs there, since another home's store may not hold it.
+        home: Option<PathBuf>,
     },
     /// The destination home's session store could not be read, or the bound
     /// session belongs to another directory: the launch refuses before any
@@ -100,7 +103,8 @@ type Owner<'a> = &'a dyn Fn(Harness, &Path, &Path, &str) -> Reading<Option<PathB
 /// The destination is the home the lane's last confirmed launch recorded,
 /// where its bound session was written (a private Codex home links the
 /// account's store); a lane that recorded none reads its account, else the
-/// harness's default home. Nothing is resolved again in this process.
+/// harness's default home. Nothing is resolved again in this process, and a
+/// resume runs under the home its session was found under.
 fn relaunch_route(run: &Run, lane: &Lane, r: &LaunchLane) -> Result<Route> {
     let handoff = standing_handoff(run, &lane.item)?;
     let destination = lane
@@ -183,7 +187,10 @@ fn route_of(
         }
     }
     match handoff {
-        Some(Relaunch::Resume) | None => Route::Resume { session_id },
+        Some(Relaunch::Resume) | None => Route::Resume {
+            session_id,
+            home: destination.map(Path::to_path_buf),
+        },
         Some(Relaunch::Fresh) => Route::Fresh {
             cause: Some("session-retired"),
         },
@@ -261,11 +268,21 @@ fn prepare_launch(
     if let Some(brief) = &r.brief_file {
         read_brief(brief)?;
     }
-    // A Codex window with no account runs on the `CODEX_HOME` the fleet
-    // server hands its panes, where it holds one.
-    let kept = match (harness, &r.account) {
-        (Harness::Codex, None) => operation::server_codex_home(&server, &session)?,
-        (Harness::Codex | Harness::Claude | Harness::Copilot | Harness::Pi, _) => None,
+    // A resume with no account runs under the home its session was found
+    // under, whatever the server or the settings now name; otherwise a Codex
+    // window with no account runs on the `CODEX_HOME` the fleet server hands
+    // its panes, where it holds one. An account names its own home, and an
+    // accountless Claude launch names none.
+    let kept = match (harness, &r.account, route) {
+        (
+            Harness::Codex | Harness::Copilot,
+            None,
+            Route::Resume {
+                home: Some(home), ..
+            },
+        ) => Some(home.clone()),
+        (Harness::Codex, None, _) => operation::server_codex_home(&server, &session)?,
+        (Harness::Codex | Harness::Claude | Harness::Copilot | Harness::Pi, _, _) => None,
     };
     let homes = launch_home(
         settings,
@@ -276,7 +293,7 @@ fn prepare_launch(
         &cwd,
     )?;
     let floor = match (route, &homes.sessions) {
-        (Route::Resume { session_id }, _) => SessionFloor::Fixed(session_id.clone()),
+        (Route::Resume { session_id, .. }, _) => SessionFloor::Fixed(session_id.clone()),
         (Route::Fresh { .. }, Some(home)) => operation.session_floor(harness, home, &cwd)?,
         (Route::Fresh { .. }, None) => SessionFloor::Baseline(Vec::new()),
         (Route::Refuse { .. }, _) => {
@@ -304,7 +321,7 @@ fn prepare_launch(
         },
     )?;
     lane_words(&mut intent, &cwd);
-    if let Route::Resume { session_id } = route {
+    if let Route::Resume { session_id, .. } = route {
         intent.resume = Some(Resume {
             session_id: session_id.clone(),
             session_file: None,
@@ -383,14 +400,14 @@ fn inherited_home(settings: &Settings, harness: Harness) -> Option<PathBuf> {
 /// The home a launch of `harness` billing `account` on `model` names before
 /// its trust record, and the account it bills where that account's variable
 /// is not the home's; never the cwd. The account is the home where its
-/// variable is the harness's own. Otherwise a Pi or Codex launch runs on
-/// `kept`, the home it keeps where no account names one (the Pi root a
-/// controller's succession keeps, whether or not a metered account bills
-/// it; the `CODEX_HOME` the fleet server's panes inherit), else on its
-/// inherited home; a Pi seat rides in the account alone. Copilot with no
-/// account runs on its inherited home; Codex and Copilot ask a trust
-/// question under theirs. An accountless Claude launch names none, so the
-/// operator's own config stays untouched.
+/// variable is the harness's own. Otherwise a Pi, Codex or Copilot launch
+/// runs on `kept`, the home it keeps where no account names one (the Pi
+/// root a controller's succession keeps, whether or not a metered account
+/// bills it; the `CODEX_HOME` the fleet server's panes inherit; the home a
+/// resumed session was found under), else on its inherited home; a Pi seat
+/// rides in the account alone. Codex and Copilot ask a trust question
+/// under theirs. An accountless Claude launch names none, so the operator's
+/// own config stays untouched.
 fn named_home(
     settings: &Settings,
     harness: Harness,
@@ -405,11 +422,11 @@ fn named_home(
     }
     let billed = account.map(PathBuf::from);
     let home = match (harness, kept) {
-        (Harness::Pi | Harness::Codex, Some(kept)) => {
+        (Harness::Pi | Harness::Codex | Harness::Copilot, Some(kept)) => {
             check_directory("home-missing", kept)?;
             Some(kept.to_path_buf())
         }
-        (Harness::Pi | Harness::Codex, None) | (Harness::Copilot, _) => {
+        (Harness::Pi | Harness::Codex | Harness::Copilot, None) => {
             inherited_home(settings, harness)
         }
         (Harness::Claude, _) => None,
@@ -703,7 +720,7 @@ fn local_launch(
     // and a crash between here and the window leaves a marker the next
     // launch rewrites, never a lane with no mail.
     let resumed = match route {
-        Route::Resume { session_id } => Some(marker::Resumed {
+        Route::Resume { session_id, .. } => Some(marker::Resumed {
             harness: &r.harness,
             session_id,
         }),
@@ -804,10 +821,14 @@ fn hosted_launch(
     let created = match created {
         Ok(created) => created,
         Err(hosted::Asked::Failed(cause)) => return failed(operation, &cause),
-        // The provider may hold the item: the intent stays open, the lane
-        // preparing, until a close settles it.
+        // The provider may hold the item. Its create reuses the worktree it
+        // holds, so the launch fails and the next launch's create settles
+        // what this one may have left: nothing is held for a person.
         Err(hosted::Asked::Unknown(cause)) => {
-            return Ok(preparing_held(operation, HOST_CREATE, provider, &cause));
+            return Ok(operation.settle(
+                Word::Failed,
+                json!({"note": format!("{HOST_CREATE}-unknown"), "cause": cause, "at": provider}),
+            ));
         }
     };
     if let Harness::Pi = harness
@@ -1289,7 +1310,7 @@ fn package(
 /// The note a cloud launch is held under where the create's answer was lost.
 const CLOUD_CREATE_UNKNOWN: &str = "cloud-create-unknown";
 
-/// The preparation steps a launch records before asking, each held as
+/// The preparation steps a launch records before asking, each read as
 /// `<step>-unknown` where its answer is lost.
 const HOST_CREATE: &str = "host-create";
 const WORKTREE_CREATE: &str = "worktree-create";
@@ -1568,13 +1589,20 @@ pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutco
             })));
         }
         // A preparation asked and never answered, its asking process ended
-        // included, may stand: held until a close.
+        // included, may stand. A hosted provider's create reuses what it
+        // holds, so that launch fails and the next create settles it; a
+        // worktree step is held until a close.
         Phase::Preparing { step, at } => {
-            return Ok(operation.hold(json!({
+            let observation = json!({
                 "reconcile": "launch",
                 "note": format!("{step}-unknown"),
                 "at": at,
-            })));
+            });
+            return Ok(if step == HOST_CREATE {
+                operation.settle(Word::Failed, observation)
+            } else {
+                operation.hold(observation)
+            });
         }
         Phase::Opening { opening } => match operation.recover_opening(opening)? {
             Recovered::Adopted {
@@ -1899,7 +1927,7 @@ mod tests {
         let owner = &operation::session_owner;
         assert!(matches!(
             route_of(&lane, &same, None, Some(&a), owner),
-            Route::Resume { session_id } if session_id == id
+            Route::Resume { session_id, .. } if session_id == id
         ));
         assert!(matches!(
             route_of(&lane, &same, Some(Relaunch::Resume), Some(&a), owner),
@@ -2021,7 +2049,7 @@ mod tests {
         *answer.borrow_mut() = Reading::Live(None);
         assert!(matches!(
             route_of(&bound("claude", Some(&cwd)), &request("claude"), None, Some(&home), &owner),
-            Route::Resume { session_id } if session_id == id
+            Route::Resume { session_id, .. } if session_id == id
         ));
         assert!(matches!(
             route_of(

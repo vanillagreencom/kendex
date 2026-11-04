@@ -1146,7 +1146,7 @@ fn cloud_world(dir: &Path) -> CloudWorld {
 
 impl CloudWorld {
     /// The runtime in this world, the cloud CLI fixture first on `PATH`.
-    fn run(&self, args: &[&str], env: &[(&str, &Path)]) -> std::process::Output {
+    fn command(&self, args: &[&str], env: &[(&str, &Path)]) -> std::process::Command {
         let mut command = isolated();
         command
             .args(["--state-dir", &self.root.display().to_string()])
@@ -1157,11 +1157,23 @@ impl CloudWorld {
         for (key, value) in env {
             command.env(key, value);
         }
-        command.output().unwrap()
+        command
+    }
+
+    fn run(&self, args: &[&str], env: &[(&str, &Path)]) -> std::process::Output {
+        self.command(args, env).output().unwrap()
     }
 
     /// `launch-lane` for `item` on the cloud.
     fn launch(&self, item: &str, env: &[(&str, &Path)]) -> std::process::Output {
+        self.run(
+            &["op", "--fleet", "--request", &self.launch_request(item)],
+            env,
+        )
+    }
+
+    /// The `launch-lane` request file for `item` on the cloud.
+    fn launch_request(&self, item: &str) -> String {
         let request = self.root.join(format!("request-{item}.json"));
         std::fs::write(
             &request,
@@ -1178,9 +1190,25 @@ impl CloudWorld {
             .to_string(),
         )
         .unwrap();
+        request.display().to_string()
+    }
+
+    /// A person's terminal close of `item`.
+    fn close(&self, item: &str) -> std::process::Output {
+        let request = self.root.join(format!("close-{item}.json"));
+        std::fs::write(
+            &request,
+            json!({
+                "op": "close-owned-resources",
+                "item": item,
+                "terminal": {"verdict": "canceled", "source": "claude.ai/code read by a person"},
+            })
+            .to_string(),
+        )
+        .unwrap();
         self.run(
             &["op", "--fleet", "--request", &request.display().to_string()],
-            env,
+            &[],
         )
     }
 
@@ -1345,21 +1373,7 @@ fn a_cloud_launch_pushes_the_branch_creates_the_session_through_the_cli_and_reco
         reconciled["observation"]["note"], "cloud-create-unknown",
         "{answer}"
     );
-    let request = root.join("close-CC-10.json");
-    std::fs::write(
-        &request,
-        json!({
-            "op": "close-owned-resources",
-            "item": "CC-10",
-            "terminal": {"verdict": "canceled", "source": "claude.ai/code read by a person"},
-        })
-        .to_string(),
-    )
-    .unwrap();
-    let closed = world.run(
-        &["op", "--fleet", "--request", &request.display().to_string()],
-        &[],
-    );
+    let closed = world.close("CC-10");
     assert!(
         closed.status.success(),
         "the close settles the held create: {}",
@@ -1408,4 +1422,82 @@ fn a_cloud_create_whose_asking_process_ends_is_held_and_never_asked_again() {
         .matches("argv=")
         .count();
     assert_eq!(creates, 1, "no second create beside the one that may stand");
+}
+
+/// Defect: a person's close that fails a cloud launch while its `op` is
+/// still inside the create, so the session the create then makes is
+/// recorded nowhere. While the asking `op` runs, the close refuses
+/// `intent-open` and the launch stays open; once that `op` has ended with
+/// the create unanswered, the close supersedes the held launch, naming its
+/// worktree.
+#[test]
+fn a_close_beside_a_live_cloud_create_is_refused_and_supersedes_it_once_its_op_is_gone() {
+    let dir = tempfile::tempdir().unwrap();
+    let world = cloud_world(dir.path());
+    let claude_log = dir.path().join("claude.log");
+    let hold = dir.path().join("hold.fifo");
+    let made = program("mkfifo").arg(&hold).output().unwrap();
+    assert!(made.status.success(), "{}", stderr(&made));
+    let init = world.run(&["state", "init", "--fleet"], &[]);
+    assert!(init.status.success(), "init: {}", stderr(&init));
+    // Held so a row that fails before its end still ends the `op`.
+    let mut asking = Owned(
+        world
+            .command(
+                &["op", "--fleet", "--request", &world.launch_request("CC-20")],
+                &[
+                    ("CLAUDE_CLOUD_LOG", claude_log.as_path()),
+                    ("CLAUDE_CLOUD_HOLD", hold.as_path()),
+                ],
+            )
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    // The CLI's log line is its acknowledgement that the create was asked.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !std::fs::read_to_string(&claude_log).is_ok_and(|log| log.contains("argv=")) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the create was never asked"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let refused = world.close("CC-20");
+    assert!(!refused.status.success(), "{}", stderr(&refused));
+    assert_eq!(
+        reply(&refused)["refusal"]["key"],
+        "intent-open",
+        "{}",
+        stderr(&refused)
+    );
+    let open = world.intent("CC-20");
+    assert!(
+        matches!(
+            open["outcome"].as_str(),
+            Some("not-started" | "unconfirmed")
+        ),
+        "the launch stays open: {open}"
+    );
+    assert_eq!(world.lane("CC-20")["status"], "preparing");
+    // The asking `op` ends inside the create; the CLI, released after it,
+    // answers no one.
+    asking.0.kill().unwrap();
+    asking.0.wait().unwrap();
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&hold)
+        .and_then(|mut fifo| std::io::Write::write_all(&mut fifo, b"\n"))
+        .unwrap();
+    let closed = world.close("CC-20");
+    assert!(closed.status.success(), "{}", stderr(&closed));
+    let launch = world.intent("CC-20");
+    assert_eq!(launch["outcome"], "failed", "{launch}");
+    assert_eq!(
+        launch["observation"]["cloud_create"],
+        world.root.join("wt").join("CC-20").display().to_string(),
+        "{launch}"
+    );
+    assert_ne!(world.lane("CC-20")["status"], "preparing");
 }

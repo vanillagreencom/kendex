@@ -17,7 +17,6 @@
 
 pub mod run;
 
-use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::io::ErrorKind;
@@ -28,6 +27,7 @@ use agent_runtime::host::{self, Place};
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::effects::{self, JobHandle, SidecarRead};
 use crate::error::{Error, Result};
 use crate::ops::validate::{
     Launch, RecordEnd, RecordLaunch, RecordStart, Reuse, Validate, Validated, Want,
@@ -1435,17 +1435,6 @@ fn started_line(run_dir: &Path, proof: &Proof) -> String {
     )
 }
 
-/// The launcher's record in job-unit's own form.
-fn read_launcher_record(record: &Path) -> BTreeMap<String, String> {
-    fs::read_to_string(record)
-        .map(|text| {
-            text.lines()
-                .filter_map(|l| l.split_once('=').map(|(k, v)| (k.to_owned(), v.to_owned())))
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
 /// Ask the job launcher for the run's job: `validate run` under the
 /// worktree's name with the cap as the unit's bound, the record beside the
 /// run as the executor reads it.
@@ -1519,16 +1508,37 @@ fn ask_launcher(
         place,
         LAUNCH_TIMEOUT,
     ) {
-        Ok(out) if out.status.success() => {
-            let fields = read_launcher_record(&record);
-            Launch::Started {
-                runner: fields.get("runner").cloned().unwrap_or_default(),
-                unit: fields.get("unit").cloned(),
-                pid: fields.get("pid").and_then(|p| p.parse().ok()),
-                start: fields.get("start").cloned(),
+        // The started job is the one its record names, read by the one
+        // reader of that record; a record naming no unit or leader identity
+        // leaves the job for the round's reconcile to read from it.
+        Ok(out) if out.status.success() => match effects::read_handle(&record) {
+            SidecarRead::Present(JobHandle::Unit { unit }) => Launch::Started {
+                runner: "systemd".to_owned(),
+                unit: Some(unit),
+                pid: None,
+                start: None,
                 line: host::stdout_text(&out),
-            }
-        }
+            },
+            SidecarRead::Present(JobHandle::Group(identity)) => Launch::Started {
+                runner: "setsid".to_owned(),
+                unit: None,
+                pid: Some(identity.pid),
+                start: Some(identity.start),
+                line: host::stdout_text(&out),
+            },
+            SidecarRead::Present(JobHandle::Pgid(pgid)) => Launch::Unanswered {
+                cause: format!("launcher-record-key pgid={pgid}"),
+            },
+            SidecarRead::Failed { status } => Launch::Unanswered {
+                cause: format!("launcher-record-ended status={status}"),
+            },
+            SidecarRead::Absent => Launch::Unanswered {
+                cause: "launcher-record-absent".to_owned(),
+            },
+            SidecarRead::Unreadable { cause } => Launch::Unanswered {
+                cause: format!("launcher-record-unreadable cause={cause}"),
+            },
+        },
         // An end with no status, or the launcher's own possibly-started
         // answer, may have started the job.
         Ok(out) if out.status.code().is_none() => Launch::Unanswered {

@@ -1179,8 +1179,10 @@ pub enum Phase {
     /// a hosted provider's `create` (`step` `host-create`, `at` the host;
     /// the `wait` after it included), a cloud lane's worktree `create` and
     /// branch `push` (`worktree-create` at the claim root, `worktree-push`
-    /// at the worktree). Its effect may stand though nothing answered, so a
-    /// reconcile holds the launch until a close settles it.
+    /// at the worktree). Its effect may stand though nothing answered. A
+    /// reconcile fails a hosted create, since the provider's next create
+    /// reuses what it holds, and holds a worktree step until a close
+    /// settles it.
     Preparing { step: String, at: String },
 }
 
@@ -1337,10 +1339,10 @@ pub enum Obligation {
     /// The detached job leads this process group, by the identity its child
     /// wrote before it ran.
     JobGroup(Identity),
-    /// The detached job's process group by its key alone: the launcher ended
-    /// the launch `unwound-failed` without reading the leader's start, and
-    /// the group is read in the kernel's table until it empties (decision
-    /// 124h (33)).
+    /// The detached job by its group key alone: the launcher ended the launch
+    /// `unwound-failed` without reading the leader's start, and the key is
+    /// read in the kernel's table, the child whose pid it is and every member
+    /// of its group, until neither stands.
     JobPgid { pgid: u32 },
     /// The lane's local worktree at `path`, an owned resource of the close
     /// (decision 128 (9)): released through `git worktree remove`, or kept

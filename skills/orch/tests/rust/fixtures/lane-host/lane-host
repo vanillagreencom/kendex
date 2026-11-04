@@ -11,9 +11,11 @@
 # differently, or by either with `#N` appended for the Nth call of that
 # argv where a row answers a repeated read differently (a marker absent,
 # then present once the launch put it): `{exit?, stdout?, stderr?,
-# signal?}`, `stdout` the exact bytes printed, the status 0 when absent,
-# and `signal` a signal this call ends itself by after its output, so a
-# row reads a call with no answer. A key the map
+# signal?, kill_ancestor?}`, `stdout` the exact bytes printed, the status 0
+# when absent, `signal` a signal this call ends itself by after its output,
+# so a row reads a call with no answer, and `kill_ancestor` N the process N
+# levels above this one, ended by SIGKILL before any output (2 through the
+# dispatcher is the program that asked it). A key the map
 # lacks is exit 64 with `lane-host-fixture: unplanned argv=[...]` on stderr,
 # so a row that forgot an answer reads an unreadable call, never a missing
 # file. Bash 3.2.
@@ -30,6 +32,15 @@ reply="$(jq -c --arg k "$key" --arg h "$host $key" --arg n "$nth" '.[$h + $n] //
 if [ -z "$reply" ]; then
   printf 'lane-host-fixture: unplanned argv=[%s]\n' "$key" >&2
   exit 64
+fi
+ancestor="$(jq -r '.kill_ancestor // empty' <<<"$reply")"
+if [ -n "$ancestor" ]; then
+  target=$$
+  while [ "$ancestor" -gt 0 ]; do
+    target="$(ps -o ppid= -p "$target" | tr -d ' ')"
+    ancestor=$((ancestor - 1))
+  done
+  kill -KILL "$target"
 fi
 jq -rj '.stderr // empty' <<<"$reply" >&2
 jq -rj '.stdout // empty' <<<"$reply"

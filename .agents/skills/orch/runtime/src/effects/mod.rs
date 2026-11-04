@@ -63,6 +63,8 @@ mod transfer;
 
 pub(crate) use operation::Recorded;
 pub use operation::job::{JobStarted, NoticeUnmarked};
+pub(crate) use operation::job::{pgid_reading, read_handle};
+pub(crate) use operation::{JobHandle, SidecarRead};
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -309,7 +311,7 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
         // A repeated request found an open intent: reconcile it rather than
         // start a second effect (plan § Records).
         Effect::Reconciled { intent } => {
-            let Reconciled { applied, stale } = reconcile_intent(run, &intent.id)?;
+            let Reconciled { applied, stale, .. } = reconcile_intent(run, &intent.id)?;
             // A close or a controller stop whose reconcile still reads a
             // stop to run, the recorded identity live and unchanged or a
             // recorded pane present, is a stop never completed. The request
@@ -524,13 +526,14 @@ fn stop_route_open(applied: &Applied) -> bool {
 /// finds it. One still unconfirmed with its pane present is closed `failed`
 /// with `superseded-by-close`, since a hung launch would otherwise have
 /// neither a close nor a relaunch, and the close then stops what that pane
-/// holds. So is a cloud create held with its answer unknown, which has no
-/// local process to stop: the close is the person's settlement, its line
-/// naming the worktree whose session to check on claude.ai/code; and a
-/// preparation held so (a hosted provider's create, a cloud lane's worktree
-/// create or push), its line naming the step and where it was asked. One whose
-/// pane cannot be observed is left open, and the close refuses
-/// `intent-open` as before: there is nothing to stop by. The close
+/// holds. So is a cloud create the reconcile holds with its answer unknown,
+/// which has no local process to stop: the close is the person's
+/// settlement, its line naming the worktree whose session to check on
+/// claude.ai/code; and a cloud lane's worktree create or push held so, its
+/// line naming the step and where it was asked. A launch whose owner still
+/// runs, or cannot be read, is its owner's: a create it is still inside may
+/// yet answer, so the close refuses `intent-open`, as it does for one whose
+/// pane cannot be observed, which leaves nothing to stop by. The close
 /// is then persisted through `operation`, the one store entry of the effect
 /// files.
 fn supersede_launch(
@@ -538,11 +541,18 @@ fn supersede_launch(
     close: &ops::CloseOwnedResources,
     launch_id: &str,
 ) -> Result<Applied> {
-    let reconciled = reconcile_intent(run, launch_id)?.applied;
-    let Report::RecordOutcome(launch) = &reconciled.report else {
+    let reconciled = reconcile_intent(run, launch_id)?;
+    let Report::RecordOutcome(launch) = &reconciled.applied.report else {
         unreachable!("record-outcome returns its own report")
     };
     if launch.intent.open() {
+        if reconciled.deferred {
+            return Err(Error::IntentOpen {
+                intent: launch.intent.id.clone(),
+                op: launch.intent.op,
+                target: launch.intent.target.clone(),
+            });
+        }
         let present = launch
             .intent
             .observation
@@ -847,6 +857,9 @@ pub struct IntentRefused {
 struct Reconciled {
     applied: Applied,
     stale: Vec<Identity>,
+    /// The owner was live or unreadable: the reconcile recorded nothing and
+    /// the intent stays the owner's.
+    deferred: bool,
 }
 
 fn reconcile_intent(run: &Run, intent_id: &str) -> Result<Reconciled> {
@@ -872,6 +885,7 @@ fn reconcile_intent(run: &Run, intent_id: &str) -> Result<Reconciled> {
             .map(|applied| Reconciled {
                 applied,
                 stale: Vec::new(),
+                deferred: true,
             });
         }
         Reading::Unreadable { cause } => {
@@ -883,6 +897,7 @@ fn reconcile_intent(run: &Run, intent_id: &str) -> Result<Reconciled> {
             .map(|applied| Reconciled {
                 applied,
                 stale: Vec::new(),
+                deferred: true,
             });
         }
         Reading::Gone => {}
@@ -899,6 +914,7 @@ fn reconcile_intent(run: &Run, intent_id: &str) -> Result<Reconciled> {
     Ok(Reconciled {
         applied: run.apply_outcome(outcome)?,
         stale,
+        deferred: false,
     })
 }
 

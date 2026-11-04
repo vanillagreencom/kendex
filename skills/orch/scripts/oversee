@@ -307,7 +307,9 @@ ORCH_RUNTIME="${ORCH_RUNTIME_CLI:-$SCRIPT_DIR/orch-runtime}"
 # in ASKED. A call the runtime refuses, at an exit other than 0 or one
 # ASK_SETTLED lists (the exits `op --effect-exit` answers a settled effect
 # with), or a reply that names no `ok` result, refuses REFUSAL naming the
-# first word of the runtime's own line and its exit. Where ASK_HELD names a
+# first word of the runtime's own line and its exit. That line is the first
+# that begins `orch-runtime: `, since the settings load may print notices
+# before it. Where ASK_HELD names a
 # key, the call is an `op` whose request persists an intent, and the
 # runtime's contract says which answers are refusals: exit 1 with a line
 # that names no `persisted_intent`, 2 usage, 69 the wrapper's setup line,
@@ -323,9 +325,9 @@ ask() { # REFUSAL ARGS...
   ASKED=0
   REPLY="$("$ORCH_RUNTIME" "$@" 2>"$DEP_ERR")" || ASKED=$?
   if [[ " 0 ${ASK_SETTLED:-} " != *" $ASKED "* ]] || ! jq -e '.ok == true' <<<"$REPLY" >/dev/null 2>&1; then
-    key="$(sed -n '1s/^orch-runtime: \([^ ]*\).*/\1/p' "$DEP_ERR")"
+    key="$(sed -n '/^orch-runtime: /{s/^orch-runtime: \([^ ]*\).*/\1/p;q;}' "$DEP_ERR")" || key=""
     if [[ -n "${ASK_HELD:-}" ]]; then
-      intent="$(sed -n '1s/^orch-runtime: .* persisted_intent=\([^ ]*\).*/\1/p' "$DEP_ERR")" || intent=""
+      intent="$(sed -n '/^orch-runtime: /{s/^orch-runtime: .* persisted_intent=\([^ ]*\).*/\1/p;q;}' "$DEP_ERR")" || intent=""
       case "$ASKED" in
         1|2|69|126|127) [[ -z "$intent" ]] || die "$ASK_HELD" "intent=$intent" "note=${key:-none}" "cause=exit-$ASKED" ;;
         *) die "$ASK_HELD" "intent=${intent:-unread}" "note=${key:-none}" "cause=exit-$ASKED" ;;

@@ -249,6 +249,14 @@ impl HeadRecord {
             retry: None,
         }
     }
+
+    /// Whether the head's request stands as the `draft` fallback: no
+    /// request went out, and none will while the head reads draft.
+    fn held_as_draft(&self) -> bool {
+        self.request.as_ref().is_some_and(|request| {
+            request.outcome == FALLBACK && request.cause.as_deref() == Some("draft")
+        })
+    }
 }
 
 /// `resent` marks a `requested` POST GitHub showed no sign of, sent once
@@ -639,19 +647,14 @@ impl Gate<'_> {
         draft: bool,
         marked: bool,
     ) -> Step<HeadRecord> {
-        let held_as_draft = |head: &HeadRecord| {
-            head.request.as_ref().is_some_and(|request| {
-                request.outcome == FALLBACK && request.cause.as_deref() == Some("draft")
-            })
-        };
         let mut pull = None;
         let mut ready = marked;
-        if !ready && !self.view.draft && record.as_ref().is_some_and(held_as_draft) {
+        if !ready && !self.view.draft && record.as_ref().is_some_and(HeadRecord::held_as_draft) {
             let read = review::pull(&self.gh, &self.r.repo, self.r.pr)?;
             ready = !read.draft;
             pull = Some(read);
         }
-        let stands = |head: &HeadRecord| head.request.is_some() && !(ready && held_as_draft(head));
+        let stands = |head: &HeadRecord| head.request.is_some() && !(ready && head.held_as_draft());
         if let Some(head) = record.as_ref().filter(|head| stands(head)) {
             self.reply.request = head.request.as_ref().map(|q| q.report(false));
             return self.confirm_request(head.clone());
@@ -733,7 +736,7 @@ impl Gate<'_> {
                 // A lapsing draft fallback starts the period and the hold
                 // with the request it releases: no review was asked for
                 // while the head stood as a draft.
-                let (at, period_started) = if held_as_draft(&base) {
+                let (at, period_started) = if base.held_as_draft() {
                     (stamp.clone(), stamp.clone())
                 } else {
                     (base.at.clone(), base.period_started.clone())
@@ -939,9 +942,14 @@ impl Gate<'_> {
     /// Copilot's flight against the hold and the reviewer's silence against
     /// the period: `pending` while the period runs, else the period's
     /// verdict, `proceeded` on a silent reviewer under `proceed`, `timeout`
-    /// otherwise, which ends the period and counts it.
+    /// otherwise, which ends the period and counts it. A head held as a
+    /// draft has no period: no review was asked for, so it stays `pending`
+    /// until the request that releases it starts one.
     fn period(&mut self, record: &HeadRecord, engaged: usize) -> Step<Verdict> {
         self.hold(Some(record))?;
+        if record.held_as_draft() {
+            return Err(Stop::Pending("request-fallback cause=draft".into()));
+        }
         let started =
             clock::epoch_secs(&record.period_started).ok_or_else(|| shape(self.path, "heads"))?;
         let spent = self.now.saturating_sub(started);
