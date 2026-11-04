@@ -211,6 +211,8 @@ oracle_runs_env() { # COMMAND: whether real bash runs env with no operands
 # the hook classifies it without executing the command or opening its log.
 # The Python replacement-source row models KEN-4586's attributed edit; its
 # pathlib and environment text are submitted data, never executed here.
+# Target rows keep the reported failed-cd/delete class as hook input only.
+# They carry no actual-Bash oracle mark and never execute their targets.
 # The vgs-waiter-* rows are the kendex#5631 command, reported against source
 # 4c265f7. The fleet-waiter-* rows keep the command, wrapper and assignment
 # roles of FLT-1406's refused accounts start, whose raw packet stays on
@@ -1438,6 +1440,59 @@ environment_rows() {
 [2,"while read -r a b; do :; done <<< $'x 1\\ny 2'","ansi-loop-here-string-drop","project","environment-dump","undecoded-ansi-escape"]
 [2,"{ cat; } <<< $'a\\tb'","ansi-grouped-here-string-drop","project","environment-dump","undecoded-ansi-escape"]
 [0,"bash -c 'printf env'","oracle-control-printf-env","project","environment-dump","-","no-env"]
+[2,"cd DIR; rm -rf X","target-unsafe-semicolon","project","relative-target"]
+[2,"cd DIR || true; rm -rf -- X","target-swallowed-failure","project","relative-target"]
+[2,"cd DIR && true; rm -rf X","target-success-chain-ends-before-delete","project","relative-target"]
+[2,"cd DIR || true && git init","target-swallowed-failure-and-init","project","relative-target"]
+[2,"cd DIR && false || rm -rf X","target-failure-or-delete","project","relative-target"]
+[2,"cd -- -DIR; rm --recursive --force -- 'relative target'","target-long-rm-options","project","relative-target"]
+[2,"cd DIR; /bin/rm -fR X /absolute/target","target-mixed-rm-operands","project","relative-target"]
+[2,"cd DIR; rm -rf -- -relative","target-option-terminator","project","relative-target"]
+[2,"cd DIR; git init","target-implicit-init","project","relative-target"]
+[2,"cd DIR; git init -- 'relative target'","target-explicit-init","project","relative-target"]
+[2,"cd DIR; printf safe > .git/config","target-output-write","project","relative-target"]
+[2,"cd DIR; printf safe 2>> ./repo/.git/config","target-stderr-append","project","relative-target"]
+[2,"cd DIR; : <> .git","target-read-write-git-link","project","relative-target"]
+[2,"cd DIR; printf safe &> .git/config","target-combined-output","project","relative-target"]
+[2,"cd DIR; printf safe &\u003e\u003e .git/config","target-combined-append","project","relative-target"]
+[2,"cd DIR; > .git/config","target-redirection-only","project","relative-target"]
+[2,"cd DIR; exit 1 > .git/config","target-write-before-exit","project","relative-target"]
+[2,"cd DIR || exit 1 > LOG; rm -rf X","target-redirection-can-prevent-exit","project","relative-target"]
+[2,"cd DIR; true < INPUT || rm -rf X","target-redirection-can-fail-true","project","relative-target"]
+[2,"cd FIRST; cd SECOND && rm -rf X","target-earlier-failure-retained","project","relative-target"]
+[2,"cd DIR\n\nrm -rf X","target-newline-list","outside","relative-target"]
+[2,"cd DIR; rm -rf X","target-before-settings","bad-settings","relative-target"]
+[0,"cd DIR && rm -rf X","target-success-dependent-delete"]
+[0,"cd DIR && git init X","target-success-dependent-init"]
+[0,"cd DIR && printf safe > .git/config","target-success-dependent-write"]
+[0,"cd DIR || exit 1; rm -rf X","target-exit-on-failure"]
+[0,"cd DIR || exit; git init","target-bare-exit-on-failure"]
+[0,"cd DIR || false && rm -rf X","target-false-keeps-failure"]
+[0,"false && cd DIR; rm -rf X","target-skipped-cd"]
+[0,"true || cd DIR; rm -rf X","target-or-skipped-cd"]
+[0,"cd DIR; : || rm -rf X","target-colon-skips-delete"]
+[0,"cd DIR; false && git init","target-false-skips-init"]
+[0,"cd DIR; rm -rf /literal/target","target-absolute-delete"]
+[0,"cd DIR; git init /literal/target","target-absolute-init"]
+[0,"cd DIR; printf safe > /literal/.git/config","target-absolute-write"]
+[0,"printf '%s' 'cd DIR; rm -rf X'","target-quoted-example-data"]
+[0,"cd DIR; printf '%s' 'rm -rf X' .git/config","target-nontarget-arguments"]
+[0,"cd DIR; printf safe < .git/config","target-read-is-not-write"]
+[0,"cd DIR; rm -f X","target-nonrecursive-rm"]
+[0,["printf","cd DIR; rm -rf X"],"target-argv-operator-data"]
+[0,"cd DIR; rm -rf X; printf '%s' \"$VALUE\"","target-whole-source-unknown"]
+[0,"cd DIR; rm -rf X; printf '%s' 'literal*'","target-whole-word-quote-limit"]
+[0,"cd DIR; rm -rf X; VALUE=literal","target-whole-source-assignment"]
+[0,"cd DIR; rm -rf X; (printf safe)","target-whole-source-nested"]
+[0,"cd DIR &&\nrm -rf X","target-empty-conditional-stage-unproved"]
+[0,"cd DIR; rm -rfv X","target-unsupported-rm-option"]
+[0,"cd DIR; git init --bare X","target-unsupported-init-option"]
+[0,"cd DIR; git -C ELSEWHERE init","target-git-global-options-unproved"]
+[0,"set -e; cd DIR; rm -rf X","target-shell-options-unproved"]
+[0,"command cd DIR; rm -rf X","target-prefixed-cd-unproved"]
+[0,"cd; rm -rf X","target-implicit-cd-unproved"]
+[0,"bash -c 'cd DIR; rm -rf X'","target-nested-shell-unproved"]
+[2,"cd DIR; rm -rf X; printf '%s' \"$VALUE\"; env","target-exclusion-keeps-environment-check"]
 ENVIRONMENT_ROWS
   ) || exit 1
   while IFS=$'\t' read -r expected command_json label world refusal reason oracle; do
@@ -1610,6 +1665,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     done
   done <<'ENVIRONMENT_CONTROLS'
 no-check|if environment_dump "$command_kind"; then|if false; then|exit=0 expected=2|incident
+no-targeting|  if relative_targeting judge; then refuse refused relative-target; fi|  if false; then refuse refused relative-target; fi|exit=0 expected=2|target-unsafe-semicolon
 dotted-word-boundary|  for value in "$@"; do|  opaque_re=${opaque_re//_.-/_-}; for value in "$@"; do|exit=2 expected=0|waiter-named-variable-setting-data waiter-dotted-word-data
 forwarded-word-test|        environment_producer shell|        environment_producer shell; if [ "$mode" = other ] && environment_main_evidence "${args[@]}"; then return 0; fi|exit=2 expected=0|vgs-waiter-unset-validation vgs-waiter-unset-validation-bash-lc fleet-waiter-timeout-empty-env-fixture fleet-waiter-timeout-empty-env-fixture-bash-lc
 ENVIRONMENT_CONTROLS

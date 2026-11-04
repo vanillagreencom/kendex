@@ -3,9 +3,9 @@
 # name: command-safety
 # event: PreToolUse
 # matcher: Bash
-# description: On harnesses that execute hooks, refuse cat reads of the known ~/.fleet/env spellings. Refuse a recognized whole-environment read where the shell runs it, unless a proven direct pipe filters named variables: at a command head, among the forwarded operands of a shell or source script, a shell or env -S command string, exec or builtin, in selected shell, eval or env -S source, in literal input a shell, exec or builtin gets, and in heredoc bodies an unknown receiver gets. Words elsewhere are data. This fixed check runs outside Git and before project policy. Nested dumps can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check.
+# description: On harnesses that execute hooks, refuse supported relative recursive deletes, git init and .git output writes reachable after a failed cd in a flat literal list. Refuse cat reads of the known ~/.fleet/env spellings. Refuse a recognized whole-environment read where the shell runs it, unless a proven direct pipe filters named variables: at a command head, among the forwarded operands of a shell or source script, a shell or env -S command string, exec or builtin, in selected shell, eval or env -S source, in literal input a shell, exec or builtin gets, and in heredoc bodies an unknown receiver gets. Words elsewhere are data. This fixed check runs outside Git and before project policy. Nested dumps can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check.
 # summary: Refuses cat reads of the known private environment file and offers the named non-secret settings reader. Refuses whole-environment reads where the shell would run them and gives a filter that names a variable; the same words as an argument, or in one quoted `<<` cat heredoc whose output goes to the terminal or a file, pass. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow the call; unreadable policy support affects only the pattern check.
-# safety: Classify literal command producers at executable positions, with one producer grammar: command heads, each forwarded operand of a shell or source script, a shell or env -S command string, exec or builtin, selected shell, eval and env -S source, each literal body a shell, exec or builtin gets, and each heredoc body an unknown receiver gets, judged alone as shell source. Known interpreters at a stage's own head use language-specific whole-environment evidence, which also judges input to exec, builtin and syntax-only stages, piped input included; literal cat bodies retain their data contract. Text a waiter launcher forwards keeps a conservative word test. Unquoted body expansions are checked independently. Known private-file cat reads cannot be filtered into permission. Only proven direct named-variable filters grant environment-producer dump permission; project-pattern matching remains independent and reads the submitted text. Not reached: unseen programs and runtime-built names; an unknown launcher or non-producer reader inside reserved-word syntax, such as if true; then timeout 5 env; fi; the same command as a quoted forwarded argument when the launcher stage redirects its output; the same command inside a body an unknown receiver gets; here-string input to any stage other than a shell, eval or source and an exec, builtin or syntax-only stage, an unknown program and a Python, Node, Ruby or Perl head alike, such as ssh host <<< env or python3 <<< os.environ; an interpreter body that is forwarded or nested in shell source, such as bash wrapper.sh python3 <<'EOF'; and a trap action word, such as trap 'env' EXIT. An undecoded ANSI-C escape refuses with reason=undecoded-ansi-escape under the keyed line in a command head or a producer argument or input; an ANSI-C escaped word judged as shell source, or redirected as input to a shell, source, eval, exec, builtin, script-operand or compound shell stage, refuses with no producer in it and even where that stage reads it as data, such as while read -r a b; do :; done <<< $'x 1\ny 2' or { cat; } <<< $'a\tb'; piped, it refuses only for a shell, source or eval receiver, and an exec, builtin or compound receiver reads it as data. Unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>.
+# safety: The targeting check uses existing flat stages, literal executable/operand roles and list separators; a failed cd can reach a relative recursive rm, direct git init or .git output redirect only on an executing path. Earlier cd failures remain possible after later changes. Unknown, nested, forwarded, assignment, glob/brace/tilde and unsupported invocation forms provide no targeting proof; independent environment checks still run. Classify literal command producers at executable positions, with one producer grammar: command heads, each forwarded operand of a shell or source script, a shell or env -S command string, exec or builtin, selected shell, eval and env -S source, each literal body a shell, exec or builtin gets, and each heredoc body an unknown receiver gets, judged alone as shell source. Known interpreters at a stage's own head use language-specific whole-environment evidence, which also judges input to exec, builtin and syntax-only stages, piped input included; literal cat bodies retain their data contract. Text a waiter launcher forwards keeps a conservative word test. Unquoted body expansions are checked independently. Known private-file cat reads cannot be filtered into permission. Only proven direct named-variable filters grant environment-producer dump permission; project-pattern matching remains independent and reads the submitted text. Not reached: unseen programs and runtime-built names; an unknown launcher or non-producer reader inside reserved-word syntax, such as if true; then timeout 5 env; fi; the same command as a quoted forwarded argument when the launcher stage redirects its output; the same command inside a body an unknown receiver gets; here-string input to any stage other than a shell, eval or source and an exec, builtin or syntax-only stage, an unknown program and a Python, Node, Ruby or Perl head alike, such as ssh host <<< env or python3 <<< os.environ; an interpreter body that is forwarded or nested in shell source, such as bash wrapper.sh python3 <<'EOF'; and a trap action word, such as trap 'env' EXIT. An undecoded ANSI-C escape refuses with reason=undecoded-ansi-escape under the keyed line in a command head or a producer argument or input; an ANSI-C escaped word judged as shell source, or redirected as input to a shell, source, eval, exec, builtin, script-operand or compound shell stage, refuses with no producer in it and even where that stage reads it as data, such as while read -r a b; do :; done <<< $'x 1\ny 2' or { cat; } <<< $'a\tb'; piped, it refuses only for a shell, source or eval receiver, and an exec, builtin or compound receiver reads it as data. Unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
@@ -492,6 +492,106 @@ environment_program_text() {
   environment_queue "$source" "$source_kind"
 }
 
+# Permission settings match argv prefixes, subcommands or text patterns, not
+# an earlier cd's failure and a later target's execution condition. Bash tool
+# submissions can continue after that failure, so this hook relates the existing
+# flat stage facts. Nested frames and uncertain words provide no targeting proof.
+relative_targeting() { # collect | judge; environment_dump owns the stage facts
+  local cursor value recursive="" operands="" options_ended="" relative="" states runnable skipped next_states gate=';' effect previous=""
+  if [ "$1" = collect ]; then
+    target_effects[stage]=ordinary
+    if [ "${#args[@]}" -eq 0 ]; then
+      if [ -z "${target_redirects[$stage]}" ]; then
+        target_effects[stage]=empty
+        [ "$stage" -eq 0 ] || previous=${separators[$((stage - 1))]}
+        case "${separators[$stage]}:$previous" in
+          '&&:'* | '||:'* | *':&&' | *':||') targeting_eligible="" ;;
+        esac
+      fi
+      return 0
+    fi
+    [ "$head_start" -eq 0 ] && [ "$program_pos" = 0 ] || { targeting_eligible=""; return 0; }
+    case "${args[0]}" in
+      cd)
+        cursor=1
+        if [ "${args[$cursor]:-}" = -- ]; then options_ended=1; cursor=$((cursor + 1)); fi
+        if [ "$((cursor + 1))" -ne "${#args[@]}" ] || [ -z "${args[$cursor]}" ] ||
+           [ "${args[$cursor]}" = - ] || { [ -z "$options_ended" ] && [[ ${args[$cursor]} == -* ]]; }; then
+          targeting_eligible=""
+        else target_effects[stage]=cd; fi ;;
+      true | :)
+        [ "${#args[@]}" -ne 1 ] || [ -n "${target_redirects[$stage]}" ] || target_effects[stage]=success ;;
+      false) [ "${#args[@]}" -ne 1 ] || target_effects[stage]=failure ;;
+      exit)
+        if [ -z "${target_redirects[$stage]}" ] &&
+           { [ "${#args[@]}" -eq 1 ] || { [ "${#args[@]}" -eq 2 ] && [[ ${args[1]} =~ ^[+-]?[0-9]+$ ]]; }; }; then target_effects[stage]=exit; fi ;;
+      exec | builtin | pushd | popd | set) targeting_eligible="" ;;
+    esac
+    case "$program" in
+      rm)
+        for ((cursor=pos; cursor<${#args[@]}; cursor++)); do
+          value=${args[$cursor]}
+          if [ -z "$operands$options_ended" ]; then
+            case "$value" in
+              --) options_ended=1; continue ;;
+              --recursive) recursive=1; continue ;;
+              --force) continue ;;
+              -*)
+                [[ $value =~ ^-[rRf]+$ ]] || { targeting_eligible=""; return 0; }
+                [[ $value != *[rR]* ]] || recursive=1
+                continue ;;
+            esac
+          fi
+          if [ -z "$options_ended" ] && [[ $value == -* ]]; then targeting_eligible=""; return 0; fi
+          operands=1
+          [ -z "$value" ] || [[ $value == /* ]] || relative=1
+        done
+        if [ -n "$recursive" ] && [ -n "$relative" ]; then target_operands[stage]=1; fi ;;
+      git)
+        [[ ${args[$pos]:-} != -* ]] || targeting_eligible=""
+        if [ "${args[$pos]:-}" = init ]; then
+          cursor=$((pos + 1))
+          if [ "${args[$cursor]:-}" = -- ]; then options_ended=1; cursor=$((cursor + 1)); fi
+          case "$((${#args[@]} - cursor))" in
+            0) target_operands[stage]=1 ;;
+            1)
+              value=${args[$cursor]}
+              if [ -z "$options_ended" ] && [[ $value == -* ]]; then targeting_eligible=""
+              elif [ -n "$value" ] && [[ $value != /* ]]; then target_operands[stage]=1; fi ;;
+            *) targeting_eligible="" ;;
+          esac
+        fi ;;
+    esac
+    return 0
+  fi
+  [ -n "$targeting_eligible" ] && [ -z "$compound" ] || return 1
+  # Bits retain correlated outcomes: clean success/failure, then prior-failed-cd
+  # success/failure. A skipped command keeps its status; a later cd cannot prove
+  # that an earlier failure left the shell in the intended directory.
+  states=1
+  for ((stage=0; stage<${#starts[@]}; stage++)); do
+    runnable=$states
+    case "$gate" in '&&') runnable=$((states & 5)) ;; '||') runnable=$((states & 10)) ;; esac
+    skipped=$((states ^ runnable))
+    if [ "$((runnable & 12))" -ne 0 ] && [ -n "${target_files[$stage]}${target_operands[$stage]}" ]; then return 0; fi
+    effect=${target_effects[$stage]}
+    next_states=$skipped
+    if [ "$effect" = empty ]; then next_states=$states
+    elif [ "$effect" != exit ]; then
+      if [ "$((runnable & 3))" -ne 0 ]; then
+        case "$effect" in success) next_states=$((next_states | 1)) ;; failure) next_states=$((next_states | 2)) ;;
+          cd) next_states=$((next_states | 1 | 8)) ;; *) next_states=$((next_states | 3)) ;; esac
+      fi
+      if [ "$((runnable & 12))" -ne 0 ]; then
+        case "$effect" in success) next_states=$((next_states | 4)) ;; failure) next_states=$((next_states | 8)) ;;
+          *) next_states=$((next_states | 12)) ;; esac
+      fi
+    fi
+    states=$next_states; gate=${separators[$stage]}
+  done
+  return 1
+}
+
 environment_dump() { # command kind; arguments are already decoded data
   local LC_ALL=C i=0 c next quote="" word="" active="" kind=literal compound="" bare=1 quoted=""
   local j start=0 end n fd redirection_kind target proc output input_redirect input_escaped pos program value named flags
@@ -506,6 +606,8 @@ environment_dump() { # command kind; arguments are already decoded data
   local tokens=() kinds=() unquoted_words=() saved_quotes=() closers=() args=() arg_kinds=() arg_unquoted=() stage_args=() stage_kinds=() stage_unquoted=() heredocs=() heredoc_tabs=() heredoc_expand=() heredoc_bodies=() body_ids=() stage_sources=() stage_stdin=() stage_fallback=() executable_texts=() executable_stages=()
   local private_inputs=() executable_kinds=() literal_kinds=() escaped_input
   local starts=() ends=() separators=() decisions=() literal_inputs=() input_bodies=() executable_contexts=()
+  local targeting_eligible="" target_effects=() target_files=() target_operands=() target_redirects=()
+  [ "$1" != shell ] || [ -n "${2:-}" ] || targeting_eligible=1
   if [ "${2:-}" = forwarded ]; then
     forwarded_argument=1
     set -- "$1" conservative "${@:3}"
@@ -707,6 +809,17 @@ environment_dump() { # command kind; arguments are already decoded data
   n=${#tokens[@]}
   for ((i=0; i<=n; i++)); do
     if [ "$i" -lt "$n" ]; then
+      if [ -n "$targeting_eligible" ]; then
+        case "${kinds[$i]}" in
+          literal)
+            # Whole-word quote evidence cannot distinguish protected wildcard
+            # fragments from active ones. Exclude both, without another reader.
+            case "${tokens[$i]}" in *'*'* | *'?'* | *'['* | *']'* | *'{'* | *'}'* | *'~'*) targeting_eligible="" ;; esac ;;
+          operator | operator-stderr | operator-explicit-other)
+            case "${tokens[$i]}" in ';' | '&&' | '||' | '<' | '>' | '>>' | '<>' | '&>' | '&>''>' | '>&' | '<&') ;; *) targeting_eligible="" ;; esac ;;
+          *) targeting_eligible="" ;;
+        esac
+      fi
       [ "${kinds[$i]}" = operator ] || continue
       case "${tokens[$i]}" in '|' | ';' | '&&' | '||' | '&') ;; *) continue ;; esac
     fi
@@ -715,11 +828,17 @@ environment_dump() { # command kind; arguments are already decoded data
   done
   for ((stage=0; stage<${#starts[@]}; stage++)); do
     start=${starts[$stage]}; end=${ends[$stage]}; args=(); arg_kinds=(); arg_unquoted=()
+    target_files[stage]=""; target_operands[stage]=""; target_redirects[stage]=""; target_effects[stage]=ordinary
     private_inputs=(); proc=""; output=""; input_redirect=""; input_escaped=""; mode=other; program=""; program_pos=""; data_source=""; fallback_sources=""; file_output=""; file_body=""
     for ((j=start; j<end; j++)); do
       case "${kinds[$j]}" in operator | operator-stderr | operator-explicit-other)
         fd=${kinds[$j]}
         j=$((j + 1)); target=${tokens[$j]:-}
+        target_redirects[stage]=1
+        case "${tokens[$((j - 1))]}" in
+          '>' | '>>' | '<>' | '&>' | '&>''>')
+            case "$target" in /*) ;; .git | .git/* | */.git | */.git/*) target_files[stage]=1 ;; esac ;;
+        esac
         case "${tokens[$((j - 1))]}" in
           '<' | '<>')
             input_redirect=1
@@ -761,6 +880,7 @@ environment_dump() { # command kind; arguments are already decoded data
       program=opaque
     fi
     environment_producer "$1"
+    [ -z "$targeting_eligible" ] || relative_targeting collect
     # A /proc environ input only these readers' arms can classify. Any other
     # program, such as a shell reading its descriptors, can print it.
     case "$program" in cat | strings | tr | xargs) ;; *) [ -z "$proc" ] || mode=dump-unknown ;; esac
@@ -777,6 +897,7 @@ environment_dump() { # command kind; arguments are already decoded data
       done
     fi
     environment_program_text
+    [ -z "$stdin_program$script_operand" ] || targeting_eligible=""
     # Supported shell source keeps this classification check in its queue.
     # Other unclassified forwarded argv retains the complete read evidence.
     if [ "$mode" = unclassified-forwarded ]; then
@@ -929,6 +1050,7 @@ environment_dump() { # command kind; arguments are already decoded data
         if [ "${separators[$j]}" != '|' ] || [ "${decisions[$((j + 1))]:-}" != filter ]; then return 0; fi ;;
     esac
   done
+  if relative_targeting judge; then refuse refused relative-target; fi
   return 1
 }
 
@@ -961,6 +1083,10 @@ refuse() { # KEY VALUE [CAUSE]
       settings=empty) echo "COMMAND_SAFETY_DENY_PATTERN must be configured" ;;
       settings=invalid-pattern) echo "COMMAND_SAFETY_DENY_PATTERN is not a readable POSIX ERE" ;;
       refused=policy) echo "the command text matches this project's COMMAND_SAFETY_DENY_PATTERN" ;;
+      refused=relative-target)
+        echo "a failed directory change can reach a relative recursive delete, git init or .git write in this literal command list"
+        echo "make the target depend on a successful directory change with &&, stop on failure, or use a verified literal absolute target"
+        echo "earlier failed directory changes remain possible even after a later cd; nested, dynamic and unsupported forms have no targeting proof" ;;
       refused=environment-dump)
         # An undecoded escape is refused as unknown, not as a recognized read,
         # so it gets its own reason and remedy.
