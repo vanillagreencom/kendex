@@ -1212,6 +1212,56 @@ fn a_terminal_item_with_no_recorded_close_gets_one_close_request() {
     );
 }
 
+#[test]
+fn a_terminal_close_whose_effect_fails_is_said_refused_not_closed() {
+    let harness = Owned::sleep();
+    let mut world = World::new();
+    world.write_fleet(&json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
+        "lanes": [{"item": "KEN-3", "tracker": "linear", "repo": "owner/repo", "harness": "claude",
+            "window": null, "host": null, "mail_root": "/srv/lane/x", "status": "stopped",
+            "session_since": "2026-10-09T00:00:00Z",
+            "launch": {"pane": "%7", "server": 41020, "pid": harness.pid(), "start": harness.start()}}]}));
+    world.linear("statuses list", statuses());
+    world.linear("issues list", json!({"body": []}));
+    world.linear("issues bulk-get", json!({"body": {"issues": {"nodes": [
+        {"identifier": "KEN-3", "state": {"type": "canceled"}, "description": null, "children": {"nodes": []}}
+    ]}}}));
+    quiet_github(&mut world);
+    world.gh(
+        "repos/owner/repo/pulls?state=closed&head=owner%3Aken-3&per_page=100&page=1",
+        json!({"body": []}),
+    );
+    world.gh(
+        "search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20%22KEN-3%22%20in%3Atitle%2Cbody&per_page=100&page=1",
+        json!({"body": {"total_count": 0, "incomplete_results": false, "items": []}}),
+    );
+    // The harness still runs and holds an unanswered ask: the close's
+    // effect refuses it and records `failed`, the harness untouched.
+    let mailbox = world.dir.path().join("asking-lane-mail");
+    std::fs::write(
+        &mailbox,
+        "#!/bin/bash\n[ \"${1:-}\" = pending ] && printf '%s\\n' '{\"id\":\"1769700000-9-31\",\"kind\":\"ask\",\"text\":\"which base\"}'\nexit 0\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&mailbox, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mailbox = mailbox.display().to_string();
+    let settings = world.settings(&[("LANE_MAIL_CLI", mailbox.as_str())]);
+    let clock = FakeClock::new();
+    let mut body = tracker::body(world.context(settings, None));
+    let mut baseline = Baseline::default();
+    let first = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
+    assert_eq!(rendered(&first), vec!["EVENT lane-close-refused KEN-3"]);
+    let close = world.fleet()["intents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["op"] == "close-owned-resources")
+        .cloned()
+        .unwrap();
+    assert_eq!(close["outcome"], "failed", "{close}");
+    assert!(live(harness.pid()), "the refused close stopped nothing");
+}
+
 /// Defect: the heartbeat's capacity line naming an
 /// item a lane holds, a queued item or a blocked one, or missing a Backlog
 /// item. The slot the heartbeat body reads names the open items with no

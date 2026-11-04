@@ -830,7 +830,7 @@ fn a_walled_lane_is_relaunched_once_under_auto_and_only_reported_under_ask() {
             vec![
                 "sh".to_owned(),
                 "-c".to_owned(),
-                "\"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$3\" && \"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$4\"".to_owned(),
+                "\"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$3\"; rc=$?; [ \"$rc\" -eq 0 ] || [ \"$rc\" -eq 75 ] || exit \"$rc\"; exec \"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$4\"".to_owned(),
                 "wall-relaunch".to_owned(),
                 "/nonexistent/orch-runtime".to_owned(),
                 driver.state_dir.display().to_string(),
@@ -1251,8 +1251,9 @@ struct OverseerDriver<'a> {
 impl OverseerDriver<'_> {
     fn pass(&mut self, fleet: &FleetState) -> Produced {
         let transfer = |request: RequestTransfer| {
-            self.transfers.borrow_mut().push(request);
-            Ok(())
+            let mut asked = self.transfers.borrow_mut();
+            asked.push(request);
+            Ok(format!("request-transfer:overseer:{}", asked.len()))
         };
         let produced = overseer::observe(
             &overseer::Pass {
@@ -1341,9 +1342,9 @@ fn walk_b(_: &WalkRequest) -> Result<Walked, String> {
 }
 
 /// The line under a reached mark for the session in `cwd` at `pane`.
-fn hand_over(cwd: &Path, pane: &str, preference: &str) -> String {
+fn hand_over(cwd: &Path, pane: &str, kind: &str, preference: &str) -> String {
     format!(
-        "Hand this session over at the next safe point: write the overseer handoff file, choose the successor with orch-runtime successor --fleet --cwd {} --predecessor {pane} (it walks ORCH_OVERSEER_PREFERENCE={preference}) and ask orch-runtime op --fleet for request-transfer with cause live, its .result.successor as the successor and its .result.expected as the expected record.",
+        "Hand this session over at the next safe point: write the overseer handoff file, choose the successor with orch-runtime successor --fleet --cwd {} --predecessor {pane} --mark {kind} (it walks ORCH_OVERSEER_PREFERENCE={preference}) and ask orch-runtime op --fleet --effect-exit for request-transfer with cause live, its .result.successor as the successor and its .result.expected as the expected record, which answers the transfer's own outcome.",
         cwd.display()
     )
 }
@@ -1647,6 +1648,7 @@ fn the_mark_line_carries_the_succession_s_handling_under_it() {
             hand_over(
                 dir.path(),
                 &pane,
+                "headroom",
                 "claude:standard:high,codex:standard:high"
             ),
         ]
@@ -1666,7 +1668,7 @@ fn the_mark_line_carries_the_succession_s_handling_under_it() {
     let preferred = chosen.pass(&state);
     assert_eq!(
         lines(&preferred).get(1).map(String::as_str),
-        Some(hand_over(dir.path(), &pane, "claude:fable:high").as_str()),
+        Some(hand_over(dir.path(), &pane, "headroom", "claude:fable:high").as_str()),
         "{:?}",
         lines(&preferred)
     );
@@ -1804,6 +1806,7 @@ fn the_context_reading_is_handed_to_the_judge_and_a_context_mark_is_said_once_pe
             hand_over(
                 dir.path(),
                 &pane,
+                "context",
                 "claude:standard:high,codex:standard:high"
             ),
         ]
@@ -2201,9 +2204,12 @@ fn a_refused_handoff_read_is_the_pass_s_failure_and_the_other_lanes_news_stands(
 }
 
 /// One outcomes pass over the markers under `dir`, the changes applied as
-/// the runner commits them; the prepare bound its default, 1800 s.
+/// the runner commits them; the prepare bound its default, 1800 s, over a
+/// fleet holding no intent.
 fn outcomes(dir: &Path, baseline: &mut Baseline, now: u64) -> Produced {
-    let produced = overseer::relaunch_outcomes(dir, Duration::from_secs(1800), now, baseline);
+    let fleet = FleetState::view(&dir.join("fleet.json"), &serde_json::Map::new()).unwrap();
+    let produced =
+        overseer::relaunch_outcomes(dir, &fleet, Duration::from_secs(1800), now, baseline);
     apply(baseline, &produced);
     produced
 }
@@ -2868,6 +2874,39 @@ fn a_stalled_cloud_lane_whose_directive_went_unanswered_is_closed_once_with_the_
         std::fs::metadata(&marker).is_ok(),
         "this close's own marker stands for the record read"
     );
+    // A close ended with no status gave no answer and may have closed: its
+    // marker stands, and the next pass leaves the lane to the operator
+    // rather than close it again.
+    std::fs::remove_file(&marker).unwrap();
+    world.plant_close(json!({"signal": "KILL"}));
+    let unanswered = driver.pass(&state);
+    assert!(
+        unanswered
+            .failed
+            .as_deref()
+            .is_some_and(|f| f.starts_with("lane-close-unanswered item=CC-1 ")),
+        "{:?}",
+        unanswered.failed
+    );
+    assert_eq!(world.close_log().len(), 5);
+    assert!(
+        std::fs::metadata(&marker).is_ok(),
+        "the unanswered close's marker stands"
+    );
+    let after = driver.pass(&state);
+    assert!(
+        after
+            .failed
+            .as_deref()
+            .is_some_and(|f| f.starts_with("lane-close-unconfirmed item=CC-1 marker=")),
+        "{:?}",
+        after.failed
+    );
+    assert_eq!(
+        world.close_log().len(),
+        5,
+        "no second close after no answer"
+    );
 }
 
 /// `oversee-watch:2662` (`check_start_stall`, the `HOSTED_ROOT` arm), the
@@ -3515,8 +3554,6 @@ fn the_prepare_records_are_said_once_per_key() {
     );
 }
 
-/// The detached line run as its starter runs it, the entry's word first, in
-/// the lane's checkout with the runner's environment.
 #[test]
 fn the_wall_relaunch_retires_the_walled_harness_and_relaunches_it_through_the_runtime() {
     let dir = tempfile::tempdir().unwrap();
@@ -3748,6 +3785,7 @@ fn a_wall_relaunch_whose_replacement_effect_fails_is_said_failed_not_relaunched(
         .unwrap();
         let outcomes = overseer::relaunch_outcomes(
             lanes::watch_state_dir(&driver.settings.claim_store),
+            &fleet.read(),
             driver.settings.watch.prepare,
             driver.now,
             &driver.baseline,
@@ -3759,6 +3797,127 @@ fn a_wall_relaunch_whose_replacement_effect_fails_is_said_failed_not_relaunched(
                 relaunch.log.display()
             )],
             "hosted={hosted}"
+        );
+    }
+}
+
+#[test]
+fn an_unconfirmed_wall_replacement_keeps_its_marker_until_its_launch_settles_and_a_later_failure_is_said_once()
+ {
+    // Whether the replacement reaches its composer before its reconcile.
+    for confirms in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut fleet = Fleet::new(&server);
+        fleet.runner.verify = Some(1);
+        fleet.runner.stub = fixtures().join("stub-late/claude");
+        let checkout = dir.path().join("checkout");
+        std::fs::create_dir_all(&checkout).unwrap();
+        let init = program("git")
+            .args(["-C", &checkout.display().to_string(), "init", "-q"])
+            .output()
+            .unwrap();
+        assert!(init.status.success(), "{}", stderr(&init));
+        let checkout = checkout.canonicalize().unwrap();
+        let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
+        let old_account = dir.path().join("old-account");
+        let new_account = dir.path().join("new-account");
+        std::fs::create_dir_all(&old_account).unwrap();
+        std::fs::create_dir_all(&new_account).unwrap();
+        let mut record = relaunchable(
+            lane_record(
+                "KEN-4",
+                "gh-4",
+                "claude",
+                &server,
+                &pane,
+                Some(&identity),
+                &checkout,
+            ),
+            &checkout,
+        );
+        record["account"] = json!(old_account.display().to_string());
+        fleet.set_lanes(vec![record]);
+        let scripts = dir.path().join("scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        std::os::unix::fs::symlink(binary(), scripts.join("orch-runtime")).unwrap();
+        lane_driver!(server, fleet, readers, driver);
+        driver.scripts = scripts;
+        driver.pick = Pick::Lane(new_account.display().to_string());
+        let produced = driver.pass(&fleet.read());
+        assert_eq!(
+            driver.relaunches.borrow().len(),
+            1,
+            "{:?}",
+            lines(&produced)
+        );
+        let relaunch = driver.relaunches.borrow()[0].clone();
+        let out = run_relaunch(&fleet, &relaunch);
+        let code = out.status.code().unwrap();
+        assert_eq!(
+            code,
+            orch_runtime::effects::UNCONFIRMED_EXIT,
+            "confirms={confirms}: the chain answers its launch's open outcome: {}",
+            stderr(&out)
+        );
+        assert!(!live(identity.pid), "the close retired the walled harness");
+        std::fs::write(
+            overseer::relaunch_exit_path(&relaunch.marker),
+            format!("{code}\n"),
+        )
+        .unwrap();
+        let outcomes = |driver: &mut LaneDriver<'_>| {
+            let produced = overseer::relaunch_outcomes(
+                lanes::watch_state_dir(&driver.settings.claim_store),
+                &fleet.read(),
+                driver.settings.watch.prepare,
+                driver.now,
+                &driver.baseline,
+            );
+            apply(&mut driver.baseline, &produced);
+            lines(&produced)
+        };
+        assert!(outcomes(&mut driver).is_empty(), "confirms={confirms}");
+        assert!(
+            relaunch.marker.exists(),
+            "confirms={confirms}: the pending marker stands"
+        );
+        let replacement = fleet.runner.fleet()["intents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["op"] == "launch-lane")
+            .and_then(|i| i["phase"]["pane"].as_str())
+            .expect("the open launch names its window")
+            .to_owned();
+        if confirms {
+            std::fs::write(checkout.join(".stub-composer"), "").unwrap();
+        } else {
+            let ended = tmux(&server.socket, &["kill-pane", "-t", &replacement]);
+            assert!(ended.status.success());
+        }
+        let settled = fleet.runner.reconcile_one();
+        let expected = if confirms { "confirmed" } else { "failed" };
+        assert_eq!(settled["intent"]["outcome"], expected, "{settled}");
+        let said = outcomes(&mut driver);
+        if confirms {
+            assert!(said.is_empty(), "a confirmation says nothing: {said:?}");
+        } else {
+            assert_eq!(
+                said,
+                vec![format!(
+                    "EVENT lane-prepare-failed KEN-4 reason=relaunch-failed log={}",
+                    relaunch.log.display()
+                )]
+            );
+        }
+        assert!(
+            !relaunch.marker.exists(),
+            "confirms={confirms}: settled, the marker leaves"
+        );
+        assert!(
+            outcomes(&mut driver).is_empty(),
+            "confirms={confirms}: said once"
         );
     }
 }
@@ -4009,4 +4168,43 @@ fn a_dead_controller_whose_record_names_a_succession_owner_has_that_command_run_
     );
     assert_eq!(failed.baseline.get("overseer-dead", &key), Some("reported"));
     assert!(transfers2.borrow().is_empty());
+}
+
+#[test]
+fn a_walled_github_lane_s_replacement_starts_on_the_brief_naming_its_repository_issue() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let (pane, identity) = walled_claude(&server, dir.path(), "gh-12", BANNER);
+    let mut record = relaunchable(
+        lane_record(
+            "issue-12",
+            "gh-12",
+            "claude",
+            &server,
+            &pane,
+            Some(&identity),
+            dir.path(),
+        ),
+        dir.path(),
+    );
+    record["tracker"] = json!("github");
+    record["repo"] = json!("owner/name");
+    fleet.set_lanes(vec![record]);
+    let state = fleet.read();
+    lane_driver!(server, fleet, readers, driver);
+    driver.pick = Pick::Lane("/home/me/.bclaude".to_owned());
+    let produced = driver.pass(&state);
+    assert_eq!(
+        driver.relaunches.borrow().len(),
+        1,
+        "{:?}",
+        lines(&produced)
+    );
+    let brief =
+        std::fs::read_to_string(driver.state_dir.join("wall-relaunch-issue-12.md")).unwrap();
+    assert!(
+        brief.starts_with("/orch start github owner/name#12 This is an unattended orch lane"),
+        "{brief}"
+    );
 }

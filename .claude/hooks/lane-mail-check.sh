@@ -2005,7 +2005,7 @@ handoff_is_mine() {
 # established by a read of the fleet item's own state file under the rule,
 # which answers nothing without that file, so the item an overseer is judged
 # under always has one there.
-handoff_instruction() { # DECISION
+handoff_instruction() { # DECISION KEY
   if [ "$ROLE" = jarvis ]; then
     printf -v HANDOFF_INSTRUCTION \
       'Reach a safe point. Follow Succession in %s/workflows/session.md. Replace the handoff as that workflow requires, then run:\n  %q succeed --home %q' \
@@ -2046,10 +2046,17 @@ handoff_instruction() { # DECISION
     # crossing sent there would open nothing.
     # The successor verb walks for this session's own pane and answers the
     # request's successor and compare-and-swap set; the runtime opens the
-    # successor on the takeover brief naming the overseer handoff file.
+    # successor on the takeover brief naming the overseer handoff file. The
+    # mark the refusal names decides whether the walk leaves this session's
+    # account or keeps it; a refusal no mark sent names none.
+    MARK_WORDS=""
+    case "$2" in
+      context|agent-launch) MARK_WORDS=" --mark context" ;;
+      headroom|rate|memory) MARK_WORDS=" --mark $2" ;;
+    esac
     printf -v HANDOFF_INSTRUCTION \
-      'Reach a safe point first, with no merged event part-handled and no lane waiting on an answer only the root can give. There, rewrite the overseer handoff file and succeed this session through the orch runtime: choose the successor with\n  %q successor --fleet --cwd %q --predecessor %q\nthen ask for request-transfer with cause live, the reply'\''s .result.successor as the successor and its .result.expected as the expected record:\n  %q op --fleet --request [REQUEST FILE]\nWhere either refuses, tell the user a fresh overseer session must be started by hand, then record the handoff and end this session:\n  %q set %q handoff %s\nWrite the record as it stands above: the two names in it are what end this refusal for this session and for no other. It repeats at every turn end until the succession lands or that record stands.' \
-      "$SCRIPTS/orch-runtime" "$ROOT" "${CALLER_KEY##* }" "$SCRIPTS/orch-runtime" \
+      'Reach a safe point first, with no merged event part-handled and no lane waiting on an answer only the root can give. There, rewrite the overseer handoff file and succeed this session through the orch runtime: choose the successor with\n  %q successor --fleet --cwd %q --predecessor %q%s\nthen ask for request-transfer with cause live, the reply'\''s .result.successor as the successor and its .result.expected as the expected record, the call waiting for the transfer'\''s own outcome:\n  %q op --fleet --effect-exit --request [REQUEST FILE]\nWhere either refuses or exits nonzero, tell the user a fresh overseer session must be started by hand, then record the handoff and end this session:\n  %q set %q handoff %s\nWrite the record as it stands above: the two names in it are what end this refusal for this session and for no other. It repeats at every turn end until the succession lands or that record stands.' \
+      "$SCRIPTS/orch-runtime" "$ROOT" "${CALLER_KEY##* }" "$MARK_WORDS" "$SCRIPTS/orch-runtime" \
       "$SCRIPTS/workflow-state" "$ITEM" "$HANDOFF_RECORD_WORD"
     HANDOFF_INSTRUCTION="$AGENT_INSTRUCTION$NL$HANDOFF_INSTRUCTION"
     return 0
@@ -2469,7 +2476,7 @@ refuse_judged_handoff() { # DECISION KEY VALUE [CAUSE]
     message "$@"
     exit 0
   fi
-  handoff_instruction "$decision"
+  handoff_instruction "$decision" "$1"
   if [ "$ARM" = deliver ]; then
     message "$@"
     printf '%s\n' "$1" >"$WORK_DIR/tool.key"

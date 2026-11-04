@@ -1598,16 +1598,17 @@ impl ObligationRecord {
     }
 }
 
-/// The one failure announcement an intent makes (decision 109 (7)): the
-/// keyed line the fleet log holds under `item: overseer`, as the legacy
-/// `oversee-succeed: <key> field=value...` row, and how the owner notice
-/// went. The outcome's own write records the notice `owed`, with its row
-/// (decision 124f (28)); the send follows, and a later write marks it
-/// `sent`, or `unsent:<cause>` where the mailbox CLI refused or could not
-/// be run. A notice still `owed` on a closed intent is a continuation every
-/// reconcile and request runs once, under the owner. `to` names the item
-/// whose lane the notice goes to; absent, it goes to the owner through the
-/// overseer's box, the shape every intent notice has (U6a, step6-map F7).
+/// The one failure announcement an intent makes: the keyed line the fleet
+/// log holds under `item: overseer`, an `oversee-succeed: <key>
+/// field=value...` row, and how the owner notice went. The outcome's own
+/// write records the notice `owed`, with its row; the send follows, and a
+/// later write marks it `sent`, `unsent:<cause>` where the mailbox CLI
+/// refused, or `unanswered:<cause>` where it gave no answer. A notice still
+/// `owed` on a closed intent is a continuation every reconcile and request
+/// runs once, under the owner; an `unanswered` one is sent once more by the
+/// watch's heartbeat. `to` names the item whose lane the notice goes to;
+/// absent, it goes to the owner through the overseer's box, the shape every
+/// intent notice has.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Notice {
     pub key: String,
@@ -1620,10 +1621,18 @@ pub struct Notice {
 /// The `owner` word of a notice recorded with its outcome and not yet sent.
 pub const NOTICE_OWED: &str = "owed";
 
+/// The `owner` word's prefix for a notice whose send got no answer.
+pub const NOTICE_UNANSWERED: &str = "unanswered:";
+
 impl Notice {
     /// Whether the notice is recorded and still to be sent.
     pub fn owed(&self) -> bool {
         self.owner == NOTICE_OWED
+    }
+
+    /// Whether the notice's send got no answer, so it may not have gone.
+    pub fn unanswered(&self) -> bool {
+        self.owner.starts_with(NOTICE_UNANSWERED)
     }
 }
 

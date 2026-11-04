@@ -36,7 +36,6 @@ pub(super) const CLAUDE_OAUTH_BETA: &str = "oauth-2025-04-20";
 /// A request's own bound is curl's `--max-time 10`; the runner's covers
 /// the start.
 const REQUEST_BOUND: Duration = Duration::from_secs(15);
-/// The longest wait before the one retry of a refused cold account.
 const RETRY_WAIT_MAX_S: u64 = 5;
 /// One `secret-tool search` before the Secret Service reads absent.
 const KEYRING_BOUND: Duration = Duration::from_secs(5);
@@ -70,7 +69,6 @@ struct Ctx<'a> {
     now: u64,
     today: String,
     notes: Vec<String>,
-    /// Whether this listing spent its one retry of a refused cold account.
     retry_spent: bool,
 }
 
@@ -1168,7 +1166,6 @@ struct ProviderLine {
     credit_fields: bool,
 }
 
-/// A provider line a field of which cannot be read.
 struct Unreadable {
     account: String,
     field: &'static str,

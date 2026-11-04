@@ -1,11 +1,10 @@
-//! The tracker read duty (decision 121 Q17; step5-map § A4): each tracker
-//! inventory read once per pass, in complete bounded batches through the
-//! linear package's CLI via the one runner, decoded at the boundary into
-//! typed records, with a refusal that is never an empty set (decisions 87,
-//! 104, 106): a failed call, a chain the CLI left open at its page cap or a
-//! malformed member refuses the inventory with its cause, which the runner
-//! prints as `watch-step-failed step=tracker` and the duty's next run
-//! repeats; nothing of that pass moves.
+//! The tracker read duty: each tracker inventory read once per pass, in
+//! complete bounded batches through the linear package's CLI via the one
+//! runner, decoded at the boundary into typed records, with a refusal that
+//! is never an empty set: a failed call, a chain the CLI left open at its
+//! page cap or a malformed member refuses the inventory with its cause,
+//! which the runner prints as `watch-step-failed step=tracker` and the
+//! duty's next run repeats; nothing of that pass moves.
 //!
 //! One body runs the reads in order: the tracker's own (the team's
 //! statuses, its open items once, the lane items' terminal states, the
@@ -13,23 +12,20 @@
 //! the comments the triage key needs), the GitHub-tracked lane items' ends
 //! (the tracker of those items is GitHub), then the closes the terminal
 //! verdicts call for, last so a refused read never discards a close's
-//! line. The GitHub inventories are the GitHub duty's (`github`, decision
-//! 162 (2)): its refusal discards nothing here. The tracker's own quota
-//! refusal (`RATELIMITED`, the linear package's receipt) is the one limit
-//! event (decision 142 (1)): held as a typed record in the baseline, it
-//! stops the tracker reads until its reset and nothing else; the GitHub
-//! duty and the mail thread go on.
+//! line. The GitHub inventories are the GitHub duty's (`github`): its
+//! refusal discards nothing here. The tracker's own quota refusal
+//! (`RATELIMITED`, the linear package's receipt) is the one limit event:
+//! held as a typed record in the baseline, it stops the tracker reads until
+//! its reset and nothing else; the GitHub duty and the mail thread go on.
 //!
-//! Baselines (decision 141 (4)): the triage row keys an item on its state
-//! and its newest comment time; an item whose key is unchanged since the
-//! line that raised it prints nothing, and a moved key raises it once
-//! more. The legacy raised every unresolved discovery on every pass
-//! (`oversee-watch:2064`), a correction recorded at the row that holds it.
+//! Baselines: the triage row keys an item on its state and its newest
+//! comment time; an item whose key is unchanged since the line that raised
+//! it prints nothing, and a moved key raises it once more.
 //!
 //! The results the heartbeat and verification duties read (the owed
-//! items, the Verifying items, the open unblocked items no lane holds,
-//! decisions 126 (1) and 130) are handed over through `Shared`, written
-//! once per pass; those duties make no second read.
+//! items, the Verifying items, the open unblocked items no lane holds) are
+//! handed over through `Shared`, written once per pass; those duties make
+//! no second read.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
@@ -74,20 +70,19 @@ const FLEET: &str = "fleet";
 pub struct TrackerInventory {
     /// The epoch second of the pass that read it.
     pub read_at: u64,
-    /// The work the fleet owes, one row per item, sorted by id as the
-    /// legacy's `unique_by(.id)` sorted its lines.
+    /// The work the fleet owes, one row per item, sorted by id.
     pub owed: Vec<OwedItem>,
     /// The Verifying items and the containers whose children all ended.
     pub verifying: Vec<VerifyingItem>,
     /// The team's open items with no open blocker that no lane holds and
-    /// the launch queue does not name, sorted (decision 126 (1)).
+    /// the launch queue does not name, sorted.
     pub open_unblocked: Vec<String>,
 }
 
 /// The latest results of the read duties; `None` until the first
 /// successful read of each. The tracker duty writes `tracker`, `quota`
-/// and `terminal`, the GitHub duty `github` (decision 162 (2)): one
-/// `Arc<Mutex>` both bodies hold, each writing its own members.
+/// and `terminal`, the GitHub duty `github`: one `Arc<Mutex>` both bodies
+/// hold, each writing its own members.
 #[derive(Debug, Default)]
 pub struct Latest {
     pub tracker: Option<TrackerInventory>,
@@ -101,7 +96,7 @@ pub struct Latest {
 
 pub type Shared = Arc<Mutex<Latest>>;
 
-/// The owed states the legacy printed (`oversee-watch:5384`).
+/// The owed states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum OwedState {
@@ -130,8 +125,7 @@ impl OwedState {
 }
 
 /// One owed item with what its `owed` line carries before the wall
-/// verdict (`oversee-watch:5429-5453`): the account judge is the
-/// heartbeat's (decision 121 Q9).
+/// verdict: the account judge is the heartbeat's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OwedItem {
     pub id: String,
@@ -182,8 +176,7 @@ pub enum QuotaLimit {
 }
 
 /// The linear package's quota receipt, `{"code":"RATELIMITED","quota":…}`
-/// on a refused call's stderr, held to the shape the legacy accepted
-/// (`TRACKER_QUOTA_JQ`, `oversee-watch:5299`): a `future` or `elapsed`
+/// on a refused call's stderr, held to one shape: a `future` or `elapsed`
 /// status carries the reset epoch and its ISO rendering, the others
 /// `unavailable` and no epoch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -222,9 +215,8 @@ impl Quota {
         self.status == QuotaStatus::Future && self.reset_epoch.is_some_and(|epoch| now < epoch)
     }
 
-    /// The `tracker-quota` line's body as `tracker_quota_line`
-    /// (`oversee-watch:5307`) composed it: a future reset already reached
-    /// at `now` reads `elapsed`.
+    /// The `tracker-quota` line's body: a future reset already reached at
+    /// `now` reads `elapsed`.
     pub fn line(&self, now: u64) -> String {
         let status = match self.status {
             QuotaStatus::Future if self.reset_epoch.is_some_and(|epoch| epoch <= now) => "elapsed",
@@ -245,7 +237,7 @@ impl Quota {
         )
     }
 
-    /// The row value, the receipt's JSON as the legacy stored it.
+    /// The row value, the receipt's JSON.
     fn row_value(&self) -> String {
         serde_json::to_string(self).unwrap_or_default()
     }
@@ -435,8 +427,8 @@ fn is_word(text: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
 }
 
-/// The epoch second of a tracker stamp, its fractional seconds dropped as
-/// the legacy dropped them (`sub("\\.[0-9]+Z$"; "Z")`).
+/// The epoch second of a tracker stamp, its fractional seconds before a
+/// closing `Z` dropped.
 pub(super) fn stamp_epoch(stamp: &str) -> Option<u64> {
     let whole = match stamp.find('.') {
         Some(dot) if stamp.ends_with('Z') => format!("{}Z", &stamp[..dot]),
@@ -494,7 +486,7 @@ pub struct Context {
     pub fleet: PathBuf,
     pub settings: Settings,
     /// The discovery floor the run was started with (`--since`), as an
-    /// epoch second; none disables triage, as the legacy's `--since` did.
+    /// epoch second; none disables triage.
     pub since: Option<u64>,
     /// The `gh` program the GitHub-tracked items' ends are read through;
     /// `gh` on `PATH` in production.
@@ -511,10 +503,10 @@ pub fn body<'a>(ctx: Context) -> Body<'a> {
     Box::new(move |tick: &Tick| run(&ctx, tick))
 }
 
-/// Register the duty on `runner` for the fleet at `path` (decision 153):
-/// the legacy `--since` is one UTC stamp (`oversee-watch` `since-invalid`),
-/// read here as the discovery floor; `gh` is found on `PATH`. The slot the
-/// heartbeat, verification and GitHub duties read is returned.
+/// Register the duty on `runner` for the fleet at `path`: `--since` is one
+/// UTC stamp (`since-invalid` otherwise), read here as the discovery floor;
+/// `gh` is found on `PATH`. The slot the heartbeat, verification and GitHub
+/// duties read is returned.
 pub fn register(
     runner: &mut crate::watch::Runner<'_>,
     path: &Path,
@@ -600,8 +592,8 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
         match read_tracker(&linear, team, &fleet, ctx, tick, &mut ask_failed)? {
             Answered::Value(read) => tracker = Some(read),
             Answered::Quota(quota) => {
-                // The one limit event (decision 142 (1)): printed when the
-                // receipt is taken, held as the row until its reset.
+                // The one limit event: printed when the receipt is taken,
+                // held as the row until its reset.
                 produced.events.push(Event::TrackerQuota {
                     line: quota.line(tick.wall),
                 });
@@ -640,10 +632,8 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
     }
     // The GitHub-tracked lane items' ends: their tracker is GitHub. A
     // refused read leaves its item with no verdict, so no close, and is
-    // the pass's partial failure, as the legacy's per-item
-    // `lane-close-failed` was (`check_terminal_lanes`,
-    // `oversee-watch:1527-1532`: the line, `PASS_FAILED=1`, `continue`);
-    // the tracker's lines, rows and other closes stand (decision 162 (2)).
+    // the pass's partial failure, a per-item `lane-close-failed`; the
+    // tracker's lines, rows and other closes stand.
     let gh = github::Gh { cli: &ctx.gh };
     let mut failed = Vec::new();
     for (item, read) in github::terminal_github(&gh, &fleet.lanes) {
@@ -661,8 +651,7 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
     produced.changes.extend(closes.changes);
     // A refused terminal read or due-ask close is the pass's partial
     // failure, counted and said by the runner under its one rule, as the
-    // mail duty's refused turn is; the pass's own lines stand
-    // (`PASS_FAILED`, `oversee-watch:1531`, `:2852`, `:2866`).
+    // mail duty's refused turn is; the pass's own lines stand.
     failed.extend(ask_failed);
     produced.failed = (!failed.is_empty()).then(|| failed.join("\n"));
     {
@@ -816,8 +805,7 @@ fn read_tracker(
                 "canceled" => TerminalState::Canceled,
                 "completed" => {
                     // Done at merge before the lane's close-out ticked its
-                    // boxes is not ended: an open box keeps it open
-                    // (`lane-close:774`).
+                    // boxes is not ended: an open box keeps it open.
                     let description = match node.description {
                         Nullable::Present(d) => d,
                         Nullable::Absent | Nullable::Null => String::new(),
@@ -835,7 +823,7 @@ fn read_tracker(
         }
     }
     // The owner's tracker answers, then the due tracker asks once the
-    // tracker was read (`oversee-watch:5771-5774`): an unread tracker
+    // tracker was read: an unread tracker
     // cannot establish that the person left a recommendation unanswered.
     let mailbox = Mailbox::new(ctx.settings.lane_mail_cli.clone());
     let owner_read = quota!(read_owner_tracker_answers(linear, ctx, &mailbox)?);
@@ -844,7 +832,7 @@ fn read_tracker(
     }
     // The triage candidates: open items created at or after the floor
     // whose verdict is not kept or canceled, keyed on state and newest
-    // comment (decision 141 (4)).
+    // comment.
     let mut triage = BTreeMap::new();
     if let Some(since) = ctx.since {
         let acknowledged = fleet.acknowledged_issues();
@@ -881,7 +869,7 @@ fn read_tracker(
 }
 
 /// Whether every Done-when box of `description` is checked, through the
-/// linear package's parser (decision 9); a description with no section
+/// linear package's parser; a description with no section
 /// has no open box.
 fn all_boxes_checked(linear: &Linear, description: &str) -> Result<bool> {
     if !description.contains("## Done when") {
@@ -981,7 +969,7 @@ fn inventory_of(
         .map(|l| l.item.as_str())
         .chain(fleet.launch_queue.iter().map(String::as_str))
         .collect();
-    // The legacy's `unique_by(.id)` sorted the rows by id.
+    // The rows sorted by id.
     owed.sort_by(|a, b| a.id.cmp(&b.id));
     let open_unblocked = items
         .iter()
@@ -1000,11 +988,9 @@ fn inventory_of(
 
 // --- the owner's tracker answers and the due tracker asks -----------------------
 
-/// How the owner-tracker read ended (`OWNER_TRACKER_READ`,
-/// `oversee-watch:2759-2840`): off with no owner tracker configured, read
-/// whole, or unread with its cause, which the legacy named once on stderr
-/// as `KEN-3624-unread cause=<cause>` and went on; the due tracker asks are
-/// resolved only after a whole read.
+/// How the owner-tracker read ended: off with no owner tracker configured,
+/// read whole, or unread with its cause, named once on stderr as the pass
+/// goes on; the due tracker asks are resolved only after a whole read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum OwnerRead {
     Disabled,
@@ -1091,8 +1077,7 @@ fn write_answer(path: &Path, text: &str) -> Result<()> {
     })
 }
 
-/// The owner's tracker answers (`read_owner_tracker_answers`,
-/// `oversee-watch:2758-2840`): the posted owner asks' labels, the owner's
+/// The owner's tracker answers: the posted owner asks' labels, the owner's
 /// items under each, the description repair (`owner_action_line`) of an
 /// item whose posted ask has an action and whose description lost its
 /// action line, the comments of those items in one batch, and each owner
@@ -1152,7 +1137,7 @@ fn read_owner_tracker_answers(
             items.entry(item.id.clone()).or_insert(item);
         }
     }
-    // The description repair (`oversee-watch:2787-2803`).
+    // The description repair.
     for item in items.values() {
         let ask = posted.iter().rev().find(|a| {
             a.issue.as_deref() == Some(item.id.as_str())
@@ -1215,8 +1200,7 @@ fn read_owner_tracker_answers(
             .map(|r| r.iter().collect())
             .unwrap_or_default();
         rows.sort_by(|a, b| a.created_at.cmp(&b.created_at));
-        // A legacy record carries no comment id; its comment carries an
-        // ask= line.
+        // A record with no comment id finds its comment by its ask= line.
         let question = rows.iter().find(|c| match &ask.tracker_comment {
             Some(id) => c.id == *id,
             None => c.body.lines().any(|l| l == format!("ask={}", ask.id())),
@@ -1240,12 +1224,11 @@ fn read_owner_tracker_answers(
     Ok(Answered::Value(OwnerRead::Read))
 }
 
-/// The due tracker asks (`resolve_due_owner_asks tracker`,
-/// `oversee-watch:2846-2867`): every due owner ask posted to the tracker
-/// closed with its recommendation through the mailbox client; another
-/// close winning the lock is no failure; a read or close that fails is the
-/// pass's partial failure, its causes keyed as the legacy named them
-/// (`ask-due-unread`, `ask-resolve-failed`), said by the runner.
+/// The due tracker asks: every due owner ask posted to the tracker closed
+/// with its recommendation through the mailbox client; another close
+/// winning the lock is no failure; a read or close that fails is the pass's
+/// partial failure, its causes keyed `ask-due-unread` and
+/// `ask-resolve-failed`, said by the runner.
 fn resolve_due_tracker_asks(mailbox: &Mailbox, root: &Path) -> Option<String> {
     let due = match mailbox.due_owner_asks(root) {
         Ok(due) => due,
@@ -1275,8 +1258,7 @@ fn resolve_due_tracker_asks(mailbox: &Mailbox, root: &Path) -> Option<String> {
 /// source: tracker}`, for every parked or stopped lane whose item the
 /// tracker shows ended and whose refusal, if one stands, was under another
 /// key: one line per close, a refused close reported and held under its
-/// key so it is not asked again until the record or the verdict moves
-/// (`oversee-watch:1515-1597`).
+/// key so it is not asked again until the record or the verdict moves.
 fn close_terminal_lanes(
     ctx: &Context,
     tick: &Tick,
@@ -1316,8 +1298,17 @@ fn close_terminal_lanes(
             nonce: ctx.nonce,
             owner: ctx.owner.clone(),
         };
-        match close_one(ctx, tick, &env, &lane.item, verdict) {
-            Ok(()) => {
+        let closed =
+            close_one(ctx, tick, &env, &lane.item, verdict).and_then(|closed| match closed {
+                Closed::Confirmed => Ok(true),
+                Closed::Open => Ok(false),
+                Closed::Failed(cause) => Err(Error::Runtime(agent_runtime::Error::refused(
+                    "close-failed",
+                    &[("cause", &cause)],
+                ))),
+            });
+        match closed {
+            Ok(true) => {
                 produced.events.push(Event::LaneClosed {
                     item: lane.item.clone(),
                 });
@@ -1326,10 +1317,18 @@ fn close_terminal_lanes(
                     identity: lane.item.clone(),
                 });
             }
+            // The close's intent stands open for its reconcile, and the next
+            // pass's request reconciles it: nothing is said of it yet.
+            Ok(false) => {
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "lane-close-failed item={} outcome=unconfirmed",
+                    lane.item
+                );
+            }
             Err(cause) => {
                 // The cause is said once, here, for the launcher's record
-                // of this run's stderr, as the legacy carried lane-close's
-                // stderr; the line carries the legacy's field alone.
+                // of this run's stderr; the line carries the item alone.
                 let _ = writeln!(
                     std::io::stderr(),
                     "lane-close-refused item={} cause={cause}",
@@ -1357,9 +1356,18 @@ fn close_terminal_lanes(
     Ok(produced)
 }
 
+/// How a close's effect ended, by the outcome it recorded.
+enum Closed {
+    Confirmed,
+    /// Failed, with the intent's note, or closed under a moved record.
+    Failed(String),
+    /// Unconfirmed, the intent left open.
+    Open,
+}
+
 /// One close through the store and the effect module, as the `op` command
 /// runs it: the request persisted on the host's facts, then its effect run
-/// and recorded.
+/// and recorded, read by the outcome it recorded.
 #[allow(
     clippy::disallowed_methods,
     reason = "the terminal-lanes step's one store call per ended item: the close request the fleet record's own close effect runs on (decision 128 (9))"
@@ -1370,7 +1378,7 @@ fn close_one(
     env: &Env,
     item: &str,
     verdict: TerminalVerdict,
-) -> Result<()> {
+) -> Result<Closed> {
     let request = Request::CloseOwnedResources(CloseOwnedResources {
         item: item.to_owned(),
         terminal: Some(Terminal {
@@ -1384,7 +1392,7 @@ fn close_one(
         Some(ctx.settings.claim_store.clone()),
     );
     let applied = ops::apply_on(&ctx.fleet, &request, env, ctx.locking, &host)?;
-    crate::effects::run(
+    let effected = crate::effects::run(
         &ctx.fleet,
         &request,
         &applied.report,
@@ -1393,7 +1401,26 @@ fn close_one(
         ctx.locking,
         tick.clock,
     )?;
-    Ok(())
+    let Some(crate::effects::Effected::Recorded(recorded)) = effected else {
+        return Ok(Closed::Open);
+    };
+    let ops::Report::RecordOutcome(outcome) = &recorded.report else {
+        return Ok(Closed::Open);
+    };
+    let intent = &outcome.intent;
+    if intent.open() {
+        return Ok(Closed::Open);
+    }
+    if intent.outcome == agent_runtime::protocol::Outcome::Confirmed {
+        return Ok(Closed::Confirmed);
+    }
+    let note = intent
+        .observation
+        .as_ref()
+        .and_then(|o| o.get("note").or_else(|| o.get("cause")))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("failed");
+    Ok(Closed::Failed(note.to_owned()))
 }
 
 /// The rows this duty keeps and what each holds, for `watch status` and
@@ -1469,8 +1496,8 @@ mod tests {
         assert_eq!(owner_action_line("", action, body), None);
     }
 
-    /// A tracker stamp with fractional seconds reads as its whole second,
-    /// as the legacy cut it; a stamp of another shape reads as none.
+    /// A tracker stamp with fractional seconds reads as its whole second;
+    /// a stamp of another shape reads as none.
     #[test]
     fn a_stamp_drops_its_fraction_before_the_epoch_read() {
         assert_eq!(stamp_epoch("2026-01-01T00:00:00.123Z"), Some(1767225600));

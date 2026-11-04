@@ -348,9 +348,11 @@ fn the_native_probe_reads_the_binary_s_own_process_replies_by_their_reading() {
     );
 }
 
-/// A private tmux server on its own socket with one detached session, read
-/// with no configuration file so the host's own reaches no row; ended on
-/// drop. Its first pane is the one a planted launch record names.
+/// A private tmux server on its own socket with one detached session,
+/// started by the runtime's own constructor, so no configuration file, no
+/// login shell and none of the host's environment reaches a pane, and
+/// sized to 80 by 24; ended on drop. Its first pane is the one a planted
+/// launch record names.
 struct PrivatePane {
     socket: PathBuf,
     server_pid: u64,
@@ -379,34 +381,23 @@ fn tmux_at(socket: &std::path::Path, args: &[&str]) -> String {
 impl PrivatePane {
     fn start(dir: &std::path::Path) -> PrivatePane {
         let socket = dir.join("tmux.sock");
+        let server = agent_runtime::host::tmux::start_private_server(&socket, "probe", dir)
+            .expect("a private tmux server");
         tmux_at(
             &socket,
-            &[
-                "-f",
-                "/dev/null",
-                "new-session",
-                "-d",
-                "-s",
-                "probe",
-                "-x",
-                "80",
-                "-y",
-                "24",
-                "-c",
-                &dir.display().to_string(),
-            ],
+            &["resize-window", "-t", "probe", "-x", "80", "-y", "24"],
         );
         let text = tmux_at(
             &socket,
             &[
                 "display-message",
                 "-p",
-                "#{pid}\t#{start_time}\t#{pane_id}\t#{window_id}\t#{session_name}",
+                "#{pane_id}\t#{window_id}\t#{session_name}",
             ],
         );
         let mut parts = text.trim_end().split('\t');
-        let server_pid = parts.next().unwrap().parse().expect("server pid");
-        let server_start = parts.next().unwrap().parse().expect("server start");
+        let server_pid = u64::from(server.pid);
+        let server_start = server.start;
         let pane = parts.next().unwrap().to_owned();
         let window = parts.next().unwrap().to_owned();
         let session = parts.next().unwrap().to_owned();
@@ -1007,4 +998,81 @@ fn deliver_confirms_by_the_fixed_file_s_user_turn_and_never_by_the_paste_alone()
     let (refused, code) = deliver_on(&pane, &home, &["--session-id", "x", "--line", "lost"]);
     assert_eq!(code, 1, "{refused}");
     assert_eq!(refused["refusal"]["key"], "deliver-refused", "{refused}");
+}
+
+#[test]
+#[cfg(unix)]
+fn a_launch_whose_line_never_reached_its_window_closes_it_and_one_whose_paste_went_unanswered_keeps_its_record()
+ {
+    use std::os::unix::fs::PermissionsExt;
+    let real = std::env::var_os("PATH")
+        .and_then(|path| {
+            std::env::split_paths(&path)
+                .map(|d| d.join("tmux"))
+                .find(|p| p.is_file())
+        })
+        .expect("tmux on PATH");
+    // (the tmux verb refused, the refusal, whether the window and its record
+    // stand after it)
+    for (verb, key, stands) in [
+        ("load-buffer", "launch-line-unsent", false),
+        ("paste-buffer", "launch-line-unanswered", true),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let pane = PrivatePane::start(&root);
+        let shims = root.join("refusing-tmux");
+        std::fs::create_dir(&shims).unwrap();
+        std::fs::write(
+            shims.join("tmux"),
+            format!(
+                "#!/bin/bash\nfor arg in \"$@\"; do [ \"$arg\" != {verb} ] || {{ echo refused >&2; exit 1; }}; done\nexec '{}' \"$@\"\n",
+                real.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(shims.join("tmux"), std::fs::Permissions::from_mode(0o755))
+            .unwrap();
+        let intent = root.join("intent.json");
+        std::fs::write(
+            &intent,
+            serde_json::json!({"harness": "claude", "home": root.join("home"), "cwd": root})
+                .to_string(),
+        )
+        .unwrap();
+        let record = root.join("launch-record.json");
+        let path = std::env::join_paths(std::iter::once(shims.clone()).chain(
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+        ))
+        .unwrap();
+        let out = Command::new(binary())
+            .args(["launch", "--intent"])
+            .arg(&intent)
+            .arg("--record")
+            .arg(&record)
+            .arg("--socket")
+            .arg(&pane.socket)
+            .args(["--session", &pane.session, "--window-name", "launched"])
+            .env("PATH", &path)
+            .output()
+            .unwrap();
+        let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_default();
+        assert_eq!(reply["refusal"]["key"], key, "{verb}: {reply}");
+        let windows = pane.tmux(&["list-windows", "-t", &pane.session, "-F", "#{window_name}"]);
+        assert_eq!(
+            windows.lines().any(|w| w == "launched"),
+            stands,
+            "{verb}: the window: {windows}"
+        );
+        assert_eq!(record.exists(), stands, "{verb}: the record");
+        if stands {
+            let recorded: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&record).unwrap()).unwrap();
+            let inspected = inspect(&record, &recorded);
+            assert_eq!(
+                inspected["pane"]["reading"], "live",
+                "{verb}: the record names the window it opened: {inspected}"
+            );
+        }
+    }
 }

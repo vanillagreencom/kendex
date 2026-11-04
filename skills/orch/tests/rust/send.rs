@@ -1212,4 +1212,60 @@ fn a_cloud_launch_pushes_the_branch_creates_the_session_through_the_cli_and_reco
         "parent-marker=\n",
         "the builder's environment removals reach the CLI"
     );
+    // A create whose answer is lost may have made a session nothing here can
+    // name: the launch stays open with the lane preparing, never failed, and
+    // a reconcile keeps it so.
+    let request = root.join("request-lost.json");
+    std::fs::write(
+        &request,
+        json!({
+            "op": "launch-lane",
+            "item": "CC-10",
+            "harness": "claude",
+            "mail_root": root.display().to_string(),
+            "account": account.display().to_string(),
+            "host": "claude-cloud",
+            "model": "opus",
+            "brief_file": brief.display().to_string(),
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let mut command = isolated();
+    command
+        .args(["--state-dir", &root.display().to_string()])
+        .args(["op", "--fleet", "--request", &request.display().to_string()])
+        .env("PATH", tool_path(&[&fixtures().join("claude-cloud")]))
+        .env("CLAUDE_CLOUD_LOG", &claude_log)
+        .env("CLAUDE_CLOUD_ANSWER", "not an answer")
+        .env("WORKTREE_CLI", &worktree)
+        .current_dir(&root);
+    let report = effect_report(&command.output().unwrap());
+    assert_eq!(report["intent"]["outcome"], "unconfirmed", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["note"], "cloud-create-unknown",
+        "{report}"
+    );
+    let fleet: Value = serde_json::from_str(
+        &std::fs::read_to_string(root.join("workflow-state-oversee.json")).unwrap(),
+    )
+    .unwrap();
+    let lane = fleet["lanes"]
+        .as_array()
+        .and_then(|lanes| lanes.iter().find(|l| l["item"] == "CC-10"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    assert_eq!(lane["status"], "preparing", "{lane}");
+    let mut command = isolated();
+    command
+        .args(["--state-dir", &root.display().to_string()])
+        .args(["reconcile", "--fleet"])
+        .current_dir(&root);
+    let answer = reply(&command.output().unwrap());
+    let reconciled = &answer["result"]["reconciled"][0]["report"]["intent"];
+    assert_eq!(reconciled["outcome"], "unconfirmed", "{answer}");
+    assert_eq!(
+        reconciled["observation"]["note"], "cloud-create-unknown",
+        "{answer}"
+    );
 }

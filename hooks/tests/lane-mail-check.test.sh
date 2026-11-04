@@ -1798,9 +1798,9 @@ overseer_transcript
 # the runtime's succession (the successor verb for this session's own pane,
 # its answer handed to request-transfer), and the record that clears a
 # succession that refuses.
-overseer_route() {
-  printf '%s%s' "$(grep -cE -- "/orch-runtime successor --fleet --cwd [^ ]+ --predecessor %[0-9]+$" "$ERR_FILE")" \
-    "$(grep -cF -- "/orch-runtime op --fleet --request [REQUEST FILE]" "$ERR_FILE")"
+overseer_route() { # MARK
+  printf '%s%s' "$(grep -cE -- "/orch-runtime successor --fleet --cwd [^ ]+ --predecessor %[0-9]+ --mark $1$" "$ERR_FILE")" \
+    "$(grep -cF -- "/orch-runtime op --fleet --effect-exit --request [REQUEST FILE]" "$ERR_FILE")"
 }
 overseer_record_named() { grep -cF -- " set oversee handoff " "$ERR_FILE"; }
 
@@ -1843,7 +1843,7 @@ judge_says "$CONTEXT_MARK_LINE"
 stop_at "$TRANSCRIPT" false $(overseer_env)
 expect 2 "lane-mail-check: context=612000" \
   "an overseer the judgement puts at the context mark is refused with the figure it read"
-assert_eq "route=$(overseer_route) record=$(overseer_record_named)" "route=11 record=1" \
+assert_eq "route=$(overseer_route context) record=$(overseer_record_named)" "route=11 record=1" \
   "the refusal names the succession as the route, with the record that clears a succession that refuses"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" true $(overseer_env)
@@ -1880,7 +1880,7 @@ judge_says "$HEADROOM_MARK_LINE"
 stop_at "$TRANSCRIPT" false $(overseer_env)
 expect 2 "lane-mail-check: headroom=4" \
   "an overseer the judgement puts at its account mark is refused with the headroom it read"
-assert_eq "named=$(grep -cF -- 'the ORCH_OVERSEER_HEADROOM_PCT mark of 10' "$ERR_FILE") route=$(overseer_route)" \
+assert_eq "named=$(grep -cF -- 'the ORCH_OVERSEER_HEADROOM_PCT mark of 10' "$ERR_FILE") route=$(overseer_route headroom)" \
   "named=1 route=11" "and the refusal names the judge's own setting and the succession"
 
 # A session with compaction enabled has no managed handoff window. It passes that
@@ -1891,7 +1891,7 @@ usage_line sonnet 999999 > "$TRANSCRIPT"
 judge_says "$HEADROOM_MARK_LINE"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env) DISABLE_AUTO_COMPACT=0
-assert_eq "argv=$(judge_argv | tail -n 1) route=$(overseer_route)" \
+assert_eq "argv=$(judge_argv | tail -n 1) route=$(overseer_route headroom)" \
   "argv=marks --fleet --context 999999: route=11" \
   "an overseer reading with no window hands its judge the tokens and no window" "$ERR_FILE"
 variant no-context-arg -e 's|^    ${JUDGE_ARGS\[@\]+"${JUDGE_ARGS\[@\]}"} 2>|    2>|'
@@ -2189,7 +2189,7 @@ for mark_row in \
   stop_at "$TRANSCRIPT" false $(overseer_env)
   expect 2 "lane-mail-check: $mark_kind=$mark_value" \
     "an overseer at its $mark_kind mark is refused with the value it read"
-  assert_eq "setting=$(grep -cF -- "$mark_setting" "$ERR_FILE") route=$(overseer_route) shell=$(grep -cF -- /oversee-succeed "$ERR_FILE")" \
+  assert_eq "setting=$(grep -cF -- "$mark_setting" "$ERR_FILE") route=$(overseer_route "$mark_kind") shell=$(grep -cF -- /oversee-succeed "$ERR_FILE")" \
     "setting=1 route=11 shell=0" "and the $mark_kind refusal names the setting and the runtime's succession route"
 done
 

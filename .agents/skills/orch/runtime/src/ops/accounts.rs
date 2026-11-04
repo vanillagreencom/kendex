@@ -1932,6 +1932,7 @@ mod tests {
             lane_dirs: Vec::new(),
             codex_home: None,
             copilot_home: None,
+            pi_root: None,
             usage_ttl: 300,
             usage_max_age: 0,
             accounts_timeout: 30,

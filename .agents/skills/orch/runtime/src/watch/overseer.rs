@@ -153,7 +153,6 @@ const CONTEXT_CAP: u64 = 400_000;
 /// setting cannot weaken it.
 const CONTEXT_PCT_CEILING: u32 = 90;
 
-/// Which of the controller's own marks a line names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum MarkKind {
@@ -171,6 +170,17 @@ impl MarkKind {
             MarkKind::Rate => "rate",
             MarkKind::Memory => "memory",
         }
+    }
+
+    pub fn parse(word: &str) -> Option<MarkKind> {
+        [
+            MarkKind::Context,
+            MarkKind::Headroom,
+            MarkKind::Rate,
+            MarkKind::Memory,
+        ]
+        .into_iter()
+        .find(|kind| kind.word() == word)
     }
 }
 
@@ -202,13 +212,11 @@ pub enum ContextRead {
     },
 }
 
-/// What the judge answered.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Marks {
     pub key: MarkKey,
     /// The figure read at the mark, as the line prints it.
     pub value: String,
-    /// The setting it crossed.
     pub mark: String,
     pub succession: Succession,
     /// The caller's own account and its binding reset, on an account mark.
@@ -402,7 +410,7 @@ impl Caller {
 
     /// The walk's caller entry: this session's own harness and lane, its
     /// model and effort where the record names them.
-    fn walk_entry(&self, harness: Harness) -> walk::Caller {
+    pub(crate) fn walk_entry(&self, harness: Harness) -> walk::Caller {
         walk::Caller {
             harness: harness.name().to_owned(),
             lane: self.account.clone(),
@@ -411,6 +419,69 @@ impl Caller {
             pick_model: self.mark_model(),
             keep: false,
         }
+    }
+
+    /// This session's own account through the judge's named form at the
+    /// trigger: the judged record's wall, alias, reset, rate and status,
+    /// read as the state the marks and a mark's succession dispatch on.
+    fn own_account(
+        &self,
+        harness: Harness,
+        settings: &Settings,
+        fleet_path: &Path,
+        host: &crate::ops::Host<'_>,
+        now: u64,
+    ) -> AccountRead {
+        let trigger = settings.accounts.overseer_headroom_pct;
+        match self.account.as_deref() {
+            Some(account) => {
+                let answer = accounts::pick_fleet(
+                    settings,
+                    fleet_path,
+                    host,
+                    &PickRequest {
+                        harness: harness.name().to_owned(),
+                        model: self.mark_model(),
+                        lane: Some(account.to_owned()),
+                        for_overseer: true,
+                        min_headroom_pct: Some(trigger),
+                        ..PickRequest::default()
+                    },
+                    now,
+                );
+                match answer {
+                    PickAnswer::Lane(j) => read_account(&j, AccountState::HasRoom, false, now),
+                    PickAnswer::Walled(j)
+                    | PickAnswer::Reserved(j)
+                    | PickAnswer::Retired { judged: j, .. }
+                    | PickAnswer::Excluded(j)
+                    | PickAnswer::CloudRepoUnset(j) => {
+                        read_account(&j, AccountState::AtTrigger, true, now)
+                    }
+                    PickAnswer::Unmeasured(j) => {
+                        read_account(&j, AccountState::Unmeasured, false, now)
+                    }
+                    PickAnswer::NoRecord
+                    | PickAnswer::ProviderUnmeasured { .. }
+                    | PickAnswer::Unbilled { .. } => unmeasured_account(),
+                    PickAnswer::None { .. } | PickAnswer::Unjudged { .. } => unreadable_account(),
+                }
+            }
+            None => unmeasured_account(),
+        }
+    }
+
+    /// The state of this session's own account, as [`judge_marks`] reads it.
+    pub(crate) fn account_state(
+        &self,
+        harness: Harness,
+        settings: &Settings,
+        fleet_path: &Path,
+        host: &crate::ops::Host<'_>,
+        now: u64,
+    ) -> AccountState {
+        self.own_account(harness, settings, fleet_path, host, now)
+            .state
     }
 
     /// The pending the walk's choice opens: its harness, account, model,
@@ -451,16 +522,14 @@ impl Caller {
     }
 }
 
-/// What the account judge said of the caller's own account.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AccountState {
+pub(crate) enum AccountState {
     HasRoom,
     AtTrigger,
     Unmeasured,
     Unreadable,
 }
 
-/// The caller's own account as the judge read it.
 struct AccountRead {
     state: AccountState,
     headroom: Option<u32>,
@@ -605,43 +674,9 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
         return Err(agent_runtime::Error::refused("harness-unnamed", &[]).into());
     };
     let trigger = settings.accounts.overseer_headroom_pct;
-    let mark_model = ask.caller.mark_model();
-    let account = match ask.caller.account.as_deref() {
-        Some(account) => {
-            let answer = accounts::pick_fleet(
-                settings,
-                ask.fleet_path,
-                ask.host,
-                &PickRequest {
-                    harness: harness.name().to_owned(),
-                    model: mark_model.clone(),
-                    lane: Some(account.to_owned()),
-                    for_overseer: true,
-                    min_headroom_pct: Some(trigger),
-                    ..PickRequest::default()
-                },
-                ask.now,
-            );
-            match answer {
-                PickAnswer::Lane(j) => read_account(&j, AccountState::HasRoom, false, ask.now),
-                PickAnswer::Walled(j)
-                | PickAnswer::Reserved(j)
-                | PickAnswer::Retired { judged: j, .. }
-                | PickAnswer::Excluded(j)
-                | PickAnswer::CloudRepoUnset(j) => {
-                    read_account(&j, AccountState::AtTrigger, true, ask.now)
-                }
-                PickAnswer::Unmeasured(j) => {
-                    read_account(&j, AccountState::Unmeasured, false, ask.now)
-                }
-                PickAnswer::NoRecord
-                | PickAnswer::ProviderUnmeasured { .. }
-                | PickAnswer::Unbilled { .. } => unmeasured_account(),
-                PickAnswer::None { .. } | PickAnswer::Unjudged { .. } => unreadable_account(),
-            }
-        }
-        None => unmeasured_account(),
-    };
+    let account = ask
+        .caller
+        .own_account(harness, settings, ask.fleet_path, ask.host, ask.now);
     let memory = match (marks.memory_pct, &ask.caller.identity) {
         (None, _) => MemoryRead::Inert,
         (Some(_), None) => MemoryRead::Unmeasured("identity-unrecorded".to_owned()),
@@ -771,7 +806,6 @@ fn unreadable_account() -> AccountRead {
     }
 }
 
-/// What the memory mark read of the caller's process.
 enum MemoryRead {
     /// No mark set, or no cap on the process's path.
     Inert,
@@ -1088,8 +1122,9 @@ pub struct Pass<'a> {
     pub preference: &'a str,
     pub now: u64,
     /// The one request the duty makes: `request-transfer`, as the `op`
-    /// command runs it; `Err` is the refusal's text.
-    pub transfer: &'a dyn Fn(RequestTransfer) -> Result<(), String>,
+    /// command runs it; `Ok` is the intent it persisted, `Err` the
+    /// refusal's text.
+    pub transfer: &'a dyn Fn(RequestTransfer) -> Result<String, String>,
     /// The overseer's context record, `context.json` in the overseer
     /// mailbox; `None` where the fleet has no mailbox root to read it in.
     pub context_record: Option<&'a Path>,
@@ -1242,12 +1277,22 @@ fn clear(kind: &str, identity: &str) -> Change {
 }
 
 /// The rows this duty keeps, keyed by the pane key.
-const ROWS: [&str; 4] = [
+const ROWS: [&str; 5] = [
     "overseer-dead",
     "overseer-walled",
     "overseer-mark",
+    TRANSFER_ROW,
     context::GAP_ROW,
 ];
+
+/// The row naming the transfer a `requested` case row asked for,
+/// `<attempt>:<intent>`: the case row is the admission, and the intent's
+/// own outcome is what the next pass reads.
+const TRANSFER_ROW: &str = "overseer-transfer";
+
+/// A recovery's transfers: the first and one more after a failure, as the
+/// recovery's bounded retry runs them.
+const TRANSFER_ATTEMPTS: u32 = 2;
 
 /// The duty's pass: the one verdict, stored in `slot`, then the count, the
 /// line and the request.
@@ -1410,6 +1455,7 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         // only on a live reading, never on an unreadable one.
         if verdict == Verdict::Live {
             out.changes.push(clear("overseer-dead", &key));
+            out.changes.push(clear(TRANSFER_ROW, &key));
             let prior = pass.baseline.get("overseer-walled", &key).unwrap_or("");
             if !prior.starts_with("reserve:")
                 || marks_now.as_ref().is_some_and(|m| m.key == MarkKey::Below)
@@ -1447,7 +1493,11 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         (OverseerCase::Dead | OverseerCase::Walled, None) => prior,
     };
     match prior.as_str() {
-        "reported" | "requested" => return judged(verdict, Some(key)),
+        "reported" => return judged(verdict, Some(key)),
+        "requested" => {
+            transfer_settled(&record, row, &key, prefix, pass, out);
+            return judged(verdict, Some(key));
+        }
         "announced" => {
             transfer(&record, case, &verdict, &key, prefix, pass, out);
             return judged(verdict, Some(key));
@@ -1471,6 +1521,8 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         }
         OverseerCase::Dead | OverseerCase::Walled | OverseerCase::Reserve => None,
     };
+    // A new episode counts its own transfers.
+    out.changes.push(clear(TRANSFER_ROW, &key));
     out.events.push(Event::OverseerSession {
         case,
         pane: record.pane.clone(),
@@ -1649,11 +1701,76 @@ fn pass_next_due() -> std::time::Instant {
     std::time::Instant::now()
 }
 
+/// The transfer a `requested` row asked for, read by its outcome: in
+/// flight, or confirmed with the record moved, it holds; failed, or closed
+/// under a moved record, it is said as `overseer-relaunch-failed` with the
+/// intent's note as its step and asked again on the next run while the
+/// recovery's attempts last, else the row is `reported`. A row naming no
+/// transfer is a succession owner's command, whose outcome is the
+/// owner's.
+fn transfer_settled(
+    record: &Record,
+    row: &str,
+    key: &str,
+    prefix: &str,
+    pass: &Pass,
+    out: &mut Produced,
+) {
+    let Some((attempt, intent_id)) = pass
+        .baseline
+        .get(TRANSFER_ROW, key)
+        .and_then(|v| v.split_once(':'))
+        .and_then(|(n, id)| Some((n.parse::<u32>().ok()?, id.to_owned())))
+    else {
+        return;
+    };
+    let Some(intent) = pass.fleet.intents.iter().find(|i| i.id == intent_id) else {
+        return;
+    };
+    if intent.open() || intent.outcome == agent_runtime::protocol::Outcome::Confirmed {
+        return;
+    }
+    let observed = |field: &str| {
+        intent
+            .observation
+            .as_ref()
+            .and_then(|o| o.get(field))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    let step = observed("note")
+        .or_else(|| observed("cause"))
+        .unwrap_or_else(|| "failed".to_owned());
+    let retry = attempt < TRANSFER_ATTEMPTS;
+    context::note(
+        if prefix.is_empty() {
+            "overseer-relaunch-failed"
+        } else {
+            "overseer-capacity-failed"
+        },
+        &format!(
+            "pane={} attempt={attempt} retry={} step={step}",
+            record.pane,
+            if retry { "pending" } else { "exhausted" }
+        ),
+    );
+    if retry {
+        out.changes
+            .push(set(row, key, format!("{prefix}announced")));
+        out.next_due = Some(pass_next_due());
+    } else {
+        out.changes.push(set(row, key, format!("{prefix}reported")));
+        out.changes.push(clear(TRANSFER_ROW, key));
+    }
+}
+
 /// The announced succession: `request-transfer` with the case's cause and
 /// the spent account, the successor a walled case takes from the overseer
 /// walk with the spent account excluded; a refusal is the duty's failure,
 /// said on the log by the runner, and the row stays announced so the next
-/// pass asks again. A controller whose record names its own succession
+/// pass asks again. An admitted transfer is `requested`, its intent and
+/// attempt on the transfer row for the next pass to read its outcome. A
+/// controller whose record names its own succession
 /// owner has that owner's command run instead, once: the row is
 /// `requested` on its success and `reported` on its failure, so a command
 /// that fails is not run again every pass.
@@ -1740,9 +1857,24 @@ fn transfer(
         handoff_session_id: None,
         recovery: None,
     };
-    if let Ok(()) = (pass.transfer)(request) {
-        out.changes
-            .push(set(row, key, format!("{prefix}requested")));
+    match (pass.transfer)(request) {
+        Ok(intent) => {
+            let attempt = pass
+                .baseline
+                .get(TRANSFER_ROW, key)
+                .and_then(|v| v.split_once(':'))
+                .and_then(|(n, _)| n.parse::<u32>().ok())
+                .unwrap_or(0)
+                + 1;
+            out.changes
+                .push(set(row, key, format!("{prefix}requested")));
+            out.changes
+                .push(set(TRANSFER_ROW, key, format!("{attempt}:{intent}")));
+        }
+        Err(cause) => {
+            out.failed
+                .get_or_insert(format!("transfer-refused cause={cause}"));
+        }
     }
 }
 
@@ -1826,13 +1958,30 @@ pub fn relaunch_pending(marker: &Path, prepare: Duration, now: u64) -> RelaunchP
     }
 }
 
+/// The launch a relaunch's chain asked, the one whose status was
+/// [`crate::effects::UNCONFIRMED_EXIT`]: the item's latest `launch-lane`
+/// intent, since the chain's status is its launch's and no other launch of
+/// the item runs while the marker stands.
+fn relaunched<'a>(fleet: &'a FleetState, item: &str) -> Option<&'a crate::state::Intent> {
+    fleet
+        .intents
+        .iter()
+        .filter(|i| i.op == crate::state::EffectOp::LaunchLane && i.target == item)
+        .max_by(|a, b| a.created_at.cmp(&b.created_at))
+}
+
 /// Every relaunch marker with an exit status beside it is read once,
 /// `lane-prepare-failed ...
 /// reason=relaunch-failed exit= log=` for a non-zero status, and the marker
 /// and its status leave; a marker with no status `prepare` past its start
 /// is `lane-prepare-stuck ... reason=relaunch-pending` once per start (the
 /// `wall-relaunch` row keyed `<since>|stuck`, cleared when the status
-/// lands). A marker, a status or a removal that fails is the pass's
+/// lands). A status of [`crate::effects::UNCONFIRMED_EXIT`] is no outcome
+/// yet: the marker stands, read against the item's launch intent, until the
+/// intent's reconcile settles it, a failure said once as
+/// `lane-prepare-failed ... reason=relaunch-failed log=` and a confirmation
+/// saying nothing, and while it stays open the marker reads as one with no
+/// status. A marker, a status or a removal that fails is the pass's
 /// partial failure, the marker kept for the next pass; a status that is no
 /// exit code is such a failure, never a result.
 #[allow(
@@ -1841,6 +1990,7 @@ pub fn relaunch_pending(marker: &Path, prepare: Duration, now: u64) -> RelaunchP
 )]
 pub fn relaunch_outcomes(
     watch_state_dir: &Path,
+    fleet: &FleetState,
     prepare: Duration,
     now: u64,
     baseline: &Baseline,
@@ -1882,20 +2032,40 @@ pub fn relaunch_outcomes(
                 continue;
             }
         };
-        match status {
-            Some(text) => {
-                let rc = match text.trim_end_matches('\n').parse::<i32>() {
-                    Ok(rc) => rc,
-                    Err(_) => {
-                        failed(&mut out, "read", &exit, format!("no exit status: {text:?}"));
+        // What the relaunch came to: pending (no status yet, or a launch its
+        // reconcile has not settled), or ended with the chain's status,
+        // `None` for a launch settled failed after its chain ended, which
+        // has no status of its own to say.
+        let ended = match status {
+            None => None,
+            Some(text) => match text.trim_end_matches('\n').parse::<i32>() {
+                Ok(crate::effects::UNCONFIRMED_EXIT) => match relaunched(fleet, &fields.item) {
+                    Some(intent) if intent.open() => None,
+                    Some(intent)
+                        if intent.outcome == agent_runtime::protocol::Outcome::Confirmed =>
+                    {
+                        Some(Some(0))
+                    }
+                    Some(_) => Some(None),
+                    None => {
+                        failed(&mut out, "read", &exit, "launch-intent-absent".to_owned());
                         continue;
                     }
-                };
-                if rc != 0 {
+                },
+                Ok(rc) => Some(Some(rc)),
+                Err(_) => {
+                    failed(&mut out, "read", &exit, format!("no exit status: {text:?}"));
+                    continue;
+                }
+            },
+        };
+        match ended {
+            Some(rc) => {
+                if rc != Some(0) {
                     out.events.push(Event::LanePrepareFailed {
                         item: fields.item.clone(),
                         reason: "relaunch-failed".to_owned(),
-                        exit: Some(rc),
+                        exit: rc,
                         log: fields.log,
                     });
                 }
@@ -1967,7 +2137,7 @@ fn mark_check(record: &Record, key: &str, marks: Option<&Marks>, pass: &Pass, ou
         let sentence = match marks.succession {
             Succession::Off => "ORCH_OVERSEER_SUCCESSION is off, so no successor opens: rewrite the overseer handoff file and ask the user to start a fresh overseer session.".to_owned(),
             Succession::On => format!(
-                "Hand this session over at the next safe point: write the overseer handoff file, choose the successor with orch-runtime successor --fleet --cwd {} --predecessor {} (it walks ORCH_OVERSEER_PREFERENCE={}) and ask orch-runtime op --fleet for request-transfer with cause live, its .result.successor as the successor and its .result.expected as the expected record.",
+                "Hand this session over at the next safe point: write the overseer handoff file, choose the successor with orch-runtime successor --fleet --cwd {} --predecessor {} --mark {kind} (it walks ORCH_OVERSEER_PREFERENCE={}) and ask orch-runtime op --fleet --effect-exit for request-transfer with cause live, its .result.successor as the successor and its .result.expected as the expected record, which answers the transfer's own outcome.",
                 text(record.raw.get("cwd")).unwrap_or_else(|| "[CHECKOUT]".to_owned()),
                 record.pane,
                 if pass.preference.is_empty() {
@@ -2058,12 +2228,20 @@ pub fn run_transfer(
     locking: crate::state::Locking,
     clock: &dyn crate::schedule::Clock,
     mut request: RequestTransfer,
-) -> crate::error::Result<()> {
+) -> crate::error::Result<String> {
     crate::ops::successor::posture(&mut request.successor, settings);
     let request = crate::ops::Request::RequestTransfer(Box::new(request));
     crate::ops::admit(&request, settings)?;
     let host = crate::ops::Host::kernel(settings.lane_cap, Some(settings.claim_store.clone()));
     let applied = crate::ops::apply_on(path, &request, env, locking, &host)?;
+    let crate::ops::Report::RequestTransfer(report) = &applied.report else {
+        unreachable!("a transfer request reports its transfer")
+    };
+    let intent = match &report.effect {
+        crate::ops::Effect::Persisted { intent }
+        | crate::ops::Effect::Reconciled { intent }
+        | crate::ops::Effect::Supersedes { intent } => intent.id.clone(),
+    };
     crate::effects::run(
         path,
         &request,
@@ -2073,7 +2251,7 @@ pub fn run_transfer(
         locking,
         clock,
     )?;
-    Ok(())
+    Ok(intent)
 }
 
 /// Register the native observation duty: the controller's one verdict
@@ -2235,6 +2413,7 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
             &mut produced,
             relaunch_outcomes(
                 watch_state_dir(&ctx.settings.claim_store),
+                &fleet,
                 ctx.settings.watch.prepare,
                 tick.wall,
                 tick.baseline,

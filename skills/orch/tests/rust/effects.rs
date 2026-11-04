@@ -6293,7 +6293,7 @@ fn a_copilot_lane_launches_only_where_its_lane_mail_hooks_run() {
     ];
     let answer = |stdout: &str| json!({"stdout": stdout});
     type Case<'a> = (&'a str, Option<bool>, Value, Option<&'a str>);
-    let cases: [Case; 6] = [
+    let cases: [Case; 8] = [
         (
             "KEN-C1",
             None,
@@ -6330,6 +6330,18 @@ fn a_copilot_lane_launches_only_where_its_lane_mail_hooks_run() {
             answer(r#"{"switched_off_by": null}"#),
             Some("no-context-hooks"),
         ),
+        (
+            "KEN-C7",
+            Some(true),
+            answer(r#"{"switched_off_by": null}"#),
+            None,
+        ),
+        (
+            "KEN-C8",
+            Some(false),
+            answer(r#"{"switched_off_by": null}"#),
+            None,
+        ),
     ];
     for (item, in_worktree, kendex, refused) in cases {
         let worktree = dir.path().join(item);
@@ -6356,10 +6368,23 @@ fn a_copilot_lane_launches_only_where_its_lane_mail_hooks_run() {
                 std::fs::write(half.join(format!("lane-mail-check.{ext}")), "{}\n").unwrap();
             }
         }
+        // Both scopes hold the three: the worktree's registrations are the
+        // ones judged.
+        if item == "KEN-C7" {
+            plant_copilot_hooks(&account.join("hooks"));
+        }
         plant_hooks_off(&tools, kendex);
         let mut request = launch_request(item, &worktree);
         request["harness"] = json!("copilot");
         request["account"] = json!(account.display().to_string());
+        // No account named: the home is the one the launching environment
+        // names in `COPILOT_HOME`.
+        let account_word = account.display().to_string();
+        let mut env = env.to_vec();
+        if item == "KEN-C8" {
+            request.as_object_mut().unwrap().remove("account");
+            env.push(("COPILOT_HOME", account_word.as_str()));
+        }
         let panes_before = server.panes().len();
         let report = effect_report(&runner.op_fleet_env(&request, &env));
         let calls = std::fs::read_to_string(tools.join("kendex.log")).unwrap_or_default();
@@ -6537,6 +6562,17 @@ fn a_pi_lane_on_a_claude_seat_keeps_pis_own_root_beside_the_seat() {
     )
     .unwrap();
     request["item"] = json!("KEN-PI");
+    let elsewhere = dir.path().join("server-pi-root");
+    let set = tmux(
+        &server.socket,
+        &[
+            "set-environment",
+            "-g",
+            "PI_CODING_AGENT_DIR",
+            &elsewhere.display().to_string(),
+        ],
+    );
+    assert!(set.status.success(), "{}", stderr(&set));
     let out = runner.op_fleet_env(&request, &env);
     let report = effect_report(&out);
     assert!(
@@ -6555,7 +6591,311 @@ fn a_pi_lane_on_a_claude_seat_keeps_pis_own_root_beside_the_seat() {
         seat.display().to_string()
     );
     assert_eq!(
-        recorded["env"]["PI_CODING_AGENT_DIR"], "",
-        "Pi's own root is not the seat: {recorded}"
+        recorded["env"]["PI_CODING_AGENT_DIR"],
+        pi_root.display().to_string(),
+        "the root the gate judged, never the seat: {recorded}"
+    );
+    let relocated = dir.path().join("relocated-pi-root");
+    std::fs::create_dir_all(&relocated).unwrap();
+    std::fs::write(
+        relocated.join("settings.json"),
+        r#"{"compaction": {"enabled": true}}"#,
+    )
+    .unwrap();
+    let relocated_word = relocated.display().to_string();
+    request["item"] = json!("KEN-PI2");
+    let panes_before = server.panes().len();
+    let report = effect_report(&runner.op_fleet_env(
+        &request,
+        &[
+            env[0],
+            env[1],
+            ("PI_CODING_AGENT_DIR", relocated_word.as_str()),
+        ],
+    ));
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["cause"],
+        format!("compaction-on harness=pi file={relocated_word}/settings.json"),
+        "{report}"
+    );
+    assert_eq!(server.panes().len(), panes_before, "no window opened");
+}
+
+/// A Pi root and a carrier that leaves its compaction off and wakes on mail.
+fn pi_root_ready(root: &Path) {
+    let carrier = root.join("packages/@vanillagreen/pi-hooks");
+    std::fs::create_dir_all(carrier.join("extensions")).unwrap();
+    std::fs::write(
+        root.join("settings.json"),
+        r#"{"compaction": {"enabled": false}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        carrier.join("package.json"),
+        r#"{"version": "1.4.0", "pi": {"extensions": ["./extensions/lane-mail-wake.ts"]}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        carrier.join("extensions/vocab.ts"),
+        "export const fields = { context_window: 0 };\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_pi_root_the_private_env_file_names_is_the_root_a_seat_lane_is_judged_and_run_on() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-record");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    let seat = dir.path().join("claude-seat");
+    std::fs::create_dir_all(&seat).unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(home.join(".pi/agent")).unwrap();
+    let relocated = home.join("relocated-pi");
+    std::fs::create_dir_all(&relocated).unwrap();
+    std::fs::write(
+        relocated.join("settings.json"),
+        r#"{"compaction": {"enabled": true}}"#,
+    )
+    .unwrap();
+    runner
+        .env
+        .push(("HOME".to_owned(), home.display().to_string()));
+    runner.env.push((
+        "ORCH_HARNESS_BINARIES".to_owned(),
+        format!("pi={}", fixtures().join("stub-record/pi").display()),
+    ));
+    let work = runner.state_dir().to_path_buf();
+    std::fs::write(
+        work.join(".env.local"),
+        "export PI_CODING_AGENT_DIR=$HOME/relocated-pi\n",
+    )
+    .unwrap();
+    // The real executable reading the project's private file.
+    let launch = |item: &str| {
+        let mut request = launch_request(item, &work);
+        request["harness"] = json!("pi");
+        request["model"] = json!("pi-claude/fable");
+        request["account"] = json!(seat.display().to_string());
+        let path = work.join(format!("{item}.json"));
+        std::fs::write(&path, request.to_string()).unwrap();
+        let mut command = program(binary());
+        command
+            .args(["--state-dir", &work.display().to_string()])
+            .args(["op", "--fleet", "--request", &path.display().to_string()])
+            .current_dir(&work);
+        runner.apply_env(&mut command);
+        effect_report(&command.output().unwrap())
+    };
+    let panes = server.panes().len();
+    let refused = launch("KEN-PR1");
+    assert_eq!(refused["intent"]["outcome"], "failed", "{refused}");
+    assert_eq!(
+        refused["intent"]["observation"]["cause"],
+        format!(
+            "compaction-on harness=pi file={}/settings.json",
+            relocated.display()
+        ),
+        "{refused}"
+    );
+    assert_eq!(server.panes().len(), panes, "no window opened");
+    pi_root_ready(&relocated);
+    let opened = launch("KEN-PR2");
+    assert_ne!(opened["intent"]["outcome"], "failed", "{opened}");
+    let recorded: Value =
+        serde_json::from_str(&std::fs::read_to_string(work.join("launch-record.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        recorded["env"]["PI_CODING_AGENT_DIR"],
+        relocated.display().to_string(),
+        "{recorded}"
+    );
+}
+
+#[test]
+fn a_codex_lane_with_no_account_runs_on_the_codex_home_the_fleet_server_hands_its_panes() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-record");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(home.join(".codex")).unwrap();
+    let served = dir.path().join("served-codex");
+    std::fs::create_dir_all(&served).unwrap();
+    runner
+        .env
+        .push(("HOME".to_owned(), home.display().to_string()));
+    runner.env.push((
+        "ORCH_HARNESS_BINARIES".to_owned(),
+        format!("codex={}", fixtures().join("stub-record/codex").display()),
+    ));
+    let work = runner.state_dir().to_path_buf();
+    let set = |args: &[&str]| {
+        let out = tmux(&server.socket, args);
+        assert!(out.status.success(), "{}", stderr(&out));
+    };
+    // The server's global scope, then the session's marker removing it: the
+    // pane takes the session's word first.
+    let served_word = served.display().to_string();
+    set(&["set-environment", "-g", "CODEX_HOME", &served_word]);
+    let session_target = format!("={}", server.session);
+    for (item, want) in [
+        ("KEN-CX1", served.clone()),
+        ("KEN-CX2", home.join(".codex")),
+    ] {
+        if item == "KEN-CX2" {
+            set(&["set-environment", "-t", &session_target, "-r", "CODEX_HOME"]);
+        }
+        let mut request = launch_request(item, &work);
+        request["harness"] = json!("codex");
+        request.as_object_mut().unwrap().remove("account");
+        let report = effect_report(&runner.op_fleet(&request));
+        assert_ne!(report["intent"]["outcome"], "failed", "{item}: {report}");
+        let recorded: Value = serde_json::from_str(
+            &std::fs::read_to_string(work.join("launch-record.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            recorded["env"]["CODEX_HOME"],
+            agent_runtime::trust::home_path(&want, &work)
+                .display()
+                .to_string(),
+            "{item}: {recorded}"
+        );
+    }
+}
+
+#[test]
+fn a_reconciled_pi_lane_on_a_seat_binds_its_session_under_pis_root_not_the_seat() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let work = runner.state_dir().to_path_buf();
+    let seat = dir.path().join("claude-seat");
+    std::fs::create_dir_all(&seat).unwrap();
+    let root = dir.path().join("pi-root");
+    std::fs::create_dir_all(&root).unwrap();
+    // A program named `pi` that draws Pi's composer at rest and stands.
+    let bin = dir.path().join("pi-bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let pi = bin.join("pi");
+    std::fs::write(
+        &pi,
+        "#!/bin/bash\nprintf '%s\\n' '────────────────────────────────' '────────────────────────────────' '~/work (main)' '0.4%/1.0M'\nwhile IFS= read -r _line; do :; done\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&pi, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    runner.env.push((
+        "ORCH_HARNESS_BINARIES".to_owned(),
+        format!("pi={}", pi.display()),
+    ));
+    runner
+        .env
+        .push(("PI_CODING_AGENT_DIR".to_owned(), root.display().to_string()));
+    let since = now_ms();
+    let pane = server.open_window("KEN-PIR", &work, &format!("exec {}", pi.display()));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let drawn = || {
+        let out = tmux(&server.socket, &["capture-pane", "-p", "-t", &pane]);
+        String::from_utf8_lossy(&out.stdout).contains("0.4%/1.0M")
+    };
+    while !drawn() {
+        assert!(Instant::now() < deadline, "the stand-in never drew");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // The session the launch's own Pi wrote, under Pi's root.
+    let sessions = root
+        .join("sessions")
+        .join(agent_runtime::session::pi_slug(&work));
+    std::fs::create_dir_all(&sessions).unwrap();
+    std::fs::write(
+        sessions.join("one.jsonl"),
+        format!(
+            "{}\n",
+            json!({"type": "session", "id": "pi-session-1", "cwd": work.display().to_string()})
+        ),
+    )
+    .unwrap();
+    let mut lane = lane("KEN-PIR", "preparing", &runner, Value::Null);
+    lane["harness"] = json!("pi");
+    lane["model"] = json!("pi-claude/fable");
+    lane["account"] = json!(seat.display().to_string());
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([lane]);
+    fleet["intents"] = json!([lane_intent(
+        "launch-lane",
+        "KEN-PIR",
+        "not-started",
+        Some(phase("window-opened", &server, &pane, since, None)),
+    )]);
+    runner.write_fleet(&fleet);
+    let report = runner.reconcile_one();
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(
+        runner.fleet()["lanes"][0]["session_id"],
+        "pi-session-1",
+        "{report}"
+    );
+}
+
+#[test]
+fn a_codex_lane_with_no_account_resumes_the_session_its_served_home_holds() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-record");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(home.join(".codex")).unwrap();
+    let served = dir.path().join("served-codex");
+    runner
+        .env
+        .push(("HOME".to_owned(), home.display().to_string()));
+    runner.env.push((
+        "ORCH_HARNESS_BINARIES".to_owned(),
+        format!("codex={}", fixtures().join("stub-record/codex").display()),
+    ));
+    let work = runner.state_dir().to_path_buf();
+    let out = tmux(
+        &server.socket,
+        &[
+            "set-environment",
+            "-g",
+            "CODEX_HOME",
+            &served.display().to_string(),
+        ],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    // The lane's bound session, in the store of the home the server hands
+    // its panes, where the launch's private home links it.
+    let day = served.join("sessions/2026/11/04");
+    std::fs::create_dir_all(&day).unwrap();
+    std::fs::write(
+        day.join("rollout-a-codex-session-1.jsonl"),
+        format!(
+            "{}\n",
+            json!({"type": "session_meta", "payload": {"id": "codex-session-1", "cwd": work.display().to_string(), "source": "cli"}})
+        ),
+    )
+    .unwrap();
+    let mut stopped = lane("KEN-CXR", "stopped", &runner, Value::Null);
+    stopped["harness"] = json!("codex");
+    stopped["session_id"] = json!("codex-session-1");
+    stopped.as_object_mut().unwrap().remove("account");
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([stopped]);
+    runner.write_fleet(&fleet);
+    let mut request = launch_request("KEN-CXR", &work);
+    request["harness"] = json!("codex");
+    request.as_object_mut().unwrap().remove("account");
+    let report = effect_report(&runner.op_fleet(&request));
+    assert_eq!(
+        report["intent"]["observation"]["route"], "resume",
+        "{report}"
     );
 }

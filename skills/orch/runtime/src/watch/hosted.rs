@@ -603,6 +603,10 @@ pub enum Closed {
     Deferred,
     /// Any other end: the status and the output's first line.
     Failed { cause: String },
+    /// No answer: the runner's bound passed or a signal ended it, so the
+    /// close may have happened. Its marker stands for the next pass, which
+    /// leaves the lane to the operator.
+    Unanswered { cause: String },
 }
 
 /// `lane-close --state-dir [DIR] [ITEM]` through the one runner, both
@@ -624,7 +628,7 @@ fn run_close(scripts: &Path, state_dir: &Path, item: &str) -> Closed {
     ) {
         Ok(out) => out,
         Err(e) => {
-            return Closed::Failed {
+            return Closed::Unanswered {
                 cause: e.to_string(),
             };
         }
@@ -663,7 +667,7 @@ fn run_close(scripts: &Path, state_dir: &Path, item: &str) -> Closed {
                 .trim_end()
                 .to_owned(),
         },
-        None => Closed::Failed {
+        None => Closed::Unanswered {
             cause: format!("{} {}", out.status, first_line(&text))
                 .trim_end()
                 .to_owned(),
@@ -865,7 +869,8 @@ fn unconfirmed(item: &str, marker: &Path) -> String {
 /// happened and the next pass may ask again; a close that answered `closed`
 /// keeps it until the next pass reads the lane record `lane-close` wrote
 /// and finds the lane out of flight (`prune_close_markers`), so a record
-/// that still reads open is the operator's lane, never a second close.
+/// that still reads open is the operator's lane, never a second close; so
+/// does a close that gave no answer.
 /// `None` is a close not asked: a marker standing from an earlier close, or
 /// one this pass could not write, each the pass's failure.
 fn close_once(pass: &Pass, lane: &Lane, reason: &str, out: &mut Produced) -> Option<Closed> {
@@ -897,8 +902,9 @@ fn close_once(pass: &Pass, lane: &Lane, reason: &str, out: &mut Produced) -> Opt
     let closed = run_close(pass.scripts, pass.state_dir, item);
     match closed {
         // The lane record `lane-close` wrote confirms the close on the next
-        // pass's read; the marker stands until then.
-        Closed::Closed { .. } => {}
+        // pass's read; the marker stands until then, and stands for a close
+        // that may have happened with no answer.
+        Closed::Closed { .. } | Closed::Unanswered { .. } => {}
         Closed::Refused { .. } | Closed::Deferred | Closed::Failed { .. } => {
             if let Err(cause) = remove_marker(&path) {
                 fail(
@@ -929,6 +935,9 @@ fn say_closed(item: &str, closed: &Closed, out: &mut Produced) {
         }
         Closed::Deferred => {}
         Closed::Failed { cause } => fail(out, format!("lane-close-failed item={item} {cause}")),
+        Closed::Unanswered { cause } => {
+            fail(out, format!("lane-close-unanswered item={item} {cause}"));
+        }
     }
 }
 
@@ -1348,7 +1357,10 @@ fn cloud_stall_close(pass: &Pass, lane: &Lane, since: u64, out: &mut Produced) -
             });
             true
         }
-        Closed::Refused { .. } | Closed::Deferred | Closed::Failed { .. } => false,
+        Closed::Refused { .. }
+        | Closed::Deferred
+        | Closed::Failed { .. }
+        | Closed::Unanswered { .. } => false,
     }
 }
 
@@ -1632,7 +1644,7 @@ pub fn close_finished(
     };
     say_closed(&lane.item, &closed, out);
     match closed {
-        Closed::Failed { .. } => {
+        Closed::Failed { .. } | Closed::Unanswered { .. } => {
             out.changes.push(set(row, &name, key.to_owned()));
             out.changes.push(clear(CLOSE_PENDING_ROW, &name));
         }

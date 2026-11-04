@@ -20,7 +20,7 @@ use agent_runtime::launch::{Compaction, LaunchCommand, Permission, Resume};
 use agent_runtime::reading::Reading;
 use serde_json::{Value, json};
 
-use super::launch::{GATE_REFUSED, Unready};
+use super::launch::{GATE_REFUSED, LaunchHome, Unready};
 use super::operation::{
     self, Binding, EffectOutcome, Identity, Observed, OpenRefusal, Operation, Pane, Polled,
     ProcessRead, Proof, Published, Recovered, SessionFloor, State, Stop, TurnConfirm, WindowClose,
@@ -244,6 +244,15 @@ fn unconfirmed_after_retirement(
     })
 }
 
+/// The home a successor keeps where no account names one: the pending's
+/// `home`, read only as the Pi root a Pi successor keeps.
+fn kept(pending: &state::Pending, harness: Harness) -> Option<&Path> {
+    match harness {
+        Harness::Pi => pending.home.as_deref().map(Path::new),
+        Harness::Claude | Harness::Codex | Harness::Copilot => None,
+    }
+}
+
 /// What a succession resolved about its successor before anything opened,
 /// and what a reconcile rebuilds from the record: the harness, the home its
 /// native session is read under, the home the launch names and the account
@@ -274,14 +283,45 @@ impl Successor {
     /// reads before retirement: the harness word, the working directory and
     /// the account it spends, which must exist, and the home it runs under,
     /// prepared by the lane launch's own rule (`launch::launch_home`) with
-    /// its trust record, so a reconcile resolves the same home. The pending's
-    /// `home` is read only as the Pi root a successor on another provider's
-    /// seat keeps. The program and brief are checked by the effect that
-    /// builds the command.
+    /// its trust record and harness gate. The pending's `home` is read only
+    /// as the Pi root a Pi successor keeps. The program and brief are checked
+    /// by the effect that builds the command.
     fn from_pending(
         settings: &Settings,
         pending: &state::Pending,
     ) -> std::result::Result<Successor, Unready> {
+        let (harness, cwd) = Self::checked(pending)?;
+        let homes = super::launch::launch_home(
+            settings,
+            harness,
+            pending.account.as_deref(),
+            pending.model.as_deref(),
+            kept(pending, harness),
+            &cwd,
+        )?;
+        Ok(Self::of(settings, pending, harness, cwd, homes)?)
+    }
+
+    /// The successor `pending` names once its runner opened, for a
+    /// reconcile: the same preconditions and the home its launch prepared,
+    /// read by the same rule with no trust record written and no gate
+    /// asked over a successor that already runs.
+    fn opened(settings: &Settings, pending: &state::Pending) -> Result<Successor> {
+        let (harness, cwd) = Self::checked(pending)?;
+        let homes = super::launch::prepared_home(
+            settings,
+            harness,
+            pending.account.as_deref(),
+            pending.model.as_deref(),
+            kept(pending, harness),
+            &cwd,
+        )?;
+        Self::of(settings, pending, harness, cwd, homes)
+    }
+
+    /// The harness word and the working directory, and the account where
+    /// the pending names one, each standing.
+    fn checked(pending: &state::Pending) -> Result<(Harness, PathBuf)> {
         let harness = pending
             .harness
             .as_deref()
@@ -295,20 +335,26 @@ impl Successor {
         // Pi continues a session by its file, which no record carries, so a
         // Pi controller has no resume form.
         if harness == Harness::Pi && pending.resume.is_some() {
-            return Err(refused("resume-unsupported", &[("harness", harness.name())]).into());
+            return Err(refused(
+                "resume-unsupported",
+                &[("harness", harness.name())],
+            ));
         }
         let cwd = PathBuf::from(pending.cwd.clone().unwrap_or_default());
         check_directory("cwd-missing", &cwd)?;
         if let Some(account) = pending.account.as_deref() {
             check_directory("account-missing", Path::new(account))?;
         }
-        let homes = super::launch::launch_home(
-            harness,
-            pending.account.as_deref(),
-            pending.model.as_deref(),
-            pending.home.as_deref().map(Path::new),
-            &cwd,
-        )?;
+        Ok((harness, cwd))
+    }
+
+    fn of(
+        settings: &Settings,
+        pending: &state::Pending,
+        harness: Harness,
+        cwd: PathBuf,
+        homes: LaunchHome,
+    ) -> Result<Successor> {
         let home = homes
             .sessions
             .ok_or_else(|| refused("home-unresolved", &[("harness", harness.name())]))?;
@@ -1009,7 +1055,10 @@ fn complete_transfer(
                 }
             };
             // The runner's pane stands in the set; the brief is typed through
-            // its token, the `delivering` phase written before the paste.
+            // its token, the `delivering` phase written before the paste. A
+            // brief refused before the paste leaves the phase as it stood, so
+            // a repeat types it; one whose paste went unanswered is never
+            // typed again, and its turn alone says whether it went in.
             let text = text.trim_end();
             let delivered = match operation.standing_pane(pane.clone()) {
                 Ok(token) => operation.deliver(
@@ -1022,17 +1071,25 @@ fn complete_transfer(
                         lines: text.lines().count() as u64,
                     },
                 )?,
-                Err(_) => Ok(()),
+                Err(_) => operation::Delivery::Unsent(agent_runtime::Error::refused(
+                    "pane-not-standing",
+                    &[],
+                )),
             };
-            if let Err(e) = delivered {
+            let undelivered = match delivered {
+                operation::Delivery::Pasted => None,
+                operation::Delivery::Unsent(e) => Some(("brief-unsent", e.key())),
+                operation::Delivery::Unanswered(e) => Some(("brief-undelivered", e.key())),
+            };
+            if let Some((note, cause)) = undelivered {
                 return Ok(unconfirmed_after_retirement(
                     operation,
                     opened,
                     Some(identity.identity()),
                     Some(session.session_id),
-                    "brief-undelivered",
+                    note,
                     by,
-                    json!({"cause": e.key()}),
+                    json!({"cause": cause}),
                 ));
             }
             operation.record_phase(Phase::Delivered {
@@ -1742,7 +1799,7 @@ fn judge_resolved(
     // failure here does with the runner depends on what stands below.
     let successor = match overseer.pending.as_ref() {
         None => Err("pending-missing"),
-        Some(pending) => Successor::from_pending(run.settings, pending).map_err(|e| e.key()),
+        Some(pending) => Successor::opened(run.settings, pending).map_err(|e| e.key()),
     };
     let by = match (retirement, phase) {
         (Some(by), _) => by,

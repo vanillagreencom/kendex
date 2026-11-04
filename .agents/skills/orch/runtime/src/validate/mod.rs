@@ -1,20 +1,19 @@
-//! The validation run's start (U6a, step6-map § A1, § A4): one verb,
-//! `orch-runtime validate start`, that reads the project's declaration, the
-//! worktree's snapshot and class, the CI admission and the selector's
-//! preview, judges reuse over the proof rows already on the item's stages,
-//! writes the proof facts and the launcher's record path on the admitted
-//! stage, writes the run directory the kept executor reads, and launches
-//! `orch-runtime validate run` detached through the job launcher, writing
-//! the launcher's answer on the stage after it. The reads come first and
-//! the records follow (read-then-record); the executor, `dev-validate-run
-//! --child`, stays byte for byte (decision 182 Q1). `run` holds the job.
+//! The validation run's start: one verb, `orch-runtime validate start`, that
+//! reads the project's declaration, the worktree's snapshot and class, the CI
+//! admission and the selector's preview, judges reuse over the proof rows
+//! already on the item's stages, writes the proof facts and the launcher's
+//! record path on the admitted stage, writes the run directory the kept
+//! executor reads, and launches `orch-runtime validate run` detached through
+//! the job launcher, writing the launcher's answer on the stage after it. The
+//! reads come first and the records follow (read-then-record); the executor,
+//! `dev-validate-run --child`, stays byte for byte. `run` holds the job.
 //!
-//! The mode resolver (§ A4): a fix round, one that names a base, takes the
-//! narrowest mode the declaration admits for its kind: `ci` where the CI
-//! context is declared and the base's rules require it, else `range` where
-//! the range command is declared, else the whole battery; an implement
-//! round runs the whole battery. A `full` request on a project declaring a
-//! narrower mode needs a cause, and both are recorded.
+//! The mode resolver: a fix round, one that names a base, takes the narrowest
+//! mode the declaration admits for its kind: `ci` where the CI context is
+//! declared and the base's rules require it, else `range` where the range
+//! command is declared, else the whole battery; an implement round runs the
+//! whole battery. A `full` request on a project declaring a narrower mode needs
+//! a cause, and both are recorded.
 
 pub mod run;
 
@@ -40,8 +39,7 @@ use crate::state::{
     ValidateMode,
 };
 
-/// The poll interval a start records when the caller names none, the
-/// legacy `POLL_DEFAULT`.
+/// The poll interval a start records when the caller names none.
 pub const POLL_DEFAULT: u64 = 30;
 /// The seconds between the bound's SIGTERM and its SIGKILL, job-unit's
 /// grace, which the cap carries so the sentinel lands inside a wait.
@@ -61,7 +59,7 @@ const RUN_INDEX: &str = "validation-runs";
 #[derive(Debug, Clone)]
 pub struct StartRequest {
     /// The item and round the run is for; or `run_dir`, the admitted
-    /// directory the legacy forward names, which the item is found by.
+    /// directory a forward names, which the item is found by.
     pub item: Option<String>,
     pub round: Option<String>,
     pub run_dir: Option<String>,
@@ -75,7 +73,7 @@ pub struct StartRequest {
     pub fresh: bool,
 }
 
-/// The start's reply: the fields of the legacy `state=started` line, the
+/// The start's reply: the fields of the `state=started` line, the
 /// mode that resolved, and the job the launcher answered for, or the
 /// outcome a run that ran nothing closed with.
 #[derive(Debug, Clone, Serialize)]
@@ -95,7 +93,7 @@ pub struct StartReply {
     pub class_fallback: Option<String>,
     pub mode: ValidateMode,
     pub base: String,
-    /// The `state=started` line byte for byte as the legacy printed it.
+    /// The `state=started` line, byte for byte as printed.
     pub started_line: String,
     pub launched: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -128,8 +126,8 @@ pub(crate) fn load(path: &Path) -> Result<Option<state::Snapshot>> {
 }
 
 /// The item whose admitted run stands under `run_dir`: the state files of
-/// the directory are read for a validate stage naming it. The legacy
-/// forwards, the start's and the stop's, name the directory alone.
+/// the directory are read for a validate stage naming it. The forwards,
+/// the start's and the stop's, name the directory alone.
 pub(crate) fn item_of_run_dir(state_dir: &Path, run_dir: &str) -> Result<(String, String)> {
     let entries = fs::read_dir(state_dir).map_err(|e| Error::ValidateUnreadable {
         read: "state-dir",
@@ -191,7 +189,7 @@ fn run_in(
     ) {
         Ok(out) => {
             // The stderr travels on the log either way: the classifier's
-            // records ride on it, as the legacy `2>>` kept them.
+            // records ride on it.
             let err = host::stderr_text(&out);
             if !err.is_empty() {
                 log.push_str(&err);
@@ -286,8 +284,8 @@ fn sibling(settings: &Settings, name: &str) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(name))
 }
 
-/// The classifier the legacy `change_class_read` runs: harness-ci's
-/// wrapper where that sibling is installed, else change-scope's own.
+/// The classifier: harness-ci's wrapper where that sibling is installed,
+/// else change-scope's own.
 fn classifier(settings: &Settings) -> (PathBuf, Vec<&'static str>) {
     let scripts = settings
         .scope_paths_cli
@@ -899,9 +897,8 @@ fn narrowest_declared(settings: &Settings) -> Option<&'static str> {
     }
 }
 
-/// Resolve the run from the declaration and the worktree (step6-map § A4
-/// and the legacy start, `dev-validate-run:1026-1231`), reading everything
-/// and recording nothing.
+/// Resolve the run from the declaration and the worktree, reading
+/// everything and recording nothing.
 fn resolve(
     settings: &Settings,
     scratch: &Scratch,
@@ -944,9 +941,9 @@ fn resolve(
     // the merge base of HEAD with the origin base branch.
     let mut base_sha = String::new();
     let mut orphaned = false;
-    // A full request validates the whole tree from no base, as the legacy
-    // start ignored a carried base; the round's base still names a fix
-    // round, so the cause rule above applies.
+    // A full request validates the whole tree from no base, ignoring a
+    // carried base; the round's base still names a fix round, so the cause
+    // rule above applies.
     if let Some(base) = req
         .base
         .as_ref()
@@ -1005,8 +1002,8 @@ fn resolve(
     let mut preview = Preview::default();
     let paths_file = scratch.0.join("paths");
     // A ci request, and under push-first any fix round, asks whether CI
-    // covers the change (`dev-validate-run:1087-1115`); so does a fix
-    // round the declaration lets defer (§ A4's narrowest mode).
+    // covers the change; so does a fix round the declaration lets defer
+    // (its narrowest mode).
     let may_defer = fix_round && req.mode.is_none() && settings.validate.ci_context.is_some();
     if mode == ValidateMode::Ci || order == "push-first" || may_defer {
         ci_attempted = true;
@@ -1100,7 +1097,7 @@ fn resolve(
     };
     let mut scoped = false;
     // The selector's own preview for a local run, and the scoped start
-    // where CI cannot see the head yet (`dev-validate-run:1134-1154`).
+    // where CI cannot see the head yet.
     if mode != ValidateMode::Ci && !previewed && settings.validate.selection_cmd.is_some() {
         preview = preview_selection(
             settings,
@@ -1184,7 +1181,7 @@ fn resolve(
     .unwrap_or_default();
     // An earlier row that answers this run (`dev-validate-run --help`,
     // "A start reads the worktree's earlier runs"), judged over the item's
-    // own proof rows (step6-map § C).
+    // own proof rows.
     let mut reused = None;
     if mode != ValidateMode::Ci && !req.fresh && class.fallback.is_none() {
         let want = Want {
@@ -1293,8 +1290,7 @@ fn resolve(
 
 // --- The run directory ------------------------------------------------------------
 
-/// The run's `start` record, line for line as the legacy writes it
-/// (`dev-validate-run:1267-1289`), which the executor reads.
+/// The run's `start` record, line for line in the form the executor reads.
 fn start_record(worktree: &Path, proof: &Proof, start: u64) -> String {
     let mut text = String::new();
     let mut line = |l: String| {
@@ -1414,9 +1410,9 @@ fn write_run_dir(
     Ok(())
 }
 
-/// The `state=started` line the legacy prints, with the CI fallback cause
-/// appended where the rules read fell back to a local run (decision 184 (9)),
-/// so the dev agent sees why CI did not take the change.
+/// The `state=started` line, with the CI fallback cause appended where the
+/// rules read fell back to a local run, so the dev agent sees why CI did
+/// not take the change.
 fn started_line(run_dir: &Path, proof: &Proof) -> String {
     let class_fallback = proof
         .class_fallback
@@ -1533,6 +1529,11 @@ fn ask_launcher(
                 line: host::stdout_text(&out),
             }
         }
+        // An end with no status, or no answer in the bound, may have
+        // started the job.
+        Ok(out) if out.status.code().is_none() => Launch::Unanswered {
+            cause: out.status.to_string(),
+        },
         Ok(out) => Launch::Refused {
             cause: host::stderr_text(&out)
                 .lines()
@@ -1540,13 +1541,13 @@ fn ask_launcher(
                 .unwrap_or_default()
                 .to_owned(),
         },
-        Err(e) => Launch::Refused {
+        Err(e) => Launch::Unanswered {
             cause: e.to_string(),
         },
     }
 }
 
-/// Start a validation run (step6-map § A1): read, record, launch.
+/// Start a validation run: read, record, launch.
 pub fn start(
     settings: &Settings,
     req: &StartRequest,
@@ -1648,8 +1649,17 @@ pub fn start(
     let Validated::Launch(recorded) = recorded else {
         unreachable!("a launch reports its launch")
     };
-    if let Launch::Refused { cause } = launched {
-        return Err(Error::ValidateLaunchFailed { run_dir, cause });
+    match launched {
+        Launch::Refused { cause } => {
+            return Err(Error::ValidateLaunchFailed { run_dir, cause });
+        }
+        Launch::Unanswered { cause } => {
+            return Err(Error::Runtime(agent_runtime::Error::refused(
+                "launch-unanswered",
+                &[("run_dir", &run_dir), ("cause", &cause)],
+            )));
+        }
+        Launch::Started { .. } => {}
     }
     let mut outcome = recorded.outcome;
     if resolved.ran_nothing.is_some() {

@@ -367,6 +367,31 @@ fn a_start_records_the_proof_and_the_job_before_the_launcher_is_asked_and_a_refu
     );
 }
 
+#[test]
+fn a_launch_whose_answer_was_lost_keeps_its_stage_open_until_the_reconcile_reads_its_job() {
+    let w = World::new();
+    let lost = [("JOB_UNIT_RECORD_ONLY", "1"), ("JOB_UNIT_ANSWER_LOST", "1")];
+    let (key, line) = refusal(&w.start(&[], &lost));
+    assert_eq!(key, "launch-unanswered", "{line}");
+    let run_dir = line
+        .split(' ')
+        .find_map(|f| f.strip_prefix("run_dir="))
+        .unwrap()
+        .to_owned();
+    let stage = w.stage(&run_dir);
+    assert!(stage["end"].is_null(), "the stage stays open: {stage}");
+    assert!(
+        stage["job"]["runner"].is_null(),
+        "no identity read from a lost answer: {stage}"
+    );
+    let (key, _) = refusal(&w.start(&[], &[("JOB_UNIT_RECORD_ONLY", "1")]));
+    assert_eq!(key, "run-live", "nothing launched beside it");
+    // The launcher's record names a pid that does not run: the round's
+    // reconcile reads the job gone and closes the stage.
+    ok(&w.op(&json!({"op": "reconcile-round", "round_id": ROUND}), &[]));
+    assert_eq!(w.stage(&run_dir)["outcome"], "lost");
+}
+
 /// A1 row (1), the live rule: a round with an open started run refuses a
 /// second start as `run-live` and records nothing. Defect caught: two
 /// batteries beside each other, the slower failing on load.

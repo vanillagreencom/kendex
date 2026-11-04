@@ -389,14 +389,41 @@ pub(crate) fn unresolved_threads(gh: &Gh, repo: &str, pr: u64) -> Read<usize> {
 }
 
 /// Ask Copilot for a review of the pull request: the one POST the gate
-/// makes. A call that could not be made at all is the read's failure.
+/// makes. A refusal is GitHub's own: a failed call whose stderr carries
+/// the status line gh writes for a reply above 299, `gh: <message> (HTTP
+/// 4xx)` or `gh: HTTP 4xx`. Any other failure, a transport failure (`error
+/// connecting to <host>`, recorded from gh 2.103.3), a 5xx or a call that
+/// could not be made, may or may not have reached GitHub, so it is the
+/// read's failure and the request's claim stands for the confirmation.
 pub(crate) fn request_review(gh: &Gh, repo: &str, pr: u64) -> Read<Acted> {
     let path = format!("repos/{repo}/pulls/{pr}/requested_reviewers");
     let reviewer = format!("reviewers[]={COPILOT_REVIEWER}[bot]");
-    gh.act(
+    match gh.act(
         Endpoint::RequestReview,
         &["api", &path, "--method", "POST", "-f", &reviewer],
-    )
+    )? {
+        Acted::Refused { detail, .. } if !refused_by_github(&detail) => Err(Cause::ReadFailed {
+            endpoint: Endpoint::RequestReview,
+            detail,
+        }),
+        acted => Ok(acted),
+    }
+}
+
+/// Whether gh's stderr holds GitHub's 4xx status line.
+fn refused_by_github(detail: &str) -> bool {
+    detail
+        .lines()
+        .filter(|line| line.starts_with("gh: "))
+        .any(|line| {
+            line.match_indices("HTTP ").any(|(at, _)| {
+                let code = &line.as_bytes()[at + 5..];
+                code.len() >= 3
+                    && code[0] == b'4'
+                    && code[..3].iter().all(u8::is_ascii_digit)
+                    && code.get(3).is_none_or(|&b| b == b')')
+            })
+        })
 }
 
 /// Mark an open draft ready for review: GitHub exposes the transition

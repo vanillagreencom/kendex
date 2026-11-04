@@ -565,10 +565,21 @@ impl Gate<'_> {
     }
 
     /// Mark an open draft ready where the call asks: a mark recorded
-    /// `marking` and a view still draft is sent again. Answers whether this
-    /// call made the draft ready.
+    /// `marking` and a view still draft is sent again; one the view reads
+    /// ready is confirmed, whoever's call asks. Answers whether the gate's
+    /// mark made the draft ready, this call's or one whose answer was lost.
     fn mark_ready(&mut self, record: &mut Option<HeadRecord>) -> Step<bool> {
         let done = |head: &HeadRecord| head.ready == Some(Ready::Done);
+        let marking = |head: &HeadRecord| head.ready == Some(Ready::Marking);
+        if !self.view.draft && record.as_ref().is_some_and(marking) {
+            let path = self.path;
+            *record = Some(self.update_head(|standing| {
+                let mut head = standing.ok_or_else(|| shape(path, "heads"))?;
+                head.ready = Some(Ready::Done);
+                Ok((head.clone(), head))
+            })?);
+            return Ok(true);
+        }
         if !self.r.mark_ready || !self.view.draft || record.as_ref().is_some_and(done) {
             return Ok(false);
         }
@@ -617,27 +628,39 @@ impl Gate<'_> {
 
     /// The head's request, claimed once and read after: a standing
     /// `requested` GitHub shows no sign of is sent once more, then falls
-    /// back `unconfirmed`. A `draft` fallback lapses once this call made
-    /// the draft ready.
+    /// back `unconfirmed`. A `draft` fallback lapses once the gate's mark
+    /// made the draft ready, or once the view and `pulls/N` both read it
+    /// ready, so a call where the two reads disagree records and notifies
+    /// nothing again.
     fn request(
         &mut self,
         record: Option<HeadRecord>,
         draft: bool,
         marked: bool,
     ) -> Step<HeadRecord> {
-        let stands = |head: &HeadRecord| {
+        let held_as_draft = |head: &HeadRecord| {
             head.request.as_ref().is_some_and(|request| {
-                !(marked
-                    && request.outcome == FALLBACK
-                    && request.cause.as_deref() == Some("draft"))
+                request.outcome == FALLBACK && request.cause.as_deref() == Some("draft")
             })
         };
+        let mut pull = None;
+        let ready = marked
+            || (!self.view.draft && record.as_ref().is_some_and(held_as_draft) && {
+                let read = review::pull(&self.gh, &self.r.repo, self.r.pr)?;
+                let ready = !read.draft;
+                pull = Some(read);
+                ready
+            });
+        let stands = |head: &HeadRecord| head.request.is_some() && !(ready && held_as_draft(head));
         if let Some(head) = record.as_ref().filter(|head| stands(head)) {
             self.reply.request = head.request.as_ref().map(|q| q.report(false));
             return self.confirm_request(head.clone());
         }
         let policy = policy(&self.r.base_checkout)?;
-        let pull = review::pull(&self.gh, &self.r.repo, self.r.pr)?;
+        let pull = match pull {
+            Some(pull) => pull,
+            None => review::pull(&self.gh, &self.r.repo, self.r.pr)?,
+        };
         if pull.head.sha != self.view.head {
             return Err(Stop::Pending(format!("head-moved head={}", pull.head.sha)));
         }
@@ -723,10 +746,12 @@ impl Gate<'_> {
     }
 
     /// A standing `requested` read against GitHub's record of it: Copilot's
-    /// work, a request event for Copilot or a Copilot review on the head
-    /// confirms it; with none, it is sent once more under its `resent`
-    /// mark, and a second miss falls back `unconfirmed` so the fallback
-    /// notice goes out.
+    /// work, a request event for Copilot since the head's record was
+    /// written or a Copilot review on the head confirms it; with none, it
+    /// is sent once more under its `resent` mark, and a second miss falls
+    /// back `unconfirmed` so the fallback notice goes out. The event is read
+    /// from the record's stamp, not the head's arrival: a commit's
+    /// committer date can precede a request made on the head before it.
     fn confirm_request(&mut self, head: HeadRecord) -> Step<HeadRecord> {
         let Some(request) = head.request.clone() else {
             return Ok(head);
@@ -736,7 +761,10 @@ impl Gate<'_> {
         }
         let reviews = self.reviews()?.clone();
         let landed = self.work()?.is_some()
-            || reviews.requested_at.is_some()
+            || reviews
+                .requested_at
+                .as_deref()
+                .is_some_and(|at| at >= head.at.as_str())
             || reviews.latest.is_some()
             || reviews.any_non_error;
         if landed {
@@ -1230,9 +1258,8 @@ fn policy(base: &Path) -> Result<BTreeMap<String, String>> {
             values.insert(key, value);
         }
     }
-    for (key, value) in settings::private_env_file(&base.join(settings::DEFAULT_ENV_FILE))? {
-        values.insert(key, value);
-    }
+    let private = settings::private_env_file(&base.join(settings::DEFAULT_ENV_FILE), None)?;
+    values.extend(private.values);
     Ok(values)
 }
 

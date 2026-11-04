@@ -783,7 +783,7 @@ fn assert_verdict(r: Verdict) {
     );
 }
 
-/// Decision 93: a final verdict is recorded through `record-verification`
+/// A final verdict is recorded through `record-verification`
 /// in the same call, and a later verdict replaces it. Without
 /// `required_only` the base's rules and protection are not read; the
 /// check-suites count is read beside the check runs, and the workflows
@@ -1684,12 +1684,12 @@ fn a_failed_check_is_associated_through_its_link_and_held_while_unresolved() {
     }
 }
 
-/// Decision 114 (3): a run whose workflow the repository's list lacks is
+/// A run whose workflow the repository's list lacks is
 /// judged under the workflow fetched by id, as gh fetches it, so a
 /// successful historical run of a deleted workflow passes; membership in
 /// the list is no prerequisite. The fetch's refusals are in the malformed
 /// table.
-/// Decision 117 (4): a job's workflow name the repository's list lacks is
+/// A job's workflow name the repository's list lacks is
 /// read through the graph, the check's `checkSuite.workflowRun.workflow.name`
 /// (the route `gh pr checks` read every name by), before the REST detail
 /// by id, which is read only when the graph does not resolve the check's
@@ -1834,7 +1834,7 @@ fn required_only_judges_the_named_contexts_alone() {
     assert!(gh.state().get("verification").is_none());
 }
 
-/// Decision 87: `none` holds only once every absence probe was read to its
+/// `none` holds only once every absence probe was read to its
 /// last page; a later page that says CI exists keeps it off.
 #[test]
 fn none_needs_every_absence_probe_read_to_its_last_page() {
@@ -2327,7 +2327,7 @@ fn malformed_rows() -> Vec<Malformed> {
             cause: "check-runs-response-invalid",
             detail: None,
         },
-        // Decision 110 (1): the binding proof's own replies refuse like
+        // The binding proof's own replies refuse like
         // every other: a nodes answer without its data (gh exits nonzero
         // on every reply carrying errors, so its cause is the failed
         // call's, the line it wrote to stderr), one without its nodes, a
@@ -2686,7 +2686,7 @@ fn malformed_rows() -> Vec<Malformed> {
             cause: "protection-read-failed",
             detail: None,
         },
-        // Decision 112 (2): the check-run nodes read, made for a check
+        // The check-run nodes read, made for a check
         // whose suite no run on the head carries, refuses like every
         // other; a run whose workflow the repository's list lacks is not
         // the documented answer.
@@ -2845,7 +2845,7 @@ fn malformed_rows() -> Vec<Malformed> {
             cause: "check-run-suites-response-invalid",
             detail: None,
         },
-        // Decision 117 (1): the suite read of a bound run refuses like
+        // The suite read of a bound run refuses like
         // every other collection; its members decode as check runs.
         Malformed {
             name: "a suite check run without a name",
@@ -2964,7 +2964,7 @@ fn assert_unreadable(r: Malformed) {
     assert_pinned(&gh.log(), HEAD);
 }
 
-/// Decision 87: every read names the pinned sha; the branch's later head
+/// Every read names the pinned sha; the branch's later head
 /// is never asked for, so what it carries cannot change the verdict.
 #[test]
 fn a_moved_branch_head_is_never_read() {
@@ -3058,7 +3058,7 @@ fn a_required_workflow_binds_only_through_its_proven_source() {
         );
     }
 
-    // Decision 117 (1): the suite lists `request` twice, completed in the
+    // The suite lists `request` twice, completed in the
     // same second; which the `latest` listing names is the server's answer,
     // consumed as given. The rollup keeps the later-started one (gh's
     // rule), so the listing naming it passes and the listing naming the
@@ -3978,6 +3978,28 @@ impl Github {
         self
     }
 
+    /// GitHub's refusal of `path` as gh reports one: the reply's message
+    /// on stderr with its status, `gh: <message> (HTTP <status>)`, the body
+    /// on stdout, exit 1.
+    fn refused(&mut self, path: &str, status: u16, message: &str) -> &mut Self {
+        self.replies.insert(
+            path.to_owned(),
+            json!({"body": {"message": message}, "stderr": format!("gh: {message} (HTTP {status})"), "exit": 1}),
+        );
+        self
+    }
+
+    /// A call to `path` whose transport failed, as gh 2.103.3 reports a
+    /// host it cannot reach: nothing on stdout, exit 1; `landed` where
+    /// GitHub took the request before its answer was lost.
+    fn unreachable(&mut self, path: &str, landed: bool) -> &mut Self {
+        self.replies.insert(
+            path.to_owned(),
+            json!({"text": "", "stderr": "error connecting to api.github.com\ncheck your internet connection or https://githubstatus.com", "exit": 1, "landed": landed}),
+        );
+        self
+    }
+
     /// Rewrite one field of the head's record in the item file.
     fn set_head(&self, field: &str, value: Value) {
         let mut state = self.state();
@@ -4508,7 +4530,11 @@ fn a_request_falls_back_with_its_cause() {
                 );
             }
             "refused" => {
-                gh.fail(&format!("POST repos/{REPO}/pulls/{PR}/requested_reviewers"));
+                gh.refused(
+                    &format!("POST repos/{REPO}/pulls/{PR}/requested_reviewers"),
+                    422,
+                    "Validation Failed",
+                );
             }
             _ => unreachable!(),
         }
@@ -4696,14 +4722,105 @@ fn a_refused_ready_mark_is_sent_again_and_its_request_follows() {
     assert_eq!(gh.requests(), 1, "{:?}", gh.log());
 }
 
+/// A ready mark whose answer was lost, its call killed before or after the
+/// mark reached GitHub, stands `marking`: the next call reads the head's
+/// draft flag, marks again only where it still reads draft, records `done`
+/// either way and releases the `draft` fallback an earlier call recorded,
+/// so the request goes out once. A head recorded `done` that a person
+/// returns to draft is never marked over.
+#[test]
+fn a_ready_mark_whose_answer_was_lost_is_settled_by_the_heads_flag_and_its_request_follows() {
+    let ready = format!("pr ready {PR} --repo {REPO}");
+    let marks = |gh: &Github| gh.log().iter().filter(|line| **line == ready).count();
+    for (landed, sent) in [(true, 1), (false, 2)] {
+        let mut gh = Github::review_world();
+        gh.answer(&format!("pr view {PR}"), review_view("", &[], true))
+            .answer(
+                &pull_path(),
+                rest_pull(true, "feat", "lane-app[bot]", "Bot"),
+            );
+        gh.replies.insert(
+            format!("pr ready {PR}"),
+            json!({"signal": "TERM", "landed": landed}),
+        );
+        let held = ok_result(&gh.review(false, &[]));
+        assert_eq!(held["request"]["cause"], "draft", "{landed}: {held}");
+        let lost = ok_result(&gh.review(true, &[]));
+        assert_eq!(lost["status"], "unreadable", "{landed}: {lost}");
+        assert_eq!(gh.head_record()["ready"], "marking", "{landed}");
+        gh.answer(&format!("pr ready {PR}"), json!({}));
+        let repeat = ok_result(&gh.review(true, &[]));
+        assert_eq!(marks(&gh), sent, "{landed}: {:?}", gh.log());
+        assert_eq!(gh.head_record()["ready"], "done", "{landed}");
+        assert_eq!(
+            repeat["request"]["outcome"], "requested",
+            "{landed}: {repeat}"
+        );
+        assert_eq!(
+            repeat["request"]["recorded_now"], true,
+            "{landed}: {repeat}"
+        );
+        assert_eq!(gh.requests(), 1, "{landed}: {:?}", gh.log());
+
+        let acts = gh.dir.path().join("replies.acts.json");
+        let mut landed_acts: Value = serde_json::from_slice(&fs::read(&acts).unwrap()).unwrap();
+        landed_acts.as_object_mut().unwrap().remove("ready");
+        fs::write(&acts, landed_acts.to_string()).unwrap();
+        ok_result(&gh.review(true, &[]));
+        assert_eq!(
+            marks(&gh),
+            sent,
+            "{landed}: a re-drafted head is marked over: {:?}",
+            gh.log()
+        );
+        assert_eq!(gh.head_record()["ready"], "done", "{landed}");
+    }
+}
+
+/// A draft made ready outside the gate, by a person or a lane's own `gh pr
+/// ready`, lapses its `draft` fallback once the view and `pulls/N` both
+/// read it ready, and the request goes out once; while the two reads
+/// disagree the fallback stands, recorded and notified once.
+#[test]
+fn a_draft_made_ready_outside_the_gate_lapses_its_draft_fallback_once_both_reads_agree() {
+    let mut gh = Github::review_world();
+    gh.answer(&format!("pr view {PR}"), review_view("", &[], true))
+        .answer(
+            &pull_path(),
+            rest_pull(true, "feat", "lane-app[bot]", "Bot"),
+        );
+    let held = ok_result(&gh.review(false, &[]));
+    assert_eq!(held["request"]["cause"], "draft", "{held}");
+    assert_eq!(held["request"]["recorded_now"], true, "{held}");
+    gh.answer(&format!("pr view {PR}"), review_view("", &[], false));
+    let lagging = ok_result(&gh.review(false, &[]));
+    assert_eq!(lagging["request"]["cause"], "draft", "{lagging}");
+    assert_eq!(lagging["request"]["recorded_now"], false, "{lagging}");
+    assert_eq!(gh.requests(), 0, "{:?}", gh.log());
+    gh.answer(
+        &pull_path(),
+        rest_pull(false, "feat", "lane-app[bot]", "Bot"),
+    );
+    let ready = ok_result(&gh.review(false, &[]));
+    assert_eq!(ready["request"]["outcome"], "requested", "{ready}");
+    assert_eq!(ready["request"]["recorded_now"], true, "{ready}");
+    assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+    assert!(
+        !gh.log().iter().any(|line| line.starts_with("pr ready")),
+        "{:?}",
+        gh.log()
+    );
+}
+
 /// A POST that ended with no exit status, as a call killed or timed out
 /// leaves it, may or may not have reached GitHub: the request stands
 /// `requested`, and the next call reads GitHub's record of it. With no sign
-/// of it (no Copilot work, request event or review on the head) the request
-/// is sent once more under its `resent` mark; a request GitHub recorded is
-/// never sent again, and a second miss falls back `unconfirmed`, written on
-/// that call so the fallback notice goes out. The error retry reads the
-/// same way, and its second miss is the `copilot-error` verdict.
+/// of it (no Copilot work, no request event since the head's record, no
+/// review on the head) the request is sent once more under its `resent`
+/// mark; a request GitHub recorded is never sent again, and a second miss
+/// falls back `unconfirmed`, written on that call so the fallback notice
+/// goes out. The error retry reads the same way, and its second miss is
+/// the `copilot-error` verdict.
 #[test]
 fn a_request_whose_answer_was_lost_is_sent_once_more_then_falls_back_unconfirmed() {
     let post = format!("POST repos/{REPO}/pulls/{PR}/requested_reviewers");
@@ -4739,6 +4856,54 @@ fn a_request_whose_answer_was_lost_is_sent_once_more_then_falls_back_unconfirmed
     let fourth = ok_result(&gh.review(false, &[]));
     assert_eq!(fourth["request"]["recorded_now"], false, "{fourth}");
     assert_eq!(gh.requests(), 2, "{:?}", gh.log());
+
+    // A POST whose transport failed, a nonzero exit with no answer from
+    // GitHub, is no refusal: the request stands, and the next call finds
+    // it landed or sends it once more.
+    for (landed, sent) in [(true, 1), (false, 2)] {
+        let mut gh = Github::review_world();
+        gh.unreachable(&post, landed);
+        let lost = ok_result(&gh.review(false, &[]));
+        assert_eq!(lost["status"], "unreadable", "{landed}: {lost}");
+        assert_eq!(lost["reason"], "request-review-read-failed", "{landed}");
+        assert_eq!(
+            gh.head_record()["request"]["outcome"],
+            "requested",
+            "{landed}"
+        );
+        gh.answer(&post, json!({}));
+        let next = ok_result(&gh.review(false, &[]));
+        assert_eq!(next["status"], "pending", "{landed}: {next}");
+        assert_eq!(next["request"]["outcome"], "requested", "{landed}: {next}");
+        assert_eq!(gh.requests(), sent, "{landed}: {:?}", gh.log());
+        assert_eq!(
+            gh.head_record()["request"]["resent"] == json!(true),
+            !landed,
+            "{landed}: {}",
+            gh.head_record()
+        );
+    }
+
+    // A request event from before the head's record, made on the head
+    // before it, is no sign of this head's request, though the head's
+    // commit is dated earlier still.
+    let mut gh = Github::review_world();
+    gh.answer(
+        &timeline_path(),
+        json!([
+            {"event": "committed", "sha": HEAD, "committer": {"date": "2026-01-01T00:00:00Z"}},
+            {"event": "review_requested", "id": 72, "created_at": "2026-01-01T00:05:00Z", "requested_reviewer": {"login": "Copilot"}},
+            {"event": "reviewed", "submitted_at": "2026-01-01T00:06:00Z", "user": {"login": COPILOT_REST}}
+        ]),
+    )
+    .killed(&post);
+    let lost = ok_result(&gh.review(false, &[]));
+    assert_eq!(lost["status"], "unreadable", "{lost}");
+    gh.answer(&post, json!({}));
+    let resent = ok_result(&gh.review(false, &[]));
+    assert_eq!(resent["status"], "pending", "{resent}");
+    assert_eq!(gh.requests(), 2, "{:?}", gh.log());
+    assert_eq!(gh.head_record()["request"]["resent"], true);
 
     // The error retry: Copilot answered the first request with its error,
     // so a request event older than the error is no sign of the retry.

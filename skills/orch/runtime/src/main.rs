@@ -59,8 +59,12 @@ enum Verb {
         /// A JSON request tagged by `op`.
         #[arg(long)]
         request: PathBuf,
-        /// Exit 3 where the request's live effect ended `failed`, the reply
-        /// printed as ever, for a caller that reads the status alone.
+        /// Exit by the live effect's outcome, the reply printed as ever:
+        /// 0 confirmed, 3 failed, 75 unconfirmed with its intent left open.
+        /// A transfer's or a stop's job is waited for within twice the
+        /// verify bound and a minute; its runner up under a recorded
+        /// identity is 0, the predecessor's retirement then the job's. The
+        /// intent read last is the reply's `settled`.
         #[arg(long)]
         effect_exit: bool,
     },
@@ -123,6 +127,14 @@ enum Verb {
         /// predecessor record's own, else the default.
         #[arg(long)]
         handoff: Option<String>,
+        /// The mark that sent the succession (`context`, `headroom`, `rate`
+        /// or `memory`), which decides whether the predecessor's own account
+        /// is left or kept.
+        #[arg(long, requires = "predecessor", value_parser = |word: &str| {
+            watch::overseer::MarkKind::parse(word)
+                .ok_or_else(|| format!("{word}: not context, headroom, rate or memory"))
+        })]
+        mark: Option<watch::overseer::MarkKind>,
     },
     /// Judge the paths a running lane adds, or a launch before its record
     /// stands, against the fleet's holders under the launch lock, and widen
@@ -949,16 +961,27 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &schedule::SystemClock,
             )? {
                 Some(outcome) => {
-                    // An admitted request whose effect failed is not a
-                    // success to a caller that reads the status alone.
-                    const EFFECT_FAILED_EXIT: i32 = 3;
-                    let failed = match &outcome {
-                        effects::Effected::Recorded(applied) => matches!(
-                            &applied.report,
-                            ops::Report::RecordOutcome(r)
-                                if r.intent.outcome == agent_runtime::protocol::Outcome::Failed
-                        ),
-                        effects::Effected::Started(_) => false,
+                    // An admitted request is not its effect: a caller that
+                    // reads the status alone reads the effect's own outcome.
+                    let settled = if effect_exit {
+                        Some(match &outcome {
+                            effects::Effected::Recorded(applied) => match &applied.report {
+                                ops::Report::RecordOutcome(r) => {
+                                    Settled::Recorded(r.intent.clone())
+                                }
+                                _ => Settled::Unread,
+                            },
+                            effects::Effected::Started(started) => {
+                                Settled::Job(effects::await_job(
+                                    &path,
+                                    &started.intent,
+                                    settings.verify * 2 + JOB_ANSWER_MARGIN,
+                                    &schedule::SystemClock,
+                                )?)
+                            }
+                        })
+                    } else {
+                        None
                     };
                     let mut reply = serde_json::json!({
                         "persisted": applied,
@@ -967,13 +990,19 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     if !notices_unmarked.is_empty() {
                         reply["notices_unmarked"] = serde_json::to_value(notices_unmarked)?;
                     }
-                    if effect_exit && failed {
-                        let _ = writeln!(
-                            std::io::stdout().lock(),
-                            "{}",
-                            serde_json::to_string(&Reply::ok(reply)).unwrap_or_default()
-                        );
-                        std::process::exit(EFFECT_FAILED_EXIT);
+                    if let Some(settled) = settled {
+                        if let Some(intent) = settled.intent() {
+                            reply["settled"] = serde_json::to_value(intent)?;
+                        }
+                        let status = settled.status();
+                        if status != 0 {
+                            let _ = writeln!(
+                                std::io::stdout().lock(),
+                                "{}",
+                                serde_json::to_string(&Reply::ok(reply)).unwrap_or_default()
+                            );
+                            std::process::exit(status);
+                        }
                     }
                     reply
                 }
@@ -1030,6 +1059,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             predecessor,
             cwd,
             handoff,
+            mark,
         } => {
             let settings = resolve_settings(&flags)?;
             let path = target_path(&target, &settings);
@@ -1038,6 +1068,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &settings,
                 &path,
                 predecessor.as_deref(),
+                mark,
                 &cwd,
                 handoff.as_deref(),
                 now,
@@ -1326,6 +1357,8 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
                 repos.clone(),
                 shared.clone(),
                 verifying,
+                &env,
+                locking,
             );
             watch::report::register(&mut runner, &path, &settings, repos.clone());
             watch::retention::register(&mut runner, &path, &settings, locking)?;
@@ -1513,6 +1546,53 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
                     Err(cause) => serde_json::json!({"read": false, "cause": cause}),
                 },
             )
+        }
+    }
+}
+
+/// The part of `--effect-exit`'s wait on a job beyond twice the verify
+/// bound: the job's start, its launch gate and its window.
+const JOB_ANSWER_MARGIN: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The intent an `--effect-exit` call reads its status from: the outcome
+/// its effect recorded here, its job's as last read, or none where the
+/// effect's report names no intent.
+enum Settled {
+    Recorded(state::Intent),
+    Job(state::Intent),
+    Unread,
+}
+
+impl Settled {
+    fn intent(&self) -> Option<&state::Intent> {
+        match self {
+            Settled::Recorded(intent) | Settled::Job(intent) => Some(intent),
+            Settled::Unread => None,
+        }
+    }
+
+    /// 0 confirmed, or a job's runner up and waiting for this caller's exit;
+    /// 3 failed, or closed by a reconcile because its record moved; 75 open
+    /// with its outcome unknown, the intent's reconcile its owner.
+    fn status(&self) -> i32 {
+        const FAILED: i32 = 3;
+        let (intent, job) = match self {
+            Settled::Recorded(intent) => (intent, false),
+            Settled::Job(intent) => (intent, true),
+            Settled::Unread => return effects::UNCONFIRMED_EXIT,
+        };
+        if intent.open() {
+            return if job && effects::runner_recorded(intent) {
+                0
+            } else {
+                effects::UNCONFIRMED_EXIT
+            };
+        }
+        match intent.outcome {
+            agent_runtime::protocol::Outcome::Confirmed => 0,
+            agent_runtime::protocol::Outcome::Failed
+            | agent_runtime::protocol::Outcome::Unconfirmed
+            | agent_runtime::protocol::Outcome::NotStarted => FAILED,
         }
     }
 }

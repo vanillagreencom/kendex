@@ -5578,6 +5578,106 @@ fn a_private_file_setting_reaches_the_account_readers_as_it_reached_the_released
     );
 }
 
+/// An account key the private file spells through the home is read as the
+/// released listing read the file it sourced: `$HOME`, `${HOME}`, a quoted
+/// `"$HOME/..."` and a `~` at the value's start or after a `:` name the
+/// caller's home, on an `export` line too. A spelling only a shell reads is
+/// passed over with one notice, the key read as if the line were absent,
+/// and every verb still runs.
+#[test]
+fn a_private_file_account_key_spelled_through_the_home_reads_the_home_and_a_shell_only_form_is_passed_over()
+ {
+    let producer = Producer::new();
+    producer.plant_usage(&claude_body(json!(10), json!(20), &[]));
+    let home = producer.home();
+    std::fs::create_dir_all(home.join("lane-a")).unwrap();
+    std::fs::copy(
+        home.join(".aclaude/.credentials.json"),
+        home.join("lane-a/.credentials.json"),
+    )
+    .unwrap();
+    let env: Vec<(String, String)> = producer
+        .env(false, &[])
+        .into_iter()
+        .filter(|(key, _)| key != "ORCH_LANE_DIRS")
+        .collect();
+    let run = |args: &[&str]| {
+        let mut command = program(binary());
+        command
+            .current_dir(producer.path().join("project"))
+            .env("PATH", tool_path(&[&producer.path().join("bin")]));
+        for (key, value) in &env {
+            command.env(key, value);
+        }
+        command.args(args).output().unwrap()
+    };
+    let at = |name: &str, status: &str| (home.join(name).display().to_string(), status.to_owned());
+    for (line, mut want, skipped) in [
+        (
+            "ORCH_LANE_DIRS=$HOME/lane-a\n",
+            vec![at("lane-a", "ok")],
+            None,
+        ),
+        (
+            "ORCH_LANE_DIRS=\"$HOME/lane-a\"\n",
+            vec![at("lane-a", "ok")],
+            None,
+        ),
+        ("ORCH_LANE_DIRS=~/lane-a\n", vec![at("lane-a", "ok")], None),
+        (
+            "ORCH_LANE_DIRS=${HOME}/lane-a:~/.aclaude # both\n",
+            vec![at("lane-a", "ok"), at(".aclaude", "ok")],
+            None,
+        ),
+        (
+            "export CODEX_HOME=$HOME/.codex-work\n",
+            vec![at(".aclaude", "ok"), at(".codex-work", "no_credentials")],
+            None,
+        ),
+        (
+            "ORCH_LANE_DIRS=$(dirname ~/lane-a/x)\n",
+            vec![at(".aclaude", "ok")],
+            Some("ORCH_LANE_DIRS"),
+        ),
+    ] {
+        std::fs::write(producer.path().join("project/.env.local"), line).unwrap();
+        let roster = run(&["accounts", "roster"]);
+        assert!(roster.status.success(), "{line:?}: {}", stderr(&roster));
+        let reply: Value = serde_json::from_slice(&roster.stdout).unwrap();
+        let mut dirs: Vec<(String, String)> = reply["result"]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| {
+                (
+                    row["config_dir"].as_str().unwrap().to_owned(),
+                    row["status"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect();
+        dirs.sort();
+        want.sort();
+        assert_eq!(dirs, want, "{line:?}");
+        let notices: Vec<String> = stderr(&roster)
+            .lines()
+            .filter(|l| l.starts_with("settings-skipped "))
+            .map(str::to_owned)
+            .collect();
+        let want_notice: Vec<String> = skipped
+            .map(|key| {
+                format!(
+                    "settings-skipped path={}/project/.env.local key={key} reason=shell-form",
+                    producer.path().display()
+                )
+            })
+            .into_iter()
+            .collect();
+        assert_eq!(notices, want_notice, "{line:?}");
+        let state = run(&["state", "path", "--fleet"]);
+        assert!(state.status.success(), "{line:?}: {}", stderr(&state));
+    }
+}
+
 /// A directory of links to every tool the listing and its fixtures run
 /// here, `flock` left out: the path of a host without `flock(1)`.
 fn path_without_flock(world: &World) -> PathBuf {

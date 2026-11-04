@@ -2714,6 +2714,451 @@ fn a_released_watch_loop_running_across_an_upgrade_hands_its_claim_to_one_runtim
     stop_live_watch(&runner, &state);
 }
 
+#[test]
+fn a_released_watch_loop_upgraded_before_setup_keeps_its_claim_until_the_runtime_is_built_then_migrates()
+ {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::process::CommandExt;
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let (bin, env) = watch_world(runner.state_dir());
+    for fake in ["systemd-run", "systemctl", "loginctl"] {
+        std::fs::remove_file(bin.join(fake)).unwrap();
+    }
+    runner.tools = Some(bin);
+    runner.env.extend(env);
+    // The package as an apply lays it out, the shipped wrapper between the
+    // entry and the binary: it answers `setup-required` until the binary
+    // its key names stands in the cache.
+    let package = runner.state_dir().join("package");
+    let scripts = package.join("orch/scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::create_dir_all(package.join("agent-runtime/scripts")).unwrap();
+    let shipped = shipped_scripts();
+    std::os::unix::fs::symlink(shipped.join("lib"), scripts.join("lib")).unwrap();
+    std::os::unix::fs::symlink(shipped.join("../runtime"), package.join("orch/runtime")).unwrap();
+    std::os::unix::fs::symlink(
+        shipped.join("../../agent-runtime/scripts/lib"),
+        package.join("agent-runtime/scripts/lib"),
+    )
+    .unwrap();
+    std::fs::copy(shipped.join("orch-runtime"), scripts.join("orch-runtime")).unwrap();
+    let cache = runner.state_dir().join("cache");
+    runner.env.push((
+        "AGENT_RUNTIME_CACHE".to_owned(),
+        cache.display().to_string(),
+    ));
+    let state = runner
+        .state_dir()
+        .join(orch_runtime::state::FLEET_FILE_NAME);
+    let entry = scripts.join("oversee-watch");
+    std::fs::copy(fixtures().join("released-watch-loop/oversee-watch"), &entry).unwrap();
+    std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let err = runner.state_dir().join("loop.err");
+    let mut command = program(&entry);
+    runner.apply_env(&mut command);
+    command
+        .args(["--repeat", "1", "--state", &state.display().to_string()])
+        .args(["--since", "2026-01-01T00:00:00Z"])
+        .current_dir(runner.state_dir())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::fs::File::create(&err).unwrap())
+        .process_group(0);
+    let mut released = ReleasedLoop {
+        child: command.spawn().unwrap(),
+        runner: &runner,
+        state: state.clone(),
+    };
+    let loop_pid = released.child.id();
+    let paths = orch_runtime::watch::claim::Paths::of(&state).unwrap();
+    let claim = || orch_runtime::watch::claim::read(&paths).ok().flatten();
+    wait_until("the loop's start-less claim", SETTLE, || {
+        claim().is_some_and(|c| c.pid == loop_pid && c.start.is_none())
+    });
+    let next = scripts.join(".oversee-watch.next");
+    std::fs::copy(shipped.join("oversee-watch"), &next).unwrap();
+    std::fs::rename(&next, &entry).unwrap();
+    // Two passes answer the wrapper's refusal and the loop runs on with its
+    // claim.
+    let refused =
+        format!("oversee-watch: watch-relaunch-failed pid={loop_pid} error=setup-required");
+    let said = || std::fs::read_to_string(&err).unwrap_or_default();
+    wait_until("two passes refused before setup", SETTLE, || {
+        said().lines().filter(|l| *l == refused).count() >= 2
+    });
+    assert!(
+        released.child.try_wait().unwrap().is_none(),
+        "the loop runs on: {}",
+        said()
+    );
+    assert!(
+        claim().is_some_and(|c| c.pid == loop_pid && c.start.is_none()),
+        "the loop keeps its claim: {:?}",
+        claim()
+    );
+    assert!(
+        !runner.state_dir().join("oversee-watch.runner").exists(),
+        "nothing was launched"
+    );
+    // Setup places the binary its key names; the next pass migrates.
+    let text = said();
+    let key = text
+        .lines()
+        .find_map(|l| l.strip_prefix("orch-runtime: setup-required key="))
+        .and_then(|rest| rest.split_whitespace().next())
+        .expect("the wrapper's own line names its key")
+        .to_owned();
+    std::fs::create_dir_all(cache.join("bin")).unwrap();
+    std::os::unix::fs::symlink(
+        runner.state_dir().join("orch-runtime"),
+        cache.join("bin").join(format!("orch-runtime-{key}")),
+    )
+    .unwrap();
+    let deadline = Instant::now() + SETTLE;
+    let status = loop {
+        if let Some(status) = released.child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the released loop never ended: {}",
+            said()
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(status.success(), "{status:?}: {}", said());
+    let claimed = claim().expect("a claim stands once the loop has ended");
+    assert!(
+        claimed.start.is_some() && live(claimed.pid) && claimed.pid != loop_pid,
+        "the runtime's claim stood before the loop was told to end: {claimed:?}"
+    );
+    let job = std::fs::read_to_string(runner.state_dir().join("oversee-watch.runner")).unwrap();
+    assert!(
+        job.lines().any(|l| l == format!("pid={}", claimed.pid)),
+        "the claim is the relaunched job's: {claimed:?}, {job}"
+    );
+    stop_live_watch(&runner, &state);
+}
+
+#[test]
+fn a_dead_recovery_whose_transfer_fails_is_said_and_asked_once_more_then_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-unconfirmed");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    let work = runner.state_dir().to_path_buf();
+    let (bin, env) = watch_world(&work);
+    runner.tools = Some(bin);
+    runner.env.extend(env);
+    let pane = server.open_window("overseer", &work, "bash --norc --noprofile");
+    let agent_runtime::reading::Reading::Live(fields) = agent_runtime::host::tmux::pane_fields(
+        &agent_runtime::host::tmux::server(&server.socket).unwrap(),
+        &pane,
+    ) else {
+        panic!("the overseer's pane reads")
+    };
+    let ended = Owned::sleep();
+    let mut record = overseer_record(ended.pid(), &ended.start(), &server, &work);
+    drop(ended);
+    record["pane"] = json!(pane);
+    record["window"] = json!(fields.pane.window);
+    record["server_start"] = json!(server.start);
+    record.as_object_mut().unwrap().remove("launch_line");
+    let mut fleet = runner.fleet();
+    fleet["overseer"] = record;
+    runner.write_fleet(&fleet);
+    let state = work.join(orch_runtime::state::FLEET_FILE_NAME);
+    let paths = orch_runtime::watch::claim::Paths::of(&state).unwrap();
+    let err = work.join("watch.err");
+    let mut watch = isolated();
+    watch
+        .args(["--state-dir", &work.display().to_string()])
+        .args(["watch", "run", "--file", &state.display().to_string()])
+        .args(["--interval", "1", "--since", "2026-01-01T00:00:00Z"])
+        .current_dir(&work)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::fs::File::create(&err).unwrap());
+    runner.apply_env(&mut watch);
+    let mut watch = watch.spawn().expect("watch run");
+    let transfers = |runner: &Runner| -> Vec<Value> {
+        runner.fleet()["intents"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|i| i["op"] == "request-transfer")
+            .collect()
+    };
+    let key = format!("{} {pane}", server.pid);
+    let row = || {
+        orch_runtime::watch::Baseline::load(&paths.baseline)
+            .ok()
+            .and_then(|b| b.get("overseer-dead", &key).map(str::to_owned))
+    };
+    // The watch is stopped before any assertion, so a failing row leaves no
+    // watch running.
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while row().as_deref() != Some("reported") && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let reported = row();
+    let asked = transfers(&runner);
+    let said = std::fs::read_to_string(&err).unwrap_or_default();
+    stop_live_watch(&runner, &state);
+    let _ = watch.wait();
+    assert_eq!(reported.as_deref(), Some("reported"), "{said}");
+    assert_eq!(
+        asked.len(),
+        2,
+        "the failed transfer is asked once more: {asked:?}"
+    );
+    for intent in &asked {
+        assert_eq!(intent["outcome"], "failed", "{intent}");
+        assert_eq!(
+            intent["observation"]["note"], "successor-not-ready",
+            "{intent}"
+        );
+    }
+    for (attempt, retry) in [(1, "pending"), (2, "exhausted")] {
+        let line = format!(
+            "overseer-relaunch-failed pane={pane} attempt={attempt} retry={retry} step=successor-not-ready"
+        );
+        assert_eq!(
+            said.lines().filter(|l| *l == line).count(),
+            1,
+            "each failed transfer is said once: {said}"
+        );
+    }
+}
+
+#[test]
+fn a_brief_refused_before_its_paste_is_typed_on_the_repeat_and_one_whose_paste_went_unanswered_never_twice()
+ {
+    use std::os::unix::fs::PermissionsExt;
+    // (the tmux verb refused once, the note, the repeat's outcome, the
+    // turns the runner recorded after the repeat)
+    let cases = [
+        ("load-buffer", "brief-unsent", "confirmed", 1),
+        ("paste-buffer", "brief-undelivered", "unconfirmed", 0),
+    ];
+    for (verb, note, repeat, turns) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner = suite_runner(&server, "stub-confirm");
+        runner.verify = Some(3);
+        runner.init_fleet();
+        let work = runner.state_dir();
+        let tools = work.join("refusing-tools");
+        std::fs::create_dir(&tools).unwrap();
+        // The first launch types its line through load-buffer and
+        // paste-buffer; the brief is the second of each, refused once.
+        let shim = tools.join("tmux");
+        let body = r#"#!/bin/bash
+set -eu
+for arg in "$@"; do
+  if [ "$arg" = "__VERB__" ]; then
+    count=0
+    [ ! -f "$REFUSE_COUNT" ] || count="$(cat "$REFUSE_COUNT")"
+    count=$((count + 1))
+    printf '%s\n' "$count" > "$REFUSE_COUNT"
+    if [ "$count" -eq 2 ]; then
+      printf 'refused: %s\n' "$arg" >&2
+      exit 1
+    fi
+  fi
+done
+exec "__TMUX__" "$@"
+"#;
+        std::fs::write(
+            &shim,
+            body.replace("__VERB__", verb)
+                .replace("__TMUX__", &which_tmux()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+        runner.env.push((
+            "REFUSE_COUNT".to_owned(),
+            work.join("refuse-count").display().to_string(),
+        ));
+        runner.tools = Some(tools);
+        let request = json!({"op": "start-controller", "controller": pending(runner.state_dir())});
+        let first = effect_report(&runner.op_fleet(&request));
+        assert_eq!(first["intent"]["outcome"], "unconfirmed", "{verb}: {first}");
+        assert_eq!(
+            first["intent"]["observation"]["note"], note,
+            "{verb}: {first}"
+        );
+        assert!(
+            runner
+                .stub_turns(runner.state_dir(), runner.state_dir())
+                .is_empty(),
+            "{verb}: no turn before the repeat"
+        );
+        let second = effect_report(&runner.op_fleet(&request));
+        assert_eq!(second["intent"]["outcome"], repeat, "{verb}: {second}");
+        assert_eq!(
+            runner
+                .stub_turns(runner.state_dir(), runner.state_dir())
+                .len(),
+            turns,
+            "{verb}: the brief typed once at most"
+        );
+    }
+}
+
+#[test]
+fn a_transfer_asked_with_effect_exit_answers_its_jobs_outcome_not_its_start() {
+    // A successor that never draws its composer fails before retirement,
+    // the predecessor kept, status 3 with the job's note; one at its
+    // composer is up under its recorded identity, status 0, and the job
+    // goes on to retire the predecessor once this caller has exited.
+    for (stub, code) in [("stub-unconfirmed", 3), ("stub-confirm", 0)] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner = suite_runner(&server, stub);
+        runner.verify = Some(1);
+        runner.init_fleet();
+        let predecessor = Owned::sleep();
+        plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
+        let path = runner.state_dir().join("transfer.json");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&transfer_request(&server, runner.state_dir())).unwrap(),
+        )
+        .unwrap();
+        let mut op = isolated();
+        op.args(["--state-dir", &runner.state_dir().display().to_string()])
+            .args(["op", "--fleet", "--effect-exit", "--request"])
+            .arg(&path);
+        runner.apply_env(&mut op);
+        let out = op.output().unwrap();
+        let reply: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
+        assert_eq!(
+            out.status.code(),
+            Some(code),
+            "{stub}: {reply}\n{}",
+            stderr(&out)
+        );
+        assert_eq!(
+            reply["result"]["effect"]["started"], "transfer-started",
+            "{stub}: {reply}"
+        );
+        let settled = &reply["result"]["settled"];
+        if code == 3 {
+            assert_eq!(settled["outcome"], "failed", "{stub}: {reply}");
+            assert_eq!(
+                settled["observation"]["note"], "successor-not-ready",
+                "{stub}: {reply}"
+            );
+            assert!(live(predecessor.pid()), "the predecessor keeps running");
+        } else {
+            assert!(
+                settled["outcome"] == "confirmed" || settled["phase"]["identity"].is_object(),
+                "{stub}: the successor stands under its identity: {reply}"
+            );
+            let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
+            assert_eq!(intent["outcome"], "confirmed", "{stub}: {intent}");
+        }
+    }
+}
+
+#[test]
+fn a_notice_whose_send_got_no_answer_is_sent_once_more_by_the_heartbeat_and_never_by_a_walk() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-unconfirmed");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    let work = runner.state_dir().to_path_buf();
+    let (bin, env) = watch_world(&work);
+    runner.tools = Some(bin);
+    runner.env.extend(env);
+    // The mailbox's first notice ends by a signal before it answers; every
+    // later call answers.
+    let sends = work.join("notices.log");
+    let lost = work.join("notice-lost");
+    let mailbox = work.join("lane-mail-lossy");
+    std::fs::write(
+        &mailbox,
+        format!(
+            "#!/bin/bash\nif [ \"${{1:-}}\" = notice ]; then\n  printf 'notice\\n' >> '{sends}'\n  if [ ! -e '{lost}' ]; then : > '{lost}'; kill -KILL $$; fi\n  exit 0\nfi\nexec '{quiet}' \"$@\"\n",
+            sends = sends.display(),
+            lost = lost.display(),
+            quiet = fixtures().join("lane-mail-quiet/lane-mail").display(),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&mailbox, std::fs::Permissions::from_mode(0o755)).unwrap();
+    runner
+        .env
+        .push(("LANE_MAIL_CLI".to_owned(), mailbox.display().to_string()));
+    let sent = || {
+        std::fs::read_to_string(&sends)
+            .unwrap_or_default()
+            .lines()
+            .count()
+    };
+    let mark = |runner: &Runner| {
+        runner.fleet()["intents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|i| i["op"] == "request-transfer")
+            .map(|i| i["notice"]["owner"].as_str().unwrap_or("").to_owned())
+            .unwrap_or_default()
+    };
+    // A transfer whose successor never draws fails and owes its notice; the
+    // send gets no answer.
+    let predecessor = Owned::sleep();
+    plant_transfer(&runner, &server, predecessor.pid(), &predecessor.start());
+    runner.transfer_started(&transfer_request(&server, &work));
+    let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
+    assert_eq!(intent["outcome"], "failed", "{intent}");
+    assert!(
+        mark(&runner).starts_with("unanswered:"),
+        "{}",
+        mark(&runner)
+    );
+    assert_eq!(sent(), 1);
+    // A request's walk and a reconcile send nothing more.
+    let _ = runner.op_fleet(&json!({"op": "close-owned-resources", "item": "KEN-NONE"}));
+    let _ = runner.run(&["reconcile", "--fleet"]);
+    assert_eq!(sent(), 1, "no walk resends an unanswered notice");
+    // The watch's heartbeat sends it once more, and marks it.
+    let state = work.join(orch_runtime::state::FLEET_FILE_NAME);
+    let mut watch = isolated();
+    watch
+        .args(["--state-dir", &work.display().to_string()])
+        .args(["watch", "run", "--file", &state.display().to_string()])
+        .args(["--interval", "1", "--max-loops", "1"])
+        .args(["--since", "2026-01-01T00:00:00Z"])
+        .current_dir(&work)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::fs::File::create(work.join("watch.err")).unwrap());
+    runner.apply_env(&mut watch);
+    let mut watch = watch.spawn().expect("watch run");
+    let deadline = Instant::now() + SETTLE;
+    while mark(&runner) != "sent" && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let marked = mark(&runner);
+    stop_live_watch(&runner, &state);
+    let _ = watch.wait();
+    let log = runner.run(&["watch", "log", "--fleet"]);
+    assert_eq!(
+        marked,
+        "sent",
+        "{}\n{}",
+        std::fs::read_to_string(work.join("watch.err")).unwrap_or_default(),
+        String::from_utf8_lossy(&log.stdout)
+    );
+    assert_eq!(sent(), 2, "sent once more");
+}
+
 /// Defect: the caller's words reshaped on the way to the launch, or a bypass
 /// word slipped under a `native` posture. The caller's argv reaches the
 /// launched command exactly as given, the judged posture travels as its own
@@ -5244,7 +5689,14 @@ fn a_predecessor_that_is_not_the_live_recorded_controller_is_refused_with_nothin
     let before = recorded_on(&runner, &server, gone, "bclaude", &work, "bypass", &[]);
     drop(ended);
     let dead = launch("%99");
-    assert!(dead.status.success(), "{}", stderr(&dead));
+    let said = stderr(&dead);
+    assert!(!dead.status.success(), "{said}");
+    assert!(
+        said.lines()
+            .any(|line| line.starts_with("oversee: transfer-failed ")
+                && line.contains(" note=predecessor-not-live ")),
+        "{said}"
+    );
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     assert_eq!(intent["outcome"], "failed", "{intent}");
     assert_eq!(
@@ -5297,7 +5749,14 @@ fn a_successor_that_never_comes_up_leaves_the_predecessor_running_and_its_record
     .args(["--predecessor", "%99", "--wait-secs", "1"])
     .output()
     .unwrap();
-    assert!(out.status.success(), "{}", stderr(&out));
+    let said = stderr(&out);
+    assert!(!out.status.success(), "{said}");
+    assert!(
+        said.lines()
+            .any(|line| line.starts_with("oversee: transfer-failed ")
+                && line.contains(" note=successor-not-ready ")),
+        "{said}"
+    );
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     assert_eq!(intent["outcome"], "failed", "{intent}");
     assert_eq!(
@@ -5561,7 +6020,8 @@ fn a_pi_successor_keeps_pi_s_own_root_and_bills_the_chosen_seat() {
     let successor = walled_successor(&runner, "pi:pi-claude/claude-fable-5-1:high", &seat);
     let (intent, launched) = walled_transfer(&runner, &spent, &successor);
     assert_eq!(
-        launched["env"]["PI_CODING_AGENT_DIR"], "",
+        launched["env"]["PI_CODING_AGENT_DIR"],
+        home.join(".pi/agent").display().to_string(),
         "Pi's own root, never the caller's home: {launched} {intent}"
     );
     assert_eq!(
@@ -5937,5 +6397,261 @@ fn a_succession_by_hand_through_the_verb_keeps_the_predecessors_own_handoff() {
         runner.stub_turns(Path::new(&planted(&runner, "bclaude")), &work),
         vec![brief],
         "the successor opens on the predecessor's own handoff"
+    );
+}
+
+#[test]
+fn an_accountless_pi_successor_runs_on_the_pi_root_its_predecessor_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    let (_, bin, env, _) = walk_world(&runner, &[]);
+    runner.tools = Some(bin);
+    runner.env.extend(env);
+    let work = runner.state_dir().to_path_buf();
+    let root = work.join("custom-pi-root");
+    let home = work.join("operator-home");
+    pi_root_marked(&root);
+    pi_root_marked(&home.join(".pi/agent"));
+    runner
+        .env
+        .push(("HOME".to_owned(), home.display().to_string()));
+    runner.env.push((
+        "ORCH_OVERSEER_PREFERENCE".to_owned(),
+        "pi:openrouter/anthropic/claude-fable-5-1:high".to_owned(),
+    ));
+    let predecessor = walled_on(&runner, &server, "pi", &work.join("unused"), &root);
+    let mut fleet = runner.fleet();
+    fleet["overseer"]["model"] = json!("openrouter/anthropic/claude-fable-5-1");
+    fleet["overseer"].as_object_mut().unwrap().remove("account");
+    runner.write_fleet(&fleet);
+    let pane = fleet["overseer"]["pane"].as_str().unwrap().to_owned();
+    let answer = reply(&runner.run(&[
+        "successor",
+        "--fleet",
+        "--cwd",
+        &work.display().to_string(),
+        "--predecessor",
+        &pane,
+    ]));
+    let result = &answer["result"];
+    assert_eq!(result["walk"]["answer"], "lane", "{answer}");
+    assert!(result["successor"]["account"].is_null(), "{answer}");
+    runner.transfer_started_env(
+        &json!({
+            "op": "request-transfer",
+            "cause": "live",
+            "expected": result["expected"],
+            "successor": result["successor"],
+        }),
+        &[(
+            "ORCH_HARNESS_BINARIES",
+            &format!("pi={}", fixtures().join("stub-record/pi").display()),
+        )],
+    );
+    let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
+    assert!(live(predecessor.pid()), "{intent}");
+    let launched: Value =
+        serde_json::from_slice(&std::fs::read(work.join("launch-record.json")).unwrap()).unwrap();
+    assert_eq!(
+        launched["env"]["PI_CODING_AGENT_DIR"],
+        root.display().to_string(),
+        "{launched} {intent}"
+    );
+}
+
+#[test]
+fn a_reconcile_of_an_opened_successor_writes_no_trust_record_and_asks_no_gate() {
+    for harness in ["claude", "copilot"] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner = suite_runner(&server, "stub-confirm");
+        runner.verify = Some(1);
+        runner.init_fleet();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        runner
+            .env
+            .push(("HOME".to_owned(), home.display().to_string()));
+        let account = dir.path().join("account");
+        std::fs::create_dir_all(&account).unwrap();
+        if harness == "copilot" {
+            copilot_gate_passed(&mut runner, &account);
+            runner.env.push((
+                "ORCH_HARNESS_BINARIES".to_owned(),
+                format!("copilot={}", stub("stub-confirm").display()),
+            ));
+        }
+        let since = now_ms();
+        let pane = server.open_stub(
+            "overseer",
+            "stub-confirm",
+            runner.state_dir(),
+            runner.state_dir(),
+        );
+        server.await_composer(&pane);
+        let idle = server.open_idle("predecessor", runner.state_dir());
+        let pid = server.pane_pid(&pane);
+        let mut ph = phase("window-opened", &server, &pane, since, None);
+        ph["identity"] = json!({"pid": pid, "start": start_of(pid)});
+        let mut fleet = runner.fleet();
+        fleet["overseer"] =
+            overseer_record(GONE_PID as u32, "ticks:1", &server, runner.state_dir());
+        fleet["overseer"]["pane"] = json!(idle);
+        fleet["overseer"]["server_start"] = json!(server.start);
+        let mut successor = pending(runner.state_dir());
+        successor["harness"] = json!(harness);
+        successor["account"] = json!(account.display().to_string());
+        successor.as_object_mut().unwrap().remove("home");
+        fleet["overseer"]["pending"] = successor;
+        let mut intent = transfer_intent(Some(ph), None);
+        intent["obligations"] = json!({
+            "standing": [
+                {"kind": "pane", "pane": pane, "server": server.pid, "server_start": server.start, "role": "runner"},
+                {"kind": "process", "pid": pid, "start": start_of(pid), "role": "runner"},
+            ],
+            "discharged": [{"obligation": {"kind": "receipt"}, "by": "receipt-read", "role": "runner"}],
+        });
+        fleet["intents"] = json!([intent]);
+        runner.write_fleet(&fleet);
+        let report = runner.reconcile_one();
+        let written: Vec<String> = [".claude.json", "settings.json", "extensions"]
+            .iter()
+            .filter(|name| account.join(name).exists())
+            .map(|name| (*name).to_owned())
+            .collect();
+        assert_eq!(written, Vec::<String>::new(), "{harness}: {report}");
+        let asked = runner.state_dir().join("gate-tools/kendex.log").exists();
+        assert!(!asked, "{harness}: {report}");
+        if harness == "claude" {
+            assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+        }
+    }
+}
+
+#[test]
+fn a_marks_succession_leaves_the_account_a_rate_mark_spends_and_keeps_one_a_context_mark_can_keep()
+{
+    // The case, the accounts, the preference set (none: unset), the context
+    // reading the marks judge and the account the successor spends.
+    type Case<'a> = (&'a str, Vec<Value>, Option<&'a str>, &'a str, &'a str);
+    let mut fast = measured_account("eclaude", 40);
+    fast["usage_rate_pct_per_min"] = json!(2.0);
+    let mut unread = measured_account("eclaude", 10);
+    unread["status"] = json!("unreachable");
+    unread["headroom_pct"] = Value::Null;
+    unread["wall"] = Value::Null;
+    let mut codex = measured_account("ccodex", 20);
+    codex["harness"] = json!("codex");
+    let cases: [Case; 5] = [
+        (
+            "rate",
+            vec![fast.clone(), measured_account("bclaude", 70)],
+            Some("claude:opus:high"),
+            "100000:1000000",
+            "bclaude",
+        ),
+        (
+            "rate, empty preference",
+            vec![fast, measured_account("bclaude", 70)],
+            Some(""),
+            "100000:1000000",
+            "bclaude",
+        ),
+        (
+            "context, unmeasured caller",
+            vec![unread, measured_account("bclaude", 99)],
+            Some("claude:opus:high"),
+            "950000:1000000",
+            "eclaude",
+        ),
+        (
+            "context, caller with room",
+            vec![
+                measured_account("eclaude", 50),
+                measured_account("bclaude", 10),
+            ],
+            None,
+            "950000:1000000",
+            "eclaude",
+        ),
+        (
+            "context, caller at its trigger",
+            vec![measured_account("eclaude", 97), codex],
+            None,
+            "950000:1000000",
+            "ccodex",
+        ),
+    ];
+    for (case, rows, preference, context, account) in cases {
+        let mut world = MarksWorld::new();
+        world.plant(None, &rows);
+        world.write_fleet(&world.dir("eclaude"));
+        let mut extra = vec![("ORCH_OVERSEER_WALL_MINUTES", "30")];
+        if let Some(preference) = preference {
+            extra.push(("ORCH_OVERSEER_PREFERENCE", preference));
+        }
+        let reached = world.marks(&["--context", context], &extra);
+        let kind = reached["kind"].as_str().unwrap_or_default().to_owned();
+        let cwd = world.path().display().to_string();
+        let out = world.run(
+            &[
+                "successor",
+                "--fleet",
+                "--cwd",
+                &cwd,
+                "--predecessor",
+                "%1",
+                "--mark",
+                &kind,
+            ],
+            &extra,
+        );
+        let answer = reply(&out);
+        assert_eq!(
+            answer["result"]["successor"]["account"],
+            json!(world.dir(account)),
+            "{case}: {reached} {answer} {}",
+            stderr(&out)
+        );
+    }
+}
+
+#[test]
+fn a_first_launch_under_the_native_posture_opens_with_no_bypass_word_on_its_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let (scripts, bin, env, work) = walk_world(&runner, &[measured_account("aclaude", 5)]);
+    let opened = oversee_launch(
+        &server,
+        &scripts,
+        &bin,
+        &env,
+        &work,
+        "claude",
+        "fable",
+        &stub("stub-confirm"),
+    )
+    .env("ORCH_LAUNCH_PERMISSION", "native")
+    .output()
+    .unwrap();
+    let state = runner
+        .state_dir()
+        .join(orch_runtime::state::FLEET_FILE_NAME);
+    if opened.status.success() {
+        stop_live_watch(&runner, &state);
+    }
+    assert!(opened.status.success(), "{}", stderr(&opened));
+    let overseer = runner.fleet()["overseer"].clone();
+    assert_eq!(overseer["permission"], "native", "{overseer}");
+    assert!(
+        overseer["launch_line"]
+            .as_str()
+            .is_some_and(|line| !line.contains("--dangerously-skip-permissions")),
+        "{overseer}"
     );
 }

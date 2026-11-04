@@ -33,13 +33,17 @@
 # repository lacks (exit 1, the GraphQL message on stderr). The review
 # gate's calls: `gh pr ready N --repo R` answers from `pr ready N`; on a
 # zero exit it prints its success line on stderr and nothing on stdout,
-# as gh v2.103.3 `pkg/cmd/pr/ready` writes it. `gh api PATH --method POST
+# as gh v2.103.3 `pkg/cmd/pr/ready` writes it; the entry's `signal` kills
+# the call, after the mark reached GitHub where its `landed` is true, else
+# before. `gh api PATH --method POST
 # -f F` answers from `POST PATH`; an entry's `signal` kills the call by
 # that signal, a call that ended with no exit status. What an act left on
 # GitHub outlives the map a row rewrites between calls: it is kept in
 # `<map>.acts.json` beside the map and laid over every later answer, a
 # ready mark making `pr view N` and `pulls/N` read ready, a request a zero
-# exit on `pulls/N/requested_reviewers` made adding GitHub's record of it,
+# exit on `pulls/N/requested_reviewers` made (or a failed call whose entry
+# says `landed`, an answer lost after GitHub took it) adding GitHub's
+# record of it,
 # a `review_requested` event naming `Copilot`, to `issues/N/timeline`.
 # The GraphQL form
 # with `-F number=N` (the thread walk, its `cursor=` field empty on the
@@ -83,7 +87,10 @@ elif [ "${1:-}" = pr ] && [ "${2:-}" = ready ]; then
     exit 1
   fi
   if [ "$(jq -r '.exit // 0' <<<"$reply")" = 0 ]; then
+    signal=$(jq -r '.signal // empty' <<<"$reply")
+    [ -z "$signal" ] || [ "$(jq -r '.landed // false' <<<"$reply")" = true ] || kill -s "$signal" "$$"
     act '.ready = ((.ready // []) + [$n] | unique)' --arg n "${3:-}"
+    [ -z "$signal" ] || kill -s "$signal" "$$"
     printf '✓ Pull request #%s is marked as "ready for review"\n' "${3:-}" >&2
     exit 0
   fi
@@ -122,7 +129,7 @@ elif [ "$#" -ge 4 ] && [ "${3:-}" = --method ] && [ "${4:-}" = POST ]; then
   [ -z "$signal" ] || kill -s "$signal" "$$"
   case "$2" in
     repos/*/pulls/*/requested_reviewers)
-      if [ -n "$reply" ] && [ "$(jq -r '.exit // 0' <<<"$reply")" = 0 ]; then
+      if [ -n "$reply" ] && { [ "$(jq -r '.exit // 0' <<<"$reply")" = 0 ] || [ "$(jq -r '.landed // false' <<<"$reply")" = true ]; }; then
         number="${2#*/pulls/}"
         act '.events[$n] = ((.events[$n] // []) + [{event: "review_requested", id: (900 + (.events[$n] // [] | length)), created_at: $at, requested_reviewer: {login: "Copilot"}}])' \
           --arg n "${number%/requested_reviewers}" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"

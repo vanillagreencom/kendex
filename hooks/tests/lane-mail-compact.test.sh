@@ -192,7 +192,7 @@ new_compact_overseer() { # NAME [JUDGE]
   cop_clear_leads
   cop_lead_start "$LANE/.github/hooks/lane-mail-check.sh" s1
 }
-OVERSEER_ROUTE='/orch-runtime op --fleet --request [REQUEST FILE]'
+OVERSEER_ROUTE='/orch-runtime op --fleet --effect-exit --request [REQUEST FILE]'
 new_compact_overseer overseer
 # shellcheck disable=SC2046
 compact auto s1 s1 $(overseer_env)

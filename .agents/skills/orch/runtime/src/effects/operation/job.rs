@@ -474,10 +474,10 @@ impl Operation<'_> {
     /// open-file limits and, where the caller runs in a user-manager slice,
     /// that slice with its task and memory caps, so a warden that reads
     /// units outside an agent's slice as escaped work sees the job inside
-    /// it. A start the manager refused is read back through `LoadState`: a
-    /// unit it holds is the job, one it has no record of falls to `setsid`
-    /// (`Err` with the reason), any other state ends the launch with
-    /// nothing started.
+    /// it. A start the manager answered with a failure is read back as the
+    /// reconcile reads a unit: one it has no record of falls to `setsid`
+    /// (`Err` with the reason), one read ended ends the launch, and any
+    /// other answer, an unread one included, is the job, held by its unit.
     fn launch_unit(
         &self,
         record: &Path,
@@ -571,11 +571,8 @@ impl Operation<'_> {
         };
         // The call failed after the probe answered. A lost reply or a
         // client-side timeout leaves the manager free to have started the
-        // unit, so only the manager's own answer settles it, read as the
-        // reconcile reads a unit: no record of it falls to `setsid`, a unit
-        // read ended is a launch that ended, and anything else, an unread
-        // answer included, is the job, held by its unit until the claim or a
-        // reconcile reads it.
+        // unit, so only the manager's own answer settles it; a unit held
+        // as the job stands until the claim or a reconcile reads it.
         match unit_end(unit) {
             Some(JobEnd::UnitGone) => Err(format!("unit-launch-failed detail={detail}")),
             Some(JobEnd::UnitEnded { state }) => {
@@ -1598,7 +1595,8 @@ fn mark_notice(
 #[derive(Debug, Clone, Serialize)]
 pub struct NoticeUnmarked {
     pub intent: String,
-    /// The mark the send earned, `sent` or `unsent:<cause>`.
+    /// The mark the send earned, `sent`, `unsent:<cause>` or
+    /// `unanswered:<cause>`.
     pub mark: String,
     /// The key of the store's refusal.
     pub refusal: String,
@@ -1612,10 +1610,24 @@ pub struct NoticeUnmarked {
 /// A mark the store refused is returned for the reply and stops neither the
 /// walk nor the request that runs it.
 pub(in crate::effects) fn send_owed_notices(run: &Run) -> Result<Vec<NoticeUnmarked>> {
+    send_notices(run, Notice::owed, false)
+}
+
+/// Send once more every notice whose send got no answer: the heartbeat's
+/// retry, never the walk's, so the notice's bound is paid once more and not
+/// on every request. A retry that gets no answer either is `unsent`, and
+/// the notice is sent no more.
+pub(in crate::effects) fn send_unanswered_notices(run: &Run) -> Result<Vec<NoticeUnmarked>> {
+    send_notices(run, Notice::unanswered, true)
+}
+
+/// Send each notice `due` picks on a closed intent whose owner is gone, and
+/// mark it; `last` makes a send with no answer final.
+fn send_notices(run: &Run, due: fn(&Notice) -> bool, last: bool) -> Result<Vec<NoticeUnmarked>> {
     let owed: Vec<Intent> = crate::effects::fleet(run.path)?
         .intents
         .into_iter()
-        .filter(|i| !i.open() && i.notice.as_ref().is_some_and(Notice::owed))
+        .filter(|i| !i.open() && i.notice.as_ref().is_some_and(due))
         .collect();
     let mut unmarked = Vec::new();
     for intent in owed {
@@ -1623,10 +1635,13 @@ pub(in crate::effects) fn send_owed_notices(run: &Run) -> Result<Vec<NoticeUnmar
             Reading::Live(_) | Reading::Unreadable { .. } => continue,
             Reading::Gone => {}
         }
-        let Some(notice) = intent.notice.as_ref().filter(|n| n.owed()) else {
+        let Some(notice) = intent.notice.as_ref().filter(|n| due(n)) else {
             continue;
         };
-        let mark = send_owner_notice(run, &intent.id, &notice.text);
+        let mut mark = send_owner_notice(run, &intent.id, &notice.text);
+        if last && mark.starts_with(state::NOTICE_UNANSWERED) {
+            mark = format!("unsent:{mark}");
+        }
         if let Err(e) = mark_notice(run, &intent, notice, mark.clone(), None) {
             unmarked.push(NoticeUnmarked {
                 intent: intent.id.clone(),
@@ -1641,9 +1656,11 @@ pub(in crate::effects) fn send_owed_notices(run: &Run) -> Result<Vec<NoticeUnmar
 /// Send `text` to the owner through the mailbox CLI (`lane-mail notice
 /// --item overseer --to owner --file FILE`). A notice the owner already
 /// received within the mailbox's window
-/// is refused by the CLI as a repeat, which is `sent`; any other refusal or
-/// a CLI that could not be run is `unsent:<cause>`, recorded, never a reason
-/// to hold the outcome.
+/// is refused by the CLI as a repeat, which is `sent`; any other refusal is
+/// `unsent:<cause>`; a CLI that gave no answer (its bound passed, a signal
+/// ended it, or it could not be run) is `unanswered:<cause>`, since the
+/// notice may have gone. Each is recorded, never a reason to hold the
+/// outcome.
 fn send_owner_notice(run: &Run, intent_id: &str, text: &str) -> String {
     let path = run
         .settings
@@ -1683,10 +1700,13 @@ fn send_owner_notice(run: &Run, intent_id: &str, text: &str) -> String {
             {
                 "sent".to_owned()
             } else {
-                format!("unsent:status={}:{line}", out.status.code().unwrap_or(-1))
+                match out.status.code() {
+                    Some(code) => format!("unsent:status={code}:{line}"),
+                    None => format!("{}{}", state::NOTICE_UNANSWERED, out.status),
+                }
             }
         }
-        Err(e) => format!("unsent:{}", e.key()),
+        Err(e) => format!("{}{}", state::NOTICE_UNANSWERED, e.key()),
     }
 }
 

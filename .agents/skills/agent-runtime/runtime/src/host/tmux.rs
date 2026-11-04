@@ -7,9 +7,9 @@
 //!
 //! A pane known by id is addressed by that exact id, `-t %N`, never found
 //! in a server-wide listing filtered afterwards, and a pane read answers
-//! with a [`Reading`] (decision 99): live with its fields, gone when the
-//! server has no such pane, unreadable when tmux did not answer. A failed
-//! tmux call is never an absence.
+//! with a [`Reading`]: live with its fields, gone when the server has no
+//! such pane, unreadable when tmux did not answer. A failed tmux call is
+//! never an absence.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -35,7 +35,7 @@ pub struct PaneFields {
 }
 
 /// What an exact close did. A caller that drops it has not learned whether
-/// the target stands (decision 105).
+/// the target stands.
 #[must_use]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "close", rename_all = "kebab-case")]
@@ -204,6 +204,47 @@ pub fn session_present(server: &Server, session: &str) -> Result<bool> {
     })
 }
 
+/// The value of `name` a pane opened in `session` on `server` inherits: the
+/// session's entry where it has one, else the global one, which holds the
+/// environment the server was started with. A scope that marks the name for
+/// removal gives the pane nothing, whatever the global scope holds.
+pub fn inherited(server: &Server, session: &str, name: &str) -> Result<Option<String>> {
+    confirm(server)?;
+    let socket = server.socket.display().to_string();
+    let target = format!("={session}");
+    for scope in [vec!["-t", target.as_str()], vec!["-g"]] {
+        let mut args = vec!["-S", socket.as_str(), "show-environment"];
+        args.extend(scope);
+        args.push(name);
+        let output = run_with("tmux", "show-environment", &args, &[], None, TIMEOUT)?;
+        if !output.status.success() {
+            let err = stderr_text(&output);
+            if err.starts_with("unknown variable") {
+                continue;
+            }
+            return Err(Error::External {
+                program: "tmux",
+                operation: "show-environment",
+                cause: err,
+            });
+        }
+        let line = stdout_text(&output);
+        let line = line.trim_end_matches('\n');
+        if line == format!("-{name}") {
+            return Ok(None);
+        }
+        return match line.strip_prefix(&format!("{name}=")) {
+            Some(value) => Ok(Some(value.to_owned())),
+            None => Err(Error::External {
+                program: "tmux",
+                operation: "show-environment",
+                cause: format!("answer-unread line={line}"),
+            }),
+        };
+    }
+    Ok(None)
+}
+
 /// Open a new window in `session` at the default shell, detached, named
 /// `name` in `cwd`, and return the pane. The pane id comes from the
 /// creating call's own `-P -F` answer, no second command, so the caller
@@ -339,9 +380,9 @@ pub fn pane_fields(server: &Server, id: &str) -> Reading<PaneFields> {
 
 /// The windows of `session` on the confirmed server: each window's id, its
 /// active pane's id and its name, for a sweep that reports a window nothing
-/// records (decision 96) and adopts none. The server is confirmed first; a
-/// server that does not answer, a session the server has not, or a listing
-/// that cannot be read is `Unreadable` or `Gone`, never an empty session.
+/// records and adopts none. The server is confirmed first; a server that
+/// does not answer, a session the server has not, or a listing that cannot
+/// be read is `Unreadable` or `Gone`, never an empty session.
 pub fn list_windows(server: &Server, session: &str) -> Reading<Vec<(String, String, String)>> {
     if let Err(e) = confirm(server) {
         return Reading::Unreadable { cause: e.key() };
@@ -466,6 +507,22 @@ fn mode_clear(pane: &Pane) -> Result<()> {
 /// Paste `text` as one bracketed paste then press Enter: the one way
 /// text reaches a pane. The pane is confirmed on its server first.
 pub fn send_line(pane: &Pane, text: &str) -> Result<()> {
+    load_line(pane, text)?.paste()
+}
+
+/// A line loaded into its own buffer on the pane's server, every step
+/// before the paste done: a failure up to here left the pane untouched,
+/// while one from [`Loaded::paste`] on may have put the text in it. A
+/// line dropped unpasted takes its buffer with it.
+pub struct Loaded<'a> {
+    pane: &'a Pane,
+    buffer: String,
+    pasted: bool,
+}
+
+/// Load `text` for [`send_line`]'s paste into `pane`, its server confirmed
+/// and its copy mode left first.
+pub fn load_line<'a>(pane: &'a Pane, text: &str) -> Result<Loaded<'a>> {
     confirm(&pane.server)?;
     mode_clear(pane)?;
     let buffer = format!(
@@ -489,24 +546,57 @@ pub fn send_line(pane: &Pane, text: &str) -> Result<()> {
             cause: stderr_text(&loaded),
         });
     }
-    if let Err(e) = tmux(
-        Some(&pane.server.socket),
-        "paste-buffer",
-        &["paste-buffer", "-p", "-d", "-b", &buffer, "-t", &pane.id],
-    ) {
-        let _ = tmux(
+    Ok(Loaded {
+        pane,
+        buffer,
+        pasted: false,
+    })
+}
+
+impl Loaded<'_> {
+    /// Paste the loaded line and press Enter.
+    pub fn paste(mut self) -> Result<()> {
+        self.pasted = true;
+        let pane = self.pane;
+        if let Err(e) = tmux(
             Some(&pane.server.socket),
-            "delete-buffer",
-            &["delete-buffer", "-b", &buffer],
-        );
-        return Err(e);
+            "paste-buffer",
+            &[
+                "paste-buffer",
+                "-p",
+                "-d",
+                "-b",
+                &self.buffer,
+                "-t",
+                &pane.id,
+            ],
+        ) {
+            self.delete();
+            return Err(e);
+        }
+        tmux(
+            Some(&pane.server.socket),
+            "send-enter",
+            &["send-keys", "-t", &pane.id, "Enter"],
+        )?;
+        Ok(())
     }
-    tmux(
-        Some(&pane.server.socket),
-        "send-enter",
-        &["send-keys", "-t", &pane.id, "Enter"],
-    )?;
-    Ok(())
+
+    fn delete(&self) {
+        let _ = tmux(
+            Some(&self.pane.server.socket),
+            "delete-buffer",
+            &["delete-buffer", "-b", &self.buffer],
+        );
+    }
+}
+
+impl Drop for Loaded<'_> {
+    fn drop(&mut self) {
+        if !self.pasted {
+            self.delete();
+        }
+    }
 }
 
 /// Press one named key.
@@ -536,27 +626,54 @@ pub fn kill_window(pane: &Pane) -> Close {
 /// Start a private tmux server on `socket` with one detached session, for
 /// fixtures and probes that must not touch the person's own server. It
 /// reads no configuration file, so no hook or option of the person's
-/// reaches it.
+/// reaches it, and it starts under `env -i` with this process's `PATH`,
+/// locale and temporary directory, `cwd` as the home and `/bin/sh` as the
+/// shell: the server's environment is every pane's, so no pane reads the
+/// person's profile or reaches their session bus. Each pane runs that
+/// shell as a plain interactive shell, never a login one.
 pub fn start_private_server(socket: &Path, session: &str, cwd: &Path) -> Result<Server> {
-    tmux(
-        Some(socket),
+    let cwd = cwd.display().to_string();
+    let mut selected = vec![format!("HOME={cwd}"), "SHELL=/bin/sh".to_owned()];
+    for name in ["PATH", "LANG", "TMPDIR"] {
+        if let Ok(value) = std::env::var(name) {
+            selected.push(format!("{name}={value}"));
+        }
+    }
+    let socket = socket.display().to_string();
+    let mut args = vec!["-i"];
+    args.extend(selected.iter().map(String::as_str));
+    args.extend([
+        "tmux",
+        "-S",
+        &socket,
+        "-f",
+        "/dev/null",
         "new-session",
-        &[
-            "-f",
-            "/dev/null",
-            "new-session",
-            "-d",
-            "-s",
-            session,
-            "-c",
-            &cwd.display().to_string(),
-            "-x",
-            "200",
-            "-y",
-            "50",
-        ],
-    )?;
-    server(socket)
+        "-d",
+        "-s",
+        session,
+        "-c",
+        &cwd,
+        "-x",
+        "200",
+        "-y",
+        "50",
+        "/bin/sh",
+        ";",
+        "set-option",
+        "-g",
+        "default-command",
+        "/bin/sh",
+    ]);
+    let output = run_with("env", "new-session", &args, &[], None, TIMEOUT)?;
+    if !output.status.success() {
+        return Err(Error::External {
+            program: "tmux",
+            operation: "new-session",
+            cause: stderr_text(&output),
+        });
+    }
+    server(Path::new(&socket))
 }
 
 /// End a private server started by `start_private_server`.
@@ -587,9 +704,9 @@ mod tests {
         }
     }
 
-    /// Decision 99 on the host: a pane the live server does not have reads
-    /// gone, by its exact id; once the server is gone, the same read is
-    /// unreadable with the cause, never an absence.
+    /// A pane the live server does not have reads gone, by its exact id;
+    /// once the server is gone, the same read is unreadable with the cause,
+    /// never an absence.
     #[test]
     fn a_missing_pane_reads_gone_and_a_dead_server_reads_unreadable() {
         let dir = tempfile::tempdir().unwrap();

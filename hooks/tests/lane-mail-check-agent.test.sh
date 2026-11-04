@@ -516,7 +516,7 @@ AGENTS=out launch 250000 Agent $(overseer_env)
 expect 2 "$(scan_key 'lane-mail-check: agent-reserve=Agent tokens=250000 reserve=150000')" 'the identified overseer meets the reserve'
 # Only a refusal at the plain mark names the runtime's succession; a reserve
 # refusal, with the roster read or not, names none.
-named_route() { grep -cF -- "/orch-runtime op --fleet --request [REQUEST FILE]" "$ERR_FILE"; }
+named_route() { grep -cF -- "/orch-runtime op --fleet --effect-exit --request [REQUEST FILE]" "$ERR_FILE"; }
 while IFS='|' read -r agents tokens rc key route; do
   case "$agents" in out | unclassified) ;; *) [ "$SCAN_AVAILABLE" -eq 1 ] || continue ;; esac
   key=$(scan_key "$key")

@@ -1,16 +1,15 @@
-//! The wake duty (step5-map § A9, § B rows 3, 7, 8; decisions 60, 61, 65,
-//! 99, 118 (2), 121 Q6, 135a): a lead or lane the mail duty reports unread
-//! mail for is read positively idle, by identity and markers, and typed one
-//! line, confirmed by a new user turn in that session's own bound file,
-//! never a neighbour's and never the newest file; a harness with no
-//! confirmable route gets its limit reported. The duty acts only through
+//! The wake duty: a lead or lane the mail duty reports unread mail for is
+//! read positively idle, by identity and markers, and typed one line,
+//! confirmed by a new user turn in that session's own bound file, never a
+//! neighbour's and never the newest file; a harness with no confirmable
+//! route gets its limit reported. The duty acts only through
 //! agent-runtime's `deliver` verb, run by the one runner under the `wake`
-//! tag, and records its mark in the watch's own record (`ops::wake`,
-//! decision 159), durably, before it types, so a crash between the mark and
-//! the paste never repeats a nudge for the same unread state; a later
-//! unread state is a new wake. The record is read at the start of each
-//! pass: nothing the fleet record's writers do (the legacy `open-terminal
-//! --wake` rewrites a lane's `wake` object) moves a mark.
+//! tag, and records its mark in the watch's own record (`ops::wake`),
+//! durably, before it types, so a crash between the mark and the paste
+//! never repeats a nudge for the same unread state; a later unread state
+//! is a new wake. The record is read at the start of each pass: nothing
+//! the fleet record's writers do (`open-terminal --wake` rewrites a lane's
+//! `wake` object) moves a mark.
 //!
 //! Slot: the mail duty sets a baseline row of kind [`UNREAD_KIND`], its
 //! identity the target (an item key, or [`OVERSEER_TARGET`]), its value the
@@ -19,14 +18,13 @@
 //! the row once read. The wake reads that row from its tick's snapshot and
 //! writes no row of its own.
 //!
-//! Codex (decisions 94, 121 Q6): a Codex lane keeps the legacy
-//! `open-terminal --wake` route until the paste route is proved on a real
-//! Codex (the step-9 native case); the duty reads it idle, reports
+//! Codex: a Codex lane keeps the `open-terminal --wake` route until the
+//! paste route is proved on a real Codex; the duty reads it idle, reports
 //! `wake-limit` and types nothing, so no resumed execution of live history
 //! is ever started here. The duty starts no detached process: nothing new
 //! charges the lane cap.
 //!
-//! The owner (round 11; decision 130): an overseer the duty leaves idle
+//! The owner: an overseer the duty leaves idle
 //! with its mail unread, `wake-limit` or `wake-unconfirmed` for the
 //! [`OVERSEER_TARGET`], has no reader of the log but itself, so the owner
 //! is told through the overseer mailbox's owner channel
@@ -67,8 +65,8 @@ pub fn record_path(fleet: &Path) -> PathBuf {
     fleet.parent().unwrap_or(Path::new(".")).join(WAKE_FILE)
 }
 
-/// The one line typed: the legacy `open-terminal --wake` line, which runs
-/// the target's inbox read.
+/// The one line typed: the `open-terminal --wake` line, which runs the
+/// target's inbox read.
 fn line_for(target: &str) -> String {
     format!(
         "Run .agents/skills/mailbox/scripts/lane-mail inbox --item {target} and act on every envelope it prints, answers and directives alike, as its text directs."
@@ -77,8 +75,8 @@ fn line_for(target: &str) -> String {
 
 /// The capability limit a harness has for a positively idle paste, where
 /// it has one: Codex's print-mode resume refuses while its process runs
-/// and its paste route is unproved (decision 121 Q6), so an idle Codex
-/// session is reported and never typed into.
+/// and its paste route is unproved, so an idle Codex session is reported
+/// and never typed into.
 fn route_limit(harness: Harness) -> Option<&'static str> {
     match harness {
         Harness::Codex => Some("process-running"),
@@ -192,7 +190,7 @@ fn lane_target(lane: &Lane, socket: &Path) -> Option<Target> {
 }
 
 /// The overseer as a target: the session record's pane, server, harness
-/// identity, home and directory, as the legacy launchers wrote them.
+/// identity, home and directory, as the launchers wrote them.
 fn overseer_target(overseer: &Overseer) -> Option<Target> {
     let extra = &overseer.extra;
     let text = |key: &str| extra.get(key).and_then(Value::as_str);
@@ -237,18 +235,22 @@ enum Paste {
         cause: String,
     },
     /// Refused before anything was typed: the pane was no longer idle, or
-    /// gone or unreadable.
+    /// gone or unreadable, or the line never reached it.
     Refused,
 }
 
-/// The refusals that are a reading of the pane, which the duty leaves for
+/// The refusals that leave the pane untouched, which the duty leaves for
 /// its next pass; any other refusal is the call itself failing.
-const PANE_REFUSALS: [&str; 3] = ["deliver-refused", "pane-gone", "pane-unreadable"];
+const PANE_REFUSALS: [&str; 4] = [
+    "deliver-refused",
+    "pane-gone",
+    "pane-unreadable",
+    "paste-unsent",
+];
 
 /// Register the wake duty on `runner` for the fleet state at `fleet`, as
-/// `watch run` registers every duty (decision 153). The duty writes no
-/// fleet record: its mark is the runner-private record beside the fleet
-/// state (decision 159).
+/// `watch run` registers every duty. The duty writes no fleet record: its
+/// mark is the runner-private record beside the fleet state.
 pub fn register(runner: &mut Runner<'_>, fleet: &Path, settings: &Settings) {
     runner.register(Duty::Wake, body(fleet, settings));
 }

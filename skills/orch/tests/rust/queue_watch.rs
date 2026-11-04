@@ -254,10 +254,11 @@ impl World {
     /// Run the wait on the fake clock while `drive` rewrites the maps and
     /// passes time between polls; the wait's own thread answers. A wait
     /// still polling after the drive is released to its deadline one poll
-    /// at a time, and only while it sleeps, so a poll's reads, however slow
-    /// the host, spend none of its budget; past a real-time bound it is
-    /// released regardless, so a wrong route answers a wrong reply rather
-    /// than hanging the row.
+    /// at a time, and only while it sleeps with its wake ahead, so a poll's
+    /// reads, however slow the host, spend none of its budget. Past a
+    /// real-time bound the row fails with the memory the wait wrote so far
+    /// and the reply it gives once let run out, never a reply read as the
+    /// row's answer.
     fn wait(&mut self, request: &QueueWatch, drive: impl FnOnce(&mut World, &FakeClock)) -> Reply {
         self.write();
         let clock = FakeClock::new();
@@ -267,7 +268,18 @@ impl World {
             drive(self, &clock);
             let bound = std::time::Instant::now() + secs(60);
             while !handle.is_finished() {
-                if clock.sleepers() > 0 || std::time::Instant::now() >= bound {
+                if std::time::Instant::now() >= bound {
+                    let memory = self.memory();
+                    while !handle.is_finished() {
+                        clock.release(request.max_wait);
+                        std::thread::sleep(Duration::from_millis(20));
+                    }
+                    let reply = handle.join().expect("the wait's thread");
+                    panic!(
+                        "the wait still polled after 60 s of real time; its memory then: {memory}; let run out it answered {reply:?}"
+                    );
+                }
+                if clock.asleep() {
                     clock.release(request.poll);
                 }
                 std::thread::sleep(Duration::from_millis(20));

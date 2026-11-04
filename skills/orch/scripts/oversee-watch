@@ -2,15 +2,21 @@
 # A repeat loop a released `oversee-watch --repeat` started keeps running
 # across an upgrade and runs this path as each pass, with
 # OVERSEE_WATCH_REPEAT_OWNER its own pid. That pass is the one call this entry
-# serves: it starts `orch-runtime watch run --replace <loop pid>` detached
-# through lib/job-unit.sh, says watch-relaunched and exits 4, the pass status
-# on which the loop ends and its exit releases its claim; the runtime waits
-# that release out and claims the fleet. A relaunch that fails is
-# watch-relaunch-failed, exit 1, and the loop runs its next pass. Any other
-# call is refused, exit 2: the fleet watch is `orch-runtime watch run`.
+# serves: it hands the loop's claim to `orch-runtime watch run --replace <loop
+# pid>`, started detached through lib/job-unit.sh, and exits 4, the pass status
+# on which the loop ends, only once the runtime's own claim stands. The loop
+# waits on this pass and its exit releases only a record naming itself, so the
+# entry releases the loop's start-less record for it and reads the runtime's
+# claim back within CLAIM_SECS. A runtime that cannot run (setup-required, 69,
+# before scripts/setup has built it), a launch that fails, or a claim that does
+# not stand in time is watch-relaunch-failed, exit 1: the loop keeps its claim,
+# put back where it was released, and its next pass tries again. Any other call
+# is refused, exit 2: the fleet watch is `orch-runtime watch run`.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUNTIME="$SCRIPT_DIR/orch-runtime"
+CLAIM_SECS=60
 
 say() { # KEY FIELD=VALUE...
   local key="$1"
@@ -43,12 +49,64 @@ while [[ $# -gt 0 ]]; do
 done
 [[ -n "$STATE" ]] || die 2 state-required "option=--state"
 DIR="$(cd -- "$(dirname -- "$STATE")" && pwd -P)" || die 1 watch-relaunch-failed "pid=$OWNER" "error=state-dir-unresolved"
+RECORD="$DIR/oversee-watch.pid"
+
+# The runtime answers before anything is launched, so a binary setup has not
+# built yet leaves the loop and its claim as they stand.
+if ! answer="$("$RUNTIME" version 2>&1 >/dev/null)"; then
+  key="$(sed -n '1s/^orch-runtime: \([^ ]*\).*/\1/p' <<<"$answer")"
+  say watch-relaunch-failed "pid=$OWNER" "error=${key:-runtime-unavailable}"
+  [[ -z "$answer" ]] || printf '%s\n' "$answer" >&2
+  exit 1
+fi
+
+# The pid of a runtime watch's claim on STATE: live, started, not the loop's.
+runtime_claim() {
+  local status
+  status="$("$RUNTIME" watch status --file "$STATE" 2>/dev/null)" || return 1
+  jq -er --argjson owner "$OWNER" '.result.claim
+    | select(. != null and .standing == "live" and .start != null and .pid != $owner) | .pid' \
+    <<<"$status" 2>/dev/null
+}
+
+if claimed="$(runtime_claim)"; then
+  say watch-relaunched "pid=$OWNER" "claim=$claimed"
+  exit 4
+fi
 
 # shellcheck source=lib/job-unit.sh
 source "$SCRIPT_DIR/lib/job-unit.sh"
 job_unit_launch "watch-$(date -u +%Y%m%dT%H%M%SZ)" "$DIR/oversee-watch.runner" -- \
   sh -c 'err=$1; shift; exec "$@" 2>>"$err"' sh "$DIR/oversee-watch.err" \
-  "$SCRIPT_DIR/orch-runtime" watch run --file "$STATE" --replace "$OWNER" ${RUN_ARGS[@]+"${RUN_ARGS[@]}"} \
+  "$RUNTIME" watch run --file "$STATE" --replace "$OWNER" ${RUN_ARGS[@]+"${RUN_ARGS[@]}"} \
   || die 1 watch-relaunch-failed "pid=$OWNER" "error=${JOB_UNIT_ERROR_KEY:-launch-failed}" "$JOB_UNIT_ERROR"
-say watch-relaunched "pid=$OWNER" "unit=$JOB_UNIT_LINE"
-exit 4
+
+# The loop's own record, released on its behalf: only by the loop's own pass,
+# and only while it is the loop's start-less record.
+released=""
+if [[ "$PPID" == "$OWNER" ]] && grep -qxF -- "pid=$OWNER" "$RECORD" 2>/dev/null \
+  && ! grep -q '^start=' "$RECORD" 2>/dev/null; then
+  released="$(cat -- "$RECORD")" && rm -f -- "$RECORD" || released=""
+fi
+
+deadline=$((SECONDS + CLAIM_SECS))
+while (( SECONDS < deadline )); do
+  if claimed="$(runtime_claim)"; then
+    say watch-relaunched "pid=$OWNER" "unit=$JOB_UNIT_LINE"
+    exit 4
+  fi
+  sleep 0.5
+done
+
+# No claim stood in time: the loop's record goes back unless a claim landed
+# meanwhile, the link refusing to replace one.
+if [[ -n "$released" ]]; then
+  printf '%s\n' "$released" > "$RECORD.$$"
+  ln -- "$RECORD.$$" "$RECORD" 2>/dev/null || true
+  rm -f -- "$RECORD.$$"
+fi
+if claimed="$(runtime_claim)"; then
+  say watch-relaunched "pid=$OWNER" "unit=$JOB_UNIT_LINE"
+  exit 4
+fi
+die 1 watch-relaunch-failed "pid=$OWNER" "error=claim-unconfirmed" "secs=$CLAIM_SECS"

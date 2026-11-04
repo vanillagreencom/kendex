@@ -4,11 +4,12 @@
 # `lib/job-unit.sh` ($JOB_UNIT_REAL) with the `loginctl` beside this file
 # first on PATH, which answers no linger, so the launcher forks the job
 # under setsid with this caller's own PATH and reads its identity from the
-# kernel table (decision 120). With $JOB_UNIT_SNAPSHOT set, the state file
+# kernel table. With $JOB_UNIT_SNAPSHOT set, the state file
 # $JOB_UNIT_STATE names is copied there the moment the launcher is asked,
 # before anything starts: what the record held when the launch began. With
 # $JOB_UNIT_RECORD_ONLY set the record is written and nothing is launched:
-# a row then runs the job itself. Every other verb (`stop-job RECORD PID
+# a row then runs the job itself; with $JOB_UNIT_ANSWER_LOST set beside it
+# the launcher then ends by a signal before it answers. Every other verb (`stop-job RECORD PID
 # ARGV_GLOB`, the stop's) runs the real library's as it stands. Every call
 # is appended to $JOB_UNIT_LOG when set.
 [ -z "${JOB_UNIT_LOG:-}" ] || printf '%s\n' "$*" >> "$JOB_UNIT_LOG"
@@ -18,6 +19,7 @@ if [ "${1:-}" = launch ]; then
   fi
   if [ -n "${JOB_UNIT_RECORD_ONLY:-}" ]; then
     printf 'runner=setsid\npid=%s\nstart=ticks:1\nline=runner=setsid reason=fixture\n' "${JOB_UNIT_RECORD_PID:-2000000000}" > "$3"
+    [ -z "${JOB_UNIT_ANSWER_LOST:-}" ] || kill -KILL $$
     echo 'runner=setsid reason=fixture'
     exit 0
   fi

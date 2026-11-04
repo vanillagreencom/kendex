@@ -129,6 +129,14 @@ impl FakeClock {
         self.lock().sleepers.len()
     }
 
+    /// Whether a thread sleeps and every sleeper's wake is still ahead: a
+    /// woken thread keeps its wake listed until it runs again, so a count
+    /// alone reads a thread mid-work as asleep.
+    pub fn asleep(&self) -> bool {
+        let s = self.lock();
+        !s.sleepers.is_empty() && s.sleepers.iter().all(|wake| s.now < *wake)
+    }
+
     /// Wait, in real time, until `n` threads are blocked in `sleep`.
     pub fn await_sleepers(&self, n: usize) {
         let mut s = self.lock();

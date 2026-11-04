@@ -1,16 +1,16 @@
-//! The validation run's stage transitions (U6a, step6-map § A1, § C): the
-//! proof facts and the job's record written on the admitted stage before
-//! the launch, the launcher's answer written after it, the one close with
-//! the lane's end notice recorded `owed` in the same write, the mark that
-//! says how the send went, and the stop recorded on an open stage before
-//! its job is ended (decision 188 (c)). Every step is one request under
-//! `{"op": "validate", "step": ...}`, so the envelope's exhaustive matches
-//! take one arm. The reads that precede the start (the settings, the tree,
-//! the launcher) are `crate::validate`'s; nothing here runs a process.
+//! The validation run's stage transitions: the proof facts and the job's
+//! record written on the admitted stage before the launch, the launcher's
+//! answer written after it, the one close with the lane's end notice
+//! recorded `owed` in the same write, the mark that says how the send went,
+//! and the stop recorded on an open stage before its job is ended. Every
+//! step is one request under `{"op": "validate", "step": ...}`, so the
+//! envelope's exhaustive matches take one arm. The reads that precede the
+//! start (the settings, the tree, the launcher) are `crate::validate`'s;
+//! nothing here runs a process.
 //!
 //! The reuse judge over the stages, [`reuse`], is the start's own reading of
 //! the proof rows already on the item: the proof reader's `round` need
-//! (`ops::proof`, U6b) for the pass, and the bound-ended run beside it.
+//! (`ops::proof`) for the pass, and the bound-ended run beside it.
 use std::fs;
 use std::io::ErrorKind;
 use std::path::Path;
@@ -56,7 +56,7 @@ impl Validate {
 /// dev agent's admission named, open and not yet started; without it the
 /// round's open admitted run, or one minted here through the admission.
 /// A round with an open run that carries a job refuses `run-live`: one run
-/// at a time per round, as the legacy start refused beside a live child.
+/// at a time per round.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordStart {
     pub round_id: String,
@@ -66,15 +66,15 @@ pub struct RecordStart {
 }
 
 /// The launcher's record beside the run, `<run_dir>/runner`: the job's
-/// identity-to-be, on the stage from before the launch (decision 115 (B)),
-/// and the record the executor reads its runner from.
+/// identity-to-be, on the stage from before the launch, and the record the
+/// executor reads its runner from.
 pub fn job_record(run_dir: &str) -> String {
     format!("{run_dir}/runner")
 }
 
 /// Write what the launcher answered: the job's identity, or the refusal,
 /// which closes the stage `stopped` with its cause, never leaving it open
-/// over nothing (step6-map § A1 row (1)).
+/// over nothing.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordLaunch {
     pub round_id: String,
@@ -99,16 +99,23 @@ pub enum Launch {
     Refused {
         cause: String,
     },
+    /// The launcher gave no answer: the job may have started. The stage
+    /// stays open with its job read from the launcher's record, as a start
+    /// whose answer was never written is read, until the round's reconcile
+    /// reads the job back.
+    Unanswered {
+        cause: String,
+    },
 }
 
 /// The one close of a started run: `accept-result` on the stage with the
 /// sentinel's word, and the lane's end notice recorded `owed` in the same
 /// write, so a crash between the close and the send leaves the notice for
-/// the next reconcile (decision 124f (28)). `end` is the sentinel's own
-/// time where it parses, bounded to `[start, now]` as the reconcile bounds
-/// it (a time outside them yields to the close's); `seconds` the run's
-/// wall time from its `timing` record, reported, never written. `selection`
-/// is the command's own `validate:` line where the log carries one. A run
+/// the next reconcile. `end` is the sentinel's own time where it parses,
+/// bounded to `[start, now]` as the reconcile bounds it (a time outside
+/// them yields to the close's); `seconds` the run's wall time from its
+/// `timing` record, reported, never written. `selection` is the command's
+/// own `validate:` line where the log carries one. A run
 /// that ran nothing closes with no notice: its caller holds the verdict. A
 /// stage already closed changes nothing and reports its recorded close and
 /// notice.
@@ -128,7 +135,7 @@ pub struct RecordEnd {
 }
 
 /// Record an intentional stop on the round's open started run, before its
-/// job is ended (decision 188 (c)): `stop {at}` on the stage, which the
+/// job is ended: `stop {at}` on the stage, which the
 /// job's own close and the reconcile both read for a job gone with no
 /// sentinel. A closed stage refuses `run-closed`; a stage with no runtime
 /// job, or one the start ran nothing for, refuses `run-unstarted`. A stop
@@ -146,7 +153,7 @@ pub struct NoticeText {
     pub text: String,
 }
 
-/// The end notice a run's close owes its lane (decision 184 (1)): the key the
+/// The end notice a run's close owes its lane: the key the
 /// send is judged by (`validate-<run_id>`, the mailbox's delivery id, so a
 /// replay after a lost mark lands once and reads `duplicate` = delivered) and
 /// a text naming the run and its outcome. Both the job's own close and the
@@ -370,6 +377,10 @@ fn launch(path: &Path, doc: &mut Document, r: &RecordLaunch, env: &Env) -> Resul
             job.runner = Some("none".to_owned());
             job.cause = Some(cause.clone());
             Some(StageOutcome::Stopped)
+        }
+        Launch::Unanswered { cause } => {
+            job.cause = Some(cause.clone());
+            None
         }
     };
     if let Some(outcome) = outcome {
@@ -615,7 +626,7 @@ fn covered(inner: &[String], outer: &[String]) -> bool {
 }
 
 /// The rows that answer `want` among the item's stages. The pass is the
-/// proof reader's `round` need (U6b, step6-map § C) over `want.tree` and
+/// proof reader's `round` need over `want.tree` and
 /// `want.base` under `declaration`: a row of an admitted mode running that
 /// mode's declared command, covering the tree whole or from the start's
 /// own base, not voided by a later or same-second row at that tree that
@@ -667,8 +678,8 @@ pub fn reuse(stages: &[Stage], want: &Want, declaration: &proof::Declaration) ->
         if outcome != StageOutcome::NoVerdict || proof.timeout_secs < want.timeout_secs {
             continue;
         }
-        // A host no-verdict (exit 3) is no bound: the legacy's sentinel
-        // regex admits `verdict=no-verdict` alone.
+        // A host no-verdict (exit 3) is no bound: the sentinel's match
+        // admits `verdict=no-verdict` alone.
         let Some(exit) = run_sentinel(run_dir).and_then(|line| {
             let rest = line.strip_prefix("guard-exit=")?;
             let (exit, tail) = rest.split_once(' ')?;

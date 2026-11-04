@@ -319,6 +319,8 @@ pub const LANE_DIRS_KEY: &str = "ORCH_LANE_DIRS";
 /// it names; a Copilot home likewise.
 pub const CODEX_HOME_KEY: &str = "CODEX_HOME";
 pub const COPILOT_HOME_KEY: &str = "COPILOT_HOME";
+/// Pi's own root, where a Pi launch that names no account of Pi's runs.
+pub const PI_ROOT_KEY: &str = "PI_CODING_AGENT_DIR";
 /// Seconds a cached usage figure is served within; 0 declines every
 /// cached figure. The default outlasts the longest watch interval, since a
 /// window under it has every pass find the figure expired and post again.
@@ -427,7 +429,18 @@ const READ_KEYS: &[&str] = &[
     QUEUE_WAIT_PROBE_INTERVAL_KEY,
     REPORT_CLI_KEY,
     LANES_CLI_KEY,
-    // The account readers' keys: the listing, the renewal and the judge.
+    COPILOT_HOLD_SECS_KEY,
+    REVIEW_WAIT_SECS_KEY,
+    REVIEW_ON_TIMEOUT_KEY,
+    COPILOT_REQUESTS_KEY,
+];
+
+/// The account readers' keys (the listing, the renewal and the judge), read
+/// from the private env file beside [`READ_KEYS`]. A spelling of one that
+/// only a shell reads is passed over with a notice, never refused: an
+/// operator wrote these for a loader that sourced the file, so such a line
+/// stays the shell's, as a key this runtime does not read does.
+const ACCOUNT_KEYS: &[&str] = &[
     LANE_RETIRE_KEY,
     LANE_CLOUD_REPOS_KEY,
     LANE_COPILOT_POOL_KEY,
@@ -443,6 +456,7 @@ const READ_KEYS: &[&str] = &[
     LANE_DIRS_KEY,
     CODEX_HOME_KEY,
     COPILOT_HOME_KEY,
+    PI_ROOT_KEY,
     USAGE_TTL_KEY,
     USAGE_MAX_AGE_KEY,
     HOST_ACCOUNTS_TIMEOUT_KEY,
@@ -451,10 +465,6 @@ const READ_KEYS: &[&str] = &[
     CODEX_USAGE_URL_KEY,
     CLAUDE_TOKEN_URL_KEY,
     CLAUDE_CLIENT_ID_KEY,
-    COPILOT_HOLD_SECS_KEY,
-    REVIEW_WAIT_SECS_KEY,
-    REVIEW_ON_TIMEOUT_KEY,
-    COPILOT_REQUESTS_KEY,
 ];
 
 /// What the command line says about the settings: a state directory that
@@ -641,6 +651,7 @@ pub struct AccountSettings {
     pub lane_dirs: Vec<String>,
     pub codex_home: Option<String>,
     pub copilot_home: Option<String>,
+    pub pi_root: Option<String>,
     pub usage_ttl: u64,
     pub usage_max_age: u64,
     pub accounts_timeout: u64,
@@ -708,6 +719,11 @@ pub struct Settings {
     /// line's payload names; an empty value reads as the default, as this
     /// reader takes every key.
     pub overseer_preference: String,
+    /// Whether the setting names the succession's preference, an empty
+    /// value included: unset, a context mark's succession walks the
+    /// controller's own entry alone, since a context handoff replaces the
+    /// session and not its harness or model.
+    pub overseer_preference_set: bool,
     /// A lane launch's preference entries; `None` where the setting
     /// names none.
     pub lane_preference: Option<String>,
@@ -875,9 +891,17 @@ pub fn load(
             .filter(|v| !v.is_empty())
             .cloned();
         let path = roots.project.join(private_env_name(named.as_deref())?);
-        for (key, value) in private_env_file(&path)? {
-            values.insert(key, value);
+        let home = caller.get(HOME_KEY).or_else(|| values.get(HOME_KEY));
+        let private = private_env_file(&path, home.map(String::as_str))?;
+        for key in &private.passed_over {
+            use std::io::Write as _;
+            let _ = writeln!(
+                std::io::stderr(),
+                "settings-skipped path={} key={key} reason=shell-form",
+                path.display()
+            );
         }
+        values.extend(private.values);
         for (key, value) in caller {
             values.insert(key, value);
         }
@@ -1096,6 +1120,7 @@ pub fn load(
         .get(OVERSEER_PREFERENCE_KEY)
         .map_or(DEFAULT_OVERSEER_PREFERENCE, String::as_str)
         .to_owned();
+    let overseer_preference_set = values.contains_key(OVERSEER_PREFERENCE_KEY);
     let lane_preference = get(LANE_PREFERENCE_KEY).map(str::to_owned);
     let retention_days = count(RECORD_RETENTION_DAYS_KEY, DEFAULT_RECORD_RETENTION_DAYS)?;
     let queue_watch = QueueWatchSettings {
@@ -1299,6 +1324,7 @@ pub fn load(
             .collect(),
         codex_home: get(CODEX_HOME_KEY).map(str::to_owned),
         copilot_home: get(COPILOT_HOME_KEY).map(str::to_owned),
+        pi_root: get(PI_ROOT_KEY).map(str::to_owned),
         usage_ttl: whole(USAGE_TTL_KEY, DEFAULT_USAGE_TTL)?,
         usage_max_age: whole(USAGE_MAX_AGE_KEY, 0)?,
         accounts_timeout: whole(HOST_ACCOUNTS_TIMEOUT_KEY, DEFAULT_HOST_ACCOUNTS_TIMEOUT)?,
@@ -1401,6 +1427,7 @@ pub fn load(
         validate,
         scope_paths_cli,
         overseer_preference,
+        overseer_preference_set,
         lane_preference,
         retention_days,
         queue_watch,
@@ -1580,14 +1607,91 @@ fn decode_shell_value(raw: &str) -> Option<String> {
     bare.then(|| raw.to_owned())
 }
 
-/// The assignments of the private env file this runtime reads, in file
-/// order, read as data. A line that assigns nothing this runtime reads is
-/// the shell's alone.
-pub(crate) fn private_env_file(path: &Path) -> Result<Vec<(String, String)>> {
-    let Some(text) = read_text(path)? else {
-        return Ok(Vec::new());
+/// Read an account key's value as the sourcing shell assigns it, for the
+/// forms this reader can stand in for: one single-quoted string as it
+/// stands; one double-quoted string or one bare word with `$HOME` and
+/// `${HOME}` read as `home`, and in a bare word a `~` at its start or after
+/// a `:`, before a `/`, a `:` or its end, read as `home` too, as bash
+/// expands it in an assignment; then blanks and an optional `#` comment.
+/// `None` is any other shell form, or a home form with no home to read.
+fn decode_account_value(raw: &str, home: Option<&str>) -> Option<String> {
+    let raw = raw.trim_end();
+    let comment_only = |rest: &str| {
+        let tail = rest.trim_start();
+        tail.is_empty() || (tail.starts_with('#') && tail.len() < rest.len())
     };
-    let mut out = Vec::new();
+    if let Some(body) = raw.strip_prefix('\'') {
+        let (value, rest) = body.split_once('\'')?;
+        return comment_only(rest).then(|| value.to_owned());
+    }
+    if let Some(body) = raw.strip_prefix('"') {
+        let (value, rest) = body.split_once('"')?;
+        if !comment_only(rest) || value.contains(['\\', '`']) {
+            return None;
+        }
+        return expand_home(value, home, false);
+    }
+    let (word, rest) = raw.split_at(raw.find(char::is_whitespace).unwrap_or(raw.len()));
+    if word.is_empty() || !comment_only(rest) || word.contains(['#', '\\', '\'', '"', '`']) {
+        return None;
+    }
+    expand_home(word, home, true)
+}
+
+/// `text` with `$HOME` and `${HOME}` read as `home`, and where `tilde` (a
+/// bare word) a `~` at its start or after a `:`, before a `/`, a `:` or its
+/// end. `None` is any other `$` or `~` form, or one of these with no home.
+fn expand_home(text: &str, home: Option<&str>, tilde: bool) -> Option<String> {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut at_start = true;
+    while let Some(c) = rest.chars().next() {
+        let after = &rest[c.len_utf8()..];
+        let tail = match c {
+            '$' => after.strip_prefix("{HOME}").or_else(|| {
+                after
+                    .strip_prefix("HOME")
+                    .filter(|t| !t.starts_with(|n: char| n.is_ascii_alphanumeric() || n == '_'))
+            }),
+            '~' if tilde && at_start => {
+                Some(after).filter(|t| t.is_empty() || t.starts_with(['/', ':']))
+            }
+            _ => {
+                out.push(c);
+                at_start = tilde && c == ':';
+                rest = after;
+                continue;
+            }
+        };
+        rest = tail?;
+        out.push_str(home?);
+        at_start = false;
+    }
+    Some(out)
+}
+
+/// The private env file's assignments this runtime reads, in file order,
+/// and the account keys whose line it passed over.
+pub(crate) struct PrivateEnv {
+    pub(crate) values: Vec<(String, String)>,
+    pub(crate) passed_over: Vec<String>,
+}
+
+/// The assignments of the private env file this runtime reads, in file
+/// order. An account key's value is read as the sourcing shell assigns
+/// it, `home` the shell's `HOME` until the file assigns one, and a form
+/// only a shell reads is passed over; every other key's value is read as
+/// data and refuses the load in a shape only a shell reads. A line that
+/// assigns nothing this runtime reads is the shell's alone.
+pub(crate) fn private_env_file(path: &Path, home: Option<&str>) -> Result<PrivateEnv> {
+    let mut env = PrivateEnv {
+        values: Vec::new(),
+        passed_over: Vec::new(),
+    };
+    let Some(text) = read_text(path)? else {
+        return Ok(env);
+    };
+    let mut home = home.filter(|h| !h.is_empty()).map(str::to_owned);
     for raw in text.lines() {
         let line = raw.trim();
         let line = line
@@ -1597,15 +1701,27 @@ pub(crate) fn private_env_file(path: &Path) -> Result<Vec<(String, String)>> {
         let Some((key, value)) = line.split_once('=') else {
             continue;
         };
-        if !READ_KEYS.contains(&key) {
+        let account = ACCOUNT_KEYS.contains(&key);
+        if !account && !READ_KEYS.contains(&key) {
             continue;
         }
-        let Some(value) = decode_shell_value(value) else {
-            return Err(file_refusal(path, key, "value-syntax"));
+        let decoded = if account {
+            decode_account_value(value, home.as_deref())
+        } else {
+            decode_shell_value(value)
         };
-        out.push((key.to_owned(), value));
+        match decoded {
+            Some(value) => {
+                if key == HOME_KEY {
+                    home = Some(value.clone()).filter(|h| !h.is_empty());
+                }
+                env.values.push((key.to_owned(), value));
+            }
+            None if account => env.passed_over.push(key.to_owned()),
+            None => return Err(file_refusal(path, key, "value-syntax")),
+        }
     }
-    Ok(out)
+    Ok(env)
 }
 
 #[allow(
@@ -1817,6 +1933,10 @@ mod tests {
         assert_eq!(settings.close_grace, Duration::from_secs(15));
     }
 
+    /// A key outside the account keys reads its value as data, a shell
+    /// form inside quotes as the text it is, and refuses the load in a
+    /// shape only a shell reads; an account key's form only a shell reads
+    /// is passed over, the load and every other key read as before.
     #[test]
     fn a_private_file_line_this_runtime_reads_must_decode_as_data() {
         let dir = tempfile::tempdir().unwrap();
@@ -1838,6 +1958,26 @@ mod tests {
         assert_eq!(settings.tmux_session.as_deref(), Some("plain"));
         assert_eq!(settings.verify, Duration::from_secs(4));
         assert_eq!(settings.close_grace, Duration::from_secs(5));
+        write(
+            &roots.project,
+            ".env.local",
+            "ORCH_TMUX_SESSION=\"$HOME/s\"\nORCH_LANE_DIRS=$(pwd)\nCODEX_HOME=~/c\n",
+        );
+        for (home, codex_home) in [(Some("/h"), Some("/h/c")), (None, None)] {
+            let caller: Vec<(&str, &str)> = home.map(|h| ("HOME", h)).into_iter().collect();
+            let settings = load(&roots, &env(&caller), &FLAGS).unwrap();
+            assert_eq!(
+                settings.tmux_session.as_deref(),
+                Some("$HOME/s"),
+                "{home:?}"
+            );
+            assert!(settings.accounts.lane_dirs.is_empty(), "{home:?}");
+            assert_eq!(
+                settings.accounts.codex_home.as_deref(),
+                codex_home,
+                "{home:?}"
+            );
+        }
     }
 
     /// Each typed key: its default, its words and what it refuses.

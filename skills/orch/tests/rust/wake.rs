@@ -817,6 +817,56 @@ fn a_mark_before_the_paste_pastes_nothing_on_the_repeat_and_a_later_state_pastes
     assert_eq!(fleet.turns("lead-1").len(), 1, "typed once");
 }
 
+#[test]
+fn a_wake_whose_line_never_reached_the_pane_types_it_on_the_next_pass() {
+    use std::os::unix::fs::PermissionsExt;
+    let real = agent_runtime();
+    let fleet = Fleet::new();
+    // The tmux the agent-runtime runs refuses its first load-buffer, before
+    // any paste.
+    let shims = fleet.root.join("refusing-tmux");
+    std::fs::create_dir(&shims).unwrap();
+    let count = fleet.root.join("load-count");
+    std::fs::write(
+        shims.join("tmux"),
+        format!(
+            "#!/bin/bash\nfor arg in \"$@\"; do\n  if [ \"$arg\" = load-buffer ] && [ ! -e '{count}' ]; then\n    : > '{count}'\n    echo refused >&2\n    exit 1\n  fi\ndone\nexec '{tmux}' \"$@\"\n",
+            count = count.display(),
+            tmux = which_tmux(),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(shims.join("tmux"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    let refusing = fleet.root.join("agent-runtime-refusing");
+    std::fs::write(
+        &refusing,
+        format!(
+            "#!/bin/bash\nPATH='{}':\"$PATH\" exec '{}' \"$@\"\n",
+            shims.display(),
+            real.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&refusing, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let pane = fleet.open("KEN-1", "claude", "lead-1", &[]);
+    fleet.server.await_composer(&pane.id);
+    fleet.set_lanes(vec![fleet.lane("KEN-1", "claude", &pane)]);
+    let clock = FakeClock::new();
+    let mut body = wake::body(&fleet.fleet_file(), &settings_in(&fleet.root, &refusing));
+    let state = unread(&[("KEN-1", "m-1")]);
+    let refused = run_once(&mut body, &state, &clock).unwrap();
+    assert_eq!(rendered(&refused), Vec::<String>::new());
+    assert!(count.exists(), "the load was refused");
+    assert_eq!(fleet.mark("KEN-1"), None, "nothing typed, no mark stands");
+    assert_eq!(fleet.turns("lead-1"), Vec::<String>::new());
+    let typed = run_once(&mut body, &state, &clock).unwrap();
+    assert_eq!(
+        rendered(&typed),
+        vec!["EVENT idle-unread KEN-1", "EVENT wake-delivered KEN-1"]
+    );
+    assert_eq!(fleet.turns("lead-1").len(), 1, "typed once");
+}
+
 /// Defect: a Codex lane typed into through the unproved paste route, a
 /// second execution over its live history. The lane is read idle, reported
 /// `wake-limit`, and nothing reaches its pane.

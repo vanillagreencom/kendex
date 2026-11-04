@@ -3,9 +3,10 @@
 //! carries. A fleet's first controller walks with no source session, so
 //! only an entry whose harness writes a full bypass is taken, and runs under
 //! the settings' posture; a succession walks with the recorded controller's
-//! posture as the source and keeps it on a same-harness successor. Nothing
-//! is written: the request that carries the answer records it. The brief a
-//! controller opens on is [`brief`]'s, for every launch of one.
+//! posture as the source and keeps it on a same-harness successor. A
+//! succession a mark sent walks as that mark decides (`walk_request`).
+//! Nothing is written: the request that carries the answer records it. The
+//! brief a controller opens on is [`brief`]'s, for every launch of one.
 
 use std::path::Path;
 
@@ -17,7 +18,7 @@ use crate::error::{Error, Result};
 use crate::ops::walk::{self, Preference, Scope, Source, WalkAnswer, WalkRequest};
 use crate::settings::{OVERSEER_PREFERENCE_KEY, Settings};
 use crate::state::Pending;
-use crate::watch::overseer::{Caller, Record};
+use crate::watch::overseer::{AccountState, Caller, MarkKind, Record};
 
 /// The handoff a controller is pointed at where its launch names no other.
 pub const HANDOFF: &str = "tmp/handoffs/OVERSEER-HANDOFF.md";
@@ -63,9 +64,65 @@ pub fn source(caller: &Caller, harness: Harness) -> Source {
     }
 }
 
+/// The walk a succession the `mark` sent takes for `caller` on `harness`.
+/// Where the caller's own account reads at its trigger, the walk is the
+/// headroom mark's whatever mark fired first, since that account is the one
+/// the successor must leave. A headroom or rate mark leaves the caller's
+/// account out of every pick. A context or memory mark keeps the caller's
+/// own account, unpicked, where it has room; a context mark also keeps an
+/// account nothing measures where no other account of its harness has room
+/// (the walk's `keep_unmeasured`), and walks the caller's own entry alone
+/// where the setting names no preference, since a context handoff replaces
+/// the session and not its harness or model. Every succession walks the
+/// caller's own entry last.
+fn walk_request(
+    settings: &Settings,
+    path: &Path,
+    host: &crate::ops::Host<'_>,
+    caller: &Caller,
+    harness: Harness,
+    mark: MarkKind,
+    now: u64,
+) -> WalkRequest {
+    let state = match mark {
+        MarkKind::Headroom | MarkKind::Rate => None,
+        MarkKind::Context | MarkKind::Memory => {
+            Some(caller.account_state(harness, settings, path, host, now))
+        }
+    };
+    let mark = match state {
+        Some(AccountState::AtTrigger) => MarkKind::Headroom,
+        Some(AccountState::HasRoom | AccountState::Unmeasured | AccountState::Unreadable)
+        | None => mark,
+    };
+    let mut entry = caller.walk_entry(harness);
+    entry.keep = state == Some(AccountState::HasRoom);
+    let (exclude, preference) = match mark {
+        MarkKind::Headroom | MarkKind::Rate => (caller.account.iter().cloned().collect(), None),
+        MarkKind::Context => (
+            Vec::new(),
+            (!settings.overseer_preference_set).then(String::new),
+        ),
+        MarkKind::Memory => (Vec::new(), None),
+    };
+    WalkRequest {
+        scope: Scope::Overseer,
+        preference,
+        lane: None,
+        exclude,
+        replaces: None,
+        max_pct: None,
+        min_headroom_pct: None,
+        source: Some(source(caller, harness)),
+        caller: Some(entry),
+        keep_unmeasured: mark == MarkKind::Context,
+    }
+}
+
 /// The `successor` verb: the overseer walk for the fleet at `path`, for its
 /// first controller in `cwd`, or for the successor of the recorded
-/// controller whose pane `predecessor` names. The reply carries the walk's
+/// controller whose pane `predecessor` names, walked as the `mark` that
+/// sent it decides. The reply carries the walk's
 /// own reply, the pending the choice opens and the brief it opens on with
 /// the handoff at `handoff` (each `null` where the walk chose none) and,
 /// for a succession, the compare-and-swap set naming that pane. Left out,
@@ -79,14 +136,17 @@ pub fn successor(
     settings: &Settings,
     path: &Path,
     predecessor: Option<&str>,
+    mark: Option<MarkKind>,
     cwd: &Path,
     handoff: Option<&str>,
     now: u64,
 ) -> Result<Value> {
     // An empty preference is a setting with no entry to walk, not a walk
-    // that found no room: no wait for headroom could open anything.
-    if Preference::parse(&settings.overseer_preference, Scope::Overseer)
-        .is_ok_and(|preference| preference.entries.is_empty())
+    // that found no room: no wait for headroom could open anything. A mark's
+    // succession still walks the caller's own entry.
+    if mark.is_none()
+        && Preference::parse(&settings.overseer_preference, Scope::Overseer)
+            .is_ok_and(|preference| preference.entries.is_empty())
     {
         return Err(refused(
             "preference-empty",
@@ -123,21 +183,24 @@ pub fn successor(
                 .and_then(|(caller, _, _)| caller.handoff.clone())
         })
         .unwrap_or_else(|| HANDOFF.to_owned());
-    let request = WalkRequest {
-        scope: Scope::Overseer,
-        preference: None,
-        lane: None,
-        exclude: Vec::new(),
-        replaces: None,
-        max_pct: None,
-        min_headroom_pct: None,
-        source: recorded
-            .as_ref()
-            .map(|(caller, harness, _)| source(caller, *harness)),
-        caller: None,
-        keep_unmeasured: false,
-    };
     let host = crate::ops::Host::kernel(settings.lane_cap, Some(settings.claim_store.clone()));
+    let request = match (recorded.as_ref(), mark) {
+        (Some((caller, harness, _)), Some(mark)) => {
+            walk_request(settings, path, &host, caller, *harness, mark, now)
+        }
+        (recorded, _) => WalkRequest {
+            scope: Scope::Overseer,
+            preference: None,
+            lane: None,
+            exclude: Vec::new(),
+            replaces: None,
+            max_pct: None,
+            min_headroom_pct: None,
+            source: recorded.map(|(caller, harness, _)| source(caller, *harness)),
+            caller: None,
+            keep_unmeasured: false,
+        },
+    };
     let walked = walk::walk(settings, path, &host, &request, now)?;
     let successor = match &walked.answer {
         WalkAnswer::Lane(chosen) => {

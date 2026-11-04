@@ -97,13 +97,38 @@ type Owner<'a> = &'a dyn Fn(Harness, &Path, &Path, &str) -> Reading<Option<PathB
 /// or whose session file is absent from the destination home by its fixed
 /// id, starts fresh with `account-switched`: the context continues through
 /// the handoff record, never a transcript another account cannot read.
-fn relaunch_route(run: &Run, lane: &Lane, r: &LaunchLane) -> Result<Route> {
+/// The destination is the home the launch's own rule names (`named_home`):
+/// the account, else the home the harness inherits, a local Codex window's
+/// from the fleet server; its store holds the sessions a private launch
+/// home links. A home that rule refuses refuses the route.
+fn relaunch_route(run: &Run, operation: &Operation, lane: &Lane, r: &LaunchLane) -> Result<Route> {
     let handoff = standing_handoff(run, &lane.item)?;
-    let destination = r
-        .account
-        .as_deref()
-        .map(PathBuf::from)
-        .or_else(|| Harness::parse(&r.harness).and_then(operation::default_home));
+    let Some(harness) = Harness::parse(&r.harness) else {
+        return Ok(route_of(lane, r, handoff, None, &operation::session_owner));
+    };
+    let kept = match (harness, &r.account, surface_of(r.host.as_deref())) {
+        (Harness::Codex, None, Surface::Local) => {
+            let doc_session = fleet_tmux_session(run.path)?;
+            let served = operation
+                .fleet_server(doc_session.as_deref())
+                .and_then(|(server, session)| operation::server_codex_home(&server, &session));
+            match served {
+                Ok(kept) => kept,
+                Err(e) => return Ok(Route::Refuse { cause: e.key() }),
+            }
+        }
+        (Harness::Codex | Harness::Claude | Harness::Copilot | Harness::Pi, _, _) => None,
+    };
+    let destination = match named_home(
+        run.settings,
+        harness,
+        r.account.as_deref(),
+        r.model.as_deref(),
+        kept.as_deref(),
+    ) {
+        Ok((home, _)) => home.or_else(|| operation::default_home(harness)),
+        Err(e) => return Ok(Route::Refuse { cause: e.key() }),
+    };
     Ok(route_of(
         lane,
         r,
@@ -256,11 +281,18 @@ fn prepare_launch(
     if let Some(brief) = &r.brief_file {
         read_brief(brief)?;
     }
+    // A Codex window with no account runs on the `CODEX_HOME` the fleet
+    // server hands its panes, where it holds one.
+    let kept = match (harness, &r.account) {
+        (Harness::Codex, None) => operation::server_codex_home(&server, &session)?,
+        (Harness::Codex | Harness::Claude | Harness::Copilot | Harness::Pi, _) => None,
+    };
     let homes = launch_home(
+        settings,
         harness,
         r.account.as_deref(),
         r.model.as_deref(),
-        None,
+        kept.as_deref(),
         &cwd,
     )?;
     let floor = match (route, &homes.sessions) {
@@ -323,16 +355,6 @@ pub(super) enum Unready {
     Gate(String),
 }
 
-impl Unready {
-    /// The refusal's key, a gate refusal's as one word.
-    pub(super) fn key(&self) -> &'static str {
-        match self {
-            Unready::Refused(e) => e.key(),
-            Unready::Gate(_) => GATE_REFUSED,
-        }
-    }
-}
-
 impl From<crate::error::Error> for Unready {
     fn from(e: crate::error::Error) -> Unready {
         Unready::Refused(e)
@@ -359,44 +381,80 @@ pub(super) struct LaunchHome {
     pub trust: Option<trust::Route>,
 }
 
-/// The home a launch of `harness` billing `account` on `model` names,
-/// never the cwd: the account where the account's variable is the
-/// harness's own home variable; a Pi launch on another provider's seat
-/// names `root`, the Pi root a controller's succession keeps, or none, so
-/// Pi keeps its own root and the seat rides in `account` alone. The trust
-/// record for `cwd` stands before the window opens under
-/// the named home, or under the default home of a harness that asks a
-/// trust question (Codex, Copilot); an accountless Claude launch leaves
-/// the operator's own config untouched. A private Codex home built under
-/// the account is then the home the launch runs under, its sessions linked
-/// from the account's. The harness gate then judges what the harness needs
-/// beyond its trust record under the home its sessions are read from.
-pub(super) fn launch_home(
+/// The home a harness runs under where its launch names no account, read as
+/// the fleet's launchers read it: Copilot's `COPILOT_HOME` and Pi's
+/// `PI_CODING_AGENT_DIR` as the settings load reads them (the environment,
+/// the private file, the settings files), else the default under the home
+/// directory. The launch names it to the child, so the child, its gate and
+/// its session reader agree on one root whatever the fleet server's own
+/// environment holds.
+fn inherited_home(settings: &Settings, harness: Harness) -> Option<PathBuf> {
+    let named = match harness {
+        Harness::Copilot => settings.accounts.copilot_home.as_deref(),
+        Harness::Pi => settings.accounts.pi_root.as_deref(),
+        Harness::Claude | Harness::Codex => None,
+    };
+    named
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| operation::default_home(harness))
+}
+
+/// The home a launch of `harness` billing `account` on `model` names before
+/// its trust record, and the account it bills where that account's variable
+/// is not the home's; never the cwd. The account is the home where its
+/// variable is the harness's own. Otherwise a Pi or Codex launch runs on
+/// `kept`, the home it keeps where no account names one (the Pi root a
+/// controller's succession keeps, whether or not a metered account bills
+/// it; the `CODEX_HOME` the fleet server's panes inherit), else on its
+/// inherited home; a Pi seat rides in the account alone. Copilot with no
+/// account runs on its inherited home; Codex and Copilot ask a trust
+/// question under theirs. An accountless Claude launch names none, so the
+/// operator's own config stays untouched.
+fn named_home(
+    settings: &Settings,
     harness: Harness,
     account: Option<&str>,
     model: Option<&str>,
-    root: Option<&Path>,
+    kept: Option<&Path>,
+) -> Result<(Option<PathBuf>, Option<PathBuf>)> {
+    if harness.account_var(model) == harness.home_var()
+        && let Some(account) = account
+    {
+        return Ok((Some(PathBuf::from(account)), None));
+    }
+    let billed = account.map(PathBuf::from);
+    let home = match (harness, kept) {
+        (Harness::Pi | Harness::Codex, Some(kept)) => {
+            check_directory("home-missing", kept)?;
+            Some(kept.to_path_buf())
+        }
+        (Harness::Pi | Harness::Codex, None) | (Harness::Copilot, _) => {
+            inherited_home(settings, harness)
+        }
+        (Harness::Claude, _) => None,
+    };
+    Ok((home, billed))
+}
+
+/// The home a launch of `harness` runs under, prepared before its window
+/// opens: the trust record for `cwd` under the named home, and a private
+/// Codex home built under the account where the account's own config does
+/// not trust `cwd`, its sessions linked from the account's. The harness
+/// gate then judges what the harness needs beyond its trust record under
+/// the home its sessions are read from.
+pub(super) fn launch_home(
+    settings: &Settings,
+    harness: Harness,
+    account: Option<&str>,
+    model: Option<&str>,
+    kept: Option<&Path>,
     cwd: &Path,
 ) -> std::result::Result<LaunchHome, Unready> {
-    let one_variable = harness.account_var(model) == harness.home_var();
-    let (named, billed) = match (account, one_variable) {
-        (Some(account), true) => (Some(PathBuf::from(account)), None),
-        (Some(account), false) => {
-            if let Some(root) = root {
-                check_directory("home-missing", root)?;
-            }
-            (root.map(Path::to_path_buf), Some(PathBuf::from(account)))
-        }
-        (None, _) => (None, None),
-    };
-    let trusted = match (&named, harness) {
-        (Some(home), _) => Some(prepare_trust(harness, home, cwd)?),
-        (None, Harness::Codex | Harness::Copilot) => match operation::default_home(harness) {
-            Some(home) => Some(prepare_trust(harness, &home, cwd)?),
-            None => None,
-        },
-        (None, Harness::Claude | Harness::Pi) => None,
-    };
+    let (home, billed) = named_home(settings, harness, account, model, kept)?;
+    let trusted = home
+        .map(|home| prepare_trust(harness, &home, cwd))
+        .transpose()?;
     let named = trusted.as_ref().map(|t| t.home.clone());
     let sessions = named.clone().or_else(|| operation::default_home(harness));
     gate::local(harness, sessions.as_deref(), cwd).map_err(Unready::Gate)?;
@@ -405,6 +463,30 @@ pub(super) fn launch_home(
         named,
         account: billed,
         trust: trusted.map(|t| t.route),
+    })
+}
+
+/// The home a launch [`launch_home`] already prepared runs under, read by
+/// the same rule without writing a trust record or asking the gate: a
+/// reconcile of a running successor names the home it was opened on, and
+/// neither question has an answer that could change what already runs.
+pub(super) fn prepared_home(
+    settings: &Settings,
+    harness: Harness,
+    account: Option<&str>,
+    model: Option<&str>,
+    kept: Option<&Path>,
+    cwd: &Path,
+) -> Result<LaunchHome> {
+    let (home, billed) = named_home(settings, harness, account, model, kept)?;
+    let named = home
+        .map(|home| trust::prepared_home(harness, &home, cwd))
+        .transpose()?;
+    Ok(LaunchHome {
+        sessions: named.clone().or_else(|| operation::default_home(harness)),
+        named,
+        account: billed,
+        trust: None,
     })
 }
 
@@ -525,7 +607,7 @@ fn scripts_dir(settings: &Settings) -> PathBuf {
 pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Result<EffectOutcome> {
     let operation = Operation::open(run, intent)?;
     let (lane, _) = lane_for_intent(run.path, &intent.id)?;
-    let route = relaunch_route(run, &lane, r)?;
+    let route = relaunch_route(run, &operation, &lane, r)?;
     // A destination session store that could not be read, or a bound
     // session another directory owns, refuses before any window opens,
     // nothing recorded.
@@ -1052,8 +1134,17 @@ fn cloud_launch(
         },
     )?;
     let session = match cloud_create(&command, &prompt) {
-        Ok(id) => id,
-        Err(cause) => return failed(operation, &cause),
+        Created::Session(id) => id,
+        Created::Refused(cause) => return failed(operation, &cause),
+        // A session may exist that nothing here can name: the intent stays
+        // open, the lane preparing, so no second create starts beside it.
+        Created::Unknown(cause) => {
+            return Ok(operation.hold(json!({
+                "note": CLOUD_CREATE_UNKNOWN,
+                "cause": cause,
+                "worktree": wt.display().to_string(),
+            })));
+        }
     };
     let mut repositories: BTreeSet<String> = BTreeSet::new();
     repositories.insert(origin.to_ascii_lowercase());
@@ -1182,16 +1273,30 @@ fn package(
     }
 }
 
+/// The note a cloud launch is held under where the create's answer was lost.
+const CLOUD_CREATE_UNKNOWN: &str = "cloud-create-unknown";
+
+/// How the cloud session's create answered.
+enum Created {
+    Session(String),
+    /// The CLI exited non-zero or answered `ok: false`: nothing was created.
+    Refused(String),
+    /// No answer within the bound, or one that names no session: a session
+    /// may exist. No documented interface lists cloud sessions by id
+    /// (`claude agents --json` names local sessions alone, and the session
+    /// list is claude.ai/code's page), so nothing reads it back here.
+    Unknown(String),
+}
+
 /// `claude [model words] --cloud --output-format json -p PROMPT` under the
 /// account the command's environment names, with the bundling switch
 /// cleared and the nonessential-traffic switch set, as the session send
-/// runs the CLI; the `session_id` its JSON answer carries. `Err` is the
-/// cause: a CLI that exited non-zero, or an answer naming no session.
+/// runs the CLI; the `session_id` its JSON answer carries.
 #[allow(
     clippy::disallowed_methods,
     reason = "the cloud session's creation through the Claude CLI, the one runner under the launch's tag; the record is written only once the CLI answered"
 )]
-fn cloud_create(command: &LaunchCommand, prompt: &str) -> std::result::Result<String, String> {
+fn cloud_create(command: &LaunchCommand, prompt: &str) -> Created {
     // The builder's environment removals reach the child through `env -u`,
     // since the runner only adds; the additions ride the same line.
     let mut args: Vec<String> = Vec::new();
@@ -1212,7 +1317,7 @@ fn cloud_create(command: &LaunchCommand, prompt: &str) -> std::result::Result<St
             .map(str::to_owned),
     );
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    let out = host::run_tagged_in(
+    let out = match host::run_tagged_in(
         "launch",
         "claude",
         Path::new("env"),
@@ -1223,23 +1328,35 @@ fn cloud_create(command: &LaunchCommand, prompt: &str) -> std::result::Result<St
             env: &[],
         },
         CLOUD_BOUND,
-    )
-    .map_err(|e| format!("cloud-create-refused cause={e}"))?;
+    ) {
+        Ok(out) => out,
+        Err(e) => return Created::Unknown(format!("cloud-create-unanswered cause={e}")),
+    };
     if !out.status.success() {
-        return Err(format!(
+        return Created::Refused(format!(
             "cloud-create-refused exit={} cause={}",
             out.status.code().unwrap_or(-1),
             host::stderr_text(&out).lines().next().unwrap_or("")
         ));
     }
-    let answer: Value = serde_json::from_str(&host::stdout_text(&out))
-        .map_err(|e| format!("cloud-session-unread cause={e}"))?;
-    answer
+    let answer: Value = match serde_json::from_str(&host::stdout_text(&out)) {
+        Ok(answer) => answer,
+        Err(e) => return Created::Unknown(format!("cloud-session-unread cause={e}")),
+    };
+    if answer.get("ok") == Some(&Value::Bool(false)) {
+        return Created::Refused(format!(
+            "cloud-create-refused cause={}",
+            answer.get("error").and_then(Value::as_str).unwrap_or("")
+        ));
+    }
+    match answer
         .get("session_id")
         .and_then(Value::as_str)
         .filter(|id| !id.is_empty())
-        .map(str::to_owned)
-        .ok_or_else(|| "cloud-session-unread cause=no-session-id".to_owned())
+    {
+        Some(id) => Created::Session(id.to_owned()),
+        None => Created::Unknown("cloud-session-unread cause=no-session-id".to_owned()),
+    }
 }
 
 /// Where a confirmed launch binds the lane's session: the native store under
@@ -1386,6 +1503,18 @@ pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutco
     // Every standing handle is read by its own key first.
     operation.read_standing(None)?;
     let Some(phase) = &intent.phase else {
+        // A cloud create whose answer was lost may have made a session that
+        // nothing reads back: the obligation stands until a person settles
+        // it, closing the lane.
+        if let Some(observation) = intent
+            .observation
+            .as_ref()
+            .filter(|o| o.get("note").and_then(Value::as_str) == Some(CLOUD_CREATE_UNKNOWN))
+        {
+            let mut observation = observation.clone();
+            observation["reconcile"] = json!("launch");
+            return Ok(operation.hold(observation));
+        }
         return Ok(operation.settle(
             Word::Failed,
             json!({"reconcile": "launch", "phase": "none", "cause": "nothing-opened"}),
@@ -1521,16 +1650,43 @@ fn judge_opened(
     if up(&state)
         && let Some(identity) = read
     {
-        let home = lane
-            .account
-            .as_deref()
-            .map(PathBuf::from)
-            .or_else(|| operation::default_home(harness));
         let cwd = lane
             .mail_root
             .as_deref()
             .map(PathBuf::from)
             .unwrap_or_default();
+        // The sessions are read under the home the lane's launch resolved,
+        // read again by the same rule with nothing written: a Pi lane on a
+        // seat keeps Pi's root, never the seat. A home that cannot be read
+        // holds the launch, as an unreadable store does.
+        let home = if hosted {
+            None
+        } else {
+            let resolved = match (harness, &lane.account) {
+                (Harness::Codex, None) => operation::server_codex_home(&pane.server, &pane.session),
+                (Harness::Codex | Harness::Claude | Harness::Copilot | Harness::Pi, _) => Ok(None),
+            }
+            .and_then(|kept| {
+                prepared_home(
+                    run.settings,
+                    harness,
+                    lane.account.as_deref(),
+                    lane.model.as_deref(),
+                    kept.as_deref(),
+                    &cwd,
+                )
+            });
+            match resolved {
+                Ok(homes) => homes.sessions,
+                Err(e) => {
+                    return Ok(launch_pane_unconfirmed(
+                        operation,
+                        opened,
+                        json!({"reconcile": "launch", "observed": "present", "note": "home-unreadable", "cause": e.key()}),
+                    ));
+                }
+            }
+        };
         let sessions = if hosted {
             Sessions::Hosted {
                 mail_root: cwd.display().to_string(),

@@ -1403,7 +1403,7 @@ const UNATTENDED_TEXT: &str = include_str!("unattended.txt");
 /// the record's harness and tracker, whose workflow reads the item's
 /// handoff record, closed by the unattended words every lane brief carries.
 /// A GitHub record names its issue as `issue-N` beside its repository.
-/// `Err` is the cause word.
+/// `Err` is the cause.
 fn start_brief(lane: &Lane, harness: Harness) -> Result<String, String> {
     let subject = match lane.tracker.as_deref() {
         None | Some("linear") => lane.item.clone(),
@@ -1512,13 +1512,15 @@ fn relaunch_request(
         .map_err(|e| format!("request-unwritten path={} cause={e}", file.display()))?;
     // The two requests in order through the one shell word, each exiting by
     // its effect's outcome, never by its admission alone: the launch is
-    // asked only once the close's effect did not fail, its own transition
-    // refuses a lane whose harness still runs, and a replacement whose
-    // effect failed leaves a non-zero status the outcome reader says.
+    // asked only once the close's effect did not fail (an unconfirmed close
+    // leaves the launch's own transition to refuse a lane whose harness
+    // still runs), and the launch's status is the chain's: a replacement
+    // whose effect failed, or whose outcome is still open, leaves the status
+    // the outcome reader says or settles from the launch's intent.
     let args = vec![
         "sh".to_owned(),
         "-c".to_owned(),
-        "\"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$3\" && \"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$4\"".to_owned(),
+        "\"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$3\"; rc=$?; [ \"$rc\" -eq 0 ] || [ \"$rc\" -eq 75 ] || exit \"$rc\"; exec \"$1\" --state-dir \"$2\" op --fleet --effect-exit --request \"$4\"".to_owned(),
         "wall-relaunch".to_owned(),
         pass.scripts.join("orch-runtime").display().to_string(),
         pass.state_dir.display().to_string(),

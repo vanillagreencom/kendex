@@ -705,11 +705,15 @@ pub(super) fn record_progress(
         });
     }
     let before = doc.clone();
-    // The notice the outcome's write recorded `owed` is marked with how its
-    // send went; a notice already marked, or none recorded, is left as it
-    // is, so a second sender changes nothing.
+    // The notice the outcome's write recorded `owed`, or one whose send got
+    // no answer, is marked with how its send went; a notice already marked
+    // otherwise, or none recorded, is left as it is, so a second sender
+    // changes nothing.
     if let Some(notice) = &r.notice
-        && intent.notice.as_ref().is_some_and(Notice::owed)
+        && intent
+            .notice
+            .as_ref()
+            .is_some_and(|n| n.owed() || n.unanswered())
     {
         intent.notice = Some(notice.clone());
     }

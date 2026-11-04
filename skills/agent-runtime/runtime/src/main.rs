@@ -5,8 +5,7 @@
 //! and exits 2, clap's own convention, with no reply: there was no request
 //! to answer.
 
-// Every reading, close and stop outcome is matched variant by variant
-// (decision 105).
+// Every reading, close and stop outcome is matched variant by variant.
 #![deny(clippy::wildcard_enum_match_arm)]
 
 use std::io::Write;
@@ -101,7 +100,7 @@ enum Verb {
         program: Option<PathBuf>,
         /// The tmux socket and server pid the pane sits on, and the server's
         /// start where the caller recorded one; without it the server at
-        /// the socket stands for the pid alone (decision 66).
+        /// the socket stands for the pid alone.
         #[arg(long)]
         socket: Option<PathBuf>,
         #[arg(long)]
@@ -111,7 +110,7 @@ enum Verb {
         #[arg(long)]
         pane: Option<String>,
         /// The harness process the session runs as; only that identity is
-        /// the harness (decision 99).
+        /// the harness.
         #[arg(long, requires = "start")]
         pid: Option<u32>,
         #[arg(long)]
@@ -183,19 +182,18 @@ struct LaunchRecord {
     pane: tmux::Pane,
     launched_at: String,
     /// The harness process holding the pane, read once it is up and the
-    /// only process a later read confirms (decision 99).
+    /// only process a later read confirms.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     harness_process: Option<Identity>,
     /// The native session the harness recorded for the cwd, bound once it
     /// is up: by the id the launch fixed, else as the one lead session for
     /// the cwd that appeared after the window opened and stood in no
-    /// `baseline` (decision 65). Never the newest file by its age
-    /// (decision 92).
+    /// `baseline`. Never the newest file by its age.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     native_session: Option<session::SessionRef>,
     /// The lead session ids for the cwd under the launch's home before the
     /// window opened, the floor `native_session` is bound above for a
-    /// harness whose launch fixes no id. Three-valued (decision 108 (6)):
+    /// harness whose launch fixes no id. Three-valued:
     /// absent where no baseline was read (the launch fixed an id, named no
     /// home, or the record predates the field), when nothing binds by
     /// appearance; present and empty where the store held no lead for the
@@ -216,7 +214,7 @@ struct StopRecord {
 
 /// What `inspect` read: the pane by its exact id, the recorded harness and
 /// whether it still runs, the native session and the judged state. Each
-/// read is three-valued (decision 99); an unreadable pane or process is
+/// read is three-valued; an unreadable pane or process is
 /// printed as such, never as absent.
 #[derive(Debug, Serialize)]
 struct Inspection {
@@ -225,8 +223,8 @@ struct Inspection {
     harness_live: Option<Reading<Identity>>,
     native_session: Option<session::SessionRef>,
     /// Why `native_session` is null though the store was asked: the cause
-    /// word of the read that failed (decision 108 (8)). Absent when the
-    /// store was read whole, or not asked.
+    /// word of the read that failed. Absent when the store was read whole,
+    /// or not asked.
     #[serde(skip_serializing_if = "Option::is_none")]
     native_session_unreadable: Option<&'static str>,
     state: State,
@@ -290,16 +288,16 @@ enum Binding {
     /// Nothing binds yet: the fixed id's file is not written, no lead or
     /// several appeared, or no baseline was read to bind above.
     Unbound,
-    /// A read failed; nothing is bound over an unread store (decision 95).
+    /// A read failed; nothing is bound over an unread store.
     Unreadable(&'static str),
 }
 
 /// The record's native session, bound by its fixed id where the launch
 /// fixed one (the file that id names under `home`, once written), else as
 /// the one lead for the cwd that appeared at or after the launch and stood
-/// in no baseline (decision 65). None or several bind nothing; a record
-/// that predates the baseline and fixed no id binds nothing either, since
-/// nothing tells its session from a neighbour's (decision 92).
+/// in no baseline. None or several bind nothing; a record that predates
+/// the baseline and fixed no id binds nothing either, since nothing tells
+/// its session from a neighbour's.
 fn bound_session(rec: &LaunchRecord, home: &Path) -> Binding {
     if let Some(id) = &rec.intent.session_id {
         let Some(file) = session::fixed_file(rec.harness, home, &rec.intent.cwd, id) else {
@@ -318,7 +316,7 @@ fn bound_session(rec: &LaunchRecord, home: &Path) -> Binding {
         };
     }
     // A record with no baseline read binds nothing by appearance: nothing
-    // tells its session from a neighbour's (decision 92). An empty baseline
+    // tells its session from a neighbour's. An empty baseline
     // was read, and the one lead that appeared over it is the launch's.
     let Some(baseline) = &rec.baseline else {
         return Binding::Unbound;
@@ -350,7 +348,7 @@ struct Judged {
 /// Read `pane` and judge its screen for `harness`. Who holds the pane's
 /// terminal is read against `recorded` where the caller has one: that
 /// identity alone is the harness, and an ended one is read as other, never
-/// replaced (decision 99). With none, the harness-named process now in the
+/// replaced. With none, the harness-named process now in the
 /// foreground is read, for the caller to record.
 fn judge_pane(
     harness: Harness,
@@ -453,7 +451,7 @@ fn inspect(rec: &mut LaunchRecord) -> Result<Inspection> {
 }
 
 /// What a delivery is confirmed by: the session file bound once (a launch
-/// record's), or the id the file is found by (decision 65), or nothing,
+/// record's), or the id the file is found by, or nothing,
 /// which no paste can be confirmed against.
 enum SessionFile {
     Bound(PathBuf),
@@ -510,9 +508,9 @@ fn recorded_session(path: &Path) -> Result<(Session, Judged)> {
 }
 
 /// How a delivery ended. A paste alone settles nothing: `confirmed` is a
-/// user turn the harness wrote to the session's own file after the paste
-/// (decisions 61, 65), `unconfirmed` the bound passed with no such turn,
-/// `limit` a session with no confirmable route, into which nothing is typed.
+/// user turn the harness wrote to the session's own file after the paste,
+/// `unconfirmed` the bound passed with no such turn, `limit` a session with
+/// no confirmable route, into which nothing is typed.
 #[derive(Debug, Serialize)]
 #[serde(tag = "delivery", rename_all = "kebab-case")]
 enum Delivery {
@@ -632,7 +630,12 @@ fn deliver(
         });
     };
     let text = text.trim_end_matches('\n');
-    tmux::send_line(&session.pane, text)?;
+    // A line that never reached the pane is refused as unsent, so the
+    // caller may type it again; a paste asked and not answered may stand in
+    // the pane, and only its turn says whether it went in.
+    let loaded = tmux::load_line(&session.pane, text)
+        .map_err(|e| Error::refused("paste-unsent", &[("cause", e.key())]))?;
+    let pasted = loaded.paste();
     let deadline = Instant::now() + bound;
     let unconfirmed = |cause: &'static str| Delivery::Unconfirmed {
         outcome: Outcome::Unconfirmed,
@@ -641,6 +644,9 @@ fn deliver(
         file: file.clone(),
         turns_before: before,
     };
+    if pasted.is_err() {
+        return Ok(unconfirmed("paste-unanswered"));
+    }
     loop {
         let after = session::user_turns(harness, &file)? as u64;
         if after > before {
@@ -728,10 +734,9 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             }
             let line = command.shell_line();
             // The leads that stand before the window opens, so the one that
-            // appears after it is the launch's own (decision 65). A store
-            // that cannot be read is no baseline: the launch is refused
-            // before any window opens rather than recording a floor it does
-            // not have (decision 95).
+            // appears after it is the launch's own. A store that cannot be
+            // read is no baseline: the launch is refused before any window
+            // opens rather than recording a floor it does not have.
             let baseline = match intent
                 .home
                 .clone()
@@ -753,7 +758,6 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             };
             let launched_at = clock::now();
             let pane = tmux::new_window(&server, &session, &window_name, &intent.cwd)?;
-            tmux::send_line(&pane, &line)?;
             let rec = LaunchRecord {
                 harness: intent.harness,
                 intent,
@@ -765,13 +769,46 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 baseline,
                 stopped: None,
             };
-            record::write(
+            // The record names the window before its line is typed, so an
+            // `inspect` or a `stop` reads what the launch opened whatever
+            // the answer to the line. A window nothing was typed into is
+            // closed by its exact id where the record cannot stand or the
+            // line never reached it.
+            if let Err(e) = record::write(
                 &record_path,
                 RECORD_VERSION,
                 &rec,
                 &Map::new(),
                 Expect::Absent,
-            )?;
+            ) {
+                let _ = tmux::kill_window(&rec.pane);
+                return Err(e);
+            }
+            let loaded = match tmux::load_line(&rec.pane, &rec.command_line) {
+                Ok(loaded) => loaded,
+                Err(e) => {
+                    let record = record_path.display().to_string();
+                    return Err(match tmux::kill_window(&rec.pane) {
+                        Close::Closed | Close::AlreadyGone => {
+                            let _ = std::fs::remove_file(&record_path);
+                            Error::refused("launch-line-unsent", &[("cause", e.key())])
+                        }
+                        Close::Unreadable { .. } => Error::refused(
+                            "launch-line-unsent",
+                            &[("cause", e.key()), ("record", &record)],
+                        ),
+                    });
+                }
+            };
+            if let Err(e) = loaded.paste() {
+                return Err(Error::refused(
+                    "launch-line-unanswered",
+                    &[
+                        ("cause", e.key()),
+                        ("record", &record_path.display().to_string()),
+                    ],
+                ));
+            }
             Ok(serde_json::to_value(&rec).unwrap_or_default())
         }
         Verb::Inspect {
@@ -978,7 +1015,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             Ok(serde_json::to_value(observe::judge(&text, h, &reading, None)).unwrap_or_default())
         }
         // Both print the reading whole: `live` with the identity, `gone`,
-        // or `unreadable` with its cause (decision 99).
+        // or `unreadable` with its cause.
         Verb::Process { op } => match op {
             ProcessOp::Identity { pid } => {
                 Ok(serde_json::to_value(process::identity(pid)).unwrap_or_default())

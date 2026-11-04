@@ -79,10 +79,15 @@
 #          opens the successor beside the predecessor, retires the
 #          predecessor once the successor is up, delivers the brief and
 #          publishes the successor; a predecessor that no longer runs fails
-#          `predecessor-not-live` before anything opens. The reply is
-#          `transfer-started` naming the intent and its job at exit 0. Run
-#          from inside the predecessor's own window, the retirement ends
-#          this command's pane once the job holds the intent.
+#          `predecessor-not-live` before anything opens. The launch waits
+#          for the transfer's own outcome (`op --effect-exit`): a successor
+#          standing is `transfer-started` naming the intent and its job at
+#          exit 0; a transfer that failed refuses `transfer-failed`, and one
+#          nothing settled within the bound `transfer-unconfirmed`, each
+#          naming the intent and the runtime's note and cause, the
+#          predecessor still running where it failed. Run from inside the
+#          predecessor's own window, the retirement ends this command's pane
+#          once the job holds the intent.
 #        A runtime that refuses a call, or is not set up (the wrapper's
 #        `setup-required` line, exit 69), refuses `start-refused`, or
 #        `transfer-refused` for a succession, naming its key and exit, with
@@ -176,6 +181,8 @@ message() { # KEY FIELD=VALUE...
     repo-unresolved) text='The checkout'\''s repository resolved to a value that is not owner/name, so the fleet watch'\''s --repo cannot be named. Nothing was launched. Set GH_REPO, or fix the origin remote.' ;;
     record-unwritten) text='The session record could not be written to the fleet state: an overseer nothing records is one the hooks and the watch cannot tell from any other session.' ;;
     overseer-launched) text='The overseer is running and recorded.' ;;
+    transfer-failed) text='The orch runtime ran the succession and it failed before the predecessor was retired: the note field is the runtime'\''s reason and cause its cause. The predecessor keeps running and recorded.' ;;
+    transfer-unconfirmed) text='The orch runtime holds the succession open and could not settle it within the bound: its job still owns the intent named, and the note field names the step it holds at. Read the intent with orch-runtime state inspect --fleet before succeeding again.' ;;
     transfer-started) text='The orch runtime recorded the succession and its detached job runs it: the successor opens beside the predecessor, which is retired once the successor is up. The intent names it for orch-runtime state inspect --fleet.' ;;
     checkout-unsynced) text='The checkout this session opens in is not at its base branch'\''s origin head, so a merged hook, render or script may be missing from it. The launch goes on, on the tree as it stands; the fix field says what clears the cause.' ;;
     fleet-log-unwritten) text='The fleet log row for the line the key field names could not be written; that line stands and is printed beside this one. The step field says what failed, and the writer words follow.' ;;
@@ -289,17 +296,21 @@ ORCH_RUNTIME="${ORCH_RUNTIME_CLI:-$SCRIPT_DIR/orch-runtime}"
 # ---------------------------------------------------------------------------
 # launch
 # ---------------------------------------------------------------------------
-# ask REFUSAL ARGS... — one runtime call, its reply in REPLY. A call the
-# runtime refuses, or a reply that names no `ok` result, refuses REFUSAL
-# naming the first word of the runtime's own line and its exit.
+# ask REFUSAL ARGS... — one runtime call, its reply in REPLY and its exit
+# in ASKED. A call the runtime refuses, at an exit other than 0 or one
+# ASK_SETTLED lists (the exits `op --effect-exit` answers a settled effect
+# with), or a reply that names no `ok` result, refuses REFUSAL naming the
+# first word of the runtime's own line and its exit.
 REPLY=""
+ASKED=0
 ask() { # REFUSAL ARGS...
-  local refusal="$1" rc=0 key
+  local refusal="$1" key
   shift
-  REPLY="$("$ORCH_RUNTIME" "$@" 2>"$DEP_ERR")" || rc=$?
-  if (( rc )) || ! jq -e '.ok == true' <<<"$REPLY" >/dev/null 2>&1; then
+  ASKED=0
+  REPLY="$("$ORCH_RUNTIME" "$@" 2>"$DEP_ERR")" || ASKED=$?
+  if [[ " 0 ${ASK_SETTLED:-} " != *" $ASKED "* ]] || ! jq -e '.ok == true' <<<"$REPLY" >/dev/null 2>&1; then
     key="$(sed -n '1s/^orch-runtime: \([^ ]*\).*/\1/p' "$DEP_ERR")"
-    die "$refusal" "key=${key:-runtime-unavailable}" "exit=$rc"
+    die "$refusal" "key=${key:-runtime-unavailable}" "exit=$ASKED"
   fi
   : > "$DEP_ERR"
 }
@@ -307,7 +318,7 @@ ask() { # REFUSAL ARGS...
 launch() {
   local refusal=start-refused op=start-controller session="$SESSION_NAME" repo_rc=0 repo_name state \
     entries walled unmeasured successor expected harness brief since repo watch_words fields outcome \
-    intent note cause window server generation lane question_policy model effort pick_model account \
+    intent job note cause window server generation lane question_policy model effort pick_model account \
     line_cwd permission source="" word opens_on
   local question_off=() words=()
   local args=(successor --fleet --cwd "$CWD")
@@ -365,8 +376,12 @@ launch() {
     source="$harness"
     while IFS= read -r word; do words+=("$word"); done < <(jq -r '.result.successor.extra_args // [] | .[]' <<<"$REPLY")
   fi
-  ol_launch_flags ${question_off[@]+"${question_off[@]}"} "$harness" "$model" "$effort" "$pick_model" "$source" \
-    ${words[@]+"${words[@]}"} || die "$OL_REASON" ${OL_FIELDS[@]+"${OL_FIELDS[@]}"}
+  # The runtime's walk admitted the posture the successor carries, a native
+  # one with no permission word among its own; the builder's admission is
+  # its caller's where PREFERENCE_ACTIVE is true, so the line spells that
+  # posture and never judges it a second time.
+  PREFERENCE_ACTIVE=true ol_launch_flags ${question_off[@]+"${question_off[@]}"} "$harness" "$model" "$effort" \
+    "$pick_model" "$source" ${words[@]+"${words[@]}"} || die "$OL_REASON" ${OL_FIELDS[@]+"${OL_FIELDS[@]}"}
   ol_command_line "$harness" "$HANDOFF" "$account" "$line_cwd" ${OL_FLAGS[@]+"${OL_FLAGS[@]}"} \
     || die launch-trust-missing "lane=$account" "dir=$line_cwd" "reason=$OL_TRUST_REASON"
   successor="$(jq -c --arg line "$OL_CMD" '. + {launch_line: $line}' <<<"$successor")"
@@ -408,13 +423,24 @@ launch() {
       > "$REQUEST" 2>"$DEP_ERR" || die launch-failed step=request
   fi
 
-  ORCH_TMUX_VERIFY_SECS="$WAIT_SECS" ask "$refusal" op --fleet --request "$REQUEST"
-  if [[ "$(jq -r '.result.effect.started // empty' <<<"$REPLY")" == transfer-started ]]; then
-    fields="$(jq -r '.result.effect | [.intent, .job] | join("\u001f")' <<<"$REPLY")"
-    IFS=$'\x1f' read -r intent note <<<"$fields"
-    message transfer-started "intent=$intent" "job=$note" "predecessor=$PREDECESSOR"
-    exit 0
+  if [[ -n "$PREDECESSOR" ]]; then
+    # The transfer's own outcome, which `op` waits for under --effect-exit:
+    # 0 the successor stands and the job retires the predecessor, 3 it
+    # failed with the predecessor still running, 75 nothing settled within
+    # the bound. Only the first is a succession.
+    ASK_SETTLED="3 75" ORCH_TMUX_VERIFY_SECS="$WAIT_SECS" \
+      ask "$refusal" op --fleet --effect-exit --request "$REQUEST"
+    fields="$(jq -r '[(.result.effect.intent // "none"), (.result.effect.job // "none"),
+      (.result.settled.observation.note // "none"), (.result.settled.observation.cause // "none")]
+      | map(tostring) | join("\u001f")' <<<"$REPLY" 2>"$DEP_ERR")" || die "$refusal" key=reply-unread
+    IFS=$'\x1f' read -r intent job note cause <<<"$fields"
+    case "$ASKED" in
+      0) message transfer-started "intent=$intent" "job=$job" "predecessor=$PREDECESSOR"; exit 0 ;;
+      3) die transfer-failed "intent=$intent" "note=$note" "cause=$cause" "predecessor=$PREDECESSOR" ;;
+      *) die transfer-unconfirmed "intent=$intent" "note=$note" "cause=$cause" "predecessor=$PREDECESSOR" ;;
+    esac
   fi
+  ORCH_TMUX_VERIFY_SECS="$WAIT_SECS" ask "$refusal" op --fleet --request "$REQUEST"
   fields="$(jq -r '.result.effect.report.intent | [(.outcome // ""), (.id // "none"),
     (.observation.note // "none"), (.observation.cause // "none")] | join("\u001f")' <<<"$REPLY" 2>"$DEP_ERR")" \
     || die "$refusal" key=reply-unread

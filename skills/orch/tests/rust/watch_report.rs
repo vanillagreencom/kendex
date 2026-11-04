@@ -991,6 +991,9 @@ fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
             gh: world.path().join("gh"),
             shared,
             verifying,
+            locking: Locking::FLOCK,
+            nonce: 7,
+            owner: None,
         }),
     );
     let identity = me();
@@ -1089,6 +1092,9 @@ fn the_heartbeat_body_says_unread_for_every_list_no_duty_has_read() {
         gh: world.path().join("gh"),
         shared: Shared::default(),
         verifying: Lines::default(),
+        locking: Locking::FLOCK,
+        nonce: 7,
+        owner: None,
     });
     let mut baseline = Baseline::default();
     let produced = pass(
@@ -1140,6 +1146,9 @@ fn roster_body(world: &World, planted: &[(String, String)]) -> watch::Body<'stat
         gh: world.path().join("gh"),
         shared: Shared::default(),
         verifying: Lines::default(),
+        locking: Locking::FLOCK,
+        nonce: 7,
+        owner: None,
     })
 }
 
@@ -1686,6 +1695,9 @@ fn an_owed_local_item_under_a_fleet_provider_is_judged_on_the_local_listing() {
         gh: world.path().join("gh"),
         shared,
         verifying: Lines::default(),
+        locking: Locking::FLOCK,
+        nonce: 7,
+        owner: None,
     });
     let produced = pass(Duty::Heartbeat, &mut body, &mut baseline, &clock, wall).unwrap();
     assert_eq!(produced.failed, None);
@@ -1748,6 +1760,9 @@ fn an_owed_local_item_is_judged_on_the_local_listing_while_the_fleet_provider_ca
         gh: world.path().join("gh"),
         shared,
         verifying: Lines::default(),
+        locking: Locking::FLOCK,
+        nonce: 7,
+        owner: None,
     });
     let produced = pass(Duty::Heartbeat, &mut body, &mut baseline, &clock, wall).unwrap();
     let lines = rendered(&produced);

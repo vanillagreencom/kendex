@@ -384,6 +384,18 @@ pub(in crate::effects) fn default_home(harness: Harness) -> Option<PathBuf> {
     session::default_home(harness)
 }
 
+/// The `CODEX_HOME` a pane opened in `session` on `server` inherits from the
+/// server, where it holds one: a window's process takes the server's
+/// environment, never that of the process that asked for the window.
+pub(in crate::effects) fn server_codex_home(
+    server: &Server,
+    session: &str,
+) -> Result<Option<PathBuf>> {
+    Ok(tmux::inherited(server, session, Harness::Codex.home_var())?
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from))
+}
+
 /// The file the harness records the session `id` for `cwd` in under `home`,
 /// for a harness whose launch fixes the id.
 pub(in crate::effects) fn fixed_file(
@@ -1518,25 +1530,41 @@ impl Operation<'_> {
 
     /// Type `text` and Enter into the standing pane: the held brief delivered
     /// to the runner at its composer. The `delivering` phase is written
-    /// before the paste, so a repeat after a crash reads
-    /// the brief as possibly delivered and never pastes twice. No obligation
-    /// changes: the pane and its process stand as before. The inner `Err` is
-    /// the host's refusal of the paste.
+    /// once the line is loaded and before the paste, so a repeat after a
+    /// crash or an unanswered paste reads the brief as possibly delivered
+    /// and never pastes twice, while a line refused before the paste leaves
+    /// the phase where it stood for a repeat to deliver. No obligation
+    /// changes: the pane and its process stand as before.
     pub(in crate::effects) fn deliver(
         &mut self,
         pane: &Standing<Pane>,
         text: &str,
         delivering: Phase,
-    ) -> Result<std::result::Result<(), agent_runtime::Error>> {
+    ) -> Result<Delivery> {
         self.check_pane_token(pane)?;
+        let loaded = match tmux::load_line(pane.key(), text) {
+            Ok(loaded) => loaded,
+            Err(e) => return Ok(Delivery::Unsent(e)),
+        };
         self.record_phase(delivering)?;
-        Ok(tmux::send_line(pane.key(), text))
+        Ok(match loaded.paste() {
+            Ok(()) => Delivery::Pasted,
+            Err(e) => Delivery::Unanswered(e),
+        })
     }
 
     /// The user turns the session file `file` records.
     pub(in crate::effects) fn user_turns(&self, harness: Harness, file: &Path) -> Result<u64> {
         Ok(session::user_turns(harness, file)? as u64)
     }
+}
+
+/// How a brief's paste went: pasted, refused before anything reached the
+/// pane, or asked with no answer, the text possibly in the pane.
+pub(in crate::effects) enum Delivery {
+    Pasted,
+    Unsent(agent_runtime::Error),
+    Unanswered(agent_runtime::Error),
 }
 
 /// How the close's release of the lane's worktree went, by the release's

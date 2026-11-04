@@ -286,10 +286,9 @@ pub fn run_tagged_fed(
 
 /// `run_tagged_fed` with the child leading its own process group: a group
 /// signal to the caller (a hook's `timeout` ending the runtime) does not
-/// reach the child, so what the child does runs to its own end whatever
-/// becomes of the caller. Where `hold` is given, the child's stdin stays
-/// open after `stdin` is written, for a server that stops at the end of
-/// its input before it answers. The same spawn site, bound and count.
+/// reach the child. Where `hold` is given, the child's stdin stays open
+/// after `stdin` is written, for a server that stops at the end of its
+/// input before it answers. The same spawn site, bound and count.
 #[allow(clippy::too_many_arguments)]
 pub fn run_tagged_fed_own_group(
     tag: &'static str,

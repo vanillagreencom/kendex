@@ -104,7 +104,7 @@ assert_eq "RC=$RC context=$(context_line) record=$(tool_record) judged=$(judge_c
   "an overseer tool call below its mark hands over nothing and records the reading, asking no account judge" "$ERR_FILE"
 append_transcript "$TRANSCRIPT" 600000
 overseer_tool "$TRANSCRIPT"
-assert_eq "RC=$RC context=$(context_line) record=$(tool_record) route=$(jq -r '.hookSpecificOutput.additionalContext' "$TMP_ROOT/stdout" | grep -cF -- "/orch-runtime op --fleet --request [REQUEST FILE]")" \
+assert_eq "RC=$RC context=$(context_line) record=$(tool_record) route=$(jq -r '.hookSpecificOutput.additionalContext' "$TMP_ROOT/stdout" | grep -cF -- "/orch-runtime op --fleet --effect-exit --request [REQUEST FILE]")" \
   "RC=0 context=PostToolUse lane-mail-check: context=600000 record=600000 null route=1" \
   "the tool call after the mark is crossed hands the overseer the context mark and its succession as context" "$ERR_FILE"
 overseer_tool "$TRANSCRIPT"

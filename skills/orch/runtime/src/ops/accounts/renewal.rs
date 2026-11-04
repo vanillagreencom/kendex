@@ -540,7 +540,6 @@ fn codex_refusal(dir: &str, said: &str, answer: &str) -> Refused {
     )
 }
 
-/// Whether the CLI's output so far carries its answer to request 1.
 fn answers_request_1(stdout: &[u8]) -> bool {
     String::from_utf8_lossy(stdout).lines().any(|line| {
         serde_json::from_str::<Value>(line)

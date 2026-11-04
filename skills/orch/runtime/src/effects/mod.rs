@@ -188,6 +188,25 @@ pub fn send_owed_notices(
     job::send_owed_notices(&run)
 }
 
+/// Send once more the notices whose send got no answer, the watch
+/// heartbeat's retry; a mark the store refused is returned for its line.
+pub fn send_unanswered_notices(
+    path: &Path,
+    settings: &Settings,
+    env: &Env,
+    locking: Locking,
+    clock: &dyn Clock,
+) -> Result<Vec<NoticeUnmarked>> {
+    let run = Run {
+        path,
+        settings,
+        env,
+        locking,
+        clock,
+    };
+    job::send_unanswered_notices(&run)
+}
+
 /// What a reconcile answers: the committed outcome of every open intent it
 /// completed or marked, the open intents it could not, and the owed
 /// notices of closed intents it sent whose mark the store refused.
@@ -402,6 +421,47 @@ pub fn run_job(
         clock,
     };
     job::run_job(&run, intent_id)
+}
+
+/// The status `op --effect-exit` answers for an effect whose outcome is
+/// still open, its intent left for its reconcile.
+pub const UNCONFIRMED_EXIT: i32 = 75;
+
+/// The intent of a job this process started, read until its outcome
+/// settles, or until its runner's identity is recorded, or until `bound`
+/// passes. A transfer's job records the runner it opened and then waits for
+/// the process that handed it the intent to exit before it retires the
+/// predecessor, so the caller waits no longer than that: the rest of the
+/// outcome is the job's, which owes the owner a notice where it fails.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the caller's one bounded wait on the injected clock for the job it handed its intent to"
+)]
+pub fn await_job(
+    path: &Path,
+    intent_id: &str,
+    bound: Duration,
+    clock: &dyn Clock,
+) -> Result<Intent> {
+    const POLL: Duration = Duration::from_millis(200);
+    let deadline = clock.now() + bound;
+    loop {
+        let intent = read_intent(path, intent_id)?;
+        if !intent.open() || runner_recorded(&intent) || clock.now() >= deadline {
+            return Ok(intent);
+        }
+        clock.sleep(POLL);
+    }
+}
+
+/// Whether an open intent records the runner its effect opened, under the
+/// identity read once that runner stood at its composer.
+pub fn runner_recorded(intent: &Intent) -> bool {
+    intent
+        .phase
+        .as_ref()
+        .and_then(state::Phase::opened)
+        .is_some_and(|opened| opened.identity.is_some())
 }
 
 /// Read the pane an adoption names and record the controller in it: the

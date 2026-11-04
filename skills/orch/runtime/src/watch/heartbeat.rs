@@ -38,11 +38,12 @@ use std::time::Duration;
 use agent_runtime::clock;
 use serde::Deserialize;
 
-use crate::ops::Host;
 use crate::ops::accounts::{
     self, PickAnswer, PickRequest, Roster, pick_harness, pick_pool, text_or_dash,
 };
+use crate::ops::{Env, Host};
 use crate::settings::Settings;
+use crate::state::{Locking, Owner};
 use crate::watch::github::Gh;
 use crate::watch::tracker::{OwedItem, Shared};
 use crate::watch::verifying::Lines;
@@ -68,6 +69,10 @@ pub struct Context {
     pub gh: PathBuf,
     pub shared: Shared,
     pub verifying: Lines,
+    /// The stamp inputs and the lock policy of the notice retry's marks.
+    pub locking: Locking,
+    pub nonce: u32,
+    pub owner: Option<Owner>,
 }
 
 pub fn body<'a>(ctx: Context) -> Body<'a> {
@@ -77,7 +82,8 @@ pub fn body<'a>(ctx: Context) -> Body<'a> {
 /// Register the body on `runner`, replacing the runner's
 /// placeholder: the three flags the line carries, `repos` the watch's
 /// `--repo` names, `shared` the tracker and GitHub duties' slot,
-/// `verifying` the verification duty's lines.
+/// `verifying` the verification duty's lines, `env` and `locking` the
+/// notice retry's stamp and lock policy.
 #[allow(
     clippy::too_many_arguments,
     reason = "the one registration line names each input the body has; a struct for them would be built on that line alone"
@@ -92,6 +98,8 @@ pub fn register(
     repos: Vec<String>,
     shared: Shared,
     verifying: Lines,
+    env: &Env,
+    locking: Locking,
 ) {
     runner.register(
         crate::schedule::Duty::Heartbeat,
@@ -105,6 +113,9 @@ pub fn register(
             gh: PathBuf::from("gh"),
             shared,
             verifying,
+            locking,
+            nonce: env.nonce,
+            owner: env.owner.clone(),
         }),
     );
 }
@@ -382,7 +393,7 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
     // host reuse it. A roster that could not be read is the pass's partial
     // failure with the `account-unread` fields, said by the runner.
     let roster = accounts::roster(&ctx.settings, None, tick.wall);
-    let (mut events, changes, failed) = match &roster {
+    let (mut events, changes, mut failed) = match &roster {
         Ok(listing) => {
             let (events, changes) = check_accounts(listing, tick);
             (events, changes, None)
@@ -452,9 +463,8 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
             body(line.to_owned());
         }
     }
-    // Decision 126 (1): the one capacity line, every open unblocked item
-    // no lane holds, from the tracker duty's inventory; `unread` until it
-    // has read one.
+    // The one capacity line, every open unblocked item no lane holds, from
+    // the tracker duty's inventory; `unread` until it has read one.
     match open {
         None => body("open-unblocked count=unread items=-".to_owned()),
         Some(items) => body(format!(
@@ -466,6 +476,30 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
                 items.join(",")
             }
         )),
+    }
+    // The notices whose send got no answer, sent once more here and never
+    // on every request: a mark the store refused is its line, a retry that
+    // could not run the pass's partial failure.
+    let env = Env {
+        now_secs: tick.wall,
+        now_nanos: u128::from(tick.wall) * 1_000_000_000,
+        nonce: ctx.nonce,
+        owner: ctx.owner.clone(),
+    };
+    match crate::effects::send_unanswered_notices(
+        &ctx.path,
+        &ctx.settings,
+        &env,
+        ctx.locking,
+        tick.clock,
+    ) {
+        Ok(unmarked) => events.extend(unmarked.into_iter().map(|n| Event::NoticeUnmarked {
+            intent: n.intent,
+            cause: n.refusal,
+        })),
+        Err(e) => {
+            failed.get_or_insert(format!("notice-retry-failed cause={e}"));
+        }
     }
     Produced {
         events,
