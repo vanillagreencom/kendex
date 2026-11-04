@@ -177,6 +177,10 @@ description = "Project-defined shell command restrictions"
 hooks = ["command-safety"]
 skills = ["commit-guards"]
 
+[bundles.claude-attention]
+description = "Optional terminal bell for Claude permission prompts and questions in inactive tmux panes, with a shared cooldown; requires Python 3"
+hooks = ["claude-attention", "claude-question-attention"]
+
 # Items this catalog no longer ships, one table per kind (skills, agents,
 # hooks, commands, mcp-servers, output-styles, pi-extensions), each name with
 # a migration line (empty for none). A consumer still declaring one keeps it
