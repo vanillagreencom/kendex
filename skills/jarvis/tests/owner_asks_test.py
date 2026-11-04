@@ -353,9 +353,10 @@ class PublicOwnerAsks(MailWorld):
         for checkout_code in (False, True):
             with self.subTest(checkout_code=checkout_code):
                 if checkout_code:
-                    (remote / "base64.py").write_text('from pathlib import Path\nPath(' +
-                                                     repr(str(self.root / "executed-checkout-code")) +
-                                                     ').touch()\nraise SystemExit(91)\n')
+                    for module in ("base64", "json"):
+                        (remote / (module + ".py")).write_text('from pathlib import Path\nPath(' +
+                                                              repr(str(self.root / "executed-checkout-code")) +
+                                                              ').touch()\nraise SystemExit(91)\n')
                     for package, entry in (("jarvis", "lib/jarvis-env.sh"), ("mailbox", "lane-mail"),
                                            ("linear", "linear.sh"), ("slack", "slack")):
                         scripts = remote / ".agents/skills" / package / "scripts"
@@ -374,6 +375,72 @@ class PublicOwnerAsks(MailWorld):
         result, page = self.run_cli()
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         self.assertEqual(page["activeCount"], 1)
+
+    def test_carried_presence_preserves_root_settings_and_permission(self):
+        remote = make_project(self.root / "remote ' presence;$")
+        marker = self.root / "executed-presence-checkout"
+        (remote / "json.py").write_text('from pathlib import Path\nPath(' + repr(str(marker)) +
+                                        ').touch()\nraise SystemExit(91)\n')
+        registry = self.root / "presence-registry"
+        registry.write_text(str(remote) + "\n")
+        self.env.update(REMOTE_ROOT=str(remote), REMOTE_REGISTRY=str(registry))
+        self.executable("ssh", '#!' + BASH + '\nset -euo pipefail\ncd -- "$REMOTE_ROOT"\n' +
+                        'export REGISTRY="$REMOTE_REGISTRY"\nexec ' + BASH + ' -s\n')
+        # The production owner keeps the fd3 payload separate from this
+        # permission dialogue. Only the local live-session answer is injected.
+        code = '''import json,sys
+from pathlib import Path
+sys.path.insert(0,sys.argv[1])
+import watch
+settings=dict(JARVIS_LOG_DIR=sys.argv[3],JARVIS_CONTROL_HOST='',JARVIS_MAIN_HOST='',
+              JARVIS_REMOTE_HOSTS='fixture',JARVIS_WAKE_SETTLE_SECS='0')
+owner=watch.Watch(Path(sys.argv[2]),sys.argv[4],settings)
+answers=iter(json.loads(sys.argv[5]))
+owner.live=lambda: next(answers)
+print(json.dumps(owner._presence('ssh:fixture')))
+'''
+        cases = [("renew", [True, True, True], 600, "ok"),
+                 ("revoke", [True, True, False], 600, "skipped"),
+                 ("refusal", [True, True, True], 0, "failed")]
+        for name, permission, age, expected in cases:
+            with self.subTest(name=name):
+                hold = remote / (name + " ' hold;$")
+                (remote / "kendex.settings.toml").write_text(
+                    '[env]\nSLACK_JARVIS_SESSION_FILE=' + json.dumps(hold.name) +
+                    '\nSLACK_JARVIS_SESSION_MAX_AGE=' + json.dumps(str(age)) + '\n')
+                result = subprocess.run([sys.executable, "-c", code, str(LIB), str(self.home),
+                                         str(self.root / "presence-log"), BASH, json.dumps(permission)],
+                                        env=self.env, cwd=self.home, capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                rows = json.loads(result.stdout)
+                self.assertEqual([(row[0], row[1]) for row in rows], [(str(remote), expected)])
+                if expected == "failed":
+                    self.assertEqual(rows[0][2]["key"], ["presence-settings", "refusal", "setting-invalid"])
+                else:
+                    self.assertIsNone(rows[0][2])
+                self.assertEqual(hold.exists(), expected == "ok")
+                self.assertFalse(marker.exists())
+
+    def test_control_rejects_carried_startup_checkout_import(self):
+        directory = REPO.parent / "tmp"
+        directory.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="carried-startup-control-", dir=directory) as allocation:
+            skills = Path(allocation).resolve() / "skills"
+            for package in ("jarvis", "orch", "mailbox", "linear", "slack"):
+                shutil.copytree(REPO / "skills" / package / "scripts", skills / package / "scripts")
+            path = skills / "jarvis/scripts/lib/watch.py"
+            original = path.read_text()
+            old = "[sys.executable,'-I','-B','-c',%s]"
+            self.assertEqual(original.count(old), 1)
+            mutant = original.replace(old, "[sys.executable,'-B','-c',%s]")
+            self.assertNotEqual(mutant, original)
+            path.write_text(mutant)
+            result = subprocess.run([BASH, str(REPO / "skills/jarvis/tests/owner-asks.test.sh"),
+                                     "PublicOwnerAsks.test_remote_mailbox_only_worktree_and_untrusted_checkout_code"],
+                                    env=dict(os.environ, JARVIS_TEST_SKILLS=str(skills)),
+                                    capture_output=True, text=True, timeout=60)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("FAILED (failures=", result.stderr)
 
     def slack_thread(self, home, ask):
         # Exercise Slack's public mapping/permalink owner against its existing
