@@ -55,7 +55,7 @@ fn a_multi_package_refresh_and_updates_hash_each_distinct_snapshot_once() {
         .map(|p| store::signature_calls(p))
         .collect();
     assert!(
-        sync_declared_sources(&refresh, &declaration)
+        sync_declared_sources(&refresh, &scope, &declaration)
             .failures
             .is_empty()
     );

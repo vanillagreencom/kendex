@@ -365,7 +365,7 @@ fn sync_scope(env: &Env, scope: &kendex_core::model::Scope) -> kendex_core::remo
     match kendex_core::engine::ops::manifest_for_reading(env, scope) {
         Ok(manifest) => {
             let _reading = ui::spinner(&format!("reading marketplaces for {}", scope_label(scope)));
-            kendex_core::remote::sync_declared_sources(env, &manifest)
+            kendex_core::remote::sync_declared_sources(env, scope, &manifest)
         }
         Err(_) => kendex_core::remote::Synced::default(),
     }

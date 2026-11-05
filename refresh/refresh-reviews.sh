@@ -6,9 +6,10 @@
 # the upstream KENDEX_ISSUES_TOKEN and the release's kendex on PATH. The
 # release checkout's change-class proves the render class. Before it judges a
 # pull request with review work, `kendex source refresh --in-use` fetches the
-# sources that pull request head's packages come from, which a job that
-# skipped rendering has not fetched; a subscription no package uses is left
-# alone, as a render leaves it. No script from the pull request is executed.
+# sources that pull request head's packages come from and the sources its
+# install record names, which a job that skipped rendering has not fetched;
+# any other subscription is left alone, as a render leaves it. No script from
+# the pull request is executed.
 #
 # A thread whose first comment a Bot wrote is filed upstream through
 # refresh-report.py, answered with a reply naming that issue and the
@@ -200,10 +201,11 @@ while IFS= read -r pr; do
       --no-write-fetch-head origin "$PR_BASE_SHA" "refs/pull/$PR_NUMBER/head" \
       || fail fetch "$PR_NUMBER" 'Could not fetch the pull request base and head.'
   fi
-  # The classifier verifies the head's own manifest against local source
-  # mirrors, so the sources that manifest's packages come from are refreshed
-  # from a checkout of the head. The manifest is pull-request content, so no
-  # repository credential goes with its fetches.
+  # The classifier verifies the head's own manifest and record against local
+  # source mirrors, so the sources that manifest's packages come from and the
+  # sources that record names are refreshed from a checkout of the head. Both
+  # are pull-request content, so no repository credential goes with their
+  # fetches.
   sources_tree="$scratch/sources-$PR_NUMBER"
   git -C "$ROOT" worktree add --quiet --detach "$sources_tree" "$HEAD_SHA" >&2 \
     || fail sources-checkout "$PR_NUMBER" 'Could not check out the pull request head for its sources.'
