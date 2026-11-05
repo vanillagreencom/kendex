@@ -468,7 +468,20 @@ if ! engine_version="$(kendex --version)"; then
 fi
 printf -v version_report 'Engine version: `%s`.' "$engine_version"
 git add -A
-if git diff --cached --quiet; then
+# D003 keeps project lock records with the next content-changing refresh.
+# Literal exclusions use the verified project list, so other changes still publish.
+publication_paths=(.)
+for directory in "${projects[@]}"; do
+  lock_path="${directory#"$ROOT"}/.kendex-lock.json"
+  publication_paths+=(":(top,exclude,literal)${lock_path#/}")
+done
+publication_status=0
+git diff --cached --quiet -- "${publication_paths[@]}" || publication_status=$?
+if [ "$publication_status" -gt 1 ]; then
+  printf 'refresh-error=read value=publication-diff\n' >&2
+  exit 1
+fi
+if [ "$publication_status" -eq 0 ]; then
   report_settings
   if [ -n "$pr" ]; then
     gh pr close "$pr" --repo "$GH_REPO"
@@ -511,7 +524,7 @@ else:
     print('sources=covered')
 SOURCE_COVERAGE
   fi
-  printf '%s\n' "$version_report" >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
+  printf '%s\n\nNo content changes to publish. Project lock records publish with the next content change.\n' "$version_report" >>"${GITHUB_STEP_SUMMARY:?GITHUB_STEP_SUMMARY names the run summary}"
   [ -z "$catalog_report" ] || printf '\n%s\n' "$catalog_report" >>"$GITHUB_STEP_SUMMARY"
   # A run with no render change opens no pull request; its settings report
   # still reaches the run summary.
