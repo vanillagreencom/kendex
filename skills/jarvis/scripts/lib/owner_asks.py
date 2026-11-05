@@ -118,10 +118,10 @@ class Sources:
         shell_args = (["-c", 'source "$1"; mailbox_common_root "$2"', "owner-asks"]
                       if operation == "mailbox/lib/common-root.sh" else [])
         try:
+            files = {}
             if target.host:
                 # All dependencies come from the caller's declared packages,
                 # including sibling reads made by Linear and Slack themselves.
-                files = {}
                 for name in ("mailbox", "linear", "slack"):
                     directory = packages / name / "scripts"
                     for path in directory.rglob("*"):
@@ -129,16 +129,17 @@ class Sources:
                             files[str(path.relative_to(packages))] = base64.b64encode(path.read_bytes()).decode()
                 for name in ("orch/scripts/lib/kendex-env.sh", "orch/references/secret-value.ere"):
                     files[name] = base64.b64encode((packages / name).read_bytes()).decode()
-                command, payload = watch.remote_command(files, package + "/scripts/" + script, args,
-                                                        data=data, stdin=True, shell_args=shell_args)
+            command, payload = watch.remote_command(files, package + "/scripts/" + script, args,
+                                                    data=data, stdin=True, shell_args=shell_args,
+                                                    local_root=None if target.host else packages)
+            if target.host:
                 role = watch.Role("satellite", target.host, str(root))
                 cause, result = forward.host_call(role, self.session.deadline,
                                                   'set -euo pipefail\ncd -- "$1"\n' + command, [], payload)
                 if cause != "ok":
                     raise watch.Failure(operation, "transport", cause, result)
             else:
-                path = packages / package / "scripts" / script
-                result = watch.run([self.session.env["JARVIS_BASH"], *shell_args, path, *args], root, data,
+                result = watch.run([self.session.env["JARVIS_BASH"], "-c", command], root, payload,
                                    operation=operation, timeout=self.remaining())
             if check and result.returncode:
                 raise watch.child_failure(operation, result)
