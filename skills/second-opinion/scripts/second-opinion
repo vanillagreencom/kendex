@@ -166,10 +166,14 @@ SECOND_OPINION_FOREGROUND_CAP, which are session-scoped:
                              prefixes. Other target
                              names, CLIs and opaque wrappers supply their own
                              backend flags. Keep every configured command read-only.
-                             copilot has none: Copilot
-                             CLI documents no headless mode that is read-only,
-                             so SECOND_OPINION_COPILOT_CMD names a command you
-                             have checked cannot write
+                             copilot has no stock command here; set
+                             SECOND_OPINION_COPILOT_CMD and _MODEL, with
+                             _ROOM_CMD and _INLINE_DIFF as described below.
+                             Copilot CLI documents -p prompt mode and
+                             --available-tools=view,grep,glob to restrict
+                             the model to file reading/search tools:
+                             https://docs.github.com/en/copilot/how-tos/copilot-cli/use-copilot-cli/allowing-tools
+                             https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference
   SECOND_OPINION_<NAME>_ROOM_CMD
                              Whether the account target <NAME> spends has
                              room now (default: none, no check; for
