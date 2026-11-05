@@ -629,6 +629,10 @@ harnesses = [
 ]
 enabled = true
 
+[commands.code-scrub]
+source = "."
+harnesses = ["claude", "pi"]
+
 [hooks.block-bare-cd]
 source = "."
 enabled = true

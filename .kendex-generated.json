@@ -962,6 +962,7 @@
   ".claude/agents/scout.md",
   ".claude/agents/swift.md",
   ".claude/agents/tpm.md",
+  ".claude/commands/code-scrub.md",
   ".claude/hooks/block-argv-kill.sh",
   ".claude/hooks/block-bare-cd.sh",
   ".claude/hooks/block-repo-copy.sh",
@@ -1155,5 +1156,6 @@
   ".pi/kendex/hooks/session-end-row.sh",
   ".pi/kendex/hooks/session-start-row.sh",
   ".pi/kendex/hooks/stop-failure-row.sh",
-  ".pi/kendex/hooks/worktree-session-claim.sh"
+  ".pi/kendex/hooks/worktree-session-claim.sh",
+  ".pi/prompts/code-scrub.md"
 ]
