@@ -250,7 +250,12 @@ fn unconfirmed_after_retirement(
 /// home a resumed session stands under (the pending's own rule), named as
 /// the pending names it, and `served` the home the fleet server hands its
 /// panes. An account names its own home.
-fn kept(pending: &state::Pending, harness: Harness, served: Option<&Path>) -> Option<Kept> {
+fn kept(
+    settings: &Settings,
+    pending: &state::Pending,
+    harness: Harness,
+    served: Option<&Path>,
+) -> Option<Kept> {
     let home = pending.home.as_deref().map(|home| Kept {
         home: PathBuf::from(home),
         named: true,
@@ -258,9 +263,12 @@ fn kept(pending: &state::Pending, harness: Harness, served: Option<&Path>) -> Op
     match (harness, pending.account.is_some()) {
         (Harness::Pi, _) => home,
         (Harness::Claude | Harness::Codex | Harness::Copilot, true) => None,
-        (Harness::Claude | Harness::Codex | Harness::Copilot, false) => {
-            accountless_kept(harness, home.filter(|_| pending.resume.is_some()), served)
-        }
+        (Harness::Claude | Harness::Codex | Harness::Copilot, false) => accountless_kept(
+            settings,
+            harness,
+            home.filter(|_| pending.resume.is_some()),
+            served,
+        ),
     }
 }
 
@@ -311,7 +319,7 @@ impl Successor {
             harness,
             pending.account.as_deref(),
             pending.model.as_deref(),
-            kept(pending, harness, served).as_ref(),
+            kept(settings, pending, harness, served).as_ref(),
             &cwd,
         )?;
         Ok(Self::of(settings, pending, harness, cwd, homes)?)

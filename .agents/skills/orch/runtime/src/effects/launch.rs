@@ -121,12 +121,7 @@ fn relaunch_route(run: &Run, lane: &Lane, r: &LaunchLane, served: Option<&Path>)
             home: PathBuf::from(account),
             named: true,
         }),
-        (None, None, Some(harness)) => accountless_kept(harness, None, served).or_else(|| {
-            inherited_home(run.settings, harness).map(|home| Kept {
-                home,
-                named: harness != Harness::Claude,
-            })
-        }),
+        (None, None, Some(harness)) => accountless_kept(run.settings, harness, None, served),
         (None, None, None) => None,
     };
     let route = route_of(
@@ -298,7 +293,7 @@ fn prepare_launch(
     };
     let kept = match &r.account {
         Some(_) => None,
-        None => accountless_kept(harness, recorded, fleet.served.as_deref()),
+        None => accountless_kept(settings, harness, recorded, fleet.served.as_deref()),
     };
     let homes = launch_home(
         settings,
@@ -394,12 +389,15 @@ pub(super) struct Kept {
 }
 
 /// The home an accountless launch of `harness` keeps, decided once for the
-/// lane launch and the transfer: the home a resumed session ran under,
-/// `recorded`, in its mode; else, for Codex and Claude, `served`, the home
-/// the fleet server hands its panes (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`),
-/// named as found even where it spells the default; else none, the
-/// launch's own rule (the inherited home, Claude's implicit default).
+/// lane launch, its relaunch route and the transfer: the home a resumed
+/// session ran under, `recorded`, in its mode; else, for Codex and Claude,
+/// `served`, the home the fleet server hands its panes (`CODEX_HOME`,
+/// `CLAUDE_CONFIG_DIR`), named as found even where it spells the default;
+/// else the inherited home, named, but Claude's implicit default config
+/// dir, which the launch names to nothing. `None` is a host with no home
+/// directory at all.
 pub(super) fn accountless_kept(
+    settings: &Settings,
     harness: Harness,
     recorded: Option<Kept>,
     served: Option<&Path>,
@@ -407,13 +405,21 @@ pub(super) fn accountless_kept(
     if recorded.is_some() {
         return recorded;
     }
-    match harness {
-        Harness::Codex | Harness::Claude => served.map(|home| Kept {
+    let served = match harness {
+        Harness::Codex | Harness::Claude => served,
+        Harness::Copilot | Harness::Pi => None,
+    };
+    served
+        .map(|home| Kept {
             home: home.to_path_buf(),
             named: true,
-        }),
-        Harness::Copilot | Harness::Pi => None,
-    }
+        })
+        .or_else(|| {
+            inherited_home(settings, harness).map(|home| Kept {
+                home,
+                named: harness != Harness::Claude,
+            })
+        })
 }
 
 /// The fleet server a local window opens on, its session, and the home it
@@ -469,14 +475,15 @@ fn inherited_home(settings: &Settings, harness: Harness) -> Option<PathBuf> {
 /// its trust record, and the account it bills where that account's variable
 /// is not the home's; never the cwd. The account is the home where its
 /// variable is the harness's own. Otherwise a Pi, Codex or Copilot launch
-/// runs on `kept`, the home it keeps where no account names one (the Pi
-/// root a controller's succession keeps, whether or not a metered account
-/// bills it; the `CODEX_HOME` the fleet server's panes inherit; the home a
-/// resumed session was found under), else on its inherited home; a Pi seat
-/// rides in the account alone. Codex and Copilot ask a trust question
-/// under theirs. An accountless Claude launch names none here, so no trust
-/// record is ever written into the operator's own config; `launch_home`
-/// names the config dir it keeps as found.
+/// runs on `kept`, which must stand: the home it keeps where no account
+/// names one (`accountless_kept`'s answer: the home a resumed session was
+/// found under, the `CODEX_HOME` the fleet server's panes inherit, else
+/// the inherited home) or the Pi root a controller's succession keeps
+/// whatever account bills it; a Pi seat with no root kept rides in the
+/// account alone, on its inherited root. Codex and Copilot ask a trust
+/// question under theirs. An accountless Claude launch names none here, so
+/// no trust record is ever written into the operator's own config;
+/// `launch_home` names the config dir it keeps as found.
 fn named_home(
     settings: &Settings,
     harness: Harness,
@@ -507,10 +514,11 @@ fn named_home(
 /// opens: the trust record for `cwd` under the named home, and a private
 /// Codex home built under the account where the account's own config does
 /// not trust `cwd`, its sessions linked from the account's. An accountless
-/// Claude launch runs on the config dir it keeps where that is named (the
+/// Claude launch runs on the config dir it keeps where `kept` names it (the
 /// fleet server's, or the one a resumed session ran under), named as found
 /// and never prepared, so nothing is written into the operator's config;
-/// otherwise on its implicit default, the variable cleared. The harness
+/// on its implicit default, the variable cleared, where `kept` names none
+/// (`accountless_kept` decides which). The harness
 /// gate then judges what the harness needs beyond its trust record under
 /// the home its sessions are read from.
 pub(super) fn launch_home(
@@ -534,10 +542,8 @@ pub(super) fn launch_home(
     let mut named = trusted.as_ref().map(|t| t.home.clone());
     let mut cleared = false;
     if let (Harness::Claude, None) = (harness, account) {
-        match kept {
-            Some(Kept { home, named: true }) => named = Some(home.clone()),
-            Some(Kept { named: false, .. }) | None => cleared = true,
-        }
+        named = kept.filter(|kept| kept.named).map(|kept| kept.home.clone());
+        cleared = named.is_none();
     }
     let sessions = named.clone().or_else(|| operation::default_home(harness));
     gate::local(harness, sessions.as_deref(), cwd).map_err(Unready::Gate)?;
@@ -642,10 +648,12 @@ fn launch_pane_gone(
     ))
 }
 
-/// The host a request names: none for a local window, the cloud kind, or a
-/// provider's path.
-enum Surface<'a> {
-    Local,
+/// The host a request names: a local window, the cloud kind, or a
+/// provider's path. `L` is what a local window carries once a launch has
+/// resolved it, its fleet server; a reconcile's reading of a record
+/// carries nothing.
+enum Surface<'a, L = ()> {
+    Local(L),
     Cloud,
     Hosted(&'a str),
 }
@@ -653,7 +661,7 @@ enum Surface<'a> {
 /// The surface a record's or a request's `host` names.
 fn surface_of(host: Option<&str>) -> Surface<'_> {
     match host {
-        None | Some("") | Some("local") => Surface::Local,
+        None | Some("") | Some("local") => Surface::Local(()),
         Some(CLOUD_KIND) => Surface::Cloud,
         Some(provider) => Surface::Hosted(provider),
     }
@@ -667,18 +675,21 @@ fn scripts_dir(settings: &Settings) -> PathBuf {
 pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Result<EffectOutcome> {
     let operation = Operation::open(run, intent)?;
     let (lane, _) = lane_for_intent(run.path, &intent.id)?;
-    let surface = surface_of(r.host.as_deref());
     // A local window's fleet server is resolved before the route, which
     // reads a record with no home under the home that server hands its
     // panes; one that cannot be resolved fails before anything opens.
-    let fleet = match surface {
-        Surface::Local => match local_fleet(run, &operation, r) {
-            Ok(fleet) => Some(fleet),
+    let surface = match surface_of(r.host.as_deref()) {
+        Surface::Local(()) => match local_fleet(run, &operation, r) {
+            Ok(fleet) => Surface::Local(fleet),
             Err(e) => return Ok(operation.settle(Word::Failed, json!({"cause": e.key()}))),
         },
-        Surface::Hosted(_) | Surface::Cloud => None,
+        Surface::Cloud => Surface::Cloud,
+        Surface::Hosted(provider) => Surface::Hosted(provider),
     };
-    let served = fleet.as_ref().and_then(|f| f.served.as_deref());
+    let served = match &surface {
+        Surface::Local(fleet) => fleet.served.as_deref(),
+        Surface::Cloud | Surface::Hosted(_) => None,
+    };
     let route = relaunch_route(run, &lane, r, served)?;
     // A destination session store that could not be read, or a bound
     // session another directory owns, refuses before any window opens,
@@ -689,11 +700,10 @@ pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Resul
     // Whether the launch re-enters a standing record, as the transition
     // judged it: the provider then reuses the worktree it holds.
     let relaunch = intent.selection.as_ref().is_some_and(|s| s.relaunch);
-    let mut outcome = match (surface, fleet) {
-        (Surface::Local, Some(fleet)) => local_launch(run, operation, r, fleet, &route)?,
-        (Surface::Local, None) => unreachable!("a local launch resolved its fleet above"),
-        (Surface::Hosted(provider), _) => hosted_launch(run, operation, r, provider, relaunch)?,
-        (Surface::Cloud, _) => cloud_launch(run, operation, &lane, r)?,
+    let mut outcome = match surface {
+        Surface::Local(fleet) => local_launch(run, operation, r, fleet, &route)?,
+        Surface::Hosted(provider) => hosted_launch(run, operation, r, provider, relaunch)?,
+        Surface::Cloud => cloud_launch(run, operation, &lane, r)?,
     };
     outcome.annotate("route", json!(route.word()));
     if let Some(cause) = route.cause() {
@@ -1706,7 +1716,7 @@ pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutco
     // outcome; a pending reading binds no pane and leaves the lane as found
     // for the next reconcile. The marker written before the window is read
     // back on the outcome of a launch that ended there.
-    let local = matches!(surface_of(lane.host.as_deref()), Surface::Local);
+    let local = matches!(surface_of(lane.host.as_deref()), Surface::Local(()));
     let (opened, registered) = match phase {
         // A cloud create asked and never answered, its asking process ended
         // included, may have made a session nothing here can name: the

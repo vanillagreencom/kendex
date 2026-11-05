@@ -6969,16 +6969,18 @@ fn a_reconciled_pi_lane_on_a_seat_binds_its_session_under_pis_root_not_the_seat(
 /// session stands in, and whether it named it; whatever the fleet server or
 /// the settings now hand the harness, the relaunch resumes the session on
 /// that home in that mode. A record with no home, as every released record
-/// is, resumes under the home a fresh launch picks: the server's. A fresh
+/// is, resumes under the home a fresh launch picks: the server's, else the
+/// loaded `COPILOT_HOME`, else the default, Claude's implicit. A fresh
 /// Claude launch names the server's config dir as found, even
-/// `$HOME/.claude`, and records that it named it.
+/// `$HOME/.claude`, and records that it named it; where the server names
+/// none it runs on the implicit default, the variable cleared.
 #[test]
 fn a_lane_with_no_account_runs_under_the_one_home_its_session_is_proved_and_recorded_under() {
     // The case, the harness, what the lane recorded (`dir` a named home of
     // its own, `implicit` Claude's default named by nothing, `named-default`
     // the default named, `released` a bound session and no home, `none` no
     // session), and the home the server or the settings now name (`current`,
-    // or `home-claude`, `$HOME/.claude` spelled out).
+    // `home-claude`, `$HOME/.claude` spelled out, or `nothing`).
     let cases = [
         (
             "codex: the server hands the recorded home",
@@ -7029,6 +7031,12 @@ fn a_lane_with_no_account_runs_under_the_one_home_its_session_is_proved_and_reco
             "home-claude",
         ),
         (
+            "claude: a fresh launch, the server naming nothing",
+            "claude",
+            "none",
+            "nothing",
+        ),
+        (
             "claude: a released record under the server's config dir",
             "claude",
             "released",
@@ -7037,6 +7045,24 @@ fn a_lane_with_no_account_runs_under_the_one_home_its_session_is_proved_and_reco
         (
             "codex: a released record under the server's CODEX_HOME",
             "codex",
+            "released",
+            "current",
+        ),
+        (
+            "claude: a released record, the server naming nothing",
+            "claude",
+            "released",
+            "nothing",
+        ),
+        (
+            "codex: a released record, the server naming nothing",
+            "codex",
+            "released",
+            "nothing",
+        ),
+        (
+            "copilot: a released record under the loaded COPILOT_HOME",
+            "copilot",
             "released",
             "current",
         ),
@@ -7052,17 +7078,22 @@ fn a_lane_with_no_account_runs_under_the_one_home_its_session_is_proved_and_reco
         std::fs::create_dir_all(home.join(".claude")).unwrap();
         let own = dir.path().join("dir");
         let served = match served {
-            "home-claude" => home.join(".claude"),
-            other => dir.path().join(other),
+            "nothing" => None,
+            "home-claude" => Some(home.join(".claude")),
+            other => Some(dir.path().join(other)),
         };
-        std::fs::create_dir_all(&served).unwrap();
+        if let Some(served) = &served {
+            std::fs::create_dir_all(served).unwrap();
+        }
         // The home the session stands in and the launch should run on, and
-        // whether the launch names it.
-        let (expected, named) = match recorded {
-            "dir" => (own.clone(), true),
-            "implicit" => (home.join(".claude"), false),
-            "named-default" => (home.join(".claude"), true),
-            _ => (served.clone(), true),
+        // whether the launch names it: with nothing recorded and nothing
+        // served, the harness's default, Claude's implicit.
+        let (expected, named) = match (recorded, &served) {
+            ("dir", _) => (own.clone(), true),
+            ("implicit", _) => (home.join(".claude"), false),
+            ("named-default", _) => (home.join(".claude"), true),
+            (_, Some(served)) => (served.clone(), true),
+            (_, None) => (home.join(format!(".{harness}")), harness != "claude"),
         };
         runner
             .env
@@ -7084,26 +7115,30 @@ fn a_lane_with_no_account_runs_under_the_one_home_its_session_is_proved_and_reco
             "claude" => ("CLAUDE_CONFIG_DIR", "projects"),
             _ => ("COPILOT_HOME", "session-state"),
         };
-        if harness == "copilot" {
-            let tools = dir.path().join("tools");
-            std::fs::create_dir_all(&tools).unwrap();
-            runner.tools = Some(tools.clone());
-            plant_copilot_hooks(&work.join(".github/hooks"));
-            plant_hooks_off(&tools, json!({"stdout": r#"{"switched_off_by": null}"#}));
-            runner
-                .env
-                .push(("COPILOT_HOME".to_owned(), served.display().to_string()));
-        } else {
-            let out = tmux(
-                &server.socket,
-                &[
-                    "set-environment",
-                    "-g",
-                    variable,
-                    &served.display().to_string(),
-                ],
-            );
-            assert!(out.status.success(), "{case}: {}", stderr(&out));
+        match (harness, &served) {
+            ("copilot", Some(served)) => {
+                let tools = dir.path().join("tools");
+                std::fs::create_dir_all(&tools).unwrap();
+                runner.tools = Some(tools.clone());
+                plant_copilot_hooks(&work.join(".github/hooks"));
+                plant_hooks_off(&tools, json!({"stdout": r#"{"switched_off_by": null}"#}));
+                runner
+                    .env
+                    .push(("COPILOT_HOME".to_owned(), served.display().to_string()));
+            }
+            (_, Some(served)) => {
+                let out = tmux(
+                    &server.socket,
+                    &[
+                        "set-environment",
+                        "-g",
+                        variable,
+                        &served.display().to_string(),
+                    ],
+                );
+                assert!(out.status.success(), "{case}: {}", stderr(&out));
+            }
+            (_, None) => {}
         }
         let bound = recorded != "none";
         match (harness, bound) {
@@ -7200,6 +7235,65 @@ fn a_lane_with_no_account_runs_under_the_one_home_its_session_is_proved_and_reco
             !named,
             "{case}: the launch records whether it named its home: {report}"
         );
+    }
+}
+
+/// Defect: an accountless launch run on an inherited home that does not
+/// stand, so a harness with no login runs where a named refusal was owed.
+/// With nothing recorded and the server naming nothing, the launch keeps
+/// the inherited home (`~/.codex`; the loaded `COPILOT_HOME`), which must
+/// exist: it refuses `home-missing` before any window opens, nothing
+/// recorded as opening.
+#[test]
+fn an_accountless_launch_whose_inherited_home_does_not_stand_refuses_before_any_window() {
+    let cases = [
+        ("codex: no ~/.codex under HOME", "codex", None),
+        (
+            "copilot: the loaded COPILOT_HOME names no directory",
+            "copilot",
+            Some("COPILOT_HOME"),
+        ),
+    ];
+    for (case, harness, variable) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner = Runner::new(&server, "stub-record");
+        runner.verify = Some(1);
+        runner.init_fleet();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        runner
+            .env
+            .push(("HOME".to_owned(), home.display().to_string()));
+        if let Some(variable) = variable {
+            runner.env.push((
+                variable.to_owned(),
+                dir.path().join("absent").display().to_string(),
+            ));
+        }
+        runner.env.push((
+            "ORCH_HARNESS_BINARIES".to_owned(),
+            format!(
+                "{harness}={}",
+                fixtures().join("stub-record").join(harness).display()
+            ),
+        ));
+        let work = runner.state_dir().to_path_buf();
+        let mut request = launch_request("KEN-H", &work);
+        request["harness"] = json!(harness);
+        request.as_object_mut().unwrap().remove("account");
+        let panes = server.panes().len();
+        let report = effect_report(&runner.op_fleet(&request));
+        assert_eq!(report["intent"]["outcome"], "failed", "{case}: {report}");
+        assert_eq!(
+            report["intent"]["observation"]["cause"], "home-missing",
+            "{case}: {report}"
+        );
+        assert!(
+            report["intent"]["phase"].is_null(),
+            "{case}: nothing recorded as opening: {report}"
+        );
+        assert_eq!(server.panes().len(), panes, "{case}: no window opened");
     }
 }
 

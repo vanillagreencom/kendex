@@ -1931,10 +1931,7 @@ fn the_successor_is_launched_from_its_typed_fields_with_the_account_routed() {
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     assert_eq!(intent["outcome"], "failed", "{intent}");
     assert_eq!(intent["observation"]["note"], "successor-not-ready");
-    let launched: Value = serde_json::from_str(
-        &std::fs::read_to_string(runner.state_dir().join("launch-record.json")).unwrap(),
-    )
-    .unwrap();
+    let launched = launch_record(runner.state_dir());
     assert_eq!(
         launched["env"]["PI_CODING_AGENT_DIR"],
         pi_home.display().to_string(),
@@ -1982,10 +1979,7 @@ fn the_successor_is_launched_from_its_typed_fields_with_the_account_routed() {
     runner.transfer_started(&request);
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
-    let launched: Value = serde_json::from_str(
-        &std::fs::read_to_string(runner.state_dir().join("launch-record.json")).unwrap(),
-    )
-    .unwrap();
+    let launched = launch_record(runner.state_dir());
     let argv: Vec<String> = launched["argv"]
         .as_array()
         .unwrap()
@@ -2052,10 +2046,7 @@ fn the_successor_is_launched_from_its_typed_fields_with_the_account_routed() {
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     assert_eq!(intent["outcome"], "failed", "{intent}");
     assert_eq!(intent["observation"]["note"], "successor-not-ready");
-    let launched: Value = serde_json::from_str(
-        &std::fs::read_to_string(runner.state_dir().join("launch-record.json")).unwrap(),
-    )
-    .unwrap();
+    let launched = launch_record(runner.state_dir());
     assert_eq!(
         launched["env"]["COPILOT_ALLOW_ALL"], "true",
         "the bypass posture sets the Copilot permission environment: {launched}"
@@ -3570,7 +3561,10 @@ fn a_live_predecessor_after_a_timed_out_stop_is_re_signalled_by_the_reconcile() 
 /// carrying a full-bypass alias refuses `permission-mismatch`.
 #[test]
 fn a_native_posture_keeps_a_narrower_permission_word_and_refuses_a_bypass_alias() {
-    let launch = |harness: &str, words: &[&str]| -> (Value, Value) {
+    // `started`: the words admit the posture, so the successor's stub runs
+    // and its record is read once it stands; a mismatch is refused before
+    // any window, and no record is awaited.
+    let launch = |harness: &str, words: &[&str], started: bool| -> (Value, Value) {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
         let mut runner = suite_runner(&server, "stub-record");
@@ -3602,10 +3596,11 @@ fn a_native_posture_keeps_a_narrower_permission_word_and_refuses_a_bypass_alias(
         );
         runner.transfer_started_env(&request, &[("ORCH_HARNESS_BINARIES", &binaries)]);
         let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
-        let launched = std::fs::read_to_string(runner.state_dir().join("launch-record.json"))
-            .ok()
-            .and_then(|t| serde_json::from_str(&t).ok())
-            .unwrap_or(Value::Null);
+        let launched = if started {
+            launch_record(runner.state_dir())
+        } else {
+            Value::Null
+        };
         (intent, launched)
     };
     // (harness, words, the bypass word that must not appear, the bypass
@@ -3637,7 +3632,7 @@ fn a_native_posture_keeps_a_narrower_permission_word_and_refuses_a_bypass_alias(
         ),
     ];
     for (harness, words, bypass, var) in narrower {
-        let (intent, launched) = launch(harness, words);
+        let (intent, launched) = launch(harness, words, true);
         assert_ne!(
             intent["observation"]["note"], "permission-mismatch",
             "{harness} {words:?}: a narrower word is no mismatch: {intent}"
@@ -3661,7 +3656,7 @@ fn a_native_posture_keeps_a_narrower_permission_word_and_refuses_a_bypass_alias(
             );
         }
     }
-    let (intent, _) = launch("copilot", &["--yolo"]);
+    let (intent, _) = launch("copilot", &["--yolo"], false);
     assert_eq!(intent["outcome"], "failed", "{intent}");
     assert_eq!(
         intent["observation"]["note"], "permission-mismatch",
@@ -3676,6 +3671,7 @@ fn a_native_posture_keeps_a_narrower_permission_word_and_refuses_a_bypass_alias(
             "--permission-mode=dontAsk",
             "--dangerously-skip-permissions",
         ],
+        false,
     );
     assert_eq!(intent["outcome"], "failed", "{intent}");
     assert_eq!(
@@ -4504,6 +4500,70 @@ fn a_unit_start_the_client_refused_before_asking_the_manager_runs_the_job_and_no
             "{case}: no variable the client refuses is handed to it: {calls}"
         );
     }
+}
+
+/// Defect: the job's variables handed to the client as `--setenv=NAME=VALUE`,
+/// so every exported value of the launching process, a lane's token among
+/// them, sat on the client's command line, which every local user reads
+/// through `/proc/<pid>/cmdline` while the client runs. The op's environment
+/// carries a token-shaped value and asks systemd for debug logging; the fake
+/// user manager starts the watch's unit with the variables its `--setenv`
+/// arguments resolve to, as a unit gets them. The client's recorded
+/// invocation holds the variable's name and never its value, and the unit's
+/// environment holds the variable with its value and the job's logging
+/// setting, where the client itself runs on the runtime's.
+#[test]
+fn a_unit_launch_hands_the_jobs_variables_to_the_unit_and_no_value_to_the_clients_command_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let (bin, env) = watch_world(runner.state_dir());
+    runner.tools = Some(bin.clone());
+    let state = runner
+        .state_dir()
+        .join(orch_runtime::state::FLEET_FILE_NAME);
+    let token = "ghp_fixture_value_never_on_a_command_line";
+    let mut env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    env.push(("ORCH_PROBE_TOKEN", token));
+    env.push(("SYSTEMD_LOG_LEVEL", "debug"));
+    let report = effect_report(&runner.op_fleet_env(
+        &json!({
+            "op": "start-controller",
+            "controller": pending(runner.state_dir()),
+            "watch": watch_words(&state),
+        }),
+        &env,
+    ));
+    let overseer = runner.fleet()["overseer"].clone();
+    let calls = std::fs::read_to_string(bin.join("systemd.log")).unwrap_or_default();
+    let unit_env: Vec<String> = std::fs::read_dir(bin.join("units"))
+        .map(|units| units.map(|unit| unit.unwrap().path()).collect::<Vec<_>>())
+        .unwrap_or_default()
+        .iter()
+        .map(|unit| std::fs::read_to_string(unit).unwrap())
+        .flat_map(|pid| std::fs::read(format!("/proc/{}/environ", pid.trim())).unwrap_or_default())
+        .collect::<Vec<u8>>()
+        .split(|byte| *byte == 0)
+        .map(|variable| String::from_utf8_lossy(variable).into_owned())
+        .collect();
+    if report["intent"]["outcome"] == "confirmed" {
+        stop_live_watch(&runner, &state);
+    }
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(overseer["watch"]["runner"], "systemd", "{overseer}");
+    assert!(
+        calls.contains("--setenv=ORCH_PROBE_TOKEN ") && !calls.contains(token),
+        "the client's command line names the variable and never its value: {calls}"
+    );
+    assert!(
+        unit_env.contains(&format!("ORCH_PROBE_TOKEN={token}")),
+        "the unit gets the variable with its value: {unit_env:?}"
+    );
+    assert!(
+        unit_env.contains(&"SYSTEMD_LOG_LEVEL=debug".to_owned()),
+        "the unit gets the job's logging setting, not the client's: {unit_env:?}"
+    );
 }
 
 /// The number of units the fake user manager started under `bin`: the fleet
@@ -6438,9 +6498,8 @@ fn walled_transfer(runner: &Runner, spent: &Path, successor: &Value) -> (Value, 
         &[("ORCH_HARNESS_BINARIES", &binaries)],
     );
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
-    let launched = std::fs::read_to_string(runner.state_dir().join("launch-record.json"))
-        .unwrap_or_else(|e| panic!("the successor launched: {e} {intent}"));
-    (intent, serde_json::from_str(&launched).unwrap())
+    let launched = launch_record(runner.state_dir());
+    (intent, launched)
 }
 
 #[test]
@@ -6802,11 +6861,7 @@ fn a_walled_bypass_controllers_watch_walk_crosses_harness_and_its_successor_runs
     runner.write_fleet(&fleet);
     let intent = watched_transfer(&runner);
     assert_eq!(intent["cause"], "walled", "{intent}");
-    let launched: Value = serde_json::from_str(
-        &std::fs::read_to_string(work.join("launch-record.json"))
-            .unwrap_or_else(|e| panic!("the walk's Codex successor launched: {e} {intent}")),
-    )
-    .unwrap();
+    let launched = launch_record(&work);
     assert_eq!(
         launched["env"]["CODEX_HOME"],
         agent_runtime::trust::home_path(Path::new(&planted(&runner, "xcodex")), &work)
@@ -7005,8 +7060,7 @@ fn an_accountless_pi_successor_runs_on_the_pi_root_its_predecessor_kept() {
     );
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     assert!(live(predecessor.pid()), "{intent}");
-    let launched: Value =
-        serde_json::from_slice(&std::fs::read(work.join("launch-record.json")).unwrap()).unwrap();
+    let launched = launch_record(&work);
     assert_eq!(
         launched["env"]["PI_CODING_AGENT_DIR"],
         root.display().to_string(),

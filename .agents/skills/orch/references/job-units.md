@@ -27,7 +27,7 @@ Every character outside `A-Za-z0-9_.-` in the name becomes `_`. Example: `orch-v
 | `MemoryMax` | The launch's `--memory-max` in MiB; none without it |
 | `IgnoreSIGPIPE` | `no`, so the job takes SIGPIPE at its default, as a process the caller starts does; a service ignores it otherwise |
 | `LimitNOFILE` | The launching process's own soft and hard open-file limits (`unlimited` as `infinity`) |
-| Environment | Every variable the launching process exports, `TMUX`, `TMUX_PANE` and a lane's account variable among them |
+| Environment | Every variable the launching process exports, `TMUX`, `TMUX_PANE` and a lane's account variable among them; the runtime's own launch leaves out a variable whose value is not UTF-8 text or holds a Unicode noncharacter |
 | `WorkingDirectory` | The launching process's own directory |
 | `Slice` | The innermost slice in the launching process's cgroup v2 path under this user's manager (`job-unit.sh`'s `job_unit_slice`): `agents.slice` for a lane the warden's launcher placed, or one the warden moved. None, so the manager's default slice, where the launching process runs outside the user manager (a login session scope) or has no cgroup v2 path (macOS). |
 | `TasksMax` | The launching process's own cgroup `pids.max`, where the unit takes a `Slice` and that file holds a number. None, so the manager's `DefaultTasksMax`, otherwise. |
