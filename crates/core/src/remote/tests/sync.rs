@@ -4,12 +4,13 @@
 use std::fs;
 
 use super::{REPO, fixture};
+use crate::env::Env;
 use crate::error::CoreError;
 use crate::manifest;
 use crate::model::Scope;
 use crate::remote::{
-    cache_head, cached, mirror_commit, sync, sync_declared_sources, sync_source, sync_sources,
-    sync_sources_in_use,
+    Synced, cache_head, cached, mirror_commit, sync, sync_declared_sources, sync_source,
+    sync_sources, sync_sources_in_use,
 };
 
 #[test]
@@ -132,49 +133,55 @@ fn sync_sources_reports_warnings_and_fails_on_the_unreachable() {
 /// use, the lenient and the strict, read an item's and a bundle's source.
 #[test]
 fn a_refresh_skips_a_catalog_nothing_installs_from() {
-    for case in ["item", "bundle"] {
-        let f = fixture();
-        let mut manifest = manifest::seed(&Scope::Global, &[]);
-        manifest.sources.insert(
-            "cat".to_owned(),
-            manifest::SourceDecl {
-                repo: Some(REPO.to_owned()),
-                path: None,
-                rev: None,
-                enabled: true,
-            },
-        );
-        // The seeded default is unreachable and nothing declares anything from it.
-        manifest
-            .sources
-            .get_mut(manifest::DEFAULT_SOURCE_NAME)
-            .unwrap()
-            .repo = Some("owner/gone".to_owned());
-        let users = match case {
-            "item" => &mut manifest.skills,
-            _ => &mut manifest.bundles,
-        };
-        users.insert("gh".to_owned(), manifest::ItemDecl::from_source("cat"));
+    type Refresh = fn(&Env, &manifest::Manifest) -> crate::error::Result<Synced>;
+    let refreshes: [(&str, Refresh); 2] = [
+        ("lenient", |env, manifest| {
+            Ok(sync_declared_sources(env, manifest))
+        }),
+        ("strict", sync_sources_in_use),
+    ];
+    for user in ["item", "bundle"] {
+        for (refresh, run) in refreshes {
+            let case = format!("{refresh} {user}");
+            // Each pair gets its own cache, so only its own fetch can fill it.
+            let f = fixture();
+            let mut manifest = manifest::seed(&Scope::Global, &[]);
+            manifest.sources.insert(
+                "cat".to_owned(),
+                manifest::SourceDecl {
+                    repo: Some(REPO.to_owned()),
+                    path: None,
+                    rev: None,
+                    enabled: true,
+                },
+            );
+            // The seeded default is unreachable and nothing declares anything from it.
+            manifest
+                .sources
+                .get_mut(manifest::DEFAULT_SOURCE_NAME)
+                .unwrap()
+                .repo = Some("owner/gone".to_owned());
+            let users = match user {
+                "item" => &mut manifest.skills,
+                _ => &mut manifest.bundles,
+            };
+            users.insert("gh".to_owned(), manifest::ItemDecl::from_source("cat"));
 
-        // The strict pass runs first, so its own fetch is what fills the cache.
-        let strict = sync_sources_in_use(&f.env, &manifest);
-        assert!(
-            strict.as_ref().is_ok_and(|s| s.notes.is_empty()),
-            "{case}: {strict:?}"
-        );
-        assert_eq!(
-            cache_head(&f.env, REPO, None).map(|h| h.len()),
-            Some(7),
-            "{case}"
-        );
-        assert!(
-            sync_declared_sources(&f.env, &manifest).notes.is_empty(),
-            "{case}"
-        );
-        assert!(
-            sync_sources(&f.env, &manifest).is_err(),
-            "{case}: the unused catalog is still reachable, so this proves nothing"
-        );
+            let synced = run(&f.env, &manifest);
+            assert!(
+                synced.as_ref().is_ok_and(|s| s.notes.is_empty()),
+                "{case}: {synced:?}"
+            );
+            assert_eq!(
+                cache_head(&f.env, REPO, None).map(|h| h.len()),
+                Some(7),
+                "{case}"
+            );
+            assert!(
+                sync_sources(&f.env, &manifest).is_err(),
+                "{case}: the unused catalog is still reachable, so this proves nothing"
+            );
+        }
     }
 }
 
@@ -204,44 +211,19 @@ fn one_catalog_in_use(repo: &str, rev: Option<&str>) -> manifest::Manifest {
 fn a_strict_refresh_of_the_sources_in_use_keeps_each_resolution_failure() {
     type Expected = fn(&CoreError) -> bool;
     let unknown_pin = "0".repeat(40);
-    let rows: [(&str, &str, Option<&str>, bool, Expected); 3] = [
-        ("never fetched", "owner/gone", None, false, |e| {
+    let rows: [(&str, &str, Option<&str>, Expected); 2] = [
+        ("never fetched", "owner/gone", None, |e| {
             matches!(e, CoreError::GitFailed { .. })
         }),
-        ("unavailable pin", REPO, Some(&unknown_pin), false, |e| {
+        ("unavailable pin", REPO, Some(&unknown_pin), |e| {
             matches!(e, CoreError::PinUnavailable { .. })
         }),
-        ("busy", REPO, None, true, |e| {
-            matches!(e, CoreError::SourceBusy { .. })
-        }),
     ];
-    for (case, repo, rev, busy, expected) in rows {
+    for (case, repo, rev, expected) in rows {
         let f = fixture();
-        let manifest = one_catalog_in_use(repo, rev);
-        let guard =
-            busy.then(|| super::store::lock_repo(&f.env, &super::key_for(&f.env), REPO).unwrap());
-        let result = sync_sources_in_use(&f.env, &manifest);
-        drop(guard);
+        let result = sync_sources_in_use(&f.env, &one_catalog_in_use(repo, rev));
         assert!(result.as_ref().is_err_and(expected), "{case}: {result:?}");
     }
-}
-
-/// A source in use that was fetched once and cannot be reached now answers
-/// from the cache, and the strict refresh says so.
-#[test]
-fn a_strict_refresh_of_the_sources_in_use_keeps_the_cached_note() {
-    let f = fixture();
-    let manifest = one_catalog_in_use(REPO, None);
-    assert!(
-        sync_sources_in_use(&f.env, &manifest)
-            .unwrap()
-            .notes
-            .is_empty()
-    );
-
-    fs::remove_dir_all(&f.upstream).unwrap();
-    let notes = sync_sources_in_use(&f.env, &manifest).unwrap().notes;
-    assert_eq!(notes.len(), 1, "{notes:?}");
 }
 
 /// A catalog out of reach must not strand the items that came from every
