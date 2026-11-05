@@ -2597,7 +2597,6 @@ fn install_scripts(runner: &support::Runner) {
     }
 }
 
-/// The orch package this test tree is under.
 fn orch_package() -> PathBuf {
     support::fixtures()
         .parent()
@@ -2735,4 +2734,184 @@ fn lane_status_carries_the_lane_long_counts_read_from_the_items_state() {
         assert_eq!(answer["result"][key], "unread", "{key}: {answer}");
     }
     assert_eq!(answer["result"]["stage"], "none", "{answer}");
+}
+
+/// Defect: a provider that answers `running` of a `pane=local` kind, the
+/// static ssh provider among them, lost to the local transport pane, whose
+/// own foreground is a shell: `lane status` read the harness it had just
+/// confirmed as `exited`. The provider's answer is the process proof for
+/// both pane kinds and the local pane is judged with it: a shell drawing
+/// Codex's idle screen reads `idle`, with one status call and no capture; a
+/// provider line naming no `pane` is the same kind.
+#[test]
+fn lane_status_keeps_a_providers_running_answer_over_a_local_transport_shell() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = support::Server::start(dir.path(), "fleet");
+    let runner = support::Runner::new(&server, "stub-record");
+    runner.init_fleet();
+    install_scripts(&runner);
+    let pane = server.open_window(
+        "gh-2",
+        dir.path(),
+        "printf '%s\\n' '› complete' '› Type a prompt'; exec bash --norc --noprofile",
+    );
+    let provider = orch_package()
+        .join("tests")
+        .join("fixtures")
+        .join("lane-host");
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([{
+        "item": "issue-2", "window": "fleet:gh-2", "harness": "codex",
+        "host": provider, "status": "running", "mail_root": "/remote/issue-2",
+        "launch": {"server": server.pid, "pane": pane}
+    }]);
+    runner.write_fleet(&fleet);
+    let log = dir.path().join("host.log");
+    let explicit = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\tpane=local";
+    let absent = explicit.trim_end_matches("\tpane=local");
+    for caps in [explicit, absent] {
+        let _ = std::fs::remove_file(&log);
+        let env = [
+            ("LANE_HOST_STUB_CAPABILITIES", caps),
+            ("LANE_HOST_STUB_HARNESS_STATE", "running"),
+            ("LANE_HOST_STUB_LOG", log.to_str().unwrap()),
+        ];
+        let out = runner.run_env(&["lane", "status", "--item", "issue-2"], &env);
+        let answer = reply(&out);
+        assert_eq!(out.status.code(), Some(0), "{answer}");
+        assert_eq!(answer["result"]["state"], "idle", "{caps}: {answer}");
+        let calls = std::fs::read_to_string(&log).unwrap_or_default();
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|l| l.starts_with("status --item issue-2 --harness codex"))
+                .count(),
+            1,
+            "{calls}"
+        );
+        assert!(!calls.contains("capture"), "{calls}");
+    }
+}
+
+/// Defect: the counts read `<worktree>/tmp` whatever state directory the
+/// lane's checkout names, so a lane on a configured directory read a stale
+/// or absent state as counts and `unread`. The counts read the state where
+/// the checkout's own files put it: a local repository whose settings file
+/// names `records`, with a decoy under `tmp`; a checkout whose private env
+/// file outranks its settings file; a hosted checkout whose settings file
+/// comes through the provider's `cat`, the state under the clone its `.git`
+/// names where its `tmp` holds none.
+#[test]
+fn lane_status_reads_the_counts_under_the_state_directory_the_lanes_checkout_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = support::Server::start(dir.path(), "fleet");
+    let runner = support::Runner::new(&server, "stub-record");
+    runner.init_fleet();
+    install_scripts(&runner);
+    let pane = server.open_window("gh-2", dir.path(), "bash --norc --noprofile");
+    let counts = r#"{"first_panel":{},"rereview_cycles":1,"pr_comment_review":{"iterations":3,"patched_causes":[{"cause":"a","commit":"aaa111"},{"cause":"a","commit":"bbb222"}]},"stages":[{"kind":"fix"},{"kind":"fix"},{"kind":"fix"}],"restacks":4}"#;
+    let decoy = r#"{"stages":[{"kind":"fix"}],"restacks":1}"#;
+    let settings = "[env]\nORCH_STATE_DIR = \"records\"\n";
+    let plant = |root: &Path, files: &[(&str, &str)]| {
+        for (name, text) in files {
+            let path = root.join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+    };
+    let local = dir.path().join("local");
+    std::fs::create_dir_all(&local).unwrap();
+    let init = support::program("git")
+        .args(["init", "-q", "-b", "main"])
+        .arg(&local)
+        .output()
+        .unwrap();
+    assert!(init.status.success(), "{}", support::stderr(&init));
+    plant(
+        &local,
+        &[
+            ("kendex.settings.toml", settings),
+            ("records/workflow-state-KEN-2.json", counts),
+            ("tmp/workflow-state-KEN-2.json", decoy),
+            ("tmp/lane-status-KEN-2.md", "Step: review\n"),
+        ],
+    );
+    let private = dir.path().join("private");
+    plant(
+        &private,
+        &[
+            ("kendex.settings.toml", settings),
+            (".env.local", "export ORCH_STATE_DIR=kept\n"),
+            ("kept/workflow-state-KEN-3.json", counts),
+            ("records/workflow-state-KEN-3.json", decoy),
+        ],
+    );
+    let disk = dir.path().join("disk");
+    plant(
+        &disk.join("remote").join("KEN-4"),
+        &[
+            (".git/HEAD", "ref: refs/heads/main\n"),
+            ("kendex.settings.toml", settings),
+            ("records/workflow-state-KEN-4.json", counts),
+            ("tmp/lane-status-KEN-4.md", "Step: review\n"),
+            (
+                "tmp/validation-runs",
+                "dev-validate-runs-v1\ndev-validate-a\ndev-validate-b\ndev-validate-c\ndev-validate-d\n",
+            ),
+        ],
+    );
+    let provider = orch_package()
+        .join("tests")
+        .join("fixtures")
+        .join("lane-host");
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([
+        {"item": "KEN-2", "window": "gh-2", "harness": "claude", "status": "running",
+         "mail_root": local, "launch": {"pane": pane, "server": server.pid}},
+        {"item": "KEN-3", "window": "gh-3", "harness": "claude", "status": "running",
+         "mail_root": private, "launch": {"pane": pane, "server": server.pid}},
+        {"item": "KEN-4", "window": "fleet:gh-4", "harness": "codex", "host": provider,
+         "status": "running", "mail_root": "/remote/KEN-4"},
+    ]);
+    runner.write_fleet(&fleet);
+    let log = dir.path().join("host.log");
+    let caps = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane";
+    let status = |item: &str| {
+        let env = [
+            ("LANE_HOST_STUB_CAPABILITIES", caps),
+            ("LANE_HOST_STUB_HARNESS_STATE", "exited"),
+            ("LANE_HOST_STUB_DIR", disk.to_str().unwrap()),
+            ("LANE_HOST_STUB_LOG", log.to_str().unwrap()),
+        ];
+        reply(&runner.run_env(&["lane", "status", "--item", item], &env))
+    };
+    for (item, runs) in [("KEN-2", "unread"), ("KEN-3", "unread"), ("KEN-4", "4")] {
+        let answer = status(item);
+        for (key, want) in [
+            ("review_rounds", "5"),
+            ("fix_receipts", "3"),
+            ("validation_runs", runs),
+            ("restacks", "4"),
+            ("repeated_class_rounds", "1"),
+        ] {
+            assert_eq!(answer["result"][key], want, "{item} {key}: {answer}");
+        }
+        assert_eq!(
+            answer["result"]["counts_cause"],
+            Value::Null,
+            "{item}: {answer}"
+        );
+    }
+    let calls = std::fs::read_to_string(&log).unwrap_or_default();
+    for path in [
+        "/remote/KEN-4/tmp/workflow-state-KEN-4.json",
+        "/remote/KEN-4/.git/HEAD",
+        "/remote/KEN-4/kendex.settings.toml",
+        "/remote/KEN-4/records/workflow-state-KEN-4.json",
+    ] {
+        assert!(
+            calls.contains(&format!("cat --item KEN-4 {path}")),
+            "{path}: {calls}"
+        );
+    }
 }

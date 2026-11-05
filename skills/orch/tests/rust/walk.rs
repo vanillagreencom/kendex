@@ -37,6 +37,107 @@ fn stamp(at: u64) -> String {
 
 /// A cloud-session host's line and a cloud-task host's.
 const CLOUD_LINE: &str = "kind=claude-cloud\tlaunch=cloud-session\tchannel=session\tfiles=none\tstatus=none\tstop=none\tpool=cloud-credit\n";
+
+/// The pick replies `tests/overseer-walk.sh` plants for the walk it runs,
+/// one file per (harness, trigger, excluded account) its stand-in serves,
+/// keyed as the stand-in keys them: `tests/fixtures/accounts-pick`.
+fn planted_pick_replies() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("tests/fixtures/accounts-pick")
+}
+
+/// The walk suite's world as the verb reads it: the overseer's own Claude
+/// account at 57 percent of its session window (the headroom trigger is
+/// 50), a second Claude account whose usage cannot be read, and three
+/// Codex accounts at 22, 20 and 18 percent of their primary window, every
+/// reset far off, no burn.
+fn walk_suite_world() -> World {
+    let mut world = World::new(&[("ORCH_OVERSEER_HEADROOM_PCT", "50")]);
+    let far = "2099-08-01T06:00:00Z";
+    let codex = |alias: &str, used: u64| {
+        json!({"alias": alias, "harness": "codex", "config_dir": format!("/home/me/.{alias}"),
+               "measured_through": "local", "status": "ok", "session_5h_pct": used,
+               "resets": {"session": "2099-01-01T00:00:00Z", "weekly": null, "model": null, "monthly": null},
+               "usage_age_s": 0})
+    };
+    world.plant_listing(&[
+        json!({"alias": "claude", "harness": "claude", "config_dir": "/home/me/.claude",
+               "measured_through": "local", "status": "ok", "plan": "max",
+               "session_5h_pct": 57, "weekly_pct": 30,
+               "model_buckets": [{"label": "Opus", "pct": 5, "resets_at": far}],
+               "resets": {"session": "2099-01-01T06:00:00Z", "weekly": far, "model": far, "monthly": null},
+               "usage_age_s": 0}),
+        json!({"alias": "unreadclaude", "harness": "claude", "config_dir": "/home/me/.unreadclaude",
+               "measured_through": "local", "status": "unreachable", "plan": "max", "usage_age_s": 0}),
+        codex("codex", 22),
+        codex("1codex", 20),
+        codex("2codex", 18),
+    ]);
+    world.write_fleet(Some(&world.dir("claude")));
+    world
+}
+
+/// `reply` with its record's `selection_score` at four decimals: the score
+/// carries a fraction derived from the clock, which no caller reads.
+fn scored(mut reply: Value) -> Value {
+    if let Some(score) = reply["result"]["record"]["selection_score"].as_f64() {
+        reply["result"]["record"]["selection_score"] = json!((score * 10_000.0).round() / 10_000.0);
+    }
+    reply
+}
+
+/// A planted pick reply drifting from the verb's: the walk suite reads its
+/// stand-in's replies as the verb's own, so each file it serves is the
+/// reply the real `accounts pick` prints over the suite's world, the home
+/// as `@H@`; a difference names the file to re-capture from this row's
+/// output.
+#[test]
+fn the_walk_suites_planted_pick_replies_are_the_verbs_own_over_its_world() {
+    let world = walk_suite_world();
+    let home = world.path().join("home").display().to_string();
+    let mut drifted = Vec::new();
+    for (harness, trigger, excluded) in [
+        ("claude", "50", "claude"),
+        ("codex", "50", "claude"),
+        ("claude", "90", "claude"),
+        ("codex", "90", "claude"),
+        ("codex", "50", "2codex"),
+    ] {
+        let mut command = isolated();
+        command
+            .current_dir(world.path())
+            .env("PATH", tool_path(&[&world.bin()]))
+            .args(["accounts", "pick", "--fleet", "--harness", harness])
+            .args([
+                "--min-headroom-pct",
+                trigger,
+                "--for-overseer",
+                "--binding-floor",
+            ])
+            .args(["--exclude-lane", &world.dir(excluded)]);
+        for (key, value) in &world.env {
+            command.env(key, value);
+        }
+        let out = command.output().unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let verb = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        let key = format!("{harness}-{trigger}-{excluded}");
+        let planted = std::fs::read_to_string(planted_pick_replies().join(format!("{key}.json")))
+            .unwrap_or_default()
+            .trim()
+            .replace("@H@", &home);
+        let actual = scored(serde_json::from_str(&verb).unwrap());
+        let expected = scored(serde_json::from_str(&planted).unwrap_or(Value::Null));
+        if actual != expected {
+            drifted.push(format!(
+                "{key}: the planted reply is not the verb's\nverb={verb}\nplanted={planted}"
+            ));
+        }
+    }
+    assert!(drifted.is_empty(), "{}", drifted.join("\n"));
+}
 const TASK_LINE: &str = "kind=claude-cloud\tlaunch=cloud-task\tchannel=session\tfiles=none\tstatus=task\tstop=none\tpool=cloud-credit\n";
 
 /// One world: the accounts planted under `home` as the listing reads them

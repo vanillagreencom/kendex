@@ -171,7 +171,7 @@ pub struct RecordVerification {
     pub verdict: String,
     /// What the reader read: for `none`, the affirmative absence evidence.
     pub reason: String,
-    /// The reader, such as `ci-wait --required-only`.
+    /// The reader, such as `verify-pr`.
     pub source: String,
 }
 

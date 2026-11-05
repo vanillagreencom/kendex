@@ -28,9 +28,9 @@ use super::{
     Run, Spec, Target, build_launch, check_directory, check_program, fleet_tmux_session,
     lane_for_intent, pane_harness, pending_observation, read_brief, refused, up,
 };
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::marker;
-use crate::ops::{CLOUD_KIND, LaunchLane, Relaunch};
+use crate::ops::{CLOUD_KIND, LaunchLane, Relaunch, accounts};
 use crate::settings::Settings;
 use crate::state::{self, Intent, Lane, LaunchIdentity, OpenedPane, Phase};
 use crate::watch::hosted::{self, Launch, PaneKind};
@@ -40,6 +40,15 @@ mod gate;
 /// The words that close a cloud session's description, after the brief:
 /// the branch it cloned and how it publishes.
 const CLOUD_SESSION_TEXT: &str = include_str!("cloud-session.txt");
+/// The POSIX shell step a hosted Pi lane on the Copilot pool runs before
+/// its harness, inside the provider's login shell: it copies the
+/// github-copilot key variables its Pi `models.json` names and the host's
+/// egress proxy settings into the tmux session holding its pane, which a
+/// pane agent `tmux split-window` starts reads its environment from. The
+/// server was started outside the login profile and holds neither, so
+/// without the step every pane agent stops on "No API key found for
+/// github-copilot" or reaches GitHub unproxied.
+const PI_SESSION_ENV_STEP: &str = include_str!("pi-session-env.txt");
 /// The bound on the Claude CLI creating a cloud session.
 const CLOUD_BOUND: Duration = Duration::from_secs(600);
 /// The bound on the worktree package and git during a cloud launch.
@@ -315,6 +324,7 @@ fn prepare_launch(
             unreachable!("a refuse route fails before prepare_launch")
         }
     };
+    let permission = r.permission_words();
     let (mut intent, _) = build_launch(
         settings,
         &Spec {
@@ -332,7 +342,7 @@ fn prepare_launch(
                 Route::Fresh { .. } => floor.session_id(),
                 Route::Resume { .. } | Route::Refuse { .. } => None,
             },
-            extra_args: &[],
+            extra_args: &permission,
         },
     )?;
     lane_words(&mut intent, &cwd);
@@ -698,7 +708,7 @@ pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Resul
     let surface = match surface_of(r.host.as_deref()) {
         Surface::Local(()) => match local_fleet(run, &operation, r) {
             Ok(fleet) => Surface::Local(fleet),
-            Err(e) => return Ok(operation.settle(Word::Failed, json!({"cause": e.key()}))),
+            Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&e))),
         },
         Surface::Cloud => Surface::Cloud,
         Surface::Hosted(provider) => Surface::Hosted(provider),
@@ -760,7 +770,9 @@ fn open_and_confirm(
     };
     let opening = match operation.opening(server, floor, None, home, home_implicit) {
         Ok(opening) => opening,
-        Err(e) => return Ok(operation.settle(Word::Failed, json!({"cause": e.key()}))),
+        Err(e) => {
+            return Ok(operation.settle(Word::Failed, refusal_observation(&Error::from(e))));
+        }
     };
     operation.record_phase(Phase::Opening {
         opening: opening.clone(),
@@ -771,7 +783,7 @@ fn open_and_confirm(
         // receipt or window was recorded, so nothing stands and the launch
         // fails with its cause.
         Err(OpenRefusal::Refused(e)) => {
-            return Ok(operation.settle(Word::Failed, json!({"cause": e.key()})));
+            return Ok(operation.settle(Word::Failed, refusal_observation(&Error::from(e))));
         }
         // The launcher was asked and did not answer: a window may stand
         // that nothing registers, an obligation the reconcile reads; the
@@ -877,7 +889,7 @@ fn local_launch(
         Route::Fresh { .. } | Route::Refuse { .. } => None,
     };
     if let Err(e) = marker::write(&cwd, &r.item, r.refresh, resumed) {
-        return Ok(operation.settle(Word::Failed, json!({"cause": e.key()})));
+        return Ok(operation.settle(Word::Failed, refusal_observation(&e)));
     }
     let target = prep.target.clone();
     let mut outcome = open_and_confirm(
@@ -1110,7 +1122,9 @@ fn hosted_marker(
 /// harness line the builder spells for the worktree on the host, quoted as
 /// one word. The brief travels inline, since the file is on this machine;
 /// the harness is the host's own program by name; no account variable
-/// reaches the host, whose prefix carries the credential it placed.
+/// reaches the host, whose prefix carries the credential it placed. A Pi
+/// lane on the Copilot pool runs the session-environment step first, in
+/// the same login shell.
 fn hosted_command(
     settings: &Settings,
     r: &LaunchLane,
@@ -1119,6 +1133,7 @@ fn hosted_command(
     brief: Option<&str>,
 ) -> Result<LaunchCommand> {
     let remote_cwd = PathBuf::from(&created.path);
+    let permission = r.permission_words();
     let (mut intent, _) = build_launch(
         settings,
         &Spec {
@@ -1133,7 +1148,7 @@ fn hosted_command(
             question_tool: QuestionTool::Off,
             compaction: lane_compaction(harness),
             session_id: None,
-            extra_args: &[],
+            extra_args: &permission,
         },
     )?;
     intent.program = None;
@@ -1144,7 +1159,13 @@ fn hosted_command(
         remote.brief_arg = None;
         remote.brief_path = None;
     }
-    let line = format!("{} {}", created.prefix, shell_quote(&remote.shell_line()));
+    let mut shell_line = remote.shell_line();
+    if harness == Harness::Pi
+        && accounts::pick_pool("pi", r.model.as_deref().unwrap_or("")) == "copilot"
+    {
+        shell_line = format!("{} && {shell_line}", PI_SESSION_ENV_STEP.trim_end());
+    }
+    let line = format!("{} {}", created.prefix, shell_quote(&shell_line));
     // The client by the path this process finds it at: the pane's shell
     // runs it, and its search path is the fleet server's, not this one's.
     let program = on_path("ssh")
@@ -1976,6 +1997,7 @@ mod tests {
             item: "KEN-7".to_owned(),
             harness: "claude".to_owned(),
             mail_root: mail_root.display().to_string(),
+            permission: None,
             tracker: None,
             repo: None,
             account: Some(account.to_owned()),

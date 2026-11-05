@@ -471,12 +471,12 @@ for input in skills/orch/scripts/open-terminal skills/orch/scripts/lib/lane-laun
 done
 for input in hooks/tests/lane-mail-check-agent.test.sh \
   skills/orch/tests/lane-launch-trust.sh skills/orch/tests/lane_context_adapters.sh \
-  skills/orch/tests/open-terminal-harness-gate.sh skills/orch/tests/open-terminal-lane-hosted-codex.sh \
-  skills/orch/tests/open-terminal-record.sh; do
+  skills/orch/tests/open-terminal-wake.sh skills/orch/tests/lane_model_recovery.sh \
+  skills/orch/tests/lane-claims.sh; do
   printf '\n# launch replay\n' >> "$actual/$input"
 done
 direct_launch_selection() { # SELECTED PATHS
-  grep -Fxq 'skills/orch/tests/open-terminal-cap.sh' <<<"$1" &&
+  grep -Fxq 'skills/orch/tests/open-terminal-wake.sh' <<<"$1" &&
     grep -Fxq 'skills/orch/tests/lane-launch-question-tool.sh' <<<"$1" &&
     ! grep -Fxq 'skills/orch/tests/oversee_cycle.sh' <<<"$1"
 }

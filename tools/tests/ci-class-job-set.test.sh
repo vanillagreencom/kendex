@@ -208,7 +208,7 @@ while IFS='|' read -r path shard expected; do
   done
 done <<'ROWS'
 skills/orch/tests/lanes-pick-spread.sh|orch-state|none
-skills/orch/tests/open-terminal-copilot-context.sh|orch-terminal|checkout
+skills/orch/tests/open-terminal-wake.sh|orch-terminal|checkout
 skills/orch/tests/tier-model-fixture.sh|orch-rest|checkout
 skills/orch/tests/dev_return.sh|orch-dev|none
 skills/github/tests/pr-view.test.sh||checkout

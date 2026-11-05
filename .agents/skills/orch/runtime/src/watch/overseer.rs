@@ -2540,6 +2540,7 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
                 roster: &roster,
                 repos: &ctx.settings.reads.connected_repos,
             };
+            let copilot_home = super::lanes::copilot_home(&ctx.settings.accounts);
             let lanes = super::lanes::observe(&super::lanes::Pass {
                 fleet: &fleet,
                 readers: &readers,
@@ -2554,6 +2555,7 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
                 route: &route,
                 wall_pauses: &wall_pauses,
                 hosted: &hosted_reads,
+                copilot_home: copilot_home.as_deref(),
             });
             absorb(&mut produced, lanes);
         }

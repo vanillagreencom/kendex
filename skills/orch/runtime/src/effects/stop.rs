@@ -5,7 +5,7 @@
 //! disposition stops only the attempt's own identity and only idle, the
 //! worktree's validation runs are ended before the window closes, and the
 //! worktree itself is released after it, or kept with its reason on the lane
-//! record (decision 128 (9)). Every
+//! record. Every
 //! handle the lane records is an obligation of the close intent's set, read
 //! and discharged through the operation handle, which acts only on a standing
 //! token. The lane's launch record is read once, at the open's bootstrap; the
@@ -26,7 +26,7 @@ use crate::error::Result;
 use crate::state::{CloseGround, Intent, Lane};
 
 /// `stale` is what the reconcile of the same request already read stale,
-/// counted no second time here (decision 124e (22)).
+/// counted no second time here.
 pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Result<EffectOutcome> {
     let (lane, item) = lane_for_intent(run.path, intent_id)?;
     let intent = read_intent(run.path, intent_id)?;
@@ -52,15 +52,14 @@ pub(super) fn stop_effect(run: &Run, intent_id: &str, stale: &[Identity]) -> Res
     }
     // The worktree's validation runs are owed from the close's start,
     // acquired before the first signal; so is the worktree itself, except
-    // under a `no-landing` disposition, which keeps the attempt's work
-    // (decision 98).
+    // under a `no-landing` disposition, which keeps the attempt's work.
     operation.owe_validation()?;
     if !close.no_landing() {
         operation.owe_worktree(&lane)?;
     }
     // The harness is the set's, by role, never the lane's launch record.
     let Some(identity) = operation.harness_identity() else {
-        // No recorded process identity: a legacy record may name a pid with
+        // No recorded process identity: an earlier launcher's record may name a pid with
         // no start, read by that pid and discharged gone where nothing holds
         // it; then the pane the record names is the one handle left, and what
         // it holds is stopped by the identity read there.
@@ -156,6 +155,18 @@ impl Close<'_> {
         matches!(self.ground, Some(CloseGround::NoLanding { .. }))
     }
 
+    /// Whether the disposition stops the harness mid-turn, asking no idle
+    /// proof of it.
+    fn interrupts(&self) -> bool {
+        matches!(
+            self.ground,
+            Some(CloseGround::NoLanding {
+                interrupt: true,
+                ..
+            })
+        )
+    }
+
     fn observed(&self, observation: Value) -> Value {
         let mut observation = observation;
         observation["item"] = json!(self.item);
@@ -191,7 +202,7 @@ impl Close<'_> {
         operation: &mut Operation,
         identity: &Identity,
     ) -> Result<std::result::Result<(), (&'static str, Value)>> {
-        if self.no_landing() {
+        if self.no_landing() && !self.interrupts() {
             let Some(target) = &self.target else {
                 return Ok(Err(("harness-unknown", json!({}))));
             };
@@ -431,14 +442,14 @@ fn with_pane(operation: &Operation, mut observation: Value) -> Value {
     observation
 }
 
-/// A moved lane (decision 124d (20)): before any signal the close refuses
+/// A moved lane: before any signal the close refuses
 /// `lane-moved` with no effect; after one it retries on the recorded set
 /// alone, every standing process stopped by its own token and the set's own
 /// pane closed by its full key, the worktree and its validation runs released
-/// to the session that now holds the lane (decision 124e (24)), then settles by
+/// to the session that now holds the lane, then settles by
 /// that set. The processes a stop may signal below a recorded root are
 /// named by the harness kind the set recorded at its bootstrap, never by
-/// the harness the relaunched session runs (decision 124g (29)). Nothing
+/// the harness the relaunched session runs. Nothing
 /// the lane names now is read or acted on. A handle still standing holds
 /// the intent with `stop: pending`, so the repeat retries again.
 fn moved_lane(
@@ -487,7 +498,7 @@ fn reconcile_observation(item: &str, observation: Value) -> Value {
 /// repeated close closes through the pane route. A reconcile of a lane that
 /// still holds its set stops and closes nothing; one of a lane moved under
 /// the intent retries on the recorded set alone, stopping its standing
-/// processes by token and closing its own panes (decision 124d (20)).
+/// processes by token and closing its own panes.
 pub(super) fn reconcile_close(run: &Run, intent: &Intent) -> Result<EffectOutcome> {
     let (lane, item) = lane_for_intent(run.path, &intent.id)?;
     let mut operation = Operation::open(run, intent)?;

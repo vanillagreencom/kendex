@@ -647,6 +647,53 @@ pub fn lead_ids(harness: Harness, home: &Path, cwd: &Path) -> Reading<Vec<String
     Reading::Live(ids)
 }
 
+/// The lead session for `cwd` under `home` a reader with no id binds by
+/// time: with `since`, the earliest that appeared at or after it, the
+/// session the launch at `since` started (a later one in the same
+/// directory is a second session, run from the first); without, the
+/// newest. `Gone` where none qualifies; `Unreadable` where the store or a
+/// candidate could not be read, which binds nothing.
+pub fn lead_at(
+    harness: Harness,
+    home: &Path,
+    cwd: &Path,
+    since: Option<SystemTime>,
+) -> Reading<SessionRef> {
+    let found = match candidates(harness, home, cwd) {
+        Reading::Live(found) => found,
+        Reading::Gone => return Reading::Gone,
+        Reading::Unreadable { cause } => return Reading::Unreadable { cause },
+    };
+    let mut best: Option<(SystemTime, SessionRef)> = None;
+    for candidate in found {
+        if since.is_some_and(|since| candidate.modified < since) {
+            continue;
+        }
+        match identify(harness, &candidate.path, Some(cwd)) {
+            Ok(Some(lead)) => {
+                let better = match &best {
+                    None => true,
+                    Some((at, _)) if since.is_some() => candidate.modified < *at,
+                    Some((at, _)) => candidate.modified > *at,
+                };
+                if better {
+                    best = Some((candidate.modified, lead));
+                }
+            }
+            Ok(None) => {}
+            Err(_) => {
+                return Reading::Unreadable {
+                    cause: FILE_UNREADABLE.cause,
+                };
+            }
+        }
+    }
+    match best {
+        Some((_, lead)) => Reading::Live(lead),
+        None => Reading::Gone,
+    }
+}
+
 /// The lead sessions for `cwd` under `home` that appeared since a launch's
 /// window opened: modified at or after `since` and absent from the
 /// `baseline` read before the window opened. One is the launch's own; two

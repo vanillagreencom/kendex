@@ -111,6 +111,10 @@ name = "walk"
 path = "../tests/rust/walk.rs"
 
 [[test]]
+name = "open_terminal"
+path = "../tests/rust/open_terminal.rs"
+
+[[test]]
 name = "state"
 path = "../tests/rust/state.rs"
 

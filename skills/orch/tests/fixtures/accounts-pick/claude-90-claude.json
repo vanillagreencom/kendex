@@ -1,0 +1,1 @@
+{"protocol":"orch-runtime-v1","ok":true,"result":{"answer":"none","exit":3,"record":{"walled":0,"unmeasured":1,"seats":[],"qualifying_count":0,"walled_resets_at":null,"refusals":[],"exclusions":[{"config_dir":"@H@/.unreadclaude","reason":"unmeasured"}]}}}

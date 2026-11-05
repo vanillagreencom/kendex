@@ -15,7 +15,7 @@ Every place a lane runs is a host kind. `lane-host capabilities` prints the kind
 | `channel` | `mailbox`, `session`, `task` | `lane-mail send`, the watch's mail pass |
 | `files` | `local`, `verb`, `none` | `lane-mail send` hosted mailbox requirement; the watch's status-file, workflow state, run-index, `.git` and mailbox reads; `lib/lane-gitfile.sh` `lane_item_state`, which reads no state for `none`, for `oversee-cycle record` and `oversee-report` |
 | `status` | `pane`, `verb`, `task`, `none` | the watch's lane judgement |
-| `pane` | `local`, `verb` | Pane capture and input in `open-terminal`, the watch, `lane_state`, `lane-close` and `pane-write`. Optional on older provider lines; absent means `local`. The dispatcher and static SSH provider declare `local`. A provider opts in through its own line. |
+| `pane` | `local`, `verb` | Pane capture and input in the watch, `lane_state`, `lane-close` and the `pane_write` function in `scripts/lib/pane-write.sh`. Optional on older provider lines; absent means `local`. The dispatcher and static SSH provider declare `local`. A provider opts in through its own line. |
 | `stop` | `window`, `verb`, `none` | `lane-close` |
 | `relaunch` | `resume`, `fresh` | read by no caller in this build |
 | `park` | `verb`, `none` | read by no caller until the Daytona provider declares its line; `lane-close --park` keeps its `stop-sandbox --check` read |

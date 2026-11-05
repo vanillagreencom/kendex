@@ -51,10 +51,12 @@ use super::lanes::{
     watch_state_dir,
 };
 use super::tracker::{QUOTA_ROW, Quota};
+use crate::marker;
 use crate::ops::CLOUD_KIND;
 use crate::ops::accounts::Roster;
 use crate::ops::wall;
-use crate::state::{Lane, LaneStatus};
+use crate::settings;
+use crate::state::{self, Lane, LaneStatus};
 
 /// The tag the lane duty's provider calls are counted under.
 const TAG: &str = "lanes";
@@ -1626,10 +1628,10 @@ pub fn step(scripts: &Path, lane: &Lane) -> String {
     }
 }
 
-/// A hosted lane's `lane-long` counters (`lane_long_rounds`,
-/// `lib/watch-host-kinds.sh:472`; `lane_item_state`'s hosted arm): the
-/// item's workflow state and the run index under the lane's root on its
-/// host, each through `cat`; a state the lane has not written, or one that
+/// A hosted lane's `lane-long` counters: the run index and the item's
+/// workflow state under the lane's root on its host, each through `cat`; a
+/// state absent there is read where the checkout's own files put it
+/// ([`configured_state`]); a state the lane has not written, or one that
 /// could not be read, counts nothing and the read's failure is said.
 pub fn counters(scripts: &Path, lane: &Lane, out: &mut Produced) -> Counters {
     let Some(root) = root_of(lane) else {
@@ -1645,32 +1647,85 @@ pub fn counters(scripts: &Path, lane: &Lane, out: &mut Produced) -> Counters {
         Answer::Live(text) => validation_runs_of(&text),
         Answer::Gone | Answer::Unreadable { .. } => None,
     };
-    match fetch(
+    let unread = |out: &mut Produced, cause: String| {
+        fail(
+            out,
+            format!("lane-long-rounds-unread item={} cause={cause}", lane.item),
+        );
+        Counters::unread()
+    };
+    let state = match fetch(
         scripts,
         host,
         &lane.item,
         &format!("{root}/tmp/workflow-state-{}.json", lane.item),
     ) {
-        Answer::Live(text) => match serde_json::from_str::<Value>(&text) {
-            Ok(Value::Object(doc)) => counters_of(&doc, runs).unwrap_or_else(Counters::unread),
-            Ok(
-                Value::Null
-                | Value::Bool(_)
-                | Value::Number(_)
-                | Value::String(_)
-                | Value::Array(_),
-            )
-            | Err(_) => Counters::unread(),
+        Answer::Live(text) => text,
+        Answer::Unreadable { cause } => return unread(out, cause),
+        Answer::Gone => match configured_state(scripts, lane, root) {
+            Ok(Answer::Live(text)) => text,
+            Ok(Answer::Gone) => return Counters::unread(),
+            Ok(Answer::Unreadable { cause }) | Err(cause) => return unread(out, cause),
         },
-        Answer::Gone => Counters::unread(),
-        Answer::Unreadable { cause } => {
-            fail(
-                out,
-                format!("lane-long-rounds-unread item={} cause={cause}", lane.item),
-            );
-            Counters::unread()
-        }
+    };
+    match serde_json::from_str::<Value>(&state) {
+        Ok(Value::Object(doc)) => counters_of(&doc, runs).unwrap_or_else(Counters::unread),
+        Ok(
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_),
+        )
+        | Err(_) => Counters::unread(),
     }
+}
+
+/// The item's workflow state where a hosted checkout's own files put it,
+/// through the provider: under the state directory its settings files and
+/// private env file name (`settings::state_dir_named`), relative to the
+/// clone its `.git` names, as the checkout's own `workflow-state` resolves
+/// it. A `.git` the host cannot `cat` is a clone's own directory, confirmed
+/// by its `HEAD`, and the clone is the root. `Gone` is a worktree the host
+/// no longer has, or a checkout holding no state there; `Err` a file the
+/// host could not read, or one this reader cannot parse.
+fn configured_state(scripts: &Path, lane: &Lane, root: &str) -> Result<Answer<String>, String> {
+    let host = host_of(lane);
+    let clone = match fetch(scripts, host, &lane.item, &format!("{root}/.git")) {
+        Answer::Live(gitfile) => match marker::git_dirs_of(&gitfile)
+            .and_then(|(_, common)| common.parent().map(Path::to_path_buf))
+        {
+            Some(clone) => clone,
+            None => return Err(format!("gitfile-unread path={root}/.git")),
+        },
+        Answer::Gone => return Ok(Answer::Gone),
+        Answer::Unreadable { cause } => {
+            match fetch(scripts, host, &lane.item, &format!("{root}/.git/HEAD")) {
+                Answer::Live(_) => PathBuf::from(root),
+                Answer::Gone | Answer::Unreadable { .. } => return Err(cause),
+            }
+        }
+    };
+    let read = |path: &Path| -> crate::error::Result<Option<String>> {
+        let shown = path.display().to_string();
+        match fetch(scripts, host, &lane.item, &shown) {
+            Answer::Live(text) => Ok(Some(text)),
+            Answer::Gone => Ok(None),
+            Answer::Unreadable { cause } => Err(agent_runtime::Error::refused(
+                "host-file-unread",
+                &[("path", &shown), ("cause", &cause)],
+            )
+            .into()),
+        }
+    };
+    let dir = settings::state_dir_named(Path::new(root), &read).map_err(|e| e.to_string())?;
+    let dir = if dir.is_absolute() {
+        dir
+    } else {
+        clone.join(dir)
+    };
+    Ok(fetch(
+        scripts,
+        host,
+        &lane.item,
+        &state::item_path(&dir, &lane.item).display().to_string(),
+    ))
 }
 
 // --- the finished-hosted close ------------------------------------------------

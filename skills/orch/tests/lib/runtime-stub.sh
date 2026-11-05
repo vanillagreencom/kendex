@@ -87,15 +87,21 @@ EOF
 # answers with the open intents in RECORD_DIR/runtime.open-intents (`[]`
 # when absent), or exits with the status RECORD_DIR/runtime.inspect-rc
 # holds, printing one keyed line. `accounts pick`, the account judge the
-# succession walk and the mark judge ask, answers the reply planted
+# succession walk and the mark judge ask, answers the reply planted under
+# RECORD_DIR/runtime.picks for the question asked, keyed
+# `<harness>-<trigger>-<excluded account's name>` (the trigger
+# `--min-headroom-pct`'s word, the name `--exclude-lane`'s basename
+# without its dot, `none` where the question names none), else the reply
 # at RECORD_DIR/runtime.pick-lane for a named pick (`--lane`) and at
-# RECORD_DIR/runtime.pick for the chooser where a row plants one (a reply
-# the verb printed on a fixture, never one written by hand: the record's
-# spelling is what the caller's reading is proven on), else the shell
-# judge beside the stub (DIR/lanes, else the shipped `lanes`) asked the
-# same question through its `pick`, its answer wrapped as the verb's reply,
-# the exit by number and the record; `--fleet` and `--replaces` are the
-# verb's words alone and are dropped. `state get --item KEY [POINTER]` and
+# RECORD_DIR/runtime.pick for the chooser where a row plants one (each a
+# reply the verb printed on a fixture, never one written by hand: the
+# record's spelling is what the caller's reading is proven on); where none
+# is planted and RECORD_DIR/runtime.picks-only stands, the question is
+# refused `fixture-pick-unplanted`, else the shell judge beside the stub
+# (DIR/lanes, else the shipped `lanes`) is asked the same question through
+# its `pick`, its answer wrapped as the verb's reply, the exit by number and
+# the record; `--fleet` and `--replaces` are the verb's words alone and are
+# dropped. `state get --item KEY [POINTER]` and
 # `state set --item KEY POINTER VALUE` answer through the store beside the
 # stub (DIR/workflow-state, else the shipped one), the pointer's tokens
 # joined as the store's dotted field, so the store's `set` judges VALUE as
@@ -166,7 +172,27 @@ case "\${1:-} \${2:-}" in
   "accounts pick")
     planted="\$record/runtime.pick"
     case " \$* " in *" --lane "*) planted="\$record/runtime.pick-lane" ;; esac
+    harness="" trigger="" excluded=none take=""
+    for arg in "\$@"; do
+      case "\$take" in
+        harness) harness="\$arg" ;;
+        trigger) trigger="\$arg" ;;
+        excluded) excluded="\${arg##*/}"; excluded="\${excluded#.}" ;;
+      esac
+      take=""
+      case "\$arg" in
+        --harness) take=harness ;;
+        --min-headroom-pct) take=trigger ;;
+        --exclude-lane) take=excluded ;;
+      esac
+    done
+    keyed="\$record/runtime.picks/\$harness-\$trigger-\$excluded"
+    if [[ -f "\$keyed" ]]; then cat -- "\$keyed"; exit 0; fi
     if [[ -f "\$planted" ]]; then cat -- "\$planted"; exit 0; fi
+    if [[ -e "\$record/runtime.picks-only" ]]; then
+      printf 'orch-runtime: fixture-pick-unplanted key=%s\\n' "\$harness-\$trigger-\$excluded" >&2
+      exit 2
+    fi
     args=() skip=""
     for arg in "\$@"; do
       if [[ -n "\$skip" ]]; then skip=""; continue; fi

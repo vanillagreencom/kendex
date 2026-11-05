@@ -45,7 +45,7 @@ QUIET_SCRIPTS="$(mutant_scripts fixture-watch oversee-succeed)" || exit 1
 cp -p -- "$SUCCEED" "$QUIET_SCRIPTS/oversee-succeed"
 SUCCEED="$QUIET_SCRIPTS/oversee-succeed"
 fixture_watch_neighbor "$SUCCEED"
-# The runtime the succession is handed to (decision 76): a stand-in beside
+# The runtime the succession is handed to: a stand-in beside
 # the script, which records the request and answers `transfer-started`.
 # shellcheck source=lib/runtime-stub.sh
 source "$TEST_DIR/lib/runtime-stub.sh"
@@ -301,7 +301,7 @@ hp=""
 lane="\${CALLER_LANE:-CLAUDE_CONFIG_DIR=$H/.claude}"
 [ "\$lane" != none ] || lane=""
 cm="ORCH_HANDOFF_CONTEXT_PCT=\${CONTEXT_PCT:-50}"
-# Legacy percentage rows use no attached-result reserve; reserve rows name it.
+# Plain percentage rows use no attached-result reserve; reserve rows name it.
 reserve="ORCH_HANDOFF_AGENT_RESERVE_TOKENS=\${AGENT_RESERVE:-0}"
 [ "\${AGENT_RESERVE:-}" != default ] || reserve=""
 # The pause between the two reads an account settles on. A harness stub here
@@ -766,14 +766,14 @@ record_caller "$MARK" "$CALLER_PANE"
 rm -f -- "${TMP_ROOT:?}/runtime.request" "${TMP_ROOT:?}/runtime.args"
 for _ in $(seq 1 150); do ! grep -qE '^oversee-succeed: transfer-(started|refused) ' "$TMP_ROOT/in-pane.out" 2>/dev/null || break; sleep 0.2; done
 replay_runtime_request
-# The succession is handed to the runtime (decision 76) from the caller's own
+# The succession is handed to the runtime from the caller's own
 # pane: the script's last word is the started transfer, the caller's window
 # stands for the runtime's job to retire, no window of this script's opens,
 # and the line the runtime is handed is the successor's whole command.
 assert_eq "$(overseers)|$(caller_open)|$(grep '^oversee-succeed:' "$TMP_ROOT/in-pane.out" | sed 's/intent=[^ ]*/intent=ID/' | tr '\n' ';')|$(recorded claude)" \
   "0|yes|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=account-config;${UNOBSERVED_LINE}oversee-succeed: transfer-started intent=ID runner=fixture;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$CLAUDE_COMPACT;--dangerously-skip-permissions;--verbose;$BRIEF;" \
   "success in the caller's own pane: the succession handed to the runtime, the caller's window kept"
-# The runtime is also the account judge the marks and the walk ask (U8d),
+# The runtime is also the account judge the marks and the walk ask,
 # so its calls are filtered to the operations it is handed.
 assert_eq "$(runtime_calls | grep '^op ' | sed 's|--request .*|--request FILE|')" "op --fleet --request FILE" \
   "the runtime is asked for one transfer"
@@ -815,9 +815,9 @@ assert_eq "$RC|$(caller_open)|$(overseers)|$(keyed --summary context-below-mark 
   "0|yes|0|oversee-succeed: context-below-mark" \
   "control: without the walk's context arm a caller past its context mark launches no successor"
 # The successor opens on its checkout fast-forwarded to origin's head, the
-# launcher's sync run for this script as for `oversee launch`
-# (oversee_launch.sh holds its refusal table). Its control opens without it
-# and leaves the checkout behind.
+# library's sync (ol_checkout_sync) run for this script, whose refusals the
+# rows below table. Its control opens without it and leaves the checkout
+# behind.
 work_head() { git -C "$TMP_ROOT/work" rev-parse HEAD; }
 unsynced() { grep -c "^oversee-succeed: checkout-unsynced cause=$1 path=$TMP_ROOT/work fix=[^ ]" <<<"$OUT" || true; }
 CHECKOUT_OPENED="$TMP_ROOT/checkout-opened"
@@ -1113,16 +1113,16 @@ SEAT_RECORD="$("$SRC_DIR/workflow-state" --state-dir "$TMP_ROOT/work/tmp" get ov
 new_known_claude_caller 'Seat reserve fixture'
 claude_usage 60 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 # No control on `--for-overseer` here: the room a seat keeps is
-# ORCH_OVERSEER_HEADROOM_PCT, the mark judge's own trigger (KEN-4416's one
+# ORCH_OVERSEER_HEADROOM_PCT, the mark judge's own trigger (the one
 # setting), so the overseer's account under the seat's room is under its
 # trigger whichever way its seat is judged, and the mark fires rightly.
 "$SRC_DIR/workflow-state" --state-dir "$TMP_ROOT/work/tmp" set oversee overseer "$SEAT_RECORD" >/dev/null
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
-# The runtime's own record (R-U8-1d, the Anthropic lane's H1): the replies
+# The runtime's own record: the replies
 # below are the verb's real output on a fixture (`tests/rust/accounts.rs`'s
 # world, the account's path the one difference), planted through the suite's
-# stand-in in place of the legacy judge's wrap. The mark judge reads `wall`,
+# stand-in in place of a wrap of the judge. The mark judge reads `wall`,
 # `effective_headroom_pct` and `qualifying_count` by `^[0-9]{1,3}$`: an
 # integral figure the verb spelled `60.0` left the caller `unreadable`, so
 # the overseer's headroom mark and the qualifying-accounts mark never fired.
@@ -1361,8 +1361,8 @@ assert_eq "$RC|$(caller_open)|$(recorded claude)" \
   "a rate trigger moves off the caller account even when it has more headroom"
 stage_usage_pair rateslow 22 20 600
 new_caller "$UNDER_MARK"
-# The rate mark counts from the sample's instant, never from the judgement's
-# (R-U8-2 L2): a sample 180 seconds old whose rate reaches the wall 22 minutes
+# The rate mark counts from the sample's instant, never from the judgement's:
+# a sample 180 seconds old whose rate reaches the wall 22 minutes
 # after it was taken is 19 minutes from the wall now, inside a 20-minute
 # setting; read from now it would stand at 22 and fire up to the cache's serve
 # age late.
@@ -1396,17 +1396,16 @@ codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 new_caller "$UNDER_MARK"
 new_caller "$UNDER_MARK"
 # A preference entry outside harness:model:effort is refused before any pick,
-# by lib/overseer-launch.sh's parser, the one `oversee launch` reads the same
-# setting with.
+# by lib/overseer-launch.sh's parser.
 new_caller "$MARK"
 run_succeed badpreference 'claude:Opus:high' --wait-secs 5
 assert_eq "$RC|$(keyed --summary invalid-preference "$OUT")|$(overseers)" \
   "1|oversee-succeed: invalid-preference entry=claude:Opus:high|0" \
   "a preference entry outside the shape is refused before any pick, nothing opened"
 # A runtime other than tmux is refused before anything is printed, written or
-# opened, by the library rule `oversee launch` reads: this script verifies the
-# successor's account off its pane, so a provider path is never opened through
-# and recorded as tmux.
+# opened, by the library rule `oversee register` reads too: this script
+# verifies the successor's account off its pane, so a provider path is never
+# opened through and recorded as tmux.
 new_caller "$MARK"
 OVERSEER_HOST="$TMP_ROOT/other" run_succeed otherhost 'claude:fable:high' --wait-secs 5
 assert_eq "$RC|$(keyed --summary runtime-unsupported "$OUT")|$(grep -c '^oversee-succeed: successor-launch ' <<<"$OUT")|$(overseers)" \
@@ -1616,7 +1615,7 @@ new_caller "$UNDER_MARK"
 new_caller "$UNDER_MARK"
 
 # The account the printed line opens its successor on is the one the fleet
-# state records for this pane, where it records one: `oversee launch`,
+# state records for this pane, where it records one: a `start-controller`,
 # `oversee register` and a succession write it before the session's first
 # turn, and a session launched from a stored token has no lane variable for
 # the environment to answer with. A record naming another pane is another
@@ -1886,7 +1885,7 @@ for row in \
   HANDOFF_FIXTURE=off SUCCEED_BIN="$row_bin" run_succeed "handoff-$row_name" ''
   if [[ "$row_rc" == 0 ]]; then
     # A current handoff admits the succession, which is the runtime's
-    # request (decision 76): the caller, its window and the generation
+    # request: the caller, its window and the generation
     # stand until the runtime's job publishes the successor.
     assert_eq "$RC|$(caller_open)|$(overseers)|$(orec generation)|$(req cause)" '0|yes|0|1|live' \
       "handoff $row_name: hand one succession to the runtime at the current generation"
@@ -2018,13 +2017,13 @@ for row in \
     missing) rm -- "$HANDOFF_BODY" ;;
     header) printf '## State\nStart here: supplied metadata\n' > "$HANDOFF_BODY" ;;
     progress-*)
-      # The gen271 reading on KEN-4040 supplies the observed bad records.
+      # Bad records a fleet's handoff was observed to carry.
       # The second bad record also proves that the first matching line wins.
       printf '## State\nComplete new snapshot\n\n## Progress log\n%s\nFiled: KEN-4079\n' "$row_text" > "$HANDOFF_BODY" ;;
     clock)
-      # KEN-4040 comment 3171efdf supplies gen271's excluded records only.
-      # This derived clean body uses constructed merge/launch input and the
-      # KEN-4276 requirement's explicit (Verifying) state line.
+      # The excluded records alone, as a fleet's handoff carried them.
+      # This derived clean body uses constructed merge/launch input and an
+      # explicit (Verifying) state line.
       # Matching labels outside Progress log do not belong to this check.
       printf '%s\n' '## State' 'Rulings: see fleet log' 'Filed: see fleet log' \
         'Verifying reads: see tracker items' '' '## Progress log' \
@@ -2551,7 +2550,7 @@ assert_eq "$RC|$(caller_open)|$(keyed --summary successor-launch "$OUT")|$(recor
   "a lane whose launcher is on PATH is launched through it by absolute path, with no environment prefix"
 
 # A successor parked at a folder-trust dialog, and what its pane shows, are the
-# runtime's job's to judge (decision 60: a runner not at its composer within the
+# runtime's job's to judge (a runner not at its composer within the
 # bound is abandoned, `successor-not-ready`); the stand-in here opens no pane,
 # so the two dialog-spelling rows are the runtime's
 # `a_succession_whose_preconditions_fail_never_retires` now.
@@ -2614,15 +2613,11 @@ assert_eq "$RC|$(caller_open)|$(recorded claude)" \
 
 # ── The account the pane is really on ───────────────────────────────────────
 #
-# The legacy read the successor's account back off its pane before closing
-# the caller (`successor-wrong-lane`, `successor-lane-unobserved`), bounded the
-# read and the running-turn wait under one `--wait-secs`, and judged a
-# handover that landed with the budget spent. The runtime's succession runs
-# in its detached job and performs no account verification of the successor
-# (R-U4c answer A: dropped, no runtime owner), and its verify bound is its
-# own (`ORCH_TMUX_VERIFY_SECS`); the stand-in here opens no pane. Those rows,
-# and the wait-bound rows on the virtual clock, end here with no counterpart:
-# the account the successor spends is the account its typed launch routes
+# The runtime's succession runs in its detached job and performs no account
+# verification of the successor, and its verify bound is its own
+# (`ORCH_TMUX_VERIFY_SECS`); the stand-in here opens no pane. So no row here
+# reads the successor's account off its pane or waits on `--wait-secs`: the
+# account the successor spends is the account its typed launch routes
 # (the runtime's `the_successor_is_launched_from_its_typed_fields_with_the_account_routed`).
 rm -f -- "${TMP_ROOT:?}/selects" "${TMP_ROOT:?}/selects-late" "${TMP_ROOT:?}/selects-nothing" "${TMP_ROOT:?}/idle"
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# scope_current_run, the one run-scoping for orch ci-wait and the GitHub
+# scope_current_run, the one run-scoping for the GitHub
 # commands: which checks of a head survive the scoping (the current run of
 # each workflow ranked by when it last executed, tiebroken by run id, falling
 # back to run id alone while a run is pending or undated; run-less checks

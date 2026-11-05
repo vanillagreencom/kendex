@@ -185,6 +185,35 @@ impl Fleet {
         .unwrap();
     }
 
+    /// The fake tracker's answer for `item` under the container `parent`
+    /// (none for an empty word) with the launch blockers the tracker
+    /// judges open.
+    fn item_under(&self, item: &str, parent: &str, blockers: &[&str]) {
+        let body = json!({
+            "id": item,
+            "description": "Some text.\n",
+            "labels": [],
+            "children": [],
+            "in_pr_bundle": false,
+            "parent_id": parent,
+            "blocked_by_launch": blockers,
+        });
+        std::fs::write(
+            self.items_dir().join(format!("{item}.json")),
+            serde_json::to_vec(&body).unwrap(),
+        )
+        .unwrap();
+    }
+
+    /// Every tracker read made so far, one argument line each.
+    fn linear_log(&self) -> Vec<String> {
+        std::fs::read_to_string(self.dir.path().join("linear.log"))
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
     /// Plant the `gh api` fixture's map and put that fake `gh` on `PATH`.
     fn gh_api(&mut self, map: &Value) {
         std::fs::write(
@@ -492,6 +521,68 @@ fn a_launch_over_a_done_record_is_judged_as_a_first_launch() {
     assert_eq!(holders, ["KEN-H", "#7"], "{lane}");
     assert_eq!(fleet.lane_count(), 2, "the record's slot is taken");
     assert_eq!(fleet.lane("KEN-H"), before["lanes"][0]);
+}
+
+/// Defect: a fresh lane launched under a container ancestor holding an
+/// open launch blocker, which the tracker's safe read names on the
+/// ancestor and the launch never read. Through the real `launch-lane` and
+/// the fake tracker: an item whose grandparent holds a blocker is refused
+/// `launch-blocked` naming it after reading the three, nothing written; the
+/// item's own blocker refuses after one read; an ancestor the tracker
+/// cannot answer for refuses `launch-blocked-unread` naming it; a chain
+/// with no blocker admits; and a relaunch over a recorded lane reads no
+/// item at all.
+#[test]
+fn a_launch_under_a_container_ancestor_holding_a_blocker_is_refused_before_any_record() {
+    let fleet = Fleet::new();
+    fleet.init_fleet();
+    let reads_since = |after: usize| fleet.linear_log()[after..].to_vec();
+    let read = |item: &str| format!("issues get {item} --with-bundle --format=safe");
+    fleet.item_under("CC-1", "CC-2", &[]);
+    fleet.item_under("CC-2", "CC-3", &["CC-9"]);
+    fleet.item_under("CC-3", "", &[]);
+    let before = fleet.fleet();
+    let (key, fields) = refusal(&fleet.op(&launch("CC-1", fleet.state_dir().as_path())));
+    assert_eq!(key, "launch-blocked");
+    assert_eq!(fields, pairs(&[("item", "CC-1"), ("blockers", "CC-9")]));
+    assert_eq!(fleet.fleet(), before, "nothing written, no intent");
+    assert_eq!(
+        reads_since(0),
+        vec![read("CC-1"), read("CC-2"), read("CC-3")],
+        "the item and its two ancestors, once each"
+    );
+    fleet.item_under("CC-4", "", &["CC-9", "CC-8"]);
+    let (key, fields) = refusal(&fleet.op(&launch("CC-4", fleet.state_dir().as_path())));
+    assert_eq!(key, "launch-blocked");
+    assert_eq!(
+        fields,
+        pairs(&[("item", "CC-4"), ("blockers", "CC-8,CC-9")])
+    );
+    assert_eq!(reads_since(3), vec![read("CC-4")]);
+    fleet.item_under("CC-5", "CC-6", &[]);
+    let (key, fields) = refusal(&fleet.op(&launch("CC-5", fleet.state_dir().as_path())));
+    assert_eq!(key, "launch-blocked-unread");
+    assert_eq!(fields, pairs(&[("item", "CC-5"), ("read", "CC-6")]));
+    assert_eq!(fleet.fleet(), before, "an unread chain writes nothing");
+    fleet.item_under("CC-7", "CC-3", &[]);
+    let admitted = reply(&fleet.op(&launch("CC-7", fleet.state_dir().as_path())));
+    assert_eq!(admitted["ok"], true, "{admitted}");
+    assert_eq!(reads_since(6), vec![read("CC-7"), read("CC-3")]);
+    assert_eq!(
+        fleet.lane("CC-7")["status"],
+        "stopped",
+        "admitted, no server"
+    );
+    fleet.item_under("CC-7", "CC-2", &[]);
+    let mut relaunch = launch("CC-7", fleet.state_dir().as_path());
+    relaunch["tracker"] = json!("linear");
+    let admitted = reply(&fleet.op(&relaunch));
+    assert_eq!(admitted["ok"], true, "{admitted}");
+    assert_eq!(
+        reads_since(8),
+        Vec::<String>::new(),
+        "a recorded lane's relaunch was judged when it was admitted"
+    );
 }
 
 /// Decisions 99 and 105 at the holder: a holder whose touched set cannot be

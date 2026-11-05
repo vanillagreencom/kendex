@@ -160,78 +160,37 @@ workspace "$SESSION" "$WT" '{"type":"session.start"}'
 workspace empty-1 "$WT" none
 workspace other-2 "$TMP_ROOT/elsewhere" '{"type":"session.start"}'
 touch -t 200001010000 "$ACCOUNT/session-state/$SESSION/workspace.yaml"
-# fleet_lane STATUS HARNESS ACCOUNT SESSION_ID MAIL_ROOT [ALLOW_ALL]
-# [SESSION_SINCE] [LAUNCHED_AT] — one fleet record, the lane in the window
-# kendex:CC-1, `null` for a field it leaves unset; ALLOW_ALL is the launch's
-# grant, true unless named, SESSION_SINCE the stamp of the launch that
-# started the running session and LAUNCHED_AT the fleet's first launch, each
-# null unless named.
-fleet_lane() {
-  jq -nc --arg st "$1" --arg h "$2" --arg a "$3" --arg s "$4" --arg m "$5" --argjson g "${6:-true}" --arg ss "${7:-null}" --arg l "${8:-null}" \
-    'def v: if . == "null" then null else . end;
-     {item: "CC-1", window: "kendex:CC-1", status: $st, harness: $h, account: ($a | v), session_id: ($s | v),
-      mail_root: ($m | v), allow_all: $g, session_since: ($ss | v), launched_at: ($l | v)}'
-}
-# lane_row RECORD NOW [COPILOT_HOME] — the note a reader outside the session
-# takes for a Copilot lane's record, from a child shell, through
-# lib/lane-context.sh lane_context_copilot_note; `none` for an empty note,
-# `rc=N` for a record the note could not read.
-lane_row() {
-  COPILOT_HOME="${3:-}" LANES_HOME="$TMP_ROOT" bash -c 'set -euo pipefail; . "$1/lib/lane-context.sh"
-    lane_context_copilot_note "$2" "$3" || { echo "rc=$?"; exit 0; }
-    echo "${COPILOT_SESSION_NOTE:-none}"' \
-    _ "${LIB:-$SCRIPTS_DIR}" "$1" "$2"
-}
-statusline blocked <<<"$(status | jq -c '.allow_all_enabled = false')"
-WRITTEN="$(jq -r '.written_at' "$RECORD")"
-while IFS='|' read -r label record_json now want; do
-  assert_eq "$(lane_row "$record_json" "$now")" "$want" "$label"
-done <<ROWS
-the lane's session reporting allow-all blocked names the cause|$(fleet_lane running copilot "$ACCOUNT" null "$WT")|$WRITTEN|stop-cause=allow-all-blocked-by-policy
-another worktree's session is read as that lane's, and wrote no record|$(fleet_lane running copilot "$ACCOUNT" null "$TMP_ROOT/elsewhere")|$WRITTEN|session-record=missing
-a worktree no session ran in is unmatched|$(fleet_lane running copilot "$ACCOUNT" null "$TMP_ROOT")|$WRITTEN|session-record=worktree-unmatched
-a record naming no session and no worktree is unmatched|$(fleet_lane running copilot "$ACCOUNT" null null)|$WRITTEN|session-record=worktree-unmatched
-the lane's session record past the bound is stale|$(fleet_lane running copilot "$ACCOUNT" null "$WT")|$((WRITTEN + MAX + 1))|session-record=stale
-an account with no session store is unmatched|$(fleet_lane running copilot "$TMP_ROOT/.2copilot" null "$WT")|$WRITTEN|session-record=worktree-unmatched
-a worktree that does not resolve is unreadable|$(fleet_lane running copilot "$ACCOUNT" null "$TMP_ROOT/gone")|$WRITTEN|session-record=store-unreadable
-an empty record is no lane and leaves the note empty||$WRITTEN|none
-a record that is not JSON is refused|{|$WRITTEN|rc=2
-a lane launched without allow-all reads allow_all_enabled false too, and names no cause|$(fleet_lane running copilot "$ACCOUNT" null "$WT" false)|$WRITTEN|none
-a record naming no grant is no lane launched with allow-all, and no session is looked up for it|$(fleet_lane running copilot "$ACCOUNT" null "$TMP_ROOT" null)|$WRITTEN|none
-ROWS
-# A record naming no account is the account a launch with no --lane runs on,
-# COPILOT_HOME, which the default of every launch and relaunch is too.
-assert_eq "$(lane_row "$(fleet_lane running copilot null null "$WT")" "$WRITTEN" "$ACCOUNT")" \
-  stop-cause=allow-all-blocked-by-policy "a record naming no account is read under the account a launch with no --lane runs on"
+echo "=== the session a lane in a worktree runs is the one its launch started ==="
 # A later session of another run in the same worktree, a second-opinion run
-# from it, say, with allow-all on in its own record, and an earlier one a
-# fresh relaunch retired, whose record went stale: the lane's session is the
-# record's session_id, else the earliest written at or after the record's
-# session_since, never its launched_at, which a relaunch keeps. $SESSION's
-# workspace.yaml is stamped 2000-01-01 local time and the retired one's
-# 1999-06-01, so a stamp on 1999-01-01 UTC precedes both, one on 1999-12-30
-# UTC falls between them and one on 2001-01-01 UTC follows both in every zone.
+# from it, say, and an earlier one a fresh relaunch retired: the lane's
+# session is the earliest written at or after the launch's session_since, or
+# the newest where none is named. $SESSION's workspace.yaml is stamped
+# 2000-01-01 local time and the retired one's 1999-06-01, so a stamp on
+# 1999-12-30 UTC falls between them and one on 2001-01-01 UTC follows both in
+# every zone.
 workspace foreign-3 "$WT" '{"type":"session.start"}'
-statusline foreign <<<"$(status | jq -c --arg t "$ACCOUNT/session-state/foreign-3/events.jsonl" \
-  '.session_id = "foreign-3" | .transcript_path = $t')"
-statusline blocked <<<"$(status | jq -c '.allow_all_enabled = false')"
-WRITTEN="$(jq -r '.written_at' "$RECORD")"
 workspace retired-4 "$WT" '{"type":"session.start"}'
 touch -t 199906010000 "$ACCOUNT/session-state/retired-4/workspace.yaml"
-jq -c --arg t "$ACCOUNT/session-state/retired-4/events.jsonl" --argjson w "$((WRITTEN - MAX - 1))" \
-  '.session_id = "retired-4" | .transcript_path = $t | .written_at = $w' "$RECORD" > "$ACCOUNT/lane-status/retired-4.json"
-while IFS='|' read -r label session since launched want; do
-  assert_eq "$(lane_row "$(fleet_lane running copilot "$ACCOUNT" "$session" "$WT" true "$since" "$launched")" "$WRITTEN")" "$want" "$label"
+# worktree_row WORKTREE [SINCE] — the id of the session copilot_session_in_worktree
+# names for a lane in WORKTREE under ACCOUNT since SINCE, epoch seconds, from a
+# child shell: `none` where none qualifies, `rc=N` where the worktree or the
+# store could not be read.
+worktree_row() {
+  bash -c 'set -euo pipefail; . "$1/lib/copilot-session.sh"; rc=0
+    file="$(copilot_session_in_worktree "$2" "$3" "${4:-}")" || rc=$?
+    case "$rc" in 0) copilot_session_id "$file" ;; 1) echo none ;; *) echo "rc=$rc" ;; esac' \
+    _ "${LIB:-$SCRIPTS_DIR}" "$ACCOUNT" "$@"
+}
+epoch() { jq -nr --arg s "$1" '$s | fromdateiso8601'; }
+while IFS='|' read -r label worktree since want; do
+  assert_eq "$(worktree_row "$worktree" "$since")" "$want" "$label"
 done <<ROWS
-the record's session_id is read over a later session in the worktree|$SESSION|null|null|stop-cause=allow-all-blocked-by-policy
-a record naming no session reads the earliest session written since its session_since, the relaunched session, not the one the relaunch retired before it or the fleet's launched_at|null|1999-12-30T00:00:00Z|1999-01-01T00:00:00Z|stop-cause=allow-all-blocked-by-policy
-a session written before session_since is not the lane's|null|2001-01-01T00:00:00Z|null|none
-a record with no session_since reads the newest session in the worktree, though it names a launched_at|null|null|1999-01-01T00:00:00Z|none
+a lane with a session_since reads the earliest session written at or after it, the relaunched session, not the one the relaunch retired before it|$WT|$(epoch 1999-12-30T00:00:00Z)|$SESSION
+a session written before session_since is not the lane's|$WT|$(epoch 2001-01-01T00:00:00Z)|foreign-3
+with no session_since the newest session in the worktree is the lane's|$WT||foreign-3
+a worktree no session ran in names none|$TMP_ROOT||none
+a worktree that does not resolve is unreadable|$TMP_ROOT/gone||rc=2
 ROWS
-statusline allowed <<<"$(status)"
-WRITTEN="$(jq -r '.written_at' "$RECORD")"
-assert_eq "$(lane_row "$(fleet_lane running copilot "$ACCOUNT" "$SESSION" "$WT")" "$WRITTEN")" none \
-  "the lane's session with allow-all on names no cause"
 statusline blocked <<<"$(status | jq -c '.allow_all_enabled = false')"
 WRITTEN="$(jq -r '.written_at' "$RECORD")"
 rm -rf -- "${ACCOUNT:?}/session-state/empty-1" "${ACCOUNT:?}/session-state/other-2"
@@ -264,22 +223,10 @@ lib_control ctl-cause lib/copilot-session.sh '[ "$CS_ALLOW_ALL" = false ] || ret
 assert_eq "$(cause '{"status":{"allow_all_enabled":false}}' true)" none "control: without the allow-all test a policy-blocked record names no cause"
 lib_control ctl-cause-grant lib/copilot-session.sh '  [ "$2" = true ] || return 1' '  : || return 1'
 assert_eq "$(cause '{"status":{"allow_all_enabled":false}}' '')" allow-all-blocked-by-policy "control: without the grant test a launch without allow-all is named policy-blocked"
-lib_control ctl-unmatched lib/copilot-session.sh '1) COPILOT_SESSION_NOTE=session-record=worktree-unmatched; return 0 ;;' '1) return 0 ;;'
-assert_eq "$(lane_row "$(fleet_lane running copilot "$ACCOUNT" null "$TMP_ROOT")" "$WRITTEN")" none "control: without the unmatched arm a worktree no session ran in reads as a lane with no cause"
-lib_control ctl-session-id lib/copilot-session.sh '  if [ -z "$session" ]; then' '  if true; then'
-assert_eq "$(lane_row "$(fleet_lane running copilot "$ACCOUNT" "$SESSION" "$WT")" "$WRITTEN")" none "control: without the record's session_id a newer session in the worktree is read in the lane's place"
 lib_control ctl-launch-pick lib/copilot-session.sh '[ ! "$file" -ot "$best" ]' '[ ! "$file" -nt "$best" ]'
-assert_eq "$(lane_row "$(fleet_lane running copilot "$ACCOUNT" null "$WT" true 1999-12-30T00:00:00Z)" "$WRITTEN")" none "control: without the earliest pick since session_since a later session in the worktree is read in the lane's place"
+assert_eq "$(worktree_row "$WT" "$(epoch 1999-12-30T00:00:00Z)")" foreign-3 "control: without the earliest pick since session_since a later session in the worktree is read in the lane's place"
 lib_control ctl-launch-floor lib/copilot-session.sh '[ "$written" -ge "$since" ] || continue' 'true || continue'
-assert_eq "$(lane_row "$(fleet_lane running copilot "$ACCOUNT" null "$WT" true 2001-01-01T00:00:00Z)" "$WRITTEN")" session-record=stale "control: without the floor the session a relaunch retired, written before session_since, is read as the lane's"
-lib_control ctl-session-since lib/lane-context.sh '(.session_since | fromdateiso8601' '(.launched_at | fromdateiso8601'
-assert_eq "$(lane_row "$(fleet_lane running copilot "$ACCOUNT" null "$WT" true 1999-12-30T00:00:00Z 1999-01-01T00:00:00Z)" "$WRITTEN")" session-record=stale "control: bound through launched_at, which a relaunch keeps, a relaunched lane reads the session the relaunch retired"
-lib_control ctl-default-account lib/lane-context.sh 'home="$(lane_context_caller_cfg copilot)"' 'home="$(printf "")"'
-assert_eq "$(lane_row "$(fleet_lane running copilot null "$SESSION" "$WT")" "$WRITTEN" "$ACCOUNT")" session-record=missing "control: without the default account a record naming none is read under no account"
-lib_control ctl-granted lib/copilot-session.sh '[ "$4" = true ] || return 0' ': || return 0'
-assert_eq "$(lane_row "$(fleet_lane running copilot "$ACCOUNT" null "$TMP_ROOT" false)" "$WRITTEN")" session-record=worktree-unmatched "control: without the grant test a lane launched without allow-all is looked up and reports a record reason"
-lib_control ctl-grant-field lib/lane-context.sh '(.allow_all == true | tostring)' '"true"'
-assert_eq "$(lane_row "$(fleet_lane running copilot "$ACCOUNT" "$SESSION" "$WT" false)" "$WRITTEN")" stop-cause=allow-all-blocked-by-policy "control: without the record's grant every Copilot lane reads as launched with allow-all"
+assert_eq "$(worktree_row "$WT" "$(epoch 2001-01-01T00:00:00Z)")" retired-4 "control: without the floor the session a relaunch retired, written before session_since, is read as the lane's"
 lib_control ctl-write lib/copilot-session.sh '       status: .}' '       status: {}}'
 statusline ctl-write "$LIB" <<<"$(status)"
 assert_eq "$(reading "$(cat "$RECORD")")" unread "control: a writer that drops the CLI's object leaves nothing to read"

@@ -77,9 +77,11 @@ pub const AGENT_RUNTIME_DEFAULT: &str = ".agents/skills/agent-runtime/scripts/ag
 /// The orch package's job-unit launcher under the project's install.
 pub const JOB_UNIT_DEFAULT: &str = ".agents/skills/orch/scripts/lib/job-unit.sh";
 /// The lanes the fleet cap admits at once: every lane kind but
-/// `claude-cloud`, which the cloud cap bounds. The shipped default
-/// is 4; the shell launcher `open-terminal` defaults to 3.
+/// `claude-cloud`, which the cloud cap bounds.
 pub const LANE_CAP_KEY: &str = "ORCH_OVERSEER_LANES";
+/// The Claude cloud sessions one overseer holds at once: the record's
+/// declared `claude-cloud` kind owns this cap, whatever its host name.
+pub const CLOUD_LANE_CAP_KEY: &str = "ORCH_OVERSEER_CLOUD_LANES";
 /// The directory the shell launcher keeps its claim store under, as
 /// `<dir>/claims` (`lib/lane-claims.sh`, `lane_claims_dir`); the main
 /// checkout's `tmp/oversee-watch` when unset. Read, never written, by the
@@ -358,6 +360,7 @@ const DEFAULT_VERIFY_SECS: u64 = 15;
 const DEFAULT_CLOSE_SECS: u64 = 15;
 const DEFAULT_CLAIM_SECS: u64 = 15;
 const DEFAULT_LANE_CAP: u32 = 4;
+const DEFAULT_CLOUD_LANE_CAP: u32 = 10;
 const DEFAULT_MAIL_INTERVAL_SECS: u64 = 20;
 const DEFAULT_MARK_REPEAT: u32 = 5;
 const DEFAULT_DEAD_PASSES: u32 = 2;
@@ -393,6 +396,7 @@ const READ_KEYS: &[&str] = &[
     SUCCESSION_KEY,
     JOB_UNIT_KEY,
     LANE_CAP_KEY,
+    CLOUD_LANE_CAP_KEY,
     CLAIM_STATE_DIR_KEY,
     LANE_MAIL_CLI_KEY,
     DEV_VALIDATE_CLI_KEY,
@@ -709,6 +713,7 @@ pub struct Settings {
     pub marks: MarkSettings,
     pub job_unit: PathBuf,
     pub lane_cap: u32,
+    pub cloud_lane_cap: u32,
     /// The shell launcher's claim store the cap's admission reads, never writes.
     pub claim_store: PathBuf,
     pub lane_mail_cli: PathBuf,
@@ -862,6 +867,81 @@ fn git_line(cwd: &str, operation: &'static str, args: &[&str]) -> Result<Option<
     .into())
 }
 
+/// A file's text under a checkout's root, or `None` where the checkout
+/// has no such file; `Err` is the read's cause. The disk reader is
+/// [`read_text`]; a hosted checkout's is the provider's `cat`.
+pub type FileRead<'a> = &'a dyn Fn(&Path) -> Result<Option<String>>;
+
+/// The file rung of the settings ladder, read through `read` under `root`:
+/// the `[env]` tables of the two settings files in order, the later
+/// outranking, and under `private` the private env file they name
+/// (`KENDEX_ENV_FILE`, else `.env.local`); `private` carries the caller's
+/// own name for that file and its home, which outrank the files' in naming
+/// it and in expanding its account keys.
+pub(crate) struct FileRung {
+    pub(crate) values: BTreeMap<String, String>,
+    pub(crate) private: Option<(PathBuf, PrivateEnv)>,
+}
+
+pub(crate) fn file_rung(
+    root: &Path,
+    read: FileRead,
+    private: Option<(Option<&str>, Option<&str>)>,
+) -> Result<FileRung> {
+    let mut values: BTreeMap<String, String> = BTreeMap::new();
+    for name in SETTINGS_FILES {
+        let path = root.join(name);
+        if let Some(text) = read(&path)? {
+            for (key, value) in settings_text(&path, &text)? {
+                values.insert(key, value);
+            }
+        }
+    }
+    let Some((named, home)) = private else {
+        return Ok(FileRung {
+            values,
+            private: None,
+        });
+    };
+    let named = named
+        .or_else(|| values.get(ENV_FILE_KEY).map(String::as_str))
+        .filter(|v| !v.is_empty())
+        .map(str::to_owned);
+    let path = root.join(private_env_name(named.as_deref())?);
+    let home = home
+        .or_else(|| values.get(HOME_KEY).map(String::as_str))
+        .map(str::to_owned);
+    let env = match read(&path)? {
+        Some(text) => private_env_text(&path, home.as_deref(), &text)?,
+        None => PrivateEnv {
+            values: Vec::new(),
+            passed_over: Vec::new(),
+        },
+    };
+    Ok(FileRung {
+        values,
+        private: Some((path, env)),
+    })
+}
+
+/// The state directory a checkout's own files name, as its `workflow-state`
+/// resolves it with no caller environment: `ORCH_STATE_DIR` of its settings
+/// files and private env file, `tmp` where none names one; a relative
+/// directory is under the common root git names for the checkout.
+pub fn state_dir_named(root: &Path, read: FileRead) -> Result<PathBuf> {
+    let rung = file_rung(root, read, Some((None, None)))?;
+    let mut values = rung.values;
+    if let Some((_, private)) = rung.private {
+        values.extend(private.values);
+    }
+    Ok(PathBuf::from(
+        values
+            .get(STATE_DIR_KEY)
+            .filter(|v| !v.is_empty())
+            .map_or(DEFAULT_STATE_DIR, String::as_str),
+    ))
+}
+
 /// Resolve the settings for a process: the files under `roots`, the
 /// caller's `environment` and the command-line `flags`.
 pub fn load(
@@ -869,30 +949,26 @@ pub fn load(
     environment: &[(OsString, OsString)],
     flags: &Flags,
 ) -> Result<Settings> {
-    let mut file_values: BTreeMap<String, String> = BTreeMap::new();
-    for name in SETTINGS_FILES {
-        let path = roots.project.join(name);
-        for (key, value) in settings_file(&path)? {
-            file_values.insert(key, value);
-        }
-    }
     let caller: BTreeMap<String, String> = environment
         .iter()
         .filter_map(|(k, v)| Some((k.to_str()?.to_owned(), v.to_str()?.to_owned())))
         .collect();
+    let disk = |path: &Path| read_text(path);
+    let rung = file_rung(
+        &roots.project,
+        &disk,
+        flags.private_env.then(|| {
+            (
+                caller.get(ENV_FILE_KEY).map(String::as_str),
+                caller.get(HOME_KEY).map(String::as_str),
+            )
+        }),
+    )?;
     let mut values: BTreeMap<String, String> = BTreeMap::new();
-    if flags.private_env {
+    if let Some((path, private)) = rung.private {
         // The default ladder, lowest rung first: the settings files, the
         // private env file, then the caller's environment over all.
-        values.extend(file_values);
-        let named = caller
-            .get(ENV_FILE_KEY)
-            .or_else(|| values.get(ENV_FILE_KEY))
-            .filter(|v| !v.is_empty())
-            .cloned();
-        let path = roots.project.join(private_env_name(named.as_deref())?);
-        let home = caller.get(HOME_KEY).or_else(|| values.get(HOME_KEY));
-        let private = private_env_file(&path, home.map(String::as_str))?;
+        values.extend(rung.values);
         for key in &private.passed_over {
             use std::io::Write as _;
             let _ = writeln!(
@@ -912,8 +988,8 @@ pub fn load(
         // from them (`workflow-state` § State directory). Every other key
         // comes from the caller's environment.
         values.extend(caller);
-        if let Some(state_dir) = file_values.remove(STATE_DIR_KEY) {
-            values.insert(STATE_DIR_KEY.to_owned(), state_dir);
+        if let Some(state_dir) = rung.values.get(STATE_DIR_KEY) {
+            values.insert(STATE_DIR_KEY.to_owned(), state_dir.clone());
         }
     }
     let get = |key: &str| {
@@ -1007,6 +1083,7 @@ pub fn load(
         }
     };
     let lane_cap = count(LANE_CAP_KEY, DEFAULT_LANE_CAP)?;
+    let cloud_lane_cap = count(CLOUD_LANE_CAP_KEY, DEFAULT_CLOUD_LANE_CAP)?;
     // Digits alone with the value at least 1, a leading zero admitted.
     let passes = |key: &str, default: u32| -> Result<u32> {
         match get(key) {
@@ -1421,6 +1498,7 @@ pub fn load(
         marks,
         job_unit,
         lane_cap,
+        cloud_lane_cap,
         claim_store,
         lane_mail_cli,
         dev_validate_cli,
@@ -1497,7 +1575,7 @@ fn private_env_name(named: Option<&str>) -> Result<PathBuf> {
     Ok(PathBuf::from(named))
 }
 
-fn read_text(path: &Path) -> Result<Option<String>> {
+pub(crate) fn read_text(path: &Path) -> Result<Option<String>> {
     match fs::read(path) {
         Ok(bytes) => {
             if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
@@ -1545,9 +1623,14 @@ fn decode_toml_value(raw: &str) -> Option<String> {
 /// The `[env]` assignments of one settings file, in file order; an absent
 /// file holds none.
 pub(crate) fn settings_file(path: &Path) -> Result<Vec<(String, String)>> {
-    let Some(text) = read_text(path)? else {
-        return Ok(Vec::new());
-    };
+    match read_text(path)? {
+        Some(text) => settings_text(path, &text),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// [`settings_file`] over a file's text; `path` names it in a refusal.
+pub(crate) fn settings_text(path: &Path, text: &str) -> Result<Vec<(String, String)>> {
     let mut out = Vec::new();
     let mut section = String::new();
     let mut seen: Vec<String> = Vec::new();
@@ -1689,12 +1772,20 @@ pub(crate) struct PrivateEnv {
 /// data and refuses the load in a shape only a shell reads. A line that
 /// assigns nothing this runtime reads is the shell's alone.
 pub(crate) fn private_env_file(path: &Path, home: Option<&str>) -> Result<PrivateEnv> {
+    match read_text(path)? {
+        Some(text) => private_env_text(path, home, &text),
+        None => Ok(PrivateEnv {
+            values: Vec::new(),
+            passed_over: Vec::new(),
+        }),
+    }
+}
+
+/// [`private_env_file`] over the file's text; `path` names it in a refusal.
+pub(crate) fn private_env_text(path: &Path, home: Option<&str>, text: &str) -> Result<PrivateEnv> {
     let mut env = PrivateEnv {
         values: Vec::new(),
         passed_over: Vec::new(),
-    };
-    let Some(text) = read_text(path)? else {
-        return Ok(env);
     };
     let mut home = home.filter(|h| !h.is_empty()).map(str::to_owned);
     for raw in text.lines() {
@@ -2044,6 +2135,7 @@ mod tests {
         assert_eq!(settings.succession, Succession::On);
         assert_eq!(settings.job_unit, roots.project.join(JOB_UNIT_DEFAULT));
         assert_eq!(settings.lane_cap, 4);
+        assert_eq!(settings.cloud_lane_cap, 10);
         assert_eq!(settings.claim_store, roots.common.join(CLAIM_STORE_DEFAULT));
         assert_eq!(
             settings.lane_mail_cli,
@@ -2070,6 +2162,7 @@ mod tests {
                 (SUCCESSION_KEY, "off"),
                 (JOB_UNIT_KEY, "/opt/job-unit.sh"),
                 (LANE_CAP_KEY, "7"),
+                (CLOUD_LANE_CAP_KEY, "2"),
                 (CLAIM_STATE_DIR_KEY, "/var/watch"),
                 (LANE_MAIL_CLI_KEY, "/opt/lane-mail"),
                 (DEV_VALIDATE_CLI_KEY, "/opt/dev-validate-run"),
@@ -2117,6 +2210,7 @@ mod tests {
         assert_eq!(settings.succession, Succession::Off);
         assert_eq!(settings.job_unit, PathBuf::from("/opt/job-unit.sh"));
         assert_eq!(settings.lane_cap, 7);
+        assert_eq!(settings.cloud_lane_cap, 2);
         assert_eq!(settings.claim_store, PathBuf::from("/var/watch/claims"));
         assert_eq!(settings.lane_mail_cli, PathBuf::from("/opt/lane-mail"));
         assert_eq!(

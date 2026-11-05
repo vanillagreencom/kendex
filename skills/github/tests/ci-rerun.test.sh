@@ -215,8 +215,8 @@ assert_eq "$(rerun_calls)" "0" "nothing is rerun"
 # chose from the rollup alone answered `no-failed-run` without reading the
 # failed run's log, the lane went to ci-fix while its one rerun was owed,
 # and the head record written before the ask foreclosed that rerun for the
-# head. The legacy waiter took the reader's bound run first (ci-wait's
-# required branch); the rollup is not consulted for it.
+# head. The reader's bound run is taken first (the required branch); the
+# rollup is not consulted for it.
 echo "=== a failed required workflow is rerun from its bound run though every visible job is green ==="
 gh_stub_reset
 stage_required_workflow failure

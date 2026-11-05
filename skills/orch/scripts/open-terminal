@@ -34,17 +34,18 @@ message() { # REASON FIELD=VALUE...
     issue-canonical-failed) text='The canonical spelling of the issue identifier could not be read; git-context'"'"'s own line is above.' ;;
     github-item-invalid) text='A GitHub work item must be an issue number.' ;;
     repo-missing) text='Specify a repository with --repo for a GitHub item.' ;;
-    wake-invalid) text='The wake takes --harness claude, codex, pi or copilot and a lane on this machine: a hosted lane'"'"'s sessions are on its host, and a cloud lane has none to resume.' ;;
+    wake-invalid) text='The wake takes --harness claude, codex, pi or copilot and a lane on this machine whose record is in flight: a hosted lane'"'"'s sessions are on its host, a cloud lane has none to resume, and a stopped, parked or done lane is relaunched through the runtime, not woken.' ;;
     state-absent) text='No oversee workflow state exists at the address this wake resolved, so nothing was ever launched into it. Nothing woken. Point the wake at the fleet state with --state-dir, the directory holding the file workflow-state-oversee.json.' ;;
     state-read-failed) text='The fleet state could not be read; the store'"'"'s own line is above. Nothing woken.' ;;
     record-missing) text='No lane record names the item, so no launch made this lane and there is no session to wake. Nothing woken. Launch the item through the runtime (workflows/oversee.md § 3).' ;;
     directory-missing) text='The lane'"'"'s worktree is not a directory on this machine. Nothing woken.' ;;
-    wake-refused) text='The lane is not idle: the reason names the state the runtime'"'"'s lane status read from its pane and its harness process, and a resume would run a second session beside a live one. Nothing was started. A reason of unjudged is a reading the runtime could not make; its own line is above.' ;;
+    wake-refused) text='The lane is not idle: the reason names the state the runtime'"'"'s lane status read from its pane and its harness process, and a resume would run a second session beside a live one. Nothing was started. A reason of unjudged is a reading the runtime could not make, its own line above, or a codex or copilot lane whose process still runs: neither harness publishes an idle signal, so a live session of either is never resumed beside itself.' ;;
     session-missing) text='No session of this harness names the item. Nothing was started.' ;;
     session-scan-failed) text='The harness'"'"'s session store could not be read. Nothing was started.' ;;
     launch-trust-missing) text='The folder-trust entry for the lane'"'"'s worktree could not be made in the config the woken session would read, so nothing was started; the reason names the step.' ;;
     launch-identity-unread) text='The detached turn'"'"'s process identity could not be read, so the lane record names no turn for lane-close to stop; the turn runs.' ;;
     wake-failed) text='The delivering command exited non-zero before the wake window closed. The lane was not woken; the log says why.' ;;
+    wake-unstarted) text='The detached start refused before any process ran; lane-launch'"'"'s own line is above. Nothing was started.' ;;
     record-write-failed) text='The lane record could not be rewritten; the woken session runs. The store'"'"'s own line is above.' ;;
     lane-woken) text='The line that reads the lane inbox is on its way to the session. The delivering command runs detached; its output goes to the log.' ;;
     summary) text='The wake batch is complete.' ;;
@@ -87,7 +88,9 @@ Options:
   --help                 this text
 
 A wake into a lane whose status is not idle refuses as wake-refused naming
-the state; a lane no record names, a hosted or cloud lane, and a lane whose
+the state, and a codex or copilot lane, whose harness publishes no idle
+signal, is refused while its process runs; a lane no record names, a hosted
+or cloud lane, a lane whose record is not in flight, and a lane whose
 harness holds no session for it are refused by name and nothing starts.
 USAGE
 }
@@ -291,7 +294,12 @@ run_detached() { # LOG COMMAND...
 open_wake() { # DIR WT_ID CMD
   local log="$1/tmp/lane-wake-$2.log" status="$1/tmp/lane-wake-$2.status" waited=0 rc=0 pid start
   mkdir -p -- "$1/tmp" && rm -f -- "$status" || return 1
-  run_detached "$log" bash -c 'cd -- "$1" && eval "$3"; echo "$?" >"$2"' wake "$1" "$status" "$3"
+  # A start that refused before any process ran leaves no job to read, so
+  # its status is read before the identity below is.
+  if ! run_detached "$log" bash -c 'cd -- "$1" && eval "$3"; echo "$?" >"$2"' wake "$1" "$status" "$3"; then
+    message wake-unstarted "item=$2" "harness=$HARNESS" >&2
+    return 1
+  fi
   # The turn runs outside the pane's process tree, where the pane's stop never
   # reaches it, so its own identity is recorded for lane-close to stop it by:
   # the detached shell, whose children are the resumed harness. Read before
@@ -329,7 +337,7 @@ wake_record_write() { # WT_ID SESSION_ID
 }
 
 wake_item() { # RAW
-  local raw="$1" item wt_id record host kind live_display wt state session_file="" session_id="" resume_rc=0 reading cmd record_rc=0
+  local raw="$1" item wt_id record host kind status live_display wt state session_file="" session_id="" resume_rc=0 reading cmd record_rc=0
   LANE_ENV="" LAUNCH_WAKE="" WAKE_MODEL=""
   LANE_LAUNCH_SCRUB=("${LAUNCH_SCRUB_BASE[@]}")
   if [[ "$TRACKER" == linear ]]; then
@@ -359,6 +367,13 @@ wake_item() { # RAW
     message wake-invalid "option=--wake" "harness=$HARNESS" "host=${host:-$kind}" >&2
     return 1
   fi
+  # The runtime judges an in-flight record alone; any other names no session
+  # a wake may resume, and its relaunch is the runtime's.
+  status="$(jq -r '.status // ""' <<<"$record")" || return 1
+  case "$status" in
+    preparing | running) ;;
+    *) message wake-invalid "option=--wake" "harness=$HARNESS" "status=${status:-unrecorded}" >&2; return 1 ;;
+  esac
   # The account the turn spends: --lane, else the record's, as the account
   # variable the launchers render.
   if [[ -n "$LANE" ]]; then
@@ -377,6 +392,10 @@ wake_item() { # RAW
   if [[ "$HARNESS" != pi ]]; then
     state="$(wake_state "$wt_id")" || state=unjudged
     [[ "$state" == idle ]] || { message wake-refused "item=$item" "reason=$state" >&2; return 1; }
+    # The runtime reads idle with the harness in the foreground: for codex
+    # and copilot, which publish no idle signal, that is a live session no
+    # second process may run beside.
+    case "$HARNESS" in codex | copilot) message wake-refused "item=$item" "reason=unjudged" >&2; return 1 ;; esac
     session_file="$(find_relaunch_session "$HARNESS" "$wt")" || resume_rc=$?
     [[ "$resume_rc" -le 1 ]] || { message session-scan-failed "item=$item" "harness=$HARNESS" >&2; return 1; }
     [[ -n "$session_file" ]] || { message session-missing "item=$item" "harness=$HARNESS" >&2; return 1; }

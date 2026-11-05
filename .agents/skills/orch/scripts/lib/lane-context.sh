@@ -60,45 +60,6 @@ lane_context_overseer_box() { # DIR
   printf '%s/tmp/lane-mail/overseer\n' "${root:-$1}"
 }
 
-# One report row. $1 lane, $2 pane id, $3 config dir, $4 account label, $5
-# status, $6 detail, $7 the tmux server the pane id belongs to, $8 non-empty on
-# the READER'S OWN row, $9 the judged reading's JSON, empty where there is none.
-# Empty fields become null, never 0 or "".
-#
-# `caller` is the answer to "which row is this session", and
-# lane_context_with_caller is the one place that decides it: it already holds
-# the reader's server and pane and matches the claims on that pair, so a
-# consumer reads the flag instead of rebuilding the key. Pane ids restart at %0
-# on every tmux server, so a consumer keying on the pane id alone can be handed
-# another server's lane; `server` stays on the record for the table and for
-# readers asking a different question.
-lane_context_emit() {
-  jq -nc \
-    --arg lane "$1" --arg pane "$2" --arg cfg "$3" --arg account "$4" \
-    --arg status "$5" --arg detail "$6" --arg server "${7:-}" --arg caller "${8:-}" \
-    --arg reading "${9:-}" '
-    def nul: if . == "" then null else . end;
-    (if $reading == "" then {} else ($reading | fromjson) end) as $r
-    | {
-        lane: ($lane | nul),
-        pane: $pane,
-        server: ($server | nul),
-        caller: ($caller != ""),
-        account: ($account | nul),
-        config_dir: ($cfg | nul),
-        harness: ($r.harness // null),
-        model: ($r.model // null),
-        context_used_pct: ($r.used_pct // null),
-        context_tokens: ($r.tokens // null),
-        context_window: ($r.window // null),
-        context_capacity_source: ($r.capacity_source // null),
-        context_at: ($r.at // null),
-        context_handoff_due: (if $r | has("handoff_due") then $r.handoff_due else null end),
-        status: $status,
-        detail: ($detail | nul)
-      }'
-}
-
 # The shape a pane's foreground process ($1) offers, decided here and in no
 # other place: `codex` the codex shape alone, a claude wrapper spelling the
 # claude shape alone, and anything else `both`, because a reader with no rule
@@ -171,14 +132,12 @@ lane_context_pane_shape() { # CMD PANE_PID
 
 # The config directory a session of shape $1 runs its credential out of: a
 # lane's, and an overseer's where its launch record names none. The lane's own
-# turn-end hook asks it about itself and records the answer, and the runtime's
-# report reader (`watch::context::lane`) reads that record, so one lane is never
-# joined to one account by the report and to another by the hook that hands it
-# off. A recorded overseer's account is its launch record's
-# (lib/overseer-launch.sh § ol_record_current), which `oversee-succeed` judges
-# it on; the hook reads this function alone, so its record for that overseer
-# can name another account where the session's environment disagrees with its
-# record.
+# turn-end hook asks it for the account its headroom is judged on
+# (hooks/lane-mail-check.sh); it records no account. A recorded overseer's
+# account is its launch record's (lib/overseer-launch.sh § ol_record_current),
+# which `oversee-succeed` judges it on; the hook reads this function alone, so
+# it judges that overseer's headroom on another account where the session's
+# environment disagrees with its record.
 #
 # Which variable names the account is decided by the SHAPE, never by which
 # variable happens to be set: every launcher here prefixes one without clearing
@@ -219,33 +178,6 @@ lane_context_caller_cfg() { # SHAPE
         lane_launch_home_account "${CLAUDE_CONFIG_DIR:-${CODEX_HOME:-}}"
       ;;
   esac
-}
-
-# lane_context_copilot_note REC NOW — lib/copilot-session.sh
-# copilot_session_lane_note for REC, a Copilot lane's fleet record, into
-# COPILOT_SESSION_NOTE: under
-# the record's `account`, else the account a launch with no --lane runs on, for
-# its `session_id`, which a relaunch or a wake writes, its `mail_root`, its
-# `allow_all`, which open-terminal writes, and its `session_since`, the stamp
-# open-terminal reads before each launch or relaunch opens the terminal, which
-# binds a record with no session_id to the session that launch started. The
-# record's `launched_at` is not read: a relaunch keeps it, so it names the
-# first launch, whose session a fresh relaunch retired. A stamp that does not
-# parse is handed on empty. The store read is this machine's: a
-# fleet refuses a hosted Copilot lane (open-terminal,
-# `unsupported-for-oversee reason=hosted`). An empty REC is no lane and leaves
-# the note empty; 2 where REC could not be read.
-lane_context_copilot_note() { # REC NOW
-  local f home session root
-  COPILOT_SESSION_NOTE=""
-  [ -n "$1" ] || return 0
-  f="$(jq -r '[(.account, .session_id, .mail_root | strings // ""), (.allow_all == true | tostring),
-    (try (.session_since | fromdateiso8601 | floor | tostring) catch "")] | join("\t")' <<<"$1" 2>/dev/null)" || return 2
-  home="${f%%	*}"; f="${f#*	}"
-  session="${f%%	*}"; f="${f#*	}"
-  root="${f%%	*}"; f="${f#*	}"
-  [ -n "$home" ] || home="$(lane_context_caller_cfg copilot)" || return 2
-  copilot_session_lane_note "$home" "$session" "$root" "${f%%	*}" "$2" "${f#*	}"
 }
 
 # lane_context_caller_home HARNESS — the launch home a session of HARNESS runs
@@ -655,8 +587,8 @@ lane_context_record_fields() { # RECORD
     | [(.harness // ""), (.tokens // "" | tostring), (.window // "" | tostring),
        (.model // ""), (.pane_key // ""), (.session_id // ""), (.gap // ""), (.at // ""),
        (.capacity_source // "")] | join("\t")' <<<"${1:-}" 2>/dev/null) || return 1
-  # Split by hand for the reason lane_context_collect gives: an empty field
-  # would otherwise collapse into its neighbour.
+  # Split by hand, never `IFS=$'\t' read`: a TAB is IFS whitespace, so an
+  # empty field would otherwise collapse into its neighbour.
   rest="$fields"
   LANE_CTX_HARNESS="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
   LANE_CTX_TOKENS="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
@@ -669,35 +601,14 @@ lane_context_record_fields() { # RECORD
   LANE_CTX_SOURCE="${rest#*$'\t'}"
 }
 
-# lane_context_record_judged RECORD PCT — RECORD with `handoff_due` set from
-# lane_context_handoff_due: true, false, or null where capacity is unknown
-# below the independent token limit.
-# Exit 1 where RECORD is not a reading lane_context_record wrote, a gap record
-# included, 2 where PCT is out of range; nothing is printed then.
-lane_context_record_judged() { # RECORD PCT
-  local verdict rc=0 due
-  lane_context_record_fields "${1:-}" || return 1
-  [ -z "$LANE_CTX_GAP" ] || return 1
-  verdict=$(lane_context_handoff_due "$LANE_CTX_TOKENS" "$LANE_CTX_WINDOW" "${2:-}") || rc=$?
-  case "$rc" in
-    0)
-      due=false
-      [ "$verdict" != due ] || due=true
-      ;;
-    1) due=null ;;
-    *) return 2 ;;
-  esac
-  jq -c --argjson due "$due" '.handoff_due = $due' <<<"$1"
-}
-
 # The key a live session's own row is matched on, `<tmux server pid> <pane id>`
 # on one line; 1 where the caller sits on no pane this reader can ask about.
 #
 # Pane ids restart at %0 on every tmux server, so the PAIR is the key and the id
 # alone is not. Every consumer that compares one session's key against another
-# session's record reads it here: the report below matches its claims on it,
-# `oversee-watch` records the overseer's by it, and the turn-end hook compares
-# its own against that record, so the three cannot spell one session
+# session's record reads it here: `oversee` and `overseer-run` record the
+# overseer's by it, the session rows name it, and the turn-end hook compares
+# its own against that record, so none of them can spell one session
 # differently.
 lane_context_caller_key() {
   local pane="${TMUX_PANE:-}" server
@@ -707,106 +618,8 @@ lane_context_caller_key() {
   printf '%s %s\n' "$server" "$pane"
 }
 
-# The claims in $1 plus the CALLER's OWN pane, unless a claim already names it.
-# An overseer is started by hand into a window nothing claimed a lane for, so
-# its own context — the figure its succession turns on — reaches no report
-# built from claims alone, and that session reads as an empty fleet. $1:
-# `lane_claims_read` output. $2: the caller's config dir, canonicalised by the
-# caller, which owns that spelling.
-#
-# The pane is matched on `<server pid> <pane id>`, the same key a claim's
-# liveness rests on: a pane id alone repeats on every tmux server, and a
-# duplicate row would report one session as two lanes. The row that match
-# lands on, appended or already present, carries the `caller` flag out, so
-# this is the only place that decides which row is the reader's own session.
-lane_context_with_caller() {
-  local claims="$1" cfg="$2" key pane server name marked
-  if ! key="$(lane_context_caller_key)"; then
-    printf '%s\n' "$claims"
-    return 0
-  fi
-  server="${key%% *}"
-  pane="${key#* }"
-  # A claim already naming this pair IS the caller's row, so the flag goes on
-  # the record that is already there rather than on a duplicate beside it.
-  if marked="$(awk -F'\t' -v OFS='\t' -v s="$server" -v p="$pane" '
-    $3 == s && $4 == p { $5 = "caller"; f = 1 } { print } END { exit !f }' <<<"$claims")"
-  then
-    printf '%s\n' "$marked"
-    return 0
-  fi
-  name="$(tmux display-message -p -t "$pane" '#{window_name}' 2>/dev/null)" || name=""
-  printf '%s\n' "$claims"$'\n'"$cfg"$'\t'"$name"$'\t'"$server"$'\t'"$pane"$'\t'caller
-}
-
-# One report row per live lane claim, as a JSON array. $1: `lane_claims_read`
-# output with lane_context_with_caller's flag, $2: the name of a function
-# mapping a config dir to its account label, $3: the name of a function given a
-# row's lane and caller flag that prints that session's recorded reading and
-# exits 0, exits 1 where none is recorded, and exits 2 with the cause on stdout
-# where the record could not be read. $4: the percentage every row is judged at.
-#
-# No pane is read. A session that has not ended a turn since its launch has no
-# reading, and its row is `unrecorded`, never an empty context; a reading whose
-# window its adapter could not name is `window-unread`, never `ok`.
-lane_context_collect() {
-  local claims="$1" alias_fn="$2" fetch_fn="$3" pct="$4" cfg lane server pane caller claim rest
-  local out rc judged
-  {
-    # Split by hand, never `IFS=$'\t' read`: a TAB is IFS whitespace, so read
-    # drops a LEADING one and every field of a row whose config dir is empty
-    # shifts left. A caller pane whose account cannot be established is such a
-    # row, and it would be reported under the pane id of another lane.
-    while IFS= read -r claim; do
-      cfg="${claim%%$'\t'*}"; rest="${claim#*$'\t'}"
-      lane="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
-      server="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
-      pane="${rest%%$'\t'*}"
-      # The caller flag is the optional fifth field lane_context_with_caller
-      # writes; a claim the store holds carries four and no flag.
-      caller=""
-      [[ "$rest" != *$'\t'* ]] || caller="${rest#*$'\t'}"
-      [[ -n "$pane" && "$claim" == *$'\t'*$'\t'*$'\t'* ]] || continue
-      rc=0
-      out="$("$fetch_fn" "$lane" "$caller")" || rc=$?
-      case "$rc" in
-        0) ;;
-        1)
-          lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" \
-            unrecorded "no reading of this session is recorded, so its context is unmeasured" "$server" "$caller"
-          continue
-          ;;
-        *)
-          lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" \
-            unreadable "$out" "$server" "$caller"
-          continue
-          ;;
-      esac
-      rc=0
-      judged="$(lane_context_record_judged "$out" "$pct")" || rc=$?
-      case "$rc" in
-        0)
-          # Below the token limit, unknown capacity is neither due nor room.
-          # The row reports that gap instead of an ok row with a blank handoff.
-          if [[ "$(jq -r '.handoff_due' <<<"$judged")" == null ]]; then
-            lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" window-unread \
-              "the harness adapter named no context window for this session's model" "$server" "$caller" "$judged"
-          else
-            lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" ok "" "$server" "$caller" "$judged"
-          fi
-          ;;
-        1)
-          lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" \
-            unreadable "the recorded reading is not an object carrying a token count" "$server" "$caller"
-          ;;
-        *) return 2 ;;
-      esac
-    done <<<"$claims"
-  } | jq -s '.'
-}
-
-# Align the tab-separated table on stdin; both lane tables render through
-# here. `column` is util-linux, not one of orch's declared dependencies (jq,
+# Align the tab-separated table on stdin; the lane listing (`lanes list`)
+# renders through here. `column` is util-linux, not one of orch's declared dependencies (jq,
 # bash 3.2, flock), and installations that satisfy those ship without it —
 # where the pipeline fails and every row is lost, which on the compaction
 # rule reads as a fleet with no lanes rather than as a table that could not
@@ -832,7 +645,7 @@ lane_context_columns() {
     }'
 }
 
-# The HEADROOM cell both lane tables print, as a jq def over one record: the
+# The HEADROOM cell the lane listing prints, as a jq def over one record: the
 # credit balance of a Codex account room on its credits, binding_bucket
 # `credits`, whose window headroom is spent and says nothing of its room;
 # otherwise headroom_pct, which for a dollar API grant is its share left.
@@ -845,54 +658,6 @@ def headroom_cell:
   elif .headroom_pct == null then "-" else (.headroom_pct | tostring) + "%" end;
 '
 
-lane_context_message() {
-  case "$1" in
-    empty)
-      printf 'lane-context: empty count=0\nNo live lane claims to measure.\n'
-      ;;
-    legend)
-      printf 'lane-context: percent kind=consumed\n'
-      printf 'CONTEXT_USED_PCT: percent of effective capacity CONSUMED at the recorded turn end; a dash where capacity is unknown.\n'
-      printf 'lane-context: tokens kind=recorded absent=-\n'
-      printf 'CONTEXT_TOKENS: the tokens the last response left in the context, read from the transcript by the harness adapter at the session'"'"'s last turn end; a dash where no reading is recorded.\n'
-      printf 'lane-context: headroom kind=account-binding handoff=threshold\n'
-      printf 'HEADROOM: percent remaining in the account binding bucket; HANDOFF is required at or below ORCH_HANDOFF_HEADROOM_PCT. Headroom never marks a Codex account room on its credits, which shows its balance in cr, or a lane on a grant, a Pi anthropic/ API grant or a Claude cloud credit, which shows the grant share left and is marked only when the grant is walled (lanes --help, context).\n'
-      printf 'lane-context: handoff kind=lane-threshold context=ORCH_HANDOFF_CONTEXT_PCT overseer-trigger=ORCH_OVERSEER_HEADROOM_PCT\n'
-      printf 'HANDOFF: required by the shared context rule, or at the LANE headroom threshold. It never reports the overseer'"'"'s own ORCH_OVERSEER_HEADROOM_PCT, wall or qualifying-accounts triggers: by default the overseer succeeds itself at 5 percent headroom against the lane'"'"'s 3, so its own row can read - at a headroom that already fires its succession.\n'
-      printf 'lane-context: caller kind=lane-marker marker=*\n'
-      printf 'LANE: a leading * marks the row of the session that ran this command.\n'
-      ;;
-  esac
-}
-
-# Table for the records on stdin. The legend is part of the output, not a
-# nicety: a bare percentage column is read in whichever direction the reader
-# last saw one.
-#
-# The caller's own row carries a leading `*` on its lane name. An overseer is
-# told its own pane is in this report, and without a mark it has no way to
-# find the row — its HANDOFF cell speaks for the lane threshold, which by
-# default is the lower figure, so that cell reads `-` at a headroom already
-# past the overseer's own succession trigger. Nothing orders the two
-# settings, so the legend states the comparison as the default it is.
-lane_context_render() {
-  local recs
-  recs="$(cat)"
-  if [[ "$(jq -r 'length' <<<"$recs")" == "0" ]]; then
-    lane_context_message empty
-    return 0
-  fi
-  jq -r "$LANE_HEADROOM_CELL_JQ"'
-    (["LANE","PANE","ACCOUNT","HARNESS","CONTEXT_USED_PCT","CONTEXT_TOKENS","HEADROOM","HANDOFF","STATUS"] | @tsv),
-    (.[] | [ ((if .caller then "*" else "" end) + (.lane // "-")), .pane, (.account // "-"), (.harness // "-"),
-             (if .context_used_pct == null then "-" else (.context_used_pct | tostring) + "%" end),
-             (if .context_tokens == null then "-" else (.context_tokens | tostring) end),
-             headroom_cell,
-             (if .handoff_required then "required" else "-" end),
-             .status ] | @tsv)
-  ' <<<"$recs" | lane_context_columns
-  lane_context_message legend
-}
 # The live reader shared by the hook and the pre-panel check. The hook supplies
 # its session inputs, WORK_DIR and the message/refuse_handoff callbacks. Direct
 # execution below supplies the same contract for review-pr. Both use the

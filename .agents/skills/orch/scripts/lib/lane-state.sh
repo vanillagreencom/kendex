@@ -861,9 +861,9 @@ lane_stop_owned() { # WORKTREE HARNESS
 # The pane a recorded window names, in either form tmux itself accepts as a
 # target: a bare `KEN-1` is that window on whatever session of the caller's
 # server carries it, and `kendex:KEN-1` is that window under exactly that
-# session. ONE owner for the resolution, because the wake and `lane-close`
-# both start from a recorded window and a second matcher is how
-# two of them come to point at different panes.
+# session. ONE owner for the resolution, because `lane-close` and the pane
+# writer (lib/pane-write.sh) both start from a recorded window and a second
+# matcher is how two of them come to point at different panes.
 #
 # The session is matched EXACTLY. tmux's own `-t` falls back to a prefix
 # match, so a lane whose session died would silently resolve a sibling
@@ -923,43 +923,13 @@ lane_pane_by_id() { # PANE_ID
   read -r LANE_PANE_ID LANE_PANE_PID LANE_PANE_CMD <<<"$row"
 }
 
-# The lane's tmux pane, as the three raw observations `lane_state` judges
-# from: the pane's foreground command, its process id, and its screen, found
-# through the resolution above. For a caller whose own window is on the lane's
-# tmux server, as `open-terminal --wake` is, this is the SAME pane the runtime's
-# observation duty reads, which is why the two answer alike.
-# oversee-watch publishes the same capture result to a file per pass. A failed
-# provider capture stays unreadable; a failed local watch capture ends the run.
-#
-# A window this server does not hold, a name it holds more than once, or a
-# capture that fails leaves all three empty, and the count at none: nothing
-# here can be acted on, whichever of the three it was. LANE_PANE_SOURCE keeps
-# failed provider reads separate from local failures and completed captures.
-# That is not an idle
-# lane either — the judge then has only the harness process to go on, and
-# answers `unjudged` where that is silent too, which the wake refuses on. A
-# caller that must tell those silences apart — `lane-close` owes its operator
-# one reason per cause — calls lane_pane_resolve and reads LANE_PANE_COUNT
-# itself.
+# The pane's foreground command, process id, screen and the screen's
+# source, as the resolution above and the capture below set them and
+# `lane_state` reads them.
 LANE_PANE_CMD=""
 LANE_PANE_PID=""
 LANE_PANE_SCREEN=""
 LANE_PANE_SOURCE=""
-lane_pane_observe() { # WINDOW [HOST ITEM]
-  local mode=local
-  LANE_PANE_SCREEN=""
-  LANE_PANE_SOURCE=""
-  # The count belongs to the resolution, which answers three ways; this one
-  # answers two, so a window two panes share leaves the same post-state here as
-  # a window none carries.
-  lane_pane_resolve "$1" || { LANE_PANE_COUNT=0; return 0; }
-  [[ -z "${3:-}" ]] || lane_pane_mode mode "${2:-local}" || { LANE_PANE_SOURCE=unreadable; LANE_PANE_COUNT=0; return 0; }
-  lane_pane_capture LANE_PANE_SCREEN "$mode" "${2:-local}" "${3:-}" "$LANE_PANE_ID" 2>/dev/null || {
-    LANE_PANE_ID=""; LANE_PANE_PID=""; LANE_PANE_CMD=""; LANE_PANE_SCREEN=""
-    LANE_PANE_COUNT=0
-    return 0
-  }
-}
 
 # The hosted pane belongs to the provider. A dormant local viewer cannot
 # answer about the harness, even when it still holds a previous turn's text.
@@ -1103,15 +1073,13 @@ lane_state_is() { # STATE live|dialog
 # lane only comes back `idle` when every reader the caller has agrees it is.
 # WORKING_RE appears a second or two into a turn, after streaming starts, so a
 # turn's first moments are an input marker with nothing above it —
-# indistinguishable on the screen from a finished turn. `open-terminal --wake`
-# is the caller that acts on `idle`, by starting a second session on the lane's
-# worktree, and the only one that supplies SESSION. A process read that cannot
+# indistinguishable on the screen from a finished turn. SESSION is for a
+# caller that acts on `idle` by starting a second session on the lane's
+# worktree, read off the harness process itself; a process read that cannot
 # settle the question is `unjudged`, and treating that as agreement is what
-# would wake a live lane. Codex publishes no idle signal, so the wake's reader
-# answers `busy` for a codex process with a shell under it and `unjudged` for
-# every other one it finds in the lane's worktree: such a lane is never woken
-# while that process lives. A caller that supplies no SESSION keeps every
-# answer the pane gives.
+# would wake a live lane. The callers here, `lane-close`, `overseer-host-tmux`
+# and jarvis's session backend, supply none and keep every answer the pane
+# gives; the runtime's wake reads `orch-runtime lane status` instead.
 #
 # An OUT_VAR rather than a printed word: the child probe's raw status is the
 # caller's to report, and LANE_PROBE_RC set inside a command substitution
@@ -1252,56 +1220,6 @@ lane_input_ready() {
   printf -v "$_lir_out" '%s' "$_lir_state"
   [[ "$_lir_rc" -eq 0 ]] || return "$_lir_rc"
   [[ "$_lir_state" == idle ]]
-}
-
-# ---------------------------------------------------------------------------
-# Whether a lane's handoff record stands, as `workflow-state handoff-standing`
-# answers it. That verb owns the test, and where the record is read, and
-# publishes its verdict as the word on its first stdout line, exiting 0 for
-# every verdict, so the word is read here and its status only says whether the
-# run reached the verb: every orch script sources the project's `.env.local`
-# before its dispatch, and a settings file that stops it exits with a status of
-# its own and no verdict.
-#
-# lane_handoff_standing DIR ERR_FILE COMMAND... runs COMMAND, the verb's whole
-# argv, from DIR with its stderr in ERR_FILE, and sets LANE_HANDOFF_STATE:
-#   stands      a record no relaunch has resumed, its JSON in
-#               LANE_HANDOFF_RECORD
-#   none        no record stands, a state file that is not there included
-#   unreadable  anything else: the verb's own `unreadable`, a run that never
-#               reached the verb, a word it does not print, and a `stands`
-#               with no record under it, which the verb never prints whole
-# and LANE_HANDOFF_FILE to the state file the verdict names, empty where the
-# run printed none. ERR_FILE holds the run's own words for the last; an empty
-# ERR_FILE leaves them on the caller's own stderr, never reopened by path,
-# since a redirect to /dev/stderr truncates a stderr that is a regular file.
-# The watch that reports a record and the relaunch that retires a session both
-# ask here; the lane-mail hook parses the same verdict itself, since it
-# installs apart from these scripts.
-# ---------------------------------------------------------------------------
-LANE_HANDOFF_VERDICT='workflow-state: handoff-standing'
-LANE_HANDOFF_STATE=""
-LANE_HANDOFF_RECORD=""
-LANE_HANDOFF_FILE=""
-lane_handoff_standing() { # DIR ERR_FILE COMMAND...
-  local dir="$1" err="$2" answer line rc=0
-  shift 2
-  LANE_HANDOFF_STATE=unreadable
-  LANE_HANDOFF_RECORD=""
-  LANE_HANDOFF_FILE=""
-  if [[ -n "$err" ]]; then answer="$(cd -- "$dir" && "$@" 2>"$err")" || rc=$?
-  else answer="$(cd -- "$dir" && "$@")" || rc=$?; fi
-  [[ "$rc" -eq 0 ]] || return 0
-  line="${answer%%$'\n'*}"
-  [[ "$line" != *" file="* ]] || LANE_HANDOFF_FILE="${line#* file=}"
-  case "${line%% file=*}" in
-    "$LANE_HANDOFF_VERDICT=none") LANE_HANDOFF_STATE=none ;;
-    "$LANE_HANDOFF_VERDICT=stands")
-      [[ "$answer" != "$line" && -n "${answer#*$'\n'}" ]] || return 0
-      LANE_HANDOFF_STATE=stands
-      LANE_HANDOFF_RECORD="${answer#*$'\n'}" ;;
-  esac
-  return 0
 }
 
 # ---------------------------------------------------------------------------

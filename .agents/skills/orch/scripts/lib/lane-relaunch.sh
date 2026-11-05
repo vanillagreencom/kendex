@@ -11,25 +11,28 @@
 # copilot_launch_home. Exit 1 means no session; exit 2 means the lookup
 # failed, never permission to start fresh.
 
-# The lane record names the choices a recovery repeats in `recovery`: the
-# checkout, the launch flags and the refresh word. A record with none, or a
-# custom command, cannot recover its permissions, so the watch refuses
-# before stopping a lane. The host and tracker keep their lane-record
-# meanings, including null host meaning local.
-#
 # The replacement is the runtime's: one `launch-lane` request written beside
-# the fleet state, its path in LANE_RECOVERY_REQUEST, with the record's
-# harness, tracker, repository, host and kind, the resolved checkout as its
-# mail_root, the account where one is named, the refresh word, the model the
-# switch recorded with its effort, and the continuation line as its brief.
+# the fleet state, its path in LANE_RECOVERY_REQUEST, composed from the lane
+# record as the runtime writes it, with the record's harness, tracker,
+# repository, host and kind, the checkout the launch ran from as its
+# mail_root (`checkout` on a hosted record, whose `mail_root` is its host's;
+# else `mail_root`), the account where one is named, the refresh word, the
+# model the switch recorded with its effort, and the continuation line as
+# its brief. A record an earlier launcher wrote keeps its `recovery` object:
+# its `cwd` and `refresh` stand in for the fields above where the record
+# lacks them, and its `flags` name the selector whose `[1m]` suffix the
+# model keeps, the effort the record lacks and the permission choice the
+# lane ran under, which the request carries as its `permission`. The host
+# and tracker keep their lane-record meanings, including null host meaning
+# local.
 lane_recovery_request() { # RECORD ACCOUNT STATE_DIR
   local fields item harness flags refresh tracker repo kind model effort launch_model launch_id selector_id brief request
-  LANE_RECOVERY_CAUSE=permission-choice-unrecorded
-  LANE_RECOVERY_REQUEST="" LANE_RECOVERY_CWD="" LANE_RECOVERY_HOST="" LANE_RECOVERY_SESSION=""
-  fields="$(jq -er 'select((.recovery | type) == "object"
-      and (.recovery.cwd | type) == "string" and (.recovery.cwd | length) > 0
-      and (.recovery.flags | type) == "string" and (.recovery.refresh | type) == "boolean")
-    | [.item, .harness, .recovery.cwd, .recovery.flags, (.recovery.refresh | tostring),
+  LANE_RECOVERY_CAUSE=checkout-unrecorded
+  LANE_RECOVERY_REQUEST="" LANE_RECOVERY_CWD="" LANE_RECOVERY_HOST="" LANE_RECOVERY_SESSION="" LANE_RECOVERY_PERMISSION=""
+  fields="$(jq -er '(.checkout // .recovery.cwd // .mail_root) as $cwd
+    | select(($cwd | type) == "string" and ($cwd | length) > 0)
+    | [.item, .harness, $cwd, (.recovery.flags | strings // ""),
+       ((.recovery.refresh // .refresh // false) == true | tostring),
        (.host // "local"), (.recovery.session // ""), (.tracker // ""), (.repo // ""), (.kind // "")]
     | join("\u001f")' <<<"$1")" || return 1
   IFS=$'\x1f' read -r item harness LANE_RECOVERY_CWD flags refresh LANE_RECOVERY_HOST LANE_RECOVERY_SESSION tracker repo kind <<<"$fields"
@@ -42,16 +45,19 @@ lane_recovery_request() { # RECORD ACCOUNT STATE_DIR
   model="$(jq -er '.model | strings | select(length > 0)' <<<"$1")" || return 1
   model="$(launch_choice_model_id "$harness" "$model" recorded)" || return 1
   [[ -n "$model" ]] || return 1
-  launch_model="$(launch_choice_launch_model "$harness" "$flags")" || return 1
-  launch_id="$(launch_choice_model_id "$harness" "$model" recorded "$launch_model")" || return 1
-  selector_id="$(launch_choice_model_id "$harness" "$launch_model" recorded)" || return 1
-  # Carry the suffix only from a matching explicit ID or family selector.
-  if [[ "$harness" == claude && "$launch_model" == *\[1[mM]\]
-      && "$launch_id" == "$selector_id" ]]; then
-    model="${model}[1m]"
-  fi
   effort="$(jq -r '.effort // ""' <<<"$1")" || return 1
-  [[ -n "$effort" ]] || effort="$(launch_choice_effort "$harness" "$flags")" || return 1
+  if [[ -n "$flags" ]]; then
+    launch_model="$(launch_choice_launch_model "$harness" "$flags")" || return 1
+    launch_id="$(launch_choice_model_id "$harness" "$model" recorded "$launch_model")" || return 1
+    selector_id="$(launch_choice_model_id "$harness" "$launch_model" recorded)" || return 1
+    # Carry the suffix only from a matching explicit ID or family selector.
+    if [[ "$harness" == claude && "$launch_model" == *\[1[mM]\]
+        && "$launch_id" == "$selector_id" ]]; then
+      model="${model}[1m]"
+    fi
+    [[ -n "$effort" ]] || effort="$(launch_choice_effort "$harness" "$flags")" || return 1
+    lane_recovery_permission "$harness" "$flags" || return 1
+  fi
   LANE_RECOVERY_CAUSE=checkout-unavailable
   LANE_RECOVERY_CWD="$(cd -- "$LANE_RECOVERY_CWD" && pwd -P)" || return 1
   LANE_RECOVERY_CAUSE=brief-unwritten
@@ -61,12 +67,42 @@ lane_recovery_request() { # RECORD ACCOUNT STATE_DIR
   request="$3/model-recovery-$item.json"
   jq -cn --arg item "$item" --arg harness "$harness" --arg cwd "$LANE_RECOVERY_CWD" --argjson refresh "$refresh" --arg brief "$brief" \
     --arg tracker "$tracker" --arg repo "$repo" --arg model "$model" --arg effort "$effort" --arg account "$2" --arg kind "$kind" \
-    --arg host "$LANE_RECOVERY_HOST" '
+    --arg host "$LANE_RECOVERY_HOST" --arg permission "$LANE_RECOVERY_PERMISSION" '
     {op: "launch-lane", item: $item, harness: $harness, mail_root: $cwd, refresh: $refresh, brief_file: $brief}
-    + ({tracker: $tracker, repo: $repo, model: $model, effort: $effort, account: $account, kind: $kind} | with_entries(select(.value != "")))
+    + ({tracker: $tracker, repo: $repo, model: $model, effort: $effort, account: $account, kind: $kind, permission: $permission} | with_entries(select(.value != "")))
     + (if $host == "local" then {} else {host: $host} end)' > "$request" || return 1
   LANE_RECOVERY_REQUEST="$request"
   LANE_RECOVERY_CAUSE=""
+}
+
+# The permission choice a released launch's flags carry, in
+# LANE_RECOVERY_PERMISSION as the runtime takes it: the first spelling of the
+# harness's permission table in FLAGS, a two-word spelling kept as its two
+# words. A permission flag whose value the table lacks is a choice no launch
+# line of the runtime carries, so the recovery refuses before stopping
+# anything, permission-choice-unrepresentable. Flags with no permission word
+# leave the choice to the launch's posture, as the launcher's own line did.
+lane_recovery_permission() { # HARNESS FLAGS
+  local spellings spec flag i
+  LANE_RECOVERY_PERMISSION=""
+  spellings="$(launch_choice_permission_spellings "$1")" || return 1
+  launch_choice_shell_words "$2" || return 1
+  for ((i = 0; i < ${#LAUNCH_CHOICE_ARGV[@]}; i++)); do
+    [[ "$1" != claude || "${LAUNCH_CHOICE_ARGV[i]}" != -- ]] || break
+    launch_choice_permission_match "$spellings" "${LAUNCH_CHOICE_ARGV[i]}" "${LAUNCH_CHOICE_ARGV[i+1]:-}"
+    case "$LAUNCH_CHOICE_PERMISSION_SPAN" in
+      1) LANE_RECOVERY_PERMISSION="${LAUNCH_CHOICE_ARGV[i]}"; return 0 ;;
+      2) LANE_RECOVERY_PERMISSION="${LAUNCH_CHOICE_ARGV[i]} ${LAUNCH_CHOICE_ARGV[i+1]}"; return 0 ;;
+    esac
+    for spec in $spellings; do
+      [[ "$spec" == *=* ]] || continue
+      flag="${spec%%=*}"
+      if [[ "${LAUNCH_CHOICE_ARGV[i]}" == "$flag" || "${LAUNCH_CHOICE_ARGV[i]}" == "$flag="* ]]; then
+        LANE_RECOVERY_CAUSE=permission-choice-unrepresentable
+        return 1
+      fi
+    done
+  done
 }
 
 # The line a resumed lane runs first: read its inbox, then continue; a
@@ -120,13 +156,15 @@ lane_native_model_stop() { # RECORD STATE_DIR SCRIPTS ITEM SESSION
 
 # The hook acquires one session's recovery under workflow-state's lock before
 # starting this outside the predecessor's process group. Compose the recovery
-# request before stopping the predecessor; the runtime's launch follows the stop.
+# request before stopping the predecessor; the runtime's launch follows the
+# stop. A local predecessor is stopped by the runtime's close on the
+# no-landing ground, interrupting its turn: the one reader of the record's
+# launch identity, in the form the launch wrote it, and the writer of the
+# lane's `stopped`. A hosted predecessor is stopped by its provider's verb.
 lane_model_recovery() { # RECORD STATE_DIR SCRIPTS SESSION
-  local record="$1" state_dir="$2" SCRIPT_DIR="$3" session="$4" fields item host harness pane pid start wake_pid wake_start account out claim pane_pid identity limit rc=0 result
-  fields="$(jq -er '[.item, (.host // "local"), .harness, (.launch.pane // ""),
-    (.launch.pid // ""), (.launch.start // ""), (.wake.pid // ""),
-    (.wake.start // ""), (.account // "")] | join("\u001f")' <<<"$record")" || return 1
-  IFS=$'\x1f' read -r item host harness pane pid start wake_pid wake_start account <<<"$fields"
+  local record="$1" state_dir="$2" SCRIPT_DIR="$3" session="$4" fields item host harness account out claim close limit rc=0 result
+  fields="$(jq -er '[.item, (.host // "local"), .harness, (.account // "")] | join("\u001f")' <<<"$record")" || return 1
+  IFS=$'\x1f' read -r item host harness account <<<"$fields"
   limit="$("$SCRIPT_DIR/orch-env" ORCH_MODEL_RECOVERY_LIMIT 3)" || return 1
   claim="$("$SCRIPT_DIR/workflow-state" --state-dir "$state_dir" update-report oversee '
     first(.lanes[]? | select(.item == $item)) as $current
@@ -159,35 +197,41 @@ lane_model_recovery() { # RECORD STATE_DIR SCRIPTS SESSION
     return 1
   }
   if [[ "$host" == local ]]; then
-    # Older launches recorded the pane but no process identity. Read that
-    # identity once; a stale positive recorded identity never takes this path.
-    if [[ -z "$pid$start" ]]; then
-      pane_pid="$(tmux display-message -p -t "$pane" '#{pane_pid}')" || return 1
-      identity="$(lane_harness_identity "$pane_pid" "$harness")" || return 1
-      pid=${identity%% *} start=${identity#* }
+    # The close's status is its effect's own (--effect-exit): 0 the harness
+    # stopped and the lane marked, 3 the stop failed with the lane standing,
+    # 75 the close open with its answer unknown, which the launch below
+    # would meet as an open intent; only the first launches.
+    close="$state_dir/model-recovery-$item.close.json"
+    jq -cn --arg item "$item" '{op: "close-owned-resources", item: $item,
+      no_landing: {reason: "model-switch", source: "model-recovery", interrupt: true}}' > "$close" || return 1
+    "$SCRIPT_DIR/orch-runtime" --state-dir "$state_dir" op --fleet --effect-exit --request "$close" >/dev/null || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
+      printf 'lane-relaunch: model-recovery=stop-failed item=%s cause=close exit=%s\n' "$item" "$rc" >&2
+      return "$rc"
     fi
-    # Never substitute a pane's new process for this predecessor's identity.
-    lane_stop_local "" "$pid" "$start" "$wake_pid" "$wake_start" "$harness" || {
-      printf 'lane-relaunch: model-recovery=stop-failed item=%s cause=%s\n' "$item" "$LANE_STOP_CAUSE" >&2
-      return 1
-    }
   else
     out="$(ORCH_LANE_HOST="$host" "$SCRIPT_DIR/lane-host" stop --item "$item" --harness "$harness")" || return 1
     lane_recovery_stop_confirmed "$out" "$item" || return 1
+    "$SCRIPT_DIR/workflow-state" --state-dir "$state_dir" update oversee \
+      '(.lanes[] | select(.item == $item and .launched_at == $launch)) |= (.status = "stopped")' \
+      --arg item "$item" --arg launch "$(jq -r '.launched_at' <<<"$record")" >/dev/null || return 1
   fi
-  "$SCRIPT_DIR/workflow-state" --state-dir "$state_dir" update oversee \
-    '(.lanes[] | select(.item == $item and .launched_at == $launch)) |= (.status = "stopped")' \
-    --arg item "$item" --arg launch "$(jq -r '.launched_at' <<<"$record")" >/dev/null || return 1
-  export ORCH_TMUX_SESSION="$LANE_RECOVERY_SESSION"
+  [[ -z "$LANE_RECOVERY_SESSION" ]] || export ORCH_TMUX_SESSION="$LANE_RECOVERY_SESSION"
   cd -- "$LANE_RECOVERY_CWD" || return 1
   # A new mismatch can arrive before the runtime returns. Its new launch
   # identity proves that this pending replacement reached a live harness.
   # The launch's status is its effect's own (--effect-exit), never its
-  # admission's alone.
+  # admission's alone: 0 the replacement confirmed, `replaced`; 75 its
+  # intent open with the outcome unknown, left `starting` for the intent's
+  # reconcile to settle, and counted as the attempt it is; any other status
+  # nothing launched, `failed`.
   lane_model_recovery_result "$record" "$state_dir" "$SCRIPT_DIR" "$session" starting || return 1
   "$SCRIPT_DIR/orch-runtime" --state-dir "$state_dir" op --fleet --effect-exit --request "$LANE_RECOVERY_REQUEST" || rc=$?
-  result=replaced
-  [[ "$rc" -eq 0 ]] || result=failed
+  case "$rc" in
+    0) result=replaced ;;
+    75) return "$rc" ;;
+    *) result=failed ;;
+  esac
   lane_model_recovery_result "$record" "$state_dir" "$SCRIPT_DIR" "$session" "$result" || return 1
   return "$rc"
 }

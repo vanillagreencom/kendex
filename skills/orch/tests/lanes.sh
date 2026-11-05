@@ -1548,8 +1548,8 @@ stage_claims() {
       *) echo "stage_claims: unknown dir token in $item" >&2; exit 1 ;;
     esac
     printf '%s\t%s\t%s\t%s\t2026-08-16T00:00:00Z' "$pid" "$pane" "$dir" "$name" > "$STORE/claims/$name.claim"
-    # The record lane_claim_put writes ends in the fleet and the named spelling;
-    # the other tokens stage the older record that carries neither.
+    # A record a launch wrote ends in the fleet and the named spelling; the
+    # other tokens stage the older record that carries neither.
     [[ -z "$named" ]] || printf '\t\t%s' "$named" >> "$STORE/claims/$name.claim"
     printf '\n' >> "$STORE/claims/$name.claim"
   done
@@ -1589,7 +1589,7 @@ claims_table() {
 
 # The provider bills an Anthropic Pi lane on its Claude home. Drive the real
 # pick on that same home and plant the claim as a launch once recorded it,
-# without fleet metadata to infer a pool from. The legacy row is the older
+# without fleet metadata to infer a pool from. The older row is the
 # eight-field record.
 same_home_claim_result() { # NAME SCRIPTS CLAIM_POOL QUERY
   (
@@ -3299,8 +3299,8 @@ printf 'account=%s\tharness=claude\tstatus=plan_ended\tdetail=http-403-oauth_not
 table \
   "the chooser counts an ended seat walled and omits no seat|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-ended-seat.tsv|$PICK|rc=3 keyed.no-candidate=no-candidate,harness=claude,max-pct=95,model=none,walled=1,unmeasured=2,seats=0 keyed.pick-seat-omitted=none" \
   "a named ended seat is walled, never seat-reserve|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-ended-seat.tsv|$PICK_LANE $H/.tclaude|rc=3 status=plan_ended wall=100 verdict=null"
-# Control: the seat-reserve arm ahead of the ended wall, the old arm order,
-# holds the ended seat at its reserve.
+# Control: the seat-reserve arm ahead of the ended wall holds the ended seat
+# at its reserve.
 lanes_mutant mutant-ended-seat lib/lane-model.sh '(if lane_ended then "walled"' '(if false then "walled"'
 LANES="$TMP_ROOT/mutant-ended-seat/scripts/lanes"
 table \

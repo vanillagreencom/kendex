@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
-# Surface: ol_walk and its Jarvis select consumer over the real lanes picker.
+# Surface: ol_walk and its Jarvis select consumer over the runtime's account
+# judge, its replies planted from fixtures/accounts-pick; the rows that ask
+# the retained `lanes pick` directly run it over the usage fixture.
 # Inputs: orch/scripts/, jarvis/scripts/, mailbox/scripts/, lib/lanes-fixture.sh,
-# lib/assertions.sh and lib/growth-state.sh. Only the usage endpoint is a fixture.
+# lib/runtime-stub.sh, fixtures/accounts-pick/, lib/assertions.sh and
+# lib/growth-state.sh. Only the usage endpoint is a fixture.
 set -euo pipefail
 export MSYS=winsymlinks:nativestrict
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -40,12 +43,20 @@ SCRIPT_DIR="$SKILLS/orch/scripts" DEP_ERR="$TMP_ROOT/dependency.err"
 source "$SCRIPT_DIR/lib/lane-launch.sh"
 source "$SCRIPT_DIR/lib/lane-context.sh"
 source "$SCRIPT_DIR/lib/overseer-launch.sh"
-# The walk asks the runtime's account judge (U8d); this world has no built
-# runtime, so the stand-in answers `accounts pick` through the real `lanes`
-# over the usage fixture (lib/runtime-stub.sh), named by ORCH_RUNTIME_CLI.
+# The walk asks the runtime's account judge; this world has no built
+# runtime, so the stand-in (lib/runtime-stub.sh), named by ORCH_RUNTIME_CLI,
+# answers each `accounts pick` the walk asks with the reply the real verb
+# printed over this world: one file per question (harness, trigger, excluded
+# account) under fixtures/accounts-pick, its home spelled as this one's,
+# each held to the verb by tests/rust/walk.rs. A question no file answers
+# is refused, never answered by the retained shell judge.
 source "$TEST_DIR/lib/runtime-stub.sh"
-mkdir -p "$TMP_ROOT/runtime"
+mkdir -p "$TMP_ROOT/runtime/runtime.picks"
 fixture_runtime_stub "$TMP_ROOT/runtime" "$TMP_ROOT/runtime" || exit 1
+for reply in "$TEST_DIR"/fixtures/accounts-pick/*.json; do
+  sed "s|@H@|$H|g" "$reply" > "$TMP_ROOT/runtime/runtime.picks/$(basename "$reply" .json)"
+done
+: > "$TMP_ROOT/runtime/runtime.picks-only"
 export ORCH_RUNTIME_CLI="$TMP_ROOT/runtime/orch-runtime"
 
 selection() {

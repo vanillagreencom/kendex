@@ -66,7 +66,7 @@ pane_write_message() { # KEY FIELD=VALUE...
   for field in "$@"; do printf ' %s' "$field"; done
   printf '\n'
   case "$key" in
-    pane-unresolved) printf '%s\n' 'fix=name the lane by its recorded window (--window), or a pane you opened by the pane id (%N) new-window printed (--pane)' ;;
+    pane-unresolved) printf '%s\n' 'fix=name the lane by its recorded window (KIND window), a pane you opened by the pane id (%N) new-window printed (KIND pane), or the hosted item (KIND host)' ;;
     pane-self) printf '%s\n' 'fix=the target is the pane this command runs in; name the lane'"'"'s own window' ;;
     pane-missing) printf '%s\n' 'fix=no pane on this tmux server carries the target; read the lane record'"'"'s window again, or relaunch a lane whose window closed' ;;
     pane-ambiguous) printf '%s\n' 'fix=more than one pane carries the window name; rename the one that is not the lane'"'"'s, as lane-reach.md § Wake refusals says' ;;
@@ -81,7 +81,6 @@ pane_write_message() { # KEY FIELD=VALUE...
     action-invalid) printf '%s\n' 'fix=the action is text, file or key; this is a defect in the caller' ;;
     key-invalid) printf '%s\n' "fix=press one of: $PANE_WRITE_KEYS" ;;
     file-unreadable) printf '%s\n' 'fix=write the input to a regular file first, with the harness file tool' ;;
-    argument-invalid) printf '%s\n' 'fix=run pane-write --help' ;;
     write-failed) printf '%s\n' 'fix=a pane write failed after the checks passed and part of the input may have landed; read the pane before writing again' ;;
     *) printf '%s\n' "fix=pane_write has no message for $key; this is a defect in lib/pane-write.sh" ;;
   esac
@@ -250,8 +249,8 @@ pane_write() { # KIND TARGET EXPECT ACTION VALUE
   pane_write_resolved "$expect" "$action" "$value"
 }
 
-# The CLI already resolved the local pane to find its hosted record. Reuse
-# that observation so the shell settle budget has the same first read.
+# The write into the pane pane_write_resolve named: the process check, then
+# the key, or the paste from a named buffer and its Enter.
 pane_write_resolved() { # EXPECT ACTION VALUE
   local expect="$1" action="$2" value="$3" buffer
   pane_write_expect "$expect" || return

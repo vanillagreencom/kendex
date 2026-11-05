@@ -321,6 +321,8 @@ struct LaneDriver<'a> {
     roster: Option<Roster>,
     /// The fleet's repositories for a record naming none.
     repos: Vec<String>,
+    /// The account a Copilot record naming none runs on.
+    copilot_home: Option<PathBuf>,
 }
 
 impl LaneDriver<'_> {
@@ -372,6 +374,7 @@ impl LaneDriver<'_> {
             route: &route,
             wall_pauses: &wall_pauses,
             hosted: &reads,
+            copilot_home: self.copilot_home.as_deref(),
         });
         apply(&mut self.baseline, &produced);
         self.now += 240;
@@ -413,6 +416,7 @@ macro_rules! lane_driver {
             gh: PathBuf::from("/nonexistent/gh"),
             roster: None,
             repos: Vec::new(),
+            copilot_home: None,
         };
     };
 }
@@ -939,6 +943,10 @@ fn a_long_lane_is_reported_once_per_age_interval_with_its_records_counts() {
     let launched: u64 = 1_800_000_000 - 12_601;
     let mut running = lane_record("KEN-9", "gh-9", "claude", &server, "%999", None, dir.path());
     running["launched_at"] = json!("2027-01-15T04:29:59Z");
+    // The lane's checkout is its own: a `.git` entry at its root, which the
+    // counts read for the common root, planted as a directory and never by a
+    // git process.
+    std::fs::create_dir(dir.path().join(".git")).unwrap();
     let tmp = dir.path().join("tmp");
     std::fs::write(
         tmp.join("lane-status-KEN-9.md"),
@@ -4374,5 +4382,182 @@ fn a_walled_github_lane_s_replacement_starts_on_the_brief_naming_its_repository_
     assert!(
         brief.starts_with("/orch start github owner/name#12 This is an unattended orch lane"),
         "{brief}"
+    );
+}
+
+/// The scripts directory of the orch package this test tree is under: the
+/// real `copilot-statusline` writer runs from it.
+fn orch_scripts() -> PathBuf {
+    fixtures()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("scripts")
+}
+
+/// Defect (the duty's side of the provider's running answer): a hosted lane
+/// of a `pane=local` kind whose provider answers `running` read
+/// `lane-exited` off its local transport pane, a shell. The provider's
+/// answer is the process proof and the local pane's screen is judged with
+/// it: a shell drawing Codex's idle screen is `idle-after-return`, never
+/// exited, and no capture is asked; a provider line naming no `pane` is the
+/// same kind.
+#[test]
+fn a_hosted_lane_the_provider_reads_running_is_never_exited_off_its_transport_shell() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let pane = server.open_window(
+        "gh-1",
+        dir.path(),
+        "printf '%s\\n' '› complete' '› Type a prompt'; exec bash --norc --noprofile",
+    );
+    let mut one = hosted_lane("KEN-1", "gh-1", "/remote/KEN-1");
+    one["harness"] = json!("codex");
+    one["launch"] = json!({"pane": pane, "server": server.pid});
+    fleet.set_lanes(vec![one]);
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path());
+    world.plant_host(&[
+        (&format!("{PROVIDER} capabilities"), ok(SSH_LINE)),
+        ("status --item KEN-1 --harness codex", ok("running\n")),
+    ]);
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    driver.gh = world.gh();
+    let all: Vec<String> = (0..2)
+        .flat_map(|_| event_lines(&driver.pass(&state)))
+        .collect();
+    assert!(
+        !all.iter().any(|l| l.starts_with("EVENT lane-exited")),
+        "{all:?}"
+    );
+    assert!(
+        all.iter().any(|l| l == "EVENT idle-after-return gh-1"),
+        "{all:?}"
+    );
+    let log = world.host_log();
+    assert!(!log.iter().any(|l| l.contains("capture")), "{log:?}");
+}
+
+/// Defect: a hosted lane with no recorded pane keys its exit row on the
+/// empty pane key, which an absent row read as too, so the two-pass rule
+/// reported it on the first pass. The row standing is the first pass's
+/// record: the lane the provider reads exited is `lane-exited` on the
+/// second pass alone, and a third says nothing.
+#[test]
+fn a_paneless_hosted_lane_the_provider_reads_exited_is_reported_on_the_second_pass() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let mut four = hosted_lane("KEN-4", "gh-4", "/remote/KEN-4");
+    four["harness"] = json!("codex");
+    fleet.set_lanes(vec![four]);
+    let state = fleet.read();
+    let world = HostedWorld::new(dir.path());
+    world.plant_host(&[
+        (&format!("{PROVIDER} capabilities"), ok(SSH_LINE)),
+        ("status --item KEN-4 --harness codex", ok("exited\n")),
+    ]);
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = world.scripts.clone();
+    driver.gh = world.gh();
+    let passes: Vec<Vec<String>> = (0..3).map(|_| event_lines(&driver.pass(&state))).collect();
+    assert_eq!(
+        passes,
+        vec![vec![], vec!["EVENT lane-exited gh-4".to_owned()], vec![]]
+    );
+}
+
+/// Defect: a Copilot lane launched with allow-all whose managed policy
+/// withdrew the grant waited at a permission prompt, and the duty said
+/// `lane-asking` with no cause, so its overseer answered the prompt on every
+/// tool call where the line's cause has it stop the lane instead. The duty
+/// reads the session's status-line record, the real `copilot-statusline`
+/// writer's, under the record's account: a running record with `allow_all`
+/// true whose session reports the grant off carries
+/// `stop-cause=allow-all-blocked-by-policy`; a record bound to no session id
+/// is read through the session the store holds for its worktree; a lane
+/// launched without allow-all carries no cause; the note is in the line's
+/// key, so the grant restored under the same prompt is news once.
+#[test]
+fn a_copilot_lanes_prompt_carries_the_policy_cause_its_session_record_reports() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let copilot = named_sleep(dir.path(), "MainThread");
+    let dialog = format!(
+        "printf '%s\\n' 'Do you want to proceed?' '❯ 1. Yes'; exec {} 120",
+        copilot.display()
+    );
+    let account = dir.path().join("account");
+    std::fs::create_dir_all(&account).unwrap();
+    let write_record = |session: &str, allow_all: bool| -> u64 {
+        let payload = json!({"session_id": session, "allow_all_enabled": allow_all}).to_string();
+        let out = program("bash")
+            .args(["-c", r#"printf '%s' "$2" | "$1/copilot-statusline""#, "_"])
+            .arg(orch_scripts())
+            .arg(payload)
+            .env("COPILOT_HOME", &account)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+        let record: Value = serde_json::from_slice(
+            &std::fs::read(account.join("lane-status").join(format!("{session}.json"))).unwrap(),
+        )
+        .unwrap();
+        record["written_at"].as_u64().unwrap()
+    };
+    let worktree = dir.path().join("worktree-4");
+    std::fs::create_dir_all(&worktree).unwrap();
+    let session = account.join("session-state").join("s2");
+    std::fs::create_dir_all(&session).unwrap();
+    std::fs::write(
+        session.join("workspace.yaml"),
+        format!(
+            "id: s2\ncwd: {}\n",
+            worktree.canonicalize().unwrap().display()
+        ),
+    )
+    .unwrap();
+    std::fs::write(session.join("events.jsonl"), "{}\n").unwrap();
+    let lane = |item: &str, window: &str, root: &Path| {
+        let pane = server.open_window(window, dir.path(), &dialog);
+        let mut record = lane_record(item, window, "copilot", &server, &pane, None, root);
+        record["account"] = json!(account.display().to_string());
+        record
+    };
+    let mut granted = lane("KEN-2", "gh-2", dir.path());
+    granted["session_id"] = json!("s1");
+    granted["allow_all"] = json!(true);
+    let ungranted = lane("KEN-3", "gh-3", dir.path());
+    let mut unbound = lane("KEN-4", "gh-4", &worktree);
+    unbound["allow_all"] = json!(true);
+    fleet.set_lanes(vec![granted, ungranted, unbound]);
+    let state = fleet.read();
+    lane_driver!(server, fleet, readers, driver);
+    let written = write_record("s1", false).max(write_record("s2", false));
+    driver.now = written;
+    let first = driver.pass(&state);
+    assert_eq!(
+        event_lines(&first),
+        vec![
+            "EVENT lane-asking gh-2 stop-cause=allow-all-blocked-by-policy",
+            "EVENT lane-asking gh-3",
+            "EVENT lane-asking gh-4 stop-cause=allow-all-blocked-by-policy",
+        ],
+        "{:?}",
+        lines(&first)
+    );
+    driver.now = write_record("s1", true);
+    let second = driver.pass(&state);
+    assert_eq!(
+        event_lines(&second),
+        vec!["EVENT lane-asking gh-2"],
+        "{:?}",
+        lines(&second)
     );
 }

@@ -13,8 +13,9 @@
 //! `preparing` record that names no identity at all.
 //!
 //! One slot per lane record, the first rule that holds deciding
-//! (`lane_charge`); a `kind: claude-cloud` record belongs to the cloud cap
-//! and is not read here:
+//! (`lane_charge`). A `kind: claude-cloud` record charges the cloud cap,
+//! never this one (`cloud_charge`): it names no process, so its in-flight
+//! status word is its evidence, read after its reservation:
 //!
 //! | Record reads | Charge | Reason, cause |
 //! |---|---|---|
@@ -45,9 +46,9 @@ use crate::settings::Settings;
 use crate::state::{EffectOp, Intent, Lane, LaneStatus, LaunchIdentity};
 
 /// The `kind` a Claude cloud lane records: hosted, its `mail_root` the
-/// item's worktree on this machine. The cloud cap counts it, not this one
-/// (`lane-cap.sh`'s `cap_kind`); the lane observation duty does not observe
-/// it; the close owes its worktree.
+/// item's worktree on this machine. The cloud cap counts it, not the lane
+/// cap; the lane observation duty does not observe it; the close owes its
+/// worktree.
 pub(crate) const CLOUD_KIND: &str = "claude-cloud";
 
 /// The host facts a fleet transition judges beside the record: the lane cap
@@ -59,6 +60,10 @@ pub(crate) const CLOUD_KIND: &str = "claude-cloud";
 /// no identity.
 pub struct Host<'a> {
     pub lane_cap: u32,
+    /// The cloud sessions the overseer holds at once, bounding a
+    /// `claude-cloud` launch alone. `None` on a host built for an entry
+    /// that launches no lane, which judges no cloud cap.
+    pub cloud_lane_cap: Option<u32>,
     /// Whether a recorded identity still runs under its recorded start.
     pub(super) still_runs: &'a dyn Fn(&Identity) -> Reading<Identity>,
     /// The admission's reads: the item read
@@ -83,6 +88,7 @@ impl Host<'static> {
     pub fn kernel(lane_cap: u32) -> Host<'static> {
         Host {
             lane_cap,
+            cloud_lane_cap: None,
             still_runs: &process::still_runs,
             admission: None,
             accounts: None,
@@ -91,6 +97,15 @@ impl Host<'static> {
 }
 
 impl<'a> Host<'a> {
+    /// The host with the cloud cap a `claude-cloud` launch is judged
+    /// against.
+    pub fn cloud_cap(self, cap: u32) -> Host<'a> {
+        Host {
+            cloud_lane_cap: Some(cap),
+            ..self
+        }
+    }
+
     /// The kernel host with the admission's reads through the named
     /// programs: what the launch and admit entries judge against.
     pub fn admitting(self, clis: Clis) -> Host<'a> {
@@ -120,6 +135,9 @@ pub enum ChargeReason {
     Wake,
     /// The lane is `preparing` under an open launch intent.
     Preparing,
+    /// The lane's cloud session is recorded running: no process read can
+    /// release it, so the record's word stands until its close.
+    Session,
     /// An explicit reservation stands and has not lapsed.
     Reservation,
     /// Ownership could not be established: an unreadable identity, a record
@@ -340,10 +358,44 @@ pub(super) fn launch_open(intents: &[Intent], item: &str) -> bool {
         .any(|i| i.open() && i.op == EffectOp::LaunchLane && i.target == item)
 }
 
-/// What charges the fleet cap now: every local lane judged by
-/// [`lane_charge`] from identities read once each, except the lane a
-/// relaunch replaces (`replacing`: its item and the identities the caller
-/// read), which charges only what the relaunch does not replace.
+/// The slot one cloud session's record charges, or none: a standing
+/// reservation as [`lane_charge`] reads it, a `preparing` row under its
+/// open launch intent, a `running` session; a stopped, parked or done
+/// record holds nothing.
+pub(super) fn cloud_charge(lane: &Lane, launch_open: bool, now_secs: u64) -> Option<Charge> {
+    let charge = |reason: ChargeReason, cause: Option<String>| Charge {
+        source: lane_source(lane),
+        reason,
+        cause,
+    };
+    if let Some(reservation) = &lane.reservation {
+        match clock::epoch_secs(&reservation.until) {
+            Some(until) if now_secs < until => {
+                return Some(charge(
+                    ChargeReason::Reservation,
+                    Some(reservation.reason.clone()),
+                ));
+            }
+            Some(_) => {}
+            None => {
+                return Some(charge(
+                    ChargeReason::Unknown,
+                    Some("reservation-until-invalid".to_owned()),
+                ));
+            }
+        }
+    }
+    match lane.status {
+        LaneStatus::Preparing if launch_open => Some(charge(ChargeReason::Preparing, None)),
+        LaneStatus::Running => Some(charge(ChargeReason::Session, None)),
+        LaneStatus::Preparing | LaneStatus::Stopped | LaneStatus::Parked | LaneStatus::Done => None,
+    }
+}
+
+/// What charges the lane cap now: every lane but the cloud sessions,
+/// judged by [`lane_charge`] from identities read once each, except the
+/// lane a relaunch replaces (`replacing`: its item and the identities the
+/// caller read), which charges only what the relaunch does not replace.
 pub(super) fn occupancy(
     lanes: &[Lane],
     intents: &[Intent],
@@ -351,30 +403,57 @@ pub(super) fn occupancy(
     now_secs: u64,
     host: &Host,
 ) -> Occupancy {
+    counted(
+        lanes,
+        intents,
+        replacing,
+        now_secs,
+        host,
+        host.lane_cap,
+        false,
+    )
+}
+
+/// What charges the cloud cap `cap` now: every cloud session's record
+/// judged by [`cloud_charge`], except the one a relaunch replaces.
+pub(super) fn cloud_occupancy(
+    lanes: &[Lane],
+    intents: &[Intent],
+    replacing: Option<(&str, &Identities)>,
+    now_secs: u64,
+    host: &Host,
+    cap: u32,
+) -> Occupancy {
+    counted(lanes, intents, replacing, now_secs, host, cap, true)
+}
+
+fn counted(
+    lanes: &[Lane],
+    intents: &[Intent],
+    replacing: Option<(&str, &Identities)>,
+    now_secs: u64,
+    host: &Host,
+    cap: u32,
+    cloud: bool,
+) -> Occupancy {
     let mut charges = Vec::new();
     for lane in lanes {
-        if lane.kind.as_deref() == Some(CLOUD_KIND) {
+        if (lane.kind.as_deref() == Some(CLOUD_KIND)) != cloud {
             continue;
         }
         let own = replacing
             .filter(|(item, _)| *item == lane.item)
             .map(|(_, ids)| ids);
-        let read;
-        let ids = match own {
-            Some(ids) => ids,
-            None => {
-                read = read_identities(lane, host);
-                &read
-            }
-        };
-        let charge = match own {
-            Some(ids) => retained_charge(lane, ids),
-            None => lane_charge(lane, launch_open(intents, &lane.item), now_secs, ids),
+        let open = launch_open(intents, &lane.item);
+        let charge = match (own, cloud) {
+            (Some(ids), _) => retained_charge(lane, ids),
+            (None, true) => cloud_charge(lane, open, now_secs),
+            (None, false) => lane_charge(lane, open, now_secs, &read_identities(lane, host)),
         };
         charges.extend(charge);
     }
     Occupancy {
-        cap: host.lane_cap,
+        cap,
         occupancy: u32::try_from(charges.len()).unwrap_or(u32::MAX),
         charges,
     }
@@ -459,6 +538,7 @@ mod tests {
         let reader = planted(&answers);
         let host = Host {
             lane_cap: 4,
+            cloud_lane_cap: None,
             still_runs: &reader,
             admission: Some(no_reads()),
             accounts: None,
@@ -606,6 +686,7 @@ mod tests {
         let reader = planted(&answers);
         let host = Host {
             lane_cap: 4,
+            cloud_lane_cap: None,
             still_runs: &reader,
             admission: Some(no_reads()),
             accounts: None,
@@ -643,6 +724,46 @@ mod tests {
             at(&running, until + 3600),
             Some((ChargeReason::Live, None)),
             "the identity is read before the hold"
+        );
+    }
+
+    /// Defect: a cloud session charged against the lane cap, or a local
+    /// lane against the cloud cap, so a full cloud cap admits a session and a
+    /// full lane cap refuses one. Each count reads its own kind alone, a
+    /// running session charges by its word and a stopped one holds nothing.
+    #[test]
+    fn each_cap_counts_its_own_kind_and_a_cloud_session_charges_by_its_word() {
+        let answers = HashMap::from([live(100, "ticks:1")]);
+        let reader = planted(&answers);
+        let host = Host {
+            lane_cap: 1,
+            cloud_lane_cap: Some(1),
+            still_runs: &reader,
+            admission: Some(no_reads()),
+            accounts: None,
+        };
+        let cloud = |item: &str, status: LaneStatus| {
+            let mut lane = lane(item, status, None);
+            lane.kind = Some(CLOUD_KIND.to_owned());
+            lane
+        };
+        let lanes = [
+            lane("L", LaneStatus::Running, Some((100, "ticks:1"))),
+            cloud("C", LaneStatus::Running),
+            cloud("S", LaneStatus::Stopped),
+            cloud("P", LaneStatus::Preparing),
+        ];
+        let local = occupancy(&lanes, &[], None, 0, &host);
+        assert_eq!((local.cap, local.occupancy), (1, 1));
+        assert_eq!(local.charges[0].source, lane_source(&lanes[0]));
+        let cloud_count = cloud_occupancy(&lanes, &[], None, 0, &host, 1);
+        assert_eq!((cloud_count.cap, cloud_count.occupancy), (1, 1));
+        assert_eq!(cloud_count.charges[0].source, lane_source(&lanes[1]));
+        assert_eq!(cloud_count.charges[0].reason, ChargeReason::Session);
+        assert_eq!(
+            cloud_charge(&lanes[3], true, 0).map(|c| c.reason),
+            Some(ChargeReason::Preparing),
+            "a preparing session under its open intent holds its slot"
         );
     }
 

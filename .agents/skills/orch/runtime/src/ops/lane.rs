@@ -5,10 +5,13 @@
 //! effect's phase written onto its open intent, and the arms of
 //! `record-outcome` that move a lane when its launch or close ends.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use agent_runtime::clock;
+use agent_runtime::harness::{Harness, PermissionMeaning};
+use agent_runtime::launch::Permission;
 use agent_runtime::process::Identity;
 use agent_runtime::protocol::Outcome;
 use agent_runtime::reading::Reading;
@@ -23,6 +26,7 @@ use super::{
     new_intent, no_open_intent, open_intent, push_intent, same_open_intent, string_or_null,
 };
 use crate::error::{Error, Result, RetiredEnd, WalledWindow};
+use crate::settings::{CLOUD_LANE_CAP_KEY, LANE_CAP_KEY};
 use crate::state::{
     self, CloseGround, Document, EffectOp, Intent, Lane, LaneKeys, LaneStatus, LaunchIdentity,
     ObligationRecord, Phase, Reservation, Selection, TerminalVerdict,
@@ -45,12 +49,17 @@ use crate::state::{
 /// out, the account is taken as a pick's answer, judged already. `refresh`
 /// marks a refresh lane, whose brief runs `kendex refresh` or `kendex
 /// apply` with `--lane-refresh`: the launch writes the refresh record the
-/// drift hooks read.
+/// drift hooks read. `permission` is the harness's permission word the
+/// lane runs under, spelled as agent-runtime's table spells it (one word,
+/// or `FLAG VALUE` as two); left out, the launch runs the settings'
+/// posture, and a word the table lacks is refused before any intent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LaunchLane {
     pub item: String,
     pub harness: String,
     pub mail_root: String,
+    #[serde(default)]
+    pub permission: Option<String>,
     #[serde(default)]
     pub tracker: Option<String>,
     #[serde(default)]
@@ -112,6 +121,48 @@ impl LaunchLane {
         }
     }
 
+    /// The permission word as the launch line takes it, split at its
+    /// blanks.
+    pub fn permission_words(&self) -> Vec<String> {
+        self.permission
+            .as_deref()
+            .map(|p| p.split_whitespace().map(str::to_owned).collect())
+            .unwrap_or_default()
+    }
+
+    /// The permission word judged against the harness's table: `Ok` with
+    /// the meaning of the word that stands (`None` for no word), `Err` for
+    /// a word the table lacks, which no launch line can carry faithfully.
+    fn permission_meaning(&self) -> std::result::Result<Option<PermissionMeaning>, ()> {
+        let words = self.permission_words();
+        if words.is_empty() {
+            return Ok(None);
+        }
+        let Some(harness) = Harness::parse(&self.harness) else {
+            return Ok(None);
+        };
+        match harness.permission_word_in(&words) {
+            Some((spelling, meaning)) if spelling.split_whitespace().count() == words.len() => {
+                Ok(Some(meaning))
+            }
+            Some(_) | None => Err(()),
+        }
+    }
+
+    /// The record's `allow_all`: whether a Copilot lane's line grants the
+    /// full allow-all mode, which a policy block can take away; `None` on
+    /// every other harness, and where no posture is known to judge by.
+    fn allow_all(&self, posture: Option<Permission>) -> Option<bool> {
+        if Harness::parse(&self.harness) != Some(Harness::Copilot) {
+            return None;
+        }
+        let narrower = matches!(
+            self.permission_meaning(),
+            Ok(Some(PermissionMeaning::Narrower))
+        );
+        posture.map(|posture| posture == Permission::Bypass && !narrower)
+    }
+
     /// The optional fields a relaunch writes at `preparing`, in the lane
     /// record's order.
     fn prepared(&self) -> [(&'static str, &Option<String>); 5] {
@@ -161,11 +212,14 @@ pub struct Terminal {
 }
 
 /// An explicit disposition that ends the attempt with no landing while the
-/// item stays open.
+/// item stays open. `interrupt` stops the harness mid-turn, its idle proof
+/// not asked for: the session it runs is unusable, as after a model switch.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NoLanding {
     pub reason: String,
     pub source: String,
+    #[serde(default)]
+    pub interrupt: bool,
 }
 
 /// Ask for a lane's owned processes and window to be closed. Without a
@@ -282,8 +336,9 @@ pub struct PhaseRecorded {
 
 /// The record a first launch appends, in the lane record's key order with
 /// `null` where the launch knows no value, the order every reader of the
-/// fleet record meets.
-fn new_lane_record(r: &LaunchLane, at: &str) -> Value {
+/// fleet record meets. `allow_all` is the Copilot grant, `tier` and
+/// `tier_inputs` what the brief states of the item's tier.
+fn new_lane_record(r: &LaunchLane, at: &str, allow_all: Option<bool>, tier: &Tier) -> Value {
     json!({
         "item": r.item,
         "tracker": string_or_null(&r.tracker),
@@ -303,8 +358,145 @@ fn new_lane_record(r: &LaunchLane, at: &str) -> Value {
         "running_at": Value::Null,
         "status": LaneStatus::Preparing.word(),
         "over_cap": string_or_null(&r.over_cap),
+        "allow_all": allow_all,
+        "tier": tier.tier,
+        "tier_inputs": tier.inputs(),
         "launch": Value::Null,
     })
+}
+
+/// What a launch states of its item's tier: the workflow verb its brief
+/// opens with (`start` is the standard tier), else the one item-tier line
+/// the brief carries whole, and the inputs that line names. A launch that
+/// states none records `null`: it judges no tier it did not read.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Tier {
+    tier: Option<&'static str>,
+    estimate: Option<u64>,
+    delta: Option<u64>,
+    paths: Option<u64>,
+}
+
+impl Tier {
+    /// The brief's tier: the verb where the run text opens the orch
+    /// workflow with one (`/orch`, `/skill:orch`, `$orch` or `execute the
+    /// orch`, then `micro`, `small` or `start`), with the first item-tier
+    /// line's inputs; else the tier and inputs of the brief's one whole
+    /// item-tier line, none where it has none or two that differ. A cloud
+    /// session runs no orch workflow, so its text is read for the line
+    /// alone.
+    fn of(brief: &str, cloud: bool) -> Tier {
+        let verb = if cloud { None } else { workflow_verb(brief) };
+        let line = match verb {
+            Some(_) => brief
+                .match_indices("tier=")
+                .find_map(|(at, _)| tier_line(&brief[at..])),
+            None => {
+                let whole: BTreeSet<TierLine> = brief
+                    .lines()
+                    .filter_map(|line| {
+                        let line = line.trim();
+                        tier_line(line).filter(|parsed| parsed.len == line.len())
+                    })
+                    .collect();
+                (whole.len() == 1)
+                    .then(|| whole.into_iter().next())
+                    .flatten()
+            }
+        };
+        let tier = match verb {
+            Some("start") => Some("standard"),
+            Some(verb) => Some(verb),
+            None => line.as_ref().map(|l| l.tier),
+        };
+        Tier {
+            tier,
+            estimate: line.as_ref().and_then(|l| l.estimate),
+            delta: line.as_ref().and_then(|l| l.delta),
+            paths: line.as_ref().map(|l| l.paths),
+        }
+    }
+
+    fn inputs(&self) -> Value {
+        json!({"estimate": self.estimate, "delta": self.delta, "paths": self.paths})
+    }
+}
+
+/// One item-tier line as a brief states it: `tier=T brief=B cause=...
+/// estimate=N|- delta=N|- paths=N`, `len` the bytes it spans.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct TierLine {
+    tier: &'static str,
+    estimate: Option<u64>,
+    delta: Option<u64>,
+    paths: u64,
+    len: usize,
+}
+
+/// The item-tier line at the start of `text`, where one stands.
+fn tier_line(text: &str) -> Option<TierLine> {
+    let tiers: [&'static str; 3] = ["micro", "small", "standard"];
+    let rest = text.strip_prefix("tier=")?;
+    let tier = tiers
+        .iter()
+        .copied()
+        .find(|t| rest.starts_with(t) && rest[t.len()..].starts_with(" brief="))?;
+    let rest = &rest[tier.len() + " brief=".len()..];
+    let brief = ["micro", "small", "start"]
+        .iter()
+        .find(|b| rest.starts_with(*b) && rest[b.len()..].starts_with(" cause="))?;
+    let rest = &rest[brief.len() + " cause=".len()..];
+    let line_end = rest.find('\n').unwrap_or(rest.len());
+    let cause_at = rest[..line_end].find(" estimate=")?;
+    let rest = &rest[cause_at + " estimate=".len()..];
+    let count = |rest: &str| -> Option<(Option<u64>, usize)> {
+        if let Some(after) = rest.strip_prefix('-') {
+            return Some((None, rest.len() - after.len()));
+        }
+        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+        (digits > 0).then(|| (rest[..digits].parse().ok(), digits))
+    };
+    let (estimate, used) = count(rest)?;
+    let rest = rest[used..].strip_prefix(" delta=")?;
+    let (delta, used) = count(rest)?;
+    let rest = rest[used..].strip_prefix(" paths=")?;
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    let paths = rest[..digits].parse().ok()?;
+    let consumed = text.len() - rest.len() + digits;
+    Some(TierLine {
+        tier,
+        estimate,
+        delta,
+        paths,
+        len: consumed,
+    })
+}
+
+/// The orch workflow verb the run text opens with, case folded: the first
+/// `/orch`, `/skill:orch`, `$orch` or `execute the orch` followed by
+/// `micro`, `small` or `start` and a blank or the end.
+fn workflow_verb(text: &str) -> Option<&'static str> {
+    let folded = text.to_ascii_lowercase();
+    let verbs: [&'static str; 3] = ["micro", "small", "start"];
+    let mut found: Option<(usize, &'static str)> = None;
+    for prefix in ["/orch ", "/skill:orch ", "$orch ", "execute the orch "] {
+        for (at, _) in folded.match_indices(prefix) {
+            let rest = &folded[at + prefix.len()..];
+            let verb = verbs.iter().copied().find(|v| {
+                rest.starts_with(v)
+                    && rest[v.len()..]
+                        .chars()
+                        .next()
+                        .is_none_or(char::is_whitespace)
+            });
+            if let Some(verb) = verb
+                && found.is_none_or(|(first, _)| at < first)
+            {
+                found = Some((at, verb));
+            }
+        }
+    }
+    found.map(|(_, verb)| verb)
 }
 
 /// Unpark at `at`: a standing `parked` moves into `pending_pr`
@@ -535,6 +727,30 @@ pub(super) fn launch_lane(
             surface: surface.to_owned(),
         });
     }
+    // A permission word no launch line of the harness carries faithfully
+    // is refused before any intent, never widened to the posture's own.
+    if r.permission_meaning().is_err() {
+        return Err(Error::from(agent_runtime::Error::refused(
+            "permission-unrepresentable",
+            &[
+                ("harness", &r.harness),
+                ("permission", r.permission.as_deref().unwrap_or("")),
+            ],
+        )));
+    }
+    let cloud = kind == CLOUD_KIND;
+    // The cap the request's kind is bounded by: a cloud session the cloud
+    // cap, every other lane the lane cap.
+    let (cap, setting) = if cloud {
+        let cap = host.cloud_lane_cap.ok_or_else(|| Error::CapUnreadable {
+            read: "cloud-cap",
+            path: path.to_path_buf(),
+            cause: "no cloud cap on this host".to_owned(),
+        })?;
+        (cap, CLOUD_LANE_CAP_KEY)
+    } else {
+        (host.lane_cap, LANE_CAP_KEY)
+    };
     let lanes = lanes(path, doc)?;
     let intents = intents(path, doc)?;
     let position = lanes.iter().position(|l| l.item == r.item);
@@ -547,16 +763,15 @@ pub(super) fn launch_lane(
     // relaunch is refused beside a harness that still runs.
     let own = position.map(|index| occupancy::read_identities(&lanes[index], host));
     // The cap as it stands, read once for the reply whether this request
-    // admits a launch or finds its own standing: every local
-    // lane, the one a relaunch replaces counted for what the relaunch does
-    // not replace.
-    let admission = occupancy::occupancy(
-        &lanes,
-        &intents,
-        own.as_ref().map(|ids| (r.item.as_str(), ids)),
-        env.now_secs,
-        host,
-    );
+    // admits a launch or finds its own standing: every lane of the
+    // request's kind, the one a relaunch replaces counted for what the
+    // relaunch does not replace.
+    let replacing = own.as_ref().map(|ids| (r.item.as_str(), ids));
+    let admission = if cloud {
+        occupancy::cloud_occupancy(&lanes, &intents, replacing, env.now_secs, host, cap)
+    } else {
+        occupancy::occupancy(&lanes, &intents, replacing, env.now_secs, host)
+    };
     if let Some(intent) = same_open_intent(&intents, EffectOp::LaunchLane, &r.item)? {
         let index = position.ok_or_else(|| Error::LaneMissing {
             item: r.item.clone(),
@@ -619,7 +834,7 @@ pub(super) fn launch_lane(
             host,
         )?),
     };
-    if admission.occupancy >= host.lane_cap && r.over_cap.is_none() {
+    if admission.occupancy >= cap && r.over_cap.is_none() {
         let lanes = admission
             .charges
             .iter()
@@ -627,13 +842,31 @@ pub(super) fn launch_lane(
             .count();
         return Err(Error::CapReached {
             occupancy: admission.occupancy,
-            cap: host.lane_cap,
+            cap,
             lanes: u32::try_from(lanes).unwrap_or(u32::MAX),
             claims: admission
                 .occupancy
                 .saturating_sub(u32::try_from(lanes).unwrap_or(u32::MAX)),
+            setting,
         });
     }
+    // What the launch states of the lane beyond its selection: the Copilot
+    // grant its line carries and the tier its brief names, written on
+    // every launch as the record reads them.
+    let allow_all = r.allow_all(host.accounts.map(|s| s.permission));
+    let brief = match &r.brief_file {
+        Some(file) => fs::read_to_string(file).map_err(|e| {
+            Error::from(agent_runtime::Error::refused(
+                "brief-unreadable",
+                &[
+                    ("path", &file.display().to_string()),
+                    ("cause", &e.to_string()),
+                ],
+            ))
+        })?,
+        None => String::new(),
+    };
+    let tier = Tier::of(&brief, cloud);
     let at = env.iso();
     let index = match position {
         Some(index) => {
@@ -671,6 +904,15 @@ pub(super) fn launch_lane(
             state::set(lane, "session_since", at.as_str());
             state::set(lane, "running_at", Value::Null);
             state::set(lane, "status", LaneStatus::Preparing.word());
+            // What this launch states of the lane, over what the record
+            // keeps: a grant judged now and a tier the brief names.
+            if allow_all.is_some() {
+                state::set(lane, "allow_all", allow_all);
+            }
+            if tier.tier.is_some() {
+                state::set(lane, "tier", tier.tier);
+                state::set(lane, "tier_inputs", tier.inputs());
+            }
             state::set(lane, "launch", Value::Null);
             state::delete(lane, "prepare");
             state::delete(lane, "live_display");
@@ -683,7 +925,7 @@ pub(super) fn launch_lane(
         }
         None => {
             let rows = state::array_mut(path, doc, "lanes")?;
-            let mut record = new_lane_record(r, &at);
+            let mut record = new_lane_record(r, &at, allow_all, &tier);
             if r.refresh {
                 record["refresh"] = Value::Bool(true);
             }
@@ -819,6 +1061,7 @@ fn close_ground(lane: &Lane, r: &CloseOwnedResources, host: &Host) -> Result<Clo
             None | Some(Reading::Live(_) | Reading::Gone) => Ok(CloseGround::NoLanding {
                 reason: disposition.reason.clone(),
                 source: disposition.source.clone(),
+                interrupt: disposition.interrupt,
             }),
         },
         (None, None) => match reading {
@@ -1229,7 +1472,7 @@ pub(super) fn record_close_outcome(
             });
             let lane = lane_doc_mut(path, doc, index)?;
             match &intent.close {
-                Some(CloseGround::NoLanding { reason, source }) => {
+                Some(CloseGround::NoLanding { reason, source, .. }) => {
                     state::set(lane, "status", LaneStatus::Stopped.word());
                     row["text"] =
                         json!(format!("attempt retired, no landing; intent {}", intent.id));
@@ -1359,6 +1602,9 @@ mod tests {
                 "running_at",
                 "status",
                 "over_cap",
+                "allow_all",
+                "tier",
+                "tier_inputs",
                 "launch",
                 "touched",
                 "in_scope"
@@ -1536,10 +1782,102 @@ mod tests {
         }
     }
 
+    /// The tier a brief states, by the one reader of its words: the
+    /// workflow verb in any of its spellings, case folded, with the first
+    /// item-tier line's inputs; no verb and one whole item-tier line; no
+    /// verb and two lines that differ, or none; and a cloud session's text
+    /// read for the line alone.
+    #[test]
+    fn the_tier_a_brief_states_is_read_from_its_verb_or_its_one_item_tier_line() {
+        let line = "tier=small brief=small cause=estimate 3 over estimate=3 delta=10 paths=2";
+        type Row<'a> = (
+            &'a str,
+            bool,
+            Option<&'static str>,
+            (Option<u64>, Option<u64>, Option<u64>),
+        );
+        let rows: [Row; 9] = [
+            (
+                "/orch start KEN-1 and more",
+                false,
+                Some("standard"),
+                (None, None, None),
+            ),
+            (
+                "/skill:orch small KEN-1",
+                false,
+                Some("small"),
+                (None, None, None),
+            ),
+            (
+                "$orch MICRO KEN-1\n",
+                false,
+                Some("micro"),
+                (None, None, None),
+            ),
+            (
+                "Read SKILL.md and execute the orch start workflow for KEN-1",
+                false,
+                Some("standard"),
+                (None, None, None),
+            ),
+            ("/orch starter KEN-1", false, None, (None, None, None)),
+            (
+                &format!("/orch micro KEN-1\nnotes {line} and {line}"),
+                false,
+                Some("micro"),
+                (Some(3), Some(10), Some(2)),
+            ),
+            (
+                &format!("Resume.\n  {line}  \n"),
+                false,
+                Some("small"),
+                (Some(3), Some(10), Some(2)),
+            ),
+            (
+                &format!("{line}\ntier=micro brief=micro cause=x estimate=- delta=- paths=0"),
+                false,
+                None,
+                (None, None, None),
+            ),
+            (
+                &format!("/orch start KEN-1\n{line}"),
+                true,
+                Some("small"),
+                (Some(3), Some(10), Some(2)),
+            ),
+        ];
+        for (brief, cloud, tier, (estimate, delta, paths)) in rows {
+            assert_eq!(
+                Tier::of(brief, cloud),
+                Tier {
+                    tier,
+                    estimate,
+                    delta,
+                    paths,
+                },
+                "{brief:?} cloud={cloud}"
+            );
+        }
+        assert_eq!(
+            Tier::of(
+                "tier=micro brief=micro cause=x estimate=- delta=4 paths=1",
+                false
+            ),
+            Tier {
+                tier: Some("micro"),
+                estimate: None,
+                delta: Some(4),
+                paths: Some(1),
+            }
+        );
+    }
+
     /// The production host: the kernel's own reader.
     fn kernel(cap: u32) -> Host<'static> {
         Host {
             lane_cap: cap,
+            cloud_lane_cap: Some(cap),
             still_runs: &process::still_runs,
             admission: Some(no_reads()),
             accounts: None,
@@ -1617,7 +1955,8 @@ mod tests {
                 ("occupancy".to_owned(), "1".to_owned()),
                 ("cap".to_owned(), "1".to_owned()),
                 ("lanes".to_owned(), "1".to_owned()),
-                ("claims".to_owned(), "0".to_owned())
+                ("claims".to_owned(), "0".to_owned()),
+                ("setting".to_owned(), "ORCH_OVERSEER_LANES".to_owned())
             ]
         );
         assert_eq!(
@@ -1761,6 +2100,7 @@ mod tests {
         };
         let host = Host {
             lane_cap: 1,
+            cloud_lane_cap: None,
             admission: Some(no_reads()),
             still_runs: &unread,
             accounts: None,
@@ -2467,6 +2807,7 @@ mod tests {
             no_landing: Some(NoLanding {
                 reason: "diagnosis".into(),
                 source: "overseer".into(),
+                interrupt: false,
             }),
         });
         let err = apply_on(&path, &both, &env(), LOCK, &kernel(4)).unwrap_err();
@@ -2591,6 +2932,7 @@ mod tests {
             no_landing: Some(NoLanding {
                 reason: "diagnosis-complete".into(),
                 source: "overseer".into(),
+                interrupt: false,
             }),
         });
         let unread = |_: &Identity| Reading::Unreadable {
@@ -2620,7 +2962,8 @@ mod tests {
             intent.close,
             Some(CloseGround::NoLanding {
                 reason: "diagnosis-complete".into(),
-                source: "overseer".into()
+                source: "overseer".into(),
+                interrupt: false,
             })
         );
         run(&path, &outcome(&intent.id, Outcome::Confirmed)).unwrap();

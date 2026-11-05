@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Live launch claims per auth lane: one file per lane window launched under a
-# resolved lane, so `lanes pick` sees the launches already in flight on an
-# account instead of only its usage numbers, which lag a launch by minutes.
+# Launch claims per auth lane: one file per lane window an earlier install's
+# launch wrote under a resolved lane, which `lanes pick` counts beside an
+# account's usage numbers while the claim's pane lives.
 #
 # Home: $OVERSEE_WATCH_STATE_DIR/claims, else <project root>/tmp/oversee-watch/
 # claims — the directory oversee-watch keeps its own state in.

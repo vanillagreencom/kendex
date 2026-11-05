@@ -897,9 +897,8 @@ ol_launch_flags() { # [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE [F
 OL_CMD="" OL_LANE_VAR="" OL_LAUNCH_HOME="" OL_FORM="" OL_TRUST_REASON="" OL_TRUST_ROUTE=""
 OL_HANDOFF_PROMPT='Read .agents/skills/orch/SKILL.md and follow .agents/skills/orch/workflows/oversee-takeover.md with the overseer handoff at '
 # ol_brief HARNESS HANDOFF — the takeover brief naming HANDOFF, into OL_BRIEF:
-# one plain sentence on claude, codex and copilot, pi's skill command on pi.
-# A launcher that hands the brief to the runtime apart from the line
-# (`oversee launch`) and the command line below take the one text.
+# one plain sentence on claude, codex and copilot, pi's skill command on pi,
+# the text the command line below carries.
 OL_BRIEF=""
 ol_brief() { # HARNESS HANDOFF
   case "$1" in

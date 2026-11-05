@@ -77,10 +77,10 @@ name: Skill Tests
 # which is what keeps a shard set a partition. Where the next cut would have
 # to name individual suites one at a time, the shard stands at what the seam
 # left and answers to its own step bound instead, and the paragraph above its
-# steps says so. Two legs are that case. `orch-terminal` is the first: its
-# suite open-terminal-lane, which races a real process tree, is on
-# run-all.sh's ALONE list and runs after the others, so the leg's wall time is that suite's seconds plus the
-# pooled rest, and the orch shard comment gives the figures. The macOS
+# steps says so. Two legs are that case. `orch-terminal` is the first:
+# run-all.sh's shard_of names its suites by their `open-terminal` and
+# `lane-launch` names, the wake entry's and the launch libraries', pooled
+# under the leg's own step bound. The macOS
 # `kendex-cli` cargo leg splits by `--test` target into `render-lint` and
 # `rest`, and `render-lint` is the second: a target whose cost is one
 # expensive test, so no target seam reaches inside it. After its comments
@@ -522,9 +522,7 @@ jobs:
     # shard that runs those suites must be one that installed a kendex
     # whatever the roster looks like later. The macOS legs keep the skip, for
     # the reason the install step gives.
-    # ORCH_REQUIRE_KENDEX does the same for three orch suites:
-    # open-terminal-copilot-context.sh, whose disableAllHooks rows ask a real
-    # kendex hooks-off and which the `orch-terminal` shard runs, and
+    # ORCH_REQUIRE_KENDEX does the same for two orch suites,
     # claude-model-classes.sh and tier-model-fixture.sh, whose rows ask a
     # real kendex tier-model and which the `orch-rest` shard runs.
     env: &skill-suite-env
@@ -703,10 +701,9 @@ jobs:
       # kendex-cli, built from this checkout and put on PATH, for the
       # shards whose suites run a real kendex: `rest`, for change-scope's
       # change-scope rows, whose comment at the `rest` shard's verify-document
-      # step says why the build is this checkout's and why Linux alone, and
-      # `orch-terminal`, for the disableAllHooks rows of
-      # open-terminal-copilot-context.sh, which ask the `hooks-off` verb this
-      # checkout ships, `orch-rest`, for claude-model-classes.sh, whose core
+      # step says why the build is this checkout's and why Linux alone,
+      # `orch-terminal`, which tools/ci-job-set keeps among the checkout
+      # shards, `orch-rest`, for claude-model-classes.sh, whose core
       # contract rows hold the Claude plugin's fixtures to this checkout's
       # `tier-model`, and tier-model-fixture.sh, which holds the orch suites'
       # class table fixture to it, and `refresh`, for refresh-consumer's held-render

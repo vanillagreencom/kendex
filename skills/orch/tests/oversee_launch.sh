@@ -342,9 +342,10 @@ assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "1|oversee: tmux-missing var=TMUX_PANE" \
   "register outside a pane refuses"
 run_oversee -- launch
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "2|oversee: unknown-command command=launch" \
-  "a command other than register is refused: a launch goes through the runtime"
+assert_eq "$RC|$(sed -n 1,2p <<<"$OUT")" \
+  "2|oversee: unknown-command command=launch
+The command is register. A fleet's first overseer and a successor open through the runtime: orch-runtime successor --fleet, then op --fleet, as the first section of workflows/oversee.md spells it." \
+  "a command other than register is refused, its text naming the route a launch takes for the person who typed it"
 
 # A Copilot overseer a launch opened on its account, the record the turn
 # end below reads.

@@ -950,9 +950,16 @@ pub enum CloseGround {
         source: String,
     },
     /// An explicit disposition: the attempt ends with no landing while the
-    /// item stays open, on idle-or-gone proof of its harness. `source`
-    /// names who recorded it.
-    NoLanding { reason: String, source: String },
+    /// item stays open, on idle-or-gone proof of its harness, or, under
+    /// `interrupt`, with the harness stopped mid-turn: the session it runs
+    /// is unusable (a model switch), so its idle proof is not asked for.
+    /// `source` names who recorded it.
+    NoLanding {
+        reason: String,
+        source: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        interrupt: bool,
+    },
 }
 
 /// The harness, account, model and effort a launch was asked for. The

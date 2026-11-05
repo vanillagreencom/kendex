@@ -696,6 +696,7 @@
   ".agents/skills/orch/runtime/src/effects/operation/obligations.rs",
   ".agents/skills/orch/runtime/src/effects/operation/receipt.rs",
   ".agents/skills/orch/runtime/src/effects/operation/window.rs",
+  ".agents/skills/orch/runtime/src/effects/pi-session-env.txt",
   ".agents/skills/orch/runtime/src/effects/stop.rs",
   ".agents/skills/orch/runtime/src/effects/transfer.rs",
   ".agents/skills/orch/runtime/src/error.rs",

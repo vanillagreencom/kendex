@@ -167,9 +167,8 @@ copilot_session_fields() { # RECORD
 # it mid-run; every tool call then waits on a permission prompt nobody at the
 # pane answers. That is a stop with its own cause, never a quiet lane. A
 # session launched without allow-all reports false as well and waits on its
-# prompts by design; the record alone cannot tell the two apart, so every
-# caller passes the launch's grant: copilot_session_lane_note the fleet
-# record's `allow_all`, the lane-mail-check hook the session's
+# prompts by design; the record alone cannot tell the two apart, so the
+# caller passes the launch's grant: the lane-mail-check hook the session's
 # COPILOT_ALLOW_ALL, which lib/lane-launch.sh lane_copilot_env sets `true` on
 # a launch line granting it and empty on any other. Prints the cause, 0;
 # prints nothing, 1, where GRANTED is anything but `true`, or the record says
@@ -226,46 +225,4 @@ copilot_session_in_worktree() { # HOME WORKTREE [SINCE]
   done <<<"$files"
   [ -n "$best" ] || return 1
   printf '%s\n' "$best"
-}
-
-# copilot_session_lane_note HOME SESSION_ID WORKTREE GRANTED NOW SINCE — what the
-# session record of a Copilot lane on the account HOME says about a stop, for a
-# reader outside the session, which holds no payload naming it: `lanes state`
-# and oversee-watch, through lib/lane-context.sh lane_context_copilot_note.
-# Into COPILOT_SESSION_NOTE as one `key=value` word, empty where the record
-# names no cause:
-#   stop-cause=<cause>       copilot_session_stop_cause's cause
-#   session-record=<reason>  no record answered: copilot_session_read's reason,
-#                            `worktree-unmatched` for no SESSION_ID and no
-#                            session with events in WORKTREE since SINCE, or
-#                            `store-unreadable` for a WORKTREE or a session
-#                            store that could not be read
-# GRANTED is `true` for a lane whose launch granted the full allow-all mode,
-# `--allow-all` or `--yolo` (lib/lane-launch.sh lane_copilot_allows_all), and
-# is handed on to copilot_session_stop_cause, which judges it. Only such a lane
-# has an allow-all a policy can take, so any other GRANTED leaves the note
-# empty and reads no record: a record reason for a lane that can carry no
-# cause names nothing to act on. The session is SESSION_ID, else the one
-# copilot_session_in_worktree names for WORKTREE since SINCE, in epoch seconds
-# the record's `session_since`, the launch that started the running session,
-# or the newest there where SINCE is empty. Always 0.
-COPILOT_SESSION_NOTE=""
-copilot_session_lane_note() { # HOME SESSION_ID WORKTREE GRANTED NOW SINCE
-  local home="$1" session="$2" file rc=0
-  COPILOT_SESSION_NOTE=""
-  [ "$4" = true ] || return 0
-  if [ -z "$session" ]; then
-    if [ -z "$3" ]; then rc=1; else file="$(copilot_session_in_worktree "$home" "$3" "${6:-}")" || rc=$?; fi
-    [ "$rc" -ne 0 ] || session="$(copilot_session_id "$file")" || rc=2
-    case "$rc" in
-      0) ;;
-      1) COPILOT_SESSION_NOTE=session-record=worktree-unmatched; return 0 ;;
-      *) COPILOT_SESSION_NOTE=session-record=store-unreadable; return 0 ;;
-    esac
-  fi
-  if ! copilot_session_read "$home" "$session" "" "$5"; then
-    COPILOT_SESSION_NOTE="session-record=$COPILOT_SESSION_REASON"
-  elif COPILOT_SESSION_NOTE="$(copilot_session_stop_cause "$COPILOT_SESSION_RECORD" "$4")"; then
-    COPILOT_SESSION_NOTE="stop-cause=$COPILOT_SESSION_NOTE"
-  fi
 }

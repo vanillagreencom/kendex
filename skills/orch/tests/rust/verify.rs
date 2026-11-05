@@ -4088,6 +4088,28 @@ fn a_second_run_requests_no_second_review() {
     let result = ok_result(&gh.review(false, &[]));
     assert_eq!(result["status"], "pending", "{result}");
     assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+
+    // A Copilot review already on the head, one that is no error, is the
+    // request answered: nothing is asked again.
+    let mut gh = Github::review_world();
+    gh.answer(
+        &format!("pr view {PR}"),
+        review_view("", &[(COPILOT, "COMMENTED")], false),
+    )
+    .answer(
+        &reviews_path(),
+        json!([copilot_review(
+            12,
+            "COMMENTED",
+            "Reviewed.",
+            "2026-01-01T00:00:00Z"
+        )]),
+    );
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["status"], "pending", "{result}");
+    assert_eq!(result["request"]["outcome"], "existing", "{result}");
+    assert_eq!(result["request"]["reason"], "existing-review");
+    assert_eq!(gh.requests(), 0, "{:?}", gh.log());
 }
 
 /// Each verdict word is read from the head's reviews, threads and the
@@ -4367,6 +4389,20 @@ fn copilot_work_in_flight_holds_pending_within_the_bound_and_expires_past_it() {
     let result = ok_result(&gh.review(false, &[]));
     assert_eq!(result["copilot"]["state"], "none", "{result}");
 
+    // A request GitHub removed is no work in flight: the gate asks again.
+    let mut gh = Github::review_world();
+    gh.answer(
+        &timeline_path(),
+        json!([
+            {"event": "review_requested", "id": 77, "created_at": "2026-01-01T00:00:00Z", "requested_reviewer": {"login": COPILOT_REST}},
+            {"event": "review_request_removed", "id": 78, "created_at": "2026-01-01T00:01:00Z", "requested_reviewer": {"login": COPILOT_REST}}
+        ]),
+    );
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["copilot"]["state"], "none", "{result}");
+    assert_eq!(result["request"]["outcome"], "requested", "{result}");
+    assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+
     let mut gh = Github::review_world();
     gh.fail(&check_runs(HEAD, 1));
     let result = ok_result(&gh.review(false, &[]));
@@ -4474,6 +4510,44 @@ fn the_gate_mode_is_recorded_once() {
         assert_eq!(result["mode"], mode, "{name}: {result}");
     }
 
+    // A rule requiring no general count still requires a review through
+    // code-owner review, last-push approval or a team minimum; an optional
+    // team minimum requires none.
+    for (name, parameters, mode) in [
+        (
+            "code owner",
+            json!({"required_approving_review_count": 0, "require_code_owner_review": true}),
+            "approval",
+        ),
+        (
+            "last push",
+            json!({"required_approving_review_count": 0, "require_last_push_approval": true}),
+            "approval",
+        ),
+        (
+            "a team minimum",
+            json!({"required_approving_review_count": 0, "required_reviewers": [{"minimum_approvals": 1}]}),
+            "approval",
+        ),
+        (
+            "an optional team",
+            json!({"required_approving_review_count": 0, "required_reviewers": [{"minimum_approvals": 0}]}),
+            "off",
+        ),
+    ] {
+        let mut gh = Github::review_world();
+        gh.answer(
+            &rules(1),
+            json!([{"type": "pull_request", "parameters": parameters}]),
+        )
+        .answer(
+            &branch(),
+            json!({"protected": false, "protection": {"enabled": false}}),
+        );
+        let result = ok_result(&gh.review(false, &[]));
+        assert_eq!(result["mode"], mode, "{name}: {result}");
+    }
+
     // A failed rules read on the first call is no mode: unreadable, nothing
     // recorded, never off.
     let mut gh = Github::review_world();
@@ -4481,6 +4555,14 @@ fn the_gate_mode_is_recorded_once() {
     let result = ok_result(&gh.review(false, &[]));
     assert_eq!(result["status"], "unreadable", "{result}");
     assert_eq!(result["reason"], "rules-read-failed");
+    assert!(gh.state().get("pr_review").is_none());
+
+    // A policy value outside `enforce` and `off` is refused, nothing read.
+    let gh = Github::review_world();
+    gh.policy("[env]\nREVIEW_GATE_MODE = \"junk\"\n");
+    let out = gh.review(false, &[]);
+    assert!(!out.status.success());
+    assert_eq!(reply(&out)["refusal"]["key"], "setting-invalid", "{out:?}");
     assert!(gh.state().get("pr_review").is_none());
 }
 
@@ -4549,6 +4631,20 @@ fn a_request_falls_back_with_its_cause() {
         let again = ok_result(&gh.review(false, &env));
         assert_eq!(again["request"]["recorded_now"], false, "{name}: {again}");
         assert_eq!(gh.requests(), requests, "{name}: {:?}", gh.log());
+    }
+
+    // A refresh route outside `copilot` and `overseer`, or an overseer route
+    // with no branch or author declared, is refused before any request.
+    for policy in [
+        "[env]\nREVIEW_GATE_MODE = \"enforce\"\nREVIEW_GATE_REFRESH_REVIEW = \"junk\"\n",
+        "[env]\nREVIEW_GATE_MODE = \"enforce\"\nREVIEW_GATE_REFRESH_REVIEW = \"overseer\"\nREVIEW_GATE_REFRESH_AUTHOR = \"lane-app[bot]\"\n",
+    ] {
+        let gh = Github::review_world();
+        gh.policy(policy);
+        let out = gh.review(false, &[]);
+        assert!(!out.status.success(), "{policy}");
+        assert_eq!(reply(&out)["refusal"]["key"], "setting-invalid", "{policy}");
+        assert_eq!(gh.requests(), 0, "{policy}: {:?}", gh.log());
     }
 }
 
@@ -5230,4 +5326,129 @@ fn copilot_work_in_flight_holds_a_verdict_that_permits_a_merge() {
     gh.set_head("at", json!(stamp_ago(601)));
     let result = ok_result(&gh.review(false, short));
     assert_eq!(result["verdict"], "proceeded", "{result}");
+}
+
+/// The review-thread walk counts every page and refuses what it cannot
+/// verify: an unresolved thread on a later page holds the head at
+/// `comments`; a partial reply (an `errors` array beside data), a null
+/// thread set, a next page with no cursor or one that does not advance,
+/// and a failed query are each `unreadable` with no verdict and nothing
+/// recorded, never an approval on the pages that could be read. A cursor
+/// that repeats is refused on the page that repeats it, not after the page
+/// bound.
+#[test]
+fn a_thread_on_a_later_page_holds_the_head_and_an_unverifiable_page_never_approves() {
+    let approved = || review_view("APPROVED", &[("colleague", "APPROVED")], false);
+    let paged = |unresolved: usize, cursor: Value| {
+        let mut page = threads_page(unresolved);
+        page["data"]["repository"]["pullRequest"]["reviewThreads"]["pageInfo"] =
+            json!({"hasNextPage": true, "endCursor": cursor});
+        page
+    };
+    let second = format!("{THREADS}page2");
+    let thread_reads = |gh: &Github| gh.log().iter().filter(|l| l.contains("number=7")).count();
+
+    let mut gh = Github::review_world();
+    gh.answer(&format!("pr view {PR}"), approved())
+        .answer(THREADS, paged(0, json!("page2")))
+        .answer(&second, threads_page(1));
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["status"], "complete", "{result}");
+    assert_eq!(result["verdict"], "comments", "{result}");
+    assert_eq!(result["unresolved_count"], 1, "{result}");
+    assert_eq!(gh.review_record()["verdict"]["verdict"], "comments");
+    assert_eq!(thread_reads(&gh), 2, "{:?}", gh.log());
+
+    struct Row {
+        name: &'static str,
+        first: Value,
+        second: Option<Value>,
+        reads: usize,
+    }
+    let rows = [
+        Row {
+            name: "an errors array beside data",
+            first: {
+                let mut page = threads_page(0);
+                page["errors"] = json!([{"message": "an unread page"}]);
+                page
+            },
+            second: None,
+            reads: 1,
+        },
+        Row {
+            name: "a null thread set",
+            first: json!({"data": {"repository": {"pullRequest": {"reviewThreads": null}}}}),
+            second: None,
+            reads: 1,
+        },
+        Row {
+            name: "a next page with an empty cursor",
+            first: paged(0, json!("")),
+            second: None,
+            reads: 1,
+        },
+        Row {
+            name: "a next page with a null cursor",
+            first: paged(0, Value::Null),
+            second: None,
+            reads: 1,
+        },
+        Row {
+            name: "a cursor that does not advance",
+            first: paged(0, json!("page2")),
+            second: Some(paged(1, json!("page2"))),
+            reads: 2,
+        },
+    ];
+    for row in rows {
+        let mut gh = Github::review_world();
+        gh.answer(&format!("pr view {PR}"), approved())
+            .answer(THREADS, row.first);
+        if let Some(page) = row.second {
+            gh.answer(&second, page);
+        }
+        let result = ok_result(&gh.review(false, &[]));
+        assert_eq!(result["status"], "unreadable", "{}: {result}", row.name);
+        assert!(result["verdict"].is_null(), "{}: {result}", row.name);
+        assert!(gh.review_record()["verdict"].is_null(), "{}", row.name);
+        assert_eq!(thread_reads(&gh), row.reads, "{}: {:?}", row.name, gh.log());
+    }
+
+    let mut gh = Github::review_world();
+    gh.answer(&format!("pr view {PR}"), approved())
+        .fail(THREADS);
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["status"], "unreadable", "{result}");
+    assert!(
+        result["verdict"].is_null() && gh.review_record()["verdict"].is_null(),
+        "{result}"
+    );
+}
+
+/// The request is made on the head the view read: a `pulls/N` read that
+/// names another head is `pending` with `head-moved`, no request sent and
+/// nothing claimed, so the next call judges the head that stands rather
+/// than asking Copilot for a review of one it has not read.
+#[test]
+fn a_head_that_moved_between_the_view_and_the_pull_read_is_pending_with_no_request() {
+    let mut gh = Github::review_world();
+    gh.answer(
+        &pull_path(),
+        json!({"state": "open", "draft": false, "head": {"sha": NEXT, "ref": "feat"}, "base": {"ref": BASE}, "user": {"login": "lane-app[bot]", "type": "Bot"}}),
+    );
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["status"], "pending", "{result}");
+    assert!(
+        result["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.starts_with("head-moved head=")),
+        "{result}"
+    );
+    assert_eq!(gh.requests(), 0, "{:?}", gh.log());
+    assert!(
+        gh.head_record()["request"].is_null(),
+        "{}",
+        gh.head_record()
+    );
 }

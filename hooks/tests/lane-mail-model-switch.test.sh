@@ -39,16 +39,25 @@ model_world() { # NAME LAUNCHED [broken] [RECORDED FLAGS]
   cp -- "$REPO_ROOT"/skills/github/scripts/lib/*.sh "$LANE/.agents/skills/github/scripts/lib/"
   S="$LANE/.agents/skills/orch/scripts"
   [[ -z "${MODEL_RELAUNCH_UNDER_TEST:-}" ]] || cp -- "$MODEL_RELAUNCH_UNDER_TEST" "$S/lib/lane-relaunch.sh"
-  # Capture only the launch dependency, the runtime's launch-lane request.
-  # Recovery itself, process identity, stop and workflow writes remain
-  # production operations.
+  # Capture the runtime dependency alone: the close that stops the
+  # predecessor (its request in MODEL_CLOSE) and the launch-lane request
+  # (MODEL_ARGV), each op appended to MODEL_OPS in the order asked. The
+  # recovery's claim, its composition and its workflow writes remain
+  # production operations; the stop and the launch are the runtime's, held
+  # by its own rows.
   cat >"$S/orch-runtime" <<'LAUNCH'
 #!/usr/bin/env bash
 set -euo pipefail
 request="" prev=""
 for arg in "$@"; do [[ "$prev" != --request ]] || request="$arg"; prev="$arg"; done
-cp -- "$request" "$MODEL_ARGV"
-printf '%s\n' done > "$MODEL_DONE"
+op="$(jq -r .op "$request")"
+printf '%s\n' "$op" >> "$MODEL_OPS"
+if [[ "$op" == close-owned-resources ]]; then
+  cp -- "$request" "$MODEL_CLOSE"
+else
+  cp -- "$request" "$MODEL_ARGV"
+  printf '%s\n' done > "$MODEL_DONE"
+fi
 printf '{"protocol":"orch-runtime-v1","ok":true,"result":{"effect":{"report":{"intent":{"outcome":"confirmed"}}}}}\n'
 LAUNCH
   chmod +x "$S/orch-runtime"
@@ -66,7 +75,7 @@ LAUNCH
       launch:{pid:$pid,start:$start,pane:"%1",server:$server},recovery:(if $broken == "broken" then null else
       {cwd:$cwd,flags:$flags,refresh:false,session:"model-test"} end)}')
   "$S/workflow-state" --state-dir "$LANE/tmp" update oversee '.lanes=[$r]' --argjson r "$record" >/dev/null
-  CALL_ENV=("MODEL_ARGV=$LANE/tmp/argv" "MODEL_DONE=$LANE/tmp/done" ORCH_MODEL_RECOVERY_LIMIT=3 ANTHROPIC_BASE_URL= \
+  CALL_ENV=("MODEL_ARGV=$LANE/tmp/argv" "MODEL_DONE=$LANE/tmp/done" "MODEL_CLOSE=$LANE/tmp/close" "MODEL_OPS=$LANE/tmp/ops" ORCH_MODEL_RECOVERY_LIMIT=3 ANTHROPIC_BASE_URL= \
     ANTHROPIC_DEFAULT_FABLE_MODEL= ANTHROPIC_DEFAULT_OPUS_MODEL= ANTHROPIC_DEFAULT_SONNET_MODEL= ANTHROPIC_DEFAULT_HAIKU_MODEL= \
     CLAUDE_CODE_USE_BEDROCK= CLAUDE_CODE_USE_VERTEX= CLAUDE_CODE_USE_FOUNDRY= CLAUDE_CODE_USE_MANTLE= \
     CLAUDE_CODE_USE_ANTHROPIC_AWS= CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST= \
@@ -77,6 +86,11 @@ event() { # MODEL [EXTRA JSON]
     '{hook_event_name:"PostModelSwitch",session_id:"s1",to_model:$m} + ($extra // {})')"
 }
 switch_count() { jq '[.fleet_log[]? | select(.kind=="model-switched")] | length' "$LANE/tmp/workflow-state-oversee.json"; }
+# The ops the recovery asked the runtime, in order, one word per line.
+asked_ops() { tr '\n' ' ' < "$LANE/tmp/ops" 2>/dev/null | sed 's/ $//'; }
+# The close the recovery asked for the predecessor: its item and whether it
+# interrupts the harness mid-turn.
+asked_close() { jq -r '[.item, (.no_landing.reason // "none"), (.no_landing.interrupt // false | tostring)] | join("|")' "$LANE/tmp/close" 2>/dev/null || echo none; }
 await_recovery() {
   local until_second=$((SECONDS + 15))
   while [[ ! -f "$LANE/tmp/done" ]]; do
@@ -199,19 +213,18 @@ model_world fresh-shell claude-fable-5-1
   '.lanes[0].model_check={session_id:"s1",outcome:"switched"}' >/dev/null
 status=0
 env -i "PATH=$TMUX_BIN:$PATH" "HOME=$OFFLINE_HOME" \
-  "MODEL_ARGV=$LANE/tmp/argv" "MODEL_DONE=$LANE/tmp/done" \
+  "MODEL_ARGV=$LANE/tmp/argv" "MODEL_DONE=$LANE/tmp/done" "MODEL_CLOSE=$LANE/tmp/close" "MODEL_OPS=$LANE/tmp/ops" \
   "$BASH" "$S/lib/lane-relaunch.sh" model-recovery "$record" "$LANE/tmp" s1 \
   >"$TMP_ROOT/recovery.out" 2>"$ERR_FILE" || status=$?
 assert_eq "$status" 0 'fresh-shell recovery completes through its own dependencies'
 assert_eq "$(jq -r '[.model, .effort] | join(" ")' "$LANE/tmp/argv" 2>/dev/null || :)" \
   'claude-fable-5-1 high' \
   'fresh-shell recovery launches the recorded model and effort'
-state=$(lane_process_state "$OWNED_CHILD")
-case "$state" in '' | Z) state=gone ;; esac
-assert_eq "$state" gone 'fresh-shell recovery stops its verified predecessor'
-assert_eq "$(jq -r '.lanes[0].status' "$LANE/tmp/workflow-state-oversee.json")" stopped \
-  'fresh-shell recovery records the predecessor stop'
-[[ "$state" == gone ]] || kill "$OWNED_CHILD" 2>/dev/null || :
+assert_eq "$(asked_ops)" 'close-owned-resources launch-lane' \
+  'fresh-shell recovery asks the runtime to stop its predecessor before the launch'
+assert_eq "$(asked_close)" 'KEN-3916|model-switch|true' \
+  'fresh-shell recovery asks the runtime to stop its predecessor mid-turn'
+kill "$OWNED_CHILD" 2>/dev/null || :
 wait "$OWNED_CHILD" 2>/dev/null || :
 OWNED_CHILD=""
 
@@ -244,7 +257,8 @@ if model_case optional-account; then
       if [[ "$status" == 0 ]]; then
         expected="$(jq -ncS --arg cwd "$(cd -- "$LANE" && pwd -P)" --arg account "$account" --arg brief "$LANE/tmp/model-recovery-KEN-3916.md" \
           '{op: "launch-lane", item: "KEN-3916", harness: "claude", mail_root: $cwd, refresh: false, brief_file: $brief,
-            tracker: "linear", model: "claude-fable-5-1", effort: "high"} + (if $account == "" then {} else {account: $account} end)')"
+            tracker: "linear", model: "claude-fable-5-1", effort: "high", permission: "--dangerously-skip-permissions"}
+           + (if $account == "" then {} else {account: $account} end)')"
         assert_eq "$(jq -cS . "$LANE_RECOVERY_REQUEST")" "$expected" \
           "$account_case recovery request preserves its account option"
         assert_eq "$(head -c 50 "$LANE/tmp/model-recovery-KEN-3916.md")" 'Resume the orch workflow for KEN-3916 from where t' \
@@ -256,10 +270,7 @@ if model_case optional-account; then
           assert_eq "$(cat "$LANE/tmp/done")" done "$account_case replacement acknowledges completion"
           assert_eq "$(jq -cS . "$LANE/tmp/argv")" "$expected" \
             "$account_case replacement keeps account, recorded model and effort"
-          state=$(lane_process_state "$OWNED_CHILD")
-          case "$state" in '' | Z) state=gone ;; esac
-          assert_eq "$state" gone "$account_case recovery stops its verified predecessor"
-          assert_eq "$(jq -r '.lanes[0].status' "$LANE/tmp/workflow-state-oversee.json")" stopped "$account_case records stopped state"
+          assert_eq "$(asked_ops)" 'close-owned-resources launch-lane' "$account_case recovery asks the runtime to stop its predecessor before the launch"
           assert_eq "$(switch_count)" 1 "$account_case records one model switch"
           event "$observed"
           assert_eq "$(switch_count)" 1 "$account_case repeated delivery writes no second switch"
@@ -310,16 +321,13 @@ while IFS='|' read -r preparation launched original override expected_model obse
         sleep 0.05
       done
     fi
-    state=$(lane_process_state "$OWNED_CHILD")
-    case "$state" in '' | Z) state=gone ;; esac
-    expected_status=stopped
     if [[ "$preparation" == broken ]]; then
-      expected_status=running
+      assert_eq "$(asked_ops)" '' "$preparation preparation failure asks the runtime for nothing"
       assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" "$preparation preparation failure keeps predecessor running"
     else
-      assert_eq "$state" gone "$preparation predecessor has stopped"
+      assert_eq "$(asked_close)" 'KEN-3916|model-switch|true' "$preparation predecessor is stopped through the runtime"
     fi
-    [[ "$state" == gone ]] || kill "$OWNED_CHILD" 2>/dev/null || :
+    kill "$OWNED_CHILD" 2>/dev/null || :
     wait "$OWNED_CHILD" 2>/dev/null || :
     OWNED_CHILD=""
     event "$observed"
@@ -332,7 +340,7 @@ while IFS='|' read -r preparation launched original override expected_model obse
     assert_eq "$(jq -r '.handoff.traps|any(contains("attached-agent=a1"))' "$LANE/tmp/workflow-state-KEN-3916.json")" true "$preparation records unfinished agent"
     assert_eq "$(jq -r --arg p "$LANE/tmp/parent/subagents/agent-a1.jsonl" '.handoff.traps|any(contains("output="+$p))' "$LANE/tmp/workflow-state-KEN-3916.json")" true "$preparation keeps known agent output"
     assert_eq "$(jq -r '.handoff.traps|any(contains("attached-agent=a2"))' "$LANE/tmp/workflow-state-KEN-3916.json")" false "$preparation omits retired agent"
-    assert_eq "$(jq -r '.lanes[0].status' "$LANE/tmp/workflow-state-oversee.json")" "$expected_status" "$preparation remains recoverable"
+    assert_eq "$(jq -r '.lanes[0].status' "$LANE/tmp/workflow-state-oversee.json")" running "$preparation leaves the record to the runtime's close"
     if [[ "$preparation" == complete ]]; then
       # Native resume can retain s1. A later process must get its own action
       # and evidence, while a duplicate of launch-a remains suppressed.
@@ -349,10 +357,9 @@ while IFS='|' read -r preparation launched original override expected_model obse
       assert_eq "$(switch_count)" 2 'a later launch of the same native session records its switch'
       assert_eq "$(jq -c '[.fleet_log[]|select(.kind=="model-switched")|.launch_identity.launched_at]' "$LANE/tmp/workflow-state-oversee.json")" \
         '["launch-a","launch-b"]' 'each affected launch retains its own evidence'
-      state=$(lane_process_state "$OWNED_CHILD")
-      case "$state" in '' | Z) state=gone ;; esac
-      assert_eq "$state" gone 'a later mismatch stops the resumed predecessor'
-      [[ "$state" == gone ]] || kill "$OWNED_CHILD" 2>/dev/null || :
+      assert_eq "$(asked_ops)" 'close-owned-resources launch-lane close-owned-resources launch-lane' \
+        'a later mismatch stops the resumed predecessor through the runtime'
+      kill "$OWNED_CHILD" 2>/dev/null || :
       wait "$OWNED_CHILD" 2>/dev/null || :
       OWNED_CHILD=""
       event claude-opus-4-8
@@ -685,12 +692,12 @@ import sys
 source, target, rule = sys.argv[1:]
 text = Path(source).read_text()
 old, new = {
-    "stop": ('lane_stop_local "" "$pid" "$start" "$wake_pid" "$wake_start" "$harness" || {', 'true || {'),
+    "stop": ('no_landing: {reason: "model-switch", source: "model-recovery", interrupt: true}}', 'no_landing: {reason: "model-switch", source: "model-recovery", interrupt: false}}'),
     "pin": ('model="$(jq -er \'.model | strings | select(length > 0)\' <<<"$1")" || return 1', 'model="$(launch_choice_launch_model "$harness" "$flags")" || return 1'),
     "binding": ('[[ "$claim" == true ]] || return 0', ':'),
     "selector": ('model="${model}[1m]"', 'model="$model"'),
     "selector-id": ('&& "$launch_id" == "$selector_id"', '&& true'),
-    "account": ('account: $account, kind: $kind} | with_entries(select(.value != ""))', 'account: $account, kind: $kind} | with_entries(select(.value != "" or .key == "account"))'),
+    "account": ('permission: $permission} | with_entries(select(.value != ""))', 'permission: $permission} | with_entries(select(.value != "" or .key == "account"))'),
 }[rule]
 assert text.count(old) == 1
 changed = text.replace(old, new)

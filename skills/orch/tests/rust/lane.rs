@@ -572,11 +572,14 @@ fn the_cap_charges_a_live_harness_and_releases_an_ended_one() {
             ["occupancy", "1"],
             ["cap", "1"],
             ["lanes", "1"],
-            ["claims", "0"]
+            ["claims", "0"],
+            ["setting", "ORCH_OVERSEER_LANES"]
         ])
     );
     assert!(
-        stderr(&out).starts_with("orch-runtime: cap-reached occupancy=1 cap=1 lanes=1 claims=0"),
+        stderr(&out).starts_with(
+            "orch-runtime: cap-reached occupancy=1 cap=1 lanes=1 claims=0 setting=ORCH_OVERSEER_LANES"
+        ),
         "{}",
         stderr(&out)
     );
@@ -1240,6 +1243,92 @@ fn two_contenders_at_cap_minus_one_admit_exactly_one_under_the_launch_lock() {
         0
     );
     assert_eq!(fleet.fleet()["lanes"].as_array().unwrap().len(), 1);
+}
+
+/// Defect: the cloud cap went unread, so a cloud session at its cap was
+/// admitted and a lane at the lane cap refused a cloud session. Through
+/// the real `launch-lane` at a lane cap of one and a cloud cap of one: a
+/// running cloud session refuses the next session `cap-reached` naming the
+/// cloud setting and writes nothing, and charges no lane slot, so a lane
+/// is admitted beside it; a live lane at the lane cap charges no cloud
+/// slot, so a session is admitted beside it; `over_cap` admits a session
+/// past the cloud cap and is recorded; and with no cloud setting the tenth
+/// running session fills the cap.
+#[test]
+fn a_cloud_session_is_bounded_by_the_cloud_cap_and_charges_no_lane_slot() {
+    let mut fleet = Fleet::new(1);
+    fleet
+        .env
+        .push(("ORCH_OVERSEER_CLOUD_LANES".into(), "1".into()));
+    fleet.init_fleet();
+    let state_dir = fleet.state_dir().to_path_buf();
+    let session = |item: &str| {
+        json!({
+            "item": item,
+            "harness": "claude",
+            "host": "claude-cloud",
+            "kind": "claude-cloud",
+            "status": "running",
+            "session_id": "session_held",
+            "mail_root": state_dir.display().to_string(),
+            "launch": Value::Null,
+        })
+    };
+    let cloud = |item: &str| {
+        let mut request = launch(item, &state_dir);
+        request["host"] = json!("claude-cloud");
+        request["account"] = json!(state_dir.display().to_string());
+        request
+    };
+    fleet.write_lanes(vec![session("KEN-C1")]);
+    let before = fleet.fleet();
+    let refused = reply(&fleet.op(&cloud("KEN-C2")));
+    assert_eq!(refused["ok"], false, "{refused}");
+    assert_eq!(refused["refusal"]["key"], "cap-reached", "{refused}");
+    let fields = refusal_fields(&refused);
+    assert_eq!(fields["setting"], "ORCH_OVERSEER_CLOUD_LANES", "{refused}");
+    assert_eq!(fields["cap"], "1", "{refused}");
+    assert_eq!(fleet.fleet(), before, "a refusal writes nothing");
+    let admitted = reply(&fleet.op(&launch("KEN-L1", fleet.state_dir())));
+    assert_eq!(admitted["ok"], true, "{admitted}");
+    assert_eq!(
+        admitted["result"]["persisted"]["report"]["admission"]["occupancy"], 0,
+        "the session charges no lane slot: {admitted}"
+    );
+    let harness = Owned::sleep();
+    fleet.write_lanes(vec![record(
+        "KEN-L2",
+        "running",
+        Some(&harness),
+        fleet.state_dir(),
+    )]);
+    let admitted = reply(&fleet.op(&cloud("KEN-C3")));
+    assert_eq!(admitted["ok"], true, "{admitted}");
+    let admission = &admitted["result"]["persisted"]["report"]["admission"];
+    assert_eq!(
+        (admission["cap"].as_u64(), admission["occupancy"].as_u64()),
+        (Some(1), Some(0)),
+        "the lane charges no cloud slot: {admitted}"
+    );
+    assert_eq!(fleet.lane("KEN-C3")["kind"], "claude-cloud");
+    fleet.write_lanes(vec![session("KEN-C1")]);
+    let mut over = cloud("KEN-C4");
+    over["over_cap"] = json!("cloud-cap");
+    let admitted = reply(&fleet.op(&over));
+    assert_eq!(admitted["ok"], true, "{admitted}");
+    assert_eq!(fleet.lane("KEN-C4")["over_cap"], "cloud-cap");
+    fleet.env.clear();
+    let ten: Vec<Value> = (1..=10).map(|n| session(&format!("KEN-D{n}"))).collect();
+    fleet.write_lanes(ten[..9].to_vec());
+    let admitted = reply(&fleet.op(&cloud("KEN-C5")));
+    assert_eq!(
+        admitted["ok"], true,
+        "the ninth session leaves room: {admitted}"
+    );
+    fleet.write_lanes(ten);
+    let refused = reply(&fleet.op(&cloud("KEN-C6")));
+    assert_eq!(refused["refusal"]["key"], "cap-reached", "{refused}");
+    assert_eq!(refusal_fields(&refused)["cap"], "10", "{refused}");
 }
 
 /// The paths an archive holds, as `tar` lists them, each relative to `/`.

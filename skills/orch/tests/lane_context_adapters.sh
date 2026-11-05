@@ -412,17 +412,12 @@ ROWS
 fi
 
 if section record; then
-  echo "=== the reading a turn end records, and the report's judgement of it ==="
+  echo "=== the reading a turn end records ==="
   BOX="$TMP_ROOT/box"; mkdir -p "$BOX"
   bash -c 'source "$1"; lane_context_record "$2" codex 232560 258400 gpt-6-astra s1 "7000 %9"' _ "$LIB" "$BOX"
   assert_eq "$(jq -c 'del(.at)' "$BOX/context.json")" \
     '{"harness":"codex","model":"gpt-6-astra","tokens":232560,"window":258400,"used_pct":90,"capacity_source":null,"session_id":"s1","pane_key":"7000 %9","gap":null}' \
     "the record names the reading, the share used, and the session and pane it belongs to"
-  assert_eq "$(bash -c 'source "$1"; lane_context_record_judged "$(cat "$2")" 90' _ "$LIB" "$BOX/context.json" | jq -c '.handoff_due')" \
-    "false" "the report judges a recorded reading by the same judge"
-  bash -c 'source "$1"; lane_context_record "$2" pi 1000 "" m' _ "$LIB" "$BOX"
-  assert_eq "$(bash -c 'source "$1"; lane_context_record_judged "$(cat "$2")" 90' _ "$LIB" "$BOX/context.json" | jq -c '[.window, .used_pct, .handoff_due]')" \
-    "[null,null,null]" "a reading with no window is recorded unmeasured and judged neither due nor room"
   assert_eq "$(ls -A "$BOX")" "context.json" "the record lands by a rename, leaving no staged file beside it"
   # A turn end that took no reading writes the reason as the gap, with no token
   # count, and the one parser of a record reads it back as a gap and not as a
@@ -443,8 +438,6 @@ $(cat "$BOX/context.json")|rc=0 harness=claude tokens=none pane=7000 %9 session=
 {"harness":"claude","tokens":null,"gap":null,"pane_key":"k"}|rc=1|a record with neither a reading nor a gap is no record
 {"harness":"claude","tokens":5,"gap":"home-unnamed","pane_key":"k"}|rc=1|a record carrying both a reading and a gap is no record
 ROWS
-  assert_eq "$(bash -c 'source "$1"; if lane_context_record_judged "$(cat "$2")" 90; then echo rc=0; else echo "rc=$?"; fi' _ "$LIB" "$BOX/context.json")" \
-    "rc=1" "the report's judge refuses a gap record as no reading"
   bash -c 'source "$1"; lane_context_record "$2" copilot 150000 217600 "" s1 "" "" "80% of tokenLimit"' _ "$LIB" "$BOX"
   assert_eq "$(bash -c 'source "$1"; lane_context_record_fields "$(cat "$2")"; printf "%s|%s|%s" "$LANE_CTX_SESSION" "$LANE_CTX_WINDOW" "$LANE_CTX_AT"' _ "$LIB" "$BOX/context.json" | cut -c1-12)" \
     "s1|217600|20" "a record's fields name its session apart from the time it was taken"
@@ -1021,8 +1014,6 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'a gap record names the reason and the session and pane, with no reading'
   control gap-parsed lane-context.sh 'or (.tokens == null and (.gap | type)' 'or (false and (.gap | type)' \
     'a gap record parses with its gap, its session and no tokens'
-  control gap-judged lane-context.sh '[ -z "$LANE_CTX_GAP" ] || return 1' ':' \
-    "the report's judge refuses a gap record as no reading"
   control owned-binding-missing lane-context.sh 'if [ -z "${2:-}" ] || [ -z "${3:-}" ]; then' 'if false; then' \
     'claude none for s1 under claude-home: 1 binding-missing'
   control owned-home-unnamed lane-context.sh 'if [ -z "${4:-}" ]; then' 'if false; then' \

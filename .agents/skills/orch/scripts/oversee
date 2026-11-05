@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# oversee — register the overseer session a person opened by hand. A fleet's
-# first overseer and a successor are opened through the orch runtime
-# (`orch-runtime successor --fleet`, then `op --fleet`), as
-# ../workflows/oversee.md § 1 spells it.
+# oversee — register the overseer session a person opened by hand.
 #
 # Usage:
 #   oversee register [--account DIR]
+#
+#   A fleet's first overseer and a successor open through the orch runtime
+#   (`orch-runtime successor --fleet`, then `op --fleet`), as the first
+#   section of ../workflows/oversee.md spells it.
 #
 #   register writes the session record for the session this command runs in,
 #            a tmux pane a person opened by hand: runtime tmux, the tmux
@@ -53,7 +54,7 @@ message() { # KEY FIELD=VALUE...
   shift
   case "$key" in
     unknown-option) text="$(usage | sed -n '/^Usage:/,/^$/p')" ;;
-    unknown-command) text='The command is register.' ;;
+    unknown-command) text='The command is register. A fleet'\''s first overseer and a successor open through the runtime: orch-runtime successor --fleet, then op --fleet, as the first section of workflows/oversee.md spells it.' ;;
     settings-rejected) text='The settings load failed; nothing is recorded from partial settings.' ;;
     runtime-unsupported) text='This command reads the session'\''s account off its tmux pane, so it registers sessions on the tmux runtime alone. ORCH_OVERSEER_HOST names another; nothing was recorded.' ;;
     tmux-missing) text='register runs inside the overseer'\''s own tmux pane.' ;;

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Surface: lane_model_recovery's consecutive successful replacement bound.
+# Surface: lane_model_recovery's consecutive successful replacement bound and
+# how it records the runtime's answer to the replacement's launch.
 # Inputs: skills/orch/scripts/** skills/github/scripts/lib/** skills/mailbox/scripts/** skills/orch/tests/fixtures/lane-model-recovery-base.sh
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -26,6 +27,9 @@ HOST
 cat > "$S/orch-runtime" <<'LAUNCH'
 #!/usr/bin/env bash
 set -euo pipefail
+request="" prev=""
+for arg in "$@"; do [[ "$prev" != --request ]] || request="$arg"; prev="$arg"; done
+[[ "$(jq -r .op "$request")" == launch-lane ]] || exit 0
 printf '%s\n' launched >> "$MODEL_STARTS"
 exit "${MODEL_LAUNCH_EXIT:-0}"
 LAUNCH
@@ -70,7 +74,10 @@ while IFS='|' read -r NAME PRIOR BOUND LAUNCH_EXIT WANT; do
   run_recovery
   GOT="$RC|$(wc -l < "$CASE/starts" | tr -d ' ')|$(jq '[.fleet_log[] | select(.kind=="model-recovery-limit")]|length' "$CASE/workflow-state-oversee.json")"
   assert_eq "$GOT" "$WANT" "$NAME replacement and refusal result"
-  if [[ "$RC" -eq 0 ]]; then
+  if [[ "$NAME" == launch-open ]]; then
+    assert_eq "$(jq -r '.fleet_log[-1].recovery' "$CASE/workflow-state-oversee.json")" starting \
+      'a replacement whose launch is open is left starting for its reconcile'
+  elif [[ "$RC" -eq 0 ]]; then
     assert_eq "$(jq -r '.fleet_log[-1].recovery' "$CASE/workflow-state-oversee.json")" replaced "$NAME records a successful replacement"
   elif [[ "$NAME" != launch-failed ]]; then
     # The model-recovery log and fleet row are the issue's accepted report channels.
@@ -97,6 +104,7 @@ reset|replaced,replaced,reset|3|0|0|1|0
 other-item|replaced,other|3|0|0|1|0
 failed-prior|replaced,failed,unavailable|3|0|0|1|0
 launch-failed||3|7|7|1|0
+launch-open||3|75|75|1|0
 ROWS
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -14,7 +14,93 @@ Once per session, first match wins:
 
 A lane's questions arrive at least once as `lane-question` and new tracker items as `triage`, both from the § 4 watch, on every surface. Only session banners are surface-specific: off the tmux surface, read them through the harness's own session tooling.
 
-A session a person opened by hand registers itself first, so the hooks and the watch know which session is the overseer: `.agents/skills/orch/scripts/oversee register`. The Jarvis session registers as its checkout's overseer the same way so the turn-end hook judges its wake. A session `oversee launch` or a succession opened is already recorded.
+### Controller start and adoption
+
+Run these commands from the overseer's checkout, one per tool call. Use the same fleet state address throughout. `[DIR]` is the absolute checkout directory; `[OVERSEE_STATE]` is the path returned below and `[OVERSEE_STATE_DIR]` its directory. Name the fleet's tmux session with `ORCH_TMUX_SESSION` before a first start; without a session the runtime refuses `tmux-session-unresolved`.
+
+```bash
+.agents/skills/orch/scripts/orch-runtime state exists --fleet
+```
+
+Where `.result.exists` is false, initialize it before a start or adoption:
+
+```bash
+.agents/skills/orch/scripts/orch-runtime state init --fleet
+```
+
+```bash
+.agents/skills/orch/scripts/orch-runtime state path --fleet
+```
+
+A session opened by hand can record itself with `.agents/skills/orch/scripts/oversee register`; `--account [DIR]` supplies an account the pane cannot reveal. Read its hook and context-reader notices before relying on that session's marks. For runtime adoption, write `[REQUEST_FILE]` with the harness file tool, then run the request below. Add only known launch fields (`account`, `home`, `model`, `effort`, `cwd`, `session_id`) and `socket` where the pane is on another socket. The runtime reads the process identity from the pane.
+
+```json
+{"op":"adopt-controller","pane":"[PANE]","harness":"[HARNESS]","cwd":"[DIR]"}
+```
+
+```bash
+.agents/skills/orch/scripts/orch-runtime op --fleet --request [REQUEST_FILE]
+```
+
+Where another lifecycle owns replacement, its adoption also carries `succession`, an array of command words whose first word is the owner's absolute executable path, followed by its succession arguments. The record keeps that command. Run it at a mark instead of choosing a successor or requesting a transfer. The watch runs that owner for recovery; `request-transfer` refuses such a record as `succession-owned command=...`. A Jarvis controller belongs to its Jarvis lifecycle.
+
+A runtime start or transfer records its controller itself. Its harness passes the same launch gate as a lane: Copilot needs the three lane-mail hook scripts and registrations in its project or home, with `kendex hooks-off` answering `switched_off_by: null`. Pi needs automatic compaction disabled in its own settings, no project setting enabling it, and an installed pi-hooks carrier that supplies `context_window` and wakes on mail. [The launch gate](../runtime/src/effects/launch/gate.rs) owns these checks.
+
+For a fleet's first overseer, save the successor reply:
+
+```bash
+.agents/skills/orch/scripts/orch-runtime successor --fleet --cwd [DIR] > [CHOICE_FILE]
+```
+
+For a succession by hand, name the recorded predecessor's pane instead:
+
+```bash
+.agents/skills/orch/scripts/orch-runtime successor --fleet --cwd [DIR] --predecessor [PANE] > [CHOICE_FILE]
+```
+
+At a watch or hook mark, add `--mark [KIND]` with its reported kind. Add `--handoff [HANDOFF_PATH]` only for an explicit handoff override; otherwise a succession keeps the predecessor's handoff and a first start uses `tmp/handoffs/OVERSEER-HANDOFF.md`. Read `.result.walk.answer` before composing anything. If it is not `lane`, stop and report the verb's reply. `none` carries `entries`, `walled` and `unmeasured` in `.result.walk`; `held` carries its hold. Neither opens a session.
+
+Keep the complete `.result.successor` object as the controller to open. Under `permission: native`, set its `extra_args` to the caller's own permission words and use those same words in the print call below. Under `bypass`, use the harness's bypass word. `[WORDS]` names its model, effort and permission: Claude uses `--model [MODEL] --effort [EFFORT]` and `--dangerously-skip-permissions` for bypass; Codex uses `--model [MODEL] -c model_reasoning_effort=[EFFORT]` and `--dangerously-bypass-approvals-and-sandbox`. A native Claude example is `--permission-mode dontAsk`. Use the chosen harness's own words for Copilot or Pi.
+
+From the current pane, with its `TMUX_PANE`, print the display line for that successor into `[LINE_FILE]`. `[HARNESS]`, `[ACCOUNT]` and `[HANDOFF_PATH]` come from the successor. `[ACCOUNT_VAR]` is its harness's account variable, `CLAUDE_CONFIG_DIR` for Claude or `CODEX_HOME` for Codex. For Pi, keep its own `home` in `PI_CODING_AGENT_DIR` and route the account through its model's billing variable.
+
+```bash
+env [ACCOUNT_VAR]=[ACCOUNT] .agents/skills/orch/scripts/oversee-succeed --print-launch-line --harness [HARNESS] --handoff [HANDOFF_PATH] -- [WORDS] > [LINE_FILE]
+```
+
+Require exit 0 and the line on stdout before continuing. Print mode launches nothing. A missing Claude or Codex permission word refuses `launch-choice-failed reason=permission-unrecorded`; a call outside a pane refuses `tmux-missing var=TMUX_PANE`. Do not substitute a line of your own. The request carries this line as `launch_line`, which the model-switch hook reads from the published record.
+
+With the file tool, create a unique brief file exclusively under `[OVERSEE_STATE_DIR]/intents/`, named for the operation, timestamp and process, and write `.result.brief` followed by a newline. Keep it there for a reconcile that completes delivery after the launcher ends. Run the checkout's synchronization before submitting the request; stop on failure:
+
+```bash
+.agents/skills/orch/scripts/sync-base [DIR]
+```
+
+For a first start, write `[WATCH_WORDS_FILE]` as a JSON array of the watch's arguments: the absolute runtime wrapper path, `watch`, `run`, `--file`, `[OVERSEE_STATE]`, `--interval`, `240`, `--since`, `[FLEET_SINCE]`, and `--repo`, `[ITEMS_REPO]`, adding one `--repo` pair per other watched repository. Resolve the time and repositories under § 4. Compose one request from the saved reply and printed line:
+
+```bash
+jq -n --slurpfile choice [CHOICE_FILE] --rawfile line [LINE_FILE] --arg brief [BRIEF_FILE] --slurpfile watch [WATCH_WORDS_FILE] '{op:"start-controller",controller:($choice[0].result.successor + {launch_line:($line | rtrimstr("\n"))}),brief_file:$brief,watch:$watch[0]}' > [REQUEST_FILE]
+```
+
+```bash
+.agents/skills/orch/scripts/orch-runtime op --fleet --request [REQUEST_FILE]
+```
+
+For a succession, compose the transfer with the reply's compare set and successor, then wait for its effect:
+
+```bash
+jq -n --slurpfile choice [CHOICE_FILE] --rawfile line [LINE_FILE] --arg brief [BRIEF_FILE] '{op:"request-transfer",cause:"live",expected:$choice[0].result.expected,successor:($choice[0].result.successor + {launch_line:($line | rtrimstr("\n"))}),brief_file:$brief}' > [REQUEST_FILE]
+```
+
+```bash
+.agents/skills/orch/scripts/orch-runtime op --fleet --effect-exit --request [REQUEST_FILE]
+```
+
+A start's exit 0 alone proves no launch. Read `.result.effect.report.intent.outcome`: `confirmed` confirms it; `unconfirmed` leaves its reconcile responsible, with the note and cause in `.result.effect.report.intent.observation`; `failed` reports failure. A transfer's `.result.effect.started: transfer-started` names its detached job. With `--effect-exit`, exit 0 means confirmed or a recorded runner waiting for the predecessor to exit; an open `.result.settled` is not publication. Exit 3 reports a closed failure in `.result.settled.observation.note`; a failed start of the successor leaves the predecessor running and restores its pending record. Exit 75 leaves the intent open with its outcome unknown. Read the intent through `orch-runtime state inspect --fleet`; its reconcile owns completion. Never submit a second launch to resolve an unknown outcome.
+
+On a runtime refusal, read the first stderr line beginning `orch-runtime: ` as `orch-runtime: <key> field=value...`; a settings notice can precede it. Exit 1 and `ok: false` report the refusal. A line naming `persisted_intent=` means an intent was recorded and the effect may have acted: inspect that intent instead of treating the refusal as nothing done. An unanswered call also leaves the outcome unknown. At exit 69, `orch-runtime: setup-required ... run=...` comes from the runtime wrapper: run the named `scripts/setup` before retrying. A wrapper missing its agent-runtime dependency refuses at exit 2.
+
+To resume a recorded native session after its pane ends, use `start-controller` with the recorded controller's typed launch fields and `resume` set to its native `session_id`. Initialize the state and run `sync-base` before that request, and carry the brief and watch as for a first start. The runtime refuses a missing or unreadable session store before opening a pane; Pi refuses `resume-unsupported`. A resume does not choose a new account.
 
 Read the mailbox and handoff through [overseer takeover § 1](oversee-takeover.md#1-read-the-mailbox-and-handoff). At succession, takeover and after compaction, follow that route instead of reading launch or stop rules. A new fleet continues with § 2 after those reads.
 
@@ -150,7 +236,7 @@ For an existing surface-2 item, use `workflow-state update-report` to merge into
 
 ## 4. Watch And Advance
 
-`oversee launch` hands the runtime one `start-controller` request whose `watch` field is the words of the block below. The runtime opens the session, delivers the brief, launches the watch detached through the job launcher before it publishes the controller record, and records the job as the record's `overseer.watch`; a watch that refuses or never claims leaves the start `unconfirmed` naming it. A runtime that answers `setup-required` refuses the launch and opens nothing: run `setup` first. A launch's brief is kept under the fleet state directory's `intents/`, beside the runtime's per-intent files, where the runtime reads it at delivery; a reconcile after the launcher ended reads the same file. A session `oversee register` recorded starts its watch itself with the block below; a session a succession opened has its watch already.
+The `start-controller` request in § 1 carries the runtime watch's words. The runtime opens the controller, delivers its brief and starts the watch before publication; a watch that refuses or never claims leaves that start `unconfirmed`. A hand-opened controller starts its watch under [takeover § 2](oversee-takeover.md#watch-reader). A succession keeps the standing watch.
 
 The watch's `--since` is the earliest `lanes[].launched_at`, else the launch's own time; succession keeps that floor. Pass `--state [OVERSEE_STATE]` with the file that [Fleet state address](oversee-takeover.md#fleet-state-address) resolves.
 
@@ -176,7 +262,7 @@ The watch also reads each repository `ORCH_CONNECTED_REPOS` lists, after the `--
 .agents/skills/orch/scripts/lib/job-unit.sh launch watch-[STAMP] "[OVERSEE_STATE_DIR]/oversee-watch.runner" -- sh -c 'err=$1; shift; exec "$@" 2>>"$err"' sh "[OVERSEE_STATE_DIR]/oversee-watch.err" .agents/skills/orch/scripts/oversee-watch --repeat 60 --state [OVERSEE_STATE] --interval 240 --since [FLEET_SINCE] --harness [HARNESS] --repo [ITEMS_REPO] --repo [OTHER_REPO]... -- [FLAGS]
 ```
 
-`[STAMP]` is the launch's UTC time in the compact form the runtime names its own unit with, the ISO 8601 UTC time with its `-` and `:` removed: `watch-20260301T120000Z`. `[HARNESS]` is the harness this overseer runs, `claude`, `codex`, `copilot` or `pi`; `oversee-succeed --help`, `--harness`, states when a pane needs it. `[FLAGS]` are the permission flags this overseer runs under, plus its current model and effort flags. Pass all of them even when `ORCH_OVERSEER_PREFERENCE` is set: the printed line takes its permission words from these flags, and with none from the line the record already holds, which a `register` record has none of. `--harness`, `--handoff` and `-- [FLAGS]` are this session's own launch line: the entry records it in the fleet state's `overseer` record before the runtime claims, as `oversee-succeed --print-launch-line` prints it, beside the harness, account, model and effort the launcher or `oversee register` (§ 1) wrote there; a death or wall recovery replays that line, and the runtime takes none of the three. A Copilot CLI overseer's account and marks follow [copilot-runtime.md § Overseer succession](../references/copilot-runtime.md#overseer-succession); on a host without `/proc`, register it with `oversee register --account [DIR]` first. Start the watch from the overseer's own pane, with `TMUX_PANE` as that pane's shell sets it: the claim records the pane it serves.
+`[STAMP]` is the launch's compact UTC timestamp. The controller's request carries its typed identity and the display line printed under § 1. Recovery uses the record's typed launch fields and handoff; it opens a fresh session. A Copilot controller whose pane cannot reveal its account registers with `oversee register --account [DIR]`. Start a hand-opened controller's watch from its own pane, with its shell's `TMUX_PANE`, so the claim names that pane.
 
 `oversee-watch --help` states the entry's refusals and `orch-runtime watch --help` the runtime's: a live claim refuses `watch-running`. After a self-succession the successor starts no watch: the scheduler outlives the controller, and the successor follows the log from the handoff's next line.
 
@@ -297,17 +383,20 @@ At an overseer trigger under [oversee-events.md § Judgement rules](../reference
 1. Wait for a safe point. Finish any `merged` event, answer each lane waiting on a root answer, and collect every attached child's return. Keep each wait inside the current turn. Claude Code uses its native task list or measured id/status fallback and its wait or result tools. Codex, Pi and Copilot track the children they launched. Pi waits through `get_subagent_result`. If a handoff cannot wait, name every unfinished child and its known output path in the handoff's State, or state that its state and path are unknown.
 2. Write the progress report by the [report-due event](../references/oversee-events.md#event-kinds), with `--succession` on `oversee-report write`, whatever `ORCH_REPORT` says. Do not repeat a refused `write` during this handover. Tell the user the handover has no report and give the cause from its first stderr line. Put that line in the handoff and continue preparation. The successor's next report covers the same merges.
 3. Complete § 5's handoff preparation, including the `--write-only` snapshot. Require that write to pass before claiming an installed snapshot or recording it for manual recovery.
-4. Run the plain succession call under a shell-tool timeout longer than its `--wait-secs`:
+4. Read the controller's succession owner from its record. Where `succession` names a command, run those words through that owner and read its outcome; do not run the successor walk or `request-transfer`. Otherwise follow § 1's succession route: `successor --fleet --cwd [DIR] --predecessor [PANE]`, adding `--mark [KIND]` at a reported mark, then the printed line, brief, checkout sync and `request-transfer` under `--effect-exit`.
+
+   When the turn-end refusal names the plain succession call, run that call under a shell-tool timeout longer than its `--wait-secs`:
 
    ```bash
    .agents/skills/orch/scripts/oversee-succeed --context [TOKENS:WINDOW] -- [FLAGS]
    ```
 
-   Copy `[TOKENS:WINDOW]` from the turn-end refusal. An `overseer-mark kind=context` line from the watch is the same mark reached between turn ends: finish the turn at a safe point, and that turn end's refusal carries the figures. At an account trigger with no context reading, omit `--context`. `[FLAGS]` carries this session's permission, model and effort flags. A successor using the caller's harness entry keeps that model and effort. A named preference entry uses its own model and effort. Add `--handoff [PATH]` when the fleet brief names a different handoff path. `oversee-succeed --help` owns account selection and launch results.
+   Copy the refusal's figures and this session's permission, model and effort words. Omit `--context` at an account trigger with no context reading. Add `--handoff [PATH]` for the fleet's custom path. This command owns its mark judgement and request; its `--help` defines its refusals.
 
-5. Read the launch result. `transfer-started intent=[ID]` says the runtime's detached job holds the succession; `transfer-refused key=[KEY]` says it was refused and this session keeps running. The job records the publication; the fleet watch is the standing scheduler and outlives this session, so the successor reads the same log through § 4 from the handoff's next line and starts no second watch; with no live claim it starts one under [takeover § 2](oversee-takeover.md#watch-reader).
+5. Read the outcome through the route that ran. The runtime route uses § 1's start, settled and refusal fields, including exits 3 and 75. The plain call's `transfer-started intent=[ID]` names a detached job, not a confirmed publication; `transfer-refused key=[KEY]` reports its refusal, with the runtime's detail below it. A persisted intent or unanswered call remains unknown until its intent is read. The fleet watch outlives this controller; the successor follows the same log from the handoff's next line and starts no second watch. With no live claim, it follows [takeover § 2](oversee-takeover.md#watch-reader).
+
 6. Handle a refusal by its fields:
    - `context-below-mark`, or `context-unmeasured reason=window-unnamed`: no trigger is reached. Keep running and try again at a later event.
    - `context-unmeasured reason=context-unread`: at the context mark, run the command the turn-end refusal gives. It carries the missing reading. `headroom=none` or `headroom=unreadable` does not mean room. A gap the watch reports as `overseer-context-unmeasured` is not a trigger: keep running, and act on the owner's alert it sends on the second pass.
    - `succession-off`: tell the user the handoff file is written and a fresh overseer session must start, under [communication-modes.md § Status report](../references/communication-modes.md#status-report). Keep running at an account trigger, whose turn-end refusal is disabled. At the context mark, record the handoff as the next branch requires.
-   - `no-lane-qualifies`, `launch-failed`, or any other refusal: tell the user the handoff file is written and a fresh overseer session must start. Record the handoff on the fleet's own item with the exact command the refusal prints. Keep its `handoff_file`, `session_id` and `pane_key`. That record ends the turn-end refusal for this session. `no-lane-qualifies` covers all preference entries and the fallback harness sweep. Its `entries`, `fallback`, `walled` and `unmeasured` fields distinguish refused accounts from unread accounts. Its `mark` names `headroom`, `rate`, `qualifying` or `context`; only a headroom refusal includes the account and reset time.
+   - A walk that chooses none, `no-lane-qualifies` from the plain call, or another refused succession: tell the user the snapshot is installed and a fresh overseer must start. Record it on the fleet's own item with the command the refusal prints, keeping its `handoff_file`, `session_id` and `pane_key`. That record ends the context turn-end refusal for this session. Read an unresolved intent before retrying. The plain call's counts distinguish walled from unmeasured accounts; only a measured headroom refusal supplies an account and reset time.

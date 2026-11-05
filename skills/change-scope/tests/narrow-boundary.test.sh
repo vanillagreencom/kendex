@@ -304,7 +304,7 @@ while IFS='|' read -r label edit expected; do
   measured="$fixture/change-scope/scripts/change-scope"
   case "$edit" in
     declare-extra)
-      printf '%s\n' '# measures-with: skills/orch/scripts/lib/lane-cap.sh' >>"$measured" ;;
+      printf '%s\n' '# measures-with: skills/orch/scripts/lib/lane-claims.sh' >>"$measured" ;;
     drop-conf-row)
       grep -vxF 'path *skills/change-scope/scripts/lib/branch-growth.sh' "$conf" >"$conf.new"
       mv "$conf.new" "$conf" ;;
@@ -364,7 +364,7 @@ while IFS='|' read -r label edit expected; do
   expected="${expected//@LAST_LINE@/$(grep -c '' "$measured")}"
   assert_eq "$label" "$expected" "$(boundary_drift "$fixture" "$conf")"
 done <<'FIXTURES'
-a dependency declared without its conf row is named|declare-extra|uncovered path=skills/orch/scripts/lib/lane-cap.sh
+a dependency declared without its conf row is named|declare-extra|uncovered path=skills/orch/scripts/lib/lane-claims.sh
 a conf row dropped while the declaration still carries it is named|drop-conf-row|uncovered path=skills/change-scope/scripts/lib/branch-growth.sh
 a boundary row no declaration backs is named|add-conf-row|unbacked glob=*skills/orch/scripts/lanes
 a library sourced without a declaration is named, spelled quoted|source-spelled-quoted|undeclared-source file=skills/change-scope/scripts/change-scope source=skills/orch/scripts/lib/lane-relaunch.sh

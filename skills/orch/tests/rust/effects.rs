@@ -20,6 +20,7 @@
 #[path = "support.rs"]
 mod support;
 
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -407,6 +408,19 @@ fn a_launch_with_no_tmux_session_records_failed() {
     let report = effect_report(&out);
     assert_eq!(report["intent"]["outcome"], "failed");
     assert_eq!(report["lane"]["status"], "stopped");
+    // The session the launch looked for and the socket it looked on ride
+    // the observation, so the record names what to repair.
+    let observation = &report["intent"]["observation"];
+    assert_eq!(
+        observation["cause"], "tmux-session-missing",
+        "{observation}"
+    );
+    assert_eq!(observation["session"], "nosuch", "{observation}");
+    assert_eq!(
+        observation["socket"],
+        server.socket.display().to_string(),
+        "{observation}"
+    );
     assert_eq!(server.panes().len(), 1, "no window ever opened");
 }
 
@@ -6545,6 +6559,82 @@ fn a_copilot_lane_launches_only_where_its_lane_mail_hooks_run() {
     }
 }
 
+/// Defect: a Copilot lane's record said nothing of the grant its line
+/// carries, so no reader could tell a lane a policy block can take
+/// allow-all from. Through the real `launch-lane`: a Copilot lane under the
+/// bypass posture records `allow_all: true` and its line carries the grant;
+/// one whose request narrows the permission records `false`, its line the
+/// narrower word and no grant; a Claude lane records none.
+#[test]
+fn a_copilot_lanes_record_says_whether_its_line_grants_allow_all() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-record");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    let tools = dir.path().join("tools");
+    std::fs::create_dir_all(&tools).unwrap();
+    runner.tools = Some(tools.clone());
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let account = dir.path().join("copilot-account");
+    plant_copilot_hooks(&account.join("hooks"));
+    plant_hooks_off(&tools, json!({"stdout": r#"{"switched_off_by": null}"#}));
+    let binaries = format!(
+        "copilot={}",
+        fixtures().join("stub-record").join("copilot").display()
+    );
+    let home_word = home.display().to_string();
+    let env = [
+        ("ORCH_HARNESS_BINARIES", binaries.as_str()),
+        ("HOME", home_word.as_str()),
+    ];
+    for (item, permission, allow_all, grant) in [
+        ("KEN-G1", None, true, "true"),
+        ("KEN-G2", Some("--allow-all-tools"), false, ""),
+    ] {
+        let worktree = dir.path().join(item);
+        std::fs::create_dir_all(&worktree).unwrap();
+        let init = program("git")
+            .args(["-C", &worktree.display().to_string(), "init", "-q"])
+            .output()
+            .unwrap();
+        assert!(init.status.success(), "{}", stderr(&init));
+        let mut request = launch_request(item, &worktree);
+        request["harness"] = json!("copilot");
+        request["account"] = json!(account.display().to_string());
+        if let Some(permission) = permission {
+            request["permission"] = json!(permission);
+        }
+        let report = effect_report(&runner.op_fleet_env(&request, &env));
+        assert_ne!(report["intent"]["outcome"], "failed", "{item}: {report}");
+        assert_eq!(report["lane"]["allow_all"], allow_all, "{item}: {report}");
+        let recorded = launch_record_of(&worktree);
+        assert_eq!(
+            recorded["env"]["COPILOT_ALLOW_ALL"], grant,
+            "{item}: the grant on the line: {recorded}"
+        );
+        let argv = recorded["argv"].as_array().unwrap();
+        assert_eq!(
+            argv.contains(&json!("--allow-all")),
+            allow_all,
+            "{item}: the bypass word on the line: {argv:?}"
+        );
+        assert_eq!(
+            argv.contains(&json!("--allow-all-tools")),
+            permission.is_some(),
+            "{item}: the request's word on the line: {argv:?}"
+        );
+    }
+    let report = effect_report(&runner.op_fleet(&launch_request("KEN-G3", runner.state_dir())));
+    assert_ne!(report["intent"]["outcome"], "failed", "{report}");
+    assert!(
+        report["lane"].get("allow_all").is_some_and(Value::is_null),
+        "a Claude lane records the field with no grant to judge: {}",
+        report["lane"]
+    );
+}
+
 /// A hosted Copilot lane, whose home is on its host, and a hosted Pi lane
 /// billing a Claude seat are refused before the provider creates anything;
 /// a hosted Pi lane on its own root is judged on its host's files once
@@ -6615,6 +6705,96 @@ fn a_hosted_lane_is_gated_before_create_and_a_hosted_pi_lane_on_its_host_s_files
             "nothing dialled"
         );
     }
+}
+
+/// Defect: a hosted Pi lane on the Copilot pool started its harness under
+/// the provider's login shell, whose key and proxy variables the parent
+/// read, while a pane agent `tmux split-window` starts took its environment
+/// from the host's tmux server, started outside that shell, and read none.
+/// Through the real hosted `launch-lane`, the fixture provider and a
+/// private server: the typed line runs the session-environment step before
+/// the harness, so the pane agent the harness splits off reads the key its
+/// Pi `models.json` names and the proxy, as the parent does.
+#[test]
+fn a_hosted_pi_lane_on_the_copilot_pool_hands_its_pane_agents_the_login_environment() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let record = json!({"identity_file": "/srv/clone/.git/lane-host-pid", "runtime": "/cache/bin/orch-runtime-k"});
+    let mut world = HostedLaunch::new(&server, dir.path(), record);
+    world.runner.verify = Some(2);
+    let root = dir.path().join("pi-home");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("models.json"),
+        r#"{"providers":{"github-copilot":{"apiKey":"$POOL_KEY"}}}"#,
+    )
+    .unwrap();
+    let parent_env = dir.path().join("parent.env");
+    let child_env = dir.path().join("child.env");
+    let child = dir.path().join("child.sh");
+    std::fs::write(
+        &child,
+        format!(
+            "#!/bin/bash\nprintf '%s|%s\\n' \"${{POOL_KEY-unset}}\" \"${{HTTPS_PROXY-unset}}\" > '{}'\n",
+            child_env.display()
+        ),
+    )
+    .unwrap();
+    // The Pi stand-in: it reads the two names, splits a pane agent off the
+    // way pi-agents-tmux does and stands.
+    let pi = world.tools.join("pi");
+    std::fs::write(
+        &pi,
+        format!(
+            "#!/bin/bash\nprintf '%s|%s\\n' \"${{POOL_KEY-unset}}\" \"${{HTTPS_PROXY-unset}}\" > '{}'\ntmux split-window -d -t \"$TMUX_PANE\" \"/bin/bash '{}'\"\nprintf 'pi starting\\n'\nwhile read -r line; do :; done\n",
+            parent_env.display(),
+            child.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&pi, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = world.scripts.join("lane-host.json");
+    let mut answers: Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let account = world.runner.state_dir().display().to_string();
+    let host = world.host();
+    answers[format!("create --item KEN-H --repo o/r --harness pi --account {account}")] = json!({
+        "stdout": format!(
+            "ssh-target=lane.example\tpath={host}\tremote-prefix=exec env POOL_KEY=fixture HTTPS_PROXY=http://proxy.test:3128 PI_CODING_AGENT_DIR={} bash -c\tpi-root={}\n",
+            root.display(),
+            root.display()
+        )
+    });
+    answers[format!("cat --item KEN-H {}/settings.json", root.display())] =
+        json!({"stdout": r#"{"compaction":{"enabled":false}}"#});
+    answers[format!("cat --item KEN-H {host}/.pi/settings.json")] = json!({"exit": 2});
+    answers[format!("cat --item KEN-H {host}/.pi/packages/@vanillagreen/pi-hooks/package.json")] = json!({
+        "stdout": r#"{"version":"1","pi":{"extensions":["./extensions/lane-mail-wake.ts"]}}"#
+    });
+    answers[format!(
+        "cat --item KEN-H {host}/.pi/packages/@vanillagreen/pi-hooks/extensions/vocab.ts"
+    )] = json!({"stdout": "context_window"});
+    std::fs::write(path, answers.to_string()).unwrap();
+    let mut request = world.request();
+    request["harness"] = json!("pi");
+    request["model"] = json!("github-copilot/gpt-6");
+    let report = effect_report(&world.runner.op_fleet(&request));
+    assert_ne!(report["intent"]["outcome"], "failed", "{report}");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while std::fs::metadata(&child_env).is_err() {
+        assert!(Instant::now() < deadline, "the pane agent never ran");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        std::fs::read_to_string(&parent_env).unwrap().trim(),
+        "fixture|http://proxy.test:3128",
+        "the harness reads the login shell's variables"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&child_env).unwrap().trim(),
+        "fixture|http://proxy.test:3128",
+        "the pane agent reads the same from the session"
+    );
 }
 
 /// A Pi lane billing a Claude seat runs under Pi's own root; the seat
@@ -7354,97 +7534,273 @@ fn a_seated_pi_lane_with_no_pi_root_refuses_home_missing_before_the_gate() {
     assert_eq!(server.panes().len(), panes, "no window opened");
 }
 
-/// The model-switch recovery's handoff to the runtime: the request
-/// `lib/lane-relaunch.sh` composes from a lane record (the model the switch
-/// recorded, its effort, the checkout, the account) runs through the real
-/// `launch-lane`, which admits it over the stopped record and opens the lane
-/// on that model. A field the runtime needs that the composer never set, or
-/// a spelling it refuses, fails here and nowhere later.
+/// The model-switch recovery's handoff to the runtime, over the record the
+/// real `launch-lane` wrote: `lib/lane-relaunch.sh model-recovery` stops
+/// the predecessor through the runtime's close, which reads the identity
+/// the launch recorded in the launch's own form and interrupts the turn it
+/// is in, and starts the replacement on the recorded model through the
+/// real `launch-lane`. A field the runtime needs that the record never
+/// carried, a stop that reads the live harness stale and leaves it running
+/// beside a record marked stopped, or a stop that waits on a harness mid-
+/// turn, fails here and nowhere later. The released case is the record an
+/// earlier launcher wrote, planted as it wrote it: a bare `lstart` start
+/// and a `recovery` object whose flags carry a narrower permission choice,
+/// which reaches the replacement's line and never widens to the bypass
+/// default.
 #[test]
-fn the_model_switch_recovery_s_request_launches_through_the_real_launch_lane() {
+fn the_model_switch_recovery_stops_through_the_runtime_and_relaunches_over_the_real_launch_lane() {
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum Predecessor {
+        Idle,
+        Released,
+        Working,
+    }
+    for case in [
+        Predecessor::Idle,
+        Predecessor::Released,
+        Predecessor::Working,
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner = Runner::new(&server, "stub-record");
+        runner.verify = Some(2);
+        runner.init_fleet();
+        let work = runner.state_dir().to_path_buf();
+        let hold = work.join("hold.fifo");
+        if case == Predecessor::Working {
+            // A harness mid-turn: it draws its composer, and on the first
+            // line it reads echoes the turn, draws Claude Code's working
+            // line and holds the turn open on the FIFO, bounded.
+            mkfifo(&hold);
+            let working = dir.path().join("working");
+            std::fs::create_dir_all(&working).unwrap();
+            let stub = working.join("claude");
+            std::fs::write(
+                &stub,
+                format!(
+                    "#!/bin/bash\nprintf '\\xe2\\x9d\\xaf\\xc2\\xa0\\n'\nprintf '  ? for shortcuts\\n'\nIFS= read -r line\nprintf '\\xe2\\x9d\\xaf %s\\n' \"$line\"\nprintf '%s\\n' '* Thinking... (esc to interrupt)'\nexec 9<>'{}'\nread -r -t 30 -u 9 _\nexit 0\n",
+                    hold.display()
+                ),
+            )
+            .unwrap();
+            std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+            runner.stub = stub;
+        }
+        let mut request = launch_request("KEN-R", &work);
+        request["model"] = json!("claude-fable-5-1");
+        request["effort"] = json!("high");
+        let report = effect_report(&runner.op_fleet(&request));
+        assert_eq!(
+            report["intent"]["outcome"], "confirmed",
+            "{case:?}: {report}"
+        );
+        if case == Predecessor::Working {
+            // A turn under way: the harness holds its turn open and draws
+            // no composer, so the pane reads working.
+            let pane = report["lane"]["launch"]["pane"].as_str().unwrap();
+            server.send_line(pane, "keep working");
+            let state = runner.run(&["lane", "status", "--item", "KEN-R"]);
+            assert_eq!(
+                reply(&state)["result"]["state"],
+                "working",
+                "{}",
+                stderr(&state)
+            );
+        } else {
+            launch_record_of(&work);
+            std::fs::remove_file(work.join("launch-record.json")).unwrap();
+        }
+        let mut fleet = runner.fleet();
+        let predecessor = fleet["lanes"][0]["launch"]["pid"].as_u64().unwrap() as u32;
+        if case == Predecessor::Released {
+            fleet["lanes"][0]["launch"]["start"] = json!(lstart_of(predecessor));
+            fleet["lanes"][0]["recovery"] = json!({
+                "cwd": work.display().to_string(),
+                "flags": "--model claude-opus-4-8 --effort high --permission-mode dontAsk",
+                "refresh": false,
+                "session": "fleet",
+            });
+        }
+        fleet["lanes"][0]["model_check"] = json!({"session_id": "current", "outcome": "switched"});
+        fleet["fleet_log"] = json!([{
+            "kind": "model-switched", "item": "KEN-R", "session_id": "current",
+            "launch_identity": {
+                "launch": fleet["lanes"][0]["launch"],
+                "launched_at": fleet["lanes"][0]["launched_at"],
+            },
+        }]);
+        runner.write_fleet(&fleet);
+        let scripts = installed_scripts(dir.path());
+        let mut command = program("bash");
+        runner.apply_env(&mut command);
+        let out = command
+            .arg(scripts.join("lib/lane-relaunch.sh"))
+            .args(["model-recovery", &fleet["lanes"][0].to_string()])
+            .arg(&work)
+            .arg("current")
+            .env("ORCH_MODEL_RECOVERY_LIMIT", "3")
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(0), "{case:?}: {}", stderr(&out));
+        assert!(
+            !live(predecessor),
+            "{case:?}: the predecessor runs on beside its record"
+        );
+        let fleet = runner.fleet();
+        let lane = &fleet["lanes"][0];
+        assert_eq!(lane["status"], "running", "{case:?}: {lane}");
+        assert_eq!(lane["model"], "claude-fable-5-1", "{case:?}: {lane}");
+        assert_ne!(
+            lane["launch"]["pid"].as_u64().unwrap() as u32,
+            predecessor,
+            "{case:?}: the replacement is another harness"
+        );
+        let log = fleet["fleet_log"].as_array().unwrap();
+        let close = log.iter().find(|row| row["kind"] == "close").unwrap();
+        assert_eq!(close["disposition"], "no-landing", "{case:?}: {close}");
+        assert_eq!(close["reason"], "model-switch", "{case:?}: {close}");
+        assert_eq!(log[0]["recovery"], "replaced", "{case:?}: {log:?}");
+        if case == Predecessor::Working {
+            continue;
+        }
+        let recorded = launch_record_of(&work);
+        let argv: Vec<&str> = recorded["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a.as_str().unwrap())
+            .collect();
+        assert!(
+            argv.windows(2)
+                .any(|w| w == ["--model", "claude-fable-5-1"]),
+            "{case:?}: the recorded model on the line: {argv:?}"
+        );
+        assert!(
+            argv.windows(2).any(|w| w == ["--effort", "high"]),
+            "{case:?}: the recorded effort on the line: {argv:?}"
+        );
+        assert_eq!(
+            recorded["env"]["CLAUDE_CONFIG_DIR"],
+            work.display().to_string()
+        );
+        let released = case == Predecessor::Released;
+        let bypass = argv.contains(&"--dangerously-skip-permissions");
+        let narrower = argv
+            .windows(2)
+            .any(|w| w == ["--permission-mode", "dontAsk"]);
+        assert_eq!(
+            (bypass, narrower),
+            (!released, released),
+            "{case:?}: the recorded permission choice on the line: {argv:?}"
+        );
+        assert_eq!(
+            recorded["env"]["CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS"],
+            if released { "" } else { "1" },
+            "{case:?}: the bypass switches ride a full bypass alone: {recorded}"
+        );
+    }
+}
+
+/// Defect: the lane record named no tier, so the cycle reader asked for one
+/// on every runtime-launched lane. Through the real `launch-lane`: a brief
+/// opening the orch workflow with `start` records the standard tier and
+/// the item-tier line's inputs; one stating no verb and two item-tier lines
+/// that differ records none; a relaunch whose brief states none keeps the
+/// record's.
+#[test]
+fn the_launch_records_the_tier_its_brief_states_and_a_relaunch_keeps_it() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let mut runner = Runner::new(&server, "stub-record");
-    runner.verify = Some(1);
+    let runner = Runner::new(&server, "stub-confirm");
     runner.init_fleet();
-    let work = runner.state_dir().display().to_string();
-    let scripts = fixtures()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .join("scripts");
-    let record = json!({
-        "item": "KEN-R", "tracker": "linear", "harness": "claude", "status": "stopped",
-        "model": "claude-fable-5-1", "effort": "high", "account": work, "mail_root": work,
-        "session_since": "2026-01-29T15:00:00Z", "launched_at": "2026-01-29T15:00:00Z",
-        "launch": null,
-        "recovery": {
-            "cwd": work,
-            "flags": "--dangerously-skip-permissions --model claude-opus-4-8 --effort high",
-            "refresh": false,
-            "session": "fleet",
-        },
-    });
+    let brief = runner.state_dir().join("brief.md");
+    std::fs::write(
+        &brief,
+        "/orch start KEN-T\ntier=small brief=small cause=estimate estimate=3 delta=10 paths=2\n",
+    )
+    .unwrap();
+    let mut request = launch_request("KEN-T", runner.state_dir());
+    request["brief_file"] = json!(brief.display().to_string());
+    let report = effect_report(&runner.op_fleet(&request));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(report["lane"]["tier"], "standard", "{}", report["lane"]);
+    assert_eq!(
+        report["lane"]["tier_inputs"],
+        json!({"estimate": 3, "delta": 10, "paths": 2}),
+        "{}",
+        report["lane"]
+    );
+    std::fs::write(
+        &brief,
+        "Resume the work.\ntier=small brief=small cause=a estimate=3 delta=10 paths=2\ntier=micro brief=micro cause=b estimate=1 delta=1 paths=1\n",
+    )
+    .unwrap();
+    let mut other = launch_request("KEN-U", runner.state_dir());
+    other["brief_file"] = json!(brief.display().to_string());
+    let report = effect_report(&runner.op_fleet(&other));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert!(
+        report["lane"].get("tier").is_some_and(Value::is_null),
+        "two lines that differ state no tier: {}",
+        report["lane"]
+    );
+    assert_eq!(
+        report["lane"]["tier_inputs"],
+        json!({"estimate": null, "delta": null, "paths": null})
+    );
     let mut fleet = runner.fleet();
-    fleet["lanes"] = json!([record]);
+    fleet["lanes"][0]["status"] = json!("stopped");
+    fleet["lanes"][0]["launch"] = Value::Null;
     runner.write_fleet(&fleet);
-    let composed = program("bash")
+    other["item"] = json!("KEN-T");
+    let report = effect_report(&runner.op_fleet(&other));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(
+        report["lane"]["tier"], "standard",
+        "a relaunch whose brief states none keeps the record's: {}",
+        report["lane"]
+    );
+}
+
+/// The `ps -o lstart` text of a live pid as the shell launcher recorded a
+/// harness's start, in the C locale and UTC with its blanks squeezed.
+fn lstart_of(pid: u32) -> String {
+    let out = program("ps")
+        .args(["-o", "lstart=", "-p", &pid.to_string()])
+        .env("LC_ALL", "C")
+        .env("TZ", "UTC")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+    String::from_utf8_lossy(&out.stdout)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The shipped scripts laid out as an install under `dir`, their sibling
+/// libraries beside them and `orch-runtime` the binary under test, for a
+/// row that runs a shell entry which calls the runtime back.
+fn installed_scripts(dir: &Path) -> PathBuf {
+    let scripts = dir.join("packages/orch/scripts");
+    let shipped = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts");
+    let tests = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tests");
+    let out = program("bash")
         .args([
             "-euo",
             "pipefail",
             "-c",
-            r#"cd -- "$1" || exit 1
-export SCRIPT_DIR="$2"
-. "$2/lib/lane-launch.sh"
-. "$2/lib/lane-capabilities.sh"
-. "$2/lib/lane-relaunch.sh"
-lane_recovery_request "$3" "$1" "$1" || { echo "cause=$LANE_RECOVERY_CAUSE" >&2; exit 1; }
-printf '%s
-' "$LANE_RECOVERY_REQUEST"
-"#,
-            "compose",
-            &work,
-            &scripts.display().to_string(),
-            &record.to_string(),
+            r#"mkdir -p "$2" && cp -R "$1/." "$2/" && . "$3/lib/shared-skill-libs.sh" && orch_fixture_shared_libs "${2%/scripts}" && printf '#!/bin/bash\nexec "%s" --no-private-env "$@"\n' "$4" > "$2/orch-runtime" && chmod +x "$2/orch-runtime""#,
+            "install",
         ])
+        .arg(&shipped)
+        .arg(&scripts)
+        .arg(&tests)
+        .arg(binary())
         .output()
         .unwrap();
-    assert!(composed.status.success(), "{}", stderr(&composed));
-    let request_path = String::from_utf8_lossy(&composed.stdout).trim().to_owned();
-    let request: Value =
-        serde_json::from_str(&std::fs::read_to_string(&request_path).unwrap()).unwrap();
-    assert_eq!(request["model"], "claude-fable-5-1", "{request}");
-    assert_eq!(request["account"], work, "{request}");
-    let out = runner.run(&["op", "--fleet", "--effect-exit", "--request", &request_path]);
-    let report = effect_report(&out);
-    assert!(
-        matches!(
-            report["intent"]["outcome"].as_str(),
-            Some("confirmed" | "unconfirmed")
-        ),
-        "{report}"
-    );
-    assert_eq!(report["lane"]["model"], "claude-fable-5-1", "{report}");
-    let recorded = launch_record_of(Path::new(&work));
-    let argv: Vec<&str> = recorded["argv"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|a| a.as_str().unwrap())
-        .collect();
-    assert!(
-        argv.windows(2)
-            .any(|w| w == ["--model", "claude-fable-5-1"]),
-        "the recorded model on the line: {argv:?}"
-    );
-    assert!(
-        argv.windows(2).any(|w| w == ["--effort", "high"]),
-        "the recorded effort on the line: {argv:?}"
-    );
-    assert_eq!(recorded["env"]["CLAUDE_CONFIG_DIR"], work, "{recorded}");
+    assert!(out.status.success(), "{}", stderr(&out));
+    scripts
 }
 
 /// The launch record the record stubs write in `cwd`, read once it stands:

@@ -29,6 +29,10 @@ const PR: u64 = 7;
 const HEAD: &str = "737bce791577e140436490e0fed5751bb5144a61";
 const NODE_ID: &str = "PR_node123";
 const LOCK: Locking = Locking::FLOCK;
+/// The merge-group head a queued entry exposes, whose check runs the
+/// progress read counts.
+const QUEUE_HEAD: &str = "aaa111";
+const MERGED_AT: &str = "2026-07-24T10:00:00Z";
 
 fn env() -> Env {
     Env {
@@ -158,12 +162,84 @@ impl World {
         self
     }
 
+    /// The `pr view` answer for a merged pull request, `mergeable` as GitHub
+    /// last left it.
+    fn merged(&mut self, mergeable: &str) -> &mut Self {
+        self.replies.insert(
+            format!("pr view {PR}"),
+            json!({"body": {
+                "state": "MERGED", "mergedAt": MERGED_AT, "mergeable": mergeable,
+                "headRefOid": HEAD, "baseRefName": "main"
+            }}),
+        );
+        self
+    }
+
+    /// A read gh could not make: nothing printed, `stderr` as gh writes it,
+    /// exit 1.
+    fn failed(&mut self, key: &str, stderr: &str) -> &mut Self {
+        self.replies.insert(
+            key.to_owned(),
+            json!({"text": "", "stderr": stderr, "exit": 1}),
+        );
+        self
+    }
+
+    /// The check runs on the merge-group head, as the progress read lists
+    /// them: `completed` done and `running` still in progress; `None` is a
+    /// read that fails.
+    fn check_runs(&mut self, counts: Option<(usize, u64)>) -> &mut Self {
+        let key = format!("repos/{REPO}/commits/{QUEUE_HEAD}/check-runs?per_page=100&page=1");
+        match counts {
+            Some((completed, running)) => {
+                let runs: Vec<Value> = (0..completed)
+                    .map(|_| json!({"status": "completed", "conclusion": "success"}))
+                    .chain(
+                        (0..running).map(|_| json!({"status": "in_progress", "conclusion": null})),
+                    )
+                    .collect();
+                self.replies.insert(
+                    key,
+                    json!({"body": {"total_count": runs.len(), "check_runs": runs}}),
+                );
+            }
+            None => {
+                self.replies.remove(&key);
+            }
+        }
+        self
+    }
+
     fn threads(&mut self, unresolved: u64) -> &mut Self {
         self.threads.insert(
             format!("pr-threads {PR}"),
             json!({"body": {"count": unresolved, "unresolved_count": unresolved, "threads": []}}),
         );
         self
+    }
+
+    /// A thread read that answers no count: `text` printed as is, or with
+    /// `None` no answer at all (the command refuses).
+    fn threads_unreadable(&mut self, text: Option<&str>) -> &mut Self {
+        let key = format!("pr-threads {PR}");
+        match text {
+            Some(text) => {
+                self.threads.insert(key, json!({"text": text}));
+            }
+            None => {
+                self.threads.remove(&key);
+            }
+        }
+        self
+    }
+
+    /// The thread reads the fake `github.sh` answered.
+    fn thread_reads(&self) -> usize {
+        fs::read_to_string(self.root().join("github.log"))
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| l.contains("pr-threads"))
+            .count()
     }
 
     /// A guard mutation's answer: the payload on success, a GraphQL
@@ -292,13 +368,13 @@ impl World {
     }
 
     /// One call of the binary, the fakes ahead of the inherited PATH.
-    fn binary(&self, args: &[&str]) -> Output {
+    fn binary(&self, repo: &str, args: &[&str]) -> Output {
         self.write();
         let root = self.root();
         support::isolated()
             .args(["--state-dir", &root.display().to_string()])
             .arg("queue-watch")
-            .args(["--item", ITEM_ID, "--repo", REPO, "--pr", &PR.to_string()])
+            .args(["--item", ITEM_ID, "--repo", repo, "--pr", &PR.to_string()])
             .args(args)
             .env(
                 "PATH",
@@ -700,7 +776,7 @@ fn pending_required_checks_await_never_progress_unobservable() {
 #[test]
 fn a_poll_interval_past_the_budget_is_refused_before_any_read() {
     let world = World::new();
-    let out = world.binary(&["--poll", "60", "--max-wait", "30"]);
+    let out = world.binary(REPO, &["--poll", "60", "--max-wait", "30"]);
     assert!(!out.status.success());
     assert!(
         support::stderr(&out).contains("queue-watch-invalid"),
@@ -708,4 +784,779 @@ fn a_poll_interval_past_the_budget_is_refused_before_any_read() {
         support::stderr(&out)
     );
     assert!(world.gh_log().is_empty(), "no read before the refusal");
+}
+
+/// The repository is the request's own `owner/name`: one outside that form
+/// is refused before any read, never resolved from a checkout or handed to
+/// gh.
+#[test]
+fn a_repository_outside_its_form_is_refused_before_any_read() {
+    let world = World::new();
+    let out = world.binary("elsewhere", &[]);
+    assert!(!out.status.success());
+    assert!(
+        support::stderr(&out).contains("verify-request-invalid"),
+        "{}",
+        support::stderr(&out)
+    );
+    assert!(world.gh_log().is_empty(), "no read before the refusal");
+}
+
+/// A merged pull request ends the wait on the poll that reads it, whatever
+/// `mergeable` still says of the merged head, with `merged_at` and no
+/// cause, and the memory the earlier polls wrote stands on the reply, so
+/// the workflow reads that the merge went through the queue it armed.
+#[test]
+fn a_merged_pull_request_is_merged_whatever_mergeable_says_and_keeps_its_queue_memory() {
+    let mut world = World::new();
+    world.queue(in_queue(None));
+    let request = world.request(10, 30);
+    let reply = world.wait(&request, |world, clock| {
+        clock.await_sleepers(1);
+        world.merged("CONFLICTING").write();
+        clock.release(secs(10));
+    });
+    assert_eq!(
+        (reply.status, reply.verdict, reply.cause, reply.polls),
+        ("complete", "merged", None, 2),
+        "{reply:?}"
+    );
+    assert_eq!(reply.merged_at, MERGED_AT);
+    assert!(reply.was_queued && reply.was_in_merge_queue, "{reply:?}");
+
+    // Merged before the first poll: one read, no queue read after the state.
+    let mut world = World::new();
+    world.merged("MERGEABLE").queue(in_queue(None));
+    let request = world.request(10, 30);
+    let reply = world.wait(&request, |_, _| {});
+    assert_eq!(
+        (reply.status, reply.verdict, reply.polls, reply.was_queued),
+        ("complete", "merged", 1, false),
+        "{reply:?}"
+    );
+    assert!(
+        !world.gh_log().iter().any(|l| l.contains("isInMergeQueue")),
+        "{:?}",
+        world.gh_log()
+    );
+}
+
+/// A closed, unmerged pull request is `closed` with `closed_without_merge`
+/// on the poll that reads it, before any queue read: the workflow hands
+/// back rather than waiting on a queue the pull request has left.
+#[test]
+fn a_closed_pull_request_is_closed_without_merge_before_any_queue_read() {
+    let mut world = World::new();
+    world.pull("CLOSED", "MERGEABLE").queue(in_queue(None));
+    let request = world.request(10, 30);
+    let reply = world.wait(&request, |_, _| {});
+    assert_eq!(
+        (reply.status, reply.verdict, reply.cause, reply.polls),
+        ("complete", "closed", Some("closed_without_merge"), 1),
+        "{reply:?}"
+    );
+    assert!(
+        !world.gh_log().iter().any(|l| l.contains("isInMergeQueue")),
+        "{:?}",
+        world.gh_log()
+    );
+}
+
+/// An arm GitHub cleared from a pull request a poll saw armed and never
+/// enqueued is `disarmed` with `auto_merge_cleared` once the confirmation
+/// count agrees, `mergeable` clean routing nothing else; `mergeable`
+/// `UNKNOWN` is GitHub recomputing and routes nothing, so an armed pull
+/// request whose rollup no probe read awaits its checks unread.
+#[test]
+fn an_arm_cleared_after_being_armed_is_disarmed_once_confirmed() {
+    let mut world = World::new();
+    world.queue(armed_only());
+    let request = world.request(10, 60);
+    let reply = world.wait(&request, |world, clock| {
+        clock.await_sleepers(1);
+        world.queue(out()).write();
+        clock.pass(secs(10));
+        clock.release(secs(10));
+    });
+    assert_eq!(
+        (reply.status, reply.verdict, reply.cause, reply.polls),
+        ("complete", "disarmed", Some("auto_merge_cleared"), 3),
+        "{reply:?}"
+    );
+    assert!(reply.was_queued && !reply.was_in_merge_queue, "{reply:?}");
+
+    let mut world = World::new();
+    world.pull("OPEN", "UNKNOWN").queue(armed_only());
+    let request = world.request(10, 10);
+    let reply = world.wait(&request, |_, clock| {
+        clock.await_sleepers(1);
+        clock.release(secs(10));
+    });
+    assert_eq!(
+        (
+            reply.status,
+            reply.verdict,
+            reply.cause,
+            reply.unconfirmed_verdict
+        ),
+        (
+            "timeout",
+            "armed_awaiting_checks",
+            Some("checks_unread"),
+            None
+        ),
+        "{reply:?}"
+    );
+}
+
+/// A transient failure of a read (a 5xx, a rate limit, a timeout) is
+/// absorbed under the backoff and counted on the reply, and the next poll
+/// that reads goes on from it; one that never clears ends the wait only
+/// once the budget is spent, as the read's failure, never as a pull request
+/// that was never armed.
+#[test]
+fn a_transient_read_failure_is_absorbed_and_counted_and_ends_the_wait_only_at_the_budget() {
+    let mut world = World::new();
+    world.failed("queue", "HTTP 502: Bad Gateway");
+    let request = world.request(10, 60);
+    let reply = world.wait(&request, |world, clock| {
+        clock.await_sleepers(1);
+        world.merged("MERGEABLE").write();
+        clock.release(secs(10));
+    });
+    assert_eq!(
+        (
+            reply.status,
+            reply.verdict,
+            reply.transient_api_errors,
+            reply.polls
+        ),
+        ("complete", "merged", Some(1), 2),
+        "{reply:?}"
+    );
+
+    let mut world = World::new();
+    world.failed(
+        &format!("pr view {PR}"),
+        "API rate limit already exceeded for installation ID 161253865",
+    );
+    let request = world.request(1, 3);
+    let reply = world.wait(&request, |_, clock| {
+        clock.await_sleepers(1);
+        clock.pass(secs(1));
+        clock.release(secs(2));
+    });
+    assert_eq!(
+        (
+            reply.status,
+            reply.verdict,
+            reply.transient_api_errors,
+            reply.polls
+        ),
+        ("error", "unknown", Some(2), 2),
+        "{reply:?}"
+    );
+    let error = reply.error.unwrap_or_default();
+    assert!(
+        error.starts_with("pr-view-failed pr=7 repo=owner/repo"),
+        "{error}"
+    );
+}
+
+/// A queue answer that is no pull request (an empty object, an empty body)
+/// is absorbed up to the bound and then ends the wait `queue-unreadable`
+/// with the polls it spent, never `not_queued`.
+#[test]
+fn an_unreadable_queue_answer_ends_the_wait_after_the_bound_never_not_queued() {
+    for (name, answer) in [
+        ("an empty object", json!({"body": {}})),
+        ("an empty body", json!({"text": ""})),
+    ] {
+        let mut world = World::new();
+        world.queue(answer);
+        let request = world.request(1, 30);
+        let reply = world.wait(&request, |_, clock| {
+            clock.await_sleepers(1);
+            clock.pass(secs(1));
+            clock.release(secs(1));
+        });
+        assert_eq!(
+            (reply.status, reply.verdict, reply.polls),
+            ("error", "unknown", 3),
+            "{name}: {reply:?}"
+        );
+        assert_eq!(
+            reply.error.as_deref(),
+            Some("queue-unreadable pr=7 repo=owner/repo polls=3"),
+            "{name}"
+        );
+    }
+}
+
+/// The deadline is a timeout on the budget, never a silent success or a
+/// poll past it: the last sleep is clamped to the remaining budget, and a
+/// pull request still queued at the deadline is `queued` with its entry
+/// read on the reply.
+#[test]
+fn the_deadline_is_a_timeout_on_the_budget_with_the_entry_still_read() {
+    let mut world = World::new();
+    world.queue(in_queue(None));
+    let request = world.request(3, 4);
+    let reply = world.wait(&request, |_, clock| {
+        clock.await_sleepers(1);
+        clock.pass(secs(3));
+        clock.release(secs(1));
+    });
+    assert_eq!(
+        (
+            reply.status,
+            reply.verdict,
+            reply.elapsed_seconds,
+            reply.polls
+        ),
+        ("timeout", "queued", 4, 2),
+        "{reply:?}"
+    );
+    assert!(
+        reply.in_merge_queue && reply.merge_queue_state == "QUEUED",
+        "{reply:?}"
+    );
+}
+
+/// Progress on a queued entry with a merge-group head is read from that
+/// head's check runs: a completed count that moved within the window, or a
+/// run still running, is `still_progressing`; a count that has not moved
+/// with nothing running is `stalled`; a read that failed is no count, never
+/// zero, so every read failing is `progress_unobservable` and one failing
+/// between two reads erases no movement.
+#[test]
+fn progress_is_read_from_the_heads_check_runs_and_a_failed_read_is_never_zero() {
+    struct Row {
+        name: &'static str,
+        reads: &'static [Option<(usize, u64)>],
+        cause: &'static str,
+        progressing: Option<bool>,
+        check_reads: u64,
+        last_running: Option<u64>,
+    }
+    let rows = [
+        Row {
+            name: "a completed count advancing every poll",
+            reads: &[Some((1, 0)), Some((2, 0)), Some((3, 0))],
+            cause: "still_progressing",
+            progressing: Some(true),
+            check_reads: 3,
+            last_running: Some(0),
+        },
+        Row {
+            name: "one change older than the window, then flat",
+            reads: &[
+                Some((1, 0)),
+                Some((2, 0)),
+                Some((2, 0)),
+                Some((2, 0)),
+                Some((2, 0)),
+                Some((2, 0)),
+            ],
+            cause: "stalled",
+            progressing: Some(false),
+            check_reads: 6,
+            last_running: Some(0),
+        },
+        Row {
+            name: "a flat count with a run still running",
+            reads: &[Some((1, 1)), Some((1, 1)), Some((1, 1))],
+            cause: "still_progressing",
+            progressing: Some(true),
+            check_reads: 3,
+            last_running: Some(1),
+        },
+        Row {
+            name: "every read failing",
+            reads: &[None, None, None],
+            cause: "progress_unobservable",
+            progressing: None,
+            check_reads: 0,
+            last_running: None,
+        },
+        Row {
+            name: "a failed read between two reads",
+            reads: &[Some((1, 0)), None, Some((2, 0))],
+            cause: "still_progressing",
+            progressing: Some(true),
+            check_reads: 2,
+            last_running: Some(0),
+        },
+    ];
+    for row in rows {
+        let mut world = World::new();
+        world
+            .queue(in_queue(Some(QUEUE_HEAD)))
+            .check_runs(row.reads[0]);
+        let request = world.request(1, row.reads.len() as u64);
+        let reply = world.wait(&request, |world, clock| {
+            clock.await_sleepers(1);
+            for read in &row.reads[1..] {
+                world.check_runs(*read).write();
+                clock.pass(secs(1));
+            }
+            clock.release(secs(1));
+        });
+        assert_eq!(
+            (reply.status, reply.verdict, reply.cause, reply.progressing),
+            ("timeout", "queued", Some(row.cause), row.progressing),
+            "{}: {reply:?}",
+            row.name
+        );
+        assert_eq!(
+            (
+                reply.progress_head_polls,
+                reply.progress_check_reads,
+                reply.last_running_count
+            ),
+            (row.reads.len() as u64, row.check_reads, row.last_running),
+            "{}: {reply:?}",
+            row.name
+        );
+    }
+}
+
+/// A hold is named only by a live group ahead of a headless `QUEUED` or
+/// `UNMERGEABLE` entry: a group behind this entry, an entry ahead without a
+/// head, or another entry state proves no hold, and an entry with its own
+/// group keeps its progress reading.
+#[test]
+fn a_hold_is_named_only_by_a_live_group_ahead_of_a_headless_entry() {
+    let entry = |edit: fn(&mut Value)| -> Value {
+        let mut body = held_behind(9);
+        edit(&mut body["body"]["data"]["repository"]["pullRequest"]["mergeQueueEntry"]);
+        body
+    };
+    let cases: [(&str, Value, &str, Option<u64>); 5] = [
+        (
+            "an UNMERGEABLE entry behind a live group",
+            entry(|e| e["state"] = json!("UNMERGEABLE")),
+            "blocked_by_entry_ahead",
+            Some(9),
+        ),
+        (
+            "a live group behind this entry",
+            entry(|e| e["mergeQueue"]["entries"]["nodes"][0]["position"] = json!(3)),
+            "progress_unobservable",
+            None,
+        ),
+        (
+            "an entry ahead without a group",
+            entry(|e| e["mergeQueue"]["entries"]["nodes"][0]["headCommit"] = Value::Null),
+            "progress_unobservable",
+            None,
+        ),
+        (
+            "an entry with its own group",
+            entry(|e| e["headCommit"] = json!({"oid": QUEUE_HEAD})),
+            "still_progressing",
+            None,
+        ),
+        (
+            "another entry state",
+            entry(|e| e["state"] = json!("AWAITING_CHECKS")),
+            "progress_unobservable",
+            None,
+        ),
+    ];
+    for (name, queue, cause, ahead) in cases {
+        let mut world = World::new();
+        world.queue(queue).check_runs(Some((1, 1)));
+        let request = world.request(10, 10);
+        let reply = world.wait(&request, |_, clock| {
+            clock.await_sleepers(1);
+            clock.release(secs(10));
+        });
+        assert_eq!(
+            (reply.verdict, reply.cause, reply.queue_ahead_pr),
+            ("queued", Some(cause), ahead),
+            "{name}: {reply:?}"
+        );
+    }
+}
+
+/// The confirmation count is the whole rule: a candidate the budget cannot
+/// confirm, however the gaps shrink, is reported beside `queued` as
+/// `unconfirmed_verdict`, never under a confirmed verdict's name; a pull
+/// request read out of the queue is `exit_unconfirmed`, never a progress
+/// reading the workflow would route to a recovery cycle.
+#[test]
+fn a_candidate_the_budget_cannot_confirm_is_reported_beside_queued_never_as_its_verdict() {
+    let cases: [(&str, &str, Option<Value>, &str, &str); 2] = [
+        (
+            "an ejection",
+            "MERGEABLE",
+            Some(out()),
+            "exit_unconfirmed",
+            "ejected",
+        ),
+        (
+            "a conflict",
+            "CONFLICTING",
+            None,
+            "progress_unobservable",
+            "conflicting",
+        ),
+    ];
+    for (name, mergeable, later, cause, unconfirmed) in cases {
+        let mut world = World::new();
+        world.pull("OPEN", mergeable).queue(in_queue(None));
+        let request = QueueWatch {
+            confirm_polls: 100,
+            ..world.request(1, 2)
+        };
+        let reply = world.wait(&request, |world, clock| {
+            clock.await_sleepers(1);
+            if let Some(queue) = later.clone() {
+                world.queue(queue).write();
+            }
+            clock.pass(secs(1));
+            clock.release(secs(1));
+        });
+        assert_eq!(
+            (
+                reply.status,
+                reply.verdict,
+                reply.cause,
+                reply.unconfirmed_verdict,
+                reply.polls
+            ),
+            ("timeout", "queued", Some(cause), Some(unconfirmed), 2),
+            "{name}: {reply:?}"
+        );
+        assert!(
+            reply.elapsed_seconds <= 2 && reply.last_poll_age_seconds.is_some(),
+            "{name}: {reply:?}"
+        );
+    }
+}
+
+/// How a drive moves the fake clock after it rewrote the maps: `pass`
+/// waits for the wait's thread to sleep again, `release` wakes it for a
+/// poll that may end the wait.
+enum Advance {
+    Pass(Duration),
+    Release(Duration),
+}
+
+/// One poll's world as the drive rewrites it before moving the clock.
+struct Step {
+    mergeable: Option<&'static str>,
+    queue: Option<Value>,
+    then: Advance,
+}
+
+/// An ejection or a disarm is a transition, observed once, so one the
+/// deadline cuts off mid-confirmation is re-observed by nobody and the
+/// workflow re-arms a pull request the queue threw out: the confirmation
+/// polls a transition still owes near the deadline are moved inside the
+/// budget, which stays the upper bound; the move is owed per candidate, so
+/// a transition after a candidate that spent its move is still confirmed;
+/// and polls owed exactly the remaining budget are moved too, since a gap
+/// landing on the deadline is a poll never made.
+#[test]
+fn a_transition_first_seen_near_the_deadline_is_confirmed_inside_the_budget() {
+    struct Row {
+        name: &'static str,
+        first: Value,
+        poll: u64,
+        max_wait: u64,
+        confirm_polls: u32,
+        steps: Vec<Step>,
+        verdict: &'static str,
+        cause: &'static str,
+        polls: u64,
+    }
+    let step = |mergeable: Option<&'static str>, queue: Option<Value>, then: Advance| Step {
+        mergeable,
+        queue,
+        then,
+    };
+    let rows = vec![
+        Row {
+            name: "an ejection at the deadline",
+            first: in_queue(None),
+            poll: 2,
+            max_wait: 3,
+            confirm_polls: 2,
+            steps: vec![
+                step(None, Some(out()), Advance::Pass(secs(2))),
+                step(None, None, Advance::Release(Duration::from_millis(500))),
+            ],
+            verdict: "ejected",
+            cause: "merge_group_failed",
+            polls: 3,
+        },
+        Row {
+            name: "a disarm at the deadline",
+            first: armed_only(),
+            poll: 2,
+            max_wait: 3,
+            confirm_polls: 2,
+            steps: vec![
+                step(None, Some(out()), Advance::Pass(secs(2))),
+                step(None, None, Advance::Release(Duration::from_millis(500))),
+            ],
+            verdict: "disarmed",
+            cause: "auto_merge_cleared",
+            polls: 3,
+        },
+        Row {
+            name: "a transition after a candidate that spent its move",
+            first: in_queue(None),
+            poll: 3,
+            max_wait: 5,
+            confirm_polls: 2,
+            steps: vec![
+                step(Some("CONFLICTING"), None, Advance::Pass(secs(3))),
+                step(Some("MERGEABLE"), Some(out()), Advance::Pass(secs(1))),
+                step(None, None, Advance::Release(Duration::from_millis(500))),
+            ],
+            verdict: "ejected",
+            cause: "merge_group_failed",
+            polls: 4,
+        },
+        Row {
+            name: "owed polls that fit the budget exactly",
+            first: in_queue(None),
+            poll: 1,
+            max_wait: 3,
+            confirm_polls: 3,
+            steps: vec![
+                step(None, Some(out()), Advance::Pass(secs(1))),
+                step(None, None, Advance::Pass(Duration::from_millis(667))),
+                step(None, None, Advance::Release(secs(1))),
+            ],
+            verdict: "ejected",
+            cause: "merge_group_failed",
+            polls: 4,
+        },
+    ];
+    for row in rows {
+        let Row {
+            name,
+            first,
+            poll,
+            max_wait,
+            confirm_polls,
+            steps,
+            verdict,
+            cause,
+            polls,
+        } = row;
+        let mut world = World::new();
+        world.queue(first);
+        let request = QueueWatch {
+            confirm_polls,
+            ..world.request(poll, max_wait)
+        };
+        let reply = world.wait(&request, |world, clock| {
+            clock.await_sleepers(1);
+            for step in steps {
+                if let Some(mergeable) = step.mergeable {
+                    world.pull("OPEN", mergeable);
+                }
+                if let Some(queue) = step.queue {
+                    world.queue(queue);
+                }
+                world.write();
+                match step.then {
+                    Advance::Pass(d) => clock.pass(d),
+                    Advance::Release(d) => clock.release(d),
+                }
+            }
+        });
+        assert_eq!(
+            (reply.status, reply.verdict, reply.cause, reply.polls),
+            ("complete", verdict, Some(cause), polls),
+            "{name}: {reply:?}"
+        );
+        assert!(reply.elapsed_seconds <= max_wait, "{name}: {reply:?}");
+    }
+}
+
+/// The guard's thread read is three-valued: a read that failed, or an
+/// answer that is no count, is no evidence (nothing pulled, no count on
+/// the reply, the wait goes on), never no threads; and with the guard off
+/// no thread is read at all.
+#[test]
+fn a_thread_read_that_failed_or_answered_no_count_is_no_evidence() {
+    for (name, text) in [
+        ("a refused read", None),
+        ("an answer that is no count", Some("not json")),
+    ] {
+        let mut world = World::new();
+        world.queue(in_queue(None)).threads_unreadable(text);
+        let request = world.request(10, 10);
+        let reply = world.wait(&request, |_, clock| {
+            clock.await_sleepers(1);
+            clock.release(secs(10));
+        });
+        assert_eq!(
+            (
+                reply.status,
+                reply.verdict,
+                reply.unresolved_count,
+                world.thread_reads()
+            ),
+            ("timeout", "queued", None, 2),
+            "{name}: {reply:?}"
+        );
+        assert!(world.mutations().is_empty(), "{name}: {:?}", world.gh_log());
+    }
+
+    let mut world = World::new();
+    world.queue(in_queue(None)).threads(1);
+    let request = QueueWatch {
+        guard: false,
+        ..world.request(10, 10)
+    };
+    let reply = world.wait(&request, |_, clock| {
+        clock.await_sleepers(1);
+        clock.release(secs(10));
+    });
+    assert_eq!(
+        (reply.verdict, reply.unresolved_count, world.thread_reads()),
+        ("queued", None, 0),
+        "{reply:?}"
+    );
+    assert!(world.mutations().is_empty(), "{:?}", world.gh_log());
+}
+
+/// The guard pulls the halves the shape calls for: an armed, unenqueued
+/// pull request takes the disarm alone; a disarm GitHub refused does not
+/// skip the dequeue, and the reply names the refused half; and the deadline
+/// runs one last probe, so a thread landing before it is still pulled.
+#[test]
+fn the_guard_pulls_the_halves_the_shape_calls_for_and_probes_once_more_at_the_deadline() {
+    let mut world = World::new();
+    world
+        .queue(armed_only())
+        .threads(1)
+        .mutation("disablePullRequestAutoMerge", true);
+    let request = world.request(10, 30);
+    let reply = world.wait(&request, |_, _| {});
+    assert_eq!(
+        (reply.status, reply.verdict, reply.cause),
+        ("complete", "dequeued", Some("late_findings")),
+        "{reply:?}"
+    );
+    let sent = world.mutations();
+    assert!(
+        sent.len() == 1 && sent[0].contains("disablePullRequestAutoMerge"),
+        "{sent:?}"
+    );
+    let guard = &world.memory()["guard"];
+    assert_eq!(
+        (
+            guard["disarm"]["state"].as_str(),
+            guard["dequeue"]["state"].as_str()
+        ),
+        (Some("done"), Some("unneeded"))
+    );
+
+    let mut world = World::new();
+    world
+        .queue(in_queue(None))
+        .threads(1)
+        .mutation("disablePullRequestAutoMerge", false)
+        .mutation("dequeuePullRequest", true);
+    let request = world.request(10, 30);
+    let reply = world.wait(&request, |_, _| {});
+    assert_eq!(
+        (reply.status, reply.verdict, reply.cause),
+        ("error", "dequeued", Some("late_findings_dequeue_failed")),
+        "{reply:?}"
+    );
+    let error = reply.error.unwrap_or_default();
+    assert!(
+        error.contains("operation=disablePullRequestAutoMerge pr=7"),
+        "{error}"
+    );
+    let guard = &world.memory()["guard"];
+    assert_eq!(
+        (
+            guard["disarm"]["state"].as_str(),
+            guard["dequeue"]["state"].as_str()
+        ),
+        (Some("failed"), Some("done"))
+    );
+    assert_eq!(world.mutations().len(), 2, "{:?}", world.gh_log());
+
+    let mut world = World::new();
+    world
+        .queue(in_queue(None))
+        .threads(0)
+        .mutation("disablePullRequestAutoMerge", true)
+        .mutation("dequeuePullRequest", true);
+    let request = world.request(1, 1);
+    let reply = world.wait(&request, |world, clock| {
+        clock.await_sleepers(1);
+        world.threads(1).write();
+        clock.release(secs(1));
+    });
+    assert_eq!(
+        (reply.status, reply.verdict, reply.cause, reply.polls),
+        ("complete", "dequeued", Some("late_findings"), 1),
+        "{reply:?}"
+    );
+}
+
+/// The failed-check probe's settled answers: every required check passed
+/// with still no entry is `armed_blocked` with `not_mergeable` at the
+/// deadline, and a probe that could not read keeps the reading before it,
+/// never replacing it with none.
+#[test]
+fn a_settled_probe_is_armed_blocked_at_the_deadline_and_an_unreadable_probe_keeps_the_reading() {
+    let mut world = World::new();
+    world
+        .witness("required-build-optional-docs-active")
+        .queue(armed_only());
+    let request = QueueWatch {
+        probe_interval: secs(0),
+        ..probe_request(&world, 3)
+    };
+    let reply = world.wait(&request, |world, clock| {
+        clock.await_sleepers(1);
+        world.replies.remove(&format!(
+            "repos/{REPO}/commits/{HEAD}/check-runs?filter=all&per_page=100&page=1"
+        ));
+        world.write();
+        clock.release(secs(1));
+    });
+    assert_eq!(
+        (reply.status, reply.verdict, reply.cause, reply.polls),
+        ("timeout", "armed_blocked", Some("not_mergeable"), 3),
+        "{reply:?}"
+    );
+    assert!(reply.pending_checks.is_none(), "{reply:?}");
+
+    // A standing conflict is never overtaken by the probe's one reading of
+    // a failed check: the probe runs only past a candidate's confirmation,
+    // so the verdict keeps the conflict's cause, not `check_failed`.
+    let mut world = World::new();
+    world
+        .pull("OPEN", "CONFLICTING")
+        .witness("bound-run-failed-own-check")
+        .queue(armed_only());
+    let request = probe_request(&world, 10);
+    let reply = world.wait(&request, |_, clock| {
+        clock.await_sleepers(1);
+        clock.release(secs(1));
+    });
+    assert_eq!(
+        (reply.status, reply.verdict, reply.cause, reply.polls),
+        ("complete", "conflicting", Some("base_conflict"), 2),
+        "{reply:?}"
+    );
+    assert!(
+        !world.gh_log().iter().any(|l| l.contains("check-runs")),
+        "no probe past a standing candidate: {:?}",
+        world.gh_log()
+    );
 }

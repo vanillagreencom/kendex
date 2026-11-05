@@ -348,9 +348,9 @@ BARRIER
         "$(jq -nc --arg line "$line" --arg cwd "$launch_dir" '{launch_line:$line,cwd:$cwd,session_id:"s1"}')")"
     else
       # The record a launch in the subdirectory wrote, in the released
-      # producer's shape: the caller pane opened there, its line naming that
-      # directory and the handoff the launch was given, the base recorded.
-      # Recovery below still starts at the repo root.
+      # producer's shape: the caller pane opened there, its line naming the
+      # handoff the launch was given, its cwd that directory, the base model
+      # recorded. Recovery below still starts at the repo root.
       state none
       prior_pane=$CALLER_PANE
       tm kill-pane -t "$prior_pane"

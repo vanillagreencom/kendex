@@ -1827,7 +1827,7 @@ for spelling in space equals; do
     space) run_close "$SCRIPT" --state-dir "$FLEET_DIR" ;;
     equals) run_close "$SCRIPT" "--state-dir=$FLEET_DIR" ;;
   esac
-  # Two reads: the lane records and the runtime intent rows (decision 44).
+  # Two reads: the lane records and the runtime intent rows.
   assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") get=$(state_call_count "--state-dir $FLEET_DIR get oversee ") update=$(state_call_count "--state-dir $FLEET_DIR update oversee ")" \
     'rc=0 status=done get=2 update=1' "the $spelling spelling carries the fleet state directory into the reads and the write"
 done
@@ -1952,6 +1952,88 @@ assert_eq "rc=$RC job=$JOB kill=$(grep -c '^kill-window ' "$CALLS" || true) host
 prepare_close "$SCRIPT" "$JOB_DIR/other-job"
 assert_eq "rc=$RC job=$JOB status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=0 job=running status=done' 'a recorded pid that runs anything but open-terminal is left running'
+
+echo '=== a released selection record keeps the started harness close protections ==='
+# A hosted Codex lane whose harness started during a selection read: the
+# record is `preparing` with `prepare.step` selection and its `launch` naming
+# the started pane, the shape a released launcher wrote and a fleet upgrading
+# mid-selection still carries. The runtime writes no such record and deletes
+# `prepare` on every relaunch; lane-close reads the arm until the hosted
+# close moves into the runtime. The record is planted as that launcher wrote
+# it, so its close reaches the checks and the stop a running record does.
+selection_record() {
+  jq -n --arg root "$MAIL_ROOT" --arg claim "$FIXTURE" \
+    '{lanes: [{item: "KEN-1", tracker: "linear", repo: "owner/repo", harness: "codex", window: "kendex:KEN-1",
+      account: "/lane", host: "/host", kind: "ssh", mail_root: $root, surface: "tmux", model: "model", effort: "medium",
+      session_id: null, session_since: "2026-09-20T00:00:00Z", launched_at: "2026-09-20T00:00:00Z", running_at: null,
+      status: "preparing", over_cap: null, allow_all: null, touched: null, in_scope: [], obligation: null,
+      recovery: {cwd: $claim, flags: "", session: "kendex", refresh: false},
+      prepare: {status: "preparing", host: "/host", line: "ssh-target=host\tpath=/srv/worktree\tremote-prefix=cd /srv/worktree",
+        step: "selection", since: "2026-09-20T00:00:00Z", account: "CODEX_HOME=/lane", harness: "codex", relaunch: false,
+        command_route: "native", pane: "%7", server: "999", session: "kendex", model: "model", effort: "medium"},
+      launch: {pane: "%7", server: 999, pid: null, start: null}}]}' >"$STATE"
+}
+selection_close() { # SCRIPT CASE [OPTIONS...]
+  local script="$1" kind="$2"
+  shift 2
+  selection_record
+  write_panes codex
+  case "$kind" in
+    live) printf '› run\n  press to interrupt\n' >"$SCREEN"; run_close "$script" "$@" ;;
+    ask) codex_screen; LANE_CLOSE_MAIL_PENDING="$ASK" run_close "$script" "$@" ;;
+    idle) codex_screen; run_close "$script" "$@" ;;
+  esac
+  SELECTION_GOT="rc=$RC stop=$(stop_count KEN-1 codex) close=$(close_call_count) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")"
+}
+for options in full keep; do
+  selection_args=()
+  [[ "$options" != keep ]] || selection_args=(--keep-sandbox)
+  for kind in live ask idle; do
+    selection_close "$SCRIPT" "$kind" ${selection_args[@]+"${selection_args[@]}"}
+    case "$kind:$options" in
+      live:*|ask:*) expected='rc=1 stop=0 close=0 kill=0 status=preparing' ;;
+      idle:full) expected='rc=0 stop=1 close=1 kill=1 status=done' ;;
+      idle:keep) expected='rc=0 stop=1 close=0 kill=1 status=stopped' ;;
+    esac
+    assert_eq "$SELECTION_GOT" "$expected" "selection $kind $options preserves its close protection"
+    case "$kind" in
+      live) assert_eq "$(grep -c '^lane-close: lane-live ' <<<"$ERR" || true)" 1 'the live pane reaches the live-lane guard' ;;
+      ask) assert_eq "$(grep -c '^lane-close: ask-unanswered ' <<<"$ERR" || true)" 1 'the pending ask reaches the unanswered-ask guard' ;;
+    esac
+  done
+done
+# Each control preserves the changed routing and disables one protection.
+# shellcheck disable=SC2016
+MUTANT="$(mutant selection-live '  *) message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;' '  *) : ;; # message lane-live')"
+selection_close "$MUTANT" live
+assert_eq "$SELECTION_GOT" 'rc=0 stop=0 close=1 kill=1 status=done' 'control: the live-lane guard prevents selection close'
+# shellcheck disable=SC2016
+MUTANT="$(mutant selection-ask '  refuse_unanswered_ask
+  close_secs=' '  : # refuse_unanswered_ask
+  close_secs=')"
+selection_close "$MUTANT" ask
+assert_eq "$SELECTION_GOT" 'rc=0 stop=1 close=1 kill=1 status=done' 'control: the ask guard prevents selection close'
+# shellcheck disable=SC2016
+MUTANT="$(mutant selection-stop '  stop_harness
+  [[ "$STOP_SKIPPED"' '  : # stop_harness
+  finish_close
+  [[ "$STOP_SKIPPED"')"
+selection_close "$MUTANT" idle --keep-sandbox
+assert_eq "$SELECTION_GOT" 'rc=0 stop=0 close=0 kill=1 status=stopped' 'control: the kept selection must stop its hosted harness'
+# The limit wall is judged on the account the started harness runs under,
+# the record's, which the selection step named.
+for options in full keep; do
+  selection_args=()
+  [[ "$options" != keep ]] || selection_args=(--keep-sandbox)
+  selection_record
+  write_panes codex
+  printf '%s\n' 'Usage limit reached. Increase your limits to continue.' '› run' >"$SCREEN"
+  LANE_CLOSE_WALLED_ACCOUNT=/lane run_close "$SCRIPT" ${selection_args[@]+"${selection_args[@]}"}
+  assert_eq "rc=$RC stop=$(stop_count KEN-1 codex) close=$(close_call_count) kill=$(grep -c '^kill-window ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=1 stop=0 close=0 kill=0 status=preparing' "a walled started selection refuses $options close on a terminal item"
+  assert_eq "$(grep -c '^lane-close: lane-live item=KEN-1 state=walled pane=%7 account=walled' <<<"$ERR" || true)" 1 \
+    'the limit wall is judged on the started account'
+done
 
 run_boundary() { # RULE SCRIPT
   local rule="$1" script="$2"
@@ -2260,7 +2342,7 @@ else
 fi
 
 # A Daytona stop's round trip and signal grace can take most of the close
-# bound. The status reads after it get the whole bound (KEN-4444); the control
+# bound. The status reads after it get the whole bound; the control
 # starts the bound before the stop again and times out with the harness gone.
 # Real elapsed time: this is the deadline's timer wiring.
 SLOW_STOP_CONTROL="$(mutant slow-stop '    close_deadline=$((close_deadline + SECONDS - stop_started))' '    :')"

@@ -46,6 +46,7 @@
 use std::collections::BTreeSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, UNIX_EPOCH};
 
 use agent_runtime::clock;
 use agent_runtime::harness::Harness;
@@ -54,6 +55,7 @@ use agent_runtime::observe::{self, ProcessReading, State, WallAge, WallKind};
 use agent_runtime::process::Identity;
 use agent_runtime::reading::Reading;
 use agent_runtime::rows::{self, LaneVerdict};
+use agent_runtime::session;
 use jiff::tz::TimeZone;
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -63,11 +65,12 @@ use super::baseline::{Baseline, Change};
 use super::events::Event;
 use super::hosted::{self, Answer, Capabilities, Files, HostStatus, Hosts, PaneKind, Status};
 use super::overseer::{Pick, RelaunchPending, relaunch_pending};
+use crate::marker;
 use crate::ops::CLOUD_KIND;
 use crate::ops::wall::{
     self, AccountWallWrite, RecordWallPauses, WallChannel, WallObservation, WallReading,
 };
-use crate::settings::{Settings, WallRelaunch, WatchSettings};
+use crate::settings::{self, AccountSettings, Settings, WallRelaunch, WatchSettings};
 use crate::state::{self, Document, FleetState, Lane, LaneStatus, Phase};
 
 /// The row kinds this duty keeps, each keyed by the lane's name, pruned
@@ -473,6 +476,8 @@ pub struct Pass<'a> {
     /// The hosted arms' reads beyond the scripts directory: `gh`, the
     /// account roster and the fleet's repositories.
     pub hosted: &'a hosted::Reads<'a>,
+    /// The account a Copilot record naming none runs on ([`copilot_home`]).
+    pub copilot_home: Option<&'a Path>,
 }
 
 /// What one lane's pass read, kept for the report a row asks for.
@@ -515,11 +520,10 @@ fn identity_word(identity: Option<&Identity>) -> String {
     identity.map_or_else(|| "none".to_owned(), |i| format!("{}:{}", i.pid, i.start))
 }
 
-/// What a lane's host answers before its pane is read (`lane_state`,
-/// `lib/lane-state.sh:1137`; `lane_pane_observe`): the provider's status
-/// verb where the lane's kind declares one, and its capture where the
-/// kind's pane is the provider's own (`pane=verb`), asked only of a harness
-/// the status verb did not read as exited.
+/// What a lane's host answers before its pane is read: the provider's
+/// status verb where the lane's kind declares one, and its capture where
+/// the kind's pane is the provider's own (`pane=verb`), asked only of a
+/// harness the status verb did not read as exited.
 pub(super) struct HostRead {
     status: Option<Result<HostStatus, String>>,
     screen: Option<Result<String, String>>,
@@ -549,9 +553,10 @@ impl HostRead {
 /// Read one lane: the pane, its foreground, its screen and, for a Pi lane,
 /// its rows, each once. `host` is what its provider answered first: an
 /// exited harness is the lane exited whatever its pane shows, a failed read
-/// leaves it unjudged, and a running one is judged by the pane, the
-/// provider's own where its kind captures it (the local pane then holds a
-/// transport shell, which proves nothing of the harness).
+/// leaves it unjudged, and a running one is the proof that the harness is
+/// up, which the pane is judged with: the provider's own where its kind
+/// captures it, else the local pane, whose own foreground is the transport
+/// shell and proves nothing of the harness either way.
 fn read_lane<'a>(lane: &'a Lane, readers: &Readers, host: HostRead) -> Observed<'a> {
     let name = lane_name(lane);
     let harness = lane.harness.as_deref().and_then(Harness::parse);
@@ -573,11 +578,12 @@ fn read_lane<'a>(lane: &'a Lane, readers: &Readers, host: HostRead) -> Observed<
         rows_key: None,
         state,
     };
-    match host.status {
+    let harness_up = match host.status {
         Some(Err(cause)) => return unread(LaneState::Unjudged { cause }),
         Some(Ok(HostStatus::Exited)) => return unread(LaneState::Exited),
-        Some(Ok(HostStatus::Running)) | None => {}
-    }
+        Some(Ok(HostStatus::Running)) => true,
+        None => false,
+    };
     let rows_file = (harness == Some(Harness::Pi))
         .then(|| {
             lane.mail_root.as_deref().map(|root| {
@@ -621,7 +627,11 @@ fn read_lane<'a>(lane: &'a Lane, readers: &Readers, host: HostRead) -> Observed<
     let pane = (readers.pane)(server, launch.and_then(|l| l.server_start), pane_id);
     let (process, screen) = match &pane {
         Reading::Live(fields) => (
-            Some((readers.foreground)(fields.pid, harness, identity.as_ref())),
+            Some(if harness_up {
+                ProcessReading::HarnessUp
+            } else {
+                (readers.foreground)(fields.pid, harness, identity.as_ref())
+            }),
             Some((readers.capture)(&fields.pane)),
         ),
         Reading::Gone | Reading::Unreadable { .. } => (None, None),
@@ -1101,12 +1111,15 @@ fn observe_one(
         }
     }
     // Exited: two consecutive passes on one pane key, then reported once.
+    // The row standing is the first pass's record: a lane with no pane of
+    // its own, which the provider's status verb judges, keys on nothing,
+    // and an absent row must not read as that first pass.
     if let LaneState::Exited = state {
-        let prior = get("lane-exited").unwrap_or_default();
-        if prior == format!("{pane_key}|reported") {
+        let prior = get("lane-exited");
+        if prior.as_deref() == Some(format!("{pane_key}|reported").as_str()) {
             return reading;
         }
-        if prior == pane_key {
+        if prior.as_deref() == Some(pane_key.as_str()) {
             out.events.push(Event::LaneExited { lane: lane.clone() });
             out.events.extend(payload(report_tail(&slice, cap)));
             out.changes
@@ -1119,17 +1132,20 @@ fn observe_one(
         return reading;
     }
     out.changes.push(clear("lane-exited", lane));
-    // Asking: once per prompt, keyed by the pane and the slice.
+    // Asking: once per prompt, keyed by the pane, the slice and a Copilot
+    // lane's policy note, so a grant a policy withdraws under an unchanged
+    // prompt is news.
     match &state {
         LaneState::Asking | LaneState::RateLimitSwitch => {
-            let fingerprint = format!("{pane_key}|{}", hash_of(&slice));
+            let note = copilot_note(obs.lane, pass);
+            let fingerprint = keyed(format!("{pane_key}|{}", hash_of(&slice)), note.as_deref());
             let prior = get("lane-asking");
             out.changes
                 .push(set("lane-asking", lane, fingerprint.clone()));
             if prior.as_deref() != Some(fingerprint.as_str()) {
                 out.events.push(Event::LaneAsking {
                     lane: lane.clone(),
-                    note: None,
+                    note,
                 });
                 out.events.extend(payload(bounded_tail(&slice, cap)));
             }
@@ -1147,7 +1163,8 @@ fn observe_one(
     // per screen, on the first pass for a local Codex lane below a prior
     // turn and on two consecutive passes otherwise; the line carries the
     // stop's cause where the verdict kept one, so a turn its output limit
-    // cut is told apart from a finished one, whose line is as before.
+    // cut is told apart from a finished one, whose line is as before, else
+    // a Copilot lane's policy note, keyed as the asking line keys it.
     match &state {
         LaneState::Idle { capacity: true, .. } => {
             let key = hash_of(&slice).to_string();
@@ -1163,7 +1180,11 @@ fn observe_one(
         } => {
             out.changes.push(clear("model-capacity", lane));
             let turn = obs.rows_key.as_deref().unwrap_or(&slice);
-            let key = format!("{pane_key}|{}", hash_of(turn));
+            let note = cause
+                .as_ref()
+                .map(|word| format!("cause={word}"))
+                .or_else(|| copilot_note(obs.lane, pass));
+            let key = keyed(format!("{pane_key}|{}", hash_of(turn)), note.as_deref());
             let prior = get("lane-idle").unwrap_or_default();
             if prior == format!("{key}|reported") {
                 return reading;
@@ -1175,7 +1196,7 @@ fn observe_one(
                     .push(set("lane-idle", lane, format!("{key}|reported")));
                 out.events.push(Event::IdleAfterReturn {
                     lane: lane.clone(),
-                    note: cause.as_ref().map(|word| format!("cause={word}")),
+                    note,
                 });
                 out.events.extend(payload(bounded_tail(&slice, cap)));
                 hosted::close_finished(obs.lane, pass, hosts, "lane-idle", &key, out);
@@ -1196,6 +1217,151 @@ fn observe_one(
         }
     }
     reading
+}
+
+/// A line's key with the note the line carries, so a changed note is news
+/// under an unchanged screen.
+fn keyed(key: String, note: Option<&str>) -> String {
+    match note {
+        Some(note) => format!("{key}|{note}"),
+        None => key,
+    }
+}
+
+/// The account a Copilot record naming none runs on, as the lane's own
+/// readers name it: the runtime's `COPILOT_HOME`, else `.copilot` under its
+/// home.
+pub fn copilot_home(accounts: &AccountSettings) -> Option<PathBuf> {
+    accounts
+        .copilot_home
+        .as_deref()
+        .map(PathBuf::from)
+        .or_else(|| {
+            accounts
+                .home
+                .as_deref()
+                .map(|home| Path::new(home).join(".copilot"))
+        })
+}
+
+/// A session id as the Copilot CLI spells one, the alphabet that keeps a
+/// record's path under its directory.
+fn session_id_bound(id: &str) -> bool {
+    !(id.is_empty() || id == "." || id == "..")
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+/// The status line's refresh bound: a record older than this is one the CLI
+/// stopped refreshing, which would read as a session with room for as long
+/// as it stood.
+const COPILOT_RECORD_MAX_AGE: u64 = 120;
+
+/// The policy note of a Copilot lane's line (`lane-asking`,
+/// `idle-after-return`), for a running record whose launch granted
+/// allow-all (`allow_all` true): what the session's status-line record
+/// under its account's `lane-status/` says. Enterprise managed settings can
+/// withdraw the grant mid-run, and each tool call then waits on a prompt
+/// nobody at the pane answers, so `stop-cause=allow-all-blocked-by-policy`
+/// where the CLI reports `allow_all_enabled` false; `session-record=<reason>`
+/// where no record answers: `unbound` (no session id on the record and no
+/// session in the store for its worktree since its launch, or an id outside
+/// a session id's alphabet), `store-unreadable`, `missing`, `unreadable`,
+/// `wrong-session`, `wrong-account`, or `stale` (past the refresh bound, or
+/// stamped ahead of this clock). `None` for every other lane: a launch
+/// without the grant waits on its prompts by design, and the record alone
+/// cannot tell the two apart.
+fn copilot_note(lane: &Lane, pass: &Pass) -> Option<String> {
+    if lane.harness.as_deref() != Some("copilot")
+        || lane.extra.get("allow_all") != Some(&Value::Bool(true))
+    {
+        return None;
+    }
+    let home = match lane.account.as_deref().filter(|a| !a.is_empty()) {
+        Some(account) => PathBuf::from(account),
+        None => match pass.copilot_home {
+            Some(home) => home.to_path_buf(),
+            None => return Some("session-record=account-unnamed".to_owned()),
+        },
+    };
+    let session = match lane.session_id.as_deref().filter(|id| !id.is_empty()) {
+        Some(id) => id.to_owned(),
+        None => {
+            let Some(root) = lane.mail_root.as_deref().filter(|r| !r.is_empty()) else {
+                return Some("session-record=worktree-unmatched".to_owned());
+            };
+            let Ok(cwd) = std::fs::canonicalize(root) else {
+                return Some("session-record=store-unreadable".to_owned());
+            };
+            let since = lane
+                .session_since
+                .as_deref()
+                .and_then(clock::epoch_secs)
+                .map(|secs| UNIX_EPOCH + Duration::from_secs(secs));
+            match session::lead_at(Harness::Copilot, &home, &cwd, since) {
+                Reading::Live(lead) => lead.id,
+                Reading::Gone => return Some("session-record=worktree-unmatched".to_owned()),
+                Reading::Unreadable { .. } => {
+                    return Some("session-record=store-unreadable".to_owned());
+                }
+            }
+        }
+    };
+    match copilot_record(&home, &session, pass.now) {
+        Ok(Some(cause)) => Some(format!("stop-cause={cause}")),
+        Ok(None) => None,
+        Err(reason) => Some(format!("session-record={reason}")),
+    }
+}
+
+/// The stop cause a session's status-line record establishes for a launch
+/// that granted allow-all: `Ok(Some)` the cause, `Ok(None)` a record that
+/// reports the grant standing or says nothing of it, `Err` the first
+/// binding that did not agree (the record's own session id, its account
+/// directory, its freshness).
+fn copilot_record(
+    home: &Path,
+    session: &str,
+    now: u64,
+) -> Result<Option<&'static str>, &'static str> {
+    if !session_id_bound(session) {
+        return Err("unbound");
+    }
+    let path = home.join("lane-status").join(format!("{session}.json"));
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err("missing"),
+        Err(_) => return Err("unreadable"),
+    };
+    let Ok(Value::Object(record)) = serde_json::from_str::<Value>(&text) else {
+        return Err("unreadable");
+    };
+    let (Some(recorded), Some(account), Some(written)) = (
+        record.get("session_id").and_then(Value::as_str),
+        record.get("copilot_home").and_then(Value::as_str),
+        record.get("written_at").and_then(Value::as_u64),
+    ) else {
+        return Err("unreadable");
+    };
+    if recorded != session {
+        return Err("wrong-session");
+    }
+    if home.to_str() != Some(account) {
+        return Err("wrong-account");
+    }
+    if written > now || now - written > COPILOT_RECORD_MAX_AGE {
+        return Err("stale");
+    }
+    Ok(
+        match record
+            .get("status")
+            .and_then(|s| s.get("allow_all_enabled"))
+        {
+            Some(Value::Bool(false)) => Some("allow-all-blocked-by-policy"),
+            Some(_) | None => None,
+        },
+    )
 }
 
 /// The wall: the `usage-limit` row keyed to the identity it was judged for,
@@ -1951,8 +2117,9 @@ impl Counters {
 
 /// The five counts and the stage of the `lane-long` line, read where the
 /// lane's files are: under its worktree on this disk, through its host's
-/// `cat`, or not at all. A parked lane's disk is not asked; a host whose
-/// line could not be read (`files` none) counts nothing.
+/// `cat`, or nowhere for a kind that keeps none (`files=none`). A parked
+/// lane's disk is not asked, and a host whose capability line could not be
+/// read counts nothing.
 fn lane_counts(
     lane: &Lane,
     files: Option<Files>,
@@ -1965,7 +2132,7 @@ fn lane_counts(
         (
             LaneStatus::Running | LaneStatus::Preparing | LaneStatus::Stopped | LaneStatus::Done,
             Some(Files::Local),
-        ) => (lane_counters(lane, state_dir), lane_step(lane)),
+        ) => (lane_counters(lane, state_dir, out), lane_step(lane)),
         (
             LaneStatus::Running | LaneStatus::Preparing | LaneStatus::Stopped | LaneStatus::Done,
             Some(Files::Verb),
@@ -1985,14 +2152,13 @@ fn lane_counts(
     }
 }
 
-/// The counters of a running lane (`lane_long_rounds`, `lib/lane-gitfile.sh`
-/// `lane_item_state`): the item's own workflow state under its worktree's
-/// state directory (`<mail_root>/tmp/workflow-state-<item>.json`, the path
-/// `workflow-state path` answers there), or under the fleet's where the
-/// record names no worktree on this disk; the validation run index under
-/// the worktree; a state the lane has not written, or one that cannot be
-/// read, counts nothing.
-fn lane_counters(lane: &Lane, state_dir: &Path) -> Counters {
+/// The counters of a running lane: the item's own workflow state in the
+/// state directory its checkout names ([`lane_state_dir`]), or under the
+/// fleet's where the record names no worktree on this disk; the
+/// validation run index under the worktree; a state the lane has not
+/// written, or one that cannot be read, counts nothing, and a checkout
+/// whose files could not be read says so.
+fn lane_counters(lane: &Lane, state_dir: &Path, out: &mut Produced) -> Counters {
     // The worktree the record names, read three-valued where the `-d` test
     // stood: a root this reader cannot read counts nothing.
     let root = match lane.mail_root.as_deref().map(Path::new) {
@@ -2008,11 +2174,55 @@ fn lane_counters(lane: &Lane, state_dir: &Path) -> Counters {
         .map(|root| root.join("tmp").join("validation-runs"))
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|text| validation_runs_of(&text));
-    let state_dir = root.map_or_else(|| state_dir.to_path_buf(), |root| root.join("tmp"));
+    let state_dir = match root {
+        None => state_dir.to_path_buf(),
+        Some(root) => match lane_state_dir(root) {
+            Ok(dir) => dir,
+            Err(cause) => {
+                fail(
+                    out,
+                    format!("lane-long-rounds-unread item={} cause={cause}", lane.item),
+                );
+                return Counters::unread();
+            }
+        },
+    };
     match item_doc(&state::item_path(&state_dir, &lane.item)) {
         Reading::Live(doc) => counters_of(&doc, runs).unwrap_or_else(Counters::unread),
         Reading::Gone | Reading::Unreadable { .. } => Counters::unread(),
     }
+}
+
+/// The state directory a local checkout's own files name, as the checkout's
+/// `workflow-state` resolves it: its settings files and private env file
+/// (`settings::state_dir_named`), a relative directory under the common
+/// root its `.git` names (a linked worktree's gitfile; a `.git` directory,
+/// or none, is the checkout's own root), so a worktree's state is where its
+/// main checkout keeps it. Read off the root the record names alone, never
+/// through a `git` run: a run would carry this process's environment and
+/// walk up from the root into whatever repository holds it.
+fn lane_state_dir(root: &Path) -> Result<PathBuf, String> {
+    let gitfile = root.join(".git");
+    let unread = |cause: String| format!("gitfile-unread path={} {cause}", gitfile.display());
+    let common = match std::fs::metadata(&gitfile) {
+        Ok(meta) if meta.is_dir() => root.to_path_buf(),
+        Ok(_) => {
+            let text = std::fs::read_to_string(&gitfile)
+                .map_err(|e| unread(format!("cause={:?}", e.kind())))?;
+            marker::git_dirs_of(&text)
+                .and_then(|(_, common)| common.parent().map(Path::to_path_buf))
+                .ok_or_else(|| unread("cause=no-linked-worktree".to_owned()))?
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => root.to_path_buf(),
+        Err(e) => return Err(unread(format!("cause={:?}", e.kind()))),
+    };
+    let read = |path: &Path| settings::read_text(path);
+    let dir = settings::state_dir_named(root, &read).map_err(|e| e.to_string())?;
+    Ok(if dir.is_absolute() {
+        dir
+    } else {
+        common.join(dir)
+    })
 }
 
 /// The item's workflow state as the counts read it: the file's JSON object,

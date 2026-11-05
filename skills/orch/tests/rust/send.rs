@@ -1341,6 +1341,12 @@ fn a_cloud_launch_pushes_the_branch_creates_the_session_through_the_cli_and_reco
         "the session words name the branch: {argv:?}"
     );
     assert!(
+        !["approval-wait", "queue-wait", "ci-wait"]
+            .iter()
+            .any(|waiter| argv.contains(waiter)),
+        "the session words run no waiter: {argv:?}"
+    );
+    assert!(
         cli.contains(&format!("config={}", account.display())),
         "the session is created under the lane's account: {cli}"
     );

@@ -294,17 +294,19 @@ pub enum Error {
     /// inner refusal's, with `persisted_intent` added.
     #[error("{error}")]
     Persisted { intent: String, error: Box<Error> },
-    /// The fleet cap admits no further lane: `occupancy` slots charge it
-    /// (decision 97), `lanes` of them lane records and `claims` legacy claim
-    /// store rows, and `cap` is the setting.
+    /// The cap the request's kind is bounded by admits no further lane:
+    /// `occupancy` slots charge it, `lanes` of them lane records and
+    /// `claims` claim store rows, `cap` is the bound and `setting` the key
+    /// that raises it.
     #[error(
-        "the fleet cap of {cap} is reached: {occupancy} slots charge it ({lanes} lanes, {claims} legacy claims)"
+        "the {setting} cap of {cap} is reached: {occupancy} slots charge it ({lanes} lanes, {claims} claims)"
     )]
     CapReached {
         occupancy: u32,
         cap: u32,
         lanes: u32,
         claims: u32,
+        setting: &'static str,
     },
     /// The cap could not be judged: a source the count reads failed. A count
     /// missing a lane admits one lane too many, so none is made.
@@ -424,6 +426,18 @@ pub enum Error {
     /// the `agent:multi` label, outside an in-PR bundle. Never launched.
     #[error("{item} is not launchable: {cause}")]
     ItemIneligible { item: String, cause: &'static str },
+    /// The item, or a container ancestor of it, holds a launch blocker the
+    /// tracker reports open: nothing is launched before the blockers land.
+    #[error("{item} is blocked from launch by {}", blockers.join(","))]
+    LaunchBlocked { item: String, blockers: Vec<String> },
+    /// The item's ancestor chain could not be read whole, so the launch
+    /// blockers are unknown: `read` names the item whose read failed.
+    #[error("the launch blockers of {item} could not be read at {read}: {cause}")]
+    LaunchBlockedUnread {
+        item: String,
+        read: String,
+        cause: String,
+    },
     /// A source of the item's touched set could not be read: its body, a
     /// Location line naming no path, the brief file, or the change-scope
     /// paths over the named range.
@@ -694,6 +708,8 @@ impl Error {
             Error::LaunchOverlap { .. } => "launch-overlap",
             Error::HolderUnreadable { .. } => "holder-unreadable",
             Error::ItemIneligible { .. } => "item-ineligible",
+            Error::LaunchBlocked { .. } => "launch-blocked",
+            Error::LaunchBlockedUnread { .. } => "launch-blocked-unread",
             Error::TouchedUnreadable { .. } => "touched-unreadable",
             Error::HoldersUnreadable { .. } => "holders-unreadable",
             // U6a
@@ -889,11 +905,13 @@ impl Error {
                 cap,
                 lanes,
                 claims,
+                setting,
             } => vec![
                 pair("occupancy", occupancy.to_string()),
                 pair("cap", cap.to_string()),
                 pair("lanes", lanes.to_string()),
                 pair("claims", claims.to_string()),
+                pair("setting", (*setting).to_owned()),
             ],
             Error::CapUnreadable { read, path, .. } => vec![
                 pair("source", (*read).to_owned()),
@@ -1019,6 +1037,15 @@ impl Error {
                     pair("item", item.clone()),
                     pair("cause", (*cause).to_owned()),
                 ]
+            }
+            Error::LaunchBlocked { item, blockers } => {
+                vec![
+                    pair("item", item.clone()),
+                    pair("blockers", blockers.join(",")),
+                ]
+            }
+            Error::LaunchBlockedUnread { item, read, .. } => {
+                vec![pair("item", item.clone()), pair("read", read.clone())]
             }
             Error::TouchedUnreadable { item, read, .. } => {
                 vec![pair("item", item.clone()), pair("read", (*read).to_owned())]

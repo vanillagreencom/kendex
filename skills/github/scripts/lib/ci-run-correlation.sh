@@ -54,7 +54,7 @@
 # scoping, pr-merge's classification and head_runs, ci-classify-refusal's
 # diagnosis) prepends the SAME definitions —
 # a local `def bucket`/`def runid` copy is the drift this library exists to
-# kill, and ci-run-correlation.test.sh rejects one.
+# kill, and tools/guard refuses one.
 # `red` is the failed/cancelled bucket test, and `required_only($req)` asks
 # whether the base branch requires this context or workflow check — the one definition
 # of "this check can block", shared by pr-merge's classification and

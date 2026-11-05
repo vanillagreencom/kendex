@@ -63,6 +63,7 @@ fn gone(_: &Identity) -> Reading<Identity> {
 pub(super) fn host() -> Host<'static> {
     Host {
         lane_cap: 4,
+        cloud_lane_cap: Some(4),
         still_runs: &gone,
         admission: Some(no_reads()),
         accounts: None,
@@ -180,6 +181,7 @@ pub(super) fn launch_fields(item: &str) -> LaunchLane {
         item: item.into(),
         harness: "claude".into(),
         mail_root: format!("/w/{item}"),
+        permission: None,
         tracker: None,
         repo: None,
         account: None,

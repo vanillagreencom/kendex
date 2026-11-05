@@ -1,17 +1,17 @@
 //! The admission judgement a lane launch runs before the cap, and a
-//! running lane runs for a path it adds (decisions 118 (3), (4), (6),
-//! 142 (4)): the item's eligibility from its body, its touched set as the
+//! running lane runs for a path it adds: the item's eligibility from its
+//! body, its touched set as the
 //! union of the item's Location paths, the brief's paths, the change-scope
 //! paths over the range the request names and the paths the request adds,
 //! and every holder of a shared path judged by its lane's liveness through
-//! the occupancy identity reads, never by its status word (decision 97).
+//! the occupancy identity reads, never by its status word.
 //!
 //! | Holder's lane reads (`occupancy::lane_charge`) | Judgement |
 //! |---|---|
 //! | `live`, `wake` or `preparing` | blocks: `launch-overlap holder=<item>` |
-//! | `unknown`: an unreadable identity, or an in-flight record with none | blocks: `holder-unreadable read=identity` (decisions 99, 105) |
+//! | `unknown`: an unreadable identity, or an in-flight record with none | blocks: `holder-unreadable read=identity` |
 //! | `reservation`, or no charge: a stopped, parked or gone holder | yields: a [`RebaseObligation`] naming it is recorded on the launching item's lane record |
-//! | a hosted lane (`host` recorded): no identity this host reads | `running` or `preparing` blocks, else yields (decision 57: its host's) |
+//! | a hosted lane (`host` recorded): no identity this host reads | `running` or `preparing` blocks, else yields (its host's) |
 //! | `done` | no holder |
 //!
 //! A holder is a record of the item's repository: a path is relative to
@@ -22,14 +22,14 @@
 //! names in scope is left out of the comparison.
 //!
 //! An open pull request of the item's repository is a holder of the paths
-//! it changes (decision 165; the legacy `overlap_prs`): its liveness is
+//! it changes: its liveness is
 //! its state, read from GitHub by number through the one `gh api`
 //! transport (`watch::github::Gh`, the `gh` on `PATH`). Open yields, a
 //! [`RebaseObligation`] naming `#N` and its head branch; closed, merged, a
 //! fork's or a deleted fork's holds nothing. A list, object or files read
 //! that fails, answers nothing, decodes to no member or falls short of the
 //! object's `changed_files` blocks `holders-unreadable`: an unread
-//! inventory is never an empty one (decisions 87, 99, 105). A pull request
+//! inventory is never an empty one. A pull request
 //! a lane record of this fleet names, by its `pending_pr` or `parked`
 //! number or by its head branch (the lane's recorded branch, or its item
 //! key), is that lane's work and judged once, as the lane; a record
@@ -39,13 +39,18 @@
 //! candidate set is not empty, of the repository the request names, else
 //! of the checkout it names (`repo_dir`, the fleet's own repository, whose
 //! lane records name none): the slug `gh repo view` answers in the
-//! checkout, else the one its `origin` remote names on github.com, as the
-//! legacy `resolve_repo` read it; a checkout naming no GitHub repository
+//! checkout, else the one its `origin` remote names on github.com; a
+//! checkout naming no GitHub repository
 //! blocks `holders-unreadable read=repo`. A request naming neither reads
 //! none.
 //!
 //! The item's body is read only where the request names its tracker: a
-//! launch that names none is judged on the sources it does name.
+//! launch that names none is judged on the sources it does name. A
+//! `linear` item's launch blockers are read with it, and every container
+//! ancestor's up its `parent_id` chain: an open blocker anywhere on the
+//! chain refuses `launch-blocked` naming the blockers, and an ancestor the
+//! tracker could not read whole refuses `launch-blocked-unread`, before any
+//! holder is judged or any record is written.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -72,9 +77,15 @@ pub struct ItemRead {
     /// The review audit's in-PR bundle root, the one container launched
     /// (`skill-rules.md` § Containers; the linear package's `in_pr_bundle`).
     pub in_pr_bundle: bool,
+    /// The container the item sits under, where the tracker reports one.
+    pub parent_id: Option<String>,
+    /// The items that block this one's launch as the tracker judges them
+    /// (the linear package's `blocked_by_launch`, read under the safe
+    /// format this runtime asks for by name).
+    pub blocked_by_launch: Vec<String>,
 }
 
-/// A diff range the change-scope paths are read over (decision 118 (4)),
+/// A diff range the change-scope paths are read over,
 /// each end a revision the checkout resolves.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScopeRange {
@@ -97,7 +108,7 @@ pub struct Clis {
 pub type ReadFailure = String;
 
 /// One open same-repository pull request and the paths it changes, a
-/// holder of them (decision 165).
+/// holder of them.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct OpenPull {
     pub number: u64,
@@ -164,9 +175,8 @@ impl AdmissionReads<'static> {
     }
 }
 
-/// Judge the paths a lane adds within its item's outcome (decision 142
-/// (4)), or a launch before any record stands (decision 94 (b): the legacy
-/// launcher receives this judgement and records what it answers). The
+/// Judge the paths a lane adds within its item's outcome, or a launch
+/// before any record stands. The
 /// touched set judged is the union of the sources the request names and
 /// `paths`; where a lane record stands, it is widened by that set and the
 /// obligations found, and a lane record reading `done` refuses.
@@ -230,6 +240,43 @@ pub(super) struct Judged {
 /// adds beside its own.
 const UNCOUNTED_PREFIX: &str = "changelog.d/";
 
+/// The launch blockers of `item` and of every container ancestor up its
+/// `parent_id` chain, each ancestor read through `reader`: a chain read
+/// whole with none passes; a blocker on it refuses `launch-blocked` with
+/// the blockers sorted, once each; an ancestor read that fails or returns
+/// to an item already read refuses `launch-blocked-unread` naming it.
+fn launch_blockers(
+    item: &str,
+    read: &ItemRead,
+    reader: impl Fn(&str) -> std::result::Result<ItemRead, ReadFailure>,
+) -> Result<()> {
+    let unread = |read: &str, cause: &str| Error::LaunchBlockedUnread {
+        item: item.to_owned(),
+        read: read.to_owned(),
+        cause: cause.to_owned(),
+    };
+    let mut blockers: BTreeSet<String> = BTreeSet::new();
+    let mut seen: BTreeSet<String> = [item.to_owned()].into();
+    let mut current = read.clone();
+    loop {
+        blockers.extend(current.blocked_by_launch.iter().cloned());
+        let Some(parent) = current.parent_id.clone().filter(|p| !p.is_empty()) else {
+            break;
+        };
+        if !seen.insert(parent.clone()) {
+            return Err(unread(&parent, "chain-repeats"));
+        }
+        current = reader(&parent).map_err(|cause| unread(&parent, &cause))?;
+    }
+    if blockers.is_empty() {
+        return Ok(());
+    }
+    Err(Error::LaunchBlocked {
+        item: item.to_owned(),
+        blockers: blockers.into_iter().collect(),
+    })
+}
+
 /// Whether the cause word a container refusal carries.
 fn eligibility(item: &ItemRead) -> std::result::Result<(), &'static str> {
     if item.in_pr_bundle {
@@ -244,7 +291,7 @@ fn eligibility(item: &ItemRead) -> std::result::Result<(), &'static str> {
     Ok(())
 }
 
-/// Whether `line` is a Location header, the legacy `LOCATION_LINE_ERE`:
+/// Whether `line` is a Location header:
 /// optional bullet, optional emphasis marks, `Location`, emphasis marks, a
 /// colon.
 fn is_location_line(line: &str) -> bool {
@@ -264,7 +311,7 @@ fn is_location_line(line: &str) -> bool {
 }
 
 /// The backticked tokens of `text` holding no whitespace, each less a
-/// `:N` or `:N-M` line suffix, as the legacy `ticks` read them.
+/// `:N` or `:N-M` line suffix.
 fn ticks(text: &str) -> Vec<String> {
     let mut found = Vec::new();
     let mut rest = text;
@@ -300,7 +347,7 @@ fn without_line_suffix(token: &str) -> &str {
 }
 
 /// The paths the body's Location lines name. A Location line naming no
-/// backticked path is unread (`location`), as the legacy judged it.
+/// backticked path is unread (`location`).
 fn location_paths(body: &str) -> std::result::Result<Vec<String>, &'static str> {
     let mut located = false;
     let mut paths = Vec::new();
@@ -328,7 +375,7 @@ fn brief_paths(brief: &str) -> Vec<String> {
 }
 
 /// Whether `a` and `b` name one file: equal, or one a directory (`/`) the
-/// other is under, the legacy `meets`.
+/// other is under.
 fn meets(a: &str, b: &str) -> bool {
     a == b || (a.ends_with('/') && b.starts_with(a)) || (b.ends_with('/') && a.starts_with(b))
 }
@@ -390,9 +437,13 @@ fn holding(lane: &Lane, intents: &[Intent], env: &Env, host: &Host) -> Holding {
         &ids,
     );
     match charge.map(|c| (c.reason, c.cause)) {
-        Some((ChargeReason::Live | ChargeReason::Wake | ChargeReason::Preparing, _)) => {
-            Holding::Live
-        }
+        Some((
+            ChargeReason::Live
+            | ChargeReason::Wake
+            | ChargeReason::Preparing
+            | ChargeReason::Session,
+            _,
+        )) => Holding::Live,
         Some((ChargeReason::Unknown, cause)) => Holding::Unknown(cause.unwrap_or_default()),
         Some((ChargeReason::Reservation, _)) | None => Holding::Yields,
     }
@@ -447,6 +498,11 @@ pub(super) fn judge(
                 item: a.item.to_owned(),
                 cause,
             });
+        }
+        if tracker == "linear" {
+            launch_blockers(a.item, &item, |parent| {
+                (reads.item)(&reads.clis, tracker, parent, a.repo)
+            })?;
         }
         touched.extend(location_paths(&item.body).map_err(|c| unreadable("location", c.into()))?);
     }
@@ -607,7 +663,7 @@ pub(super) fn judge(
 /// where it names one, or the pull request's head branch is the lane's, the
 /// branch its item state records or its item key. A record's own facts,
 /// not the merged index's mention rule: a stranger's pull request that
-/// cites an item in its title is exactly the holder decision 165 keeps.
+/// cites an item in its title is exactly the holder kept.
 fn names_pull(lane: &Lane, branch: Option<&str>, pull: &OpenPull, repo: &str) -> bool {
     let numbered = ["pending_pr", "parked"]
         .iter()
@@ -761,6 +817,10 @@ struct LinearIssue {
     children: Vec<Value>,
     #[serde(default)]
     in_pr_bundle: bool,
+    #[serde(default)]
+    parent_id: String,
+    #[serde(default)]
+    blocked_by_launch: Vec<String>,
 }
 
 /// `gh issue view N --repo R --json body,labels`: the body and the labels
@@ -831,6 +891,8 @@ pub(super) fn read_item(
                 labels: issue.labels,
                 children: issue.children.len(),
                 in_pr_bundle: issue.in_pr_bundle,
+                parent_id: Some(issue.parent_id).filter(|p| !p.is_empty()),
+                blocked_by_launch: issue.blocked_by_launch,
             })
         }
         "github" => {
@@ -860,6 +922,8 @@ pub(super) fn read_item(
                 labels: issue.labels.into_iter().map(|l| l.name).collect(),
                 children: 0,
                 in_pr_bundle: false,
+                parent_id: None,
+                blocked_by_launch: Vec::new(),
             })
         }
         other => Err(format!("tracker-unknown:{other}")),
@@ -998,7 +1062,7 @@ pub(crate) fn origin_slug(url: &str) -> Option<String> {
 
 /// What `gh repo view --json nameWithOwner -q .nameWithOwner` answers in
 /// `dir`; `None` for a call that fails or prints nothing, which the origin
-/// remote then answers, as the legacy resolver fell through.
+/// remote then answers.
 #[allow(
     clippy::disallowed_methods,
     reason = "the admission's one gh read in the checkout, for the repository whose pull requests it reads; no effect on a lane or a controller"
@@ -1032,8 +1096,8 @@ fn viewed_repo(clis: &Clis, dir: &Path) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-/// The GitHub repository of the checkout at `dir`, as the legacy
-/// `resolve_repo` read it: what `gh repo view` answers in it, else the
+/// The GitHub repository of the checkout at `dir`: what `gh repo view`
+/// answers in it, else the
 /// `owner/name` its `origin` remote names on github.com, judged by the
 /// resolver's classes; neither is the failure, `read=repo`.
 fn checkout_slug(clis: &Clis, dir: &Path) -> std::result::Result<String, PullsFailure> {
@@ -1170,6 +1234,7 @@ mod tests {
         fn host<'a>(&'a self, still_runs: &'a dyn Fn(&Identity) -> Reading<Identity>) -> Host<'a> {
             Host {
                 lane_cap: 4,
+                cloud_lane_cap: None,
                 still_runs,
                 accounts: None,
                 admission: Some(AdmissionReads {
@@ -1242,6 +1307,7 @@ mod tests {
             labels: labels.iter().map(|l| (*l).to_owned()).collect(),
             children,
             in_pr_bundle: bundle,
+            ..ItemRead::default()
         };
         let rows = [
             (item(0, &[], false), Ok(())),

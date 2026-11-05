@@ -2151,6 +2151,7 @@ fn persist(
 )]
 fn kernel_host(settings: &Settings) -> ops::Host<'_> {
     ops::Host::kernel(settings.lane_cap)
+        .cloud_cap(settings.cloud_lane_cap)
         .admitting(ops::Clis {
             tracker: settings.reads.tracker_cli.clone(),
             gh: PathBuf::from("gh"),

@@ -180,7 +180,7 @@ lane_copilot_pool_fix() { # HOST READ [DIR [STATUS [DETAIL]]]
 # `oversee-succeed` that renders them. Stated here once, in the file that owns
 # per-harness launch mapping, so a harness that renames its effort flag cannot
 # leave one copy behind and have the launcher refuse every launch of it while
-# the builder writes the old word.
+# the builder still writes the word it renamed.
 #
 # One row per harness,
 # `HARNESS|MODEL SPELLINGS|EFFORT SPELLINGS|EFFORT-IN-MODEL|ATTACH WORD|
@@ -728,40 +728,6 @@ launch_choice_question_off() { # HARNESS
 # no lane status file update since its last judgement. The text crosses the quoting layers a codex kickoff does, so it
 # holds only letters, spaces, commas, periods and hyphens.
 LAUNCH_UNATTENDED_TEXT='This is an unattended orch lane, and nobody reads this pane. Send every question for the overseer with lane-mail ask and block on lane-mail wait for its answer, never as a question in chat. Never end a turn waiting on the person, and end none before a lane-mail ask or notice, or the lane status file, says where the work stands. Send a notice only when the work changed since your last notice, with a new head, PR, verdict, blocker, request or finish. A wait that continues updates the lane status file only. Where you would stop to ask, read lane-mail inbox and continue the workflow.'
-
-# The words a channel=session brief closes on in place of the unattended words
-# above (../../schemas/lane-host.md § Host kinds): a cloud session has no mailbox,
-# so it reaches its overseer through its branch and pull request and nothing
-# else, and never asks. It works on the item branch the session cloned, which
-# open-terminal pushed and fills in at each {branch}, so no worktree create
-# meets that branch already checked out. A cloud session pushes to a claude/
-# branch unless its prompt names another, and the overseer's watch finds a
-# lane's pull request and its merge by the item branch, so the words name it.
-# GitHub REST can create a ready pull request but cannot mark a draft ready.
-# The cloud denies GraphQL, so its session reviews before publication.
-# It names the steps the kind never
-# takes, each one a mailbox, a tracker the cloud cannot reach, a merge under
-# another identity or a wait on a person. A cloud machine has no kendex and no tools/setup, so it
-# arms the commit hooks only through the commit-guards script where the
-# checkout carries it, and otherwise commits under the gates that hold the
-# merge. It holds no apostrophe or backtick, as the words above hold none.
-LAUNCH_SESSION_TEXT='This is an unattended orch lane in a cloud session, and nobody reads it. The task above is the whole issue. This session cloned the item branch {branch}: work on it as checked out, create no other work branch. The detached base checkout in the completion commands below is the only extra worktree allowed. Commit and push each finished part of the work to {branch} on origin as it finishes, not only at the end. Before each commit, before staging or validation, apply the safe fixes of the formatter declared by the repository lint script or DEV_VALIDATE_CMD. Run its write mode only on files you changed. Apply no unsafe fix and touch no other file. For a review or audit, commit the report file after each section, so a session that runs out of credit or time leaves its work on the branch. Never push to a claude/ branch, since your overseer finds your work by the item branch name. You reach your overseer through your branch and pull request and nothing else. Where .agents/skills/commit-guards/scripts/install-git-hooks is present, arm the commit hooks with it before your first commit. Where it is not, commit anyway, since the pull request CI, the review gate and the second-opinion gate hold the merge. Then, before any other work, make your first commit with git commit --allow-empty and push it to {branch} on origin. Finish the change, pass your own tests and internal review, and push the final commits before opening the pull request. Cloud sessions use the review-first publication order from pr-order, including where the repository selects open-first or push-first: the cloud refuses GraphQL, and REST cannot mark an existing draft ready. Explain this cloud route in the pull request body under ## Lane status. Resolve [OWNER], [REPO] and the intended target [BASE] from the repository and task; when the task names no target, read the default branch with gh api repos/[OWNER]/[REPO] --jq .default_branch. Write tmp/cloud-pull-request.json with title, body, head set to {branch}, base set to [BASE], and "draft": false as a JSON boolean. Create the ready pull request through REST with gh api --method POST repos/[OWNER]/[REPO]/pulls --input tmp/cloud-pull-request.json --jq .number and bind its returned number as [PR_NUMBER]. Open no draft and run no draft-to-ready command. If creation fails or a blocker prevents completion before creation, record the refusal or blocker in a commit message or committed report on {branch}. Push that commit to {branch} on origin before ending your turn. After creation succeeds, report refusals and blockers in the pull request body or comments. After creation, read the pull request target base through REST with gh api repos/[OWNER]/[REPO]/pulls/[PR_NUMBER] --jq .base.ref and bind it as [BASE]. The detached checkout below supplies the consumer base policy without item-branch changes. Run these commands in order:
-(
-git fetch origin [BASE] || exit "$?"
-git worktree add --detach tmp/review-base origin/[BASE] || exit "$?"
-cloud_request_status=0
-env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --base-checkout tmp/review-base || cloud_request_status=$?
-cloud_cleanup_status=0
-git worktree remove tmp/review-base || cloud_cleanup_status=$?
-if [ "$cloud_cleanup_status" -ne 0 ]; then
-  printf "%s\n" "cloud-completion: base-cleanup-failed exit=$cloud_cleanup_status" >&2
-fi
-if [ "$cloud_request_status" -ne 0 ]; then
-  exit "$cloud_request_status"
-fi
-exit "$cloud_cleanup_status"
-)
-Remove the temporary base checkout even if the request fails. Use a full clone under tmp/ only if Gate-mode routing refuses the detached base checkout, and name its refusal line in the pull request. On a fallback or failure, copy the request answer to a pull request comment for the landing lane. Never close and reopen the pull request to request review. Read no CI and wait on no review, since CI and merge belong to the landing lane. Never ask a question: a step that needs an answer is a step this lane never takes, so use the failure-reporting route above and end your turn. Never run linear.sh, lane-mail or pr-merge, never arm a background wake, and never wait on a person.'
 
 # ORCH_QUESTION_TOOL, decided once here for every launcher: `off`, the
 # default, gives a launched overseer its harness row's question-off words in
