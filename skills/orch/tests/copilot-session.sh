@@ -129,7 +129,7 @@ ROWS
 assert_eq "$(bash -c '. "$1/lib/lane-context.sh"; COPILOT_HOME= LANES_HOME=/h lane_context_caller_cfg copilot; COPILOT_HOME=/a lane_context_caller_cfg copilot' _ "$SCRIPTS_DIR")" \
   $'/h/.copilot\n/a' "a copilot session's account is COPILOT_HOME, else the CLI's default home"
 
-echo "=== the stop cause, and the session a lane in a worktree runs ==="
+echo "=== the stop cause ==="
 # cause RECORD_JSON GRANTED — copilot_session_stop_cause over one record and a
 # launch's grant: the cause, or none.
 cause() {
@@ -146,54 +146,8 @@ allow_all_enabled true names none|true|true|none
 a record that does not say names none|null|true|none
 a string is not the CLI's boolean and names none|"false"|true|none
 ROWS
-# A lane's worktree and the session store beside the record: WT_SESSION ran
-# in WT and holds events, EMPTY_SESSION started in WT and ended before its
-# first event, OTHER_SESSION ran elsewhere.
-WT="$TMP_ROOT/lane-wt"
-mkdir -p "$WT" "$TMP_ROOT/elsewhere"
-workspace() { # SESSION CWD EVENTS
-  mkdir -p "$ACCOUNT/session-state/$1"
-  printf 'id: %s\ncwd: %s\n' "$1" "$2" > "$ACCOUNT/session-state/$1/workspace.yaml"
-  [ "$3" = none ] || printf '%s\n' "$3" > "$ACCOUNT/session-state/$1/events.jsonl"
-}
-workspace "$SESSION" "$WT" '{"type":"session.start"}'
-workspace empty-1 "$WT" none
-workspace other-2 "$TMP_ROOT/elsewhere" '{"type":"session.start"}'
-touch -t 200001010000 "$ACCOUNT/session-state/$SESSION/workspace.yaml"
-echo "=== the session a lane in a worktree runs is the one its launch started ==="
-# A later session of another run in the same worktree, a second-opinion run
-# from it, say, and an earlier one a fresh relaunch retired: the lane's
-# session is the earliest written at or after the launch's session_since, or
-# the newest where none is named. $SESSION's workspace.yaml is stamped
-# 2000-01-01 local time and the retired one's 1999-06-01, so a stamp on
-# 1999-12-30 UTC falls between them and one on 2001-01-01 UTC follows both in
-# every zone.
-workspace foreign-3 "$WT" '{"type":"session.start"}'
-workspace retired-4 "$WT" '{"type":"session.start"}'
-touch -t 199906010000 "$ACCOUNT/session-state/retired-4/workspace.yaml"
-# worktree_row WORKTREE [SINCE] — the id of the session copilot_session_in_worktree
-# names for a lane in WORKTREE under ACCOUNT since SINCE, epoch seconds, from a
-# child shell: `none` where none qualifies, `rc=N` where the worktree or the
-# store could not be read.
-worktree_row() {
-  bash -c 'set -euo pipefail; . "$1/lib/copilot-session.sh"; rc=0
-    file="$(copilot_session_in_worktree "$2" "$3" "${4:-}")" || rc=$?
-    case "$rc" in 0) copilot_session_id "$file" ;; 1) echo none ;; *) echo "rc=$rc" ;; esac' \
-    _ "${LIB:-$SCRIPTS_DIR}" "$ACCOUNT" "$@"
-}
-epoch() { jq -nr --arg s "$1" '$s | fromdateiso8601'; }
-while IFS='|' read -r label worktree since want; do
-  assert_eq "$(worktree_row "$worktree" "$since")" "$want" "$label"
-done <<ROWS
-a lane with a session_since reads the earliest session written at or after it, the relaunched session, not the one the relaunch retired before it|$WT|$(epoch 1999-12-30T00:00:00Z)|$SESSION
-a session written before session_since is not the lane's|$WT|$(epoch 2001-01-01T00:00:00Z)|foreign-3
-with no session_since the newest session in the worktree is the lane's|$WT||foreign-3
-a worktree no session ran in names none|$TMP_ROOT||none
-a worktree that does not resolve is unreadable|$TMP_ROOT/gone||rc=2
-ROWS
 statusline blocked <<<"$(status | jq -c '.allow_all_enabled = false')"
 WRITTEN="$(jq -r '.written_at' "$RECORD")"
-rm -rf -- "${ACCOUNT:?}/session-state/empty-1" "${ACCOUNT:?}/session-state/other-2"
 
 echo "=== must-fail controls ==="
 # One per reader rule and one per writer, each in a private copy of the scripts.
@@ -223,10 +177,6 @@ lib_control ctl-cause lib/copilot-session.sh '[ "$CS_ALLOW_ALL" = false ] || ret
 assert_eq "$(cause '{"status":{"allow_all_enabled":false}}' true)" none "control: without the allow-all test a policy-blocked record names no cause"
 lib_control ctl-cause-grant lib/copilot-session.sh '  [ "$2" = true ] || return 1' '  : || return 1'
 assert_eq "$(cause '{"status":{"allow_all_enabled":false}}' '')" allow-all-blocked-by-policy "control: without the grant test a launch without allow-all is named policy-blocked"
-lib_control ctl-launch-pick lib/copilot-session.sh '[ ! "$file" -ot "$best" ]' '[ ! "$file" -nt "$best" ]'
-assert_eq "$(worktree_row "$WT" "$(epoch 1999-12-30T00:00:00Z)")" foreign-3 "control: without the earliest pick since session_since a later session in the worktree is read in the lane's place"
-lib_control ctl-launch-floor lib/copilot-session.sh '[ "$written" -ge "$since" ] || continue' 'true || continue'
-assert_eq "$(worktree_row "$WT" "$(epoch 2001-01-01T00:00:00Z)")" retired-4 "control: without the floor the session a relaunch retired, written before session_since, is read as the lane's"
 lib_control ctl-write lib/copilot-session.sh '       status: .}' '       status: {}}'
 statusline ctl-write "$LIB" <<<"$(status)"
 assert_eq "$(reading "$(cat "$RECORD")")" unread "control: a writer that drops the CLI's object leaves nothing to read"

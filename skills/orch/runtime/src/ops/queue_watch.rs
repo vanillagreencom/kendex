@@ -5,8 +5,9 @@
 //! or armed pulls the arm (the github skill's `pr-threads` is the one thread
 //! reader and its `merge-queue-mutation` the one sender of the disarm and
 //! the dequeue), a failed required check on an armed, unenqueued pull request is
-//! read through `verify-pr`, and the reply is the result object the merge
-//! workflow routes on its `verdict` and `cause` words.
+//! read through `verify-pr` within the budget the wait has left, and the
+//! reply is the result object the merge workflow routes on its `verdict`
+//! and `cause` words.
 //!
 //! The memory on the item is what separates an ejection from a pull request
 //! that never entered the queue: a run that starts after another ended, or
@@ -26,7 +27,7 @@ use super::{Env, Request, Verdict as CiVerdict, VerifyPr, verify_pr};
 use crate::error::{Error, Result};
 use crate::schedule::Clock;
 use crate::state::{self, Document, Locking};
-use crate::verify::{self, Bucket, Status};
+use crate::verify::{self, Bucket, Budget, Gh, Status};
 
 /// The github package's program under the project's install, whose
 /// `pr-threads` reads the review threads.
@@ -1192,20 +1193,32 @@ impl<'a> Wait<'a> {
 
     // --- the probe ---
 
-    /// One `verify-pr` read of the pull request's own required checks: only
-    /// a complete `fail` ends the wait; `pending` and the settled words are
-    /// recorded for the deadline verdict; an unreadable answer or a refusal
-    /// is no reading and leaves the last one standing.
-    fn probe_failed_check(&mut self) -> bool {
+    /// What a probe may spend: the wait's remaining budget less the poll
+    /// after it, so the probe's reads end where that poll is still owed;
+    /// none where no poll fits after it.
+    fn probe_budget(&self) -> Option<Budget<'a>> {
+        let left = self
+            .remaining()
+            .checked_sub(self.r.poll)
+            .filter(|left| !left.is_zero())?;
+        Some(Budget::until(self.clock, self.now() + left))
+    }
+
+    /// One `verify-pr` read of the pull request's own required checks
+    /// within `budget`: only a complete `fail` ends the wait; `pending` and
+    /// the settled words are recorded for the deadline verdict; an
+    /// unreadable answer, a refusal or an answer that arrived past the
+    /// budget is no reading and leaves the last one standing.
+    fn probe_failed_check(&mut self, budget: Budget<'a>) -> bool {
         let request = VerifyPr {
             repo: self.r.repo.clone(),
             pr: self.r.pr,
             required_only: true,
         };
-        let Ok(verified) = verify_pr::run(
+        let Ok(verified) = verify_pr::run_with(
             self.path,
             &request,
-            &self.programs.gh,
+            &Gh::within(&self.programs.gh, budget),
             self.env,
             self.locking,
         ) else {
@@ -1369,9 +1382,11 @@ impl<'a> Wait<'a> {
                 }
             }
             // The probe runs only on the armed, unenqueued shape (membership
-            // reports a queued pull request's failure as an ejection) and
-            // never past a candidate awaiting its confirmation, so one probe
-            // reading cannot route a standing conflict to a CI cycle.
+            // reports a queued pull request's failure as an ejection), never
+            // past a candidate awaiting its confirmation, so one probe
+            // reading cannot route a standing conflict to a CI cycle, and
+            // only within the budget left past the poll after it, which its
+            // reads are bounded by.
             if self.r.check_probe
                 && self.candidate.is_none()
                 && !in_queue
@@ -1379,10 +1394,10 @@ impl<'a> Wait<'a> {
                 && self
                     .probe_at
                     .is_none_or(|at| self.since(at) >= self.r.probe_interval)
-                && self.remaining() > self.r.poll
+                && let Some(budget) = self.probe_budget()
             {
                 self.probe_at = Some(self.now());
-                if self.probe_failed_check() {
+                if self.probe_failed_check(budget) {
                     return Ok(end(self.reply(
                         Outcome::Complete,
                         Verdict::ArmedBlocked,

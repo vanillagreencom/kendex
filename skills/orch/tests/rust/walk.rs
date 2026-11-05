@@ -12,11 +12,16 @@
 #[path = "support.rs"]
 mod support;
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use agent_runtime::clock;
+use orch_runtime::ops::Host;
+use orch_runtime::ops::accounts::{PickRequest, pick_fleet};
+use orch_runtime::protocol::Reply;
+use orch_runtime::settings::{self, Flags as SettingsFlags, Roots, Settings};
 use orch_runtime::state::FLEET_FILE_NAME;
 use serde_json::{Value, json};
 use support::*;
@@ -48,11 +53,18 @@ fn planted_pick_replies() -> PathBuf {
         .join("tests/fixtures/accounts-pick")
 }
 
-/// The walk suite's world as the verb reads it: the overseer's own Claude
-/// account at 57 percent of its session window (the headroom trigger is
-/// 50), a second Claude account whose usage cannot be read, and three
-/// Codex accounts at 22, 20 and 18 percent of their primary window, every
-/// reset far off, no burn.
+/// The epoch second the walk suite's pick replies are judged at: the
+/// judgement takes its clock as an input, so the planted listing's sample
+/// age and the score's reset bonus hold still between a capture and its
+/// check.
+const PICK_NOW: u64 = 1_769_700_000;
+
+/// The walk suite's world as the verb reads it at [`PICK_NOW`]: the
+/// overseer's own Claude account at 57 percent of its session window (the
+/// headroom trigger is 50), a second Claude account whose usage cannot be
+/// read, and three Codex accounts at 22, 20 and 18 percent of their
+/// primary window, every reset far off, no burn, every usage sampled at
+/// that second.
 fn walk_suite_world() -> World {
     let mut world = World::new(&[("ORCH_OVERSEER_HEADROOM_PCT", "50")]);
     let far = "2099-08-01T06:00:00Z";
@@ -62,77 +74,72 @@ fn walk_suite_world() -> World {
                "resets": {"session": "2099-01-01T00:00:00Z", "weekly": null, "model": null, "monthly": null},
                "usage_age_s": 0})
     };
-    world.plant_listing(&[
-        json!({"alias": "claude", "harness": "claude", "config_dir": "/home/me/.claude",
-               "measured_through": "local", "status": "ok", "plan": "max",
-               "session_5h_pct": 57, "weekly_pct": 30,
-               "model_buckets": [{"label": "Opus", "pct": 5, "resets_at": far}],
-               "resets": {"session": "2099-01-01T06:00:00Z", "weekly": far, "model": far, "monthly": null},
-               "usage_age_s": 0}),
-        json!({"alias": "unreadclaude", "harness": "claude", "config_dir": "/home/me/.unreadclaude",
-               "measured_through": "local", "status": "unreachable", "plan": "max", "usage_age_s": 0}),
-        codex("codex", 22),
-        codex("1codex", 20),
-        codex("2codex", 18),
-    ]);
+    world.plant_at(
+        PICK_NOW,
+        &[
+            json!({"alias": "claude", "harness": "claude", "config_dir": "/home/me/.claude",
+                   "measured_through": "local", "status": "ok", "plan": "max",
+                   "session_5h_pct": 57, "weekly_pct": 30,
+                   "model_buckets": [{"label": "Opus", "pct": 5, "resets_at": far}],
+                   "resets": {"session": "2099-01-01T06:00:00Z", "weekly": far, "model": far, "monthly": null},
+                   "usage_age_s": 0}),
+            json!({"alias": "unreadclaude", "harness": "claude", "config_dir": "/home/me/.unreadclaude",
+                   "measured_through": "local", "status": "unreachable", "plan": "max", "usage_age_s": 0}),
+            codex("codex", 22),
+            codex("1codex", 20),
+            codex("2codex", 18),
+        ],
+    );
     world.write_fleet(Some(&world.dir("claude")));
     world
 }
 
-/// `reply` with its record's `selection_score` at four decimals: the score
-/// carries a fraction derived from the clock, which no caller reads.
-fn scored(mut reply: Value) -> Value {
-    if let Some(score) = reply["result"]["record"]["selection_score"].as_f64() {
-        reply["result"]["record"]["selection_score"] = json!((score * 10_000.0).round() / 10_000.0);
-    }
-    reply
-}
-
 /// A planted pick reply drifting from the verb's: the walk suite reads its
 /// stand-in's replies as the verb's own, so each file it serves is the
-/// reply the real `accounts pick` prints over the suite's world, the home
-/// as `@H@`; a difference names the file to re-capture from this row's
+/// reply `accounts pick` prints over the suite's world, the home as `@H@`.
+/// The judgement runs in process at [`PICK_NOW`], the one input the
+/// executable adds from its own clock, and every field is compared as
+/// printed; a difference names the file to re-capture from this row's
 /// output.
 #[test]
 fn the_walk_suites_planted_pick_replies_are_the_verbs_own_over_its_world() {
     let world = walk_suite_world();
     let home = world.path().join("home").display().to_string();
+    let settings = world.settings();
+    let fleet = world.path().join(FLEET_FILE_NAME);
+    let host = Host::kernel(settings.lane_cap);
     let mut drifted = Vec::new();
     for (harness, trigger, excluded) in [
-        ("claude", "50", "claude"),
-        ("codex", "50", "claude"),
-        ("claude", "90", "claude"),
-        ("codex", "90", "claude"),
-        ("codex", "50", "2codex"),
+        ("claude", 50, "claude"),
+        ("codex", 50, "claude"),
+        ("claude", 90, "claude"),
+        ("codex", 90, "claude"),
+        ("codex", 50, "2codex"),
     ] {
-        let mut command = isolated();
-        command
-            .current_dir(world.path())
-            .env("PATH", tool_path(&[&world.bin()]))
-            .args(["accounts", "pick", "--fleet", "--harness", harness])
-            .args([
-                "--min-headroom-pct",
-                trigger,
-                "--for-overseer",
-                "--binding-floor",
-            ])
-            .args(["--exclude-lane", &world.dir(excluded)]);
-        for (key, value) in &world.env {
-            command.env(key, value);
-        }
-        let out = command.output().unwrap();
-        assert!(out.status.success(), "{}", stderr(&out));
-        let verb = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+        let request = PickRequest {
+            harness: harness.to_owned(),
+            model: None,
+            exclude: vec![world.dir(excluded)],
+            replaces: None,
+            for_overseer: true,
+            lane: None,
+            projected: false,
+            max_pct: None,
+            min_headroom_pct: Some(trigger),
+            binding_floor: true,
+            host: None,
+        };
+        let answer = pick_fleet(&settings, &fleet, &host, &request, PICK_NOW);
+        let verb = serde_json::to_value(Reply::ok(answer.reply())).unwrap();
         let key = format!("{harness}-{trigger}-{excluded}");
         let planted = std::fs::read_to_string(planted_pick_replies().join(format!("{key}.json")))
             .unwrap_or_default()
             .trim()
             .replace("@H@", &home);
-        let actual = scored(serde_json::from_str(&verb).unwrap());
-        let expected = scored(serde_json::from_str(&planted).unwrap_or(Value::Null));
-        if actual != expected {
+        if verb != serde_json::from_str(&planted).unwrap_or(Value::Null) {
             drifted.push(format!(
-                "{key}: the planted reply is not the verb's\nverb={verb}\nplanted={planted}"
+                "{key}: the planted reply is not the verb's\nverb={}\nplanted={planted}",
+                verb.to_string().replace(&home, "@H@")
             ));
         }
     }
@@ -208,9 +215,10 @@ impl World {
     }
 
     /// The accounts the listing lists: the local rows as directories under
-    /// the home with their records, the provider's rows under `host`.
-    fn plant(&mut self, host: Option<&str>, rows: &[Value]) {
-        let env = plant_accounts(self.path(), self.path(), host, rows, now());
+    /// the home with their records sampled at `now`, the provider's rows
+    /// under `host`.
+    fn plant(&mut self, host: Option<&str>, rows: &[Value], now: u64) {
+        let env = plant_accounts(self.path(), self.path(), host, rows, now);
         for (key, value) in env {
             self.env.retain(|(k, _)| *k != key);
             self.env.push((key, value));
@@ -218,11 +226,41 @@ impl World {
     }
 
     fn plant_listing(&mut self, rows: &[Value]) {
-        self.plant(None, rows);
+        self.plant(None, rows, now());
+    }
+
+    /// The local rows sampled at `now`, for a judgement run in process at
+    /// that second.
+    fn plant_at(&mut self, now: u64, rows: &[Value]) {
+        self.plant(None, rows, now);
     }
 
     fn plant_host_listing(&mut self, host: &str, rows: &[Value]) {
-        self.plant(Some(host), rows);
+        self.plant(Some(host), rows, now());
+    }
+
+    /// This world's settings as the executable resolves them: its
+    /// directory the project and the state directory, its environment the
+    /// caller's.
+    fn settings(&self) -> Settings {
+        let roots = Roots {
+            project: self.path().to_path_buf(),
+            common: self.path().to_path_buf(),
+        };
+        let environment: Vec<(OsString, OsString)> = self
+            .env
+            .iter()
+            .map(|(k, v)| (OsString::from(k), OsString::from(v)))
+            .collect();
+        settings::load(
+            &roots,
+            &environment,
+            &SettingsFlags {
+                state_dir: Some(self.path().to_path_buf()),
+                private_env: false,
+            },
+        )
+        .unwrap()
     }
 
     fn plant_capabilities(&self, lines: &[(&str, &str)]) {

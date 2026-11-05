@@ -14,9 +14,8 @@
 # command: it persists the JSON it received as a record bound to the session,
 # and lib/adapters/copilot.sh reads it back for the shared context judge.
 # Nothing here parses a pane or a screen. The session store the CLI keeps
-# beside it, `session-state/<id>/workspace.yaml`, is read here too, for the one
-# question a reader outside the session asks of it: which session a lane in a
-# given worktree runs.
+# beside it, `session-state/<id>/workspace.yaml`, is read here for one line:
+# the id a session is resumed by.
 #
 # One record per session, at `<COPILOT_HOME>/lane-status/<session_id>.json`,
 # under the account directory the session runs on. The record carries the CLI's
@@ -180,49 +179,9 @@ copilot_session_stop_cause() { # RECORD GRANTED
   printf 'allow-all-blocked-by-policy\n'
 }
 
-# The session id and the directory a session's workspace.yaml names, from its
-# `id:` and `cwd:` lines, each empty where the file names none. The CLI writes
-# both plain lines as a session starts and before any turn (measured on 1.0.88).
+# The session id a session's workspace.yaml names, from its `id:` line, empty
+# where the file names none. The CLI writes it as a plain line as a session
+# starts and before any turn (measured on 1.0.88).
 copilot_session_id() { # WORKSPACE_YAML
   awk 'index($0, "id: ") == 1 { print substr($0, 5); exit }' "$1"
-}
-copilot_session_cwd() { # WORKSPACE_YAML
-  awk 'index($0, "cwd: ") == 1 { print substr($0, 6); exit }' "$1"
-}
-
-# copilot_session_in_worktree HOME WORKTREE [SINCE] — the workspace.yaml of
-# the session a lane in WORKTREE runs under the account HOME, printed, 0: among
-# the `HOME/session-state/<id>/workspace.yaml` files whose `cwd:` line is
-# WORKTREE, resolved, and that hold events, the newest; with SINCE, epoch
-# seconds the launch or relaunch that started the lane's running session read
-# before it opened the terminal, the earliest written at or after SINCE, the
-# session that launch started. A session a relaunch retired is written before
-# SINCE, and a later Copilot session in the same worktree on the same account,
-# a second-opinion run from it, after the lane's own, so neither is read in
-# its place. A session that ended before its first event, one whose sign-in
-# failed, leaves workspace.yaml and no events.jsonl, and
-# `copilot --resume=<id>` on it exits 1, so it is passed over. 1 where no
-# session qualifies; 2 where WORKTREE does not resolve or the store could not
-# be read.
-copilot_session_in_worktree() { # HOME WORKTREE [SINCE]
-  local store="$1/session-state" since="${3:-}" cwd files file recorded written best=""
-  cwd="$(cd -- "$2" 2>/dev/null && pwd -P)" || return 2
-  [ -e "$store" ] || return 1
-  { [ -d "$store" ] && [ -r "$store" ]; } || return 2
-  files="$(find -H "$store" -mindepth 2 -maxdepth 2 -type f -name workspace.yaml -print 2>/dev/null)" || return 2
-  while IFS= read -r file; do
-    [ -n "$file" ] || continue
-    recorded="$(copilot_session_cwd "$file")" || return 2
-    { [ "$recorded" = "$cwd" ] && [ -s "${file%/*}/events.jsonl" ]; } || continue
-    if [ -z "$since" ]; then
-      { [ -n "$best" ] && [ ! "$file" -nt "$best" ]; } || best="$file"
-      continue
-    fi
-    written="$(stat -c %Y -- "$file" 2>/dev/null || stat -f %m -- "$file" 2>/dev/null)" || return 2
-    case "$written" in '' | *[!0-9]*) return 2 ;; esac
-    [ "$written" -ge "$since" ] || continue
-    { [ -n "$best" ] && [ ! "$file" -ot "$best" ]; } || best="$file"
-  done <<<"$files"
-  [ -n "$best" ] || return 1
-  printf '%s\n' "$best"
 }

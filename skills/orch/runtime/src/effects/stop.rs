@@ -2,8 +2,9 @@
 //! wake turn it names and its window, by the identity recorded or the one
 //! read in its pane's foreground, on the ground the close intent recorded. A
 //! live harness is asked for its unanswered asks first, a `no-landing`
-//! disposition stops only the attempt's own identity and only idle, the
-//! worktree's validation runs are ended before the window closes, and the
+//! disposition stops only the attempt's own identity and only idle, unless
+//! it interrupts a turn (a model switch), where the ask guard alone stands;
+//! the worktree's validation runs are ended before the window closes, and the
 //! worktree itself is released after it, or kept with its reason on the lane
 //! record. Every
 //! handle the lane records is an obligation of the close intent's set, read

@@ -470,7 +470,7 @@ struct Gate<'a> {
     locking: Locking,
     r: &'a VerifyReview,
     review: Review,
-    gh: Gh,
+    gh: Gh<'a>,
     view: View,
     doc: Document,
     now: u64,

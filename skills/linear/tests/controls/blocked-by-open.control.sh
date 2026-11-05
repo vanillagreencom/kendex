@@ -24,3 +24,16 @@ control_replace scripts/lib/formatters.sh 1 \
 control_expect "production GraphQL has one inverse relation projection owner"
 control_append scripts/commands/issues.sh \
     "BYPASS_RELATION_QUERY='inverseRelations { nodes { id type issue { identifier } } }'"
+
+# 4. The bundle root loses its launch field, the one the launch gate reads;
+#    the single read keeps its own line, so only the bundle's assertion falls.
+control_expect "live bundle root names launch blockers"
+control_replace scripts/lib/formatters.sh 1 \
+    '            blocked_by_launch: issue_blocked_by_launch_ids(.issue.inverseRelations.nodes),' \
+    '            blocked_by_launch_dropped: null,'
+
+# 5. A bundled node loses its launch field.
+control_expect "live bundle child names launch blockers"
+control_replace scripts/lib/formatters.sh 1 \
+    '                blocked_by_launch: issue_blocked_by_launch_ids($node.inverseRelations.nodes)' \
+    '                blocked_by_launch_dropped: null'

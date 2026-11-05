@@ -63,11 +63,12 @@ ORCH_LANE_HOST = "local"
 # absolute, and a harness is named at most once.
 # ORCH_HARNESS_BINARIES = "claude=/opt/claude/bin/claude,pi=/opt/pi/bin/pi"
 
-# Runtime the overseer's own session runs in, which oversee launch and
-# oversee-succeed open sessions through: "tmux", the included provider, or an
-# executable script path speaking schemas/overseer-host.md. Both launchers
-# verify a session's account through its tmux pane, so today they refuse any
-# value but "tmux" as runtime-unsupported.
+# Runtime the overseer's own session runs in, which oversee-succeed opens
+# sessions through: "tmux", the included provider, or an executable script
+# path speaking schemas/overseer-host.md. It verifies a session's account
+# through its tmux pane, so today it refuses any value but "tmux" as
+# runtime-unsupported. The orch runtime's start-controller request opens the
+# overseer's window on the fleet's tmux server and reads no other host.
 # ORCH_OVERSEER_HOST = "tmux"
 
 # How much a lane prints into its own window. "quiet" prints one line per
@@ -240,8 +241,8 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # The fleet's first tmux launch records the session it opened in, this one when
 # set, once tmux confirms it exists. A launch with no live pane and no recorded
 # session refuses as tmux-session-unresolved; a session tmux does not hold
-# refuses as tmux-session-missing. With it set, open-terminal, oversee-watch and
-# oversee launch need no $TMUX: run from outside tmux they reach that session on
+# refuses as tmux-session-missing. With it set, open-terminal --wake and the
+# orch runtime need no $TMUX: run from outside tmux they reach that session on
 # your own tmux server.
 # ORCH_TMUX_SESSION = "kendex"
 
@@ -453,7 +454,8 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # Zero disables the rate trigger.
 ORCH_OVERSEER_WALL_MINUTES = "20"
 
-# The qualifying-account trigger, by the rule oversee-succeed --help states.
+# The qualifying-account trigger, by the rule oversee-succeed --help states;
+# read by oversee-succeed alone, never by the runtime's mark judge.
 # Zero disables it.
 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 

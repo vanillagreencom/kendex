@@ -9,9 +9,10 @@
 //! whose head moved between two calls is judged on the newer head and the
 //! older record replaced. `pending` and an unreadable read are results the
 //! caller repeats under its own budget, never verdicts, as `verify-head`
-//! answers them. The poll, its budget and the wait itself stay with the
-//! workflow's waiter launch; no mail nap is here, since the lane's mail
-//! reaches it through the wake duty.
+//! answers them. The poll and the wait stay with the caller: the workflow
+//! repeats the call, and the queue watch's probe hands one call the budget
+//! its wait has left (`run_with`); no mail nap is here, since the lane's
+//! mail reaches it through the wake duty.
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -20,7 +21,7 @@ use super::{Applied, Env, VerifyHead};
 use crate::error::{Error, Result};
 use crate::state::{self, Locking};
 use crate::verify::wire::PullRequestState;
-use crate::verify::{self, Caller, CheckReport, Status};
+use crate::verify::{self, Caller, CheckReport, Gh, Status};
 
 /// Verify a pull request's current head where it stands and record the
 /// verdict. `repo` is `owner/name` and `pr` the pull request's number;
@@ -67,14 +68,25 @@ pub struct PrVerified {
 /// record the verdict on the item at `path`. The request's forms refuse
 /// before any read; a missing record refuses before any network read, as
 /// `verify-head` refuses it.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the verify-pr operation's one record read before GitHub and its one call of the verification, over the head the pull request answered"
-)]
 pub fn run(
     path: &Path,
     r: &VerifyPr,
     gh: &Path,
+    env: &Env,
+    locking: Locking,
+) -> Result<PrVerified> {
+    run_with(path, r, &Gh::new(gh), env, locking)
+}
+
+/// [`run`] over a `gh` handle the caller built, with the budget it carries.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the verify-pr operation's one record read before GitHub and its one call of the verification, over the head the pull request answered"
+)]
+pub(crate) fn run_with(
+    path: &Path,
+    r: &VerifyPr,
+    gh: &Gh<'_>,
     env: &Env,
     locking: Locking,
 ) -> Result<PrVerified> {
@@ -120,7 +132,7 @@ pub fn run(
         head: pull.head,
         required_only: r.required_only,
     };
-    let verified = verify::run(path, &head, gh, env, locking, Caller::VerifyPr)?;
+    let verified = verify::run_with(path, &head, gh, env, locking, Caller::VerifyPr)?;
     Ok(PrVerified {
         pr: r.pr,
         repo: verified.repo,

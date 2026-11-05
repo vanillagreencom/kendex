@@ -1123,9 +1123,8 @@ claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 # below are the verb's real output on a fixture (`tests/rust/accounts.rs`'s
 # world, the account's path the one difference), planted through the suite's
 # stand-in in place of a wrap of the judge. The mark judge reads `wall`,
-# `effective_headroom_pct` and `qualifying_count` by `^[0-9]{1,3}$`: an
-# integral figure the verb spelled `60.0` left the caller `unreadable`, so
-# the overseer's headroom mark and the qualifying-accounts mark never fired.
+# `effective_headroom_pct` and `qualifying_count` by `^[0-9]{1,3}$`, so each
+# is planted as an integer.
 plant_reply() { # FILE JSON
   jq -c --arg dir "$H/.claude" '.result.record.config_dir = $dir' <<<"$2" > "$1"
 }
@@ -1615,11 +1614,12 @@ new_caller "$UNDER_MARK"
 new_caller "$UNDER_MARK"
 
 # The account the printed line opens its successor on is the one the fleet
-# state records for this pane, where it records one: a `start-controller`,
-# `oversee register` and a succession write it before the session's first
-# turn, and a session launched from a stored token has no lane variable for
-# the environment to answer with. A record naming another pane is another
-# session's and leaves the environment's answer standing. The harness is
+# state records for this pane, where it records one: `oversee register`
+# writes it when it runs, and a `start-controller` and a succession publish
+# it once the brief is delivered; a session launched from a stored token has
+# no lane variable for the environment to answer with. A record naming
+# another pane is another session's and leaves the environment's answer
+# standing. The harness is
 # named on the line, as a watch recording inside the first turn names it.
 record_account() { # PANE ACCOUNT
   jq --arg server "$SERVER_PID" --arg pane "$1" --arg account "$2" --argjson start "$SERVER_START" \
@@ -2017,13 +2017,12 @@ for row in \
     missing) rm -- "$HANDOFF_BODY" ;;
     header) printf '## State\nStart here: supplied metadata\n' > "$HANDOFF_BODY" ;;
     progress-*)
-      # Bad records a fleet's handoff was observed to carry.
+      # Bad records a handoff can carry.
       # The second bad record also proves that the first matching line wins.
       printf '## State\nComplete new snapshot\n\n## Progress log\n%s\nFiled: KEN-4079\n' "$row_text" > "$HANDOFF_BODY" ;;
     clock)
-      # The excluded records alone, as a fleet's handoff carried them.
-      # This derived clean body uses constructed merge/launch input and an
-      # explicit (Verifying) state line.
+      # The excluded records alone: constructed merge and launch rows under
+      # an explicit (Verifying) state line.
       # Matching labels outside Progress log do not belong to this check.
       printf '%s\n' '## State' 'Rulings: see fleet log' 'Filed: see fleet log' \
         'Verifying reads: see tracker items' '' '## Progress log' \

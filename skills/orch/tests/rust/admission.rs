@@ -48,6 +48,12 @@ fn end(owned: &mut Owned) {
     panic!("the ended child never became a zombie");
 }
 
+/// The linear package's formatter library in this checkout, which the
+/// tracker stand-in runs over the planted answers.
+fn linear_formatters() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../linear/scripts/lib/formatters.sh")
+}
+
 /// The change-scope package's path reader in this checkout.
 fn harness_only() -> PathBuf {
     fixtures()
@@ -63,9 +69,9 @@ fn harness_only() -> PathBuf {
 }
 
 /// The binary against a fleet state in its own directory, with no tmux
-/// server to reach, a cap of four, the fake tracker answering from the
-/// items this test writes, the real path reader, and one fake `gh` on
-/// `PATH`: `gh-issue` for the item read, or `gh` answering `gh api` and
+/// server to reach, a cap of four, the tracker stand-in running the linear
+/// package's real bundle formatter over the GraphQL answers this test
+/// writes, the real path reader, and one fake `gh` on `PATH`: `gh-issue` for the item read, or `gh` answering `gh api` and
 /// `gh repo view` from the map a row plants ([`Fleet::gh_api`]). Every
 /// child runs with
 /// `--no-private-env` and `GIT_CEILING_DIRECTORIES` at the temp root, so
@@ -114,6 +120,7 @@ impl Fleet {
                 fixtures().join("linear-items/linear.sh"),
             )
             .env("LINEAR_ITEMS_DIR", self.items_dir())
+            .env("LINEAR_FORMATTERS", linear_formatters())
             .env("LINEAR_FAKE_LOG", self.dir.path().join("linear.log"))
             .env("CHANGE_SCOPE_PATHS_CLI", harness_only())
             .env("GH_ISSUES_DIR", self.items_dir())
@@ -168,41 +175,69 @@ impl Fleet {
         assert!(out.status.success(), "init {item}: {}", stderr(&out));
     }
 
-    /// The fake tracker's answer for `item`: a body with one Location line,
-    /// `children` flattened children and the labels.
-    fn item(&self, item: &str, location: &str, children: usize, labels: &[&str]) {
-        let body = json!({
-            "id": item,
-            "description": format!("Some text.\n**Location**: {location}\n"),
-            "labels": labels,
-            "children": (0..children).map(|n| json!({"id": format!("{item}-c{n}")})).collect::<Vec<_>>(),
-            "in_pr_bundle": false,
+    /// The tracker's GraphQL answer for `item` as `issues get` receives it
+    /// and the bundle formatter reads it: `fields` over an unstarted
+    /// issue with no parent, children, labels or relations.
+    fn plant(&self, item: &str, fields: Value) {
+        let mut node = json!({
+            "id": format!("uuid-{item}"),
+            "identifier": item,
+            "title": item,
+            "description": "Some text.\n",
+            "state": {"name": "Todo", "type": "unstarted"},
+            "parent": Value::Null,
+            "labels": {"nodes": []},
+            "children": {"nodes": []},
+            "relations": {"nodes": []},
+            "inverseRelations": {"nodes": []},
         });
+        for (key, value) in fields.as_object().unwrap() {
+            node[key] = value.clone();
+        }
         std::fs::write(
             self.items_dir().join(format!("{item}.json")),
-            serde_json::to_vec(&body).unwrap(),
+            serde_json::to_vec(&json!({"issue": node})).unwrap(),
         )
         .unwrap();
     }
 
-    /// The fake tracker's answer for `item` under the container `parent`
-    /// (none for an empty word) with the launch blockers the tracker
-    /// judges open.
+    /// The tracker's answer for `item`: a body with one Location line,
+    /// `children` child issues and the labels.
+    fn item(&self, item: &str, location: &str, children: usize, labels: &[&str]) {
+        let children: Vec<Value> = (0..children)
+            .map(|n| {
+                json!({"id": format!("uuid-{item}-c{n}"), "identifier": format!("{item}-c{n}"),
+                            "state": {"name": "Todo", "type": "unstarted"}})
+            })
+            .collect();
+        self.plant(
+            item,
+            json!({
+                "description": format!("Some text.\n**Location**: {location}\n"),
+                "labels": {"nodes": labels.iter().map(|l| json!({"name": l})).collect::<Vec<_>>()},
+                "children": {"nodes": children},
+            }),
+        );
+    }
+
+    /// The tracker's answer for `item` under the container `parent` (none
+    /// for an empty word), blocked by the started issues `blockers`.
     fn item_under(&self, item: &str, parent: &str, blockers: &[&str]) {
-        let body = json!({
-            "id": item,
-            "description": "Some text.\n",
-            "labels": [],
-            "children": [],
-            "in_pr_bundle": false,
-            "parent_id": parent,
-            "blocked_by_launch": blockers,
-        });
-        std::fs::write(
-            self.items_dir().join(format!("{item}.json")),
-            serde_json::to_vec(&body).unwrap(),
-        )
-        .unwrap();
+        let relations: Vec<Value> = blockers
+            .iter()
+            .map(|b| {
+                json!({"id": format!("rel-{b}"), "type": "blocks",
+                       "issue": {"id": format!("uuid-{b}"), "identifier": b, "title": b,
+                                 "state": {"name": "In Progress", "type": "started"}}})
+            })
+            .collect();
+        self.plant(
+            item,
+            json!({
+                "parent": if parent.is_empty() { Value::Null } else { json!({"identifier": parent}) },
+                "inverseRelations": {"nodes": relations},
+            }),
+        );
     }
 
     /// Every tracker read made so far, one argument line each.
@@ -466,7 +501,7 @@ fn a_live_holder_blocks_the_launch_and_a_gone_one_yields_with_a_rebase_obligatio
     assert_eq!(lane["status"], "stopped");
 }
 
-/// Decision 129 at a record reading `done`: the item's next phase is
+/// A record reading `done`: the item's next phase is
 /// judged as a first launch, on its item, its brief and the range it
 /// names, over the record's slot. KEN-L's done record keeps its earlier
 /// sets; a live holder of a path the item now names refuses
@@ -523,15 +558,24 @@ fn a_launch_over_a_done_record_is_judged_as_a_first_launch() {
     assert_eq!(fleet.lane("KEN-H"), before["lanes"][0]);
 }
 
+/// The bundle reply a linear package whose formatter names no launch
+/// blockers prints over a node blocked by the started issue CC-9: that
+/// formatter's own output, planted as it stands for the row below, since
+/// such a package may be installed beside this runtime.
+const RELEASED_BUNDLE_REPLY: &str = r#"{"id":"CC-8","identifier":"CC-8","uuid":"uuid-CC-8","title":"CC-8","description":"Some text.\n","in_pr_bundle":false,"state":"Todo","state_type":"unstarted","agent":"","platform":"","labels":[],"priority":0,"estimate":0,"sort_order":0,"project":"","project_id":"","assignee":"","parent_id":"","milestone":"","cycle":"","created_at":"","updated_at":"","blocks":[],"blocked_by":["CC-9"],"blocked_by_open":["CC-9"],"related":[],"url":"","children":[],"pending_count":0}"#;
+
 /// Defect: a fresh lane launched under a container ancestor holding an
-/// open launch blocker, which the tracker's safe read names on the
-/// ancestor and the launch never read. Through the real `launch-lane` and
-/// the fake tracker: an item whose grandparent holds a blocker is refused
+/// open launch blocker, which the tracker's safe bundle read names on the
+/// ancestor and the launch never read; and a bundle reply carrying no
+/// launch-blocker field read as no blocker. Through the real `launch-lane`
+/// and the linear package's real bundle formatter over planted GraphQL
+/// answers: an item whose grandparent holds a blocker is refused
 /// `launch-blocked` naming it after reading the three, nothing written; the
 /// item's own blocker refuses after one read; an ancestor the tracker
-/// cannot answer for refuses `launch-blocked-unread` naming it; a chain
-/// with no blocker admits; and a relaunch over a recorded lane reads no
-/// item at all.
+/// cannot answer for refuses `launch-blocked-unread` naming it; a reply
+/// with no launch-blocker field refuses `launch-blocked-unread` naming its
+/// node, for the item itself and for an ancestor; a chain with no blocker
+/// admits; and a relaunch over a recorded lane reads no item at all.
 #[test]
 fn a_launch_under_a_container_ancestor_holding_a_blocker_is_refused_before_any_record() {
     let fleet = Fleet::new();
@@ -564,10 +608,26 @@ fn a_launch_under_a_container_ancestor_holding_a_blocker_is_refused_before_any_r
     assert_eq!(key, "launch-blocked-unread");
     assert_eq!(fields, pairs(&[("item", "CC-5"), ("read", "CC-6")]));
     assert_eq!(fleet.fleet(), before, "an unread chain writes nothing");
+    std::fs::write(
+        fleet.items_dir().join("CC-8.released.json"),
+        RELEASED_BUNDLE_REPLY,
+    )
+    .unwrap();
+    let (key, fields) = refusal(&fleet.op(&launch("CC-8", fleet.state_dir().as_path())));
+    assert_eq!(
+        key, "launch-blocked-unread",
+        "a reply with no launch-blocker field is no judgement"
+    );
+    assert_eq!(fields, pairs(&[("item", "CC-8"), ("read", "CC-8")]));
+    fleet.item_under("CC-10", "CC-8", &[]);
+    let (key, fields) = refusal(&fleet.op(&launch("CC-10", fleet.state_dir().as_path())));
+    assert_eq!(key, "launch-blocked-unread");
+    assert_eq!(fields, pairs(&[("item", "CC-10"), ("read", "CC-8")]));
+    assert_eq!(fleet.fleet(), before, "an unjudged chain writes nothing");
     fleet.item_under("CC-7", "CC-3", &[]);
     let admitted = reply(&fleet.op(&launch("CC-7", fleet.state_dir().as_path())));
     assert_eq!(admitted["ok"], true, "{admitted}");
-    assert_eq!(reads_since(6), vec![read("CC-7"), read("CC-3")]);
+    assert_eq!(reads_since(9), vec![read("CC-7"), read("CC-3")]);
     assert_eq!(
         fleet.lane("CC-7")["status"],
         "stopped",
@@ -579,7 +639,7 @@ fn a_launch_under_a_container_ancestor_holding_a_blocker_is_refused_before_any_r
     let admitted = reply(&fleet.op(&relaunch));
     assert_eq!(admitted["ok"], true, "{admitted}");
     assert_eq!(
-        reads_since(8),
+        reads_since(11),
         Vec::<String>::new(),
         "a recorded lane's relaunch was judged when it was admitted"
     );
@@ -1116,15 +1176,7 @@ fn a_gh_failure_a_short_files_list_and_a_malformed_member_each_refuse_holders_un
     // An item whose body names no path has nothing to hold: no pull request
     // is read, and the failing map above is never reached.
     let reads = fleet.gh_log().len();
-    std::fs::write(
-        fleet.items_dir().join("KEN-E.json"),
-        serde_json::to_vec(&json!({
-            "id": "KEN-E", "description": "Touches nothing.", "labels": [],
-            "children": [], "in_pr_bundle": false,
-        }))
-        .unwrap(),
-    )
-    .unwrap();
+    fleet.plant("KEN-E", json!({"description": "Touches nothing."}));
     let mut request = launch("KEN-E", fleet.state_dir().as_path());
     request["repo"] = json!("o/r");
     let out = fleet.op(&request);

@@ -1264,12 +1264,13 @@ const COPILOT_RECORD_MAX_AGE: u64 = 120;
 /// under its account's `lane-status/` says. Enterprise managed settings can
 /// withdraw the grant mid-run, and each tool call then waits on a prompt
 /// nobody at the pane answers, so `stop-cause=allow-all-blocked-by-policy`
-/// where the CLI reports `allow_all_enabled` false; `session-record=<reason>`
-/// where no record answers: `unbound` (no session id on the record and no
-/// session in the store for its worktree since its launch, or an id outside
-/// a session id's alphabet), `store-unreadable`, `missing`, `unreadable`,
-/// `wrong-session`, `wrong-account`, or `stale` (past the refresh bound, or
-/// stamped ahead of this clock). `None` for every other lane: a launch
+/// where the CLI reports `allow_all_enabled` false, and
+/// `session-record=<reason>` where no record answers for the session:
+/// [`copilot_record`]'s reasons, or `worktree-unmatched` and
+/// `store-unreadable` from the store read that binds a record naming no
+/// session id. The record is read under the record's `account`, else the
+/// `home` its confirmed launch ran under, else the watch's own Copilot home
+/// (`account-unnamed` with none). `None` for every other lane: a launch
 /// without the grant waits on its prompts by design, and the record alone
 /// cannot tell the two apart.
 fn copilot_note(lane: &Lane, pass: &Pass) -> Option<String> {
@@ -1278,8 +1279,11 @@ fn copilot_note(lane: &Lane, pass: &Pass) -> Option<String> {
     {
         return None;
     }
-    let home = match lane.account.as_deref().filter(|a| !a.is_empty()) {
-        Some(account) => PathBuf::from(account),
+    let named = [&lane.account, &lane.home]
+        .into_iter()
+        .find_map(|field| field.as_deref().filter(|a| !a.is_empty()));
+    let home = match named {
+        Some(home) => PathBuf::from(home),
         None => match pass.copilot_home {
             Some(home) => home.to_path_buf(),
             None => return Some("session-record=account-unnamed".to_owned()),
@@ -1701,13 +1705,66 @@ fn start_brief(lane: &Lane, harness: Harness) -> Result<String, String> {
     })
 }
 
+/// The permission choice a relaunch keeps: the record's `permission`, the
+/// words of the launch line the runtime launched it with; on a record no
+/// runtime launch wrote, the first spelling of the harness's permission
+/// table among the `recovery.flags` an earlier launcher recorded (a Claude
+/// line's words end at `--`), a `FLAG=VALUE` spelling given as its two
+/// words. `Ok(None)` is a record stating no choice, which runs the settings'
+/// posture; `Err` is a permission flag whose value the table lacks, a
+/// choice no launch line carries faithfully, refused before anything is
+/// stopped.
+fn recorded_permission(lane: &Lane, harness: Harness) -> Result<Option<String>, String> {
+    if let Some(word) = lane
+        .extra
+        .get("permission")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|w| !w.is_empty())
+    {
+        return Ok(Some(word.to_owned()));
+    }
+    let words: Vec<&str> = lane
+        .extra
+        .get("recovery")
+        .and_then(|r| r.get("flags"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .split_whitespace()
+        .take_while(|w| harness != Harness::Claude || *w != "--")
+        .collect();
+    let spellings = harness.permission_spellings();
+    for (i, word) in words.iter().enumerate() {
+        for (spelling, _) in &spellings {
+            if word == spelling {
+                return Ok(Some((*spelling).to_owned()));
+            }
+            if let Some((flag, value)) = spelling.split_once('=')
+                && *word == flag
+                && words.get(i + 1) == Some(&value)
+            {
+                return Ok(Some(format!("{flag} {value}")));
+            }
+        }
+        let valued = spellings
+            .iter()
+            .filter_map(|(spelling, _)| spelling.split_once('='))
+            .any(|(flag, _)| *word == flag || word.starts_with(&format!("{flag}=")));
+        if valued {
+            return Err("permission-choice-unrepresentable".to_owned());
+        }
+    }
+    Ok(None)
+}
+
 /// The record's own relaunch as two requests the runtime's entry applies in
 /// order from the lane's checkout: the predecessor retired through the
 /// close route on the `no-landing` ground (its harness idle under its
 /// recorded identity, the item's work kept), then `launch-lane` on the
 /// picked account with the record's harness, model, effort, host, tracker
-/// and repository, its refresh word, the spent account excluded and the
-/// start brief. The checkout is the one the launch ran from
+/// and repository, its refresh word and permission choice
+/// ([`recorded_permission`]), the spent account excluded and the start
+/// brief. The checkout is the one the launch ran from
 /// (`checkout` on a hosted record, whose `mail_root` is its host's; the
 /// `recovery.cwd` an earlier launcher recorded; else `mail_root`). A
 /// record whose checkout is gone, or whose provider is spelled relative to
@@ -1745,6 +1802,7 @@ fn relaunch_request(
         .and_then(Value::as_bool)
         .or_else(|| lane.extra.get("refresh").and_then(Value::as_bool))
         .unwrap_or(false);
+    let permission = recorded_permission(lane, harness)?;
     let stem = pass
         .state_dir
         .join(format!("wall-relaunch-{}", lane.item))
@@ -1782,6 +1840,9 @@ fn relaunch_request(
         if let Some(value) = value.as_deref().filter(|v| !v.is_empty()) {
             request[key] = json!(value);
         }
+    }
+    if let Some(permission) = permission {
+        request["permission"] = json!(permission);
     }
     let file = PathBuf::from(format!("{stem}.json"));
     std::fs::write(&file, request.to_string())

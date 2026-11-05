@@ -181,7 +181,8 @@ format_issue_with_bundle() {
                 parent_id: ($node.parent.identifier // ""),
                 blocks: issue_blocks_ids($node.relations.nodes),
                 blocked_by: issue_blocked_by_ids($node.inverseRelations.nodes),
-                blocked_by_open: issue_blocked_by_open_ids($node.inverseRelations.nodes)
+                blocked_by_open: issue_blocked_by_open_ids($node.inverseRelations.nodes),
+                blocked_by_launch: issue_blocked_by_launch_ids($node.inverseRelations.nodes)
             }] + (($node.children.nodes // []) | map(flatten_children(depth + 1)) | flatten);
 
         # Flatten all children
@@ -213,6 +214,7 @@ format_issue_with_bundle() {
             blocks: issue_blocks_ids(.issue.relations.nodes),
             blocked_by: issue_blocked_by_ids(.issue.inverseRelations.nodes),
             blocked_by_open: issue_blocked_by_open_ids(.issue.inverseRelations.nodes),
+            blocked_by_launch: issue_blocked_by_launch_ids(.issue.inverseRelations.nodes),
             related: issue_related_ids(.issue.relations.nodes; .issue.inverseRelations.nodes),
             url: (.issue.url // ""),
             children: $children,

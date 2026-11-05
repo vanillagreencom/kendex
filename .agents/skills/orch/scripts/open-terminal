@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Wake a lane on this machine: hand the line that reads its inbox to the
 # session the lane already holds, as a second process in print mode for
-# Claude, Codex and Copilot and through pi-bridge for Pi, once the runtime's
-# lane status reads the lane idle. The wake decides nothing else: which lane,
-# which account and which session are the lane record's and the harness
-# store's. A lane's launch, relaunch and stop are the runtime's, through
-# `orch-runtime op --fleet --request FILE` with a `launch-lane` or
-# `close-owned-resources` request (../workflows/oversee.md § 3).
+# Claude and through pi-bridge for Pi, once no turn an earlier wake started
+# still runs and the runtime's lane status reads the lane idle. The wake
+# decides nothing else: which lane, which account and which session are the
+# lane record's and the harness store's. A lane's launch, relaunch and stop
+# are the runtime's, through `orch-runtime op --fleet --request FILE` with a
+# `launch-lane` or `close-owned-resources` request
+# (../workflows/oversee.md § 3).
 #
 # Message headers are `open-terminal: REASON field=value ...`; backslash,
 # tab, carriage return and newline in values are escaped on that first line.
@@ -26,7 +27,7 @@ message() { # REASON FIELD=VALUE...
     helper-missing) text='The required helper is not executable.' ;;
     items-missing) text='Specify a work item.' ;;
     tracker-invalid) text='The tracker must be linear or github.' ;;
-    harness-missing) text='Name the harness the lane runs: --harness claude, codex, pi or copilot.' ;;
+    harness-missing) text='Name the harness the lane runs: --harness claude or pi.' ;;
     state-missing) text='A wake names the fleet by its state: pass --state-dir, the directory holding workflow-state-oversee.json.' ;;
     flags-invalid) text='Launch flags must contain plain flag words without shell metacharacters.' ;;
     lane-unknown) text='The --lane option names no directory on this machine. A wake spends the account the lane record names where no --lane is passed.' ;;
@@ -34,15 +35,14 @@ message() { # REASON FIELD=VALUE...
     issue-canonical-failed) text='The canonical spelling of the issue identifier could not be read; git-context'"'"'s own line is above.' ;;
     github-item-invalid) text='A GitHub work item must be an issue number.' ;;
     repo-missing) text='Specify a repository with --repo for a GitHub item.' ;;
-    wake-invalid) text='The wake takes --harness claude, codex, pi or copilot and a lane on this machine whose record is in flight: a hosted lane'"'"'s sessions are on its host, a cloud lane has none to resume, and a stopped, parked or done lane is relaunched through the runtime, not woken.' ;;
+    wake-invalid) text='The wake takes --harness claude or pi and a lane on this machine whose record is in flight: a codex or copilot session is never resumed beside itself, a hosted lane'"'"'s sessions are on its host, a cloud lane has none to resume, and a stopped, parked or done lane is relaunched through the runtime, not woken.' ;;
     state-absent) text='No oversee workflow state exists at the address this wake resolved, so nothing was ever launched into it. Nothing woken. Point the wake at the fleet state with --state-dir, the directory holding the file workflow-state-oversee.json.' ;;
     state-read-failed) text='The fleet state could not be read; the store'"'"'s own line is above. Nothing woken.' ;;
     record-missing) text='No lane record names the item, so no launch made this lane and there is no session to wake. Nothing woken. Launch the item through the runtime (workflows/oversee.md § 3).' ;;
     directory-missing) text='The lane'"'"'s worktree is not a directory on this machine. Nothing woken.' ;;
-    wake-refused) text='The lane is not idle: the reason names the state the runtime'"'"'s lane status read from its pane and its harness process, and a resume would run a second session beside a live one. Nothing was started. A reason of unjudged is a reading the runtime could not make, its own line above, or a codex or copilot lane whose process still runs: neither harness publishes an idle signal, so a live session of either is never resumed beside itself.' ;;
+    wake-refused) text='The lane is not idle: the reason names the state the runtime'"'"'s lane status read from its pane and its harness process, and a resume would run a second session beside a live one. Nothing was started. A reason of wake-running is the turn an earlier wake started, still running under the identity the lane record names; a reason of unjudged is a reading that could not be made, its own line above.' ;;
     session-missing) text='No session of this harness names the item. Nothing was started.' ;;
     session-scan-failed) text='The harness'"'"'s session store could not be read. Nothing was started.' ;;
-    launch-trust-missing) text='The folder-trust entry for the lane'"'"'s worktree could not be made in the config the woken session would read, so nothing was started; the reason names the step.' ;;
     launch-identity-unread) text='The detached turn'"'"'s process identity could not be read, so the lane record names no turn for lane-close to stop; the turn runs.' ;;
     wake-failed) text='The delivering command exited non-zero before the wake window closed. The lane was not woken; the log says why.' ;;
     wake-unstarted) text='The detached start refused before any process ran; lane-launch'"'"'s own line is above. Nothing was started.' ;;
@@ -67,15 +67,16 @@ usage() {
 Usage: open-terminal --wake --harness HARNESS --state-dir DIR [options] ITEM...
 
 Wake a lane on this machine: resume the session its record and its harness
-store name, as a second process in print mode (claude, codex, copilot) or
-through pi-bridge (pi), with the one line that reads its inbox, once the
-runtime's lane status reads the lane idle. A lane launch, relaunch or stop is
-the runtime's: orch-runtime op --fleet --request FILE with a launch-lane or
-close-owned-resources request (workflows/oversee.md § 3).
+store name, as a second process in print mode (claude) or through pi-bridge
+(pi), with the one line that reads its inbox, once no turn an earlier wake
+started still runs and the runtime's lane status reads the lane idle. A lane
+launch, relaunch or stop is the runtime's: orch-runtime op --fleet --request
+FILE with a launch-lane or close-owned-resources request
+(workflows/oversee.md § 3).
 
 Options:
   --wake                 required: this entry does nothing else
-  --harness HARNESS      claude, codex, pi or copilot: the harness the lane runs
+  --harness HARNESS      claude or pi: the harness the lane runs
   --state-dir DIR        the fleet state the lane record is read from and
                          rewritten into: session_id, status and the wake's
                          own process identity, which lane-close stops by
@@ -84,14 +85,15 @@ Options:
   --lane DIR             the account the woken turn spends; without it the
                          account the lane record names
   --launch-flags "..."   plain flag words the woken command carries, such as
-                         a copilot model and effort
+                         a model
   --help                 this text
 
 A wake into a lane whose status is not idle refuses as wake-refused naming
-the state, and a codex or copilot lane, whose harness publishes no idle
-signal, is refused while its process runs; a lane no record names, a hosted
-or cloud lane, a lane whose record is not in flight, and a lane whose
-harness holds no session for it are refused by name and nothing starts.
+the state, and one whose record names a turn an earlier wake started that
+still runs refuses as wake-refused reason=wake-running; a codex or copilot
+lane, a lane no record names, a hosted or cloud lane, a lane whose record is
+not in flight, and a lane whose harness holds no session for it are refused
+by name and nothing starts.
 USAGE
 }
 
@@ -155,14 +157,13 @@ source "$SCRIPT_DIR/lib/lane-context.sh"
 source "$SCRIPT_DIR/lib/lane-relaunch.sh"
 WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
 ORCH_RUNTIME="${ORCH_RUNTIME_CLI:-$SCRIPT_DIR/orch-runtime}"
-LANES_CLI="${LANES_CLI:-$SCRIPT_DIR/lanes}"
 WORKFLOW_STATE="$SCRIPT_DIR/workflow-state"
 GH_ISSUE_PATTERN="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
 
 parse_argv "$@"
 [[ "$WAKE" == true ]] || { message wake-only >&2; exit 1; }
 [[ -n "$HARNESS" ]] || { message harness-missing >&2; exit 1; }
-[[ "$HARNESS" =~ ^(claude|codex|pi|copilot)$ ]] || { message wake-invalid "option=--wake" "harness=$HARNESS" >&2; exit 1; }
+[[ "$HARNESS" =~ ^(claude|pi)$ ]] || { message wake-invalid "option=--wake" "harness=$HARNESS" >&2; exit 1; }
 [[ -n "$STATE_DIR" ]] || { message state-missing >&2; exit 1; }
 [[ ${#ITEMS[@]} -gt 0 ]] || { message items-missing "count=0" >&2; exit 1; }
 [[ "$TRACKER" == "linear" || "$TRACKER" == "github" ]] || { message tracker-invalid "tracker=$TRACKER" >&2; exit 1; }
@@ -189,18 +190,6 @@ fi
 # display keeps the live-session names for its turn alone.
 LAUNCH_SCRUB_BASE=("${LANE_LAUNCH_SCRUB[@]}")
 
-# The two homes lib/lane-relaunch.sh asks of its caller for the session scan:
-# the account a codex session store is read under, this process's own, and
-# the copilot home, named by --lane where one is, else the caller's.
-launch_ambient_codex_home() {
-  if [[ "${LANE_ENV%%=*}" == CODEX_HOME ]]; then printf '%s\n' "${LANE_ENV#*=}"; return; fi
-  ( CODEX_HOME="${CODEX_HOME:-}"; lane_context_caller_cfg codex )
-}
-copilot_launch_home() {
-  if [[ "${LANE_ENV%%=*}" == COPILOT_HOME ]]; then printf '%s\n' "${LANE_ENV#*=}"; return; fi
-  lane_context_caller_cfg copilot
-}
-
 # The lane record the fleet state holds for WT_ID, compact on stdout; status
 # 2 for a state that could not be read, which is no answer, and 1 for none.
 lane_record() { # WT_ID
@@ -221,8 +210,8 @@ wake_state() { # WT_ID
   jq -r '.result.state // "unjudged"' <<<"$reply" 2>/dev/null || printf 'unjudged\n'
 }
 
-# The woken command: the harness's own resume of SESSION_ID in print mode,
-# with the lane's inbox line as its one prompt, the lead settings and the
+# The woken command: claude's own resume of SESSION_ID in print mode, with
+# the lane's inbox line as its one prompt, the lead settings and the
 # question-tool words first, then the flags; pi takes the line through
 # pi-bridge into the live session in WT. The compaction words follow the
 # model the session's transcript names (WAKE_MODEL), since the new process
@@ -239,39 +228,18 @@ wake_line() { # ITEM WT_ID SESSION_ID WT
   case "$HARNESS" in
     pi) printf 'pi-bridge send --cwd %q%s\n' "$4" "$line" ;;
     claude) printf 'claude -n %q %s--resume %q -p%s\n' "$1" "$flags" "$3" "$line" ;;
-    codex) printf 'codex exec resume %s%q%s\n' "$flags" "$3" "$line" ;;
-    copilot) printf 'copilot %s--resume=%q -p%s\n' "$flags" "$3" "$line" ;;
   esac
 }
 
 # The command under the account it spends and the launch environment
 # lib/lane-launch.sh renders for every launcher: the account variable where
-# the record or --lane names one, the folder trust a codex or copilot session
-# reads, the identity scrub and the lane's own words.
-wake_command() { # ITEM WT CMD
-  local item="$1" wt="$2" cmd="$3" launch_var="" launch_home="" form
-  case "$HARNESS" in
-    codex | copilot)
-      if [[ -n "$LANE_ENV" ]]; then
-        launch_var="${LANE_ENV%%=*}"; launch_home="${LANE_ENV#*=}"
-      elif [[ "$HARNESS" == codex ]]; then
-        launch_var=CODEX_HOME; launch_home="$(launch_ambient_codex_home)" || return 1
-      else
-        launch_var=COPILOT_HOME; launch_home="$(copilot_launch_home)" || return 1
-      fi
-      if ! lane_trust_prepare "$HARNESS" "$launch_home" "$wt"; then
-        message launch-trust-missing "item=$item" "lane=$launch_home" "dir=$wt" "reason=$LANE_TRUST_REASON" >&2
-        [[ -z "$LANE_TRUST_DETAIL" ]] || printf '%s\n' "$LANE_TRUST_DETAIL" >&2
-        return 1
-      fi
-      launch_home="$LANE_TRUST_HOME"
-      form="$(lane_launch_form "$cmd" "$HARNESS" "$launch_home" "")" || return 1
-      cmd="$(lane_launch_line "$cmd" "$HARNESS" "$launch_var" "$launch_home" "$form")" || return 1 ;;
-    *)
-      if [[ -n "$LANE_ENV" ]]; then launch_var="${LANE_ENV%%=*}"; launch_home="${LANE_ENV#*=}"; fi
-      form="$(lane_launch_form "$cmd" "$HARNESS" "$launch_home" "")" || return 1
-      cmd="$(lane_launch_line "$cmd" "$HARNESS" "$launch_var" "$launch_home" "$form")" || return 1 ;;
-  esac
+# the record or --lane names one, the identity scrub and the lane's own
+# words.
+wake_command() { # WT CMD
+  local wt="$1" cmd="$2" launch_var="" launch_home="" form
+  if [[ -n "$LANE_ENV" ]]; then launch_var="${LANE_ENV%%=*}"; launch_home="${LANE_ENV#*=}"; fi
+  form="$(lane_launch_form "$cmd" "$HARNESS" "$launch_home" "")" || return 1
+  cmd="$(lane_launch_line "$cmd" "$HARNESS" "$launch_var" "$launch_home" "$form")" || return 1
   cmd="export KENDEX_USER_EMAIL='' && $cmd"
   printf '%s\n' "export KENDEX_LANE_ORIGIN=$(lane_single_quote "$wt") && $cmd"
 }
@@ -287,8 +255,8 @@ run_detached() { # LOG COMMAND...
 # A resumed turn can run for a long time, so it runs detached from the caller,
 # in the lane's worktree, with its output in that worktree's tmp/. Its exit
 # status is read if it lands inside the window: pi-bridge returns once the
-# session takes the line, and a Claude, Codex or Copilot start failure (a
-# rejected flag, an auth wall, an unresumable id) exits there too. The status
+# session takes the line, and a Claude start failure (a rejected flag, an
+# auth wall, an unresumable id) exits there too. The status
 # comes from a file the detached shell writes, because an exited child that
 # nobody has reaped still answers `kill -0`.
 open_wake() { # DIR WT_ID CMD
@@ -337,7 +305,7 @@ wake_record_write() { # WT_ID SESSION_ID
 }
 
 wake_item() { # RAW
-  local raw="$1" item wt_id record host kind status live_display wt state session_file="" session_id="" resume_rc=0 reading cmd record_rc=0
+  local raw="$1" item wt_id record host kind status live_display wt state session_file="" session_id="" resume_rc=0 reading cmd record_rc=0 wake_identity wake_rc
   LANE_ENV="" LAUNCH_WAKE="" WAKE_MODEL=""
   LANE_LAUNCH_SCRUB=("${LAUNCH_SCRUB_BASE[@]}")
   if [[ "$TRACKER" == linear ]]; then
@@ -374,6 +342,21 @@ wake_item() { # RAW
     preparing | running) ;;
     *) message wake-invalid "option=--wake" "harness=$HARNESS" "status=${status:-unrecorded}" >&2; return 1 ;;
   esac
+  # The turn an earlier wake started, by the identity the record names and
+  # lane-close stops it by: a pane reads idle while that detached turn runs,
+  # so the identity is read before the pane is. Live under its recorded
+  # start, no second turn starts beside it; ended, or a later process under
+  # its pid, it is no turn; an identity that cannot be read admits nothing.
+  wake_identity="$(jq -r '.wake | select(type == "object") | [(.pid | tostring), (.start // "")] | join(" ")' <<<"$record")" || return 1
+  if [[ -n "$wake_identity" ]]; then
+    wake_rc=0
+    lane_identity_status "${wake_identity%% *}" "${wake_identity#* }" || wake_rc=$?
+    case "$wake_rc" in
+      0) message wake-refused "item=$item" "reason=wake-running" >&2; return 1 ;;
+      3) ;;
+      *) message wake-refused "item=$item" "reason=unjudged" "cause=$LANE_IDENTITY_CAUSE" >&2; return 1 ;;
+    esac
+  fi
   # The account the turn spends: --lane, else the record's, as the account
   # variable the launchers render.
   if [[ -n "$LANE" ]]; then
@@ -392,22 +375,15 @@ wake_item() { # RAW
   if [[ "$HARNESS" != pi ]]; then
     state="$(wake_state "$wt_id")" || state=unjudged
     [[ "$state" == idle ]] || { message wake-refused "item=$item" "reason=$state" >&2; return 1; }
-    # The runtime reads idle with the harness in the foreground: for codex
-    # and copilot, which publish no idle signal, that is a live session no
-    # second process may run beside.
-    case "$HARNESS" in codex | copilot) message wake-refused "item=$item" "reason=unjudged" >&2; return 1 ;; esac
     session_file="$(find_relaunch_session "$HARNESS" "$wt")" || resume_rc=$?
     [[ "$resume_rc" -le 1 ]] || { message session-scan-failed "item=$item" "harness=$HARNESS" >&2; return 1; }
     [[ -n "$session_file" ]] || { message session-missing "item=$item" "harness=$HARNESS" >&2; return 1; }
     session_id="$(session_id_of "$HARNESS" "$session_file")" || { message session-scan-failed "item=$item" "harness=$HARNESS" >&2; return 1; }
-    # A copilot row names no compaction words and no adapter reads its session.
-    if [[ "$HARNESS" != copilot ]]; then
-      reading="$(lane_context_reading "$HARNESS" < "$session_file")" || { message session-scan-failed "item=$item" "harness=$HARNESS" >&2; return 1; }
-      [[ "$reading" != *$'\t'* ]] || WAKE_MODEL="${reading##*$'\t'}"
-    fi
+    reading="$(lane_context_reading "$HARNESS" < "$session_file")" || { message session-scan-failed "item=$item" "harness=$HARNESS" >&2; return 1; }
+    [[ "$reading" != *$'\t'* ]] || WAKE_MODEL="${reading##*$'\t'}"
   fi
   cmd="$(wake_line "$item" "$wt_id" "$session_id" "$wt")" || return 1
-  cmd="$(wake_command "$item" "$wt" "$cmd")" || return 1
+  cmd="$(wake_command "$wt" "$cmd")" || return 1
   open_wake "$wt" "$wt_id" "$cmd" || return 1
   record_rc=0
   wake_record_write "$wt_id" "$session_id" || record_rc=$?

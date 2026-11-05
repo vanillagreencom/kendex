@@ -40,7 +40,8 @@
 # that signal, a call that ended with no exit status. What an act left on
 # GitHub outlives the map a row rewrites between calls: it is kept in
 # `<map>.acts.json` beside the map and laid over every later answer, a
-# ready mark making `pr view N` and `pulls/N` read ready, a request a zero
+# ready mark making `pr view N` and `pulls/N` read ready (and `pr view N`
+# read the `head` its entry carries: a push that landed with the mark), a request a zero
 # exit on `pulls/N/requested_reviewers` made (or a failed call whose entry
 # says `landed`, an answer lost after GitHub took it) adding GitHub's
 # record of it,
@@ -48,7 +49,8 @@
 # The GraphQL form
 # with `-F number=N` (the thread walk, its `cursor=` field empty on the
 # first page) answers from `graphql number=N cursor=C`, its body printed
-# as it stands.
+# as the `nodes` form prints one: exit 1 and the `gh: ` line where it
+# carries `errors`.
 set -u
 here="$(dirname "${BASH_SOURCE[0]}")"
 if [ -z "${GH_FAKE_LOG:-}" ]; then
@@ -90,6 +92,7 @@ elif [ "${1:-}" = pr ] && [ "${2:-}" = ready ]; then
     signal=$(jq -r '.signal // empty' <<<"$reply")
     [ -z "$signal" ] || [ "$(jq -r '.landed // false' <<<"$reply")" = true ] || kill -s "$signal" "$$"
     act '.ready = ((.ready // []) + [$n] | unique)' --arg n "${3:-}"
+    act '.heads += (if $head == "" then {} else {($n): $head} end)' --arg n "${3:-}" --arg head "$(jq -r '.head // empty' <<<"$reply")"
     [ -z "$signal" ] || kill -s "$signal" "$$"
     printf '✓ Pull request #%s is marked as "ready for review"\n' "${3:-}" >&2
     exit 0
@@ -109,7 +112,7 @@ elif [ "${2:-}" = graphql ]; then
     shift
   done
   if [ -n "$number" ]; then
-    reply=$(jq -c --arg k "graphql number=$number cursor=$cursor" '.[$k] // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
+    reply=$(jq -c --arg k "graphql number=$number cursor=$cursor" '.[$k] // empty | if (.body | type) == "object" and ((.body.errors // []) | length) > 0 then .exit = 1 | .stderr = ("gh: " + ([.body.errors[] | .message // ""] | join("\n"))) else . end' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
   else
   reply=$(jq -c --argjson ids "$ids" --arg keyed "graphql owner=$owner name=$name" '
     (.[$keyed] // .graphql) // empty
@@ -156,6 +159,7 @@ fi
 if [ -n "$overlay" ] && [ -n "$reply" ] && [ -f "$acts" ]; then
   reply=$(jq -c --slurpfile acts "$acts" --arg kind "$overlay" --arg n "$number" '
     $acts[0] as $a
+    | if $kind == "view" and (.exit // 0) == 0 and (($a.heads // {})[$n] // "") != "" then .body.headRefOid = $a.heads[$n] else . end
     | if (.exit // 0) != 0 then .
       elif $kind == "view" and (($a.ready // []) | index($n)) then .body.isDraft = false
       elif $kind == "pull" and (($a.ready // []) | index($n)) then .body.draft = false

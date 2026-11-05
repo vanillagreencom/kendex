@@ -1,15 +1,17 @@
-//! The wake entry, `scripts/open-terminal --wake`, over the runtime's lane
-//! status through the real executable: a Codex pane the runtime reads
-//! `idle` still holds the live session, which no second process may run
-//! beside, and a record no longer in flight is refused by its status before
-//! any read. Each row names the defect it catches at its doc comment and
-//! holds the runtime's own reading beside the wake's answer. The scripts
-//! run from a directory of links to the shipped tree under a private home,
-//! the lane's pane on a private tmux server, and a control copies the entry
-//! with its rule cut.
+//! The wake entry, `scripts/open-terminal --wake`, through the real
+//! executable over a Claude lane the real `launch-lane` launched on a
+//! private tmux server: a codex or copilot wake is refused by the harness
+//! gate, a record no longer in flight by its status, and a second wake
+//! while the turn the first started still runs by that turn's recorded
+//! identity, each before the runtime is asked anything; and the lane record
+//! the recovery suites plant is the one this launch wrote. Each row names
+//! the defect it catches at its doc comment and holds the runtime's own
+//! reading beside the wake's answer. The scripts run from a directory of
+//! links to the shipped tree under a private home, and a control copies the
+//! entry with its rule cut.
 #![allow(
     clippy::disallowed_methods,
-    reason = "the rows hold a private tmux server and plant the records and homes the entry reads"
+    reason = "the rows hold a private tmux server and plant the homes and stubs the entry reads"
 )]
 
 #[path = "support.rs"]
@@ -18,17 +20,26 @@ mod support;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::time::{Duration, Instant};
 
-use serde_json::json;
+use serde_json::{Value, json};
 use support::*;
 
-const CODEX_ID: &str = "44444444-4444-4444-4444-444444444444";
+const CLAUDE_ID: &str = "22222222-2222-2222-2222-222222222222";
+const PERMISSION: &str = "--permission-mode dontAsk";
 
 fn scripts() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
         .join("scripts")
+}
+
+fn fixture() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("tests/fixtures/launch-lane/claude-dontask.json")
 }
 
 fn executable(path: &Path, text: &str) {
@@ -62,12 +73,43 @@ fn linked_scripts(root: &Path, name: &str, edit: Option<(&str, &str)>) -> PathBu
     dir
 }
 
-/// One lane: its worktree, the Codex session store naming it, the stubs
-/// the wake calls (the harness, which records the line it was woken with;
-/// the worktree CLI; the account listing; the runtime as the real binary
-/// under the runner's environment), its pane on the fleet server running a
-/// Codex stand-in at its idle composer, and its running record naming that
-/// pane and process.
+/// Wait for `path` to hold readable JSON, bounded.
+fn await_json(path: &Path) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Ok(text) = std::fs::read_to_string(path)
+            && let Ok(value) = serde_json::from_str::<Value>(&text)
+        {
+            return value;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "nothing readable at {}",
+            path.display()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Wait until none of `pids` is live, bounded.
+fn await_ended(pids: &[u32]) {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while pids.iter().any(|pid| live(*pid)) {
+        assert!(
+            Instant::now() < deadline,
+            "a woken turn still runs: {pids:?}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// One lane, launched by the real `launch-lane` into the runner's checkout
+/// with the narrow permission choice, its pane on the fleet server running
+/// the recording stub at its composer; beside it the Claude session store
+/// naming the checkout, and the stubs the wake calls: the harness, which
+/// records the pid of each turn it was woken as and holds while the hold
+/// file stands; the worktree CLI; the runtime as the real binary under the
+/// runner's environment, each call it gets written down.
 struct Lane {
     _dir: tempfile::TempDir,
     root: PathBuf,
@@ -76,6 +118,9 @@ struct Lane {
     bin: PathBuf,
     home: PathBuf,
     capture: PathBuf,
+    calls: PathBuf,
+    hold: PathBuf,
+    fifo: PathBuf,
 }
 
 impl Lane {
@@ -83,85 +128,59 @@ impl Lane {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
         let server = Server::start(&root, "fleet");
-        let runner = Runner::new(&server, "stub-confirm");
+        let runner = Runner::new(&server, "stub-record");
         runner.init_fleet();
-        let wt = root.join("wt/KEN-1");
+        let work = runner.state_dir().to_path_buf();
+        let mut request = launch_request("KEN-1", &work);
+        request["model"] = json!("claude-fable-5-1");
+        request["effort"] = json!("high");
+        request["permission"] = json!(PERMISSION);
+        let report = effect_report(&runner.op_fleet(&request));
+        assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+        // The stub writes its record as it starts: the harness is up.
+        await_json(&work.join("launch-record.json"));
         let home = root.join("home");
-        let codex_home = home.join(".codex");
-        let bin = root.join("bin");
-        let capture = root.join("woken");
-        for sub in [&wt, &codex_home.join("sessions/2026"), &bin] {
-            std::fs::create_dir_all(sub).unwrap();
-        }
+        let projects = home.join(".claude-shared/projects/repo");
+        std::fs::create_dir_all(&projects).unwrap();
         std::fs::write(
-            codex_home.join("sessions/2026/rollout.jsonl"),
+            projects.join(format!("{CLAUDE_ID}.jsonl")),
             format!(
                 "{}\n",
-                json!({"type": "session_meta", "payload": {"id": CODEX_ID, "cwd": wt, "source": "cli", "parent_thread_id": null}})
+                json!({"type": "user", "cwd": work, "isSidechain": false, "message": {"content": "Continue."}})
             ),
         )
         .unwrap();
+        let bin = root.join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let capture = root.join("woken");
+        let calls = root.join("runtime-calls");
+        let hold = root.join("hold");
+        let fifo = root.join("wake.fifo");
+        mkfifo(&fifo);
         executable(
-            &bin.join("codex"),
+            &bin.join("claude"),
             &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"codex $*\" > '{}'\n",
-                capture.display()
+                "#!/bin/bash\nprintf '%s\\n' \"$$\" >> '{}'\n[ -e '{}' ] || exit 0\nexec 9<>'{}'\nread -r -t 60 -u 9 _\n",
+                capture.display(),
+                hold.display(),
+                fifo.display()
             ),
         );
         executable(
             &bin.join("worktree"),
             &format!(
                 "#!/bin/sh\n[ \"$1\" = path ] || exit 1\nprintf '%s\\n' '{}'\n",
-                wt.display()
-            ),
-        );
-        executable(
-            &bin.join("lanes"),
-            &format!(
-                "#!/bin/sh\nprintf '[{{\"config_dir\":\"%s\"}}]\\n' '{}'\n",
-                codex_home.display()
+                work.display()
             ),
         );
         executable(
             &bin.join("orch-runtime"),
             &format!(
-                "#!/bin/sh\nexec '{}' --no-private-env \"$@\"\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexec '{}' --no-private-env \"$@\"\n",
+                calls.display(),
                 binary().display()
             ),
         );
-        // The pane: a process named `codex` drawing Codex's composer and
-        // holding its stdin, as a live session at its prompt does.
-        let pane_bin = root.join("pane-bin");
-        std::fs::create_dir_all(&pane_bin).unwrap();
-        executable(
-            &pane_bin.join("codex"),
-            "#!/bin/bash\nprintf '\\342\\200\\272 Ask Codex to do anything\\n'\nwhile read -r line; do :; done\n",
-        );
-        let pane = server.open_window("KEN-1", &wt, &pane_bin.join("codex").display().to_string());
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-        loop {
-            let cap = tmux(&server.socket, &["capture-pane", "-p", "-t", &pane]);
-            if String::from_utf8_lossy(&cap.stdout).contains('\u{203a}') {
-                break;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "the composer was never drawn"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-        let pid = server.pane_pid(&pane);
-        let mut fleet = runner.fleet();
-        fleet["lanes"] = json!([{
-            "item": "KEN-1", "tracker": "linear", "repo": null, "harness": "codex",
-            "window": "fleet:KEN-1", "account": null, "host": null, "kind": "local",
-            "mail_root": wt, "surface": "tmux", "model": "gpt-6", "effort": "high",
-            "session_id": null, "session_since": "2026-01-29T15:00:00Z",
-            "launched_at": "2026-01-29T15:00:00Z", "running_at": "2026-01-29T15:00:01Z",
-            "status": "running", "over_cap": null, "allow_all": null,
-            "launch": {"pane": pane, "server": server.pid, "pid": pid, "start": start_of(pid)}
-        }]);
-        runner.write_fleet(&fleet);
         Lane {
             _dir: dir,
             root,
@@ -170,7 +189,14 @@ impl Lane {
             bin,
             home,
             capture,
+            calls,
+            hold,
+            fifo,
         }
+    }
+
+    fn record(&self) -> Value {
+        self.runner.fleet()["lanes"][0].clone()
     }
 
     fn set_status(&self, status: &str) {
@@ -184,19 +210,18 @@ impl Lane {
         self.runner.run(&["lane", "status", "--item", "KEN-1"])
     }
 
-    /// The wake of KEN-1 through `entry`, a scripts directory under the
-    /// root, with every stub on its path and the runtime's environment.
-    fn wake(&self, entry: &Path) -> Output {
-        let _ = std::fs::remove_file(&self.capture);
+    /// The wake of KEN-1 as `harness` through `entry`, a scripts directory
+    /// under the root, with every stub on its path and the runtime's
+    /// environment.
+    fn wake(&self, entry: &Path, harness: &str) -> Output {
         let mut command = Command::new(entry.join("open-terminal"));
         isolation_env(&mut command);
         self.runner.apply_env(&mut command);
-        let codex_home = self.home.join(".codex");
         command
             .args([
                 "--wake",
                 "--harness",
-                "codex",
+                harness,
                 "--state-dir",
                 &self.runner.state_dir().display().to_string(),
                 "KEN-1",
@@ -205,78 +230,98 @@ impl Lane {
             .env("PATH", tool_path(&[&self.bin]))
             .env("HOME", &self.home)
             .env("LANES_HOME", &self.home)
-            .env("CODEX_HOME", &codex_home)
             .env("WORKTREE_CLI", self.bin.join("worktree"))
-            .env("LANES_CLI", self.bin.join("lanes"))
             .env("ORCH_RUNTIME_CLI", self.bin.join("orch-runtime"))
             .env("GH_ISSUE_PATTERN", "[A-Z]+-[0-9]+");
         command.output().unwrap()
     }
 
-    /// The line the harness stub was woken with, where a wake started one.
-    fn woken(&self) -> Option<String> {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while !self.capture.exists() {
-            if std::time::Instant::now() >= deadline {
-                return None;
+    /// The runtime calls the wake made, one line each.
+    fn calls(&self) -> Vec<String> {
+        std::fs::read_to_string(&self.calls)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// The pids of the turns the harness stub was woken as, in order.
+    fn woken(&self) -> Vec<u32> {
+        std::fs::read_to_string(&self.capture)
+            .unwrap_or_default()
+            .lines()
+            .map(|line| line.trim().parse().unwrap())
+            .collect()
+    }
+
+    /// Wait until the stub has recorded `n` woken turns, bounded.
+    fn await_woken(&self, n: usize) -> Vec<u32> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let pids = self.woken();
+            if pids.len() >= n {
+                return pids;
             }
-            std::thread::sleep(std::time::Duration::from_millis(50));
+            assert!(
+                Instant::now() < deadline,
+                "{n} woken turns expected, {pids:?} recorded"
+            );
+            std::thread::sleep(Duration::from_millis(50));
         }
-        Some(
-            std::fs::read_to_string(&self.capture)
-                .unwrap()
-                .trim()
-                .to_owned(),
-        )
+    }
+
+    /// Release every held turn and wait for it to end.
+    fn release(&self, pids: &[u32]) {
+        let _ = std::fs::remove_file(&self.hold);
+        for pid in pids.iter().filter(|pid| live(**pid)) {
+            release_hold(&self.fifo, Duration::from_secs(10), || {
+                format!("the held turn {pid} never opened its fifo")
+            });
+        }
+        await_ended(pids);
     }
 }
 
-/// The wake starting a second Codex process beside a live session: the
-/// runtime reads the pane at its composer `idle` with the harness in the
-/// foreground, and Codex publishes no idle signal, so the wake refuses
-/// that lane as `unjudged` and starts nothing.
+/// A codex or copilot wake reaching the runtime, or a session lookup, for
+/// a harness no wake may resume: neither publishes an idle signal, so a
+/// resume would run beside a live session; the gate refuses the harness
+/// word before any read.
 #[test]
-fn a_live_codex_pane_the_runtime_reads_idle_is_refused_by_the_wake() {
+fn a_codex_or_copilot_wake_is_refused_by_the_harness_gate_before_any_read() {
     let lane = Lane::new();
-    let status = lane.status();
-    assert!(status.status.success(), "{}", stderr(&status));
-    let result = &reply(&status)["result"];
-    assert_eq!(result["state"], json!("idle"), "{result}");
-    assert!(
-        result["identity"]
-            .as_str()
-            .is_some_and(|i| i.contains(":ticks:")),
-        "the recorded process is the live one: {result}"
-    );
     let entry = linked_scripts(&lane.root, "scripts", None);
-    let out = lane.wake(&entry);
-    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
-    assert!(
-        stderr(&out).contains("open-terminal: wake-refused item=KEN-1 reason=unjudged\n"),
-        "{}",
-        stderr(&out)
-    );
-    assert_eq!(
-        lane.woken(),
-        None,
-        "nothing started beside the live session"
-    );
-    // The control: the rule cut, the wake resumes the session beside the
-    // live pane.
+    for harness in ["codex", "copilot"] {
+        let out = lane.wake(&entry, harness);
+        assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+        assert!(
+            stderr(&out).contains(&format!(
+                "open-terminal: wake-invalid option=--wake harness={harness}\n"
+            )),
+            "{}",
+            stderr(&out)
+        );
+    }
+    assert_eq!(lane.calls(), Vec::<String>::new(), "the runtime was asked");
+    assert_eq!(lane.woken(), Vec::<u32>::new(), "a turn started");
+    // The control: the gate widened, a codex wake asks the runtime and goes
+    // looking for a codex session of the lane.
     let cut = linked_scripts(
         &lane.root,
         "scripts-cut",
-        Some((
-            "    case \"$HARNESS\" in codex | copilot) message wake-refused \"item=$item\" \"reason=unjudged\" >&2; return 1 ;; esac\n",
-            "",
-        )),
+        Some(("^(claude|pi)$", "^(claude|codex|pi|copilot)$")),
     );
-    let out = lane.wake(&cut);
-    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
-    let line = lane.woken().expect("the control started a second process");
+    let out = lane.wake(&cut, "codex");
     assert!(
-        line.starts_with("codex exec resume ") && line.contains(CODEX_ID),
-        "{line}"
+        lane.calls()
+            .iter()
+            .any(|call| call.contains("lane status --item KEN-1")),
+        "{:?}",
+        lane.calls()
+    );
+    assert!(
+        stderr(&out).contains("open-terminal: session-missing item=KEN-1 harness=codex\n"),
+        "{}",
+        stderr(&out)
     );
 }
 
@@ -297,18 +342,16 @@ fn a_record_no_longer_in_flight_is_refused_by_its_status_before_the_read() {
         stderr(&status)
     );
     let entry = linked_scripts(&lane.root, "scripts", None);
-    let out = lane.wake(&entry);
+    let out = lane.wake(&entry, "claude");
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
-    let err = stderr(&out);
     assert!(
-        err.contains("open-terminal: wake-invalid option=--wake harness=codex status=done\n"),
-        "{err}"
+        stderr(&out)
+            .contains("open-terminal: wake-invalid option=--wake harness=claude status=done\n"),
+        "{}",
+        stderr(&out)
     );
-    assert!(
-        !err.contains("orch-runtime: lane-missing"),
-        "the record is refused before the read: {err}"
-    );
-    assert_eq!(lane.woken(), None);
+    assert_eq!(lane.calls(), Vec::<String>::new(), "the runtime was asked");
+    assert_eq!(lane.woken(), Vec::<u32>::new(), "a turn started");
     // The control: the status check cut, the wake asks the runtime, whose
     // refusal it reads as unjudged.
     let cut = linked_scripts(
@@ -319,11 +362,143 @@ fn a_record_no_longer_in_flight_is_refused_by_its_status_before_the_read() {
             "    preparing | running | done) ;;\n",
         )),
     );
-    let out = lane.wake(&cut);
+    let out = lane.wake(&cut, "claude");
     let err = stderr(&out);
     assert!(
         err.contains("orch-runtime: lane-missing item=KEN-1")
             && err.contains("open-terminal: wake-refused item=KEN-1 reason=unjudged\n"),
         "{err}"
     );
+}
+
+/// A second wake starting a turn beside the one the first wake started:
+/// the detached print-mode turn runs outside the pane, whose composer the
+/// runtime reads `idle` all the while, so the pane's word admits it; the
+/// wake refuses by the turn's identity the record names, before any status
+/// read, and keeps that identity for lane-close. A turn that ended is no
+/// turn: the next wake starts one and records it.
+#[test]
+fn a_second_wake_while_the_first_turn_runs_is_refused_before_any_status_read() {
+    let lane = Lane::new();
+    let entry = linked_scripts(&lane.root, "scripts", None);
+    std::fs::write(&lane.hold, b"").unwrap();
+    let first = lane.wake(&entry, "claude");
+    assert_eq!(first.status.code(), Some(0), "{}", stderr(&first));
+    let turns = lane.await_woken(1);
+    let first_wake = lane.record()["wake"].clone();
+    assert!(
+        first_wake["pid"].as_u64().is_some() && first_wake["start"].as_str().is_some(),
+        "the first wake recorded its turn: {first_wake}"
+    );
+    assert!(live(turns[0]), "the first turn runs on");
+    let state = reply(&lane.status());
+    assert_eq!(
+        state["result"]["state"],
+        json!("idle"),
+        "the pane reads idle while the detached turn runs: {state}"
+    );
+    let calls_before = lane.calls();
+    let second = lane.wake(&entry, "claude");
+    assert_eq!(second.status.code(), Some(1), "{}", stderr(&second));
+    assert!(
+        stderr(&second).contains("open-terminal: wake-refused item=KEN-1 reason=wake-running\n"),
+        "{}",
+        stderr(&second)
+    );
+    assert_eq!(
+        lane.calls(),
+        calls_before,
+        "the second wake asked the runtime"
+    );
+    assert_eq!(
+        lane.record()["wake"],
+        first_wake,
+        "the second wake rewrote the first turn's identity"
+    );
+    assert_eq!(lane.woken().len(), 1, "a second turn started");
+    lane.release(&turns);
+    // The turn over, its identity is no turn: the next wake starts one.
+    let third = lane.wake(&entry, "claude");
+    assert_eq!(third.status.code(), Some(0), "{}", stderr(&third));
+    let turns = lane.await_woken(2);
+    assert_ne!(
+        lane.record()["wake"],
+        first_wake,
+        "the wake after the turn ended recorded its own turn"
+    );
+    await_ended(&turns);
+    // The control: the liveness read cut, every recorded turn reads ended,
+    // and the second wake starts a turn beside the running first.
+    let cut = linked_scripts(
+        &lane.root,
+        "scripts-cut",
+        Some((
+            "    lane_identity_status \"${wake_identity%% *}\" \"${wake_identity#* }\" || wake_rc=$?\n",
+            "    wake_rc=3\n",
+        )),
+    );
+    std::fs::write(&lane.hold, b"").unwrap();
+    let first = lane.wake(&cut, "claude");
+    assert_eq!(first.status.code(), Some(0), "{}", stderr(&first));
+    let turns = lane.await_woken(3);
+    let first_wake = lane.record()["wake"].clone();
+    let second = lane.wake(&cut, "claude");
+    let turns = {
+        let more = lane.await_woken(4);
+        assert_eq!(second.status.code(), Some(0), "{}", stderr(&second));
+        assert_ne!(
+            lane.record()["wake"],
+            first_wake,
+            "the control kept the identity"
+        );
+        assert!(
+            live(turns[2]) && live(more[3]),
+            "the control's two turns run beside each other"
+        );
+        more
+    };
+    lane.release(&turns[2..]);
+}
+
+/// The lane record the recovery suites plant drifting from what the real
+/// `launch-lane` writes: `tests/lane_model_recovery.sh` and the hook's
+/// `lane-mail-model-switch.test.sh` read the permission words off the
+/// record the fixture holds, so the fixture is this launch's record, its
+/// root and its process, pane and clock values as placeholders.
+#[test]
+fn the_recovery_suites_planted_record_is_the_real_launch_lanes() {
+    let lane = Lane::new();
+    let work = lane.runner.state_dir().display().to_string();
+    let mut record = lane.record();
+    for (field, placeholder) in [
+        ("pane", "@PANE@"),
+        ("server", "@SERVER@"),
+        ("server_start", "@SERVER_START@"),
+        ("pid", "@PID@"),
+        ("start", "@START@"),
+    ] {
+        if record["launch"].get(field).is_some() {
+            record["launch"][field] = json!(placeholder);
+        }
+    }
+    for (field, placeholder) in [
+        ("session_id", "@SESSION_ID@"),
+        ("launched_at", "@LAUNCHED_AT@"),
+        ("running_at", "@RUNNING_AT@"),
+        ("session_since", "@SESSION_SINCE@"),
+    ] {
+        assert!(record[field].is_string(), "{field} on the record: {record}");
+        record[field] = json!(placeholder);
+    }
+    let text = serde_json::to_string_pretty(&record)
+        .unwrap()
+        .replace(&work, "@ROOT@");
+    let planted: Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture()).unwrap()).unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&text).unwrap(),
+        planted,
+        "the fixture is not this launch's record:\n{text}"
+    );
+    assert_eq!(planted["permission"], json!(PERMISSION), "{planted}");
 }

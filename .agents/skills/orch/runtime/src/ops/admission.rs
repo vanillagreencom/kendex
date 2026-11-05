@@ -48,9 +48,10 @@
 //! launch that names none is judged on the sources it does name. A
 //! `linear` item's launch blockers are read with it, and every container
 //! ancestor's up its `parent_id` chain: an open blocker anywhere on the
-//! chain refuses `launch-blocked` naming the blockers, and an ancestor the
-//! tracker could not read whole refuses `launch-blocked-unread`, before any
-//! holder is judged or any record is written.
+//! chain refuses `launch-blocked` naming the blockers, and a node the
+//! tracker could not read whole, or whose answer carries no launch-blocker
+//! field, refuses `launch-blocked-unread`, before any holder is judged or
+//! any record is written.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -80,9 +81,11 @@ pub struct ItemRead {
     /// The container the item sits under, where the tracker reports one.
     pub parent_id: Option<String>,
     /// The items that block this one's launch as the tracker judges them
-    /// (the linear package's `blocked_by_launch`, read under the safe
-    /// format this runtime asks for by name).
-    pub blocked_by_launch: Vec<String>,
+    /// (the linear package's `blocked_by_launch`, read under the safe bundle
+    /// format this runtime asks for by name); `None` where the answer
+    /// carries no such field, which is no judgement: the gate refuses on it
+    /// rather than reading no blocker.
+    pub blocked_by_launch: Option<Vec<String>>,
 }
 
 /// A diff range the change-scope paths are read over,
@@ -243,8 +246,10 @@ const UNCOUNTED_PREFIX: &str = "changelog.d/";
 /// The launch blockers of `item` and of every container ancestor up its
 /// `parent_id` chain, each ancestor read through `reader`: a chain read
 /// whole with none passes; a blocker on it refuses `launch-blocked` with
-/// the blockers sorted, once each; an ancestor read that fails or returns
-/// to an item already read refuses `launch-blocked-unread` naming it.
+/// the blockers sorted, once each; a node whose read fails, whose answer
+/// names no launch blockers (a formatter without the field), or whose
+/// parent is an item already read refuses `launch-blocked-unread` naming
+/// it.
 fn launch_blockers(
     item: &str,
     read: &ItemRead,
@@ -258,8 +263,12 @@ fn launch_blockers(
     let mut blockers: BTreeSet<String> = BTreeSet::new();
     let mut seen: BTreeSet<String> = [item.to_owned()].into();
     let mut current = read.clone();
+    let mut current_id = item.to_owned();
     loop {
-        blockers.extend(current.blocked_by_launch.iter().cloned());
+        match &current.blocked_by_launch {
+            Some(judged) => blockers.extend(judged.iter().cloned()),
+            None => return Err(unread(&current_id, "blocked-by-launch-missing")),
+        }
         let Some(parent) = current.parent_id.clone().filter(|p| !p.is_empty()) else {
             break;
         };
@@ -267,6 +276,7 @@ fn launch_blockers(
             return Err(unread(&parent, "chain-repeats"));
         }
         current = reader(&parent).map_err(|cause| unread(&parent, &cause))?;
+        current_id = parent;
     }
     if blockers.is_empty() {
         return Ok(());
@@ -806,7 +816,10 @@ const TAG: &str = "admission";
 
 /// The linear package's `issues get ID --with-bundle --format=safe`
 /// (`lib/formatters.sh` `format_issue_with_bundle`): the description, the
-/// label names, the flattened children and the in-PR bundle mark.
+/// label names, the flattened children, the in-PR bundle mark, the
+/// container's id and the launch blockers its one classifier judges.
+/// `blocked_by_launch` has no default: a bundle formatter without the field
+/// answers `None`, which the gate refuses rather than reads as no blocker.
 #[derive(Deserialize)]
 struct LinearIssue {
     #[serde(default)]
@@ -819,8 +832,7 @@ struct LinearIssue {
     in_pr_bundle: bool,
     #[serde(default)]
     parent_id: String,
-    #[serde(default)]
-    blocked_by_launch: Vec<String>,
+    blocked_by_launch: Option<Vec<String>>,
 }
 
 /// `gh issue view N --repo R --json body,labels`: the body and the labels
@@ -923,7 +935,7 @@ pub(super) fn read_item(
                 children: 0,
                 in_pr_bundle: false,
                 parent_id: None,
-                blocked_by_launch: Vec::new(),
+                blocked_by_launch: None,
             })
         }
         other => Err(format!("tracker-unknown:{other}")),
@@ -1263,9 +1275,12 @@ mod tests {
         }
     }
 
+    /// A tracker answer judging no launch blocker, its body naming one
+    /// Location.
     fn body(location: &str) -> std::result::Result<ItemRead, ReadFailure> {
         Ok(ItemRead {
             body: format!("Some text.\n**Location**: {location}\nMore.\n"),
+            blocked_by_launch: Some(Vec::new()),
             ..ItemRead::default()
         })
     }

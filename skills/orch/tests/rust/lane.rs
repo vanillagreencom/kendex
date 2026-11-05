@@ -572,13 +572,12 @@ fn the_cap_charges_a_live_harness_and_releases_an_ended_one() {
             ["occupancy", "1"],
             ["cap", "1"],
             ["lanes", "1"],
-            ["claims", "0"],
             ["setting", "ORCH_OVERSEER_LANES"]
         ])
     );
     assert!(
         stderr(&out).starts_with(
-            "orch-runtime: cap-reached occupancy=1 cap=1 lanes=1 claims=0 setting=ORCH_OVERSEER_LANES"
+            "orch-runtime: cap-reached occupancy=1 cap=1 lanes=1 setting=ORCH_OVERSEER_LANES"
         ),
         "{}",
         stderr(&out)
@@ -731,6 +730,69 @@ fn a_close_needs_a_ground_asks_the_mailbox_and_then_ends_the_harness() {
     assert_eq!(row["kind"], "close");
     assert_eq!(row["verdict"], "completed");
     assert_eq!(row["source"], "linear");
+}
+
+/// Defect: a close that interrupts a turn (the model-switch recovery's
+/// ground) stopping a harness that holds an unanswered ask. Through the
+/// executable: the `no-landing` close with `interrupt` asks the mailbox
+/// before anything else and refuses `ask-unanswered` while one stands, the
+/// harness still live and the lane running.
+#[test]
+fn an_interrupting_close_still_refuses_an_unanswered_ask() {
+    let fleet = Fleet::new(4);
+    fleet.init_fleet();
+    let harness = Owned::sleep();
+    fleet.write_lanes(vec![record(
+        "KEN-A",
+        "running",
+        Some(&harness),
+        fleet.state_dir(),
+    )]);
+    let ask = r#"{"id":"1769700000-9-31","kind":"ask","text":"which base"}"#;
+    let asking = Fleet {
+        env: vec![("LANE_MAIL_ASKS".to_owned(), ask.to_owned())],
+        ..fleet
+    };
+    let close = json!({
+        "op": "close-owned-resources",
+        "item": "KEN-A",
+        "no_landing": {"reason": "model-switch", "source": "model-recovery", "interrupt": true},
+    });
+    let answer = reply(&asking.op(&close));
+    assert_eq!(answer["ok"], true, "{answer}");
+    let report = &answer["result"]["effect"]["report"];
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    assert_eq!(report["intent"]["observation"]["cause"], "ask-unanswered");
+    assert_eq!(report["intent"]["observation"]["ask"], "1769700000-9-31");
+    assert!(live(harness.pid()), "an unanswered ask stops nothing");
+    assert_eq!(asking.lane("KEN-A")["status"], "running");
+}
+
+/// Defect: a permission word the harness's launch line cannot carry
+/// faithfully (a value its table lacks, or a two-word spelling given in
+/// part) widened to the posture's own. Through the executable: each is
+/// refused `permission-unrepresentable` naming the harness and the word,
+/// and nothing is written.
+#[test]
+fn a_permission_word_the_launch_line_cannot_carry_is_refused_before_any_record() {
+    let fleet = Fleet::new(4);
+    fleet.init_fleet();
+    let before = fleet.fleet();
+    for word in ["--permission-mode unknown", "--permission-mode"] {
+        let mut request = launch("KEN-A", fleet.state_dir());
+        request["permission"] = json!(word);
+        let answer = reply(&fleet.op(&request));
+        assert_eq!(
+            answer["refusal"]["key"], "permission-unrepresentable",
+            "{word}: {answer}"
+        );
+        let fields = refusal_fields(&answer);
+        assert_eq!(
+            (fields["harness"].as_str(), fields["permission"].as_str()),
+            ("claude", word)
+        );
+        assert_eq!(fleet.fleet(), before, "{word}: a refusal writes nothing");
+    }
 }
 
 /// Through the executable: a `no-landing` disposition on a lane
@@ -1252,8 +1314,9 @@ fn two_contenders_at_cap_minus_one_admit_exactly_one_under_the_launch_lock() {
 /// cloud setting and writes nothing, and charges no lane slot, so a lane
 /// is admitted beside it; a live lane at the lane cap charges no cloud
 /// slot, so a session is admitted beside it; `over_cap` admits a session
-/// past the cloud cap and is recorded; and with no cloud setting the tenth
-/// running session fills the cap.
+/// past the cloud cap and is recorded; with no cloud setting the tenth
+/// running session fills the cap; and a stopped session's standing
+/// reservation holds its slot until it lapses.
 #[test]
 fn a_cloud_session_is_bounded_by_the_cloud_cap_and_charges_no_lane_slot() {
     let mut fleet = Fleet::new(1);
@@ -1329,6 +1392,26 @@ fn a_cloud_session_is_bounded_by_the_cloud_cap_and_charges_no_lane_slot() {
     let refused = reply(&fleet.op(&cloud("KEN-C6")));
     assert_eq!(refused["refusal"]["key"], "cap-reached", "{refused}");
     assert_eq!(refusal_fields(&refused)["cap"], "10", "{refused}");
+    fleet
+        .env
+        .push(("ORCH_OVERSEER_CLOUD_LANES".into(), "1".into()));
+    let mut reserved = session("KEN-C1");
+    reserved["status"] = json!("stopped");
+    reserved["reservation"] =
+        json!({"reason": "resume", "until": clock::iso_utc(epoch_now() + 3600)});
+    fleet.write_lanes(vec![reserved.clone()]);
+    let refused = reply(&fleet.op(&cloud("KEN-C7")));
+    assert_eq!(
+        refused["refusal"]["key"], "cap-reached",
+        "a standing reservation charges the cloud cap: {refused}"
+    );
+    reserved["reservation"]["until"] = json!(clock::iso_utc(epoch_now() - 1));
+    fleet.write_lanes(vec![reserved]);
+    let admitted = reply(&fleet.op(&cloud("KEN-C8")));
+    assert_eq!(
+        admitted["ok"], true,
+        "a lapsed reservation holds nothing: {admitted}"
+    );
 }
 
 /// The paths an archive holds, as `tar` lists them, each relative to `/`.

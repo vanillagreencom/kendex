@@ -4294,7 +4294,6 @@ fn workflow_launch(
     ];
     world.extend(env.iter().cloned());
     Launch {
-        scripts: scripts.to_owned(),
         runtime: scripts.join("orch-runtime"),
         state: runner
             .state_dir()
@@ -4310,14 +4309,13 @@ fn workflow_launch(
 /// One launch of the workflow. `wait_secs` is the bound the runtime gives
 /// the session to reach its composer.
 struct Launch {
-    scripts: std::path::PathBuf,
     runtime: std::path::PathBuf,
     state: std::path::PathBuf,
     work: std::path::PathBuf,
     env: Vec<(String, String)>,
     predecessor: Option<String>,
-    /// The caller's own permission words under the native posture, named
-    /// on the controller as its `extra_args` and on the line alike.
+    /// The caller's own permission words under the native posture, the
+    /// controller's `extra_args`.
     words: Vec<String>,
     wait_secs: u64,
 }
@@ -4358,13 +4356,12 @@ impl Launch {
     }
 
     /// The workflow's steps: the fleet state where none stands, the
-    /// successor the walk chose, the display line spelled for it, its
-    /// brief under the state's `intents/`, and the one request handed to
-    /// `op --fleet`: `start-controller` with the successor as the
-    /// controller and the fleet watch's words, or, named a predecessor,
-    /// `request-transfer` with cause `live`, waited for under
-    /// `--effect-exit`. `sync-base`, the checkout step between, is the
-    /// worktree skill's own command and is not run here.
+    /// successor the walk chose, its brief under the state's `intents/`,
+    /// and the one request handed to `op --fleet`: `start-controller` with
+    /// the successor as the controller and the fleet watch's words, or,
+    /// named a predecessor, `request-transfer` with cause `live`, waited
+    /// for under `--effect-exit`. `sync-base`, the checkout step between,
+    /// is the worktree skill's own command and is not run here.
     fn run(&self) -> Launched {
         let exists = reply(
             &self
@@ -4387,18 +4384,12 @@ impl Launch {
         let verb = self.runtime(&args).output().unwrap();
         let chosen = reply(&verb);
         if chosen["result"]["walk"]["answer"] != "lane" {
-            return Launched {
-                verb,
-                op: None,
-                line: None,
-            };
+            return Launched { verb, op: None };
         }
         let mut successor = chosen["result"]["successor"].clone();
         if !self.words.is_empty() {
             successor["extra_args"] = json!(self.words);
         }
-        let line = self.launch_line(&successor);
-        successor["launch_line"] = json!(line);
         let dir = self.state.parent().unwrap();
         let intents = dir.join("intents");
         std::fs::create_dir_all(&intents).unwrap();
@@ -4442,75 +4433,13 @@ impl Launch {
             .env("ORCH_TMUX_VERIFY_SECS", self.wait_secs.to_string())
             .output()
             .unwrap();
-        Launched {
-            verb,
-            op: Some(op),
-            line: Some(line),
-        }
-    }
-
-    /// The display line the record carries for the hook's model-switch
-    /// recovery, spelled by its one owner, `oversee-succeed
-    /// --print-launch-line`, for the successor the walk chose: from the
-    /// server's first pane, as the fence spells it from the pane it is
-    /// typed in, under the account the successor spends, with its handoff
-    /// and the words its harness takes for the model, the effort and the
-    /// posture.
-    fn launch_line(&self, successor: &Value) -> String {
-        let field = |key: &str| successor[key].as_str().unwrap_or_default().to_owned();
-        let harness = field("harness");
-        let (effort_words, bypass_word, account_var) = match harness.as_str() {
-            "claude" => (
-                vec!["--effort".to_owned(), field("effort")],
-                "--dangerously-skip-permissions",
-                "CLAUDE_CONFIG_DIR",
-            ),
-            "codex" => (
-                vec![
-                    "-c".to_owned(),
-                    format!("model_reasoning_effort={}", field("effort")),
-                ],
-                "--dangerously-bypass-approvals-and-sandbox",
-                "CODEX_HOME",
-            ),
-            other => panic!("no launch line is spelled here for {other}"),
-        };
-        let mut words = vec!["--model".to_owned(), field("model")];
-        words.extend(effort_words);
-        if successor["permission"] == "bypass" {
-            words.push(bypass_word.to_owned());
-        } else if let Some(extra) = successor["extra_args"].as_array() {
-            words.extend(extra.iter().map(|w| w.as_str().unwrap().to_owned()));
-        }
-        let mut command = program(self.scripts.join("oversee-succeed"));
-        command
-            .args(["--print-launch-line", "--harness", &harness])
-            .args(["--handoff", &field("handoff"), "--"])
-            .args(&words)
-            .current_dir(&self.work);
-        for (name, value) in &self.env {
-            command.env(name, value);
-        }
-        command
-            .env("TMUX_PANE", "%0")
-            .env(account_var, field("account"));
-        let out = command.output().unwrap();
-        assert!(
-            out.status.success(),
-            "print-launch-line: {}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            stderr(&out)
-        );
-        String::from_utf8(out.stdout).unwrap().trim_end().to_owned()
+        Launched { verb, op: Some(op) }
     }
 }
 
-/// A launch's answers: the `successor` verb's, and, where the walk chose a
-/// lane, the line spelled for it and `op`'s.
 struct Launched {
     verb: std::process::Output,
     op: Option<std::process::Output>,
-    line: Option<String>,
 }
 
 impl Launched {
@@ -4532,6 +4461,67 @@ impl Launched {
     /// The intent a succession settled under `--effect-exit`.
     fn settled(&self) -> Value {
         reply(self.op())["result"]["settled"].clone()
+    }
+}
+
+/// A record's line as the hook's model-switch recovery reads it, through
+/// the row's checkout: `ol_command_read` gives the model, the handoff and
+/// the flags between the harness's own words and the brief; `env` is the
+/// `VAR=DIR` words ahead of the program.
+#[derive(Debug)]
+struct LineRead {
+    env: Vec<String>,
+    model: String,
+    handoff: String,
+    flags: Vec<String>,
+}
+
+const READ_LINE: &str = r#"set -euo pipefail
+. "$1/lib/lane-launch.sh"
+. "$1/lib/overseer-launch.sh"
+DEP_ERR=/dev/null
+launch_choice_shell_words "$3"
+prefix=()
+for word in "${LAUNCH_CHOICE_ARGV[@]}"; do
+  [[ "$word" == *=* ]] || break
+  prefix+=("$word")
+done
+ol_command_read "$2" "$3"
+IFS=$'\t'
+printf '%s\n' "$OL_COMMAND_MODEL" "$OL_COMMAND_HANDOFF" "${prefix[*]+${prefix[*]}}" "${OL_COMMAND_FLAGS[*]+${OL_COMMAND_FLAGS[*]}}"
+"#;
+
+fn read_line(scripts: &Path, bin: &Path, harness: &str, line: &str) -> LineRead {
+    let out = program("/bin/bash")
+        .args(["-c", READ_LINE, "_"])
+        .arg(scripts)
+        .args([harness, line])
+        .env("PATH", tool_path(&[bin]))
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "ol_command_read {harness} {line}: {}",
+        stderr(&out)
+    );
+    let text = String::from_utf8(out.stdout).unwrap();
+    let mut rows = text.lines().map(str::to_owned);
+    let mut next = || rows.next().unwrap_or_default();
+    let split = |row: String| -> Vec<String> {
+        row.split('\t')
+            .filter(|w| !w.is_empty())
+            .map(str::to_owned)
+            .collect()
+    };
+    let model = next();
+    let handoff = next();
+    let env = split(next());
+    let flags = split(next());
+    LineRead {
+        env,
+        model,
+        handoff,
+        flags,
     }
 }
 
@@ -5005,6 +4995,27 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
     assert_eq!(overseer["generation"], 1, "{overseer}");
     assert_eq!(overseer["harness"], "codex", "{overseer}");
     assert_eq!(overseer["pane"], pane, "{overseer}");
+    let line = read_line(
+        &scripts,
+        &bin,
+        "codex",
+        overseer["launch_line"].as_str().unwrap(),
+    );
+    assert_eq!(
+        line.model, "gpt-6-astra",
+        "the reconcile's publication carries the runtime's line: {overseer}"
+    );
+    assert_eq!(
+        line.env,
+        vec![format!("CODEX_HOME={}", account.display())],
+        "{overseer}"
+    );
+    assert!(
+        line.flags
+            .iter()
+            .any(|f| f == "--dangerously-bypass-approvals-and-sandbox"),
+        "{line:?}"
+    );
     assert_eq!(
         codex_turns(&account),
         vec![text.trim_end().to_owned()],
@@ -5023,7 +5034,8 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
 /// confirm in their own call, and the record carries the launch's
 /// directory, model, account and pane; the brief typed into the stub is
 /// the file the request named, which the launch left standing; the display
-/// line recorded is the one the request named.
+/// line recorded reads, as the hook reads it, to the launch's model,
+/// account, permission word and handoff.
 #[test]
 fn a_first_launch_confirmed_in_its_call_records_the_launchers_identity() {
     let dir = tempfile::tempdir().unwrap();
@@ -5066,10 +5078,27 @@ fn a_first_launch_confirmed_in_its_call_records_the_launchers_identity() {
     );
     assert_eq!(overseer["model"], "fable", "{overseer}");
     assert_eq!(overseer["pane"], runner_pane(&server), "{overseer}");
+    let line = read_line(
+        &scripts,
+        &bin,
+        "claude",
+        overseer["launch_line"].as_str().unwrap(),
+    );
+    assert_eq!(line.model, "fable", "the launched model: {overseer}");
     assert_eq!(
-        overseer["launch_line"],
-        json!(launched.line.as_deref().unwrap()),
-        "the display line the request named: {overseer}"
+        line.handoff, "tmp/handoffs/OVERSEER-HANDOFF.md",
+        "{overseer}"
+    );
+    assert_eq!(
+        line.env,
+        vec![format!("CLAUDE_CONFIG_DIR={}", account.display())],
+        "the account the launch spends: {overseer}"
+    );
+    assert!(
+        line.flags
+            .iter()
+            .any(|f| f == "--dangerously-skip-permissions"),
+        "the posture the launch runs under: {line:?}"
     );
     let intent = &fleet["intents"][0];
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
@@ -5091,10 +5120,10 @@ fn a_first_launch_confirmed_in_its_call_records_the_launchers_identity() {
 /// names, run as the harness runs it from `work` under `home`: the hook
 /// copied into the checkout's hook directory, the orch and mailbox packages
 /// linked under its install, and `oversee-succeed`, the recovery the hook
-/// starts detached once it has read the record's line, replaced by a no-op
-/// after the launch spelled its line through it, since that succession is
-/// not what the rows here claim. Returns the hook's output and the check
-/// the record carries after it.
+/// starts detached once it has read the record's line, replaced by a no-op,
+/// since that succession would outlive the row and is not what the rows
+/// here claim. Returns the hook's output and the check the record carries
+/// after it.
 fn model_switch(
     runner: &Runner,
     scripts: &Path,
@@ -5162,16 +5191,13 @@ fn model_switch(
     (out, runner.fleet()["overseer"]["model_check"].clone())
 }
 
-/// The notice the hook hands the overseer for a switch it recovered from.
 const MODEL_SWITCHED: &str = "lane-mail-check: model-switched=fable observed=claude-sonnet-5-5";
 
-/// Defect: a first launch through the fence whose record the installed
-/// hook's model-switch recovery cannot read. The request carries the line
-/// spelled for the walk's successor, the real `start-controller` publishes
-/// it, and the real hook's `PostModelSwitch` reads the launched model and
-/// the handoff off it: the check persists `switched` naming both models
-/// with no cause, and the notice names the switch, never
-/// `launch-command-unread`.
+/// Defect: a first launch whose record the installed hook's model-switch
+/// recovery cannot read, the request carrying no line and the runtime
+/// publishing none. The real `start-controller` publishes the line the
+/// runtime composes for the controller it launched, and the real hook's
+/// `PostModelSwitch` reads the model and the handoff off it.
 #[test]
 fn a_model_switch_after_a_first_launch_through_the_fence_is_read_off_the_records_line() {
     let dir = tempfile::tempdir().unwrap();
@@ -6606,14 +6632,16 @@ fn a_named_predecessor_is_succeeded_on_the_walks_choice_with_its_posture_once_th
     );
 }
 
-/// Defect: a succession through the fence whose successor's record the
-/// installed hook's model-switch recovery cannot read. The
-/// `request-transfer` request carries the line spelled for the walk's
-/// successor, the real transfer publishes it on the successor's record once
-/// the predecessor is retired, and the real hook's `PostModelSwitch` for
-/// the successor reads it: `switched`, the notice naming the switch.
+/// Defect: a succession publishing a line that names the predecessor, the
+/// account it spent and the model it ran, where the walk chose another
+/// account and model, so the hook's model-switch recovery relaunches the
+/// predecessor's model on the spent account. The predecessor holds its own
+/// pane on the fleet server, its record carrying the line a released launch
+/// wrote for it, planted as `main` wrote it; the successor's record carries
+/// the line the runtime composed from the fields it launched with, which
+/// the real hook reads.
 #[test]
-fn a_model_switch_after_a_succession_through_the_fence_is_read_off_the_successors_line() {
+fn a_succession_publishes_the_line_of_the_successor_it_launched_never_the_predecessors() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let runner = suite_runner(&server, "stub-confirm");
@@ -6625,19 +6653,31 @@ fn a_model_switch_after_a_succession_through_the_fence_is_read_off_the_successor
             measured_account("bclaude", 5),
         ],
     );
-    let state = runner
-        .state_dir()
-        .join(orch_runtime::state::FLEET_FILE_NAME);
-    let predecessor = Stopped::start(&state, &runner.state_dir().join("unused.json"));
-    recorded_on(
-        &runner,
-        &server,
-        predecessor.pid(),
-        "eclaude",
+    let pane = server.open_window(
+        "overseer",
         &work,
-        "bypass",
-        &[],
+        "trap 'exit 0' TERM; while :; do sleep 0.1; done",
     );
+    let pid = server.pane_pid(&pane);
+    let window = tmux(
+        &server.socket,
+        &["display-message", "-p", "-t", &pane, "#{window_id}"],
+    );
+    let spent = planted(&runner, "eclaude");
+    let released = format!(
+        "CLAUDE_CONFIG_DIR={spent} claude -n overseer --model opus --effort low \
+         --dangerously-skip-permissions 'Read .agents/skills/orch/SKILL.md and follow \
+         .agents/skills/orch/workflows/oversee-takeover.md with the overseer handoff at \
+         tmp/handoffs/OVERSEER-HANDOFF.md'"
+    );
+    let mut record = recorded_on(&runner, &server, pid, "eclaude", &work, "bypass", &[]);
+    record["pane"] = json!(pane);
+    record["window"] = json!(String::from_utf8_lossy(&window.stdout).trim());
+    record["effort"] = json!("low");
+    record["launch_line"] = json!(released);
+    let mut fleet = runner.fleet();
+    fleet["overseer"] = record;
+    runner.write_fleet(&fleet);
     let out = workflow_launch(
         &runner,
         &scripts,
@@ -6648,17 +6688,38 @@ fn a_model_switch_after_a_succession_through_the_fence_is_read_off_the_successor
         "fable",
         &stub("stub-confirm"),
     )
-    .predecessor("%99")
+    .predecessor(&pane)
     .run();
     let op = out.op();
     assert!(op.status.success(), "{}", stderr(op));
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
+    assert!(!live(pid), "the predecessor was retired");
     let overseer = runner.fleet()["overseer"].clone();
+    let chosen = planted(&runner, "bclaude");
+    assert_eq!(overseer["account"], chosen, "{overseer}");
+    let line = overseer["launch_line"].as_str().unwrap();
+    assert_ne!(line, released, "{overseer}");
+    let read = read_line(&scripts, &bin, "claude", line);
     assert_eq!(
-        overseer["launch_line"],
-        json!(out.line.as_deref().unwrap()),
-        "the successor's record carries the line the request named: {overseer}"
+        read.model, "fable",
+        "the successor's model, not the predecessor's: {line}"
+    );
+    assert_eq!(
+        read.env,
+        vec![format!("CLAUDE_CONFIG_DIR={chosen}")],
+        "the successor's account, not the spent one: {line}"
+    );
+    assert_eq!(read.handoff, "tmp/handoffs/OVERSEER-HANDOFF.md", "{line}");
+    assert!(
+        read.flags.windows(2).any(|w| w == ["--effort", "high"]),
+        "the successor's effort: {line}"
+    );
+    assert!(
+        read.flags
+            .iter()
+            .any(|f| f == "--dangerously-skip-permissions"),
+        "the posture the successor runs under: {line}"
     );
     let home = Path::new(overseer["home"].as_str().unwrap()).to_owned();
     let (hook, check) = model_switch(&runner, &scripts, &bin, &home, &work, &overseer);
@@ -7698,10 +7759,11 @@ fn a_marks_succession_leaves_the_account_a_rate_mark_spends_and_keeps_one_a_cont
 }
 
 /// Defect: a first launch under the settings' native posture carrying a
-/// bypass word. The launch starts with no fleet state, which its first step
-/// makes, and names the caller's permission words, which the line the
-/// library spells needs and the harness is launched with; the record names
-/// the native posture and the harness's argv carries no bypass word.
+/// bypass word, or publishing a line naming a posture the launch does not
+/// run under. The launch starts with no fleet state, which its first step
+/// makes, and names the caller's permission words as the controller's
+/// `extra_args`: they reach the harness's argv and the record's line alike,
+/// and neither carries a bypass word.
 #[test]
 fn a_first_launch_under_the_native_posture_opens_with_no_bypass_word_in_its_argv() {
     let dir = tempfile::tempdir().unwrap();
@@ -7757,5 +7819,24 @@ fn a_first_launch_under_the_native_posture_opens_with_no_bypass_word_in_its_argv
     assert!(
         !argv.iter().any(|a| a == "--dangerously-skip-permissions"),
         "no bypass word under the native posture: {argv:?}"
+    );
+    let line = read_line(
+        &scripts,
+        &bin,
+        "claude",
+        overseer["launch_line"].as_str().unwrap(),
+    );
+    assert!(
+        line.flags
+            .windows(2)
+            .any(|w| w == ["--permission-mode", "dontAsk"]),
+        "the caller's permission words reach the record's line: {line:?}"
+    );
+    assert!(
+        !line
+            .flags
+            .iter()
+            .any(|f| f == "--dangerously-skip-permissions"),
+        "no bypass word on the line under the native posture: {line:?}"
     );
 }

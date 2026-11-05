@@ -1,0 +1,38 @@
+{
+  "item": "KEN-1",
+  "tracker": null,
+  "repo": null,
+  "harness": "claude",
+  "window": "fleet:KEN-1",
+  "account": "@ROOT@",
+  "host": null,
+  "kind": "local",
+  "mail_root": "@ROOT@",
+  "surface": "tmux",
+  "model": "claude-fable-5-1",
+  "effort": "high",
+  "session_id": "@SESSION_ID@",
+  "session_since": "@SESSION_SINCE@",
+  "launched_at": "@LAUNCHED_AT@",
+  "running_at": "@RUNNING_AT@",
+  "status": "running",
+  "over_cap": null,
+  "allow_all": null,
+  "tier": null,
+  "tier_inputs": {
+    "estimate": null,
+    "delta": null,
+    "paths": null
+  },
+  "launch": {
+    "pane": "@PANE@",
+    "server": "@SERVER@",
+    "server_start": "@SERVER_START@",
+    "pid": "@PID@",
+    "start": "@START@"
+  },
+  "touched": [],
+  "in_scope": [],
+  "home": "@ROOT@",
+  "permission": "--permission-mode dontAsk"
+}

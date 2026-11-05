@@ -238,7 +238,7 @@ fetch_checks_rollup() {
 # Arg 1 is required_contexts' complete evidence object; the scoping keeps the
 # workflow runs it bound. Classic names and workflow check links remain
 # separate. Red optional checks block nothing.
-# The legacy array argument names classic contexts; [] counts every check.
+# A bare array as the argument names classic contexts alone; [] counts every check.
 #
 # A required context the scoped rollup carries no check for is `pending` as
 # `<context> (missing)`. GitHub waits for every required context to report,

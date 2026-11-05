@@ -16,7 +16,7 @@
 use std::path::{Path, PathBuf};
 
 use agent_runtime::harness::Harness;
-use agent_runtime::launch::{Compaction, LaunchCommand, Permission, Resume};
+use agent_runtime::launch::{Compaction, LaunchCommand, Permission, Resume, shell_quote};
 use agent_runtime::reading::Reading;
 use serde_json::{Value, json};
 
@@ -277,7 +277,8 @@ fn kept(
 /// and what a reconcile rebuilds from the record: the harness, the home its
 /// native session is read under, the home the launch names and the account
 /// it bills, its working directory and the typed launch fields the command
-/// is built from. The pending line is kept for display alone.
+/// is built from. The line is the request's where it carries one, else
+/// `display_line`'s from those fields; the command is never built from it.
 #[derive(Clone)]
 struct Successor {
     harness: Harness,
@@ -391,7 +392,7 @@ impl Successor {
         let home = homes
             .sessions
             .ok_or_else(|| refused("home-unresolved", &[("harness", harness.name())]))?;
-        Ok(Successor {
+        let mut successor = Successor {
             harness,
             target: Target::new(settings, harness),
             home,
@@ -404,9 +405,72 @@ impl Successor {
             effort: pending.effort.clone(),
             permission: pending.permission,
             extra_args: pending.extra_args.clone(),
-            launch_line: pending.launch_line.clone(),
+            launch_line: None,
             resume: pending.resume.clone(),
-        })
+        };
+        successor.launch_line = Some(
+            pending
+                .launch_line
+                .clone()
+                .unwrap_or_else(|| successor.display_line(settings)),
+        );
+        Ok(successor)
+    }
+
+    /// The line the record carries, for a person reading the fleet state
+    /// and for the hook's model-switch reader (`ol_command_read` in orch's
+    /// `lib/overseer-launch.sh`), spelled from the fields the launch runs
+    /// with, so both read the account, model, effort and permission the
+    /// runtime launched: the account in its harness's variable, the
+    /// program, the model and effort words, the permission word where the
+    /// launch adds one, the caller's own words, then the brief. The reader
+    /// anchors on a Claude line's `-n overseer`, a Copilot brief's `-i` and
+    /// the handoff at the brief's tail, so the line keeps those words.
+    fn display_line(&self, settings: &Settings) -> String {
+        let h = self.harness;
+        let account_var = h.account_var(self.model.as_deref());
+        let mut env = Vec::new();
+        if let Some(home) = &self.named {
+            env.push(format!(
+                "{}={}",
+                h.home_var(),
+                shell_quote(&home.display().to_string())
+            ));
+        }
+        if let Some(account) = &self.account
+            && (self.named.is_none() || account_var != h.home_var())
+        {
+            env.push(format!(
+                "{account_var}={}",
+                shell_quote(&account.display().to_string())
+            ));
+        }
+        let mut argv = vec![h.binary().to_owned()];
+        if h == Harness::Claude {
+            argv.extend(["-n".to_owned(), "overseer".to_owned()]);
+        }
+        match (&self.model, &self.effort) {
+            (Some(model), effort) => argv.extend(h.model_words(model, effort.as_deref())),
+            (None, Some(effort)) => argv.extend(h.effort_words(effort)),
+            (None, None) => {}
+        }
+        let permission = self.permission.unwrap_or(settings.permission);
+        if permission == Permission::Bypass && h.permission_word_in(&self.extra_args).is_none() {
+            argv.extend(h.bypass_words().into_iter().map(str::to_owned));
+        }
+        argv.extend(self.extra_args.iter().cloned());
+        if h == Harness::Copilot {
+            argv.push("-i".to_owned());
+        }
+        let handoff = self
+            .handoff
+            .as_deref()
+            .unwrap_or(crate::ops::successor::HANDOFF);
+        argv.push(crate::ops::successor::brief(h, handoff));
+        env.into_iter()
+            .chain(argv.iter().map(|word| shell_quote(word)))
+            .collect::<Vec<_>>()
+            .join(" ")
     }
 
     /// The launch the successor runs, built from its typed fields through

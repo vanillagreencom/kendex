@@ -7,7 +7,7 @@
 //! it, and logs every call, so a row can assert what was read and what
 //! never was. Recorded answer sets under `fixtures/gh/witnesses/` are
 //! the verdict's correctness floor, one table row each
-//! (`the_recorded_witnesses_keep_the_legacy_verdict`).
+//! (`the_recorded_witnesses_keep_their_verdicts`).
 //!
 //! The `verify-pr` operation is the same verification over the head
 //! one `gh pr view` answers for a pull request; its rows at the end pin the
@@ -838,7 +838,7 @@ fn a_passing_head_is_complete_pass_and_recorded() {
 /// taxonomy, the wire's nullable run status, the empty head, the
 /// skipped-check flag, the substantive events and the held failure's
 /// relabel. The witnesses' own answers are the witness rows
-/// (`the_recorded_witnesses_keep_the_legacy_verdict`).
+/// (`the_recorded_witnesses_keep_their_verdicts`).
 #[test]
 fn verdicts_follow_the_check_and_run_states() {
     let aggregate = |context: &str, state: &str, run_id: u64| {
@@ -1071,7 +1071,7 @@ struct Witness {
 /// same answers under the recorded corrections. A verdict that changes
 /// here is one named correction.
 #[test]
-fn the_recorded_witnesses_keep_the_legacy_verdict() {
+fn the_recorded_witnesses_keep_their_verdicts() {
     let rows = [
         Witness {
             defect: "the cancelled jobs of a superseded run counted as failures",
@@ -3324,7 +3324,7 @@ fn a_required_workflow_binds_only_through_its_proven_source() {
 /// bound; a failed commit status whose target is the bound job's URL is a
 /// required member by link.
 #[test]
-fn the_definition_walk_and_link_membership_follow_the_legacy() {
+fn the_definition_walk_ends_at_the_first_unready_and_a_status_joins_by_its_link() {
     let unresolved_first = {
         let mut rule = workflows_rule(Some(WORKFLOW_SHA));
         rule["parameters"]["workflows"]
@@ -3444,7 +3444,7 @@ fn documented_rule_kinds_outside_the_rollup_change_no_required_set() {
 /// one, and each run's suite node proves the required file at the rule's
 /// sha for the attempt the run reads as.
 #[test]
-fn omitted_selection_fields_read_as_the_legacy_defaults() {
+fn omitted_selection_fields_read_as_their_documented_defaults() {
     // Run 700's job started after run 701's, so gh's rule keeps whichever
     // run is current here by start, not by the tie order.
     let own = |id: u64, conclusion: &str| {
@@ -4110,6 +4110,62 @@ fn a_second_run_requests_no_second_review() {
     assert_eq!(result["request"]["outcome"], "existing", "{result}");
     assert_eq!(result["request"]["reason"], "existing-review");
     assert_eq!(gh.requests(), 0, "{:?}", gh.log());
+
+    // A human's review on the head, or Copilot's review of an earlier head,
+    // is no Copilot review of this head: the request still goes out.
+    for (name, latest, review) in [
+        (
+            "a human's comment on the head",
+            ("colleague", "COMMENTED"),
+            json!({"id": 21, "user": {"login": "colleague", "type": "User"}, "body": "Looks fine.", "state": "COMMENTED", "commit_id": HEAD, "submitted_at": "2026-01-01T00:00:00Z"}),
+        ),
+        (
+            "Copilot's review of the previous head",
+            (COPILOT, "COMMENTED"),
+            with(
+                copilot_review(22, "COMMENTED", "Reviewed.", "2026-01-01T00:00:00Z"),
+                "commit_id",
+                json!(OTHER_SHA),
+            ),
+        ),
+    ] {
+        let mut gh = Github::review_world();
+        gh.answer(&format!("pr view {PR}"), review_view("", &[latest], false))
+            .answer(&reviews_path(), json!([review]));
+        let result = ok_result(&gh.review(false, &[]));
+        assert_eq!(result["status"], "pending", "{name}: {result}");
+        assert_eq!(
+            result["request"]["outcome"], "requested",
+            "{name}: {result}"
+        );
+        assert_eq!(gh.requests(), 1, "{name}: {:?}", gh.log());
+    }
+
+    // The reviews read failing, or the timeline read failing, is unreadable:
+    // no request goes out on identities that could not be read, and nothing
+    // is claimed under the head. Copilot's check in flight ends the work
+    // read before its own timeline read, so the reviews' timeline read is
+    // the one that meets the failure.
+    for (name, failing, reason) in [
+        ("the reviews", reviews_path(), "reviews-read-failed"),
+        ("the timeline", timeline_path(), "timeline-read-failed"),
+    ] {
+        let mut gh = Github::review_world();
+        gh.answer(
+            &check_runs(HEAD, 1),
+            check_runs_page(1, vec![copilot_check(31, "in_progress")]),
+        )
+        .fail(&failing);
+        let result = ok_result(&gh.review(false, &[]));
+        assert_eq!(result["status"], "unreadable", "{name}: {result}");
+        assert_eq!(result["reason"], reason, "{name}: {result}");
+        assert_eq!(gh.requests(), 0, "{name}: {:?}", gh.log());
+        assert!(
+            gh.head_record()["request"].is_null(),
+            "{name}: {}",
+            gh.head_record()
+        );
+    }
 }
 
 /// Each verdict word is read from the head's reviews, threads and the
@@ -4557,7 +4613,45 @@ fn the_gate_mode_is_recorded_once() {
     assert_eq!(result["reason"], "rules-read-failed");
     assert!(gh.state().get("pr_review").is_none());
 
-    // A policy value outside `enforce` and `off` is refused, nothing read.
+    // A failed view is unreadable before any rules read: no mode, nothing
+    // recorded.
+    let mut gh = Github::review_world();
+    gh.fail(&format!("pr view {PR}"));
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["status"], "unreadable", "{result}");
+    assert_eq!(result["reason"], "pull-request-read-failed");
+    assert!(gh.state().get("pr_review").is_none());
+    assert!(
+        !gh.log().iter().any(|l| l.contains("/rules/branches/")),
+        "{:?}",
+        gh.log()
+    );
+
+    // A failed branch read, or a failed protection read, is no mode either:
+    // never `off`, so no later head of the item skips the gate on it.
+    for (name, failing, reason) in [
+        ("the branch", branch(), "protection-read-failed"),
+        (
+            "the protection",
+            classic_path(),
+            "classic-protection-read-failed",
+        ),
+    ] {
+        let mut gh = Github::review_world();
+        gh.answer(&rules(1), json!([]))
+            .answer(
+                &branch(),
+                json!({"protected": true, "protection": {"enabled": true}}),
+            )
+            .fail(&failing);
+        let result = ok_result(&gh.review(false, &[]));
+        assert_eq!(result["status"], "unreadable", "{name}: {result}");
+        assert_eq!(result["reason"], reason, "{name}: {result}");
+        assert!(gh.state().get("pr_review").is_none(), "{name}");
+    }
+
+    // A policy value outside `enforce` and `off` is refused, nothing
+    // recorded.
     let gh = Github::review_world();
     gh.policy("[env]\nREVIEW_GATE_MODE = \"junk\"\n");
     let out = gh.review(false, &[]);
@@ -4673,6 +4767,24 @@ fn a_draft_is_marked_ready_before_its_request() {
         "{log:?}"
     );
     assert_eq!(gh.head_record()["ready"], "done");
+
+    // A push that lands with the mark moves the head: the view after the
+    // act names another head, so the call is `pending` with no request and
+    // the mark still `marking`, and the next call judges the head that
+    // stands.
+    let mut gh = Github::review_world();
+    gh.answer(&format!("pr view {PR}"), review_view("", &[], true))
+        .answer(
+            &pull_path(),
+            rest_pull(true, "feat", "lane-app[bot]", "Bot"),
+        );
+    gh.replies
+        .insert(format!("pr ready {PR}"), json!({"body": {}, "head": NEXT}));
+    let result = ok_result(&gh.review(true, &[]));
+    assert_eq!(result["status"], "pending", "{result}");
+    assert_eq!(result["reason"], format!("ready-head-moved head={NEXT}"));
+    assert_eq!(gh.requests(), 0, "{:?}", gh.log());
+    assert_eq!(gh.head_record()["ready"], "marking", "{}", gh.head_record());
 }
 
 /// A request outside the pinned forms, a pull request number of zero or a
@@ -5367,7 +5479,7 @@ fn a_thread_on_a_later_page_holds_the_head_and_an_unverifiable_page_never_approv
     }
     let rows = [
         Row {
-            name: "an errors array beside data",
+            name: "a partial reply carrying errors, printed with gh's nonzero exit",
             first: {
                 let mut page = threads_page(0);
                 page["errors"] = json!([{"message": "an unread page"}]);
@@ -5451,4 +5563,77 @@ fn a_head_that_moved_between_the_view_and_the_pull_read_is_pending_with_no_reque
         "{}",
         gh.head_record()
     );
+
+    // The `pulls/N` read failing is unreadable: no request goes out on a
+    // head one read alone named.
+    let mut gh = Github::review_world();
+    gh.fail(&pull_path());
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["status"], "unreadable", "{result}");
+    assert_eq!(result["reason"], "pull-read-failed");
+    assert_eq!(gh.requests(), 0, "{:?}", gh.log());
+    assert!(
+        gh.head_record()["request"].is_null(),
+        "{}",
+        gh.head_record()
+    );
+}
+
+/// The reviews and the timeline are read to their last page: the head's
+/// arrival on a later timeline page still binds the reviews, so an
+/// approval re-pointed to the head carries no verdict, and an approval on
+/// a later reviews page is still the head's.
+#[test]
+fn the_reviews_and_the_timeline_are_read_past_their_first_page() {
+    let filler_events: Vec<Value> = (0..100)
+        .map(|i| json!({"event": "labeled", "id": 1000 + i, "created_at": "2025-12-31T00:00:00Z"}))
+        .collect();
+    let filler_reviews: Vec<Value> = (0..100)
+        .map(|i| json!({"id": 100 + i, "user": {"login": "colleague", "type": "User"}, "body": "Noted.", "state": "COMMENTED", "commit_id": HEAD, "submitted_at": "2025-12-31T00:00:00Z"}))
+        .collect();
+    let committed =
+        json!({"event": "committed", "sha": HEAD, "committer": {"date": "2026-01-02T00:00:00Z"}});
+    let timeline = |n: usize| page(&format!("repos/{REPO}/issues/{PR}/timeline"), n);
+    let reviews = |n: usize| page(&format!("repos/{REPO}/pulls/{PR}/reviews"), n);
+    let approved = || review_view("APPROVED", &[(COPILOT, "APPROVED")], false);
+
+    // An approval submitted before the head's arrival on the timeline's
+    // second page is re-pointed: no verdict, the request goes out.
+    let mut gh = Github::review_world();
+    gh.answer(&format!("pr view {PR}"), approved())
+        .answer(
+            &reviews(1),
+            json!([copilot_review(
+                5,
+                "APPROVED",
+                "Looks good.",
+                "2026-01-01T00:00:00Z"
+            )]),
+        )
+        .answer(&timeline(1), json!(filler_events))
+        .answer(&timeline(2), json!([committed]));
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["status"], "pending", "{result}");
+    assert_eq!(result["review_decision"], "REVIEW_REQUIRED", "{result}");
+    assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+
+    // An approval on the reviews' second page, after the head arrived, is
+    // the head's.
+    let mut gh = Github::review_world();
+    gh.answer(&format!("pr view {PR}"), approved())
+        .answer(&reviews(1), json!(filler_reviews))
+        .answer(
+            &reviews(2),
+            json!([copilot_review(
+                5,
+                "APPROVED",
+                "Looks good.",
+                "2026-01-03T00:00:00Z"
+            )]),
+        )
+        .answer(&timeline(1), json!([committed]));
+    let result = ok_result(&gh.review(false, &[]));
+    assert_eq!(result["status"], "complete", "{result}");
+    assert_eq!(result["verdict"], "approved", "{result}");
+    assert_eq!(gh.requests(), 0, "{:?}", gh.log());
 }

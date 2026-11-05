@@ -56,6 +56,12 @@ struct World {
     threads: Map<String, Value>,
 }
 
+/// The replies of a recorded verify witness (`fixtures/gh/witnesses/`).
+fn witness_map(name: &str) -> Map<String, Value> {
+    let text = fs::read_to_string(fixtures().join(format!("gh/witnesses/{name}.json"))).unwrap();
+    serde_json::from_str(&text).unwrap()
+}
+
 /// The queue read's pull request: in the queue (with or without a
 /// merge-group head), armed only, out, or held behind a live group.
 fn queue_body(pull: Value) -> Value {
@@ -258,10 +264,7 @@ impl World {
     /// A recorded verify witness as the base of the replies, for a probe
     /// row.
     fn witness(&mut self, name: &str) -> &mut Self {
-        let text =
-            fs::read_to_string(fixtures().join(format!("gh/witnesses/{name}.json"))).unwrap();
-        let map: Map<String, Value> = serde_json::from_str(&text).unwrap();
-        for (key, value) in map {
+        for (key, value) in witness_map(name) {
             self.replies.entry(key).or_insert(value);
         }
         self
@@ -733,7 +736,7 @@ fn failed_required_check_on_an_armed_pr_is_armed_blocked() {
     world
         .witness("bound-run-failed-own-check")
         .queue(armed_only());
-    let request = probe_request(&world, 2);
+    let request = probe_request(&world, 5);
     let value = serde_json::to_value(world.wait(&request, |_, _| {})).unwrap();
     assert_eq!(
         (
@@ -754,7 +757,7 @@ fn failed_required_check_on_an_armed_pr_is_armed_blocked() {
 fn pending_required_checks_await_never_progress_unobservable() {
     let mut world = World::new();
     world.witness("required-build-missing").queue(armed_only());
-    let request = probe_request(&world, 2);
+    let request = probe_request(&world, 5);
     let value = serde_json::to_value(world.wait(&request, |_, _| {})).unwrap();
     assert_eq!(
         (
@@ -1558,5 +1561,145 @@ fn a_settled_probe_is_armed_blocked_at_the_deadline_and_an_unreadable_probe_keep
         !world.gh_log().iter().any(|l| l.contains("check-runs")),
         "no probe past a standing candidate: {:?}",
         world.gh_log()
+    );
+}
+
+/// A hold that cleared names no entry ahead: the reply names a group ahead
+/// only while the last poll read one, so the workflow routes on the queue
+/// as it stands, never on a hold that lifted.
+#[test]
+fn a_hold_that_cleared_names_no_entry_ahead() {
+    let mut world = World::new();
+    world.queue(held_behind(9)).check_runs(Some((1, 1)));
+    let request = world.request(1, 3);
+    let reply = world.wait(&request, |world, clock| {
+        clock.await_sleepers(1);
+        world.queue(in_queue(Some(QUEUE_HEAD))).write();
+        clock.pass(secs(1));
+        clock.release(secs(2));
+    });
+    assert_eq!(
+        (
+            reply.status,
+            reply.verdict,
+            reply.cause,
+            reply.queue_ahead_pr
+        ),
+        ("timeout", "queued", Some("still_progressing"), None),
+        "{reply:?}"
+    );
+}
+
+/// An enqueued entry keeps its progress reading: the probe reads the pull
+/// request's own checks, which say nothing of the merge group's, so a
+/// queued entry whose own check failed is still `queued`, never
+/// `armed_blocked` while the queue holds it.
+#[test]
+fn an_enqueued_entry_is_not_probed_for_a_failed_check() {
+    let mut world = World::new();
+    world
+        .witness("bound-run-failed-own-check")
+        .queue(in_queue(Some(QUEUE_HEAD)))
+        .check_runs(Some((1, 1)));
+    let request = probe_request(&world, 3);
+    let reply = world.wait(&request, |_, _| {});
+    assert_eq!(
+        (reply.status, reply.verdict, reply.cause),
+        ("timeout", "queued", Some("still_progressing")),
+        "{reply:?}"
+    );
+    assert!(
+        !world
+            .gh_log()
+            .iter()
+            .any(|l| l.contains(HEAD) && l.contains("check-runs")),
+        "no probe of the pull request's own head: {:?}",
+        world.gh_log()
+    );
+}
+
+/// The probe reserves the poll after it: none runs at the last poll before
+/// the deadline, where its reads would run past the budget, so a check
+/// that failed after the earlier probe is read by the next call, and the
+/// deadline reports the reading the earlier probe left.
+#[test]
+fn the_last_poll_before_the_deadline_runs_no_probe() {
+    let mut world = World::new();
+    world.witness("required-build-missing").queue(armed_only());
+    let request = QueueWatch {
+        probe_interval: secs(0),
+        ..probe_request(&world, 2)
+    };
+    let reply = world.wait(&request, |world, clock| {
+        clock.await_sleepers(1);
+        for (key, value) in witness_map("bound-run-failed-own-check") {
+            world.replies.insert(key, value);
+        }
+        world.write();
+        clock.release(secs(1));
+    });
+    assert_eq!(
+        (reply.status, reply.verdict, reply.cause, reply.polls),
+        (
+            "timeout",
+            "armed_awaiting_checks",
+            Some("checks_pending"),
+            2
+        ),
+        "{reply:?}"
+    );
+    assert_eq!(reply.pending_checks, Some(vec!["build".to_owned()]));
+    assert_eq!(
+        world
+            .gh_log()
+            .iter()
+            .filter(|l| l.contains(HEAD) && l.contains("check-runs"))
+            .count(),
+        1,
+        "one probe, at the first poll: {:?}",
+        world.gh_log()
+    );
+}
+
+/// The probe's reads spend the budget the wait has left past the poll after
+/// it: a check-run read that answers past the deadline is no reading, so
+/// the deadline reports the reading before it, never a verdict read after
+/// the wait was due to end.
+#[test]
+fn a_probe_answered_past_the_deadline_is_no_reading() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut world = World::new();
+    world
+        .witness("bound-run-failed-own-check")
+        .queue(armed_only());
+    let root = world.root();
+    // The fake `gh` behind a wrapper that holds the pull request's check-run
+    // read until the row releases it.
+    fs::rename(root.join("gh"), root.join("gh-answers")).unwrap();
+    let wrapper = format!(
+        "#!/bin/bash\nhere=\"$(dirname \"$0\")\"\ncase \"$*\" in\n  *\"commits/{HEAD}/check-runs?filter=all\"*)\n    : > \"$here/probe-entered\"\n    while [ ! -f \"$here/probe-released\" ]; do sleep 0.01; done ;;\nesac\nexec \"$here/gh-answers\" \"$@\"\n"
+    );
+    fs::write(root.join("gh"), wrapper).unwrap();
+    fs::set_permissions(root.join("gh"), fs::Permissions::from_mode(0o755)).unwrap();
+    let request = probe_request(&world, 3);
+    let reply = world.wait(&request, |world, clock| {
+        let entered = world.root().join("probe-entered");
+        let bound = std::time::Instant::now() + secs(10);
+        while !entered.exists() {
+            assert!(
+                std::time::Instant::now() < bound,
+                "the probe did not reach its check-run read: {:?}",
+                world.gh_log()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        clock.release(secs(4));
+        fs::write(world.root().join("probe-released"), "").unwrap();
+    });
+    assert_eq!(
+        (reply.status, reply.verdict, reply.cause, reply.polls),
+        ("timeout", "armed_awaiting_checks", Some("checks_unread"), 1),
+        "{reply:?}"
     );
 }

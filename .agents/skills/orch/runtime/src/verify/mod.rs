@@ -27,6 +27,9 @@
 //! No polling loop runs here. One call is one read set; the caller repeats
 //! on `pending` under its own budget, so the budget and the retry stay with
 //! the workflow that owns them and a hung read never holds the record lock.
+//! A caller that waits under a deadline of its own hands the read set what
+//! it has left ([`Budget`]): no call starts past it, each call is bounded by
+//! what is left, and an answer that arrives past it is no answer.
 //!
 //! The `verify-pr` operation (`ops::verify_pr`) is the one caller that
 //! names a pull request: [`pull_request`] reads its current head, base and
@@ -42,13 +45,14 @@ mod selection;
 pub mod wire;
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use agent_runtime::host;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
 use crate::ops::{self, Applied, Env, RecordVerification, Request, Verdict, VerifyHead};
+use crate::schedule::Clock;
 use crate::state::{self, Locking};
 
 use judge::Judgement;
@@ -174,14 +178,26 @@ pub struct Verified {
 /// it on the item at `path` under `caller`'s source. `pending` and
 /// `unreadable` are results, not refusals: the reply carries them and the
 /// record is untouched.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the verification's one store call: the verdict recorded through record-verification"
-)]
 pub fn run(
     path: &Path,
     r: &VerifyHead,
     gh: &Path,
+    env: &Env,
+    locking: Locking,
+    caller: Caller,
+) -> Result<Verified> {
+    run_with(path, r, &Gh::new(gh), env, locking, caller)
+}
+
+/// [`run`] over a `gh` handle the caller built, with the budget it carries.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the verification's one store call: the verdict recorded through record-verification"
+)]
+pub(crate) fn run_with(
+    path: &Path,
+    r: &VerifyHead,
+    gh: &Gh<'_>,
     env: &Env,
     locking: Locking,
     caller: Caller,
@@ -202,7 +218,7 @@ pub fn run(
         checks,
         recorded,
     };
-    match evidence::read(&Gh::new(gh), r).map(judge::judge) {
+    match evidence::read(gh, r).map(judge::judge) {
         Ok(Judgement::Final {
             verdict,
             reason,
@@ -316,15 +332,15 @@ impl From<Cause> for Unreadable {
 /// an answer outside gh's documented shape, a head that is not a full
 /// lowercase 40-hex id or a base that is no branch name is `Unreadable`
 /// with its cause, never a pull request.
-pub fn pull_request(
-    gh: &Path,
+pub(crate) fn pull_request(
+    gh: &Gh<'_>,
     repo: &str,
     pr: u64,
 ) -> std::result::Result<wire::PullRequestView, Unreadable> {
     let endpoint = Endpoint::PullRequest;
     let number = pr.to_string();
     let read = || -> Read<wire::PullRequestView> {
-        let bytes = Gh::new(gh)
+        let bytes = gh
             .call(
                 endpoint,
                 &[
@@ -464,6 +480,9 @@ pub(crate) enum Cause {
     /// A required workflow names no explicit source sha; binding it would
     /// resolve a live ref.
     WorkflowSourceUnbound { path: String },
+    /// The caller's budget was spent before the call could start, or before
+    /// its answer arrived (`Budget`).
+    BudgetSpent(Endpoint),
 }
 
 impl Cause {
@@ -476,13 +495,17 @@ impl Cause {
             Cause::WorkflowSourceUnbound { path } => {
                 format!("workflow-source-unbound path={path}")
             }
+            Cause::BudgetSpent(endpoint) => format!("{}-budget-spent", endpoint.word()),
         }
     }
 
     fn detail(&self) -> Option<String> {
         match self {
             Cause::ReadFailed { detail, .. } => Some(detail.clone()),
-            Cause::ResponseInvalid(_) | Cause::TotalMismatch(_) | Cause::Capped(_) => None,
+            Cause::ResponseInvalid(_)
+            | Cause::TotalMismatch(_)
+            | Cause::Capped(_)
+            | Cause::BudgetSpent(_) => None,
             Cause::WorkflowSourceUnbound { .. } => None,
         }
     }
@@ -525,6 +548,30 @@ pub enum Acted {
     Refused { exit: i32, detail: String },
 }
 
+/// What a read set may spend, on the one injected clock: the deadline of
+/// the wait it serves, less the poll that wait still owes after it. No
+/// call starts past it, each call is bounded by what is left, and an
+/// answer that arrives past it is no answer, since the wait has moved on:
+/// a probe never carries its wait past the wait's own deadline.
+pub(crate) struct Budget<'a> {
+    clock: &'a dyn Clock,
+    deadline: Instant,
+}
+
+impl<'a> Budget<'a> {
+    pub(crate) fn until(clock: &'a dyn Clock, deadline: Instant) -> Budget<'a> {
+        Budget { clock, deadline }
+    }
+
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the budget's one clock read, through the injected clock the wait it serves runs on"
+    )]
+    fn remaining(&self) -> Duration {
+        self.deadline.saturating_duration_since(self.clock.now())
+    }
+}
+
 /// `gh` through agent-runtime's one process runner: `program`, a bare
 /// `gh` resolved on this process's PATH, or the path the caller already
 /// runs `gh` by, with this process's environment, so the caller's GitHub
@@ -532,15 +579,25 @@ pub enum Acted {
 /// program, as `gh api PATH`, the GraphQL form `gh api graphql -f query=…`
 /// or `gh pr view N`, answered with what it printed and whether it exited
 /// zero (`Answer`). The runner's operation word is the call's first
-/// argument, `api` or `pr`.
-pub(crate) struct Gh {
+/// argument, `api` or `pr`. A handle built `within` a budget refuses a
+/// call past it and bounds each call by what is left.
+pub(crate) struct Gh<'a> {
     program: PathBuf,
+    budget: Option<Budget<'a>>,
 }
 
-impl Gh {
-    pub(crate) fn new(program: &Path) -> Gh {
+impl<'a> Gh<'a> {
+    pub(crate) fn new(program: &Path) -> Gh<'a> {
         Gh {
             program: program.to_path_buf(),
+            budget: None,
+        }
+    }
+
+    pub(crate) fn within(program: &Path, budget: Budget<'a>) -> Gh<'a> {
+        Gh {
+            program: program.to_path_buf(),
+            budget: Some(budget),
         }
     }
 
@@ -603,8 +660,24 @@ impl Gh {
             | Endpoint::ClassicProtection
             | Endpoint::RequestReview => "api",
         };
-        let output = host::run_tagged("verify", "gh", &self.program, operation, args, GH_TIMEOUT)
-            .map_err(|e| failed(e.to_string()))?;
+        let timeout = match &self.budget {
+            None => GH_TIMEOUT,
+            Some(budget) => match budget.remaining() {
+                left if left.is_zero() => return Err(Cause::BudgetSpent(endpoint)),
+                left => GH_TIMEOUT.min(left),
+            },
+        };
+        let output = host::run_tagged("verify", "gh", &self.program, operation, args, timeout);
+        // An answer that arrived past the budget is no answer: the wait it
+        // served has moved on.
+        if self
+            .budget
+            .as_ref()
+            .is_some_and(|b| b.remaining().is_zero())
+        {
+            return Err(Cause::BudgetSpent(endpoint));
+        }
+        let output = output.map_err(|e| failed(e.to_string()))?;
         if !output.status.success() {
             // gh writes an HTTP error's message to stderr and its body to
             // stdout; whichever it wrote is the detail.
@@ -625,7 +698,7 @@ impl Gh {
 
 /// The reads over `gh`, decoding each answer into a wire type.
 struct Reader<'a> {
-    gh: &'a Gh,
+    gh: &'a Gh<'a>,
 }
 
 impl Reader<'_> {

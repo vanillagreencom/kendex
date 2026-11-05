@@ -21,7 +21,7 @@ trap cleanup_model_world EXIT
 # repeating unrelated worlds. An ordinary run still exercises every case.
 if [[ -n "${MODEL_CONTROL:-}" ]]; then
   case "${MODEL_CONTROL_CASE:-}" in
-    matching|family-alias|no-fleet-record|gui-session|adapter|fresh-shell|complete|extended|conflicting-selector|retired-callback|replaced-before-write|stale-launch|missing-judge|optional-account|reset|reset-replaced|reset-warning|lock-cause) ;;
+    matching|family-alias|no-fleet-record|gui-session|adapter|fresh-shell|complete|extended|conflicting-selector|retired-callback|replaced-before-write|stale-launch|missing-judge|optional-account|runtime-record|reset|reset-replaced|reset-warning|lock-cause) ;;
     *) printf 'lane-mail-model-switch.test: control-case=unknown value=%s\n' "${MODEL_CONTROL_CASE:-}" >&2; exit 1 ;;
   esac
 fi
@@ -283,6 +283,30 @@ omitted-mismatch|omitted|claude-opus-4-8
 named-mismatch|named|claude-opus-4-8
 matching-omitted|omitted|claude-fable-5-1
 ACCOUNTS
+fi
+
+if model_case runtime-record; then
+  echo '=== a runtime record carries its permission words into the recovery request ==='
+  # The record the runtime's launch-lane writes for a Claude lane launched
+  # with `--permission-mode dontAsk` (skills/orch/tests/fixtures/launch-lane/
+  # claude-dontask.json, held to the producer by tests/rust/open_terminal.rs),
+  # bound to this world: its item and root, the live predecessor's identity
+  # on the world's pane and server, the session and the account the world
+  # names.
+  model_world runtime-record claude-fable-5-1
+  record="$(sed "s|@ROOT@|$LANE|g" "$REPO_ROOT/skills/orch/tests/fixtures/launch-lane/claude-dontask.json" \
+    | jq -c --arg pid "$OWNED_CHILD" --arg start "$START" --arg account "$OFFLINE_HOME" --argjson server "$OVERSEER_SERVER" '
+      .item = "KEN-3916" | .launch = {pid: ($pid | tonumber), start: $start, pane: "%1", server: $server}
+      | .session_id = "s1" | .launched_at = "launch-a" | .account = $account')"
+  "$S/workflow-state" --state-dir "$LANE/tmp" update oversee '.lanes=[$r]' --argjson r "$record" >/dev/null
+  assert_eq "$(jq -r '[(has("recovery") | tostring), .permission] | join(" ")' <<<"$record")" 'false --permission-mode dontAsk' \
+    'the runtime record names its permission words and no released recovery object'
+  event claude-opus-4-8
+  await_recovery || FAIL=$((FAIL + 1))
+  assert_eq "$(jq -r '.permission // "none"' "$LANE/tmp/argv" 2>/dev/null || echo unwritten)" '--permission-mode dontAsk' \
+    "a runtime record's permission words are the replacement request's"
+  assert_eq "$(asked_ops)" 'close-owned-resources launch-lane' "the runtime record's recovery stops its predecessor before the launch"
+  kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
 fi
 
 echo '=== recovery validates before stopping ==='
@@ -698,6 +722,7 @@ old, new = {
     "selector": ('model="${model}[1m]"', 'model="$model"'),
     "selector-id": ('&& "$launch_id" == "$selector_id"', '&& true'),
     "account": ('permission: $permission} | with_entries(select(.value != ""))', 'permission: $permission} | with_entries(select(.value != "" or .key == "account"))'),
+    "permission-field": ('if [[ -n "$permission" ]]; then LANE_RECOVERY_PERMISSION="$permission"', 'if false; then LANE_RECOVERY_PERMISSION="$permission"'),
 }[rule]
 assert text.count(old) == 1
 changed = text.replace(old, new)
@@ -720,6 +745,7 @@ binding|stale-launch
 selector|extended
 selector-id|conflicting-selector
 account|optional-account
+permission-field|runtime-record
 CONTROLS
   control="$TMP_ROOT/companion-control.sh"
   python3 - "$COMPANION" "$control" <<'CONTROL'

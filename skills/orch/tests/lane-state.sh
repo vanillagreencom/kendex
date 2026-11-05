@@ -11,8 +11,11 @@
 #                  turn it is stale, and a quoted one is no wall; a Pi lane's
 #                  idle rows outrank the banner on its pane
 #   § input        Pi input waits on the base editor, not on idle rows alone
+#   § capture      lane_pane_capture keeps the screen and reads remain-on-exit's
+#                  dead flag, under a UTF-8 client locale and under none
 #
-# The sandbox, its pgrep stub and its assertions are lib/oversee-watch-harness.sh.
+# The sandbox, its pgrep stub and its assertions are lib/oversee-watch-harness.sh;
+# § capture runs a tmux server private to this suite.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # An inherited or configured provider would turn the rows hosted.
@@ -118,6 +121,65 @@ assert_eq "$actual/$rc" idle/0 "idle rows over the empty base editor permit inpu
 rc=0
 lane_input_ready actual listed pi 100 "$PI_DRAFT" "" "" idle "" pi || rc=$?
 assert_eq "$actual/$rc" unjudged/1 "idle rows over a drafted editor refuse input: the editor is not ready"
+
+echo "=== lane-state § capture: the screen kept and remain-on-exit's dead flag read ==="
+
+# lane_pane_capture is lane-close's one read of a local pane. A launcher run
+# from a job unit is a tmux client whose environment names no UTF-8 locale,
+# to which tmux prints a control byte in a format as `_`, so the screen and
+# the dead proof are read under a UTF-8 client and under none. The pane
+# prints a line spelled like the dead marker: screen text, never the flag.
+# The server is this suite's own, its socket under TMP_ROOT, ended with it.
+# The sandbox's stubs sit ahead of PATH; the capture runs the real tmux.
+CAPTURE_PATH="$(printf '%s' "$PATH" | tr ':' '\n' | grep -vxF "$TMP_ROOT/bin" | paste -sd: -)"
+REAL_TMUX="$(PATH="$CAPTURE_PATH" command -v tmux)" || { echo "lane-state: tmux-missing" >&2; exit 1; }
+SOCK_DIR="$TMP_ROOT/sock"
+mkdir -p "$SOCK_DIR"
+tm() { env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$CAPTURE_PATH" HOME="$TMP_ROOT" LANG=C.UTF-8 SHELL=/bin/sh TMUX_TMPDIR="$SOCK_DIR" "$REAL_TMUX" "$@"; }
+trap 'tm kill-server 2>/dev/null || true; rm -rf -- "${TMP_ROOT:?}"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+tm -f /dev/null new-session -d -s w -n lane -x 200 -y 50 'exec sleep 100000'
+CAPTURE_PANE="$(tm new-window -d -P -F '#{pane_id}' -t w -n capture "printf 'capture-ready\\nkendex-pane-dead=1\\n'; exec cat")"
+tm set-window-option -t "$CAPTURE_PANE" remain-on-exit on
+capture_wait=0
+until [[ "$(tm capture-pane -pJ -t "$CAPTURE_PANE")" == *capture-ready* ]]; do
+  capture_wait=$((capture_wait + 1))
+  [[ "$capture_wait" -lt 100 ]] || { echo 'lane-state: capture-not-ready' >&2; exit 1; }
+  sleep 0.1
+done
+# capture_locale LOCALE EXPECTED_SCREEN — the capture of the pane and the
+# judge's word on it, from a child shell whose client locale is LOCALE, none
+# where LOCALE is empty.
+capture_locale() {
+  env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$CAPTURE_PATH" HOME="$TMP_ROOT" TMUX_TMPDIR="$SOCK_DIR" ${1:+LANG="$1"} "$BASH" -c '
+    source "$1"
+    rc=0
+    lane_pane_capture screen local local capture "$3" || rc=$?
+    preserved=no; [[ "$screen" != "$2" ]] || preserved=yes
+    lane_state state listed copilot "" "$screen" "" "" "" "" copilot "$LANE_PANE_SOURCE"
+    printf "rc=%s source=%s screen=%s state=%s" "$rc" "$LANE_PANE_SOURCE" "$preserved" "$state"
+  ' _ "$JUDGE" "$2" "$CAPTURE_PANE"
+}
+while IFS='|' read -r phase locale source state; do
+  if [[ "$phase" == dead && "$(tm display-message -p -t "$CAPTURE_PANE" '#{pane_dead}')" != 1 ]]; then
+    tm send-keys -t "$CAPTURE_PANE" C-d
+    capture_wait=0
+    until [[ "$(tm display-message -p -t "$CAPTURE_PANE" '#{pane_dead}')" == 1 ]]; do
+      capture_wait=$((capture_wait + 1))
+      [[ "$capture_wait" -lt 100 ]] || { echo 'lane-state: capture-not-dead' >&2; exit 1; }
+      sleep 0.1
+    done
+  fi
+  capture_expected="$(tm capture-pane -pJ -t "$CAPTURE_PANE")"
+  assert_eq "$(capture_locale "$locale" "$capture_expected")" \
+    "rc=0 source=$source screen=yes state=$state" "real tmux capture: $phase pane with locale [$locale]"
+done <<'ROWS'
+live|C.UTF-8|local|unjudged
+live||local|unjudged
+dead|C.UTF-8|local-dead|exited
+dead||local-dead|exited
+ROWS
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -2795,12 +2795,17 @@ fn lane_status_keeps_a_providers_running_answer_over_a_local_transport_shell() {
 
 /// Defect: the counts read `<worktree>/tmp` whatever state directory the
 /// lane's checkout names, so a lane on a configured directory read a stale
-/// or absent state as counts and `unread`. The counts read the state where
-/// the checkout's own files put it: a local repository whose settings file
-/// names `records`, with a decoy under `tmp`; a checkout whose private env
-/// file outranks its settings file; a hosted checkout whose settings file
-/// comes through the provider's `cat`, the state under the clone its `.git`
-/// names where its `tmp` holds none.
+/// or absent state as counts and `unread`, and a lane in a linked worktree,
+/// every local orch lane, read its own `tmp` where its main checkout keeps
+/// the state. The counts read the state where the checkout's own files put
+/// it: a local repository whose settings file names `records`, with a decoy
+/// under `tmp`; a checkout whose private env file outranks its settings
+/// file; two worktrees of a real `git worktree add`, each `.git` a gitfile,
+/// the state under the main checkout's `records` or `tmp` over decoys in
+/// the worktree's own; a hosted checkout whose settings file comes through
+/// the provider's `cat`, the state under the clone its `.git` names where
+/// its `tmp` holds none, the clone's own `.git` directory and a worktree's
+/// gitfile alike.
 #[test]
 fn lane_status_reads_the_counts_under_the_state_directory_the_lanes_checkout_names() {
     let dir = tempfile::tempdir().unwrap();
@@ -2819,14 +2824,21 @@ fn lane_status_reads_the_counts_under_the_state_directory_the_lanes_checkout_nam
             std::fs::write(path, text).unwrap();
         }
     };
+    // Every `git` here runs under the row's own isolation: no global or
+    // system configuration, no maintenance a removal could race.
+    let git = |args: &[&str]| {
+        let out = support::program("git")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .args(["-c", "gc.auto=0", "-c", "maintenance.auto=false"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}: {}", support::stderr(&out));
+    };
     let local = dir.path().join("local");
     std::fs::create_dir_all(&local).unwrap();
-    let init = support::program("git")
-        .args(["init", "-q", "-b", "main"])
-        .arg(&local)
-        .output()
-        .unwrap();
-    assert!(init.status.success(), "{}", support::stderr(&init));
+    git(&["init", "-q", "-b", "main", &local.display().to_string()]);
     plant(
         &local,
         &[
@@ -2846,6 +2858,48 @@ fn lane_status_reads_the_counts_under_the_state_directory_the_lanes_checkout_nam
             ("records/workflow-state-KEN-3.json", decoy),
         ],
     );
+    let main = dir.path().canonicalize().unwrap().join("main");
+    std::fs::create_dir_all(&main).unwrap();
+    let main_word = main.display().to_string();
+    git(&["init", "-q", "-b", "main", &main_word]);
+    git(&[
+        "-C",
+        &main_word,
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "base",
+    ]);
+    let configured = main.with_file_name("wt-configured");
+    let unnamed = main.with_file_name("wt-unnamed");
+    for worktree in [&configured, &unnamed] {
+        git(&[
+            "-C",
+            &main_word,
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            &worktree.display().to_string(),
+        ]);
+    }
+    plant(
+        &configured,
+        &[
+            ("kendex.settings.toml", settings),
+            ("records/workflow-state-KEN-5.json", decoy),
+            ("tmp/workflow-state-KEN-5.json", decoy),
+        ],
+    );
+    plant(&unnamed, &[("tmp/workflow-state-KEN-6.json", decoy)]);
+    plant(
+        &main,
+        &[
+            ("records/workflow-state-KEN-5.json", counts),
+            ("tmp/workflow-state-KEN-6.json", counts),
+        ],
+    );
     let disk = dir.path().join("disk");
     plant(
         &disk.join("remote").join("KEN-4"),
@@ -2860,6 +2914,18 @@ fn lane_status_reads_the_counts_under_the_state_directory_the_lanes_checkout_nam
             ),
         ],
     );
+    plant(
+        &disk.join("remote").join("KEN-7"),
+        &[
+            (".git", "gitdir: /remote/clone/.git/worktrees/KEN-7\n"),
+            ("kendex.settings.toml", settings),
+            ("records/workflow-state-KEN-7.json", decoy),
+        ],
+    );
+    plant(
+        &disk.join("remote").join("clone"),
+        &[("records/workflow-state-KEN-7.json", counts)],
+    );
     let provider = orch_package()
         .join("tests")
         .join("fixtures")
@@ -2872,6 +2938,12 @@ fn lane_status_reads_the_counts_under_the_state_directory_the_lanes_checkout_nam
          "mail_root": private, "launch": {"pane": pane, "server": server.pid}},
         {"item": "KEN-4", "window": "fleet:gh-4", "harness": "codex", "host": provider,
          "status": "running", "mail_root": "/remote/KEN-4"},
+        {"item": "KEN-5", "window": "gh-5", "harness": "claude", "status": "running",
+         "mail_root": configured, "launch": {"pane": pane, "server": server.pid}},
+        {"item": "KEN-6", "window": "gh-6", "harness": "claude", "status": "running",
+         "mail_root": unnamed, "launch": {"pane": pane, "server": server.pid}},
+        {"item": "KEN-7", "window": "fleet:gh-7", "harness": "codex", "host": provider,
+         "status": "running", "mail_root": "/remote/KEN-7"},
     ]);
     runner.write_fleet(&fleet);
     let log = dir.path().join("host.log");
@@ -2885,7 +2957,14 @@ fn lane_status_reads_the_counts_under_the_state_directory_the_lanes_checkout_nam
         ];
         reply(&runner.run_env(&["lane", "status", "--item", item], &env))
     };
-    for (item, runs) in [("KEN-2", "unread"), ("KEN-3", "unread"), ("KEN-4", "4")] {
+    for (item, runs) in [
+        ("KEN-2", "unread"),
+        ("KEN-3", "unread"),
+        ("KEN-4", "4"),
+        ("KEN-5", "unread"),
+        ("KEN-6", "unread"),
+        ("KEN-7", "unread"),
+    ] {
         let answer = status(item);
         for (key, want) in [
             ("review_rounds", "5"),
@@ -2903,14 +2982,17 @@ fn lane_status_reads_the_counts_under_the_state_directory_the_lanes_checkout_nam
         );
     }
     let calls = std::fs::read_to_string(&log).unwrap_or_default();
-    for path in [
-        "/remote/KEN-4/tmp/workflow-state-KEN-4.json",
-        "/remote/KEN-4/.git/HEAD",
-        "/remote/KEN-4/kendex.settings.toml",
-        "/remote/KEN-4/records/workflow-state-KEN-4.json",
+    for (item, path) in [
+        ("KEN-4", "/remote/KEN-4/tmp/workflow-state-KEN-4.json"),
+        ("KEN-4", "/remote/KEN-4/.git/HEAD"),
+        ("KEN-4", "/remote/KEN-4/kendex.settings.toml"),
+        ("KEN-4", "/remote/KEN-4/records/workflow-state-KEN-4.json"),
+        ("KEN-7", "/remote/KEN-7/.git"),
+        ("KEN-7", "/remote/KEN-7/kendex.settings.toml"),
+        ("KEN-7", "/remote/clone/records/workflow-state-KEN-7.json"),
     ] {
         assert!(
-            calls.contains(&format!("cat --item KEN-4 {path}")),
+            calls.contains(&format!("cat --item {item} {path}")),
             "{path}: {calls}"
         );
     }

@@ -32,7 +32,7 @@ Read the PR's decline replies and the repo's instruction files before reporting 
 
 Accepted rationale can appear in settings comments, engine comments, or `skills/review-gate/references/`.
 
-Thread resolution is not rechecked by GitHub after queue admission. `skills/orch/scripts/queue-wait` dequeues or disarms a PR when it observes late findings. Findings inside its probe gap can merge. `skills/orch/workflows/merge-pr.md` reads and answers unresolved threads once after merge. A thread arriving after that read remains unhandled.
+Thread resolution is not rechecked by GitHub after queue admission. The orch runtime's `queue-watch` disarms and dequeues a PR when it observes late findings. Findings inside its probe gap can merge. `skills/orch/workflows/merge-pr.md` reads and answers unresolved threads once after merge. A thread arriving after that read remains unhandled.
 
 Do not request test coverage for instruction markdown or for a `tools/guard` change that adds no guard test lane. Structural markdown checks establish syntax elements, not the truth of prose.
 

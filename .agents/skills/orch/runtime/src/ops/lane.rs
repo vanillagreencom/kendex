@@ -51,8 +51,9 @@ use crate::state::{
 /// apply` with `--lane-refresh`: the launch writes the refresh record the
 /// drift hooks read. `permission` is the harness's permission word the
 /// lane runs under, spelled as agent-runtime's table spells it (one word,
-/// or `FLAG VALUE` as two); left out, the launch runs the settings'
-/// posture, and a word the table lacks is refused before any intent.
+/// or `FLAG VALUE` as two) and recorded on the lane; left out, the launch
+/// runs the settings' posture, and a word the table lacks is refused
+/// before any intent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LaunchLane {
     pub item: String,
@@ -128,6 +129,19 @@ impl LaunchLane {
             .as_deref()
             .map(|p| p.split_whitespace().map(str::to_owned).collect())
             .unwrap_or_default()
+    }
+
+    /// The permission choice as the record carries it: the line's words
+    /// joined by one blank, so a relaunch composed from the record (the
+    /// model-switch recovery) runs the replacement under the same choice;
+    /// `null` where the launch runs the settings' posture.
+    fn permission_recorded(&self) -> Value {
+        let words = self.permission_words();
+        if words.is_empty() {
+            Value::Null
+        } else {
+            Value::from(words.join(" "))
+        }
     }
 
     /// The permission word judged against the harness's table: `Ok` with
@@ -336,8 +350,9 @@ pub struct PhaseRecorded {
 
 /// The record a first launch appends, in the lane record's key order with
 /// `null` where the launch knows no value, the order every reader of the
-/// fleet record meets. `allow_all` is the Copilot grant, `tier` and
-/// `tier_inputs` what the brief states of the item's tier.
+/// fleet record meets. `permission` is the permission choice the line
+/// carries, `allow_all` the Copilot grant, `tier` and `tier_inputs` what
+/// the brief states of the item's tier.
 fn new_lane_record(r: &LaunchLane, at: &str, allow_all: Option<bool>, tier: &Tier) -> Value {
     json!({
         "item": r.item,
@@ -352,6 +367,7 @@ fn new_lane_record(r: &LaunchLane, at: &str, allow_all: Option<bool>, tier: &Tie
         "surface": r.surface.as_deref().unwrap_or("tmux"),
         "model": string_or_null(&r.model),
         "effort": string_or_null(&r.effort),
+        "permission": r.permission_recorded(),
         "session_id": Value::Null,
         "session_since": at,
         "launched_at": at,
@@ -844,9 +860,6 @@ pub(super) fn launch_lane(
             occupancy: admission.occupancy,
             cap,
             lanes: u32::try_from(lanes).unwrap_or(u32::MAX),
-            claims: admission
-                .occupancy
-                .saturating_sub(u32::try_from(lanes).unwrap_or(u32::MAX)),
             setting,
         });
     }
@@ -905,13 +918,14 @@ pub(super) fn launch_lane(
             state::set(lane, "running_at", Value::Null);
             state::set(lane, "status", LaneStatus::Preparing.word());
             // What this launch states of the lane, over what the record
-            // keeps: a grant judged now and a tier the brief names.
+            // keeps: a permission choice and a grant judged now. The tier
+            // stays the first launch's: a relaunch's brief opens the
+            // workflow with `start` whatever tier the item runs at.
+            if let Value::String(permission) = r.permission_recorded() {
+                state::set(lane, "permission", permission.as_str());
+            }
             if allow_all.is_some() {
                 state::set(lane, "allow_all", allow_all);
-            }
-            if tier.tier.is_some() {
-                state::set(lane, "tier", tier.tier);
-                state::set(lane, "tier_inputs", tier.inputs());
             }
             state::set(lane, "launch", Value::Null);
             state::delete(lane, "prepare");
@@ -1596,6 +1610,7 @@ mod tests {
                 "surface",
                 "model",
                 "effort",
+                "permission",
                 "session_id",
                 "session_since",
                 "launched_at",
@@ -1955,7 +1970,6 @@ mod tests {
                 ("occupancy".to_owned(), "1".to_owned()),
                 ("cap".to_owned(), "1".to_owned()),
                 ("lanes".to_owned(), "1".to_owned()),
-                ("claims".to_owned(), "0".to_owned()),
                 ("setting".to_owned(), "ORCH_OVERSEER_LANES".to_owned())
             ]
         );

@@ -104,9 +104,9 @@ stage_required_build() {
   gh_stub_answer 'api:/branches/main' '{"protection":{"required_status_checks":{"contexts":["build"]}}}'
 }
 
-# A required workflow bound to run 500 on the head, the legacy waiter's
-# fixture: the ruleset requires the workflow at WORKFLOW_PATH from
-# org/source, and its one run on the head ended with CONCLUSION. Every read
+# A required workflow bound to run 500 on the head: the ruleset requires
+# the workflow at WORKFLOW_PATH from org/source, and its one run on the
+# head ended with CONCLUSION. Every read
 # required_contexts makes to bind that run is staged; the api selectors are
 # staged most specific first, since the stub takes the first whose text the
 # call carries.
@@ -126,7 +126,7 @@ stage_required_workflow() { # CONCLUSION
   gh_stub_answer api-graphql "$(jq -cn --arg path "$WORKFLOW_PATH" --arg sha "$SOURCE_SHA" \
     '{data: {nodes: [{id: "suite-500", databaseId: 500, workflowRun: {databaseId: 500, runAttempt: 1, file: {path: $path, repositoryName: "org/source", repositoryFileUrl: ("https://github.com/org/source/blob/" + $sha + "/" + $path), viewerCanReadRepository: true}}}]}}')"
 }
-# The failed job log of that workflow's runner, the legacy fixture's line.
+# The failed job log of that workflow's runner.
 runner_log="$TMP_ROOT/runner.log"
 printf 'runner error: network timeout\n' >"$runner_log"
 

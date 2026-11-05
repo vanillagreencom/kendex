@@ -6,10 +6,8 @@
 # reads a recorded session file through it.
 #
 # The session lookup: which harness transcript a wake resumes, and the id the
-# harness resumes it by. It reads the caller's globals (LANE_ENV,
-# LAUNCH_FLAGS, LANES_CLI) and calls its launch_ambient_codex_home and
-# copilot_launch_home. Exit 1 means no session; exit 2 means the lookup
-# failed, never permission to start fresh.
+# harness resumes it by. It reads the caller's LAUNCH_FLAGS. Exit 1 means no
+# session; exit 2 means the lookup failed, never permission to start fresh.
 
 # The replacement is the runtime's: one `launch-lane` request written beside
 # the fleet state, its path in LANE_RECOVERY_REQUEST, composed from the lane
@@ -17,25 +15,27 @@
 # repository, host and kind, the checkout the launch ran from as its
 # mail_root (`checkout` on a hosted record, whose `mail_root` is its host's;
 # else `mail_root`), the account where one is named, the refresh word, the
-# model the switch recorded with its effort, and the continuation line as
-# its brief. A record an earlier launcher wrote keeps its `recovery` object:
-# its `cwd` and `refresh` stand in for the fields above where the record
-# lacks them, and its `flags` name the selector whose `[1m]` suffix the
-# model keeps, the effort the record lacks and the permission choice the
-# lane ran under, which the request carries as its `permission`. The host
-# and tracker keep their lane-record meanings, including null host meaning
-# local.
+# model the switch recorded with its effort, the permission words the
+# record's `permission` names, which the request carries as its own, and
+# the continuation line as its brief. A record an earlier launcher wrote
+# keeps its `recovery` object: its `cwd` and `refresh` stand in for the
+# fields above where the record lacks them, and its `flags` name the
+# selector whose `[1m]` suffix the model keeps, the effort the record lacks
+# and, where the record names no `permission`, the permission choice the
+# lane ran under. The host and tracker keep their lane-record meanings,
+# including null host meaning local.
 lane_recovery_request() { # RECORD ACCOUNT STATE_DIR
-  local fields item harness flags refresh tracker repo kind model effort launch_model launch_id selector_id brief request
+  local fields item harness flags refresh tracker repo kind model effort launch_model launch_id selector_id brief request permission
   LANE_RECOVERY_CAUSE=checkout-unrecorded
   LANE_RECOVERY_REQUEST="" LANE_RECOVERY_CWD="" LANE_RECOVERY_HOST="" LANE_RECOVERY_SESSION="" LANE_RECOVERY_PERMISSION=""
   fields="$(jq -er '(.checkout // .recovery.cwd // .mail_root) as $cwd
     | select(($cwd | type) == "string" and ($cwd | length) > 0)
     | [.item, .harness, $cwd, (.recovery.flags | strings // ""),
        ((.recovery.refresh // .refresh // false) == true | tostring),
-       (.host // "local"), (.recovery.session // ""), (.tracker // ""), (.repo // ""), (.kind // "")]
+       (.host // "local"), (.recovery.session // ""), (.tracker // ""), (.repo // ""), (.kind // ""),
+       (.permission | strings // "")]
     | join("\u001f")' <<<"$1")" || return 1
-  IFS=$'\x1f' read -r item harness LANE_RECOVERY_CWD flags refresh LANE_RECOVERY_HOST LANE_RECOVERY_SESSION tracker repo kind <<<"$fields"
+  IFS=$'\x1f' read -r item harness LANE_RECOVERY_CWD flags refresh LANE_RECOVERY_HOST LANE_RECOVERY_SESSION tracker repo kind permission <<<"$fields"
   # A provider path is recorded as named, and the runtime resolves none.
   case "$LANE_RECOVERY_HOST" in
     local|claude-cloud|/*) ;;
@@ -56,8 +56,9 @@ lane_recovery_request() { # RECORD ACCOUNT STATE_DIR
       model="${model}[1m]"
     fi
     [[ -n "$effort" ]] || effort="$(launch_choice_effort "$harness" "$flags")" || return 1
-    lane_recovery_permission "$harness" "$flags" || return 1
   fi
+  if [[ -n "$permission" ]]; then LANE_RECOVERY_PERMISSION="$permission"
+  elif [[ -n "$flags" ]]; then lane_recovery_permission "$harness" "$flags" || return 1; fi
   LANE_RECOVERY_CAUSE=checkout-unavailable
   LANE_RECOVERY_CWD="$(cd -- "$LANE_RECOVERY_CWD" && pwd -P)" || return 1
   LANE_RECOVERY_CAUSE=brief-unwritten
@@ -289,43 +290,18 @@ pi_relaunch_root() { # WORKTREE HOME
   printf '%s\n' "$root"
 }
 
-# Transcript fallback for Claude listSessions, Codex thread/list and Pi
-# SessionManager.list: shell launches lack SDK/app-server connections; Codex
-# copies across accounts. Worktree metadata owns repository/item, never prompts.
-# Pi workers use kendex/sessions, outside its lead store; Pi parents are forks.
-#
-# Copilot is the exception: how its events.jsonl records a kickoff is not
-# measured, so a copilot session is the one lib/copilot-session.sh's
-# copilot_session_in_worktree names for the lane's worktree, one item's alone.
-# A record quoting its path names no directory there and matches nothing, which
-# renders the fresh brief. So does a record with no events beside it, which
-# `copilot --resume=<id>` exits 1 on with "No session, task, or name matched",
-# in `-p` and at a pane alike (1.0.88, the log naming "Cannot create session
-# from empty events array"). An older resumable record in the same worktree is
-# resumed in its place.
-find_relaunch_session() { # HARNESS WORKTREE [HOST_CODEX_HOME]
-  local harness="$1" cwd="$2" home="${LANES_HOME:-$HOME}" config roots root inventory match_filter="" files file best="" best_root="" rc relative target
+# Transcript fallback for Claude listSessions and Pi SessionManager.list:
+# shell launches lack SDK/app-server connections. Worktree metadata owns
+# repository/item, never prompts. Pi workers use kendex/sessions, outside its
+# lead store; Pi parents are forks.
+find_relaunch_session() { # HARNESS WORKTREE
+  local harness="$1" cwd="$2" home="${LANES_HOME:-$HOME}" roots root match_filter="" files file best="" rc
   command -v jq >/dev/null 2>&1 || return 2
   cwd="$(cd -- "$cwd" && pwd -P)" || return 2
   case "$harness" in
     claude) roots="$home/.claude-shared/projects"; match_filter='first(inputs|fromjson?|select(.cwd!=null)) // {} | {cwd, lead:(.isSidechain!=true)}' ;;
-    codex)
-      if [[ -n "${3:-}" ]]; then config="$3"
-      else
-        config="$(launch_ambient_codex_home)" || return 2
-        [[ "${LANE_ENV%%=*}" != CODEX_HOME ]] || config="${LANE_ENV#*=}"
-      fi
-      [[ -x "$LANES_CLI" ]] || return 2
-      inventory="$("$LANES_CLI" list --local --harness codex --json)" || return 2
-      roots="$(jq -er --arg d "$config" 'if type=="array" and all(.[]; (.config_dir|type)=="string") then ([.[]|.config_dir]+[$d]|unique[]|.+"/sessions") else error("inventory") end' <<<"$inventory")" || return 2
-      # SessionMeta defaults an omitted source to vscode in Codex's protocol.
-      match_filter='first(inputs|fromjson?|select(.type=="session_meta")|.payload) // {} |
-        {cwd, lead:((.source=="cli" or .source=="vscode" or (has("source")|not)) and .parent_thread_id==null)}' ;;
     pi) roots="$(pi_relaunch_root "$cwd" "$home")" || return 2; match_filter='first(inputs|fromjson?|select(.type=="session")) // {} | {cwd, lead:true}' ;;
-    copilot)
-      config="$(copilot_launch_home)"
-      copilot_session_in_worktree "$config" "$cwd"
-      return ;;
+    *) return 1 ;;
   esac
 
   while IFS= read -r root; do
@@ -341,24 +317,19 @@ find_relaunch_session() { # HARNESS WORKTREE [HOST_CODEX_HOME]
     while IFS= read -r file; do
       [[ -n "$file" ]] || continue
       if jq -Rne --arg cwd "$cwd" "$match_filter | .cwd==\$cwd and .lead" "$file" >/dev/null 2>&1; then
-        [[ -n "$best" && ! "$file" -nt "$best" ]] || { best="$file"; best_root="$root"; }
+        [[ -n "$best" && ! "$file" -nt "$best" ]] || best="$file"
       else rc=$?; [[ "$rc" -eq 1 ]] || return 2; fi
     done <<<"$files"
   done <<<"$roots"
   [[ -n "$best" ]] || return 1
-  if [[ "$harness" == codex && "$best_root" != "$config/sessions" ]]; then
-    relative="${best#"$best_root"/}"; target="$config/sessions/$relative"
-    if [[ -e "$target" ]]; then cmp -s -- "$best" "$target" || return 2
-    else mkdir -p -- "${target%/*}" || return 2; cp -p -- "$best" "$target" || return 2; fi
-    best="$target"
-  fi
   printf '%s\n' "$best"
 }
 # The id a harness resumes a transcript by: the file's basename for claude,
 # the session_meta id inside a codex transcript, the file itself for pi,
 # whose --session takes a path, and a copilot session's own id, read from its
-# workspace.yaml by lib/copilot-session.sh. Empty is a transcript the harness cannot resume, and a
-# failure.
+# workspace.yaml by lib/copilot-session.sh; a Jarvis session reads a recorded
+# codex or copilot file through recorded_session_file below. Empty is a
+# transcript the harness cannot resume, and a failure.
 session_id_of() { # HARNESS SESSION_FILE
   local id=""
   case "$1" in

@@ -923,6 +923,213 @@ fn a_walled_lane_is_relaunched_once_under_auto_and_only_reported_under_ask() {
     );
 }
 
+/// A `claude` the launch rows start that hits a weekly wall: it draws
+/// Claude's composer, echoes the first turn it reads, then draws the banner
+/// and the composer again and holds; the path to run it as.
+fn walled_stub(dir: &Path) -> PathBuf {
+    let bin = dir.join("walled");
+    std::fs::create_dir_all(&bin).unwrap();
+    let path = bin.join("claude");
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/bash\nprintf '\\xe2\\x9d\\xaf\\xc2\\xa0\\n'\nprintf '  ? for shortcuts\\n'\nIFS= read -r line\nprintf '\\xe2\\x9d\\xaf %s\\n' \"$line\"\nprintf '%s\\n' '⏺ Working through the queue.' '{}' 'Run /usage-credits to raise it'\nprintf '\\xe2\\x9d\\xaf\\xc2\\xa0\\n'\nwhile IFS= read -r _line; do :; done\n",
+            BANNER.replace('\'', "'\\''")
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        &path,
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
+    )
+    .unwrap();
+    path
+}
+
+/// The launch record the recording stub writes in `cwd`, read once it
+/// stands: the stub writes it from its own process after the launch answers.
+fn launch_record_of(cwd: &Path) -> Value {
+    let path = cwd.join("launch-record.json");
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Ok(text) = std::fs::read_to_string(&path)
+            && let Ok(record) = serde_json::from_str::<Value>(&text)
+        {
+            return record;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no launch record at {}",
+            path.display()
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// A checkout at `path` for a launch to run in, made by `git` under the
+/// row's own isolation.
+fn init_checkout(path: &Path) {
+    std::fs::create_dir_all(path).unwrap();
+    let out = program("git")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .args([
+            "-c",
+            "gc.auto=0",
+            "-c",
+            "maintenance.auto=false",
+            "init",
+            "-q",
+        ])
+        .arg(path)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", stderr(&out));
+}
+
+/// Defect: a lane launched under a narrower permission choice was relaunched
+/// at a wall under the bypass default, since the wall route's request
+/// carried no permission. Through the real `launch-lane` and the real duty:
+/// the record of a lane launched with `--permission-mode dontAsk` carries the
+/// choice, the wall relaunch's request carries it, and the replacement the
+/// request starts through the real entry runs with the word and no bypass
+/// word; a released record, planted as `main` wrote it, carries the choice in
+/// `recovery.flags`, and its request carries the same word.
+#[test]
+fn a_walled_lanes_relaunch_keeps_its_permission_choice() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let work = root.join("KEN-5");
+    init_checkout(&work);
+    let spent = root.join("eclaude");
+    let picked = root.join("bclaude");
+    for account in [&spent, &picked] {
+        std::fs::create_dir_all(account).unwrap();
+    }
+    let binaries = format!("claude={}", walled_stub(&root).display());
+    let request = json!({
+        "op": "launch-lane",
+        "item": "KEN-5",
+        "harness": "claude",
+        "mail_root": work.display().to_string(),
+        "account": spent.display().to_string(),
+        "model": "opus",
+        "permission": "--permission-mode dontAsk",
+    });
+    let report = effect_report(
+        &fleet
+            .runner
+            .op_fleet_env(&request, &[("ORCH_HARNESS_BINARIES", binaries.as_str())]),
+    );
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    let runtime = fleet.runner.fleet()["lanes"][0].clone();
+    let walled = runtime["launch"]["pane"].as_str().unwrap();
+    server.send_line(walled, "work through the queue");
+    await_drawn(&server, walled, "weekly limit");
+    let (pane, identity) = walled_claude(&server, dir.path(), "gh-6", BANNER);
+    let mut released = relaunchable(
+        lane_record(
+            "KEN-6",
+            "gh-6",
+            "claude",
+            &server,
+            &pane,
+            Some(&identity),
+            dir.path(),
+        ),
+        dir.path(),
+    );
+    released["recovery"]["flags"] = json!("--model opus --permission-mode dontAsk");
+    fleet.set_lanes(vec![runtime, released]);
+    let state = fleet.read();
+    lane_driver!(server, fleet, readers, driver);
+    driver.now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    driver.pick = Pick::Lane(picked.display().to_string());
+    let scripts = root.join("scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::os::unix::fs::symlink(binary(), scripts.join("orch-runtime")).unwrap();
+    driver.scripts = scripts;
+    let produced = driver.pass(&state);
+    let relaunched: Vec<String> = event_lines(&produced)
+        .into_iter()
+        .filter(|l| l.starts_with("EVENT lane-relaunched "))
+        .collect();
+    assert_eq!(
+        relaunched,
+        vec![
+            format!(
+                "EVENT lane-relaunched KEN-5 lane={} from={}",
+                picked.display(),
+                spent.display()
+            ),
+            format!(
+                "EVENT lane-relaunched KEN-6 lane={} from=/home/me/.eclaude",
+                picked.display()
+            ),
+        ],
+        "{:?}",
+        lines(&produced)
+    );
+    let started = driver.relaunches.borrow();
+    assert_eq!(started.len(), 2);
+    for relaunch in started.iter() {
+        let request: Value =
+            serde_json::from_str(&std::fs::read_to_string(&relaunch.args[7]).unwrap()).unwrap();
+        assert_eq!(
+            request["permission"],
+            json!("--permission-mode dontAsk"),
+            "{}: {request}",
+            relaunch.item
+        );
+    }
+    // The runtime record's two requests through the real entry, as the
+    // route starts them: the walled predecessor retired, the replacement
+    // started on the picked account with the kept choice.
+    let chain = &started[0];
+    assert_eq!(chain.item, "KEN-5");
+    let mut command = program("sh");
+    fleet.runner.apply_env(&mut command);
+    let out = command
+        .args(&chain.args[1..])
+        .current_dir(&chain.cwd)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let replacement = launch_record_of(&work);
+    let argv: Vec<&str> = replacement["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect();
+    assert!(
+        argv.windows(2)
+            .any(|w| w == ["--permission-mode", "dontAsk"]),
+        "the kept choice on the replacement's line: {argv:?}"
+    );
+    assert!(
+        !argv.contains(&"--dangerously-skip-permissions"),
+        "the bypass default on the replacement's line: {argv:?}"
+    );
+    assert_eq!(
+        replacement["env"]["CLAUDE_CONFIG_DIR"],
+        json!(picked.display().to_string()),
+        "{replacement}"
+    );
+    let lane = fleet.runner.fleet()["lanes"][0].clone();
+    assert_eq!(lane["status"], "running", "{lane}");
+    assert_eq!(
+        lane["account"],
+        json!(picked.display().to_string()),
+        "{lane}"
+    );
+}
+
 /// The item state `744fd5727:skills/orch/tests/oversee_watch_start_stall.sh` plants for its
 /// `separate_counts` row.
 const COUNTS_STATE: &str = r#"{"first_panel":{},"rereview_cycles":1,"cycles":7,"pr_comment_review":{"iterations":3,"patched_causes":[{"cause":"a","commit":"aaa111"},{"cause":"a","commit":"bbb222"}]},"stages":[{"kind":"implement"},{"kind":"fix"},{"kind":"fix"},{"kind":"fix"},{"kind":"review"}],"validate_rounds":[{"kind":"implement"},{"kind":"fix"},{"kind":"restack"},{"kind":"restack"}],"restack_skips":[{},{}],"restacks":4}"#;
@@ -943,10 +1150,6 @@ fn a_long_lane_is_reported_once_per_age_interval_with_its_records_counts() {
     let launched: u64 = 1_800_000_000 - 12_601;
     let mut running = lane_record("KEN-9", "gh-9", "claude", &server, "%999", None, dir.path());
     running["launched_at"] = json!("2027-01-15T04:29:59Z");
-    // The lane's checkout is its own: a `.git` entry at its root, which the
-    // counts read for the common root, planted as a directory and never by a
-    // git process.
-    std::fs::create_dir(dir.path().join(".git")).unwrap();
     let tmp = dir.path().join("tmp");
     std::fs::write(
         tmp.join("lane-status-KEN-9.md"),
@@ -4472,41 +4675,93 @@ fn a_paneless_hosted_lane_the_provider_reads_exited_is_reported_on_the_second_pa
     );
 }
 
+/// A `copilot` the launch rows start, at rest: it writes the session the
+/// CLI keeps under its home at start (`session-state/<id>/`, the id from the
+/// checkout's name), draws Copilot's framed composer and holds; the path to
+/// run it as.
+fn copilot_stub(dir: &Path) -> PathBuf {
+    let bin = dir.join("resting");
+    std::fs::create_dir_all(&bin).unwrap();
+    let path = bin.join("copilot");
+    let rule = "─".repeat(40);
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/bash\nhome=\"${{COPILOT_HOME:-$HOME/.copilot}}\"\nid=\"s-$(basename \"$PWD\")\"\nmkdir -p \"$home/session-state/$id\"\nprintf 'id: %s\\ncwd: %s\\n' \"$id\" \"$(pwd -P)\" > \"$home/session-state/$id/workspace.yaml\"\nprintf '%s\\n' '{{\"type\":\"user.message\"}}' > \"$home/session-state/$id/events.jsonl\"\nprintf '%s\\n' ' ~/work [⎇ main]' '{rule}' '❯ ' '{rule}'\nwhile IFS= read -r _line; do :; done\n"
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        &path,
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
+    )
+    .unwrap();
+    path
+}
+
+/// The lane-mail hooks a Copilot launch's gate wants under `dir`, and the
+/// `kendex` that judges them switched off by nothing, first on `tools`.
+fn plant_copilot_hooks(dir: &Path, tools: &Path) {
+    std::fs::create_dir_all(dir).unwrap();
+    for name in ["lane-mail-check", "lane-mail-compact", "lane-mail-start"] {
+        for ext in ["sh", "json"] {
+            std::fs::write(dir.join(format!("{name}.{ext}")), "{}\n").unwrap();
+        }
+    }
+    std::fs::create_dir_all(tools).unwrap();
+    let link = tools.join("kendex");
+    if std::fs::symlink_metadata(&link).is_err() {
+        std::os::unix::fs::symlink(fixtures().join("kendex-hooks-off/kendex"), &link).unwrap();
+    }
+    std::fs::write(
+        tools.join("hooks-off.json"),
+        json!({"stdout": r#"{"switched_off_by": null}"#}).to_string(),
+    )
+    .unwrap();
+}
+
 /// Defect: a Copilot lane launched with allow-all whose managed policy
 /// withdrew the grant waited at a permission prompt, and the duty said
 /// `lane-asking` with no cause, so its overseer answered the prompt on every
-/// tool call where the line's cause has it stop the lane instead. The duty
-/// reads the session's status-line record, the real `copilot-statusline`
-/// writer's, under the record's account: a running record with `allow_all`
-/// true whose session reports the grant off carries
-/// `stop-cause=allow-all-blocked-by-policy`; a record bound to no session id
-/// is read through the session the store holds for its worktree; a lane
-/// launched without allow-all carries no cause; the note is in the line's
-/// key, so the grant restored under the same prompt is news once.
+/// tool call where the line's cause has it stop the lane instead; a lane
+/// whose turn ended under the withdrawn grant read as a finished turn. The
+/// duty reads the session's status-line record, the real
+/// `copilot-statusline` writer's, under the record's account: a running
+/// record with `allow_all` true whose session reports the grant off carries
+/// `stop-cause=allow-all-blocked-by-policy` on `lane-asking` and on
+/// `idle-after-return`; a record bound to no session id is read through the
+/// session the store holds for its worktree; a lane launched without
+/// allow-all carries no cause; the note is in the line's key, so the grant
+/// restored under the same prompt is news once. The asking records are the
+/// released shape, planted as `main` wrote them (`allow_all` a top-level
+/// boolean, `account` the directory); the idle records are the real
+/// `launch-lane`'s, one on an account, one accountless, whose `home` names
+/// the directory its sessions ran under where the record names no account.
 #[test]
 fn a_copilot_lanes_prompt_carries_the_policy_cause_its_session_record_reports() {
     let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
     let server = Server::start(dir.path(), "fleet");
-    let fleet = Fleet::new(&server);
+    let mut fleet = Fleet::new(&server);
     let copilot = named_sleep(dir.path(), "MainThread");
     let dialog = format!(
         "printf '%s\\n' 'Do you want to proceed?' '❯ 1. Yes'; exec {} 120",
         copilot.display()
     );
-    let account = dir.path().join("account");
+    let account = root.join("account");
     std::fs::create_dir_all(&account).unwrap();
-    let write_record = |session: &str, allow_all: bool| -> u64 {
+    let write_record = |home: &Path, session: &str, allow_all: bool| -> u64 {
         let payload = json!({"session_id": session, "allow_all_enabled": allow_all}).to_string();
         let out = program("bash")
             .args(["-c", r#"printf '%s' "$2" | "$1/copilot-statusline""#, "_"])
             .arg(orch_scripts())
             .arg(payload)
-            .env("COPILOT_HOME", &account)
+            .env("COPILOT_HOME", home)
             .output()
             .unwrap();
         assert!(out.status.success(), "{}", stderr(&out));
         let record: Value = serde_json::from_slice(
-            &std::fs::read(account.join("lane-status").join(format!("{session}.json"))).unwrap(),
+            &std::fs::read(home.join("lane-status").join(format!("{session}.json"))).unwrap(),
         )
         .unwrap();
         record["written_at"].as_u64().unwrap()
@@ -4536,11 +4791,82 @@ fn a_copilot_lanes_prompt_carries_the_policy_cause_its_session_record_reports() 
     let ungranted = lane("KEN-3", "gh-3", dir.path());
     let mut unbound = lane("KEN-4", "gh-4", &worktree);
     unbound["allow_all"] = json!(true);
-    fleet.set_lanes(vec![granted, ungranted, unbound]);
+    // The idle lanes through the real `launch-lane` under the bypass
+    // posture: one on the account, one accountless under the launch's
+    // own home.
+    let home = root.join("home");
+    let copilot_home = home.join(".copilot");
+    let tools = root.join("tools");
+    plant_copilot_hooks(&account.join("hooks"), &tools);
+    plant_copilot_hooks(&copilot_home.join("hooks"), &tools);
+    fleet.runner.tools = Some(tools);
+    let binaries = format!("copilot={}", copilot_stub(&root).display());
+    let home_word = home.display().to_string();
+    let env = [
+        ("ORCH_HARNESS_BINARIES", binaries.as_str()),
+        ("HOME", home_word.as_str()),
+    ];
+    let launch = |item: &str, account: Option<&Path>| -> Value {
+        let work = root.join(item);
+        init_checkout(&work);
+        let mut request = json!({
+            "op": "launch-lane",
+            "item": item,
+            "harness": "copilot",
+            "mail_root": work.display().to_string(),
+        });
+        if let Some(account) = account {
+            request["account"] = json!(account.display().to_string());
+        }
+        let report = effect_report(&fleet.runner.op_fleet_env(&request, &env));
+        assert_eq!(report["intent"]["outcome"], "confirmed", "{item}: {report}");
+        report["lane"].clone()
+    };
+    let bound = launch("KEN-5", Some(&account));
+    assert_eq!(bound["allow_all"], json!(true), "{bound}");
+    assert_eq!(
+        bound["account"],
+        json!(account.display().to_string()),
+        "{bound}"
+    );
+    assert_eq!(bound["session_id"], json!("s-KEN-5"), "{bound}");
+    let homed = launch("KEN-6", None);
+    assert_eq!(homed["allow_all"], json!(true), "{homed}");
+    assert_eq!(homed["account"], Value::Null, "{homed}");
+    assert_eq!(
+        homed["home"],
+        json!(copilot_home.display().to_string()),
+        "{homed}"
+    );
+    assert_eq!(homed["session_id"], json!("s-KEN-6"), "{homed}");
+    let idle = |record: &Value, note: &str| {
+        format!(
+            "EVENT idle-after-return {}{note}",
+            record["window"].as_str().unwrap()
+        )
+    };
+    fleet.set_lanes(vec![
+        granted,
+        ungranted,
+        unbound,
+        bound.clone(),
+        homed.clone(),
+    ]);
     let state = fleet.read();
     lane_driver!(server, fleet, readers, driver);
-    let written = write_record("s1", false).max(write_record("s2", false));
-    driver.now = written;
+    // The pass's clock is the records' own stamp.
+    let stamp = |granted: bool| -> u64 {
+        [
+            write_record(&account, "s1", granted),
+            write_record(&account, "s2", false),
+            write_record(&account, "s-KEN-5", false),
+            write_record(&copilot_home, "s-KEN-6", false),
+        ]
+        .into_iter()
+        .max()
+        .unwrap()
+    };
+    driver.now = stamp(false);
     let first = driver.pass(&state);
     assert_eq!(
         event_lines(&first),
@@ -4552,11 +4878,15 @@ fn a_copilot_lanes_prompt_carries_the_policy_cause_its_session_record_reports() 
         "{:?}",
         lines(&first)
     );
-    driver.now = write_record("s1", true);
+    driver.now = stamp(true);
     let second = driver.pass(&state);
     assert_eq!(
         event_lines(&second),
-        vec!["EVENT lane-asking gh-2"],
+        vec![
+            "EVENT lane-asking gh-2".to_owned(),
+            idle(&bound, " stop-cause=allow-all-blocked-by-policy"),
+            idle(&homed, " stop-cause=allow-all-blocked-by-policy"),
+        ],
         "{:?}",
         lines(&second)
     );

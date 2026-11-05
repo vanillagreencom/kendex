@@ -2,11 +2,12 @@
 # Surface: open-terminal, the wake of a lane on this machine: the line that
 # reads the lane's inbox handed to the session its record and its harness
 # store name, as a second process in print mode (claude) or through
-# pi-bridge (pi), once the runtime's lane status reads the lane idle; a codex
-# or copilot lane the runtime reads idle still holds its live session and is
-# refused; a record not in flight is refused by its status; the lane record
-# rewritten with the session it resumed and the identity of the turn it
-# started; every refusal by name, starting nothing.
+# pi-bridge (pi), once the runtime's lane status reads the lane idle; a
+# record not in flight is refused by its status; the lane record rewritten
+# with the session it resumed and the identity of the turn it started; every
+# refusal by name, starting nothing. A second wake beside a running first
+# turn is tests/rust/open_terminal.rs's, over a lane the real launch-lane
+# launched.
 #
 # Each wake runs a copy of the orch scripts in a temp git repo, with the
 # worktree CLI, the runtime's lane status and the harness binaries stubbed:
@@ -60,7 +61,7 @@ while [[ -n "${STUB_HOLD:-}" && -e "$STUB_HOLD" ]]; do sleep 0.1; done
 exit "${STUB_RC:-0}"
 EOF
 chmod +x "$BIN/claude"
-for harness in codex copilot pi-bridge; do ln -s claude "$BIN/$harness"; done
+ln -s claude "$BIN/pi-bridge"
 # The runtime's lane status, the one judge of whether a lane is idle: the
 # state STUB_LANE_STATE plants, idle by default, as the one field the wake
 # reads of the verb's reply; with STUB_LANE_STATUS_FAIL set the verb refuses
@@ -179,17 +180,6 @@ claude|claude -n CC-1 $CLAUDE_COMPACTION --disallowedTools=AskUserQuestion,Enter
 pi|pi-bridge send --cwd $WT $WAKE_LINE $UNATTENDED
 ROWS
 
-echo "=== a codex or copilot lane the runtime reads idle still holds its live session and is not woken ==="
-# The runtime reads a pane idle only with the harness in the foreground, and
-# neither harness publishes an idle signal, so idle is a live session no
-# second process may run beside.
-for harness in codex copilot; do
-  plant "$(record CC-1 "$harness")"
-  run_wake --wake --harness "$harness" CC-1
-  assert_eq "rc=$RC $(grep -c '^open-terminal: wake-refused item=CC-1 reason=unjudged$' <<<"$ERR" || true) started=${CMD:-none}" "rc=1 1 started=none" \
-    "a $harness lane the runtime reads idle is refused as unjudged and no second process starts"
-done
-
 echo "=== a wake rewrites the session it resumed, the lane running and the turn's identity, and nothing else ==="
 # The turn runs detached, outside the pane's process tree, so lane-close
 # stops it by the identity the wake records: the detached shell's pid and
@@ -222,6 +212,7 @@ echo "=== a wake spends the account the record names, or the --lane named ==="
 plant "$(record CC-1 claude "{\"account\": \"$SESSION_HOME/.aclaude\"}")"
 run_wake --wake --harness claude CC-1
 assert_contains "$(env_of)" "CLAUDE_CONFIG_DIR=$SESSION_HOME/.aclaude " "a wake runs under the account the record names"
+plant "$(record CC-1 claude "{\"account\": \"$SESSION_HOME/.aclaude\"}")"
 run_wake --wake --harness claude --lane "$SESSION_HOME/.other-claude" CC-1
 assert_contains "$(env_of)" "CLAUDE_CONFIG_DIR=$SESSION_HOME/.other-claude " "a --lane names the account the woken turn spends"
 run_wake --wake --harness claude --lane "$TMP_ROOT/no-such-account" CC-1

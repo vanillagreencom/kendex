@@ -18,11 +18,11 @@
 //! the row once read. The wake reads that row from its tick's snapshot and
 //! writes no row of its own.
 //!
-//! Codex: a Codex lane keeps the `open-terminal --wake` route until the
-//! paste route is proved on a real Codex; the duty reads it idle, reports
-//! `wake-limit` and types nothing, so no resumed execution of live history
-//! is ever started here. The duty starts no detached process: nothing new
-//! charges the lane cap.
+//! Codex: Codex publishes no idle signal, so no resume of a live Codex
+//! session is ever started beside it, and its paste route is unproved on a
+//! real Codex; the duty reads a Codex lane idle, reports `wake-limit` and
+//! types nothing, and the lane's mail waits for its relaunch. The duty
+//! starts no detached process: nothing new charges the lane cap.
 //!
 //! The owner: an overseer the duty leaves idle
 //! with its mail unread, `wake-limit` or `wake-unconfirmed` for the
@@ -74,9 +74,9 @@ fn line_for(target: &str) -> String {
 }
 
 /// The capability limit a harness has for a positively idle paste, where
-/// it has one: Codex's print-mode resume refuses while its process runs
-/// and its paste route is unproved, so an idle Codex session is reported
-/// and never typed into.
+/// it has one: no route resumes a live Codex session, which publishes no
+/// idle signal, and its paste route is unproved, so an idle Codex session
+/// is reported and never typed into.
 fn route_limit(harness: Harness) -> Option<&'static str> {
     match harness {
         Harness::Codex => Some("process-running"),

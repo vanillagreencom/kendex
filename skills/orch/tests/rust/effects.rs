@@ -7701,12 +7701,15 @@ fn the_model_switch_recovery_stops_through_the_runtime_and_relaunches_over_the_r
     }
 }
 
-/// Defect: the lane record named no tier, so the cycle reader asked for one
-/// on every runtime-launched lane. Through the real `launch-lane`: a brief
-/// opening the orch workflow with `start` records the standard tier and
-/// the item-tier line's inputs; one stating no verb and two item-tier lines
-/// that differ records none; a relaunch whose brief states none keeps the
-/// record's.
+/// Defects: the lane record named no tier, so the cycle reader asked for
+/// one on every runtime-launched lane; and a relaunch rewrote a micro
+/// lane's tier from its brief, which opens the workflow with `start`
+/// whatever the item's tier, so the cycle refused the overseer's `--tier
+/// micro`. Through the real `launch-lane`: a brief opening the orch
+/// workflow with `start` records the standard tier and the item-tier
+/// line's inputs; one stating no verb and two item-tier lines that differ
+/// records none; one opening with `micro` records micro and its line's
+/// inputs, and that lane's relaunch on the wall's start brief keeps them.
 #[test]
 fn the_launch_records_the_tier_its_brief_states_and_a_relaunch_keeps_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -7748,17 +7751,117 @@ fn the_launch_records_the_tier_its_brief_states_and_a_relaunch_keeps_it() {
         report["lane"]["tier_inputs"],
         json!({"estimate": null, "delta": null, "paths": null})
     );
+    std::fs::write(
+        &brief,
+        "/orch micro KEN-V\ntier=micro brief=micro cause=estimate estimate=1 delta=4 paths=1\n",
+    )
+    .unwrap();
+    let mut micro = launch_request("KEN-V", runner.state_dir());
+    micro["brief_file"] = json!(brief.display().to_string());
+    let report = effect_report(&runner.op_fleet(&micro));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(report["lane"]["tier"], "micro", "{}", report["lane"]);
+    let inputs = json!({"estimate": 1, "delta": 4, "paths": 1});
+    assert_eq!(report["lane"]["tier_inputs"], inputs, "{}", report["lane"]);
     let mut fleet = runner.fleet();
-    fleet["lanes"][0]["status"] = json!("stopped");
-    fleet["lanes"][0]["launch"] = Value::Null;
+    let micro_row = fleet["lanes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .position(|l| l["item"] == "KEN-V")
+        .unwrap();
+    fleet["lanes"][micro_row]["status"] = json!("stopped");
+    fleet["lanes"][micro_row]["launch"] = Value::Null;
     runner.write_fleet(&fleet);
-    other["item"] = json!("KEN-T");
-    let report = effect_report(&runner.op_fleet(&other));
+    std::fs::write(&brief, "/orch start KEN-V Work unattended.\n").unwrap();
+    let report = effect_report(&runner.op_fleet(&micro));
     assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
     assert_eq!(
-        report["lane"]["tier"], "standard",
-        "a relaunch whose brief states none keeps the record's: {}",
+        (&report["lane"]["tier"], &report["lane"]["tier_inputs"]),
+        (&json!("micro"), &inputs),
+        "a relaunch on the start brief keeps the first launch's tier: {}",
         report["lane"]
+    );
+}
+
+/// Defect: a lane launched under a narrower permission choice recovered
+/// from a model switch under the bypass default, its record carrying no
+/// choice. Through the real `launch-lane` and the real recovery: a lane
+/// launched with `--permission-mode dontAsk` records the choice as its
+/// line's words, the replacement's line carries `dontAsk` and no bypass
+/// word, and the relaunched record keeps the choice.
+#[test]
+fn a_lanes_recorded_permission_choice_reaches_its_model_switch_replacement() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-record");
+    runner.verify = Some(2);
+    runner.init_fleet();
+    let work = runner.state_dir().to_path_buf();
+    let argv_of = |record: &Value| -> Vec<String> {
+        record["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a.as_str().unwrap().to_owned())
+            .collect()
+    };
+    let choice = ["--permission-mode".to_owned(), "dontAsk".to_owned()];
+    let mut request = launch_request("KEN-P", &work);
+    request["model"] = json!("claude-fable-5-1");
+    request["effort"] = json!("high");
+    request["permission"] = json!("--permission-mode dontAsk");
+    let report = effect_report(&runner.op_fleet(&request));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(
+        report["lane"]["permission"], "--permission-mode dontAsk",
+        "{}",
+        report["lane"]
+    );
+    let argv = argv_of(&launch_record_of(&work));
+    assert!(argv.windows(2).any(|w| w == choice), "{argv:?}");
+    std::fs::remove_file(work.join("launch-record.json")).unwrap();
+    let mut fleet = runner.fleet();
+    let predecessor = fleet["lanes"][0]["launch"]["pid"].as_u64().unwrap() as u32;
+    fleet["lanes"][0]["model_check"] = json!({"session_id": "current", "outcome": "switched"});
+    fleet["fleet_log"] = json!([{
+        "kind": "model-switched", "item": "KEN-P", "session_id": "current",
+        "launch_identity": {
+            "launch": fleet["lanes"][0]["launch"],
+            "launched_at": fleet["lanes"][0]["launched_at"],
+        },
+    }]);
+    runner.write_fleet(&fleet);
+    let scripts = installed_scripts(dir.path());
+    let mut command = program("bash");
+    runner.apply_env(&mut command);
+    let out = command
+        .arg(scripts.join("lib/lane-relaunch.sh"))
+        .args(["model-recovery", &fleet["lanes"][0].to_string()])
+        .arg(&work)
+        .arg("current")
+        .env("ORCH_MODEL_RECOVERY_LIMIT", "3")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        !live(predecessor),
+        "the predecessor runs on beside its record"
+    );
+    let lane = runner.fleet()["lanes"][0].clone();
+    assert_eq!(lane["status"], "running", "{lane}");
+    assert_eq!(
+        lane["permission"], "--permission-mode dontAsk",
+        "the relaunch keeps the choice: {lane}"
+    );
+    let argv = argv_of(&launch_record_of(&work));
+    assert!(
+        argv.windows(2).any(|w| w == choice),
+        "the replacement runs under the recorded choice: {argv:?}"
+    );
+    assert!(
+        !argv.iter().any(|a| a == "--dangerously-skip-permissions"),
+        "no bypass word beside the choice: {argv:?}"
     );
 }
 

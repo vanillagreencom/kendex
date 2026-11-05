@@ -85,7 +85,12 @@ pub(super) fn no_clis() -> Clis {
 pub(super) fn no_reads() -> AdmissionReads<'static> {
     AdmissionReads {
         clis: no_clis(),
-        item: Box::new(|_: &Clis, _: &str, _: &str, _: Option<&str>| Ok(ItemRead::default())),
+        item: Box::new(|_: &Clis, _: &str, _: &str, _: Option<&str>| {
+            Ok(ItemRead {
+                blocked_by_launch: Some(Vec::new()),
+                ..ItemRead::default()
+            })
+        }),
         range_paths: Box::new(|_: &Clis, _: &Path, _: &ScopeRange| Ok(Vec::new())),
         pulls: Box::new(|_: &Clis, _: Option<&str>, _: Option<&Path>| Ok(None)),
     }

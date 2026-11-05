@@ -255,9 +255,9 @@ pub struct RecordHandoff {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResumeHandoff {}
 
-/// The verdicts a verification record carries: ci-wait's terminal words.
-/// ci-wait's fourth word, `pending`, is a wait that ended without a result
-/// and so no verdict about the head; it is refused, never recorded.
+/// The verdicts a verification record carries. A read that ended without
+/// a result (`pending`, `unreadable`) is no verdict about the head: it is
+/// refused, never recorded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Verdict {
     Pass,

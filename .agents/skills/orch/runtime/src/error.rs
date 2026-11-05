@@ -295,17 +295,13 @@ pub enum Error {
     #[error("{error}")]
     Persisted { intent: String, error: Box<Error> },
     /// The cap the request's kind is bounded by admits no further lane:
-    /// `occupancy` slots charge it, `lanes` of them lane records and
-    /// `claims` claim store rows, `cap` is the bound and `setting` the key
-    /// that raises it.
-    #[error(
-        "the {setting} cap of {cap} is reached: {occupancy} slots charge it ({lanes} lanes, {claims} claims)"
-    )]
+    /// `occupancy` slots charge it, `lanes` of them lane records, `cap` is
+    /// the bound and `setting` the key that raises it.
+    #[error("the {setting} cap of {cap} is reached: {occupancy} slots charge it ({lanes} lanes)")]
     CapReached {
         occupancy: u32,
         cap: u32,
         lanes: u32,
-        claims: u32,
         setting: &'static str,
     },
     /// The cap could not be judged: a source the count reads failed. A count
@@ -904,13 +900,11 @@ impl Error {
                 occupancy,
                 cap,
                 lanes,
-                claims,
                 setting,
             } => vec![
                 pair("occupancy", occupancy.to_string()),
                 pair("cap", cap.to_string()),
                 pair("lanes", lanes.to_string()),
-                pair("claims", claims.to_string()),
                 pair("setting", (*setting).to_owned()),
             ],
             Error::CapUnreadable { read, path, .. } => vec![

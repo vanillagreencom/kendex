@@ -107,5 +107,26 @@ launch-failed||3|7|7|1|0
 launch-open||3|75|75|1|0
 ROWS
 
+echo "=== a runtime record's permission words reach the replacement's request ==="
+# The record the runtime's launch-lane writes for a Claude lane launched with
+# `--permission-mode dontAsk`: tests/fixtures/launch-lane/claude-dontask.json,
+# held to the producer by tests/rust/open_terminal.rs, its root this case's.
+# It carries no recovery object: the words are read from its permission.
+CASE="$TMP_ROOT/runtime-record"
+mkdir -p "$CASE"
+RECORD="$(sed "s|@ROOT@|$CASE|g" "$TEST_DIR/fixtures/launch-lane/claude-dontask.json")"
+RC=0
+"$BASH" -euo pipefail -c '
+  cd -- "$1"
+  . "$2/lib/lane-state.sh"
+  . "$2/lib/lane-launch.sh"
+  . "$2/lib/lane-capabilities.sh"
+  . "$2/lib/lane-relaunch.sh"
+  lane_recovery_request "$3" "" "$1" || { printf "cause=%s\n" "$LANE_RECOVERY_CAUSE"; exit 1; }
+  jq -r ".permission // \"none\"" "$LANE_RECOVERY_REQUEST"
+' _ "$CASE" "$S" "$RECORD" > "$CASE/out" 2> "$CASE/err" || RC=$?
+assert_eq "$RC|$(cat "$CASE/out")" "0|--permission-mode dontAsk" "a runtime record's permission words are the replacement request's"
+assert_eq "$(jq -r 'has("recovery")' <<<"$RECORD")" false "the runtime's record carries no released recovery object to read them from"
+
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

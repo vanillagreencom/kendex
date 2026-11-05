@@ -118,6 +118,10 @@ assert_issue "live bulk-get filters by state type" "$(run_live issues bulk-get K
 live_bundle="$(run_live issues get KEN-1 --with-bundle --format=safe)"
 assert_issue "live bundle root filters by state type" "$live_bundle" '.'
 assert_issue "live bundle child filters by state type" "$live_bundle" '.children[0]'
+# The launch gate reads the bundle: the root and every bundled node name
+# their launch blockers from the one classifier, as the single read does.
+assert_jq "live bundle root names launch blockers" "$live_bundle" '.blocked_by_launch == ["KEN-2"]'
+assert_jq "live bundle child names launch blockers" "$live_bundle" '.children[0].blocked_by_launch == ["KEN-2"]'
 live_bundle_compact="$(run_live issues get KEN-1 --with-bundle --format=compact)"
 assert_issue "live compact bundle root filters by state type" "$live_bundle_compact" '.'
 assert_issue "live compact bundle child filters by state type" "$live_bundle_compact" '.children[0]'
