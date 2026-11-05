@@ -47,6 +47,14 @@ Use the repository-declared owner for kendex refresh outputs. Kendex uses its lo
 ### Cargo round cleanup
 
 At each development round boundary, run the owner-scoped worktree cleanup policy for Cargo output. Use ORCH_ROUND_PRUNE_DISK_PCT as the configured disk threshold. Prune only the owned worktree target directory. If CARGO_TARGET_DIR is elsewhere, report the separate cleanup need and do not delete another owner's output. Use `.agents/skills/orch/scripts/round-prune` between the round-id and delegation-time stamps.
+
+### Pi package publication
+
+When a kendex item's diff changes consumer-facing files under `pi-extensions/<dir>`, the launch read gives the item two Done-when boxes. The branch box requires its PR to raise `pi-extensions/<dir>/package.json` by `skills/commit-guards/CHECKS.md` § Release versions and replace its changelog heading `### Unreleased` with `### <version>`. A diff that only touches what `.pi/prompts/npm-deploy.md` § Skip publish for lists takes neither box.
+
+After merge, the item's lane runs `.pi/prompts/npm-deploy.md` § Publish, tag, refresh, verify steps 1-4 for that package only. Fetch main, use the item's merge commit as `<release>` and the fetched main head as `<head>`, tag `<unscoped-name>-v<version>` at `<release>`, and push that tag alone. Find and watch the `publish-npm` workflow_dispatch run. Retry the same tag only when the failure needs no new version, following step 4. Keep the item in Verifying until its Post-merge box passes. Run this action in the lane, never on the control VM. The orch verification pass reads the workflow run rather than `npm view`: `tools/publish-npm` exits 0 with `published=` or `served=` only after npm serves the version. Use this exact Post-merge box:
+
+- [ ] Post-merge: the publish-npm workflow_dispatch run titled publish-npm <tag> (not a dry_run dispatch) concluded success for this item's version or a later version of the same package; Where: gh api REST repos/vanillagreencom/kendex/actions/workflows/publish-npm.yml/runs, read by the orch verification pass; Why after merge: publish-npm publishes from main only, on a tag of the merged commit (D003); Trigger: merge; Deadline: +24h
 <!-- kendex:project-instructions:end -->
 
 # Orchestration
