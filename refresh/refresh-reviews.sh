@@ -5,9 +5,10 @@
 # the refresh workflow's concurrency group, with GH_REPO, its scoped GH_TOKEN,
 # the upstream KENDEX_ISSUES_TOKEN and the release's kendex on PATH. The
 # release checkout's change-class proves the render class. Before it judges a
-# pull request with review work, `kendex source refresh` fetches the sources
-# that pull request's head declares, which a job that skipped rendering has
-# not fetched. No script from the pull request is executed.
+# pull request with review work, `kendex source refresh --in-use` fetches the
+# sources that pull request head's packages come from, which a job that
+# skipped rendering has not fetched; a subscription no package uses is left
+# alone, as a render leaves it. No script from the pull request is executed.
 #
 # A thread whose first comment a Bot wrote is filed upstream through
 # refresh-report.py, answered with a reply naming that issue and the
@@ -200,14 +201,14 @@ while IFS= read -r pr; do
       || fail fetch "$PR_NUMBER" 'Could not fetch the pull request base and head.'
   fi
   # The classifier verifies the head's own manifest against local source
-  # mirrors, so that manifest's sources are refreshed from a checkout of the
-  # head. The manifest is pull-request content, so no repository credential
-  # goes with its fetches.
+  # mirrors, so the sources that manifest's packages come from are refreshed
+  # from a checkout of the head. The manifest is pull-request content, so no
+  # repository credential goes with its fetches.
   sources_tree="$scratch/sources-$PR_NUMBER"
   git -C "$ROOT" worktree add --quiet --detach "$sources_tree" "$HEAD_SHA" >&2 \
     || fail sources-checkout "$PR_NUMBER" 'Could not check out the pull request head for its sources.'
-  (cd -- "$sources_tree" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR kendex source refresh --scope project) >&2 \
-    || fail sources "$PR_NUMBER" 'Could not refresh the sources the pull request head declares.'
+  (cd -- "$sources_tree" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR kendex source refresh --scope project --in-use) >&2 \
+    || fail sources "$PR_NUMBER" 'Could not refresh the sources the pull request head uses.'
   git -C "$ROOT" worktree remove --force "$sources_tree" \
     || fail sources-checkout "$PR_NUMBER" 'Could not remove the pull request head checkout.'
   sources_tree=""

@@ -248,6 +248,65 @@ fn refresh_waits_for_the_download_another_process_is_finishing() {
     assert!(project.join(".claude/skills/gh/SKILL.md").is_file());
 }
 
+/// Preparing the sources a project's packages come from fetches those and
+/// leaves an unreachable subscription nothing installs from alone, while
+/// the all-source form still fails on it. Either way the project's manifest,
+/// lock and installed files stay as they were, though upstream has moved.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn source_refresh_in_use_skips_an_unused_unreachable_source_and_writes_no_project_file() {
+    let tmp = fixture();
+    let home = test_util::rooted(&tmp);
+    let project = home.join("proj");
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 7\n\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n\n[sources.gone]\nrepo = \"owner/gone\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.gh]\nsource = \"kendex\"\n",
+    )
+    .unwrap();
+    let installed = kendex(
+        &home,
+        &project,
+        &["refresh", "--scope", "project", "--yes", "--leave"],
+    );
+    assert!(installed.status.success(), "{}", said(&installed));
+    let upstream = home.join("git/vanillagreencom/kendex");
+    fs::write(
+        upstream.join("skills/gh/SKILL.md"),
+        "---\nname: gh\ndescription: github flows\n---\nUpstream v2.\n",
+    )
+    .unwrap();
+    git(&upstream, &["commit", "--quiet", "-am", "two"]);
+    let moved = git_stdout(&upstream, &["rev-parse", "HEAD"]);
+    let before = test_util::lane::snapshot(&project);
+
+    let in_use = kendex(
+        &home,
+        &project,
+        &["source", "refresh", "--scope", "project", "--in-use"],
+    );
+    assert!(in_use.status.success(), "{}", said(&in_use));
+    let env = kendex_core::env::Env::host_rooted(&home)
+        .with_var("KENDEX_GIT_BASE", &format!("file://{}/git", home.display()));
+    assert_eq!(
+        kendex_core::remote::mirror_commit(&env, "vanillagreencom/kendex", None),
+        Some(moved)
+    );
+    let all = kendex(
+        &home,
+        &project,
+        &["source", "refresh", "--scope", "project"],
+    );
+    assert!(!all.status.success(), "control: {}", said(&all));
+    let conflicting = kendex(
+        &home,
+        &project,
+        &["source", "refresh", "--in-use", "--stale"],
+    );
+    assert_eq!(conflicting.status.code(), Some(2), "{}", said(&conflicting));
+
+    assert_eq!(test_util::lane::snapshot(&project), before);
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn consuming_repo_installs_customizes_and_refreshes_from_the_default_catalog() {

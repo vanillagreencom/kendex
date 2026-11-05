@@ -38,12 +38,12 @@ exec python3 "$GH_MOCK" classify "$@"
 CLASSIFIER
 chmod +x "$TMP/skills/harness-ci/scripts/change-class"
 # The source refresh records the head its checkout holds, standing for the
-# sources that head's manifest declares. It refuses the repository credential,
+# sources that head's packages come from. It refuses the repository credential,
 # and .failure.kind == "sources" makes it fail.
 cat >"$BIN/kendex" <<'KENDEX'
 #!/usr/bin/env bash
 set -euo pipefail
-[ "$*" = 'source refresh --scope project' ] || exit 64
+[ "$*" = 'source refresh --scope project --in-use' ] || exit 64
 [ -z "${GH_TOKEN+set}${GITHUB_TOKEN+set}" ] || exit 65
 ! jq -e '.failure.kind == "sources"' "$GH_FIXTURE" >/dev/null || exit 1
 git rev-parse HEAD >>"$HOME/prepared-sources"
@@ -551,6 +551,13 @@ run_writer
 if ! filed_and_resolved && grep -q '^refresh-reviews=unclassified pr=1 cause=source-mirror-missing$' <<<"$OUT"; then
   ok 'must-fail control: classifying without refreshing the head sources fails the filed-and-resolved case'
 else bad 'sources control did not detect the planted defect' "$OUT"; fi
+mutant all-sources-mutant 'kendex source refresh --scope project --in-use)' 'kendex source refresh --scope project)'
+cp "$BASE" "$FIXTURE"
+run_writer
+if [ "$RC" -ne 0 ] && grep -q '^refresh-reviews-error=sources ' <<<"$OUT" \
+    && [ "$(jq '.writes | length' "$FIXTURE")" = 0 ]; then
+  ok 'must-fail control: refreshing every subscription instead of the ones in use fails the filed-and-resolved case'
+else bad 'all-sources control did not detect the planted defect' "$OUT"; fi
 mutant class-mutant 'if [ "$class" != change_class=render ]; then' 'if false; then # class'
 jq '.prs |= map(.class="change_class=standard")' "$BASE" >"$FIXTURE"
 run_writer
