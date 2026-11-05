@@ -330,8 +330,14 @@ fi
 reply_reader="$SCRIPT_DIR/../../github/scripts/github.sh"
 [[ -x "$reply_reader" ]] || refuse 1 review-replies "$PR_NUM" "$REPO" "$live" 127 unavailable
 reply_status=0
-reply_result="$(GH_REPO="$REPO" "$reply_reader" -C "$PROJECT_ROOT" check-review-replies "$PR_NUM" 2>&1)" \
-  || reply_status=$?
+reply_result="$(
+  # A configured reader also selects whose replies count. Supply the file
+  # credential only when no reader credential or working keyring is present.
+  if ! kendex_github_has_env_token && [[ -z "${GH_BOT_TOKEN:-}" ]] && ! orch_github_keyring_auth_status; then
+    export GH_TOKEN="$token"
+  fi
+  GH_REPO="$REPO" "$reply_reader" -C "$PROJECT_ROOT" check-review-replies "$PR_NUM" 2>&1
+)" || reply_status=$?
 [[ "$reply_status" -eq 0 && "$reply_result" == "review-replies: pass head=$live" ]] \
   || refuse 1 review-replies "$PR_NUM" "$REPO" "$live" "$reply_status" "$reply_result"
 payload="$(jq -c --arg sha "$live" '{commit_id: $sha} + .' "$SCRATCH/review")" \

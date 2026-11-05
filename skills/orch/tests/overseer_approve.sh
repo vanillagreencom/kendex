@@ -81,15 +81,25 @@ SYSTEM_SLEEP="$(type -P sleep)" || exit 1
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "$*" == 'auth status' ]]; then
+  [[ "$STUB_KEYRING_OK" == 1 ]]
+  exit
+fi
+credential="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+if [[ -z "$credential" && "$STUB_KEYRING_OK" == 1 ]]; then credential=fixture_lane; fi
+case "$credential" in
+  fixture_lane|ghs_fixtureOverseerReviewToken) ;;
+  *) echo 'gh: Bad credentials (HTTP 401)' >&2; exit 1 ;;
+esac
 # Reader API calls use separate evidence so the existing approval-call
 # assertions keep their scope. The reader itself judges the Copilot body.
 case "$*" in
   'api user --jq .login')
-    if [[ "${GH_TOKEN:-}" == fixture_lane ]]; then echo 'lane-app[bot]'; else echo 'overseer-app[bot]'; fi
+    if [[ "$credential" == fixture_lane ]]; then echo 'lane-app[bot]'; else echo 'overseer-app[bot]'; fi
     exit 0 ;;
   'api graphql '*)
     if [[ "$*" == *'viewer {'* ]]; then
-      if [[ "${GH_TOKEN:-}" == fixture_lane ]]; then
+      if [[ "$credential" == fixture_lane ]]; then
         echo '{"data":{"viewer":{"login":"lane-app[bot]","databaseId":2002}}}'
       else
         echo '{"data":{"viewer":{"login":"overseer-app[bot]","databaseId":4004}}}'
@@ -101,7 +111,7 @@ case "$*" in
     fi
     exit 0 ;;
   'api repos/o/r/pulls/42')
-    printf '%s|%s|%s\n' "${GH_TOKEN:-}" "${GH_REPO:-}" "$*" >> "$REPLY_CALLS"
+    printf '%s|%s|%s\n' "$credential" "${GH_REPO:-}" "$*" >> "$REPLY_CALLS"
     case "$REPLY_MODE" in
       unavailable) echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
       malformed) echo '{}'; exit 0 ;;
@@ -204,6 +214,13 @@ case "$*" in
 esac
 EOF
 chmod +x "$TMP_ROOT/bin/gh"
+cat > "$TMP_ROOT/bin/op" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$*" == 'read op://fixture/lane/token' ]] || exit 1
+printf '%s\n' fixture_lane
+EOF
+chmod +x "$TMP_ROOT/bin/op"
 
 # Inject the clock through executable fixtures. No real wait decides a row.
 cat > "$TMP_ROOT/bin/date" <<'EOF'
@@ -225,9 +242,10 @@ EOF
 chmod +x "$TMP_ROOT/bin/date" "$TMP_ROOT/bin/sleep"
 
 run_approve() { # SCRIPT TOKEN_FILE LIVE_HEAD POST ARGS...
-  local script="$1" token_file="$2" live="$3" post="$4" setting=()
+  local script="$1" token_file="$2" live="$3" post="$4" setting=() reader_setting=()
   shift 4
   [[ -z "$token_file" ]] || setting=("ORCH_OVERSEER_REVIEW_TOKEN_FILE=$token_file")
+  [[ -z "${READER_TOKEN_NAME-GH_BOT_TOKEN}" ]] || reader_setting=("${READER_TOKEN_NAME-GH_BOT_TOKEN}=${READER_TOKEN_VALUE-fixture_lane}")
   : > "$CALLS"
   : > "$REPLY_CALLS"
   printf '0\n' > "$CHECK_READS"
@@ -238,7 +256,7 @@ run_approve() { # SCRIPT TOKEN_FILE LIVE_HEAD POST ARGS...
   RC=0
   (cd -- "$TMP_ROOT/cwd" && env -i GIT_CEILING_DIRECTORIES="$TMP_ROOT" PATH="$TMP_ROOT/bin:$PATH" HOME="$TMP_ROOT/home" \
     ${setting[@]+"${setting[@]}"} \
-    GH_BOT_TOKEN=fixture_lane \
+    ${reader_setting[@]+"${reader_setting[@]}"} STUB_KEYRING_OK="${STUB_KEYRING_OK-0}" \
     CALLS="$CALLS" INPUT="$INPUT" LIVE_HEAD="$live" POST="$post" \
     CHECK_MODE="${CHECK_MODE-finishing}" CHECK_READS="$CHECK_READS" \
     HEAD_READS="$HEAD_READS" AFTER_HOLD_HEAD="${AFTER_HOLD_HEAD-$live}" \
@@ -268,8 +286,8 @@ assert_eq "$(cat "$REPLY_CALLS")" "fixture_lane|o/r|api repos/o/r/pulls/42" \
 
 identity_scripts="$(mutant_scripts reader-identity/orch overseer-approve)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/reader-identity/github"
-mutate_file "$identity_scripts/overseer-approve" 'reply_result="$(GH_REPO="$REPO"' \
-  'reply_result="$(GH_TOKEN="$token" GH_REPO="$REPO"'
+mutate_file "$identity_scripts/overseer-approve" 'GH_REPO="$REPO" "$reply_reader"' \
+  'GH_TOKEN="$token" GH_REPO="$REPO" "$reply_reader"'
 
 # The reader's verdict and full head, rather than the caller's short prefix,
 # decide whether a body-only finding can receive an approval.
@@ -282,6 +300,11 @@ while IFS='|' read -r label mode reader_head want_rc want_post result subject; d
   posted=no
   [[ ! -f "$INPUT" ]] || posted=yes
   assert_eq "$RC|$posted" "$want_rc|$want_post" "$label" "$ERR"
+  if [[ "${subject:-}" != identity-control ]]; then
+    assert_eq "$(cat "$REPLY_CALLS")" 'fixture_lane|o/r|api repos/o/r/pulls/42' \
+      "$label retains the configured reader even after a read failure" "$ERR"
+  fi
+  assert_not_contains "$(cat "$OUT" "$ERR")" "$TOKEN" "$label prints no file token"
   if [[ "$want_rc" != 0 ]]; then
     assert_eq "$(wc -l < "$ERR" | tr -d ' ')|${STDERR_KEY%% pr=*}" '1|overseer-approve: review-replies' \
       "$label emits one keyed refusal" "$ERR"
@@ -300,6 +323,40 @@ must-fail: changed reader identity rejects the valid lane answer|lane-dispositio
 must-fail: changed reader identity ignores the invalid lane reply|bad-lane-reply|$GIVEN|0|yes||identity-control
 EOF
 unset REPLY_MODE REPLY_HEAD CHECK_MODE
+
+# Fleet's isolated approve_refreshes caller supplies only the token file.
+# Disabling just its nested export restores the pre-correction auth failure.
+absence_scripts="$(mutant_scripts reader-absence/orch overseer-approve)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/reader-absence/github"
+mutate_file "$absence_scripts/overseer-approve" '    export GH_TOKEN="$token"' \
+  '    : # export GH_TOKEN="$token"'
+while IFS='|' read -r label name value keyring mode want_rc credential result subject; do
+  READER_TOKEN_NAME="$name" READER_TOKEN_VALUE="$value" STUB_KEYRING_OK="$keyring" REPLY_MODE="$mode"
+  subject_script="$RUN"
+  [[ "${subject:-}" != absence-control ]] || subject_script="$absence_scripts/overseer-approve"
+  run_approve "$subject_script" "$TMP_ROOT/token" "$GIVEN" ok "${APPROVE[@]}"
+  posted=no
+  [[ ! -f "$INPUT" ]] || posted=yes
+  if [[ "$want_rc" == 0 ]]; then
+    assert_eq "$RC|$posted|$(cat "$OUT")|$(jq -r .commit_id "$INPUT")" \
+      "0|yes|APPROVED vanillagreen-overseer[bot] 0123456|$GIVEN" "$label" "$ERR"
+  else
+    assert_eq "$RC|$posted|${STDERR_KEY%% pr=*}" '1|no|overseer-approve: review-replies' "$label" "$ERR"
+    assert_contains "$STDERR_KEY" "$result" "$label names the unread evidence" "$ERR"
+  fi
+  expected_read=""
+  [[ -z "$credential" ]] || expected_read="$credential|o/r|api repos/o/r/pulls/42"
+  assert_eq "$(cat "$REPLY_CALLS")" "$expected_read" "$label selects only the intended reader" "$ERR"
+  assert_not_contains "$(cat "$OUT" "$ERR")" "$TOKEN" "$label prints no file token"
+  [[ -z "$value" ]] || assert_not_contains "$(cat "$OUT" "$ERR")" "$value" "$label prints no configured credential"
+done <<EOF
+token file alone authenticates nested reads|||0|pass|0|$TOKEN||
+must-fail: missing nested export refuses without POST|||0|pass|1||read-failed|absence-control
+configured reference retains the lane viewer|GH_TOKEN|op://fixture/lane/token|0|lane-disposition|0|fixture_lane||
+successful keyring retains the lane viewer|||1|lane-disposition|0|fixture_lane||
+configured resolution failure is not absence|GH_BOT_TOKEN|op://fixture/refused/token|0|pass|1||read-failed|
+EOF
+unset READER_TOKEN_NAME READER_TOKEN_VALUE STUB_KEYRING_OK REPLY_MODE
 
 scripts="$(mutant_scripts reader-missing/orch overseer-approve)" || exit 1
 mkdir -p "$TMP_ROOT/reader-missing/github/scripts"
