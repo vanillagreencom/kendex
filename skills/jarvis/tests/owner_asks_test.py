@@ -318,6 +318,8 @@ class PublicOwnerAsks(MailWorld):
             directory.symlink_to(REPO / "skills" / package, target_is_directory=True)
         self.registry.write_text(str(self.home) + "\n")
         self.env.update(XDG_STATE_HOME=str(self.root / "runtime"), SLACK_BOT_TOKEN="test-token")
+        self.env.pop("PYTHONPATH", None)
+        self.env.pop("_KENDEX_JARVIS_PYTHON", None)
 
     def run_cli(self, action="list", home=None, payload=None, *args, view="active"):
         command = [BASH, LIB.parent / "jarvis-session", "owner-asks", action, "--home", home or self.home, *args]
@@ -352,6 +354,98 @@ class PublicOwnerAsks(MailWorld):
                 record = json.loads(result.stderr.split("owner-asks-failure=", 1)[1])
                 self.assertEqual(record["key"][:2], ["project-list", "registration-unreadable"])
                 self.assertNotIn("activeCount", error)
+
+    def test_local_source_startup_preserves_settings_and_presence(self):
+        local = make_project(self.root / "local ' source;$")
+        self.registry.write_text(str(local) + "\n")
+        ask = self.mail(local, "ask", "Local original", "--to", "owner", "--options", "a,b", "--reserved")
+        workspace = self.slack_thread(local, ask)
+        marker = self.root / "executed-local-checkout"
+        planted = 'from pathlib import Path\nPath(' + repr(str(marker)) + ').touch()\nraise SystemExit(91)\n'
+        for module in ("json", "base64"):
+            (local / (module + ".py")).write_text(planted)
+        pythonpath = local / "checkout-python"
+        pythonpath.mkdir()
+        for module in ("argparse", "verbs"):
+            (pythonpath / (module + ".py")).write_text(planted)
+        callerpath = local / "caller-python"
+        callerpath.mkdir()
+        # Slack imports http.client; the parent session does not import it.
+        (callerpath / "http.py").write_text(planted)
+        helper = local / "checkout-helper"
+        helper.write_text('#!' + BASH + '\ntouch "' + str(marker) + '"\nexit 91\n')
+        helper.chmod(0o755)
+        cases = [
+            ("cwd", {}, {}, True),
+            ("public-pythonpath", {"PYTHONPATH": "./checkout-python", "SLACK_POLL_SECONDS": "7"}, {}, True),
+            ("caller-pythonpath", {}, {"PYTHONPATH": str(callerpath)}, True),
+            ("caller-override", {"SLACK_POLL_SECONDS": "invalid"}, {"SLACK_POLL_SECONDS": "7"}, True),
+            ("caller-empty", {"SLACK_POLL_SECONDS": "invalid"}, {"SLACK_POLL_SECONDS": ""}, True),
+            ("invalid", {"SLACK_POLL_SECONDS": "invalid"}, {}, False),
+            *[(key, {key: "./checkout-helper"}, {}, False)
+              for key in ("_slack_script", "orch", "linear", "_slack_caller_env")],
+        ]
+        self.env.pop("_KENDEX_JARVIS_PYTHON", None)
+        for name, values, caller, succeeds in cases:
+            (local / "kendex.settings.toml").write_text(
+                "[env]\n" + "".join(key + "=" + json.dumps(value) + "\n" for key, value in values.items()))
+            with patch.dict(self.env, caller):
+                result, page = self.run_cli()
+            self.assertFalse(marker.exists(), "local-source-checkout-executed: " + name)
+            with self.subTest(setting=name):
+                if succeeds:
+                    self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                    self.assertEqual(page["activeCount"], 1)
+                    self.assertEqual(page["rows"][0]["what"], "Local original")
+                    self.assertEqual(page["rows"][0]["link"]["url"],
+                                     "https://workspace.slack.test/archives/C1/p100000001")
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(page["kind"], "unavailable")
+                    record = json.loads(result.stderr.split("owner-asks-failure=", 1)[1])
+                    self.assertEqual(record["key"][:2], ["slack/slack", "exit"])
+                    self.assertEqual(record["destination"], "local:" + str(local))
+
+        binding = local / "tmp/slack/binding.json"
+        binding.write_text(json.dumps(dict(json.loads(binding.read_text()), owner_ids={"owner@example.test": "U1"})))
+        hold = local / "fresh ' hold;$"
+        hold.touch()
+        code = '''import json,sys,time
+sys.path.insert(0,sys.argv[1])
+import owner_asks
+from session import Session
+session=Session(sys.argv[2])
+session.deadline=time.monotonic()+14
+result=owner_asks.Sources(session,{}).call(owner_asks.watch.Destination('local',None),sys.argv[3],
+ 'slack','slack',['post','--root',sys.argv[3],'--text',sys.argv[4],'--mention'],check=False)
+print(json.dumps([result.returncode,result.stdout,result.stderr]))
+'''
+        for name, caller, age, expected in (
+                ("root", {}, "600", "held"),
+                ("caller-file", {"SLACK_JARVIS_SESSION_FILE": "missing"}, "600", "mentioned"),
+                ("caller-empty", {"SLACK_JARVIS_SESSION_FILE": ""}, "600", "mentioned"),
+                ("invalid-age", {}, "0", "refused")):
+            with self.subTest(presence=name):
+                (local / "kendex.settings.toml").write_text(
+                    '[env]\nPYTHONPATH="./checkout-python"\nSLACK_JARVIS_SESSION_FILE=' + json.dumps(hold.name) +
+                    '\nSLACK_JARVIS_SESSION_MAX_AGE=' + json.dumps(age) + '\n')
+                text = "Post ' " + name + "\nsecond line"
+                previous = len(workspace.messages["C1"])
+                result = subprocess.run([sys.executable, "-I", "-c", code, str(LIB), str(self.home), str(local), text],
+                                        env=dict(self.env, JARVIS_BASH=BASH, **caller), cwd=self.home,
+                                        capture_output=True, text=True, timeout=20)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                status, _, error = json.loads(result.stdout)
+                self.assertFalse(marker.exists(), "local-source-checkout-executed: presence")
+                if expected == "refused":
+                    self.assertNotEqual(status, 0)
+                    self.assertEqual(len(workspace.messages["C1"]), previous)
+                    self.assertTrue(error.startswith("slack: setting-invalid="))
+                else:
+                    self.assertEqual(status, 0, error)
+                    self.assertEqual(len(workspace.messages["C1"]), previous + 1)
+                    self.assertEqual(workspace.messages["C1"][-1]["text"],
+                                     ("<@U1> " if expected == "mentioned" else "") + text)
 
     def test_remote_mailbox_only_worktree_and_untrusted_checkout_code(self):
         remote = make_project(self.root / "remote (owner)")
@@ -402,6 +496,7 @@ class PublicOwnerAsks(MailWorld):
         # launch. Ordinary values and dead construction locals remain data.
         cases = [
             ("ordinary", {"SLACK_API_URL": "http://127.0.0.1:1", "SLACK_POLL_SECONDS": "7"}, True),
+            ("public-pythonpath", {"PYTHONPATH": "./checkout-python"}, True),
             ("construction-inputs", {"here": "./checkout-helper", "_slack_python": "./checkout-helper",
                                      "_slack_code": "./checkout-helper"}, True),
             ("_slack_script", {"_slack_script": "./checkout-helper"}, False),
@@ -409,6 +504,11 @@ class PublicOwnerAsks(MailWorld):
             ("linear", {"linear": "./checkout-helper"}, False),
             ("_slack_caller_env", {"_slack_caller_env": "{}"}, False),
         ]
+        pythonpath = remote / "checkout-python"
+        pythonpath.mkdir()
+        for module in ("argparse", "verbs"):
+            (pythonpath / (module + ".py")).write_text('from pathlib import Path\nPath(' + repr(str(marker)) +
+                                                      ').touch()\nraise SystemExit(91)\n')
         for setting, values, succeeds in cases:
             with self.subTest(setting=setting):
                 (remote / "kendex.settings.toml").write_text(
@@ -516,6 +616,24 @@ print(json.dumps(owner._presence('ssh:fixture')))
             self.assertNotIn("(checkout_code=False)", result.stderr)
             self.assertNotIn("(checkout_code=True)", result.stderr)
 
+            launcher.write_text(original)
+            path = skills / "jarvis/scripts/lib/owner_asks.py"
+            original = path.read_text()
+            old = 'result = watch.run([self.session.env["JARVIS_BASH"], "-c", command], root, payload,'
+            self.assertEqual(original.count(old), 1)
+            mutant = original.replace(old, 'result = watch.run([self.session.env["JARVIS_BASH"], *shell_args, '
+                                      'packages / package / "scripts" / script, *args], root, data,')
+            self.assertNotEqual(mutant, original)
+            path.write_text(mutant)
+            result = subprocess.run([BASH, str(REPO / "skills/jarvis/tests/owner-asks.test.sh"),
+                                     "PublicOwnerAsks.test_local_source_startup_preserves_settings_and_presence"],
+                                    env=dict(os.environ, JARVIS_TEST_SKILLS=str(skills)),
+                                    capture_output=True, text=True, timeout=60)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("FAILED (failures=", result.stderr)
+            self.assertIn("local-source-checkout-executed: cwd", result.stderr)
+            self.assertNotIn("ERROR:", result.stderr)
+
     def slack_thread(self, home, ask):
         # Exercise Slack's public mapping/permalink owner against its existing
         # API fixture; no product reader or HTTP transport is replaced.
@@ -536,6 +654,7 @@ print(json.dumps(owner._presence('ssh:fixture')))
         slack.mkdir()
         (slack / "binding.json").write_text(json.dumps({"channel": "C1", "channel_name": "owner", "bound_at": "100", "owners": [], "owner_ids": {}}))
         (slack / "journal.jsonl").write_text(json.dumps({"t": "out", "id": ask, "kind": "ask", "state": "open", "thread": "100.000001", "at": "2026-11-01T00:00:00Z"}) + "\n")
+        return fake.Handler.ws
 
     def test_real_mailbox_link_reply_checking_and_verified_close(self):
         ask = self.mail(self.home, "ask", "Original owner ask", "--to", "owner", "--options", "a,b", "--reserved")

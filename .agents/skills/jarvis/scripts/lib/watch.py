@@ -59,8 +59,8 @@ def destination_roots(destination, timeout=60, complete=False):
     return listed_roots(checked(["kendex", "project", "list"], operation="project-list", timeout=timeout), complete=complete)
 
 
-def remote_command(files, entry, args, data=None, stdin=False, shell_args=()):
-    """Transport caller-owned code; target checkouts supply only data/settings."""
+def remote_command(files, entry, args, data=None, stdin=False, shell_args=(), *, local_root=None):
+    """Isolate caller-owned code, local or transported; checkouts supply data/settings."""
     startup = """import runpy,sys
 operation,library,source,*args=sys.argv[1:]
 if library: sys.path.insert(0,library)
@@ -79,11 +79,12 @@ if sys.argv[1] == 'stdin':
 else:
  with os.fdopen(3) as source: payload=json.load(source)
 with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
- root=pathlib.Path(folder)
+ allocation=pathlib.Path(folder)
+ root=pathlib.Path(payload['local_root']) if payload['local_root'] is not None else allocation
  for name,value in payload['files'].items():
-  path=root/name; path.parent.mkdir(parents=True,exist_ok=True); path.write_bytes(base64.b64decode(value)); path.chmod(0o700)
- # Children share this extraction lifetime but start their own isolated Python.
- startup=root/'caller-python'
+  path=allocation/name; path.parent.mkdir(parents=True,exist_ok=True); path.write_bytes(base64.b64decode(value)); path.chmod(0o700)
+ # The temporary startup never owns or changes the caller's local package tree.
+ startup=allocation/'caller-python'
  startup.write_text('#!'+sys.argv[2]+'\\nexec '+shlex.join([sys.executable,'-I','-B','-c',%s])+' "$@"\\n')
  startup.chmod(0o700)
  env=dict(os.environ,_KENDEX_JARVIS_PYTHON=str(startup))
@@ -93,7 +94,7 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
 """ % repr(startup)
     command = ("python3 -I -c " + shlex.quote(bootstrap) + " " + ("stdin" if stdin else "fd3") +
                " \"$BASH\" " + shlex.join([json.dumps(list(shell_args)), entry, *map(str, args)]))
-    payload = json.dumps({"files": files, "data": data})
+    payload = json.dumps({"files": files, "data": data, "local_root": str(local_root) if local_root is not None else None})
     if stdin:
         return command, payload
     return command + " 3<<'jarvis-files'\n" + payload + "\njarvis-files\n", None
