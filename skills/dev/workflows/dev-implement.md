@@ -31,6 +31,17 @@ Every path is worktree-scoped: `git -C [WORKTREE_PATH] ...` for Bash, `[WORKTREE
 
 ```bash
 .agents/skills/orch/scripts/resolve-base-branch [WORKTREE_PATH]
+```
+
+If `[WORKTREE_PATH]/.agents/skills/github/scripts/git-https-auth` is installed and executable, use it for the baseline fetch:
+
+```bash
+[WORKTREE_PATH]/.agents/skills/github/scripts/git-https-auth -C [WORKTREE_PATH] fetch origin [BASE_BRANCH_FROM_PREVIOUS_COMMAND]
+```
+
+Otherwise use git:
+
+```bash
 git -C [WORKTREE_PATH] fetch origin [BASE_BRANCH_FROM_PREVIOUS_COMMAND]
 ```
 
