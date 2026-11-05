@@ -98,8 +98,16 @@ rc="$(run_roster "$TMP/orphan-one.log" "$orphaned" alpha)"
 assert_ne "a targeted run fails on an orphan outside its selection" "$rc" 0
 assert_file_contains "the targeted run names the orphaned control" \
     "$TMP/orphan-one.log" "ORPHAN   controls/ghost.control.sh"
-assert_file_contains "the targeted run counts the orphan" \
-    "$TMP/orphan-one.log" "1 controls, 0 failing, 1 orphaned"
+# Judged on the log's text so a failure prints what the nested runner wrote,
+# its status last where a tail of the report still holds it: the EXIT trap
+# deletes the log, and a file assertion would leave CI only its path.
+if targeted_out="$(<"$TMP/orphan-one.log")"; then
+    assert_contains "the targeted run counts the orphan" \
+        "$targeted_out"$'\n'"exit=$rc" "1 controls, 0 failing, 1 orphaned"
+else
+    assert_fail "the targeted run counts the orphan" \
+        "cannot read $TMP/orphan-one.log" "exit=$rc"
+fi
 
 # --- a control that does not red its suite is a failure --------------------
 # The runner judges each control in a background job and turns its status into
