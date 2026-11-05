@@ -102,7 +102,16 @@ jobs:
         with:
           key: lock-record
       - name: System dependencies for the keychain store
-        run: sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} update && sudo apt-get ${{ env.APT_ACQUIRE_OPTIONS }} install -y libdbus-1-dev
+        run: |
+          # Keep the image's suites and signing key, without its slow Azure mirror
+          # or unrelated third-party sources. Leave the image's sources untouched.
+          apt_sources="$(mktemp --suffix=.sources "$RUNNER_TEMP/ubuntu.XXXXXX")"
+          trap 'rm -- "$apt_sources"' EXIT
+          sed -e 's|://azure\.archive\.ubuntu\.com/|://archive.ubuntu.com/|g' \
+            -e 's|mirror+file:/etc/apt/apt-mirrors\.txt|https://archive.ubuntu.com/ubuntu/|g' \
+            /etc/apt/sources.list.d/ubuntu.sources > "$apt_sources"
+          apt_options=(${{ env.APT_ACQUIRE_OPTIONS }} -o "Dir::Etc::sourcelist=$apt_sources" -o Dir::Etc::sourceparts=/dev/null)
+          sudo apt-get "${apt_options[@]}" update && sudo apt-get "${apt_options[@]}" install -y libdbus-1-dev
 
       # The judge is this tree's kendex, not a release: a change to the code
       # that hashes, renders or records is one of the changes that moves the
