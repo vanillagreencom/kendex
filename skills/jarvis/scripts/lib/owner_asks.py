@@ -201,8 +201,8 @@ class Sources:
                     issue = ask["issue"]
                     if issue not in posted:
                         workspace = self.value(target, root, "linear", "linear.sh", ["teams", "keys"])["urlKey"]
-                        item = self.value(target, root, "linear", "linear.sh", ["issues", "get", issue])
-                        comments = self.value(target, root, "linear", "linear.sh", ["comments", "list", issue])
+                        item = self.value(target, root, "linear", "linear.sh", ["issues", "get", issue, "--format=safe"])
+                        comments = self.value(target, root, "linear", "linear.sh", ["comments", "list", issue, "--format=safe"])
                         posted[issue] = {"workspace": workspace, "uuid": item["uuid"], "comments": comments}
                     comment = next((row for row in posted[issue]["comments"] if row["id"] == ask["tracker_comment"]), None)
                     if comment is not None:
@@ -417,6 +417,7 @@ class OwnerAsks:
         entry = {"payload": payload, "receipt": None, "route": routes[key]}
         state["requests"][request["requestId"]] = entry
         state["sequence"] += 1
+        entry["sequence"] = state["sequence"]
         if action == "later":
             return self.accept(state, entry)
         delivery = "owner-action-" + digest([state["homeId"], request["requestId"]])
@@ -444,9 +445,14 @@ class OwnerAsks:
         delta = state["deltas"].setdefault(key, {"route": entry["route"]})
         if action == "done":
             delta["checking"] = True
-            delta.pop("until", None)
+            # Confirming an older delivery cannot undo a newer visibility
+            # choice. Legacy intents precede sequenced actions in this home.
+            if delta.get("until_sequence", 0) <= entry.get("sequence", 0):
+                delta.pop("until", None)
+                delta.pop("until_sequence", None)
         elif action == "later":
             delta["until"] = request["until"]
+            delta["until_sequence"] = entry["sequence"]
         current = "snoozed" if delta.get("until") and instant(delta["until"]) > self.clock() else "checking" if delta.get("checking") else "open"
         entry["receipt"] = self.receipt(request, "accepted", "checking" if action == "done" else current)
         self.session.write(state)
