@@ -111,7 +111,11 @@ run_refresh() { # CONTENT VERIFY CLASS
   fi
   rm -f -- "${TMP:?}/state/auth" "$TMP/state/push-refused" "$TMP/state/refreshed" \
     "$TMP/state/head-reads" "$TMP/state/shown-head" "$TMP/state/arm-attempted" \
-    "$TMP/state/armed" "$TMP/state/queued" "$TMP/state/merged" "$TMP/state/arm-state.json"
+    "$TMP/state/armed" "$TMP/state/queued" "$TMP/state/merged" "$TMP/state/arm-state.json" \
+    "$TMP/state/disarm-attempted"
+  if jq -e '.data.repository.pullRequest.autoMergeRequest != null' "$TMP/state/start-state.json" >/dev/null 2>&1; then
+    : >"$TMP/state/armed"
+  fi
   : >"$TMP/state/summary"
   : >"$TMP/state/outputs"
   OUT="$(cd "$repo" && env -i PATH="$TMP/bin:$PATH" HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=test-token GITHUB_TOKEN=other-test-token GITHUB_STEP_SUMMARY="$TMP/state/summary" GITHUB_OUTPUT="$TMP/state/outputs" TEST_VERSION_EXIT="${VERSION_EXIT:-0}" TEST_SECRET=private-test-value GH_REPO=acme/test REFRESH_APP_SLUG=lanes ${catalog_env[@]+"${catalog_env[@]}"} ${PROJECT_SETTING_ENV[@]+"${PROJECT_SETTING_ENV[@]}"} TEST_STATE="$TMP/state" TEST_REAL_GIT="$REAL_GIT" TEST_CONTENT="$1" TEST_VERIFY="$2" TEST_CLASS="$3" TEST_MEASURED="${MEASURED:-true}" TEST_REASON="${CLASS_REASON:-cause=renders-match-their-sources}" TEST_CLASS_EXIT="${CLASS_EXIT:-0}" TEST_CLASS_NOTES="${CLASS_NOTES:-}" TEST_APPLY_EXIT="${APPLY_EXIT:-0}" TEST_LISTS_PRUNE="${LISTS_PRUNE:-}" TEST_LEASE_RACE="${LEASE_RACE:-}" TEST_PUSH_MODE="${PUSH_MODE:-normal}" TEST_PUSH_QUERY="${PUSH_QUERY:-pass}" TEST_START_QUERY="${START_QUERY:-pass}" TEST_DISARM_MODE="${DISARM_MODE:-pass}" TEST_HEAD_MODE="${HEAD_MODE:-matched}" TEST_ARM_MODE="${ARM_MODE:-armed}" TEST_ARM_QUERY="${ARM_QUERY:-pass}" TEST_LEASE_REMOTE="${LEASE_REMOTE:-$TMP/remote}" TEST_HOSTILE="${HOSTILE:-}" TEST_FRESH_ORCH="${FRESH_ORCH:-}" TEST_ORCH_MODE="${ORCH_MODE:-keep}" TEST_REFRESH_SKILL="${REFRESH_SKILL:-}" TEST_REFRESH_BOT="${REFRESH_BOT:-}" TEST_REFRESH_ADDS="${REFRESH_ADDS:-}" TEST_REFRESH_SAID="${REFRESH_SAID:-}" TEST_FRESH_TEMPLATES="$TMP/fresh-templates" TEST_GH_SHIM="$TMP/standard-gh" GH_SHIM_FIXTURES="$FIXTURES" "$BASH" "$runner" ${RUNNER_ARGS[@]+"${RUNNER_ARGS[@]}"} 2>&1)" || result=$?
@@ -304,8 +308,7 @@ PROJECT_ROWS
 }
 
 # The acceptance assertion also holds ordering and no publication after refusal.
-# STARTS is the number of run-start lifecycle reads, one when a pull request
-# was open at run start.
+# STARTS counts the run-start and fresh pre-push lifecycle reads.
 refresh_push_matches() { # EXIT REASON STARTS
   local deferred_count
   [ "$RC" -eq "$1" ] || return 1
@@ -358,11 +361,11 @@ refresh_start_matches() { # EXIT REASON
     active) [ "$deferred_count" -eq 0 ] && [ -e "$TMP/state/refreshed" ] &&
       ! grep -qF -- '--disable-auto' "$TMP/state/calls" ;;
     # A disarm GitHub refuses on a pull request still armed stops the run
-    # before the refresh and the push.
+    # after rendering, before the push.
     disarm) grep -qxF 'refresh-error=disarm pr=1 value=armed' <<<"$OUT" && [ "$deferred_count" -eq 0 ] &&
       grep -qxF 'pr merge 1 --repo acme/test --disable-auto' "$TMP/state/calls" &&
-      [ "$(grep -c '^api graphql ' "$TMP/state/calls")" -eq 2 ] &&
-      [ ! -e "$TMP/state/refreshed" ] && ! grep -qxF 'git push' "$TMP/state/calls" ;;
+      [ "$(grep -c '^api graphql ' "$TMP/state/calls")" -eq 3 ] &&
+      [ -e "$TMP/state/refreshed" ] && ! grep -qxF 'git push' "$TMP/state/calls" ;;
     *) return 1 ;;
   esac
 }
@@ -385,6 +388,127 @@ refresh_class_matches() { # CLASS STATE REASON METHOD [MEASURED]
     grep -qxF -- "pr merge 1 --repo acme/test --auto --squash --match-head-commit $head" "$TMP/state/calls" &&
     ! grep -qF -- '--disable-auto' "$TMP/state/calls" &&
     [ -f "$TMP/state/armed" ]
+}
+
+# The actual caller and shared armer decide every mutation. The control only
+# bypasses the unchanged-publication return on a disposable release copy.
+run_admission_rows() {
+  local saved_runner="$runner" old_head name has_pr armed content lifecycle disarm expected
+  local matched remote_head expected_pr
+  mkdir -p "$TMP/admission-release" "$TMP/admission-control"
+  cp -RL "$repo/refresh" "$repo/skills" "$TMP/admission-release/"
+  cp -RL "$repo/refresh" "$repo/skills" "$TMP/admission-control/"
+  python3 - "$TMP/admission-control/refresh/refresh-consumer.sh" <<'UNCHANGED_CONTROL'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1]).resolve()
+source = path.read_text()
+old = 'if [ "$state" = unchanged ]; then'
+assert source.count(old) == 1
+changed = source.replace(old, 'if false; then # ' + old)
+assert changed != source
+path.write_text(changed)
+UNCHANGED_CONTROL
+  runner="$TMP/admission-release/refresh/refresh-consumer.sh"
+  run_refresh admission-original pass render
+  [ "$RC" -eq 0 ] || { bad 'admission fixture first publication' "$OUT"; return 1; }
+  old_head="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+  while IFS='|' read -r name has_pr armed content lifecycle disarm expected; do
+    reset_default
+    runner="$TMP/admission-release/refresh/refresh-consumer.sh"
+    [ "$name" != unchanged-control ] || runner="$TMP/admission-control/refresh/refresh-consumer.sh"
+    git --git-dir="$TMP/remote" update-ref refs/heads/kendex/refresh "$old_head"
+    if [ "$name" = first ]; then git --git-dir="$TMP/remote" update-ref -d refs/heads/kendex/refresh; fi
+    : >"$TMP/state/pr"
+    expected_pr=none
+    if [ "$has_pr" = yes ]; then printf '1\n' >"$TMP/state/pr"; expected_pr=1; fi
+    jq -cn --argjson armed "$armed" \
+      '{data:{repository:{ref:{target:{oid:"abc"}},pullRequest:{state:"OPEN",isInMergeQueue:false,autoMergeRequest:(if $armed then {enabledAt:"2026-10-02T01:09:07Z"} else null end)}}}}' >"$TMP/state/start-state.json"
+    cp "$TMP/state/start-state.json" "$TMP/state/prepush-state.json"
+    case "$lifecycle" in
+      queued) jq '.data.repository.pullRequest.isInMergeQueue = true' "$TMP/state/start-state.json" >"$TMP/state/prepush-state.json" ;;
+      merged|closed) jq --arg state "$(printf '%s' "$lifecycle" | tr '[:lower:]' '[:upper:]')" '.data.repository.pullRequest.state = $state' "$TMP/state/start-state.json" >"$TMP/state/prepush-state.json" ;;
+      branch-gone) jq '.data.repository.ref = null' "$TMP/state/start-state.json" >"$TMP/state/prepush-state.json" ;;
+      malformed) printf 'not-json\n' >"$TMP/state/prepush-state.json" ;;
+      partial) jq 'del(.data.repository.pullRequest.isInMergeQueue)' "$TMP/state/start-state.json" >"$TMP/state/prepush-state.json" ;;
+      unread) : >"$TMP/state/prepush-query-failed" ;;
+    esac
+    DISARM_MODE="$disarm"
+    if [ "$name" = disarm-race ]; then
+      jq '.data.repository.pullRequest.isInMergeQueue = true' "$TMP/state/start-state.json" >"$TMP/state/disarm-state.json"
+    fi
+    if [ "$name" = unchanged-direct ]; then
+      printf '[]\n' >"$TMP/state/branch-rules"
+      printf 'false\n' >"$TMP/state/branch-protected"
+    fi
+    : >"$TMP/state/calls"
+    run_refresh "$content" pass render
+    remote_head="$(git --git-dir="$TMP/remote" rev-parse refs/heads/kendex/refresh)"
+    matched=false
+    case "$expected" in
+      unchanged)
+        if [ "$RC" -eq 0 ] && [ "$remote_head" = "$old_head" ] &&
+            grep -qxF "refresh-state=unchanged pr=$expected_pr class=render head=$old_head published=false" <<<"$OUT" &&
+            ! grep -qE '^git push$|^api --method (POST|PATCH)|^pr (merge|close) ' "$TMP/state/calls" &&
+            [ ! -e "$TMP/state/arm-attempted" ] &&
+            { { [ "$armed" = true ] && [ -e "$TMP/state/armed" ]; } ||
+              { [ "$armed" = false ] && [ ! -e "$TMP/state/armed" ]; }; }; then matched=true; fi ;;
+      published)
+        if [ "$RC" -eq 0 ] && [ "$remote_head" != "$old_head" ] &&
+            grep -qxF 'refresh-state=pushed pr=1 class=render' <<<"$OUT" &&
+            [ -e "$TMP/state/armed" ] &&
+            awk -v initial="$armed" -v arm="pr merge 1 --repo acme/test --auto --squash --match-head-commit $remote_head" '
+              /--disable-auto$/ { if (pushed) exit 1; disabled++ }
+              /^git push$/ { if (initial == "true" && disabled != 1) exit 1; pushed++ }
+              $0 == arm { if (pushed != 1) exit 1; admitted++ }
+              END { if (pushed != 1 || admitted != 1 || (initial == "false" && disabled)) exit 1 }
+            ' "$TMP/state/calls"; then matched=true; fi ;;
+      *)
+        if [ "$remote_head" = "$old_head" ] &&
+            ! grep -qE '^git push$|^api --method (POST|PATCH)|^pr merge .*--auto' "$TMP/state/calls"; then
+          case "$expected" in
+            query|output|disarm)
+              if [ "$RC" -eq 1 ] && grep -qE "^refresh-error=($expected|push-state value=$expected)( |$)" <<<"$OUT"; then matched=true; fi ;;
+            *) if [ "$RC" -eq 0 ] && grep -qxF "refresh-state=deferred reason=$expected" <<<"$OUT"; then matched=true; fi ;;
+          esac
+        fi ;;
+    esac
+    if [ "$name" = unchanged-control ]; then
+      if [ "$matched" = false ] && [ "$RC" -eq 0 ] && [ -e "$TMP/state/arm-attempted" ] &&
+          grep -qxF "pr merge 1 --repo acme/test --auto --squash --match-head-commit $old_head" "$TMP/state/calls"; then
+        ok 'control: unconditional old-head admission turns the unchanged assertion red'
+      else bad "$name admission control" "$OUT"; fi
+    elif [ "$matched" = true ]; then ok "$name publication admission"
+    else bad "$name publication admission" "$OUT"; fi
+    rm -f -- "${TMP:?}/state/prepush-state.json" "${TMP:?}/state/disarm-state.json" "${TMP:?}/state/prepush-query-failed" \
+      "${TMP:?}/state/branch-rules" "${TMP:?}/state/branch-protected"
+  done <<'ADMISSION_ROWS'
+unchanged|yes|false|admission-original|active|pass|unchanged
+unchanged-armed|yes|true|admission-original|active|pass|unchanged
+unchanged-direct|yes|false|admission-original|active|pass|unchanged
+retained-no-pr|no|false|admission-original|active|pass|unchanged
+unchanged-control|yes|false|admission-original|active|pass|unchanged
+changed-armed|yes|true|admission-changed|active|pass|published
+changed-active|yes|false|admission-changed|active|pass|published
+first|no|false|admission-first|active|pass|published
+queue-race|yes|true|admission-changed|queued|pass|queued
+merge-race|yes|true|admission-changed|merged|pass|merged
+close-race|yes|true|admission-changed|closed|pass|closed
+branch-race|yes|false|admission-changed|branch-gone|pass|branch-gone
+disarm-race|yes|true|admission-changed|active|refused|queued
+disarm-refused|yes|true|admission-changed|active|refused|disarm
+prepush-unread|yes|true|admission-changed|unread|pass|query
+prepush-malformed|yes|true|admission-changed|malformed|pass|output
+prepush-partial|yes|true|admission-changed|partial|pass|output
+ADMISSION_ROWS
+  unset DISARM_MODE
+  reset_default
+  runner="$saved_runner"
+  git --git-dir="$TMP/remote" update-ref -d refs/heads/kendex/refresh
+  printf '{"data":{"repository":{"ref":{"target":{"oid":"abc"}},"pullRequest":{"state":"OPEN","isInMergeQueue":false,"autoMergeRequest":null}}}}\n' >"$TMP/state/start-state.json"
+  : >"$TMP/state/pr"
+  : >"$TMP/state/calls"
+  : >"$TMP/state/creates"
 }
 
 # The service records an actual arm, queue entry or completed merge separately
