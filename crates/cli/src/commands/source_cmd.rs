@@ -76,8 +76,9 @@ pub enum SourceCommand {
         /// installed files changed — the background job check starts
         #[arg(long)]
         stale: bool,
-        /// Only check the marketplaces installed packages come from; one of
-        /// them that was never fetched and cannot be reached fails the run
+        /// Only check the marketplaces installed packages come from and the
+        /// ones the install record names; one of them that was never fetched
+        /// and cannot be reached fails the run
         #[arg(long, conflicts_with = "stale")]
         in_use: bool,
     },
@@ -153,7 +154,7 @@ pub fn run(env: &Env, args: SourceArgs) -> CliResult {
                     continue;
                 };
                 let synced = match in_use {
-                    true => remote::sync_sources_in_use(env, &manifest)?,
+                    true => remote::sync_record_sources(env, &scope, &manifest)?,
                     false => remote::sync_sources(env, &manifest)?,
                 };
                 super::engine_common::print_synced(&synced);

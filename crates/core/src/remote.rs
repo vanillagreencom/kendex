@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::manifest::{Manifest, SourceDecl};
+use crate::model::Scope;
 
 pub mod history;
 pub mod store;
@@ -363,8 +364,9 @@ fn sources_in_use(manifest: &Manifest) -> std::collections::BTreeSet<&str> {
         .collect()
 }
 
-/// Resolve the enabled remote sources this scope installs from, doing as
-/// much as it can and reporting the rest.
+/// Resolve the enabled remote sources a write of `scope` reads
+/// ([`syncable_for_record`]), doing as much as it can and reporting the
+/// rest.
 ///
 /// Every seeded manifest declares the default catalog whether or not
 /// anything ever came from it, so fetching all of them makes a routine
@@ -373,9 +375,9 @@ fn sources_in_use(manifest: &Manifest) -> std::collections::BTreeSet<&str> {
 /// items that came from every other catalog, so an unreachable source is
 /// reported and the rest still resolve. Browsing a catalog is a different
 /// question and still syncs everything, strictly: see `sync_sources`.
-pub fn sync_declared_sources(env: &Env, manifest: &Manifest) -> Synced {
+pub fn sync_declared_sources(env: &Env, scope: &Scope, manifest: &Manifest) -> Synced {
     let mut synced = Synced::default();
-    for (name, decl) in syncable_in_use(manifest) {
+    for (name, decl) in syncable_for_record(env, scope, manifest) {
         match sync_source(env, name, decl) {
             Ok(one) => synced.extend(one),
             Err(error @ CoreError::SourceBusy { .. }) => {
@@ -395,11 +397,12 @@ pub fn sync_sources(env: &Env, manifest: &Manifest) -> Result<Synced> {
     sync_strictly(env, syncable(manifest, |_| true))
 }
 
-/// [`sync_sources`] over only the sources some declaration names: what
-/// preparing a render needs, without reaching for a subscription nothing
-/// installs from. A source in use resolves as strictly as there.
-pub fn sync_sources_in_use(env: &Env, manifest: &Manifest) -> Result<Synced> {
-    sync_strictly(env, syncable_in_use(manifest))
+/// [`sync_sources`] over only the sources a write of `scope` reads
+/// ([`syncable_for_record`]): what verifying a render against its record
+/// needs, without reaching for a subscription neither names. Each of them
+/// resolves as strictly as there.
+pub fn sync_record_sources(env: &Env, scope: &Scope, manifest: &Manifest) -> Result<Synced> {
+    sync_strictly(env, syncable_for_record(env, scope, manifest))
 }
 
 fn sync_strictly<'a>(
@@ -430,6 +433,38 @@ fn syncable<'a>(
 fn syncable_in_use(manifest: &Manifest) -> impl Iterator<Item = (&str, &SourceDecl)> {
     let in_use = sources_in_use(manifest);
     syncable(manifest, move |name| in_use.contains(name))
+}
+
+/// [`syncable`] narrowed to what a write of `scope` reads: the sources in
+/// use, and every source the scope's install record names. The record pass
+/// reads each enabled repository source from its mirror where nothing in
+/// the pass resolved it, and fails the record row for a recorded one the
+/// mirror cannot serve, so a subscription no package uses that the record
+/// carries must be fetched on a machine that never fetched it. One the
+/// record does not carry is left alone: a mirror that answers for it would
+/// add an entry the committed record does not hold.
+fn syncable_for_record<'a>(
+    env: &Env,
+    scope: &Scope,
+    manifest: &'a Manifest,
+) -> impl Iterator<Item = (&'a str, &'a SourceDecl)> {
+    let in_use = sources_in_use(manifest);
+    let recorded = recorded_sources(env, scope);
+    syncable(manifest, move |name| {
+        in_use.contains(name) || recorded.contains(name)
+    })
+}
+
+/// The sources the scope's install record names. No record, or one this
+/// build cannot read, names none: the planner reads the same file and
+/// either refuses it with its cause or plans fresh without its entries, so
+/// no recorded entry holds a mirror to anything, and a refusal here would
+/// only put that cause behind a preparation error.
+fn recorded_sources(env: &Env, scope: &Scope) -> std::collections::BTreeSet<String> {
+    match crate::lock::load_file(&crate::lock::lock_path(env, scope)) {
+        Ok(crate::lock::LockFile::Current(lock)) => lock.sources.into_keys().collect(),
+        Ok(crate::lock::LockFile::Absent) | Err(_) => std::collections::BTreeSet::new(),
+    }
 }
 
 /// Resolve one declared source: a never-cached repository that cannot be

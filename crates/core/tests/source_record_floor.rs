@@ -94,7 +94,7 @@ fn world() -> World {
 #[allow(clippy::unwrap_used)]
 fn refresh(env: &Env, scope: &Scope) {
     let manifest = kendex_core::engine::ops::manifest_for_reading(env, scope).unwrap();
-    let synced = remote::sync_declared_sources(env, &manifest);
+    let synced = remote::sync_declared_sources(env, scope, &manifest);
     assert!(synced.failures.is_empty(), "{:?}", synced.failures);
     let options = PlanOptions {
         sweep_unneeded: true,

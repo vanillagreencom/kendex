@@ -9,8 +9,8 @@ use crate::error::CoreError;
 use crate::manifest;
 use crate::model::Scope;
 use crate::remote::{
-    Synced, cache_head, cached, mirror_commit, sync, sync_declared_sources, sync_source,
-    sync_sources, sync_sources_in_use,
+    Synced, cache_head, cached, mirror_commit, sync, sync_declared_sources, sync_record_sources,
+    sync_source, sync_sources,
 };
 
 #[test]
@@ -133,12 +133,12 @@ fn sync_sources_reports_warnings_and_fails_on_the_unreachable() {
 /// use, the lenient and the strict, read an item's and a bundle's source.
 #[test]
 fn a_refresh_skips_a_catalog_nothing_installs_from() {
-    type Refresh = fn(&Env, &manifest::Manifest) -> crate::error::Result<Synced>;
+    type Refresh = fn(&Env, &Scope, &manifest::Manifest) -> crate::error::Result<Synced>;
     let refreshes: [(&str, Refresh); 2] = [
-        ("lenient", |env, manifest| {
-            Ok(sync_declared_sources(env, manifest))
+        ("lenient", |env, scope, manifest| {
+            Ok(sync_declared_sources(env, scope, manifest))
         }),
-        ("strict", sync_sources_in_use),
+        ("strict", sync_record_sources),
     ];
     for user in ["item", "bundle"] {
         for (refresh, run) in refreshes {
@@ -167,7 +167,7 @@ fn a_refresh_skips_a_catalog_nothing_installs_from() {
             };
             users.insert("gh".to_owned(), manifest::ItemDecl::from_source("cat"));
 
-            let synced = run(&f.env, &manifest);
+            let synced = run(&f.env, &Scope::Global, &manifest);
             assert!(
                 synced.as_ref().is_ok_and(|s| s.notes.is_empty()),
                 "{case}: {synced:?}"
@@ -221,9 +221,24 @@ fn a_strict_refresh_of_the_sources_in_use_keeps_each_resolution_failure() {
     ];
     for (case, repo, rev, expected) in rows {
         let f = fixture();
-        let result = sync_sources_in_use(&f.env, &one_catalog_in_use(repo, rev));
+        let result = sync_record_sources(&f.env, &Scope::Global, &one_catalog_in_use(repo, rev));
         assert!(result.as_ref().is_err_and(expected), "{case}: {result:?}");
     }
+}
+
+/// An install record this build cannot read names no source for the strict
+/// refresh to add, and the refresh does not refuse over it: the planner
+/// reads the same file and reports it with its cause.
+#[test]
+fn a_strict_refresh_does_not_refuse_over_an_unreadable_record() {
+    let f = fixture();
+    let record = crate::lock::lock_path(&f.env, &Scope::Global);
+    fs::create_dir_all(record.parent().unwrap()).unwrap();
+    fs::write(&record, "not a record").unwrap();
+
+    let synced = sync_record_sources(&f.env, &Scope::Global, &one_catalog_in_use(REPO, None));
+    assert!(synced.is_ok(), "{synced:?}");
+    assert!(cache_head(&f.env, REPO, None).is_some());
 }
 
 /// A catalog out of reach must not strand the items that came from every
@@ -250,7 +265,7 @@ fn a_refresh_reports_an_unreachable_catalog_and_resolves_the_rest() {
     }
     manifest.sources.remove(manifest::DEFAULT_SOURCE_NAME);
 
-    let notes = sync_declared_sources(&f.env, &manifest).notes;
+    let notes = sync_declared_sources(&f.env, &Scope::Global, &manifest).notes;
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(notes[0].contains("gone"), "{notes:?}");
     // The reachable catalog resolved despite the other one failing first.
@@ -279,7 +294,7 @@ fn a_busy_source_is_one_failure_instead_of_one_pending_note_per_package() {
             .insert(name.to_owned(), manifest::ItemDecl::from_source("cat"));
     }
     let guard = super::store::lock_repo(&f.env, &super::key_for(&f.env), super::REPO).unwrap();
-    let synced = sync_declared_sources(&f.env, &manifest);
+    let synced = sync_declared_sources(&f.env, &Scope::Global, &manifest);
     drop(guard);
 
     assert_eq!(synced.failures.len(), 1, "{:?}", synced.failures);
