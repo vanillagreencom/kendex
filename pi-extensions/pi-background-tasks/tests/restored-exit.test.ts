@@ -9,7 +9,7 @@ test("restored exits read their tail before delivery and suppress completions af
 test("must-fail: dropping the asynchronous exit tail fails the registered lifecycle suite", () => {
 	expect(() => runSpawnFixture("spawn-extension.ts", { mode: "restored-exit" }, {
 		file: "extensions/background-tasks.ts", from: "options, tail) });", to: "options, { text: \"\", truncated: false }) });",
-	})).toThrow("spawn_fixture.child_exit=1");
+	})).toThrow("exit tail content: delivered");
 }, SPAWN_FIXTURE_TIMEOUT_MS);
 
 test("must-fail: dropping disk omission information loses exit-tail metadata", () => {
