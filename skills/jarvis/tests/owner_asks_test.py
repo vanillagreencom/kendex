@@ -407,7 +407,8 @@ class PublicOwnerAsks(MailWorld):
                     self.assertEqual(record["destination"], "local:" + str(local))
 
         binding = local / "tmp/slack/binding.json"
-        binding.write_text(json.dumps(dict(json.loads(binding.read_text()), owner_ids={"owner@example.test": "U1"})))
+        binding.write_text(json.dumps(dict(json.loads(binding.read_text()), owners=["owner@example.test"],
+                                              owner_ids={"owner@example.test": "U1"})))
         hold = local / "fresh ' hold;$"
         hold.touch()
         code = '''import json,sys,time
