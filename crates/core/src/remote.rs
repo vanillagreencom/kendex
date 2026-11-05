@@ -345,8 +345,7 @@ pub fn fetch_all(env: &Env, manifest: &Manifest) -> Vec<String> {
 /// answered honestly.
 pub fn last_fetched(env: &Env, manifest: &Manifest) -> Option<u64> {
     let now = crate::clock::unix_now();
-    let in_use = sources_in_use(manifest);
-    syncable(manifest, |name| in_use.contains(name))
+    syncable_in_use(manifest)
         .filter_map(|(_, decl)| decl.repo.as_deref())
         .filter_map(|repo| crate::drift::stamps::load(env, &cache_key(env, repo)).fetched_at)
         .filter(|at| *at <= now)
@@ -375,9 +374,8 @@ fn sources_in_use(manifest: &Manifest) -> std::collections::BTreeSet<&str> {
 /// reported and the rest still resolve. Browsing a catalog is a different
 /// question and still syncs everything, strictly: see `sync_sources`.
 pub fn sync_declared_sources(env: &Env, manifest: &Manifest) -> Synced {
-    let in_use = sources_in_use(manifest);
     let mut synced = Synced::default();
-    for (name, decl) in syncable(manifest, |name| in_use.contains(name)) {
+    for (name, decl) in syncable_in_use(manifest) {
         match sync_source(env, name, decl) {
             Ok(one) => synced.extend(one),
             Err(error @ CoreError::SourceBusy { .. }) => {
@@ -394,8 +392,22 @@ pub fn sync_declared_sources(env: &Env, manifest: &Manifest) -> Synced {
 /// never-cached sources are hard errors; refresh failures on cached
 /// sources degrade to warnings.
 pub fn sync_sources(env: &Env, manifest: &Manifest) -> Result<Synced> {
+    sync_strictly(env, syncable(manifest, |_| true))
+}
+
+/// [`sync_sources`] over only the sources some declaration names: what
+/// preparing a render needs, without reaching for a subscription nothing
+/// installs from. A source in use resolves as strictly as there.
+pub fn sync_sources_in_use(env: &Env, manifest: &Manifest) -> Result<Synced> {
+    sync_strictly(env, syncable_in_use(manifest))
+}
+
+fn sync_strictly<'a>(
+    env: &Env,
+    sources: impl Iterator<Item = (&'a str, &'a SourceDecl)>,
+) -> Result<Synced> {
     let mut synced = Synced::default();
-    for (name, decl) in syncable(manifest, |_| true) {
+    for (name, decl) in sources {
         synced.extend(sync_source(env, name, decl)?);
     }
     Ok(synced)
@@ -412,6 +424,12 @@ fn syncable<'a>(
         .iter()
         .filter(move |(name, decl)| decl.enabled && decl.repo.is_some() && wanted(name))
         .map(|(name, decl)| (name.as_str(), decl))
+}
+
+/// [`syncable`] narrowed to [`sources_in_use`].
+fn syncable_in_use(manifest: &Manifest) -> impl Iterator<Item = (&str, &SourceDecl)> {
+    let in_use = sources_in_use(manifest);
+    syncable(manifest, move |name| in_use.contains(name))
 }
 
 /// Resolve one declared source: a never-cached repository that cannot be

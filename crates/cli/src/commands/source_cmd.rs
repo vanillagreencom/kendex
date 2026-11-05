@@ -76,6 +76,10 @@ pub enum SourceCommand {
         /// installed files changed — the background job check starts
         #[arg(long)]
         stale: bool,
+        /// Only check the marketplaces installed packages come from; one of
+        /// them that was never fetched and cannot be reached fails the run
+        #[arg(long, conflicts_with = "stale")]
+        in_use: bool,
     },
 }
 
@@ -85,7 +89,7 @@ pub fn run(env: &Env, args: SourceArgs) -> CliResult {
     // The stale refresh serves the session check, which reads project AND
     // global — a project-scoped default here would leave global mirrors
     // stale forever (and die outright when run outside a project).
-    if let SourceCommand::Refresh { stale: true } = &command {
+    if let SourceCommand::Refresh { stale: true, .. } = &command {
         let stale = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::All)?;
         let scopes = resolve_scopes(env, stale)?;
         for note in kendex_core::drift::refresh::refresh_stale(env, &scopes) {
@@ -135,16 +139,25 @@ pub fn run(env: &Env, args: SourceArgs) -> CliResult {
             | SourceCommand::Remove { .. }
             | SourceCommand::Enable { .. }
             | SourceCommand::Disable { .. } => unreachable!("handled before the read loop"),
-            SourceCommand::Refresh { stale: true } => unreachable!("handled above the scope loop"),
-            SourceCommand::Refresh { stale: false } => {
+            SourceCommand::Refresh { stale: true, .. } => {
+                unreachable!("handled above the scope loop")
+            }
+            SourceCommand::Refresh {
+                stale: false,
+                in_use,
+            } => {
                 let Some(manifest) = kendex_core::manifest::load_for_mutation(
                     &kendex_core::manifest::manifest_path(env, &scope),
                 )?
                 else {
                     continue;
                 };
-                super::engine_common::print_synced(&remote::sync_sources(env, &manifest)?);
-                // The fetches above stamped every mirror; the snapshot makes
+                let synced = match in_use {
+                    true => remote::sync_sources_in_use(env, &manifest)?,
+                    false => remote::sync_sources(env, &manifest)?,
+                };
+                super::engine_common::print_synced(&synced);
+                // The fetches above stamped their mirrors; the snapshot makes
                 // the fresh verdicts what the next session check reads.
                 if let Err(error) = kendex_core::drift::snapshot::record(env, &scope) {
                     say(&format!("warning: snapshot not derived ({})", error));

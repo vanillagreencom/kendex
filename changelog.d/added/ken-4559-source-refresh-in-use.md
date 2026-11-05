@@ -1,0 +1,1 @@
+- `kendex source refresh --in-use` refreshes only the sources the scope's installed packages and bundles come from, leaving a subscription no package uses alone; a source in use that was never fetched and cannot be reached still fails the run.
