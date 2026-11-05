@@ -31,6 +31,7 @@ const tools = new Map<string, Tool>();
 const commands = new Map<string, { handler(args: string, ctx: ExtensionContext): unknown }>();
 const events = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
 const messages: unknown[] = [];
+let deliveryAck: (() => void) | undefined;
 const notifications: unknown[] = [];
 
 const ctx = {
@@ -44,7 +45,7 @@ const pi = {
 	registerCommand(name: string, command: { handler(args: string, ctx: ExtensionContext): unknown }) { commands.set(name, command); }, registerShortcut() {}, registerMessageRenderer() {},
 	on(event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) { events.set(event, handler); },
 	appendEntry() {},
-	sendMessage: (...args: unknown[]) => messages.push(args),
+	sendMessage: (...args: unknown[]) => { messages.push(args); deliveryAck?.(); },
 } as unknown as ExtensionAPI;
 let started = false;
 let shutDown = false;
@@ -73,7 +74,7 @@ async function finalized() {
 }
 async function restoredExits() {
 	Object.defineProperty(process, "platform", { ...originalPlatform, value: "linux" });
-	const tails = messages as [{ details: { outputTail: string; outputTailTruncated: boolean; eventType: string; task: { terminationReason?: string } } }][];
+	const tails = messages as [{ details: { outputTail: string; outputTailTruncated: boolean; eventType: string; task: BackgroundTaskSnapshot } }][];
 	const long = "x".repeat(4000) + "TAIL";
 	const rows = [
 		{ action: "delivered", output: long, truncated: true },
@@ -86,8 +87,12 @@ async function restoredExits() {
 	] as const;
 	for (const { action, output, truncated } of rows) {
 		effects.identityGone = false;
+		effects.deferLogOpens = false;
+		const suppressed = action === "clear" || action === "shutdown";
 		const logFile = `${process.cwd()}/${action}.log`;
 		await writeFile(logFile, output);
+		// Delivered rows hold their product tail read; clear and shutdown keep today's unheld read.
+		effects.deferLogOpens = !suppressed;
 		const before = tails.length;
 		const task = { id: "bg-1", command: "restored", cwd: process.cwd(), exitCode: 0, exitNotified: false,
 			logFile, notifyOnExit: true, notifyOnOutput: false, outputBytes: Buffer.byteLength(output),
@@ -104,14 +109,22 @@ async function restoredExits() {
 			effects.identityGone = true;
 			await native.fireInterval(30_000);
 		}
-		const suppressed = action === "clear" || action === "shutdown";
-		// Real asynchronous file reads must finish before delivery or suppression checks.
-		for (let waited = 0; waited < 100 && (suppressed || tails.length === before); waited += 1) await Bun.sleep(1);
+		if (suppressed) {
+			// Elapsed sampling only: it does not prove the suppressed continuation finished.
+			for (let waited = 0; waited < 100; waited += 1) await Bun.sleep(1);
+		} else {
+			assert.equal(native.heldLogOpens(), 1, `exit tail read held: ${action}`);
+			assert.equal(tails.length, before, `exit before tail read: ${action}`);
+			const delivered = new Promise<void>((resolve) => { deliveryAck = resolve; });
+			native.releaseLogOpens();
+			await delivered;
+			deliveryAck = undefined;
+		}
 		assert.equal(tails.length, before + (suppressed ? 0 : 1), action);
 		if (!suppressed) {
 			const tail = tails[before][0].details;
 			assert.equal(tail.eventType, "exit");
-			assert.ok(tail.outputTail.endsWith("TAIL"));
+			assert.ok(tail.outputTail.endsWith("TAIL"), `exit tail content: ${action}`);
 			assert.equal(tail.outputTailTruncated, truncated, `exit omission metadata: ${action}`);
 			assert.equal(tail.outputTail.startsWith("[...truncated]\n"), truncated, `exit omission marker: ${action}`);
 			assert.ok(tail.outputTail.length <= 2015);
@@ -119,6 +132,8 @@ async function restoredExits() {
 			if (action === "unicode") assert.equal(tail.outputTail, "[...truncated]\n" + "😀".repeat(998) + "TAIL", "restored exit character limit");
 			if (!truncated) assert.equal(tail.outputTail, output);
 			if (action === "orphan") assert.equal(tail.task.terminationReason, "orphaned-pid-gone");
+			assert.equal(tail.task.exitNotified, false, `exit delivered before acknowledgement: ${action}`);
+			assert.equal(latestSnapshot(tail.task)?.exitNotified, true, `exit acknowledgement: ${action}`);
 		}
 		if (action !== "shutdown") await dispatch("session_shutdown");
 	}
