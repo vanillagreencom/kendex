@@ -62,7 +62,6 @@ hooks = [
   "block-unsafe-rm",
   "command-safety",
   "block-argv-kill",
-  "block-worktree-refresh",
   "worktree-session-claim",
   "worktree-prompt-claim",
   "pre-commit-check",
@@ -159,7 +158,6 @@ hooks = [
   "block-repo-copy",
   "block-unsafe-rm",
   "block-argv-kill",
-  "block-worktree-refresh",
   "pre-commit-check",
   "session-drift-check",
   "task-completed-check",
@@ -186,6 +184,7 @@ hooks = ["claude-attention", "claude-question-attention"]
 # a migration line (empty for none). A consumer still declaring one keeps it
 # installed, with one notice carrying it, until `kendex refresh --prune`.
 [retired.hooks]
+block-worktree-refresh = ""
 doc-drift-check = ""
 skill-load-check = ""
 skill-load-record = ""

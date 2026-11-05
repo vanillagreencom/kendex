@@ -18,7 +18,6 @@
     "hooks/tests/block-bare-cd.test.sh": "linux-duplicate",
     "hooks/tests/block-repo-copy.test.sh": "linux-duplicate",
     "hooks/tests/block-unsafe-rm.test.sh": "linux-duplicate",
-    "hooks/tests/block-worktree-refresh.test.sh": "linux-duplicate",
     "hooks/tests/cloud-git-hooks.test.sh": "linux-duplicate",
     "hooks/tests/command-safety.test.sh": "linux-duplicate",
     "hooks/tests/critical-path-deny.test.sh": "linux-duplicate",
