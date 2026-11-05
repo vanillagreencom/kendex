@@ -1,5 +1,6 @@
 # shellcheck shell=bash
-# KEN-4033 must-fail control: lane_model_recovery at b23b769a0d110c854a460f8dadbe2b343fd35247.
+# KEN-4033 must-fail control: lane_model_recovery at b23b769a0d110c854a460f8dadbe2b343fd35247,
+# its launch through the request the runtime takes.
 lane_model_recovery() { # RECORD STATE_DIR SCRIPTS SESSION
   local record="$1" state_dir="$2" SCRIPT_DIR="$3" session="$4" fields item host harness pane pid start wake_pid wake_start account out claim pane_pid identity
   fields="$(jq -er '[.item, (.host // "local"), .harness, (.launch.pane // ""),
@@ -15,7 +16,7 @@ lane_model_recovery() { # RECORD STATE_DIR SCRIPTS SESSION
       else (.lanes[] | select(.item == $item)).model_check.recovery_started = true
         | {state:.,report:true} end' --arg item "$item" --arg session "$session" --argjson record "$record")" || return 1
   [[ "$claim" == true ]] || return 0
-  lane_recovery_args "$record" "$account" "$state_dir" "$SCRIPT_DIR/open-terminal" model-switched || {
+  lane_recovery_request "$record" "$account" "$state_dir" || {
     printf 'lane-relaunch: model-recovery=prepare-failed item=%s cause=%s\n' "$item" "$LANE_RECOVERY_CAUSE" >&2
     return 1
   }
@@ -41,5 +42,5 @@ lane_model_recovery() { # RECORD STATE_DIR SCRIPTS SESSION
     --arg item "$item" --arg launch "$(jq -r '.launched_at' <<<"$record")" >/dev/null || return 1
   export ORCH_TMUX_SESSION="$LANE_RECOVERY_SESSION"
   cd -- "$LANE_RECOVERY_CWD" || return 1
-  "${LANE_RECOVERY_ARGS[@]}"
+  "$SCRIPT_DIR/orch-runtime" --state-dir "$state_dir" op --fleet --effect-exit --request "$LANE_RECOVERY_REQUEST"
 }

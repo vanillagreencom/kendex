@@ -868,37 +868,6 @@ launch_choice_shell_words() { # TEXT [literal]
   [[ "$inword" != true ]] || LAUNCH_CHOICE_ARGV+=("$word")
 }
 
-# Whether TEXT, a caller's command, hands its command WORDS as consecutive
-# arguments, exactly as the table spells them once the shell has removed the
-# command's own quoting. A word quoted so its shell strips what the word needs,
-# the claude compaction word's JSON quotes among them, is not the word.
-launch_choice_words_present() { # WORDS TEXT
-  local -a want=()
-  local i j
-  read -r -a want <<<"$1"
-  (( ${#want[@]} > 0 )) || return 1
-  launch_choice_shell_words "$2"
-  for ((i = 0; i + ${#want[@]} <= ${#LAUNCH_CHOICE_ARGV[@]}; i++)); do
-    for ((j = 0; j < ${#want[@]}; j++)); do
-      [[ "${LAUNCH_CHOICE_ARGV[i + j]}" == "${want[j]}" ]] || continue 2
-    done
-    return 0
-  done
-  return 1
-}
-
-# Whether TEXT, a caller's command, hands PHRASE whole inside one argument once
-# the shell has removed the command's own quoting: a phrase the shell splits
-# reaches the harness as several words.
-launch_choice_phrase_present() { # PHRASE TEXT
-  local word
-  launch_choice_shell_words "$2"
-  for word in ${LAUNCH_CHOICE_ARGV[@]+"${LAUNCH_CHOICE_ARGV[@]}"}; do
-    [[ "$word" != *"$1"* ]] || return 0
-  done
-  return 1
-}
-
 # The flags of a launch on HARNESS with that harness's own MODEL and EFFORT
 # words taken out, left in LAUNCH_CHOICE_KEPT, a provider word the model is
 # split across (launch_choice_provider_spelling) going with the model. What is
@@ -1470,11 +1439,8 @@ lane_launch_rm_prompt_env() { # CMD HARNESS
 # names of the owner's desktop session (LANE_LAUNCH_LIVE_SESSION), cleared
 # from every child a launcher starts so the child never writes that session's
 # records or answers as it, and finds no display through those names:
-# lane_launch_line opens each `env` line it renders with them,
-# open-terminal's run_detached clears them from a wake, and from a GUI terminal
-# all but the live-session names, which the terminal keeps to open its window
-# and the lane's shell inside it clears with `unset` (open_gui), and its hosted
-# command, POSIX shell text, clears them with `unset`. A tmux window takes the
+# lane_launch_line opens each `env` line it renders with them, and
+# open-terminal's run_detached clears them from a wake. A tmux window takes the
 # server's environment rather than the launcher's, so the scrub rides in the
 # command and not in the caller's process. Account and home variables are not
 # listed: a launch sets the child's own after this scrub, and
@@ -1491,7 +1457,7 @@ lane_launch_rm_prompt_env() { # CMD HARNESS
 #                PI_SUBAGENT_PARENT_SESSION_ID and PI_BRIDGE_PARENT_SESSION_ID,
 #                pi-agents-tmux's parent session for a subagent;
 #                SECOND_OPINION_CURRENT_MODEL, the model a Pi lane declares to
-#                second-opinion (open-terminal lane_model_env), which a child
+#                second-opinion, which a child
 #                on another model would otherwise take as its own. A Pi
 #                launch passes its own as lane_launch_line's CHILD_ENV.
 #   Jarvis       JARVIS_RECORD and JARVIS_GENERATION, the runtime record a
@@ -1530,8 +1496,8 @@ LANE_LAUNCH_SCRUB=(
 )
 
 # Drop the live-session names from LANE_LAUNCH_SCRUB for every launch this
-# process makes after the call: open-terminal --live-display or a wake of a
-# lane recorded with it, a Jarvis session, which acts on the owner's desktop,
+# process makes after the call: a wake of a lane recorded with live_display,
+# a Jarvis session, which acts on the owner's desktop,
 # and the overseer's own line (lib/overseer-launch.sh ol_command_line).
 lane_launch_keep_live_session() {
   local name kept=()
@@ -1541,26 +1507,14 @@ lane_launch_keep_live_session() {
   LANE_LAUNCH_SCRUB=("${kept[@]}")
 }
 
-# Start the pane's configured shell with no parent session identity. Scrubbing
-# before shell initialization preserves functions and the shell language of a
-# raw custom command. Match tmux's default-command or login-shell selection.
-lane_launch_shell_argv() { # SHELL DEFAULT_COMMAND
-  local name
-  LANE_LAUNCH_SHELL_ARGV=(env)
-  for name in "${LANE_LAUNCH_SCRUB[@]}"; do LANE_LAUNCH_SHELL_ARGV+=(-u "$name"); done
-  LANE_LAUNCH_SHELL_ARGV+=("$1")
-  if [[ -n "$2" ]]; then LANE_LAUNCH_SHELL_ARGV+=(-c "$2")
-  else LANE_LAUNCH_SHELL_ARGV+=(-l); fi
-}
-
 # The complete command under the form lane_launch_form picked for it. TEMPLATE
 # retains caller shell text independently of whether its account is checked. Empty
 # account words keep the caller's account, or the provider's on a host. Every
 # line that opens on `env` clears LANE_LAUNCH_SCRUB there, and CHILD_ENV
 # follows its `-u` words. A custom command that takes no env words is the
 # caller's shell text and stays as written, CHILD_ENV exported ahead of it: it
-# runs in the pane's own shell, started through lane_launch_shell_argv, so a
-# function that shell defines stays callable without the parent's identity.
+# runs in the pane's own shell, so a function that shell defines stays
+# callable without the parent's identity.
 #
 # The prefix value is quoted by lane_single_quote, not wrapped in bare quotes:
 # lane dirs are paths, an unquoted space would split the env assignment inside
@@ -1696,39 +1650,6 @@ lane_copilot_allows_all() { # CMD [HARNESS]
     (( LAUNCH_CHOICE_PERMISSION_SPAN == 0 )) || return 0
   done
   return 1
-}
-
-# The POSIX shell step a hosted Pi lane on the Copilot pool runs before its
-# harness, inside the provider's login shell, which alone holds what the lane
-# needs to call github-copilot: the provider puts the key and the egress proxy
-# settings in the login profile, and the host's tmux server, started from a
-# shell that never read it, holds neither. pi-agents-tmux starts each pane
-# agent with `tmux split-window`, and a new pane takes its environment from
-# the tmux server and session, never from the process that asked for it, so
-# without this step every pane agent stops on "No API key found for
-# github-copilot" or reaches GitHub with the key unreplaced. The step copies,
-# from its own environment into the session holding its pane and never into
-# the server's global one:
-#   - each variable the github-copilot provider in the lane's Pi models.json
-#     names in its apiKey or header values, `$NAME` or `${NAME}` (the
-#     interpolation Pi's models documentation states); an absent models.json names
-#     none, as Pi then reads none;
-#   - the egress proxy settings on that host: HTTPS_PROXY, HTTP_PROXY and
-#     NO_PROXY, which Node's fetch reads under NODE_USE_ENV_PROXY, with the
-#     proxy's CA in NODE_EXTRA_CA_CERTS, which Node reads, and SSL_CERT_FILE,
-#     which the OpenSSL-based tools a pane agent runs, such as git and gh, read.
-# A name its environment does not hold is skipped. A shell outside tmux has no
-# session for pane agents to start in, and copies nothing. A models.json jq
-# cannot read, or a copy tmux refuses, ends the shell with a
-# `lane-session-env:` line on its stderr, and the harness does not start.
-# open-terminal makes no harness check on a fresh hosted launch, so it still
-# counts that lane launched. The line in the lane's pane is the only record,
-# and a provider that runs the shell in a detached host session closes that
-# pane with the shell. No value is printed.
-lane_pi_session_env() {
-  cat <<'STEP'
-if [ -n "${TMUX_PANE:-}" ]; then lane_models="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}/models.json" lane_keys=; if [ -e "$lane_models" ]; then lane_keys=$(jq -r '.providers["github-copilot"] // {} | [.apiKey, (.headers // {} | .[])][] | strings | scan("\\$\\{([A-Za-z_][A-Za-z0-9_]*)\\}|\\$([A-Za-z_][A-Za-z0-9_]*)")[] | strings' "$lane_models" 2>/dev/null) || { printf '%s\n' "lane-session-env: models-unreadable path=$lane_models" >&2; jq empty "$lane_models" >&2; exit 1; }; fi; for lane_name in $lane_keys HTTPS_PROXY HTTP_PROXY NO_PROXY NODE_EXTRA_CA_CERTS SSL_CERT_FILE NODE_USE_ENV_PROXY; do if lane_value=$(printenv "$lane_name"); then tmux set-environment -t "$TMUX_PANE" "$lane_name" "$lane_value" || { printf '%s\n' "lane-session-env: set-failed name=$lane_name" >&2; exit 1; }; fi; done; fi
-STEP
 }
 
 # CODEX_HOME from the deepest codex process under pane pid $1, even when unset.

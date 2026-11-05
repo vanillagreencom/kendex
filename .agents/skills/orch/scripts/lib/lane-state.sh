@@ -494,8 +494,7 @@ lane_process_below() { # TABLE ROOT NAME_RE INCLUDE_ROOT [DEPTH] [ANSWER]
 # NAME: CMD itself, or the pane process or a process below it carrying one of
 # the names lane_harness_process_re gives NAME, a harness started under a shell
 # or through a wrapper script. Status 0 runs it, 1 does not, 2 a process table
-# that could not be read. pane-write's process check and open-terminal's wait
-# for a cloud session's CLI both ask it.
+# that could not be read. lib/pane-write.sh's process check asks it.
 lane_pane_runs() { # CMD PID NAME
   local table name_re found
   [[ "$1" != "$3" ]] || return 0
@@ -862,8 +861,8 @@ lane_stop_owned() { # WORKTREE HARNESS
 # The pane a recorded window names, in either form tmux itself accepts as a
 # target: a bare `KEN-1` is that window on whatever session of the caller's
 # server carries it, and `kendex:KEN-1` is that window under exactly that
-# session. ONE owner for the resolution, because `lanes state`, the wake and
-# `lane-close` all start from a recorded window and a second matcher is how
+# session. ONE owner for the resolution, because the wake and `lane-close`
+# both start from a recorded window and a second matcher is how
 # two of them come to point at different panes.
 #
 # The session is matched EXACTLY. tmux's own `-t` falls back to a prefix
@@ -927,8 +926,8 @@ lane_pane_by_id() { # PANE_ID
 # The lane's tmux pane, as the three raw observations `lane_state` judges
 # from: the pane's foreground command, its process id, and its screen, found
 # through the resolution above. For a caller whose own window is on the lane's
-# tmux server — `open-terminal --wake` and `lanes state` both are — this is the
-# SAME pane oversee-watch reads, which is why the three now answer alike.
+# tmux server, as `open-terminal --wake` is, this is the SAME pane the runtime's
+# observation duty reads, which is why the two answer alike.
 # oversee-watch publishes the same capture result to a file per pass. A failed
 # provider capture stays unreadable; a failed local watch capture ends the run.
 #
@@ -1077,8 +1076,8 @@ lane_state_is() { # STATE live|dialog
 #
 # A PI LANE IS JUDGED FROM WHAT PI EMITS, NEVER FROM ITS PANE, by every caller
 # that passes ROWS: the Stop and PreToolUse rows the lane-mail-check hook
-# writes under the pi-hooks carrier, which oversee-watch and `lanes state`
-# pass. lane-close's close guard passes none, so it still reads a Pi lane's
+# writes under the pi-hooks carrier, which the runtime's observation duty
+# reads. lane-close's close guard passes none, so it still reads a Pi lane's
 # pane. Past `gone` and `exited`, which are the window and the process and no screen,
 # ROWS answers `idle`, `working` or `walled` alone, under the same ACCOUNT and
 # SESSION rules the pane rungs keep, and a lane with no row, or rows that could

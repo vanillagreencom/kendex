@@ -280,10 +280,6 @@ case "$command" in
             exit 1
         fi
         ;;
-    ci-wait|ciwait|ci_wait)
-        echo "Error: Unknown command '$command' — CI waiting is the orch skill's script: .agents/skills/orch/scripts/ci-wait <PR_NUMBER> [interval] [max_wait] [--json]" >&2
-        exit 1
-        ;;
     *)
         echo "Error: Unknown command '$command'" >&2
         echo "Run './github.sh --help' for usage." >&2

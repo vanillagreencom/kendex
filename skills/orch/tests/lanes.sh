@@ -1505,7 +1505,7 @@ stage_panes() {
 # `.claude`, `srv` for a second `.eclaude` this home lists beside its own, `srvf` for a
 # listed `.fclaude`, `pia` for a Pi root, `aliased` for a second home's `.other`
 # whose launch named it by that spelling and whose canonical target is
-# `creds-b`, `written` for that claim written through lane_claim_write, `bs`
+# `creds-b`, `bs`
 # for the backslash-named lane; `junk` writes a malformed record. Any other
 # token is a typo and aborts the suite rather than staging the opposite world.
 stage_claims() {
@@ -1538,15 +1538,6 @@ stage_claims() {
       aliased)
         dir="$AWAY_HOME/creds-b"; named="$AWAY_HOME/.other"
         mkdir -p "$dir"; ln -sfn "$dir" "$named"
-        ;;
-      written)
-        # The same claim as `aliased`, written by the claims library beside the
-        # `lanes` under test, whatever record that library writes.
-        mkdir -p "$AWAY_HOME/creds-b"; ln -sfn "$AWAY_HOME/creds-b" "$AWAY_HOME/.other"
-        ( source "$(dirname "$LANES")/lib/lane-claims.sh" \
-          && lane_claim_write "$STORE/claims" "$pid" "$pane" "$AWAY_HOME/.other" "$name" "" ) \
-          || { echo "stage_claims: lane_claim_write failed for $item" >&2; exit 1; }
-        continue
         ;;
       bs)
         dir="$BSDIR"
@@ -1597,8 +1588,9 @@ claims_table() {
 }
 
 # The provider bills an Anthropic Pi lane on its Claude home. Drive the real
-# pick and claim writer on that same home, without fleet metadata to infer a
-# pool from. The legacy row is the older eight-field claim writer's output.
+# pick on that same home and plant the claim as a launch once recorded it,
+# without fleet metadata to infer a pool from. The legacy row is the older
+# eight-field record.
 same_home_claim_result() { # NAME SCRIPTS CLAIM_POOL QUERY
   (
     local scope="$TMP_ROOT/pool-$1" scripts="$2" claim="$3" query="$4" account record pool rc=0
@@ -1622,12 +1614,10 @@ same_home_claim_result() { # NAME SCRIPTS CLAIM_POOL QUERY
         pick --harness claude --json)" || return 1
     fi
     pool="$(jq -er '.pool' <<<"$record")" || return 1
-    # shellcheck source=/dev/null
-    source "$scripts/lib/lane-claims.sh"
     if [[ "$claim" == legacy ]]; then
       printf '%s\t%%1\t%s\tlegacy\t2026-10-11T00:00:00Z\t\t\tssh\n' "$LIVE_PID" "$account" > "$scope/store/claims/legacy.claim"
     else
-      lane_claim_write "$scope/store/claims" "$LIVE_PID" %1 "$account" lane "" ssh "$pool" || return 1
+      printf '%s\t%%1\t%s\tlane\t2026-10-11T00:00:00Z\t\t%s\tssh\t%s\n' "$LIVE_PID" "$account" "$account" "$pool" > "$scope/store/claims/lane.claim"
     fi
     args=(pick --harness claude --json)
     case "$query" in
@@ -1704,13 +1694,12 @@ ORCH_LANE_DIRS="$H/.eclaude" ORCH_LANE_COPILOT_POOL="$TMP_ROOT/pi/.pia=1/10" ORC
 # the other's `.other`, a symlink to a target named for neither.
 WORK_ALIASES="eclaude=work,other=work"
 ORCH_LANE_ALIASES="$WORK_ALIASES" claims_table \
-  "a claim keys by the alias its launch named, not its canonical target's name|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:aliased||$LIST|work.claims=2 claude.claims=0" \
-  "a claim lane_claim_write records through a symlinked spelling keys by that spelling's alias|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:written||$LIST|work.claims=2 claude.claims=0"
+  "a claim keys by the alias its launch named, not its canonical target's name|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:aliased||$LIST|work.claims=2 claude.claims=0"
 
 # Controls: keyed by the canonical path alone, the second home's claim lands
 # on a key no listed lane carries and the account reads half its load; keyed
-# by the canonical target's name, or written with no named spelling, the
-# aliased claim misses `work` the same way.
+# by the canonical target's name, the aliased claim misses `work` the same
+# way.
 claims_scripts="$(mutant_scripts mutant-claims-path-key lanes)" || exit 1
 mutate_file "$claims_scripts/lanes" ' || ( -n "$named" && "$named" == "$LANE_ACCOUNT_NAME" )' ''
 LANES="$claims_scripts/lanes" claims_table \
@@ -1719,10 +1708,6 @@ claims_scripts="$(mutant_scripts mutant-claims-canon-alias lanes)" || exit 1
 mutate_file "$claims_scripts/lanes" 'lane_account_name "${named:-$cfg}" silent' 'lane_account_name "$cfg" silent'
 ORCH_LANE_ALIASES="$WORK_ALIASES" LANES="$claims_scripts/lanes" claims_table \
   "control: the canonical target's name splits one aliased account in two|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:aliased||$LIST|work.claims=1 claude.claims=0"
-claims_scripts="$(mutant_scripts mutant-claims-unnamed lib/lane-claims.sh)" || exit 1
-mutate_file "$claims_scripts/lib/lane-claims.sh" '"$7" "$5" "${8:-}" "${9:-plan}" > "$tmp"' '"$7" "" "${8:-}" "${9:-plan}" > "$tmp"'
-ORCH_LANE_ALIASES="$WORK_ALIASES" LANES="$claims_scripts/lanes" claims_table \
-  "control: a writer that drops the named spelling keys the claim by its target's name|live:%1,live:%2|mine:live:%1:eclaude;theirs:live:%2:written||$LIST|work.claims=1 claude.claims=0"
 claims_scripts="$(mutant_scripts mutant-claims-default-merged lanes)" || exit 1
 mutate_file "$claims_scripts/lanes" '[[ "$alias" == "$base" && "$base" =~ ^(claude|codex|copilot)$ ]] || LANE_ACCOUNT_NAME="$alias"' 'LANE_ACCOUNT_NAME="$alias"'
 LANES="$claims_scripts/lanes" claims_table \
@@ -2525,18 +2510,6 @@ assert_eq "$([[ "$WATCH_INTERVAL_DEFAULT" =~ ^[0-9]+$ ]] && echo found || echo "
   "the extractor reads exactly one interval default out of the runtime's watch verb"
 assert_eq "$([[ "$TTL_DEFAULT" -gt "$WATCH_INTERVAL_DEFAULT" ]] && echo outlasts || echo "under-interval:$TTL_DEFAULT<=$WATCH_INTERVAL_DEFAULT")" \
   "outlasts" "the default TTL outlasts the default watch interval"
-# The two documents that STATE the default name the setting on one line each,
-# so every line naming it has to carry the script's own number: the two counts
-# are equal or a document has drifted. The left count floors the comparison, so
-# a document that stopped naming the setting reddens rather than passing as
-# agreeing. README.md names the setting without stating its value and is left
-# out for that reason.
-SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
-for doc in DEVELOPMENT.md kendex.settings.toml.example; do
-  assert_eq "names=$(grep -c -F -e "ORCH_LANES_USAGE_TTL" "$SKILL_DIR/$doc" || true) agrees=$(grep -F -e "ORCH_LANES_USAGE_TTL" "$SKILL_DIR/$doc" | grep -c -F -e "$TTL_DEFAULT" || true)" \
-    "names=1 agrees=1" \
-    "$doc states the script's own TTL default on the line that names the setting"
-done
 # The script's own help text is the third place the number is written out, and
 # it is a different line from the assignment the extractor above read.
 assert_eq "$(grep -c -F -e "reused (default $TTL_DEFAULT;" "$LANES" || true)" "1" \

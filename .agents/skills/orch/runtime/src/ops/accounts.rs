@@ -1749,11 +1749,9 @@ pub fn fleet_facts(
     {
         facts.seats.push(wall::canon(account));
     }
-    let occupancy = occupancy::occupancy(&fleet.lanes, &fleet.intents, None, &[], now, host);
+    let occupancy = occupancy::occupancy(&fleet.lanes, &fleet.intents, None, now, host);
     for charge in occupancy.charges {
-        let ChargeSource::Lane { item } = charge.source else {
-            continue;
-        };
+        let ChargeSource::Lane { item } = charge.source;
         if replaces == Some(item.as_str()) {
             continue;
         }

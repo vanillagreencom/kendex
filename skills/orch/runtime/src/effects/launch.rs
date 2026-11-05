@@ -291,8 +291,12 @@ fn prepare_launch(
         Route::Resume { home, .. } => home.clone(),
         Route::Fresh { .. } | Route::Refuse { .. } => None,
     };
+    // A seat of another harness bills the launch and is not its home: a Pi
+    // lane on a Claude seat runs on Pi's own root, kept as an accountless
+    // launch keeps it, so the root stands before the gate reads it.
     let kept = match &r.account {
-        Some(_) => None,
+        Some(_) if harness.account_var(r.model.as_deref()) == harness.home_var() => None,
+        Some(_) => accountless_kept(settings, harness, None, None),
         None => accountless_kept(settings, harness, recorded, fleet.served.as_deref()),
     };
     let homes = launch_home(
@@ -358,6 +362,19 @@ fn prepare_launch(
 /// The key a harness gate's refusal stands under where its outcome names one
 /// word.
 pub(super) const GATE_REFUSED: &str = "launch-gate-refused";
+
+/// A preparation refusal as the launch's observation: its key as `cause`
+/// and every value it acted on beside it (the path, the harness, the
+/// program), so the record a person reads names what to repair; a
+/// dependency's own cause rides as `detail`.
+fn refusal_observation(e: &crate::error::Error) -> Value {
+    let mut observation = json!({"cause": e.key()});
+    for (field, value) in e.fields() {
+        let field = if field == "cause" { "detail" } else { &field };
+        observation[field] = json!(value);
+    }
+    observation
+}
 
 /// Why a launch cannot run where its preparation put it.
 pub(super) enum Unready {
@@ -842,7 +859,7 @@ fn local_launch(
         // A harness, session, directory, program or brief the effect cannot
         // resolve: `failed` before anything opens, never a bare refusal.
         Err(Unready::Refused(e)) => {
-            return Ok(operation.settle(Word::Failed, json!({"cause": e.key()})));
+            return Ok(operation.settle(Word::Failed, refusal_observation(&e)));
         }
         Err(Unready::Gate(cause)) => {
             return Ok(operation.settle(Word::Failed, json!({"cause": cause})));
@@ -929,15 +946,15 @@ fn hosted_launch(
     let doc_session = fleet_tmux_session(run.path)?;
     let (server, session) = match operation.fleet_server(doc_session.as_deref()) {
         Ok(found) => found,
-        Err(e) => return failed(operation, e.key()),
+        Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&e))),
     };
     let cwd = PathBuf::from(&r.mail_root);
     if let Err(e) = check_directory("cwd-missing", &cwd) {
-        return failed(operation, e.key());
+        return Ok(operation.settle(Word::Failed, refusal_observation(&e)));
     }
     let brief = match r.brief_file.as_deref().map(read_brief).transpose() {
         Ok(text) => text,
-        Err(e) => return failed(operation, e.key()),
+        Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&e))),
     };
     operation.record_phase(Phase::Preparing {
         step: HOST_CREATE.to_owned(),
@@ -981,10 +998,10 @@ fn hosted_launch(
     }
     let command = match hosted_command(run.settings, r, harness, &created, brief.as_deref()) {
         Ok(command) => command,
-        Err(e) => return failed(operation, e.key()),
+        Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&e))),
     };
     if let Err(e) = check_program(&command) {
-        return failed(operation, e.key());
+        return Ok(operation.settle(Word::Failed, refusal_observation(&e)));
     }
     let target = Target::new(run.settings, harness);
     // A hosted lane's sessions live on its host and bind nothing here, so
@@ -1180,7 +1197,7 @@ fn cloud_launch(
     };
     let brief = match read_brief(brief_file) {
         Ok(text) => text,
-        Err(e) => return failed(operation, e.key()),
+        Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&e))),
     };
     let Some(account) = r.account.as_deref() else {
         return failed(operation, "host-request-incomplete");

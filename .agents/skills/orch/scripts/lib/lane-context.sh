@@ -170,14 +170,15 @@ lane_context_pane_shape() { # CMD PANE_PID
 }
 
 # The config directory a session of shape $1 runs its credential out of: a
-# lane's, and an overseer's where its launch record names none. `lanes context`
-# asks it about the pane it is reading, and the lane's own turn-end hook asks
-# it about itself, so one lane is never joined to one account by the report and
-# to another by the hook that hands it off. A recorded overseer's account is
-# its launch record's (lib/overseer-launch.sh § ol_record_current), which
-# `oversee-succeed` judges it on; `lanes context` still reads this function
-# alone, so its row for that overseer can name another account where the
-# session's environment disagrees with its record.
+# lane's, and an overseer's where its launch record names none. The lane's own
+# turn-end hook asks it about itself and records the answer, and the runtime's
+# report reader (`watch::context::lane`) reads that record, so one lane is never
+# joined to one account by the report and to another by the hook that hands it
+# off. A recorded overseer's account is its launch record's
+# (lib/overseer-launch.sh § ol_record_current), which `oversee-succeed` judges
+# it on; the hook reads this function alone, so its record for that overseer
+# can name another account where the session's environment disagrees with its
+# record.
 #
 # Which variable names the account is decided by the SHAPE, never by which
 # variable happens to be set: every launcher here prefixes one without clearing
@@ -221,8 +222,8 @@ lane_context_caller_cfg() { # SHAPE
 }
 
 # lane_context_copilot_note REC NOW — lib/copilot-session.sh
-# copilot_session_lane_note for REC, a Copilot lane's fleet record
-# (lib/lane-claims.sh lane_running_record), into COPILOT_SESSION_NOTE: under
+# copilot_session_lane_note for REC, a Copilot lane's fleet record, into
+# COPILOT_SESSION_NOTE: under
 # the record's `account`, else the account a launch with no --lane runs on, for
 # its `session_id`, which a relaunch or a wake writes, its `mail_root`, its
 # `allow_all`, which open-terminal writes, and its `session_since`, the stamp

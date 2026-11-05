@@ -94,9 +94,8 @@ EOF
 # spelling is what the caller's reading is proven on), else the shell
 # judge beside the stub (DIR/lanes, else the shipped `lanes`) asked the
 # same question through its `pick`, its answer wrapped as the verb's reply,
-# the exit by number and the record, as the launch suites' stub wraps it
-# (lib/open-terminal-stubs.sh); `--fleet` and `--replaces` are the verb's
-# words alone and are dropped. `state get --item KEY [POINTER]` and
+# the exit by number and the record; `--fleet` and `--replaces` are the
+# verb's words alone and are dropped. `state get --item KEY [POINTER]` and
 # `state set --item KEY POINTER VALUE` answer through the store beside the
 # stub (DIR/workflow-state, else the shipped one), the pointer's tokens
 # joined as the store's dotted field, so the store's `set` judges VALUE as

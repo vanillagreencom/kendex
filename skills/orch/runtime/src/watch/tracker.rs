@@ -1387,10 +1387,7 @@ fn close_one(
         }),
         no_landing: None,
     });
-    let host = ops::Host::kernel(
-        ctx.settings.lane_cap,
-        Some(ctx.settings.claim_store.clone()),
-    );
+    let host = ops::Host::kernel(ctx.settings.lane_cap);
     let applied = ops::apply_on(&ctx.fleet, &request, env, ctx.locking, &host)?;
     let effected = crate::effects::run(
         &ctx.fleet,

@@ -3829,7 +3829,7 @@ fn github_skill_under(root: &Path) {
 
 /// The watch words a `start-controller` request carries for the fleet
 /// state `state`: the runtime wrapper beside it, `watch run --file` the
-/// state and the flags `oversee launch` composes. `--repo` is left out: the
+/// state and the flags the workflow's launch composes. `--repo` is left out: the
 /// row claims the watch, and a repository would set the GitHub duty
 /// reading.
 fn watch_words(state: &Path) -> Value {
@@ -4141,7 +4141,7 @@ fn shipped_scripts() -> std::path::PathBuf {
         .join("scripts")
 }
 
-/// The checkout the real `oversee launch` runs from, under the runner's
+/// The checkout a launch of the workflow runs from, under the runner's
 /// state directory: `skills/orch/scripts` links every shipped script but
 /// the three this world answers for (`orch-runtime` is the wrapper
 /// `watch_world` wrote around the test binary, `lanes` nothing, `lane-host`
@@ -4150,10 +4150,10 @@ fn shipped_scripts() -> std::path::PathBuf {
 /// launcher's pick reads through the runtime's judge lists `account` on
 /// `harness` as the one measured account, with room: its credential under
 /// the account and its usage from the usage fixture as `curl` in `bin`,
-/// named to the launcher through `env`. The walk's `kendex tier-model`
+/// named to the launch through `env`. The walk's `kendex tier-model`
 /// finds the `kendex-launch` fixture in `bin`, the watch world's directory
 /// first on the rows' `PATH`, never the operator's install. Returns the
-/// scripts directory the launcher is started from.
+/// scripts directory the launch runs from.
 fn launcher_checkout(
     runner: &Runner,
     bin: &Path,
@@ -4233,17 +4233,18 @@ fn launcher_checkout(
     scripts
 }
 
-/// `oversee launch` as the operator runs it from `work` on the row's server,
-/// with one preference entry, `harness:model:high`, and `program` as that
-/// harness's executable: the runtime beside the launcher is the row's own,
-/// the watch's world `bin` and `env` are `watch_world`'s, the mailbox and
-/// validation runner the quiet fixtures. The command, ready to run.
+/// The fleet's controller launched as `workflows/oversee.md` § 1 spells it,
+/// from `work` on the row's server through the runtime wrapper the scripts
+/// checkout links, with one preference entry, `harness:model:high`, and
+/// `program_path` as that harness's executable: the watch's world `bin` and
+/// `env`, the mailbox and validation runner the quiet fixtures. `run` asks
+/// the steps in the workflow's order.
 #[allow(
     clippy::too_many_arguments,
-    reason = "the launcher's whole world, named once per row"
+    reason = "the launch's whole world, named once per row"
 )]
-fn oversee_launch(
-    server: &Server,
+fn workflow_launch(
+    runner: &Runner,
     scripts: &Path,
     bin: &Path,
     env: &[(String, String)],
@@ -4251,45 +4252,197 @@ fn oversee_launch(
     harness: &str,
     model: &str,
     program_path: &Path,
-) -> std::process::Command {
-    let mut command = program(scripts.join("oversee"));
-    command
-        .args(["launch", "--wait-secs", "10"])
-        .current_dir(work)
-        .env("PATH", tool_path(&[bin]))
-        .env("TMUX", format!("{},0,0", server.socket.display()))
-        .env("ORCH_TMUX_SESSION", &server.session)
-        .env(
-            "ORCH_OVERSEER_PREFERENCE",
+) -> Launch {
+    let mut world = vec![
+        ("PATH".to_owned(), tool_path(&[bin])),
+        (
+            "TMUX".to_owned(),
+            format!("{},0,0", runner.server_socket.display()),
+        ),
+        ("ORCH_TMUX_SESSION".to_owned(), runner.session.clone()),
+        (
+            "ORCH_OVERSEER_PREFERENCE".to_owned(),
             format!("{harness}:{model}:high"),
-        )
-        .env(
-            "ORCH_HARNESS_BINARIES",
+        ),
+        (
+            "ORCH_HARNESS_BINARIES".to_owned(),
             format!("{harness}={}", program_path.display()),
-        )
-        .env("ORCH_JOB_CLAIM_SECS", SETTLE.as_secs().to_string())
-        .env(
-            "LANE_MAIL_CLI",
-            fixtures().join("lane-mail-quiet/lane-mail"),
-        )
-        .env(
-            "DEV_VALIDATE_CLI",
-            fixtures().join("dev-validate-quiet/dev-validate-run"),
-        );
-    for (name, value) in env {
-        command.env(name, value);
+        ),
+        (
+            "ORCH_JOB_CLAIM_SECS".to_owned(),
+            SETTLE.as_secs().to_string(),
+        ),
+        (
+            "LANE_MAIL_CLI".to_owned(),
+            fixtures()
+                .join("lane-mail-quiet/lane-mail")
+                .display()
+                .to_string(),
+        ),
+        (
+            "DEV_VALIDATE_CLI".to_owned(),
+            fixtures()
+                .join("dev-validate-quiet/dev-validate-run")
+                .display()
+                .to_string(),
+        ),
+    ];
+    world.extend(env.iter().cloned());
+    Launch {
+        runtime: scripts.join("orch-runtime"),
+        state: runner
+            .state_dir()
+            .join(orch_runtime::state::FLEET_FILE_NAME),
+        work: work.to_owned(),
+        env: world,
+        predecessor: None,
+        wait_secs: 10,
     }
-    command
 }
 
-/// The fields of the keyed line `oversee: <key> field=value...` in `text`,
-/// the launcher's one line another program reads; `None` where it printed
-/// no line under `key`.
-fn oversee_fields(text: &str, key: &str) -> Option<Vec<String>> {
-    let prefix = format!("oversee: {key}");
-    text.lines()
-        .find(|l| *l == prefix || l.starts_with(&format!("{prefix} ")))
-        .map(|l| l.split_whitespace().skip(2).map(str::to_owned).collect())
+/// One launch of the workflow: the runtime wrapper, the fleet state, the
+/// directory the launch starts in, its environment, the recorded
+/// predecessor a succession names, and the bound the runtime gives the
+/// session to reach its composer.
+struct Launch {
+    runtime: std::path::PathBuf,
+    state: std::path::PathBuf,
+    work: std::path::PathBuf,
+    env: Vec<(String, String)>,
+    predecessor: Option<String>,
+    wait_secs: u64,
+}
+
+impl Launch {
+    fn env(mut self, name: &str, value: &str) -> Launch {
+        self.env.push((name.to_owned(), value.to_owned()));
+        self
+    }
+
+    fn predecessor(mut self, pane: &str) -> Launch {
+        self.predecessor = Some(pane.to_owned());
+        self
+    }
+
+    fn wait_secs(mut self, secs: u64) -> Launch {
+        self.wait_secs = secs;
+        self
+    }
+
+    fn runtime(&self, args: &[&str]) -> std::process::Command {
+        let mut command = program(&self.runtime);
+        command.args(args).current_dir(&self.work);
+        for (name, value) in &self.env {
+            command.env(name, value);
+        }
+        command
+    }
+
+    /// The workflow's steps: the fleet state where none stands, the
+    /// successor the walk chose, its brief under the state's `intents/`,
+    /// and the one request handed to `op --fleet`: `start-controller` with
+    /// the successor as the controller and the fleet watch's words, or,
+    /// named a predecessor, `request-transfer` with cause `live`, waited
+    /// for under `--effect-exit`. `sync-base`, the checkout step between,
+    /// is the worktree skill's own command and is not run here.
+    fn run(&self) -> Launched {
+        let exists = reply(
+            &self
+                .runtime(&["state", "exists", "--fleet"])
+                .output()
+                .unwrap(),
+        );
+        if exists["result"]["exists"] != true {
+            let out = self
+                .runtime(&["state", "init", "--fleet"])
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "state init: {}", stderr(&out));
+        }
+        let cwd = self.work.display().to_string();
+        let mut args = vec!["successor", "--fleet", "--cwd", &cwd];
+        if let Some(pane) = &self.predecessor {
+            args.extend(["--predecessor", pane]);
+        }
+        let verb = self.runtime(&args).output().unwrap();
+        let chosen = reply(&verb);
+        if chosen["result"]["walk"]["answer"] != "lane" {
+            return Launched { verb, op: None };
+        }
+        let dir = self.state.parent().unwrap();
+        let intents = dir.join("intents");
+        std::fs::create_dir_all(&intents).unwrap();
+        let op = if self.predecessor.is_some() {
+            "request-transfer"
+        } else {
+            "start-controller"
+        };
+        let brief = intents.join(format!("{op}.{}.{}.brief", now_ms(), std::process::id()));
+        std::fs::write(
+            &brief,
+            format!("{}\n", chosen["result"]["brief"].as_str().unwrap()),
+        )
+        .unwrap();
+        let request = if self.predecessor.is_some() {
+            json!({
+                "op": op,
+                "cause": "live",
+                "expected": chosen["result"]["expected"],
+                "successor": chosen["result"]["successor"],
+                "brief_file": brief,
+            })
+        } else {
+            json!({
+                "op": op,
+                "controller": chosen["result"]["successor"],
+                "brief_file": brief,
+                "watch": watch_words(&self.state),
+            })
+        };
+        let file = dir.join(format!("request.{}.json", now_ms()));
+        std::fs::write(&file, request.to_string()).unwrap();
+        let file = file.display().to_string();
+        let mut args = vec!["op", "--fleet"];
+        if self.predecessor.is_some() {
+            args.push("--effect-exit");
+        }
+        args.extend(["--request", &file]);
+        let op = self
+            .runtime(&args)
+            .env("ORCH_TMUX_VERIFY_SECS", self.wait_secs.to_string())
+            .output()
+            .unwrap();
+        Launched { verb, op: Some(op) }
+    }
+}
+
+/// A launch's answers: the `successor` verb's, and `op`'s where the walk
+/// chose a lane.
+struct Launched {
+    verb: std::process::Output,
+    op: Option<std::process::Output>,
+}
+
+impl Launched {
+    fn chosen(&self) -> Value {
+        reply(&self.verb)
+    }
+
+    fn op(&self) -> &std::process::Output {
+        self.op
+            .as_ref()
+            .expect("the walk chose a lane, so the request was handed over")
+    }
+
+    /// The intent a start's reply reports.
+    fn started(&self) -> Value {
+        reply(self.op())["result"]["effect"]["report"]["intent"].clone()
+    }
+
+    /// The intent a succession settled under `--effect-exit`.
+    fn settled(&self) -> Value {
+        reply(self.op())["result"]["settled"].clone()
+    }
 }
 
 /// The runner's one window on the server, as the record and the receipt
@@ -4636,23 +4789,22 @@ fn stop_live_watch(runner: &Runner, state: &Path) {
     wait_until("the stopped watch ended", secs(20), || !live(claim.pid));
 }
 
-/// Defect: the launcher's brief removed with the launcher, so a start held
-/// `session-unbound` (a Codex account whose rollout appears after its
-/// composer is drawn) is held `brief-unreadable` by every reconcile, and a
-/// repeated launch meets the same intent and holds the same way; only a
-/// hand-closed window lets it fail. The first launch's brief outlives the
-/// launcher, because the runtime delivers it, and a start held before
-/// delivery is delivered by a reconcile that runs after `oversee launch`
-/// ended. The row drives the real `scripts/oversee launch` into the real
-/// runtime's `start-controller`, the join of the launcher's request and the
+/// Defect: the launch's brief removed with the launching process, so a
+/// start held `session-unbound` (a Codex account whose rollout appears
+/// after its composer is drawn) is held `brief-unreadable` by every
+/// reconcile, and a repeated launch meets the same intent and holds the
+/// same way; only a hand-closed window lets it fail. The first launch's
+/// brief outlives the process that wrote it, because the runtime delivers
+/// it, and a start held before delivery is delivered by a reconcile that
+/// runs after the launch ended. The row drives the workflow's launch into
+/// the real runtime's `start-controller`, the join of the request and the
 /// runtime's effect that a row pinned against a fixture of either half
-/// misses: the gated
-/// Codex stub holds the start before delivery and the launcher exits
-/// `controller-unconfirmed`; the brief file the intent names stands under
-/// the state directory; a repeated launch before the release meets the
-/// same intent and holds, opening no second runner and no watch; the gate
-/// released, the next reconcile binds the session, types that file's text
-/// and publishes the controller, one intent.
+/// misses: the gated Codex stub holds the start before delivery and the
+/// start answers `unconfirmed`; the brief file the intent names stands
+/// under the state directory; a repeated launch before the release meets
+/// the same intent and holds, opening no second runner and no watch; the
+/// gate released, the next reconcile binds the session, types that file's
+/// text and publishes the controller, one intent.
 #[test]
 fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() {
     let dir = tempfile::tempdir().unwrap();
@@ -4679,8 +4831,8 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
     mkfifo(&gate);
     let scripts = launcher_checkout(&runner, &bin, &mut env, &account, "codex");
     let codex = fixtures().join("stub-codex-gated/codex");
-    let mut launch = oversee_launch(
-        &server,
+    let launch = workflow_launch(
+        &runner,
         &scripts,
         &bin,
         &env,
@@ -4689,14 +4841,12 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
         "gpt-6-astra",
         &codex,
     );
-    let held = launch.output().unwrap();
-    assert!(!held.status.success(), "{}", stderr(&held));
-    let fields = oversee_fields(&stderr(&held), "controller-unconfirmed")
-        .unwrap_or_else(|| panic!("no controller-unconfirmed line: {}", stderr(&held)));
-    assert!(
-        fields.iter().any(|f| f == "note=session-unbound"),
-        "held before delivery: {fields:?}"
+    let held = launch.run().started();
+    assert_eq!(
+        held["outcome"], "unconfirmed",
+        "held before delivery: {held}"
     );
+    assert_eq!(held["observation"]["note"], "session-unbound", "{held}");
     let fleet = runner.fleet();
     let intents = fleet["intents"].as_array().unwrap();
     assert_eq!(intents.len(), 1, "{fleet}");
@@ -4711,7 +4861,7 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
         brief.display()
     );
     let text = std::fs::read_to_string(brief)
-        .unwrap_or_else(|e| panic!("the brief left with the launcher: {} {e}", brief.display()));
+        .unwrap_or_else(|e| panic!("the brief left with the launch: {} {e}", brief.display()));
     assert_eq!(
         server.panes().len(),
         2,
@@ -4722,13 +4872,14 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
 
     // A repeated launch before the release meets the open intent and holds
     // where it held: no second runner, no watch.
-    let repeated = launch.output().unwrap();
-    assert!(!repeated.status.success(), "{}", stderr(&repeated));
-    let fields = oversee_fields(&stderr(&repeated), "controller-unconfirmed")
-        .unwrap_or_else(|| panic!("no controller-unconfirmed line: {}", stderr(&repeated)));
-    assert!(
-        fields.iter().any(|f| f == "note=session-unbound"),
-        "the same hold: {fields:?}"
+    let repeated = launch.run().started();
+    assert_eq!(
+        repeated["outcome"], "unconfirmed",
+        "the same hold: {repeated}"
+    );
+    assert_eq!(
+        repeated["observation"]["note"], "session-unbound",
+        "{repeated}"
     );
     let fleet = runner.fleet();
     assert_eq!(fleet["intents"].as_array().unwrap().len(), 1, "{fleet}");
@@ -4736,7 +4887,7 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
     assert_eq!(runner_pane(&server), pane, "the same runner");
     assert_eq!(units_started(&bin), 0, "no watch before the controller");
 
-    // The rollout appears; the reconcile delivers the launcher's brief and
+    // The rollout appears; the reconcile delivers the launch's brief and
     // publishes the controller.
     release_hold(&gate, secs(10), || format!("{:?}", server.window_names()));
     // The reconcile binds the runner by the rollout's `session_meta` line,
@@ -4767,7 +4918,7 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
     assert_eq!(
         codex_turns(&account),
         vec![text.trim_end().to_owned()],
-        "the reconcile typed the file the launcher wrote"
+        "the reconcile typed the file the launch wrote"
     );
     assert_eq!(units_started(&bin), 1, "the controller's one watch");
     let state = runner
@@ -4776,14 +4927,13 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
     stop_live_watch(&runner, &state);
 }
 
-/// Defect: a launcher and a runtime each pinned against a fixture of the
-/// other and joined wrong. The launcher's request against the real effect
-/// in one call, the healthy path: the real `scripts/oversee launch` with
-/// the Claude stub
-/// confirms in its own call, prints `overseer-launched` from the record,
-/// and the record carries the launcher's directory, line, model, account
-/// and pane as the bridge rows read them; the brief typed into the stub is
-/// the file the request named, which the launcher left standing.
+/// Defect: a request and a runtime each pinned against a fixture of the
+/// other and joined wrong. The workflow's request against the real effect
+/// in one call, the healthy path: the launch's steps with the Claude stub
+/// confirm in their own call, and the record carries the launch's
+/// directory, model, account and pane; the brief typed into the stub is
+/// the file the request named, which the launch left standing; no display
+/// line is recorded, since the runtime launches from the typed fields.
 #[test]
 fn a_first_launch_confirmed_in_its_call_records_the_launchers_identity() {
     let dir = tempfile::tempdir().unwrap();
@@ -4797,8 +4947,8 @@ fn a_first_launch_confirmed_in_its_call_records_the_launchers_identity() {
     github_skill_under(&work);
     std::fs::create_dir(&account).unwrap();
     let scripts = launcher_checkout(&runner, &bin, &mut env, &account, "claude");
-    let launched = oversee_launch(
-        &server,
+    let launched = workflow_launch(
+        &runner,
         &scripts,
         &bin,
         &env,
@@ -4807,22 +4957,13 @@ fn a_first_launch_confirmed_in_its_call_records_the_launchers_identity() {
         "fable",
         &stub("stub-confirm"),
     )
-    .output()
-    .unwrap();
-    let stdout = String::from_utf8_lossy(&launched.stdout).into_owned();
-    assert!(
-        launched.status.success(),
-        "stdout={stdout}\nstderr={}",
-        stderr(&launched)
-    );
-    let fields = oversee_fields(&stdout, "overseer-launched")
-        .unwrap_or_else(|| panic!("no overseer-launched line: {stdout}"));
-    assert!(
-        fields.iter().any(|f| f == "generation=1")
-            && fields
-                .iter()
-                .any(|f| *f == format!("lane={}", account.display())),
-        "{fields:?}"
+    .run();
+    let started = launched.started();
+    assert_eq!(
+        started["outcome"],
+        "confirmed",
+        "{started}\n{}",
+        stderr(launched.op())
     );
     let fleet = runner.fleet();
     let overseer = &fleet["overseer"];
@@ -4835,20 +4976,19 @@ fn a_first_launch_confirmed_in_its_call_records_the_launchers_identity() {
     );
     assert_eq!(overseer["model"], "fable", "{overseer}");
     assert_eq!(overseer["pane"], runner_pane(&server), "{overseer}");
-    let line = overseer["launch_line"].as_str().unwrap();
     assert!(
-        line.contains("claude -n overseer") && line.contains("--model fable"),
-        "the launcher's own line, kept for the replay: {line}"
+        overseer["launch_line"].is_null(),
+        "no display line on a record the runtime launched from typed fields: {overseer}"
     );
     let intent = &fleet["intents"][0];
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
     let brief = Path::new(intent["phase"]["brief"].as_str().unwrap());
     let text = std::fs::read_to_string(brief)
-        .unwrap_or_else(|e| panic!("the brief left with the launcher: {} {e}", brief.display()));
+        .unwrap_or_else(|e| panic!("the brief left with the launch: {} {e}", brief.display()));
     assert_eq!(
         runner.stub_turns(&account, &work),
         vec![text.trim_end().to_owned()],
-        "the start typed the file the launcher wrote"
+        "the start typed the file the launch wrote"
     );
     let state = runner
         .state_dir()
@@ -5833,8 +5973,7 @@ fn the_memory_mark_reads_the_cgroup_three_valued_and_fires_at_the_setting() {
     };
     let judge = |extra: &[(&str, &str)], reading: Reading<Option<Memory>>| {
         let settings = settings(extra);
-        let host =
-            orch_runtime::ops::Host::kernel(settings.lane_cap, Some(settings.claim_store.clone()));
+        let host = orch_runtime::ops::Host::kernel(settings.lane_cap);
         let memory = |_: &Identity| reading.clone();
         judge_marks(&MarksAsk {
             settings: &settings,
@@ -5949,9 +6088,8 @@ fn a_stale_start_less_claim_is_taken_over_by_the_starts_watch_with_one_line() {
 }
 
 // ---------------------------------------------------------------------------
-// The launcher's walk and succession: `oversee launch` asking the runtime's
-// `successor` verb, its answer through the real `start-controller` and
-// `request-transfer`.
+// The workflow's launch: the runtime's `successor` verb, its answer through
+// the real `start-controller` and `request-transfer`.
 // ---------------------------------------------------------------------------
 
 /// A running controller the row owns: on SIGTERM it copies the fleet state
@@ -5986,8 +6124,8 @@ impl Drop for Stopped {
     }
 }
 
-/// The launcher's world on the runner's server: the watch world's `bin` and
-/// environment, the checkout `oversee launch` runs from, the accounts `rows`
+/// The launch's world on the runner's server: the watch world's `bin` and
+/// environment, the checkout the launch runs from, the accounts `rows`
 /// planted for the walk's judge, and the work directory the launch starts
 /// in. Returns the scripts directory, `bin`, the environment and the work
 /// directory.
@@ -6055,13 +6193,13 @@ fn intents(runner: &Runner) -> usize {
 }
 
 /// Defect: a first launch opening on an account the walk did not choose, or
-/// a walk that chose none opening anything. The real launcher asks the
-/// runtime's walk and hands its answer to the real `start-controller`: with
-/// the first entry's only account walled, that entry is passed over by name
-/// and the overseer opens on the second entry's account with the walk's
-/// model and the settings' posture recorded; with that walled entry alone,
-/// the launch refuses `no-lane-qualifies` at 3 with the walk's counts, and
-/// no window, intent or record is made.
+/// a walk that chose none opening anything. The workflow asks the runtime's
+/// walk and hands its answer to the real `start-controller`: with the first
+/// entry's only account walled, that entry is passed over by name and the
+/// overseer opens on the second entry's account with the walk's model and
+/// the settings' posture recorded; with that walled entry alone, the walk
+/// answers `none` with its counts and no successor, so no request is
+/// composed and no window, intent or record is made.
 #[test]
 fn a_first_launch_opens_on_the_walks_choice_past_a_walled_entry_and_a_walk_choosing_none_opens_nothing()
  {
@@ -6073,8 +6211,8 @@ fn a_first_launch_opens_on_the_walks_choice_past_a_walled_entry_and_a_walk_choos
     walled["harness"] = json!("codex");
     let (scripts, bin, env, work) = walk_world(&runner, &[walled, measured_account("aclaude", 5)]);
     let launch = |preference: &str| {
-        let mut command = oversee_launch(
-            &server,
+        workflow_launch(
+            &runner,
             &scripts,
             &bin,
             &env,
@@ -6082,49 +6220,37 @@ fn a_first_launch_opens_on_the_walks_choice_past_a_walled_entry_and_a_walk_choos
             "claude",
             "fable",
             &stub("stub-confirm"),
-        );
-        command
-            .env("ORCH_OVERSEER_PREFERENCE", preference)
-            .output()
-            .unwrap()
+        )
+        .env("ORCH_OVERSEER_PREFERENCE", preference)
+        .run()
     };
     let none = launch("codex:gpt-6.1-sol:high");
-    assert_eq!(none.status.code(), Some(3), "{}", stderr(&none));
+    let chosen = none.chosen();
+    let walk = &chosen["result"]["walk"];
+    assert_eq!(walk["answer"], "none", "{chosen}");
     assert_eq!(
-        oversee_fields(&stderr(&none), "no-lane-qualifies"),
-        Some(vec![
-            "entries=1".to_owned(),
-            "walled=1".to_owned(),
-            "unmeasured=0".to_owned()
-        ]),
-        "{}",
-        stderr(&none)
+        (&walk["entries"], &walk["walled"], &walk["unmeasured"]),
+        (&json!(1), &json!(1), &json!(0)),
+        "{walk}"
     );
+    assert!(chosen["result"]["successor"].is_null(), "{chosen}");
+    assert!(none.op.is_none(), "no request where the walk chose none");
     assert_eq!(server.panes().len(), 1, "nothing opened");
     assert_eq!(intents(&runner), 0, "no intent: {}", runner.fleet());
     assert!(runner.fleet().get("overseer").is_none(), "no record");
 
     let opened = launch("codex:gpt-6.1-sol:high,claude:fable:high");
-    let stdout = String::from_utf8_lossy(&opened.stdout).into_owned();
-    assert!(
-        opened.status.success(),
-        "stdout={stdout}\nstderr={}",
-        stderr(&opened)
-    );
-    let skipped = oversee_fields(&stderr(&opened), "entry-skipped")
-        .unwrap_or_else(|| panic!("no entry-skipped line: {}", stderr(&opened)));
-    for field in [
-        "entry=codex:gpt-6.1-sol:high".to_owned(),
-        "reason=walled".to_owned(),
-        format!("lane={}", planted(&runner, "xcodex")),
-    ] {
-        assert!(skipped.contains(&field), "{field} in {skipped:?}");
-    }
-    let launched = oversee_fields(&stdout, "overseer-launched")
-        .unwrap_or_else(|| panic!("no overseer-launched line: {stdout}"));
-    assert!(
-        launched.contains(&format!("lane={}", planted(&runner, "aclaude"))),
-        "{launched:?}"
+    let chosen = opened.chosen();
+    let skipped = &chosen["result"]["walk"]["skipped"][0];
+    assert_eq!(skipped["entry"], "codex:gpt-6.1-sol:high", "{chosen}");
+    assert_eq!(skipped["reason"], "walled", "{chosen}");
+    assert_eq!(skipped["lane"], planted(&runner, "xcodex"), "{chosen}");
+    let started = opened.started();
+    assert_eq!(
+        started["outcome"],
+        "confirmed",
+        "{started}\n{}",
+        stderr(opened.op())
     );
     let overseer = runner.fleet()["overseer"].clone();
     assert_eq!(overseer["generation"], 1, "{overseer}");
@@ -6148,8 +6274,8 @@ fn a_first_launch_opens_on_the_walks_choice_past_a_walled_entry_and_a_walk_choos
 /// Defect: a succession that stops its predecessor before the successor
 /// stands recorded, that opens on the predecessor's own account where the
 /// walk chose another, or that drops the posture the predecessor ran under.
-/// The real launcher, named the live recorded controller, asks the runtime
-/// for the successor and hands it to the real `request-transfer`: when the
+/// The workflow, named the live recorded controller, asks the runtime for
+/// the successor and hands it to the real `request-transfer`: when the
 /// predecessor is signalled the intent already records the successor's
 /// runner by its process identity; the successor is published on the
 /// account the walk chose, launched with the predecessor's own permission
@@ -6183,8 +6309,8 @@ fn a_named_predecessor_is_succeeded_on_the_walks_choice_with_its_posture_once_th
         "native",
         &words,
     );
-    let out = oversee_launch(
-        &server,
+    let out = workflow_launch(
+        &runner,
         &scripts,
         &bin,
         &env,
@@ -6193,18 +6319,15 @@ fn a_named_predecessor_is_succeeded_on_the_walks_choice_with_its_posture_once_th
         "fable",
         &stub("stub-record"),
     )
-    .args(["--predecessor", "%99"])
-    .output()
-    .unwrap();
-    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-    assert!(
-        out.status.success(),
-        "stdout={stdout}\nstderr={}",
-        stderr(&out)
-    );
-    assert!(
-        oversee_fields(&stdout, "transfer-started").is_some(),
-        "{stdout}"
+    .predecessor("%99")
+    .run();
+    let op = out.op();
+    assert!(op.status.success(), "{}", stderr(op));
+    assert_eq!(
+        reply(op)["result"]["effect"]["started"],
+        "transfer-started",
+        "{}",
+        reply(op)
     );
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     let at_stop: Value = serde_json::from_str(
@@ -6270,8 +6393,8 @@ fn a_predecessor_that_is_not_the_live_recorded_controller_is_refused_with_nothin
         .state_dir()
         .join(orch_runtime::state::FLEET_FILE_NAME);
     let launch = |pane: &str| {
-        oversee_launch(
-            &server,
+        workflow_launch(
+            &runner,
             &scripts,
             &bin,
             &env,
@@ -6280,9 +6403,8 @@ fn a_predecessor_that_is_not_the_live_recorded_controller_is_refused_with_nothin
             "fable",
             &stub("stub-confirm"),
         )
-        .args(["--predecessor", pane])
-        .output()
-        .unwrap()
+        .predecessor(pane)
+        .run()
     };
     let running = Stopped::start(&state, &runner.state_dir().join("unused.json"));
     let before = recorded_on(
@@ -6295,12 +6417,11 @@ fn a_predecessor_that_is_not_the_live_recorded_controller_is_refused_with_nothin
         &[],
     );
     let other = launch("%98");
-    assert_eq!(other.status.code(), Some(1), "{}", stderr(&other));
-    let fields = oversee_fields(&stderr(&other), "transfer-refused")
-        .unwrap_or_else(|| panic!("no transfer-refused line: {}", stderr(&other)));
-    assert!(
-        fields.contains(&"key=overseer-changed".to_owned()),
-        "{fields:?}"
+    assert_eq!(
+        refusal_key(other.op()),
+        "overseer-changed",
+        "{}",
+        stderr(other.op())
     );
     assert_eq!(intents(&runner), 0, "nothing written: {}", runner.fleet());
     assert_eq!(runner.fleet()["overseer"], before);
@@ -6311,13 +6432,13 @@ fn a_predecessor_that_is_not_the_live_recorded_controller_is_refused_with_nothin
     let before = recorded_on(&runner, &server, gone, "bclaude", &work, "bypass", &[]);
     drop(ended);
     let dead = launch("%99");
-    let said = stderr(&dead);
-    assert!(!dead.status.success(), "{said}");
-    assert!(
-        said.lines()
-            .any(|line| line.starts_with("oversee: transfer-failed ")
-                && line.contains(" note=predecessor-not-live ")),
-        "{said}"
+    let op = dead.op();
+    assert_eq!(op.status.code(), Some(3), "{}", stderr(op));
+    assert_eq!(
+        dead.settled()["observation"]["note"],
+        "predecessor-not-live",
+        "{}",
+        reply(op)
     );
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     assert_eq!(intent["outcome"], "failed", "{intent}");
@@ -6333,92 +6454,9 @@ fn a_predecessor_that_is_not_the_live_recorded_controller_is_refused_with_nothin
     );
 }
 
-/// Defect: a succession the runtime recorded, then refused, read as
-/// refused with nothing opened. The transfer's detached job never claims
-/// within its bound, so `op` refuses `job-unclaimed` after the intent was
-/// persisted and names it, on the line after the notice the settings load
-/// prints for a private key it passes over: the launcher says
-/// `transfer-unconfirmed` with that intent and the runtime's key, exits
-/// nonzero, and never says `transfer-refused` or `transfer-started`.
-#[test]
-fn a_succession_refused_after_its_intent_persisted_is_said_unconfirmed_naming_it() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let runner = suite_runner(&server, "stub-confirm");
-    runner.init_fleet();
-    let (scripts, bin, mut env, work) = walk_world(&runner, &[measured_account("bclaude", 5)]);
-    // The runtime as the shipped wrapper runs it, the private file read.
-    let wrapper = runner.state_dir().join("orch-runtime");
-    std::fs::remove_file(&wrapper).unwrap();
-    std::os::unix::fs::symlink(binary(), &wrapper).unwrap();
-    std::fs::write(
-        runner.state_dir().join(".env.local"),
-        "ORCH_LANE_EXCLUDE=\"$XDG_STATE_HOME/x\"\n",
-    )
-    .unwrap();
-    env.push((
-        "XDG_STATE_HOME".to_owned(),
-        runner.state_dir().join("xdg-state").display().to_string(),
-    ));
-    let state = runner
-        .state_dir()
-        .join(orch_runtime::state::FLEET_FILE_NAME);
-    let running = Stopped::start(&state, &runner.state_dir().join("unused.json"));
-    recorded_on(
-        &runner,
-        &server,
-        running.pid(),
-        "bclaude",
-        &work,
-        "bypass",
-        &[],
-    );
-    let (sleepers, log) = sleeper_world(runner.state_dir());
-    env.push(("PATH".to_owned(), tool_path(&[&sleepers, &bin])));
-    env.push(("ORCH_JOB_CLAIM_SECS".to_owned(), "1".to_owned()));
-    env.push(("SETSID_LOG".to_owned(), log.display().to_string()));
-    let out = oversee_launch(
-        &server,
-        &scripts,
-        &bin,
-        &env,
-        &work,
-        "claude",
-        "fable",
-        &stub("stub-confirm"),
-    )
-    .args(["--predecessor", "%99", "--wait-secs", "1"])
-    .output()
-    .unwrap();
-    let said = stderr(&out);
-    let intent = runner.fleet()["intents"][0].clone();
-    let id = intent["id"]
-        .as_str()
-        .expect("the transfer's intent")
-        .to_owned();
-    assert!(!out.status.success(), "{said}");
-    assert!(
-        said.contains("settings-skipped "),
-        "the notice stands before the runtime's line: {said}"
-    );
-    assert_eq!(
-        oversee_fields(&said, "transfer-unconfirmed"),
-        Some(vec![
-            format!("intent={id}"),
-            "note=job-unclaimed".to_owned(),
-            "cause=exit-1".to_owned(),
-        ]),
-        "{said}"
-    );
-    assert_eq!(oversee_fields(&said, "transfer-refused"), None, "{said}");
-    assert_eq!(intent["outcome"], "unconfirmed", "{intent}");
-    end_sleeper(standing_job_pid(&runner));
-    assert!(live(running.pid()), "nothing retired the predecessor");
-}
-
 /// Defect: a predecessor stopped, or a record changed, for a successor that
 /// never came up. The successor's harness never draws its composer within
-/// the launcher's bound: the transfer fails before retirement, the runner's
+/// the launch's bound: the transfer fails before retirement, the runner's
 /// window is closed, the predecessor keeps running and the record is as it
 /// stood.
 #[test]
@@ -6441,8 +6479,8 @@ fn a_successor_that_never_comes_up_leaves_the_predecessor_running_and_its_record
         "bypass",
         &[],
     );
-    let out = oversee_launch(
-        &server,
+    let out = workflow_launch(
+        &runner,
         &scripts,
         &bin,
         &env,
@@ -6451,16 +6489,16 @@ fn a_successor_that_never_comes_up_leaves_the_predecessor_running_and_its_record
         "fable",
         &stub("stub-unconfirmed"),
     )
-    .args(["--predecessor", "%99", "--wait-secs", "1"])
-    .output()
-    .unwrap();
-    let said = stderr(&out);
-    assert!(!out.status.success(), "{said}");
-    assert!(
-        said.lines()
-            .any(|line| line.starts_with("oversee: transfer-failed ")
-                && line.contains(" note=successor-not-ready ")),
-        "{said}"
+    .predecessor("%99")
+    .wait_secs(1)
+    .run();
+    let op = out.op();
+    assert_eq!(op.status.code(), Some(3), "{}", stderr(op));
+    assert_eq!(
+        out.settled()["observation"]["note"],
+        "successor-not-ready",
+        "{}",
+        reply(op)
     );
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
     assert_eq!(intent["outcome"], "failed", "{intent}");
@@ -7334,39 +7372,46 @@ fn a_marks_succession_leaves_the_account_a_rate_mark_spends_and_keeps_one_a_cont
     }
 }
 
+/// Defect: a first launch under the settings' native posture carrying a
+/// bypass word. The record names the native posture and the harness's
+/// argv carries no bypass word.
 #[test]
-fn a_first_launch_under_the_native_posture_opens_with_no_bypass_word_on_its_line() {
+fn a_first_launch_under_the_native_posture_opens_with_no_bypass_word_in_its_argv() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let runner = suite_runner(&server, "stub-confirm");
     runner.init_fleet();
     let (scripts, bin, env, work) = walk_world(&runner, &[measured_account("aclaude", 5)]);
-    let opened = oversee_launch(
-        &server,
+    let opened = workflow_launch(
+        &runner,
         &scripts,
         &bin,
         &env,
         &work,
         "claude",
         "fable",
-        &stub("stub-confirm"),
+        &stub("stub-record"),
     )
     .env("ORCH_LAUNCH_PERMISSION", "native")
-    .output()
-    .unwrap();
+    .run();
     let state = runner
         .state_dir()
         .join(orch_runtime::state::FLEET_FILE_NAME);
-    if opened.status.success() {
+    let started = opened.started();
+    if started["outcome"] == "confirmed" {
         stop_live_watch(&runner, &state);
     }
-    assert!(opened.status.success(), "{}", stderr(&opened));
+    assert_eq!(
+        started["outcome"],
+        "confirmed",
+        "{started}\n{}",
+        stderr(opened.op())
+    );
     let overseer = runner.fleet()["overseer"].clone();
     assert_eq!(overseer["permission"], "native", "{overseer}");
+    let argv = argv_of(&launch_record(&work));
     assert!(
-        overseer["launch_line"]
-            .as_str()
-            .is_some_and(|line| !line.contains("--dangerously-skip-permissions")),
-        "{overseer}"
+        !argv.iter().any(|a| a == "--dangerously-skip-permissions"),
+        "no bypass word under the native posture: {argv:?}"
     );
 }

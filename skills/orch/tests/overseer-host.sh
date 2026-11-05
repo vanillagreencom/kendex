@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Tests for scripts/overseer-host, the overseer-session runtime adapter, and
-# scripts/overseer-host-tmux, the tmux provider behind it, over a real tmux
-# server on a private socket. The dispatcher rows use a fixture provider that
-# records its argv; the provider rows open, read, feed and close panes the
-# way `oversee-succeed` did by hand before the adapter existed, and pin the
-# window placement a succession depends on.
+# Tests for scripts/overseer-host, the overseer-session adapter whose
+# `resolve` and `inspect` the register, the succession script and a Jarvis
+# session read a recorded session through, and scripts/overseer-host-tmux,
+# the tmux provider behind `inspect`, over a real tmux server on a private
+# socket. The dispatcher rows use a fixture provider that records its argv;
+# the provider rows read panes as the register's live check does.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
-# mutant_scripts and mutate_file, the two halves of the stop verb's control.
+# mutant_scripts and mutate_file, the two halves of the controls.
 # shellcheck source=lib/growth-state.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
@@ -63,9 +63,9 @@ run_host ORCH_OVERSEER_HOST="$FIXTURE" -- resolve
 assert_eq "$RC|$OUT" \
   "0|$FIXTURE" \
   "resolve with a script path answers the path"
-OUT="$(cd "$TMP_ROOT" && printf 'block\n' | env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT" PATH="$PATH" ORCH_OVERSEER_HOST="$FIXTURE" "$HOST" deliver --session %3 2>&1)" && RC=0 || RC=$?
+OUT="$(cd "$TMP_ROOT" && printf 'block\n' | env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT" PATH="$PATH" ORCH_OVERSEER_HOST="$FIXTURE" "$HOST" inspect --session %3 2>&1)" && RC=0 || RC=$?
 assert_eq "$RC|$(tr '\n' ';' <<<"$OUT")" \
-  "7|fixture deliver --session %3;block;fixture-err;" \
+  "7|fixture inspect --session %3;block;fixture-err;" \
   "a verb reaches the provider with its argv, stdin, streams and exit status unchanged"
 run_host -- wait --item x
 assert_eq "$RC|$OUT" \
@@ -89,15 +89,13 @@ tm set-option -g default-shell /bin/sh
 tm set-option -g default-command "exec /bin/sh"
 TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 SERVER_PID="$(tm display-message -p '#{pid}')"
-KEEP_WINDOW="$(tm display-message -p -t fleet:0 '#{window_id}')"
 run_tmux() { # ARGS...
   RC=0
   OUT="$(cd "$TMP_ROOT/work" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT" PATH="${RUN_PATH:-$PATH}" TMUX="$TMUX_ADDR" "${PROVIDER_BIN:-$HOST}" "$@" 2>&1 </dev/null)" || RC=$?
 }
-layout() { tm list-windows -t fleet -F '#{window_id} #{window_name}' | awk -v keep="$KEEP_WINDOW" '$1 != keep { print $2 }' | sort | tr '\n' ';'; }
 field() { awk -v k="$2=" 'NR == 1 { for (i = 1; i <= NF; i++) if (index($i, k) == 1) { print substr($i, length(k) + 1); exit } }' <<<"$1"; }
-# A pane at INDEX running COMMAND, its pane id printed. The window is named
-# for the index so a layout reads which one moved.
+# A pane at INDEX running COMMAND, its pane id printed, its window named
+# for the index.
 new_pane() { # INDEX COMMAND
   tm new-window -d -t "fleet:$1" -n "w$1" -P -F '#{pane_id}' "$2"
 }
@@ -110,39 +108,10 @@ wait_for() { # PANE TEXT
   return 1
 }
 
-# Hold the shell before it reads the submitted line, so its terminal echo
-# cannot be mistaken for output from the command.
-printf '#!/bin/sh\nexit 99\n' > "$BIN/gh"
-chmod +x "$BIN/gh"
-mkfifo "$TMP_ROOT/echo-release"
-ECHO_PANE="$(new_pane 1 "PATH='$BIN:$PATH'; export PATH; read release < '$TMP_ROOT/echo-release'; exec /bin/sh")"
-tm send-keys -t "$ECHO_PANE" -l "printf done > '$TMP_ROOT/echo-typed'; : 'esc to interrupt'"
-tm send-keys -t "$ECHO_PANE" Enter
-wait_for "$ECHO_PANE" 'esc to interrupt' || exit 1
-if [[ -e "$TMP_ROOT/echo-typed" ]]; then ECHO_WRITTEN=yes; else ECHO_WRITTEN=no; fi
-assert_eq "$ECHO_WRITTEN" no "control: the pane-text wait returns before the submitted command runs"
-printf 'go\n' > "$TMP_ROOT/echo-release"
-await_marker "$TMP_ROOT/echo-typed" || exit 1
-assert_eq "$(cat "$TMP_ROOT/echo-typed")" done \
-  "control: the file wait returns after the submitted command writes its output"
-tm kill-window -t "$ECHO_PANE"
-
-# create after a predecessor: the window starts at the base index, named
-# overseer, in the directory named, and runs the line typed.
-tm kill-window -a -t "$KEEP_WINDOW"
-tm move-window -r -t fleet
-PRED="$(new_pane 3 'exec sleep 100000')"
-new_pane 5 'exec sleep 100000' >/dev/null
-run_tmux create --cwd "$TMP_ROOT/work" --after "$PRED" --line "pwd > $TMP_ROOT/typed; printf 'esc to interrupt\\n'; exec sleep 100000"
-SESSION="$(field "$OUT" session)"; WINDOW="$(field "$OUT" window)"
-await_marker "$TMP_ROOT/typed" || exit 1
-assert_eq "$RC|$(layout)|$(field "$OUT" server)|$(cat "$TMP_ROOT/typed" 2>/dev/null)|$(tm display-message -p -t "$SESSION" '#{window_id}')" \
-  "0|overseer;w3;w5;|$SERVER_PID|$TMP_ROOT/work|$WINDOW" \
-  "create --after opens the window at the base index and types the line"
-assert_eq "$(tm display-message -p -t "$SESSION" '#{window_index} #{window_name}')" "0 overseer" \
-  "create --after reads back the actual base-index placement"
-
 # inspect --launch: the first-turn reading over the whole screen.
+SESSION="$(new_pane 3 "printf 'esc to interrupt\\n'; exec sleep 100000")"
+wait_for "$SESSION" 'esc to interrupt' || exit 1
+WINDOW="$(tm display-message -p -t "$SESSION" '#{window_id}')"
 run_tmux inspect --launch --session "$SESSION"
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(sed 1d <<<"$OUT" | grep -q 'esc to interrupt' && echo screen)" \
   "0|session=$SESSION window=$WINDOW server=$SERVER_PID state=working harness_state=unknown harness_cause=record-unreadable|screen" \
@@ -352,139 +321,6 @@ run_tmux inspect --session fleet:3
 assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
   "2|overseer-host-tmux: invalid-session value=fleet:3" \
   "inspect refuses a target that is not a pane id"
-
-# deliver: the block is consumed, the session's liveness is the answer.
-OUT="$(cd "$TMP_ROOT/work" && printf 'a block\n' | env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT" PATH="$PATH" TMUX="$TMUX_ADDR" "$HOST" deliver --session "$SESSION" 2>&1)" && RC=0 || RC=$?
-assert_eq "$RC|$OUT" \
-  "0|deliver=watch-log session=$SESSION" \
-  "deliver on a live session confirms the watch-log route"
-OUT="$(cd "$TMP_ROOT/work" && printf 'a block\n' | env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT" PATH="$PATH" TMUX="$TMUX_ADDR" "$HOST" deliver --session %999 2>&1)" && RC=0 || RC=$?
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "4|overseer-host-tmux: session-gone session=%999" \
-  "deliver on a session the server does not list refuses at 4"
-
-# stop with a successor: close the predecessor without moving the successor
-# away from the base index create gave it.
-SUCC_WINDOW="$(tm display-message -p -t "$SESSION" '#{window_id}')"
-PRED_WINDOW="$(tm display-message -p -t "$PRED" '#{window_id}')"
-run_tmux stop --session "$PRED" --successor "$SESSION"
-assert_eq "$RC|$OUT|$(layout)|$(tm display-message -p -t "$SESSION" '#{window_id}')" \
-  "0|stopped session=$PRED window=$PRED_WINDOW|overseer;w10;w5;w7;w8;w9;|$SUCC_WINDOW" \
-  "stop --successor closes the predecessor and keeps the successor's window"
-assert_eq "$(tm display-message -p -t "$SESSION" '#{window_index} #{window_name}')" "0 overseer" \
-  "stop --successor keeps the base-index placement"
-# The must-fail control restores the swap that moves the successor away
-# from the base index after create.
-MUTANT="$(mutant_scripts mutant overseer-host-tmux)" || exit 1
-mutate_file "$MUTANT/overseer-host-tmux" \
-  '      tmux kill-window -t "$window" \; set-option -wu -t "$succ_window" @orch_overseer_displaced \; select-window -t "$succ_window" \' \
-  '      tmux swap-window -d -s "$succ_window" -t "$window" \; kill-window -t "$window" \; set-option -wu -t "$succ_window" @orch_overseer_displaced \; select-window -t "$succ_window" \'
-tm kill-window -a -t "$KEEP_WINDOW"
-tm move-window -r -t fleet
-PRED2="$(new_pane 3 'exec sleep 100000')"
-new_pane 5 'exec sleep 100000' >/dev/null
-run_tmux create --cwd "$TMP_ROOT/work" --after "$PRED2" --line "exec sleep 100000"
-SUCC2="$(field "$OUT" session)"
-PROVIDER_BIN="$MUTANT/overseer-host-tmux" run_tmux stop --session "$PRED2" --successor "$SUCC2"
-assert_eq "$RC|$(layout)" "0|overseer;w5;" "control: the swapped successor still exists"
-MISPLACED_INDEX="$(tm display-message -p -t "$SUCC2" '#{window_index}')"
-if [[ "$MISPLACED_INDEX" == 0 ]]; then MISPLACED_AT_BASE=yes; else MISPLACED_AT_BASE=no; fi
-assert_eq "$MISPLACED_AT_BASE" no \
-  "control: the swap moves the successor away from the base index"
-
-# stop alone, then on a session already gone: the second is a stop with
-# nothing left to do, never a failure.
-SUCC2_WINDOW="$(tm display-message -p -t "$SUCC2" '#{window_id}')"
-run_tmux stop --session "$SUCC2"
-assert_eq "$RC|$OUT|$(layout)" \
-  "0|stopped session=$SUCC2 window=$SUCC2_WINDOW|w5;" \
-  "stop closes the session's window"
-run_tmux stop --session "$SUCC2"
-assert_eq "$RC|$OUT" \
-  "0|stopped session=$SUCC2 window=none" \
-  "stop on a session the server no longer lists is already done"
-
-# create into a session: the configured base index, and a session tmux
-# does not hold is refused before anything opens.
-tm set-option -t fleet base-index 2
-run_tmux create --cwd "$TMP_ROOT/work" --session fleet --name overseer --line "exec sleep 100000"
-FIRST="$(field "$OUT" session)"
-assert_eq "$RC|$(layout)|$(tm display-message -p -t "$FIRST" '#{window_index} #{window_name}')" \
-  "0|overseer;w5;|2 overseer" \
-  "create --session reads back the configured base index"
-run_tmux create --cwd "$TMP_ROOT/work" --session fleetz --line "exec sleep 100000"
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")|$(layout)" \
-  "1|overseer-host-tmux: tmux-session-missing session=fleetz|overseer;w5;" \
-  "create into a session tmux does not hold refuses naming it"
-# Both abandon and failed pane-write cleanup undo insertion. The retained
-# overseer occupies the base index, with an adjacent window and a later gap.
-ADJACENT="$(tm new-window -d -t fleet:3 -n adjacent -P -F '#{window_id}' 'exec sleep 100000')"
-ROLLBACK_LAYOUT="$(tm list-windows -t fleet -F '#{window_id} #{window_index}')"
-ROLLBACKCTL="$(mutant_scripts rollbackctl overseer-host-tmux)" || exit 1
-mutate_file "$ROLLBACKCTL/overseer-host-tmux" \
-  '    args+=(swap-window -d -s "$1" -t "$displaced" \;)' \
-  '    if false; then args+=(swap-window -d -s "$1" -t "$displaced" \;); fi'
-REAL_TMUX="$(command -v tmux)"
-cat > "$BIN/tmux" <<SHIM
-#!/bin/sh
-[ "\$1" != paste-buffer ] || exit 1
-exec "$REAL_TMUX" "\$@"
-SHIM
-chmod +x "$BIN/tmux"
-for rollback in abandon pane-write; do
-  for implementation in production control; do
-    provider="$HOST"
-    [[ "$implementation" != control ]] || provider="$ROLLBACKCTL/overseer-host-tmux"
-    if [[ "$rollback" == abandon ]]; then
-      PROVIDER_BIN="$provider" run_tmux create --cwd "$TMP_ROOT/work" --after "$FIRST" --line 'exec sleep 100000'
-      ABANDONED="$(field "$OUT" session)"
-      PROVIDER_BIN="$provider" run_tmux stop --session "$ABANDONED"
-      assert_eq "$RC" 0 "$implementation: abandonment closes the inserted window"
-    else
-      PROVIDER_BIN="$provider" RUN_PATH="$BIN:$PATH" run_tmux create --cwd "$TMP_ROOT/work" --after "$FIRST" --line 'exec sleep 100000'
-      assert_eq "$RC|$(sed -n 1p <<<"$OUT" | sed 's/window=@[0-9]*/window=@N/')" \
-        '1|overseer-host-tmux: create-failed step=pane-write window=@N' \
-        "$implementation: failed pane write closes the inserted window"
-    fi
-    actual="$(tm list-windows -t fleet -F '#{window_id} #{window_index}')"
-    if [[ "$implementation" == production ]]; then
-      assert_eq "$actual" "$ROLLBACK_LAYOUT" "$rollback restores every prior window index and gap"
-    else
-      if [[ "$actual" == "$ROLLBACK_LAYOUT" ]]; then restored=yes; else restored=no; fi
-      assert_eq "$restored" no "$rollback control: disabled swaps fail the placement assertion"
-      tm move-window -s "$FIRST" -t fleet:2
-      tm move-window -s "$ADJACENT" -t fleet:3
-    fi
-  done
-done
-rm -f -- "${BIN:?}/tmux"
-# A has-session answer that is not "can't find session" is the call failing,
-# not a missing session: TMUX pointed at a socket with no server refuses
-# tmux-failed, not tmux-session-missing.
-OUT="$(cd "$TMP_ROOT/work" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT" PATH="$PATH" TMUX="$TMP_ROOT/dead-socket,1,0" "$HOST" create --cwd "$TMP_ROOT/work" --session fleet --line "exec sleep 1" 2>&1)" && RC=0 || RC=$?
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "1|overseer-host-tmux: tmux-failed operation=has-session session=fleet" \
-  "create against a socket with no server refuses tmux-failed, not a missing session"
-tm kill-window -a -t "$FIRST"
-CREATECTL="$(mutant_scripts createctl overseer-host-tmux)" || exit 1
-mutate_file "$CREATECTL/overseer-host-tmux" 'tmux new-window -d -b -t "$target"' 'tmux new-window -d -a -t "$target"'
-PROVIDER_BIN="$CREATECTL/overseer-host-tmux" run_tmux create --cwd "$TMP_ROOT/work" --session fleet --line "exec sleep 100000"
-MISPLACED="$(field "$OUT" session)"
-assert_eq "$RC|$(tm display-message -p -t "$MISPLACED" '#{window_index}')" "0|3" \
-  "control: insertion after the base window moves the new overseer away from the base index"
-run_tmux stop --session "$MISPLACED"
-run_tmux create --cwd "$TMP_ROOT/work" --session fleet --after "$FIRST" --line "exec sleep 100000"
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "2|overseer-host-tmux: option-conflict verb=create" \
-  "create refuses two placements"
-run_tmux create --cwd "$TMP_ROOT/work" --session fleet
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "2|overseer-host-tmux: option-missing option=--line verb=create" \
-  "create refuses a missing line"
-run_tmux create --cwd "$TMP_ROOT/work" --line "exec sleep 1"
-assert_eq "$RC|$(sed -n 1p <<<"$OUT")" \
-  "2|overseer-host-tmux: option-missing option=--after,--session verb=create" \
-  "create refuses no placement at all"
 
 # The Python parent holds the exited child unreaped through the identity
 # observations. Every liveness read names a process this suite still owns.

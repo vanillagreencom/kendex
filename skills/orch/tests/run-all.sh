@@ -197,11 +197,11 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ORCH_TEST_DIR="$TEST_DIR"
 
 # Suites that run alone, one at a time, once every other selected suite has
-# finished: each holds a fixed wall-clock window that the code under test
-# must meet, and a loaded host has made it miss. One name per line, first
-# word, with the window it holds; run-all-parallel.sh reads this list.
+# finished, each holding a fixed wall-clock window that the code under test
+# must meet and a loaded host has made it miss. None ships today; one name
+# per line, first word, with the window it holds. run-all-parallel.sh plants
+# a name here to prove the hold.
 ALONE=(
-  open-terminal-lane      # the lane-tree stub holds the picked account for 2s
 )
 
 TEST_DIRS=("$TEST_DIR")

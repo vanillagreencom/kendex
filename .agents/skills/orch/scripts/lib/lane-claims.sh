@@ -35,23 +35,21 @@
 # by, before canonicalisation, so a reader can name the account as `lanes list`
 # does from a discovered path. A record written before it carried one has none,
 # and a reader names that claim's account from its canonical config dir.
-# The fleet is the oversee state file of the fleet the launch was judged in
-# (`open-terminal --state-dir`), empty for a launch naming no fleet, and it is
-# what lets one store serve several fleets: open-terminal's launch cap counts
-# only its own fleet's claims, while `lanes pick` charges an account with
-# matching-pool claims from any fleet that names it. A claim with an empty fleet, written by a
+# The fleet is the oversee state file of the fleet the launch was judged in,
+# empty for a launch naming no fleet, and it is what lets one store serve
+# several fleets: `lanes pick` charges an account with matching-pool claims
+# from any fleet that names it. A claim with an empty fleet, written by a
 # launch naming no fleet or before claims carried one, counts toward its
-# account and toward no fleet's cap; a fleet's report (lane_claims_for_fleet)
-# takes it as the lane of that fleet's running or preparing record whose window
-# and account it names.
+# account.
 #
 # A reservation is the same record under `.reserve`, with the launcher's pid as
-# its server and `-` as its pane: the place in the count a judged launch holds
-# from its count until its claim or record stands, or the item ends, live while
-# that launcher runs. Its config dir is empty: only the count and cap modes of
-# lane_claims_read carry reservations, and the launch cap judges
-# a reservation by its window, fleet and kind, never its account. Every other reader
-# reads claims alone.
+# its server and `-` as its pane: a place in a count held while that launcher
+# runs. Its config dir is empty: only the count and cap modes of
+# lane_claims_read carry reservations. Every other reader reads claims alone.
+#
+# No shipped launch writes a claim or a reservation: the runtime charges the
+# fleet cap from its records and the kernel table. This reader stays for the
+# rows of earlier installs, which it prunes as their panes and servers go.
 set -euo pipefail
 
 # Callers preserve positional values for this diagnostic catalog.
@@ -114,7 +112,7 @@ lane_claims_pane_live() { # LIVE SERVER PANE
 # launch writes its claim or its record before it drops its reservation, so a
 # reservation gone by the time it is read is a claim the later listing finds,
 # or a record for a caller that reads its records after this.
-# Mode `cap`, read by open-terminal, adds the declared kind after named and
+# Mode `cap` adds the declared kind after named and
 # includes reservations. Older claims carry no kind and count as fleet lanes.
 # The four-field form is the default because lane-context appends its own
 # fifth field. Mode `fleet` carries fleet and named without adding
@@ -246,82 +244,6 @@ lane_claims_pid_runs() {
   [[ "$rc" -ne 1 ]]
 }
 
-# Select context claims from the fleet-field form, emitting the normal four
-# fields. Explicit fleet identity owns even an in-flight claim with no record;
-# an empty identity needs a held record's window and canonical account.
-# Reservations never enter: the caller reads mode `fleet`, not mode `count`.
-lane_claims_for_fleet() { # CLAIMS FLEET LANES_JSON
-  local rows account window owned=""
-  [[ -n "$2" ]] || return 0
-  rows=$(jq -r "$LANE_RUNNING_JQ"'
-    .[] | select(held) | [(.account // ""), (.window // "" | sub("^[^:]*:"; ""))]
-    | join("\u001f")' <<<"$3") || return 1
-  while IFS=$'\037' read -r account window; do
-    [[ -n "$window" ]] || continue
-    account=$(lane_claims_canon "$account") || return 1
-    owned+="$window"$'\t'"$account"$'\n'
-  done <<<"$rows"
-  CLAIM_OWNED="$owned" CLAIM_FLEET="$2" awk -F'\t' '
-    BEGIN {
-      OFS = "\t"
-      n = split(ENVIRON["CLAIM_OWNED"], rows, "\n")
-      for (i = 1; i <= n; i++) if (rows[i] != "") owned[rows[i]] = 1
-    }
-    NF && ($5 == ENVIRON["CLAIM_FLEET"] || ($5 == "" && (($2 "\t" $1) in owned))) {
-      print $1, $2, $3, $4
-    }' <<<"$1"
-}
-
-# Config dir claimed for one pane, empty when no live claim names it. The key
-# is `<server pid> <pane id>` — the same key liveness uses — because a window
-# NAME is unique to a session, not to a server or across servers, so two lanes
-# can carry one name and the wrong account would answer for a pane.
-# $1: `lane_claims_read` output, $2: server pid, $3: pane id.
-lane_claims_config_dir() {
-  [[ -n "${2:-}" && -n "${3:-}" ]] || return 0
-  awk -F'\t' -v s="$2" -v p="$3" '$3 == s && $4 == p { print $1; exit }' <<<"$1"
-}
-
-# Writes one record under SUFFIX, its path left in LANE_CLAIM_PATH.
-# $1: claims dir, $2: suffix, $3: server pid, $4: pane id, $5: config dir,
-# $6: window, $7: fleet, $8: declared kind, $9: spending pool. Old callers omit kind and remain
-# fleet lanes. The config dir is recorded canonical and as named.
-lane_claim_put() {
-  local dir="$1" suffix="$2" cfg tmp
-  cfg="$(lane_claims_canon "$5")"
-  mkdir -p -- "$dir" || return 1
-  tmp="$(mktemp -- "$dir/claim.XXXXXX")" || return 1
-  # Named with its suffix only once complete: a reader must never see a
-  # half-written record and prune a live lane over it.
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$3" "$4" "$cfg" "$6" \
-    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$7" "$5" "${8:-}" "${9:-plan}" > "$tmp" || { rm -f -- "$tmp"; return 1; }
-  # mktemp creates mode 600, which no default ACL widens: a store shared by
-  # several homes would refuse every other home's read as unreadable-claim.
-  # `--` before the mode: BSD chmod applies a mode followed by `--`, then
-  # exits 1 taking `--` for a file.
-  chmod -- g+r "$tmp" || { rm -f -- "$tmp"; return 1; }
-  mv -f -- "$tmp" "$tmp.$suffix" || { rm -f -- "$tmp"; return 1; }
-  # shellcheck disable=SC2034  # read by lib/lane-cap.sh's cap_reserve
-  LANE_CLAIM_PATH="$tmp.$suffix"
-}
-
-# Record one claim. $1: claims dir, $2: server pid, $3: pane id, $4: config
-# dir, $5: window, $6: fleet, empty for none, $7: declared kind, $8: spending pool.
-# A missing pane handle or config
-# dir records nothing.
-lane_claim_write() {
-  [[ -n "$2" && -n "$3" && -n "$4" ]] || return 0
-  lane_claim_put "$1" claim "$2" "$3" "$4" "$5" "${6:-}" "${7:-}" "${8:-plan}"
-}
-
-# Record one reservation, its path left in LANE_CLAIM_PATH, with an empty
-# config dir. $1: claims dir, $2: the launcher's pid, $3: window, $4: fleet,
-# $5: declared kind. open-terminal supplies it before the record exists, so
-# concurrent cloud sessions reserve cloud slots rather than fleet slots.
-lane_claim_reserve() {
-  lane_claim_put "$1" reserve "$2" - "" "$3" "$4" "${5:-}"
-}
-
 # The one answer to which oversee lane records are lanes in flight, as jq
 # definitions a caller prefixes to its own program: oversee-watch carries the
 # running records. open-terminal counts the in_flight
@@ -331,21 +253,3 @@ lane_claim_reserve() {
 LANE_RUNNING_JQ='def running: type == "object" and .status == "running";
 def held: running or (type == "object" and .status == "preparing");
 def in_flight: held or (type == "object" and .status == "parked");'
-
-# lane_running_record LANES WINDOW HARNESS — the first running record of a
-# HARNESS lane whose window part is WINDOW's, compact on stdout, nothing where
-# none is: the one lookup of a lane's record by the window a reader holds, for
-# `lanes state` and oversee-watch. LANES is the fleet state's `lanes` array, or
-# the state object holding it, and empty is no fleet. Non-zero where LANES is
-# not JSON.
-lane_running_record() { # LANES WINDOW HARNESS [session]
-  # Input routing must keep two explicitly named sessions distinct. The
-  # existing session-note readers retain their window-name lookup.
-  jq -c --arg w "$2" --arg h "$3" --arg scope "${4:-}" "$LANE_RUNNING_JQ"'
-    (if type == "object" then .lanes // [] else . end)
-    | map(select(running and ($h == "" or .harness == $h)
-        and (if $scope == "session" and ($w | contains(":")) and ((.window // "") | contains(":"))
-             then .window == $w
-             else ((.window // "") | sub("^.*:"; "")) == ($w | sub("^.*:"; "")) end))) | first // empty' \
-    <<<"$1" 2>/dev/null
-}

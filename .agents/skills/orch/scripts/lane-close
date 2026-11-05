@@ -44,7 +44,7 @@ message() { # REASON FIELD=VALUE...
     record-missing) printf '%s\n' 'No fleet lane record names this item.' ;;
     record-duplicate) printf '%s fleet lane records name this item; remove each superseded one through `workflow-state update oversee` and close again.\n' "$count" ;;
     record-invalid) printf '%s\n' 'The lane record lacks a value required for safe close-out, or an option contradicts one it carries.' ;;
-    intent-open) printf '%s\n' 'The orch runtime holds an open intent on this lane; its effect or reconcile moves the record, and this close changed nothing.' ;;
+    intent-open) printf '%s\n' 'The orch runtime holds an open intent on this lane, and this close changed nothing. While the intent'"'"'s own process runs, its effect moves the record. A launch held for a person (cloud-create-unknown, worktree-create-unknown, worktree-push-unknown) is settled by the runtime close: orch-runtime op --fleet --request FILE, FILE holding {"op": "close-owned-resources", "item": ITEM, "terminal": {"verdict": VERDICT, "source": SOURCE}}, which supersedes the held launch and closes what the lane holds.' ;;
     runtime-unavailable) printf '%s\n' 'The fleet state holds runtime intents and orch-runtime could not say which are open; its own line is above. Nothing changed.' ;;
     pane-missing)
       printf '%s\n' 'No tmux pane carries the recorded window name.' \

@@ -1,6 +1,6 @@
 # shellcheck shell=bash
-# Settings resolution for the organization-standard tools, consumer refresh
-# and orch's approval-wait.
+# Settings resolution for the organization-standard tools and consumer
+# refresh.
 #
 # Resolution order for every key read through rg_setting (the REVIEW_GATE_*
 # family, plus shared keys like ORCH_OVERSEER_PREFERENCE):

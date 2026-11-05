@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Surface: the stored provider reply in lane_capabilities_read.
 # Inputs: scripts/lib/lane-capabilities.sh, scripts/lib/lane-claims.sh,
-# scripts/lane-host, scripts/open-terminal, scripts/lane-close,
+# scripts/lane-host, scripts/lane-close,
 # scripts/oversee-report, scripts/lib/*.sh, git-context,
 # skills/mailbox/scripts/* and skills/github/scripts/lib/*.
 set -euo pipefail
@@ -219,8 +219,6 @@ caller_run() { # CALLER
       command=("$SCRIPTS/../../mailbox/scripts/lane-mail" send --item KEN-1 --directive --file "$TMP_ROOT/directive" --state-dir "$TMP_ROOT/fleet") ;;
     lane-close)
       command=("$SCRIPTS/lane-close" --state-dir "$TMP_ROOT/fleet" --keep-sandbox KEN-1) ;;
-    open-terminal)
-      command=("$SCRIPTS/open-terminal" --host "$PROVIDER" --harness codex KEN-1) ;;
     oversee-report)
       command=("$SCRIPTS/oversee-report" render --state "$TMP_ROOT/fleet/workflow-state-oversee.json" --repo owner/repo) ;;
   esac
@@ -233,14 +231,13 @@ caller_run() { # CALLER
     "${command[@]}") > "$TMP_ROOT/out" 2> "$TMP_ROOT/err" || RC=$?
   CALLS="$(wc -l < "$TMP_ROOT/calls")"; CALLS="${CALLS//[[:space:]]/}"
 }
-for caller in watch lane-mail lane-close open-terminal oversee-report; do
+for caller in watch lane-mail lane-close oversee-report; do
   rm -rf -- "$TMP_ROOT/state"
   : > "$TMP_ROOT/calls"
   caps="$SSH"; status=running; want=0
   case "$caller" in
     lane-mail) want=2 ;;
     lane-close) status=parked ;;
-    open-terminal) caps="${SSH/kind=ssh/kind=codex-cloud}"; caps="${caps/launch=ssh/launch=cloud-task}"; want=1 ;;
     oversee-report) caps="${SSH/channel=mailbox/channel=task}"; caps="${caps/files=verb/files=none}" ;;
   esac
   write_provider "$caps" 0 ''

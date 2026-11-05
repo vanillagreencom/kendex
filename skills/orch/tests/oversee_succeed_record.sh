@@ -173,7 +173,7 @@ PENDING="$(jq -cn --arg h "$H" '{pending: {launch_line: "pending", harness: "cod
 # environment carries. Sets OUT (stdout), ERR (stderr) and RC.
 run_succeed() {
   fixture_watch_neighbor "${SUCCEED_BIN:-$SUCCEED}"
-  # The runtime the succession is handed to (decision 76): a stand-in beside
+  # The runtime the succession is handed to: a stand-in beside
   # the script that records the request; the successor's line is then run
   # once through the harness stubs, so the argv records read what it gets.
   fixture_runtime_stub "$(dirname "${SUCCEED_BIN:-$SUCCEED}")" "$TMP_ROOT"
@@ -236,7 +236,7 @@ model_switch_rows() (
   mkdir -p "${scripts%/scripts}" "$TMP_ROOT/work/.agents/skills/github/scripts/lib" "${hook%/*}"
   cp -R -- "$SRC_DIR" "$scripts"
   cp -- "$QUIET_SCRIPTS/oversee-watch" "$scripts/oversee-watch"
-  # The runtime the recovery's succession is handed to (decision 76): the
+  # The runtime the recovery's succession is handed to: the
   # stand-in that records the request, beside the copied scripts, so the
   # rows read the request and no real runtime is asked for.
   fixture_runtime_stub "$scripts" "$TMP_ROOT"
@@ -347,19 +347,20 @@ BARRIER
       state "$(record "$CALLER_PANE" "$H/.claude" claude-opus-4-6 \
         "$(jq -nc --arg line "$line" --arg cwd "$launch_dir" '{launch_line:$line,cwd:$cwd,session_id:"s1"}')")"
     else
-      # The public producer supplies the recorded base, actual pane cwd and
-      # retained watch command. Recovery below still starts at the repo root.
+      # The record a launch in the subdirectory wrote, in the released
+      # producer's shape: the caller pane opened there, its line naming that
+      # directory and the handoff the launch was given, the base recorded.
+      # Recovery below still starts at the repo root.
       state none
       prior_pane=$CALLER_PANE
+      tm kill-pane -t "$prior_pane"
+      CALLER_PANE="$(tm new-window -d -t fleet:1 -c "$launch_dir" -P -F '#{pane_id}' "exec '$BIN/hclaude' 100000")"
       producer_handoff=(--handoff "$handoff_path")
       [[ "$scenario" != sub-default ]] || producer_handoff=()
-      model_env env "ORCH_OVERSEER_PREFERENCE=claude:$executable:high" "$scripts/oversee" launch \
-        --session fleet --cwd "$launch_dir" ${producer_handoff[@]+"${producer_handoff[@]}"} --wait-secs 20 \
-        > "$TMP_ROOT/model-launch.out" 2> "$TMP_ROOT/model-launch.err"
-      CALLER_PANE=$(jq -r .overseer.pane "$FLEET_STATE")
-      tm kill-pane -t "$prior_pane"
-      "$scripts/workflow-state" --state-dir "$TMP_ROOT/work/tmp" update oversee '.overseer.session_id="s1"' >/dev/null
-      assert_eq "$(jq -r .overseer.cwd "$FLEET_STATE")" "$launch_dir" "$scenario public producer records its launch directory"
+      line=$(model_env "$scripts/oversee-succeed" --print-launch-line --harness claude \
+        ${producer_handoff[@]+"${producer_handoff[@]}"} -- --model "$executable" --effort high "$BYPASS")
+      state "$(record "$CALLER_PANE" "$H/.claude" "$recorded" \
+        "$(jq -nc --arg line "$line" --arg cwd "$launch_dir" '{launch_line:$line,cwd:$cwd,session_id:"s1"}')")"
     fi
     model_env "$BASH" -euo pipefail -c '
       SCRIPT_DIR=$1 SUCCEED=$1/oversee-succeed WORKFLOW_STATE=$1/workflow-state
@@ -467,7 +468,7 @@ BARRIER
     elif [[ "$scenario" == matching || "$scenario" == native-matching ]]; then
       assert_eq "$(jq -c . "$FLEET_STATE")" "$before" "$scenario models leave fleet state unchanged"
     elif [[ "$scenario" == switched || "$scenario" == custom || "$relative_dir" != . ]]; then
-      # The recovery's succession is the runtime's (decision 76): the
+      # The recovery's succession is the runtime's: the
       # request the hook's detached dispatch hands the stand-in is read, and
       # its line replayed once through the harness stub for the argv rows.
       # The successor's launch, publication and watch handover are the
@@ -899,8 +900,8 @@ pending_run "$(mutant_scripts pendingrun)"
 assert_eq "$RC|$(jq -r '.successor | [.launch_line, .harness, .account, .model, .effort, .cwd] | join("|")' "$TMP_ROOT/runtime.request")" \
   "0|$SUCC_LINE|claude|$H/.claude|fable-next|low|$RECORDED_CWD" \
   "a succession hands the runtime its successor's line and identity, the directory the caller's record names included" "$TMP_ROOT/err"
-# The typed launch fields the runtime builds the command from (decisions 109
-# (5), 115 (E), 120): a same-harness successor carrying a full-bypass word
+# The typed launch fields the runtime builds the command from: a same-harness
+# successor carrying a full-bypass word
 # runs the `bypass` posture, and its argv reaches the runtime exactly as
 # given; the builder derives the environment and adds no second word.
 assert_eq "$(jq -c '.successor | [.permission, .extra_args]' "$TMP_ROOT/runtime.request")" \
@@ -911,7 +912,7 @@ assert_eq "$(jq -r '[.account, .model, .launch_line, (.pending // "none")] | joi
 assert_eq "$(jq -r '.expected | [.server, .pane, .generation, .cwd] | join("|")' "$TMP_ROOT/runtime.request")" \
   "$(jq -r '.overseer | [.server, .pane, (.generation|tostring), .cwd] | join("|")' "$FLEET_STATE")" \
   "the request names the record the script read, for the runtime's compare-and-swap"
-# A narrower permission word (decision 124a (4)): the posture is judged
+# A narrower permission word: the posture is judged
 # `bypass` only from the launch table's full-bypass column, so a caller on
 # `--permission-mode dontAsk` hands the runtime `native` with its words as
 # given, and the successor runs no wider than its caller.
@@ -932,18 +933,17 @@ assert_eq "$RC|$(jq -c '.successor | [.permission, .extra_args]' "$TMP_ROOT/runt
 same_harness_words --append-system-prompt "never run with --dangerously-skip-permissions"
 assert_eq "$RC|$(jq -c '.successor | [.permission, .extra_args]' "$TMP_ROOT/runtime.request")" \
   '0|["native",["--append-system-prompt","never run with --dangerously-skip-permissions"]]' \
-  "a prompt word holding a bypass spelling as text judges native (decision 124b)" "$TMP_ROOT/err"
-# Decision 124b (7), R-U4g4 L4: a newline word reaches the request whole
-# through the full bridge where a permission word stands early; the U4g4
-# report's claim that this always dies launch-trust-missing is withdrawn.
+  "a prompt word holding a bypass spelling as text judges native" "$TMP_ROOT/err"
+# A newline word reaches the request whole through the full bridge where a
+# permission word stands early.
 same_harness_words --permission-mode dontAsk --append-system-prompt $'first\nsecond'
 assert_eq "$RC|$(jq -c '.successor | [.permission, .extra_args]' "$TMP_ROOT/runtime.request")" \
   '0|["native",["--permission-mode","dontAsk","--append-system-prompt","first\nsecond"]]' \
-  "a newline word reaches the request whole through the bridge (decision 124b)" "$TMP_ROOT/err"
-# The request's argv encoder (decision 124 (6)): the one line of the script
-# under test that encodes the caller's words, run on a value holding a
-# newline and one holding a space. jq's positional arguments carry each word
-# whole; the newline-delimited text the legacy encoder read split it.
+  "a newline word reaches the request whole through the bridge" "$TMP_ROOT/err"
+# The request's argv encoder: the one line of the script under test that
+# encodes the caller's words, run on a value holding a newline and one
+# holding a space. jq's positional arguments carry each word whole; a
+# newline-delimited text would split it.
 ENCODER_LINE="$(grep -F "jq -n '\$ARGS.positional' --args --" "$SRC_DIR/oversee-succeed")"
 assert_eq "$(grep -cF "jq -n '\$ARGS.positional' --args --" "$SRC_DIR/oversee-succeed")" "1" \
   "the script encodes the request's argv on one line, with jq's positional arguments"
@@ -978,7 +978,7 @@ assert_eq "$RC|$(grep -o '^oversee-succeed: no-lane-qualifies .* mark=headroom' 
   "a succession is judged on its record's account and model, and opens nothing where none has room"
 
 
-# --- the bridge's request through the real builder (decision 120, H1) -------
+# --- the bridge's request through the real builder ---------------------------
 # The request the script hands the runtime, fed to the shipped runtime with
 # the record stubs as the harnesses, so the home and account the bridge
 # supplies are read off what the builder launched, never off a hand-made
@@ -1031,7 +1031,7 @@ if (( RUNTIME_READY )); then
     "$RUST_FIXTURES/stub-record/pi|$PI_AGENT|$H/.claude" \
     "and the real builder launches pi on its own root with the claude seat routed" "$TMP_ROOT/replay.err"
 
-  # A claude caller succeeded by codex (decision 115 (D)): the bridge supplies
+  # A claude caller succeeded by codex: the bridge supplies
   # the trust home it prepared, a private home under the account, and the
   # builder launches codex under it, never under the account.
   new_caller claude

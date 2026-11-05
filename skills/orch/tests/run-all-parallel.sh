@@ -321,11 +321,12 @@ assert_eq "rc=$RC $(printf '%s\n' "$OUT" | sed -n '1s/ printed.*//p')" "rc=1 run
   "a worker count that is not a number refuses before any suite runs"
 
 echo "=== 4. a suite in the ALONE list runs by itself ==="
-ALONE_NAMES="$(sed -n '/^ALONE=(/,/^)/p' "$TEST_DIR/run-all.sh" | sed '1d;$d' | awk '{print $1}')"
-assert_eq "$([ -n "$ALONE_NAMES" ] && echo found || echo 'none: the sed over run-all.sh ALONE=( ... ) is broken')" \
-  found "the ALONE list is read out of run-all.sh"
+# The shipped list is empty: no suite holds a window the pool could break.
+# The runner under test names one.
+ALONE_NAMES=solo-4
 B="$TMP_ROOT/alone"
 battery "$B"
+mutate_file "$B/run-all.sh" $'ALONE=(\n)' $'ALONE=(\n  solo-4\n)'
 event_suites "$B" pool-1 pool-2 pool-3 $ALONE_NAMES
 run_battery "$B" 4 EV="$B.ev"
 verdicts="$(printf '%s\n' "$ALONE_NAMES" | awk -v ev="$B.ev" '
@@ -526,6 +527,7 @@ mkdir -p "$OTHER"
 for name in aaa-alone mmm-alone "$O" zzz-pool; do suite "$OTHER" "$name" 0 'pass: 1   fail: 0'; done
 alone_order() { # DIR [FROM TO] ; start order of a fresh runner in DIR, FROM edited to TO
   battery "$1"
+  mutate_file "$1/run-all.sh" $'ALONE=(\n)' $'ALONE=(\n  '"$O"$'\n)'
   [ "$#" -lt 3 ] || mutate_file "$1/run-all.sh" "$2" "$3"
   run_battery "$1" 1 -- --battery "$OTHER" --alone aaa-alone --alone mmm-alone
   printf 'rc=%s started=%s' "$RC" "$(started_of | tr '\n' ' ')"

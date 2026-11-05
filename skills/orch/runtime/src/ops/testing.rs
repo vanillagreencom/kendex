@@ -6,8 +6,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use agent_runtime::harness::Harness;
-use agent_runtime::observe::ProcessReading;
 use agent_runtime::process::Identity;
 use agent_runtime::protocol::Outcome;
 use agent_runtime::reading::Reading;
@@ -58,26 +56,14 @@ fn gone(_: &Identity) -> Reading<Identity> {
     Reading::Gone
 }
 
-/// The pane reader no row here consults: no fixture lane has a claim row.
-pub(super) fn no_pane(
-    server: u64,
-    pane: &str,
-    _: &Identity,
-    _: Option<Harness>,
-) -> Reading<ProcessReading> {
-    panic!("pane {pane} on server {server} read where no claim row stands")
-}
-
 /// The host every row judges against unless it plants its own: a cap of
-/// four, no store of the shell's, and a kernel that holds none of the fixtures'
-/// pids, so a fixture lane never charges and a close reads its lane exited.
-/// Rows about liveness hold their own children or plant their readings.
+/// four and a kernel that holds none of the fixtures' pids, so a fixture
+/// lane never charges and a close reads its lane exited. Rows about
+/// liveness hold their own children or plant their readings.
 pub(super) fn host() -> Host<'static> {
     Host {
         lane_cap: 4,
-        claim_store: None,
         still_runs: &gone,
-        pane_foreground: &no_pane,
         admission: Some(no_reads()),
         accounts: None,
     }

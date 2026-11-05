@@ -437,6 +437,63 @@ fn a_live_holder_blocks_the_launch_and_a_gone_one_yields_with_a_rebase_obligatio
     assert_eq!(lane["status"], "stopped");
 }
 
+/// Decision 129 at a record reading `done`: the item's next phase is
+/// judged as a first launch, on its item, its brief and the range it
+/// names, over the record's slot. KEN-L's done record keeps its earlier
+/// sets; a live holder of a path the item now names refuses
+/// `launch-overlap`, and with the holder gone and an open pull request on
+/// the path the launch is admitted with both obligations on the record,
+/// its touched set the item's.
+#[test]
+fn a_launch_over_a_done_record_is_judged_as_a_first_launch() {
+    let mut fleet = Fleet::new();
+    fleet.init_fleet();
+    fleet.init_item("KEN-H", "ken-h");
+    fleet.item("KEN-L", "`src/a.sh`, `docs/x.md`", 0, &[]);
+    let mut harness = Owned::sleep();
+    let mut live = holder("KEN-H", "running", Some(&harness), Some(&["src/a.sh"]));
+    live["repo"] = json!("o/r");
+    let mut done = holder("KEN-L", "done", None, Some(&["old/path.rs"]));
+    done["repo"] = json!("o/r");
+    fleet.write_lanes(vec![live, done]);
+    fleet.gh_api(&gh_map(&[fake_pull(7, "feature/x", &["src/a.sh"])]));
+    let before = fleet.fleet();
+    let mut request = launch("KEN-L", fleet.state_dir().as_path());
+    request["repo"] = json!("o/r");
+
+    let out = fleet.op(&request);
+    let (key, fields) = refusal(&out);
+    assert_eq!(key, "launch-overlap", "{}", stderr(&out));
+    assert_eq!(
+        fields,
+        pairs(&[("item", "KEN-L"), ("file", "src/a.sh"), ("holder", "KEN-H")])
+    );
+    assert_eq!(fleet.fleet(), before, "a refusal writes nothing");
+
+    end(&mut harness);
+    let out = fleet.op(&request);
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{}", stderr(&out));
+    let lane = fleet.lane("KEN-L");
+    // No fleet server exists here, so the admitted launch fails before any
+    // window; the record it leaves is `stopped`, its judgement kept.
+    assert_eq!(lane["status"], "stopped");
+    assert_eq!(
+        lane["touched"],
+        json!(["docs/x.md", "src/a.sh"]),
+        "the item's set, never the done record's"
+    );
+    let holders: Vec<&str> = lane["rebase"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o["holder"].as_str().unwrap())
+        .collect();
+    assert_eq!(holders, ["KEN-H", "#7"], "{lane}");
+    assert_eq!(fleet.lane_count(), 2, "the record's slot is taken");
+    assert_eq!(fleet.lane("KEN-H"), before["lanes"][0]);
+}
+
 /// Decisions 99 and 105 at the holder: a holder whose touched set cannot be
 /// read, its record carrying none and its item unreadable, blocks as
 /// unknown; nothing is written.

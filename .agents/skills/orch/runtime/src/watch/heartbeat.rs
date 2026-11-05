@@ -373,10 +373,7 @@ fn run(ctx: &Context, tick: &Tick) -> Produced {
     // The occupancy reader the owed verdicts' judge charges live lanes
     // through, as the overseer duty's walk and the `accounts pick` verb
     // build it.
-    let host = Host::kernel(
-        ctx.settings.lane_cap,
-        Some(ctx.settings.claim_store.clone()),
-    );
+    let host = Host::kernel(ctx.settings.lane_cap);
     let (owed, quota, open, github) = {
         let latest = ctx.shared.lock().unwrap_or_else(|p| p.into_inner());
         (

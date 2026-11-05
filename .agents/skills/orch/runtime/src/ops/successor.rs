@@ -183,7 +183,7 @@ pub fn successor(
                 .and_then(|(caller, _, _)| caller.handoff.clone())
         })
         .unwrap_or_else(|| HANDOFF.to_owned());
-    let host = crate::ops::Host::kernel(settings.lane_cap, Some(settings.claim_store.clone()));
+    let host = crate::ops::Host::kernel(settings.lane_cap);
     let request = match (recorded.as_ref(), mark) {
         (Some((caller, harness, _)), Some(mark)) => {
             walk_request(settings, path, &host, caller, *harness, mark, now)

@@ -1,12 +1,9 @@
 # shellcheck shell=bash
 #
-# The ONE writer into a lane pane. Every keystroke orch sends, and every paste,
-# goes through pane_write: the launch lines open-terminal types into a window it
-# just opened, the successor line overseer-host-tmux's create types into the
-# window it opens, and what the overseer still has to type through
-# ../pane-write, such as a
-# harness dialog's answer or a continuation line: a walled lane's nudge, a
-# hosted Codex relaunch's line, the resend after model-capacity. A raw
+# The ONE writer into a lane pane from shell. Every keystroke the shell
+# entries send, and every paste, goes through pane_write: the successor line
+# overseer-host-tmux's create types into the window it opens, and the lines a
+# Jarvis session and lane-close type, such as a harness dialog's answer. A raw
 # `tmux paste-buffer -t ""` types into whatever pane the caller sits in, which
 # is how an overseer pasted `/exit` into itself; a write into a pane whose
 # process has changed lands its keystrokes in a process nobody meant. Both are refused here, before anything is typed.
@@ -77,7 +74,7 @@ pane_write_message() { # KEY FIELD=VALUE...
     process-mismatch)
       case " $* " in
         *" expected=shell "*) printf '%s\n' 'fix=a window just opened must be at its shell, one of bash, zsh, fish, sh, dash or tmux'"'"'s default-shell; set default-shell to the shell it runs, and where a default-command wraps the shell (systemd-run, a confine script) raise PANE_WRITE_SETTLE_SECS past the time the wrapper takes to hand the pane to it' ;;
-        *) printf '%s\n' 'fix=the pane does not run the expected process; read the lane'"'"'s state with lanes state before writing to it' ;;
+        *) printf '%s\n' 'fix=the pane does not run the expected process; read the lane'"'"'s state with orch-runtime lane status --item before writing to it' ;;
       esac ;;
     settle-invalid) printf '%s\n' 'fix=PANE_WRITE_SETTLE_SECS is a whole number of seconds from 0 to 99; nothing was typed' ;;
     expect-missing) printf '%s\n' 'fix=name the process the pane must run: shell for a window just opened, or the harness, or ssh for a hosted lane' ;;

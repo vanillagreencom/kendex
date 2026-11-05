@@ -134,9 +134,9 @@ router reads them. Without --awaiting-after, unreadable project settings
 are a global failure.
 
 Consumers: orch's workflows treat this as the single state reducer for
-multi-PR watching (orch's approval-wait remains the single-PR foreground
-wait with on-timeout policy; orch's oversee consumes it through
-oversee-watch, and lane-close reads its silence before a park); harness
+multi-PR watching (the orch runtime's verify-review operation remains the
+single-PR review gate with its on-timeout policy; the orch runtime's watch
+consumes this reducer, and lane-close reads its silence before a park); harness
 wake-up mechanisms (a monitor loop, cron, a scheduler) call it rather than
 re-deriving state keys per session.
 USAGE

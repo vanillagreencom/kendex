@@ -1289,12 +1289,6 @@ fn a_launch_whose_uid_cannot_be_read_refuses_and_names_no_socket() {
     assert_eq!(reply["refusal"]["key"], "uid-unread", "{reply}");
 }
 
-/// `session-file` finds a session's file by the id its launch bound, under
-/// the harness's home for the cwd, and answers three-valued in the reply:
-/// a Codex rollout named by the id is `live` with its path, an id no file
-/// carries `gone` (a cold home too), a store that cannot be listed
-/// `unreadable` with its cause, and a harness no adapter reads a refusal;
-/// never a neighbour's file by its age.
 #[test]
 fn session_file_finds_the_rollout_by_its_id_and_answers_three_valued() {
     use std::os::unix::fs::PermissionsExt;

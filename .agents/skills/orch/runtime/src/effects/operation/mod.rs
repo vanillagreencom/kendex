@@ -729,13 +729,9 @@ fn record(outcome: EffectOutcome) -> RecordOutcome {
 }
 
 /// The host facts a lane transition judges live processes against: the
-/// settings' cap and the claim store, and the
-/// kernel's own reads, private to `ops`.
+/// settings' cap and the kernel's own read, private to `ops`.
 pub(in crate::effects) fn host(run: &Run) -> ops::Host<'static> {
-    ops::Host::kernel(
-        run.settings.lane_cap,
-        Some(run.settings.claim_store.clone()),
-    )
+    ops::Host::kernel(run.settings.lane_cap)
 }
 
 /// Read a state file for the effect files: their one entry to the store's

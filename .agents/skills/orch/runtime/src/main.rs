@@ -1470,7 +1470,7 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
             env,
         } => {
             let path = target_path(&target, &settings);
-            let host = ops::Host::kernel(settings.lane_cap, Some(settings.claim_store.clone()));
+            let host = ops::Host::kernel(settings.lane_cap);
             let request = ops::accounts::PickRequest {
                 harness,
                 model: native_model,
@@ -1532,7 +1532,7 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
             keep_unmeasured,
         } => {
             let path = target_path(&target, &settings);
-            let host = ops::Host::kernel(settings.lane_cap, Some(settings.claim_store.clone()));
+            let host = ops::Host::kernel(settings.lane_cap);
             let request = ops::walk::WalkRequest {
                 scope: if overseer {
                     ops::walk::Scope::Overseer
@@ -2150,7 +2150,7 @@ fn persist(
     reason = "the command's one construction of the kernel host, handed to the store entries alone"
 )]
 fn kernel_host(settings: &Settings) -> ops::Host<'_> {
-    ops::Host::kernel(settings.lane_cap, Some(settings.claim_store.clone()))
+    ops::Host::kernel(settings.lane_cap)
         .admitting(ops::Clis {
             tracker: settings.reads.tracker_cli.clone(),
             gh: PathBuf::from("gh"),

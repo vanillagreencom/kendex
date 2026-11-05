@@ -538,6 +538,10 @@ pub(super) fn launch_lane(
     let lanes = lanes(path, doc)?;
     let intents = intents(path, doc)?;
     let position = lanes.iter().position(|l| l.item == r.item);
+    // A record reading `done` holds no admission: the item's next phase is
+    // judged as a first launch, over the record's slot; a stopped or parked
+    // record's launch is the same phase, judged when it was admitted.
+    let relaunch = position.filter(|&index| lanes[index].status != LaneStatus::Done);
     // The identities the lane a relaunch replaces still names, read once:
     // they decide what of its record the count keeps and whether the
     // relaunch is refused beside a harness that still runs.
@@ -545,16 +549,11 @@ pub(super) fn launch_lane(
     // The cap as it stands, read once for the reply whether this request
     // admits a launch or finds its own standing: every local
     // lane, the one a relaunch replaces counted for what the relaunch does
-    // not replace, plus the claim rows no live record accounts for.
-    let claims = match &host.claim_store {
-        Some(store) => occupancy::read_claims(store, &occupancy::canonical_fleet(path))?,
-        None => Vec::new(),
-    };
+    // not replace.
     let admission = occupancy::occupancy(
         &lanes,
         &intents,
         own.as_ref().map(|ids| (r.item.as_str(), ids)),
-        &claims,
         env.now_secs,
         host,
     );
@@ -600,7 +599,7 @@ pub(super) fn launch_lane(
     // refuses with one cause: a first launch is judged on its item, its
     // brief and the range it names; a relaunch keeps the record's sets,
     // since a recorded lane's relaunch was judged when it was admitted.
-    let judged = match position {
+    let judged = match relaunch {
         Some(_) => None,
         None => Some(admission::judge(
             path,
@@ -677,6 +676,9 @@ pub(super) fn launch_lane(
             state::delete(lane, "live_display");
             state::delete(lane, "reservation");
             unpark(path, lane, index, &at)?;
+            if let Some(judged) = &judged {
+                admission::record(path, doc, index, judged)?;
+            }
             index
         }
         None => {
@@ -1534,13 +1536,11 @@ mod tests {
         }
     }
 
-    /// The production host: the kernel's own readers, no claim store.
+    /// The production host: the kernel's own reader.
     fn kernel(cap: u32) -> Host<'static> {
         Host {
             lane_cap: cap,
-            claim_store: None,
             still_runs: &process::still_runs,
-            pane_foreground: &no_pane,
             admission: Some(no_reads()),
             accounts: None,
         }
@@ -1586,9 +1586,6 @@ mod tests {
             .map(|c| {
                 let source = match &c.source {
                     ChargeSource::Lane { item } => item.clone(),
-                    ChargeSource::Claim { file } | ChargeSource::Reservation { file } => {
-                        file.clone()
-                    }
                 };
                 (source, c.reason)
             })
@@ -1764,10 +1761,8 @@ mod tests {
         };
         let host = Host {
             lane_cap: 1,
-            claim_store: None,
             admission: Some(no_reads()),
             still_runs: &unread,
-            pane_foreground: &no_pane,
             accounts: None,
         };
         let err = apply_on(&path, &launch("KEN-V"), &env(), LOCK, &host).unwrap_err();

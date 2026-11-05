@@ -333,7 +333,9 @@ pub enum LaneState {
 
 /// The three-valued inputs one lane is classified from.
 pub struct Inputs<'a> {
-    pub pane: &'a Reading<PaneFields>,
+    /// The lane's pane on this server; `None` where the kind's pane is the
+    /// provider's own and the screen is its capture (`pane=verb`).
+    pub pane: Option<&'a Reading<PaneFields>>,
     pub process: Option<&'a ProcessReading>,
     pub screen: Option<&'a Result<String, String>>,
     /// A Pi lane's rows; `None` for every other harness.
@@ -341,15 +343,16 @@ pub struct Inputs<'a> {
     pub harness: Option<Harness>,
 }
 
-/// The classifier, in the rung order: the window, the read, the process (a
-/// pane with nothing but shells under it is the lane, finished), the rows
-/// where the harness writes them, then the screen through the one judge. A Pi
-/// lane with no rows is unjudged, never idle off its pane.
+/// The classifier, in the rung order: the window (where the pane is this
+/// server's), the read, the process (a pane with nothing but shells under
+/// it is the lane, finished), the rows where the harness writes them, then
+/// the screen through the one judge. A Pi lane with no rows is unjudged,
+/// never idle off its pane.
 pub fn classify(inputs: &Inputs) -> LaneState {
     match inputs.pane {
-        Reading::Live(_) => {}
-        Reading::Gone => return LaneState::Gone,
-        Reading::Unreadable { cause } => {
+        None | Some(Reading::Live(_)) => {}
+        Some(Reading::Gone) => return LaneState::Gone,
+        Some(Reading::Unreadable { cause }) => {
             return LaneState::Unreadable {
                 cause: (*cause).to_owned(),
             };
@@ -512,16 +515,44 @@ fn identity_word(identity: Option<&Identity>) -> String {
     identity.map_or_else(|| "none".to_owned(), |i| format!("{}:{}", i.pid, i.start))
 }
 
+/// What a lane's host answers before its pane is read (`lane_state`,
+/// `lib/lane-state.sh:1137`; `lane_pane_observe`): the provider's status
+/// verb where the lane's kind declares one, and its capture where the
+/// kind's pane is the provider's own (`pane=verb`), asked only of a harness
+/// the status verb did not read as exited.
+pub(super) struct HostRead {
+    status: Option<Result<HostStatus, String>>,
+    screen: Option<Result<String, String>>,
+}
+
+impl HostRead {
+    pub(super) fn of(scripts: &Path, lane: &Lane, caps: Capabilities) -> HostRead {
+        let status = match (caps.status, lane.harness.as_deref()) {
+            (Status::Verb, Some(harness)) => Some(hosted::status(
+                scripts,
+                hosted::host_of(lane),
+                &lane.item,
+                harness,
+            )),
+            (Status::Verb, None) | (Status::Pane | Status::Task | Status::None, _) => None,
+        };
+        let screen = match (caps.pane, &status) {
+            (PaneKind::Verb, None | Some(Ok(HostStatus::Running))) => {
+                Some(hosted::capture(scripts, hosted::host_of(lane), &lane.item))
+            }
+            (PaneKind::Verb, Some(Ok(HostStatus::Exited) | Err(_))) | (PaneKind::Local, _) => None,
+        };
+        HostRead { status, screen }
+    }
+}
+
 /// Read one lane: the pane, its foreground, its screen and, for a Pi lane,
-/// its rows, each once. `remote` is the provider's status verb where the
-/// lane's kind declares one (`lane_state`, `lib/lane-state.sh:1137`): an
+/// its rows, each once. `host` is what its provider answered first: an
 /// exited harness is the lane exited whatever its pane shows, a failed read
-/// leaves it unjudged, and a running one is judged by the pane.
-fn read_lane<'a>(
-    lane: &'a Lane,
-    readers: &Readers,
-    remote: Option<Result<HostStatus, String>>,
-) -> Observed<'a> {
+/// leaves it unjudged, and a running one is judged by the pane, the
+/// provider's own where its kind captures it (the local pane then holds a
+/// transport shell, which proves nothing of the harness).
+fn read_lane<'a>(lane: &'a Lane, readers: &Readers, host: HostRead) -> Observed<'a> {
     let name = lane_name(lane);
     let harness = lane.harness.as_deref().and_then(Harness::parse);
     let identity = identity_of(lane);
@@ -542,25 +573,11 @@ fn read_lane<'a>(
         rows_key: None,
         state,
     };
-    match remote {
+    match host.status {
         Some(Err(cause)) => return unread(LaneState::Unjudged { cause }),
         Some(Ok(HostStatus::Exited)) => return unread(LaneState::Exited),
         Some(Ok(HostStatus::Running)) | None => {}
     }
-    let Some((server, pane_id)) = recorded else {
-        return unread(LaneState::Unjudged {
-            cause: "pane-unrecorded".to_owned(),
-        });
-    };
-    let pane_key = Some(format!("{server} {pane_id}"));
-    let pane = (readers.pane)(server, launch.and_then(|l| l.server_start), pane_id);
-    let (process, screen) = match &pane {
-        Reading::Live(fields) => (
-            Some((readers.foreground)(fields.pid, harness, identity.as_ref())),
-            Some((readers.capture)(&fields.pane)),
-        ),
-        Reading::Gone | Reading::Unreadable { .. } => (None, None),
-    };
     let rows_file = (harness == Some(Harness::Pi))
         .then(|| {
             lane.mail_root.as_deref().map(|root| {
@@ -577,8 +594,40 @@ fn read_lane<'a>(
         Reading::Live(row) => serde_json::to_string(&row).ok(),
         Reading::Gone | Reading::Unreadable { .. } => None,
     });
+    if let Some(screen) = host.screen {
+        let state = classify(&Inputs {
+            pane: None,
+            process: Some(&ProcessReading::HarnessUp),
+            screen: Some(&screen),
+            rows: rows_reading.as_ref(),
+            harness,
+        });
+        return Observed {
+            lane,
+            name: name.clone(),
+            pane_key: recorded.map(|(server, pane_id)| format!("{server} {pane_id}")),
+            identity: identity.clone(),
+            screen: screen.ok(),
+            rows_key,
+            state,
+        };
+    }
+    let Some((server, pane_id)) = recorded else {
+        return unread(LaneState::Unjudged {
+            cause: "pane-unrecorded".to_owned(),
+        });
+    };
+    let pane_key = Some(format!("{server} {pane_id}"));
+    let pane = (readers.pane)(server, launch.and_then(|l| l.server_start), pane_id);
+    let (process, screen) = match &pane {
+        Reading::Live(fields) => (
+            Some((readers.foreground)(fields.pid, harness, identity.as_ref())),
+            Some((readers.capture)(&fields.pane)),
+        ),
+        Reading::Gone | Reading::Unreadable { .. } => (None, None),
+    };
     let state = classify(&Inputs {
-        pane: &pane,
+        pane: Some(&pane),
         process: process.as_ref(),
         screen: screen.as_ref(),
         rows: rows_reading.as_ref(),
@@ -595,13 +644,11 @@ fn read_lane<'a>(
     }
 }
 
-/// `lane status --item`: what one lane is doing now, read as the
-/// observation duty reads it (the provider's status verb where its host's
-/// kind declares one, the recorded pane, its foreground and screen, a Pi
-/// lane's rows) and judged by the one classifier; nothing is written. The
-/// lane is the item's in-flight record; a host whose capability line
-/// cannot be read, or whose kind judges no status, leaves it unjudged with
-/// the cause, as the duty leaves it.
+/// `lane status --item`. The lane is the item's one in-flight record; its
+/// host is read as the observation duty reads it, so a host whose
+/// capability line cannot be read, or whose kind judges no status, leaves
+/// the lane unjudged with the cause; the counts are the `lane-long` line's,
+/// read where it reads them; nothing is written.
 #[allow(
     clippy::disallowed_methods,
     reason = "the verb's one read of the fleet state, a snapshot it judges and prints; it acts on nothing"
@@ -626,26 +673,33 @@ pub fn status(settings: &Settings, item: &str) -> crate::error::Result<Value> {
     };
     let scripts = super::overseer::scripts_dir(&settings.roots.project);
     let hosts = Hosts::read(&scripts, [lane]);
-    let remote = match hosts.of(lane) {
-        Err(cause) => Some(Err(cause)),
-        Ok(caps) => match (caps.status, lane.harness.as_deref()) {
-            (Status::None, _) => Some(Err("status-none".to_owned())),
-            (Status::Verb, Some(harness)) => Some(hosted::status(
-                &scripts,
-                hosted::host_of(lane),
-                &lane.item,
-                harness,
-            )),
-            (Status::Verb, None) | (Status::Pane | Status::Task, _) => None,
-        },
+    let unjudged = |cause: String| HostRead {
+        status: Some(Err(cause)),
+        screen: None,
+    };
+    let (host, files) = match hosts.of(lane) {
+        Err(cause) => (unjudged(cause), None),
+        Ok(caps) if caps.status == Status::None => {
+            (unjudged("status-none".to_owned()), Some(caps.files))
+        }
+        Ok(caps) => (HostRead::of(&scripts, lane, caps), Some(caps.files)),
     };
     let readers = Readers::kernel();
-    let observed = read_lane(lane, &readers, remote);
+    let observed = read_lane(lane, &readers, host);
+    let mut said = Produced::default();
+    let (counters, stage) = lane_counts(lane, files, &settings.state_dir, &scripts, &mut said);
     let mut reply = json!({
         "item": lane.item,
         "window": observed.name,
         "pane_key": observed.pane_key,
         "identity": observed.identity.as_ref().map(|i| identity_word(Some(i))),
+        "review_rounds": counters.review_rounds,
+        "fix_receipts": counters.fix_receipts,
+        "validation_runs": counters.validation_runs,
+        "restacks": counters.restacks,
+        "repeated_class_rounds": counters.repeated_class_rounds,
+        "stage": stage,
+        "counts_cause": said.failed,
     });
     let state = serde_json::to_value(&observed.state).unwrap_or_default();
     if let (Value::Object(reply), Value::Object(state)) = (&mut reply, state) {
@@ -788,18 +842,7 @@ pub fn observe(pass: &Pass) -> Produced {
         .collect();
     let observed: Vec<Observed> = lanes
         .iter()
-        .map(|(lane, caps)| {
-            let remote = match (caps.status, lane.harness.as_deref()) {
-                (Status::Verb, Some(harness)) => Some(hosted::status(
-                    pass.scripts,
-                    hosted::host_of(lane),
-                    &lane.item,
-                    harness,
-                )),
-                (Status::Verb, None) | (Status::Pane | Status::Task | Status::None, _) => None,
-            };
-            read_lane(lane, pass.readers, remote)
-        })
+        .map(|(lane, caps)| read_lane(lane, pass.readers, HostRead::of(pass.scripts, lane, *caps)))
         .collect();
     let mut walls = Vec::new();
     for obs in &observed {
@@ -1649,7 +1692,7 @@ fn start_stall(lane: &Lane, pass: &Pass, hosts: &Hosts, out: &mut Produced) {
                 },
             }
         }
-        Files::Verb => match hosted::status_file(pass, lane) {
+        Files::Verb => match hosted::status_file(pass.scripts, lane) {
             Answer::Live(_) => Answer::Live(()),
             Answer::Gone => match hosted::worktree(pass, lane) {
                 // The worktree the lane's own close-out removed writes no
@@ -1819,42 +1862,8 @@ fn lane_long(pass: &Pass, hosts: &Hosts, out: &mut Produced) {
         if prior == format!("{launched}|{interval}") {
             continue;
         }
-        let files = match hosts.of(lane) {
-            Ok(caps) => Some(caps.files),
-            Err(_) => None,
-        };
-        let (counters, stage) = match (lane.status, files) {
-            (LaneStatus::Parked, _) => (Counters::unread(), "parked".to_owned()),
-            (
-                LaneStatus::Running
-                | LaneStatus::Preparing
-                | LaneStatus::Stopped
-                | LaneStatus::Done,
-                Some(Files::Local),
-            ) => (lane_counters(lane, pass), lane_step(lane)),
-            (
-                LaneStatus::Running
-                | LaneStatus::Preparing
-                | LaneStatus::Stopped
-                | LaneStatus::Done,
-                Some(Files::Verb),
-            ) => (hosted::counters(pass, lane, out), hosted::step(pass, lane)),
-            (
-                LaneStatus::Running
-                | LaneStatus::Preparing
-                | LaneStatus::Stopped
-                | LaneStatus::Done,
-                Some(Files::None),
-            ) => (Counters::unread(), "none".to_owned()),
-            // A host whose line could not be read: said once by the pass.
-            (
-                LaneStatus::Running
-                | LaneStatus::Preparing
-                | LaneStatus::Stopped
-                | LaneStatus::Done,
-                None,
-            ) => (Counters::unread(), "unread".to_owned()),
-        };
+        let files = hosts.of(lane).ok().map(|caps| caps.files);
+        let (counters, stage) = lane_counts(lane, files, pass.state_dir, pass.scripts, out);
         out.events.push(Event::LaneLong {
             item: lane.item.clone(),
             age,
@@ -1940,6 +1949,42 @@ impl Counters {
     }
 }
 
+/// The five counts and the stage of the `lane-long` line, read where the
+/// lane's files are: under its worktree on this disk, through its host's
+/// `cat`, or not at all. A parked lane's disk is not asked; a host whose
+/// line could not be read (`files` none) counts nothing.
+fn lane_counts(
+    lane: &Lane,
+    files: Option<Files>,
+    state_dir: &Path,
+    scripts: &Path,
+    out: &mut Produced,
+) -> (Counters, String) {
+    match (lane.status, files) {
+        (LaneStatus::Parked, _) => (Counters::unread(), "parked".to_owned()),
+        (
+            LaneStatus::Running | LaneStatus::Preparing | LaneStatus::Stopped | LaneStatus::Done,
+            Some(Files::Local),
+        ) => (lane_counters(lane, state_dir), lane_step(lane)),
+        (
+            LaneStatus::Running | LaneStatus::Preparing | LaneStatus::Stopped | LaneStatus::Done,
+            Some(Files::Verb),
+        ) => (
+            hosted::counters(scripts, lane, out),
+            hosted::step(scripts, lane),
+        ),
+        (
+            LaneStatus::Running | LaneStatus::Preparing | LaneStatus::Stopped | LaneStatus::Done,
+            Some(Files::None),
+        ) => (Counters::unread(), "none".to_owned()),
+        // A host whose line could not be read, which the duty's pass says once.
+        (
+            LaneStatus::Running | LaneStatus::Preparing | LaneStatus::Stopped | LaneStatus::Done,
+            None,
+        ) => (Counters::unread(), "unread".to_owned()),
+    }
+}
+
 /// The counters of a running lane (`lane_long_rounds`, `lib/lane-gitfile.sh`
 /// `lane_item_state`): the item's own workflow state under its worktree's
 /// state directory (`<mail_root>/tmp/workflow-state-<item>.json`, the path
@@ -1947,7 +1992,7 @@ impl Counters {
 /// record names no worktree on this disk; the validation run index under
 /// the worktree; a state the lane has not written, or one that cannot be
 /// read, counts nothing.
-fn lane_counters(lane: &Lane, pass: &Pass) -> Counters {
+fn lane_counters(lane: &Lane, state_dir: &Path) -> Counters {
     // The worktree the record names, read three-valued where the `-d` test
     // stood: a root this reader cannot read counts nothing.
     let root = match lane.mail_root.as_deref().map(Path::new) {
@@ -1963,7 +2008,7 @@ fn lane_counters(lane: &Lane, pass: &Pass) -> Counters {
         .map(|root| root.join("tmp").join("validation-runs"))
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|text| validation_runs_of(&text));
-    let state_dir = root.map_or_else(|| pass.state_dir.to_path_buf(), |root| root.join("tmp"));
+    let state_dir = root.map_or_else(|| state_dir.to_path_buf(), |root| root.join("tmp"));
     match item_doc(&state::item_path(&state_dir, &lane.item)) {
         Reading::Live(doc) => counters_of(&doc, runs).unwrap_or_else(Counters::unread),
         Reading::Gone | Reading::Unreadable { .. } => Counters::unread(),

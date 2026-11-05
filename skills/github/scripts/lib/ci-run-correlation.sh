@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Shared CI check-rollup scoping for the PR merge/wait path.
 #
-# One implementation, sourced by both github `pr-merge.sh` and orch `ci-wait`,
-# so the merge gate and the waiter cannot disagree about which run is current.
-# `ci-run-correlation.test.sh` fails if either script grows a local copy.
+# One implementation, sourced by every github command that reads check runs,
+# so no two of them disagree about which run is current. tools/guard refuses
+# a command that grows a local copy.
 
 # Scope a `gh pr checks` array to the current authoritative substantive run per
 # workflow, so checks from a SUPERSEDED run are not read as current failures.
@@ -52,7 +52,7 @@
 # Shared jq preamble: the run-id extraction, the check-bucket taxonomy, and
 # the run-scope reduction, exported as one string so every consumer (this
 # scoping, pr-merge's classification and head_runs, ci-classify-refusal's
-# diagnosis, ci-wait's failure classification) prepends the SAME definitions —
+# diagnosis) prepends the SAME definitions —
 # a local `def bucket`/`def runid` copy is the drift this library exists to
 # kill, and ci-run-correlation.test.sh rejects one.
 # `red` is the failed/cancelled bucket test, and `required_only($req)` asks
@@ -316,7 +316,7 @@ RULESET_CONTEXTS_JQ='
 # on a check it does not name. Unreadable workflow parameters refuse.
 # Ready evidence holds classic contexts, distinct workflow definitions with
 # their consumer runs and check links, and all_checks for fallback protection.
-# Failed evidence holds failed_runs so ci-wait retries the bound workflow.
+# Failed evidence holds failed_runs so a caller can rerun the bound workflow.
 # Other unnameable rules retain the all-check fallback. Required workflows instead hold as pending, failed or unreadable;
 # their partial job rollup cannot prove that the required run passed.
 # Arg 2, when given, is the owner/name the PR lives in; without it gh resolves

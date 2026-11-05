@@ -31,44 +31,16 @@
 //! charges derived from those are left out of its count; a charge its wake
 //! identity derives is owned execution the relaunch does not replace, and
 //! the relaunch is refused beside it (`retained_charge`).
-//!
-//! The shell launcher's claim store is read, never written: a `.claim`
-//! row carries a server pid and a pane id and no harness identity. It is
-//! suppressed only on two proofs together: the `launch` identity of a lane of this fleet
-//! recorded at that server pid and pane id reads `Live`, and the pane the
-//! row names, on the server it names, holds that identity in its
-//! foreground group, read through `observe::foreground` with the recorded
-//! identity by exact pane id. A live wake, a status word or equal numbers
-//! alone never suppress: a wake runs outside any pane, and a server pid and
-//! a pane id are handed on to later servers and windows. One slot per row,
-//! the first rule that holds deciding (`claim_charge`):
-//!
-//! | Row reads | Charge | Reason, cause |
-//! |---|---|---|
-//! | `.claim` at the server pid and pane id of a lane whose `launch` identity reads `Live`, that pane on that server holding the identity in its foreground group | none | the row doubles the one proven harness |
-//! | `.claim` at those numbers, the pane read `Gone` | 1 | `claim`, `pane-gone` |
-//! | `.claim` at those numbers, another process or a shell in the pane's foreground | 1 | `claim`, `foreground-not-harness` |
-//! | `.claim` at those numbers, the server, the pane or the foreground unreadable | 1 | `unknown`, the reader's cause |
-//! | `.claim` at numbers no live `launch` identity records | 1 | `claim`, `unmatched` |
-//! | `.reserve`: a launcher pid and no start, which is no identity | 1 | `unknown`, `identity-unrecorded`; never read by that pid |
-//! | a row that does not parse | 1 | `unknown`, `malformed` |
-//!
-//! The shell launcher's pruner is the only remover of its rows; this
-//! reader deletes none.
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use agent_runtime::clock;
-use agent_runtime::harness::Harness;
-use agent_runtime::host::tmux;
-use agent_runtime::observe::{self, ProcessReading};
 use agent_runtime::process::{self, Identity};
 use agent_runtime::reading::Reading;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::admission::{AdmissionReads, Clis};
-use crate::error::{Error, Result};
 use crate::settings::Settings;
 use crate::state::{EffectOp, Intent, Lane, LaneStatus, LaunchIdentity};
 
@@ -79,24 +51,16 @@ use crate::state::{EffectOp, Intent, Lane, LaneStatus, LaunchIdentity};
 pub(crate) const CLOUD_KIND: &str = "claude-cloud";
 
 /// The host facts a fleet transition judges beside the record: the lane cap
-/// setting, the shell claim store, the liveness read of the one identity
-/// reader and the pane read a claim's suppression needs. The reads are
+/// setting and the liveness read of the one identity reader. The read is
 /// injected so a transition is a function of the record and what the
-/// kernel and the tmux server answered; production takes
-/// [`Host::kernel`]. The readers are private to `ops`: an effect file
-/// receives the operation handle and no primitive function pointer
-/// No read takes a pid alone: a pid alone is no identity.
+/// kernel answered; production takes [`Host::kernel`]. The reader is
+/// private to `ops`: an effect file receives the operation handle and no
+/// primitive function pointer. No read takes a pid alone: a pid alone is
+/// no identity.
 pub struct Host<'a> {
     pub lane_cap: u32,
-    /// The shell claim store; `None` where no shell launcher writes one.
-    pub claim_store: Option<PathBuf>,
     /// Whether a recorded identity still runs under its recorded start.
     pub(super) still_runs: &'a dyn Fn(&Identity) -> Reading<Identity>,
-    /// Who holds the terminal of the pane a claim row names: the pane by
-    /// exact id on the server with that pid, read with the
-    /// lane's live launch identity and its harness. Consulted only for a
-    /// claim at the numbers of a live launch identity.
-    pub(super) pane_foreground: PaneForeground<'a>,
     /// The admission's reads: the item read
     /// eligibility and the Location paths are judged from, for the
     /// launching item and for a holder with no recorded touched set, and
@@ -111,18 +75,15 @@ pub struct Host<'a> {
 }
 
 impl Host<'static> {
-    /// The host as production judges it: the kernel's own identity read and
-    /// the pane read through the one judge.
+    /// The host as production judges it: the kernel's own identity read.
     #[allow(
         clippy::disallowed_methods,
         reason = "the one site that hands the kernel's identity reader to a fleet transition, which judges live processes beside the record and never acts on one"
     )]
-    pub fn kernel(lane_cap: u32, claim_store: Option<PathBuf>) -> Host<'static> {
+    pub fn kernel(lane_cap: u32) -> Host<'static> {
         Host {
             lane_cap,
-            claim_store,
             still_runs: &process::still_runs,
-            pane_foreground: &pane_foreground,
             admission: None,
             accounts: None,
         }
@@ -149,48 +110,6 @@ impl<'a> Host<'a> {
     }
 }
 
-/// The pane read a claim's suppression needs: the server pid and pane id a
-/// lane's `launch` records, that launch identity read live, and the lane's
-/// harness, answered with who holds the pane's terminal; `Gone` for a pane
-/// the server has not, `Unreadable` when the server or the pane did not
-/// answer.
-pub(super) type PaneForeground<'a> =
-    &'a dyn Fn(u64, &str, &Identity, Option<Harness>) -> Reading<ProcessReading>;
-
-/// Who holds the terminal of pane `pane` on the tmux server whose pid is
-/// `server`, read for `recorded`, a lane's launch identity, with `harness`
-/// naming the lane's harness processes. A lane record names its server by
-/// pid alone, so the read goes to the caller's ambient server, the socket
-/// `$TMUX` names or the user's default, the server the shell claim writer
-/// and this runtime's launches open their windows on (`effects::fleet_server`);
-/// a server there with another pid, or none answering, leaves the pane
-/// `Unreadable`, never gone, since a server pid is handed on to later
-/// servers. The pane is read by exact id and its foreground through
-/// `observe::foreground` with the recorded identity, so no other process is
-/// ever taken for the harness.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the occupancy's one pane read, injected through Host: a lane transition judges who holds a claimed pane beside the record and never acts on it"
-)]
-fn pane_foreground(
-    server: u64,
-    pane: &str,
-    recorded: &Identity,
-    harness: Option<Harness>,
-) -> Reading<ProcessReading> {
-    let live = match tmux::ambient_socket().and_then(|socket| tmux::server(&socket)) {
-        Ok(live) if u64::from(live.pid) == server => live,
-        Ok(_) | Err(_) => {
-            return Reading::Unreadable {
-                cause: "server-unreachable",
-            };
-        }
-    };
-    let owns = |name: &str| harness.is_some_and(|h| h.owns_process(name));
-    tmux::pane_fields(&live, pane)
-        .map(|fields| observe::foreground(fields.pid, &owns, Some(recorded)))
-}
-
 /// Why a slot is charged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -204,29 +123,16 @@ pub enum ChargeReason {
     /// An explicit reservation stands and has not lapsed.
     Reservation,
     /// Ownership could not be established: an unreadable identity, a record
-    /// in flight with no identity, a reservation with no readable term, a
-    /// shell reservation row, or a claim row that does not parse.
+    /// in flight with no identity, or a reservation with no readable term.
     /// Protected, never released.
     Unknown,
-    /// A shell claim store row no live lane record accounts for.
-    Claim,
 }
 
 /// What a charge is attributed to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "source", rename_all = "kebab-case")]
 pub enum ChargeSource {
-    Lane {
-        item: String,
-    },
-    /// A shell `claim.*.claim` row, by file name.
-    Claim {
-        file: String,
-    },
-    /// A shell `claim.*.reserve` row, by file name.
-    Reservation {
-        file: String,
-    },
+    Lane { item: String },
 }
 
 /// One slot charged, and why.
@@ -240,7 +146,7 @@ pub struct Charge {
 }
 
 /// The cap and what charges it at one admission; `occupancy` is the number
-/// of charges, one per lane or unaccounted claim row, never per pid.
+/// of charges, one per lane, never per pid.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Occupancy {
     pub cap: u32,
@@ -398,28 +304,10 @@ fn retained_charge(lane: &Lane, ids: &Identities) -> Option<Charge> {
     execution_charge(lane, ids.wake.as_ref(), ChargeReason::Wake)
 }
 
-/// One row of the shell claim store as this reader takes it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum ClaimRow {
-    /// A lane's claim: the tmux server pid and pane id its window had.
-    Claim {
-        file: String,
-        server: u64,
-        pane: String,
-    },
-    /// A launcher's reservation: a slot held from its count until its claim
-    /// or record stands. It names a pid and no start, so it protects until
-    /// the shell launcher removes it.
-    Reserve { file: String },
-    /// A row that does not parse; its fleet cannot be told, so it protects
-    /// a slot until the shell readers, which prune such rows, remove it.
-    Malformed { file: String },
-}
-
-/// The spelling the shell launcher gives a fleet in its claim rows: the
-/// state file's directory resolved physically, else its own spelling with
-/// trailing slashes off (`lane_claims_canon`), then the file name.
-pub(super) fn canonical_fleet(path: &Path) -> String {
+/// The fleet's one spelling, which its launch lock is named by: the state
+/// file's directory resolved physically, else its own spelling with
+/// trailing slashes off, then the file name.
+fn canonical_fleet(path: &Path) -> String {
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -438,88 +326,11 @@ pub(super) fn canonical_fleet(path: &Path) -> String {
     format!("{dir}/{name}")
 }
 
-/// The path the fleet launch lock is taken beside: the shell `cap_take`
-/// holds `flock` on `<fleet>.launch.lock`, and `record::lock` names its
-/// file `<base>.lock`, so the base is `<fleet>.launch` in the shell
-/// fleet spelling.
+/// The path the fleet launch lock is taken beside: the admission holds
+/// `flock` on `<fleet>.launch.lock`, and `record::lock` names its file
+/// `<base>.lock`, so the base is `<fleet>.launch` in the fleet's spelling.
 pub(super) fn launch_lock_base(path: &Path) -> PathBuf {
     PathBuf::from(format!("{}.launch", canonical_fleet(path)))
-}
-
-/// Read the rows of `store` that belong to `fleet` and its fleet cap,
-/// without writing or pruning anything. An absent store is empty; a store or
-/// a row that cannot be read refuses `cap-unreadable`, since a count missing
-/// a lane admits one too many. A row whose kind is `claude-cloud` belongs to
-/// the cloud cap and is left out; one of another fleet is left out.
-pub(super) fn read_claims(store: &Path, fleet: &str) -> Result<Vec<ClaimRow>> {
-    let entries = match fs::read_dir(store) {
-        Ok(entries) => entries,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => {
-            return Err(Error::CapUnreadable {
-                read: "claims",
-                path: store.to_path_buf(),
-                cause: e.to_string(),
-            });
-        }
-    };
-    let mut rows = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(|e| Error::CapUnreadable {
-            read: "claims",
-            path: store.to_path_buf(),
-            cause: e.to_string(),
-        })?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        // A row becomes visible by its rename onto the suffix; a file still
-        // under its temporary name is half-written and not yet a row.
-        if !(name.ends_with(".claim") || name.ends_with(".reserve")) {
-            continue;
-        }
-        let path = entry.path();
-        let text = fs::read_to_string(&path).map_err(|e| Error::CapUnreadable {
-            read: "claims",
-            path: path.clone(),
-            cause: e.to_string(),
-        })?;
-        if let Some(row) = parse_row(&name, text.lines().next().unwrap_or(""), fleet) {
-            rows.push(row);
-        }
-    }
-    Ok(rows)
-}
-
-/// One row's fields: `server\tpane\tcfg\twindow\tcreated\tfleet\tnamed\tkind\tpool`
-/// (`lane_claim_put`); rows older than the last three fields carry six.
-fn parse_row(file: &str, line: &str, fleet: &str) -> Option<ClaimRow> {
-    let fields: Vec<&str> = line.split('\t').collect();
-    let malformed = || {
-        Some(ClaimRow::Malformed {
-            file: file.to_owned(),
-        })
-    };
-    if fields.len() < 6 || fields[1].is_empty() {
-        return malformed();
-    }
-    let Ok(server) = fields[0].parse::<u64>() else {
-        return malformed();
-    };
-    if fields[5] != fleet {
-        return None;
-    }
-    if fields.get(7).copied().unwrap_or("") == CLOUD_KIND {
-        return None;
-    }
-    if fields[1] == "-" {
-        return Some(ClaimRow::Reserve {
-            file: file.to_owned(),
-        });
-    }
-    Some(ClaimRow::Claim {
-        file: file.to_owned(),
-        server,
-        pane: fields[1].to_owned(),
-    })
 }
 
 /// Whether an open launch intent stands on `item`.
@@ -529,89 +340,18 @@ pub(super) fn launch_open(intents: &[Intent], item: &str) -> bool {
         .any(|i| i.open() && i.op == EffectOp::LaunchLane && i.target == item)
 }
 
-/// A lane whose `launch` identity reads live, at the server pid and pane id
-/// its launch records: the one provenance a claim row is matched on, and
-/// the identity the pane read must find holding that pane. A live wake is no launch: it runs outside any pane.
-struct LiveLaunch<'a> {
-    server: u64,
-    pane: &'a str,
-    identity: Identity,
-    harness: Option<Harness>,
-}
-
-fn live_launch<'a>(lane: &'a Lane, ids: &Identities) -> Option<LiveLaunch<'a>> {
-    let read = ids.launch.as_ref()?;
-    let Reading::Live(_) = &read.reading else {
-        return None;
-    };
-    let launch = lane.launch.as_ref()?;
-    Some(LiveLaunch {
-        server: launch.server?,
-        pane: launch.pane.as_deref()?,
-        identity: read.id.clone(),
-        harness: lane.harness.as_deref().and_then(Harness::parse),
-    })
-}
-
-/// The slot a `.claim` row charges, or none when the row is proven the
-/// double of one live launch: a lane's launch identity reads live at the
-/// row's server pid and pane id, and that pane, read on that server by
-/// exact id, holds the identity in its foreground group. Every other
-/// reading protects the row, an unreadable one as unknown with its cause.
-fn claim_charge(
-    file: &str,
-    server: u64,
-    pane: &str,
-    launches: &[LiveLaunch],
-    host: &Host,
-) -> Option<Charge> {
-    let protect = |reason: ChargeReason, cause: &str| {
-        Some(Charge {
-            source: ChargeSource::Claim {
-                file: file.to_owned(),
-            },
-            reason,
-            cause: Some(cause.to_owned()),
-        })
-    };
-    let Some(launch) = launches
-        .iter()
-        .find(|l| l.server == server && l.pane == pane)
-    else {
-        return protect(ChargeReason::Claim, "unmatched");
-    };
-    match (host.pane_foreground)(server, pane, &launch.identity, launch.harness) {
-        Reading::Live(ProcessReading::Harness { identity }) if identity == launch.identity => None,
-        Reading::Live(
-            ProcessReading::Harness { .. }
-            | ProcessReading::HarnessUp
-            | ProcessReading::ShellsOnly
-            | ProcessReading::ForegroundShell { .. }
-            | ProcessReading::ForegroundOther { .. },
-        ) => protect(ChargeReason::Claim, "foreground-not-harness"),
-        Reading::Live(ProcessReading::Unread { cause }) | Reading::Unreadable { cause } => {
-            protect(ChargeReason::Unknown, cause)
-        }
-        Reading::Gone => protect(ChargeReason::Claim, "pane-gone"),
-    }
-}
-
 /// What charges the fleet cap now: every local lane judged by
 /// [`lane_charge`] from identities read once each, except the lane a
 /// relaunch replaces (`replacing`: its item and the identities the caller
-/// read), which charges only what the relaunch does not replace; then the
-/// shell rows no live launch, read in its pane, accounts for
-/// ([`claim_charge`]).
+/// read), which charges only what the relaunch does not replace.
 pub(super) fn occupancy(
     lanes: &[Lane],
     intents: &[Intent],
     replacing: Option<(&str, &Identities)>,
-    claims: &[ClaimRow],
     now_secs: u64,
     host: &Host,
 ) -> Occupancy {
     let mut charges = Vec::new();
-    let mut launches: Vec<LiveLaunch> = Vec::new();
     for lane in lanes {
         if lane.kind.as_deref() == Some(CLOUD_KIND) {
             continue;
@@ -632,24 +372,6 @@ pub(super) fn occupancy(
             None => lane_charge(lane, launch_open(intents, &lane.item), now_secs, ids),
         };
         charges.extend(charge);
-        launches.extend(live_launch(lane, ids));
-    }
-    for row in claims {
-        match row {
-            ClaimRow::Claim { file, server, pane } => {
-                charges.extend(claim_charge(file, *server, pane, &launches, host));
-            }
-            ClaimRow::Reserve { file } => charges.push(Charge {
-                source: ChargeSource::Reservation { file: file.clone() },
-                reason: ChargeReason::Unknown,
-                cause: Some("identity-unrecorded".to_owned()),
-            }),
-            ClaimRow::Malformed { file } => charges.push(Charge {
-                source: ChargeSource::Claim { file: file.clone() },
-                reason: ChargeReason::Unknown,
-                cause: Some("malformed".to_owned()),
-            }),
-        }
     }
     Occupancy {
         cap: host.lane_cap,
@@ -660,11 +382,10 @@ pub(super) fn occupancy(
 
 #[allow(
     clippy::disallowed_methods,
-    reason = "the rows write the claim stores and links the occupancy reads"
+    reason = "the fleet-spelling row makes the link it resolves"
 )]
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
     use std::collections::HashMap;
 
     use serde_json::json;
@@ -684,18 +405,6 @@ mod tests {
                 .cloned()
                 .unwrap_or(Reading::Gone)
         }
-    }
-
-    /// The pane reader a row installs where no claim may reach the pane
-    /// read: a read through it is a suppression attempted on numbers, a
-    /// wake or a status word alone.
-    fn never_a_pane(
-        server: u64,
-        pane: &str,
-        _: &Identity,
-        _: Option<Harness>,
-    ) -> Reading<ProcessReading> {
-        panic!("pane {pane} on server {server} read where no live launch names it")
     }
 
     fn lane(item: &str, status: LaneStatus, launch: Option<(u32, &str)>) -> Lane {
@@ -750,9 +459,7 @@ mod tests {
         let reader = planted(&answers);
         let host = Host {
             lane_cap: 4,
-            claim_store: None,
             still_runs: &reader,
-            pane_foreground: &never_a_pane,
             admission: Some(no_reads()),
             accounts: None,
         };
@@ -899,9 +606,7 @@ mod tests {
         let reader = planted(&answers);
         let host = Host {
             lane_cap: 4,
-            claim_store: None,
             still_runs: &reader,
-            pane_foreground: &never_a_pane,
             admission: Some(no_reads()),
             accounts: None,
         };
@@ -941,278 +646,8 @@ mod tests {
         );
     }
 
-    /// The charges of an occupancy as a keyed set: the store is read in
-    /// directory order, which the contract does not fix.
-    fn keyed(counted: &Occupancy) -> Vec<(String, ChargeReason, Option<String>)> {
-        let mut summary: Vec<_> = counted
-            .charges
-            .iter()
-            .map(|c| {
-                let source = match &c.source {
-                    ChargeSource::Lane { item } => format!("lane:{item}"),
-                    ChargeSource::Claim { file } => format!("claim:{file}"),
-                    ChargeSource::Reservation { file } => format!("reserve:{file}"),
-                };
-                (source, c.reason, c.cause.clone())
-            })
-            .collect();
-        summary.sort_by(|a, b| a.0.cmp(&b.0));
-        summary
-    }
-
-    /// The shell store, read and never written: a claim at the server pid and pane id of a lane whose launch
-    /// identity reads live is suppressed once the pane, read on that
-    /// server with that identity, holds it in its foreground group, so a
-    /// live lane with its claim is one slot; the same pane read with a
-    /// shell or another process in front, gone, or unreadable protects the
-    /// claim, the unreadable one as unknown with the cause; the lane ended,
-    /// or alive only through its detached wake, never reaches the pane read
-    /// and its claim protects as unmatched, since neither proves the pane is
-    /// that attempt's; a claim no record matches protects; a reservation
-    /// row protects as unknown while it stands and is never read by its
-    /// launcher pid; a row that does not parse protects; another fleet's
-    /// rows and cloud-cap rows are left out; a half-written file is not yet
-    /// a row; a cloud lane record belongs to the cloud cap and charges
-    /// nothing here.
     #[test]
-    fn shell_claim_rows_are_accounted_by_provenance_or_protected() {
-        let dir = tempfile::tempdir().unwrap();
-        let store = dir.path().join("claims");
-        fs::create_dir_all(&store).unwrap();
-        let fleet = "/f/workflow-state-oversee.json";
-        let row = |name: &str, fields: &[&str]| {
-            fs::write(store.join(name), format!("{}\n", fields.join("\t"))).unwrap();
-        };
-        row(
-            "claim.a1.claim",
-            &[
-                "41020",
-                "%7",
-                "/a/a1",
-                "KEN-A",
-                "2026-01-01T00:00:00Z",
-                fleet,
-                "a1",
-                "local",
-                "plan",
-            ],
-        );
-        row(
-            "claim.b2.claim",
-            &[
-                "41020",
-                "%9",
-                "/a/b2",
-                "KEN-B",
-                "2026-01-01T00:00:00Z",
-                fleet,
-                "b2",
-                "",
-                "plan",
-            ],
-        );
-        row(
-            "claim.c3.reserve",
-            &[
-                "7000",
-                "-",
-                "",
-                "KEN-C",
-                "2026-01-01T00:00:00Z",
-                fleet,
-                "",
-                "local",
-                "",
-            ],
-        );
-        row(
-            "claim.f6.claim",
-            &[
-                "41020",
-                "%7",
-                "/a/a1",
-                "KEN-F",
-                "2026-01-01T00:00:00Z",
-                "/g/workflow-state-oversee.json",
-            ],
-        );
-        row(
-            "claim.g7.claim",
-            &[
-                "41020",
-                "%8",
-                "/a/a1",
-                "KEN-G",
-                "2026-01-01T00:00:00Z",
-                fleet,
-                "a1",
-                "claude-cloud",
-                "plan",
-            ],
-        );
-        row("claim.h8.claim", &["not a row"]);
-        row("claim.i9", &["41020", "%7", "/a/a1", "KEN-I", "x", fleet]);
-        let rows = read_claims(&store, fleet).unwrap();
-        assert_eq!(rows.len(), 4, "{rows:?}");
-        let answers = HashMap::from([live(100, "ticks:1"), live(300, "ticks:3")]);
-        let reader = planted(&answers);
-        let launch_id = Identity {
-            pid: 100,
-            start: "ticks:1".to_owned(),
-        };
-        // The planted pane read: what the claimed pane answers, and every
-        // ask made of it.
-        let pane_answer = RefCell::new(Reading::Live(ProcessReading::Harness {
-            identity: launch_id.clone(),
-        }));
-        let asked = RefCell::new(Vec::new());
-        let pane_reader =
-            |server: u64, pane: &str, recorded: &Identity, harness: Option<Harness>| {
-                asked
-                    .borrow_mut()
-                    .push((server, pane.to_owned(), recorded.clone(), harness));
-                pane_answer.borrow().clone()
-            };
-        let host = Host {
-            lane_cap: 4,
-            claim_store: None,
-            still_runs: &reader,
-            pane_foreground: &pane_reader,
-            admission: Some(no_reads()),
-            accounts: None,
-        };
-        let mut cloud = lane("KEN-CLOUD", LaneStatus::Running, None);
-        cloud.kind = Some("claude-cloud".into());
-        let mut live_lane = lane("KEN-A", LaneStatus::Running, Some((100, "ticks:1")));
-        live_lane.harness = Some("claude".into());
-        let lanes = [live_lane.clone(), cloud.clone()];
-        let counted = occupancy(&lanes, &[], None, &rows, 0, &host);
-        assert_eq!(
-            keyed(&counted),
-            vec![
-                (
-                    "claim:claim.b2.claim".to_owned(),
-                    ChargeReason::Claim,
-                    Some("unmatched".to_owned())
-                ),
-                (
-                    "claim:claim.h8.claim".to_owned(),
-                    ChargeReason::Unknown,
-                    Some("malformed".to_owned())
-                ),
-                ("lane:KEN-A".to_owned(), ChargeReason::Live, None),
-                (
-                    "reserve:claim.c3.reserve".to_owned(),
-                    ChargeReason::Unknown,
-                    Some("identity-unrecorded".to_owned())
-                ),
-            ]
-        );
-        assert_eq!(counted.occupancy, 4);
-        assert_eq!(
-            asked.replace(Vec::new()),
-            vec![(
-                41020,
-                "%7".to_owned(),
-                launch_id.clone(),
-                Some(Harness::Claude)
-            )],
-            "the one claim at the live launch's numbers is read in its pane, with the launch identity"
-        );
-        // The same claim with the pane read answering anything but the
-        // launch identity in the foreground protects: a shell or another
-        // process in front, the pane gone, or the pane, server or
-        // foreground unreadable.
-        let a1 = |reason: ChargeReason, cause: &str| {
-            (
-                "claim:claim.a1.claim".to_owned(),
-                reason,
-                Some(cause.to_owned()),
-            )
-        };
-        for (answer, expected) in [
-            (
-                Reading::Live(ProcessReading::ForegroundShell {
-                    name: "bash".to_owned(),
-                }),
-                a1(ChargeReason::Claim, "foreground-not-harness"),
-            ),
-            (
-                Reading::Live(ProcessReading::ForegroundOther {
-                    name: "sleep".to_owned(),
-                    pid: 7,
-                }),
-                a1(ChargeReason::Claim, "foreground-not-harness"),
-            ),
-            (
-                Reading::Live(ProcessReading::ShellsOnly),
-                a1(ChargeReason::Claim, "foreground-not-harness"),
-            ),
-            (Reading::Gone, a1(ChargeReason::Claim, "pane-gone")),
-            (
-                Reading::Live(ProcessReading::Unread {
-                    cause: "foreground-group-empty",
-                }),
-                a1(ChargeReason::Unknown, "foreground-group-empty"),
-            ),
-            (
-                Reading::Unreadable {
-                    cause: "server-unreachable",
-                },
-                a1(ChargeReason::Unknown, "server-unreachable"),
-            ),
-        ] {
-            *pane_answer.borrow_mut() = answer.clone();
-            let counted = occupancy(&lanes, &[], None, &rows, 0, &host);
-            assert_eq!(counted.occupancy, 5, "{answer:?}");
-            assert!(keyed(&counted).contains(&expected), "{answer:?}");
-            assert_eq!(asked.replace(Vec::new()).len(), 1, "{answer:?}");
-        }
-        // The same lane ended: no launch identity reads live at that server
-        // and pane, so the pane is not read and the claim protects a slot of
-        // its own.
-        let never = Host {
-            pane_foreground: &never_a_pane,
-            ..host
-        };
-        let ended = [lane("KEN-A", LaneStatus::Running, Some((900, "ticks:1")))];
-        let counted = occupancy(&ended, &[], None, &rows, 0, &never);
-        assert_eq!(counted.occupancy, 4);
-        assert!(keyed(&counted).contains(&a1(ChargeReason::Claim, "unmatched")));
-        assert!(!counted.charges.iter().any(|c| c.source
-            == ChargeSource::Lane {
-                item: "KEN-A".into()
-            }));
-        // A stopped lane whose detached wake reads live keeps its
-        // launch's server pid and pane id, numbers a later server and
-        // another attempt's window may hold. The wake charges once, as owned
-        // execution; it proves nothing about the pane, so the claim at those
-        // numbers is not read and protects.
-        let mut woken = lane("KEN-A", LaneStatus::Stopped, Some((900, "ticks:1")));
-        woken
-            .extra
-            .insert("wake".into(), json!({"pid": 300, "start": "ticks:3"}));
-        let counted = occupancy(&[woken], &[], None, &rows, 0, &never);
-        assert_eq!(counted.occupancy, 5);
-        assert!(keyed(&counted).contains(&("lane:KEN-A".to_owned(), ChargeReason::Wake, None)));
-        assert!(keyed(&counted).contains(&a1(ChargeReason::Claim, "unmatched")));
-        // Nothing was written or pruned.
-        assert_eq!(fs::read_dir(&store).unwrap().count(), 7);
-        // An absent store is empty; one that is not a directory refuses.
-        assert!(
-            read_claims(&dir.path().join("none"), fleet)
-                .unwrap()
-                .is_empty()
-        );
-        let file = dir.path().join("flat");
-        fs::write(&file, "").unwrap();
-        let err = read_claims(&file, fleet).unwrap_err();
-        assert_eq!(err.key(), "cap-unreadable");
-        assert_eq!(err.fields()[0], ("source".to_owned(), "claims".to_owned()));
-    }
-
-    #[test]
-    fn the_fleet_spelling_follows_the_shell_launchers_canon() {
+    fn the_fleet_spelling_is_resolved_and_names_the_launch_lock() {
         let dir = tempfile::tempdir().unwrap();
         let real = fs::canonicalize(dir.path()).unwrap();
         let link = dir.path().join("link");

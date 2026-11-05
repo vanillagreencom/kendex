@@ -347,8 +347,7 @@ plant_siblings() { # SCRIPTS_DIR [SKIP]
 # SCRIPTS_DIR/orch-runtime.pick where a case plants one, else the judge
 # beside the stub, SCRIPTS_DIR/lanes, asked the same question through its
 # `pick` and its answer wrapped as the verb's reply, the exit by number and
-# the record (the launch suites' stub wraps it the same,
-# skills/orch/tests/lib/open-terminal-stubs.sh), its stderr passed through.
+# the record, its stderr passed through.
 # Every other verb is refused, so a case reads only these answers.
 runtime_stub() { # SCRIPTS_DIR MODE [CWD] [ORIGIN]
   local scripts="$1" mode="$2" state claim reply

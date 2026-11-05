@@ -2536,12 +2536,6 @@ fn me() -> Identity {
     }
 }
 
-/// `lane status --item` answers the lane's state as the observation duty
-/// judges it, from the recorded pane on the fleet server and never from
-/// the record's own status word: a running record whose pane holds
-/// nothing but shells is `exited`, one naming a server the socket does not
-/// have `unreadable`, one naming no pane `unjudged`, and an item with no
-/// in-flight record is refused.
 #[test]
 fn lane_status_judges_the_recorded_pane_not_the_records_status_word() {
     let dir = tempfile::tempdir().unwrap();
@@ -2588,4 +2582,157 @@ fn lane_status_judges_the_recorded_pane_not_the_records_status_word() {
     let (code, answer) = status("KEN-9");
     assert_eq!(code, Some(1));
     assert_eq!(answer["refusal"]["key"], "lane-missing", "{answer}");
+}
+
+/// The world of a hosted lane's status read: the catalog's packages linked
+/// under the state directory, the project the runtime takes its scripts
+/// from, so the real `lane-host` dispatcher reaches the provider the record
+/// names.
+fn install_scripts(runner: &support::Runner) {
+    let skills = runner.state_dir().join(".agents").join("skills");
+    std::fs::create_dir_all(&skills).unwrap();
+    let catalog = orch_package().parent().unwrap().to_path_buf();
+    for package in ["orch", "mailbox", "agent-runtime"] {
+        std::os::unix::fs::symlink(catalog.join(package), skills.join(package)).unwrap();
+    }
+}
+
+/// The orch package this test tree is under.
+fn orch_package() -> PathBuf {
+    support::fixtures()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf()
+}
+
+#[test]
+fn lane_status_reads_a_provider_pane_through_its_capture_after_its_status_verb() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = support::Server::start(dir.path(), "fleet");
+    let runner = support::Runner::new(&server, "stub-record");
+    runner.init_fleet();
+    install_scripts(&runner);
+    let pane = server.open_window("gh-2", dir.path(), "bash --norc --noprofile");
+    let provider = orch_package()
+        .join("tests")
+        .join("fixtures")
+        .join("lane-host");
+    let screen = dir.path().join("provider-screen");
+    std::fs::write(&screen, "› task\n  press to interrupt\n").unwrap();
+    let caps = "kind=ssh\tlaunch=ssh\tchannel=mailbox\tfiles=verb\tstatus=verb\tstop=verb\trelaunch=resume\tpark=none\taccounts=none\tpool=plan\tland=lane\tpane=verb";
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([{
+        "item": "issue-2", "window": "fleet:gh-2", "harness": "codex",
+        "host": provider, "status": "running", "mail_root": "/remote/issue-2",
+        "launch": {"server": server.pid, "pane": pane}
+    }]);
+    runner.write_fleet(&fleet);
+    let log = dir.path().join("host.log");
+    let read = |capture: &str, state: &str, probe: &str| {
+        let _ = std::fs::remove_file(&log);
+        let env = [
+            ("LANE_HOST_STUB_CAPABILITIES", caps),
+            ("LANE_HOST_STUB_HARNESS_STATE", state),
+            ("LANE_HOST_STUB_CAPTURE_STATUS", capture),
+            ("LANE_HOST_STUB_PROBE_STATUS", probe),
+            ("LANE_HOST_STUB_CAPTURE_FILE", screen.to_str().unwrap()),
+            ("LANE_HOST_STUB_LOG", log.to_str().unwrap()),
+        ];
+        let out = runner.run_env(&["lane", "status", "--item", "issue-2"], &env);
+        let answer = reply(&out);
+        assert_eq!(out.status.code(), Some(0), "{answer}");
+        (answer, std::fs::read_to_string(&log).unwrap_or_default())
+    };
+    let count = |calls: &str, verb: &str| calls.lines().filter(|l| l.starts_with(verb)).count();
+    // The harness runs on the host and its own pane holds a turn in flight;
+    // the local pane under the record is the transport's shell.
+    let (answer, calls) = read("0", "running", "0");
+    assert_eq!(answer["result"]["state"], "working", "{answer}");
+    assert_eq!(count(&calls, "capture --item issue-2"), 1, "{calls}");
+    assert_eq!(
+        count(&calls, "status --item issue-2 --harness codex"),
+        1,
+        "{calls}"
+    );
+    let (answer, _) = read("2", "running", "0");
+    assert_eq!(answer["result"]["state"], "unreadable", "{answer}");
+    let cause = answer["result"]["cause"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    assert!(cause.starts_with("capture-failed item=issue-2"), "{answer}");
+    let (answer, calls) = read("0", "exited", "0");
+    assert_eq!(answer["result"]["state"], "exited", "{answer}");
+    assert_eq!(count(&calls, "capture --item issue-2"), 0, "{calls}");
+    let (answer, calls) = read("0", "running", "7");
+    assert_eq!(answer["result"]["state"], "unjudged", "{answer}");
+    let cause = answer["result"]["cause"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    assert!(
+        cause.starts_with("harness-probe-failed item=issue-2"),
+        "{answer}"
+    );
+    assert_eq!(count(&calls, "capture --item issue-2"), 0, "{calls}");
+}
+
+#[test]
+fn lane_status_carries_the_lane_long_counts_read_from_the_items_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = support::Server::start(dir.path(), "fleet");
+    let runner = support::Runner::new(&server, "stub-record");
+    runner.init_fleet();
+    let pane = server.open_window("gh-2", dir.path(), "bash --norc --noprofile");
+    let root = dir.path().join("worktree");
+    std::fs::create_dir_all(root.join("tmp")).unwrap();
+    std::fs::write(
+        root.join("tmp").join("workflow-state-KEN-2.json"),
+        r#"{"stages":[{"kind":"fix"}],"restacks":1,"rereview_cycles":2}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("tmp").join("lane-status-KEN-2.md"),
+        "Step: review\n",
+    )
+    .unwrap();
+    let record = |item: &str, window: &str| {
+        json!({
+            "item": item, "window": window, "harness": "claude", "status": "running",
+            "mail_root": root.display().to_string(),
+            "launch": {"pane": pane, "server": server.pid},
+        })
+    };
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([record("KEN-2", "gh-2"), record("KEN-3", "gh-3")]);
+    runner.write_fleet(&fleet);
+    let status = |item: &str| reply(&runner.run(&["lane", "status", "--item", item]));
+    let answer = status("KEN-2");
+    assert_eq!(answer["result"]["state"], "exited", "{answer}");
+    assert_eq!(answer["result"]["review_rounds"], "2", "{answer}");
+    assert_eq!(answer["result"]["fix_receipts"], "1", "{answer}");
+    assert_eq!(answer["result"]["validation_runs"], "unread", "{answer}");
+    assert_eq!(answer["result"]["restacks"], "1", "{answer}");
+    assert_eq!(
+        answer["result"]["repeated_class_rounds"], "unread",
+        "{answer}"
+    );
+    assert_eq!(answer["result"]["stage"], "review", "{answer}");
+    assert_eq!(answer["result"]["counts_cause"], Value::Null, "{answer}");
+    // A lane that has written no state yet counts nothing, and says so.
+    let answer = status("KEN-3");
+    for key in [
+        "review_rounds",
+        "fix_receipts",
+        "validation_runs",
+        "restacks",
+        "repeated_class_rounds",
+    ] {
+        assert_eq!(answer["result"][key], "unread", "{key}: {answer}");
+    }
+    assert_eq!(answer["result"]["stage"], "none", "{answer}");
 }

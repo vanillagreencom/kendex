@@ -411,6 +411,21 @@ pub fn status(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<H
     }
 }
 
+/// `lane-host capture --item ITEM` (`lane_pane_capture`'s verb arm): the
+/// provider's own pane for a `pane=verb` kind, the screen on exit 0; any
+/// other answer is a failed read, never a screen.
+pub fn capture(scripts: &Path, host: &str, item: &str) -> Result<String, String> {
+    let out = lane_host(scripts, host, "capture", &["capture", "--item", item])
+        .map_err(|cause| format!("capture-failed item={item} {cause}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "capture-failed item={item} {}",
+            cause_of("capture", &out)
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
 /// `lane-host stop --item ITEM --harness H` before a hosted `pane=local`
 /// relaunch, confirmed by exit 0 and the one line `stopped item=ITEM
 /// processes=N`, read by `call`'s three values: `Failed` a refusal or an
@@ -1568,12 +1583,12 @@ fn root_of(lane: &Lane) -> Option<&str> {
 
 /// The lane's status file through the provider: `<root>/tmp/lane-status-
 /// <item>.md`.
-pub fn status_file(pass: &Pass, lane: &Lane) -> Answer<String> {
+pub fn status_file(scripts: &Path, lane: &Lane) -> Answer<String> {
     let Some(root) = root_of(lane) else {
         return Answer::Gone;
     };
     fetch(
-        pass.scripts,
+        scripts,
         host_of(lane),
         &lane.item,
         &format!("{root}/tmp/lane-status-{}.md", lane.item),
@@ -1603,8 +1618,8 @@ pub fn worktree(pass: &Pass, lane: &Lane) -> Answer<()> {
 /// The `Step` line of a hosted lane's status file (`lane_step`,
 /// `lib/watch-host-kinds.sh:498`): `unread` where the fetch failed, `none`
 /// where the host has no file or it names no step.
-pub fn step(pass: &Pass, lane: &Lane) -> String {
-    match status_file(pass, lane) {
+pub fn step(scripts: &Path, lane: &Lane) -> String {
+    match status_file(scripts, lane) {
         Answer::Live(text) => step_of(&text),
         Answer::Gone => "none".to_owned(),
         Answer::Unreadable { .. } => "unread".to_owned(),
@@ -1616,13 +1631,13 @@ pub fn step(pass: &Pass, lane: &Lane) -> String {
 /// item's workflow state and the run index under the lane's root on its
 /// host, each through `cat`; a state the lane has not written, or one that
 /// could not be read, counts nothing and the read's failure is said.
-pub fn counters(pass: &Pass, lane: &Lane, out: &mut Produced) -> Counters {
+pub fn counters(scripts: &Path, lane: &Lane, out: &mut Produced) -> Counters {
     let Some(root) = root_of(lane) else {
         return Counters::unread();
     };
     let host = host_of(lane);
     let runs = match fetch(
-        pass.scripts,
+        scripts,
         host,
         &lane.item,
         &format!("{root}/tmp/validation-runs"),
@@ -1631,7 +1646,7 @@ pub fn counters(pass: &Pass, lane: &Lane, out: &mut Produced) -> Counters {
         Answer::Gone | Answer::Unreadable { .. } => None,
     };
     match fetch(
-        pass.scripts,
+        scripts,
         host,
         &lane.item,
         &format!("{root}/tmp/workflow-state-{}.json", lane.item),

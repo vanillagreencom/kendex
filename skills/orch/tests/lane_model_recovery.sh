@@ -23,13 +23,13 @@ case "$1" in
   *) exit 2 ;;
 esac
 HOST
-cat > "$S/open-terminal" <<'LAUNCH'
+cat > "$S/orch-runtime" <<'LAUNCH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' launched >> "$MODEL_STARTS"
 exit "${MODEL_LAUNCH_EXIT:-0}"
 LAUNCH
-chmod +x "$S/lane-host" "$S/open-terminal"
+chmod +x "$S/lane-host" "$S/orch-runtime"
 
 run_recovery() { # [BASE FUNCTION]
   RC=0

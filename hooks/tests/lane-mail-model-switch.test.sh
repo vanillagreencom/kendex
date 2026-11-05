@@ -39,15 +39,19 @@ model_world() { # NAME LAUNCHED [broken] [RECORDED FLAGS]
   cp -- "$REPO_ROOT"/skills/github/scripts/lib/*.sh "$LANE/.agents/skills/github/scripts/lib/"
   S="$LANE/.agents/skills/orch/scripts"
   [[ -z "${MODEL_RELAUNCH_UNDER_TEST:-}" ]] || cp -- "$MODEL_RELAUNCH_UNDER_TEST" "$S/lib/lane-relaunch.sh"
-  # Capture only the launch dependency. Recovery itself, process identity,
-  # stop and workflow writes remain production operations.
-  cat >"$S/open-terminal" <<'LAUNCH'
+  # Capture only the launch dependency, the runtime's launch-lane request.
+  # Recovery itself, process identity, stop and workflow writes remain
+  # production operations.
+  cat >"$S/orch-runtime" <<'LAUNCH'
 #!/usr/bin/env bash
 set -euo pipefail
-printf '%s\n' "$@" > "$MODEL_ARGV"
+request="" prev=""
+for arg in "$@"; do [[ "$prev" != --request ]] || request="$arg"; prev="$arg"; done
+cp -- "$request" "$MODEL_ARGV"
 printf '%s\n' done > "$MODEL_DONE"
+printf '{"protocol":"orch-runtime-v1","ok":true,"result":{"effect":{"report":{"intent":{"outcome":"confirmed"}}}}}\n'
 LAUNCH
-  chmod +x "$S/open-terminal"
+  chmod +x "$S/orch-runtime"
   mkdir -p "$TMP_ROOT/bin"
   fixture_named_process "$TMP_ROOT/bin/claude"
   "$TMP_ROOT/bin/claude" 90 &
@@ -199,9 +203,9 @@ env -i "PATH=$TMUX_BIN:$PATH" "HOME=$OFFLINE_HOME" \
   "$BASH" "$S/lib/lane-relaunch.sh" model-recovery "$record" "$LANE/tmp" s1 \
   >"$TMP_ROOT/recovery.out" 2>"$ERR_FILE" || status=$?
 assert_eq "$status" 0 'fresh-shell recovery completes through its own dependencies'
-assert_eq "$(awk '/^--launch-flags$/{getline;print}' "$LANE/tmp/argv" 2>/dev/null || :)" \
-  '--dangerously-skip-permissions --model claude-fable-5-1 --effort high' \
-  'fresh-shell recovery launches the recorded model, permissions and effort'
+assert_eq "$(jq -r '[.model, .effort] | join(" ")' "$LANE/tmp/argv" 2>/dev/null || :)" \
+  'claude-fable-5-1 high' \
+  'fresh-shell recovery launches the recorded model and effort'
 state=$(lane_process_state "$OWNED_CHILD")
 case "$state" in '' | Z) state=gone ;; esac
 assert_eq "$state" gone 'fresh-shell recovery stops its verified predecessor'
@@ -229,33 +233,29 @@ if model_case optional-account; then
       assert_eq "$(jq -c . "$LANE/tmp/workflow-state-oversee.json")" "$before" "$account_case leaves fleet state unchanged"
       assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" "$account_case keeps predecessor running"
     else
-      # Exercise the installed argument owner and the actual initial parser.
-      # Help is last so it cannot conceal an earlier invalid account option.
+      # Exercise the installed request composer, then the recovery it feeds.
       SCRIPT_DIR="$S"
       . "$S/lib/lane-launch.sh"
       . "$S/lib/lane-capabilities.sh"
       . "$S/lib/lane-relaunch.sh"
       status=0
-      lane_recovery_args "$record" "$account" "$LANE/tmp" "$REPO_ROOT/skills/orch/scripts/open-terminal" model-switched || status=$?
-      assert_eq "$status" 0 "$account_case constructs recovery arguments"
+      lane_recovery_request "$record" "$account" "$LANE/tmp" || status=$?
+      assert_eq "$status" 0 "$account_case composes the recovery request"
       if [[ "$status" == 0 ]]; then
-        expected_args=("$REPO_ROOT/skills/orch/scripts/open-terminal" --tmux --relaunch --continue-resume --harness claude
-          --launch-flags '--dangerously-skip-permissions --model claude-fable-5-1 --effort high'
-          --state-dir "$LANE/tmp" --host local --tracker linear)
-        if [[ "$account_mode" == named ]]; then expected_args+=(--lane "$OFFLINE_HOME"); fi
-        expected_args+=(KEN-3916)
-        assert_eq "$(printf '%s\n' "${LANE_RECOVERY_ARGS[@]}")" "$(printf '%s\n' "${expected_args[@]}")" \
-          "$account_case recovery arguments preserve its account option"
-        status=0
-        "$BASH" "${LANE_RECOVERY_ARGS[@]}" --help >"$TMP_ROOT/parser.out" 2>"$ERR_FILE" || status=$?
-        assert_eq "$status" 0 "$account_case passes the real parser before stop"
-        assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" "$account_case parser leaves predecessor running"
+        expected="$(jq -ncS --arg cwd "$(cd -- "$LANE" && pwd -P)" --arg account "$account" --arg brief "$LANE/tmp/model-recovery-KEN-3916.md" \
+          '{op: "launch-lane", item: "KEN-3916", harness: "claude", mail_root: $cwd, refresh: false, brief_file: $brief,
+            tracker: "linear", model: "claude-fable-5-1", effort: "high"} + (if $account == "" then {} else {account: $account} end)')"
+        assert_eq "$(jq -cS . "$LANE_RECOVERY_REQUEST")" "$expected" \
+          "$account_case recovery request preserves its account option"
+        assert_eq "$(head -c 50 "$LANE/tmp/model-recovery-KEN-3916.md")" 'Resume the orch workflow for KEN-3916 from where t' \
+          "$account_case recovery brief is the continuation line"
+        assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" "$account_case composing the request leaves predecessor running"
         if [[ "$status" == 0 ]]; then
           event "$observed"
           await_recovery || FAIL=$((FAIL + 1))
           assert_eq "$(cat "$LANE/tmp/done")" done "$account_case replacement acknowledges completion"
-          assert_eq "$(cat "$LANE/tmp/argv")" "$(printf '%s\n' "${expected_args[@]:1}")" \
-            "$account_case replacement keeps account, recorded model, permissions and effort"
+          assert_eq "$(jq -cS . "$LANE/tmp/argv")" "$expected" \
+            "$account_case replacement keeps account, recorded model and effort"
           state=$(lane_process_state "$OWNED_CHILD")
           case "$state" in '' | Z) state=gone ;; esac
           assert_eq "$state" gone "$account_case recovery stops its verified predecessor"
@@ -300,8 +300,8 @@ while IFS='|' read -r preparation launched original override expected_model obse
   if [[ "$(switch_count)" == 1 ]]; then
     if [[ "$preparation" != broken ]]; then
       await_recovery || FAIL=$((FAIL + 1))
-      assert_eq "$(awk '/^--launch-flags$/{getline;print}' "$LANE/tmp/argv")" \
-        "--dangerously-skip-permissions --model $expected_model --effort high" "$preparation replacement keeps model selectors, permissions and effort"
+      assert_eq "$(jq -r '[.model, .effort] | join(" ")' "$LANE/tmp/argv")" \
+        "$expected_model high" "$preparation replacement keeps model selectors and effort"
     else
       deadline=$((SECONDS + 15))
       while ! [[ -f "$LANE/tmp/model-recovery-KEN-3916.log" ]] || \
@@ -686,12 +686,11 @@ source, target, rule = sys.argv[1:]
 text = Path(source).read_text()
 old, new = {
     "stop": ('lane_stop_local "" "$pid" "$start" "$wake_pid" "$wake_start" "$harness" || {', 'true || {'),
-    "pin": ('if [[ "${5:-}" == model-switched ]]; then', 'if false; then'),
+    "pin": ('model="$(jq -er \'.model | strings | select(length > 0)\' <<<"$1")" || return 1', 'model="$(launch_choice_launch_model "$harness" "$flags")" || return 1'),
     "binding": ('[[ "$claim" == true ]] || return 0', ':'),
     "selector": ('model="${model}[1m]"', 'model="$model"'),
     "selector-id": ('&& "$launch_id" == "$selector_id"', '&& true'),
-    "words": ('eval "choice_words=($choice)" || return 1', 'choice_words=("$choice")'),
-    "account": ('[[ -z "$2" ]] || LANE_RECOVERY_ARGS+=(--lane "$2")', 'LANE_RECOVERY_ARGS+=(--lane "$2")'),
+    "account": ('account: $account, kind: $kind} | with_entries(select(.value != ""))', 'account: $account, kind: $kind} | with_entries(select(.value != "" or .key == "account"))'),
 }[rule]
 assert text.count(old) == 1
 changed = text.replace(old, new)
@@ -701,7 +700,7 @@ CONTROL
     status=0
     MODEL_CONTROL=1 MODEL_CONTROL_CASE="$control_case" MODEL_RELAUNCH_UNDER_TEST="$control" "$BASH" "${BASH_SOURCE[0]}" >"$TMP_ROOT/relaunch-$rule.log" 2>&1 || status=$?
     failure='^  FAIL '
-    [[ "$rule" != account ]] || failure='^  FAIL  omitted-mismatch recovery arguments preserve its account option$'
+    [[ "$rule" != account ]] || failure='^  FAIL  omitted-mismatch recovery request preserves its account option$'
     if [[ "$status" != 0 ]] && grep -q "$failure" "$TMP_ROOT/relaunch-$rule.log"; then
       assert_eq red red "$rule recovery control rejects the defect"
     else
@@ -713,7 +712,6 @@ pin|fresh-shell
 binding|stale-launch
 selector|extended
 selector-id|conflicting-selector
-words|extended
 account|optional-account
 CONTROLS
   control="$TMP_ROOT/companion-control.sh"

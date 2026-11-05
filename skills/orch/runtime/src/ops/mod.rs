@@ -537,13 +537,10 @@ fn apply_interleaved(
     }
     if matches!(request, Request::LaunchLane(_) | Request::AdmitPaths(_)) {
         // A lane admission, and the path admission that judges against the
-        // same holders, run under the fleet launch lock the launcher holds
-        // around its own count and reservation write (`lane-cap.sh`
-        // `cap_take`: `flock` on `<fleet>.launch.lock`), from before the
-        // snapshot read through the committed row, so a launcher's count and
-        // this admission exclude each other and two contenders on one path are
-        // judged one after the other; the state file's own lock is taken
-        // inside, by the write, as the launcher takes them.
+        // same holders, run under the fleet launch lock (`flock` on
+        // `<fleet>.launch.lock`) from before the snapshot read through the
+        // committed row, so two contenders on one path are judged one after
+        // the other; the state file's own lock is taken inside, by the write.
         return state::locked(&occupancy::launch_lock_base(path), locking, transition);
     }
     transition()

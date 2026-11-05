@@ -159,10 +159,6 @@ linear	scripts/linear.sh	documents --help
 linear	scripts/linear.sh	project-labels --help
 linear	scripts/linear.sh	attachments --help
 linear	scripts/linear.sh	projects
-orch	scripts/approval-wait	--help
-orch	scripts/approval-wait	-h
-orch	scripts/approval-wait	help
-orch	scripts/approval-wait	123 --mode approval -h
 orch	scripts/lanes	-
 orch	scripts/lanes	--help
 orch	scripts/lanes	-h

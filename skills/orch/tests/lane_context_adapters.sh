@@ -5,7 +5,7 @@
 # one reading, the tokens the last response left in the context and the
 # window the model has; the judge answers whether a reading is at or past a
 # percentage of its own window. Every reader of a reading, the turn-end hook,
-# `lanes context` and `oversee-succeed`, asks these two, so a row here pins
+# the review admission and `oversee-succeed`, asks these two, so a row here pins
 # what all of them decide.
 #
 # LIB_UNDER_TEST names another copy of the library, with its adapters beside

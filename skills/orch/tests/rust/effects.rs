@@ -7289,12 +7289,162 @@ fn an_accountless_launch_whose_inherited_home_does_not_stand_refuses_before_any_
             report["intent"]["observation"]["cause"], "home-missing",
             "{case}: {report}"
         );
+        let absent = match variable {
+            Some(_) => dir.path().join("absent"),
+            None => home.join(".codex"),
+        };
+        assert_eq!(
+            report["intent"]["observation"]["path"],
+            absent.display().to_string(),
+            "{case}: the home the launch would run on: {report}"
+        );
         assert!(
             report["intent"]["phase"].is_null(),
             "{case}: nothing recorded as opening: {report}"
         );
         assert_eq!(server.panes().len(), panes, "{case}: no window opened");
     }
+}
+
+/// Defect: a Pi lane launched on a seat of another harness (a Claude
+/// account billing a `pi-claude/` model) with no Pi root under the home
+/// reached the harness gate, which read the absent root's settings as
+/// compaction on, where the controller's transfer of the same shape
+/// refuses `home-missing`: the root the lane runs on must stand before
+/// anything judges it. Through the real `launch-lane`: the launch fails
+/// `home-missing` naming the root, nothing recorded as opening, no window.
+#[test]
+fn a_seated_pi_lane_with_no_pi_root_refuses_home_missing_before_the_gate() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-record");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    let seat = dir.path().join("claude-seat");
+    std::fs::create_dir_all(&seat).unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    runner
+        .env
+        .push(("HOME".to_owned(), home.display().to_string()));
+    runner.env.push((
+        "ORCH_HARNESS_BINARIES".to_owned(),
+        format!("pi={}", fixtures().join("stub-record/pi").display()),
+    ));
+    let mut request = launch_request("KEN-PS", runner.state_dir());
+    request["harness"] = json!("pi");
+    request["model"] = json!("pi-claude/fable");
+    request["account"] = json!(seat.display().to_string());
+    let panes = server.panes().len();
+    let report = effect_report(&runner.op_fleet(&request));
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["cause"], "home-missing",
+        "{report}"
+    );
+    assert_eq!(
+        report["intent"]["observation"]["path"],
+        home.join(".pi/agent").display().to_string(),
+        "the root the launch would run on: {report}"
+    );
+    assert!(
+        report["intent"]["phase"].is_null(),
+        "nothing recorded as opening: {report}"
+    );
+    assert_eq!(server.panes().len(), panes, "no window opened");
+}
+
+/// The model-switch recovery's handoff to the runtime: the request
+/// `lib/lane-relaunch.sh` composes from a lane record (the model the switch
+/// recorded, its effort, the checkout, the account) runs through the real
+/// `launch-lane`, which admits it over the stopped record and opens the lane
+/// on that model. A field the runtime needs that the composer never set, or
+/// a spelling it refuses, fails here and nowhere later.
+#[test]
+fn the_model_switch_recovery_s_request_launches_through_the_real_launch_lane() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-record");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    let work = runner.state_dir().display().to_string();
+    let scripts = fixtures()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("scripts");
+    let record = json!({
+        "item": "KEN-R", "tracker": "linear", "harness": "claude", "status": "stopped",
+        "model": "claude-fable-5-1", "effort": "high", "account": work, "mail_root": work,
+        "session_since": "2026-01-29T15:00:00Z", "launched_at": "2026-01-29T15:00:00Z",
+        "launch": null,
+        "recovery": {
+            "cwd": work,
+            "flags": "--dangerously-skip-permissions --model claude-opus-4-8 --effort high",
+            "refresh": false,
+            "session": "fleet",
+        },
+    });
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([record]);
+    runner.write_fleet(&fleet);
+    let composed = program("bash")
+        .args([
+            "-euo",
+            "pipefail",
+            "-c",
+            r#"cd -- "$1" || exit 1
+export SCRIPT_DIR="$2"
+. "$2/lib/lane-launch.sh"
+. "$2/lib/lane-capabilities.sh"
+. "$2/lib/lane-relaunch.sh"
+lane_recovery_request "$3" "$1" "$1" || { echo "cause=$LANE_RECOVERY_CAUSE" >&2; exit 1; }
+printf '%s
+' "$LANE_RECOVERY_REQUEST"
+"#,
+            "compose",
+            &work,
+            &scripts.display().to_string(),
+            &record.to_string(),
+        ])
+        .output()
+        .unwrap();
+    assert!(composed.status.success(), "{}", stderr(&composed));
+    let request_path = String::from_utf8_lossy(&composed.stdout).trim().to_owned();
+    let request: Value =
+        serde_json::from_str(&std::fs::read_to_string(&request_path).unwrap()).unwrap();
+    assert_eq!(request["model"], "claude-fable-5-1", "{request}");
+    assert_eq!(request["account"], work, "{request}");
+    let out = runner.run(&["op", "--fleet", "--effect-exit", "--request", &request_path]);
+    let report = effect_report(&out);
+    assert!(
+        matches!(
+            report["intent"]["outcome"].as_str(),
+            Some("confirmed" | "unconfirmed")
+        ),
+        "{report}"
+    );
+    assert_eq!(report["lane"]["model"], "claude-fable-5-1", "{report}");
+    let recorded = launch_record_of(Path::new(&work));
+    let argv: Vec<&str> = recorded["argv"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a.as_str().unwrap())
+        .collect();
+    assert!(
+        argv.windows(2)
+            .any(|w| w == ["--model", "claude-fable-5-1"]),
+        "the recorded model on the line: {argv:?}"
+    );
+    assert!(
+        argv.windows(2).any(|w| w == ["--effort", "high"]),
+        "the recorded effort on the line: {argv:?}"
+    );
+    assert_eq!(recorded["env"]["CLAUDE_CONFIG_DIR"], work, "{recorded}");
 }
 
 /// The launch record the record stubs write in `cwd`, read once it stands:

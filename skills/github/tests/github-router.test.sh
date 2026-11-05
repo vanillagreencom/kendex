@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # github.sh's dispatcher: an unknown command is refused with its name and
-# the usage pointer; `ci-wait` and its near-misses are refused with the orch
-# script named instead (stale handoff guidance once told an agent to run
-# `github.sh ci-wait`); a real command routes with its --format kept; the
+# the usage pointer; a real command routes with its --format kept; the
 # deprecated `--json` alias is refused by every command that dropped it.
 #
 # A row is `label|argv|rc|out|err`:
@@ -116,13 +114,8 @@ run_table() {
   [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
 }
 
-HINT=.agents/skills/orch/scripts/ci-wait
-
 run_table "the dispatcher" "\
-ci-wait is refused with the orch script named|ci-wait 296 --json|1|-|unknown=ci-wait hint=$HINT
-the ciwait near-miss too|ciwait 296|1|-|unknown=ciwait hint=$HINT
-the ci_wait near-miss too|ci_wait 296|1|-|unknown=ci_wait hint=$HINT
-any other unknown command is refused with the usage pointer and no hint|bogus 296|1|-|unknown=bogus;usage
+an unknown command is refused with the usage pointer|bogus 296|1|-|unknown=bogus;usage
 pr-issue routes, text format|pr-issue 42 --format=text|0|ABC-150|-
 pr-issue routes, json format kept|pr-issue 42 --format=json|0|issue=ABC-150|-
 pr-list-failing routes, json format kept|pr-list-failing --format=json|0|[]|-

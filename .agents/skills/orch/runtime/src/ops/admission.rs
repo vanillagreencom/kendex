@@ -394,7 +394,7 @@ fn holding(lane: &Lane, intents: &[Intent], env: &Env, host: &Host) -> Holding {
             Holding::Live
         }
         Some((ChargeReason::Unknown, cause)) => Holding::Unknown(cause.unwrap_or_default()),
-        Some((ChargeReason::Reservation | ChargeReason::Claim, _)) | None => Holding::Yields,
+        Some((ChargeReason::Reservation, _)) | None => Holding::Yields,
     }
 }
 
@@ -1170,9 +1170,7 @@ mod tests {
         fn host<'a>(&'a self, still_runs: &'a dyn Fn(&Identity) -> Reading<Identity>) -> Host<'a> {
             Host {
                 lane_cap: 4,
-                claim_store: None,
                 still_runs,
-                pane_foreground: &no_pane,
                 accounts: None,
                 admission: Some(AdmissionReads {
                     clis: no_clis(),

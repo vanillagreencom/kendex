@@ -2282,7 +2282,7 @@ pub fn marks_verb(
     let mut caller = Caller::of(&record);
     caller.harness = caller.harness.or(harness);
     caller.account = caller.account.or_else(|| account.map(str::to_owned));
-    let host = crate::ops::Host::kernel(settings.lane_cap, Some(settings.claim_store.clone()));
+    let host = crate::ops::Host::kernel(settings.lane_cap);
     let memory = |identity: &Identity| {
         agent_runtime::process::memory_of(
             Path::new("/proc"),
@@ -2321,7 +2321,7 @@ pub fn run_transfer(
     crate::ops::successor::posture(&mut request.successor, settings);
     let request = crate::ops::Request::RequestTransfer(Box::new(request));
     crate::ops::admit(&request, settings)?;
-    let host = crate::ops::Host::kernel(settings.lane_cap, Some(settings.claim_store.clone()));
+    let host = crate::ops::Host::kernel(settings.lane_cap);
     let applied = crate::ops::apply_on(path, &request, env, locking, &host)?;
     let crate::ops::Report::RequestTransfer(report) = &applied.report else {
         unreachable!("a transfer request reports its transfer")
@@ -2400,10 +2400,7 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
         // The accounts judge over the fleet's own state and the kernel's
         // identity reader: the marks, the overseer walk and the wall
         // route's pick, each a verdict this duty receives.
-        let occupancy_host = crate::ops::Host::kernel(
-            ctx.settings.lane_cap,
-            Some(ctx.settings.claim_store.clone()),
-        );
+        let occupancy_host = crate::ops::Host::kernel(ctx.settings.lane_cap);
         let memory = |identity: &Identity| {
             agent_runtime::process::memory_of(
                 Path::new("/proc"),

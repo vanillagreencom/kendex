@@ -63,7 +63,7 @@ STATE_READ="$(.agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_I
 
 ## 2. Prepare Reviewers
 
-**Pre-panel context check.** When this round will start attached reviewers, refresh the current context through the same reader `lane-mail-check` calls before sizing or starting them. Take `[HARNESS]`, `[SESSION_ID]` and `[TRANSCRIPT_PATH]` from this session's native inputs, not from `context.json`. Pass no window: a number the session types is no window source. Keep the session's launch home in its harness environment. Run from `[WORKTREE_PATH]`:
+**Pre-panel context check.** When this round will start attached reviewers, refresh the current context through the same reader `lane-mail-check` calls before sizing or starting them. Take `[HARNESS]`, `[SESSION_ID]` and any `[TRANSCRIPT_PATH]` from this session's native inputs, not from `context.json`. For Codex with a known session id and no transcript path, pass an empty `[TRANSCRIPT_PATH]`: the reader asks agent-runtime's `session-file` lookup for the rollout bound to that id. With neither a path nor an id, the Codex reading is `transcript-unnamed`; a failed lookup reports its own gap. Pass no window: a number the session types is no window source. Keep the session's launch home in its harness environment. Run from `[WORKTREE_PATH]`:
 
 ```bash
 bash .agents/skills/orch/scripts/lib/lane-context.sh --attached-launch --reading "[HARNESS]" "[SESSION_ID]" "[TRANSCRIPT_PATH]" "[WORKTREE_PATH]/tmp/lane-mail/[ISSUE_ID]" "[WORKTREE_PATH]"

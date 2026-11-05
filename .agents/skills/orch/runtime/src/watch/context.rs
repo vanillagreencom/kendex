@@ -158,7 +158,6 @@ pub fn last_event(file: &Path, event: &str) -> Reading<Value> {
     last_event_in(&text, event).map_or(Reading::Gone, Reading::Live)
 }
 
-/// The last row of the rows `text` whose `event` is `event`.
 fn last_event_in(text: &str, event: &str) -> Option<Value> {
     text.lines()
         .rev()
@@ -249,8 +248,6 @@ pub fn times(record: &ContextRecord, record_path: &Path, rows: Option<&Path>) ->
     Times::Read { at, stop }
 }
 
-/// The epoch second a Stop row's `at` names, a number or a stamp; 0 where
-/// the row names none it can read.
 fn stop_epoch(row: &Value) -> u64 {
     match row.get("at") {
         Some(Value::Number(n)) => n.as_u64().unwrap_or(0),
@@ -276,7 +273,6 @@ pub fn alert_text(pane: &str, gap: &str) -> String {
     )
 }
 
-/// Whether a lane's turn end is current.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Standing {
     Current,
@@ -291,9 +287,8 @@ pub enum LaneContext {
     /// No record, or an empty one: no turn end of this lane has recorded
     /// a reading since its launch.
     Unrecorded,
-    /// A record another session wrote: a predecessor's pane in the lane's
-    /// window, another harness, or another session than the lane record
-    /// binds.
+    /// A record another session wrote: another harness, or another session
+    /// than the lane record binds.
     Other,
     /// The record, or the rows it is judged beside, could not be read.
     Unreadable { cause: String },
@@ -348,13 +343,6 @@ pub fn lane(lane: &Lane, files: Files, scripts: &Path, now: u64) -> LaneContext 
         Ok(record) => record,
         Err(cause) => return LaneContext::Unreadable { cause },
     };
-    let pane_key = lane
-        .launch
-        .as_ref()
-        .and_then(|l| Some(format!("{} {}", l.server?, l.pane.as_deref()?)));
-    if pane_key.is_some_and(|key| record.pane_key.as_deref() != Some(key.as_str())) {
-        return LaneContext::Other;
-    }
     if let Some(h) = lane.harness.as_deref().and_then(Harness::parse)
         && record.harness.as_deref() != Some(h.name())
     {
@@ -467,27 +455,25 @@ mod tests {
         );
     }
 
-    /// A lane's record is read from its mailbox as the overseer's is: one
-    /// older than the stale bound with a Stop row after it reads stale; a
-    /// younger one, or one no later Stop row follows, reads current; a
-    /// predecessor's pane is another session's; none is unrecorded.
     #[test]
     fn a_lanes_record_with_a_stale_turn_end_reads_stale_not_current() {
         let dir = tempfile::tempdir().unwrap();
         let mailbox = dir.path().join("tmp").join("lane-mail").join("KEN-1");
         std::fs::create_dir_all(&mailbox).unwrap();
         let lane: Lane = serde_json::from_value(serde_json::json!({
-            "item": "KEN-1", "status": "running", "harness": "pi",
+            "item": "KEN-1", "status": "running", "harness": "pi", "session_id": "s1",
             "mail_root": dir.path().display().to_string(),
             "launch": {"server": 4242, "pane": "%7"}
         }))
         .unwrap();
         let at = 1_799_971_200;
-        let record = |pane: &str| {
+        // The record as the lane's own turn end writes it: no pane key, the
+        // session the hook ran in.
+        let record = |session: &str| {
             std::fs::write(
                 mailbox.join("context.json"),
                 format!(
-                    r#"{{"harness":"pi","model":"m","tokens":1000,"window":200000,"session_id":"s1","pane_key":"{pane}","gap":null,"at":"{}"}}"#,
+                    r#"{{"harness":"pi","model":"m","tokens":1000,"window":200000,"session_id":"{session}","pane_key":null,"gap":null,"at":"{}"}}"#,
                     clock::iso_utc(at)
                 ),
             )
@@ -502,7 +488,7 @@ mod tests {
         };
         let read = |now: u64| super::lane(&lane, Files::Local, dir.path(), now);
         assert_eq!(read(at + 2 * STALE_SECS), LaneContext::Unrecorded);
-        record("4242 %7");
+        record("s1");
         let own = |standing: Standing| match read(at + 2 * STALE_SECS) {
             LaneContext::Own {
                 record,
@@ -526,7 +512,7 @@ mod tests {
                 ..
             }
         ));
-        record("4242 %9");
+        record("s2");
         assert_eq!(read(at + 2 * STALE_SECS), LaneContext::Other);
         std::fs::write(mailbox.join("context.json"), "not json").unwrap();
         assert!(matches!(
