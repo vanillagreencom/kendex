@@ -358,7 +358,9 @@ class PublicOwnerAsks(MailWorld):
     def test_local_source_startup_preserves_settings_and_presence(self):
         local = make_project(self.root / "local ' source;$")
         self.registry.write_text(str(local) + "\n")
-        ask = self.mail(local, "ask", "Local original", "--to", "owner", "--options", "a,b", "--reserved")
+        # lane-mail's jq -c leaves U+2028/U+2029 raw inside its JSON lines.
+        what = "Local original\u2028second line\u2029next paragraph"
+        ask = self.mail(local, "ask", what, "--to", "owner", "--options", "a,b", "--reserved")
         workspace = self.slack_thread(local, ask)
         marker = self.root / "executed-local-checkout"
         planted = 'from pathlib import Path\nPath(' + repr(str(marker)) + ').touch()\nraise SystemExit(91)\n'
@@ -396,7 +398,7 @@ class PublicOwnerAsks(MailWorld):
                 if succeeds:
                     self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
                     self.assertEqual(page["activeCount"], 1)
-                    self.assertEqual(page["rows"][0]["what"], "Local original")
+                    self.assertEqual(page["rows"][0]["what"], what)
                     self.assertEqual(page["rows"][0]["link"]["url"],
                                      "https://workspace.slack.test/archives/C1/p100000001")
                 else:
