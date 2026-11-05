@@ -14,9 +14,19 @@
 # `unreachable` beside this fake, a start exits 1 with the line for a bus it
 # could not connect to, shaped as the client's own logging settings shape it;
 # past the connect, a `--setenv=NAME` whose value holds such a noncharacter
-# exits 1 with the line for a message it could not build, nothing sent.
+# exits 1 with the line for a message it could not build, nothing sent. A
+# file `warning` beside this fake puts its line on stderr before anything
+# else on every call, as the client's own warning about an unreadable
+# setting stands; with `SYSTEMD_INVOKED_AS=run0` in its environment it runs
+# run0's parser, which refuses `--collect` before any connect, the probe's
+# call included.
 d="$(cd "$(dirname "$0")" && pwd)"
 printf 'systemd-run %s\n' "$*" >> "$d/systemd.log"
+[[ ! -f "$d/warning" ]] || cat "$d/warning" >&2
+if [[ "${SYSTEMD_INVOKED_AS:-}" == run0 ]]; then
+  echo "systemd-run: unrecognized option '--collect'" >&2
+  exit 1
+fi
 refuse() { # ASSIGNMENT
   printf 'Cannot assign environment variable %s: Invalid argument\n' "$1" >&2
   exit 1

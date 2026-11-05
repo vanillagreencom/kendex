@@ -4416,45 +4416,87 @@ fn a_unit_start_whose_answer_was_lost_or_failed_after_the_manager_acted_is_held_
 
 /// Defect: a start the client refused before it asked the manager anything
 /// held as a unit that never existed, so no watch, transfer or stop job
-/// ran, on every attempt; a variable the client refuses handed to it; and
-/// the refusal read through logging settings the client inherited. The fake
-/// user manager answers as the real client does under a private runtime
+/// ran, on every attempt; a variable the client refuses handed to it; the
+/// refusal read through logging settings the client inherited; and the
+/// refusal missed behind a line the client puts before it: a warning about
+/// a setting of its own, the loader's line for an object it cannot preload,
+/// or another program's parser the job's environment picked. The fake user
+/// manager answers as the real client does under a private runtime
 /// directory and a private bus: a `--setenv` name outside shell syntax or a
-/// value holding a noncharacter is its parser's refusal, and a bus it cannot
-/// reach is its connect's, the line shaped by its own logging settings. An
+/// value holding a noncharacter is its parser's refusal, a bus it cannot
+/// reach is its connect's, the line shaped by its own logging settings and
+/// put after a planted warning, and `SYSTEMD_INVOKED_AS=run0` in its own
+/// environment is run0's parser refusing `--collect` before any connect. An
 /// exported bash function, or a variable holding a noncharacter: the launch
 /// hands neither over and the watch runs as its unit. The bus unreachable
-/// after the probe, on a plain host or one whose environment asks systemd for
-/// debug logging: the launch falls to `setsid` and the watch runs there.
+/// after the probe, on a plain host, one whose environment asks systemd for
+/// debug logging, one whose empty ratelimit setting draws the warning, or
+/// one whose `LD_PRELOAD` names a missing object: the launch falls to
+/// `setsid` and the watch runs there, the job's value of the client's own
+/// name handed to the unit explicitly. The environment naming run0: the
+/// client runs as itself and the watch runs as its unit.
 #[test]
 fn a_unit_start_the_client_refused_before_asking_the_manager_runs_the_job_and_no_variable_it_refuses_is_handed_to_it()
  {
     // (the case, the op's added environment, the bus unreachable after the
-    // probe, the runner the watch runs under)
-    for (case, extra, unreachable, runner) in [
+    // probe, the warning the client puts before its own line, the runner the
+    // watch runs under, the `--setenv` word the client's invocation holds)
+    for (case, extra, unreachable, warning, runner, handed) in [
         (
             "bash-function",
             ("BASH_FUNC_probe%%", "() {  :\n}"),
             false,
+            None,
             "systemd",
+            None,
         ),
         (
             "noncharacter",
             ("ORCH_PROBE_VALUE", "v\u{FFFF}w"),
             false,
+            None,
             "systemd",
+            None,
         ),
         (
             "bus-unreachable",
             ("ORCH_PROBE_VALUE", "plain"),
             true,
+            None,
             "setsid",
+            Some("--setenv=ORCH_PROBE_VALUE "),
         ),
         (
             "debug-logging",
             ("SYSTEMD_LOG_LEVEL", "debug"),
             true,
+            None,
             "setsid",
+            Some("--setenv=SYSTEMD_LOG_LEVEL=debug "),
+        ),
+        (
+            "extra-logging",
+            ("SYSTEMD_LOG_RATELIMIT_KMSG", ""),
+            true,
+            Some("Failed to parse log ratelimit kmsg boolean '', ignoring.\n"),
+            "setsid",
+            Some("--setenv=SYSTEMD_LOG_RATELIMIT_KMSG= "),
+        ),
+        (
+            "loader",
+            ("LD_PRELOAD", "/nonexistent/x.so"),
+            true,
+            None,
+            "setsid",
+            Some("--setenv=LD_PRELOAD=/nonexistent/x.so "),
+        ),
+        (
+            "run0",
+            ("SYSTEMD_INVOKED_AS", "run0"),
+            false,
+            None,
+            "systemd",
+            Some("--setenv=SYSTEMD_INVOKED_AS=run0 "),
         ),
     ] {
         let dir = tempfile::tempdir().unwrap();
@@ -4464,6 +4506,9 @@ fn a_unit_start_the_client_refused_before_asking_the_manager_runs_the_job_and_no
         let (bin, env) = watch_world(runner_world.state_dir());
         if unreachable {
             std::fs::write(bin.join("unreachable"), "").unwrap();
+        }
+        if let Some(warning) = warning {
+            std::fs::write(bin.join("warning"), warning).unwrap();
         }
         runner_world.tools = Some(bin.clone());
         let state = runner_world
@@ -4499,6 +4544,12 @@ fn a_unit_start_the_client_refused_before_asking_the_manager_runs_the_job_and_no
             !calls.contains("--setenv=BASH_FUNC") && !calls.contains("\u{FFFF}"),
             "{case}: no variable the client refuses is handed to it: {calls}"
         );
+        if let Some(handed) = handed {
+            assert!(
+                calls.contains(handed),
+                "{case}: the client's invocation hands the job's value as the client takes it: {calls}"
+            );
+        }
     }
 }
 
@@ -5116,6 +5167,48 @@ fn a_controller_with_no_account_runs_under_the_one_home_its_session_is_proved_an
             "{case}: the start records whether it named its home: {report}"
         );
     }
+}
+
+/// Defect: a Pi successor's fallback root decided outside the lane
+/// launch's one rule, so a root that does not stand reaches the harness
+/// gate, which refuses it as a settings choice under that root, where the
+/// lane launch on the same host refuses `home-missing`.
+#[test]
+fn an_accountless_pi_successor_with_no_root_kept_refuses_home_missing_before_any_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-record");
+    runner.verify = Some(1);
+    runner.init_fleet();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    runner
+        .env
+        .push(("HOME".to_owned(), home.display().to_string()));
+    let cwd = runner.state_dir().to_path_buf();
+    let mut controller = pending(&cwd);
+    controller["harness"] = json!("pi");
+    controller["model"] = json!("openrouter/anthropic/claude-fable-5-1");
+    controller.as_object_mut().unwrap().remove("account");
+    controller.as_object_mut().unwrap().remove("home");
+    let mut request = json!({"op": "start-controller", "controller": controller});
+    let brief = cwd.join("brief.md");
+    std::fs::write(&brief, "RESUME HERE\n").unwrap();
+    request["brief_file"] = json!(brief.display().to_string());
+    let binaries = format!("pi={}", fixtures().join("stub-record/pi").display());
+    let panes = server.panes().len();
+    let report =
+        effect_report(&runner.op_fleet_env(&request, &[("ORCH_HARNESS_BINARIES", &binaries)]));
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    assert_eq!(
+        report["intent"]["observation"]["note"], "home-missing",
+        "the successor's fallback root is checked as the lane launch's is: {report}"
+    );
+    assert_eq!(server.panes().len(), panes, "no window opened: {report}");
+    assert!(
+        !home.join(".pi/agent").exists(),
+        "the root was never made: {report}"
+    );
 }
 
 /// Defect: a Pi controller's resume reaching a window. Pi continues a

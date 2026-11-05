@@ -55,6 +55,7 @@ use agent_runtime::process::Identity;
 use agent_runtime::reading::Reading;
 use agent_runtime::rows::{self, LaneVerdict};
 use jiff::tz::TimeZone;
+use serde::Serialize;
 use serde_json::{Value, json};
 
 use super::Produced;
@@ -66,7 +67,7 @@ use crate::ops::CLOUD_KIND;
 use crate::ops::wall::{
     self, AccountWallWrite, RecordWallPauses, WallChannel, WallObservation, WallReading,
 };
-use crate::settings::{WallRelaunch, WatchSettings};
+use crate::settings::{Settings, WallRelaunch, WatchSettings};
 use crate::state::{self, Document, FleetState, Lane, LaneStatus, Phase};
 
 /// The row kinds this duty keeps, each keyed by the lane's name, pruned
@@ -290,7 +291,8 @@ pub fn receipts_in(state_dir: &Path) -> Reading<Vec<String>> {
 }
 
 /// Where a wall was read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum WallSource {
     /// The banner on the pane's screen.
     Pane,
@@ -300,8 +302,9 @@ pub enum WallSource {
 
 /// What one lane is doing, the `lane_state` words over the typed inputs.
 /// `Unreadable` is a read that failed; `Unjudged` is a read that settles
-/// nothing.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// nothing. Serialized as `lane status` prints it, the word under `state`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case", tag = "state")]
 pub enum LaneState {
     Gone,
     Unreadable {
@@ -590,6 +593,65 @@ fn read_lane<'a>(
         rows_key,
         state,
     }
+}
+
+/// `lane status --item`: what one lane is doing now, read as the
+/// observation duty reads it (the provider's status verb where its host's
+/// kind declares one, the recorded pane, its foreground and screen, a Pi
+/// lane's rows) and judged by the one classifier; nothing is written. The
+/// lane is the item's in-flight record; a host whose capability line
+/// cannot be read, or whose kind judges no status, leaves it unjudged with
+/// the cause, as the duty leaves it.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the verb's one read of the fleet state, a snapshot it judges and prints; it acts on nothing"
+)]
+pub fn status(settings: &Settings, item: &str) -> crate::error::Result<Value> {
+    let path = state::fleet_path(&settings.state_dir);
+    fn refused(key: &'static str, fields: &[(&str, &str)]) -> crate::error::Error {
+        crate::error::Error::from(agent_runtime::Error::refused(key, fields))
+    }
+    let fleet = state::load(&path)?
+        .map(|snapshot| <FleetState as state::Record>::view(&path, &snapshot.doc))
+        .transpose()?
+        .ok_or_else(|| refused("fleet-missing", &[("path", &path.display().to_string())]))?;
+    let mut lanes = fleet
+        .lanes
+        .iter()
+        .filter(|l| l.item == item && l.status.in_flight());
+    let lane = match (lanes.next(), lanes.next()) {
+        (Some(lane), None) => lane,
+        (None, _) => return Err(refused("lane-missing", &[("item", item)])),
+        (Some(_), Some(_)) => return Err(refused("lane-ambiguous", &[("item", item)])),
+    };
+    let scripts = super::overseer::scripts_dir(&settings.roots.project);
+    let hosts = Hosts::read(&scripts, [lane]);
+    let remote = match hosts.of(lane) {
+        Err(cause) => Some(Err(cause)),
+        Ok(caps) => match (caps.status, lane.harness.as_deref()) {
+            (Status::None, _) => Some(Err("status-none".to_owned())),
+            (Status::Verb, Some(harness)) => Some(hosted::status(
+                &scripts,
+                hosted::host_of(lane),
+                &lane.item,
+                harness,
+            )),
+            (Status::Verb, None) | (Status::Pane | Status::Task, _) => None,
+        },
+    };
+    let readers = Readers::kernel();
+    let observed = read_lane(lane, &readers, remote);
+    let mut reply = json!({
+        "item": lane.item,
+        "window": observed.name,
+        "pane_key": observed.pane_key,
+        "identity": observed.identity.as_ref().map(|i| identity_word(Some(i))),
+    });
+    let state = serde_json::to_value(&observed.state).unwrap_or_default();
+    if let (Value::Object(reply), Value::Object(state)) = (&mut reply, state) {
+        reply.extend(state);
+    }
+    Ok(reply)
 }
 
 /// The non-blank lines of `block`, the last `cap` of them

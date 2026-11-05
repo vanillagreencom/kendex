@@ -2535,3 +2535,57 @@ fn me() -> Identity {
         start: start_of(pid),
     }
 }
+
+/// `lane status --item` answers the lane's state as the observation duty
+/// judges it, from the recorded pane on the fleet server and never from
+/// the record's own status word: a running record whose pane holds
+/// nothing but shells is `exited`, one naming a server the socket does not
+/// have `unreadable`, one naming no pane `unjudged`, and an item with no
+/// in-flight record is refused.
+#[test]
+fn lane_status_judges_the_recorded_pane_not_the_records_status_word() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = support::Server::start(dir.path(), "fleet");
+    let runner = support::Runner::new(&server, "stub-record");
+    runner.init_fleet();
+    let pane = server.open_window("gh-2", dir.path(), "bash --norc --noprofile");
+    let record = |item: &str, window: &str, launch: Value| {
+        json!({
+            "item": item, "window": window, "harness": "claude", "status": "running",
+            "mail_root": runner.state_dir().display().to_string(),
+            "launch": launch,
+        })
+    };
+    let mut fleet = runner.fleet();
+    fleet["lanes"] = json!([
+        record("KEN-2", "gh-2", json!({"pane": pane, "server": server.pid})),
+        record(
+            "KEN-3",
+            "gh-3",
+            json!({"pane": pane, "server": server.pid + 1})
+        ),
+        record("KEN-4", "gh-4", json!({})),
+    ]);
+    runner.write_fleet(&fleet);
+    let status = |item: &str| {
+        let out = runner.run(&["lane", "status", "--item", item]);
+        (out.status.code(), reply(&out))
+    };
+    let (code, answer) = status("KEN-2");
+    assert_eq!(code, Some(0), "{answer}");
+    assert_eq!(answer["result"]["state"], "exited", "{answer}");
+    assert_eq!(answer["result"]["window"], "gh-2");
+    assert_eq!(
+        answer["result"]["pane_key"],
+        format!("{} {pane}", server.pid)
+    );
+    let (_, answer) = status("KEN-3");
+    assert_eq!(answer["result"]["state"], "unreadable", "{answer}");
+    assert_eq!(answer["result"]["cause"], "server-unreachable");
+    let (_, answer) = status("KEN-4");
+    assert_eq!(answer["result"]["state"], "unjudged", "{answer}");
+    assert_eq!(answer["result"]["cause"], "pane-unrecorded");
+    let (code, answer) = status("KEN-9");
+    assert_eq!(code, Some(1));
+    assert_eq!(answer["refusal"]["key"], "lane-missing", "{answer}");
+}

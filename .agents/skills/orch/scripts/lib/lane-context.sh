@@ -45,6 +45,9 @@ LANE_CONTEXT_UNREAD=unread
 LANE_CONTEXT_RECORD=context.json
 # The orch scripts directory this library sits under, where git-context is.
 LANE_CONTEXT_SCRIPTS="${BASH_SOURCE[0]%/*}/.."
+# The agent-runtime executable beside this package, the session-file lookup's
+# owner; a suite names its own through AGENT_RUNTIME_CLI.
+LANE_CONTEXT_AGENT_RUNTIME="${AGENT_RUNTIME_CLI:-$LANE_CONTEXT_SCRIPTS/../../agent-runtime/scripts/agent-runtime}"
 
 # lane_context_overseer_box DIR — the overseer mailbox directory for the
 # checkout DIR is in: `tmp/lane-mail/overseer` at its main checkout, where
@@ -896,15 +899,57 @@ lane_context_render() {
 # as a prerequisite to refreshing it.
 TRANSCRIPT_WINDOW=1048576
 
+# lane_context_session_file HARNESS SESSION CWD — the transcript of session
+# SESSION under HARNESS's home for CWD, found by the id its launch bound and
+# never by its age, through the agent-runtime executable's one lookup
+# (`session-file`), into TRANSCRIPT. Exit 1 with READ_GAP naming why no path
+# was found: `transcript-unnamed` with no session id, or a harness other than
+# codex; `session-file-absent` where the
+# harness has written no file for the id yet; `session-store-unreadable`
+# where its store could not be read; `session-lookup-unavailable` where the
+# executable gave no answer, a host where it is not built included. Each is a
+# gap the caller reports and passes, never a refusal of the turn.
+lane_context_session_file() { # HARNESS SESSION CWD
+  local home reply reading
+  # The Codex rollout is the one session file its harness names by the id
+  # alone, in a dated store no caller can name a path into; the other
+  # harnesses' turn-end payloads name their transcript, and a payload naming
+  # none is their gap.
+  [ "$1" = codex ] && [ -n "${2:-}" ] || return 1
+  home=$(lane_context_caller_home "$1") || return 1
+  if ! reply=$("$LANE_CONTEXT_AGENT_RUNTIME" session-file --harness "$1" --home "$home" --cwd "$3" --id "$2" 2>"$WORK_DIR/session-file.err"); then
+    READ_GAP=session-lookup-unavailable
+    message session-lookup-unavailable "$1" "$(cat -- "$WORK_DIR/session-file.err")"
+    return 1
+  fi
+  reading=$(jq -r '[.result.reading // "", .result.file // "", .result.cause // ""] | join("\t")' <<<"$reply" 2>/dev/null) || reading=""
+  case "${reading%%"$TAB"*}" in
+    live)
+      reading=${reading#*"$TAB"}
+      TRANSCRIPT=${reading%%"$TAB"*}
+      [ -n "$TRANSCRIPT" ] || { READ_GAP=session-lookup-unavailable; message session-lookup-unavailable "$1" "$reply"; return 1; }
+      return 0
+      ;;
+    gone) READ_GAP=session-file-absent; return 1 ;;
+    unreadable)
+      READ_GAP=session-store-unreadable
+      message session-store-unreadable "$1" "${reading##*"$TAB"}"
+      return 1
+      ;;
+    *) READ_GAP=session-lookup-unavailable; message session-lookup-unavailable "$1" "$reply"; return 1 ;;
+  esac
+}
+
 # This session's context, read from the transcript the payload names through
 # the adapter for HARNESS, into TOKENS, WINDOW and MODEL, and recorded in BOX
 # for report readers. TOKENS is empty where there is nothing to read — no
 # transcript named, no usage line in it, or a harness no adapter reads — and
 # LANE_CONTEXT_UNREAD for a usage object the adapter does not read; neither is
-# recorded, and READ_GAP names which it was, `transcript-unnamed`,
-# `usage-absent`, `usage-unread` or, for a Copilot session with no extension
-# reading, `session-record`, empty where a reading was taken or the harness is
-# one no adapter reads. A transcript named and unreadable is
+# recorded, and READ_GAP names which it was: `transcript-unnamed` (no path
+# and no session id to find one by) or a lookup gap of
+# lane_context_session_file, `usage-absent`, `usage-unread` or, for a Copilot
+# session with no extension reading, `session-record`, empty where a reading
+# was taken or the harness is one no adapter reads. A transcript named and unreadable is
 # refused, since the record is
 # what clears it. A record that cannot be written is reported and the reading
 # still judged: the mark rests on this read, the record serves the others.
@@ -971,7 +1016,7 @@ context_read_and_record() { # BOX PANE_KEY
     SOURCE=$LANE_ADAPTER_COPILOT_CAPACITY_SOURCE
   else
     READ_GAP=transcript-unnamed
-    [ -n "$TRANSCRIPT" ] || return 0
+    [ -n "$TRANSCRIPT" ] || lane_context_session_file "$HARNESS" "$SESSION" "$LANE_DIR" || return 0
     { [ -f "$TRANSCRIPT" ] && [ -r "$TRANSCRIPT" ]; } || refuse_handoff transcript unreadable
     if ! READING=$(tail -c "$TRANSCRIPT_WINDOW" -- "$TRANSCRIPT" 2>"$WORK_DIR/tail.err" |
       lane_context_reading "$HARNESS" "$PAYLOAD_WINDOW" "$LANE_DIR" "$SESSION" "$1" 2>"$WORK_DIR/transcript.err"); then
@@ -1095,7 +1140,7 @@ copilot_reading_pending() {
 # checkpoint, uses the plain mark.
 # Explicit Codex attached-launch callers also get alternate-review when only
 # the reserve refuses the launch. review-pr runs that panel through job-unit;
-# the native hook and legacy callers keep the reserve's due answer.
+# the native hook and unflagged callers keep the reserve's due answer.
 # stdout is room, due or alternate-review, or with --reading one JSON object
 # carrying `verdict`, `decision` and `source`; an unavailable read exits
 # nonzero. The hook keeps its own callbacks and never enters this arm.

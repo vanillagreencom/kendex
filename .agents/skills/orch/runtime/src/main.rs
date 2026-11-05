@@ -87,6 +87,12 @@ enum Verb {
         #[command(subcommand)]
         op: WatchOp,
     },
+    /// One lane's state as the observation duty judges it, read now
+    /// and printed; nothing is written.
+    Lane {
+        #[command(subcommand)]
+        op: LaneOp,
+    },
     /// Judge the recorded controller's own marks: the context reading handed
     /// in, its account at the headroom trigger, the rate to its wall, and its
     /// process's memory against its cgroup cap where a mark is set. The reply
@@ -421,6 +427,18 @@ enum AccountsOp {
         /// unset.
         #[arg(long)]
         host: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+enum LaneOp {
+    /// What the item's in-flight lane is doing: the provider's status verb
+    /// where its host declares one, else its recorded pane, foreground and
+    /// screen (a Pi lane's rows), judged by the watch's classifier.
+    Status {
+        /// The lane's item key.
+        #[arg(long)]
+        item: String,
     },
 }
 
@@ -1050,6 +1068,12 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         }
         Verb::Accounts { op } => accounts_verb(op, &flags)?,
         Verb::Watch { op } => watch_verb(op, &flags, locking)?,
+        Verb::Lane {
+            op: LaneOp::Status { item },
+        } => {
+            let settings = resolve_settings(&flags)?;
+            watch::lanes::status(&settings, &item)?
+        }
         Verb::Marks {
             target,
             context,

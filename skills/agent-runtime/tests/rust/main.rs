@@ -1288,3 +1288,59 @@ fn a_launch_whose_uid_cannot_be_read_refuses_and_names_no_socket() {
     let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_default();
     assert_eq!(reply["refusal"]["key"], "uid-unread", "{reply}");
 }
+
+/// `session-file` finds a session's file by the id its launch bound, under
+/// the harness's home for the cwd, and answers three-valued in the reply:
+/// a Codex rollout named by the id is `live` with its path, an id no file
+/// carries `gone` (a cold home too), a store that cannot be listed
+/// `unreadable` with its cause, and a harness no adapter reads a refusal;
+/// never a neighbour's file by its age.
+#[test]
+fn session_file_finds_the_rollout_by_its_id_and_answers_three_valued() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("codex");
+    let day = home.join("sessions").join("2026").join("09").join("27");
+    std::fs::create_dir_all(&day).unwrap();
+    let rollout = day.join("rollout-2026-09-27T00-00-00-s1.jsonl");
+    std::fs::write(&rollout, "{}\n").unwrap();
+    std::fs::write(day.join("rollout-2026-09-27T00-00-01-s2.jsonl"), "{}\n").unwrap();
+    let ask = |harness: &str, home: &std::path::Path, id: &str| {
+        let out = Command::new(binary())
+            .args(["session-file", "--harness", harness, "--home"])
+            .arg(home)
+            .arg("--cwd")
+            .arg(dir.path())
+            .args(["--id", id])
+            .output()
+            .unwrap();
+        let reply: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        (out.status.code(), reply)
+    };
+    let (code, reply) = ask("codex", &home, "s1");
+    assert_eq!(code, Some(0), "{reply}");
+    assert_eq!(reply["result"]["reading"], "live", "{reply}");
+    assert_eq!(reply["result"]["file"], rollout.display().to_string());
+    let (_, reply) = ask("codex", &home, "s3");
+    assert_eq!(reply["result"]["reading"], "gone", "{reply}");
+    let (_, reply) = ask("codex", &dir.path().join("cold"), "s1");
+    assert_eq!(reply["result"]["reading"], "gone", "{reply}");
+    let sealed = dir.path().join("sealed");
+    std::fs::create_dir_all(sealed.join("sessions")).unwrap();
+    std::fs::set_permissions(
+        sealed.join("sessions"),
+        std::fs::Permissions::from_mode(0o000),
+    )
+    .unwrap();
+    let (_, reply) = ask("codex", &sealed, "s1");
+    std::fs::set_permissions(
+        sealed.join("sessions"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .unwrap();
+    assert_eq!(reply["result"]["reading"], "unreadable", "{reply}");
+    assert!(reply["result"]["cause"].is_string(), "{reply}");
+    let (code, reply) = ask("nope", &home, "s1");
+    assert_eq!(code, Some(1));
+    assert_eq!(reply["refusal"]["key"], "harness-unknown", "{reply}");
+}

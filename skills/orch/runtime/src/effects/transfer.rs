@@ -244,12 +244,13 @@ fn unconfirmed_after_retirement(
     })
 }
 
-/// The home a successor keeps where no account names one: the pending's
-/// `home` as the Pi root a Pi successor keeps; otherwise the lane launch's
-/// own rule (`launch::accountless_kept`), the pending's `home` being the
-/// home a resumed session stands under (the pending's own rule), named as
-/// the pending names it, and `served` the home the fleet server hands its
-/// panes. An account names its own home.
+/// The home a successor keeps where no account names one, the lane
+/// launch's own rule (`launch::accountless_kept`) deciding it: the
+/// pending's `home` first, named as the pending names it, which is the Pi
+/// root a Pi successor keeps whatever account bills it, or for the other
+/// harnesses the home a resumed session stands under (the pending's own
+/// rule); `served` is the home the fleet server hands its panes. An
+/// account names its own home.
 fn kept(
     settings: &Settings,
     pending: &state::Pending,
@@ -261,7 +262,7 @@ fn kept(
         named: true,
     });
     match (harness, pending.account.is_some()) {
-        (Harness::Pi, _) => home,
+        (Harness::Pi, _) => accountless_kept(settings, harness, home, served),
         (Harness::Claude | Harness::Codex | Harness::Copilot, true) => None,
         (Harness::Claude | Harness::Codex | Harness::Copilot, false) => accountless_kept(
             settings,

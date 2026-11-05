@@ -157,6 +157,20 @@ enum Verb {
         #[arg(long, default_value = "harness-up")]
         process: String,
     },
+    /// The file a session's id names under the harness's home for the
+    /// cwd, found by the id and never by its age, three-valued: `live`
+    /// with the path, `gone` where no file carries the id yet, `unreadable`
+    /// with the cause where the store could not be read.
+    SessionFile {
+        #[arg(long)]
+        harness: String,
+        #[arg(long)]
+        home: PathBuf,
+        #[arg(long)]
+        cwd: PathBuf,
+        #[arg(long)]
+        id: String,
+    },
     /// Process identity operations.
     Process {
         #[command(subcommand)]
@@ -1050,6 +1064,22 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 }
             };
             Ok(serde_json::to_value(observe::judge(&text, h, &reading, None)).unwrap_or_default())
+        }
+        Verb::SessionFile {
+            harness: name,
+            home,
+            cwd,
+            id,
+        } => {
+            let h = Harness::parse(&name)
+                .ok_or_else(|| Error::refused("harness-unknown", &[("harness", &name)]))?;
+            Ok(match session::fixed_id_file(h, &home, &cwd, &id) {
+                Reading::Live(file) => serde_json::json!({"reading": "live", "file": file}),
+                Reading::Gone => serde_json::json!({"reading": "gone"}),
+                Reading::Unreadable { cause } => {
+                    serde_json::json!({"reading": "unreadable", "cause": cause})
+                }
+            })
         }
         // Both print the reading whole: `live` with the identity, `gone`,
         // or `unreadable` with its cause.

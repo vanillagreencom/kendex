@@ -1,14 +1,12 @@
-//! The overseer's context record and its three judgements (step6-map
-//! § A10, F11; decisions 126 (2), 176 (1) (d)), ported from the commit-11
-//! loop (`744fd5727:skills/orch/scripts/oversee-watch:4076-4228`):
-//! `context.json` in the overseer mailbox, as the session's own turn-end
-//! hook last wrote it (`lib/lane-context.sh` § `lane_context_record`), read
-//! three-valued (decision 99): own, another session's, absent, or
-//! unreadable with its cause. A record another session wrote, a
-//! predecessor's until this one's first reading, says nothing of this one:
-//! one naming another pane, a harness other than the fleet record's for
-//! the pane, or a session other than the pane's latest `SessionStart` row
-//! names.
+//! The context record a session's turn-end hook writes, `context.json` in
+//! the session's mailbox: the overseer's, read three-valued as its own,
+//! another session's, absent, or unreadable with its cause (a record
+//! another session wrote, a predecessor's until this one's first reading,
+//! says nothing of this one: one naming another pane, a harness other than
+//! the fleet record's for the pane, or a session other than the pane's
+//! latest `SessionStart` row names); and a lane's, read from its own
+//! mailbox by the same rule for the report duty, through its host where
+//! its record names one.
 //!
 //! The judgements, each over a record the session owns: `--context
 //! TOKENS:WINDOW` handed to the account judge, so the watch judges the
@@ -28,6 +26,9 @@ use agent_runtime::clock;
 use agent_runtime::harness::Harness;
 use agent_runtime::reading::Reading;
 use serde_json::Value;
+
+use super::hosted::{self, Answer, Files};
+use crate::state::Lane;
 
 /// A record older than this with a later Stop row is stale
 /// (`OVERSEER_CONTEXT_STALE_SECS`).
@@ -154,11 +155,15 @@ pub fn last_event(file: &Path, event: &str) -> Reading<Value> {
             };
         }
     };
+    last_event_in(&text, event).map_or(Reading::Gone, Reading::Live)
+}
+
+/// The last row of the rows `text` whose `event` is `event`.
+fn last_event_in(text: &str, event: &str) -> Option<Value> {
     text.lines()
         .rev()
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
         .find(|row| row.is_object() && row.get("event").and_then(Value::as_str) == Some(event))
-        .map_or(Reading::Gone, Reading::Live)
 }
 
 /// `overseer_context_own`: the record at `record` where it is the session
@@ -233,14 +238,7 @@ pub fn times(record: &ContextRecord, record_path: &Path, rows: Option<&Path>) ->
     };
     let stop = match rows.map(|r| last_event(r, "Stop")) {
         None | Some(Reading::Gone) => 0,
-        Some(Reading::Live(row)) => match row.get("at") {
-            Some(Value::Number(n)) => n.as_u64().unwrap_or(0),
-            Some(Value::String(s)) => s
-                .parse()
-                .or_else(|_| clock::epoch_secs(s).ok_or(()))
-                .unwrap_or(0),
-            None | Some(_) => 0,
-        },
+        Some(Reading::Live(row)) => stop_epoch(&row),
         Some(Reading::Unreadable { cause }) => {
             return Times::Unread {
                 path: rows.map(Path::to_path_buf).unwrap_or_default(),
@@ -251,22 +249,147 @@ pub fn times(record: &ContextRecord, record_path: &Path, rows: Option<&Path>) ->
     Times::Read { at, stop }
 }
 
+/// The epoch second a Stop row's `at` names, a number or a stamp; 0 where
+/// the row names none it can read.
+fn stop_epoch(row: &Value) -> u64 {
+    match row.get("at") {
+        Some(Value::Number(n)) => n.as_u64().unwrap_or(0),
+        Some(Value::String(s)) => s
+            .parse()
+            .or_else(|_| clock::epoch_secs(s).ok_or(()))
+            .unwrap_or(0),
+        None | Some(_) => 0,
+    }
+}
+
 /// A reading the judge cannot take, noted on stderr for the launcher's
-/// record of this run as the legacy `overseer_note` noted it; it settles
-/// nothing.
+/// record of this run; it settles nothing.
 pub fn note(key: &str, fields: &str) {
     let _ = writeln!(std::io::stderr(), "{key} {fields}");
 }
 
 /// The owner's alert for a gap that stood two long passes
-/// (`overseer_gap_alert`), the legacy's words.
+/// (`overseer_gap_alert`).
 pub fn alert_text(pane: &str, gap: &str) -> String {
     format!(
         "overseer-context-unmeasured: the overseer in pane {pane} has recorded no context reading on two consecutive watch passes, gap={gap}, so nothing judges its context mark and it can run into its context window with no handoff. The remedy for this gap is under overseer-context-unmeasured in the orch skill's references/overseer-session-events.md.\n"
     )
 }
 
+/// Whether a lane's turn end is current.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Standing {
+    Current,
+    /// The record is more than [`STALE_SECS`] old and the lane's rows hold
+    /// a Stop row after it: the hook ran and the record did not follow.
+    Stale,
+}
+
+/// What a read of a lane's context record settled, for the report duty.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LaneContext {
+    /// No record, or an empty one: no turn end of this lane has recorded
+    /// a reading since its launch.
+    Unrecorded,
+    /// A record another session wrote: a predecessor's pane in the lane's
+    /// window, another harness, or another session than the lane record
+    /// binds.
+    Other,
+    /// The record, or the rows it is judged beside, could not be read.
+    Unreadable { cause: String },
+    Own {
+        record: ContextRecord,
+        standing: Standing,
+    },
+}
+
+/// A lane's record, read as the overseer's is (`own`): from the mailbox
+/// its fleet record places, `tmp/lane-mail/<item>` under its mail root,
+/// by the host's `files` capability (locally, through the provider's
+/// `cat`, or not at all), and judged beside its rows file for the Stop
+/// row the stale rule compares against.
+pub fn lane(lane: &Lane, files: Files, scripts: &Path, now: u64) -> LaneContext {
+    let Some(root) = lane.mail_root.as_deref().filter(|r| !r.is_empty()) else {
+        return LaneContext::Unreadable {
+            cause: "mail-root-unnamed".to_owned(),
+        };
+    };
+    let mailbox = Path::new(root)
+        .join("tmp")
+        .join("lane-mail")
+        .join(&lane.item);
+    let read = |name: &str| -> Result<Option<String>, String> {
+        let path = mailbox.join(name);
+        match files {
+            Files::Local => match std::fs::read_to_string(&path) {
+                Ok(text) => Ok(Some(text)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(e) => Err(format!("{}: {e}", path.display())),
+            },
+            Files::Verb => match hosted::fetch(
+                scripts,
+                hosted::host_of(lane),
+                &lane.item,
+                &path.display().to_string(),
+            ) {
+                Answer::Live(text) => Ok(Some(text)),
+                Answer::Gone => Ok(None),
+                Answer::Unreadable { cause } => Err(cause),
+            },
+            Files::None => Err("files-none".to_owned()),
+        }
+    };
+    let text = match read("context.json") {
+        Ok(Some(text)) if !text.trim().is_empty() => text,
+        Ok(_) => return LaneContext::Unrecorded,
+        Err(cause) => return LaneContext::Unreadable { cause },
+    };
+    let record = match ContextRecord::parse(&text) {
+        Ok(record) => record,
+        Err(cause) => return LaneContext::Unreadable { cause },
+    };
+    let pane_key = lane
+        .launch
+        .as_ref()
+        .and_then(|l| Some(format!("{} {}", l.server?, l.pane.as_deref()?)));
+    if pane_key.is_some_and(|key| record.pane_key.as_deref() != Some(key.as_str())) {
+        return LaneContext::Other;
+    }
+    if let Some(h) = lane.harness.as_deref().and_then(Harness::parse)
+        && record.harness.as_deref() != Some(h.name())
+    {
+        return LaneContext::Other;
+    }
+    if let (Some(bound), Some(session)) = (lane.session_id.as_deref(), record.session_id.as_deref())
+        && !bound.is_empty()
+        && !session.is_empty()
+        && bound != session
+    {
+        return LaneContext::Other;
+    }
+    let Some(at) = record.at.as_deref().and_then(clock::epoch_secs) else {
+        return LaneContext::Unreadable {
+            cause: format!("at={}", record.at.as_deref().unwrap_or("none")),
+        };
+    };
+    let stop = match read("session-rows.jsonl") {
+        Ok(Some(rows)) => last_event_in(&rows, "Stop").map_or(0, |row| stop_epoch(&row)),
+        Ok(None) => 0,
+        Err(cause) => return LaneContext::Unreadable { cause },
+    };
+    let standing = if now.saturating_sub(at) > STALE_SECS && stop > at {
+        Standing::Stale
+    } else {
+        Standing::Current
+    };
+    LaneContext::Own { record, standing }
+}
+
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the rows plant the record and the rows file they read"
+)]
 mod tests {
     use super::*;
 
@@ -342,5 +465,73 @@ mod tests {
             record(5, Some(0), None).window_full(Harness::Pi),
             Some(false)
         );
+    }
+
+    /// A lane's record is read from its mailbox as the overseer's is: one
+    /// older than the stale bound with a Stop row after it reads stale; a
+    /// younger one, or one no later Stop row follows, reads current; a
+    /// predecessor's pane is another session's; none is unrecorded.
+    #[test]
+    fn a_lanes_record_with_a_stale_turn_end_reads_stale_not_current() {
+        let dir = tempfile::tempdir().unwrap();
+        let mailbox = dir.path().join("tmp").join("lane-mail").join("KEN-1");
+        std::fs::create_dir_all(&mailbox).unwrap();
+        let lane: Lane = serde_json::from_value(serde_json::json!({
+            "item": "KEN-1", "status": "running", "harness": "pi",
+            "mail_root": dir.path().display().to_string(),
+            "launch": {"server": 4242, "pane": "%7"}
+        }))
+        .unwrap();
+        let at = 1_799_971_200;
+        let record = |pane: &str| {
+            std::fs::write(
+                mailbox.join("context.json"),
+                format!(
+                    r#"{{"harness":"pi","model":"m","tokens":1000,"window":200000,"session_id":"s1","pane_key":"{pane}","gap":null,"at":"{}"}}"#,
+                    clock::iso_utc(at)
+                ),
+            )
+            .unwrap();
+        };
+        let stop_row = |stop: u64| {
+            std::fs::write(
+                mailbox.join("session-rows.jsonl"),
+                format!("{{\"at\":{stop},\"event\":\"Stop\",\"harness\":\"pi\"}}\n"),
+            )
+            .unwrap();
+        };
+        let read = |now: u64| super::lane(&lane, Files::Local, dir.path(), now);
+        assert_eq!(read(at + 2 * STALE_SECS), LaneContext::Unrecorded);
+        record("4242 %7");
+        let own = |standing: Standing| match read(at + 2 * STALE_SECS) {
+            LaneContext::Own {
+                record,
+                standing: read,
+            } => {
+                assert_eq!(record.tokens, Some(1000));
+                assert_eq!(read, standing);
+            }
+            other => panic!("{other:?}"),
+        };
+        own(Standing::Current);
+        stop_row(at + STALE_SECS);
+        own(Standing::Stale);
+        stop_row(at - 100);
+        own(Standing::Current);
+        stop_row(at + STALE_SECS);
+        assert!(matches!(
+            read(at + STALE_SECS),
+            LaneContext::Own {
+                standing: Standing::Current,
+                ..
+            }
+        ));
+        record("4242 %9");
+        assert_eq!(read(at + 2 * STALE_SECS), LaneContext::Other);
+        std::fs::write(mailbox.join("context.json"), "not json").unwrap();
+        assert!(matches!(
+            read(at + 2 * STALE_SECS),
+            LaneContext::Unreadable { .. }
+        ));
     }
 }

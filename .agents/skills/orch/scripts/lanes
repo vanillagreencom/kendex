@@ -21,10 +21,7 @@
 #              [--max-pct N | --min-headroom-pct N] [--model NAME]
 #              [--binding-floor] [--projected] [--no-cache] [--json]
 #   lanes host-accounts [--harness claude|codex|copilot|pi|all] [--no-cache] [--json]
-#   lanes context [--json]
 #   lanes check <config-dir|name> [--harness H] [--model NAME | --native-model NAME]
-#   lanes state <item> [--json]
-#   lanes facts --state-dir DIR ITEM
 #
 #   list  Print every lane found, measured, with its live claim count and the
 #         age of its usage figure. A lane whose access token has expired is
@@ -326,101 +323,6 @@
 #         `projected_window`: a --projected caller names its refusal from
 #         `projected_window`, as the `pick-lane-walled` line's wall= and
 #         bucket= do under --projected, and any other caller from the reading.
-#   context  Print context use for each live work lane in this fleet, as its
-#         own turn-end hook recorded it: the tokens the last response left in the
-#         context, read by the harness adapter (lib/lane-context.sh) from the
-#         transcript, and its effective compaction point; a Copilot CLI lane's
-#         is the reading its kendex extension took of Copilot's
-#         `session.usage_info`, the capacity the limit Copilot compacts at,
-#         whose source the --json row names in `context_capacity_source`, or,
-#         where no such reading stands, the one its turn end took from the
-#         session record its status line writes (references/copilot-runtime.md);
-#         one with neither is `unrecorded`, never room. No pane is
-#         read. A lane's reading is in its own mailbox, which the running
-#         lane record of the fleet state (`workflow-state get oversee`)
-#         places, read through the provider that record names. A running
-#         lane record no claim names, a lane launched with no --lane, is a
-#         row of its own, its `pane` the record's
-#         SESSION:WINDOW and its server null. The
-#         caller's own row with no lane record is the overseer, which is
-#         judged at its own turn end and reads `unrecorded` here.
-#         CONTEXT_USED_PCT is the share of that effective capacity CONSUMED. A row
-#         with no reading is `unrecorded`, never empty; one whose reading names
-#         no window is `window-unread`; one whose record could not be read, or
-#         a claimed window no running lane record places, is `unreadable`. HANDOFF is
-#         `required` when lib/lane-context.sh's shared context rule requires
-#         handoff, the judge the hook uses, or at a HEADROOM at or
-#         below ORCH_HANDOFF_HEADROOM_PCT (default 3), or on a seat at or below
-#         the room the seat keeps for the overseer, under pick. The caller's
-#         own row uses the ordinary
-#         mark. A Codex account room on its credits (see pick) is never
-#         marked by headroom; its HEADROOM is its balance. A lane on a grant,
-#         a Pi lane on an anthropic/ model's API grant or a Claude lane on a
-#         pool=cloud-credit host's cloud credit, is judged on that grant as
-#         pick --lane judges it: its HEADROOM is the grant's share left, and
-#         it is marked only when the grant is walled (at or below
-#         ORCH_LANE_CLOUD_CREDIT_FLOOR, locked or expired), never by that
-#         share or by the plan windows.
-#         --json carries `binding_bucket`, `credits` and `binding_resets_at`;
-#         the last is when the binding window resets, a Codex credits row's
-#         spent plan window, in whole-second UTC with a Z, so a headroom
-#         refusal can say when the account returns. A grant lane's is
-#         null: a grant that ends returns nothing. It also carries `server`, the tmux server the row's
-#         `pane` belongs to, since pane ids restart at %0 on every server.
-#         The caller's OWN pane is reported too, claim or no claim, so an
-#         overseer started by hand sees its own figure rather than an empty
-#         fleet, and that row alone carries `caller: true` — the report says
-#         which row is the reader's session so no reader has to work it out.
-#   state  Print what the lane for <item> is doing, as the one word
-#          lib/lane-state.sh judges it to be: working, idle, rate-limit-switch,
-#          asking, walled, exited or unjudged. rate-limit-switch adds a fix line
-#          on stderr to dismiss the reminder and keep the current model.
-#          <item> is the lane's tmux window name, which is
-#          the tracker id (TEAM-N) or gh-N; the SESSION:WINDOW form a lane
-#          record's `window` carries is accepted too, and names that window
-#          under exactly that session. Pass the record's `window` as it stands:
-#          the whole name selects the pane. The hosted probe uses the record's
-#          item, or the window part when no record exists. A hosted record declaring
-#          status=verb checks the remote harness first. Its pane=verb capture
-#          comes from the provider; other lanes keep the local pane reading.
-#          This answers exactly as oversee-watch does
-#          about the same lane, except for a window a running fleet lane
-#          record names as a Pi lane: that one is judged from the rows its
-#          lane-mail-check hook writes in its mailbox (lib/session-rows.sh),
-#          through its host where the record names one, and never from its
-#          pane, so a Pi lane with no row is `unjudged` and never `asking`;
-#          a fleet state whose records cannot be read refuses as
-#          `lanes: state-fleet`. The local pane is the fallback for an
-#          unrecorded pane=local lane. An unrecorded pane=verb lane is
-#          unjudged because no record names its remote harness.
-#          A Copilot allow-all lane's record note is on stderr beside it
-#          (references/copilot-runtime.md).
-#          A local name no pane on this server carries is
-#          `unjudged`: a window that closed and a name two windows share are
-#          the same silence from here. `gone` is the judge's answer for a
-#          window a caller has already found absent, which this verb never
-#          asserts, so it is not among the words printed here. Where
-#          the lane's resolved host names a provider, `lane-host touch` says whether
-#          the HOST answers; a failed probe prints `lanes: host-unreachable`
-#          on stderr with the provider's own message, one lane-host refused at
-#          its per-home cap `lanes: lane-host-busy`, and either leaves the state
-#          alone. --json prints {"item":..,"state":..}. Exit 1 when a scan
-#          failed rather than answered.
-#   facts  Read one exact launched item from DIR's oversee workflow state.
-#          Print one JSON object: item; status (read, absent or failed); reason
-#          (null on read, a stable key otherwise); stage (the last recorded
-#          stage kind or null); review_rounds, fix_receipts, validation_runs,
-#          restacks and repeated_class_rounds (recorded-derived numbers or
-#          "unread", using lane_state_rounds); post_pr_stop (null or the recorded
-#          gate and name). Non-read results carry null for all facts.
-#          Exit 0 means read; 1 means confirmed absence; 2 means failed or
-#          unbound read. Absence reasons are root-gone, state-absent and
-#          files-none. Failure reasons are fleet-unread, record-missing,
-#          record-ambiguous, record-invalid, root-unbound, root-unread,
-#          state-unread, state-invalid and scratch-unavailable.
-#          DIR binds the fleet state. The lane's host and mail_root bind its
-#          own state. Reads use existing host capabilities and file transport.
-#          No read uses another item key or the caller checkout as fallback.
 #          A parked sandbox stays stopped. No live activity or GitHub is read.
 #   check  Exit 0 when no lane setting excludes or retires <config-dir>, or the
 #         lane a bare name or alias names; exit 4 with `lanes: lane-excluded`
@@ -742,9 +644,9 @@
 # `usage_age_s` (the AGE column) is how old the figure is. Fresh normalized
 # records reuse parsed readings. Normal reads check stored token and login
 # expiry and the credentials file's modification time. A stale, changed or
-# legacy record uses the credential and raw-usage parsers; an expired token
+# older-format record uses the credential and raw-usage parsers; an expired token
 # is renewed or reports its refusal. Parser changes reach an existing record
-# when it is refreshed or normalized from a legacy raw record. --cache-only
+# when it is refreshed or normalized from an older-format raw record. --cache-only
 # skips credentials and renewal. A fresh write keeps the displaced figure as
 # `prior`; lane records expose the binding bucket's rate and projected wall
 # after samples at least a minute apart, and none on credits
@@ -1056,10 +958,6 @@ message() {
       printf 'lanes: usage-cache-prune-failed path=%s\n' "$1"
       printf '%s\n' "a removed account's usage record could not be deleted; check the cache directory permissions"
       ;;
-    lane-scan-failed)
-      printf 'lanes: lane-scan-failed item=%s\n' "$1"
-      printf '%s\n' "the lane's pane could not be searched; its state is unknown, not idle"
-      ;;
     host-accounts-unreadable)
       printf 'lanes: host-accounts-unreadable host=%s exit=%s\n' "$1" "$2"
       printf '%s\n' "the provider failed the accounts verb it implements, so nothing here says which accounts the host holds and a listing carries only the credentials on this machine; whatever the provider wrote is above this line, and exit 124 is the ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S bound, which leaves nothing there. The verb is optional: a provider that does not implement it exits 2 and is reported nowhere"
@@ -1087,15 +985,6 @@ message() {
     lane-host-busy)
       printf 'lanes: lane-host-busy step=%s item=%s\n' "$1" "$2"
       printf '%s\n' "lane-host refused the provider call at its per-home cap on provider calls, and its own line is above; the provider ran nothing, so this says nothing about the host. Ask again"
-      ;;
-    host-unreachable)
-      printf 'lanes: host-unreachable item=%s state=%s\n' "$1" "$2"
-      printf '%s\n' "the host provider did not answer the touch probe; the state names what this machine could read of the lane and says nothing about the host, and the provider's own message follows"
-      [ -z "$3" ] || printf '%s\n' "$3"
-      ;;
-    copilot-note)
-      printf 'lanes: %s item=%s\n' "$2" "$1"
-      printf '%s\n' "the Copilot allow-all lane's session record note; the state is the pane's (references/copilot-runtime.md § Allow-all blocked by policy)"
       ;;
     invalid-usage-ttl)
       printf 'lanes: invalid-usage-ttl value=%s\n' "$1"
@@ -1125,7 +1014,6 @@ message() {
       printf 'lanes: usage-lock-unopenable lock-file=%s\n' "$1"
       printf '%s\n' "the host-wide usage refresh lock file could not be opened, so this run measured without it and the usage endpoint may see two refreshes of the same accounts; check the usage cache directory, or set OVERSEE_WATCH_STATE_DIR"
       ;;
-    invalid-handoff-headroom) printf 'lanes: invalid-handoff-headroom value=%s\nORCH_HANDOFF_HEADROOM_PCT must be an integer 0-100\n' "$1" ;;
     invalid-overseer-headroom) printf 'lanes: invalid-overseer-headroom value=%s\nORCH_OVERSEER_HEADROOM_PCT must be an integer 0-100\n' "$1" ;;
     invalid-lane-max-pct) printf 'lanes: invalid-lane-max-pct value=%s\nORCH_LANE_MAX_PCT must be an integer 0-100\n' "$1" ;;
     invalid-lane-burn) printf 'lanes: invalid-lane-burn value=%s\nORCH_LANE_BURN_PCT_PER_HOUR must be an integer 0-100\n' "$1" ;;
@@ -1179,25 +1067,9 @@ message() {
       printf 'lanes: lane-retired dir=%s date=%s\n' "$1" "$2"
       printf '%s\n' "ORCH_LANE_RETIRE retired this lane's plan; only a Pi anthropic/ launch on its API grant runs under it"
       ;;
-    context-claims)
-      printf 'lanes: context-claims exit=%s\n' "1"
-      printf '%s\n' "in-flight lane claims could not be read; refusing to report context (fix the claims directory, or set OVERSEE_WATCH_STATE_DIR)"
-      ;;
-    invalid-handoff-context)
-      printf 'lanes: invalid-handoff-context value=%s\n' "$1"
-      printf '%s\n' "ORCH_HANDOFF_CONTEXT_PCT must be a whole number of percent from 1 to 100"
-      ;;
-    state-fleet)
-      printf 'lanes: state-fleet window=%s\n' "$1"
-      printf '%s\n' "the fleet state's lane records could not be read, so whether this window is a Pi lane, judged from the rows its hook writes and never from its pane, is unknown; refusing to answer rather than read a Pi lane's pane"
-      ;;
-    context-fleet)
-      printf 'lanes: context-fleet item=%s\n' "$1"
-      printf '%s\n' "the fleet state's lane records could not be read, so no lane's mailbox, where its turn-end hook records its context, can be found; refusing to report context rather than report every lane unrecorded"
-      ;;
     unknown-subcommand)
       printf 'lanes: unknown-subcommand SUB=%s\n' "$SUB"
-      printf '%s\n' "unknown subcommand: $SUB (expected list, pick, host-accounts, check, context, or state)"
+      printf '%s\n' "unknown subcommand: $SUB (expected list, pick, host-accounts, or check)"
       ;;
     settings-rejected)
       printf 'lanes: settings-rejected path=%s\n' "$PROJECT_ROOT"
@@ -1803,7 +1675,7 @@ measure_lane() {
 # caller back on the endpoint at once.
 usage_from_record() {
 	local refusal=""
-	# A locked re-read may find a refusal where the fast read found a legacy
+	# A locked re-read may find a refusal where the fast read found an older
 	# figure. Only the figure accepted by this attempt can supply its metadata.
 	raw="" age=null current_at="" prior_at="" prior_raw="" sample_claims=1
 	USAGE_CACHE_RECORD="" USAGE_CACHE_LEGACY=false
@@ -3381,110 +3253,6 @@ host_accounts_answer() { # HOST [SAMPLE|RECORD] — rows or their sampled body; 
 	printf '%s\n' "$rows"
 } 2>&"$HOST_ACCOUNTS_ERR_FD"
 
-# The recorded reading of the session one `lanes context` row names, the
-# lane_context_collect fetch contract: the record on stdout and exit 0, exit 1
-# where none is recorded, exit 2 with the cause on stdout where it could not be
-# read. A row whose window a running fleet lane record names is that lane, read
-# in its own mailbox, through its host where the record names one.
-context_record_fetch() { # LANE CALLER
-	local lane="$1" caller="$2" rec
-	rec="$(jq -c --arg w "$lane" 'map(select(((.window // "") | sub("^.*:"; "")) == $w)) | first // empty' <<<"$CONTEXT_LANES")" \
-		|| { printf 'the fleet lane records could not be searched for window %s\n' "$lane"; return 2; }
-	if [[ -z "$rec" ]]; then
-		# The caller's own row with no lane record is the overseer, whose context
-		# is judged at its own turn end on the reading that turn end took and on
-		# no stored one, so this report carries none for it.
-		[[ -z "$caller" ]] || return 1
-		printf 'no running fleet lane record names the window %s, so the mailbox its reading is recorded in is unknown\n' "$lane"
-		return 2
-	fi
-	mailbox_file_fetch "$rec" "$LANE_CONTEXT_RECORD"
-}
-
-# CLAIMS with a row appended for every running Copilot fleet lane record
-# LANES_JSON holds whose window no claim names. A Copilot launch takes no
-# --lane, so no claim, yet its turn end judges a reading recorded in its
-# mailbox like any lane's, so the sweep reads it from its record. Another
-# harness's lane is read through its claim alone: its claim goes when its pane
-# dies, its record can still read running, and a row from that record would
-# bring back the dead lane's stale reading. The row names the
-# record's account, or none, its window's name as the lane, no server, and
-# the window's whole `SESSION:WINDOW` as the pane, a target tmux takes where
-# it takes a pane id. Exit 1 where the records could not be read.
-context_record_claims() { # CLAIMS LANES_JSON
-	local rows
-	rows="$(jq -r --arg claims "$1" '
-		($claims | split("\n") | map(split("\t") | .[1] // empty)) as $named
-		| .[] | select((.window // "") != "" and (.harness // "") == "copilot")
-		| (.window | sub("^[^:]*:"; "")) as $w
-		| select(any($named[]; . == $w) | not)
-		| [(.account // ""), $w, "", .window] | join("\t")' <<<"$2")" || return 1
-	[[ -z "$1" ]] || printf '%s\n' "$1"
-	[[ -z "$rows" ]] || printf '%s\n' "$rows"
-}
-
-# The file NAME in the lane mailbox the fleet lane record REC names, under the
-# same contract: its bytes on stdout and exit 0, exit 1 where it is not there
-# or is empty, exit 2 with the cause on stdout where it could not be read.
-mailbox_file_fetch() { # REC NAME
-	local rec="$1" fields item host root path out rc=0 probe_rc=0
-	fields="$(jq -r '[(.item // ""), (.host // ""), (.mail_root // "")] | join("\t")' <<<"$rec")" \
-		|| { printf 'the fleet lane record %s could not be read\n' "$rec"; return 2; }
-	item="${fields%%$'\t'*}"; fields="${fields#*$'\t'}"
-	host="${fields%%$'\t'*}"; root="${fields#*$'\t'}"
-	[[ -n "$item" && -n "$root" ]] || { printf 'the fleet lane record %s names no item or no mail_root\n' "$rec"; return 2; }
-	path="$root/tmp/lane-mail/$item/$2"
-	if [[ -z "$host" ]]; then
-		[[ -e "$path" ]] || return 1
-		out="$(cat -- "$path" 2>&1)" || { printf '%s\n' "$out"; return 2; }
-		[[ -n "$out" ]] || return 1
-		printf '%s\n' "$out"
-		return 0
-	fi
-	# A hosted read that fails with 2 is a file the host does not hold, or a
-	# host lane-host could not reach at all, which answers 2 as well; the probe
-	# tells them apart, as lane-mail's own hosted read does.
-	out="$(ORCH_LANE_HOST="$host" "$SCRIPT_DIR/lane-host" cat --item "$item" "$path" 2>/dev/null)" || rc=$?
-	if [[ "$rc" -eq 0 ]]; then
-		[[ -n "$out" ]] || return 1
-		printf '%s\n' "$out"
-		return 0
-	fi
-	ORCH_LANE_HOST="$host" "$SCRIPT_DIR/lane-host" touch --item "$item" >/dev/null 2>&1 || probe_rc=$?
-	[[ "$probe_rc" -eq 0 ]] || { printf 'the host of %s did not answer\n' "$item"; return 2; }
-	[[ "$rc" -ne 2 ]] || return 1
-	printf 'the host of %s answered and the read of %s failed with exit %s\n' "$item" "$path" "$rc"
-	return 2
-}
-
-# What a Pi lane emitted, for `state`: STATE_ROWS is the verdict
-# lib/session-rows.sh § session_rows_lane_verdict reads off the rows its hook
-# wrote in its mailbox, through its host where its record names one, and
-# `unreadable` where they could not be read; it is empty for a window no
-# running fleet lane record names as a Pi lane's, whose pane is judged. Exit 2
-# where the fleet state is there and its records could not be read, since a Pi
-# lane read as any other would be judged by its pane. It keeps the records in
-# STATE_RECORDS.
-STATE_ROWS="" STATE_RECORDS=""
-state_rows_read() { # WINDOW
-	local exists rec rows rc=0
-	STATE_ROWS="" STATE_RECORDS=""
-	exists="$("$SCRIPT_DIR/workflow-state" exists --json oversee 2>/dev/null | jq -r '.exists')" || return 2
-	[[ "$exists" == true ]] || return 0
-	STATE_RECORDS="$("$SCRIPT_DIR/workflow-state" get oversee '.lanes // []' 2>/dev/null)" || return 2
-	rec="$(lane_running_record "$STATE_RECORDS" "$1" pi)" || return 2
-	[[ -n "$rec" ]] || return 0
-	STATE_ROWS=unreadable
-	rows="$(mailbox_file_fetch "$rec" "$SESSION_ROWS_LANE")" || rc=$?
-	case "$rc" in
-		0) ;;
-		1) rows="" ;;
-		*) return 0 ;;
-	esac
-	session_rows_lane_verdict /dev/stdin <<<"$rows" || return 0
-	STATE_ROWS="$SESSION_ROWS_VERDICT"
-}
-
 render_table() {
 	jq -r "$LANE_HEADROOM_CELL_JQ"'
 		def col($s; $n): ($s | tostring) as $t
@@ -4100,17 +3868,14 @@ parse_argv() {
 			--lane=*) LANE_ARG="${1#--lane=}"; need_val --lane "$LANE_ARG"; shift ;;
 			--exclude-lane) need_val "$@"; exclude_lane "$2"; shift 2 ;;
 			--exclude-lane=*) need_val --exclude-lane "${1#--exclude-lane=}"; exclude_lane "${1#--exclude-lane=}"; shift ;;
-			--state-dir) [[ "$SUB" == facts ]] || die unknown-option "$@"; need_val "$@"; FACTS_STATE_DIR="$2"; shift 2 ;;
-			--state-dir=*) [[ "$SUB" == facts ]] || die unknown-option "$@"; FACTS_STATE_DIR="${1#--state-dir=}"; need_val --state-dir "$FACTS_STATE_DIR"; shift ;;
 			--json) AS_JSON=true; shift ;;
 			--no-cache) USE_CACHE=false; shift ;;
 			--max-age) need_val "$@"; USAGE_MAX_AGE="$2"; shift 2 ;;
 			--max-age=*) USAGE_MAX_AGE="${1#--max-age=}"; need_val --max-age "$USAGE_MAX_AGE"; shift ;;
 			--help|-h) print_lanes_usage; exit 0 ;;
 			*)
-				# `check` takes one config dir and `state` one item; anything
-				# else is an option typo.
-				[[ ( "$SUB" == check || "$SUB" == state || "$SUB" == facts ) && -z "$LANE_ARG" && "$1" != -* ]] || die unknown-option "$@"
+				# `check` takes one config dir; anything else is an option typo.
+				[[ "$SUB" == check && -z "$LANE_ARG" && "$1" != -* ]] || die unknown-option "$@"
 				LANE_ARG="$1"
 				shift
 				;;
@@ -4187,7 +3952,6 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 export PROJECT_ROOT
 # shellcheck source=lib/copilot-credits.sh
 source "$SCRIPT_DIR/lib/copilot-credits.sh"
-# shellcheck source=lib/file-lock.sh
 source "$SCRIPT_DIR/../../mailbox/scripts/lib/file-lock.sh"
 # shellcheck source=lib/kendex-env.sh
 source "$SCRIPT_DIR/lib/kendex-env.sh"
@@ -4224,11 +3988,9 @@ source "$SCRIPT_DIR/lib/lane-usage.sh"
 source "$SCRIPT_DIR/lib/lane-launch.sh"
 # shellcheck source=lib/lane-host-slots.sh
 source "$SCRIPT_DIR/lib/lane-host-slots.sh"
-# shellcheck source=lib/lane-state.sh
-source "$SCRIPT_DIR/lib/lane-state.sh"
 # shellcheck source=lib/lane-capabilities.sh
 source "$SCRIPT_DIR/lib/lane-capabilities.sh"
-# The caller's own launch record and SessionStart row, for `context`.
+# The model class a pick resolves its --model through, shared with the overseer launch.
 # shellcheck source=lib/overseer-launch.sh
 source "$SCRIPT_DIR/lib/overseer-launch.sh"
 # The lib carries the strict mode its other callers run under. This one is
@@ -4506,78 +4268,9 @@ validate_lane_settings() {
 	[[ "$SUB" != check ]] || prune_usage_cache
 }
 
-facts_result() { # STATUS REASON
-	jq -cn --arg item "$LANE_ARG" --arg status "$1" --arg reason "$2" '
-		{item: $item, status: $status, reason: $reason, stage: null,
-		 review_rounds: null, fix_receipts: null, validation_runs: null,
-		 restacks: null, repeated_class_rounds: null, post_pr_stop: null,
-		 finding_occurrences: {prior: "unknown", classes: []}}'
-}
-
-cmd_facts() (
-	local fleet records record host root scratch state result rc=0
-	[[ -n "$LANE_ARG" ]] || die missing-value facts
-	[[ -n "${FACTS_STATE_DIR:-}" ]] || die missing-value --state-dir
-	if ! fleet="$("$SCRIPT_DIR/workflow-state" --state-dir "$FACTS_STATE_DIR" get oversee)"; then
-		facts_result failed fleet-unread; exit 2
-	fi
-	if ! records="$(jq -ce --arg item "$LANE_ARG" '
-		if type == "object" and (.lanes | type) == "array"
-		then [.lanes[] | select(.item == $item)] else error("invalid fleet state") end
-	' <<<"$fleet")"; then
-		facts_result failed fleet-unread; exit 2
-	fi
-	case "$(jq 'length' <<<"$records")" in
-		0) facts_result failed record-missing; exit 2 ;;
-		1) ;;
-		*) facts_result failed record-ambiguous; exit 2 ;;
-	esac
-	record="$(jq -c '.[0]' <<<"$records")" || exit 2
-	if ! jq -e '(.host == null or (.host | type) == "string") and
-		(.mail_root == null or (.mail_root | type) == "string")' <<<"$record" >/dev/null; then
-		facts_result failed record-invalid; exit 2
-	fi
-	host="$(jq -r '.host // ""' <<<"$record")" || exit 2
-	root="$(jq -r '.mail_root // ""' <<<"$record")" || exit 2
-	scratch="$(mktemp -d)" || { facts_result failed scratch-unavailable; exit 2; }
-	trap 'rm -rf -- "${scratch:?}"' EXIT
-	# shellcheck source=lib/lane-gitfile.sh
-	source "$SCRIPT_DIR/lib/lane-gitfile.sh" || exit 2
-	lane_item_state "$SCRIPT_DIR/workflow-state" "$SCRIPT_DIR/lane-host" "${ORCH_STATE_DIR:-tmp}" \
-		"$LANE_ARG" "$host" "$root" "$scratch" "" "$LANE_ARG" true || rc=$?
-	if [[ "$rc" -ne 0 ]]; then
-		[[ ! -s "$scratch/state.err" ]] || cat "$scratch/state.err" >&2
-		facts_result failed "${LANE_ITEM_STATE_REASON:-state-unread}"; exit 2
-	fi
-	if [[ -z "$LANE_ITEM_STATE" ]]; then
-		facts_result absent "${LANE_ITEM_STATE_REASON:-state-absent}"; exit 1
-	fi
-	state="$(jq -cse 'if length == 1 and (.[0] | type) == "object"
-		then .[0] else error("invalid item state") end' <<<"$LANE_ITEM_STATE")" || {
-		facts_result failed state-invalid; exit 2
-	}
-	lane_state_rounds "$state" "$scratch/state.err" "$LANE_ITEM_VALIDATION_RUNS" || {
-		cat "$scratch/state.err" >&2
-		facts_result failed state-invalid; exit 2
-	}
-	result="$(jq -c --arg item "$LANE_ARG" \
-		--argjson review "$LANE_REVIEW_ROUNDS" --arg fix "$LANE_FIX_RECEIPTS" \
-		--arg validation "$LANE_VALIDATION_RUNS" --argjson restacks "$LANE_RESTACKS" \
-		--arg repeated "$LANE_REPEATED_CLASS_ROUNDS" --argjson findings "$LANE_FINDING_OCCURRENCES" '
-		{item: $item, status: "read", reason: null, stage: (.stages[-1].kind // null),
-		 review_rounds: $review, fix_receipts: ($fix | fromjson? // $fix),
-		 validation_runs: ($validation | fromjson? // $validation), restacks: $restacks,
-		 repeated_class_rounds: ($repeated | fromjson? // $repeated),
-		 finding_occurrences: $findings,
-		 post_pr_stop: (if .post_pr_stop == null then null else .post_pr_stop | {gate, name} end)}
-	' <<<"$state")" || { facts_result failed state-invalid; exit 2; }
-	printf '%s\n' "$result"
-)
-
 parse_argv "$@"
 
 case "$SUB" in
-	facts) cmd_facts; exit $? ;;
 	list)
 		HARNESS="${HARNESS:-all}"
 		[[ "$HARNESS" =~ ^(claude|codex|copilot|pi|all)$ ]] || die invalid-harness "$@"
@@ -4737,170 +4430,6 @@ case "$SUB" in
 			fi
 		done <<<"$check_names"
 		[[ -z "$check_dir" ]] || printf '%s\n' "$check_dir"
-		;;
-	state)
-		[[ -n "$LANE_ARG" ]] || die missing-value state
-		# No /proc read: this script's vantage point is the tmux server, the
-		# same one oversee-watch reads, so the two cannot disagree. A caller
-		# that also holds the lane's worktree — `open-terminal --wake` — passes
-		# the harness process as the sixth argument instead.
-		# A Pi lane is judged from the rows its own hook wrote, never its pane;
-		# the pane is read only for a window no running Pi record names.
-		state_rows_read "$LANE_ARG" || die state-fleet "$LANE_ARG"
-		state_record="$(lane_running_record "${STATE_RECORDS:-[]}" "$LANE_ARG" "" session)" || die state-fleet "$LANE_ARG"
-		state_host="$(jq -r '.host // "local"' <<<"${state_record:-null}")"
-		[[ -n "$state_record" ]] || state_host="${ORCH_LANE_HOST:-local}"
-		state_item="$(jq -r '.item // empty' <<<"${state_record:-null}")"
-		state_probe_item="$state_item"
-		[[ -n "$state_record" ]] || state_probe_item="${LANE_ARG#*:}"
-		state_harness="$(jq -r '.harness // empty' <<<"${state_record:-null}")"
-		state_mode=local state_source="" state_status=pane
-		if [[ "$state_host" != local ]]; then
-			lane_pane_mode state_mode "$state_host" || state_mode=unreadable
-			lane_capability state_status status
-		fi
-		[[ "$state_status" == verb ]] || state_item=""
-		if [[ -z "$state_item" && "$state_mode" != local ]]; then
-			LANE_PANE_ID="" LANE_PANE_CMD="" LANE_PANE_PID="" LANE_PANE_SCREEN="" LANE_PANE_COUNT=0
-			state_source=unreadable
-		else
-			lane_pane_observe "$LANE_ARG" "$state_host" "$state_item"
-			state_source="$LANE_PANE_SOURCE"
-		fi
-		# No pane on this server carries the name: nothing here sees the lane's
-		# harness, so its rows answer nothing either and the judge says unjudged.
-		[[ -n "$LANE_PANE_ID" || "$state_mode" == verb && -n "$state_item" ]] || STATE_ROWS=""
-		[[ -z "$LANE_PANE_ID" ]] || { rec="$(lane_running_record "$STATE_RECORDS" "$LANE_ARG" copilot)" &&
-			lane_now; lane_context_copilot_note "$rec" "$LANE_NOW"; } || die state-fleet "$LANE_ARG"
-		[[ -z "$COPILOT_SESSION_NOTE" ]] || message copilot-note "$LANE_ARG" "$COPILOT_SESSION_NOTE" >&2
-		lane_state_rc=0
-		ORCH_LANE_HOST="$state_host" lane_state LANE_STATE_ANSWER listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$LANE_PANE_SCREEN" "" "" "$STATE_ROWS" "$state_item" "$state_harness" "$state_source" \
-			|| lane_state_rc=$?
-		[[ "$lane_state_rc" -ne 2 ]] || die lane-scan-failed "$LANE_ARG"
-		if [[ "$LANE_STATE_ANSWER" == rate-limit-switch ]]; then
-			printf 'fix=item=%s state=rate-limit-switch; dismiss the Codex model-switch reminder and keep the current model; close the lane if its work is finished\n' "$LANE_ARG" >&2
-		fi
-		# A hosted lane's harness is on another machine, so `unjudged` here is
-		# "no pane on this server carries the name", never "the lane is dead".
-		# The provider is asked whether the host itself answers, and its answer
-		# is reported BESIDE the state, never AS the state: `touch` keeps a host
-		# alive and carries no "no such lane" reply (schemas/lane-host.md), so
-		# every non-zero exit is a probe that failed — a rebooting host, the
-		# dispatcher's own refusal, a transient ssh error — and calling that
-		# `gone` would send the overseer down the window-gone path in
-		# references/oversee-events.md, which relaunches an item whose first
-		# session is still running on the remote host. lane-mail's failed read
-		# says `host-unreachable` for this same probe and asserts no lane state
-		# either.
-		if [[ "$LANE_STATE_ANSWER" == unjudged && "$state_host" != local && -z "$LANE_PANE_SCREEN" ]]; then
-			probe_rc=0
-			# The provider knows the item, never the session a window sits in.
-			probe_err="$(ORCH_LANE_HOST="$state_host" "$SCRIPT_DIR/lane-host" touch --item "$state_probe_item" 2>&1 >/dev/null)" || probe_rc=$?
-			if [[ "$probe_rc" -eq "$LANE_HOST_BUSY_EXIT" ]]; then
-				printf '%s\n' "$probe_err" >&2
-				message lane-host-busy touch "$LANE_ARG" >&2
-			elif [[ "$probe_rc" -ne 0 ]]; then
-				message host-unreachable "$LANE_ARG" "$LANE_STATE_ANSWER" "$probe_err" >&2
-			fi
-		fi
-		if [[ "$AS_JSON" == "true" ]]; then
-			jq -nc --arg i "$LANE_ARG" --arg s "$LANE_STATE_ANSWER" '{item:$i,state:$s}'
-		else
-			printf '%s\n' "$LANE_STATE_ANSWER"
-		fi
-		;;
-	context)
-		HANDOFF_HEADROOM_PCT="${ORCH_HANDOFF_HEADROOM_PCT:-3}"
-		pct_valid "$HANDOFF_HEADROOM_PCT" || die invalid-handoff-headroom "$HANDOFF_HEADROOM_PCT"
-		# The context mark resolves through orch-env, as the turn-end hook and
-		# oversee-succeed resolve it, so one settings file sets it for all three.
-		HANDOFF_CONTEXT_PCT="$("$SCRIPT_DIR/orch-env" ORCH_HANDOFF_CONTEXT_PCT 90)" || die settings-rejected
-		context_rc=0
-		lane_context_handoff_due 0 1 "$HANDOFF_CONTEXT_PCT" >/dev/null || context_rc=$?
-		[[ "$context_rc" -ne 2 ]] || die invalid-handoff-context "$HANDOFF_CONTEXT_PCT"
-		validate_lane_settings
-		load_lane_claims || exit 1
-		# An unreadable claim store is not an empty fleet: reporting no lanes
-		# would read as "every lane has room", which is the answer that sends
-		# a lane into its wall.
-		[[ "$LANE_CLAIMS_RC" -eq 0 ]] || die context-claims "$@"
-		# The caller's account: the one its overseer launch record or its
-		# SessionStart row names (lib/overseer-launch.sh § ol_caller_known, the
-		# reader oversee-succeed asks too), else the SHAPE its pane names turned
-		# into an account by lib/lane-context.sh's lane_context_caller_cfg, the
-		# rule the lane's turn-end handoff hook asks about itself, so no session
-		# is one account in this report and another there. A launched overseer
-		# runs under overseer-run, whose bash is the pane's foreground command,
-		# so its pane names no harness and the records answer.
-		caller_cfg=""
-		if [[ -n "${TMUX_PANE:-}" ]]; then
-			OL_KNOWN_ACCOUNT="" OL_KNOWN_HARNESS=""
-			if caller_key="$(lane_context_caller_key)"; then
-				DEP_ERR=/dev/null ol_caller_known "${caller_key%% *}" "$TMUX_PANE" "$PWD" || true
-			fi
-			caller_cfg="$OL_KNOWN_ACCOUNT"
-			if [[ -z "$caller_cfg" ]]; then
-				caller_shape="$OL_KNOWN_HARNESS"
-				if [[ -z "$caller_shape" ]]; then
-					caller_cmd="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_current_command}' 2>/dev/null)" || caller_cmd=""
-					caller_shape="$(lane_context_shape "${caller_cmd#-}")"
-				fi
-				caller_cfg="$(lane_context_caller_cfg "$caller_shape")"
-			fi
-		fi
-		# Where each row's reading is recorded: a lane's in its own mailbox, which
-		# its fleet lane record places.
-		# No fleet state is a session outside any fleet, whose rows are the
-		# caller's alone; a state that is there and cannot be read is refused.
-		CONTEXT_LANES='[]'
-		context_fleet="" context_records='[]'
-		fleet_exists="$("$SCRIPT_DIR/workflow-state" exists --json oversee 2>/dev/null | jq -r '.exists')" \
-			|| die context-fleet oversee
-		if [[ "$fleet_exists" == true ]]; then
-			context_state="$("$SCRIPT_DIR/workflow-state" path oversee)" || die context-fleet oversee
-			context_fleet="$(lane_claims_canon "${context_state%/*}")/${context_state##*/}"
-			context_records="$("$SCRIPT_DIR/workflow-state" get oversee '.lanes // []' 2>/dev/null)" \
-				|| die context-fleet oversee
-			CONTEXT_LANES="$(jq -c "$LANE_RUNNING_JQ"'[.[] | select(running)]' <<<"$context_records")" \
-				|| die context-fleet oversee
-		fi
-		context_claims="$(lane_claims_for_fleet "$LANE_CLAIMS_LIVE" "$context_fleet" "$context_records")" \
-			|| die context-claims "$@"
-		context_claims="$(context_record_claims "$context_claims" "$CONTEXT_LANES")" || die context-fleet oversee
-		# A separate list, never LANE_CLAIMS_LIVE itself: the caller's pane is
-		# a pane to measure and not a launch in flight, and the usage pass
-		# below counts that global's rows against each account.
-		panes_to_measure="$(lane_context_with_caller "$context_claims" "$(lane_claims_canon "$caller_cfg")")"
-		out="$(lane_context_collect "$panes_to_measure" lane_alias_for context_record_fetch "$HANDOFF_CONTEXT_PCT")"
-		pick_host_rows all || exit 1
-		overseer_seats || die pick-overseer-seats "$SEATS_STEP" "$SEATS_STATE"
-		context_seats="$SEATS"
-		identities="$(jq -c --argjson records "$CONTEXT_LANES" --arg provider "${ORCH_LANE_HOST:-local}" --arg seats "$context_seats" '
-		  .[] | . as $x
-		  | ($records | map(select(((.window // "") | sub("^.*:"; "")) == $x.lane)) | first) as $r
-		  | (if $r == null and $x.caller then "context-overseer" else "worker" end) as $role
-		  | {account: ($r.account // $x.config_dir // ""), harness: (($r.harness | select(. != "")) // $x.harness // ""),
-		     model: (if $role == "context-overseer" then "" else (($r.model | select(. != "")) // $x.model // "") end), role:$role, caller:$x.caller, seats:$seats,
-		     provider: (if $role == "context-overseer" then $provider else ($r.host // "local" | if . == "" then "local" else . end) end)}' <<<"$out")" || exit 1
-		judgments='[]'
-		while IFS= read -r identity; do
-			[[ -n "$identity" ]] || continue
-			judgment_rc=0
-			named_account_judgment "$identity" "$((100 - 10#$HANDOFF_HEADROOM_PCT))" false "$BURN_PCT" false "$CREDIT_FLOOR" || judgment_rc=$?
-			case "$judgment_rc" in
-				0) judgment="${NAMED_ACCOUNT_RESULT[1]}" ;;
-				4) judgment='{}' ;; # An unlisted account has no account reading.
-				*) exit "$judgment_rc" ;;
-			esac
-			judgments="$(jq -c --argjson l "$judgment" '. + [$l]' <<<"$judgments")" || exit 1
-		done <<<"$identities"
-		out="$(jq -nc --argjson c "$out" --argjson judgments "$judgments" '
-		  $c | to_entries | map(.value as $x | $judgments[.key] as $l
-		    | $x + {headroom_pct: ($l.headroom_pct // null), binding_bucket: ($l.binding_bucket // null),
-		            binding_resets_at: ($l.binding_resets_at // null), credits: ($l.credits // null),
-		            handoff_required: ($l.verdict == "walled" or $l.verdict == "seat-reserve" or $x.context_handoff_due == true)})')"
-
-		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else lane_context_render <<<"$out"; fi
 		;;
 	*) die unknown-subcommand "$@" ;;
 esac

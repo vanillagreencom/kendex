@@ -552,8 +552,8 @@ impl Operation<'_> {
         // A unit inherits the manager's environment, not the caller's, so
         // every exported variable a unit can carry is handed over, the
         // client reading each value from the environment it is given.
-        let client = client_inputs();
-        words.extend(client.setenv.iter().cloned());
+        let env = client_env();
+        words.extend(unit_setenv());
         words.push("--".to_owned());
         // The manager expands `${NAME}` in a unit's command line, and `$$`
         // is its spelling of one literal `$`.
@@ -565,7 +565,7 @@ impl Operation<'_> {
             Path::new("systemd-run"),
             "launch",
             &args,
-            &client.runner_env(),
+            &runner_env(&env),
             JOB_LAUNCH_TIMEOUT,
         ) {
             Ok(out) if out.status.success() => {
@@ -579,11 +579,11 @@ impl Operation<'_> {
             }
             Ok(out) => match out.status.code() {
                 Some(_) => {
-                    let detail = first_line(&host::stderr_text(&out));
-                    if asked_nothing(&detail) {
-                        return Err(format!("unit-launch-failed detail={detail}"));
+                    let stderr = host::stderr_text(&out);
+                    if let Some(refusal) = asked_nothing(&stderr) {
+                        return Err(format!("unit-launch-failed detail={refusal}"));
                     }
-                    detail
+                    call_line(&stderr)
                 }
                 None => "signal".to_owned(),
             },
@@ -1278,13 +1278,14 @@ fn probe_manager() -> Runner {
         Ok(out) if host::stdout_text(&out) != "yes" => return setsid("no-linger".to_owned()),
         Ok(_) => {}
     }
+    let env = client_env();
     match host::run_tagged_alone(
         "job",
         "systemd-run",
         Path::new("systemd-run"),
         "probe",
         &["--user", "--quiet", "--collect", "true"],
-        &client_inputs().runner_env(),
+        &runner_env(&env),
         JOB_LAUNCH_TIMEOUT,
     ) {
         Ok(out) if out.status.success() => Runner::Unit(String::new()),
@@ -1336,45 +1337,29 @@ fn unit_env<'a>(
     (shell_name && !value.chars().any(noncharacter)).then_some((name, value))
 }
 
-/// What the runtime hands the client: its whole environment, and the
-/// `--setenv` words that hand the job's variables to the unit.
-struct ClientInputs {
-    env: Vec<(String, std::ffi::OsString)>,
-    setenv: Vec<String>,
+/// `env` in the form the runner takes.
+fn runner_env(env: &[(String, std::ffi::OsString)]) -> Vec<(&str, &std::ffi::OsStr)> {
+    env.iter()
+        .map(|(name, value)| (name.as_str(), value.as_os_str()))
+        .collect()
 }
 
-impl ClientInputs {
-    fn runner_env(&self) -> Vec<(&str, &std::ffi::OsStr)> {
-        self.env
-            .iter()
-            .map(|(name, value)| (name.as_str(), value.as_os_str()))
-            .collect()
-    }
-}
-
-/// The client's environment is the job's own variables a unit can carry
-/// (`unit_env`), the runtime directory and bus address as found, which it
-/// reaches the user manager by, and the names it reads for itself
-/// (`CLIENT_SETTINGS`) at the runtime's value or unset. Each carried
-/// variable goes to the unit by `--setenv=NAME`, the client taking the
-/// value from that environment: a value on its command line is readable by
-/// every local user through `/proc` for as long as the client runs, and a
-/// lane's token is among the values. A name in `CLIENT_SETTINGS` the job
-/// sets goes as `--setenv=NAME=VALUE`, since by name the unit would get the
-/// client's own.
-fn client_inputs() -> ClientInputs {
+/// The client's environment: the job's own variables a unit can carry
+/// (`unit_env`) less the names the client, or the loader that starts it,
+/// reads for itself; the runtime directory and bus address as found, which
+/// it reaches the user manager by; and the client's own settings
+/// (`CLIENT_SETTINGS`) at the runtime's value. The client takes each
+/// carried variable's value from here (`unit_setenv`): a value on its
+/// command line is readable by every local user through `/proc` for as long
+/// as the client runs, and a lane's token is among the values.
+fn client_env() -> Vec<(String, std::ffi::OsString)> {
     let mut env: std::collections::BTreeMap<String, std::ffi::OsString> =
         std::collections::BTreeMap::new();
-    let mut setenv = Vec::new();
     for (key, value) in std::env::vars_os() {
-        let Some((name, value)) = unit_env(&key, &value) else {
-            continue;
-        };
-        if CLIENT_SETTINGS.iter().any(|(own, _)| *own == name) {
-            setenv.push(format!("--setenv={name}={value}"));
-        } else {
+        if let Some((name, value)) = unit_env(&key, &value)
+            && !clients_own(name)
+        {
             env.insert(name.to_owned(), value.into());
-            setenv.push(format!("--setenv={name}"));
         }
     }
     for name in ["XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS"] {
@@ -1387,22 +1372,52 @@ fn client_inputs() -> ClientInputs {
             env.insert(name.to_owned(), value.into());
         }
     }
-    ClientInputs {
-        env: env.into_iter().collect(),
-        setenv,
-    }
+    env.into_iter().collect()
 }
 
-/// The names the client reads for itself, each at the value its environment
-/// holds, so the answer `launch_unit` reads by its text and the time it
-/// waits are the measured ones (systemd 262, under a private runtime
-/// directory and a private peer): systemd's logging settings fixed, since an
-/// inherited level, target, time, location or thread setting moves the line,
-/// prefixes it or empties stderr (`systemd(1)` § Environment); the locale
-/// fixed for the error text; and the bus timeout unset, so a withheld reply
-/// ends the client after systemd's own 25 s. No other name the client or its
-/// shared library reads moves the line or the wait.
-const CLIENT_SETTINGS: [(&str, Option<&str>); 8] = [
+/// The `--setenv` words that hand the job's variables to the unit: each
+/// carried variable by name, the client taking its value from
+/// `client_env`; one the client or the loader reads for itself with the
+/// job's value explicit, since by name the unit would get the client's own
+/// value or none. The values on the command line are those names' alone:
+/// the loader's paths, a terminal name, the manager's own stream and socket
+/// names, and systemd's logging and bus settings.
+fn unit_setenv() -> Vec<String> {
+    std::env::vars_os()
+        .filter_map(|(key, value)| {
+            let (name, value) = unit_env(&key, &value)?;
+            Some(if clients_own(name) {
+                format!("--setenv={name}={value}")
+            } else {
+                format!("--setenv={name}")
+            })
+        })
+        .collect()
+}
+
+/// Whether the client reads `name` from its environment (`CLIENT_SETTINGS`),
+/// or the loader that starts it does (`ld.so(8)`'s `LD_` names, read before
+/// the client runs: a missing preload or audit object puts the loader's own
+/// line on stderr first, and `LD_DEBUG` puts its trace there).
+fn clients_own(name: &str) -> bool {
+    name.starts_with("LD_") || CLIENT_SETTINGS.iter().any(|(own, _)| *own == name)
+}
+
+/// The names the client reads from its environment, each at the value the
+/// client runs under: fixed, or unset. The names are what a `getenv`
+/// interposition shows the installed client (systemd 262) asking for on
+/// every executed path under a private runtime directory and a private
+/// peer: no bus, a started job, the manager's refusal, a dropped and a
+/// withheld reply, the parser's refusal, no runtime directory, and the two
+/// names that open further reads (`SYSTEMD_EXEC_PID`, debug logging).
+/// systemd's logging settings are fixed, since an inherited one moves the
+/// line, prefixes it or empties stderr, and an unreadable one puts a warning
+/// before it; the locale is fixed for the error text; every other name is
+/// unset, so the client runs as itself (`SYSTEMD_INVOKED_AS` picks another
+/// program's parser), reads no kernel command line (`SYSTEMD_EXEC_PID`) and
+/// waits systemd's own 25 s for a withheld reply (`SYSTEMD_BUS_TIMEOUT`).
+/// `PATH`, the runtime directory and the bus address are the job's as found.
+const CLIENT_SETTINGS: [(&str, Option<&str>); 21] = [
     ("SYSTEMD_LOG_LEVEL", Some("info")),
     ("SYSTEMD_LOG_TARGET", Some("console")),
     ("SYSTEMD_LOG_TIME", Some("0")),
@@ -1410,27 +1425,59 @@ const CLIENT_SETTINGS: [(&str, Option<&str>); 8] = [
     ("SYSTEMD_LOG_TID", Some("0")),
     ("SYSTEMD_LOG_COLOR", Some("0")),
     ("LC_ALL", Some("C")),
+    ("JOURNAL_STREAM", None),
+    ("NOTIFY_SOCKET", None),
     ("SYSTEMD_BUS_TIMEOUT", None),
+    ("SYSTEMD_ENABLE_LOG_CONTEXT", None),
+    ("SYSTEMD_EXEC_PID", None),
+    ("SYSTEMD_IGNORE_CHROOT", None),
+    ("SYSTEMD_IN_CHROOT", None),
+    ("SYSTEMD_IN_INITRD", None),
+    ("SYSTEMD_INVOKED_AS", None),
+    ("SYSTEMD_LOG_RATELIMIT_KMSG", None),
+    ("SYSTEMD_MEMPOOL", None),
+    ("SYSTEMD_PROC_CMDLINE", None),
+    ("SYSTEMD_UTF8", None),
+    ("TERM", None),
 ];
 
-/// The answers of a `systemd-run` that exited before it sent the manager
-/// anything, read from its first line of stderr under `client_inputs`: its
-/// argument parser's refusal of an environment variable, a bus it could not
-/// connect to, and a message it could not build from what it was handed.
-/// Each is measured on the real client (systemd 262) under a private runtime
-/// directory and a private bus: no connect, a failed one, or no
-/// `StartTransientUnit` sent. Every other exit may follow a call the manager
-/// received, so it is never read as a refusal.
+/// The lines of a `systemd-run` that exited before it sent the manager
+/// anything, measured on the real client (systemd 262) under a private
+/// runtime directory and a private peer: its argument parser's refusal of
+/// an environment variable (no connect), a bus it could not connect to (one
+/// failed connect), and a message it could not build from what it was
+/// handed (no `StartTransientUnit` sent). The client parses before it
+/// connects and connects before it sends, so such a line proves nothing was
+/// sent wherever it stands: after a warning the client puts first, after
+/// the loader's line, after its debug lines, or after the time, thread and
+/// location prefixes its logging settings put before every line. Every
+/// other exit may follow a call the manager received.
 const ASKED_NOTHING: [&str; 3] = [
     "Cannot assign environment variable ",
     "Failed to connect to ",
     "Failed to create bus message: ",
 ];
 
-fn asked_nothing(detail: &str) -> bool {
-    ASKED_NOTHING
-        .iter()
-        .any(|prefix| detail.starts_with(prefix))
+/// The client's line for a call the manager received: its answer, which is
+/// the manager's own text and may hold a refusal's words, or the reply lost
+/// or withheld after the call.
+const SENT: &str = "Failed to start transient service unit: ";
+
+/// The line of `stderr` that shows the client sent the manager nothing.
+fn asked_nothing(stderr: &str) -> Option<&str> {
+    stderr
+        .lines()
+        .find(|line| !line.contains(SENT) && ASKED_NOTHING.iter().any(|text| line.contains(text)))
+}
+
+/// The line of `stderr` for a `detail=` field where the call may have
+/// reached the manager: the client's line for the call where one stands,
+/// else the first line.
+fn call_line(stderr: &str) -> String {
+    stderr
+        .lines()
+        .find(|line| line.contains(SENT))
+        .map_or_else(|| first_line(stderr), str::to_owned)
 }
 
 fn on_path(name: &str) -> bool {

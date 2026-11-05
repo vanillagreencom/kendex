@@ -65,6 +65,19 @@ tm set-option -g default-command 'exec /bin/sh'
 tm set-option -g automatic-rename off
 tm set-option -g renumber-windows on
 
+# The lane's state as the suite reads it on the fleet server, the words the
+# rows expect: `working` where one window of the lane's name holds the harness
+# stub's working line, `exited` where that one window's pane runs the shell
+# alone, `unjudged` where the name is absent or names two windows.
+lane_word() {
+  local window
+  window="$(tm list-windows -t =fleet -f "#{==:#{window_name},$TITLE}" -F '#{window_id}')"
+  [[ "$window" == @* && "$window" != *$'\n'* ]] || { echo unjudged; return 0; }
+  if [[ "$(tm capture-pane -p -t "$window")" == *'Working (esc to interrupt)'* ]]; then echo working
+  elif [[ "$(tm display-message -p -t "$window" '#{pane_current_command}')" == sh ]]; then echo exited
+  else echo unjudged; fi
+}
+
 # Each row starts with the dead windows a relaunch can encounter. SPLIT adds
 # the extra pane a manually split lane can leave. SOLE removes the controller
 # window, so replacement must keep the session itself alive.
@@ -131,8 +144,7 @@ run_row() { # LAUNCHER HOST COUNT SPLIT SOLE [FAILURE] [MODE] [OWNER] [TRACKER]
   # assume the shell has executed the paste when open-terminal returns.
   STATE=""
   for i in $(seq 50); do
-    STATE="$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" HOME="$TMP_ROOT/home" PATH="$BIN:$PATH" REAL_TMUX="$REAL_TMUX" TMUX="$ADDR" \
-      "$SCRIPTS_DIR/lanes" state "fleet:$TITLE")"
+    STATE="$(lane_word)"
     [[ "$host" != local || "$RC" != 0 || "$STATE" == working || "$mode" != --relaunch || "$tracker" == github ]] && break
     sleep 0.1
   done
@@ -195,7 +207,7 @@ git -C "$TMP_ROOT/mutant" config maintenance.auto false
 mutate_file "$MUTANT" 'if [[ "$TRACKER" == github && "$owner" != "$identity" ]]; then' 'if [[ "$owner" != "$identity" ]]; then'
 run_row "$MUTANT" local 1 no no
 assert_eq "$RC|$COUNT|$RETAINED|$STATE" '0|2|1|unjudged' \
-  'control: identity-only replacement leaves the untagged Linear window and lanes state is unjudged'
+  'control: identity-only replacement leaves the untagged Linear window beside the new one, the name ambiguous'
 
 # Name-only replacement destroys an untagged GitHub window.
 mutate_file "$MUTANT" 'if [[ "$owner" != "$identity" ]]; then' 'if [[ "$TRACKER" == github && "$owner" != "$owner" ]]; then'

@@ -673,6 +673,54 @@ if section pre-panel; then
   fi
 fi
 
+if section codex-by-id; then
+  # review-pr's admission names no transcript for a Codex session whose
+  # harness exposes no path: the shared reader finds the rollout by the
+  # session id through the agent-runtime lookup and reads it. The lookup is
+  # the executable's stand-in here, answering in its own reply shape; a
+  # lookup that names no file, or gives no answer, is a gap, never a refusal.
+  ID_HOME="$PANEL_HOME/codex"
+  ROLLOUT="$ID_HOME/sessions/2026/09/27/rollout-2026-09-27T00-00-00-s1.jsonl"
+  mkdir -p "${ROLLOUT%/*}" "$TMP_ROOT/by-id/bin"
+  { codex_context gpt-6.1-sol; codex_count 249999 475000; } > "$ROLLOUT"
+  cat > "$TMP_ROOT/by-id/bin/agent-runtime" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "${AGENT_RUNTIME_LOG:?}"
+[ -z "${AGENT_RUNTIME_EXIT:-}" ] || exit "$AGENT_RUNTIME_EXIT"
+cat -- "${AGENT_RUNTIME_REPLY:?}"
+STUB
+  chmod 755 "$TMP_ROOT/by-id/bin/agent-runtime"
+  by_id() { # REPLY_JSON [EXIT]
+    local rc=0
+    printf '%s\n' "$1" > "$TMP_ROOT/by-id/reply.json"
+    : > "$TMP_ROOT/by-id/argv.log"
+    env -i PATH="$PATH" HOME="$PANEL_HOME" CODEX_HOME="$ID_HOME" \
+      AGENT_RUNTIME_CLI="$TMP_ROOT/by-id/bin/agent-runtime" AGENT_RUNTIME_REPLY="$TMP_ROOT/by-id/reply.json" \
+      AGENT_RUNTIME_LOG="$TMP_ROOT/by-id/argv.log" AGENT_RUNTIME_EXIT="${2:-}" \
+      ORCH_COMPACTION_OVERRIDES="$ORCH_COMPACTION_OVERRIDES" ORCH_HANDOFF_CONTEXT_PCT=90 ORCH_HANDOFF_AGENT_RESERVE_TOKENS=150000 \
+      "$BASH" "$LIB" --attached-launch --reading codex s1 '' "$PANEL_BOX" "$T" >"$TMP_ROOT/by-id/out.json" 2>"$T/panel.err" || rc=$?
+    printf 'rc=%s' "$rc"
+  }
+  assert_eq "$(by_id "$(jq -nc --arg f "$ROLLOUT" '{ok:true,result:{reading:"live",file:$f}}')")" 'rc=0' \
+    'Codex rollout by id: a fixture rollout named by the session id with no path is read' "$T/panel.err"
+  assert_eq "$(jq -c '[.verdict,.source.transcript,.decision.tokens]' "$TMP_ROOT/by-id/out.json")" "[\"room\",\"$ROLLOUT\",249999]" \
+    'Codex rollout by id: the reading binds the rollout the lookup named'
+  assert_eq "$(cat "$TMP_ROOT/by-id/argv.log")" "session-file --harness codex --home $ID_HOME --cwd $T --id s1" \
+    'Codex rollout by id: the lookup is asked for the session id under the Codex home for the project'
+  assert_eq "$(by_id '{"ok":true,"result":{"reading":"gone"}}')" 'rc=2' \
+    'Codex rollout by id: no file for the id yet is a gap' "$T/panel.err"
+  assert_eq "$(grep -c 'context-unmeasured=session-file-absent' "$T/panel.err" || true)" 1 \
+    'Codex rollout by id: the gap names the absent file'
+  assert_eq "$(by_id '' 69)" 'rc=2' \
+    'Codex rollout by id: an executable that is not built is a gap' "$T/panel.err"
+  assert_eq "$(grep -c 'context-unmeasured=session-lookup-unavailable' "$T/panel.err" || true)" 1 \
+    'Codex rollout by id: the gap names the lookup'
+  assert_eq "$(by_id '{"ok":true,"result":{"reading":"unreadable","cause":"store-unreadable"}}')" 'rc=2' \
+    'Codex rollout by id: an unreadable store is a gap' "$T/panel.err"
+  assert_eq "$(grep -c 'context-unmeasured=session-store-unreadable' "$T/panel.err" || true)" 1 \
+    'Codex rollout by id: the gap names the store'
+fi
+
 if section codex-alternate; then
   # review-pr consumes verdict. These native rollouts reproduce the measured
   # Luna/Sol inputs; the ordinary judge still owns both plain boundaries.
@@ -930,6 +978,10 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     '117965 of 131072 at 90: rc=0 due'
   control reserve-mark-ceiling lane-context.sh 'window_mark=$((($2 * pct + 99) / 100 - $4))' 'window_mark=$(($2 * pct / 100 - $4))' \
     'agent reserve: 67964 of 131072 at 90 with 50000: rc=0 room'
+  control rollout-by-id lane-context.sh \
+    '    [ -n "$TRANSCRIPT" ] || lane_context_session_file "$HARNESS" "$SESSION" "$LANE_DIR" || return 0' \
+    '    [ -n "$TRANSCRIPT" ] || return 0' \
+    'Codex rollout by id: a fixture rollout named by the session id with no path is read'
   control alternate-review lane-context.sh \
     '    if [ "$HARNESS" = codex ] && [ "$CLI_OPERATION" = attached-launch ] && [ "$VERDICT" = due ]; then' \
     '    if false && [ "$HARNESS" = codex ] && [ "$CLI_OPERATION" = attached-launch ] && [ "$VERDICT" = due ]; then' \

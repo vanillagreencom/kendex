@@ -391,7 +391,7 @@ try:
                             ("rows", "$ARGS.positional as $args | range(0; $args | length; 7)")]:
         for verb, entry in [("pick", ["pick", "--harness", "claude", "--model", "claude-opus-5-5", "--for-overseer", "--json"]),
                             ("named", ["pick", "--lane", str(world.home / ".aclaude"), "--harness", "claude", "--model", "claude-opus-5-5", "--for-overseer", "--json"]),
-                            ("list", ["list", "--json"]), ("host", ["host-accounts", "--json"]), ("context", ["context", "--json"])]:
+                            ("list", ["list", "--json"]), ("host", ["host-accounts", "--json"])]:
             for script, should_refuse in [(lanes, True), (load_control, False)]:
                 world.reset(home_count=1, providers=1, claims=0)
                 settings = {**env, "ORCH_LANE_HOST": str(world.provider)}
