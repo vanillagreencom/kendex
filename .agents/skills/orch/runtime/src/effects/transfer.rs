@@ -20,7 +20,7 @@ use agent_runtime::launch::{Compaction, LaunchCommand, Permission, Resume};
 use agent_runtime::reading::Reading;
 use serde_json::{Value, json};
 
-use super::launch::{GATE_REFUSED, LaunchHome, Unready};
+use super::launch::{GATE_REFUSED, Kept, LaunchHome, Unready, accountless_kept};
 use super::operation::{
     self, Binding, EffectOutcome, Identity, Observed, OpenRefusal, Operation, Pane, Polled,
     ProcessRead, Proof, Published, Recovered, SessionFloor, State, Stop, TurnConfirm, WindowClose,
@@ -244,23 +244,23 @@ fn unconfirmed_after_retirement(
     })
 }
 
-/// The home a successor keeps where no account names one, as the lane
-/// launch keeps it: the pending's `home` as the Pi root a Pi successor
-/// keeps, and as the home a resumed session stands under (the pending's
-/// own rule); else, for Codex and Claude, `served`, the home the fleet
-/// server hands its panes. An account names its own home.
-fn kept<'a>(
-    pending: &'a state::Pending,
-    harness: Harness,
-    served: Option<&'a Path>,
-) -> Option<&'a Path> {
-    let home = pending.home.as_deref().map(Path::new);
-    let resume = pending.resume.is_some();
+/// The home a successor keeps where no account names one: the pending's
+/// `home` as the Pi root a Pi successor keeps; otherwise the lane launch's
+/// own rule (`launch::accountless_kept`), the pending's `home` being the
+/// home a resumed session stands under (the pending's own rule), named as
+/// the pending names it, and `served` the home the fleet server hands its
+/// panes. An account names its own home.
+fn kept(pending: &state::Pending, harness: Harness, served: Option<&Path>) -> Option<Kept> {
+    let home = pending.home.as_deref().map(|home| Kept {
+        home: PathBuf::from(home),
+        named: true,
+    });
     match (harness, pending.account.is_some()) {
         (Harness::Pi, _) => home,
         (Harness::Claude | Harness::Codex | Harness::Copilot, true) => None,
-        (Harness::Claude | Harness::Codex, false) => home.filter(|_| resume).or(served),
-        (Harness::Copilot, false) => home.filter(|_| resume),
+        (Harness::Claude | Harness::Codex | Harness::Copilot, false) => {
+            accountless_kept(harness, home.filter(|_| pending.resume.is_some()), served)
+        }
     }
 }
 
@@ -311,7 +311,7 @@ impl Successor {
             harness,
             pending.account.as_deref(),
             pending.model.as_deref(),
-            kept(pending, harness, served),
+            kept(pending, harness, served).as_ref(),
             &cwd,
         )?;
         Ok(Self::of(settings, pending, harness, cwd, homes)?)
@@ -748,7 +748,13 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
     // 73); a reconcile at `opening` with a dead owner adopts the runner by
     // its receipt, and before retirement that is still an
     // abandon.
-    let opening = match operation.opening(&server, &floor, brief, Some(&successor.home)) {
+    let opening = match operation.opening(
+        &server,
+        &floor,
+        brief,
+        Some(&successor.home),
+        successor.cleared,
+    ) {
         Ok(opening) => opening,
         Err(e) => return Ok(failed_before_retirement_refused(operation, &Error::from(e))),
     };

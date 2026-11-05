@@ -1168,9 +1168,14 @@ pub(super) fn record_launch_outcome(
             state::set(lane, "launch", serde_json::to_value(&r.launch)?);
             state::set(lane, "session_id", string_or_null(&r.session_id));
             // The home a local launch read its sessions under, which a
-            // relaunch reads the bound session from.
+            // relaunch reads the bound session from, and whether it named it.
             if let Some(home) = &r.home {
                 state::set(lane, "home", home.as_str());
+                if r.home_implicit {
+                    state::set(lane, "home_implicit", true);
+                } else {
+                    state::delete(lane, "home_implicit");
+                }
             }
             recorded.lane = Some(Box::new(lane_at(path, doc, index)?));
         }
@@ -2090,6 +2095,39 @@ mod tests {
         assert_eq!(view.model.as_deref(), Some("gpt-5.5-codex"));
     }
 
+    /// A confirmed local launch writes the home its sessions ran under and
+    /// whether it named it, and a named launch's confirmation takes the
+    /// mark off: a later resume repeats the mode the last launch ran in.
+    #[test]
+    fn a_confirmed_launch_records_its_home_and_whether_it_named_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fleet_file(dir.path());
+        let stopped =
+            fixtures::FLEET.replacen("\"status\": \"done\"", "\"status\": \"stopped\"", 1);
+        for (implicit, prior) in [(true, false), (false, true)] {
+            let text = if prior {
+                stopped.replacen(
+                    "      \"launch\": {",
+                    "      \"home\": \"/h/.claude\",\n      \"home_implicit\": true,\n      \"launch\": {",
+                    1,
+                )
+            } else {
+                stopped.clone()
+            };
+            fs::write(&path, &text).unwrap();
+            let id = intend(&path, &launch("KEN-4437"));
+            let Request::RecordOutcome(mut confirmed) = outcome(&id, Outcome::Confirmed) else {
+                unreachable!("outcome builds a record-outcome request")
+            };
+            confirmed.home = Some("/h/.claude".into());
+            confirmed.home_implicit = implicit;
+            run(&path, &Request::RecordOutcome(confirmed)).unwrap();
+            let view = lane(&path, "KEN-4437");
+            assert_eq!(view.home.as_deref(), Some("/h/.claude"));
+            assert_eq!(view.home_implicit, implicit, "implicit={implicit}");
+        }
+    }
+
     /// An adoption binds the lane under an identity the kernel answers live
     /// for, given or kept: a gone one is no execution to adopt and an
     /// unreadable one authorizes nothing, each refused with the file as it
@@ -2294,6 +2332,7 @@ mod tests {
             baseline: Vec::new(),
             identity: None,
             home: None,
+            home_implicit: false,
         };
         let session = state::BoundSession {
             session_id: "0f6e".into(),

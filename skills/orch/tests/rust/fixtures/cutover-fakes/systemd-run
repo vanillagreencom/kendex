@@ -2,22 +2,38 @@
 # A `systemd-run --user` as the runtime's job launcher reaches the user
 # manager on a host whose manager lingers: the probe call answers 0; a
 # `--unit=NAME ... -- ARGV` start runs ARGV under setsid, the unit's own
-# group, with its pid recorded under units/NAME beside this fake and the
-# manager's `$$` escaping undone. Every call is appended to systemd.log
-# beside this fake. Never reaches a real user manager. It refuses as the
-# real client does (systemd 262, measured under a private runtime
-# directory) before it asks anything: a `--setenv` name outside shell
-# syntax exits 1 with the parser's line; with $SYSTEMD_RUN_FAKE_UNREACHABLE
-# set, a start exits 1 with the line for a bus it could not connect to.
+# group, with the environment its `--setenv` arguments hand it and nothing
+# else, its pid recorded under units/NAME beside this fake and the manager's
+# `$$` escaping undone. Every call is appended to systemd.log beside this
+# fake. Never reaches a real user manager. It answers as the real client does
+# (systemd 262, measured under a private runtime directory and a private
+# bus): before it asks anything, a `--setenv` name outside shell syntax, or a
+# `NAME=VALUE` whose value holds a basic-plane Unicode noncharacter, exits 1
+# with the parser's line; with a file `unreachable` beside this fake, a start
+# exits 1 with the line for a bus it could not connect to, shaped as the
+# client's own logging settings shape it.
 d="$(cd "$(dirname "$0")" && pwd)"
 printf 'systemd-run %s\n' "$*" >> "$d/systemd.log"
-unit="" argv=()
+refuse() { # ASSIGNMENT
+  printf 'Cannot assign environment variable %s: Invalid argument\n' "$1" >&2
+  exit 1
+}
+unit="" argv=() assigns=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --setenv=*)
-      name="${1#--setenv=}"
-      [[ "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] \
-        || { printf 'Cannot assign environment variable %s: Invalid argument\n' "$name" >&2; exit 1; }
+      assign="${1#--setenv=}"
+      name="${assign%%=*}"
+      [[ "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || refuse "$assign"
+      if [[ "$assign" == *=* ]]; then
+        value="${assign#*=}"
+        case "$value" in
+          *$'\357\277\276'* | *$'\357\277\277'* | *$'\357\267'[$'\220'-$'\257']*) refuse "$assign" ;;
+        esac
+      else
+        assign="$name=${!name-}"
+      fi
+      assigns+=("$assign")
       shift ;;
     --unit=*) unit="${1#--unit=}"; shift ;;
     --) shift; argv=("$@"); break ;;
@@ -25,12 +41,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -n "$unit" ]] || exit 0
-if [[ -n "${SYSTEMD_RUN_FAKE_UNREACHABLE:-}" ]]; then
-  echo 'Failed to connect to user scope bus via local transport: No such file or directory' >&2
+if [[ -f "$d/unreachable" ]]; then
+  [[ "${SYSTEMD_LOG_TARGET:-}" != null ]] || exit 1
+  [[ "${SYSTEMD_LOG_LEVEL:-}" != debug ]] \
+    || echo 'Failed to check if /proc/1/root and / are the same inode: Permission denied' >&2
+  prefix=""
+  [[ "${SYSTEMD_LOG_TIME:-}" != 1 ]] || prefix="$(date '+%a %Y-%m-%d %H:%M:%S %Z') "
+  [[ "${SYSTEMD_LOG_LOCATION:-}" != 1 ]] || prefix="src/shared/bus-util.c:61: "
+  [[ "${SYSTEMD_LOG_TID:-}" != 1 ]] || prefix="($$) "
+  echo "${prefix}Failed to connect to user scope bus via local transport: No such file or directory" >&2
   exit 1
 fi
 for i in "${!argv[@]}"; do argv[i]="${argv[i]//\$\$/\$}"; done
 mkdir -p "$d/units"
-setsid "${argv[@]}" </dev/null >/dev/null 2>&1 &
+env -i ${assigns[@]+"${assigns[@]}"} setsid "${argv[@]}" </dev/null >/dev/null 2>&1 &
 printf '%s\n' "$!" > "$d/units/$unit"
 exit 0

@@ -6518,10 +6518,8 @@ fn a_copilot_lane_launches_only_where_its_lane_mail_hooks_run() {
             }
             None => {
                 assert_ne!(report["intent"]["outcome"], "failed", "{item}: {report}");
-                assert!(
-                    std::fs::metadata(worktree.join("launch-record.json")).is_ok(),
-                    "{item}: the harness started in its window"
-                );
+                // The harness started in its window: its record stands.
+                launch_record_of(&worktree);
             }
         }
         match &scope {
@@ -6696,10 +6694,7 @@ fn a_pi_lane_on_a_claude_seat_keeps_pis_own_root_beside_the_seat() {
         ),
         "{report}"
     );
-    let recorded: Value = serde_json::from_str(
-        &std::fs::read_to_string(runner.state_dir().join("launch-record.json")).unwrap(),
-    )
-    .unwrap();
+    let recorded = launch_record_of(runner.state_dir());
     assert_eq!(
         recorded["env"]["CLAUDE_CONFIG_DIR"],
         seat.display().to_string()
@@ -6824,9 +6819,7 @@ fn a_pi_root_the_private_env_file_names_is_the_root_a_seat_lane_is_judged_and_ru
         relocated.display().to_string(),
         "the opening records the home a reconcile reads: {opened}"
     );
-    let recorded: Value =
-        serde_json::from_str(&std::fs::read_to_string(work.join("launch-record.json")).unwrap())
-            .unwrap();
+    let recorded = launch_record_of(&work);
     assert_eq!(
         recorded["env"]["PI_CODING_AGENT_DIR"],
         relocated.display().to_string(),
@@ -6874,10 +6867,7 @@ fn a_codex_lane_with_no_account_runs_on_the_codex_home_the_fleet_server_hands_it
         request.as_object_mut().unwrap().remove("account");
         let report = effect_report(&runner.op_fleet(&request));
         assert_ne!(report["intent"]["outcome"], "failed", "{item}: {report}");
-        let recorded: Value = serde_json::from_str(
-            &std::fs::read_to_string(work.join("launch-record.json")).unwrap(),
-        )
-        .unwrap();
+        let recorded = launch_record_of(&work);
         assert_eq!(
             recorded["env"]["CODEX_HOME"],
             agent_runtime::trust::home_path(&want, &work)
@@ -6973,47 +6963,57 @@ fn a_reconciled_pi_lane_on_a_seat_binds_its_session_under_pis_root_not_the_seat(
     );
 }
 
-/// Defect: a launch whose harness runs under another home than the one its
-/// session is proved, read and recorded under. A stopped lane with no
-/// account recorded the home its bound session stands in; whatever the
-/// fleet server or the settings now hand the harness, the relaunch resumes
-/// the session with the harness on that home, a Claude default config dir
-/// by clearing the variable the server would pass on. A fresh Claude
-/// launch runs, and records, the config dir the server hands its panes.
+/// Defect: a launch whose harness runs under another home, or another
+/// config mode, than the one its session is proved, read and recorded
+/// under. A stopped lane with no account recorded the home its bound
+/// session stands in, and whether it named it; whatever the fleet server or
+/// the settings now hand the harness, the relaunch resumes the session on
+/// that home in that mode. A record with no home, as every released record
+/// is, resumes under the home a fresh launch picks: the server's. A fresh
+/// Claude launch names the server's config dir as found, even
+/// `$HOME/.claude`, and records that it named it.
 #[test]
 fn a_lane_with_no_account_runs_under_the_one_home_its_session_is_proved_and_recorded_under() {
-    // The case, the harness, the home the lane recorded with its session
-    // (`default` the harness's default under the row's home, `none` no
-    // session bound), and the home the server or the settings now name.
+    // The case, the harness, what the lane recorded (`dir` a named home of
+    // its own, `implicit` Claude's default named by nothing, `named-default`
+    // the default named, `released` a bound session and no home, `none` no
+    // session), and the home the server or the settings now name (`current`,
+    // or `home-claude`, `$HOME/.claude` spelled out).
     let cases = [
         (
             "codex: the server hands the recorded home",
             "codex",
-            "recorded",
-            "recorded",
+            "dir",
+            "dir",
         ),
         (
             "codex: the server now hands another home",
             "codex",
-            "recorded",
+            "dir",
             "current",
         ),
         (
             "copilot: the settings now name another home",
             "copilot",
-            "recorded",
+            "dir",
             "current",
         ),
         (
             "claude: the server now names another config dir",
             "claude",
-            "recorded",
+            "dir",
             "current",
         ),
         (
-            "claude: the default recorded, the server names another",
+            "claude: the implicit default recorded, the server names another",
             "claude",
-            "default",
+            "implicit",
+            "current",
+        ),
+        (
+            "claude: the named default recorded, the server names another",
+            "claude",
+            "named-default",
             "current",
         ),
         (
@@ -7022,8 +7022,26 @@ fn a_lane_with_no_account_runs_under_the_one_home_its_session_is_proved_and_reco
             "none",
             "current",
         ),
+        (
+            "claude: a fresh launch, the server naming $HOME/.claude",
+            "claude",
+            "none",
+            "home-claude",
+        ),
+        (
+            "claude: a released record under the server's config dir",
+            "claude",
+            "released",
+            "current",
+        ),
+        (
+            "codex: a released record under the server's CODEX_HOME",
+            "codex",
+            "released",
+            "current",
+        ),
     ];
-    for (case, harness, recorded, current) in cases {
+    for (case, harness, recorded, served) in cases {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
         let mut runner = Runner::new(&server, "stub-record");
@@ -7032,13 +7050,20 @@ fn a_lane_with_no_account_runs_under_the_one_home_its_session_is_proved_and_reco
         let home = dir.path().join("home");
         std::fs::create_dir_all(home.join(".codex")).unwrap();
         std::fs::create_dir_all(home.join(".claude")).unwrap();
-        let recorded = match recorded {
-            "default" => Some(home.join(".claude")),
-            "none" => None,
-            _ => Some(dir.path().join("recorded")),
+        let own = dir.path().join("dir");
+        let served = match served {
+            "home-claude" => home.join(".claude"),
+            other => dir.path().join(other),
         };
-        let current = dir.path().join(current);
-        std::fs::create_dir_all(&current).unwrap();
+        std::fs::create_dir_all(&served).unwrap();
+        // The home the session stands in and the launch should run on, and
+        // whether the launch names it.
+        let (expected, named) = match recorded {
+            "dir" => (own.clone(), true),
+            "implicit" => (home.join(".claude"), false),
+            "named-default" => (home.join(".claude"), true),
+            _ => (served.clone(), true),
+        };
         runner
             .env
             .push(("HOME".to_owned(), home.display().to_string()));
@@ -7067,7 +7092,7 @@ fn a_lane_with_no_account_runs_under_the_one_home_its_session_is_proved_and_reco
             plant_hooks_off(&tools, json!({"stdout": r#"{"switched_off_by": null}"#}));
             runner
                 .env
-                .push(("COPILOT_HOME".to_owned(), current.display().to_string()));
+                .push(("COPILOT_HOME".to_owned(), served.display().to_string()));
         } else {
             let out = tmux(
                 &server.socket,
@@ -7075,15 +7100,16 @@ fn a_lane_with_no_account_runs_under_the_one_home_its_session_is_proved_and_reco
                     "set-environment",
                     "-g",
                     variable,
-                    &current.display().to_string(),
+                    &served.display().to_string(),
                 ],
             );
             assert!(out.status.success(), "{case}: {}", stderr(&out));
         }
-        match (harness, &recorded) {
-            (_, None) => {}
-            ("codex", Some(recorded)) => {
-                let day = recorded.join("sessions/2026/11/04");
+        let bound = recorded != "none";
+        match (harness, bound) {
+            (_, false) => {}
+            ("codex", true) => {
+                let day = expected.join("sessions/2026/11/04");
                 std::fs::create_dir_all(&day).unwrap();
                 std::fs::write(
                     day.join(format!("rollout-a-{id}.jsonl")),
@@ -7094,13 +7120,13 @@ fn a_lane_with_no_account_runs_under_the_one_home_its_session_is_proved_and_reco
                 )
                 .unwrap();
             }
-            ("claude", Some(recorded)) => {
-                let project = project_dir(recorded, &work);
+            ("claude", true) => {
+                let project = project_dir(&expected, &work);
                 std::fs::create_dir_all(&project).unwrap();
                 std::fs::write(project.join(format!("{id}.jsonl")), "{}\n").unwrap();
             }
-            (_, Some(recorded)) => {
-                let state = recorded.join("session-state").join(&id);
+            (_, true) => {
+                let state = expected.join("session-state").join(&id);
                 std::fs::create_dir_all(&state).unwrap();
                 std::fs::write(
                     state.join("workspace.yaml"),
@@ -7112,9 +7138,14 @@ fn a_lane_with_no_account_runs_under_the_one_home_its_session_is_proved_and_reco
         }
         let mut stopped = lane("KEN-R", "stopped", &runner, Value::Null);
         stopped["harness"] = json!(harness);
-        if let Some(recorded) = &recorded {
+        if bound {
             stopped["session_id"] = json!(id);
-            stopped["home"] = json!(recorded.display().to_string());
+        }
+        if bound && recorded != "released" {
+            stopped["home"] = json!(expected.display().to_string());
+            if !named {
+                stopped["home_implicit"] = json!(true);
+            }
         }
         stopped.as_object_mut().unwrap().remove("account");
         let mut fleet = runner.fleet();
@@ -7124,25 +7155,13 @@ fn a_lane_with_no_account_runs_under_the_one_home_its_session_is_proved_and_reco
         request["harness"] = json!(harness);
         request.as_object_mut().unwrap().remove("account");
         let report = effect_report(&runner.op_fleet(&request));
-        let expected = match &recorded {
-            Some(recorded) => {
-                assert_eq!(
-                    report["intent"]["observation"]["route"], "resume",
-                    "{case}: {report}"
-                );
-                recorded.clone()
-            }
-            None => current.clone(),
-        };
-        let launched: Value =
-            serde_json::from_slice(&std::fs::read(work.join("launch-record.json")).unwrap())
-                .unwrap();
-        // The home the harness runs on: its variable, else (Claude cleared)
-        // its default under the home directory.
-        let runs_on = match launched["env"][variable].as_str() {
-            Some("") | None => home.join(".claude"),
-            Some(named) => PathBuf::from(named),
-        };
+        if bound {
+            assert_eq!(
+                report["intent"]["observation"]["route"], "resume",
+                "{case}: {report}"
+            );
+        }
+        let launched = launch_record_of(&work);
         // A home is its session store: a private Codex launch home links the
         // account's.
         let store_of = |path: &Path| {
@@ -7150,17 +7169,56 @@ fn a_lane_with_no_account_runs_under_the_one_home_its_session_is_proved_and_reco
                 .or_else(|_| std::fs::canonicalize(path))
                 .ok()
         };
+        let child = launched["env"][variable].as_str().unwrap_or("");
+        if harness == "claude" {
+            let spelled = if named {
+                expected.display().to_string()
+            } else {
+                String::new()
+            };
+            assert_eq!(
+                child, spelled,
+                "{case}: the config dir named as it was found, or none: {launched}"
+            );
+        } else {
+            assert_eq!(
+                store_of(Path::new(child)),
+                store_of(&expected),
+                "{case}: the harness runs on the home its session is proved under: {launched}"
+            );
+        }
+        let phase = &report["intent"]["phase"];
         assert_eq!(
-            store_of(&runs_on),
-            store_of(&expected),
-            "{case}: the harness runs on the home its session is proved under: {launched}"
-        );
-        assert_eq!(
-            report["intent"]["phase"]["home"]
+            phase["home"]
                 .as_str()
                 .and_then(|recorded| store_of(Path::new(recorded))),
             store_of(&expected),
             "{case}: the launch records the home the harness runs on: {report}"
         );
+        assert_eq!(
+            phase["home_implicit"].as_bool().unwrap_or(false),
+            !named,
+            "{case}: the launch records whether it named its home: {report}"
+        );
+    }
+}
+
+/// The launch record the record stubs write in `cwd`, read once it stands:
+/// the stub writes it from its own process after the launch answers.
+fn launch_record_of(cwd: &Path) -> Value {
+    let path = cwd.join("launch-record.json");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Ok(text) = std::fs::read_to_string(&path)
+            && let Ok(record) = serde_json::from_str::<Value>(&text)
+        {
+            return record;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no launch record at {}",
+            path.display()
+        );
+        std::thread::sleep(Duration::from_millis(20));
     }
 }

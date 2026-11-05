@@ -645,9 +645,14 @@ pub struct Lane {
     pub account: Option<String>,
     /// The home the lane's last confirmed local launch ran its sessions
     /// under, as that launch prepared it; a relaunch reads the bound
-    /// session there.
+    /// session there. No released writer writes it: a record without it is
+    /// read by the rule the released reader used.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<String>,
+    /// That launch named no home: an accountless Claude launch on its
+    /// implicit default config dir, which a resume repeats.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub home_implicit: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1036,6 +1041,9 @@ pub struct Opening {
     /// resolved again in its own process.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<String>,
+    /// The launch named no home ([`Lane::home_implicit`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub home_implicit: bool,
 }
 
 impl Opening {
@@ -1056,6 +1064,7 @@ impl Opening {
             baseline: self.baseline.clone(),
             identity,
             home: self.home.clone(),
+            home_implicit: self.home_implicit,
         }
     }
 }
@@ -1107,6 +1116,9 @@ pub struct OpenedPane {
     /// prepared it ([`Opening::home`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<String>,
+    /// The launch named no home ([`Lane::home_implicit`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub home_implicit: bool,
 }
 
 /// The runner's own native session file, bound once before the brief is

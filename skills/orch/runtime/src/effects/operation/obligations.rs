@@ -1110,6 +1110,8 @@ pub(in crate::effects) struct Wire {
     /// The home a confirmed controller or local lane runs its sessions
     /// under, as its launch prepared it.
     pub home: Option<String>,
+    /// That launch named no home, the lane's `home_implicit`.
+    pub home_implicit: bool,
     /// The fleet watch a confirmed start launched or found claimed.
     pub watch: Option<WatchJob>,
     /// The root a confirmed lane's files are read under, where its host
@@ -1676,6 +1678,7 @@ mod tests {
                 pane: pane.map(str::to_owned),
                 asked,
                 home: None,
+                home_implicit: false,
             },
         }
     }

@@ -1601,6 +1601,7 @@ mod tests {
             baseline: Vec::new(),
             identity: None,
             home: None,
+            home_implicit: false,
         };
         run(
             &path,
@@ -1748,6 +1749,7 @@ mod tests {
             tmux_session: None,
             launch_line: None,
             home: None,
+            home_implicit: false,
             watch: None,
             mail_root: None,
             observation: Some(json!({"note": "job-unclaimed"})),

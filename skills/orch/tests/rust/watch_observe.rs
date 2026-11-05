@@ -3431,16 +3431,20 @@ fn a_finished_hosted_close_the_tracker_hold_deferred_is_retried_while_its_line_s
 /// and a line that is not `stopped item=ITEM processes=N`
 /// (`lane_recovery_stop_confirmed`'s second arm), leaves the wall to the
 /// overseer with `wall-relaunch-refused reason=stop-failed` and the status
-/// under the line, and nothing starts.
+/// under the line, and nothing starts. So does a stop that gave no answer,
+/// a status of 128 and above (a signal, the ssh provider's 255), said
+/// `reason=stop-unanswered`, since the harness may still run.
 #[test]
 fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_relaunch() {
     for (stop, refused) in [
         (ok("stopped item=KEN-4 processes=1\n"), None),
         (
             json!({"exit": 4, "stderr": "lane-host: stop-worktree-removed item=KEN-4\n"}),
-            Some("exit=4"),
+            Some("stop-failed exit=4"),
         ),
-        (ok("stopped item=KEN-4\n"), Some("exit=0")),
+        (ok("stopped item=KEN-4\n"), Some("stop-failed exit=0")),
+        (json!({"exit": 137}), Some("stop-unanswered stop exit=137")),
+        (json!({"exit": 255}), Some("stop-unanswered stop exit=255")),
     ] {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
@@ -3493,9 +3497,8 @@ fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_re
         let started = driver.relaunches.borrow();
         if let Some(status) = refused {
             assert!(
-                lines(&produced).contains(&format!(
-                    "wall-relaunch-refused lane=gh-4 reason=stop-failed {status}"
-                )),
+                lines(&produced)
+                    .contains(&format!("wall-relaunch-refused lane=gh-4 reason={status}")),
                 "{:?}",
                 lines(&produced)
             );

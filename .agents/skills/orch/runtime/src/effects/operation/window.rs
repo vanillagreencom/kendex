@@ -187,6 +187,7 @@ impl Operation<'_> {
         floor: &SessionFloor,
         brief: Option<&Path>,
         home: Option<&Path>,
+        home_implicit: bool,
     ) -> std::result::Result<Opening, agent_runtime::Error> {
         let (session_id, baseline) = match floor {
             SessionFloor::Fixed(id) => (Some(id.clone()), Vec::new()),
@@ -210,6 +211,7 @@ impl Operation<'_> {
             pane: None,
             asked: false,
             home: home.map(|h| h.display().to_string()),
+            home_implicit,
         })
     }
 

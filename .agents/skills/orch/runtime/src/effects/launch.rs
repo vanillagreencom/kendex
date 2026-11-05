@@ -56,10 +56,11 @@ enum Route {
     },
     Resume {
         session_id: String,
-        /// The home the session's file was found under: the resumed
-        /// launch runs there, since another home's store may not hold it
-        /// (an account's own home is that account, unchanged).
-        home: Option<PathBuf>,
+        /// The home the session's file was found under, and whether the
+        /// launch names it: the resumed launch runs there, since another
+        /// home's store may not hold it (an account's own home is that
+        /// account, unchanged).
+        home: Option<Kept>,
     },
     /// The destination home's session store could not be read, or the bound
     /// session belongs to another directory: the launch refuses before any
@@ -103,24 +104,45 @@ type Owner<'a> = &'a dyn Fn(Harness, &Path, &Path, &str) -> Reading<Option<PathB
 /// the handoff record, never a transcript another account cannot read.
 /// The destination is the home the lane's last confirmed launch recorded,
 /// where its bound session was written (a private Codex home links the
-/// account's store); a lane that recorded none reads its account, else the
-/// harness's default home. Nothing is resolved again in this process, and a
-/// resume runs under the home its session was found under.
-fn relaunch_route(run: &Run, lane: &Lane, r: &LaunchLane) -> Result<Route> {
+/// account's store), in the mode it ran in; a lane that recorded none reads
+/// its account. A record with neither is one no released writer gave a
+/// home, so it is read as the released relaunch read it: under the home a
+/// fresh launch picks (`served`, the fleet server's, else the inherited
+/// home or the default). A resume runs under the home its session was
+/// found under.
+fn relaunch_route(run: &Run, lane: &Lane, r: &LaunchLane, served: Option<&Path>) -> Result<Route> {
     let handoff = standing_handoff(run, &lane.item)?;
-    let destination = lane
-        .home
-        .as_deref()
-        .or(r.account.as_deref())
-        .map(PathBuf::from)
-        .or_else(|| Harness::parse(&r.harness).and_then(operation::default_home));
-    Ok(route_of(
+    let destination = match (&lane.home, &r.account, Harness::parse(&r.harness)) {
+        (Some(home), _, _) => Some(Kept {
+            home: PathBuf::from(home),
+            named: !lane.home_implicit,
+        }),
+        (None, Some(account), _) => Some(Kept {
+            home: PathBuf::from(account),
+            named: true,
+        }),
+        (None, None, Some(harness)) => accountless_kept(harness, None, served).or_else(|| {
+            inherited_home(run.settings, harness).map(|home| Kept {
+                home,
+                named: harness != Harness::Claude,
+            })
+        }),
+        (None, None, None) => None,
+    };
+    let route = route_of(
         lane,
         r,
         handoff,
-        destination.as_deref(),
+        destination.as_ref().map(|kept| kept.home.as_path()),
         &operation::session_owner,
-    ))
+    );
+    Ok(match route {
+        Route::Resume { session_id, .. } => Route::Resume {
+            session_id,
+            home: destination,
+        },
+        Route::Fresh { .. } | Route::Refuse { .. } => route,
+    })
 }
 
 /// The route from the records alone: `handoff` is the item's standing
@@ -190,7 +212,7 @@ fn route_of(
     match handoff {
         Some(Relaunch::Resume) | None => Route::Resume {
             session_id,
-            home: destination.map(Path::to_path_buf),
+            home: None,
         },
         Some(Relaunch::Fresh) => Route::Fresh {
             cause: Some("session-retired"),
@@ -238,6 +260,8 @@ fn standing_handoff(run: &Run, item: &str) -> Result<Option<Relaunch>> {
 struct LaunchPrep {
     target: Target,
     home: Option<PathBuf>,
+    /// The launch names no home (`LaunchHome::cleared`).
+    home_implicit: bool,
     server: Server,
     session: String,
     command: LaunchCommand,
@@ -258,41 +282,30 @@ fn prepare_launch(
     operation: &Operation,
     settings: &Settings,
     r: &LaunchLane,
-    doc_session: Option<&str>,
+    fleet: Fleet,
     route: &Route,
 ) -> std::result::Result<LaunchPrep, Unready> {
     let harness = Harness::parse(&r.harness)
         .ok_or_else(|| refused("harness-unknown", &[("harness", &r.harness)]))?;
-    let (server, session) = operation.fleet_server(doc_session)?;
     let cwd = PathBuf::from(&r.mail_root);
     check_directory("cwd-missing", &cwd)?;
     if let Some(brief) = &r.brief_file {
         read_brief(brief)?;
     }
-    // A resume with no account runs under the home its session was found
-    // under, whatever the server or the settings now name; otherwise a Codex
-    // or Claude window with no account runs on the home the fleet server
-    // hands its panes (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`), where it holds
-    // one. An account names its own home.
-    let kept = match (harness, &r.account, route) {
-        (
-            Harness::Codex | Harness::Copilot | Harness::Claude,
-            None,
-            Route::Resume {
-                home: Some(home), ..
-            },
-        ) => Some(home.clone()),
-        (Harness::Codex | Harness::Claude, None, _) => {
-            operation::server_home(&server, &session, harness)?
-        }
-        (Harness::Codex | Harness::Claude | Harness::Copilot | Harness::Pi, _, _) => None,
+    let recorded = match route {
+        Route::Resume { home, .. } => home.clone(),
+        Route::Fresh { .. } | Route::Refuse { .. } => None,
+    };
+    let kept = match &r.account {
+        Some(_) => None,
+        None => accountless_kept(harness, recorded, fleet.served.as_deref()),
     };
     let homes = launch_home(
         settings,
         harness,
         r.account.as_deref(),
         r.model.as_deref(),
-        kept.as_deref(),
+        kept.as_ref(),
         &cwd,
     )?;
     let floor = match (route, &homes.sessions) {
@@ -338,8 +351,9 @@ fn prepare_launch(
     Ok(LaunchPrep {
         target: Target::new(settings, harness),
         home: homes.sessions,
-        server,
-        session,
+        home_implicit: homes.cleared,
+        server: fleet.server,
+        session: fleet.session,
         command,
         floor,
         trust: homes.trust,
@@ -370,15 +384,57 @@ impl From<agent_runtime::Error> for Unready {
     }
 }
 
+/// A home a launch with no account keeps, and whether the launch names it
+/// to the child: every kept home is named but an accountless Claude
+/// launch's implicit default config dir, which names none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Kept {
+    pub home: PathBuf,
+    pub named: bool,
+}
+
+/// The home an accountless launch of `harness` keeps, decided once for the
+/// lane launch and the transfer: the home a resumed session ran under,
+/// `recorded`, in its mode; else, for Codex and Claude, `served`, the home
+/// the fleet server hands its panes (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`),
+/// named as found even where it spells the default; else none, the
+/// launch's own rule (the inherited home, Claude's implicit default).
+pub(super) fn accountless_kept(
+    harness: Harness,
+    recorded: Option<Kept>,
+    served: Option<&Path>,
+) -> Option<Kept> {
+    if recorded.is_some() {
+        return recorded;
+    }
+    match harness {
+        Harness::Codex | Harness::Claude => served.map(|home| Kept {
+            home: home.to_path_buf(),
+            named: true,
+        }),
+        Harness::Copilot | Harness::Pi => None,
+    }
+}
+
+/// The fleet server a local window opens on, its session, and the home it
+/// hands an accountless Codex or Claude pane, resolved once before the
+/// route and the preparation read them.
+pub(super) struct Fleet {
+    pub server: Server,
+    pub session: String,
+    pub served: Option<PathBuf>,
+}
+
 /// What a launch of `harness` runs under, a lane's or a controller's.
 pub(super) struct LaunchHome {
     /// The home the launch names: prepared, or an accountless Claude
     /// launch's config dir as it was found.
     pub named: Option<PathBuf>,
-    /// The child must not inherit the harness's home variable: an
-    /// accountless Claude launch kept on its default config dir, which no
-    /// variable can name, since a named config dir reads its own
-    /// `.claude.json` where the default reads the one in the home directory.
+    /// The launch names no home and the child must not inherit the
+    /// harness's home variable: an accountless Claude launch on its implicit
+    /// default config dir, since a named config dir, even `$HOME/.claude`,
+    /// reads its own `.claude.json` where the implicit default reads the one
+    /// in the home directory. Recorded, so a resume repeats the mode.
     pub cleared: bool,
     /// The account the launch bills where its variable is not the home's.
     pub account: Option<PathBuf>,
@@ -451,9 +507,10 @@ fn named_home(
 /// opens: the trust record for `cwd` under the named home, and a private
 /// Codex home built under the account where the account's own config does
 /// not trust `cwd`, its sessions linked from the account's. An accountless
-/// Claude launch runs on the config dir it keeps (the fleet server's, or the
-/// one a resumed session was found under), never prepared, else on the one
-/// it inherits; the default is kept by clearing the variable. The harness
+/// Claude launch runs on the config dir it keeps where that is named (the
+/// fleet server's, or the one a resumed session ran under), named as found
+/// and never prepared, so nothing is written into the operator's config;
+/// otherwise on its implicit default, the variable cleared. The harness
 /// gate then judges what the harness needs beyond its trust record under
 /// the home its sessions are read from.
 pub(super) fn launch_home(
@@ -461,27 +518,28 @@ pub(super) fn launch_home(
     harness: Harness,
     account: Option<&str>,
     model: Option<&str>,
-    kept: Option<&Path>,
+    kept: Option<&Kept>,
     cwd: &Path,
 ) -> std::result::Result<LaunchHome, Unready> {
-    let (home, billed) = named_home(settings, harness, account, model, kept)?;
+    let (home, billed) = named_home(
+        settings,
+        harness,
+        account,
+        model,
+        kept.map(|k| k.home.as_path()),
+    )?;
     let trusted = home
         .map(|home| prepare_trust(harness, &home, cwd))
         .transpose()?;
     let mut named = trusted.as_ref().map(|t| t.home.clone());
-    let default = operation::default_home(harness);
     let mut cleared = false;
-    if let (Harness::Claude, None, Some(kept)) = (harness, account, kept) {
-        if default
-            .as_deref()
-            .is_some_and(|default| same_directory(kept, default))
-        {
-            cleared = true;
-        } else {
-            named = Some(kept.to_path_buf());
+    if let (Harness::Claude, None) = (harness, account) {
+        match kept {
+            Some(Kept { home, named: true }) => named = Some(home.clone()),
+            Some(Kept { named: false, .. }) | None => cleared = true,
         }
     }
-    let sessions = named.clone().or(default);
+    let sessions = named.clone().or_else(|| operation::default_home(harness));
     gate::local(harness, sessions.as_deref(), cwd).map_err(Unready::Gate)?;
     Ok(LaunchHome {
         sessions,
@@ -609,7 +667,19 @@ fn scripts_dir(settings: &Settings) -> PathBuf {
 pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Result<EffectOutcome> {
     let operation = Operation::open(run, intent)?;
     let (lane, _) = lane_for_intent(run.path, &intent.id)?;
-    let route = relaunch_route(run, &lane, r)?;
+    let surface = surface_of(r.host.as_deref());
+    // A local window's fleet server is resolved before the route, which
+    // reads a record with no home under the home that server hands its
+    // panes; one that cannot be resolved fails before anything opens.
+    let fleet = match surface {
+        Surface::Local => match local_fleet(run, &operation, r) {
+            Ok(fleet) => Some(fleet),
+            Err(e) => return Ok(operation.settle(Word::Failed, json!({"cause": e.key()}))),
+        },
+        Surface::Hosted(_) | Surface::Cloud => None,
+    };
+    let served = fleet.as_ref().and_then(|f| f.served.as_deref());
+    let route = relaunch_route(run, &lane, r, served)?;
     // A destination session store that could not be read, or a bound
     // session another directory owns, refuses before any window opens,
     // nothing recorded.
@@ -619,10 +689,11 @@ pub(super) fn launch_effect(run: &Run, intent: &Intent, r: &LaunchLane) -> Resul
     // Whether the launch re-enters a standing record, as the transition
     // judged it: the provider then reuses the worktree it holds.
     let relaunch = intent.selection.as_ref().is_some_and(|s| s.relaunch);
-    let mut outcome = match surface_of(r.host.as_deref()) {
-        Surface::Local => local_launch(run, operation, r, &route)?,
-        Surface::Hosted(provider) => hosted_launch(run, operation, r, provider, relaunch)?,
-        Surface::Cloud => cloud_launch(run, operation, &lane, r)?,
+    let mut outcome = match (surface, fleet) {
+        (Surface::Local, Some(fleet)) => local_launch(run, operation, r, fleet, &route)?,
+        (Surface::Local, None) => unreachable!("a local launch resolved its fleet above"),
+        (Surface::Hosted(provider), _) => hosted_launch(run, operation, r, provider, relaunch)?,
+        (Surface::Cloud, _) => cloud_launch(run, operation, &lane, r)?,
     };
     outcome.annotate("route", json!(route.word()));
     if let Some(cause) = route.cause() {
@@ -652,11 +723,15 @@ fn open_and_confirm(
     // phase a reconcile can resume: it adopts the pane this launch's receipt
     // names, fails the recorded pane that never registered, or fails
     // `nothing-opened`.
-    let home = match &sessions {
-        Sessions::Store { home, .. } => *home,
-        Sessions::Hosted { .. } => None,
+    let (home, home_implicit) = match &sessions {
+        Sessions::Store {
+            home,
+            home_implicit,
+            ..
+        } => (*home, *home_implicit),
+        Sessions::Hosted { .. } => (None, false),
     };
-    let opening = match operation.opening(server, floor, None, home) {
+    let opening = match operation.opening(server, floor, None, home, home_implicit) {
         Ok(opening) => opening,
         Err(e) => return Ok(operation.settle(Word::Failed, json!({"cause": e.key()}))),
     };
@@ -723,17 +798,36 @@ fn open_and_confirm(
     )
 }
 
+/// The fleet server a local lane's window opens on, and the home it hands
+/// an accountless Codex or Claude pane, read from the server's own
+/// environment.
+fn local_fleet(run: &Run, operation: &Operation, r: &LaunchLane) -> Result<Fleet> {
+    let doc_session = fleet_tmux_session(run.path)?;
+    let (server, session) = operation.fleet_server(doc_session.as_deref())?;
+    let served = match (Harness::parse(&r.harness), &r.account) {
+        (Some(harness @ (Harness::Codex | Harness::Claude)), None) => {
+            operation::server_home(&server, &session, harness)?
+        }
+        (Some(Harness::Codex | Harness::Claude | Harness::Copilot | Harness::Pi) | None, _) => None,
+    };
+    Ok(Fleet {
+        server,
+        session,
+        served,
+    })
+}
+
 /// A local lane: the launch record written before the window, then the
 /// window and the harness in it.
 fn local_launch(
     run: &Run,
     operation: Operation,
     r: &LaunchLane,
+    fleet: Fleet,
     route: &Route,
 ) -> Result<EffectOutcome> {
-    let doc_session = fleet_tmux_session(run.path)?;
     let cwd = PathBuf::from(&r.mail_root);
-    let prep = match prepare_launch(&operation, run.settings, r, doc_session.as_deref(), route) {
+    let prep = match prepare_launch(&operation, run.settings, r, fleet, route) {
         Ok(prep) => prep,
         // A harness, session, directory, program or brief the effect cannot
         // resolve: `failed` before anything opens, never a bare refusal.
@@ -770,6 +864,7 @@ fn local_launch(
         &|name| target.owns(name),
         Sessions::Store {
             home: prep.home.as_deref(),
+            home_implicit: prep.home_implicit,
             cwd: &cwd,
         },
     )?;
@@ -1456,6 +1551,8 @@ fn cloud_create(command: &LaunchCommand, prompt: &str) -> Created {
 enum Sessions<'a> {
     Store {
         home: Option<&'a Path>,
+        /// The launch named no home (`LaunchHome::cleared`).
+        home_implicit: bool,
         cwd: &'a Path,
     },
     Hosted {
@@ -1486,7 +1583,7 @@ fn launch_outcome(
                     observation["note"] = json!("session-hosted");
                     (None, Some(mail_root))
                 }
-                Sessions::Store { home, cwd } => {
+                Sessions::Store { home, cwd, .. } => {
                     let session_id = match &opened.session_id {
                         Some(id) => Some(id.clone()),
                         None => {
@@ -1550,6 +1647,7 @@ fn launch_outcome(
                     tmux_session: Some(tmux_session.to_owned()),
                     mail_root,
                     home: opened.home.clone(),
+                    home_implicit: opened.home_implicit,
                     ..Wire::default()
                 }),
                 Err(operation) => {
@@ -1782,6 +1880,7 @@ fn judge_opened(
         } else {
             Sessions::Store {
                 home: home.as_deref(),
+                home_implicit: opened.home_implicit,
                 cwd: &cwd,
             }
         };
@@ -1823,6 +1922,7 @@ mod tests {
             window: None,
             account: Some(account.to_owned()),
             home: None,
+            home_implicit: false,
             host: None,
             kind: None,
             mail_root: mail_root.map(|p| p.display().to_string()),

@@ -321,6 +321,38 @@ pub fn run_tagged_fed_own_group(
         place,
         Some((stdin, hold)),
         true,
+        false,
+        timeout,
+    )
+    .map_err(|failed| failed.into_error(caller))
+}
+
+/// `run_tagged` with the child's whole environment `env`, nothing inherited:
+/// for a client whose answer the caller reads by its text, so no setting of
+/// the caller's own (a logging level, a locale) changes what it prints.
+pub fn run_tagged_alone(
+    tag: &'static str,
+    program: &'static str,
+    executable: &Path,
+    operation: &'static str,
+    args: &[&str],
+    env: &[(&str, &OsStr)],
+    timeout: Duration,
+) -> Result<Output> {
+    let caller = Caller {
+        program,
+        operation,
+        tag: Some(tag),
+    };
+    let place = Place { cwd: None, env };
+    spawn(
+        caller,
+        executable.as_os_str(),
+        args,
+        place,
+        None,
+        false,
+        true,
         timeout,
     )
     .map_err(|failed| failed.into_error(caller))
@@ -459,11 +491,14 @@ pub(crate) fn start(
         place,
         stdin.map(|bytes| (bytes, None)),
         own_group,
+        false,
         timeout,
     )
 }
 
-/// The one spawn site.
+/// The one spawn site. `alone`: the child's environment is `place.env`
+/// alone, nothing inherited.
+#[allow(clippy::too_many_arguments)]
 fn spawn(
     caller: Caller,
     executable: &OsStr,
@@ -471,6 +506,7 @@ fn spawn(
     place: Place,
     stdin: Option<(&[u8], Option<Hold>)>,
     own_group: bool,
+    alone: bool,
     timeout: Duration,
 ) -> std::result::Result<Output, Failed> {
     if let Some(cwd) = place.cwd {
@@ -478,6 +514,9 @@ fn spawn(
     }
     let mut command = Command::new(executable);
     command.args(args);
+    if alone {
+        command.env_clear();
+    }
     if own_group {
         std::os::unix::process::CommandExt::process_group(&mut command, 0);
     }

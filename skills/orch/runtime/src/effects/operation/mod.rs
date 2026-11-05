@@ -717,6 +717,7 @@ fn record(outcome: EffectOutcome) -> RecordOutcome {
         tmux_session: wire.tmux_session,
         launch_line: wire.launch_line,
         home: wire.home,
+        home_implicit: wire.home_implicit,
         watch: wire.watch,
         mail_root: wire.mail_root,
         observation: Some(observation),

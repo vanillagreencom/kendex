@@ -160,6 +160,9 @@ pub struct RecordOutcome {
     /// lane's `home`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home: Option<String>,
+    /// That launch named no home, written as the lane's `home_implicit`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub home_implicit: bool,
     /// The fleet watch a confirmed start launched or found claimed, written as
     /// the record's `overseer.watch`; a succession carries none and keeps the
     /// field as it stands.
@@ -1782,6 +1785,7 @@ mod tests {
                     tmux_session: None,
                     launch_line: None,
                     home: None,
+                    home_implicit: false,
                     watch: None,
                     mail_root: None,
                     observation: None,
