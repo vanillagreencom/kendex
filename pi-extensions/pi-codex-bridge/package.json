@@ -49,8 +49,8 @@
     }
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "1.0.0",
-    "@earendil-works/pi-coding-agent": "1.0.0",
+    "@earendil-works/pi-ai": "1.5.0",
+    "@earendil-works/pi-coding-agent": "1.5.0",
     "@types/node": "^24.3.0",
     "codex-0.163.0": "npm:@openai/codex@0.163.0",
     "codex-0.166.0": "npm:@openai/codex@0.166.0",
