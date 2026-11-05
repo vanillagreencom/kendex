@@ -162,10 +162,11 @@ class Sources:
 
     def events(self, target, root, box):
         result = self.call(target, root, "mailbox", "lane-mail", ["events", "--item", "overseer", "--box", box])
-        lines = result.stdout.splitlines()
-        if not lines or watch.mailbox_header(lines[0]) is None:
+        # Records end at LF only: jq -c leaves U+2028/U+2029 raw in strings.
+        lines = result.stdout.split("\n")
+        if watch.mailbox_header(lines[0]) is None:
             raise Unavailable("The original mailbox read is incomplete.")
-        return {"header": lines[0], "rows": [json.loads(line) for line in lines[1:]]}
+        return {"header": lines[0], "rows": [json.loads(line) for line in lines[1:] if line]}
 
     def collect(self):
         local = watch.Destination("local", None)
@@ -191,7 +192,7 @@ class Sources:
                     continue
                 canonical.add(root)
                 pending = self.call(target, root, "mailbox", "lane-mail", ["pending", "--item", "overseer", "--to", "owner"])
-                asks = [json.loads(line) for line in pending.stdout.splitlines()]
+                asks = [json.loads(line) for line in pending.stdout.split("\n") if line]
                 outward, inward = self.events(target, root, "to-overseer"), self.events(target, root, "to-lane")
                 posted, links = {}, {}
                 # Retained closed asks still own their exact tracker mirror;
