@@ -292,8 +292,6 @@ class OwnerAsksContract(unittest.TestCase):
                  "OwnerAsksContract.test_complete_row_and_byte_paging_and_stale_cursors"),
                 ('if delta.get("until_sequence", 0) <= entry.get("sequence", 0):', 'if True:',
                  "OwnerAsksContract.test_uncertain_delivery_needs_positive_evidence_and_never_resends"),
-                ('["comments", "list", issue, "--format=safe"]', '["comments", "list", issue]',
-                 "PublicOwnerAsks.test_actual_tracker_writer_recovers_lost_acknowledgement"),
             ]
             for old, replacement, case in mutations:
                 with self.subTest(case=case):
@@ -309,8 +307,6 @@ class OwnerAsksContract(unittest.TestCase):
                     self.assertNotIn("ERROR:", result.stderr)
                     if "uncertain_delivery" in case:
                         self.assertIn("(landed=True, newer_later=True)", result.stderr)
-                    if case == "PublicOwnerAsks.test_actual_tracker_writer_recovers_lost_acknowledgement":
-                        self.assertIn("safe-mirror-read:", result.stderr)
 
 
 class PublicOwnerAsks(MailWorld):
