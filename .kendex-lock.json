@@ -3257,6 +3257,58 @@
         }
       ]
     },
+    "command:code-scrub:claude": {
+      "name": "code-scrub",
+      "kind": "command",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "2e4ebc20e759fcaad44e21f0e96476b4aac65b981c768509530733d2f09a3614",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "6739429244106050652ca031ebac353574f8bff60860d8fdd929eaa0432d13fd",
+      "enabled": true,
+      "emitted": {
+        "kind": "command",
+        "name": "code-scrub",
+        "paths": [
+          ".claude/commands/code-scrub.md"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "command:code-scrub:pi": {
+      "name": "code-scrub",
+      "kind": "command",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "2e4ebc20e759fcaad44e21f0e96476b4aac65b981c768509530733d2f09a3614",
+      "selector": {
+        "sourceRev": null,
+        "rev": null
+      },
+      "renderedHash": "6739429244106050652ca031ebac353574f8bff60860d8fdd929eaa0432d13fd",
+      "enabled": true,
+      "emitted": {
+        "kind": "command",
+        "name": "code-scrub",
+        "paths": [
+          ".pi/prompts/code-scrub.md"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
     "hook:block-argv-kill:claude": {
       "name": "block-argv-kill",
       "kind": "hook",
@@ -11383,7 +11435,7 @@
   "sources": {
     "kendex": {
       "repo": "vanillagreencom/kendex",
-      "commit": "3952a4d5a27219c9b37193a90a55d21470a5d4d3"
+      "commit": "999d345af4c9ff8c48d955edd343f6f48fb0135b"
     }
   },
   "claudeProjectDefault": "released"
