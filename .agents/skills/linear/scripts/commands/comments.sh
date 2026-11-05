@@ -237,14 +237,16 @@ owner_requests() {
     identifiers=$(jq -r '.[].id' <<<"$items") || return 1
     while IFS= read -r ref; do [[ -z "$ref" ]] || refs+=("$ref"); done <<<"$identifiers"
     comments='{}'
-    if [[ ${#refs[@]} -gt 0 ]]; then comments=$(bulk_list_comments "${refs[@]}") || return 1; fi
-    jq -cn --argjson owner "$owner" --argjson workspace "$workspace" --argjson items "$items" --argjson comments "$comments" '
+    if [[ ${#refs[@]} -gt 0 ]]; then comments=$(bulk_list_comments --format=safe "${refs[@]}") || return 1; fi
+    jq -cs '
+      .[0] as $owner | .[1] as $workspace | .[2] as $items | .[3] as $comments |
       def mentions($url): [scan("https?://[^\\s<>\"()\\[\\]]+") | sub("[.,;!?]+$"; "")] | index($url) != null;
       {workspace: $workspace.urlKey, owner: $owner,
        issues: [$items[] | {id, uuid, url, updated_at, comments: $comments[.id]}]}
       | . + {requests: [.issues[] | . as $issue | .comments[] | select(.body | mentions($owner.url))
           | if .user_id == "" or .user == "" or .created_at == "" or .url == "" then error("request-metadata-unavailable") else . end
-          | {issue: $issue.id, issueUuid: $issue.uuid, comment: ., thread: (.parent_id // .id)}]}'
+          | {issue: $issue.id, issueUuid: $issue.uuid, comment: ., thread: (.parent_id // .id)}]}' \
+      <<<"$owner"$'\n'"$workspace"$'\n'"$items"$'\n'"$comments"
 }
 
 create_comment() {

@@ -150,14 +150,20 @@ class OwnerAsksContract(unittest.TestCase):
         self.assertEqual(len(self.source.deliveries), 1)
 
     def test_uncertain_delivery_needs_positive_evidence_and_never_resends(self):
-        for landed in (True, False):
-            with self.subTest(landed=landed):
+        for landed, newer_later in ((True, False), (True, True), (False, False), (False, True)):
+            with self.subTest(landed=landed, newer_later=newer_later):
+                self.now += 3600
                 self.source.confirm, self.source.land = False, landed
                 row = self.page()["rows"][0]
-                key = "uncertain-" + str(landed)
+                key = "uncertain-" + str((landed, newer_later))
                 with self.assertRaises(owner_asks.Unavailable):
                     self.action("done", row, key, text="Evidence supplied")
                 deliveries = len(self.source.deliveries)
+                if newer_later:
+                    refreshed = self.page()["rows"][0]
+                    until = owner_asks.iso(self.now + 3600)
+                    later = self.action("later", refreshed, key + "-later", until=until)
+                    self.assertEqual((later["kind"], later["state"]), ("accepted", "snoozed"))
                 if landed:
                     result = self.action("done", row, key, text="Evidence supplied")
                     self.assertEqual((result["kind"], result["state"]), ("accepted", "checking"))
@@ -165,6 +171,10 @@ class OwnerAsksContract(unittest.TestCase):
                     with self.assertRaises(owner_asks.Unavailable):
                         self.action("done", row, key, text="Evidence supplied")
                 self.assertEqual(len(self.source.deliveries), deliveries)
+                if newer_later:
+                    self.assertEqual(self.page()["activeCount"], 0)
+                    snoozed = self.page("snoozed")["rows"][0]
+                    self.assertEqual((snoozed["id"], snoozed["snoozedUntil"]), (row["id"], until))
 
     def test_done_and_snooze_follow_complete_current_view_membership(self):
         row = self.page()["rows"][0]
@@ -268,8 +278,11 @@ class OwnerAsksContract(unittest.TestCase):
         directory.mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="owner-asks-control-", dir=directory) as allocation:
             skills = Path(allocation).resolve() / "skills"
-            for package in ("jarvis", "orch", "mailbox"):
+            for package in ("jarvis", "orch", "mailbox", "linear", "slack"):
                 shutil.copytree(REPO / "skills" / package / "scripts", skills / package / "scripts")
+            references = skills / "orch/references"
+            references.mkdir()
+            shutil.copyfile(REPO / "skills/orch/references/secret-value.ere", references / "secret-value.ere")
             path = skills / "jarvis/scripts/lib/owner_asks.py"
             original = path.read_text()
             mutations = [
@@ -277,6 +290,10 @@ class OwnerAsksContract(unittest.TestCase):
                  "OwnerAsksContract.test_receipt_replay_precedes_revision"),
                 ('PAGE_BYTES = 16 * 1024', 'PAGE_BYTES = 32 * 1024',
                  "OwnerAsksContract.test_complete_row_and_byte_paging_and_stale_cursors"),
+                ('if delta.get("until_sequence", 0) <= entry.get("sequence", 0):', 'if True:',
+                 "OwnerAsksContract.test_uncertain_delivery_needs_positive_evidence_and_never_resends"),
+                ('["comments", "list", issue, "--format=safe"]', '["comments", "list", issue]',
+                 "PublicOwnerAsks.test_actual_tracker_writer_recovers_lost_acknowledgement"),
             ]
             for old, replacement, case in mutations:
                 with self.subTest(case=case):
@@ -289,6 +306,11 @@ class OwnerAsksContract(unittest.TestCase):
                                             env=env, capture_output=True, text=True, timeout=60)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertIn("FAILED (failures=", result.stderr)
+                    self.assertNotIn("ERROR:", result.stderr)
+                    if "uncertain_delivery" in case:
+                        self.assertIn("(landed=True, newer_later=True)", result.stderr)
+                    if case == "PublicOwnerAsks.test_actual_tracker_writer_recovers_lost_acknowledgement":
+                        self.assertIn("safe-mirror-read:", result.stderr)
 
 
 class PublicOwnerAsks(MailWorld):
@@ -301,10 +323,10 @@ class PublicOwnerAsks(MailWorld):
         self.registry.write_text(str(self.home) + "\n")
         self.env.update(XDG_STATE_HOME=str(self.root / "runtime"), SLACK_BOT_TOKEN="test-token")
 
-    def run_cli(self, action="list", home=None, payload=None, *args):
+    def run_cli(self, action="list", home=None, payload=None, *args, view="active"):
         command = [BASH, LIB.parent / "jarvis-session", "owner-asks", action, "--home", home or self.home, *args]
         if action == "list":
-            command += ["--view", "active"]
+            command += ["--view", view]
         result = subprocess.run(list(map(str, command)), env=self.env, text=True, input=payload,
                                 capture_output=True, cwd=self.home, timeout=20)
         return result, json.loads(result.stdout)
@@ -544,9 +566,16 @@ print(json.dumps(owner._presence('ssh:fixture')))
         result, unknown = self.run_cli("done", None, payload, "--id", row["id"])
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(unknown["kind"], "unavailable")
+        result, refreshed = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        until = owner_asks.iso(owner_asks.time.time() + 3600)
+        later_payload = json.dumps({"requestId": "newer-later", "expectedRevision": refreshed["revision"], "until": until})
+        result, later = self.run_cli("later", None, later_payload, "--id", row["id"])
+        self.assertEqual((result.returncode, later["state"]), (0, "snoozed"))
         result, receipt = self.run_cli("done", None, payload, "--id", row["id"])
         self.assertEqual(receipt["state"], "checking", result.stderr)
-        self.assertEqual(self.run_cli()[1]["rows"][0]["state"], "checking")
+        self.assertEqual(self.run_cli()[1]["activeCount"], 0)
+        self.assertEqual(self.run_cli(view="snoozed")[1]["rows"][0]["snoozedUntil"], until)
         self.assertEqual(self.run_cli("done", None, payload, "--id", row["id"])[1], receipt)
         answers = [entry for entry in self.box(self.home, "to-lane") if entry.get("re") == ask]
         self.assertEqual(len(answers), 1)
@@ -561,7 +590,7 @@ print(json.dumps(owner._presence('ssh:fixture')))
         database = self.root / "tracker.json"
         original = request_comment("request", "https://linear.app/example/profiles/owner Question")
         database.write_text(json.dumps([original]))
-        self.env.update(TRACKER_DATABASE=str(database), LINEAR_API_KEY_OVERRIDE="fixture")
+        self.env.update(TRACKER_DATABASE=str(database), LINEAR_API_KEY_OVERRIDE="fixture", LINEAR_FORMAT="raw")
         self.executable("curl", '#!' + sys.executable + '\n' + r'''
 import json, os, sys
 from pathlib import Path
@@ -604,6 +633,10 @@ elif 'ListIssues' in query:
     if mode == 'incomplete':
         issues['pageInfo'] = {'hasNextPage': True, 'endCursor': None}
     data = {'issues': issues}
+elif 'GetIssue(' in query:
+    data = {'issue': dict(id='issue-uuid', identifier='KEN-1', url='https://linear.app/example/issue/KEN-1')}
+elif 'ListComments' in query:
+    data = {'issue': dict(id='issue-uuid', comments=connection(list(map(comment, comments))))}
 elif 'comments' in query:
     data = {'issues': connection([dict(id='issue-uuid', identifier='KEN-1', comments=connection(list(map(comment, comments))))])}
 else:
@@ -623,11 +656,32 @@ print(json.dumps({'data': data})+'___HTTP_CODE___200', end='')
                 record = json.loads(result.stderr.split("owner-asks-failure=", 1)[1])
                 self.assertEqual(record["destination"], "local:" + str(self.home))
                 self.assertEqual(record["key"][0], "linear-delivery")
+                if action == "done":
+                    result, refreshed = self.run_cli()
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    until = owner_asks.iso(owner_asks.time.time() + 3600)
+                    later_payload = json.dumps({"requestId": "newer-tracker-later", "expectedRevision": refreshed["revision"],
+                                                "until": until})
+                    result, later = self.run_cli("later", None, later_payload, "--id", row["id"])
+                    self.assertEqual((result.returncode, later["state"]), (0, "snoozed"))
                 result, receipt = self.run_cli(action, None, payload, "--id", row["id"])
                 self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
                 self.assertEqual((receipt["kind"], receipt["state"]),
                                  ("accepted", "checking" if action == "done" else "open"))
-        self.assertEqual(len(json.loads(database.read_text())), 3)
+                if action == "done":
+                    self.assertEqual(self.run_cli()[1]["activeCount"], 0)
+                    result, snoozed = self.run_cli(view="snoozed")
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(snoozed["rows"][0]["snoozedUntil"], until)
+                    # A later Done still clears the earlier accepted snooze.
+                    newer_payload = json.dumps({"requestId": "newer-tracker-done", "expectedRevision": snoozed["revision"],
+                                                "text": "New evidence"})
+                    result, unknown = self.run_cli("done", None, newer_payload, "--id", row["id"])
+                    self.assertEqual(unknown["kind"], "unavailable")
+                    result, newer = self.run_cli("done", None, newer_payload, "--id", row["id"])
+                    self.assertEqual((result.returncode, newer["state"]), (0, "checking"))
+                    self.assertEqual(self.run_cli()[1]["rows"][0]["state"], "checking")
+        self.assertEqual(len(json.loads(database.read_text())), 4)
         state_path, = (self.root / "runtime").rglob("owner-asks.json")
         mode_path = database.with_suffix(".mode")
         for state in ("checking", "snoozed"):
@@ -656,7 +710,26 @@ print(json.dumps({'data': data})+'___HTTP_CODE___200', end='')
                 self.assertEqual((page["activeCount"], page["snoozedCount"], page["rows"], page["complete"]),
                                  (0, 0, [], True))
                 self.assertEqual(json.loads(state_path.read_text())["deltas"], {})
-        self.assertEqual(len(json.loads(database.read_text())), 3)
+        self.assertEqual(len(json.loads(database.read_text())), 4)
+
+        # Seed the canonical mirror fixture with the tracker-posted envelope
+        # fields produced by lane-mail after owner_tracker_ask retains its ID.
+        # The real mailbox fold and both real Linear readers consume it.
+        mode_path.write_text("present")
+        ask = self.mail(self.home, "ask", "Mirrored owner ask", "--to", "owner", "--options", "a,b", "--reserved")
+        records = self.box(self.home, "to-overseer")
+        envelope = next(record for record in records if record["id"] == ask)
+        envelope["issue"] = "KEN-1"
+        records.append({"id": ask + "-tracker", "kind": "tracker-posted", "at": envelope["at"],
+                        "from": envelope["from"], "re": ask, "issue": "KEN-1", "tracker_label": "owner-waiting",
+                        "tracker_comment": "request", "text": ""})
+        (self.home / "tmp/lane-mail/overseer/to-overseer.jsonl").write_text(
+            "".join(json.dumps(record) + "\n" for record in records))
+        result, mirrored = self.run_cli()
+        self.assertEqual(result.returncode, 0, "safe-mirror-read: " + result.stderr + result.stdout)
+        self.assertEqual(mirrored["activeCount"], 1)
+        self.assertEqual((mirrored["rows"][0]["kind"], mirrored["rows"][0]["what"], mirrored["rows"][0]["link"]["url"]),
+                         ("jarvis-ask", "Mirrored owner ask", original["url"]))
 
     def test_satellite_uses_the_same_main_receipt_without_local_state(self):
         satellite = make_project(self.root / "satellite", overseer=False)

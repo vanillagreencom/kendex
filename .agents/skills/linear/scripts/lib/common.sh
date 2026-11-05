@@ -13,6 +13,9 @@ LINEAR_LIMIT_ISSUE_DESC=100000 # Issues have no practical limit
 
 # Internal lib directory (underscore prefix avoids overwriting caller's SCRIPT_DIR)
 _LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Target settings are data; library sources, sibling commands and their shell
+# startup must retain the identities selected by the caller.
+readonly _LIB_DIR SCRIPT_DIR BASH BASH_ENV
 
 linear_canonical_existing_dir() {
     local path="$1"
