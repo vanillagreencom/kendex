@@ -3263,12 +3263,12 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "2e4ebc20e759fcaad44e21f0e96476b4aac65b981c768509530733d2f09a3614",
+      "sourceHash": "71afb018708ac668a2827368f21e1e62d63e59bdce0cc99457781b900b5e9a48",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "6739429244106050652ca031ebac353574f8bff60860d8fdd929eaa0432d13fd",
+      "renderedHash": "a90a52748468dd603a8146610ff20e8236b5fe75a4e76e9d4022310b1a281080",
       "enabled": true,
       "emitted": {
         "kind": "command",
@@ -3289,12 +3289,12 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "2e4ebc20e759fcaad44e21f0e96476b4aac65b981c768509530733d2f09a3614",
+      "sourceHash": "71afb018708ac668a2827368f21e1e62d63e59bdce0cc99457781b900b5e9a48",
       "selector": {
         "sourceRev": null,
         "rev": null
       },
-      "renderedHash": "6739429244106050652ca031ebac353574f8bff60860d8fdd929eaa0432d13fd",
+      "renderedHash": "a90a52748468dd603a8146610ff20e8236b5fe75a4e76e9d4022310b1a281080",
       "enabled": true,
       "emitted": {
         "kind": "command",
@@ -11435,7 +11435,7 @@
   "sources": {
     "kendex": {
       "repo": "vanillagreencom/kendex",
-      "commit": "999d345af4c9ff8c48d955edd343f6f48fb0135b"
+      "commit": "f9f31382bb6333ee46a1f1a4493b72d151599b42"
     }
   },
   "claudeProjectDefault": "released"
