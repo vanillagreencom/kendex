@@ -1427,9 +1427,10 @@ fn a_cloud_create_whose_asking_process_ends_is_held_and_never_asked_again() {
 /// Defect: a person's close that fails a cloud launch while its `op` is
 /// still inside the create, so the session the create then makes is
 /// recorded nowhere. While the asking `op` runs, the close refuses
-/// `intent-open` and the launch stays open; once that `op` has ended with
-/// the create unanswered, the close supersedes the held launch, naming its
-/// worktree.
+/// `intent-open` and the launch stays open; once that `op` has ended, the
+/// CLI still inside the create, the close supersedes the held launch, naming
+/// its worktree and the time the create's bound ends, so a person reads
+/// claude.ai/code only once no session can still appear.
 #[test]
 fn a_close_beside_a_live_cloud_create_is_refused_and_supersedes_it_once_its_op_is_gone() {
     let dir = tempfile::tempdir().unwrap();
@@ -1440,6 +1441,13 @@ fn a_close_beside_a_live_cloud_create_is_refused_and_supersedes_it_once_its_op_i
     assert!(made.status.success(), "{}", stderr(&made));
     let init = world.run(&["state", "init", "--fleet"], &[]);
     assert!(init.status.success(), "init: {}", stderr(&init));
+    let wall = || {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    };
+    let before = wall();
     // Held so a row that fails before its end still ends the `op`.
     let mut asking = Owned(
         world
@@ -1464,6 +1472,7 @@ fn a_close_beside_a_live_cloud_create_is_refused_and_supersedes_it_once_its_op_i
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
+    let asked = wall();
     let refused = world.close("CC-20");
     assert!(!refused.status.success(), "{}", stderr(&refused));
     assert_eq!(
@@ -1481,16 +1490,19 @@ fn a_close_beside_a_live_cloud_create_is_refused_and_supersedes_it_once_its_op_i
         "the launch stays open: {open}"
     );
     assert_eq!(world.lane("CC-20")["status"], "preparing");
-    // The asking `op` ends inside the create; the CLI, released after it,
-    // answers no one.
+    // The asking `op` ends inside the create, and the close comes while the
+    // CLI still holds it.
     asking.0.kill().unwrap();
     asking.0.wait().unwrap();
+    let closed = world.close("CC-20");
+    // Read and write, so the open never waits for a reader the CLI's own
+    // bound may already have ended.
     std::fs::OpenOptions::new()
+        .read(true)
         .write(true)
         .open(&hold)
         .and_then(|mut fifo| std::io::Write::write_all(&mut fifo, b"\n"))
         .unwrap();
-    let closed = world.close("CC-20");
     assert!(closed.status.success(), "{}", stderr(&closed));
     let launch = world.intent("CC-20");
     assert_eq!(launch["outcome"], "failed", "{launch}");
@@ -1498,6 +1510,14 @@ fn a_close_beside_a_live_cloud_create_is_refused_and_supersedes_it_once_its_op_i
         launch["observation"]["cloud_create"],
         world.root.join("wt").join("CC-20").display().to_string(),
         "{launch}"
+    );
+    // The create's bound, from the phase recorded before the CLI was asked.
+    let answer_by = launch["observation"]["answer_by"].as_str().unwrap_or("");
+    let bound = 600;
+    assert!(
+        agent_runtime::clock::iso_utc(before + bound).as_str() <= answer_by
+            && answer_by <= agent_runtime::clock::iso_utc(asked + bound).as_str(),
+        "the close names when the create's bound ends: {launch}"
     );
     assert_ne!(world.lane("CC-20")["status"], "preparing");
 }

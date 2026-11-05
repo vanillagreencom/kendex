@@ -473,21 +473,26 @@ fn a_unit_start_whose_answer_and_read_are_lost_keeps_its_live_run_open_until_the
 
 /// Defect: a launch the launcher answered possibly started, its group not
 /// read empty (`status=unwound-failed`), closed `stopped` by the round's
-/// reconcile while its job runs. The launcher reports a live job through
+/// reconcile while its job runs, or closed `lost` once its leader exited
+/// while a member of its group runs. The launcher reports a live job through
 /// the real library's ended-launch path, its record naming the leader's
 /// start or the group's key alone: the start refuses `launch-unanswered`
 /// with the stage open, a reconcile while the job runs keeps it open, and
-/// the stage closes once the job has ended.
+/// the stage closes once the job has ended. With the leader ended and its
+/// member running, the reconcile keeps the stage open until the member ends.
 #[test]
 fn a_launch_whose_group_could_not_be_read_empty_keeps_its_stage_open_while_its_job_runs() {
-    for mode in ["identity", "key"] {
+    for mode in ["identity", "key", "leader-exits"] {
         let w = World::new();
         let hold = w.root.join("child-hold");
         assert!(program("mkfifo").arg(&hold).status().unwrap().success());
         let hold_path = hold.display().to_string();
+        let member_file = w.root.join("member");
+        let member_path = member_file.display().to_string();
         let env = [
             ("JOB_UNIT_UNWOUND_FAILED", mode),
             ("DEV_VALIDATE_CHILD_HOLD", hold_path.as_str()),
+            ("JOB_UNIT_MEMBER_FILE", member_path.as_str()),
         ];
         let (key, line) = refusal(&w.start(&[], &env));
         let run_dir = line
@@ -495,21 +500,69 @@ fn a_launch_whose_group_could_not_be_read_empty_keeps_its_stage_open_while_its_j
             .find_map(|f| f.strip_prefix("run_dir="))
             .unwrap_or_default()
             .to_owned();
-        let deadline = Instant::now() + JOB_BOUND;
-        while run_file(&run_dir, "pid").is_empty() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        let child: u32 = run_file(&run_dir, "pid").trim().parse().unwrap_or_default();
         let record = run_file(&run_dir, "runner");
-        ok(&w.op(&json!({"op": "reconcile-round", "round_id": ROUND}), &[]));
-        let kept = (w.stage(&run_dir), support::live(child));
-        let _ = fs::write(&hold, "release\n");
-        let closed = w.wait_closed(&run_dir);
+        let reconcile = || ok(&w.op(&json!({"op": "reconcile-round", "round_id": ROUND}), &[]));
+        let await_gone = |pid: u32| {
+            let deadline = Instant::now() + JOB_BOUND;
+            while support::live(pid) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        };
+        let (kept, closed) = if mode == "leader-exits" {
+            let deadline = Instant::now() + JOB_BOUND;
+            while fs::read_to_string(&member_file)
+                .unwrap_or_default()
+                .is_empty()
+                && Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            let member: u32 = fs::read_to_string(&member_file)
+                .unwrap_or_default()
+                .trim()
+                .parse()
+                .unwrap_or_default();
+            let leader: u32 = record
+                .lines()
+                .find_map(|l| l.strip_prefix("pid="))
+                .and_then(|p| p.parse().ok())
+                .unwrap_or_default();
+            let _ = program("kill")
+                .args(["-KILL", &leader.to_string()])
+                .status();
+            await_gone(leader);
+            let stat = fs::read_to_string(format!("/proc/{member}/stat")).unwrap_or_default();
+            let group = stat
+                .rsplit_once(')')
+                .and_then(|(_, rest)| rest.split_whitespace().nth(2))
+                .and_then(|g| g.parse::<u32>().ok());
+            reconcile();
+            let kept = (
+                w.stage(&run_dir),
+                !support::live(leader) && support::live(member) && group == Some(leader),
+            );
+            let _ = program("kill")
+                .args(["-KILL", &member.to_string()])
+                .status();
+            await_gone(member);
+            reconcile();
+            (kept, w.stage(&run_dir))
+        } else {
+            let deadline = Instant::now() + JOB_BOUND;
+            while run_file(&run_dir, "pid").is_empty() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            let child: u32 = run_file(&run_dir, "pid").trim().parse().unwrap_or_default();
+            reconcile();
+            let kept = (w.stage(&run_dir), support::live(child));
+            let _ = fs::write(&hold, "release\n");
+            (kept, w.wait_closed(&run_dir))
+        };
         assert_eq!(key, "launch-unanswered", "{mode}: {line}");
         assert!(
             record.contains("status=unwound-failed\n")
                 && record.contains("pgid=")
-                && record.contains("start=") == (mode == "identity"),
+                && record.contains("start=") == (mode != "key"),
             "{mode}: the launcher's record: {record}"
         );
         assert!(
@@ -517,7 +570,12 @@ fn a_launch_whose_group_could_not_be_read_empty_keeps_its_stage_open_while_its_j
             "{mode}: the reconcile keeps the stage open while its job runs: {}",
             kept.0
         );
-        assert_eq!(closed["outcome"], "pass", "{mode}: {closed}");
+        let ended = if mode == "leader-exits" {
+            "lost"
+        } else {
+            "pass"
+        };
+        assert_eq!(closed["outcome"], ended, "{mode}: {closed}");
     }
 }
 
@@ -967,8 +1025,7 @@ fn the_job_closes_once_records_the_notice_owed_before_the_send_and_a_second_end_
 /// round's reconcile sends it again under its key, `sent` on the receipt.
 /// A session send the program routed to itself is marked by its result,
 /// never `sent` whatever it was. A fleet record that cannot be read picks
-/// no route: nothing is sent and the notice stays owed, the hold naming the
-/// read's refusal by its key.
+/// no route: nothing is sent and the notice stays owed.
 #[test]
 fn an_end_notice_whose_send_answer_is_unknown_stays_owed_and_one_never_started_is_unsent() {
     let w = World::new();
@@ -1033,8 +1090,6 @@ fn an_end_notice_whose_send_answer_is_unknown_stays_owed_and_one_never_started_i
     let before = sends(&w);
     let (run_dir, result) = run(&[]);
     assert_eq!(result["notice"], "owed", "{result}");
-    let held = result["held"].as_str().unwrap_or_default();
-    assert!(held.starts_with("fleet:json-invalid:"), "{result}");
     assert_eq!(sends(&w), before, "an unread fleet routes no send");
     fs::remove_file(&fleet).unwrap();
     reconcile(&w);

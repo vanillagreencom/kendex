@@ -244,12 +244,23 @@ fn unconfirmed_after_retirement(
     })
 }
 
-/// The home a successor keeps where no account names one: the pending's
-/// `home`, read only as the Pi root a Pi successor keeps.
-fn kept(pending: &state::Pending, harness: Harness) -> Option<&Path> {
-    match harness {
-        Harness::Pi => pending.home.as_deref().map(Path::new),
-        Harness::Claude | Harness::Codex | Harness::Copilot => None,
+/// The home a successor keeps where no account names one, as the lane
+/// launch keeps it: the pending's `home` as the Pi root a Pi successor
+/// keeps, and as the home a resumed session stands under (the pending's
+/// own rule); else, for Codex and Claude, `served`, the home the fleet
+/// server hands its panes. An account names its own home.
+fn kept<'a>(
+    pending: &'a state::Pending,
+    harness: Harness,
+    served: Option<&'a Path>,
+) -> Option<&'a Path> {
+    let home = pending.home.as_deref().map(Path::new);
+    let resume = pending.resume.is_some();
+    match (harness, pending.account.is_some()) {
+        (Harness::Pi, _) => home,
+        (Harness::Claude | Harness::Codex | Harness::Copilot, true) => None,
+        (Harness::Claude | Harness::Codex, false) => home.filter(|_| resume).or(served),
+        (Harness::Copilot, false) => home.filter(|_| resume),
     }
 }
 
@@ -264,6 +275,8 @@ struct Successor {
     target: Target,
     home: PathBuf,
     named: Option<PathBuf>,
+    /// The launch clears the harness's home variable (`LaunchHome.cleared`).
+    cleared: bool,
     account: Option<PathBuf>,
     /// The handoff the held brief names where the request names no brief.
     handoff: Option<String>,
@@ -283,12 +296,14 @@ impl Successor {
     /// reads before retirement: the harness word, the working directory and
     /// the account it spends, which must exist, and the home it runs under,
     /// prepared by the lane launch's own rule (`launch::launch_home`) with
-    /// its trust record and harness gate. The pending's `home` is read only
-    /// as the Pi root a Pi successor keeps. The program and brief are checked
-    /// by the effect that builds the command.
+    /// its trust record and harness gate, on the home it keeps (`kept`):
+    /// `served` is the home the fleet server its window opens on hands its
+    /// panes. The program and brief are checked by the effect that builds
+    /// the command.
     fn from_pending(
         settings: &Settings,
         pending: &state::Pending,
+        served: Option<&Path>,
     ) -> std::result::Result<Successor, Unready> {
         let (harness, cwd) = Self::checked(pending)?;
         let homes = super::launch::launch_home(
@@ -296,7 +311,7 @@ impl Successor {
             harness,
             pending.account.as_deref(),
             pending.model.as_deref(),
-            kept(pending, harness),
+            kept(pending, harness, served),
             &cwd,
         )?;
         Ok(Self::of(settings, pending, harness, cwd, homes)?)
@@ -321,6 +336,7 @@ impl Successor {
         let homes = LaunchHome {
             sessions: home.clone(),
             named: home,
+            cleared: false,
             account: None,
             trust: None,
         };
@@ -371,6 +387,7 @@ impl Successor {
             target: Target::new(settings, harness),
             home,
             named: homes.named,
+            cleared: homes.cleared,
             account: homes.account,
             handoff: pending.handoff.clone(),
             cwd,
@@ -416,13 +433,18 @@ impl Successor {
                 extra_args: &self.extra_args,
             },
         )?;
-        let Some(id) = &self.resume else {
+        if self.resume.is_none() && !self.cleared {
             return Ok(command);
-        };
-        intent.resume = Some(Resume {
-            session_id: id.clone(),
-            session_file: None,
-        });
+        }
+        if self.cleared {
+            intent.env_remove.push(self.harness.home_var().to_owned());
+        }
+        if let Some(id) = &self.resume {
+            intent.resume = Some(Resume {
+                session_id: id.clone(),
+                session_file: None,
+            });
+        }
         Ok(agent_runtime::launch::build(&intent)?)
     }
 
@@ -635,7 +657,23 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
     let Some(pending) = overseer.pending.clone() else {
         return Ok(failed_before_retirement(operation, "pending-missing"));
     };
-    let successor = match Successor::from_pending(run.settings, &pending) {
+    // The successor's window opens on the fleet server, so the home a pane
+    // there inherits is read before the successor's home is resolved; an
+    // environment that cannot be read refuses, never a guess.
+    let (server, session) = match operation.fleet_server(doc_session.as_deref()) {
+        Ok(resolved) => resolved,
+        Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
+    };
+    let served = match pending.harness.as_deref().and_then(Harness::parse) {
+        Some(harness @ (Harness::Claude | Harness::Codex)) if pending.account.is_none() => {
+            match operation::server_home(&server, &session, harness) {
+                Ok(served) => served,
+                Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
+            }
+        }
+        Some(Harness::Claude | Harness::Codex | Harness::Copilot | Harness::Pi) | None => None,
+    };
+    let successor = match Successor::from_pending(run.settings, &pending, served.as_deref()) {
         Ok(successor) => successor,
         Err(Unready::Refused(e)) => return Ok(failed_before_retirement_refused(operation, &e)),
         Err(Unready::Gate(cause)) => {
@@ -645,10 +683,6 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
                 &cause,
             ));
         }
-    };
-    let (server, session) = match operation.fleet_server(doc_session.as_deref()) {
-        Ok(resolved) => resolved,
-        Err(e) => return Ok(failed_before_retirement_refused(operation, &e)),
     };
     // The runner's session is fixed, or the sessions that already stand
     // are read, before the window opens. A resume's session is the fixed

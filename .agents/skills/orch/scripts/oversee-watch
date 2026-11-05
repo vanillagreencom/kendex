@@ -52,9 +52,11 @@ DIR="$(cd -- "$(dirname -- "$STATE")" && pwd -P)" || die 1 watch-relaunch-failed
 RECORD="$DIR/oversee-watch.pid"
 
 # The runtime answers before anything is launched, so a binary setup has not
-# built yet leaves the loop and its claim as they stand.
+# built yet leaves the loop and its claim as they stand. Its key is on the
+# first line that begins `orch-runtime: `, after any notice the settings load
+# prints first.
 if ! answer="$("$RUNTIME" version 2>&1 >/dev/null)"; then
-  key="$(sed -n '1s/^orch-runtime: \([^ ]*\).*/\1/p' <<<"$answer")"
+  key="$(sed -n '/^orch-runtime: /{s/^orch-runtime: \([^ ]*\).*/\1/p;q;}' <<<"$answer")" || key=""
   say watch-relaunch-failed "pid=$OWNER" "error=${key:-runtime-unavailable}"
   [[ -z "$answer" ]] || printf '%s\n' "$answer" >&2
   exit 1

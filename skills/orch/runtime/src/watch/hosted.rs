@@ -413,23 +413,31 @@ pub fn status(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<H
 
 /// `lane-host stop --item ITEM --harness H` before a hosted `pane=local`
 /// relaunch, confirmed by exit 0 and the one line `stopped item=ITEM
-/// processes=N`; `Err` is the status the refusal names.
-pub fn stop(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<(), i32> {
-    let out = lane_host(
+/// processes=N`, read by `call`'s three values: `Failed` a refusal or an
+/// unconfirmed answer (`stop-failed exit=N`), `Unknown` a stop that may
+/// have signalled the harness or not (`stop-unanswered`).
+pub fn stop(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<(), Asked> {
+    let out = call(
         scripts,
         host,
         "stop",
         &["stop", "--item", item, "--harness", harness],
-    )
-    .map_err(|_| -1)?;
-    if !out.status.success() {
-        return Err(exit_code(&out));
-    }
+        READ_BOUND,
+        "stop",
+    )?;
     let text = host::stdout_text(&out);
-    let confirmed = text
-        .strip_prefix(&format!("stopped item={item} processes="))
-        .is_some_and(|count| !count.is_empty() && count.bytes().all(|b| b.is_ascii_digit()));
-    if confirmed { Ok(()) } else { Err(0) }
+    let confirmed = out.status.success()
+        && text
+            .strip_prefix(&format!("stopped item={item} processes="))
+            .is_some_and(|count| !count.is_empty() && count.bytes().all(|b| b.is_ascii_digit()));
+    if confirmed {
+        Ok(())
+    } else {
+        Err(Asked::Failed(format!(
+            "stop-failed exit={}",
+            exit_code(&out)
+        )))
+    }
 }
 
 // --- the launch's calls --------------------------------------------------------
@@ -438,14 +446,15 @@ pub fn stop(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<(),
 /// the lane's checkout before it answers.
 const PREPARE_BOUND: Duration = Duration::from_secs(1800);
 
-/// Why a provider's `create` or `wait` gave no ready answer.
+/// Why a provider's `create`, `wait` or `stop` gave no ready answer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Asked {
     /// The provider answered a refusal or an unusable line, or `lane-host`
     /// never started.
     Failed(String),
-    /// The call started and gave no answer within its bound, or a signal
-    /// ended it or the provider under it: the provider may hold the item.
+    /// The call started and gave no answer within its bound, or ended with
+    /// a status of 128 and above (a signal, or the shipped ssh provider's
+    /// 255 for a failed ssh): the provider may have acted on the item.
     Unknown(String),
 }
 
@@ -512,6 +521,14 @@ pub fn create(
     match exit_code(&out) {
         0 => {}
         75 if created.preparing => {}
+        // The ssh provider's lock: another lifecycle call holds the item's
+        // clone, the item's own earlier create among them.
+        75 if host::stderr_text(&out).contains("lane-host-ssh: ownership-busy") => {
+            return Err(Asked::Failed(format!(
+                "host-create-busy {}",
+                cause_of("create", &out)
+            )));
+        }
         75 => return Err(Asked::Failed("item-owned exit=75".to_owned())),
         _ => {
             return Err(Asked::Failed(format!(
@@ -584,7 +601,11 @@ pub fn put(scripts: &Path, host: &str, item: &str, path: &str, bytes: &[u8]) -> 
 /// started made nothing (`<key>-failed`); one whose bound passed, or that a
 /// signal ended, may have acted (`<key>-unanswered`). `lane-host` exits
 /// with the provider's own status, so 128 and above is a provider a signal
-/// ended, which gave no answer either.
+/// ended, or one that passed such a status up: the shipped ssh provider
+/// exits with ssh's 255 for a failed ssh, a connection lost mid-call or one
+/// never opened alike. Either may have acted, and none is held on: the
+/// launch fails and the next create asks again, the wall route asks its
+/// stop again on its next pass.
 #[allow(
     clippy::disallowed_methods,
     reason = "the launch's provider calls, `lane-host` through the one runner under the record's host, each verb's bound its own"

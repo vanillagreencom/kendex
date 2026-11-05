@@ -4402,6 +4402,73 @@ fn a_unit_start_whose_answer_was_lost_or_failed_after_the_manager_acted_is_held_
     }
 }
 
+/// Defect: a start the client refused before it asked the manager anything
+/// held as a unit that never existed, so no watch, transfer or stop job
+/// ran, on every attempt; and an environment name the client refuses handed
+/// to it. The fake user manager answers as the real client does under a
+/// private runtime directory: a `--setenv` name outside shell syntax is its
+/// parser's refusal, and a bus it cannot reach is its connect's. The op's
+/// environment carries an exported bash function: the launch hands it no
+/// such name and the watch runs as its unit. The bus unreachable after the
+/// probe: the launch falls to `setsid` and the watch runs there.
+#[test]
+fn a_unit_start_the_client_refused_before_asking_the_manager_runs_the_job_and_no_name_it_refuses_is_handed_to_it()
+ {
+    // (the case, the op's added environment, the runner the watch runs under)
+    for (case, extra, runner) in [
+        (
+            "bash-function",
+            ("BASH_FUNC_probe%%", "() {  :\n}"),
+            "systemd",
+        ),
+        (
+            "bus-unreachable",
+            ("SYSTEMD_RUN_FAKE_UNREACHABLE", "1"),
+            "setsid",
+        ),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner_world = suite_runner(&server, "stub-confirm");
+        runner_world.init_fleet();
+        let (bin, env) = watch_world(runner_world.state_dir());
+        runner_world.tools = Some(bin.clone());
+        let state = runner_world
+            .state_dir()
+            .join(orch_runtime::state::FLEET_FILE_NAME);
+        let mut env: Vec<(&str, &str)> =
+            env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        env.push(extra);
+        let report = effect_report(&runner_world.op_fleet_env(
+            &json!({
+                "op": "start-controller",
+                "controller": pending(runner_world.state_dir()),
+                "watch": watch_words(&state),
+            }),
+            &env,
+        ));
+        let overseer = runner_world.fleet()["overseer"].clone();
+        let units = units_started(&bin);
+        let calls = std::fs::read_to_string(bin.join("systemd.log")).unwrap_or_default();
+        let record = std::fs::read_to_string(runner_world.state_dir().join("oversee-watch.runner"))
+            .unwrap_or_default();
+        if report["intent"]["outcome"] == "confirmed" {
+            stop_live_watch(&runner_world, &state);
+        }
+        assert_eq!(report["intent"]["outcome"], "confirmed", "{case}: {report}");
+        assert_eq!(overseer["watch"]["runner"], runner, "{case}: {overseer}");
+        assert_eq!(
+            units,
+            usize::from(runner == "systemd"),
+            "{case}: the units the manager started: {record}"
+        );
+        assert!(
+            !calls.contains("--setenv=BASH_FUNC"),
+            "{case}: no name the client refuses is handed to it: {calls}"
+        );
+    }
+}
+
 /// The number of units the fake user manager started under `bin`: the fleet
 /// watches launched.
 fn units_started(bin: &Path) -> usize {
@@ -4773,6 +4840,127 @@ fn a_controller_resume_continues_the_recorded_session_in_each_harness_s_own_form
         assert!(
             !argv.iter().any(|a| a == "--session-id"),
             "{harness}: no fresh id beside a resume: {argv:?}"
+        );
+    }
+}
+
+/// Defect: a successor whose harness runs under another home than the one
+/// its session is proved and recorded under. On a fleet server whose panes
+/// inherit another home, an accountless start resuming the session its
+/// pending names under a config dir resumes it there (the resume stub
+/// refuses a file its config dir lacks, so a confirmed start is the
+/// proof); one resuming under the default clears the variable the server
+/// would pass on; a fresh accountless Claude or Codex start runs on, and
+/// records, the home the server hands its panes.
+#[test]
+fn a_controller_with_no_account_runs_under_the_one_home_its_session_is_proved_and_recorded_under() {
+    // The case, the harness, the home the pending names its session under
+    // (`default` the harness's default under the row's home, `none` no
+    // resume), and the stub.
+    let cases = [
+        (
+            "claude: resumes under its recorded config dir",
+            "claude",
+            "recorded",
+            "stub-resume",
+        ),
+        (
+            "claude: resumes under the default",
+            "claude",
+            "default",
+            "stub-record",
+        ),
+        ("claude: a fresh start", "claude", "none", "stub-record"),
+        ("codex: a fresh start", "codex", "none", "stub-record"),
+    ];
+    let id = "0f6e2c1a-7d1b-4a0e-9f3c-2b5d8e1f4a6c";
+    for (case, harness, recorded, stub_name) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner = suite_runner(&server, stub_name);
+        runner.verify = Some(1);
+        runner.init_fleet();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        std::fs::create_dir_all(home.join(".codex")).unwrap();
+        runner
+            .env
+            .push(("HOME".to_owned(), home.display().to_string()));
+        let cwd = runner.state_dir().to_path_buf();
+        let current = dir.path().join("current");
+        std::fs::create_dir_all(&current).unwrap();
+        let (variable, store) = match harness {
+            "codex" => ("CODEX_HOME", "sessions"),
+            _ => ("CLAUDE_CONFIG_DIR", "projects"),
+        };
+        let out = tmux(
+            &server.socket,
+            &[
+                "set-environment",
+                "-g",
+                variable,
+                &current.display().to_string(),
+            ],
+        );
+        assert!(out.status.success(), "{case}: {}", stderr(&out));
+        let recorded = match recorded {
+            "recorded" => Some(dir.path().join("recorded")),
+            "default" => Some(home.join(".claude")),
+            _ => None,
+        };
+        let mut controller = pending(&cwd);
+        controller["harness"] = json!(harness);
+        controller.as_object_mut().unwrap().remove("account");
+        controller.as_object_mut().unwrap().remove("home");
+        if harness == "codex" {
+            controller["model"] = json!("gpt-6.1");
+        }
+        if let Some(recorded) = &recorded {
+            plant_claude_session(recorded, &cwd, id);
+            controller["home"] = json!(recorded.display().to_string());
+            controller["resume"] = json!(id);
+        }
+        let mut request = json!({"op": "start-controller", "controller": controller});
+        let brief = cwd.join("brief.md");
+        std::fs::write(&brief, "RESUME HERE\n").unwrap();
+        request["brief_file"] = json!(brief.display().to_string());
+        let binaries = format!(
+            "{harness}={}",
+            fixtures().join(stub_name).join(harness).display()
+        );
+        let report =
+            effect_report(&runner.op_fleet_env(&request, &[("ORCH_HARNESS_BINARIES", &binaries)]));
+        let expected = recorded.clone().unwrap_or_else(|| current.clone());
+        // A home is its session store: a private Codex launch home links the
+        // account's.
+        let store_of = |path: &Path| {
+            std::fs::canonicalize(path.join(store))
+                .or_else(|_| std::fs::canonicalize(path))
+                .ok()
+        };
+        if stub_name == "stub-resume" {
+            assert_eq!(report["intent"]["outcome"], "confirmed", "{case}: {report}");
+            assert_eq!(runner.fleet()["overseer"]["session_id"], id, "{case}");
+        } else {
+            // The harness wrote its record: the session was proved and the
+            // window opened.
+            let launched = launch_record(&cwd);
+            let runs_on = match launched["env"][variable].as_str() {
+                Some("") | None => home.join(".claude"),
+                Some(named) => std::path::PathBuf::from(named),
+            };
+            assert_eq!(
+                store_of(&runs_on),
+                store_of(&expected),
+                "{case}: the harness runs on the home its session is proved under: {launched}"
+            );
+        }
+        assert_eq!(
+            report["intent"]["phase"]["home"]
+                .as_str()
+                .and_then(|recorded| store_of(Path::new(recorded))),
+            store_of(&expected),
+            "{case}: the start records the home the harness runs on: {report}"
         );
     }
 }

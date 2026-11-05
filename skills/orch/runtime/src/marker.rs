@@ -86,25 +86,27 @@ pub struct Checkout {
 )]
 pub fn checkout(worktree: &Path) -> Result<Checkout> {
     let dir = worktree.display().to_string();
-    let isolation = git_isolation();
+    let (program, prefix, isolation) = git_start();
+    let mut args: Vec<&str> = prefix;
     let env: Vec<(&str, &std::ffi::OsStr)> = isolation
         .iter()
         .map(|(name, value)| (*name, value.as_os_str()))
         .collect();
+    args.extend([
+        "-C",
+        &dir,
+        "rev-parse",
+        "--path-format=absolute",
+        "--show-toplevel",
+        "--absolute-git-dir",
+        "--git-common-dir",
+    ]);
     let out = host::run_tagged_in(
         "launch",
         "git",
-        Path::new("git"),
+        program,
         "rev-parse",
-        &[
-            "-C",
-            &dir,
-            "rev-parse",
-            "--path-format=absolute",
-            "--show-toplevel",
-            "--absolute-git-dir",
-            "--git-common-dir",
-        ],
+        &args,
         Place {
             cwd: None,
             env: &env,
@@ -134,23 +136,43 @@ pub fn checkout(worktree: &Path) -> Result<Checkout> {
     }
 }
 
-/// What `git` runs with beside the process's environment: nothing in a
-/// build, so a lane's checkout is read under the operator's own
-/// configuration; under the crate's own rows a scratch home and no global
-/// or system configuration, so no row reads the operator's files.
+/// How `git` starts: its program, the arguments before git's own and what
+/// it runs with beside the process's environment.
+type GitStart = (
+    &'static Path,
+    Vec<&'static str>,
+    Vec<(&'static str, std::ffi::OsString)>,
+);
+
+/// `git` by name in a build, so a lane's checkout is read under the
+/// operator's own environment and configuration.
 #[cfg(not(test))]
-fn git_isolation() -> Vec<(&'static str, std::ffi::OsString)> {
-    Vec::new()
+fn git_start() -> GitStart {
+    (Path::new("git"), Vec::new(), Vec::new())
 }
 
+/// Under the crate's own rows, `git` through [`CLEARED_GIT`] with a scratch
+/// home and no global or system configuration, so no row reads the
+/// operator's files or, run inside a git hook, the hook's repository.
 #[cfg(test)]
-fn git_isolation() -> Vec<(&'static str, std::ffi::OsString)> {
-    vec![
-        ("HOME", std::env::temp_dir().join("isolated-home").into()),
-        ("GIT_CONFIG_NOSYSTEM", "1".into()),
-        ("GIT_CONFIG_GLOBAL", "/dev/null".into()),
-    ]
+fn git_start() -> GitStart {
+    (
+        Path::new("/bin/sh"),
+        vec!["-c", CLEARED_GIT, "git"],
+        vec![
+            ("HOME", std::env::temp_dir().join("isolated-home").into()),
+            ("GIT_CONFIG_NOSYSTEM", "1".into()),
+            ("GIT_CONFIG_GLOBAL", "/dev/null".into()),
+        ],
+    )
 }
+
+/// A shell body that runs `git` with its arguments once every
+/// repository-local variable git names (`git rev-parse --local-env-vars`)
+/// is unset: a git hook's environment carries `GIT_DIR` and
+/// `GIT_INDEX_FILE`, and git honours `GIT_DIR` over `-C`.
+#[cfg(test)]
+const CLEARED_GIT: &str = "unset $(git rev-parse --local-env-vars); exec git \"$@\"";
 
 /// What a component of the record may be before anything is written: a
 /// directory or nothing, a plain file or nothing, never a link, so a
@@ -380,8 +402,8 @@ mod tests {
     use super::*;
 
     fn git(dir: &Path, args: &[&str]) {
-        let out = Command::new("git")
-            .arg("-C")
+        let out = Command::new("/bin/sh")
+            .args(["-c", CLEARED_GIT, "git", "-C"])
             .arg(dir)
             .args(args)
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -392,6 +414,45 @@ mod tests {
         assert!(
             out.status.success(),
             "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    /// Defect: a row run inside a git hook reads the hook's repository in
+    /// place of the checkout it names, since the hook's environment carries
+    /// `GIT_DIR`, `GIT_INDEX_FILE` and `GIT_CONFIG_PARAMETERS` and git
+    /// honours `GIT_DIR` over `-C`. The row runs itself as a child with an
+    /// outer repository's variables inherited, as a hook hands them, and
+    /// the child's `checkout` reads the checkout it names.
+    #[test]
+    fn a_row_run_under_a_git_hooks_variables_reads_the_checkout_it_names() {
+        const NAME: &str =
+            "marker::tests::a_row_run_under_a_git_hooks_variables_reads_the_checkout_it_names";
+        if let Some(inner) = std::env::var_os("MARKER_HOOK_CHILD") {
+            let inner = PathBuf::from(inner);
+            let found = checkout(&inner).unwrap();
+            assert_eq!(found.root, inner);
+            assert_eq!(found.git_dir, inner.join(".git"));
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let base = fs::canonicalize(dir.path()).unwrap();
+        let outer = base.join("outer");
+        fs::create_dir_all(&outer).unwrap();
+        git(&outer, &["init", "-q"]);
+        let inner = checkout_in(&base.join("inner"));
+        let out = Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", NAME, "--nocapture"])
+            .env("MARKER_HOOK_CHILD", &inner)
+            .env("GIT_DIR", outer.join(".git"))
+            .env("GIT_INDEX_FILE", outer.join(".git/index"))
+            .env("GIT_CONFIG_PARAMETERS", "'core.bare=true'")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && stdout.contains("1 passed"),
+            "{stdout}{}",
             String::from_utf8_lossy(&out.stderr)
         );
     }

@@ -481,7 +481,8 @@ impl Operation<'_> {
     /// open-file limits and, where the caller runs in a user-manager slice,
     /// that slice with its task and memory caps, so a warden that reads
     /// units outside an agent's slice as escaped work sees the job inside
-    /// it. Only a `systemd-run` that never started proves no unit was asked
+    /// it. A `systemd-run` that never started, or one that exited before it
+    /// asked a manager anything (`ASKED_NOTHING`), proves no unit was asked
     /// for, and falls to `setsid` (`Err` with the reason). Every other
     /// failure is read back as the reconcile reads a unit: one read ended
     /// ends the launch, and any other answer is the job, held by its unit
@@ -549,10 +550,10 @@ impl Operation<'_> {
             words.push(format!("StandardError=append:{}", err.display()));
         }
         // A unit inherits the manager's environment, not the caller's, so
-        // every exported name is handed over; `--setenv=NAME` takes the
-        // value from systemd-run's own environment.
-        for (key, _) in std::env::vars_os() {
-            if let Some(name) = key.to_str() {
+        // every exported name a unit can carry is handed over;
+        // `--setenv=NAME` takes the value from systemd-run's own environment.
+        for (key, value) in std::env::vars_os() {
+            if let Some(name) = unit_env_name(&key, &value) {
                 words.push(format!("--setenv={name}"));
             }
         }
@@ -579,7 +580,13 @@ impl Operation<'_> {
                 });
             }
             Ok(out) => match out.status.code() {
-                Some(_) => first_line(&host::stderr_text(&out)),
+                Some(_) => {
+                    let detail = first_line(&host::stderr_text(&out));
+                    if asked_nothing(&detail) {
+                        return Err(format!("unit-launch-failed detail={detail}"));
+                    }
+                    detail
+                }
                 None => "signal".to_owned(),
             },
             Err(e @ agent_runtime::Error::NotStarted { .. }) => {
@@ -1101,18 +1108,22 @@ fn watch_job_of(job: &Obligation) -> WatchJob {
     }
 }
 
-/// The end of the job group `leader` leads, read by its pgid: the leader's
-/// identity through the one reader, and, once that
-/// reads gone, the kernel's table for any live member naming the leader's
-/// pid as its group, so a leader that exited leaving a descendant is a
-/// group still running. `None` while the leader lives, while a member
-/// lives, or where the leader or the table cannot be read.
+/// The end of the job group `leader` leads, by `group_reading`.
 fn group_end(leader: &Identity) -> Option<JobEnd> {
+    matches!(group_reading(leader), Reading::Gone).then_some(JobEnd::Exited)
+}
+
+/// The job group `leader` leads: the leader's identity through the one
+/// reader, and, once that reads gone, the kernel's table for any live member
+/// naming the leader's pid as its group, so a leader that exited leaving a
+/// member is a group still running. The leader's pid alone is not read once
+/// its identity reads gone: that pid may now be another process's.
+pub(crate) fn group_reading(leader: &Identity) -> Reading<()> {
     match process::still_runs(leader) {
-        Reading::Live(_) | Reading::Unreadable { .. } => return None,
-        Reading::Gone => {}
+        Reading::Live(_) => Reading::Live(()),
+        Reading::Unreadable { cause } => Reading::Unreadable { cause },
+        Reading::Gone => table_reading(|row| row.pgrp == leader.pid),
     }
-    pgid_end(leader.pid)
 }
 
 /// The end of the job group `pgid`, read by the group key alone.
@@ -1120,18 +1131,24 @@ fn pgid_end(pgid: u32) -> Option<JobEnd> {
     matches!(pgid_reading(pgid), Reading::Gone).then_some(JobEnd::Exited)
 }
 
-/// The job a group key names, read in the kernel's table: the child whose
-/// pid the key is, and any member naming it as its group, since a child that
-/// has not yet run its own `setsid` is in its parent's group. A pid and a
-/// pgid are not reallocated while that process or a member of that group
-/// runs, so this read can hold too long and never ends a running job.
-/// `Unreadable` where the table cannot be read, which the table reader
-/// answers for an unreadable row too. A zombie is no member: the table
-/// reader leaves an exited process its parent has not reaped out of every
-/// row, so a reaped-late process never holds the job.
+/// The job a group key with no identity names, read in the kernel's table:
+/// the child whose pid the key is, and any member naming it as its group,
+/// since a child that has not yet run its own `setsid` is in its parent's
+/// group. A pid and a pgid are not reallocated while that process or a
+/// member of that group runs, so this read can hold too long, while another
+/// process holds a pid the job left, and never ends a running job.
 pub(crate) fn pgid_reading(pgid: u32) -> Reading<()> {
+    table_reading(|row| row.pid == pgid || row.pgrp == pgid)
+}
+
+/// Whether a live row of the kernel's table matches. `Unreadable` where the
+/// table cannot be read, which the table reader answers for an unreadable
+/// row too. A zombie is no row: the table reader leaves an exited process its
+/// parent has not reaped out of every row, so a reaped-late process never
+/// holds the job.
+fn table_reading(matches: impl Fn(&process::Row) -> bool) -> Reading<()> {
     match process::table() {
-        Ok(rows) if rows.iter().any(|row| row.pid == pgid || row.pgrp == pgid) => Reading::Live(()),
+        Ok(rows) if rows.iter().any(matches) => Reading::Live(()),
         Ok(_) => Reading::Gone,
         Err(e) => Reading::Unreadable { cause: e.cause },
     }
@@ -1287,6 +1304,37 @@ fn unit_name(name: &str, intent: &str) -> String {
             }
         })
         .collect()
+}
+
+/// The environment name a unit can carry, with its value: a shell name,
+/// which `systemd-run` checks in its argument parser before it reaches any
+/// manager (any other name exits 1, `Cannot assign environment variable`),
+/// and a value valid as UTF-8, the only text a D-Bus string carries. These
+/// are the names `compgen -e` gives the shell launcher.
+fn unit_env_name<'a>(name: &'a std::ffi::OsStr, value: &std::ffi::OsStr) -> Option<&'a str> {
+    let name = name.to_str()?;
+    let mut bytes = name.bytes();
+    let first = bytes.next()?;
+    let shell_name = (first.is_ascii_alphabetic() || first == b'_')
+        && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_');
+    (shell_name && value.to_str().is_some()).then_some(name)
+}
+
+/// The answers of a `systemd-run` that exited before it asked a manager
+/// anything, read from its first line of stderr: its argument parser's
+/// refusal of an environment name, and a bus it could not connect to. Each
+/// is measured on the real client (systemd 262) under a private runtime
+/// directory: no connect, or one that failed. Every other exit may follow a
+/// call the manager received, so it is never read as a refusal.
+const ASKED_NOTHING: [&str; 2] = [
+    "Cannot assign environment variable ",
+    "Failed to connect to ",
+];
+
+fn asked_nothing(detail: &str) -> bool {
+    ASKED_NOTHING
+        .iter()
+        .any(|prefix| detail.starts_with(prefix))
 }
 
 fn on_path(name: &str) -> bool {
@@ -1995,6 +2043,61 @@ mod tests {
             "{:?}",
             operation.obligations.record()
         );
+    }
+
+    /// Defect: an environment name `systemd-run` refuses in its parser, or a
+    /// value no D-Bus string carries, handed to it, so every unit start
+    /// fails before it asks the manager anything. The names a unit carries
+    /// are the shell names `compgen -e` gives the shell launcher, each with a
+    /// value valid as UTF-8.
+    #[test]
+    fn an_environment_name_or_value_a_unit_cannot_carry_is_never_handed_to_systemd_run() {
+        use std::os::unix::ffi::OsStrExt;
+        let text = std::ffi::OsStr::new;
+        // (the name, the value, carried)
+        for (name, value, carried_as) in [
+            (text("GOOD"), text("1"), Some("GOOD")),
+            (text("_x9"), text(""), Some("_x9")),
+            (text("BASH_FUNC_x%%"), text("() {  :\n}"), None),
+            (text("a.b"), text("1"), None),
+            (text("a-b"), text("1"), None),
+            (text("1abc"), text("1"), None),
+            (text(""), text("1"), None),
+            (text("GOOD"), std::ffi::OsStr::from_bytes(b"v\xffw"), None),
+        ] {
+            assert_eq!(unit_env_name(name, value), carried_as, "{name:?}={value:?}");
+        }
+    }
+
+    /// Defect: a group held while an unrelated process holds its leader's
+    /// pid. The leader's identity names another start than the process now
+    /// at that pid, which runs in this test's own group: the leader reads
+    /// gone, no member names the pid as its group, and the group reads ended.
+    #[test]
+    fn a_group_whose_leader_reads_gone_is_read_by_its_members_never_by_a_process_that_took_its_pid()
+    {
+        let mut taken = host::start_detached(
+            "job",
+            "sleep",
+            Path::new("sleep"),
+            "launch",
+            &["30"],
+            host::Place::default(),
+            None,
+        )
+        .expect("sleep on PATH");
+        let leader = Identity {
+            pid: taken.pid(),
+            start: "ticks:1".to_owned(),
+        };
+        let running = matches!(process::identity(leader.pid), Reading::Live(_));
+        let end = group_end(&leader);
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", &leader.pid.to_string()])
+            .status();
+        let _ = taken.reap();
+        assert!(running, "a process holds the leader's pid");
+        assert_eq!(end, Some(JobEnd::Exited), "the group reads ended");
     }
 
     /// A clock whose waits pass no real time: each sleep moves it on.

@@ -888,9 +888,11 @@ fn unit_ended(load: &str, active: &str) -> Option<bool> {
 }
 
 /// The job a started run records, read by its identity: the unit through
-/// the user manager, or the process by pid and
-/// start, so a pid the system reused reads gone under another start and
-/// never keeps a dead run open. A job whose launcher never answered is
+/// the user manager, or the group its process leads by the shared group
+/// reading (the leader by pid and start, then the group's members), so a
+/// pid the system reused reads gone under another start and never keeps a
+/// dead run open, and a leader that exited leaving a member is a job still
+/// running. A job whose launcher never answered is
 /// read from the launcher's record beside the run, through the one reader
 /// of that record: an ended launch is nothing started, a group the launcher
 /// could not read empty is read by its key, and a record that names no
@@ -991,8 +993,8 @@ fn read_job(job: &ValidateJob) -> RunRead {
                 None => RunRead::Unreadable(format!("unit {unit}: state {text:?}")),
             }
         }
-        (_, _, Some(pid), Some(start)) => match process::still_runs(&Identity { pid, start }) {
-            Reading::Live(_) => RunRead::Live { pid },
+        (_, _, Some(pid), Some(start)) => match effects::group_reading(&Identity { pid, start }) {
+            Reading::Live(()) => RunRead::Live { pid },
             Reading::Gone => RunRead::Gone {
                 outcome: StageOutcome::Lost,
                 cause: RunCause::ProcessGone,

@@ -4,18 +4,31 @@
 # `--unit=NAME ... -- ARGV` start runs ARGV under setsid, the unit's own
 # group, with its pid recorded under units/NAME beside this fake and the
 # manager's `$$` escaping undone. Every call is appended to systemd.log
-# beside this fake. Never reaches a real user manager.
+# beside this fake. Never reaches a real user manager. It refuses as the
+# real client does (systemd 262, measured under a private runtime
+# directory) before it asks anything: a `--setenv` name outside shell
+# syntax exits 1 with the parser's line; with $SYSTEMD_RUN_FAKE_UNREACHABLE
+# set, a start exits 1 with the line for a bus it could not connect to.
 d="$(cd "$(dirname "$0")" && pwd)"
 printf 'systemd-run %s\n' "$*" >> "$d/systemd.log"
 unit="" argv=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --setenv=*)
+      name="${1#--setenv=}"
+      [[ "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] \
+        || { printf 'Cannot assign environment variable %s: Invalid argument\n' "$name" >&2; exit 1; }
+      shift ;;
     --unit=*) unit="${1#--unit=}"; shift ;;
     --) shift; argv=("$@"); break ;;
     *) shift ;;
   esac
 done
 [[ -n "$unit" ]] || exit 0
+if [[ -n "${SYSTEMD_RUN_FAKE_UNREACHABLE:-}" ]]; then
+  echo 'Failed to connect to user scope bus via local transport: No such file or directory' >&2
+  exit 1
+fi
 for i in "${!argv[@]}"; do argv[i]="${argv[i]//\$\$/\$}"; done
 mkdir -p "$d/units"
 setsid "${argv[@]}" </dev/null >/dev/null 2>&1 &

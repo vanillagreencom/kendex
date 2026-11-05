@@ -75,7 +75,7 @@ pub(in crate::effects) use host::{
     WorktreeRelease, adopt_controller, default_home, fixed_file, fixed_id_file, heal_controller,
     owner,
 };
-pub(in crate::effects) use host::{server_codex_home, session_owner};
+pub(in crate::effects) use host::{server_home, session_owner};
 pub(in crate::effects) use obligations::{EffectOutcome, Published, Wire, Word};
 pub(crate) use obligations::{JobHandle, SidecarRead};
 pub(in crate::effects) use window::{

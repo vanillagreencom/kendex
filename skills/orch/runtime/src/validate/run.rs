@@ -61,10 +61,6 @@ pub struct RunReply {
     /// `owed` where this run's send is held, or the mark an earlier run
     /// left.
     pub notice: Option<String>,
-    /// Why this run's send is held: the fleet record's read error, or the
-    /// send whose answer is not known.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub held: Option<String>,
 }
 
 /// The transition environment at this moment: the command's stamp re-read
@@ -194,12 +190,12 @@ fn read_left(run_dir: &Path, stopped: bool) -> Left {
 }
 
 /// How a notice's send went: the owner word to mark the stage with, or a
-/// send held with its cause, the stage left owed for the next walk (a send
-/// whose outcome is not known, one the lane's record refuses for now, or a
-/// fleet record that cannot be read to route it).
+/// send held, the stage left owed for the next walk (a send whose outcome
+/// is not known, one the lane's record refuses for now, or a fleet record
+/// that cannot be read to route it).
 enum NoticeSend {
     Marked(String),
-    Held(String),
+    Held,
 }
 
 /// Send the end notice `text` to the lane of `item` and answer the word its
@@ -252,7 +248,7 @@ fn send_notice(
             send_session(settings, &lane, key, &path, env, locking)
         }
         Ok(Some(_) | None) => send_directive(settings, item, key, &path),
-        Err(e) => NoticeSend::Held(format!("fleet:{}: {e}", e.key())),
+        Err(_) => NoticeSend::Held,
     };
     let _ = fs::remove_file(&path);
     mark
@@ -301,9 +297,9 @@ fn send_directive(settings: &Settings, item: &str, key: &str, file: &Path) -> No
         ) => NoticeSend::Marked(format!("unsent:{refusal}")),
         // No answer, a signal, an exit with no keyed line or a receipt that
         // does not decode: the append may stand.
-        Err(
-            refusal @ (Refusal::Unanswered { .. } | Refusal::Exit { .. } | Refusal::Reply { .. }),
-        ) => NoticeSend::Held(refusal.to_string()),
+        Err(Refusal::Unanswered { .. } | Refusal::Exit { .. } | Refusal::Reply { .. }) => {
+            NoticeSend::Held
+        }
     }
 }
 
@@ -346,11 +342,7 @@ fn send_session(
     match crate::send::run_keyed(&fleet, &lane.item, file, settings, env, locking, key) {
         Ok(Keyed::Sent(sent)) => NoticeSend::Marked(session_mark(sent.send.result)),
         Ok(Keyed::Found(KeyedSend::Settled(result))) => NoticeSend::Marked(session_mark(result)),
-        Ok(Keyed::Found(KeyedSend::Owed)) => NoticeSend::Held("session:owed".to_owned()),
-        Ok(Keyed::Found(KeyedSend::Unreadable)) => {
-            NoticeSend::Held("session:unreadable".to_owned())
-        }
-        Err(e) => NoticeSend::Held(format!("session:{}: {e}", e.key())),
+        Ok(Keyed::Found(KeyedSend::Owed | KeyedSend::Unreadable)) | Err(_) => NoticeSend::Held,
     }
 }
 
@@ -364,8 +356,7 @@ fn run_id_of(run_dir: &str) -> &str {
 }
 
 /// Send the stage's owed notice and mark it: the owner word written, or
-/// `owed` with the hold's cause where the send is held and the stage left
-/// for the next walk.
+/// `owed` where the send is held and the stage left for the next walk.
 fn send_and_mark(
     path: &Path,
     settings: &Settings,
@@ -373,16 +364,16 @@ fn send_and_mark(
     stage: &Stage,
     env: &Env,
     locking: Locking,
-) -> Result<(String, Option<String>)> {
+) -> Result<String> {
     let (Some(notice), Some(run_dir), Some(round_id)) =
         (&stage.notice, &stage.run_dir, &stage.round_id)
     else {
-        return Ok((String::new(), None));
+        return Ok(String::new());
     };
     let to = notice.to.as_deref().unwrap_or(item);
     let mark = match send_notice(settings, to, &notice.key, &notice.text, env, locking) {
         NoticeSend::Marked(mark) => mark,
-        NoticeSend::Held(cause) => return Ok((state::NOTICE_OWED.to_owned(), Some(cause))),
+        NoticeSend::Held => return Ok(state::NOTICE_OWED.to_owned()),
     };
     let marked = apply(
         path,
@@ -395,9 +386,9 @@ fn send_and_mark(
         locking,
     )?;
     Ok(match marked {
-        Validated::Mark(m) => (m.owner, None),
+        Validated::Mark(m) => m.owner,
         Validated::Start(_) | Validated::Launch(_) | Validated::End(_) | Validated::Stop(_) => {
-            (String::new(), None)
+            String::new()
         }
     })
 }
@@ -429,7 +420,6 @@ pub fn run(
             closed_now: false,
             seconds: None,
             notice: stage.notice.as_ref().map(|n| n.owner.clone()),
-            held: None,
         });
     }
     let run_dir_path = PathBuf::from(run_dir);
@@ -476,12 +466,11 @@ pub fn run(
             closed_now: false,
             seconds: None,
             notice: ended.notice_owner,
-            held: None,
         });
     }
     // The notice is on disk as `owed`; the send follows and the mark after.
     let (stages, index) = stage_of(&path, run_dir)?;
-    let (notice, held) = send_and_mark(&path, settings, item, &stages[index], env, locking)?;
+    let notice = send_and_mark(&path, settings, item, &stages[index], env, locking)?;
     Ok(RunReply {
         item: item.to_owned(),
         round_id: round.to_owned(),
@@ -490,7 +479,6 @@ pub fn run(
         closed_now: true,
         seconds: ended.seconds,
         notice: Some(notice),
-        held,
     })
 }
 
@@ -657,16 +645,16 @@ fn reconcile(path: &Path, round_id: &str, env: &Env, locking: Locking) -> Result
     Ok(())
 }
 
-/// Stop a started run: the stop recorded on its open stage first (a
-/// record before the effect; refused
-/// `run-closed` on a closed stage, `run-unstarted` on one with no runtime
-/// job), the job ended by its recorded identity through the launcher, a
-/// bounded wait for the job to read gone, then the finishing transition and
-/// the owed walk: on the unit route the manager ended the job with its
-/// child, so the reconcile closes the stage `stopped` with the notice owed
-/// and the walk sends it; on the setsid route the job outlives its child's
-/// group and makes the same close itself, the first closer winning. `item`
-/// names the record; with none, the run directory finds it.
+/// Stop a started run: the stop recorded on its open stage first (a record
+/// before the effect; refused `run-closed` on a closed stage, `run-unstarted`
+/// on one with no runtime job), the job ended by its recorded identity
+/// through the launcher, a bounded wait for the job to read gone, then the
+/// finishing transition and the owed walk: on the unit route the manager
+/// ended the job with its child, so the reconcile closes the stage `stopped`
+/// with the notice owed and the walk sends it; on the setsid route the job
+/// outlives its child's group and makes the same close itself, the first
+/// closer winning. `item` names the record; with none, the run directory
+/// finds it.
 pub fn stop(
     settings: &Settings,
     item: Option<&str>,

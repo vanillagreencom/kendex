@@ -384,14 +384,16 @@ pub(in crate::effects) fn default_home(harness: Harness) -> Option<PathBuf> {
     session::default_home(harness)
 }
 
-/// The `CODEX_HOME` a pane opened in `session` on `server` inherits from the
-/// server, where it holds one: a window's process takes the server's
-/// environment, never that of the process that asked for the window.
-pub(in crate::effects) fn server_codex_home(
+/// The home variable of `harness` a pane opened in `session` on `server`
+/// inherits from the server, where it holds one: a window's process takes
+/// the server's environment, never that of the process that asked for the
+/// window.
+pub(in crate::effects) fn server_home(
     server: &Server,
     session: &str,
+    harness: Harness,
 ) -> Result<Option<PathBuf>> {
-    Ok(tmux::inherited(server, session, Harness::Codex.home_var())?
+    Ok(tmux::inherited(server, session, harness.home_var())?
         .filter(|home| !home.is_empty())
         .map(PathBuf::from))
 }
@@ -527,6 +529,17 @@ impl Operation<'_> {
     /// The clock the handle's waits read.
     pub(in crate::effects) fn now(&self) -> std::time::Instant {
         self.clock.now()
+    }
+
+    /// The wall-clock time `after` from now, as the record's stamps spell
+    /// one.
+    pub(in crate::effects) fn stamp_after(&self, after: Duration) -> String {
+        let now = self
+            .clock
+            .wall()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        agent_runtime::clock::iso_utc(now + after.as_secs())
     }
 
     pub(in crate::effects) fn sleep(&self, d: Duration) {

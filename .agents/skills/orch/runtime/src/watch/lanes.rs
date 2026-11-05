@@ -1287,7 +1287,8 @@ enum Routed {
 /// written first for the outcome reader. A hosted lane whose kind declares a
 /// local pane has its harness stopped through the provider first (`lane-host
 /// stop --item --harness`), and a stop not confirmed refuses the relaunch as
-/// `stop-failed` with the status. A relaunch refused after the pick is said
+/// `stop-failed` with the status, or `stop-unanswered` where it gave no
+/// answer. A relaunch refused after the pick is said
 /// under the event, after the pick's line, and never asked again this pass.
 fn route(
     obs: &Observed,
@@ -1342,8 +1343,12 @@ fn route(
                 pane: PaneKind::Local,
                 ..
             }) => {
-                if let Err(rc) = hosted::stop(pass.scripts, host, &obs.lane.item, harness.name()) {
-                    return refused(notes, &format!("stop-failed exit={rc}"));
+                // A stop refused or unanswered alike may leave the harness
+                // running, so neither relaunches beside it this pass.
+                if let Err(hosted::Asked::Failed(cause) | hosted::Asked::Unknown(cause)) =
+                    hosted::stop(pass.scripts, host, &obs.lane.item, harness.name())
+                {
+                    return refused(notes, &cause);
                 }
             }
             Ok(Capabilities {

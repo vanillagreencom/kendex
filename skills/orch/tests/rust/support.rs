@@ -317,11 +317,13 @@ fn publish(dir: &Path, name: &str, text: &str) -> PathBuf {
     path
 }
 
-/// `program` behind a wrapper that runs it with the scratch home and no
-/// global or system git configuration, for a program a row hands the
-/// runtime in-process: the one runner starts it with this test process's
-/// own environment, so a `git` it runs would read the operator's
-/// configuration. The rest of the environment passes through, so a row's
+/// `program` behind a wrapper that runs it with the scratch home, no global
+/// or system git configuration and none of the repository-local variables
+/// git names (`git rev-parse --local-env-vars`), for a program a row hands
+/// the runtime in-process: the one runner starts it with this test
+/// process's own environment, so a `git` it runs would read the operator's
+/// configuration, or, run inside a git hook, the hook's repository through
+/// its `GIT_DIR`. The rest of the environment passes through, so a row's
 /// own wrapper that exports a fixture's variables still reaches it. The
 /// wrapper names the program's path, which differs per checkout, so it is
 /// published once per text under this build's own temporary directory,
@@ -332,7 +334,7 @@ pub fn isolated_program(program: &Path) -> PathBuf {
     std::fs::create_dir_all(&home).expect("the scratch home");
     let quote = |text: &str| format!("'{}'", text.replace('\'', "'\\''"));
     let text = format!(
-        "#!/bin/sh\nexport HOME={} GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null\nexec {} \"$@\"\n",
+        "#!/bin/sh\nexport HOME={} GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null\nunset $(git rev-parse --local-env-vars)\nexec {} \"$@\"\n",
         quote(&home.display().to_string()),
         quote(&program.display().to_string())
     );

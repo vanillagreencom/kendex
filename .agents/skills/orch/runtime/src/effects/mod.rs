@@ -63,7 +63,7 @@ mod transfer;
 
 pub(crate) use operation::Recorded;
 pub use operation::job::{JobStarted, NoticeUnmarked};
-pub(crate) use operation::job::{pgid_reading, read_handle};
+pub(crate) use operation::job::{group_reading, pgid_reading, read_handle};
 pub(crate) use operation::{JobHandle, SidecarRead};
 
 use std::path::{Path, PathBuf};
@@ -529,13 +529,14 @@ fn stop_route_open(applied: &Applied) -> bool {
 /// holds. So is a cloud create the reconcile holds with its answer unknown,
 /// which has no local process to stop: the close is the person's
 /// settlement, its line naming the worktree whose session to check on
-/// claude.ai/code; and a cloud lane's worktree create or push held so, its
-/// line naming the step and where it was asked. A launch whose owner still
-/// runs, or cannot be read, is its owner's: a create it is still inside may
-/// yet answer, so the close refuses `intent-open`, as it does for one whose
-/// pane cannot be observed, which leaves nothing to stop by. The close
-/// is then persisted through `operation`, the one store entry of the effect
-/// files.
+/// claude.ai/code and the time the create's bound ends, before which a
+/// session it makes may still appear; and a cloud lane's worktree create or
+/// push held so, its line naming the step and where it was asked. A launch
+/// whose owner still runs, or cannot be read, is its owner's: a create it
+/// is still inside may yet answer, so the close refuses `intent-open`, as it
+/// does for one whose pane cannot be observed, which leaves nothing to stop
+/// by. The close is then persisted through `operation`, the one store entry
+/// of the effect files.
 fn supersede_launch(
     run: &Run,
     close: &ops::CloseOwnedResources,
@@ -560,10 +561,14 @@ fn supersede_launch(
             .and_then(|o| o.get("observed"))
             .and_then(Value::as_str)
             == Some("present");
-        let cloud = if let Some(state::Phase::CloudCreate { worktree }) = &launch.intent.phase {
-            Some(worktree.clone())
+        let (cloud, answer_by) = if let Some(state::Phase::CloudCreate {
+            worktree,
+            answer_by,
+        }) = &launch.intent.phase
+        {
+            (Some(worktree.clone()), answer_by.clone())
         } else {
-            None
+            (None, None)
         };
         let preparing = if let Some(state::Phase::Preparing { step, at }) = &launch.intent.phase {
             Some(json!({"step": step, "at": at}))
@@ -589,7 +594,7 @@ fn supersede_launch(
         let operation = Operation::open(run, &launch.intent)?;
         run.apply_outcome(operation.refuse(
             "superseded-by-close",
-            json!({"reconcile": "launch", "pane": pane, "cloud_create": cloud, "preparing": preparing}),
+            json!({"reconcile": "launch", "pane": pane, "cloud_create": cloud, "answer_by": answer_by, "preparing": preparing}),
         ))?;
     }
     // The launch intent is closed either way: the close now persists its

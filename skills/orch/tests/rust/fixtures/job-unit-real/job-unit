@@ -15,7 +15,9 @@
 # ended-launch path as a launch whose group could not be read empty: the
 # record and the answer the real launcher gives that branch, naming the
 # leader's start (`identity`) or the group's key alone (`key`), over a job
-# left running. Every other verb (`stop-job RECORD PID
+# left running; with `leader-exits` the job is a leader and one member of
+# its group, the member's pid written to $JOB_UNIT_MEMBER_FILE, recorded by
+# the leader's start, each ending within 120 s. Every other verb (`stop-job RECORD PID
 # ARGV_GLOB`, the stop's) runs the real library's as it stands. Every call
 # is appended to $JOB_UNIT_LOG when set.
 [ -z "${JOB_UNIT_LOG:-}" ] || printf '%s\n' "$*" >> "$JOB_UNIT_LOG"
@@ -42,9 +44,15 @@ if [ "${1:-}" = launch ] && [ -n "${JOB_UNIT_UNWOUND_FAILED:-}" ]; then
   JOB_UNIT_RUNNER=setsid
   JOB_UNIT_LINE="runner=setsid reason=no-linger"
   job_unit_record "$record" || exit 1
-  setsid "$@" </dev/null >/dev/null 2>&1 &
+  if [ "$JOB_UNIT_UNWOUND_FAILED" = leader-exits ]; then
+    # shellcheck disable=SC2016
+    setsid bash -c 'sleep 120 </dev/null >/dev/null 2>&1 & echo "$!" > "$1"; exec sleep 120' \
+      leader "${JOB_UNIT_MEMBER_FILE:?}" </dev/null >/dev/null 2>&1 &
+  else
+    setsid "$@" </dev/null >/dev/null 2>&1 &
+  fi
   JOB_UNIT_PID=$!
-  if [ "$JOB_UNIT_UNWOUND_FAILED" = identity ]; then
+  if [ "$JOB_UNIT_UNWOUND_FAILED" != key ]; then
     identity="$(job_unit_proc_identity "$JOB_UNIT_PID")" || exit 1
     JOB_UNIT_START="${identity#* }"
   fi

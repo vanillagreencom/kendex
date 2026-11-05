@@ -839,17 +839,22 @@ impl Gate<'_> {
     }
 
     /// Copilot's error answer `error_id`: one retry per head, decided with
-    /// the request. A request the policy or the draft held back holds the
-    /// retry back too, its cause the verdict's; Copilot's work already in
-    /// flight stands for the retry; a retry the released writer recorded
-    /// is the head's; a `requested` retry GitHub shows no sign of is sent
-    /// once more; and a second error answer after the retry is the verdict.
+    /// the request. A head held as a draft takes no retry: the request that
+    /// releases it claims the retry in its own write, so one POST is both.
+    /// A request the refresh policy held back holds the retry back too, its
+    /// cause the verdict's; Copilot's work already in flight stands for the
+    /// retry; a retry the released writer recorded is the head's; a
+    /// `requested` retry GitHub shows no sign of is sent once more; and a
+    /// second error answer after the retry is the verdict.
     fn retry(
         &mut self,
         record: &HeadRecord,
         error_id: u64,
         error_at: &str,
     ) -> Step<Option<Verdict>> {
+        if record.held_as_draft() {
+            return Ok(None);
+        }
         let released = released_retry(self.path, &self.doc, &self.view.head)?;
         let standing = record.retry.clone().or(released.clone());
         let Some(retry) = standing else {
@@ -858,7 +863,7 @@ impl Gate<'_> {
                 .as_ref()
                 .filter(|request| request.outcome == FALLBACK)
                 .and_then(|request| request.cause.as_deref())
-                .filter(|cause| matches!(*cause, "refresh" | "draft"));
+                .filter(|cause| *cause == "refresh");
             if let Some(cause) = held {
                 let fallback = RetryRecord {
                     cause: Some(cause.to_owned()),

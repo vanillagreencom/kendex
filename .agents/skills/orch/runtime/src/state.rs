@@ -1173,8 +1173,13 @@ pub enum Phase {
     /// Written before a cloud session's create is asked: a create whose
     /// answer is lost, the asking process ended included, may have made a
     /// session nothing here can name, so a reconcile holds the launch
-    /// rather than reading nothing opened.
-    CloudCreate { worktree: String },
+    /// rather than reading nothing opened. `answer_by` is when the create's
+    /// bound ends: a session it makes may appear until then.
+    CloudCreate {
+        worktree: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        answer_by: Option<String>,
+    },
     /// Written before a launch asks a preparation whose answer can be lost:
     /// a hosted provider's `create` (`step` `host-create`, `at` the host;
     /// the `wait` after it included), a cloud lane's worktree `create` and

@@ -6018,7 +6018,9 @@ fn a_hosted_launch_runs_the_providers_verbs_and_opens_its_window_over_ssh() {
 /// recorded before it; a provider a signal ends mid-create fails the launch
 /// `host-create-unknown` with no window, never `host-create-failed`; each
 /// leaves the lane out of `preparing`, and the next launch asks the
-/// provider's create again, reusing the item it holds, and opens.
+/// provider's create again, reusing the item it holds, and opens. A create
+/// the provider's lock refuses fails `host-create-busy`, never as an item
+/// another session owns.
 #[test]
 fn a_hosted_create_whose_answer_is_lost_fails_and_the_next_create_reuses_what_it_holds() {
     let dir = tempfile::tempdir().unwrap();
@@ -6057,7 +6059,13 @@ fn a_hosted_create_whose_answer_is_lost_fails_and_the_next_create_reuses_what_it
         serde_json::from_str(&std::fs::read_to_string(&answers_path).unwrap()).unwrap();
     answers[first.as_str()] = json!({"kill_ancestor": 2});
     answers[format!("{create}#1")] = json!({"signal": "KILL"});
-    answers[format!("{create}#2")] = json!({"stdout": format!(
+    // The shipped ssh provider's lock, held by the item's own earlier
+    // create: its notice beside the 75 (`lane-host-ssh`'s `ownership-busy`).
+    answers[format!("{create}#2")] = json!({
+        "exit": 75,
+        "stderr": "lane-host-ssh: ownership-busy target=lane.example clone=/srv/clone exit=75\n",
+    });
+    answers[format!("{create}#3")] = json!({"stdout": format!(
         "ssh-target=lane.example\tpath={}\tremote-prefix=exec bash -c\n",
         world.host()
     )});
@@ -6087,6 +6095,14 @@ fn a_hosted_create_whose_answer_is_lost_fails_and_the_next_create_reuses_what_it
     );
     assert_eq!(server.panes().len(), panes_before, "no window opened");
     assert_ne!(world.runner.fleet()["lanes"][0]["status"], "preparing");
+    let busy = effect_report(&world.runner.op_fleet(&request));
+    assert_eq!(busy["intent"]["outcome"], "failed", "{busy}");
+    assert!(
+        busy["intent"]["observation"]["cause"]
+            .as_str()
+            .is_some_and(|c| c.starts_with("host-create-busy ")),
+        "the provider's lock is no other item's ownership: {busy}"
+    );
     let again = effect_report(&world.runner.op_fleet(&request));
     assert_eq!(again["intent"]["outcome"], "confirmed", "{again}");
     let creates: Vec<String> = std::fs::read_to_string(provider.join("lane-host.log"))
@@ -6099,6 +6115,7 @@ fn a_hosted_create_whose_answer_is_lost_fails_and_the_next_create_reuses_what_it
         creates,
         vec![
             format!("ORCH_LANE_HOST={host} {first}"),
+            format!("ORCH_LANE_HOST={host} {create}"),
             format!("ORCH_LANE_HOST={host} {create}"),
             format!("ORCH_LANE_HOST={host} {create}"),
         ],
@@ -6956,20 +6973,57 @@ fn a_reconciled_pi_lane_on_a_seat_binds_its_session_under_pis_root_not_the_seat(
     );
 }
 
-/// Defect: a relaunch that proves its session under one home and resumes it
-/// under another. A stopped lane with no account recorded the home its
-/// bound session stands in; whatever the fleet server or the settings now
-/// hand the harness, the relaunch resumes the session and the harness runs
-/// on a home whose store is the recorded one.
+/// Defect: a launch whose harness runs under another home than the one its
+/// session is proved, read and recorded under. A stopped lane with no
+/// account recorded the home its bound session stands in; whatever the
+/// fleet server or the settings now hand the harness, the relaunch resumes
+/// the session with the harness on that home, a Claude default config dir
+/// by clearing the variable the server would pass on. A fresh Claude
+/// launch runs, and records, the config dir the server hands its panes.
 #[test]
-fn a_resumed_lane_with_no_account_runs_under_the_home_its_session_was_found_under() {
-    // The case, the harness, and the home the launch would take of itself.
+fn a_lane_with_no_account_runs_under_the_one_home_its_session_is_proved_and_recorded_under() {
+    // The case, the harness, the home the lane recorded with its session
+    // (`default` the harness's default under the row's home, `none` no
+    // session bound), and the home the server or the settings now name.
     let cases = [
-        ("the server hands the recorded home", "codex", "recorded"),
-        ("the server now hands another home", "codex", "current"),
-        ("the settings now name another home", "copilot", "current"),
+        (
+            "codex: the server hands the recorded home",
+            "codex",
+            "recorded",
+            "recorded",
+        ),
+        (
+            "codex: the server now hands another home",
+            "codex",
+            "recorded",
+            "current",
+        ),
+        (
+            "copilot: the settings now name another home",
+            "copilot",
+            "recorded",
+            "current",
+        ),
+        (
+            "claude: the server now names another config dir",
+            "claude",
+            "recorded",
+            "current",
+        ),
+        (
+            "claude: the default recorded, the server names another",
+            "claude",
+            "default",
+            "current",
+        ),
+        (
+            "claude: a fresh launch under the server's config dir",
+            "claude",
+            "none",
+            "current",
+        ),
     ];
-    for (case, harness, current) in cases {
+    for (case, harness, recorded, current) in cases {
         let dir = tempfile::tempdir().unwrap();
         let server = Server::start(dir.path(), "fleet");
         let mut runner = Runner::new(&server, "stub-record");
@@ -6977,7 +7031,12 @@ fn a_resumed_lane_with_no_account_runs_under_the_home_its_session_was_found_unde
         runner.init_fleet();
         let home = dir.path().join("home");
         std::fs::create_dir_all(home.join(".codex")).unwrap();
-        let recorded = dir.path().join("recorded");
+        std::fs::create_dir_all(home.join(".claude")).unwrap();
+        let recorded = match recorded {
+            "default" => Some(home.join(".claude")),
+            "none" => None,
+            _ => Some(dir.path().join("recorded")),
+        };
         let current = dir.path().join(current);
         std::fs::create_dir_all(&current).unwrap();
         runner
@@ -6991,29 +7050,16 @@ fn a_resumed_lane_with_no_account_runs_under_the_home_its_session_was_found_unde
             ),
         ));
         let work = runner.state_dir().to_path_buf();
-        let id = format!("{harness}-session-1");
-        if harness == "codex" {
-            let out = tmux(
-                &server.socket,
-                &[
-                    "set-environment",
-                    "-g",
-                    "CODEX_HOME",
-                    &current.display().to_string(),
-                ],
-            );
-            assert!(out.status.success(), "{case}: {}", stderr(&out));
-            let day = recorded.join("sessions/2026/11/04");
-            std::fs::create_dir_all(&day).unwrap();
-            std::fs::write(
-                day.join(format!("rollout-a-{id}.jsonl")),
-                format!(
-                    "{}\n",
-                    json!({"type": "session_meta", "payload": {"id": id, "cwd": work.display().to_string(), "source": "cli"}})
-                ),
-            )
-            .unwrap();
-        } else {
+        let id = match harness {
+            "claude" => "11111111-1111-4111-8111-111111111111".to_owned(),
+            _ => format!("{harness}-session-1"),
+        };
+        let (variable, store) = match harness {
+            "codex" => ("CODEX_HOME", "sessions"),
+            "claude" => ("CLAUDE_CONFIG_DIR", "projects"),
+            _ => ("COPILOT_HOME", "session-state"),
+        };
+        if harness == "copilot" {
             let tools = dir.path().join("tools");
             std::fs::create_dir_all(&tools).unwrap();
             runner.tools = Some(tools.clone());
@@ -7022,19 +7068,54 @@ fn a_resumed_lane_with_no_account_runs_under_the_home_its_session_was_found_unde
             runner
                 .env
                 .push(("COPILOT_HOME".to_owned(), current.display().to_string()));
-            let state = recorded.join("session-state").join(&id);
-            std::fs::create_dir_all(&state).unwrap();
-            std::fs::write(
-                state.join("workspace.yaml"),
-                format!("id: {id}\ncwd: {}\n", work.display()),
-            )
-            .unwrap();
-            std::fs::write(state.join("events.jsonl"), "{}\n").unwrap();
+        } else {
+            let out = tmux(
+                &server.socket,
+                &[
+                    "set-environment",
+                    "-g",
+                    variable,
+                    &current.display().to_string(),
+                ],
+            );
+            assert!(out.status.success(), "{case}: {}", stderr(&out));
+        }
+        match (harness, &recorded) {
+            (_, None) => {}
+            ("codex", Some(recorded)) => {
+                let day = recorded.join("sessions/2026/11/04");
+                std::fs::create_dir_all(&day).unwrap();
+                std::fs::write(
+                    day.join(format!("rollout-a-{id}.jsonl")),
+                    format!(
+                        "{}\n",
+                        json!({"type": "session_meta", "payload": {"id": id, "cwd": work.display().to_string(), "source": "cli"}})
+                    ),
+                )
+                .unwrap();
+            }
+            ("claude", Some(recorded)) => {
+                let project = project_dir(recorded, &work);
+                std::fs::create_dir_all(&project).unwrap();
+                std::fs::write(project.join(format!("{id}.jsonl")), "{}\n").unwrap();
+            }
+            (_, Some(recorded)) => {
+                let state = recorded.join("session-state").join(&id);
+                std::fs::create_dir_all(&state).unwrap();
+                std::fs::write(
+                    state.join("workspace.yaml"),
+                    format!("id: {id}\ncwd: {}\n", work.display()),
+                )
+                .unwrap();
+                std::fs::write(state.join("events.jsonl"), "{}\n").unwrap();
+            }
         }
         let mut stopped = lane("KEN-R", "stopped", &runner, Value::Null);
         stopped["harness"] = json!(harness);
-        stopped["session_id"] = json!(id);
-        stopped["home"] = json!(recorded.display().to_string());
+        if let Some(recorded) = &recorded {
+            stopped["session_id"] = json!(id);
+            stopped["home"] = json!(recorded.display().to_string());
+        }
         stopped.as_object_mut().unwrap().remove("account");
         let mut fleet = runner.fleet();
         fleet["lanes"] = json!([stopped]);
@@ -7043,22 +7124,43 @@ fn a_resumed_lane_with_no_account_runs_under_the_home_its_session_was_found_unde
         request["harness"] = json!(harness);
         request.as_object_mut().unwrap().remove("account");
         let report = effect_report(&runner.op_fleet(&request));
-        assert_eq!(
-            report["intent"]["observation"]["route"], "resume",
-            "{case}: {report}"
-        );
+        let expected = match &recorded {
+            Some(recorded) => {
+                assert_eq!(
+                    report["intent"]["observation"]["route"], "resume",
+                    "{case}: {report}"
+                );
+                recorded.clone()
+            }
+            None => current.clone(),
+        };
         let launched: Value =
             serde_json::from_slice(&std::fs::read(work.join("launch-record.json")).unwrap())
                 .unwrap();
-        let (variable, store) = match harness {
-            "codex" => ("CODEX_HOME", "sessions"),
-            _ => ("COPILOT_HOME", "session-state"),
+        // The home the harness runs on: its variable, else (Claude cleared)
+        // its default under the home directory.
+        let runs_on = match launched["env"][variable].as_str() {
+            Some("") | None => home.join(".claude"),
+            Some(named) => PathBuf::from(named),
         };
-        let launched_home = Path::new(launched["env"][variable].as_str().unwrap());
+        // A home is its session store: a private Codex launch home links the
+        // account's.
+        let store_of = |path: &Path| {
+            std::fs::canonicalize(path.join(store))
+                .or_else(|_| std::fs::canonicalize(path))
+                .ok()
+        };
         assert_eq!(
-            std::fs::canonicalize(launched_home.join(store)).ok(),
-            Some(std::fs::canonicalize(recorded.join(store)).unwrap()),
-            "{case}: the resumed id stands in the store of the home the harness runs on: {launched}"
+            store_of(&runs_on),
+            store_of(&expected),
+            "{case}: the harness runs on the home its session is proved under: {launched}"
+        );
+        assert_eq!(
+            report["intent"]["phase"]["home"]
+                .as_str()
+                .and_then(|recorded| store_of(Path::new(recorded))),
+            store_of(&expected),
+            "{case}: the launch records the home the harness runs on: {report}"
         );
     }
 }

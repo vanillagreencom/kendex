@@ -57,7 +57,8 @@ enum Route {
     Resume {
         session_id: String,
         /// The home the session's file was found under: the resumed
-        /// launch runs there, since another home's store may not hold it.
+        /// launch runs there, since another home's store may not hold it
+        /// (an account's own home is that account, unchanged).
         home: Option<PathBuf>,
     },
     /// The destination home's session store could not be read, or the bound
@@ -270,18 +271,20 @@ fn prepare_launch(
     }
     // A resume with no account runs under the home its session was found
     // under, whatever the server or the settings now name; otherwise a Codex
-    // window with no account runs on the `CODEX_HOME` the fleet server hands
-    // its panes, where it holds one. An account names its own home, and an
-    // accountless Claude launch names none.
+    // or Claude window with no account runs on the home the fleet server
+    // hands its panes (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`), where it holds
+    // one. An account names its own home.
     let kept = match (harness, &r.account, route) {
         (
-            Harness::Codex | Harness::Copilot,
+            Harness::Codex | Harness::Copilot | Harness::Claude,
             None,
             Route::Resume {
                 home: Some(home), ..
             },
         ) => Some(home.clone()),
-        (Harness::Codex, None, _) => operation::server_codex_home(&server, &session)?,
+        (Harness::Codex | Harness::Claude, None, _) => {
+            operation::server_home(&server, &session, harness)?
+        }
         (Harness::Codex | Harness::Claude | Harness::Copilot | Harness::Pi, _, _) => None,
     };
     let homes = launch_home(
@@ -321,6 +324,9 @@ fn prepare_launch(
         },
     )?;
     lane_words(&mut intent, &cwd);
+    if homes.cleared {
+        intent.env_remove.push(harness.home_var().to_owned());
+    }
     if let Route::Resume { session_id, .. } = route {
         intent.resume = Some(Resume {
             session_id: session_id.clone(),
@@ -366,8 +372,14 @@ impl From<agent_runtime::Error> for Unready {
 
 /// What a launch of `harness` runs under, a lane's or a controller's.
 pub(super) struct LaunchHome {
-    /// The home the launch names, prepared.
+    /// The home the launch names: prepared, or an accountless Claude
+    /// launch's config dir as it was found.
     pub named: Option<PathBuf>,
+    /// The child must not inherit the harness's home variable: an
+    /// accountless Claude launch kept on its default config dir, which no
+    /// variable can name, since a named config dir reads its own
+    /// `.claude.json` where the default reads the one in the home directory.
+    pub cleared: bool,
     /// The account the launch bills where its variable is not the home's.
     pub account: Option<PathBuf>,
     /// Where its sessions are read: the named home, else the harness's own
@@ -406,8 +418,9 @@ fn inherited_home(settings: &Settings, harness: Harness) -> Option<PathBuf> {
 /// bills it; the `CODEX_HOME` the fleet server's panes inherit; the home a
 /// resumed session was found under), else on its inherited home; a Pi seat
 /// rides in the account alone. Codex and Copilot ask a trust question
-/// under theirs. An accountless Claude launch names none, so the operator's
-/// own config stays untouched.
+/// under theirs. An accountless Claude launch names none here, so no trust
+/// record is ever written into the operator's own config; `launch_home`
+/// names the config dir it keeps as found.
 fn named_home(
     settings: &Settings,
     harness: Harness,
@@ -437,7 +450,10 @@ fn named_home(
 /// The home a launch of `harness` runs under, prepared before its window
 /// opens: the trust record for `cwd` under the named home, and a private
 /// Codex home built under the account where the account's own config does
-/// not trust `cwd`, its sessions linked from the account's. The harness
+/// not trust `cwd`, its sessions linked from the account's. An accountless
+/// Claude launch runs on the config dir it keeps (the fleet server's, or the
+/// one a resumed session was found under), never prepared, else on the one
+/// it inherits; the default is kept by clearing the variable. The harness
 /// gate then judges what the harness needs beyond its trust record under
 /// the home its sessions are read from.
 pub(super) fn launch_home(
@@ -452,12 +468,25 @@ pub(super) fn launch_home(
     let trusted = home
         .map(|home| prepare_trust(harness, &home, cwd))
         .transpose()?;
-    let named = trusted.as_ref().map(|t| t.home.clone());
-    let sessions = named.clone().or_else(|| operation::default_home(harness));
+    let mut named = trusted.as_ref().map(|t| t.home.clone());
+    let default = operation::default_home(harness);
+    let mut cleared = false;
+    if let (Harness::Claude, None, Some(kept)) = (harness, account, kept) {
+        if default
+            .as_deref()
+            .is_some_and(|default| same_directory(kept, default))
+        {
+            cleared = true;
+        } else {
+            named = Some(kept.to_path_buf());
+        }
+    }
+    let sessions = named.clone().or(default);
     gate::local(harness, sessions.as_deref(), cwd).map_err(Unready::Gate)?;
     Ok(LaunchHome {
         sessions,
         named,
+        cleared,
         account: billed,
         trust: trusted.map(|t| t.route),
     })
@@ -1152,8 +1181,10 @@ fn cloud_launch(
             extra_args: &[],
         },
     )?;
+    let answer_by = operation.stamp_after(CLOUD_BOUND);
     operation.record_phase(Phase::CloudCreate {
         worktree: wt.display().to_string(),
+        answer_by: Some(answer_by.clone()),
     })?;
     let session = match cloud_create(&command, &prompt) {
         Created::Session(id) => id,
@@ -1165,6 +1196,7 @@ fn cloud_launch(
                 "note": CLOUD_CREATE_UNKNOWN,
                 "cause": cause,
                 "worktree": wt.display().to_string(),
+                "answer_by": answer_by,
             })));
         }
     };
@@ -1580,12 +1612,17 @@ pub(super) fn reconcile_launch(run: &Run, intent: &Intent) -> Result<EffectOutco
     let (opened, registered) = match phase {
         // A cloud create asked and never answered, its asking process ended
         // included, may have made a session nothing here can name: the
-        // launch stays held until a close supersedes it.
-        Phase::CloudCreate { worktree } => {
+        // launch stays held until a close supersedes it, and says until when
+        // a session it makes may still appear.
+        Phase::CloudCreate {
+            worktree,
+            answer_by,
+        } => {
             return Ok(operation.hold(json!({
                 "reconcile": "launch",
                 "note": CLOUD_CREATE_UNKNOWN,
                 "worktree": worktree,
+                "answer_by": answer_by,
             })));
         }
         // A preparation asked and never answered, its asking process ended

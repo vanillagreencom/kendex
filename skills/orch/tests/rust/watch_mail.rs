@@ -47,60 +47,94 @@ fn hold() -> PathBuf {
 
 /// Defect: a program a row hands the client in-process inherits this test
 /// process's environment, so a `git` it runs reads the operator's own
-/// configuration. Each route by which an inherited environment names a
-/// configuration is planted alone in a stand-in for that environment:
-/// `git` started plainly reads the planted key; behind
-/// [`isolated_program`], which [`hold`] wraps the mailbox program with, it
-/// never does.
+/// configuration, or, run inside a git hook, the hook's repository and its
+/// `-c` values. Each route by which an inherited environment names a
+/// configuration is planted alone in a stand-in for that environment: `git`
+/// started plainly reads the planted key; behind [`isolated_program`],
+/// which [`hold`] wraps the mailbox program with, it never does.
 #[test]
 fn a_program_run_in_process_reads_no_git_configuration_its_environment_names() {
     let dir = tempfile::tempdir().unwrap();
     let root = std::fs::canonicalize(dir.path()).unwrap();
-    let (home, cwd) = (root.join("home"), root.join("cwd"));
+    let (home, cwd, outer) = (root.join("home"), root.join("cwd"), root.join("outer"));
     for dir in [&home, &cwd] {
         std::fs::create_dir_all(dir).unwrap();
     }
+    let init = program("git")
+        .args(["init", "-q"])
+        .arg(&outer)
+        .output()
+        .unwrap();
+    assert!(init.status.success(), "{init:?}");
     let wrapped = isolated_program(Path::new("git"));
-    for (route, named, file) in [
-        ("home", None, home.join(".gitconfig")),
+    let named = |name: &'static str, value: &Path| vec![(name, value.as_os_str().to_owned())];
+    let set = |pairs: &[(&'static str, &str)]| -> Vec<(&'static str, std::ffi::OsString)> {
+        pairs
+            .iter()
+            .map(|(name, value)| (*name, (*value).into()))
+            .collect()
+    };
+    for (route, vars, file) in [
+        ("home", Vec::new(), Some(home.join(".gitconfig"))),
         (
             "xdg",
-            Some(("XDG_CONFIG_HOME", root.join("xdg"))),
-            root.join("xdg/git/config"),
+            named("XDG_CONFIG_HOME", &root.join("xdg")),
+            Some(root.join("xdg/git/config")),
         ),
         (
             "global",
-            Some(("GIT_CONFIG_GLOBAL", root.join("global"))),
-            root.join("global"),
+            named("GIT_CONFIG_GLOBAL", &root.join("global")),
+            Some(root.join("global")),
         ),
         (
             "system",
-            Some(("GIT_CONFIG_SYSTEM", root.join("system"))),
-            root.join("system"),
+            named("GIT_CONFIG_SYSTEM", &root.join("system")),
+            Some(root.join("system")),
+        ),
+        (
+            "git-dir",
+            named("GIT_DIR", &outer.join(".git")),
+            Some(outer.join(".git/config")),
+        ),
+        (
+            "parameters",
+            set(&[("GIT_CONFIG_PARAMETERS", "'probe.operator=planted'")]),
+            None,
+        ),
+        (
+            "count",
+            set(&[
+                ("GIT_CONFIG_COUNT", "1"),
+                ("GIT_CONFIG_KEY_0", "probe.operator"),
+                ("GIT_CONFIG_VALUE_0", "planted"),
+            ]),
+            None,
         ),
     ] {
-        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        std::fs::write(&file, "[probe]\n\toperator = planted\n").unwrap();
+        if let Some(file) = &file {
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, "[probe]\n\toperator = planted\n").unwrap();
+        }
         let read = |program: &Path| {
-            let mut command = Command::new(program);
-            command
+            Command::new(program)
                 .env_clear()
                 .env("PATH", std::env::var_os("PATH").unwrap_or_default())
                 .env("HOME", &home)
                 .env("GIT_CEILING_DIRECTORIES", &root)
+                .envs(vars.iter().map(|(name, value)| (name, value)))
                 .current_dir(&cwd)
-                .args(["config", "--get", "probe.operator"]);
-            if let Some((name, value)) = &named {
-                command.env(name, value);
-            }
-            command.output().unwrap()
+                .args(["config", "--get", "probe.operator"])
+                .output()
+                .unwrap()
         };
         let plain = read(Path::new("git"));
         assert_eq!(plain.stdout, b"planted\n", "{route}: {plain:?}");
         let isolated = read(&wrapped);
         assert_eq!(isolated.status.code(), Some(1), "{route}: {isolated:?}");
         assert!(isolated.stdout.is_empty(), "{route}: {isolated:?}");
-        std::fs::remove_file(&file).unwrap();
+        if let Some(file) = &file {
+            std::fs::remove_file(file).unwrap();
+        }
     }
 }
 

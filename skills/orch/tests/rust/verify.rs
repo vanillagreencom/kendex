@@ -4908,6 +4908,70 @@ fn a_draft_fallback_past_the_budget_takes_no_period_verdict_until_both_reads_rel
     }
 }
 
+/// Defect: Copilot's error answer on a head held as a draft read as the
+/// error retry's verdict, `copilot-error cause=draft`, which routes to a
+/// fallback notice for a draft that took no request; or the retry claimed
+/// apart from the request that releases the head, a second POST. Within
+/// the budget and past it, each call on the draft is `pending` with the
+/// draft cause, claims no retry and sends nothing; the call where both
+/// reads say ready sends one POST, recorded as the request and as the
+/// error answer's retry, and a later call sends nothing more.
+#[test]
+fn copilot_error_on_a_draft_held_head_waits_for_the_release_whose_one_request_is_its_retry() {
+    for aged in [false, true] {
+        let mut gh = Github::review_world();
+        gh.answer(
+            &format!("pr view {PR}"),
+            review_view("", &[(COPILOT, "COMMENTED")], true),
+        )
+        .answer(
+            &pull_path(),
+            rest_pull(true, "feat", "lane-app[bot]", "Bot"),
+        )
+        .answer(
+            &reviews_path(),
+            json!([copilot_review(
+                11,
+                "COMMENTED",
+                COPILOT_ERROR,
+                "2026-01-01T00:05:00Z"
+            )]),
+        );
+        let first = ok_result(&gh.review(false, &[]));
+        if aged {
+            gh.set_head("at", json!(stamp_ago(1000)));
+            gh.set_head("period_started", json!(stamp_ago(1000)));
+        }
+        let again = ok_result(&gh.review(false, &[]));
+        for (call, result) in [("first", &first), ("again", &again)] {
+            assert_eq!(result["status"], "pending", "aged={aged} {call}: {result}");
+            assert_eq!(key(result), "request-fallback", "aged={aged} {call}");
+            assert_eq!(result["request"]["cause"], "draft", "aged={aged} {call}");
+        }
+        assert_eq!(gh.requests(), 0, "aged={aged}: {:?}", gh.log());
+        assert!(gh.review_record()["verdict"].is_null(), "aged={aged}");
+        assert!(gh.head_record()["retry"].is_null(), "aged={aged}");
+        gh.answer(
+            &format!("pr view {PR}"),
+            review_view("", &[(COPILOT, "COMMENTED")], false),
+        )
+        .answer(
+            &pull_path(),
+            rest_pull(false, "feat", "lane-app[bot]", "Bot"),
+        );
+        let released = ok_result(&gh.review(false, &[]));
+        assert_eq!(released["status"], "pending", "aged={aged}: {released}");
+        assert_eq!(released["request"]["outcome"], "requested", "aged={aged}");
+        assert_eq!(gh.requests(), 1, "aged={aged}: {:?}", gh.log());
+        let head = gh.head_record();
+        assert_eq!(head["retry"]["outcome"], "requested", "aged={aged}: {head}");
+        assert_eq!(head["retry"]["review_id"], 11, "aged={aged}: {head}");
+        let later = ok_result(&gh.review(false, &[]));
+        assert_eq!(later["status"], "pending", "aged={aged}: {later}");
+        assert_eq!(gh.requests(), 1, "aged={aged}: {:?}", gh.log());
+    }
+}
+
 /// A POST that ended with no exit status, as a call killed or timed out
 /// leaves it, may or may not have reached GitHub: the request stands
 /// `requested`, and the next call reads GitHub's record of it. With no sign
