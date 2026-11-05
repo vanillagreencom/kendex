@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Answer automatic review threads on every open same-repository kendex/refresh
-# PR and each one merged in the last 24 hours. Run from the consumer checkout,
-# after refresh-consumer.sh in a job that renders, under the refresh
-# workflow's concurrency group, with GH_REPO, its scoped GH_TOKEN, the
-# upstream KENDEX_ISSUES_TOKEN and the release's kendex on PATH. The release
-# checkout's change-class proves the render class. Before it judges a pull
-# request with review work, `kendex source refresh` fetches the sources that
-# pull request's head declares, which a job that skipped rendering has not
-# fetched. No script from the pull request is executed.
+# PR and each one merged in the last 24 hours. Run from the consumer checkout
+# in the refresh job, after refresh-consumer.sh when that job renders, under
+# the refresh workflow's concurrency group, with GH_REPO, its scoped GH_TOKEN,
+# the upstream KENDEX_ISSUES_TOKEN and the release's kendex on PATH. The
+# release checkout's change-class proves the render class. Before it judges a
+# pull request with review work, `kendex source refresh` fetches the sources
+# that pull request's head declares, which a job that skipped rendering has
+# not fetched. No script from the pull request is executed.
 #
 # A thread whose first comment a Bot wrote is filed upstream through
 # refresh-report.py, answered with a reply naming that issue and the
@@ -190,7 +190,9 @@ while IFS= read -r pr; do
   | {root, path, body, url, line, start_line, side, start_side}]' <<<"$actions")" || exit 1
 
   # The classifier reads both endpoints from this checkout's object store. A
-  # merged pull request's head survives only under its pull-request ref.
+  # merged pull request's head survives only under its pull-request ref. Git
+  # opens no connection to fetch a commit it already holds, so the reporter's
+  # fetch of this head needs no credential when the render step did not run.
   if ! git -C "$ROOT" cat-file -e "$PR_BASE_SHA^{commit}" 2>/dev/null \
       || ! git -C "$ROOT" cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
     git -C "$ROOT" -c credential.helper='!gh auth git-credential' fetch --quiet --no-tags \
