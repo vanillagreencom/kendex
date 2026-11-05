@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Answer automatic review threads on every open same-repository kendex/refresh
-# PR and each one merged in the last 24 hours. Run from the consumer checkout
-# after refresh-consumer.sh in the same job, under the refresh workflow's
-# concurrency group, with GH_REPO, its scoped GH_TOKEN and the upstream
-# KENDEX_ISSUES_TOKEN. The release checkout's change-class
-# proves the render class, reading the kendex sources that job's
-# `kendex refresh` fetched. No script from the pull request is executed.
+# PR and each one merged in the last 24 hours. Run from the consumer checkout,
+# after refresh-consumer.sh in a job that renders, under the refresh
+# workflow's concurrency group, with GH_REPO, its scoped GH_TOKEN, the
+# upstream KENDEX_ISSUES_TOKEN and the release's kendex on PATH. The release
+# checkout's change-class proves the render class. Before it judges a pull
+# request with review work, `kendex source refresh` fetches the sources that
+# pull request's head declares, which a job that skipped rendering has not
+# fetched. No script from the pull request is executed.
 #
 # A thread whose first comment a Bot wrote is filed upstream through
 # refresh-report.py, answered with a reply naming that issue and the
@@ -41,8 +43,8 @@
 # A held pull request, one whose reporter failed (refresh-reviews-error=report
 # or report-shape on stderr) or that has an open unfiled thread, gets an
 # ::error:: line; the run answers the other pull requests, then exits 1. Any other
-# nonzero exit means a dependency could not be read or a write failed, and
-# stops the run where it happened.
+# nonzero exit means a dependency could not be read or prepared or a write
+# failed, and stops the run where it happened.
 set -euo pipefail
 # The upstream credential belongs only to the reporter child. In particular,
 # the classifier must not inherit it.
@@ -82,8 +84,14 @@ done
 CLASSIFIER="$script_dir/../skills/harness-ci/scripts/change-class"
 [ -x "$CLASSIFIER" ] || fail classifier "$CLASSIFIER" 'The harness-ci change classifier is not installed beside this package.'
 ROOT="$(git rev-parse --show-toplevel)" || fail checkout "$PWD" 'Run from the consumer checkout.'
-class_log="$(mktemp)" || fail scratch mktemp 'Could not create the classifier log.'
-trap 'rm -f -- "${class_log:?}"' EXIT
+scratch="$(mktemp -d)" || fail scratch mktemp 'Could not create the scratch directory.'
+class_log="$scratch/class.log"
+sources_tree=""
+cleanup() {
+  if [ -n "$sources_tree" ]; then git -C "$ROOT" worktree remove --force "$sources_tree" 2>/dev/null || :; fi
+  rm -rf -- "${scratch:?}"
+}
+trap cleanup EXIT
 
 # Either prefix marks a durable answer. The reporter supplies the issue URL.
 REPLY_PREFIX='Filed upstream as '
@@ -189,6 +197,18 @@ while IFS= read -r pr; do
       --no-write-fetch-head origin "$PR_BASE_SHA" "refs/pull/$PR_NUMBER/head" \
       || fail fetch "$PR_NUMBER" 'Could not fetch the pull request base and head.'
   fi
+  # The classifier verifies the head's own manifest against local source
+  # mirrors, so that manifest's sources are refreshed from a checkout of the
+  # head. The manifest is pull-request content, so no repository credential
+  # goes with its fetches.
+  sources_tree="$scratch/sources-$PR_NUMBER"
+  git -C "$ROOT" worktree add --quiet --detach "$sources_tree" "$HEAD_SHA" >&2 \
+    || fail sources-checkout "$PR_NUMBER" 'Could not check out the pull request head for its sources.'
+  (cd -- "$sources_tree" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR kendex source refresh --scope project) >&2 \
+    || fail sources "$PR_NUMBER" 'Could not refresh the sources the pull request head declares.'
+  git -C "$ROOT" worktree remove --force "$sources_tree" \
+    || fail sources-checkout "$PR_NUMBER" 'Could not remove the pull request head checkout.'
+  sources_tree=""
   # Only this exact answer proves render equality. A branch name or title
   # cannot authorize answers. The classifier comes from the trusted release
   # checkout, and it runs without the repository credential.

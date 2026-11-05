@@ -22,12 +22,33 @@ cp -R "$REFRESH_DIR" "$SCRIPTS"
 # The classifier and the reporter are dependencies with their own suites.
 # This suite proves the writer consumes the classifier's exact answer and
 # answers each finding by the issue the reporter names.
+# change-class's render proof reads the mirrors of the sources the judged
+# head declares; without them its verify refusal is an unmeasured
+# cause=source-mirror-missing.
 cat >"$TMP/skills/harness-ci/scripts/change-class" <<'CLASSIFIER'
 #!/usr/bin/env bash
 set -euo pipefail
+head="$(printf '%s\n' "$@" | sed -n '/^--head$/{n;p;}')"
+if ! grep -qxF -- "$head" "$HOME/prepared-sources" 2>/dev/null; then
+  printf 'class: class=standard measured=false cause=source-mirror-missing\n' >&2
+  printf 'change_class=standard\n'
+  exit 0
+fi
 exec python3 "$GH_MOCK" classify "$@"
 CLASSIFIER
 chmod +x "$TMP/skills/harness-ci/scripts/change-class"
+# The source refresh records the head its checkout holds, standing for the
+# sources that head's manifest declares. It refuses the repository credential,
+# and .failure.kind == "sources" makes it fail.
+cat >"$BIN/kendex" <<'KENDEX'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "$*" = 'source refresh --scope project' ] || exit 64
+[ -z "${GH_TOKEN+set}${GITHUB_TOKEN+set}" ] || exit 65
+! jq -e '.failure.kind == "sources"' "$GH_FIXTURE" >/dev/null || exit 1
+git rev-parse HEAD >>"$HOME/prepared-sources"
+KENDEX
+chmod +x "$BIN/kendex"
 cat >"$SCRIPTS/refresh-report.py" <<'REPORT'
 import json, os, sys
 from pathlib import Path
@@ -91,6 +112,8 @@ json.dump({'prs':prs,'writes':[]},open(out,'w'))
 PY
 DRIVER="$SCRIPTS/refresh-reviews.sh"
 run_writer() {
+  # Each run starts on a fresh runner with no source mirror.
+  rm -f -- "${TMP:?}/home/prepared-sources"
   RC=0
   OUT="$(cd "$REPO" && env -i PATH="$BIN:/usr/bin:/bin" HOME="$TMP/home" \
     GH_REPO=acme/repo GH_TOKEN=fixture-token KENDEX_ISSUES_TOKEN=upstream-fixture-token GH_FIXTURE="$FIXTURE" GH_MOCK="$BIN/gh" \
@@ -194,9 +217,11 @@ not_render_warned() {
     && grep -q '^::warning::refresh-reviews=not-render pr=1 cause=excluded-path unanswered=2 ' <<<"$OUT"
 }
 
-# A second run over answered threads files, writes and classifies nothing.
+# A second run over answered threads files, writes, prepares and classifies
+# nothing.
 idempotent() {
-  [ "$RC" -eq 0 ] && jq -e '(.writes | length) == 4 and .proofs == [1,2] and (.reports | length) == 2' "$FIXTURE" >/dev/null
+  [ "$RC" -eq 0 ] && jq -e '(.writes | length) == 4 and .proofs == [1,2] and (.reports | length) == 2' "$FIXTURE" >/dev/null \
+    && [ ! -e "$TMP/home/prepared-sources" ]
 }
 
 # The talk inventory threads arrive unresolved, with automatic authors and
@@ -412,6 +437,7 @@ pull|error
 pull|empty
 pull|object
 pull|moved
+sources|error
 ROWS
 # The join's own refusals: a thread root absent from the REST read is a
 # disagreement, and any other jq failure names jq. A string user on a
@@ -518,6 +544,13 @@ run_writer
 if ! idempotent; then
   ok 'must-fail control: a reply no longer read as an answer fails the idempotence case'
 else bad 'answered control did not detect the planted defect' "$OUT"; fi
+mutant sources-mutant 'env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR kendex source refresh' \
+  ': env -u GH_TOKEN -u GITHUB_TOKEN -u GH_CONFIG_DIR kendex source refresh'
+cp "$BASE" "$FIXTURE"
+run_writer
+if ! filed_and_resolved && grep -q '^refresh-reviews=unclassified pr=1 cause=source-mirror-missing$' <<<"$OUT"; then
+  ok 'must-fail control: classifying without refreshing the head sources fails the filed-and-resolved case'
+else bad 'sources control did not detect the planted defect' "$OUT"; fi
 mutant class-mutant 'if [ "$class" != change_class=render ]; then' 'if false; then # class'
 jq '.prs |= map(.class="change_class=standard")' "$BASE" >"$FIXTURE"
 run_writer
