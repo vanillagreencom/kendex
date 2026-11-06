@@ -2,6 +2,12 @@
 
 ## Consumer-impacting changes
 
+### Unreleased
+
+- Pi no longer crashes with "This extension ctx is stale" when it draws a tool row after the session was switched, forked or reloaded. Tool chrome keeps the current session's theme instead of its extension context.
+
+  You do: restart Pi after updating; `/reload` keeps the tool chrome code Pi loaded at startup.
+
 ### 2.0.11
 
 - A bash row whose command has a long list of git options (for example `git -c a=b -o v0 -o v1 ...`) no longer hangs Pi while the renderer checks whether it is a `git diff`.
