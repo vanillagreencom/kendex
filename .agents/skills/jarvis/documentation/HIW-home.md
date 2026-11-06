@@ -14,7 +14,7 @@ flowchart TD
 
 A Jarvis home can be a plain folder used with a coding assistant or a folder opened by an assistant app. A private Git repository lets committed instructions, skills, memory and recovery notes travel with its commits. Scratch and secrets stay local.
 
-The [setup instructions](../README.md#customise) explain personal skills and settings. The [home layout reference](../references/home-layout.md) gives the file locations and initial assistant setup.
+The [setup instructions](../README.md#customize) explain personal skills and settings. The [home layout reference](../references/home-layout.md) gives the file locations and initial assistant setup.
 
 ## Shared and personal content
 
