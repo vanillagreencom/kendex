@@ -1,70 +1,97 @@
 # Review gate and waiter reference
 
-Cross-script routing behind the gate-mode summary and the waiter rows, `approval-wait`, `queue-wait` and the CI wait, in [../SKILL.md](../SKILL.md). Each script's `--help` is its authoritative contract: arguments, modes, settings, JSON fields, exit codes. Nothing here restates one.
+Load where a workflow reads the review gate, requests Copilot or waits on one pull request. The review gate is the orch runtime's `verify-review` operation, CI on one pull request its `verify-pr` operation, and the merge queue its `queue-watch` verb. The workflows route each verdict; this file holds the review call, what its reply means and the words the three share.
 
 ## Gate-mode routing
 
-Bind `[REVIEW_BASE_CHECKOUT]` to a checkout of the target pull request's consumer base, never the catalog checkout or the pull request's updated tree. If that checkout is unavailable, stop. Read its effective mode only through `approval-wait <PR#> --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]`. The caller's trusted `approval-wait` owns the mode and runs from that consumer directory. It clears inherited review-policy overrides and reads `REVIEW_GATE_MODE` and refresh policy through its trusted review-gate settings reader's existing local settings order (`review-gate/scripts/lib/settings.sh`). It never executes the base checkout's installed resolver. `off` disables requests and waits even beside a native approval requirement. Otherwise the owner reads GitHub's approval requirement through REST. `approval-wait --help` defines its ruleset and classic protection reads. A non-zero exit is no mode: report it and stop rather than pick one. It prints:
+Bind `[REVIEW_BASE_CHECKOUT]` to a checkout of the target pull request's consumer base, never the catalog checkout or the pull request's updated tree. If that checkout is unavailable, stop.
 
-| `GATE_MODE` | Meaning | Route |
-|-------------|---------|-------|
-| `approval` | consumer policy is `enforce`, and the base's rulesets require approval or classic protection requires reviews | `approval-wait` |
-| `off` | consumer base-checkout policy is `off`, or the base's rulesets require no approval and classic protection requires no reviews | skip the wait; record the gate not-applicable |
+The gate mode is the `mode` of [the review call](#the-review-call)'s reply. The runtime resolves it on the item's first call and records it as `pr_review.mode`; every later call reads that record, so a retarget to another base keeps the mode the first call read. It reads the consumer's `REVIEW_GATE_MODE` from the base checkout's `kendex.settings.toml`, `.kendex/settings.toml` and private env file, never from the caller's environment, and runs nothing from that checkout. `off` is the mode. `enforce`, or no value, reads GitHub's approval requirement on the base: the base's ruleset pull-request rules, then classic branch protection's required reviews. A requirement of one approval or more is `approval`, none is `off`. A failed read is an `unreadable` reply with no mode, never `off`: repeat the call, and report a second failure rather than pick a mode.
+
+| `mode` | Meaning | Route |
+|--------|---------|-------|
+| `approval` | consumer policy is `enforce`, and the base's rulesets require approval or classic protection requires reviews | the review wait |
+| `off` | consumer base-checkout policy is `off`, or the base's rulesets require no approval and classic protection requires no reviews | no wait: the call answers `complete` with verdict `off` and records it; record the gate not-applicable |
 
 Under `off`, open review threads still stop the merge: submit-pr's gate 3 applies, and so do the readers [thread-read.md § What reads an open thread](thread-read.md#what-reads-an-open-thread) lists. Required CI checks, commit guards, exact-head checks and conflict refusal are untouched in both modes, and the merge path still refuses a `CHANGES_REQUESTED` review at its readiness check. In `approval` mode an unresolved thread holds the wait at `comments` even beside an approval, because orch's own merge gates refuse an open thread: submit-pr's gate 3 and merge-pr's thread read ([thread-read.md](thread-read.md)). A base rule refuses one too where it requires thread resolution.
 
-The reviewer-gate settings, `PR_REVIEW_ON_TIMEOUT`, `PR_REVIEW_WAIT_SECS` and `PR_COPILOT_REQUESTS`, live in `kendex.settings.toml` `[env]`; semantics and defaults are in `approval-wait --help`.
+The call reads its settings at its start, the caller's environment over the private env file and the settings files' `[env]`, and refuses a value outside its form as `setting-invalid key=[KEY] value=[VALUE]`. `PR_REVIEW_ON_TIMEOUT` and `ORCH_COPILOT_HOLD_SECS` are in [settings.md](settings.md); these two are this gate's alone:
+
+| Setting | Meaning | Default |
+|---------|---------|---------|
+| `PR_REVIEW_WAIT_SECS` | Seconds of one review period, counted from the head's record, or from the head's last `timeout` | `900` |
+| `PR_COPILOT_REQUESTS` | `on` requests Copilot on each head; `off` requests none, and the head's request falls back `cause=off` | `on` |
+
+## The review call
+
+Run it from the caller's checkout, `[ROOT]`: the lane's worktree, or the main checkout merge-pr runs from. `[OWNER/REPO]` is what `gh repo view --json nameWithOwner --jq .nameWithOwner` answers there, and `[STATE_KEY]` the caller's workflow state key, `[ISSUE_ID]` in a lane. `[MARK_READY]` is `true` where the step says so, which marks an open draft ready before its request under either mode, and `false` everywhere else:
+
+```bash
+jq -cn --arg repo "[OWNER/REPO]" --argjson pr [PR_NUMBER] --arg base "[REVIEW_BASE_CHECKOUT]" --argjson ready [MARK_READY] \
+  '{op: "verify-review", repo: $repo, pr: $pr, base_checkout: $base, mark_ready: $ready}' \
+  > "[ROOT]/tmp/verify-review-request-[STATE_KEY].json"
+.agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request "[ROOT]/tmp/verify-review-request-[STATE_KEY].json"
+```
+
+One call reads the pull request once and reads or records the gate mode. Under `off` it answers `off`. Under `approval` it counts the head's open threads and reads its reviews, and a head with no verdict yet takes its Copilot request (§ Copilot requests) and its review period. The call records each act it makes, the ready mark and the Copilot request, under the head before making it, and makes it once per head, so a repeated call repeats no act; the one exception is the resend § Copilot requests names. A step that needs only the mode or the request runs the call once and reads that field; on `approval`, that same call has also requested Copilot on a head with no verdict standing.
+
+The reply's fields, under `.result`:
+
+| Field | Meaning |
+|-------|---------|
+| `status` | `complete`: `verdict` is recorded on the item. `pending`: the head is not judged yet, and `reason` says why. `unreadable`: a read failed, and `reason` is its cause key |
+| `mode` | `approval` or `off`, present once the mode is read |
+| `head` | The head this call read |
+| `request` | What the head's record holds: `outcome` `requested`, `existing` or `fallback`, with `reason` or `cause`, and `recorded_now`, true on the call that wrote it |
+| `copilot` | Copilot's work on the head against the hold: `state` `none`, `pending` or `expired`, with `run` and `started_at` |
+| `unresolved_count` | The open threads counted on the head |
+| `verdict` | With `complete`: `approved`, `changes_requested`, `comments`, `timeout`, `proceeded`, `copilot-error`, `off` or `blocked` |
+
+A `pending` reply's `reason` is `review-pending copilot=[STATE] remaining=[SECS]` while the period runs, `copilot-pending run=[ID] remaining=[SECS]` while Copilot's work in flight holds a verdict that permits a merge, `request-fallback cause=draft` for a draft the call was not asked to mark ready, which starts no period, or `ready-head-moved head=[SHA]` where a push landed with the ready mark, which the next call reads as the new head. A refusal exits nonzero with its keyed line: `pr-not-open` for a closed or merged pull request, `verify-request-invalid field=[FIELD]` for a request outside its form, `setting-invalid` as above, `record-missing` for an item with no state.
+
+**The review wait.** A step that waits on the verdict runs the call through [Waiter launch](waiter-launch.md), repeated no more often than every 30 seconds while `result.status` is `pending`; an `unreadable` reply takes the step's `unreadable` row, which repeats it within that row's bound. The period is the runtime's: `complete` with `timeout` or `proceeded` arrives once `PR_REVIEW_WAIT_SECS` has passed, so the workflow keeps no budget of its own, and a `timeout` starts the head's next period. A step that names a shorter wait runs the call as `env PR_REVIEW_WAIT_SECS=[SECS] .agents/skills/orch/scripts/orch-runtime op ...`, and a step that must never proceed on a silent reviewer as `env PR_REVIEW_ON_TIMEOUT=block ...`: the call reads its caller's environment over the settings files.
+
+**A new head.** The record is the head's: a push starts a new record, request and period. A reply whose `head` differs from the head the step bound takes that step's moved-head route.
 
 ## Copilot requests
 
-Every first or repeated Copilot request uses the mode owner. Bind `[STATE_KEY]` to the existing workflow state key used by the caller's approval wait. A manual or cloud request outside orch has no saved item state and omits `--item`:
+The review call requests Copilot itself, once per head, where no verdict stands on the head after its thread and review reads. The reply's `request` reports what the head's record holds:
 
-```bash
-env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --item [STATE_KEY] --base-checkout [REVIEW_BASE_CHECKOUT]
-```
+- `requested`: the call sent the request. A request GitHub shows no sign of on a later call is sent once more, and a second miss falls back `cause=unconfirmed`.
+- `existing`: no request was needed. `reason` is `existing-run` for Copilot's work in flight on the head, `existing-review` for a Copilot review standing on it, or `existing-error-retry` for a retry of Copilot's error answer standing on it.
+- `fallback`: no request went out, and `cause` says why. `off`: `PR_COPILOT_REQUESTS` is `off`. `draft`: the head is a draft the call was not asked to mark ready; keep the draft. `refresh`: the consumer's base-checkout `REVIEW_GATE_REFRESH_REVIEW=overseer` declares this pull request its refresh head, which takes [copilot-head-notices.md § Fallback approval](copilot-head-notices.md#fallback-approval). `no-files`: Copilot's current-head answer says it could review no files, which takes the same Fallback approval without another request. `error`: the item already recorded an error fallback at this head. `refused` with `exit`: the request exited nonzero, whether GitHub refused it or the call failed. `unconfirmed`: the request went out twice and GitHub shows no Copilot work for it.
 
-The early push-first request in start-worktree § 2.1 and submit's ready-head block add `--mark-ready` to the command above. `approval-wait --help` owns its head confirmation. Both share the existing head request record to prevent duplicates. A request on a draft without that flag returns `fallback cause=draft`; keep the draft and start no Copilot wait or fallback notice.
+**The fallback notice.** In a lane, a reply whose `request.outcome` is `fallback` and whose `request.recorded_now` is true sends the `copilot-fallback` notice for that head once, as [review-pr-comments.md](../workflows/review-pr-comments.md) § 7.2 sends it: first line `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA] cause=[CAUSE]`, with ` exit=[N]` after `refused`, and the lane status path as its second line, for the overseer to read. Causes `draft` and `refresh` send none. A reply with `recorded_now` false sends nothing, since the call that recorded the fallback was the cue. The approval gate stays unmet, and the step's review wait keeps running until the overseer's approval ends it. Outside a lane, report the unavailable Copilot review and keep the approval gate unmet.
 
-`off` ends the request path without a request or a wait. `approval` confirms that a request stands for this head: the owner sent it, found an active Copilot run or pending request, or found a completed Copilot review at this head; a saved error retry sends no further request. An error review with no saved retry still permits its retry. A line whose first word is `fallback` means no request went out, and its `cause=` field says why: `cause=error` when this item already recorded an error fallback at this head; keep waiting for the overseer's approval, `cause=no-files` when Copilot's current-head COMMENTED answer says it could review no files, which takes [copilot-head-notices.md § Fallback approval](copilot-head-notices.md#fallback-approval) without another Copilot request, `cause=refresh` when the consumer's base-checkout `REVIEW_GATE_REFRESH_REVIEW=overseer` declares this pull request its refresh head, which takes [copilot-head-notices.md § Fallback approval](copilot-head-notices.md#fallback-approval) and no lane notice, `cause=off` when `PR_COPILOT_REQUESTS` is `off`, `cause=refused exit=N` when the request exited nonzero, whether GitHub refused it or the call failed. Start no wait for a Copilot review; the caller's own approval wait still runs and ends on the overseer's approval. Under `cause=off` send nothing: in a lane, that approval wait sends the `copilot-fallback` notice itself, once per head. Under `cause=refused`, in a lane, send the `copilot-fallback` notice for the current head at once, as [review-pr-comments.md](../workflows/review-pr-comments.md) § 7.2 sends it, with `cause=refused exit=N` at the end of its first line and the first `copilot-request-refused` line the owner wrote to stderr as its second line, so the overseer approves the head and knows why. A nonzero exit is no mode: report it and stop. `approval-wait --help` owns the action contract and the wait's notice.
+**Copilot's error answer.** A Copilot review on the head that is its error sentence takes one retry: the call claims it on the head's record and sends the request once. The verdict is `copilot-error`, its `reason` `copilot-error cause=[CAUSE]`, where the retry cannot stand: `refused exit=[N]` when the retry's request exited nonzero, `error` when Copilot answered the retry with another error, `unconfirmed` when the retry went out twice with no sign of Copilot's work, `refresh` when the refresh policy held the request back. In a lane, run the body check and send the `copilot-fallback` notice through [review-pr-comments.md § 7.2](../workflows/review-pr-comments.md#72-copilot-head-route), its first line ending `cause=[CAUSE]` from the reason and its second line the lane status path. Then keep the review wait running for the overseer's approval: the head's retry record keeps later calls from retrying again. Every wait restart still uses its caller's head-budget route. Outside a lane, report the unavailable Copilot review and keep the approval gate unmet.
 
-A wait receives `--base-checkout [REVIEW_BASE_CHECKOUT]` for the error-review retry owned by `approval-wait --help`. On `copilot-error`, read `head_sha` and `copilot_fallback_cause` from its result. In a lane, run the body check and send the `copilot-fallback` notice through [review-pr-comments.md § 7.2](../workflows/review-pr-comments.md#72-copilot-head-route). End its first line with `cause=[COPILOT_FALLBACK_CAUSE]`. Under `cause=refused exit=N`, include the request owner's first `copilot-request-refused` stderr line. Under `cause=error`, include the lane status path for the overseer to read. Then keep the approval wait running for the overseer's approval. The error-answer record keeps later waits from repeating `copilot-error` while that approval is pending. Every wait restart still uses its caller's existing head-budget route. Send no further Copilot request for that error answer. Outside a lane, report the unavailable Copilot review and keep the approval gate unmet.
+**Copilot's work in flight.** Under `approval`, while Copilot's check or a pending Copilot request runs on the head within `ORCH_COPILOT_HOLD_SECS` of the head's record, the call holds a verdict that permits a merge, `approved` or `proceeded`, as `pending copilot-pending`. Past the bound, `copilot.state` reads `expired` and the verdict stands as read; the expiry grants no approval. Under `off` the call awaits no Copilot work.
 
 ## Which waiter answers which state
 
 | Waiting on | Tool |
 |------------|------|
-| Reviewer verdict on one PR | `approval-wait` — statuses `approved`/`changes_requested`/`comments`/`timeout`/`proceeded`/`unreviewable`/`copilot-error`/`error` |
+| Reviewer verdict on one PR | `verify-review` (`orch-runtime op`), [§ The review call](#the-review-call): `status` `complete` with verdict `approved`/`changes_requested`/`comments`/`timeout`/`proceeded`/`copilot-error`/`off`/`blocked`; `pending` repeated, `unreadable` routed by each step |
 | CI on one PR | `verify-pr` (`orch-runtime op`) — `status` `complete` with verdict `pass`/`fail`/`none`; `pending` or `unreadable` repeated through [Waiter launch](waiter-launch.md); a `fail` verdict is rerun once per head through `github.sh ci-rerun --required-only` before ci-fix, the item's `ci_rerun` record written first ([submit-pr.md § 5.1](../workflows/submit-pr.md#51-ci-failure-recovery)); the merge state is read through `pr-merge --check` before the first call, and `CONFLICTING` takes the workflow's `conflict` route and never the wait |
-| Merge-queue / auto-merge outcome | `queue-wait` — the growing verdict set documented in its § Verdicts table |
+| Merge-queue / auto-merge outcome | `orch-runtime queue-watch --item [STATE_KEY] --repo [OWNER/REPO] --pr [PR_NUMBER] --poll [SECS] --max-wait [SECS]`: one wait bounded by `--max-wait`, its reply's `status`, `verdict` and `cause` routed by [merge-pr.md § 5](../workflows/merge-pr.md#5-execute-the-merge) step 1's table |
 | Many PRs, long horizon | `pr-watch.sh` — § Multi-PR watching |
 
-Per-verdict routing lives in the workflows (`submit-pr.md` § 4 and § 5, `merge-pr.md` § 5, [merge-attempt.md](merge-attempt.md)); each verdict's semantics live in that script's `--help`, and `verify-pr`'s reply fields in `submit-pr.md` § 5's result table.
+Per-verdict routing lives in the workflows (`submit-pr.md` § 4 and § 5, `merge-pr.md` § 5, [merge-attempt.md](merge-attempt.md)). `verify-review`'s reply fields are § The review call's, `verify-pr`'s are in `submit-pr.md` § 5's result table, and `queue-watch`'s verdict and cause words are in `merge-pr.md` § 5 step 1's table.
 
-`queue-wait` names three states on an armed head. `queued` has a merge-queue entry, and progress is read from the entry's merge-group head; `cause: progress_unobservable` means that head could not be read. `queued` has one other shape, which is no armed head at all: `cause: exit_unconfirmed` is a PR the last poll saw out of the queue and unarmed, its ejection or disarm short of its confirmation count, so nothing is armed to fire on its own. `armed_awaiting_checks` is armed, not enqueued, with no failed check in the PR's own check rollup: `merge-pr.md` § 5 step 1 waits again on the same head, spending no recovery cycle, until `QUEUE_WAIT_ARMED_MINUTES` (default 90) of wall clock hands it back. `armed_blocked` is armed and never to be enqueued: a failed check takes the recovery cycle, which `CI_FIX_MAX_CYCLES` bounds; every check passed with no entry returns to a fresh readiness check instead, since ci-fix has no failure to work.
+`blocked` is an approval the runtime refuses to publish: an `escalated_items[]` entry of `kind` `regression-against-main`, a break the branch made, stands with an outcome other than `skipped`, and `reason` reads `regression-open location=[LOCATION]`. It is never a met gate. [review-pr.md § At The Cap](../workflows/review-pr.md#at-the-cap) writes the entry, and it stands until its outcome reads `skipped` or it leaves `escalated_items`.
+
+`queue-watch` names three states on an armed head. `queued` has a merge-queue entry, and progress is read from the entry's merge-group head; `cause: progress_unobservable` means that head could not be read. `queued` has one other shape, which is no armed head at all: `cause: exit_unconfirmed` is a PR the last poll saw out of the queue and unarmed, its ejection or disarm short of its confirmation count, so nothing is armed to fire on its own. `armed_awaiting_checks` is armed, not enqueued, with no failed check at the wait's last check read: `merge-pr.md` § 5 step 1 waits again on the same head, spending no recovery cycle, until `QUEUE_WAIT_ARMED_MINUTES` (default 90) of wall clock hands it back. `armed_blocked` is armed and never to be enqueued: a failed check takes the recovery cycle, which `CI_FIX_MAX_CYCLES` bounds, and `cause: not_mergeable` is a last check read that passed with no entry, which `merge-pr.md` § 5 step 1 reads again before it routes. The wait reads the checks through one `verify-pr` read per `QUEUE_WAIT_PROBE_INTERVAL` (default 120 seconds), and only while a poll still fits after it before `--max-wait`; an answer that arrives past that budget is no reading. A deadline cause, `checks_pending`, `checks_unread` or `not_mergeable`, is therefore the last reading before the deadline, never a check verdict.
 
 A wait is a running waiter, never a session sitting at its prompt.
 
 ## Stacked pull requests
 
-`approval-wait` returns `unreviewable` (exit 1) when the deadline passes with no reviewer evidence and the PR's base sits outside the target set of the repo's automatic-review rulesets. Nothing was going to arrive on its own. Which bases draw an automatic review is per-repo configuration, read from the repo's rulesets: the github skill's `.agents/skills/github/references/automatic-review.md`.
+The review call requests Copilot on every head itself, so a stacked pull request whose base the repository's automatic-review rulesets do not target is requested like any other head; which bases those rulesets target is the github skill's [automatic-review.md](../../github/references/automatic-review.md). Merging the bottom of a stack retargets the next pull request onto the new base without moving its head: its head record and request stand, and its gate mode stays the one the item recorded. Where the new base's diff needs Copilot's review, push a new head, which takes its own request. A request that draws nothing falls back `cause=unconfirmed`, and the overseer's fallback approval decides the head.
 
-Work the chain in this order:
+## GitHub authentication
 
-1. Request the review by hand on the stacked PR. This is the remedy, not a workaround:
-
-   ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --item [STATE_KEY] --base-checkout [REVIEW_BASE_CHECKOUT]
-   ```
-
-   On `approval`, re-run the wait. On `fallback`, route as [Copilot requests](#copilot-requests) says, then re-run the wait. The request works on a base the automatic-review ruleset does not target.
-
-2. Merge the bottom of the stack. GitHub retargets the next PR onto the new base, but a retarget is not a documented review trigger: request the review by hand as in step 1, or push a new head where the rule's `review_on_push` is on, then re-run the wait.
-3. Fallback, only when the manual request draws nothing: close the PR and open a fresh one against the default branch. Close-and-open, never reopen — reopening re-arms the reviewer only on a PR it has already reviewed once, and does nothing for one it never reviewed.
-
-## Waiter auth ladder
-
-`approval-wait`, `queue-wait` and `ci-wait`, the failed-check probe `queue-wait` runs, share `scripts/lib/gh-auth.sh`, wrapping the GitHub skill's helpers: env-first, each candidate source probed at most once (an env token check killed at its bound is asked again once), exit `3` on hard auth failure. Summary in each `--help`; full ladder in [DEVELOPMENT.md § GitHub auth ladder](https://github.com/vanillagreencom/kendex/blob/main/skills/orch/DEVELOPMENT.md#github-auth-ladder).
+`verify-review`, `verify-pr` and `queue-watch` run `gh` as the calling process is authenticated, and select no token of their own. A refused read is an `unreadable` reply, or `queue-watch`'s `status: error` once its budget is spent, never a verdict. The runtime's watch selects its token once at its start: [DEVELOPMENT.md § GitHub auth ladder](https://github.com/vanillagreencom/kendex/blob/main/skills/orch/DEVELOPMENT.md#github-auth-ladder).
 
 ## Multi-PR watching
 
-The waiters above are single-PR blocking waits. For many PRs across a long horizon, the github skill ships `scripts/pr-watch.sh`, a needs-attention reducer; its contract is `pr-watch.sh --help`. The fleet watch (`oversee-watch`) runs it once per repository per long pass when the script is installed. Each pass reads GitHub's review state for every open PR, its unresolved threads, `reviewDecision`, auto-merge arm and merge-queue entry, and writes nothing. The fallback without it is per-PR `approval-wait`/`queue-wait`. `queue-wait` watches only the one PR it is given and only while it runs, so the fallback gives no standing view across PRs and no `awaiting-stale` report. A PR that no waiter watches warrants a manual read of `gh pr view [N] --json reviewDecision,autoMergeRequest` and its queue entry.
+The waits above are single-PR waits. For many PRs across a long horizon, the github skill ships `scripts/pr-watch.sh`, a needs-attention reducer; its contract is `pr-watch.sh --help`. The fleet watch, `orch-runtime watch run`, runs it once per repository per long pass when the script is installed. Each pass reads GitHub's review state for every open PR, its unresolved threads, `reviewDecision`, auto-merge arm and merge-queue entry, and writes nothing. The fallback without it is per-PR `verify-review` and `queue-watch`. `queue-watch` watches only the one PR it is given and only while it runs, so the fallback gives no standing view across PRs and no `awaiting-stale` report. A PR that no wait watches warrants a manual read of `gh pr view [N] --json reviewDecision,autoMergeRequest` and its queue entry.

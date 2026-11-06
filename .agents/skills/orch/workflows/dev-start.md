@@ -75,7 +75,7 @@ Then stamp the round and apply the cleanup condition in [references/skill-rules.
 
 A standing dev round (`.dev_round_id` not null, as a bundled group's predecessor leaves it) is reconciled before the new round supersedes it, so its admitted runs close with their words: write `[WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json` with the harness file tool as `{"op": "reconcile-round", "round_id": "[PRIOR_DEV_ROUND_ID]"}` and run it with the command below; a run its reply reports `live` keeps running under the superseded round.
 
-Mint the round through the runtime. Write `[WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json` with the harness file tool as `{"op": "begin-round", "kind": "dev"}`, then run it:
+Mint the round through the runtime. A hosted lane's `orch-runtime` is built by the provider's `create` on the host from the clone's sources; the launch refuses a host whose launch record names no built runtime. Write `[WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json` with the harness file tool as `{"op": "begin-round", "kind": "dev"}`, then run it:
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [WORKTREE_PATH]/tmp/orch-op-[ISSUE_ID].json

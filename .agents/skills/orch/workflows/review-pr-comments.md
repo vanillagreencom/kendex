@@ -36,7 +36,7 @@ On any `gh` or `github.sh` failure, report the error. `auto-recommended` retries
 
 ## 1. Fetch And Parse
 
-Triage what exists on the PR. The one bounded bot wait is [Copilot work in flight on the current head](../references/copilot-wait.md): run it before the `pr-data` read below. Skip that Copilot wait while the pull request is draft; triage its existing human threads. Other bots do not hold this read. Bot prose is never a gate: emoji reactions, sticky comments, and checklist text carry no gating weight.
+Triage what exists on the PR. No bot holds this read: Copilot's work in flight on the head holds the review gate's verdict instead ([gates.md § Copilot requests](../references/gates.md#copilot-requests)), so a thread Copilot posts after this read reaches the gate's next call as `comments`. Bot prose is never a gate: emoji reactions, sticky comments, and checklist text carry no gating weight.
 
 ```bash
 .agents/skills/github/scripts/github.sh pr-data "[PR_NUMBER]"
@@ -234,7 +234,7 @@ Read the round budget first. The cap governs what may be pushed, so it decides b
 .agents/skills/orch/scripts/orch-runtime state cap REVIEW_MAX_EXTERNAL_ROUNDS --item [ISSUE_ID]
 ```
 
-Its reply's `verdict` is `below` or `at-cap`, with `count` and `limit`, counting `pr_comment_review.iterations`. An `at-cap` verdict on `REVIEW_MAX_EXTERNAL_ROUNDS` ends the ordinary fix rounds on this PR. Two rules decide the pass. **At the cap the disposition is unconditional and the fix is what stops**: every thread is analyzed and gets its reply posted and resolved, on this pass and every later one, and what the cap forbids is the fix and the push that follows it. The **fix set** is what the rest of this section groups, records and delegates: the items marked Fixing, and **at the cap only the cap-exempt ones — a defect this diff itself introduces or arms and Step 0 does not exclude**. The pass then runs three steps, in order. **File first** — run § 6.2 for every item clearing its bar, invoked with its return recorded as `→ § 6.1` rather than § 6.2's usual `→ § 6.3`. **Then the exception**, the only fix delegation and the only push this pass makes; a fix the verification pass below triggers is part of it. **Then reply**, through the reply table below: `Tracked: [ISSUE_ID]` for a filed item, `Fixed in [SHA]` for one the exception fixed, `Declined: [REASON]` for the rest, which needs no issue. Resolve each thread as you reply, then → § 6.3 with § 6.2 already done.
+Its reply's `verdict` is `below` or `at-cap`, with `count` and `limit`, counting `pr_comment_review.iterations`. An `at-cap` verdict on `REVIEW_MAX_EXTERNAL_ROUNDS` ends the ordinary fix rounds on this PR: no ordinary fix round starts past the cap until the overseer, judging with the reply's `count` and `limit`, has appended one `ruling` row for the item through `orch-runtime state log append --fleet` ([oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules)). Two rules decide the pass. **At the cap the disposition is unconditional and the fix is what stops**: every thread is analyzed and gets its reply posted and resolved, on this pass and every later one, and what the cap forbids is the fix and the push that follows it. The **fix set** is what the rest of this section groups, records and delegates: the items marked Fixing, and **at the cap only the cap-exempt ones — a defect this diff itself introduces or arms and Step 0 does not exclude**. The pass then runs three steps, in order. **File first** — run § 6.2 for every item clearing its bar, invoked with its return recorded as `→ § 6.1` rather than § 6.2's usual `→ § 6.3`. **Then the exception**, the only fix delegation and the only push this pass makes; a fix the verification pass below triggers is part of it. **Then reply**, through the reply table below: `Tracked: [ISSUE_ID]` for a filed item, `Fixed in [SHA]` for one the exception fixed, `Declined: [REASON]` for the rest, which needs no issue. Resolve each thread as you reply, then → § 6.3 with § 6.2 already done.
 
 **Delegate the fix set.** Ensure the worktree exists (`worktree exists`/`worktree path`, creating with `--pr [PR_NUMBER]` when missing) and record the head the verification pass below diffs against, once per fix set:
 
@@ -391,7 +391,7 @@ Write `[REPLY_BODY]` with the harness file-write tool to `tmp/pr-reply-[THREAD_I
 
 PR-level comments and human-only threads stay deferred to § 7.
 
-This section counts the round and decides whether to loop; the cap is § 6.1's and is not re-applied here. Run [the bounded current-head Copilot wait](../references/copilot-wait.md) before the `pr-data` read below, except while the pull request is draft. This is the one exception to checking once without waiting for bots to re-review. Then check for comments that arrived while fixes were being applied and loop or exit.
+This section counts the round and decides whether to loop; the cap is § 6.1's and is not re-applied here. Check once, without waiting for bots to re-review, for comments that arrived while fixes were being applied, then loop or exit: a Copilot thread posted after this read reaches the review gate's next call as `comments`.
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime state increment --item [ISSUE_ID] /pr_comment_review/iterations
@@ -431,21 +431,11 @@ Auto-resolve every thread where a reply was posted; keep open only threads await
 
 ### 7.2 Copilot Head Route
 
-Run [the current-head Copilot wait](../references/copilot-wait.md) before the body check, any review request or any head notice in this step. Keep `[COPILOT_WAIT]` for the head routing below. Skip this wait when the step's skip rule below holds.
+Run [the review call](../references/gates.md#the-review-call) once before the body check and any head notice in this step, from `[WORKTREE_PATH]` with `[MARK_READY]` `false`, and keep its reply as `[REVIEW_READ]` for the routing below. Skip the call when the step's skip rule below holds.
 
-**Skip if** workflow state `pr_order` reads `open-first-returned`, `push-first` or `push-first-returned`, with no notice and no request. For `push-first-returned`, complete [submit-pr.md § 2 step 4](submit-pr.md#2-push-and-submit)'s ready-head request route first, including an already ready head with no request recorded. It changes the order to `push-first-pushed` before this wait. Other skipped orders still have the lane's `Review:` line pending and use submit's publication route. Copilot's review overview opens with one of three labels. It submits `Approved` as an `APPROVED` review. It submits `Changes recommended` and `Needs a closer look` as `COMMENTED`. It re-reads a head only on a review request, so a head its review left `COMMENTED` stays unapproved after the answers until one of the two routes below runs. Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). Resolve through that consumer base:
+**Skip if** workflow state `pr_order` reads `open-first-returned`, `push-first` or `push-first-returned`, with no notice and no request. For `push-first-returned`, complete [submit-pr.md § 2 step 4](submit-pr.md#2-push-and-submit)'s ready-head request route first, including an already ready head with no request recorded. It changes the order to `push-first-pushed` before this step's call. Other skipped orders still have the lane's `Review:` line pending and use submit's publication route. Copilot's review overview opens with one of three labels. It submits `Approved` as an `APPROVED` review. It submits `Changes recommended` and `Needs a closer look` as `COMMENTED`. It re-reads a head only on a review request, so a head its review left `COMMENTED` stays unapproved after the answers until one of the two routes below runs. Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing) and run the call through that consumer base.
 
-```bash
-env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]
-```
-
-A non-zero exit is no mode: report it and end this step. In both `off` and `approval`, bind the head before any approval-only exit:
-
-```bash
-env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
-```
-
-A non-zero exit, which is reported, ends this step. If this head differs from `[COPILOT_WAIT]`'s head, restart the current-head wait. Otherwise read every review of the pull request, oldest first, one id, login, `commit_id`, `state` and body per line:
+A refusal, or an `unreadable` reply with no `mode`, is no mode: report it and end this step. In both `off` and `approval`, bind the reply's `head` as `[HEAD_SHA]` before any approval-only exit. On `approval` the call has requested Copilot on a head with no verdict standing, and its `request` says what the head's record holds. Then read every review of the pull request, oldest first, one id, login, `commit_id`, `state` and body per line:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY gh api --paginate 'repos/{owner}/{repo}/pulls/[PR_NUMBER]/reviews' --jq '.[] | [.id, .user.login, .commit_id, .state, .body] | @tsv'
@@ -457,44 +447,34 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh api --paginate 'repos/{owner}/{repo}/pull
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh -C "[WORKTREE_PATH]" check-review-replies [PR_NUMBER]
 ```
 
-A `head=` other than `[HEAD_SHA]` restarts this § 7.2 from its current-head wait and head/reviews reads. On exit `1` with `suppressed-entry` lines, save `[HEAD_SHA]` as `[BODY_REVIEW_HEAD]` in the new pass's context before looping to § 2. Carry that saved head with each entry's original source identity through analysis, reporting and publication; later head reads and fix pushes never replace it. Each entry is an item: `source_type: "review-body"`, `source_id: "[file:line]"`, and the finding's text from the review at `[BODY_REVIEW_HEAD]` in the reviews read above. This pass uses §§ 5–6, including Recurrence before the cap, the fix set, verification and cause records; § 6.3 posts its body replies and counts the pass once. After § 6.3 completes that pass, restart this § 7.2 from its current-head wait, head/reviews reads and route selection, including the body check again. The pushed head's body findings enter their own pass with that head saved as its source. Keep handled body items with their source-reviewed heads for the skip decision and notices. Complete § 8 before returning to the caller with the current head and whether the pass pushed; discard every route selected before the pass. Other exit `1` rules use the reply rewrite in [submit-pr.md § 6.1 Merge Gates](submit-pr.md#61-merge-gates). Under the thread lines of a `copilot-declined-unchanged` or `copilot-fallback` notice, one line per body finding gives its `path:line` and the answering comment's URL, and one line names the id of each Copilot review at `[HEAD_SHA]` from the reviews read. No notice goes out, and no step ends on an approved head, before an exit `0`. Exit `2` reached no verdict: report its first stderr line and send nothing.
+A `head=` other than `[HEAD_SHA]` restarts this § 7.2 from its review call and reviews read. On exit `1` with `suppressed-entry` lines, save `[HEAD_SHA]` as `[BODY_REVIEW_HEAD]` in the new pass's context before looping to § 2. Carry that saved head with each entry's original source identity through analysis, reporting and publication; later head reads and fix pushes never replace it. Each entry is an item: `source_type: "review-body"`, `source_id: "[file:line]"`, and the finding's text from the review at `[BODY_REVIEW_HEAD]` in the reviews read above. This pass uses §§ 5–6, including Recurrence before the cap, the fix set, verification and cause records; § 6.3 posts its body replies and counts the pass once. After § 6.3 completes that pass, restart this § 7.2 from its review call, reviews read and route selection, including the body check again. The pushed head's body findings enter their own pass with that head saved as its source. Keep handled body items with their source-reviewed heads for the skip decision and notices. Complete § 8 before returning to the caller with the current head and whether the pass pushed; discard every route selected before the pass. Other exit `1` rules use the reply rewrite in [submit-pr.md § 6.1 Merge Gates](submit-pr.md#61-merge-gates). Under the thread lines of a `copilot-declined-unchanged` or `copilot-fallback` notice, one line per body finding gives its `path:line` and the answering comment's URL, and one line names the id of each Copilot review at `[HEAD_SHA]` from the reviews read. No notice goes out, and no step ends on an approved head, before an exit `0`. Exit `2` reached no verdict: report its first stderr line and send nothing.
 
 `off` ends this step only after the body check exits `0`, per [Gate-mode routing](../references/gates.md#gate-mode-routing). On `approval`, skip the remaining approval routing only if neither a thread nor a review-body item this triage handled is Copilot's and the body check exits `0`.
 
 A line whose `commit_id` is `[HEAD_SHA]` and whose `state` is `APPROVED` ends this step after the body check's exit `0`: the head is already approved. Every Copilot thread is answered and resolved by now. The route is whether the head moved since the `commit_id` of the last `copilot-pull-request-reviewer[bot]` line, the last head Copilot read:
 
 - **Head unmoved.** Copilot read this head, so each answer stands on code it saw. Send the notice below, first line `copilot-declined-unchanged PR #[PR_NUMBER] head [HEAD_SHA]`. Under it, one line per thread `github.sh pr-threads [PR_NUMBER]` lists with `author` `copilot-pull-request-reviewer` gives its `id`, its location and the reply that answered it, a decline's reason included. Request no Copilot re-review. The overseer approves the head under [copilot-head-notices.md](../references/copilot-head-notices.md).
-- **Head moved**, by a push for any reviewer's thread or body finding. If `[COPILOT_WAIT]` names `[HEAD_SHA]` with a `run` other than `none`, that in-flight run counts as the request: record the head below, send no second request, and start the existing approval wait. Otherwise, unless the head already equals `pr_approval.copilot_rerequest_head`, request one Copilot re-review, record that head, then wait on it through [Waiter launch](../references/waiter-launch.md). A head already recorded with no work observed gets no second request, no wait and no notice: the overseer's `awaiting-stale` rule decides it.
+- **Head moved**, by a push for any reviewer's thread or body finding. The step's review call requested Copilot on this head unless a request already stood on it, and `[REVIEW_READ]`'s `request` names what the head's record holds. `requested`, or `existing`, is the head's request or Copilot's work on it: wait on it below. A `fallback` starts no wait. In a lane, a `fallback` whose `request.recorded_now` is true sends the `copilot-fallback` notice below, first line `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA] cause=[CAUSE]` and the line under it as [Copilot requests](../references/gates.md#copilot-requests) sets, which asks for the overseer's fallback approval; `draft` and `refresh` send none.
 
-  Only the route that needs a new request runs this command:
-
-  ```bash
-  env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --item [ISSUE_ID] --base-checkout [REVIEW_BASE_CHECKOUT]
-  ```
-
-  For a new request, route the answer per [Copilot requests](../references/gates.md#copilot-requests) before recording the head or starting the wait. On `fallback`, record the head and start no wait. Under `cause=refused`, send the notice `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA] [CAUSE]`, `[CAUSE]` and the line under it as that section sets, which asks for the overseer's fallback approval; under `cause=off` send nothing, since the caller's approval wait sends it.
+  Wait on the head through [the review wait](../references/gates.md#the-review-call), with the call run so that a silent head ends `timeout` and never `proceeded`:
 
   ```bash
-  .agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /pr_approval/copilot_rerequest_head [HEAD_SHA]
+  env PR_REVIEW_ON_TIMEOUT=block .agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request "[WORKTREE_PATH]/tmp/verify-review-request-[ISSUE_ID].json"
   ```
 
-  ```bash
-  env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode approval --on-timeout block --item [ISSUE_ID] --base-checkout [REVIEW_BASE_CHECKOUT]
-  ```
+  On a `complete` reply, compare its `head` with `[HEAD_SHA]`: a different head restarts this § 7.2 from its review call. Otherwise read the reviews again. A `copilot-pull-request-reviewer[bot]` line whose `commit_id` is `[HEAD_SHA]` is the re-review, since none existed when the request went out:
 
-  Exit `5` with the log line `<waiter>: mail=<count>` or `<waiter>: mail-unreadable=<path>` is no verdict: run `.agents/skills/mailbox/scripts/lane-mail inbox --item [ISSUE_ID]`, act on what it prints, then launch the wait again. On any other answer, bind the head again; if it changed, restart this § 7.2 from its current-head wait. Otherwise read the reviews again. A `copilot-pull-request-reviewer[bot]` line whose `commit_id` is `[HEAD_SHA]` is the re-review, since none existed when the request went out:
-
-  | Answer | Copilot's review at `[HEAD_SHA]` | Then |
-  |--------|----------------------------------|------|
+  | Verdict | Copilot's review at `[HEAD_SHA]` | Then |
+  |---------|----------------------------------|------|
   | `comments` | any | Update the baseline and loop to § 1 for the new thread as § 6.3 does; this section then routes the head again |
   | `approved` | `APPROVED` | Run the body check above; on its exit `0`, notice `copilot-approved-on-rerequest PR #[PR_NUMBER] head [HEAD_SHA]` |
   | `approved` | none or not `APPROVED` | No notice: another reviewer approved the head |
   | `copilot-error` | error answer | Route as [Copilot requests](../references/gates.md#copilot-requests) says. The caller keeps the approval gate unmet and waits for the overseer approval |
   | `timeout` | present, not `APPROVED` | Copilot read the head again and left no open thread. Notice `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA]`, which asks for the overseer's fallback approval |
   | `timeout` | none | No notice: the overseer's `awaiting-stale` rule decides the head |
-  | any other | any | No notice: the caller's own approval wait routes it |
+  | any other | any | No notice: the caller's own review wait routes it |
 
-**Notice.** In a lane, write it with the harness file-write tool to `[WORKTREE_PATH]/tmp/copilot-head-[ISSUE_ID].md` and send it with `.agents/skills/mailbox/scripts/lane-mail notice --item [ISSUE_ID] --file [WORKTREE_PATH]/tmp/copilot-head-[ISSUE_ID].md`. Outside a lane no overseer reads a notice, and the caller's own approval wait decides the head.
+**Notice.** In a lane, write it with the harness file-write tool to `[WORKTREE_PATH]/tmp/copilot-head-[ISSUE_ID].md` and send it with `.agents/skills/mailbox/scripts/lane-mail notice --item [ISSUE_ID] --file [WORKTREE_PATH]/tmp/copilot-head-[ISSUE_ID].md`. Outside a lane no overseer reads a notice, and the caller's own review wait decides the head.
 
 ### 7.3 Present And Await
 

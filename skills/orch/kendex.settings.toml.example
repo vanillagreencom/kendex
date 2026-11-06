@@ -122,13 +122,8 @@ REVIEW_GATE_REFRESH_BRANCH = ""
 # Required when REVIEW_GATE_REFRESH_REVIEW is overseer.
 REVIEW_GATE_REFRESH_AUTHOR = ""
 
-# Seconds to keep waiting for the build to start before treating its
-# absence as a failure. Raise it where a build needs approval before it
-# begins. A value that is not a whole number of seconds waits the default.
-CI_WAIT_NO_CHECKS_GRACE = "600"
-
-# Default CI wait budget in seconds. Set it above the longest required job's
-# run time. A positional max_wait overrides this setting.
+# Budget in seconds of a workflow's CI wait, the repeated verify-pr call.
+# Set it above the longest required job's run time.
 CI_WAIT_MAX_SECS = "600"
 
 # How many times a lane may try to fix a failing build before a person
@@ -228,12 +223,11 @@ ORCH_TMUX_VERIFY_SECS = "15"
 
 # Seconds the orch-runtime stop waits after SIGTERM before SIGKILL when it
 # ends a lane's recorded process tree, applied again after SIGKILL, so a stop
-# can take up to twice this before it gives up. This is not the legacy
-# lane-close meaning: lane-close reads this key as the bound on the pane-exit
-# wait after its stop signals once. The legacy meaning cannot apply to the
-# runtime stop, which has no separate pane-exit wait: it signals the recorded
-# process tree directly and waits for it to die. During coexistence both
-# readers share the key; set it to the grace you want each signal to allow.
+# can take up to twice this before it gives up. lane-close reads the same key
+# as the bound on its pane-exit wait after its stop signals once; the runtime
+# stop has no separate pane-exit wait, since it signals the recorded process
+# tree directly and waits for it to die. Set it to the grace you want each
+# signal to allow.
 # ORCH_LANE_CLOSE_SECS = "15"
 
 # The tmux session every lane window opens in. Unset, a fleet launch uses the

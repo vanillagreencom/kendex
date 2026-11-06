@@ -1,6 +1,6 @@
 # Waiter launch
 
-Load from the workflow or reference that launches a waiter: `submit-pr.md`, `ci-fix.md`, `merge-pr.md`, `merge-attempt.md`, `review-pr-comments.md` or `copilot-wait.md` before running `approval-wait`, `copilot-wait`, `queue-wait`, `lane-mail wait` or a `verify-pr` call (`orch-runtime op`), and `watch-delivery.md` before a registered session launches the repeat watch. Start each long waiter through the orch job runner, `.agents/skills/orch/scripts/lib/job-unit.sh` ([job-units.md](job-units.md)). Keep the lane active until its completion file arrives. Never start the waiter as a harness background command.
+Load from the workflow or reference that launches a waiter: `submit-pr.md`, `ci-fix.md`, `merge-pr.md`, `merge-attempt.md`, `review-pr-comments.md`, `skill-rules.md` or `codex-runtime.md`, before a review wait or a `verify-pr` call (`orch-runtime op`), `queue-watch`, `lane-mail wait`, or a Codex artifact watchdog or reviewer. Start each long waiter through the orch job runner, `.agents/skills/orch/scripts/lib/job-unit.sh` ([job-units.md](job-units.md)). Keep the lane active until its completion file arrives. Never start the waiter as a harness background command.
 
 ## Launch
 
@@ -15,7 +15,7 @@ run_dir=${run_path%/*}
 .agents/skills/orch/scripts/lib/job-unit.sh launch "${run_path##*/}-${run_dir##*/waiter.}" "$run_path.runner" -- sh -c 'sed -n "s/^line=//p" "$0.runner" > "$0.log"; "$@" >> "$0.log" 2>&1; printf "%s\n" "$?" > "$0.exit"' "$run_path" "$@" < /dev/null
 ```
 
-The job is the launch shell, whose argv carries the run path as its own word and which leads the process group of everything the job starts. `[WORD]` is the run path's last word (`wait` or `watch`). The job's name, job-units.md's `NAME`, is `[WORD]-[RUN_ID]`, so every launch, a takeover's among them, names a unit no other launch has. The launch passes no `--cap`: each waiter ends on its own budget, a `verify-pr` call ends when the operation answers, and the repeat watch runs until it is stopped. The runner records how the job runs in `[RUN_DIR]/[WORD].runner`, and the launch shell writes that record's runner line as the first line of `[RUN_DIR]/[WORD].log`.
+The job is the launch shell, whose argv carries the run path as its own word and which leads the process group of everything the job starts. `[WORD]` is the run path's last word: `wait`, or `review` for a [process-owned Codex reviewer](codex-runtime.md#process-owned-reviewers). The job's name, job-units.md's `NAME`, is `[WORD]-[RUN_ID]`, so every launch names a unit no other launch has. The launch passes no `--cap`: each waiter ends on its own budget, a `verify-pr` or review call ends when the operation answers, and `queue-watch` ends at its `--max-wait`. The runner records how the job runs in `[RUN_DIR]/[WORD].runner`, and the launch shell writes that record's runner line as the first line of `[RUN_DIR]/[WORD].log`.
 
 The runner adds no signal ignore of its own, where a job a non-interactive shell starts with `&` ignores INT and QUIT, which leaves a detached guard or waiter uninterruptible and makes its signal rows report false failures. Under `setsid` a signal the calling process already ignores stays ignored; a unit starts from the manager's dispositions, with SIGPIPE at its default.
 
@@ -50,4 +50,4 @@ cat "[RUN_DIR]/wait.exit"
 cat "[RUN_DIR]/wait.log"
 ```
 
-The completion file contains the waiter's exit code. Route that code and the log's final result through the calling workflow; a waiter's exit `5` has no result and takes the workflow's exit-5 route, and a `verify-pr` call's log is the operation's JSON reply, routed by its `result.status`. A nonzero code stays nonzero. A confirmed stopped process with no completion file has no verdict; report the interruption and confirm that no waiter for this PR remains before any workflow-authorized retry. Never replace the waiter with manual GitHub polls or short foreground slices.
+The completion file contains the waiter's exit code. Route that code and the log's final result through the calling workflow; the log of a `verify-pr` or review call, or of `queue-watch`, is the runtime's JSON reply, routed by its `result.status`. A nonzero code stays nonzero. A confirmed stopped process with no completion file has no verdict; report the interruption and confirm that no waiter for this PR remains before any workflow-authorized retry. Never replace the waiter with manual GitHub polls or short foreground slices.

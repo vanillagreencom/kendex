@@ -2,7 +2,7 @@
 
 Verify the merge conditions and merge PR(s).
 
-Run every long `approval-wait` and `queue-wait` below, and each `verify-pr` call of [Merge attempt](../references/merge-attempt.md), through [Waiter launch](../references/waiter-launch.md). `approval-wait --resolve-mode` runs directly, not through that launch. Exit `5` from `approval-wait` or `queue-wait`, with the log line `<waiter>: mail=<count>` or `<waiter>: mail-unreadable=<path>`, is no verdict: run `.agents/skills/mailbox/scripts/lane-mail inbox --item [STATE_KEY]`, act on what it prints, then launch the same waiter again in a fresh run directory; route every other exit as written below. A `verify-pr` call has no exit `5`; Merge attempt routes its reply.
+Run each review wait and each `queue-watch` below, and each `verify-pr` call of [Merge attempt](../references/merge-attempt.md), through [Waiter launch](../references/waiter-launch.md); a [review call](../references/gates.md#the-review-call) that reads only the mode or the request runs directly. Route each reply as written below; Merge attempt routes `verify-pr`'s.
 
 | Command | Flow |
 |---------|------|
@@ -88,18 +88,15 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --
 .agents/skills/orch/scripts/orch-runtime state set --item [STATE_KEY] /post_pr_stop null
 ```
 
-**Ready-head review request.** Bind `[REVIEW_BASE_CHECKOUT]` by [Gate-mode routing](../references/gates.md#gate-mode-routing). Before each readiness check, request an open ready head through the existing owner. This includes a cloud PR whose request run skipped its draft opening. The owner reads this item's saved error retry outcome. It preserves a completed retry or fallback, an active request or a completed Copilot review at that head. A skipped request run supplies no such work. Never close and reopen a PR to request review.
+**Ready-head review request.** Bind `[REVIEW_BASE_CHECKOUT]` by [Gate-mode routing](../references/gates.md#gate-mode-routing). Before each readiness check, run [the review call](../references/gates.md#the-review-call) once from `[MAIN_REPO_ROOT]`, `[MARK_READY]` `false`, on an open ready head. This includes a cloud PR whose lane requested no review. Under `approval` the call requests a head no request is recorded on and reads the head's record for the rest: a completed retry or fallback, an active request or a completed Copilot review at that head stands, and nothing is requested twice. Never close and reopen a PR to request review.
 
 ```bash
 if ! MERGE_PR_OPEN_READY="$(env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json state,isDraft --jq '.state == "OPEN" and .isDraft == false')"; then
   exit 1
 fi
-if [[ "$MERGE_PR_OPEN_READY" == true ]]; then
-  env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --item [STATE_KEY] --base-checkout [REVIEW_BASE_CHECKOUT]
-fi
 ```
 
-Route the request answer by [Copilot requests](../references/gates.md#copilot-requests) before any review wait. A nonzero exit stops this pass. Draft, closed and merged PRs send no request.
+Run the call only where `MERGE_PR_OPEN_READY` reads `true`: draft, closed and merged PRs send no request. Route its `request` by [Copilot requests](../references/gates.md#copilot-requests) before any review wait. A refusal or an `unreadable` reply stops this pass.
 
 Read `[CHECK_HEAD]` before each readiness check:
 
@@ -130,24 +127,20 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --j
 The following conditions are merge gates, not advice:
 
 - **Open review threads** — not a `CHECK` field: run § 3.3 before the `not_approved` wait.
-- **`not_approved`** — resolve the gate mode the pull request's base sets ([references/gates.md](../references/gates.md)). A non-zero exit is no mode: report it and stop.
+- **`not_approved`** — read the gate mode through [the review call](../references/gates.md#the-review-call), run from `[MAIN_REPO_ROOT]`: its `mode` is the item's recorded one ([references/gates.md](../references/gates.md#gate-mode-routing)). A refusal, or an `unreadable` reply with no `mode`, is no mode: report it and stop.
 
-  ```bash
-  env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]
-  ```
-
-  Route on the printed `GATE_MODE`:
+  Route on its `mode`:
 
   - `off` — informational; never gate or wait.
-  - `approval` — a GitHub-native approval verdict is required. Without it, do not auto-merge: poll `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode approval --item [STATE_KEY] --base-checkout [REVIEW_BASE_CHECKOUT]`; after its budget, `auto-recommended` records `review-gate-unmet`, while `ask` presents the wait or stop choice.
+  - `approval` — a GitHub-native approval verdict is required. Without it, do not auto-merge: wait through [the review wait](../references/gates.md#the-review-call), repeating the call while it answers `pending`; at a `timeout`, `auto-recommended` records `review-gate-unmet`, while `ask` presents the wait or stop choice.
 
   A `copilot-error` answer routes as [Copilot requests](../references/gates.md#copilot-requests) says, then re-runs this wait. It is never a met approval gate.
 
-  A `comments` answer (exit 1) is an open thread: run § 3.3, then this wait again.
+  A `comments` answer is an open thread: run § 3.3, then this wait again.
 
-  With `PR_REVIEW_ON_TIMEOUT=proceed`, a deadline reached with zero unresolved threads and no reviewer evidence returns `proceeded` (exit 0) instead of `timeout` — treat it as a met gate and record it in the § 6 report. An open thread answers `comments` instead; a `changes_requested` blocked earlier, at § 3.2's readiness check. The proceed is a LOCAL verdict — orch posts no status.
+  With `PR_REVIEW_ON_TIMEOUT=proceed`, a period spent with zero unresolved threads and no reviewer evidence returns `proceeded` instead of `timeout` — treat it as a met gate and record it in the § 6 report. An open thread answers `comments` instead; a `changes_requested` blocked earlier, at § 3.2's readiness check. The proceed is a LOCAL verdict — orch posts no status.
 
-  An `unreviewable` status is never a met gate: no automatic reviewer targets this PR's base, so the silence is structural. Follow [references/gates.md](../references/gates.md) § Stacked pull requests, then re-run the wait. If it repeats, `auto-recommended` records `review-gate-unreviewable`, while `ask` presents the wait or stop choice.
+  A `blocked` answer is never a met gate: a regression-against-main blocker stands open on the item ([references/gates.md](../references/gates.md#which-waiter-answers-which-state)). Record `review-regression-open`, gate `review`, naming the location its `reason` reads, and hand back. An `unreadable` answer re-runs the call once; a second records `review-gate-read-failed`.
 
   Stop waiting for a missing gate verdict while workflow state carries `pr_approval.forced`, which `submit-pr.md` § 4's `Force merge` sets for the item and no push clears; the prepared head then takes § 5's `--auto` arm.
 
@@ -257,13 +250,9 @@ Use the output as `MAIN_REPO_ROOT`.
    .agents/skills/orch/scripts/item-tier --base [PREPARED_BASE] --head [PREPARED_HEAD] --repo [WORKTREE_PATH]
    ```
 
-   Bind `[REVIEW_BASE_CHECKOUT]` to that consumer base, per [Gate-mode routing](../references/gates.md#gate-mode-routing), and resolve its mode:
+   Bind `[REVIEW_BASE_CHECKOUT]` to that consumer base, per [Gate-mode routing](../references/gates.md#gate-mode-routing), and read the gate mode through [the review call](../references/gates.md#the-review-call), run once from `[MAIN_REPO_ROOT]`, `[MARK_READY]` `false`; on `approval` the call also requests Copilot on `[PREPARED_HEAD]` where no verdict stands.
 
-   ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]
-   ```
-
-   A `[MICRO_ENTRY]` run continues only where the `item-tier` answer is `tier=micro`, the gate mode is `approval`, AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`: a retarget can change the class or the base's approval rule without moving the head, so the fresh answers carry the micro tier and the head says it is the same run. Any other answer arms nothing and escapes by micro.md condition 8.
+   A `[MICRO_ENTRY]` run continues only where the `item-tier` answer is `tier=micro`, the reply's `mode` is `approval`, AND `[MICRO_HEAD]` equals `[PREPARED_HEAD]`: a retarget can change the class without moving the head, so the fresh class answer carries the micro tier, the head says it is the same run, and the gate mode is the one the item recorded. Any other answer arms nothing and escapes by micro.md condition 8.
 
    **Restack proof.** Run the proof block at [merge-pr-restack.md step 3](merge-pr-restack.md#merge-pr-restack-cycle), with this step's `[WORKTREE_PATH]`, `[STATE_KEY]` and `[PREPARED_HEAD]`, before either merge route. Keep the owner's `validation-proof=` line with the merge decision. A nonzero exit records `validation-proof-missing` and takes § 1's stop and unarm route. A CI answer stays pending until the existing exact-head CI wait or queue proves it.
 
@@ -271,7 +260,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    **Who acts.** The lane merges its own PR under the token the `github.sh` router selects, the lanes app's installation token in a lane sandbox. An emergency merge exists only in a consumer whose ruleset lists the overseer's GitHub App as a bypass actor, and is that app's alone. A merge group that cannot pass because a CI input read from the default branch broke takes the recovery route in review-gate's `SKILL.md` § 4. Operations.
 
-   **The direct attempt.** Follow [merge-attempt.md](../references/merge-attempt.md#direct-attempt) for the approved-head CI wait, its pending bound, the exact-head attempt and exit routing. Its exit `75` enters the queue-wait block below.
+   **The direct attempt.** Follow [merge-attempt.md](../references/merge-attempt.md#direct-attempt) for the approved-head CI wait, its pending bound, the exact-head attempt and exit routing. Its exit `75` enters the `queue-watch` block below.
 
    **Record the merge decision.** After each attempt here or in [submit-pr.md](submit-pr.md) § 2 step 5, apply [merge-attempt.md § Record the merge decision](../references/merge-attempt.md#record-the-merge-decision) before routing its exit.
 
@@ -283,17 +272,17 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Exit `0` merged the prepared head immediately — continue to step 2. Exit `1` with a diagnostic line starting `arm: no-merge-gate=<condition>`, including after a `merge-route:` line, means the arm armed nothing and names why: on § 3.2's `unknown:` path record `merge-readiness-unresolved`; otherwise take the direct attempt above, whose exit `75` routes a base that still queues the PR, and never fall back to a raw `gh pr merge --auto`. Any other exit but `0` or `75` is an exact-head arm failure: surface it and return to § 3.2.
 
-   Exit `75` means queued or armed. Run the command below through [Waiter launch](../references/waiter-launch.md), under every gate mode. Keep the lane active while polling the completion file, then route the recorded exit and result. A changes-requested review blocked at § 3.2's readiness check, before this arm; past it no mode reads review state. The wait's late-findings guard reads the review threads while the PR is queued or armed, an armed PR GitHub holds before any queue entry included, and its `dequeued` verdict routes an open thread to Late-findings triage: a thread posted after this step's thread read.
+   Exit `75` means queued or armed. Run the queue watch below through [Waiter launch](../references/waiter-launch.md), under every gate mode. Keep the lane active while polling the completion file, then route the recorded exit and reply. A changes-requested review blocked at § 3.2's readiness check, before this arm; past it no mode reads review state. The wait's late-findings guard reads the review threads while the PR is queued or armed, an armed PR GitHub holds before any queue entry included, and its `dequeued` verdict routes an open thread to Late-findings triage: a thread posted after this step's thread read.
 
    ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] 180 540 --json --item [STATE_KEY]
+   [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/orch-runtime queue-watch --item [STATE_KEY] --repo [MERGE_REPO_SLUG] --pr [PR_NUMBER] --poll 180 --max-wait 540
    ```
 
-   Keep the budget above `QUEUE_WAIT_ARM_GRACE` (`queue-wait --help` § Environment), so a slow enqueue is not read as `not_queued`. The detached process does not depend on the harness's foreground timeout.
+   Keep the budget above `QUEUE_WAIT_ARM_GRACE` (default 120 seconds), so a slow enqueue is not read as `not_queued`. The detached process does not depend on the harness's foreground timeout.
 
-   Route a completed log's verdict through the table below. If the completion file records an exit other than `5` without a result object, report the exit and stop: `queue-wait --help` § Exit codes defines those failures. Follow [Waiter launch](../references/waiter-launch.md) § Completion when no exit is recorded.
+   Route a completed log's `result.verdict` and `result.cause` through the table below. An exit other than `0` is a refusal with its keyed line, a request outside its form (`queue-watch-invalid field=[FIELD]`, `verify-request-invalid field=repo`) among them: report it and stop. Follow [Waiter launch](../references/waiter-launch.md) § Completion when no exit is recorded.
 
-   Every wait in this sequence follows an exit `75`: GitHub reported the PR queued or armed. Each new wait resets its queue history (`queue-wait --help` § Verdicts). A later `not_queued` therefore means that arm cleared between waits, not that no arm occurred.
+   Every wait in this sequence follows an exit `75`: GitHub reported the PR queued or armed. The item's record keeps the wait's queue memory across waits for the same head and arm (`queue_watch`), so a PR that left the queue or lost its arm between two waits answers `ejected` or `disarmed` once confirmed; a new head, or a newer arm, starts a fresh memory.
 
    | `verdict` | Route |
    |-----------|-------|
@@ -301,25 +290,25 @@ Use the output as `MAIN_REPO_ROOT`.
    | `conflicting` | The guarded Restack cycle below |
    | `ejected` | Recovery cycle below, using the resolved gate mode and `[RECOVERY_COUNT]` |
    | `disarmed` | Recovery cycle below |
-   | `armed_blocked` | Armed, never enqueued, and GitHub will not enqueue it. `cause: check_failed` takes the Recovery cycle below. `cause: not_mergeable` means every check passed, so ci-fix has no failure to work: return to § 3 for a fresh readiness check, which names what keeps the PR out of the queue, spending no recovery cycle; a second `not_mergeable` on the same head hands back with that check's result |
+   | `armed_blocked` | Armed, never enqueued, and GitHub will not enqueue it. `cause: check_failed` takes the Recovery cycle below. `cause: not_mergeable` is the wait's last check read before its deadline, which passed with no entry standing, never a check verdict ([gates.md](../references/gates.md#which-waiter-answers-which-state)). Read the head's CI afresh with [merge-attempt.md](../references/merge-attempt.md#direct-attempt)'s `verify-pr` call: `fail` takes the Recovery cycle; `pending` waits again as `armed_awaiting_checks` does; `pass` or `none` returns to § 3 for a fresh readiness check, which names what keeps the PR out of the queue, spending no recovery cycle. A readiness check that passes on the same head arms and waits again under the wall-clock budget below; one that names a blocker routes it by § 3.2 |
    | `dequeued` | Late-findings triage below; on `cause: late_findings_dequeue_failed` confirm the dequeue or the disarm first |
    | `queued` | Unconfirmed at the deadline. With an entry (every cause but `exit_unconfirmed`) the PR is still armed: `cause: still_progressing` means the merge is live: run the wait again, and keep repeating until a verdict terminates it. `cause: progress_unobservable` means the queue entry's head could not be read, which is not evidence of an idle queue: run the wait again on the same head under the bound below, rather than straight into the Recovery cycle. `cause: blocked_by_entry_ahead` takes the Entry-ahead wait below, spending no recovery cycle. `cause: stalled` takes the Recovery cycle below. `cause: exit_unconfirmed` is not armed: the last poll saw the PR out of the queue and unarmed, short of the confirmation count (`unconfirmed_verdict` names which), so do not wait for it to merge; run the wait once more, which reads the arm afresh, and route its verdict |
-   | `armed_awaiting_checks` | Armed, not yet enqueued, no check failed: GitHub enqueues the PR when its required checks pass. Run the wait again on the same head, spending no recovery cycle, under the wall-clock budget below |
-   | `not_queued` | The arm this step made is gone — an ejection or a silent disarm — not a merge that never fired. Take the Recovery cycle below, where `ejected` and `disarmed` already go. Never re-arm here: the head's merge-group run has just failed, and re-arming it into a shared queue can eject the PRs batched with it |
+   | `armed_awaiting_checks` | Armed, not yet enqueued, no check failed: GitHub enqueues the PR when its required checks pass. Run the wait again on the same head, whose probe reads the checks afresh, spending no recovery cycle, under the wall-clock budget below |
+   | `not_queued` | `cause: never_armed`: no arm or entry was seen on this head within `QUEUE_WAIT_ARM_GRACE`, though exit `75` reported one, so the arm this step made is gone — an ejection or a silent disarm before the first poll — not a merge that never fired. Take the Recovery cycle below, where `ejected` and `disarmed` already go. Never re-arm here: the head's merge-group run has just failed, and re-arming it into a shared queue can eject the PRs batched with it |
    | `closed` | Hand back with the verdict; no replay |
    | `unknown` | Unrecognized, or `status: error` — a read failed and says nothing about the arm, which after exit `75` is usually still live. Unarm before handing back, by § 1's no-armed-hand-back rule. Hand back with the `error` and `cause` fields, and never re-arm |
 
    A `still_progressing` repeat has no limit. Keep the lane active until a terminal verdict; after a merge, run steps 2-6.
 
-   For `armed_awaiting_checks`, record the time of the first such result on this head and read the budget once:
+   For `armed_awaiting_checks`, and for `armed_blocked` with `cause: not_mergeable`, record the time of the first such result on this head and read the budget once:
 
    ```bash
    .agents/skills/orch/scripts/orch-env QUEUE_WAIT_ARMED_MINUTES 90
    ```
 
-   Repeat the wait while that many minutes have not passed since the recorded time; a new head, or any other verdict, clears the record. Past the budget, hand back with the last result's `pending_checks` (under `cause: checks_unread` there are none: say the check rollup was never read) and the minutes waited, skipping steps 2-6: the budget, not `CI_FIX_MAX_CYCLES`, bounds a wait on checks that have not failed.
+   Repeat the wait while that many minutes have not passed since the recorded time; a new head, or any verdict but those two, clears the record. Past the budget, hand back with the last result's `pending_checks` (under `cause: checks_unread` there are none: say the checks were never read inside the wait's budget) and the minutes waited, skipping steps 2-6: the budget, not `CI_FIX_MAX_CYCLES`, bounds a wait on checks that have not failed. No wait past the budget starts until the overseer, judging with the minutes waited, has appended one `ruling` row for the item through `orch-runtime state log append --fleet` ([oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules)).
 
-   **Entry-ahead wait**: save `queue_ahead_pr` as `[AHEAD_PR]`. Repeat the same `queue-wait [PR_NUMBER] 180 540 --json --item [STATE_KEY]` command above through Waiter launch. Route `merged`, `closed`, `dequeued` and `status: error` immediately through the table. For every other result, read whether the saved entry is still in the queue:
+   **Entry-ahead wait**: save `queue_ahead_pr` as `[AHEAD_PR]`. Repeat the same `queue-watch` command above through Waiter launch. Route `merged`, `closed`, `dequeued` and `status: error` immediately through the table. For every other result, read whether the saved entry is still in the queue:
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh api graphql -f query='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { isInMergeQueue mergeQueueEntry { position } } } }' -F owner=[MERGE_REPO_OWNER] -F repo=[MERGE_REPO_NAME] -F number=[AHEAD_PR]
@@ -333,7 +322,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Read `state` first: `MERGED` continues to step 2; `CLOSED` hands back. On an open PR, `mergeable: CONFLICTING` takes the guarded Restack cycle. Every other mergeable value repeats the original wait and routes its fresh verdict through the table. This cause never enters the Recovery cycle.
 
-   For `progress_unobservable`, repeat once on the same head. A second consecutive `progress_unobservable` takes the Recovery cycle, as `stalled` does. Keep the lane active for steps 2-6. The progress counts in `queue-wait --help` report what the wait could read; neither gates the route.
+   For `progress_unobservable`, repeat once on the same head. A second consecutive `progress_unobservable` takes the Recovery cycle, as `stalled` does. Keep the lane active for steps 2-6. The reply's progress counts, `progress_head_polls`, `progress_check_reads` and `last_running_count`, report what the wait could read; none gates the route.
 
    **Recovery cycle** — route the failure back into ci-fix, never fix CI by hand:
 
@@ -341,13 +330,13 @@ Use the output as `MAIN_REPO_ROOT`.
    .agents/skills/orch/scripts/orch-runtime state cap CI_FIX_MAX_CYCLES
    ```
 
-   Its reply's `limit` is `[MAX_CYCLES]`, the recovery cycles per merge-pr run. At the cap, report the failing check names, ci-fix's last error summary, and what each cycle attempted — never a bare "persistent failure" — then skip steps 2-6 and hand back. Gate or CI behavior changes need a fresh head. **The re-queue rule**, which every other workflow points to: after a merge-group run concludes `failure` or `timed_out`, re-arm only a new head, the fix ci-fix pushes. A cancelled merge-group run, or one the infrastructure lost, may re-arm the same head once. An unchanged head never re-enters the queue after a red run: the merge-group run is the only proof of a head, and a re-run of the same head spends a full queue run on a known failure.
+   Its reply's `limit` is `[MAX_CYCLES]`, the recovery cycles per merge-pr run. At the cap, report the failing check names, ci-fix's last error summary, and what each cycle attempted — never a bare "persistent failure" — then skip steps 2-6 and hand back. No cycle starts past the cap until the overseer, judging with `[RECOVERY_COUNT]` and that `limit`, has appended one `ruling` row for the item through `orch-runtime state log append --fleet` ([oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules)). Gate or CI behavior changes need a fresh head. **The re-queue rule**, which every other workflow points to: after a merge-group run concludes `failure` or `timed_out`, re-arm only a new head, the fix ci-fix pushes. A cancelled merge-group run, or one the infrastructure lost, may re-arm the same head once. An unchanged head never re-enters the queue after a red run: the merge-group run is the only proof of a head, and a re-run of the same head spends a full queue run on a known failure.
 
    1. `⤵ workflows/ci-fix.md [PR_NUMBER] § 1-6 → § 5 step 1` with context `worktree`, `lifecycle: "managed"`, `issue_id`. For a queue ejection the failing run is the **merge-group** run (event `merge_group`), not necessarily the PR-head run — locate it via the failing check's run link or `gh run list --event merge_group --limit 10` and point ci-fix at it.
-   2. Re-confirm the gate at the head about to be re-armed, under the `GATE_MODE` ci-fix returned (skip under `off`):
+   2. Re-confirm the gate at the head about to be re-armed through [the review wait](../references/gates.md#the-review-call) with the shorter period, under the `GATE_MODE` ci-fix returned (skip under `off`), the call's request file written as that section does, `[MARK_READY]` `false`:
 
       ```bash
-      env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE] --item [STATE_KEY] --base-checkout [REVIEW_BASE_CHECKOUT]
+      env PR_REVIEW_WAIT_SECS=300 .agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request "[MAIN_REPO_ROOT]/tmp/verify-review-request-[STATE_KEY].json"
       ```
 
       A `copilot-error` answer takes [Copilot requests](../references/gates.md#copilot-requests), then re-runs this wait before re-arming.
@@ -468,7 +457,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    For `merge-pr all` or an explicit user request, also sweep the project. Check each local branch with `env -u GH_REPO -u GITHUB_REPOSITORY gh pr list --head [BRANCH] --base [BASE_BRANCH] --state all --json number,state,headRefOid,isCrossRepository`, and auto-delete only a branch with no worktree whose tip equals the `headRefOid` of one of its **merged**, non-cross-repository PRs — the predicate `worktree cleanup` applies. Neither state nor a merge into another base is the test: a closed PR merged nothing, a PR merged into a release or other side branch left its commit out of `[BASE_BRANCH]` with this ref possibly the last ordinary one holding it, and a merged PR whose head differs from the tip left the extra commits reachable from this ref alone. Leave every other branch alone, and ask before removing a stale worktree or a branch with no PR. Compare `ls [TREES_DIR]/` against `worktree list --porcelain` for orphan directories, asking before removing any.
 
-5. **Answer the threads the wait's guard did not catch.** GitHub's merge queue never re-checks thread resolution once a PR is admitted. `queue-wait`'s late-findings guard does, but on its own probe clock (`QUEUE_WAIT_PROBE_INTERVAL`, 120 seconds by default), so a finding landing inside that gap, or after the merge itself, rides the merge in. A PR [submit-pr.md](submit-pr.md) § 2 step 5 armed at creation has a wider gap, accepted: GitHub can enqueue it while the lane is still in submit-pr § 3-§ 6, and a thread posted between that enqueue and the guard step 1's queue wait starts rides the merge in the same way. Read the merged PR's unresolved threads once and answer each. Resolve the merge commit first — the queue merged a head this lane never saw:
+5. **Answer the threads the wait's guard did not catch.** GitHub's merge queue never re-checks thread resolution once a PR is admitted. `queue-watch`'s late-findings guard does, but on its own probe clock (`QUEUE_WAIT_PROBE_INTERVAL`, 120 seconds by default), so a finding landing inside that gap, or after the merge itself, rides the merge in. A PR [submit-pr.md](submit-pr.md) § 2 step 5 armed at creation has a wider gap, accepted: GitHub can enqueue it while the lane is still in submit-pr § 3-§ 6, and a thread posted between that enqueue and the guard step 1's queue wait starts rides the merge in the same way. Read the merged PR's unresolved threads once and answer each. Resolve the merge commit first — the queue merged a head this lane never saw:
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json mergeCommit --jq .mergeCommit.oid

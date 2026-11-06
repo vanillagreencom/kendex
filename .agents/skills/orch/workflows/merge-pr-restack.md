@@ -1,6 +1,6 @@
 # Merge-pr restack cycle
 
-Use this cycle for a `conflicting` queue-wait verdict, and for a `worktree-push-base-conflict` refusal that [submit-pr.md](submit-pr.md) § 2 step 1 routes here: steps 1-3, then continue that caller. Step 4 returns a merge caller to `merge-pr.md`. [§ Unarm at a stop](#unarm-at-a-stop) runs step 1 alone, to unarm a PR, and pushes or restacks nothing. A base conflict is not a CI failure.
+Use this cycle for a `conflicting` `queue-watch` verdict, and for a `worktree-push-base-conflict` refusal that [submit-pr.md](submit-pr.md) § 2 step 1 routes here: steps 1-3, then continue that caller. Step 4 returns a merge caller to `merge-pr.md`. [§ Unarm at a stop](#unarm-at-a-stop) runs step 1 alone, to unarm a PR, and pushes or restacks nothing. A base conflict is not a CI failure.
 
 With `ORCH_DELIVERY=push-base`, skip step 1 because no PR exists. Run step 2 through completion of the guarded restack and its rules reload. Before that step's validation, return to [submit-pr.md § 2.1](submit-pr.md#21-base-publication) from its entry. That shared route checks internal review, prepares, returns control for another rules reload, then validates and transports the exact prepared head against its pinned base. Skip step 3 and the remaining PR proof and merge steps. A failed restack, validation or transport hands back without a completion notice.
 
@@ -99,7 +99,7 @@ With `ORCH_DELIVERY=push-base`, skip step 1 because no PR exists. Run step 2 thr
    [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/worktree-push --record-restack-validation [RUN_DIR] --worktree [WT_PATH] --issue [ISSUE]
    ```
 
-   This command publishes nothing. Its timing write is advisory (`worktree-push --help`). A pass or a skip takes the proof read below with no second push, and a base that moves again returns through the next queue-wait verdict. `--no-rebase` cannot hold the head still here: that push carries none of the restack's force-with-lease authorization, and git refuses the rewritten branch as a non-fast-forward push.
+   This command publishes nothing. Its timing write is advisory (`worktree-push --help`). A pass or a skip takes the proof read below with no second push, and a base that moves again returns through the next `queue-watch` verdict. `--no-rebase` cannot hold the head still here: that push carries none of the restack's force-with-lease authorization, and git refuses the rewritten branch as a non-fast-forward push.
 
    **Restack proof.** Before either caller resumes, bind `[WORKTREE_PATH]` to `[WT_PATH]`, `[STATE_KEY]` to `[ISSUE]` and `[PREPARED_HEAD]` to the pushed head. Read the current head's recorded skip. Where one stands, ask the runtime whether the item's proof rows prove the pushed head: a pass at its tree over the new base, or the run the skip is equivalent to, read by the head (`restack-skip` owns the equivalence; the reader takes the skip's validated run as the tree's). A range pass counts where the project declares a range command and no CI context; a full pass covers the tree whole. A reused tree alone supplies no passing validation. This read starts no validation:
 
@@ -124,7 +124,7 @@ With `ORCH_DELIVERY=push-base`, skip step 1 because no PR exists. Run step 2 thr
 
 ## Unarm at a stop
 
-A PR [submit-pr.md](submit-pr.md) § 2 step 5 armed at creation stays armed until something unarms it, and a lane that stops leaves it to merge with no queue-wait guard and none of [merge-pr.md](merge-pr.md) § 5 steps 2-6. So every run that ends without a merged PR takes this section first: [submit-pr.md](submit-pr.md) § 2 step 5 on a refused re-arm, a `MERGE_READY = false` stop at [submit-pr.md](submit-pr.md) § 6.1, and every [merge-pr.md](merge-pr.md) hand-back. The caller supplies `[STATE_KEY]` and `[STOP_DIR]`, the directory its own stop route renders into.
+A PR [submit-pr.md](submit-pr.md) § 2 step 5 armed at creation stays armed until something unarms it, and a lane that stops leaves it to merge with no `queue-watch` guard and none of [merge-pr.md](merge-pr.md) § 5 steps 2-6. So every run that ends without a merged PR takes this section first: [submit-pr.md](submit-pr.md) § 2 step 5 on a refused re-arm, a `MERGE_READY = false` stop at [submit-pr.md](submit-pr.md) § 6.1, and every [merge-pr.md](merge-pr.md) hand-back. The caller supplies `[STATE_KEY]` and `[STOP_DIR]`, the directory its own stop route renders into.
 
 Run step 1 above on the PR. It reads the live arm and queue membership and unarms in its order; a PR it finds neither armed nor queued needs nothing. A hand-back means its final read still found the PR armed or queued: run step 1 once more. A second hand-back replaces the caller's stop with one saying the PR is still armed, which `record` writes over any earlier stop and every later `record-if-empty` keeps, and the run ends there:
 

@@ -4,7 +4,7 @@ At [overseer takeover § 2](../workflows/oversee-takeover.md#2-claim-and-follow-
 
 Oversight stands from the first watch launch until oversee.md § 5 Stop, and every watch line reaches this session as it is written, through the runtime's own event mechanism. Where the runtime has no asynchronous wake, the turn is the wait: hold a blocking follow of the watch log, re-arm it on every return, and never end the turn while any lane record is `running`.
 
-The watch is the orch runtime's standing scheduler under the `oversee-watch` entry, claimed by its process identity in `oversee-watch.pid` beside the fleet state; `oversee launch` starts it through the runtime's `start-controller`, and a `register`ed session starts it with the command [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) states. It survives the session's exit, a succession and death or wall recovery, nothing hands it over, and the successor follows the same log.
+The watch is the orch runtime's standing scheduler, `orch-runtime watch run`, claimed by its process identity in `oversee-watch.pid` beside the fleet state. A controller `start-controller` opens has its watch from the start: the request carries the watch's words, and the runtime launches them detached before it publishes the start, a watch that refuses or never claims leaving the start `unconfirmed`. A `register`ed session starts it with the block [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) states. It survives the session's exit, a succession and death or wall recovery, nothing hands it over, and the successor follows the same log.
 
 Read that watch's log without starting another watch on the same fleet state. A harness that delivers log lines as they arrive, or holds a blocking follow inside the turn, uses § Repeat watch. A harness whose only wake is a background command's exit uses § Single passes.
 
@@ -24,7 +24,7 @@ The one reader of the live watch claim is the runtime: `orch-runtime watch statu
 
 A claim whose `standing` reads `live` is the watch. `gone` is no live watch, as is no claim. `unreadable` is a failed read whose `cause` the reply carries, and a refusal with a keyed line is a failed read too: report either and start nothing. A live claim from another pane belongs to that pane; read the fleet's current overseer record before taking any recovery action. With no claim, a session the fleet state records as its overseer starts the watch as [takeover § 2](../workflows/oversee-takeover.md#watch-reader) states. Do not replace a watch merely because the follow ended. The watch log and error log stay beside the fleet state.
 
-A session `oversee register` recorded, with no live watch claim, starts the watch once with the launch line [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) states, from the overseer's own pane, and follows `oversee-watch.log` beside the fleet state as the steps above specify; the launch's `oversee-watch.runner` and `oversee-watch.err` land beside it. A session `oversee launch` opened has its watch from the start.
+A session `oversee register` recorded, with no live watch claim, starts the watch once with the launch line [oversee.md § 4](../workflows/oversee.md#4-watch-and-advance) states, from the overseer's own pane, and follows `oversee-watch.log` beside the fleet state as the steps above specify; the launch's `oversee-watch.runner` and `oversee-watch.err` land beside it. A session `start-controller` opened has its watch from the start, launched by the runtime with the request's watch words.
 
 To stop the watch, run `.agents/skills/orch/scripts/orch-runtime watch stop --fleet` from the overseer's checkout: it asks the claimed runner to stop and waits for its claim's release, answering `released` naming the runner, or `none` where no live claim stands. Report a refusal (`watch-stop-timeout`, `watch-claim-unreadable`) with its keyed line.
 
@@ -45,7 +45,7 @@ The [oversee.md § 5](../workflows/oversee.md#5-stop) handoff names the mechanis
 
 ## Single passes
 
-Keep single-pass delivery for a harness that wakes only when a background command exits. When a detached repeat watch owns the fleet state, each pass reads new log lines instead of running `oversee-watch` again. Use the same reader directory, log link and numbered cursor as § Repeat watch. Save this version as `[RUN_DIR]/follow.sh`:
+Keep single-pass delivery for a harness that wakes only when a background command exits. When a detached repeat watch owns the fleet state, each pass reads new log lines instead of starting another watch. Use the same reader directory, log link and numbered cursor as § Repeat watch. Save this version as `[RUN_DIR]/follow.sh`:
 
 ```sh
 n=$2

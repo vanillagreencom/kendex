@@ -108,17 +108,7 @@ All orders end at the caller's review step: § 3 here, or [small.md](small.md) �
 - `review-first` → the review step. A non-zero exit takes this row and reports its `pr-order-error:` line once.
 - `push-first` → the same early submit and existence check as `open-first` below. Submit creates a draft and leaves auto-merge unarmed. Its `ci` record accepts completed local edits with required CI pending. After the successful existence check, read `.agents/skills/orch/scripts/pr-view-json [WORKTREE_PATH] --json number,state,headRefOid` and bind the open PR's head as `[HEAD_SHA]`; a failed read stops this pass. Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing).
 
-  **Push-first first head.** Request Copilot before entering the review step:
-
-  ```bash
-  env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --request-review --mark-ready --item [ISSUE_ID] --base-checkout [REVIEW_BASE_CHECKOUT]
-  ```
-
-  Route the answer per [Copilot requests](../references/gates.md#copilot-requests) before recording the head. A nonzero return stops this pass with no request record. Then record the head:
-
-  ```bash
-  .agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /pr_approval/copilot_rerequest_head [HEAD_SHA]
-  ```
+  **Push-first first head.** Request Copilot before entering the review step: run [the review call](../references/gates.md#the-review-call) once from `[WORKTREE_PATH]` with `[MARK_READY]` `true`, which marks the draft ready and, under `approval`, requests the head, recording each act on the head's record. Route its `request` per [Copilot requests](../references/gates.md#copilot-requests). A refusal or an `unreadable` reply stops this pass, and the next pass runs the call again. A `pending` reply reading `ready-head-moved` runs the call again on the new head.
 
   Continue to the review step. Keep `pr_order` at `push-first` and the lane's `Review: pending` line through internal fix rounds: it holds overseer approval, and submit § 2 step 5 arms nothing. The passing review and submit publish the combined fixes and request each unrecorded head.
 

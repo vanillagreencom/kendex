@@ -6,10 +6,9 @@ Read when a workflow, a reference or a `--help` names a setting and the task nee
 |---------|---------|---------|
 | `ORCH_STATE_DIR` | Workflow state directory; the `--state-dir` flag wins where both are set | `tmp` |
 | `ORCH_ARCHIVE_ROOT` | Archive folder. The runtime archives there in its retention duty, `state remove` and an item's terminal close-out; `lane-close`'s close-out through `workflow-state remove`, `lane-mail compact` and SSH lane close archive there through `scripts/lib/state-archive.sh`, which needs Python for a configured value. Set an absolute path outside linked worktrees and state or mailbox folders. A configured value requires a readable Git worktree list. A relative or `~` value refuses each archive write, the runtime's as `setting-invalid`; the settings load accepts it | `${FLEET_DIR:-$HOME/.fleet}/archive` |
-| `OVERSEE_WATCH_STATE_DIR` | Directory for watch baselines, lane claims, the weekly walls recorded from lane banners and cached account usage, shared by `oversee-watch`, `lanes` and `open-terminal` | `tmp/oversee-watch` under the project root |
+| `OVERSEE_WATCH_STATE_DIR` | Directory for watch baselines, lane claims, the weekly walls recorded from lane banners and cached account usage, shared by `oversee-watch`, the runtime and `lanes` | `tmp/oversee-watch` under the project root |
 | `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names, matched case-insensitively and canonicalized | `([A-Z]+-[0-9]+\|issue-[0-9]+)` |
-| `CI_WAIT_NO_CHECKS_GRACE` | Seconds `ci-wait`, the failed-check probe `queue-wait` runs, keeps polling when no CI check has registered before it fails | `600` |
-| `CI_WAIT_MAX_SECS` | Budget in seconds of a workflow's CI wait, the repeated `verify-pr` call, and the default budget of the `ci-wait` probe. Set it above the longest required job's run time | `600` |
+| `CI_WAIT_MAX_SECS` | Budget in seconds of a workflow's CI wait, the repeated `verify-pr` call. Set it above the longest required job's run time | `600` |
 | `CI_FIX_MAX_CYCLES` | Automatic ci-fix cycles for one PR, counted across the heads they push; a passing CI run clears the count | `6` |
 | `REVIEW_MAX_CYCLES` | Re-review cycles per issue. `0`: one blockers-only fix round, accepted on its validation without re-review; `1`: one fix round and one re-review of its diff | `1` |
 | `REVIEW_MAX_EXTERNAL_ROUNDS` | External comment-triage passes and automatic review-wait restarts on one PR head | `4` |
@@ -21,9 +20,9 @@ Read when a workflow, a reference or a `--help` names a setting and the task nee
 | `ORCH_VERIFY_SCHEDULE` | Free text naming where and how often `/orch verify` runs: a Claude Code routine, a cron job that starts a harness on the base checkout, or the overseer's watch while it runs. A Stop handoff requires a reader that survives Stop. Names an existing schedule and starts nothing | empty |
 | `ORCH_POST_MERGE_CMD` | Bash command that `scripts/post-merge` runs in the base checkout after synchronization. `ORCH_POST_MERGE_BEFORE` is the base before the oldest unprocessed synchronization; `ORCH_POST_MERGE_AFTER` is the current synchronized head. `sync-base` saves the first in `refs/kendex/post-merge-base`; only a successful or empty command advances it. A failed command stops before project refresh and verification and keeps the range for retry | empty |
 | `PR_REVIEW_ON_TIMEOUT` | `proceed` advances only when no reviewer engaged and no thread is open; `block` reports the timeout | `proceed` |
-| `ORCH_OVERSEER_LANES` | Fleet lane cap: `open-terminal --help` | `4` |
-| `ORCH_OVERSEER_CLOUD_LANES` | Separate Claude cloud session cap per overseer: `open-terminal --help` | `10` |
-| `ORCH_CONNECTED_REPOS` | Blank-separated `OWNER/REPO` list of repositories the overseer may launch lanes in beside its own. `open-terminal` reads it in the overseer's checkout without the launcher's own value or `KENDEX_ENV_FILE`, which can be the launch checkout's, and matches it to a launch checkout's origin remote: `open-terminal --help`. The watch and `oversee-report` run in the overseer's checkout, honor both, and read each one beside their `--repo` values: `oversee-report --help` | empty |
+| `ORCH_OVERSEER_LANES` | Fleet lane cap: the lanes of every kind but `claude-cloud` a launch's admission counts, [lane-directive.md § Caps](lane-directive.md#caps) | `4` |
+| `ORCH_OVERSEER_CLOUD_LANES` | Claude cloud session cap per overseer: the `claude-cloud` lanes a launch's admission counts, [lane-directive.md § Caps](lane-directive.md#caps) | `10` |
+| `ORCH_CONNECTED_REPOS` | Blank-separated `OWNER/REPO` list of repositories the overseer may launch lanes in beside its own. The watch and `oversee-report` run in the overseer's checkout and read each one beside their `--repo` values (`oversee-report --help`), and a cloud launch names each in its `cloud_repo_access` beside the item's repository | empty |
 | `ORCH_MAIN_WORKFLOWS` | Blank-separated `OWNER/REPO:FILE` list of workflow files whose red push or nightly run on `main` the watch reports for that repository, beside `skill-tests.yml` and `ci.yml`, which every repository reads; an entry whose file the repository lacks, or whose repository the watch does not read, is reported | empty |
 | `ORCH_WAKE_PROCESS` | `pgrep -f` wake pattern for `lane-mail-check`. Empty disables the check with no watch record | empty |
 | `ORCH_WAKE_START` | Wake start command printed by the turn-end refusal. Empty disables the check with no watch record | empty |
@@ -42,7 +41,7 @@ Read when a workflow, a reference or a `--help` names a setting and the task nee
 | `ORCH_OVERSEER_DEAD_PASSES` | Watch passes that read the overseer exited or walled before it is reported: [guide](../kendex.settings.toml.example) | `2` |
 | <a id="orch-overseer-headroom-pct"></a>`ORCH_OVERSEER_HEADROOM_PCT` | Account headroom at or below which the overseer succeeds onto an account above it and `lane-mail-check` refuses its turn end. An overseer's seat keeps this room for it: a worker's pick holds a seat to `min(ORCH_LANE_MAX_PCT, 100 - ORCH_OVERSEER_HEADROOM_PCT)` and returns it last, and a lane on a seat hands off at `max(ORCH_HANDOFF_HEADROOM_PCT, ORCH_OVERSEER_HEADROOM_PCT)` room. Codex credits count as room on a seat as on any account | `5` |
 | `ORCH_OVERSEER_WALL_MINUTES` | Projected wall minutes that fire overseer succession. `0` disables it | `20` |
-| `ORCH_OVERSEER_SUCCESSOR_ACCOUNTS` | Read only by `oversee-succeed`'s plain and check modes; the runtime mark judge does not use a qualifying-account mark | `1` |
+| `ORCH_OVERSEER_SUCCESSOR_ACCOUNTS` | Read only by `oversee-succeed`'s plain and check modes; the runtime mark judge does not use a qualifying-account mark. `0` disables it | `1` |
 | `ORCH_OVERSEER_SYNC_TIMEOUT_S` | Seconds bounding only `oversee-succeed`'s checkout sync. The workflow's direct `sync-base` call does not read it | `60` |
 | `ORCH_OVERSEER_MARK_REPEAT` | Watch passes a standing `overseer-mark` waits before it repeats | `5` |
 | Recording settings | `ORCH_FLEET_LOG_ROW_BYTES`, `ORCH_TAKEOVER_ROWS`, `ORCH_RECORD_RETENTION_DAYS`, `ORCH_PROGRESS_REPORT_DIR`: [recording policy](../schemas/workflow-state.md#recording-policy) | |
@@ -51,7 +50,7 @@ Read when a workflow, a reference or a `--help` names a setting and the task nee
 | Watch settings | `ORCH_WATCH_*`, `ORCH_EXTERNAL_TRIAGE`, `ORCH_SECURITY_ALERTS`: [guide](../kendex.settings.toml.example) | |
 | `ORCH_OVERSEER_REVIEW_TOKEN_FILE` | `overseer-approve`'s app token: an absolute path, one line, mode 600, outside lane roots, swapped atomically before expiry by the control VM (hosted) or fleet worker (local) | |
 | `ORCH_OVERSEER_REVIEW_LOGIN` | The token app's bot login, such as `vanillagreen-overseer[bot]`. Required for failed-POST read-back; unset refuses confirmation | |
-| `ORCH_COPILOT_HOLD_SECS` | Bound for current-head Copilot checks and pending timeline work: `copilot-wait --help`, `overseer-approve --help`. Requires the token app's repository Checks: read permission | `600` |
+| `ORCH_COPILOT_HOLD_SECS` | Bound for current-head Copilot checks and pending timeline work, from the head's record: [gates.md § Copilot requests](gates.md#copilot-requests), `overseer-approve --help`. Requires the token app's repository Checks: read permission | `600` |
 | `ORCH_LANE_HOST` | `lane-host`'s host: `local`, `claude-cloud` (Claude Code's own cloud sessions) or a provider executable, each a [host kind](../schemas/lane-host.md#host-kinds) | `local` |
 | `ORCH_LANE_HOST_MAX_CALLS` / `ORCH_LANE_HOST_BUSY_WAIT_SECS` | Per-home long-call cap and seconds to wait at that cap; [Host protocol](../schemas/lane-host.md#provider-protocol) places the verbs | `4` / `30` |
 | `ORCH_LANE_HOST_SHORT_MAX_CALLS` / `ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS` | Independent per-home short-call cap and wait; mailbox reads can run while long calls wait on sandbox preparation | `4` / `30` |
@@ -60,9 +59,9 @@ Read when a workflow, a reference or a `--help` names a setting and the task nee
 | `QA_UI_PATHS` | Space-separated path globs whose modification adds the `needs-ui-review` QA signal | empty |
 | `QA_UI_DESIGN_DOC` | Repository path of the design-system doc a dev round that changes a view builds to and the `needs-ui-review` pass judges against; unset is reported as a gap | empty |
 | `RECONCILE_STALE_HOURS` | Hours before an In Progress or In Review item counts as started-stale in `reconcile-work-items` sweeps | `24` |
-| `WORKTREE_CLI` | Path to the worktree CLI `open-terminal` drives; empty resolves the installed worktree skill's script | resolved |
+| `WORKTREE_CLI` | Path to the worktree CLI the wake and the runtime drive; empty resolves the installed worktree skill's script | resolved |
 | Reviewer-gate settings | `PR_REVIEW_WAIT_SECS`, `PR_COPILOT_REQUESTS`: [references/gates.md](gates.md) | |
-| `ORCH_LANE_MAX_PCT` | Usage share at or above which the orch runtime's account judge, `orch-runtime accounts pick`, refuses an account for every launch, turn-end mark and succession pick; credit exemptions, bucket, overrides, other lane settings: `lanes --help`, `open-terminal --help` | `95` |
+| `ORCH_LANE_MAX_PCT` | Usage share at or above which the orch runtime's account judge, `orch-runtime accounts pick`, refuses an account for every launch, turn-end mark and succession pick; credit exemptions, bucket, overrides, other lane settings: `lanes --help` | `95` |
 | `ORCH_LANE_RETIRE` | Comma-separated `name=YYYY-MM-DD` pairs naming the day an account ends. The orch runtime's account judge picks the account until that UTC day and refuses it after; `lanes` lists it retired and never looks inside its directory: [guide](../kendex.settings.toml.example) | empty |
 | `ORCH_LANE_CLOUD_CREDIT_FLOOR` | Dollars a Claude cloud or Pi Anthropic API grant must exceed to stay pickable; tier and refusal: `lanes --help` | `10` |
 | `ORCH_LANE_CODEX_CREDIT_FLOOR` | Credits a spent Codex account must exceed to stay pickable, after plan room, since credits never reset. Provisional; lane-day arithmetic: [guide](../kendex.settings.toml.example) | `5000` |

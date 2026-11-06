@@ -25,13 +25,13 @@ The target set is per-repo configuration. A ruleset whose `conditions.ref_name.i
 
 | Situation | Action |
 |---|---|
-| The base is outside the target set | when orch is present, request the reviewer through its mode owner, `approval-wait <PR#> --request-review --base-checkout PATH`, per orch's `references/gates.md` § Copilot requests, which routes its `off` and `fallback` answers. Without orch, request directly: `gh pr edit <PR#> --add-reviewer @copilot`. The request works on a base the ruleset does not target |
-| The request, after an `approval` answer or made directly, draws nothing | close the pull request and open a fresh one against the default branch |
+| The base is outside the target set | when orch manages the pull request, its runtime's `verify-review` requests Copilot on every head itself, per orch's `references/gates.md` § Copilot requests, which routes its `fallback` answers; request nothing by hand. Without orch, request directly: `gh pr edit <PR#> --add-reviewer @copilot`. The request works on a base the ruleset does not target |
+| A direct request draws nothing | close the pull request and open a fresh one against the default branch. Under orch, a request that draws nothing falls back `cause=unconfirmed`, which orch routes to the overseer's fallback approval |
 | The reviewer already reviewed this pull request once and a new review is needed | reopen it, which re-arms the reviewer |
 | The reviewer never reviewed this pull request | reopening does nothing. Only the manual request, or a new pull request against a targeted base, draws one |
 
 Evidence for the manual route: probe pull request `vanillagreencom/kendex#2527`, based on `ken-1329-probe-base`, which the ruleset does not target. `gh pr edit 2527 --add-reviewer @copilot` was accepted, and `copilot_work_started` followed 36 seconds later.
 
-## What the waiter reports
+## What orch reads
 
-Orch's `approval-wait` resolves the native target set once per wait and matches the pull request's `baseRefName` against it. It reads `copilot_code_review` rules only. Where no active branch ruleset carries one, or the ruleset listing is refused with HTTP 403 or 404 that is not a rate limit, the default branch is the whole target set, with `auto_review_target_source` `default_branch`. So in a repository whose reviewer only a `workflows` rule arms, a pull request on the default branch waits as a targeted base, and one on any other base reads `unreviewable` and takes the manual request in § When no review arrives. It compares `~ALL`, `~DEFAULT_BRANCH` and literal refs only. A set holding any glob pattern (`*`, `?`, `[` or `\`) is `unresolved`, and so is a set behind a failed ruleset read other than a permission denial. Reviewer silence on a base outside the set is reported as status `unreviewable` (exit 1), and on an `unresolved` set as `timeout`; neither is the fail-open `proceeded`. Its JSON carries `base_ref`, `auto_review_targeted`, `auto_review_target_source` and `auto_review_targets`. Full contract: `approval-wait --help`. The stacked-chain sequence is orch's `references/gates.md` § Stacked pull requests.
+Orch's `verify-review` reads no automatic-review target set: it requests Copilot on every head itself, so a pull request on a base the rulesets do not target is requested like any other, and reviewer silence there is the ordinary review period's `timeout` or `proceeded`. The stacked-chain sequence is orch's `references/gates.md` § Stacked pull requests.

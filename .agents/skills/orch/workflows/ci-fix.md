@@ -147,25 +147,22 @@ Report findings for a user decision.
 
 ## 5. Verify
 
-Re-confirm the review gate at the new head **before** waiting on CI, on every repo with no repo detection. Either wait exiting `5` with `<waiter>: mail=<count>` or `<waiter>: mail-unreadable=<path>` is no verdict: run `.agents/skills/mailbox/scripts/lane-mail inbox --item [STATE_KEY]`, act on what it prints, then re-run the same wait.
+Re-confirm the review gate at the new head **before** waiting on CI, on every repo with no repo detection.
 
-Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing).
-
-```bash
-env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] --resolve-mode --base-checkout [REVIEW_BASE_CHECKOUT]
-```
-
-`off` skips to the CI wait; a non-zero exit is no mode, so report it and stop. Otherwise run the short exact-head re-confirmation:
+Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing). Write [the review call](../references/gates.md#the-review-call)'s request file from `[WORKTREE_PATH]`, `[MARK_READY]` `false`, and run the short exact-head re-confirmation through its review wait with the shorter period:
 
 ```bash
-env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE] --item [STATE_KEY] --base-checkout [REVIEW_BASE_CHECKOUT]
+env PR_REVIEW_WAIT_SECS=300 .agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request "[WORKTREE_PATH]/tmp/verify-review-request-[STATE_KEY].json"
 ```
+
+Its reply's `mode` is `GATE_MODE`, the item's recorded one. `off` answers `complete` with verdict `off`: go to the CI wait. A refusal is no mode, so report it and stop. On `approval` the call has also requested Copilot on the new head where no verdict stands: route its `request` by [Copilot requests](../references/gates.md#copilot-requests). Route the verdict:
 
 - `approved` / `proceeded` → wait for CI. `proceeded` is returned to the caller, not persisted here; it is a LOCAL verdict — orch posts no status.
 - `comments` / `changes_requested` → new feedback on the fix push. Managed: return it to the caller's review-gate handling. Standalone: run that triage pass, then re-run this step.
-- `unreviewable` → this PR's base draws no automatic review ([references/gates.md](../references/gates.md) § Stacked pull requests). Run the [Copilot request owner](../references/gates.md#copilot-requests). On `approval`, re-run this step once. On `fallback`, route as that owner says, then re-run this step once. On `off`, go to the CI wait. If it repeats, `auto-recommended` records `ci-gate-unreviewable`; under `ask`, hand back the unconfirmed gate. Never treat it as a met gate.
+- `blocked` → a regression-against-main blocker stands open on the item, its location in `reason`. Managed: return the unmet gate to the caller. Standalone: report the location and stop. Never treat it as a met gate.
 - `copilot-error` → route as [Copilot requests](../references/gates.md#copilot-requests) says. Managed: return the unmet gate to the caller. Standalone: re-run this step once for the overseer approval. If the gate stays unmet, use the `timeout` stop route below.
 - `timeout` → no exact-head evidence yet; a missing or red CI run here is not a fix failure. Re-run this step once. If it repeats, `auto-recommended` records `ci-gate-unconfirmed`; under `ask`, hand back the unconfirmed gate.
+- `unreadable` → re-run the call once. If it repeats, take the `timeout` route's stop.
 
 For a merge-group failure, first run the failing job's command locally on the fix head: `DEV_VALIDATE_CMD` through `.agents/skills/orch/scripts/dev-validate-run --worktree [WORKTREE_PATH] --reproduce`, which never defers the run to CI, or the suite the failing job named. Only a completed local pass lets the caller re-arm; every other outcome stops here and never reaches the wait below:
 
@@ -245,7 +242,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --j
 .agents/skills/orch/scripts/orch-runtime state head-budget take --item [STATE_KEY] --kind ci-fix --head [CI_HEAD]
 ```
 
-Its reply's `verdict`: `continue` reruns § 1. `at-cap` records and returns `ci-fix-cap`:
+Its reply's `verdict`: `continue` reruns § 1. `at-cap` records and returns `ci-fix-cap`, and no cycle starts past the cap until the overseer, judging with the reply's `attempts` and `limit`, has appended one `ruling` row for the item through `orch-runtime state log append --fleet` ([oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules)):
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime state post-pr-stop record --item [STATE_KEY] --name ci-fix-cap --gate ci --remaining "[REMAINING_CHECKS_AND_ATTEMPTS]" --comment-file [WORKTREE_PATH]/tmp/post-pr-stop-[STATE_KEY].md
@@ -256,4 +253,4 @@ Under `ask`, present `Run ci-fix again` | `Stop`; continuation clears the stop.
 
 ## 6. Return
 
-**Managed**: return to the parent workflow's next section with the `GATE_MODE` § 5 resolved at the new head. That mode is the caller's from here. **Standalone**: return `.post_pr_stop` when present; otherwise the CI-fix session is complete.
+**Managed**: return to the parent workflow's next section with the `GATE_MODE` § 5 read at the new head. That mode is the caller's from here. **Standalone**: return `.post_pr_stop` when present; otherwise the CI-fix session is complete.

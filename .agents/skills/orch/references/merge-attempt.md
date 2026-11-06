@@ -54,7 +54,7 @@ Report body read or update failures in status with the exit and route. Publish n
 
 Exit `0` merged the prepared head: continue to step 2.
 
-Exit `75` means GitHub queued or armed the PR: take merge-pr.md § 5 step 1's queue-wait block below the `--auto` arm.
+Exit `75` means GitHub queued or armed the PR: take merge-pr.md § 5 step 1's `queue-watch` block below the `--auto` arm.
 
 Exit `1` BLOCKED → classify the refusal:
 
