@@ -44,7 +44,7 @@ A flake that depends on the command pins kendex as an input and lists the packag
 
 The package installs `bin/kendex` and nothing else: no desktop app and no `kendex://` handler. The command is wrapped with Git on its `PATH`, ahead of the caller's own, and it links libdbus-1 from the Nix store for the keyring's secret-service backend. A build of a commit displays `<version>+git.<commit>`, as `kendex-cli-git` does; a build of a working tree with uncommitted changes displays the plain version.
 
-`kendex update` refuses to replace a command in the Nix store. Move the pin instead: change `<commit>` in the consumer's input, or run `nix flake update kendex` where the input names no commit. A profile installed from `github:vanillagreencom/kendex#kendex-cli` takes `nix profile upgrade kendex-cli`.
+`kendex update` refuses to replace a command in the Nix store, whoever runs it, and names Nix as its installer; the desktop app's update card does the same. Move the pin instead: change `<commit>` in the consumer's input, or run `nix flake update kendex` where the input names no commit. A profile installed from `github:vanillagreencom/kendex#kendex-cli` takes `nix profile upgrade kendex-cli`.
 
 ## The four Arch packages
 

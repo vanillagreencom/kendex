@@ -663,6 +663,33 @@ fn a_recorded_command_this_app_cannot_write_is_ours_without_the_privilege() {
     );
 }
 
+/// The flake's command, recorded by its own first run: the record names the
+/// store path the command ran from, and the Nix profile's link is not on the
+/// app's `PATH`. The store is Nix's whoever can write it, so the card names
+/// Nix and its route rather than the install.sh re-run `NeedsPrivilege`
+/// offers, and a root app on a writable store does not call it ours.
+#[test]
+fn a_recorded_command_in_the_nix_store_is_nixs() {
+    let store = "/nix/store/27az7xdcw8inf4wip88x5b31izfhyry5-kendex-cli-1.20.0/bin/.kendex-wrapped";
+    let unprivileged = Machine {
+        present: candidates(&[store]),
+        unwritable: candidates(&[store]),
+        ..Machine::default()
+    };
+    let root = Machine {
+        present: candidates(&[store]),
+        ..Machine::default()
+    };
+
+    for (label, machine) in [("unprivileged", unprivileged), ("root", root)] {
+        let beside = located(&machine, &[], store);
+        assert!(
+            matches!(&beside, CommandBeside::NotOurs(InstallChannel::Managed { manager, .. }) if manager == "Nix"),
+            "{label}: {beside:?}"
+        );
+    }
+}
+
 /// The command half writes nothing where the app has no privilege to
 /// write it. The card said so before Update now was pressed; what must
 /// not happen is a write attempt reported as a moved half.

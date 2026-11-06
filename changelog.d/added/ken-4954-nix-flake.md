@@ -1,1 +1,1 @@
-- The repository is a Nix flake that builds the kendex CLI on x86_64 and aarch64 Linux, so a Nix configuration can install the command or declare it as a dependency at a pinned commit.
+- The repository is a Nix flake that builds the kendex CLI on x86_64 and aarch64 Linux, so a Nix configuration can install the command or declare it as a dependency at a pinned commit. `kendex update` leaves a command in the Nix store in place and names the Nix route that moves it; the desktop app's update card names Nix as the command's installer.
