@@ -34,7 +34,7 @@ brew install vanillagreencom/kendex/kendex
 yay -S kendex-bin
 ```
 
-Windows: the installer at [kendex.ai/download](https://kendex.ai/download). The script installs the app and the CLI on Linux, and the CLI on macOS, where Homebrew installs the app. The other channels are in [packaging](packaging/README.md).
+Windows: the installer at [kendex.ai/download](https://kendex.ai/download). The script installs the app and the CLI on Linux, and the CLI on macOS, where Homebrew installs the app. The other channels, including the deb and rpm downloads and a Nix flake for the CLI, are in [packaging](packaging/README.md).
 
 ## Supported tools
 
