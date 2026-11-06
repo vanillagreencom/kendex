@@ -333,7 +333,8 @@ fn unread_value(newest: Option<(u64, &str)>, count: u64) -> String {
 
 /// Which lanes of the fleet have a mailbox the duty reads: a running lane
 /// whose kind's channel is a mailbox (`check_mail`'s `MAILLESS` filter),
-/// with its recorded root.
+/// with its recorded root and, for a lane on another host, that host, which
+/// its drain runs under.
 fn readable(lane: &Lane) -> Result<Option<(Option<String>, Drain)>> {
     if lane.status != LaneStatus::Running {
         return Ok(None);

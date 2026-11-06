@@ -406,7 +406,7 @@ Its reply's `verdict` is `below` or `at-cap`, with `count` and `limit`, counting
 
 ### Bounded Re-Review
 
-Apply [At The Cap](#at-the-cap)'s correction verification route first. For every other § 4 fix round or a submit-pr cut, cap 0 (bare `cap REVIEW_MAX_CYCLES` prints `0`) → § 5, accepted on validation. Any other entry, a § 7 QA round included, scopes re-review to what the round changed. Read the round's diff to decide:
+Apply [At The Cap](#at-the-cap)'s correction verification route first. For every other § 4 fix round or a submit-pr cut, cap 0 (bare `orch-runtime state cap REVIEW_MAX_CYCLES` answers a `limit` of `0`) → § 5, accepted on validation. Any other entry, a § 7 QA round included, scopes re-review to what the round changed. Read the round's diff to decide:
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /pre_delegate_sha

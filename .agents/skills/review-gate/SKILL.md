@@ -39,7 +39,7 @@ Consumers refresh on a schedule or a manual run. An organization managed by flee
 
 ## 4. Operations
 
-A pull request with no automatic review needs a Copilot request. When orch is present, its runtime's `verify-review` requests Copilot on every head itself, per orch's `references/gates.md` § Copilot requests, which routes its `fallback` answers. Without orch, request directly: `gh pr edit <PR#> --add-reviewer @copilot`. Ruleset targeting and request failures, when the github skill is installed: its `references/automatic-review.md`. The central request workflow: [references/adoption.md § Central Copilot request workflow](references/adoption.md#central-copilot-request-workflow).
+A pull request with no automatic review needs a Copilot request. When orch is present, its runtime's `verify-review` requests Copilot itself under `approval` on every head Copilot has not reviewed, per orch's `references/gates.md` § Copilot requests, which routes its `fallback` answers. Without orch, request directly: `gh pr edit <PR#> --add-reviewer @copilot`. Ruleset targeting and request failures, when the github skill is installed: its `references/automatic-review.md`. The central request workflow: [references/adoption.md § Central Copilot request workflow](references/adoption.md#central-copilot-request-workflow).
 
 The overseer's fallback approval follows the managing repository's merge workflow. An emergency merge past a failing required check exists only in a consumer whose required-checks or merge-queue ruleset lists a bypass actor. A consumer whose rulesets list no bypass has no emergency merge.
 

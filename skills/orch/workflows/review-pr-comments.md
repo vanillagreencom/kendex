@@ -36,7 +36,7 @@ On any `gh` or `github.sh` failure, report the error. `auto-recommended` retries
 
 ## 1. Fetch And Parse
 
-Triage what exists on the PR. No bot holds this read: Copilot's work in flight on the head holds the review gate's verdict instead ([gates.md § Copilot requests](../references/gates.md#copilot-requests)), so a thread Copilot posts after this read reaches the gate's next call as `comments`. Bot prose is never a gate: emoji reactions, sticky comments, and checklist text carry no gating weight.
+Triage what exists on the PR. No bot holds this read. Under `approval`, a thread Copilot posts after this read reaches the review gate's next call as `comments` ([gates.md § Copilot requests](../references/gates.md#copilot-requests)); under `off` no gate call reads it, and a later thread reaches submit-pr's gate 3 and the readers [thread-read.md § What reads an open thread](../references/thread-read.md#what-reads-an-open-thread) lists. Bot prose is never a gate: emoji reactions, sticky comments, and checklist text carry no gating weight.
 
 ```bash
 .agents/skills/github/scripts/github.sh pr-data "[PR_NUMBER]"
@@ -391,7 +391,7 @@ Write `[REPLY_BODY]` with the harness file-write tool to `tmp/pr-reply-[THREAD_I
 
 PR-level comments and human-only threads stay deferred to § 7.
 
-This section counts the round and decides whether to loop; the cap is § 6.1's and is not re-applied here. Check once, without waiting for bots to re-review, for comments that arrived while fixes were being applied, then loop or exit: a Copilot thread posted after this read reaches the review gate's next call as `comments`.
+This section counts the round and decides whether to loop; the cap is § 6.1's and is not re-applied here. Check once, without waiting for bots to re-review, for comments that arrived while fixes were being applied, then loop or exit. Under `approval`, a Copilot thread posted after this read reaches the review gate's next call as `comments`; under `off`, it reaches submit-pr's gate 3 and the readers [thread-read.md § What reads an open thread](../references/thread-read.md#what-reads-an-open-thread) lists.
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime state increment --item [ISSUE_ID] /pr_comment_review/iterations
@@ -435,7 +435,7 @@ Run [the review call](../references/gates.md#the-review-call) once before the bo
 
 **Skip if** workflow state `pr_order` reads `open-first-returned`, `push-first` or `push-first-returned`, with no notice and no request. For `push-first-returned`, complete [submit-pr.md § 2 step 4](submit-pr.md#2-push-and-submit)'s ready-head request route first, including an already ready head with no request recorded. It changes the order to `push-first-pushed` before this step's call. Other skipped orders still have the lane's `Review:` line pending and use submit's publication route. Copilot's review overview opens with one of three labels. It submits `Approved` as an `APPROVED` review. It submits `Changes recommended` and `Needs a closer look` as `COMMENTED`. It re-reads a head only on a review request, so a head its review left `COMMENTED` stays unapproved after the answers until one of the two routes below runs. Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gate-mode-routing) and run the call through that consumer base.
 
-A refusal, or an `unreadable` reply with no `mode`, is no mode: report it and end this step. In both `off` and `approval`, bind the reply's `head` as `[HEAD_SHA]` before any approval-only exit. On `approval` the call has requested Copilot on a head with no verdict standing, and its `request` says what the head's record holds. Then read every review of the pull request, oldest first, one id, login, `commit_id`, `state` and body per line:
+A refusal, or an `unreadable` reply with no `mode`, is no mode: report it and end this step. In both `off` and `approval`, bind the reply's `head` as `[HEAD_SHA]` before any approval-only exit. On `approval` the call has requested Copilot on a head Copilot has not reviewed, and its `request` says what the head's record holds, whatever the verdict, `approved` included. Then read every review of the pull request, oldest first, one id, login, `commit_id`, `state` and body per line:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY gh api --paginate 'repos/{owner}/{repo}/pulls/[PR_NUMBER]/reviews' --jq '.[] | [.id, .user.login, .commit_id, .state, .body] | @tsv'
@@ -454,7 +454,7 @@ A `head=` other than `[HEAD_SHA]` restarts this § 7.2 from its review call and 
 A line whose `commit_id` is `[HEAD_SHA]` and whose `state` is `APPROVED` ends this step after the body check's exit `0`: the head is already approved. Every Copilot thread is answered and resolved by now. The route is whether the head moved since the `commit_id` of the last `copilot-pull-request-reviewer[bot]` line, the last head Copilot read:
 
 - **Head unmoved.** Copilot read this head, so each answer stands on code it saw. Send the notice below, first line `copilot-declined-unchanged PR #[PR_NUMBER] head [HEAD_SHA]`. Under it, one line per thread `github.sh pr-threads [PR_NUMBER]` lists with `author` `copilot-pull-request-reviewer` gives its `id`, its location and the reply that answered it, a decline's reason included. Request no Copilot re-review. The overseer approves the head under [copilot-head-notices.md](../references/copilot-head-notices.md).
-- **Head moved**, by a push for any reviewer's thread or body finding. The step's review call requested Copilot on this head unless a request already stood on it, and `[REVIEW_READ]`'s `request` names what the head's record holds. `requested`, or `existing`, is the head's request or Copilot's work on it: wait on it below. A `fallback` starts no wait. In a lane, a `fallback` whose `request.recorded_now` is true sends the `copilot-fallback` notice below, first line `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA] cause=[CAUSE]` and the line under it as [Copilot requests](../references/gates.md#copilot-requests) sets, which asks for the overseer's fallback approval; `draft` and `refresh` send none.
+- **Head moved**, by a push for any reviewer's thread or body finding. The step's review call requested Copilot on this head unless a request already stood on it or Copilot had reviewed it, and `[REVIEW_READ]`'s `request` names what the head's record holds, whatever the verdict, `approved` included. `requested`, or `existing`, is the head's request or Copilot's work on it: wait on it below. A `fallback` starts no wait. In a lane, a `fallback` whose `request.recorded_now` is true sends the `copilot-fallback` notice below, first line `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA] cause=[CAUSE]` and the line under it as [Copilot requests](../references/gates.md#copilot-requests) sets, which asks for the overseer's fallback approval; `draft` and `refresh` send none.
 
   Wait on the head through [the review wait](../references/gates.md#the-review-call), with the call run so that a silent head ends `timeout` and never `proceeded`:
 
@@ -466,9 +466,9 @@ A line whose `commit_id` is `[HEAD_SHA]` and whose `state` is `APPROVED` ends th
 
   | Verdict | Copilot's review at `[HEAD_SHA]` | Then |
   |---------|----------------------------------|------|
-  | `comments` | any | Update the baseline and loop to § 1 for the new thread as § 6.3 does; this section then routes the head again |
+  | `comments` | any | Update the baseline and loop to § 1 for each open thread this triage has not answered, as § 6.3 does; this section then routes the head again. The call answers `comments` while any thread stands open: where every open thread is one § 7.1 keeps open awaiting a human, every repeat answers `comments` until the human answers, so end this step and leave the head to the caller's own review wait |
   | `approved` | `APPROVED` | Run the body check above; on its exit `0`, notice `copilot-approved-on-rerequest PR #[PR_NUMBER] head [HEAD_SHA]` |
-  | `approved` | none or not `APPROVED` | No notice: another reviewer approved the head |
+  | `approved` | none or not `APPROVED` | No notice: another reviewer approved the head. The request `[REVIEW_READ]` names stands, and Copilot's review of the head reaches a later call as `comments` |
   | `copilot-error` | error answer | Route as [Copilot requests](../references/gates.md#copilot-requests) says. The caller keeps the approval gate unmet and waits for the overseer approval |
   | `timeout` | present, not `APPROVED` | Copilot read the head again and left no open thread. Notice `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA]`, which asks for the overseer's fallback approval |
   | `timeout` | none | No notice: the overseer's `awaiting-stale` rule decides the head |

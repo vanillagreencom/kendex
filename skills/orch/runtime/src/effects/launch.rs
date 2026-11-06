@@ -46,13 +46,13 @@ const CLOUD_SESSION_TEXT: &str = include_str!("cloud-session.txt");
 const UNATTENDED_TEXT: &str = include_str!("../watch/unattended.txt");
 
 /// `brief` closed by the unattended words on a line of their own, once: a
-/// brief that already ends with them is kept as it stands. They ride the
-/// brief, never a system-prompt flag (Pi's `--append-system-prompt` would
-/// stop it reading its own `APPEND_SYSTEM.md`).
+/// brief that already carries them, anywhere, is kept as it stands. They
+/// ride the brief, never a system-prompt flag (Pi's `--append-system-prompt`
+/// would stop it reading its own `APPEND_SYSTEM.md`).
 fn unattended(brief: &str) -> String {
     let brief = brief.trim_end();
     let words = UNATTENDED_TEXT.trim_end();
-    if brief.ends_with(words) {
+    if brief.contains(words) {
         brief.to_owned()
     } else if brief.is_empty() {
         words.to_owned()

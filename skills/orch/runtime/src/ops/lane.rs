@@ -938,7 +938,21 @@ pub(super) fn launch_lane(
     // brief and the range it names; a relaunch keeps the record's sets,
     // since a recorded lane's relaunch was judged when it was admitted.
     let judged = match relaunch {
-        Some(_) => None,
+        // A relaunch was judged when first admitted, bar where it runs and
+        // whose item it is: the binding, on its effective tracker and
+        // repository, before the patch writes them.
+        Some(index) => {
+            let record = &lanes[index];
+            admission::bound(
+                path,
+                &r.item,
+                r.tracker.as_deref().or(record.tracker.as_deref()),
+                r.repo.as_deref().or(record.repo.as_deref()),
+                Path::new(&r.mail_root),
+                host,
+            )?;
+            None
+        }
         None => Some(admission::judge(
             path,
             &lanes,

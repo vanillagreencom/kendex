@@ -519,7 +519,8 @@ fn identity_word(identity: Option<&Identity>) -> String {
 /// status verb where the lane's kind declares one, its capture where the
 /// kind's pane is the provider's own (`pane=verb`), and a Pi lane's session
 /// rows where its files are the provider's (`files=verb`), the last two
-/// asked only of a harness the status verb did not read as exited.
+/// asked only where the status verb read the harness running or was not
+/// asked.
 pub(super) struct HostRead {
     status: Option<Result<HostStatus, String>>,
     screen: Option<Result<String, String>>,

@@ -6,7 +6,7 @@ Read when a workflow, a reference or a `--help` names a setting and the task nee
 |---------|---------|---------|
 | `ORCH_STATE_DIR` | Workflow state directory; the `--state-dir` flag wins where both are set | `tmp` |
 | `ORCH_ARCHIVE_ROOT` | Archive folder. The runtime archives there in its retention duty, `state remove` and an item's terminal close-out; `lane-close`'s close-out through `workflow-state remove`, `lane-mail compact` and SSH lane close archive there through `scripts/lib/state-archive.sh`, which needs Python for a configured value. Set an absolute path outside linked worktrees and state or mailbox folders. A configured value requires a readable Git worktree list. A relative or `~` value refuses each archive write, the runtime's as `setting-invalid`; the settings load accepts it | `${FLEET_DIR:-$HOME/.fleet}/archive` |
-| `OVERSEE_WATCH_STATE_DIR` | Directory for watch baselines, lane claims, the weekly walls recorded from lane banners and cached account usage, shared by `oversee-watch`, the runtime and `lanes` | `tmp/oversee-watch` under the project root |
+| `OVERSEE_WATCH_STATE_DIR` | Directory for watch baselines, lane claims, the weekly walls recorded from lane banners and cached account usage, shared by the runtime and `lanes` | `tmp/oversee-watch` under the project root |
 | `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names, matched case-insensitively and canonicalized | `([A-Z]+-[0-9]+\|issue-[0-9]+)` |
 | `CI_WAIT_MAX_SECS` | Budget in seconds of a workflow's CI wait, the repeated `verify-pr` call. Set it above the longest required job's run time | `600` |
 | `CI_FIX_MAX_CYCLES` | Automatic ci-fix cycles for one PR, counted across the heads they push; a passing CI run clears the count | `6` |

@@ -37,7 +37,7 @@ agent-runtime's launch builder spells the Copilot rows below for every runtime l
 
 | Fields the `launch-lane` request names | Why |
 |---|---|
-| `model`, `effort` | The builder spells them `--model [MODEL] --reasoning-effort [EFFORT]` (`Harness::model_words` in agent-runtime's `harness.rs`). A request that names neither adds neither word. |
+| `model`, `effort` | The builder spells them `--model [MODEL] --reasoning-effort [EFFORT]` (`Harness::model_words` in agent-runtime's `harness.rs`). A request naming an `account` names both, or the launch refuses `launch-model-missing` or `launch-effort-missing` ([lane-directive.md § Launch gate](lane-directive.md#launch-gate)); one naming no account and neither adds neither word. |
 | `permission` | The permission words of the lane's line. Where the request names none, the launch takes the `ORCH_LAUNCH_PERMISSION` posture, `bypass` by default, and the builder adds `--allow-all` (`build` in agent-runtime's `launch.rs`). A resumed session ignores `defaultPermissionMode` from settings (`copilot help config`), so a resume takes the same words. A narrower grant or the `native` posture carries an empty `COPILOT_ALLOW_ALL` and keeps its prompts. |
 
 `continueOnAutoMode` has no flag. Its default is `false`, which keeps the model on a rate limit instead of moving to Auto. It stays `false` only while the account's `settings.json` does not set it `true`.
@@ -62,7 +62,7 @@ A lane waiting at a permission prompt reaches no turn end, so the hook reports n
 | `session-record=` reason | Meaning | Remedy |
 |---|---|---|
 | `missing`, `stale` | The account's status line writes no record, or stopped refreshing it: a record older than 120 seconds, or stamped later than the reader's clock, is stale | Set the account's `statusLine` (§ Account setup) |
-| `unbound` | The session id is empty or is not an id: the hook's from its payload, the watch's from the lane record's `session_id` | Check the native session id passed to the hook, or the `session_id` in the lane record |
+| `unbound` | The session id is not an id: the hook's from its payload, an empty one included, and the watch's from the lane record's nonempty `session_id` or the session its worktree's store answered | Check the native session id passed to the hook, or the `session_id` in the lane record |
 | `worktree-unmatched` | The watch only: a lane record naming no session id names no `mail_root`, or the account's session store holds no session for that worktree | Check the lane record's `mail_root`, and that the lane's session started under that account |
 | `store-unreadable` | The watch only: the lane's worktree path does not resolve, or the account's session store or a session in it cannot be read | Check the worktree and the account's `session-state/` directory |
 | `account-unnamed` | The watch only: a lane record naming neither `account` nor `home`, on a watch whose settings name neither `COPILOT_HOME` nor `HOME`. A watch with `HOME` set, as every ordinary run has, never prints it | Run the watch with `HOME` set |
@@ -77,18 +77,18 @@ The remedy for the block is the owner's. Tell the owner the account and the caus
 
 ## Recovery
 
-A relaunch is the item's `launch-lane` request sent again ([oversee.md § Lane directive](../workflows/oversee.md#lane-directive)). It resumes the session the lane record binds by explicit id, `copilot --resume=<id> -i <brief>` (`build` in agent-runtime's `launch.rs`), and never uses bare `--resume`, which opens a picker. The route is judged from the records alone (`relaunch_route` and `route_of` in `runtime/src/effects/launch.rs`).
+A relaunch is the item's `launch-lane` request sent again ([oversee.md § Lane directive](../workflows/oversee.md#lane-directive)). It resumes the session the lane record binds by explicit id, `copilot --resume=<id> -i <brief>` (`build` in agent-runtime's `launch.rs`), and never uses bare `--resume`, which opens a picker. The route reads the lane record, the item's standing handoff and the bound session's own files under its id, never a session found by its age (`relaunch_route` and `route_of` in `runtime/src/effects/launch.rs`). The rows apply in order; the first that matches decides.
 
 | Case | What the relaunch does |
 |------|------------------------|
-| Bound session | Resumes it where the destination home holds `session-state/<id>/workspace.yaml` naming the lane's worktree. The destination is the lane record's `home`, else its account, else the home a fresh launch picks. |
-| Bound session another worktree owns | Refuses as `session-owned-elsewhere` before any window. A store that cannot be read refuses with its cause. |
-| Bound session absent from the destination home | Starts fresh, reported as `account-switched`. |
-| Session ended before its first event | Resumes like any bound session, since the route reads `workspace.yaml` alone. `--resume=<id>` on such a session exits 1 with `No session, task, or name matched`, under `-p` and at a pane, and opens no picker (measured). |
+| Hosted lane | A hosted Copilot launch refuses as `unsupported-for-oversee harness=copilot reason=hosted` before the provider creates anything. |
 | No bound session | Starts a fresh session on the request's brief. |
 | Harness or account switch | A lane record that names another harness starts fresh as `harness-switched`. A request on another account than the record's starts fresh as `account-switched`. |
+| Bound session absent from the destination home | Starts fresh as `session-absent`. The destination is the lane record's `home`, else its account, else the home a fresh launch picks. |
+| Session ended before its first event | Starts fresh as `session-absent`, as for a session absent from the destination home: the route reads a session with no event as no session (`identify` in agent-runtime's `session.rs`). `--resume=<id>` on such a session exits 1 with `No session, task, or name matched`, under `-p` and at a pane, and opens no picker (measured). |
+| Bound session another worktree owns | Refuses as `session-owned-elsewhere` before any window. A store that cannot be read refuses with its cause. |
 | Retired session | A standing handoff starts fresh as `session-retired` unless its `relaunch` says `resume`. The handoff record carries the context. |
-| Hosted lane | A hosted Copilot launch refuses as `unsupported-for-oversee harness=copilot reason=hosted` before the provider creates anything. |
+| Bound session | Resumes it: the destination home holds `session-state/<id>/` with a `workspace.yaml` naming the lane's worktree and a nonempty `events.jsonl`. |
 
 ## Wake and lane mail
 

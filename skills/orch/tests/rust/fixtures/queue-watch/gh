@@ -7,7 +7,10 @@
 # `body` is printed as JSON, `text` as raw bytes, `stderr` to stderr, `exit`
 # is the status, 0 when absent; a key with no entry is a failed request. The
 # mutations come as the github package's `merge-queue-mutation` sends them,
-# the node id a variable after the query.
+# the node id a variable after the query. A reply's `data` is projected
+# onto the query's selection (`../gh/select.jq`), as GitHub answers only the
+# fields a query selects; the queue read is keyed by `isInMergeQueue` or
+# `mergeQueueEntry`, so a query that drops one still reaches its reply.
 # Every other call (`pr view`, `gh api PATH`, the node queries) goes to the
 # verify-head fake with the same map and log, so a row whose probe reaches
 # `verify-pr` hands it one of its recorded witnesses. Every call appends its
@@ -23,19 +26,14 @@ if [ "${1:-}" = api ] && [ "${2:-}" = graphql ] && [ "${3:-}" = -f ]; then
   case "$query" in
     "mutation"*"disablePullRequestAutoMerge("*) key="mutation disablePullRequestAutoMerge" ;;
     "mutation"*"dequeuePullRequest("*) key="mutation dequeuePullRequest" ;;
-    *isInMergeQueue*) key="queue" ;;
+    *isInMergeQueue*|*mergeQueueEntry*) key="queue" ;;
     *) key="" ;;
   esac
   if [ -n "$key" ]; then
     printf '%s\n' "$*" >> "$GH_FAKE_LOG"
     reply=$(jq -c --arg k "$key" '.[$k] // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
-    # GraphQL answers only the fields a query selects: the queue read's
-    # group subtree goes out only when the query asks for it.
-    if [ "$key" = queue ] && [ -n "$reply" ]; then
-      case "$query" in
-        *"mergeQueue {"*) ;;
-        *) reply=$(jq -c 'del(.body.data.repository.pullRequest.mergeQueueEntry.mergeQueue?)' <<<"$reply") ;;
-      esac
+    if [ -n "$reply" ]; then
+      reply=$(jq -c --arg q "$query" -f "$(dirname "$(dirname "$real")")/gh/select.jq" <<<"$reply") || { echo "gh-fake: selection-unsupported" >&2; exit 64; }
     fi
     if [ -z "$reply" ]; then
       echo "gh: HTTP 404: Not Found (https://api.github.com/graphql)" >&2

@@ -1536,8 +1536,9 @@ fn a_close_beside_a_live_cloud_create_is_refused_and_supersedes_it_once_its_op_i
 /// `claude-cloud` host and kind while the relaunch opened its window on
 /// this machine, so the record charged the cloud cap and the watch's pane
 /// reads passed it over. Through the real `launch-lane`: a cloud launch
-/// records the cloud host and kind; with its session ended (the record
-/// stopped), a relaunch naming no host records no host and the `local`
+/// records the cloud host and kind; with its session ended by the real
+/// no-landing close (the record stopped), a relaunch naming no host records
+/// no host and the `local`
 /// kind, and its launch is the local one.
 #[test]
 fn a_cloud_lanes_relaunch_naming_no_host_records_the_local_launch_it_makes() {
@@ -1554,14 +1555,30 @@ fn a_cloud_lanes_relaunch_naming_no_host_records_the_local_launch_it_makes() {
         (&json!("claude-cloud"), &json!("claude-cloud")),
         "{lane}"
     );
-    let state = world.root.join("workflow-state-oversee.json");
-    let mut fleet = world.fleet();
-    for lane in fleet["lanes"].as_array_mut().unwrap() {
-        if lane["item"] == "CC-30" {
-            lane["status"] = json!("stopped");
-        }
-    }
-    std::fs::write(&state, serde_json::to_vec_pretty(&fleet).unwrap()).unwrap();
+    // The session ended through the real no-landing close, the record
+    // stopped as the landing lane's predecessor leaves it.
+    let close = world.root.join("close-CC-30.json");
+    std::fs::write(
+        &close,
+        json!({
+            "op": "close-owned-resources",
+            "item": "CC-30",
+            "no_landing": {"reason": "landing-lane", "source": "overseer"},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let out = world.run(
+        &["op", "--fleet", "--request", &close.display().to_string()],
+        &[("CLAUDE_CLOUD_LOG", claude_log.as_path())],
+    );
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    assert_eq!(
+        world.lane("CC-30")["status"],
+        "stopped",
+        "{}",
+        world.lane("CC-30")
+    );
     let request = world.root.join("relaunch.json");
     std::fs::write(
         &request,

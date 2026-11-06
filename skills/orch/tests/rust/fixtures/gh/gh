@@ -48,9 +48,12 @@
 # a `review_requested` event naming `Copilot`, to `issues/N/timeline`.
 # The GraphQL form
 # with `-F number=N` (the thread walk, its `cursor=` field empty on the
-# first page) answers from `graphql number=N cursor=C`, its body printed
+# first page; `pr-timeline`'s read, whose `gate=` field it takes) answers from `graphql number=N cursor=C`, its body printed
 # as the `nodes` form prints one: exit 1 and the `gh: ` line where it
-# carries `errors`.
+# carries `errors`. GitHub and gh answer only the fields asked for: every
+# GraphQL reply's `data` is projected onto its query's selection
+# (`select.jq` beside this file), and a `pr view` body onto its `--json`
+# list.
 set -u
 here="$(dirname "${BASH_SOURCE[0]}")"
 if [ -z "${GH_FAKE_LOG:-}" ]; then
@@ -60,7 +63,8 @@ fi
 : "${GH_FAKE_REPLIES:=$here/gh.json}"
 printf '%s\n' "$*" >> "$GH_FAKE_LOG"
 acts="${GH_FAKE_REPLIES%.json}.acts.json"
-overlay="" number=""
+overlay="" number="" query="" fields=""
+real="$(readlink -f "${BASH_SOURCE[0]}")"
 # act FILTER [ARGS...]: record what an act left on GitHub.
 act() {
   local filter="$1" was='{}' now
@@ -77,6 +81,11 @@ if [ "${1:-}" = repo ] && [ "${2:-}" = view ]; then
   fi
 elif [ "${1:-}" = pr ] && [ "${2:-}" = view ]; then
   overlay=view number="${3:-}"
+  previous=""
+  for arg in "$@"; do
+    [ "$previous" != --json ] || fields="$arg"
+    previous="$arg"
+  done
   reply=$(jq -c --arg k "pr view ${3:-}" '.[$k] // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
   if [ -z "$reply" ]; then
     echo "GraphQL: Could not resolve to a PullRequest with the number of ${3:-}. (repository.pullRequest)" >&2
@@ -106,7 +115,7 @@ elif [ "${2:-}" = graphql ]; then
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --paginate) ;;
-      -f|-F) shift; case "$1" in ids\[\]=*) ids=$(jq -c --arg id "${1#ids[]=}" '. + [$id]' <<<"$ids") ;; owner=*) owner="${1#owner=}" ;; name=*) name="${1#name=}" ;; number=*) number="${1#number=}" ;; cursor=*) cursor="${1#cursor=}" ;; query=*) ;; *) echo "gh-fake: unexpected-field field=[$1]" >&2; exit 64 ;; esac ;;
+      -f|-F) shift; case "$1" in ids\[\]=*) ids=$(jq -c --arg id "${1#ids[]=}" '. + [$id]' <<<"$ids") ;; owner=*) owner="${1#owner=}" ;; name=*) name="${1#name=}" ;; number=*) number="${1#number=}" ;; cursor=*) cursor="${1#cursor=}" ;; query=*) query="${1#query=}" ;; gate=*) ;; *) echo "gh-fake: unexpected-field field=[$1]" >&2; exit 64 ;; esac ;;
       *) echo "gh-fake: unexpected-call args=[$*]" >&2; exit 64 ;;
     esac
     shift
@@ -170,6 +179,11 @@ if [ -z "$reply" ]; then
   echo "gh: HTTP 404: Not Found (https://api.github.com/${2:-graphql})" >&2
   echo '{"message":"Not Found"}'
   exit 1
+fi
+if [ -n "$query" ]; then
+  reply=$(jq -c --arg q "$query" -f "$(dirname "$real")/select.jq" <<<"$reply") || { echo "gh-fake: selection-unsupported" >&2; exit 64; }
+elif [ -n "$fields" ]; then
+  reply=$(jq -c --arg f "$fields" 'if (.body | type) == "object" then .body |= with_entries(select(.key as $k | $f | split(",") | index($k))) else . end' <<<"$reply") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
 fi
 jq -r '.stderr // empty' <<<"$reply" >&2
 if jq -e 'has("text")' <<<"$reply" >/dev/null; then

@@ -59,7 +59,9 @@
 //! the fleet's `ORCH_CONNECTED_REPOS` lists; any other refuses
 //! `overseer-foreign`, and a binding that cannot be read `overseer-unjudged`.
 //! A fleet file in no checkout names no repository and binds every launch
-//! as its own. A `github` item of another repository than the checkout's,
+//! as its own. A relaunch is bound the same way, on its request's checkout
+//! and its effective tracker and repository (the request's, else the
+//! record's); the rest of its judgement stands from its first admission. A `github` item of another repository than the checkout's,
 //! or a `linear` item of another team than the fleet's `LINEAR_TEAM` on
 //! the fleet's own repository, refuses `item-foreign`, and a repository or
 //! team that cannot be resolved `item-repo-unresolved`.
@@ -629,6 +631,36 @@ fn bind(
     Ok(())
 }
 
+/// The binding alone (the module's binding paragraph): a first launch's,
+/// inside the judgement, and a relaunch's, whose touched set, Ancestor gate
+/// and rebase set were judged when it was first admitted but whose checkout,
+/// tracker and repository the request may change.
+pub(super) fn bound(
+    path: &Path,
+    item: &str,
+    tracker: Option<&str>,
+    repo: Option<&str>,
+    checkout: &Path,
+    host: &Host,
+) -> Result<()> {
+    let reads = host
+        .admission
+        .as_ref()
+        .ok_or_else(|| unjudged("admission-reads-unavailable", checkout))?;
+    let a = Admission {
+        item,
+        tracker,
+        repo,
+        brief_file: None,
+        repo_dir: None,
+        scope_range: None,
+        in_scope: &[],
+        paths: &[],
+        checkout: Some(checkout),
+    };
+    bind(path, &a, checkout, reads, host.accounts)
+}
+
 /// The judgement (the module's table). `lanes` and `intents` are the
 /// fleet's as the transition read them under the launch lock.
 pub(super) fn judge(
@@ -650,11 +682,7 @@ pub(super) fn judge(
             .ok_or_else(|| unreadable(read, "admission-reads-unavailable".to_owned()))
     };
     if let Some(checkout) = a.checkout {
-        let reads = host
-            .admission
-            .as_ref()
-            .ok_or_else(|| unjudged("admission-reads-unavailable", checkout))?;
-        bind(path, a, checkout, reads, host.accounts)?;
+        bound(path, a.item, a.tracker, a.repo, checkout, host)?;
     }
     let mut touched: BTreeSet<String> = BTreeSet::new();
     if let Some(tracker) = a.tracker {
@@ -797,8 +825,13 @@ pub(super) fn judge(
                 .map(|lane| Ok((lane, holder_branch(path, &lane.item)?)))
                 .collect::<Result<_>>()?;
             for pull in pulls {
+                // A `github` item's own pull request: issue and pull request
+                // numbers share one sequence per repository, so the pull
+                // request numbered as the item is the item (a review lane).
                 let own = pull.branch.eq_ignore_ascii_case(a.item)
-                    || own_branch.as_deref() == Some(pull.branch.as_str());
+                    || own_branch.as_deref() == Some(pull.branch.as_str())
+                    || (a.tracker == Some("github")
+                        && a.item.strip_prefix("issue-") == Some(pull.number.to_string().as_str()));
                 if own
                     || named
                         .iter()
@@ -1306,7 +1339,10 @@ fn checkout_slug(clis: &Clis, dir: &Path) -> std::result::Result<String, PullsFa
 )]
 fn read_checkout(dir: &Path) -> std::result::Result<Option<Repository>, ReadFailure> {
     let place = dir.display().to_string();
-    let output = host::run_tagged(
+    // git's "not a git repository" is read by its words, which a translated
+    // git words otherwise: the C locale outranks `LANGUAGE` too.
+    let c_locale = [("LC_ALL", std::ffi::OsStr::new("C"))];
+    let output = host::run_tagged_in(
         TAG,
         "git",
         Path::new("git"),
@@ -1318,6 +1354,10 @@ fn read_checkout(dir: &Path) -> std::result::Result<Option<Repository>, ReadFail
             "--path-format=absolute",
             "--git-common-dir",
         ],
+        host::Place {
+            cwd: None,
+            env: &c_locale,
+        },
         READ_TIMEOUT,
     )
     .map_err(|e| e.to_string())?;

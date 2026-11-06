@@ -491,6 +491,9 @@ pub struct Context {
     /// The `gh` program the GitHub-tracked items' ends are read through;
     /// `gh` on `PATH` in production.
     pub gh: PathBuf,
+    /// The watch's `--repo` names, the GitHub duty's own, which a terminal
+    /// close's merge read covers beside the lane's repository.
+    pub repos: Vec<String>,
     pub locking: Locking,
     pub nonce: u32,
     pub owner: Option<Owner>,
@@ -514,6 +517,7 @@ pub fn register(
     env: &Env,
     locking: Locking,
     since: Option<String>,
+    repos: Vec<String>,
 ) -> Result<Shared> {
     let since_epoch = match since.as_deref() {
         None => None,
@@ -530,6 +534,7 @@ pub fn register(
             settings: settings.clone(),
             since: since_epoch,
             gh: PathBuf::from("gh"),
+            repos,
             locking,
             nonce: env.nonce,
             owner: env.owner.clone(),
@@ -1284,6 +1289,9 @@ fn close_terminal_lanes(
             });
             continue;
         };
+        // Before the close removes the lane-side state the cycle is read
+        // from, and whether or not a refused close is held.
+        record_cycle(ctx, tick, lane, &mut produced);
         let key = format!(
             "{}|{}",
             state.word(),
@@ -1354,6 +1362,156 @@ fn close_terminal_lanes(
         }
     }
     Ok(produced)
+}
+
+/// The bound on one cycle record: the merged pull request's timeline and
+/// the merge's class, each read through `gh`.
+const CYCLE_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// An ended lane's merge cycle, recorded by `oversee-cycle record` for the
+/// first of the item's merged pull requests that is the lane's own: the
+/// parked or pending pull request its record names, else one in its
+/// repository. The merges are the merged index's current read for the lane
+/// ([`github::merged_keys`]), made before every terminal close whatever
+/// `merged` row stands: the item often ends at the merge, this duty runs
+/// before the GitHub duty on the shared cadence, and a row an earlier pass
+/// wrote can name an earlier pull request only. A merge its record's
+/// `cycle` already names is not recorded again. The recorder writes the
+/// record and the fleet log itself, and its printed line is said as it
+/// printed it. A refusal, a run that did not start or gave no answer, and a
+/// merge read that failed are each said once on stderr with the cause, and
+/// the close goes on, as a GitHub refusal holds none of this duty's work.
+/// While the close is held or left open, the next pass reads the record's
+/// `cycle` and records again only where none stands; once the close ends
+/// the lane, nothing records it, and the stderr line is the report.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the terminal-lanes step's one recorder run per ended lane with a merge: `oversee-cycle` from the scripts directory through the one runner under the duty's tag, from the project checkout it reads the merge's class in"
+)]
+fn record_cycle(ctx: &Context, tick: &Tick, lane: &Lane, produced: &mut Produced) {
+    let gh = github::Gh { cli: &ctx.gh };
+    let since_iso = ctx.since.map(clock::iso_utc);
+    let merged = match github::merged_keys(
+        &gh,
+        lane,
+        &ctx.repos,
+        &ctx.settings,
+        ctx.since,
+        since_iso.as_deref(),
+        tick.wall,
+    ) {
+        Ok(keys) => keys,
+        Err(e) => {
+            let _ = writeln!(
+                std::io::stderr(),
+                "lane-close-failed item={} step=cycle cause=merged-unread {e}",
+                lane.item
+            );
+            return;
+        }
+    };
+    let repo_of = |v: &serde_json::Value| {
+        v.get("repo")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_ascii_lowercase)
+    };
+    let recorded = lane
+        .extra
+        .get("parked")
+        .or_else(|| lane.extra.get("pending_pr"))
+        .and_then(|p| Some(format!("{}#{}", repo_of(p)?, p.get("pr")?.as_u64()?)));
+    let repo = lane
+        .repo
+        .as_deref()
+        .map(str::to_ascii_lowercase)
+        .filter(|r| !r.is_empty());
+    let cycle_pr = lane
+        .extra
+        .get("cycle")
+        .and_then(|c| c.get("pr"))
+        .and_then(serde_json::Value::as_u64);
+    let own = merged.iter().find_map(|key| {
+        let (key_repo, number) = key.rsplit_once('#')?;
+        let mine = match (&recorded, &repo) {
+            (Some(recorded), _) => recorded == key,
+            (None, Some(repo)) => repo == key_repo,
+            (None, None) => true,
+        };
+        mine.then_some((key_repo, number))
+    });
+    let Some((key_repo, number)) = own else {
+        return;
+    };
+    if cycle_pr.is_some() && cycle_pr == number.parse().ok() {
+        return;
+    }
+    let project = &ctx.settings.roots.project;
+    let state_dir = ctx
+        .fleet
+        .parent()
+        .unwrap_or(Path::new("."))
+        .display()
+        .to_string();
+    let item = lane.item.as_str();
+    let answer = host::run_tagged_in(
+        TAG,
+        "oversee-cycle",
+        &super::overseer::scripts_dir(project).join("oversee-cycle"),
+        "record",
+        &[
+            "--state-dir",
+            &state_dir,
+            "record",
+            "--pr",
+            number,
+            "--repo",
+            key_repo,
+            item,
+        ],
+        host::Place {
+            cwd: Some(project),
+            env: &[],
+        },
+        CYCLE_TIMEOUT,
+    );
+    let mut stderr = std::io::stderr();
+    match answer {
+        Ok(out) => {
+            let _ = stderr.write_all(&out.stderr);
+            match (out.status.success(), out.status.code()) {
+                (true, _) => produced.events.extend(
+                    host::stdout_text(&out)
+                        .lines()
+                        .filter(|l| !l.is_empty())
+                        .map(|l| Event::Tail(l.to_owned())),
+                ),
+                (false, Some(code)) => {
+                    let _ = writeln!(
+                        stderr,
+                        "lane-close-failed item={item} step=cycle exit={code}"
+                    );
+                }
+                (false, None) => {
+                    let _ = writeln!(
+                        stderr,
+                        "lane-close-failed item={item} step=cycle cause=unanswered"
+                    );
+                }
+            }
+        }
+        Err(agent_runtime::Error::NotStarted { .. }) => {
+            let _ = writeln!(
+                stderr,
+                "lane-close-failed item={item} step=cycle cause=not-started"
+            );
+        }
+        Err(e) => {
+            let _ = writeln!(
+                stderr,
+                "lane-close-failed item={item} step=cycle cause=unanswered {e}"
+            );
+        }
+    }
 }
 
 /// How a close's effect ended, by the outcome it recorded.

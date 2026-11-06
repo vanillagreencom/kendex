@@ -14,7 +14,7 @@ orch takes Linear or GitHub issues from implementation to merge with coding and 
 - A stopped lane is relaunched through the runtime: it resumes its own agent session on the same account, or starts fresh from its handoff record on another, and workflow state and handoff files let a lane or overseer continue where it stopped.
 - Each review finding is fixed, filed as an issue or declined by the rules in [references/finding-disposition.md](../reviewer/references/finding-disposition.md), settings cap the review and CI-fix rounds.
 - [references/secret-value.ere](references/secret-value.ere) matches GitHub and Slack tokens and private-key headers for scripts to refuse to send matching text or files. Its header states how to read it.
-- Lanes run on Claude Code, Codex, OpenCode, Pi and Copilot CLI, remotely and in a fleet on all but OpenCode (Copilot fleets local); account selection, succession and preference entries cover all but OpenCode.
+- Lanes run on Claude Code, Codex, Pi and Copilot CLI, remotely and in a fleet (Copilot fleets local); account selection, succession and preference entries cover all four.
 
 Dependabot security updates open the fleet's fix pull requests; an organization owner turns them on for every repository through an organization security configuration.
 

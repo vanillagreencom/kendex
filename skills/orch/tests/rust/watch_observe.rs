@@ -991,10 +991,19 @@ fn init_checkout(fleet: &Fleet, path: &Path) {
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
-    for checkout in [path, fleet.runner.state_dir()] {
-        let out = git()
+    fleet_origin(fleet, path);
+}
+
+/// The fleet's origin on `checkout` and on the fleet's own checkout, under
+/// the row's own isolation: the lane's checkout is then a clone of the
+/// fleet's repository, which a launch or relaunch is bound to.
+fn fleet_origin(fleet: &Fleet, checkout: &Path) {
+    for repository in [checkout, fleet.runner.state_dir()] {
+        let out = program("git")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .arg("-C")
-            .arg(checkout)
+            .arg(repository)
             .args([
                 "config",
                 "remote.origin.url",
@@ -1066,14 +1075,23 @@ fn a_walled_lanes_relaunch_keeps_its_permission_choice() {
         ),
         dir.path(),
     );
-    // A released record names its model and effort: `main`'s launch refused
-    // a lane on an account without either.
+    // A released record names its model and effort, in its fields and in
+    // the flags `main` recorded as given: its launch refused a lane on an
+    // account without either.
     released["effort"] = json!("high");
-    released["recovery"]["flags"] = json!("--model opus --permission-mode dontAsk");
+    released["recovery"]["flags"] = json!("--model opus --effort high --permission-mode dontAsk");
     let mut lanes = vec![runtime, released];
     for (item, name, flags) in [
-        ("KEN-7", "gh-7", "--model opus --permission-mode plan"),
-        ("KEN-8", "gh-8", "--model opus --permission-mode=plan"),
+        (
+            "KEN-7",
+            "gh-7",
+            "--model opus --effort high --permission-mode plan",
+        ),
+        (
+            "KEN-8",
+            "gh-8",
+            "--model opus --effort high --permission-mode=plan",
+        ),
     ] {
         let own = root.join(name);
         std::fs::create_dir_all(&own).unwrap();
@@ -3621,6 +3639,9 @@ fn a_merged_hosted_lane_whose_worktree_the_host_has_not_is_closed_at_lane_exited
             ("status --item KEN-3 --harness claude", ok("exited\n")),
             ("cat --item KEN-1 /remote/KEN-1/.git", answer(2, "")),
             ("touch --item KEN-1", ok("")),
+            // No merged row: the gate alone keeps it open, its worktree gone.
+            ("cat --item KEN-3 /remote/KEN-3/.git", answer(2, "")),
+            ("touch --item KEN-3", ok("")),
         ]
         .map(|(argv, answer)| (argv.to_owned(), answer)),
     );
@@ -3930,6 +3951,7 @@ fn the_wall_relaunch_retires_the_walled_harness_and_relaunches_it_through_the_ru
         .output()
         .unwrap();
     assert!(init.status.success(), "{}", stderr(&init));
+    fleet_origin(&fleet, &checkout);
     let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
     let old_account = dir.path().join("old-account");
     let new_account = dir.path().join("new-account");
@@ -3947,9 +3969,11 @@ fn the_wall_relaunch_retires_the_walled_harness_and_relaunches_it_through_the_ru
         ),
         &checkout,
     );
-    // A released record names its model and effort: `main`'s launch refused
-    // a lane on an account without either.
+    // A released record names its model and effort, in its fields and in
+    // the flags `main` recorded as given: its launch refused a lane on an
+    // account without either.
     record["effort"] = json!("high");
+    record["recovery"]["flags"] = json!("--model opus --effort high");
     record["account"] = json!(old_account.display().to_string());
     fleet.set_lanes(vec![record]);
     let state = fleet.read();
@@ -4034,6 +4058,7 @@ fn a_wall_relaunch_whose_replacement_effect_fails_is_said_failed_not_relaunched(
             .output()
             .unwrap();
         assert!(init.status.success(), "{}", stderr(&init));
+        fleet_origin(&fleet, &checkout);
         let checkout = checkout.canonicalize().unwrap();
         let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
         let old_account = dir.path().join("old-account");
@@ -4053,9 +4078,11 @@ fn a_wall_relaunch_whose_replacement_effect_fails_is_said_failed_not_relaunched(
             ),
             &checkout,
         );
-        // A released record names its model and effort: `main`'s launch
-        // refused a lane on an account without either.
+        // A released record names its model and effort, in its fields and in
+        // the flags `main` recorded as given: its launch refused a lane on an
+        // account without either.
         record["effort"] = json!("high");
+        record["recovery"]["flags"] = json!("--model opus --effort high");
         record["account"] = json!(old_account.display().to_string());
         let world = HostedWorld::new(dir.path());
         std::os::unix::fs::symlink(binary(), world.scripts.join("orch-runtime")).unwrap();
@@ -4188,6 +4215,7 @@ fn an_unconfirmed_wall_replacement_keeps_its_marker_until_its_launch_settles_and
             .output()
             .unwrap();
         assert!(init.status.success(), "{}", stderr(&init));
+        fleet_origin(&fleet, &checkout);
         let checkout = checkout.canonicalize().unwrap();
         let (pane, identity) = walled_claude(&server, dir.path(), "gh-4", BANNER);
         let old_account = dir.path().join("old-account");
@@ -4206,9 +4234,11 @@ fn an_unconfirmed_wall_replacement_keeps_its_marker_until_its_launch_settles_and
             ),
             &checkout,
         );
-        // A released record names its model and effort: `main`'s launch
-        // refused a lane on an account without either.
+        // A released record names its model and effort, in its fields and in
+        // the flags `main` recorded as given: its launch refused a lane on an
+        // account without either.
         record["effort"] = json!("high");
+        record["recovery"]["flags"] = json!("--model opus --effort high");
         record["account"] = json!(old_account.display().to_string());
         fleet.set_lanes(vec![record]);
         let scripts = dir.path().join("scripts");
@@ -4833,7 +4863,9 @@ fn on_disk(disk: &Path, path: &str, text: &str) {
 /// stayed unjudged and said nothing. Through the real `lane-host` to a
 /// provider serving the host's disk: the host's last row, a turn ended on
 /// the account's limit, is `usage-limit`; a file at the same path on this
-/// disk is never read.
+/// disk is never read. The fleet record is a hosted record planted as `main`
+/// wrote it (`host` the provider, `kind` `ssh`, `mail_root` the root on the
+/// host).
 #[test]
 fn a_hosted_pi_lanes_rows_are_read_through_its_provider() {
     let dir = tempfile::tempdir().unwrap();
@@ -4895,69 +4927,90 @@ fn a_hosted_pi_lanes_rows_are_read_through_its_provider() {
 /// Defect: a hosted lane's handoff record, written by its workflow in its
 /// checkout's state on its host, never read, so a lane that handed off was
 /// never `handoff`. Through the real `lane-host` to a provider serving the
-/// host's disk: the record stands where the host's checkout keeps its
-/// state, under the clone its `.git` names and the state directory its
-/// settings name (none: `tmp`), and is `handoff` with the record under it
-/// once.
+/// host's disk, the record is read in both places the local read names: the
+/// clone its `.git` names under the state directory its settings name (none:
+/// `tmp`), and the lane root's `tmp`, where a lane whose launch forbids
+/// writing the main checkout keeps it. Either is `handoff` with the record
+/// under it once; a state the host serves that is no JSON object is the
+/// pass's `handoff-read-failed`, never no handoff. The fleet record is a
+/// hosted record planted as `main` wrote it (`host` the provider, `kind`
+/// `ssh`, `mail_root` the root on the host).
 #[test]
 fn a_hosted_lanes_handoff_is_read_through_its_provider() {
-    let dir = tempfile::tempdir().unwrap();
-    let server = Server::start(dir.path(), "fleet");
-    let fleet = Fleet::new(&server);
-    let claude = named_sleep(dir.path(), "claude");
-    let line = format!("printf 'working\\n'; exec {} 600", claude.display());
-    let pane = server.open_window("gh-4", dir.path(), &format!("bash -c \"{line}\""));
-    let identity = await_named(&server, &pane, "claude");
     let handoff = r#"{"merged":[],"remaining":["review"],"branch":"b","worktree":"/remote/KEN-4","open_pr":null,"traps":[]}"#;
-    let disk = dir.path().join("host-disk");
-    on_disk(
-        &disk,
-        "/remote/KEN-4/.git",
-        "gitdir: /remote/clone/.git/worktrees/KEN-4\n",
-    );
-    on_disk(
-        &disk,
-        "/remote/clone/tmp/workflow-state-KEN-4.json",
-        &format!("{{\"handoff\":{handoff}}}\n"),
-    );
-    let (provider, _) = file_provider(dir.path(), &disk);
-    let mut record = lane_record(
-        "KEN-4",
-        "gh-4",
-        "claude",
-        &server,
-        &pane,
-        Some(&identity),
-        dir.path(),
-    );
-    record["host"] = json!(provider.display().to_string());
-    record["kind"] = json!("ssh");
-    record["mail_root"] = json!("/remote/KEN-4");
-    fleet.set_lanes(vec![record]);
-    let state = fleet.read();
-    lane_driver!(server, fleet, readers, driver);
-    driver.scripts = real_lane_host(dir.path());
-    let first = driver.pass(&state);
-    let said: Vec<String> = lines(&first)
-        .into_iter()
-        .skip_while(|l| l != "EVENT handoff KEN-4")
-        .take(2)
-        .collect();
-    assert_eq!(
-        said,
-        vec!["EVENT handoff KEN-4".to_owned(), handoff.to_owned()],
-        "{:?} {:?}",
-        lines(&first),
-        first.failed
-    );
-    let second = driver.pass(&state);
-    assert!(
-        !lines(&second)
-            .iter()
-            .any(|l| l.starts_with("EVENT handoff")),
-        "{:?}",
-        lines(&second)
-    );
+    let record_doc = format!("{{\"handoff\":{handoff}}}\n");
+    let clone = "/remote/clone/tmp/workflow-state-KEN-4.json";
+    let root = "/remote/KEN-4/tmp/workflow-state-KEN-4.json";
+    for (case, place, text) in [
+        ("the clone's state", clone, record_doc.as_str()),
+        ("the root's tmp", root, record_doc.as_str()),
+        ("a state that is no JSON", clone, "not json\n"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let fleet = Fleet::new(&server);
+        let claude = named_sleep(dir.path(), "claude");
+        let line = format!("printf 'working\\n'; exec {} 600", claude.display());
+        let pane = server.open_window("gh-4", dir.path(), &format!("bash -c \"{line}\""));
+        let identity = await_named(&server, &pane, "claude");
+        let disk = dir.path().join("host-disk");
+        on_disk(
+            &disk,
+            "/remote/KEN-4/.git",
+            "gitdir: /remote/clone/.git/worktrees/KEN-4\n",
+        );
+        on_disk(&disk, place, text);
+        let (provider, _) = file_provider(dir.path(), &disk);
+        let mut record = lane_record(
+            "KEN-4",
+            "gh-4",
+            "claude",
+            &server,
+            &pane,
+            Some(&identity),
+            dir.path(),
+        );
+        record["host"] = json!(provider.display().to_string());
+        record["kind"] = json!("ssh");
+        record["mail_root"] = json!("/remote/KEN-4");
+        fleet.set_lanes(vec![record]);
+        let state = fleet.read();
+        lane_driver!(server, fleet, readers, driver);
+        driver.scripts = real_lane_host(dir.path());
+        let first = driver.pass(&state);
+        if text == record_doc {
+            let said: Vec<String> = lines(&first)
+                .into_iter()
+                .skip_while(|l| l != "EVENT handoff KEN-4")
+                .take(2)
+                .collect();
+            assert_eq!(
+                said,
+                vec!["EVENT handoff KEN-4".to_owned(), handoff.to_owned()],
+                "{case}: {:?} {:?}",
+                lines(&first),
+                first.failed
+            );
+            let second = driver.pass(&state);
+            assert!(
+                !lines(&second)
+                    .iter()
+                    .any(|l| l.starts_with("EVENT handoff")),
+                "{case}: {:?}",
+                lines(&second)
+            );
+        } else {
+            assert_eq!(
+                first.failed.as_deref(),
+                Some(
+                    format!("handoff-read-failed item=KEN-4 path={place} cause=state-unreadable")
+                        .as_str()
+                ),
+                "{case}: {:?}",
+                lines(&first)
+            );
+        }
+    }
 }
 
 /// Defect: a hosted lane with no recorded pane keys its exit row on the

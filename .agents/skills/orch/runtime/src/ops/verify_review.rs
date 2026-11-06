@@ -501,11 +501,11 @@ impl Gate<'_> {
             return self.permit(Verdict::new(OFF, "gate off".into()), record.as_ref());
         }
 
-        // The reviewers' state on the head. An approval with no open thread
-        // is permitted as it stands; every other head takes its request
-        // before its verdict, so the commit that answers a thread or an
-        // objection is reviewed beside the answer, never left to an approval
-        // that clears them.
+        // The reviewers' state on the head, then its request: every head
+        // Copilot has not reviewed is requested before its verdict, an
+        // approval standing from an earlier commit included, so Copilot
+        // reviews the commit a push lands; the approval is answered beside
+        // the request.
         let unresolved = review::unresolved_threads(&self.gh, &self.r.repo, self.r.pr)?;
         let copilot = if review::copilot_reviewed(&self.view) {
             Some(self.reviews()?.clone())
@@ -517,15 +517,15 @@ impl Gate<'_> {
         self.reply.approvals = Some(judged.approvals);
         self.reply.changes_requested = Some(judged.changes_requested);
         self.reply.unresolved_count = Some(unresolved);
+        let draft = self.view.draft && !marked;
+        let record = self.request(record, draft, marked)?;
         if judged.approved && unresolved == 0 {
             let reason = format!(
                 "decision={} approvals={} unresolved={unresolved}",
                 judged.decision, judged.approvals
             );
-            return self.permit(Verdict::new("approved", reason), record.as_ref());
+            return self.permit(Verdict::new("approved", reason), Some(&record));
         }
-        let draft = self.view.draft && !marked;
-        let record = self.request(record, draft, marked)?;
         if !judged.approved
             && (judged.decision == "CHANGES_REQUESTED" || judged.changes_requested > 0)
         {
@@ -988,7 +988,9 @@ impl Gate<'_> {
     /// The one judgement before a verdict that permits a merge is
     /// published: a regression blocker standing open refuses it, and
     /// Copilot's work in flight within its hold keeps it `pending`. An
-    /// `off` gate awaits no Copilot work.
+    /// `off` gate awaits no Copilot work, and an approval awaits none the
+    /// gate asked for itself: that request goes out beside the approval,
+    /// which stands, and only Copilot's work found in flight holds it.
     fn permit(&mut self, verdict: Verdict, record: Option<&HeadRecord>) -> Step<Verdict> {
         if let Some(location) = regression_blocker(self.path, &loaded(self.path)?.doc)? {
             return Ok(Verdict::new(
@@ -996,7 +998,11 @@ impl Gate<'_> {
                 format!("regression-open location={location}"),
             ));
         }
+        let asked = record
+            .and_then(|head| head.request.as_ref())
+            .is_some_and(|request| request.outcome == REQUESTED);
         if verdict.word != OFF
+            && !(verdict.word == "approved" && asked)
             && let Some(remaining) = self.hold(record)?
         {
             let run = self

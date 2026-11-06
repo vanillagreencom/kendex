@@ -47,8 +47,8 @@ use super::baseline::Change;
 use super::events::Event;
 use super::github::Gh;
 use super::lanes::{
-    Counters, HandoffReading, Pass, clear, counters_of, doc_of, fail, lane_name, set,
-    standing_record, step_of, validation_runs_of, watch_state_dir,
+    Counters, HandoffReading, Pass, clear, counters_of, doc_of, fail, handoff_places, lane_name,
+    set, standing_record, step_of, validation_runs_of, watch_state_dir,
 };
 use super::tracker::{QUOTA_ROW, Quota};
 use crate::marker;
@@ -1678,28 +1678,28 @@ pub fn counters(scripts: &Path, lane: &Lane, out: &mut Produced) -> Counters {
 }
 
 /// The item's workflow state where a hosted checkout's own files put it,
-/// through the provider ([`configured_state_path`]). `Gone` is a worktree
+/// through the provider ([`configured_state_dir`]). `Gone` is a worktree
 /// the host no longer has, or a checkout holding no state there; `Err` a
 /// file the host could not read, or one this reader cannot parse.
 fn configured_state(scripts: &Path, lane: &Lane, root: &str) -> Result<Answer<String>, String> {
-    Ok(match configured_state_path(scripts, lane, root)? {
-        Some(path) => fetch(
+    Ok(match configured_state_dir(scripts, lane, root)? {
+        Some(dir) => fetch(
             scripts,
             host_of(lane),
             &lane.item,
-            &path.display().to_string(),
+            &state::item_path(&dir, &lane.item).display().to_string(),
         ),
         None => Answer::Gone,
     })
 }
 
-/// The host path of the item's workflow state under the state directory a
-/// hosted checkout's settings files and private env file name
-/// (`settings::state_dir_named`), relative to the clone its `.git` names, as
-/// the checkout's own `workflow-state` resolves it. A `.git` the host cannot
-/// `cat` is a clone's own directory, confirmed by its `HEAD`, and the clone
-/// is the root. `None` is a worktree the host no longer has.
-fn configured_state_path(
+/// The host path of the state directory a hosted checkout's settings files
+/// and private env file name (`settings::state_dir_named`), relative to the
+/// clone its `.git` names, as the checkout's own `workflow-state` resolves
+/// it. A `.git` the host cannot `cat` is a clone's own directory, confirmed
+/// by its `HEAD`, and the clone is the root. `None` is a worktree the host
+/// no longer has.
+fn configured_state_dir(
     scripts: &Path,
     lane: &Lane,
     root: &str,
@@ -1733,36 +1733,32 @@ fn configured_state_path(
         }
     };
     let dir = settings::state_dir_named(Path::new(root), &read).map_err(|e| e.to_string())?;
-    let dir = if dir.is_absolute() {
+    Ok(Some(if dir.is_absolute() {
         dir
     } else {
         clone.join(dir)
-    };
-    Ok(Some(state::item_path(&dir, &lane.item)))
+    }))
 }
 
 /// A hosted lane's standing handoff through the provider, read in the
-/// places the local read names on the lane's host: the item's state under
-/// the checkout's configured state directory ([`configured_state_path`]),
-/// then under the lane root's `tmp`. The first standing record wins, else a
-/// place that could not be read, else none. `Err` is the read that failed,
-/// as the fields after `item=`.
+/// places the local read names ([`handoff_places`]) on the lane's host: the
+/// checkout's configured state directory ([`configured_state_dir`]) and the
+/// lane root's `tmp`, the root's alone for a worktree the host no longer
+/// has. The first standing record wins, else a place that could not be read
+/// or holds no JSON object, else none. `Err` is the read that failed, as the
+/// fields after `item=`.
 pub fn handoff(scripts: &Path, lane: &Lane) -> Result<HandoffReading, String> {
     let Some(root) = root_of(lane) else {
         return Ok(HandoffReading::None);
     };
-    let mut places = Vec::new();
-    if let Some(path) =
-        configured_state_path(scripts, lane, root).map_err(|c| format!("cause={c}"))?
-    {
-        places.push(path.display().to_string());
-    }
-    let own = format!("{root}/tmp/workflow-state-{}.json", lane.item);
-    if !places.contains(&own) {
-        places.push(own);
-    }
+    let places =
+        match configured_state_dir(scripts, lane, root).map_err(|c| format!("cause={c}"))? {
+            Some(dir) => handoff_places(&dir, &lane.item, Some(Path::new(root))),
+            None => vec![state::item_path(&Path::new(root).join("tmp"), &lane.item)],
+        };
     let mut unread = None;
     for place in places {
+        let place = place.display().to_string();
         match fetch(scripts, host_of(lane), &lane.item, &place) {
             Answer::Live(text) => match doc_of(&text) {
                 Some(doc) => {

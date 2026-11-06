@@ -24,7 +24,7 @@ Absent a handoff, start from the tracker. With no item, handoff, note or pending
 
 ### Fleet state address
 
-The fleet's record is the oversee workflow state ([schemas/workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state)), at one address for the whole session: `[OVERSEE_STATE]` is the `result.path` of `orch-runtime state path --fleet` run from the overseer's checkout, which [the watch](oversee.md#4-watch-and-advance) passes as `--state`, and `[OVERSEE_STATE_DIR]` is the directory it sits in, which every `open-terminal` launch, relaunch and wake passes as `--state-dir`, so a launch run from another directory records into the same fleet; [lane-directive.md § Launch gate](../references/lane-directive.md#launch-gate) states which repositories' checkouts it admits.
+The fleet's record is the oversee workflow state ([schemas/workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state)), at one address for the whole session: `[OVERSEE_STATE]` is the `result.path` of `orch-runtime state path --fleet` run from the overseer's checkout, which [the watch](oversee.md#4-watch-and-advance) takes as `--file`, and `[OVERSEE_STATE_DIR]` is the directory it sits in, which the wake takes as `--state-dir` and `orch-runtime --state-dir` names for a command run outside the overseer's checkout, so that command reads and records the same fleet; [lane-directive.md § Launch gate](../references/lane-directive.md#launch-gate) states which repositories' checkouts the runtime's launch admits.
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime state path --fleet

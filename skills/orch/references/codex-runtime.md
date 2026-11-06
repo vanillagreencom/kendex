@@ -8,7 +8,7 @@ In the check below, Codex refused a command for one of three causes: an execpoli
 
 | Mode | Where kendex launches it | Probe flags | Sandbox | `rm -f` |
 |------|--------------------------|-------------|---------|---------|
-| Bypass | Lanes: the spelling [lane-launch.sh](../scripts/lib/lane-launch.sh) writes | `--dangerously-bypass-approvals-and-sandbox` | None | Refused |
+| Bypass | Lanes: the spelling the runtime's launch builder writes (`Harness::permission_spellings` in `skills/agent-runtime/runtime/src/harness.rs`) | `--dangerously-bypass-approvals-and-sandbox` | None | Refused |
 | `never`, full access | The user config default, `approval_policy = "never"` with `sandbox_mode = "danger-full-access"`; `-a never` on that config | None, on a config holding `approval_policy = "never"` and `sandbox_mode = "danger-full-access"` | None | Refused |
 | `never`, workspace-write | `-a never` on a config whose sandbox is `workspace-write` | `-c approval_policy='"never"' -s workspace-write` | A write outside the working directory fails `Read-only file system` | Refused |
 | Approve for me | Lanes: the accepted spelling `--approve-for-me` | `--approve-for-me` | workspace-write; a write outside the working directory failed, then its reviewed escalation ran | Reviewed, then ran |
@@ -76,7 +76,7 @@ Codex starts no turn for output that arrives after a turn ended, from a detached
 
 ## Validation wait
 
-A dev agent holds its `dev-validate-run` inside the turn with the same tools, under the limits of § Standing watch. Codex starts no turn when the run ends, and the wake refuses a hosted Codex lane (§ Lane mailbox).
+A dev agent holds its `dev-validate-run` inside the turn with the same tools, under the limits of § Standing watch. Codex starts no turn when the run ends, and the wake refuses every Codex lane (§ Lane mailbox).
 
 Start and Resume each return an `exit_code` once the command ended inside their yield, or a `session_id` while it still runs. A return that carries an `exit_code` ended the command: read its lines and do not poll. Only a return that carries a `session_id` takes the Wait step, repeated until a return carries an `exit_code`.
 
@@ -90,7 +90,7 @@ A session that exits 2 with a `dev-validate-run: [REASON]` line was refused and 
 
 ## Delegated round wait
 
-Codex starts no turn when a collaboration agent returns after its caller ended the turn. This includes hosted lanes, whose mailbox wake is unavailable. For dev rounds that write a dev-return artifact, keep the delegation's watchdog inside the current turn until it records an artifact verdict or reaches the round deadline. The round token, deadline, acceptance and escalation stay in [skill-rules.md § Round Closure](skill-rules.md#round-closure).
+Codex starts no turn when a collaboration agent returns after its caller ended the turn. This includes every Codex lane, hosted or local, since no wake reaches one (§ Lane mailbox). For dev rounds that write a dev-return artifact, keep the delegation's watchdog inside the current turn until it records an artifact verdict or reaches the round deadline. The round token, deadline, acceptance and escalation stay in [skill-rules.md § Round Closure](skill-rules.md#round-closure).
 
 Launch the single `dev-artifact-check` watchdog through [waiter-launch.md § Launch](waiter-launch.md#launch):
 
@@ -116,7 +116,7 @@ Take `[SECS]`, re-arming and the required-measurement allowance from [review-pr.
 
 Read when [review-pr.md § 2](../workflows/review-pr.md#2-prepare-reviewers) receives `alternate-review` from the explicit Codex attached-launch check. This route runs each mandatory canonical domain as a separate Codex session. Panel selection, one-domain waves, original-batch provenance, deadlines, the one re-delegation and artifact acceptance stay with that workflow. An advisory external reviewer cannot replace a required domain.
 
-Use the installed `codex exec` interface: [CLI reference](https://developers.openai.com/codex/cli/reference/). Bind `[CURRENT_REVIEW_MODEL_EFFORT_AND_PERMISSION_FLAGS]` from this lane's current native model/effort and recorded launch selection under [Model class](skill-rules.md#model-class). [lane-launch.sh](../scripts/lib/lane-launch.sh) owns the supported flag spellings. Keep the current launch home and account in the inherited environment, including a private `CODEX_HOME` when the lane uses one. Do not select another model, effort, account, provider or installed executable. A missing CLI, runner or native launch/source binding stops this route and is reported to the caller.
+Use the installed `codex exec` interface: [CLI reference](https://developers.openai.com/codex/cli/reference/). Bind `[CURRENT_REVIEW_MODEL_EFFORT_AND_PERMISSION_FLAGS]` from this lane's current native model/effort and recorded launch selection under [Model class](skill-rules.md#model-class). The runtime's launch builder owns the supported flag spellings (`Harness` in `skills/agent-runtime/runtime/src/harness.rs`). Keep the current launch home and account in the inherited environment, including a private `CODEX_HOME` when the lane uses one. Do not select another model, effort, account, provider or installed executable. A missing CLI, runner or native launch/source binding stops this route and is reported to the caller.
 
 Prepare a fresh `[JOB_DIR]` through [waiter-launch.md § Launch](waiter-launch.md#launch), including its unchanged `launch.sh`. Save the complete `DELEGATION:` prompt as `[JOB_DIR]/delegation.md` with the harness file-write tool. Use the installed canonical role's full instructions and workflow, followed by review-pr's complete unchanged delegation with its exact minted artifact path, concrete range, decisions and re-review context. A role name or shortened review request is insufficient. Launch from the owned worktree:
 

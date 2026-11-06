@@ -155,9 +155,9 @@ Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gat
 env PR_REVIEW_WAIT_SECS=300 .agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request "[WORKTREE_PATH]/tmp/verify-review-request-[STATE_KEY].json"
 ```
 
-Its reply's `mode` is `GATE_MODE`, the item's recorded one. `off` answers `complete` with verdict `off`: go to the CI wait. A refusal is no mode, so report it and stop. On `approval` the call has also requested Copilot on the new head where no verdict stands: route its `request` by [Copilot requests](../references/gates.md#copilot-requests). Route the verdict:
+Its reply's `mode` is `GATE_MODE`, the item's recorded one. `off` answers `complete` with verdict `off`: go to the CI wait; a `blocked` verdict under either mode takes the `blocked` row below. A refusal is no mode, so report it and stop. On `approval` the call has also requested Copilot on a new head Copilot has not reviewed, whatever the verdict: route its `request` by [Copilot requests](../references/gates.md#copilot-requests) before the verdict. Route the verdict:
 
-- `approved` / `proceeded` → wait for CI. `proceeded` is returned to the caller, not persisted here; it is a LOCAL verdict — orch posts no status.
+- `approved` / `proceeded` → wait for CI. ci-fix writes no `pr_approval.reviewer_down` for `proceeded`; the caller records it. It is a LOCAL verdict — orch posts no status.
 - `comments` / `changes_requested` → new feedback on the fix push. Managed: return it to the caller's review-gate handling. Standalone: run that triage pass, then re-run this step.
 - `blocked` → a regression-against-main blocker stands open on the item, its location in `reason`. Managed: return the unmet gate to the caller. Standalone: report the location and stop. Never treat it as a met gate.
 - `copilot-error` → route as [Copilot requests](../references/gates.md#copilot-requests) says. Managed: return the unmet gate to the caller. Standalone: re-run this step once for the overseer approval. If the gate stays unmet, use the `timeout` stop route below.
@@ -187,7 +187,7 @@ On `status=complete` with `verdict=fail`, a transient runner failure is rerun on
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/github/scripts/github.sh ci-rerun [PR_NUMBER] --required-only
 ```
 
-A passing or unconfigured CI result, `status=complete` with `verdict=pass` or `verdict=none`, clears the head-bound standalone budget:
+A passing or unconfigured CI result, `status=complete` with `verdict=pass` or `verdict=none`, clears the standalone CI-fix budget:
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime state set --item [STATE_KEY] /post_pr_budgets/ci_fix null

@@ -38,8 +38,8 @@ const HOOKS_OFF_BOUND: Duration = Duration::from_secs(30);
 /// A file's text where it stands, `None` where it does not, else the cause.
 type Read<'a> = &'a dyn Fn(&str) -> Result<Option<String>, String>;
 
-/// Where a Pi lane's files are read, which decides how a refused launch is
-/// retried once its carrier is updated.
+/// Where a Pi lane's files are read: this machine, or the lane's host, where
+/// the reported install is repaired.
 #[derive(Debug, Clone, Copy)]
 enum Location {
     Local,
@@ -51,13 +51,6 @@ impl Location {
         match self {
             Location::Local => "local",
             Location::Hosted => "hosted",
-        }
-    }
-
-    fn retry(self) -> &'static str {
-        match self {
-            Location::Local => "launch",
-            Location::Hosted => "--relaunch",
         }
     }
 }
@@ -197,10 +190,12 @@ fn pi(read: Read, root: &str, worktree: &str, location: Location) -> Result<(), 
             .filter(|v| !v.is_empty())
             .unwrap_or_else(|| "unread".to_owned());
         return Err(format!(
-            "pi-mail-wake-missing harness=pi version={version} root={} scope={scope} location={} update=kendex update-pi --scope {scope} retry={}",
+            // Once the install is updated, the item's `launch-lane` request sent
+            // again retries it; over the record this launch left, a hosted
+            // lane's create reuses the worktree its provider holds.
+            "pi-mail-wake-missing harness=pi version={version} root={} scope={scope} location={} update=kendex update-pi --scope {scope} retry=launch-lane",
             packages.trim_end_matches("/packages"),
             location.word(),
-            location.retry()
         ));
     }
     Err(no_window)
@@ -373,7 +368,7 @@ mod tests {
             (
                 "carrier-without-the-wake",
                 with(vec![f(user, Ok(off))], carrier(global, NO_WAKE, SENDS)),
-                Err("pi-mail-wake-missing harness=pi version=1.2.0 root=/root scope=global location=local update=kendex update-pi --scope global retry=launch".to_owned()),
+                Err("pi-mail-wake-missing harness=pi version=1.2.0 root=/root scope=global location=local update=kendex update-pi --scope global retry=launch-lane".to_owned()),
             ),
             (
                 "the-worktree-s-carrier-decides-first",
@@ -381,7 +376,7 @@ mod tests {
                     with(vec![f(user, Ok(off))], carrier(local, NO_WAKE, SENDS)),
                     carrier(global, WAKE, SENDS),
                 ),
-                Err("pi-mail-wake-missing harness=pi version=1.2.0 root=/wt/.pi scope=project location=local update=kendex update-pi --scope project retry=launch".to_owned()),
+                Err("pi-mail-wake-missing harness=pi version=1.2.0 root=/wt/.pi scope=project location=local update=kendex update-pi --scope project retry=launch-lane".to_owned()),
             ),
             (
                 "carrier-unreadable",
@@ -402,5 +397,20 @@ mod tests {
                 "{name}"
             );
         }
+        // A hosted lane's refusal names the host's install and the same retry,
+        // the request the overseer can send.
+        let files: BTreeMap<String, Result<&str, &str>> =
+            with(vec![f(user, Ok(off))], carrier(global, NO_WAKE, SENDS))
+                .into_iter()
+                .collect();
+        let read = |path: &str| match files.get(path) {
+            Some(Ok(text)) => Ok(Some((*text).to_owned())),
+            Some(Err(cause)) => Err((*cause).to_owned()),
+            None => Ok(None),
+        };
+        assert_eq!(
+            pi(&read, "/root", "/wt", Location::Hosted).map_err(cause_free),
+            Err("pi-mail-wake-missing harness=pi version=1.2.0 root=/root scope=global location=hosted update=kendex update-pi --scope global retry=launch-lane".to_owned())
+        );
     }
 }

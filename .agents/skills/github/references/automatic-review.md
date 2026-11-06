@@ -25,7 +25,7 @@ The target set is per-repo configuration. A ruleset whose `conditions.ref_name.i
 
 | Situation | Action |
 |---|---|
-| The base is outside the target set | when orch manages the pull request, its runtime's `verify-review` requests Copilot on every head itself, per orch's `references/gates.md` § Copilot requests, which routes its `fallback` answers; request nothing by hand. Without orch, request directly: `gh pr edit <PR#> --add-reviewer @copilot`. The request works on a base the ruleset does not target |
+| The base is outside the target set | when orch manages the pull request, under `approval` its runtime's `verify-review` requests Copilot itself on every head Copilot has not reviewed, per orch's `references/gates.md` § Copilot requests, which routes its `fallback` answers; request nothing by hand. Without orch, request directly: `gh pr edit <PR#> --add-reviewer @copilot`. The request works on a base the ruleset does not target |
 | A direct request draws nothing | close the pull request and open a fresh one against the default branch. Under orch, a request that draws nothing falls back `cause=unconfirmed`, which orch routes to the overseer's fallback approval |
 | The reviewer already reviewed this pull request once and a new review is needed | reopen it, which re-arms the reviewer |
 | The reviewer never reviewed this pull request | reopening does nothing. Only the manual request, or a new pull request against a targeted base, draws one |
@@ -34,4 +34,4 @@ Evidence for the manual route: probe pull request `vanillagreencom/kendex#2527`,
 
 ## What orch reads
 
-Orch's `verify-review` reads no automatic-review target set: it requests Copilot on every head itself, so a pull request on a base the rulesets do not target is requested like any other, and reviewer silence there is the ordinary review period's `timeout` or `proceeded`. The stacked-chain sequence is orch's `references/gates.md` § Stacked pull requests.
+Orch's `verify-review` reads no automatic-review target set: under `approval` it requests Copilot itself on every head Copilot has not reviewed, so a pull request on a base the rulesets do not target is requested like any other, and reviewer silence there is the ordinary review period's `timeout` or `proceeded`. The stacked-chain sequence is orch's `references/gates.md` § Stacked pull requests.

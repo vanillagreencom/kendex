@@ -223,11 +223,11 @@ ORCH_TMUX_VERIFY_SECS = "15"
 
 # Seconds the orch-runtime stop waits after SIGTERM before SIGKILL when it
 # ends a lane's recorded process tree, applied again after SIGKILL, so a stop
-# can take up to twice this before it gives up. lane-close reads the same key
-# as the bound on its pane-exit wait after its stop signals once; the runtime
-# stop has no separate pane-exit wait, since it signals the recorded process
-# tree directly and waits for it to die. Set it to the grace you want each
-# signal to allow.
+# can take up to twice this before it gives up, and a Copilot lane once more
+# first, since the stop gives its pane that long to exit on /exit before the
+# signal. lane-close reads the same key as the bound on its pane-exit wait
+# after its stop signals once. Set it to the grace you want each signal to
+# allow.
 # ORCH_LANE_CLOSE_SECS = "15"
 
 # The tmux session every lane window opens in. Unset, a fleet launch uses the
@@ -323,7 +323,7 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # point. `lanes --help` (context) states which lanes headroom marks.
 # ORCH_HANDOFF_HEADROOM_PCT = "3"
 
-# Who relaunches a lane its account walled. "auto" has oversee-watch relaunch
+# Who relaunches a lane its account walled. "auto" has the watch relaunch
 # it at once on an account with room for its model; "ask" reports the wall to
 # the overseer with that pick's answer.
 # ORCH_WALL_RELAUNCH = "auto"
@@ -430,9 +430,10 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # ORCH_OVERSEER_PREFERENCE = "claude:standard:high,codex:standard:high"
 
 # Lane defaults use harness[@host]:model:effort. @host names a host kind or
-# provider executable path for that entry; without it, the caller's --host or
-# resolved ORCH_LANE_HOST applies. Overseer preferences keep the grammar above.
-# open-terminal walks the account judge only when --cmd and --launch-flags name no model.
+# provider executable path for that entry; without it, the caller's host or
+# the resolved ORCH_LANE_HOST applies. Overseer preferences keep the grammar
+# above. The overseer walks these entries only where the brief names no model
+# (workflows/oversee.md § 3 Lane directive, step 3).
 # The first eligible entry with room supplies the harness, host, model and effort.
 # Eligibility follows references/lane-directive.md § Lane preference. Explicit
 # models keep the caller's route. Unset or empty leaves that route unchanged.
@@ -475,26 +476,26 @@ ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 # Raise it to see a screen the default cuts short.
 # ORCH_WATCH_TAIL_LINES = "12"
 
-# Seconds a hosted lane handed to a background launch job may read preparing
-# before oversee-watch reports it as lane-prepare-stuck.
+# Seconds a lane's background launch job or the watch's wall relaunch may run
+# before the watch reports it as lane-prepare-stuck.
 # ORCH_WATCH_PREPARE_SECS = "1800"
 
 # Seconds after a lane's record goes running, at a launch or a relaunch, its
-# status file may still be missing before oversee-watch reports it as
+# status file may still be missing before the watch reports it as
 # start-stalled, on every harness.
 # ORCH_WATCH_START_STALL_SECS = "600"
 
 # Minutes a stalled Claude cloud lane may leave its one directive unanswered,
-# nothing pushed, before oversee-watch closes it as cloud-stall-closed for a
+# nothing pushed, before the watch closes it as cloud-stall-closed for a
 # hosted relaunch on its branch. A fleet that sees repeated cloud stalls drops
 # cloud from ORCH_LANE_PREFERENCE instead of raising this.
 # ORCH_CLOUD_STALL_MINUTES = "30"
 
 # Age threshold in seconds for lane-long on a running or parked lane.
-# Repeat schedule: oversee-watch --help, event lane-long.
+# Repeat schedule: references/oversee-events.md, event lane-long.
 # ORCH_WATCH_LANE_AGE_SECS = "12600"
 
-# Mail cadence and delay contract: oversee-watch --help.
+# Mail cadence and delay contract: orch-runtime watch --help.
 # ORCH_WATCH_MAIL_INTERVAL = "20"
 
 # Age in seconds past which a directive a lane has not read is reported as

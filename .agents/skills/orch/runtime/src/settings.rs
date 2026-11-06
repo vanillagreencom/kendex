@@ -844,12 +844,19 @@ pub fn roots(cwd: &Path) -> Result<Roots> {
 fn git_line(cwd: &str, operation: &'static str, args: &[&str]) -> Result<Option<String>> {
     let mut full = vec!["-C", cwd, "rev-parse"];
     full.extend_from_slice(args);
-    let output = host::run_tagged(
+    // git's "not a git repository" is read by its words, which a translated
+    // git words otherwise: the C locale outranks `LANGUAGE` too.
+    let c_locale = [("LC_ALL", std::ffi::OsStr::new("C"))];
+    let output = host::run_tagged_in(
         "settings",
         "git",
         Path::new("git"),
         operation,
         &full,
+        host::Place {
+            cwd: None,
+            env: &c_locale,
+        },
         GIT_TIMEOUT,
     )?;
     if output.status.success() {

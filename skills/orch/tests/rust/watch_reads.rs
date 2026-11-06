@@ -210,6 +210,7 @@ impl World {
             settings,
             since: since.map(|_| SINCE_EPOCH),
             gh: self.dir.path().join("gh"),
+            repos: Vec::new(),
             locking: Locking::FLOCK,
             nonce: 7,
             owner: Some(orch_runtime::state::Owner {
@@ -1210,6 +1211,274 @@ fn a_terminal_item_with_no_recorded_close_gets_one_close_request() {
             .unwrap()["status"],
         "stopped"
     );
+}
+
+/// The orch, github and mailbox packages' scripts installed where the watch
+/// runs its steps from (`<project>/.agents/skills/orch/scripts`), the
+/// shipped `oversee-cycle` and `lane-host` each behind a wrapper of its name
+/// that starts it under the test child's isolation: the world's `gh`
+/// fixture first on `PATH`, a fixture token, the scratch home its call slots
+/// count under and git's ceiling at the temporary root, so no checkout above
+/// the world is read and no real `gh` is reached; `ORCH_LANE_HOST` passes
+/// as its caller set it.
+fn installed_cycle_recorder(world: &World) -> PathBuf {
+    let skills = world.dir.path().join(".agents/skills");
+    let repo = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for package in ["orch", "github", "mailbox"] {
+        let dest = skills.join(package);
+        std::fs::create_dir_all(&dest).unwrap();
+        let out = program("cp")
+            .arg("-R")
+            .arg(repo.join(package).join("scripts"))
+            .arg(&dest)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+    }
+    let scripts = skills.join("orch/scripts");
+    let root = std::env::temp_dir();
+    let home = root.join("isolated-home");
+    std::fs::create_dir_all(&home).unwrap();
+    for name in ["oversee-cycle", "lane-host"] {
+        let shipped = scripts.join(format!("{name}.shipped"));
+        std::fs::rename(scripts.join(name), &shipped).unwrap();
+        let wrapper = scripts.join(name);
+        std::fs::write(
+            &wrapper,
+            format!(
+                "#!/bin/sh\nexec env -i PATH='{path}' LANG=C.UTF-8 TMPDIR='{root}' HOME='{home}' GIT_CEILING_DIRECTORIES='{root}' GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=fixture-token ORCH_LANE_HOST=\"${{ORCH_LANE_HOST:-}}\" bash '{shipped}' \"$@\"\n",
+                path = tool_path(&[world.dir.path()]),
+                root = root.display(),
+                home = home.display(),
+                shipped = shipped.display(),
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    scripts
+}
+
+/// The lanes the cycle row's cases plant: a hosted parked lane as `main`
+/// wrote one (only a hosted lane parks: `lane-close --park` refuses a local
+/// one), its `host` the fixture provider and its `kind` the one the
+/// provider declares, `ssh`, with `mail_root` its root on the host; or a
+/// local stopped lane, as `lane-close --keep-sandbox` leaves one. Both
+/// carry the tier, the launch stamp and the repository `main`'s launch
+/// recorded.
+fn cycle_lane(world: &World, hosted: bool) -> Value {
+    let mut lane = json!({"item": "KEN-1", "tracker": "linear", "repo": "owner/repo", "harness": "codex",
+        "window": null, "tier": "small", "tier_inputs": {"estimate": 2, "delta": 40, "paths": 3},
+        "launched_at": "2026-09-20T08:50:00Z", "session_since": "2026-09-20T08:50:00Z"});
+    if hosted {
+        let disk = world.dir.path().join("host-disk");
+        std::fs::create_dir_all(&disk).unwrap();
+        let provider = world.dir.path().join("provider");
+        std::fs::write(
+            &provider,
+            format!(
+                "#!/bin/bash\nexport LANE_HOST_STUB_LOG='{}' LANE_HOST_STUB_DIR='{}'\nexec '{}' \"$@\"\n",
+                world.dir.path().join("provider.log").display(),
+                disk.display(),
+                orch_package().join("tests/fixtures/lane-host").display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&provider, std::fs::Permissions::from_mode(0o755)).unwrap();
+        lane["host"] = json!(provider.display().to_string());
+        lane["kind"] = json!("ssh");
+        lane["mail_root"] = json!("/remote/KEN-1");
+        lane["status"] = json!("parked");
+        lane["parked"] =
+            json!({"repo": "owner/repo", "pr": 7, "head": "h2", "at": "2026-09-20T11:30:00Z"});
+    } else {
+        let mail_root = world.dir.path().join("lane");
+        std::fs::create_dir_all(&mail_root).unwrap();
+        lane["host"] = json!(null);
+        lane["kind"] = json!("local");
+        lane["mail_root"] = json!(mail_root.display().to_string());
+        lane["status"] = json!("stopped");
+    }
+    lane
+}
+
+/// A merged pull request `number` of `owner/repo` in the shape the merged
+/// index reads it.
+fn merged_pull(number: u64, branch: &str) -> Value {
+    json!({"number": number, "state": "closed", "title": "work", "body": "", "merged_at": "2026-09-20T11:20:00Z",
+        "head": {"ref": branch, "repo": {"owner": {"login": "owner"}}}})
+}
+
+/// pr-timeline's one GraphQL read of the merged pull request 7.
+fn timeline_seven() -> Value {
+    json!({"body": {"data": {"repository": {"pullRequest": {
+        "number": 7, "state": "MERGED", "createdAt": "2026-09-20T09:10:00Z", "mergedAt": "2026-09-20T11:20:00Z",
+        "author": {"login": "lane-app"}, "headRefName": "", "headRepository": null,
+        "mergeCommit": {"oid": "m1", "checkSuites": {"pageInfo": {"hasNextPage": false}, "nodes": []}},
+        "firstCommit": {"nodes": [{"commit": {"authoredDate": "2026-09-20T09:00:00Z"}}]},
+        "headCommit": {"nodes": [{"commit": {"oid": "h2", "committedDate": "2026-09-20T10:10:00Z",
+            "status": {"context": {"state": "SUCCESS", "createdAt": "2026-09-20T10:25:00Z"}},
+            "checkSuites": {"pageInfo": {"hasNextPage": false}, "nodes": []}}}]},
+        "commits": {"totalCount": 0, "nodes": []},
+        "reviews": {"totalCount": 0, "nodes": []},
+        "timelineItems": {"pageInfo": {"hasNextPage": false}, "nodes": []}
+    }}}}})
+}
+
+/// Defect: an ended lane closed with its merge's cycle never recorded, the
+/// lane-side state it is read from removed by the close, so the merge
+/// metrics were lost unless the overseer recorded them by hand. Through the
+/// real tracker duty, the real `oversee-cycle` and the real `pr-timeline`
+/// over the `gh` fixture's GraphQL answer, and for a hosted lane the real
+/// `lane-host` to the fixture provider, a table of cases:
+///
+/// - a hosted parked lane whose item ended at its merge, read ended before
+///   the GitHub duty (which runs after the tracker on the shared cadence)
+///   has written any `merged` row: the merge read finds its pull request,
+///   the cycle is recorded before the close, its line said and then
+///   `lane-closed`, the record carrying it and the fleet log its row, and
+///   the next pass asks nothing;
+/// - an earlier pull request's `merged` row standing, written by the
+///   GitHub duty's pass before the merge that ended the item: the current
+///   merge read finds the lane's own, and the row hides nothing;
+/// - two merged pull requests on the item's branch, the lane's parked one
+///   the second: that one is recorded, never the other;
+/// - a held refused close whose record carries the cycle already: the pass
+///   records nothing again and reads no timeline;
+/// - a local stopped lane, its merge found in its repository;
+/// - a released Linear lane, whose record names no `repo` (`main`'s launch
+///   recorded none for it), read ended first: its merge is found in the
+///   watch's `--repo` names, the repositories the GitHub duty reads.
+#[test]
+fn an_ended_lanes_merge_cycle_is_recorded_before_its_close() {
+    let seven: &[u64] = &[7];
+    let both: &[u64] = &[5, 7];
+    for (case, hosted, merged_row, pulls, cycle, held) in [
+        (
+            "the tracker reads it ended first",
+            true,
+            None,
+            seven,
+            false,
+            false,
+        ),
+        (
+            "an earlier pull request's row standing",
+            true,
+            Some("owner/repo#5"),
+            both,
+            false,
+            false,
+        ),
+        ("two merged pull requests", true, None, both, false, false),
+        (
+            "a held close, its cycle standing",
+            true,
+            Some("owner/repo#7"),
+            seven,
+            true,
+            true,
+        ),
+        ("a local stopped lane", false, None, seven, false, false),
+        (
+            "a lane with no repo, read ended first",
+            true,
+            None,
+            seven,
+            false,
+            false,
+        ),
+    ] {
+        let mut world = World::new();
+        let mut lane = cycle_lane(&world, hosted);
+        if cycle {
+            lane["cycle"] = json!({"pr": 7, "item": "KEN-1"});
+        }
+        let unnamed = case.starts_with("a lane with no repo");
+        if unnamed {
+            lane["repo"] = json!(null);
+        }
+        world.write_fleet(
+            &json!({"issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
+            "lanes": [lane]}),
+        );
+        world.linear("statuses list", statuses());
+        world.linear("issues list", json!({"body": []}));
+        world.linear("issues bulk-get", json!({"body": {"issues": {"nodes": [
+            {"identifier": "KEN-1", "state": {"type": "completed"}, "description": "## Done when\n- [x] Done\n  Evidence: yes\n", "children": {"nodes": []}}
+        ]}}}));
+        quiet_github(&mut world);
+        // The merged index's reads of the item: its head branch's closed
+        // pull requests, the case's merged ones, and its mentions, none.
+        let listed: Vec<Value> = pulls.iter().map(|n| merged_pull(*n, "ken-1")).collect();
+        world.gh(
+            "repos/owner/repo/pulls?state=closed&head=owner%3Aken-1&per_page=100&page=1",
+            json!({ "body": listed }),
+        );
+        world.gh(
+            "search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20%22KEN-1%22%20in%3Atitle%2Cbody&per_page=100&page=1",
+            json!({"body": {"total_count": 0, "incomplete_results": false, "items": []}}),
+        );
+        world.gh("graphql number=7 cursor=", timeline_seven());
+        installed_cycle_recorder(&world);
+        let clock = FakeClock::new();
+        let settings = world.settings(&[]);
+        let mut context = world.context(settings, None);
+        if unnamed {
+            context.repos = vec!["owner/repo".to_owned()];
+        }
+        let mut body = tracker::body(context);
+        let mut baseline = Baseline::default();
+        if let Some(row) = merged_row {
+            baseline.apply(set(github::MERGED_ROW, "KEN-1", row));
+        }
+        if held {
+            baseline.apply(set(
+                tracker::TERMINAL_CLOSE_ROW,
+                "KEN-1",
+                "completed|2026-09-20T08:50:00Z",
+            ));
+        }
+        let first = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
+        let said = rendered(&first);
+        let timeline_reads = || {
+            world
+                .gh_calls()
+                .iter()
+                .filter(|c| c.contains("-F number=7 -f gate="))
+                .count()
+        };
+        let lane = world.fleet()["lanes"][0].clone();
+        if held {
+            assert_eq!(said, Vec::<String>::new(), "{case}");
+            assert_eq!(timeline_reads(), 0, "{case}: {:?}", world.gh_calls());
+            assert_eq!(lane["status"], "parked", "{case}: {lane}");
+            continue;
+        }
+        assert_eq!(said.len(), 2, "{case}: {said:?}");
+        assert!(
+            said[0].starts_with("cycle item=KEN-1 pr=7 "),
+            "{case}: {said:?}"
+        );
+        assert_eq!(said[1], "EVENT lane-closed KEN-1", "{case}: {said:?}");
+        assert_eq!(lane["cycle"]["pr"], json!(7), "{case}: {lane}");
+        assert_eq!(lane["status"], "done", "{case}: {lane}");
+        let fleet = world.fleet();
+        assert!(
+            fleet["fleet_log"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|row| row["kind"] == "cycle" && row["item"] == "KEN-1"),
+            "{case}: {}",
+            fleet["fleet_log"]
+        );
+        // The GitHub duty's pass writes the row the tracker read past.
+        baseline.apply(set(github::MERGED_ROW, "KEN-1", "owner/repo#7"));
+        let second = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1240).unwrap();
+        assert_eq!(rendered(&second), Vec::<String>::new(), "{case}");
+        assert_eq!(timeline_reads(), 1, "{case}: {:?}", world.gh_calls());
+    }
 }
 
 #[test]

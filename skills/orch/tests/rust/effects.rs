@@ -7825,8 +7825,11 @@ fn the_launch_records_the_tier_its_brief_states_and_a_relaunch_keeps_it() {
 /// its close recorded read unknown lineage. Through the real `launch-lane`
 /// and the real `oversee-cycle`: a launch naming the item's obligation
 /// records it; the item's next phase naming none keeps it, and one naming
-/// another is refused `obligation-conflict` with nothing written; the cycle
-/// recorder copies the recorded obligation into the cycle.
+/// another is refused `obligation-conflict` with nothing written; a record
+/// that binds none takes the obligation a later launch names; a parent
+/// named without its pair is refused `request-invalid` with nothing
+/// written; the cycle recorder copies the recorded obligation into the
+/// cycle.
 #[test]
 fn the_launch_binds_the_items_obligation_and_its_cycle_records_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -7862,6 +7865,34 @@ fn the_launch_binds_the_items_obligation_and_its_cycle_records_it() {
     assert_eq!(answer["ok"], false, "{answer}");
     assert_eq!(answer["refusal"]["key"], "obligation-conflict", "{answer}");
     assert_eq!(runner.fleet(), before, "a refused launch writes nothing");
+    let unbound = effect_report(&runner.op_fleet(&launch_request("KEN-Q", runner.state_dir())));
+    assert_eq!(unbound["intent"]["outcome"], "confirmed", "{unbound}");
+    assert!(
+        unbound["lane"].get("obligation").is_none(),
+        "{}",
+        unbound["lane"]
+    );
+    effect_report(&runner.op_fleet(&terminal_close("KEN-Q")));
+    let mut bind_later = launch_request("KEN-Q", runner.state_dir());
+    let later = json!({
+        "repo": "o/r", "item": "KEN-Q", "parent_repo": null, "parent_item": null,
+    });
+    bind_later["obligation"] = later.clone();
+    let bound = effect_report(&runner.op_fleet(&bind_later));
+    assert_eq!(
+        bound["lane"]["obligation"], later,
+        "a record binding none takes the named obligation: {}",
+        bound["lane"]
+    );
+    effect_report(&runner.op_fleet(&terminal_close("KEN-Q")));
+    let before = runner.fleet();
+    let mut half = launch_request("KEN-H", runner.state_dir());
+    half["obligation"] = json!({
+        "repo": "o/r", "item": "KEN-H", "parent_repo": "o/p", "parent_item": null,
+    });
+    let answer = reply(&runner.op_fleet(&half));
+    assert_eq!(answer["refusal"]["key"], "request-invalid", "{answer}");
+    assert_eq!(runner.fleet(), before, "a half-named parent writes nothing");
     // The cycle recorder over the record the launch wrote: a direct push
     // whose push log is unread still records its cycle.
     let checkout = dir.path().join("checkout");
@@ -8049,7 +8080,10 @@ fn fleet_origin(checkouts: &[&Path]) {
 /// chat nobody reads. Through the real `launch-lane`, for each harness: a
 /// brief with no unattended words reaches the harness's line closed by
 /// them, exactly once, on a line after the brief's own; a Claude brief
-/// that already ends with them reaches the line as written.
+/// that already carries them, at its end or on its first line before an
+/// item-tier line, reaches the line as written; a hosted lane's brief,
+/// through the real `lane-host` dispatcher and a fixture provider, reaches
+/// its harness on the host closed by them the same way.
 #[test]
 fn every_lane_brief_reaches_its_harness_closed_by_the_unattended_words_once() {
     let words = std::fs::read_to_string(
@@ -8057,7 +8091,7 @@ fn every_lane_brief_reaches_its_harness_closed_by_the_unattended_words_once() {
     )
     .unwrap();
     let words = words.trim_end();
-    let cases: [(&str, &str); 5] = [
+    let cases: [(&str, &str); 6] = [
         ("claude", "/orch start KEN-U"),
         (
             "codex",
@@ -8069,6 +8103,10 @@ fn every_lane_brief_reaches_its_harness_closed_by_the_unattended_words_once() {
         ),
         ("pi", "/skill:orch start KEN-U"),
         ("claude", "/orch start KEN-U WORDS"),
+        (
+            "claude",
+            "/orch small KEN-U WORDS\ntier=small brief=small cause=estimate estimate=2 delta=40 paths=3",
+        ),
     ];
     for (harness, brief) in cases {
         let brief = brief.replace("WORDS", words);
@@ -8125,7 +8163,7 @@ fn every_lane_brief_reaches_its_harness_closed_by_the_unattended_words_once() {
             .filter_map(Value::as_str)
             .filter(|arg| arg.contains(words))
             .collect();
-        let expected = if brief.ends_with(words) {
+        let expected = if brief.contains(words) {
             brief.clone()
         } else {
             format!("{brief}\n{words}")
@@ -8141,6 +8179,62 @@ fn every_lane_brief_reaches_its_harness_closed_by_the_unattended_words_once() {
             "{harness}: the words once: {recorded}"
         );
     }
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let world = HostedLaunch::new(
+        &server,
+        dir.path(),
+        json!({
+            "identity_file": "/srv/clone/.git/lane-host-pid",
+            "runtime": "/cache/bin/orch-runtime-k"
+        }),
+    );
+    // The real dispatcher in front of the fixture provider, and the
+    // recording harness on the host.
+    let shipped = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts");
+    let provider = dir.path().join("provider");
+    std::fs::create_dir_all(&provider).unwrap();
+    std::fs::rename(
+        world.scripts.join("lane-host.json"),
+        provider.join("lane-host.json"),
+    )
+    .unwrap();
+    std::fs::remove_file(world.scripts.join("lane-host")).unwrap();
+    std::os::unix::fs::symlink(shipped.join("lane-host"), world.scripts.join("lane-host")).unwrap();
+    std::os::unix::fs::symlink(shipped.join("lib"), world.scripts.join("lib")).unwrap();
+    std::os::unix::fs::symlink(
+        shipped.join("../../mailbox"),
+        world.scripts.join("../../mailbox"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        fixtures().join("lane-host/lane-host"),
+        provider.join("lane-host"),
+    )
+    .unwrap();
+    std::fs::remove_file(world.tools.join("claude")).unwrap();
+    std::os::unix::fs::symlink(
+        fixtures().join("stub-record/claude"),
+        world.tools.join("claude"),
+    )
+    .unwrap();
+    let brief = dir.path().join("hosted-brief.md");
+    std::fs::write(&brief, "Review the hosted change.\n").unwrap();
+    let mut request = world.request();
+    request["host"] = json!(provider.join("lane-host").display().to_string());
+    request["brief_file"] = json!(brief.display().to_string());
+    let report = effect_report(&world.runner.op_fleet(&request));
+    assert_ne!(report["intent"]["outcome"], "failed", "hosted: {report}");
+    let recorded = launch_record_of(&world.host_path);
+    let expected = format!("Review the hosted change.\n{words}");
+    assert!(
+        recorded["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|arg| arg == &json!(expected)),
+        "hosted: the brief the host's line carries: {recorded}"
+    );
 }
 
 /// The launch record the record stubs write in `cwd`, read once it stands:

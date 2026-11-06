@@ -1296,11 +1296,25 @@ fn two_contenders_on_one_path_are_judged_one_after_the_other() {
 /// `overseer-foreign` naming both before anything is read or written, and
 /// admitted once `ORCH_CONNECTED_REPOS` lists it; a directory in no
 /// checkout, and a checkout with no origin while the fleet connects
-/// repositories, are refused `overseer-unjudged` with the cause.
+/// repositories, are refused `overseer-unjudged` with the cause. A fleet
+/// in no checkout binds a launch under a translated git; a relaunch over a
+/// stopped record is bound on its request's checkout.
 #[test]
 fn a_launch_from_a_checkout_the_fleet_neither_owns_nor_connects_is_refused() {
     let fleet = Fleet::new();
     fleet.init_fleet();
+    // A fleet in no checkout binds every launch as its own, under a
+    // translated git too: `LANGUAGE` takes effect under any installed
+    // locale but C, and `en_US.UTF-8` is the one a host most often has.
+    let mut unbound = launch("KEN-0", &fleet.state_dir());
+    unbound.as_object_mut().unwrap().remove("tracker");
+    let out = fleet.op_with(&unbound, &[("LANGUAGE", "de"), ("LANG", "en_US.UTF-8")]);
+    assert_eq!(
+        reply(&out)["ok"],
+        true,
+        "a translated git: {}",
+        stderr(&out)
+    );
     git(&fleet.state_dir(), &["init", "-q", "-b", "main", "."]);
     git(
         &fleet.state_dir(),
@@ -1361,6 +1375,23 @@ fn a_launch_from_a_checkout_the_fleet_neither_owns_nor_connects_is_refused() {
         fleet.lane("KEN-3")["mail_root"],
         other.display().to_string()
     );
+    // KEN-1's launch failed (no server) and left its record stopped: a
+    // relaunch is bound on its own checkout, as a first launch is.
+    assert_eq!(fleet.lane("KEN-1")["status"], "stopped");
+    let before = fleet.fleet();
+    let (key, _) = refusal(&fleet.op(&launch_from("KEN-1", &other)));
+    assert_eq!(
+        key, "overseer-foreign",
+        "a relaunch into another repository"
+    );
+    assert_eq!(fleet.fleet(), before, "a refused relaunch writes nothing");
+    let out = fleet.op(&launch_from("KEN-1", &inside));
+    assert_eq!(
+        reply(&out)["ok"],
+        true,
+        "its own checkout: {}",
+        stderr(&out)
+    );
 }
 
 /// Defect: an item of another repository or team than the checkout's was
@@ -1370,7 +1401,9 @@ fn a_launch_from_a_checkout_the_fleet_neither_owns_nor_connects_is_refused() {
 /// formatter over a planted answer), are refused `item-foreign` before
 /// the item is read; a team the tracker cannot answer for is refused
 /// `item-repo-unresolved`; the item of the fleet's own team is read and
-/// admitted.
+/// admitted; a relaunch over a stopped GitHub record naming another
+/// repository refuses `item-foreign`, nothing written; a connected
+/// checkout's item of another team than the fleet's is admitted.
 #[test]
 fn an_item_of_another_repository_or_team_than_its_checkouts_is_refused() {
     let fleet = Fleet::new();
@@ -1423,6 +1456,49 @@ fn an_item_of_another_repository_or_team_than_its_checkouts_is_refused() {
             .any(|line| line == "issues get KEN-1 --with-bundle --format=safe"),
         "the fleet's own team's item is read"
     );
+    // A relaunch over the stopped record of a GitHub item admitted from its
+    // checkout, naming another repository, is the foreign item it names.
+    std::fs::write(
+        fleet.items_dir().join("12.json"),
+        br#"{"body": "Some text.\n", "labels": []}"#,
+    )
+    .unwrap();
+    let mut github = github.clone();
+    github["item"] = json!("issue-12");
+    github["repo"] = json!("o/r");
+    assert_eq!(reply(&fleet.op(&github))["ok"], true);
+    assert_eq!(fleet.lane("issue-12")["status"], "stopped");
+    let before = fleet.fleet();
+    github["repo"] = json!("o/foreign");
+    let (key, fields) = refusal(&fleet.op(&github));
+    assert_eq!(key, "item-foreign", "a relaunch naming another repository");
+    assert_eq!(
+        fields,
+        pairs(&[("repo", "o/foreign"), ("route", "peer-mail")])
+    );
+    assert_eq!(fleet.fleet(), before, "a refused relaunch writes nothing");
+    // A connected checkout's item is judged on no team of the fleet's: its
+    // team is that checkout's setting.
+    git(&fleet.state_dir(), &["init", "-q", "-b", "main", "."]);
+    git(
+        &fleet.state_dir(),
+        &["remote", "add", "origin", "https://github.com/o/fleet.git"],
+    );
+    let connected = fleet.checkout("other", Some("https://github.com/o/other.git"));
+    fleet.item("CC-3", "`src/c.sh`", 0, &[]);
+    let out = fleet.op_with(
+        &launch("CC-3", &connected),
+        &[
+            ("LINEAR_TEAM", "Kendex"),
+            ("ORCH_CONNECTED_REPOS", "o/other"),
+        ],
+    );
+    assert_eq!(
+        reply(&out)["ok"],
+        true,
+        "the connected checkout's item: {}",
+        stderr(&out)
+    );
 }
 
 /// A review lane keyed on a pull request's number, the item `issue-N` of a
@@ -1430,29 +1506,65 @@ fn an_item_of_another_repository_or_team_than_its_checkouts_is_refused() {
 /// `issueOrPullRequest` lookup (gh 2.103.3's own query; the client refuses a
 /// pull request only for `issue delete`, `transfer` and artifacts), so it
 /// answers the pull request's body and labels, the shape an issue's answer
-/// has. Through the real `launch-lane` over that answer, a body naming no
-/// Location: the lane is admitted after one `gh issue view` read, its
-/// labels judged and its touched set empty.
+/// has. Through the real `launch-lane` over that answer: the lane is
+/// admitted after one `gh issue view` read, its touched set the body's
+/// Location; the pull request numbered as the item is the lane's own, never
+/// its holder, and another open pull request on the path is.
 #[test]
 fn a_review_lane_keyed_on_a_pull_request_number_is_admitted_on_its_body() {
-    let fleet = Fleet::new();
+    let mut fleet = Fleet::new();
     fleet.init_fleet();
     let checkout = fleet.checkout("repo", Some("https://github.com/o/r.git"));
     std::fs::write(
         fleet.items_dir().join("12.json"),
-        br#"{"body": "Review the change.\n", "labels": [{"name": "review"}]}"#,
+        br#"{"body": "Review the change.\n**Location**: `src/a.rs`\n", "labels": [{"name": "review"}]}"#,
     )
     .unwrap();
-    let out = fleet.op(&json!({
-        "op": "launch-lane",
-        "item": "issue-12",
-        "tracker": "github",
-        "repo": "o/r",
-        "harness": "claude",
-        "mail_root": checkout.display().to_string(),
-    }));
+    fleet.gh_api(&gh_map(&[
+        fake_pull(12, "feature/work", &["src/a.rs"]),
+        fake_pull(13, "feature/other", &["src/a.rs"]),
+    ]));
+    // One `gh` for both reads: the item through the issue fixture, the pull
+    // requests through the API fixture.
+    let bin = fleet.dir.path().join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let dispatch = bin.join("gh");
+    std::fs::write(
+        &dispatch,
+        format!(
+            "#!/bin/bash\nif [ \"${{1:-}}\" = issue ]; then exec {} \"$@\"; fi\nexec {} \"$@\"\n",
+            fixtures().join("gh-issue/gh").display(),
+            fixtures().join("gh/gh").display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        &dispatch,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    let path = support::tool_path(&[bin.as_path()]);
+    let out = fleet.op_with(
+        &json!({
+            "op": "launch-lane",
+            "item": "issue-12",
+            "tracker": "github",
+            "repo": "o/r",
+            "harness": "claude",
+            "mail_root": checkout.display().to_string(),
+        }),
+        &[("PATH", path.as_str())],
+    );
     assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
-    assert_eq!(fleet.lane("issue-12")["touched"], json!([]));
+    let lane = fleet.lane("issue-12");
+    assert_eq!(lane["touched"], json!(["src/a.rs"]));
+    let holders: Vec<&str> = lane["rebase"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|row| row["holder"].as_str())
+        .collect();
+    assert_eq!(holders, ["#13"], "{lane}");
     let reads: Vec<String> = fleet
         .gh_log()
         .into_iter()

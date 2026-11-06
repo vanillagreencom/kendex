@@ -359,7 +359,18 @@ impl World {
         std::thread::scope(|s| {
             let handle =
                 s.spawn(|| run(&item, request, &programs, &root, wait_clock, &env(), LOCK));
-            drive(self, clock);
+            let driven =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drive(self, clock)));
+            if let Err(failure) = driven {
+                // The wait sleeps on a clock only this thread releases: run it
+                // out, so the row fails with the drive's panic instead of
+                // hanging the scope that joins it.
+                while !handle.is_finished() {
+                    clock.release(request.max_wait);
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                std::panic::resume_unwind(failure);
+            }
             let bound = std::time::Instant::now() + secs(60);
             while !handle.is_finished() {
                 if std::time::Instant::now() >= bound {
@@ -1779,8 +1790,10 @@ fn time_between_the_probes_clock_reads_never_moves_its_cutoff() {
             );
             std::thread::sleep(Duration::from_millis(10));
         }
-        // The wait's start is the clock's first read, so its deadline less
-        // the poll falls nine seconds in.
+        // `run` reads the clock first for the wait's start, so its deadline
+        // less the poll falls nine seconds after the clock's own start. A
+        // read added before it moves the wait's cutoff a tick past this
+        // instant, and the row fails, never passes.
         clock.release(secs(9) + TICK / 2 - clock.elapsed());
         fs::write(world.root().join("probe-released"), "").unwrap();
     });

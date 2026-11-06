@@ -280,7 +280,7 @@ fn a_start_less_record_is_unreadable_while_its_pid_runs_and_taken_over_once_it_i
     );
 }
 
-/// Decision 148 (7). Defect: a check-then-write claim, under which two
+/// Defect: a check-then-write claim, under which two
 /// starts that both read the path free both write and both run. Two
 /// runners started together on one fleet state: exactly one claims, the
 /// other refuses `watch-running` naming the winner, and the record names
@@ -301,43 +301,49 @@ fn two_starts_together_claim_once() {
         },
     ];
     let barrier = Barrier::new(2);
-    let results: Vec<Result<watch::Ended, Error>> = std::thread::scope(|s| {
-        let handles: Vec<_> = contenders
-            .iter()
-            .map(|identity| {
-                let runner = runner(dir.path(), &clock, &settings, identity.clone());
-                let barrier = &barrier;
-                s.spawn(move || {
-                    barrier.wait();
-                    runner.run()
+    // Nothing inside the scope panics or stops driving the clock: a runner
+    // left waiting on a fake-clock sleep would hold the scope's join. The
+    // stop goes to the claim's holder once the other runner has returned;
+    // the clock is released until both have ended, and how long that took
+    // is judged after the scope.
+    let (results, stopped, elapsed): (Vec<Result<watch::Ended, Error>>, bool, Duration) =
+        std::thread::scope(|s| {
+            let handles: Vec<_> = contenders
+                .iter()
+                .map(|identity| {
+                    let runner = runner(dir.path(), &clock, &settings, identity.clone());
+                    let barrier = &barrier;
+                    s.spawn(move || {
+                        barrier.wait();
+                        runner.run()
+                    })
                 })
-            })
-            .collect();
-        // The winner reaches its first sleep; the loser has returned.
-        let settle = Instant::now() + secs(10);
-        while clock.sleepers() == 0 && Instant::now() < settle {
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        let claim = watch::claim::read(&paths).unwrap().expect("one claim");
-        let winner = contenders
-            .iter()
-            .find(|c| claim.names(c))
-            .expect("the claim names a contender")
-            .clone();
-        watch::claim::request_stop(&paths, &winner).unwrap();
-        let bound = Instant::now() + secs(10);
-        loop {
-            clock.release(secs(1));
-            if handles.iter().all(|h| h.is_finished()) || Instant::now() >= bound {
-                break;
+                .collect();
+            let started = Instant::now();
+            let mut stopped = false;
+            while !handles.iter().all(|h| h.is_finished()) {
+                if !stopped
+                    && handles.iter().any(|h| h.is_finished())
+                    && let Ok(Some(claim)) = watch::claim::read(&paths)
+                    && let Some(winner) = contenders.iter().find(|c| claim.names(c))
+                {
+                    stopped = watch::claim::request_stop(&paths, winner).is_ok();
+                }
+                clock.release(secs(1));
+                std::thread::sleep(Duration::from_millis(20));
             }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        handles
-            .into_iter()
-            .map(|h| h.join().expect("a runner thread"))
-            .collect()
-    });
+            let elapsed = started.elapsed();
+            let results = handles
+                .into_iter()
+                .map(|h| h.join().expect("a runner thread"))
+                .collect();
+            (results, stopped, elapsed)
+        });
+    assert!(stopped, "no stop reached the claim's holder: {results:?}");
+    assert!(
+        elapsed < secs(30),
+        "the runners ended {elapsed:?} after their start: {results:?}"
+    );
     let won: Vec<_> = results.iter().filter(|r| r.is_ok()).collect();
     let lost: Vec<_> = results.iter().filter(|r| r.is_err()).collect();
     assert_eq!((won.len(), lost.len()), (1, 1), "{results:?}");

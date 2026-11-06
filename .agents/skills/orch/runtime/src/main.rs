@@ -1381,6 +1381,7 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
                 &env,
                 locking,
                 since.clone(),
+                repos.clone(),
             )?;
             // The verification duty on the tracker's slot, the heartbeat's
             // body on both slots, the report and the retention.

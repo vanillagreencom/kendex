@@ -52,7 +52,7 @@ tags: [git, integration]
 | `edit-comment <id> [body \| --body-file PATH]` | Edit an existing comment, PR-level (`#issuecomment-<id>`) or inside a review thread (`#discussion_r<id>`). Endpoint order and the unknown-id refusal: `edit-comment --help`. |
 | `sticky-comment <PR> [--verdict\|--analysis\|--body]` | Get bot sticky comment. `--verdict`: quick pass/fail. `--analysis`: deep recommendation. |
 
-CI waiting is the orch skill's: its workflows repeat the orch runtime's `verify-pr` operation on one pull request's current head, and its runtime's `queue-watch` reads the same verdict while a merge queue holds the pull request.
+CI waiting is the orch skill's: its workflows repeat the orch runtime's `verify-pr` operation on one pull request's current head, and its runtime's `queue-watch` reads that verdict on an armed pull request before the merge queue takes it, then the queue entry's progress.
 
 Contracts: `label-add --help`, `edit-comment --help`, `git-https-auth --help`, `git-diff-summary --help`.
 

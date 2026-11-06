@@ -2,7 +2,7 @@
 
 The read [merge-pr.md](../workflows/merge-pr.md) § 3.3 runs before its gate wait and before every merge call. `pr-merge` resolves no thread and counts no open one, so this read is the lane's own: the reply check every `pr-merge` call runs reads what each thread's replies say, never whether the thread is open. It runs under every gate mode and on every change class.
 
-Bind the pull request's head as `[READ_HEAD]` by the first command below, then read its open threads. No Copilot wait runs here: under `approval` the review gate holds every verdict that permits a merge while Copilot's work on the head runs ([gates.md § Copilot requests](gates.md#copilot-requests)), so a thread Copilot posts after this read reaches the gate's next call as `comments`.
+Bind the pull request's head as `[READ_HEAD]` by the first command below, then read its open threads. No Copilot wait runs here: under `approval` a thread Copilot posts after this read reaches the review gate's next call as `comments` ([gates.md § Copilot requests](gates.md#copilot-requests)), and this read runs again before every merge call.
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid

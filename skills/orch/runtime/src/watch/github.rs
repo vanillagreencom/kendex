@@ -912,6 +912,91 @@ fn terminal_of(gh: &Gh, lane: &Lane) -> Result<TerminalState> {
     }
 }
 
+/// One lane item's own merged pull requests at or after the floor, per
+/// repository, as `(number, repository)`: its recorded pull request by
+/// number where its record carries a dependency, else its head branch and
+/// its mentions.
+fn own_merges(
+    gh: &Gh,
+    entry: &MergeItem,
+    repos: &[String],
+    inputs: &Inputs,
+) -> Result<Vec<(u64, String)>> {
+    let mut hits: Vec<(u64, String)> = Vec::new();
+    for repo in repos {
+        let owner = repo.split('/').next().unwrap_or(repo);
+        let recorded_pr = entry
+            .parked_key
+            .as_deref()
+            .and_then(|k| k.strip_prefix(&format!("{repo}#")))
+            .and_then(|n| n.parse::<u64>().ok());
+        let pulls: Vec<Pull> = if let Some((own_repo, own_pr)) = &entry.own {
+            if own_repo != repo {
+                continue;
+            }
+            let Some(pr) = own_pr else { continue };
+            let path = format!("repos/{repo}/pulls/{pr}");
+            match gh.object::<Pull>("merged", &path)? {
+                Some(pull) => vec![pull],
+                None => {
+                    return Err(refused(
+                        "github-read-failed",
+                        &[("read", "merged"), ("path", &path)],
+                    ));
+                }
+            }
+        } else {
+            own_pulls(gh, repo, &entry.item, inputs.since_iso)?
+        };
+        for pull in pulls {
+            if !lane_own(&pull, &entry.item, owner, recorded_pr) {
+                continue;
+            }
+            if merged_at(&pull, inputs.since).is_none() {
+                continue;
+            }
+            if !hits.iter().any(|(n, r)| *n == pull.number && r == repo) {
+                hits.push((pull.number, repo.clone()));
+            }
+        }
+    }
+    Ok(hits)
+}
+
+/// One lane's merged keys (`<repo>#<n>`) as the merged index reads them
+/// ([`own_merges`]) over the repositories this duty reads (`repos` the
+/// watch's `--repo` names), for the tracker's terminal close, which reads
+/// the lane's current merges before it closes the lane whatever `merged`
+/// row a pass of this duty last wrote.
+pub(super) fn merged_keys(
+    gh: &Gh,
+    lane: &Lane,
+    repos: &[String],
+    settings: &Settings,
+    since: Option<u64>,
+    since_iso: Option<&str>,
+    now: u64,
+) -> Result<Vec<String>> {
+    let terminal = BTreeMap::new();
+    let inputs = Inputs {
+        repos,
+        settings,
+        lanes: std::slice::from_ref(lane),
+        terminal: &terminal,
+        since,
+        since_iso,
+        now,
+    };
+    let repos = repositories(&inputs);
+    let mut keys = Vec::new();
+    for entry in merge_items(inputs.lanes) {
+        for (number, repo) in own_merges(gh, &entry, &repos, &inputs)? {
+            keys.push(format!("{repo}#{number}"));
+        }
+    }
+    Ok(keys)
+}
+
 /// The merged index (`check_merged`, `oversee-watch:1851`): for every
 /// lane item and repository, the item's own merged pull requests at or
 /// after the floor, by head branch and by mention; a key not in the
@@ -995,45 +1080,7 @@ fn merged(
                 });
             }
         }
-        // Its own merges, per repository.
-        let mut hits: Vec<(u64, String)> = Vec::new();
-        for repo in repos {
-            let owner = repo.split('/').next().unwrap_or(repo);
-            let recorded_pr = entry
-                .parked_key
-                .as_deref()
-                .and_then(|k| k.strip_prefix(&format!("{repo}#")))
-                .and_then(|n| n.parse::<u64>().ok());
-            let pulls: Vec<Pull> = if let Some((own_repo, own_pr)) = &entry.own {
-                if own_repo != repo {
-                    continue;
-                }
-                let Some(pr) = own_pr else { continue };
-                let path = format!("repos/{repo}/pulls/{pr}");
-                match gh.object::<Pull>("merged", &path)? {
-                    Some(pull) => vec![pull],
-                    None => {
-                        return Err(refused(
-                            "github-read-failed",
-                            &[("read", "merged"), ("path", &path)],
-                        ));
-                    }
-                }
-            } else {
-                own_pulls(gh, repo, &entry.item, inputs.since_iso)?
-            };
-            for pull in pulls {
-                if !lane_own(&pull, &entry.item, owner, recorded_pr) {
-                    continue;
-                }
-                if merged_at(&pull, inputs.since).is_none() {
-                    continue;
-                }
-                if !hits.iter().any(|(n, r)| *n == pull.number && r == repo) {
-                    hits.push((pull.number, repo.clone()));
-                }
-            }
-        }
+        let hits = own_merges(gh, entry, repos, inputs)?;
         if hits.is_empty() {
             produced.changes.push(Change::Clear {
                 kind: MERGED_ROW.to_owned(),

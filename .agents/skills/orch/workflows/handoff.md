@@ -7,7 +7,7 @@ Launch one or more independent work-item sessions. Launch-only: nothing here mon
 | `tracker` | `linear` or `github` |
 | `items` | Linear IDs or GitHub issue numbers |
 | `repo` | Required for GitHub when `gh repo view` cannot resolve it |
-| `harness` | `claude`, `codex`, `codex-app`, `opencode`, or `pi` |
+| `harness` | `claude`, `codex`, `copilot`, `pi`, or `codex-app` |
 
 ## 0. Resolve The Harness
 
