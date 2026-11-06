@@ -2,9 +2,9 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 2.0.12
 
-- Pi no longer crashes with "This extension ctx is stale" when it draws a tool row after the session was switched, forked or reloaded. Tool chrome keeps the current session's theme instead of its extension context.
+- Pi no longer crashes with "This extension ctx is stale" when it draws a tool row after the session was switched, forked or reloaded. Tool chrome keeps the current session's theme instead of its extension context. Thanks to @eaxeax.
 
   You do: restart Pi after updating; `/reload` keeps the tool chrome code Pi loaded at startup.
 

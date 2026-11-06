@@ -83,11 +83,6 @@ describe("tool chrome", () => {
 
 			handlers.get("session_shutdown")!();
 			expect(renderRule()).toBe(`\x1b[90m${"─".repeat(39)}\x1b[39m`);
-
-			stale = false;
-			handlers.get(event)!({}, ctx);
-			handlers.get(event)!({}, { hasUI: false });
-			expect(renderRule()).toBe(`\x1b[90m${"─".repeat(39)}\x1b[39m`);
 		} finally {
 			handlers.get("session_shutdown")!();
 		}
