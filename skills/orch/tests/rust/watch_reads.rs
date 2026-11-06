@@ -1243,7 +1243,7 @@ fn installed_cycle_recorder(world: &World) -> PathBuf {
         let shipped = scripts.join(format!("{name}.shipped"));
         std::fs::rename(scripts.join(name), &shipped).unwrap();
         let wrapper = scripts.join(name);
-        std::fs::write(
+        write_executable(
             &wrapper,
             format!(
                 "#!/bin/sh\nexec env -i PATH='{path}' LANG=C.UTF-8 TMPDIR='{root}' HOME='{home}' GIT_CEILING_DIRECTORIES='{root}' GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GH_TOKEN=fixture-token ORCH_LANE_HOST=\"${{ORCH_LANE_HOST:-}}\" bash '{shipped}' \"$@\"\n",
@@ -1252,9 +1252,7 @@ fn installed_cycle_recorder(world: &World) -> PathBuf {
                 home = home.display(),
                 shipped = shipped.display(),
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
     }
     scripts
 }
@@ -1274,7 +1272,7 @@ fn cycle_lane(world: &World, hosted: bool) -> Value {
         let disk = world.dir.path().join("host-disk");
         std::fs::create_dir_all(&disk).unwrap();
         let provider = world.dir.path().join("provider");
-        std::fs::write(
+        write_executable(
             &provider,
             format!(
                 "#!/bin/bash\nexport LANE_HOST_STUB_LOG='{}' LANE_HOST_STUB_DIR='{}'\nexec '{}' \"$@\"\n",
@@ -1282,9 +1280,7 @@ fn cycle_lane(world: &World, hosted: bool) -> Value {
                 disk.display(),
                 orch_package().join("tests/fixtures/lane-host").display()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&provider, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         lane["host"] = json!(provider.display().to_string());
         lane["kind"] = json!("ssh");
         lane["mail_root"] = json!("/remote/KEN-1");
@@ -1314,11 +1310,12 @@ fn timeline_seven() -> Value {
     json!({"body": {"data": {"repository": {"pullRequest": {
         "number": 7, "state": "MERGED", "createdAt": "2026-09-20T09:10:00Z", "mergedAt": "2026-09-20T11:20:00Z",
         "author": {"login": "lane-app"}, "headRefName": "", "headRepository": null,
-        "mergeCommit": {"oid": "m1", "checkSuites": {"pageInfo": {"hasNextPage": false}, "nodes": []}},
+        "mergeCommit": {"__typename": "Commit", "oid": "m1",
+            "checkSuites": {"__typename": "CheckSuiteConnection", "pageInfo": {"hasNextPage": false}, "nodes": []}},
         "firstCommit": {"nodes": [{"commit": {"authoredDate": "2026-09-20T09:00:00Z"}}]},
-        "headCommit": {"nodes": [{"commit": {"oid": "h2", "committedDate": "2026-09-20T10:10:00Z",
+        "headCommit": {"nodes": [{"commit": {"__typename": "Commit", "oid": "h2", "committedDate": "2026-09-20T10:10:00Z",
             "status": {"context": {"state": "SUCCESS", "createdAt": "2026-09-20T10:25:00Z"}},
-            "checkSuites": {"pageInfo": {"hasNextPage": false}, "nodes": []}}}]},
+            "checkSuites": {"__typename": "CheckSuiteConnection", "pageInfo": {"hasNextPage": false}, "nodes": []}}}]},
         "commits": {"totalCount": 0, "nodes": []},
         "reviews": {"totalCount": 0, "nodes": []},
         "timelineItems": {"pageInfo": {"hasNextPage": false}, "nodes": []}
@@ -1507,12 +1504,10 @@ fn a_terminal_close_whose_effect_fails_is_said_refused_not_closed() {
     // The harness still runs and holds an unanswered ask: the close's
     // effect refuses it and records `failed`, the harness untouched.
     let mailbox = world.dir.path().join("asking-lane-mail");
-    std::fs::write(
+    write_executable(
         &mailbox,
         "#!/bin/bash\n[ \"${1:-}\" = pending ] && printf '%s\\n' '{\"id\":\"1769700000-9-31\",\"kind\":\"ask\",\"text\":\"which base\"}'\nexit 0\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&mailbox, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let mailbox = mailbox.display().to_string();
     let settings = world.settings(&[("LANE_MAIL_CLI", mailbox.as_str())]);
     let clock = FakeClock::new();
@@ -1559,8 +1554,7 @@ fn an_open_terminal_close_the_watch_asked_is_settled_by_its_own_next_pass() {
         json!({"body": {"total_count": 0, "incomplete_results": false, "items": []}}),
     );
     let mailbox = world.dir.path().join("quiet-lane-mail");
-    std::fs::write(&mailbox, "#!/bin/bash\nexit 0\n").unwrap();
-    std::fs::set_permissions(&mailbox, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write_executable(&mailbox, "#!/bin/bash\nexit 0\n");
     let mailbox = mailbox.display().to_string();
     let settings = world.settings(&[("LANE_MAIL_CLI", mailbox.as_str())]);
     let clock = FakeClock::new();

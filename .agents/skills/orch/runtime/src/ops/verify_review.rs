@@ -504,8 +504,8 @@ impl Gate<'_> {
         // The reviewers' state on the head, then its request: every head
         // Copilot has not reviewed is requested before its verdict, an
         // approval standing from an earlier commit included, so Copilot
-        // reviews the commit a push lands; the approval is answered beside
-        // the request.
+        // reviews the commit a push lands, and its work on the head, this
+        // request included, holds the approval until that review lands.
         let unresolved = review::unresolved_threads(&self.gh, &self.r.repo, self.r.pr)?;
         let copilot = if review::copilot_reviewed(&self.view) {
             Some(self.reviews()?.clone())
@@ -821,7 +821,12 @@ impl Gate<'_> {
     fn post_request(&mut self, claimed: HeadRecord) -> Step<HeadRecord> {
         self.asked = true;
         let exit = match review::request_review(&self.gh, &self.r.repo, self.r.pr)? {
-            Acted::Made => return Ok(claimed),
+            Acted::Made => {
+                // The work read before the POST knows nothing of it: read
+                // again, so this call's hold sees the request it made.
+                self.work = None;
+                return Ok(claimed);
+            }
             Acted::Refused { exit, .. } => exit,
         };
         let path = self.path;
@@ -987,10 +992,9 @@ impl Gate<'_> {
 
     /// The one judgement before a verdict that permits a merge is
     /// published: a regression blocker standing open refuses it, and
-    /// Copilot's work in flight within its hold keeps it `pending`. An
-    /// `off` gate awaits no Copilot work, and an approval awaits none the
-    /// gate asked for itself: that request goes out beside the approval,
-    /// which stands, and only Copilot's work found in flight holds it.
+    /// Copilot's work in flight within its hold keeps it `pending`, the
+    /// review the gate itself asked for included. An `off` gate awaits no
+    /// Copilot work.
     fn permit(&mut self, verdict: Verdict, record: Option<&HeadRecord>) -> Step<Verdict> {
         if let Some(location) = regression_blocker(self.path, &loaded(self.path)?.doc)? {
             return Ok(Verdict::new(
@@ -998,11 +1002,7 @@ impl Gate<'_> {
                 format!("regression-open location={location}"),
             ));
         }
-        let asked = record
-            .and_then(|head| head.request.as_ref())
-            .is_some_and(|request| request.outcome == REQUESTED);
         if verdict.word != OFF
-            && !(verdict.word == "approved" && asked)
             && let Some(remaining) = self.hold(record)?
         {
             let run = self

@@ -468,7 +468,7 @@ A line whose `commit_id` is `[HEAD_SHA]` and whose `state` is `APPROVED` ends th
   |---------|----------------------------------|------|
   | `comments` | any | Update the baseline and loop to § 1 for each open thread this triage has not answered, as § 6.3 does; this section then routes the head again. The call answers `comments` while any thread stands open: where every open thread is one § 7.1 keeps open awaiting a human, every repeat answers `comments` until the human answers, so end this step and leave the head to the caller's own review wait |
   | `approved` | `APPROVED` | Run the body check above; on its exit `0`, notice `copilot-approved-on-rerequest PR #[PR_NUMBER] head [HEAD_SHA]` |
-  | `approved` | none or not `APPROVED` | No notice: another reviewer approved the head. The request `[REVIEW_READ]` names stands, and Copilot's review of the head reaches a later call as `comments` |
+  | `approved` | none or not `APPROVED` | No notice: another reviewer approved the head, and Copilot's work on it ended or its hold passed |
   | `copilot-error` | error answer | Route as [Copilot requests](../references/gates.md#copilot-requests) says. The caller keeps the approval gate unmet and waits for the overseer approval |
   | `timeout` | present, not `APPROVED` | Copilot read the head again and left no open thread. Notice `copilot-fallback PR #[PR_NUMBER] head [HEAD_SHA]`, which asks for the overseer's fallback approval |
   | `timeout` | none | No notice: the overseer's `awaiting-stale` rule decides the head |

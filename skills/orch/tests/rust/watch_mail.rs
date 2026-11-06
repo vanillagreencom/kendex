@@ -10,7 +10,6 @@
 #[path = "support.rs"]
 mod support;
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{Duration, Instant};
@@ -313,8 +312,7 @@ impl World {
     /// A program written under the checkout.
     fn script(&self, name: &str, text: &str) -> PathBuf {
         let path = self.root.join(name);
-        std::fs::write(&path, text).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        write_executable(&path, text);
         path
     }
 }
@@ -1093,24 +1091,21 @@ fn a_hosted_lanes_mail_is_drained_under_the_host_its_record_names() {
             log.display()
         );
         let path = side.join(name);
-        std::fs::write(&path, text).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        write_executable(&path, text);
         path
     };
     let fleet_default = provider("p1", false);
     let record_host = provider("p2", true);
     // The client as the duty starts it, the fleet's provider its default.
     let client = side.join("lane-mail");
-    std::fs::write(
+    write_executable(
         &client,
         format!(
             "#!/bin/sh\n: \"${{ORCH_LANE_HOST:={}}}\"\nexport ORCH_LANE_HOST\nexec {} \"$@\"\n",
             fleet_default.display(),
             hold().display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&client, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let w = world(&client, 20);
     let remote = w.root.join("remote").join(ITEM);
     let dir = remote.join("tmp").join("lane-mail").join(ITEM);

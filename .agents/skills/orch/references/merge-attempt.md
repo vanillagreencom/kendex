@@ -62,6 +62,6 @@ Exit `1` BLOCKED → classify the refusal:
 env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]
 ```
 
-Read `ci-classify-refusal --help` for its output and retry contract. If it prints `retry: same-head`, increase `[MERGE_RETRY_COUNT]` and, while below `[MERGE_RETRY_LIMIT]=3`, re-enter merge-pr.md § 5 step 1: its thread read runs before each re-attempt, and its endpoint read routes a moved head. At the limit, record `merge-refusal-retry-limit`, gate `merge`, putting the last attempt's `BLOCKED` or `pr-merge:` stderr line first, then the head, each attempt's exit and stderr and each classifier output. Unarm by § 1 before handing back. Such a refusal never returns to § 3.2.
+Read `ci-classify-refusal --help` for its output and retry contract. If it prints `retry: same-head`, increase `[MERGE_RETRY_COUNT]` and, while below `[MERGE_RETRY_LIMIT]=3`, re-enter merge-pr.md § 5 step 1: its thread read and its review call run before each re-attempt, and its endpoint read routes a moved head. At the limit, record `merge-refusal-retry-limit`, gate `merge`, putting the last attempt's `BLOCKED` or `pr-merge:` stderr line first, then the head, each attempt's exit and stderr and each classifier output. Unarm by § 1 before handing back. Such a refusal never returns to § 3.2.
 
 Without that line, return to § 3.2 with the cause and its printed detail.

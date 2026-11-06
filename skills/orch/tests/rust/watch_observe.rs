@@ -930,19 +930,13 @@ fn walled_stub(dir: &Path) -> PathBuf {
     let bin = dir.join("walled");
     std::fs::create_dir_all(&bin).unwrap();
     let path = bin.join("claude");
-    std::fs::write(
+    write_executable(
         &path,
         format!(
             "#!/bin/bash\nprintf '\\xe2\\x9d\\xaf\\xc2\\xa0\\n'\nprintf '  ? for shortcuts\\n'\nIFS= read -r line\nprintf '\\xe2\\x9d\\xaf %s\\n' \"$line\"\nprintf '%s\\n' '⏺ Working through the queue.' '{}' 'Run /usage-credits to raise it'\nprintf '\\xe2\\x9d\\xaf\\xc2\\xa0\\n'\nwhile IFS= read -r _line; do :; done\n",
             BANNER.replace('\'', "'\\''")
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(
-        &path,
-        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
-    )
-    .unwrap();
+    );
     path
 }
 
@@ -3230,7 +3224,13 @@ fn a_stalled_cloud_lane_whose_directive_went_unanswered_is_closed_once_with_the_
     world.plant_close(ok("kept=/archive/CC-1\n"));
     let close = world.scripts.join("lane-close");
     std::fs::remove_file(&close).unwrap();
-    std::fs::copy(fixtures().join("lane-close/lane-close"), &close).unwrap();
+    // Copied by a child, never opened for writing here (ETXTBSY).
+    let copied = program("cp")
+        .arg(fixtures().join("lane-close/lane-close"))
+        .arg(&close)
+        .output()
+        .unwrap();
+    assert!(copied.status.success(), "{}", stderr(&copied));
     std::fs::set_permissions(&close, std::fs::Permissions::from_mode(0o644)).unwrap();
     let unstarted = driver.pass(&state);
     assert!(
@@ -4799,20 +4799,14 @@ fn a_hosted_lane_the_provider_reads_running_is_never_exited_off_its_transport_sh
 fn file_provider(dir: &Path, disk: &Path) -> (PathBuf, PathBuf) {
     let path = dir.join("provider");
     let log = dir.join("provider.log");
-    std::fs::write(
+    write_executable(
         &path,
         format!(
             "#!/bin/bash\nprintf '%s\\n' \"$*\" >> '{log}'\ncase \"$1\" in\n  capabilities) printf '{SSH_LINE}\\trelaunch=resume\\tpark=none\\taccounts=none\\tpool=plan\\tland=lane\\tpane=local\\n' ;;\n  status) echo running ;;\n  cat) [ -f '{disk}'\"$4\" ] || exit 2; exec cat -- '{disk}'\"$4\" ;;\n  touch) exit 0 ;;\n  *) exit 64 ;;\nesac\n",
             log = log.display(),
             disk = disk.display(),
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(
-        &path,
-        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
-    )
-    .unwrap();
+    );
     (path, log)
 }
 
@@ -4831,7 +4825,7 @@ fn real_lane_host(dir: &Path) -> PathBuf {
         std::fs::create_dir_all(made).unwrap();
     }
     let path = scripts.join("lane-host");
-    std::fs::write(
+    write_executable(
         &path,
         format!(
             "#!/bin/sh\ncd '{cwd}' || exit 2\nexec env -i PATH='{path}' LANG=C.UTF-8 TMPDIR='{root}' HOME='{home}' GIT_CEILING_DIRECTORIES='{root}' ORCH_LANE_HOST=\"$ORCH_LANE_HOST\" '{lane_host}' \"$@\"\n",
@@ -4841,13 +4835,7 @@ fn real_lane_host(dir: &Path) -> PathBuf {
             home = home.display(),
             lane_host = orch_scripts().join("lane-host").display(),
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(
-        &path,
-        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
-    )
-    .unwrap();
+    );
     scripts
 }
 
@@ -5051,18 +5039,12 @@ fn copilot_stub(dir: &Path) -> PathBuf {
     std::fs::create_dir_all(&bin).unwrap();
     let path = bin.join("copilot");
     let rule = "─".repeat(40);
-    std::fs::write(
+    write_executable(
         &path,
         format!(
             "#!/bin/bash\nhome=\"${{COPILOT_HOME:-$HOME/.copilot}}\"\nid=\"s-$(basename \"$PWD\")\"\nmkdir -p \"$home/session-state/$id\"\nprintf 'id: %s\\ncwd: %s\\n' \"$id\" \"$(pwd -P)\" > \"$home/session-state/$id/workspace.yaml\"\nprintf '%s\\n' '{{\"type\":\"user.message\"}}' > \"$home/session-state/$id/events.jsonl\"\nprintf '%s\\n' ' ~/work [⎇ main]' '{rule}' '❯ ' '{rule}'\nwhile IFS= read -r _line; do :; done\n"
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(
-        &path,
-        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
-    )
-    .unwrap();
+    );
     path
 }
 

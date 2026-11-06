@@ -195,7 +195,7 @@ fn fixture_check_nodes(run: u64, workflow: &str) -> Vec<Value> {
         .unwrap()
         .iter()
         .map(|c| {
-            json!({"id": c["node_id"], "checkSuite": {"workflowRun": {"databaseId": run, "event": "push", "workflow": {"name": workflow}}}})
+            json!({"__typename": "CheckRun", "id": c["node_id"], "checkSuite": {"workflowRun": {"databaseId": run, "event": "push", "workflow": {"name": workflow}}}})
         })
         .collect()
 }
@@ -314,7 +314,7 @@ fn source_file(repository: &str, sha: &str) -> Value {
 /// workflow file.
 fn suite_node(run: u64, attempt: u64, file: Value) -> Value {
     json!({
-        "id": suite_node_id(run), "databaseId": run,
+        "__typename": "CheckSuite", "id": suite_node_id(run), "databaseId": run,
         "workflowRun": {"databaseId": run, "runAttempt": attempt, "file": file},
     })
 }
@@ -2380,7 +2380,10 @@ fn malformed_rows() -> Vec<Malformed> {
             required_only: true,
             set: |gh| {
                 *gh = bound_world();
-                gh.answer(GRAPHQL, json!({"data": {"nodes": {}}}));
+                gh.answer(
+                    GRAPHQL,
+                    json!({"data": {"nodes": {"__typename": "CheckSuite"}}}),
+                );
             },
             cause: "workflow-files-response-invalid",
             detail: None,
@@ -4170,8 +4173,10 @@ fn a_second_run_requests_no_second_review() {
 
 /// An approval standing from the commit before a push, with Copilot's
 /// review of that commit and no thread open, is no review of the head the
-/// push landed: the call requests Copilot on it and answers the approval in
-/// the same call, and a repeat call sends no second request.
+/// push landed: the call requests Copilot on it, and the approval waits on
+/// that review, the request standing and then Copilot's check running, as
+/// the released merge flow waited on the head's Copilot work before merging;
+/// one request goes out throughout.
 #[test]
 fn an_approval_from_before_a_push_draws_copilot_to_the_pushed_head() {
     let mut gh = Github::review_world();
@@ -4195,21 +4200,29 @@ fn an_approval_from_before_a_push_draws_copilot_to_the_pushed_head() {
         ]),
     );
     let first = ok_result(&gh.review(false, &[]));
-    assert_eq!(first["verdict"], "approved", "{first}");
+    assert_eq!(first["status"], "pending", "{first}");
+    assert_eq!(first["copilot"]["state"], "pending", "{first}");
     assert_eq!(first["request"]["outcome"], "requested", "{first}");
     assert_eq!(first["request"]["recorded_now"], true, "{first}");
     assert_eq!(gh.requests(), 1, "{:?}", gh.log());
-    let next = ok_result(&gh.review(false, &[]));
-    assert_eq!(next["verdict"], "approved", "{next}");
-    assert_eq!(next["request"]["outcome"], "requested", "{next}");
+    let standing = ok_result(&gh.review(false, &[]));
+    assert_eq!(standing["status"], "pending", "{standing}");
+    assert_eq!(standing["copilot"]["state"], "pending", "{standing}");
+    gh.answer(
+        &check_runs(HEAD, 1),
+        check_runs_page(1, vec![copilot_check(31, "in_progress")]),
+    );
+    let running = ok_result(&gh.review(false, &[]));
+    assert_eq!(running["status"], "pending", "{running}");
+    assert_eq!(running["copilot"]["run"], 31, "{running}");
     assert_eq!(gh.requests(), 1, "{:?}", gh.log());
 }
 
 /// A head a human's open thread or objection holds, pushed after Copilot
 /// reviewed the head before it, is requested beside the `comments` or
-/// `changes_requested` verdict: the request goes out on that call, so
-/// Copilot reviews the commit that answered the thread or the objection
-/// whatever the human's approval that later clears it.
+/// `changes_requested` verdict: the request goes out on that call, so the
+/// human's approval that later clears the thread or the objection waits on
+/// Copilot's review of the commit that answered it.
 #[test]
 fn a_head_a_thread_or_an_objection_holds_is_requested_beside_its_verdict() {
     let earlier = with(
@@ -4251,9 +4264,9 @@ fn a_head_a_thread_or_an_objection_holds_is_requested_beside_its_verdict() {
             "{name}"
         );
 
-        // The human approves and the thread resolves: the approval stands,
-        // the request the first call made is the head's, and no second
-        // request goes out.
+        // The human approves and the thread resolves: the approval waits on
+        // the Copilot review the first call asked for, and no second request
+        // goes out.
         gh.answer(
             &format!("pr view {PR}"),
             review_view(
@@ -4265,7 +4278,11 @@ fn a_head_a_thread_or_an_objection_holds_is_requested_beside_its_verdict() {
         .answer(THREADS, threads_page(0))
         .answer(&reviews_path(), json!([earlier.clone(), human("APPROVED")]));
         let approved = ok_result(&gh.review(false, &[]));
-        assert_eq!(approved["verdict"], "approved", "{name}: {approved}");
+        assert_eq!(approved["status"], "pending", "{name}: {approved}");
+        assert_eq!(
+            approved["copilot"]["state"], "pending",
+            "{name}: {approved}"
+        );
         assert_eq!(gh.requests(), 1, "{name}: {:?}", gh.log());
     }
 }
@@ -4289,12 +4306,16 @@ fn each_verdict_word_is_read_from_the_head() {
         spent: bool,
         verdict: &'static str,
     }
+    // An approval with no Copilot review of the head waits on the request
+    // the call makes (`an_approval_from_before_a_push_draws_copilot_to_the_pushed_head`):
+    // the approval rows read their word with Copilot requests off.
+    const NO_REQUEST: &[(&str, &str)] = &[("PR_COPILOT_REQUESTS", "off")];
     let rows = [
         Row {
             name: "the aggregate approval",
             view: review_view("APPROVED", &[("colleague", "APPROVED")], false),
             unresolved: 0,
-            env: &[],
+            env: NO_REQUEST,
             spent: false,
             verdict: "approved",
         },
@@ -4302,7 +4323,7 @@ fn each_verdict_word_is_read_from_the_head() {
             name: "a latest approval with no decision",
             view: review_view("", &[("colleague", "APPROVED")], false),
             unresolved: 0,
-            env: &[],
+            env: NO_REQUEST,
             spent: false,
             verdict: "approved",
         },
@@ -4547,7 +4568,8 @@ fn copilot_work_in_flight_holds_pending_within_the_bound_and_expires_past_it() {
     let result = ok_result(&gh.review(false, &[]));
     assert_eq!(result["copilot"]["state"], "none", "{result}");
 
-    // A request GitHub removed is no work in flight: the gate asks again.
+    // A request GitHub removed is no work in flight: the gate asks again,
+    // and the request it makes is the work the call then holds on.
     let mut gh = Github::review_world();
     gh.answer(
         &timeline_path(),
@@ -4557,7 +4579,8 @@ fn copilot_work_in_flight_holds_pending_within_the_bound_and_expires_past_it() {
         ]),
     );
     let result = ok_result(&gh.review(false, &[]));
-    assert_eq!(result["copilot"]["state"], "none", "{result}");
+    assert_eq!(result["copilot"]["state"], "pending", "{result}");
+    assert_ne!(result["copilot"]["run"], 77, "{result}");
     assert_eq!(result["request"]["outcome"], "requested", "{result}");
     assert_eq!(gh.requests(), 1, "{:?}", gh.log());
 
@@ -4608,6 +4631,14 @@ fn merge_is_refused_while_a_regression_blocker_stands_and_allowed_once_lifted() 
             json!([{"location": "src/x.rs", "description": "misreads a moved package"}]);
         fs::write(gh.item(), serde_json::to_vec_pretty(&state).unwrap()).unwrap();
         let result = ok_result(&gh.review(false, &[]));
+        if verdict == "approved" {
+            // The blocked call requested Copilot on the approved head, which
+            // it had not reviewed: once lifted, the approval waits on that
+            // review.
+            assert_eq!(result["status"], "pending", "{result}");
+            assert_eq!(result["copilot"]["state"], "pending", "{result}");
+            continue;
+        }
         assert_eq!(result["verdict"], verdict, "{result}");
         assert_eq!(result["recorded"]["replaced"], true);
     }

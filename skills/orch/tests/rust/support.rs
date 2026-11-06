@@ -368,6 +368,29 @@ pub fn stub(name: &str) -> PathBuf {
     fixtures().join(name).join("claude")
 }
 
+/// `text` as the executable `path`, written by a child process. A file this
+/// test process holds open for writing is held by every other test thread's
+/// child between its fork and its exec as well, and running it then fails
+/// `ETXTBSY`; a rename into place keeps that same file, so it does not help.
+pub fn write_executable(path: &Path, text: impl AsRef<str>) {
+    let out = program("sh")
+        .args([
+            "-c",
+            "printf '%s' \"$1\" > \"$2\" && chmod 755 \"$2\"",
+            "write-executable",
+        ])
+        .arg(text.as_ref())
+        .arg(path)
+        .output()
+        .expect("sh");
+    assert!(
+        out.status.success(),
+        "write-executable {}: {}",
+        path.display(),
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 /// The shell every private server's panes run, resolved once: bash from
 /// this process's PATH, else `/bin/sh`. Set explicitly on each server so no
 /// user tmux configuration or login shell reaches a row.
