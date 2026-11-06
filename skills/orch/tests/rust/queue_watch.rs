@@ -11,12 +11,13 @@
 use std::fs;
 use std::path::PathBuf;
 use std::process::Output;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime};
 
 mod support;
 
 use orch_runtime::ops::Env;
 use orch_runtime::ops::queue_watch::{Programs, QueueWatch, Reply, run};
+use orch_runtime::schedule::Clock;
 use orch_runtime::state::Locking;
 use serde_json::{Map, Value, json};
 use support::{FakeClock, fixtures, tool_path};
@@ -339,12 +340,26 @@ impl World {
     /// and the reply it gives once let run out, never a reply read as the
     /// row's answer.
     fn wait(&mut self, request: &QueueWatch, drive: impl FnOnce(&mut World, &FakeClock)) -> Reply {
-        self.write();
         let clock = FakeClock::new();
+        self.wait_on(&clock, &clock, request, drive)
+    }
+
+    /// [`World::wait`] with the wait reading `wait_clock`, a clock over
+    /// `clock` that the row shapes; the drive and the release act on
+    /// `clock`.
+    fn wait_on(
+        &mut self,
+        wait_clock: &dyn Clock,
+        clock: &FakeClock,
+        request: &QueueWatch,
+        drive: impl FnOnce(&mut World, &FakeClock),
+    ) -> Reply {
+        self.write();
         let (item, programs, root) = (self.item.clone(), self.programs(), self.root());
         std::thread::scope(|s| {
-            let handle = s.spawn(|| run(&item, request, &programs, &root, &clock, &env(), LOCK));
-            drive(self, &clock);
+            let handle =
+                s.spawn(|| run(&item, request, &programs, &root, wait_clock, &env(), LOCK));
+            drive(self, clock);
             let bound = std::time::Instant::now() + secs(60);
             while !handle.is_finished() {
                 if std::time::Instant::now() >= bound {
@@ -1700,6 +1715,110 @@ fn a_probe_answered_past_the_deadline_is_no_reading() {
     assert_eq!(
         (reply.status, reply.verdict, reply.cause, reply.polls),
         ("timeout", "armed_awaiting_checks", Some("checks_unread"), 1),
+        "{reply:?}"
+    );
+}
+
+/// A clock each read of which takes `tick`, as a real clock's reads do: no
+/// two reads see the same moment.
+struct Ticking<'a> {
+    clock: &'a FakeClock,
+    tick: Duration,
+}
+
+impl Clock for Ticking<'_> {
+    fn now(&self) -> Instant {
+        let at = self.clock.now();
+        self.clock.release(self.tick);
+        at
+    }
+
+    fn wall(&self) -> SystemTime {
+        self.clock.wall()
+    }
+
+    fn sleep(&self, d: Duration) {
+        self.clock.sleep(d);
+    }
+}
+
+/// The probe's cutoff is the wait's own deadline less the poll after it,
+/// however far apart the clock reads that set it fall: on a clock whose
+/// reads each take a tick, the probe's last read answering half a tick past
+/// that cutoff is no reading, never the failed check it carries.
+#[test]
+fn time_between_the_probes_clock_reads_never_moves_its_cutoff() {
+    use std::os::unix::fs::PermissionsExt;
+
+    const TICK: Duration = Duration::from_millis(1);
+    let mut world = World::new();
+    world
+        .witness("bound-run-failed-own-check")
+        .queue(armed_only());
+    let root = world.root();
+    // The fake `gh` behind a wrapper that holds the probe's last read, the
+    // check suite's runs, until the row releases it.
+    fs::rename(root.join("gh"), root.join("gh-answers")).unwrap();
+    let wrapper = "#!/bin/bash\nhere=\"$(dirname \"$0\")\"\ncase \"$*\" in\n  *\"check-suites/5000300/check-runs\"*)\n    : > \"$here/probe-entered\"\n    while [ ! -f \"$here/probe-released\" ]; do sleep 0.01; done ;;\nesac\nexec \"$here/gh-answers\" \"$@\"\n";
+    fs::write(root.join("gh"), wrapper).unwrap();
+    fs::set_permissions(root.join("gh"), fs::Permissions::from_mode(0o755)).unwrap();
+    let request = probe_request(&world, 10);
+    let clock = FakeClock::new();
+    let ticking = Ticking {
+        clock: &clock,
+        tick: TICK,
+    };
+    let reply = world.wait_on(&ticking, &clock, &request, |world, clock| {
+        let entered = world.root().join("probe-entered");
+        let bound = std::time::Instant::now() + secs(10);
+        while !entered.exists() {
+            assert!(
+                std::time::Instant::now() < bound,
+                "the probe did not reach its last read: {:?}",
+                world.gh_log()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // The wait's start is the clock's first read, so its deadline less
+        // the poll falls nine seconds in.
+        clock.release(secs(9) + TICK / 2 - clock.elapsed());
+        fs::write(world.root().join("probe-released"), "").unwrap();
+    });
+    assert_eq!(
+        (reply.status, reply.verdict, reply.cause),
+        ("timeout", "armed_awaiting_checks", Some("checks_unread")),
+        "{reply:?}"
+    );
+}
+
+/// A probe read that never answers is ended at what its budget has left,
+/// so a hung read is no reading and the wait keeps its deadline. The fake
+/// clock stands while the read hangs, so the bound is the budget's two
+/// seconds of real time against a read held for eight; the fixture's other
+/// reads take tens of milliseconds.
+#[test]
+fn a_hung_probe_read_is_ended_at_what_its_budget_has_left() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut world = World::new();
+    world
+        .witness("bound-run-failed-own-check")
+        .queue(armed_only());
+    let root = world.root();
+    // The fake `gh` behind a wrapper that holds the pull request's check-run
+    // read on a fifo it reads with a bound, so a killed read leaves no
+    // child behind.
+    fs::rename(root.join("gh"), root.join("gh-answers")).unwrap();
+    let wrapper = format!(
+        "#!/bin/bash\nhere=\"$(dirname \"$0\")\"\ncase \"$*\" in\n  *\"commits/{HEAD}/check-runs?filter=all\"*)\n    [ -p \"$here/hold\" ] || mkfifo \"$here/hold\"\n    exec 3<>\"$here/hold\"\n    read -t 8 -u 3 || true ;;\nesac\nexec \"$here/gh-answers\" \"$@\"\n"
+    );
+    fs::write(root.join("gh"), wrapper).unwrap();
+    fs::set_permissions(root.join("gh"), fs::Permissions::from_mode(0o755)).unwrap();
+    let request = probe_request(&world, 3);
+    let reply = world.wait(&request, |_, _| {});
+    assert_eq!(
+        (reply.status, reply.verdict, reply.cause),
+        ("timeout", "armed_awaiting_checks", Some("checks_unread")),
         "{reply:?}"
     );
 }

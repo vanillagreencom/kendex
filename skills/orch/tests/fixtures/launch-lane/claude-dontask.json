@@ -29,7 +29,7 @@
     "server": "@SERVER@",
     "server_start": "@SERVER_START@",
     "pid": "@PID@",
-    "start": "@START@"
+    "start": "ticks:@START@"
   },
   "touched": [],
   "in_scope": [],

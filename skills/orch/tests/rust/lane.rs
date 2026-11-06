@@ -249,6 +249,7 @@ fn launch_on(item: &str, mail_root: &Path) -> Value {
     let mut request = launch(item, mail_root);
     request["account"] = json!(ACCOUNT);
     request["model"] = json!("opus");
+    request["effort"] = json!("high");
     request["judge_account"] = json!(true);
     request
 }
@@ -793,6 +794,114 @@ fn a_permission_word_the_launch_line_cannot_carry_is_refused_before_any_record()
         );
         assert_eq!(fleet.fleet(), before, "{word}: a refusal writes nothing");
     }
+}
+
+/// Defect: a lane launched on an account with no model ran the harness's
+/// default model, whose window the account's judge never read (the walk's
+/// `harness-default` answer among them). Through the real `launch-lane`: a
+/// launch naming an account and no model, or an empty one, on each harness,
+/// and a relaunch over a stopped record alike, is refused
+/// `launch-model-missing` naming the harness, the account and the line's
+/// model spellings, before any record; a launch naming no account is not
+/// judged here.
+#[test]
+fn a_launch_on_an_account_naming_no_model_is_refused_before_any_record() {
+    let fleet = Fleet::new(4);
+    fleet.init_fleet();
+    let account = fleet.state_dir().display().to_string();
+    let rows: [(&str, Option<&str>, &str); 5] = [
+        ("claude", None, "--model"),
+        ("claude", Some(""), "--model"),
+        ("codex", None, "-m,--model"),
+        ("copilot", None, "--model"),
+        ("pi", None, "--model"),
+    ];
+    for relaunch in [false, true] {
+        if relaunch {
+            fleet.write_lanes(vec![record("KEN-M", "stopped", None, fleet.state_dir())]);
+        }
+        let before = fleet.fleet();
+        for (harness, model, spellings) in rows {
+            let mut request = launch("KEN-M", fleet.state_dir());
+            request["harness"] = json!(harness);
+            request["account"] = json!(account);
+            request["effort"] = json!("high");
+            if let Some(model) = model {
+                request["model"] = json!(model);
+            }
+            let answer = reply(&fleet.op(&request));
+            assert_eq!(
+                answer["refusal"]["key"], "launch-model-missing",
+                "{harness} {model:?} relaunch={relaunch}: {answer}"
+            );
+            let fields = refusal_fields(&answer);
+            assert_eq!(
+                (
+                    fields["harness"].as_str(),
+                    fields["lane"].as_str(),
+                    fields["spellings"].as_str()
+                ),
+                (harness, account.as_str(), spellings),
+                "{harness}"
+            );
+            assert_eq!(fleet.fleet(), before, "{harness}: a refusal writes nothing");
+        }
+    }
+    let mut unnamed = launch("KEN-N", fleet.state_dir());
+    unnamed["harness"] = json!("codex");
+    let answer = reply(&fleet.op(&unnamed));
+    assert_ne!(
+        answer["refusal"]["key"], "launch-model-missing",
+        "a launch naming no account is not judged: {answer}"
+    );
+}
+
+/// Defect: a lane launched on an account with no effort ran its harness's
+/// default level. Through the real `launch-lane`: a launch naming an
+/// account and a model but no effort is refused `launch-effort-missing`
+/// with the line's effort spellings, before any record; a Pi model carrying
+/// its level (`provider/id:level`) names the effort.
+#[test]
+fn a_launch_on_an_account_naming_no_effort_is_refused_before_any_record() {
+    let fleet = Fleet::new(4);
+    fleet.init_fleet();
+    let account = fleet.state_dir().display().to_string();
+    let before = fleet.fleet();
+    for (harness, model, spellings) in [
+        ("claude", "claude-fable-5-1", "--effort"),
+        ("codex", "gpt-6.1-sol", "model_reasoning_effort="),
+        ("copilot", "claude-opus-5.5", "--reasoning-effort"),
+        ("pi", "github-copilot/claude-opus-5.5", "--thinking"),
+    ] {
+        let mut request = launch("KEN-E", fleet.state_dir());
+        request["harness"] = json!(harness);
+        request["account"] = json!(account);
+        request["model"] = json!(model);
+        let answer = reply(&fleet.op(&request));
+        assert_eq!(
+            answer["refusal"]["key"], "launch-effort-missing",
+            "{harness}: {answer}"
+        );
+        let fields = refusal_fields(&answer);
+        assert_eq!(
+            (
+                fields["harness"].as_str(),
+                fields["lane"].as_str(),
+                fields["spellings"].as_str()
+            ),
+            (harness, account.as_str(), spellings)
+        );
+        assert_eq!(fleet.fleet(), before, "{harness}: a refusal writes nothing");
+    }
+    let mut leveled = launch("KEN-E", fleet.state_dir());
+    leveled["harness"] = json!("pi");
+    leveled["account"] = json!(account);
+    leveled["model"] = json!("github-copilot/claude-opus-5.5:high");
+    let answer = reply(&fleet.op(&leveled));
+    assert_ne!(
+        answer["refusal"]["key"], "launch-effort-missing",
+        "the level on Pi's model word names the effort: {answer}"
+    );
 }
 
 /// Through the executable: a `no-landing` disposition on a lane
@@ -1341,6 +1450,8 @@ fn a_cloud_session_is_bounded_by_the_cloud_cap_and_charges_no_lane_slot() {
         let mut request = launch(item, &state_dir);
         request["host"] = json!("claude-cloud");
         request["account"] = json!(state_dir.display().to_string());
+        request["model"] = json!("opus");
+        request["effort"] = json!("high");
         request
     };
     fleet.write_lanes(vec![session("KEN-C1")]);

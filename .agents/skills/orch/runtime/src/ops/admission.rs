@@ -52,6 +52,17 @@
 //! tracker could not read whole, or whose answer carries no launch-blocker
 //! field, refuses `launch-blocked-unread`, before any holder is judged or
 //! any record is written.
+//!
+//! A launch is bound before its item is read: its checkout (`mail_root`)
+//! is of the fleet's repository, the one the fleet file sits in, by git
+//! common directory or by the `owner/name` both origins name, or of one
+//! the fleet's `ORCH_CONNECTED_REPOS` lists; any other refuses
+//! `overseer-foreign`, and a binding that cannot be read `overseer-unjudged`.
+//! A fleet file in no checkout names no repository and binds every launch
+//! as its own. A `github` item of another repository than the checkout's,
+//! or a `linear` item of another team than the fleet's `LINEAR_TEAM` on
+//! the fleet's own repository, refuses `item-foreign`, and a repository or
+//! team that cannot be resolved `item-repo-unresolved`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -64,6 +75,7 @@ use serde_json::Value;
 use super::occupancy::{self, ChargeReason, Host};
 use super::{Env, intents, lane_at, lane_doc_mut, lanes};
 use crate::error::{Error, Result};
+use crate::settings::Settings;
 use crate::state::{self, Document, Intent, Lane, LaneStatus, RebaseObligation};
 use crate::verify::wire::{Nullable, Optional};
 use crate::watch::github::Gh;
@@ -155,8 +167,25 @@ pub(super) type PullsReader<'a> = Box<
         + 'a,
 >;
 
-/// The admission's reads a host carries: the programs and the three
-/// readers over them. A host built without them (the effect and duty
+/// The repository a directory sits in, as git names it: its common
+/// directory, resolved, and the `owner/name` its `origin` names on
+/// github.com, where it names one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Repository {
+    pub root: PathBuf,
+    pub slug: Option<String>,
+}
+
+/// The repository of a directory, `None` for one in no checkout.
+pub(super) type CheckoutReader<'a> =
+    Box<dyn Fn(&Path) -> std::result::Result<Option<Repository>, ReadFailure> + 'a>;
+
+/// The key of the Linear team a key or name names, through the tracker.
+pub(super) type TeamReader<'a> =
+    Box<dyn Fn(&Clis, &str) -> std::result::Result<String, ReadFailure> + 'a>;
+
+/// The admission's reads a host carries: the programs and the readers
+/// over them. A host built without them (the effect and duty
 /// entries, which launch no lane) judges a launch that names a source as
 /// `touched-unreadable`.
 pub(super) struct AdmissionReads<'a> {
@@ -164,6 +193,8 @@ pub(super) struct AdmissionReads<'a> {
     pub item: ItemReader<'a>,
     pub range_paths: RangeReader<'a>,
     pub pulls: PullsReader<'a>,
+    pub checkout: CheckoutReader<'a>,
+    pub team_key: TeamReader<'a>,
 }
 
 impl AdmissionReads<'static> {
@@ -174,6 +205,8 @@ impl AdmissionReads<'static> {
             item: Box::new(read_item),
             range_paths: Box::new(read_range_paths),
             pulls: Box::new(read_open_pulls),
+            checkout: Box::new(read_checkout),
+            team_key: Box::new(read_team_key),
         }
     }
 }
@@ -229,6 +262,10 @@ pub(super) struct Admission<'r> {
     pub in_scope: &'r [String],
     /// The paths the request adds to the touched set.
     pub paths: &'r [String],
+    /// The checkout a launch runs in, bound to the fleet's repository
+    /// before anything is read; `None` for paths a running lane adds,
+    /// bound when it was admitted.
+    pub checkout: Option<&'r Path>,
 }
 
 /// What the judge answers when it admits.
@@ -478,6 +515,120 @@ fn holder_branch(fleet: &Path, holder: &str) -> Result<Option<String>> {
         .map(str::to_owned))
 }
 
+/// How a launch's checkout stands to the fleet's repository.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Binding {
+    /// The fleet's own repository, or any, where the fleet names none.
+    Own,
+    /// A repository the fleet's `ORCH_CONNECTED_REPOS` lists.
+    Connected,
+}
+
+/// The binding refusal for an unread input, naming the cause and where.
+fn unjudged(cause: &str, at: &Path) -> Error {
+    Error::from(agent_runtime::Error::refused(
+        "overseer-unjudged",
+        &[("cause", cause), ("path", &at.display().to_string())],
+    ))
+}
+
+fn unresolved(fields: &[(&str, &str)]) -> Error {
+    Error::from(agent_runtime::Error::refused(
+        "item-repo-unresolved",
+        fields,
+    ))
+}
+
+fn item_foreign(repo: &str) -> Error {
+    Error::from(agent_runtime::Error::refused(
+        "item-foreign",
+        &[("repo", repo), ("route", "peer-mail")],
+    ))
+}
+
+/// The launch bound to the fleet's repository and its item to the
+/// checkout's (the module's binding paragraph). `settings` are the
+/// fleet's, which name its connected repositories and its team; a host
+/// built without them reads none, so a checkout of another repository
+/// is unjudged and a `linear` item is judged on no team. On a connected
+/// binding a `linear` item's team is the connected checkout's setting,
+/// which the fleet's settings do not carry: the binding is the gate there.
+fn bind(
+    path: &Path,
+    a: &Admission,
+    checkout: &Path,
+    reads: &AdmissionReads,
+    settings: Option<&Settings>,
+) -> Result<()> {
+    let fleet_dir = path.parent().unwrap_or(Path::new("/"));
+    let fleet = (reads.checkout)(fleet_dir).map_err(|_| unjudged("overseer-root", fleet_dir))?;
+    let binding = match fleet {
+        None => Binding::Own,
+        Some(fleet) => {
+            let launch = (reads.checkout)(checkout)
+                .ok()
+                .flatten()
+                .ok_or_else(|| unjudged("checkout-root", checkout))?;
+            let same_slug = match (&launch.slug, &fleet.slug) {
+                (Some(a), Some(b)) => a.eq_ignore_ascii_case(b),
+                _ => false,
+            };
+            if launch.root == fleet.root || same_slug {
+                Binding::Own
+            } else {
+                let connected = &settings
+                    .ok_or_else(|| unjudged("setting", fleet_dir))?
+                    .reads
+                    .connected_repos;
+                match &launch.slug {
+                    Some(slug) if connected.contains(&slug.to_ascii_lowercase()) => {
+                        Binding::Connected
+                    }
+                    None if !connected.is_empty() => return Err(unjudged("origin", checkout)),
+                    Some(_) | None => {
+                        let named = |repo: &Repository| {
+                            repo.slug
+                                .clone()
+                                .unwrap_or_else(|| repo.root.display().to_string())
+                        };
+                        return Err(Error::from(agent_runtime::Error::refused(
+                            "overseer-foreign",
+                            &[
+                                ("item", a.item),
+                                ("repo", &named(&launch)),
+                                ("overseer", &named(&fleet)),
+                                ("route", "connected-repos,peer-mail"),
+                            ],
+                        )));
+                    }
+                }
+            }
+        }
+    };
+    match (a.tracker, a.repo) {
+        (Some("github"), Some(repo)) => {
+            let own = checkout_slug(&reads.clis, checkout)
+                .map_err(|_| unresolved(&[("tracker", "github")]))?;
+            if !own.eq_ignore_ascii_case(repo) {
+                return Err(item_foreign(repo));
+            }
+        }
+        (Some("linear"), _) if binding == Binding::Own => {
+            let Some(team) = settings.and_then(|s| s.watch.linear_team.as_deref()) else {
+                return Ok(());
+            };
+            let key = (reads.team_key)(&reads.clis, team)
+                .map_err(|_| unresolved(&[("tracker", "linear"), ("team", team)]))?;
+            let prefix = a.item.rsplit_once('-').map_or(a.item, |(prefix, _)| prefix);
+            if !prefix.eq_ignore_ascii_case(&key) {
+                return Err(item_foreign(prefix));
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 /// The judgement (the module's table). `lanes` and `intents` are the
 /// fleet's as the transition read them under the launch lock.
 pub(super) fn judge(
@@ -498,6 +649,13 @@ pub(super) fn judge(
             .as_ref()
             .ok_or_else(|| unreadable(read, "admission-reads-unavailable".to_owned()))
     };
+    if let Some(checkout) = a.checkout {
+        let reads = host
+            .admission
+            .as_ref()
+            .ok_or_else(|| unjudged("admission-reads-unavailable", checkout))?;
+        bind(path, a, checkout, reads, host.accounts)?;
+    }
     let mut touched: BTreeSet<String> = BTreeSet::new();
     if let Some(tracker) = a.tracker {
         let reads = reads("item")?;
@@ -776,6 +934,7 @@ pub(super) fn admit_paths(
             scope_range: r.scope_range.as_ref(),
             in_scope: &in_scope,
             paths: &r.paths,
+            checkout: None,
         },
         env,
         host,
@@ -1136,6 +1295,79 @@ fn checkout_slug(clis: &Clis, dir: &Path) -> std::result::Result<String, PullsFa
     checked_slug(&candidate).ok_or_else(|| failed(format!("slug-form: {candidate}")))
 }
 
+/// The production checkout read: git's common directory for `dir`,
+/// resolved, and the `owner/name` its `origin` names, `None` where it has
+/// no origin or one off github.com; `None` for a directory git reads as in
+/// no repository, and any other failure of git (a directory that does not
+/// stand, a repository git cannot read) the cause.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the admission's reads of a checkout's repository through the one runner; they act on nothing"
+)]
+fn read_checkout(dir: &Path) -> std::result::Result<Option<Repository>, ReadFailure> {
+    let place = dir.display().to_string();
+    let output = host::run_tagged(
+        TAG,
+        "git",
+        Path::new("git"),
+        "common-dir",
+        &[
+            "-C",
+            &place,
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+        ],
+        READ_TIMEOUT,
+    )
+    .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        if host::stderr_text(&output).starts_with("fatal: not a git repository") {
+            return Ok(None);
+        }
+        return Err(format!(
+            "common-dir {}: {}",
+            output.status,
+            first_line(&output)
+        ));
+    }
+    let common = host::stdout_text(&output);
+    let root = std::fs::canonicalize(&common).map_err(|e| format!("common-dir {common}: {e}"))?;
+    let slug = read_stdout(
+        "git",
+        Path::new("git"),
+        "origin-url",
+        &["-C", &place, "remote", "get-url", "origin"],
+    )
+    .ok()
+    .and_then(|out| origin_slug(String::from_utf8_lossy(&out).trim()));
+    Ok(Some(Repository { root, slug }))
+}
+
+/// `teams get TEAM --format=safe` (`lib/formatters.sh`
+/// `format_team_single`): the team's key, which prefixes its items'
+/// identifiers.
+#[derive(Deserialize)]
+struct LinearTeam {
+    key: String,
+}
+
+/// The production team read: the key the linear CLI answers for a team
+/// key or name; an answer with no key is the failure.
+fn read_team_key(clis: &Clis, team: &str) -> std::result::Result<String, ReadFailure> {
+    let stdout = read_stdout(
+        "linear",
+        &clis.tracker,
+        "team-read",
+        &["teams", "get", team, "--format=safe"],
+    )?;
+    let read: LinearTeam =
+        serde_json::from_slice(&stdout).map_err(|e| format!("team-read: {e}"))?;
+    Some(read.key)
+        .filter(|key| !key.is_empty())
+        .ok_or_else(|| "team-read: key-empty".to_owned())
+}
+
 /// The production pull-request read: the open same-repository pull
 /// requests of the repository the request names, else of the checkout it
 /// names ([`checkout_slug`]), `None` where it names neither; their files
@@ -1264,6 +1496,8 @@ mod tests {
                     // No pull request: the process rows read them through
                     // the gh fixture.
                     pulls: Box::new(|_: &Clis, _: Option<&str>, _: Option<&Path>| Ok(None)),
+                    checkout: Box::new(|_: &Path| Ok(None)),
+                    team_key: Box::new(|_: &Clis, _: &str| Err("unplanted".to_owned())),
                 }),
             }
         }
@@ -1308,6 +1542,7 @@ mod tests {
             scope_range: None,
             in_scope: &[],
             paths,
+            checkout: None,
         }
     }
 
@@ -1452,7 +1687,7 @@ mod tests {
         }
     }
 
-    /// Decision 165 at the lane: a pull request a record names, by its
+    /// At the lane: a pull request a record names, by its
     /// `pending_pr` or `parked` number for this repository or by its head
     /// branch (the recorded branch, or the item key, case apart), is that
     /// lane's work and no second holder; a number of another repository or
@@ -1514,7 +1749,7 @@ mod tests {
         }
     }
 
-    /// Decision 97 at the holder: the holder is judged by its identity
+    /// At the holder: the holder is judged by its identity
     /// reading, never by its status word, and an unreadable identity
     /// blocks as unknown.
     #[test]
@@ -1657,7 +1892,7 @@ mod tests {
         }
     }
 
-    /// Decision 118 (4): the touched set is the union of the Location
+    /// The touched set is the union of the Location
     /// paths, the brief's paths, the range's paths and the added paths; a
     /// path only one source names overlaps a holder.
     #[test]
@@ -1727,7 +1962,7 @@ mod tests {
         assert_eq!(err.fields()[1].1, "classification");
     }
 
-    /// Decision 118 (6): a container is refused from its body with nothing
+    /// A container is refused from its body with nothing
     /// written; a launch naming no tracker reads no item.
     #[test]
     fn an_ineligible_item_is_refused_and_an_untracked_launch_reads_nothing() {
@@ -1776,7 +2011,7 @@ mod tests {
         );
     }
 
-    /// Decision 142 (4): a running lane's added path is judged against the
+    /// A running lane's added path is judged against the
     /// holders and widens its record, or is refused by a live holder with
     /// the record untouched; a done lane refuses.
     #[test]

@@ -143,13 +143,14 @@ fn a_launch_that_never_draws_its_composer_records_unconfirmed() {
 
 /// A pane whose screen carries the composer marker while a shell holds its
 /// terminal never reads idle, so the launch never confirms; a reconcile
-/// reads the same.
+/// reads the same. The window spans the stub's exec and the shell's first
+/// prompt, so the op's last reading is the shell's.
 #[test]
 fn a_pane_whose_foreground_is_a_shell_never_reads_idle_whatever_it_draws() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let mut runner = Runner::new(&server, "stub-shell");
-    runner.verify = Some(1);
+    runner.verify = Some(4);
     runner.init_fleet();
     let report = effect_report(&runner.op_fleet(&launch_request("KEN-40", runner.state_dir())));
     assert_eq!(report["intent"]["outcome"], "unconfirmed");
@@ -158,11 +159,20 @@ fn a_pane_whose_foreground_is_a_shell_never_reads_idle_whatever_it_draws() {
         .as_str()
         .unwrap()
         .to_owned();
-    let screen = tmux(&server.socket, &["capture-pane", "-p", "-t", &pane]);
-    assert!(
-        String::from_utf8_lossy(&screen.stdout).contains('\u{276f}'),
-        "the screen does carry the composer marker"
-    );
+    // The shell draws the marker as its prompt, which a loaded host can
+    // land after the window: the screen is read until it does, bounded.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let drawn = loop {
+        let screen = tmux(&server.socket, &["capture-pane", "-p", "-t", &pane]);
+        if String::from_utf8_lossy(&screen.stdout).contains('\u{276f}') {
+            break true;
+        }
+        if Instant::now() >= deadline {
+            break false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(drawn, "the screen does carry the composer marker");
     let reading = report["intent"]["observation"]["process"]["reading"]
         .as_str()
         .unwrap()
@@ -2874,9 +2884,10 @@ fn reconcile_cells(cells: Vec<Cell>) {
     }
 }
 
-/// Decision 108 (4): a relaunch on another account than the bound session's
-/// recorded one starts fresh with `account-switched`; so does one whose
-/// destination home holds no file for the fixed id. The stub refuses a
+/// A relaunch on another account than the bound session's recorded one
+/// starts fresh with `account-switched`; one whose destination home holds
+/// no file for the fixed id starts fresh with `session-absent`, its own
+/// cause, the account unchanged. The stub refuses a
 /// resume of a session its home does not hold, as the harness does, so a
 /// relaunch that resumed across accounts would fail here; one on the same
 /// account resumes the bound session.
@@ -2897,6 +2908,8 @@ fn a_relaunch_on_another_account_starts_fresh_and_the_same_account_resumes() {
             "harness": "claude",
             "mail_root": runner.state_dir().display().to_string(),
             "account": account.display().to_string(),
+            "model": "claude-fable-5-1",
+            "effort": "high",
         })
     };
     let first = effect_report(&runner.op_fleet(&request(&a)));
@@ -2943,7 +2956,7 @@ fn a_relaunch_on_another_account_starts_fresh_and_the_same_account_resumes() {
     assert_eq!(missing["intent"]["observation"]["route"], "fresh");
     assert_eq!(
         missing["intent"]["observation"]["route_cause"],
-        "account-switched"
+        "session-absent"
     );
 }
 
@@ -5934,6 +5947,8 @@ impl HostedLaunch {
             "harness": "claude",
             "mail_root": self.runner.state_dir().display().to_string(),
             "account": self.runner.state_dir().display().to_string(),
+            "model": "claude-fable-5-1",
+            "effort": "high",
             "host": PROVIDER_PATH,
             "repo": "o/r",
         })
@@ -6479,6 +6494,7 @@ fn a_copilot_lane_launches_only_where_its_lane_mail_hooks_run() {
             .output()
             .unwrap();
         assert!(init.status.success(), "{}", stderr(&init));
+        fleet_origin(&[runner.state_dir(), &worktree]);
         let _ = std::fs::remove_dir_all(account.join("hooks"));
         let scope = match in_worktree {
             Some(true) => Some(worktree.join(".github/hooks")),
@@ -6600,6 +6616,7 @@ fn a_copilot_lanes_record_says_whether_its_line_grants_allow_all() {
             .output()
             .unwrap();
         assert!(init.status.success(), "{}", stderr(&init));
+        fleet_origin(&[runner.state_dir(), &worktree]);
         let mut request = launch_request(item, &worktree);
         request["harness"] = json!("copilot");
         request["account"] = json!(account.display().to_string());
@@ -7709,7 +7726,9 @@ fn the_model_switch_recovery_stops_through_the_runtime_and_relaunches_over_the_r
 /// workflow with `start` records the standard tier and the item-tier
 /// line's inputs; one stating no verb and two item-tier lines that differ
 /// records none; one opening with `micro` records micro and its line's
-/// inputs, and that lane's relaunch on the wall's start brief keeps them.
+/// inputs, and that lane's relaunch on the wall's start brief keeps them;
+/// closed `done`, its next phase opening with `small` records small and
+/// that brief's inputs, as a first launch does.
 #[test]
 fn the_launch_records_the_tier_its_brief_states_and_a_relaunch_keeps_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -7781,6 +7800,107 @@ fn the_launch_records_the_tier_its_brief_states_and_a_relaunch_keeps_it() {
         (&json!("micro"), &inputs),
         "a relaunch on the start brief keeps the first launch's tier: {}",
         report["lane"]
+    );
+    let closed = effect_report(&runner.op_fleet(&terminal_close("KEN-V")));
+    assert_eq!(closed["lane"]["status"], "done", "{closed}");
+    std::fs::write(
+        &brief,
+        "/orch small KEN-V\ntier=small brief=small cause=estimate estimate=2 delta=40 paths=3\n",
+    )
+    .unwrap();
+    let report = effect_report(&runner.op_fleet(&micro));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(
+        (&report["lane"]["tier"], &report["lane"]["tier_inputs"]),
+        (
+            &json!("small"),
+            &json!({"estimate": 2, "delta": 40, "paths": 3})
+        ),
+        "the next phase over a done record records its own brief's tier: {}",
+        report["lane"]
+    );
+}
+
+/// Defect: a lane the runtime launched bound no obligation, so the cycle
+/// its close recorded read unknown lineage. Through the real `launch-lane`
+/// and the real `oversee-cycle`: a launch naming the item's obligation
+/// records it; the item's next phase naming none keeps it, and one naming
+/// another is refused `obligation-conflict` with nothing written; the cycle
+/// recorder copies the recorded obligation into the cycle.
+#[test]
+fn the_launch_binds_the_items_obligation_and_its_cycle_records_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-confirm");
+    runner.init_fleet();
+    let obligation = json!({
+        "repo": "o/r", "item": "KEN-O", "parent_repo": "o/p", "parent_item": "KEN-P",
+    });
+    let mut request = launch_request("KEN-O", runner.state_dir());
+    request["obligation"] = obligation.clone();
+    let report = effect_report(&runner.op_fleet(&request));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(
+        report["lane"]["obligation"], obligation,
+        "{}",
+        report["lane"]
+    );
+    effect_report(&runner.op_fleet(&terminal_close("KEN-O")));
+    let report = effect_report(&runner.op_fleet(&launch_request("KEN-O", runner.state_dir())));
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    assert_eq!(
+        report["lane"]["obligation"], obligation,
+        "a launch naming none keeps the bound lineage: {}",
+        report["lane"]
+    );
+    effect_report(&runner.op_fleet(&terminal_close("KEN-O")));
+    let before = runner.fleet();
+    let mut other = request.clone();
+    other["obligation"]["parent_item"] = json!("KEN-Q");
+    let out = runner.op_fleet(&other);
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], false, "{answer}");
+    assert_eq!(answer["refusal"]["key"], "obligation-conflict", "{answer}");
+    assert_eq!(runner.fleet(), before, "a refused launch writes nothing");
+    // The cycle recorder over the record the launch wrote: a direct push
+    // whose push log is unread still records its cycle.
+    let checkout = dir.path().join("checkout");
+    std::fs::create_dir_all(&checkout).unwrap();
+    for args in [
+        &["init", "-q"][..],
+        &["commit", "-q", "--allow-empty", "-m", "work"][..],
+    ] {
+        let out = program("git")
+            .arg("-C")
+            .arg(&checkout)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", stderr(&out));
+    }
+    let head = program("git")
+        .arg("-C")
+        .arg(&checkout)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let head = String::from_utf8_lossy(&head.stdout).trim().to_owned();
+    let scripts = installed_scripts(dir.path());
+    let mut command = program("bash");
+    runner.apply_env(&mut command);
+    let out = command
+        .arg(scripts.join("oversee-cycle"))
+        .arg("--state-dir")
+        .arg(runner.state_dir())
+        .args(["record", "--commit", &head, "KEN-O"])
+        .current_dir(&checkout)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let lane = runner.fleet()["lanes"][0].clone();
+    assert_eq!(
+        lane["cycle"]["obligation"], obligation,
+        "the cycle reads the launch's binding: {lane}"
     );
 }
 
@@ -7904,6 +8024,123 @@ fn installed_scripts(dir: &Path) -> PathBuf {
         .unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
     scripts
+}
+
+/// One origin for the fleet's checkout and a lane's: a clone of the
+/// fleet's repository, which its launch is bound to.
+fn fleet_origin(checkouts: &[&Path]) {
+    for checkout in checkouts {
+        let out = program("git")
+            .arg("-C")
+            .arg(checkout)
+            .args([
+                "config",
+                "remote.origin.url",
+                "https://github.com/o/fleet.git",
+            ])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+    }
+}
+
+/// Defect: a first launch carried the overseer's brief as written, so a
+/// lane briefed without the unattended words asked its questions in a
+/// chat nobody reads. Through the real `launch-lane`, for each harness: a
+/// brief with no unattended words reaches the harness's line closed by
+/// them, exactly once, on a line after the brief's own; a Claude brief
+/// that already ends with them reaches the line as written.
+#[test]
+fn every_lane_brief_reaches_its_harness_closed_by_the_unattended_words_once() {
+    let words = std::fs::read_to_string(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/watch/unattended.txt"),
+    )
+    .unwrap();
+    let words = words.trim_end();
+    let cases: [(&str, &str); 5] = [
+        ("claude", "/orch start KEN-U"),
+        (
+            "codex",
+            "Read .agents/skills/orch/SKILL.md and run orch start KEN-U.",
+        ),
+        (
+            "copilot",
+            "Read .agents/skills/orch/SKILL.md and run orch start KEN-U.",
+        ),
+        ("pi", "/skill:orch start KEN-U"),
+        ("claude", "/orch start KEN-U WORDS"),
+    ];
+    for (harness, brief) in cases {
+        let brief = brief.replace("WORDS", words);
+        let dir = tempfile::tempdir().unwrap();
+        let server = Server::start(dir.path(), "fleet");
+        let mut runner = Runner::new(&server, "stub-record");
+        runner.verify = Some(1);
+        runner.init_fleet();
+        let home = dir.path().join("home");
+        std::fs::create_dir_all(home.join(".codex")).unwrap();
+        runner
+            .env
+            .push(("HOME".to_owned(), home.display().to_string()));
+        runner.env.push((
+            "ORCH_HARNESS_BINARIES".to_owned(),
+            format!(
+                "{harness}={}",
+                fixtures().join("stub-record").join(harness).display()
+            ),
+        ));
+        let work = runner.state_dir().to_path_buf();
+        let mut request = launch_request("KEN-U", &work);
+        request["harness"] = json!(harness);
+        match harness {
+            "claude" => {}
+            "copilot" => {
+                let tools = dir.path().join("tools");
+                std::fs::create_dir_all(&tools).unwrap();
+                runner.tools = Some(tools.clone());
+                plant_copilot_hooks(&work.join(".github/hooks"));
+                plant_hooks_off(&tools, json!({"stdout": r#"{"switched_off_by": null}"#}));
+                let copilot_home = dir.path().join("copilot");
+                std::fs::create_dir_all(&copilot_home).unwrap();
+                request["account"] = json!(copilot_home.display().to_string());
+            }
+            "pi" => {
+                pi_root_ready(&home.join(".pi/agent"));
+                request.as_object_mut().unwrap().remove("account");
+            }
+            _ => {
+                request.as_object_mut().unwrap().remove("account");
+            }
+        }
+        let file = dir.path().join("brief.md");
+        std::fs::write(&file, format!("{brief}\n")).unwrap();
+        request["brief_file"] = json!(file.display().to_string());
+        let report = effect_report(&runner.op_fleet(&request));
+        assert_ne!(report["intent"]["outcome"], "failed", "{harness}: {report}");
+        let recorded = launch_record_of(&work);
+        let carried: Vec<&str> = recorded["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|arg| arg.contains(words))
+            .collect();
+        let expected = if brief.ends_with(words) {
+            brief.clone()
+        } else {
+            format!("{brief}\n{words}")
+        };
+        assert_eq!(
+            carried,
+            [expected.as_str()],
+            "{harness}: the brief the line carries: {recorded}"
+        );
+        assert_eq!(
+            carried[0].matches(words).count(),
+            1,
+            "{harness}: the words once: {recorded}"
+        );
+    }
 }
 
 /// The launch record the record stubs write in `cwd`, read once it stands:

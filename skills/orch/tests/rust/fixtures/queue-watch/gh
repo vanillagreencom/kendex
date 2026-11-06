@@ -29,6 +29,14 @@ if [ "${1:-}" = api ] && [ "${2:-}" = graphql ] && [ "${3:-}" = -f ]; then
   if [ -n "$key" ]; then
     printf '%s\n' "$*" >> "$GH_FAKE_LOG"
     reply=$(jq -c --arg k "$key" '.[$k] // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
+    # GraphQL answers only the fields a query selects: the queue read's
+    # group subtree goes out only when the query asks for it.
+    if [ "$key" = queue ] && [ -n "$reply" ]; then
+      case "$query" in
+        *"mergeQueue {"*) ;;
+        *) reply=$(jq -c 'del(.body.data.repository.pullRequest.mergeQueueEntry.mergeQueue?)' <<<"$reply") ;;
+      esac
+    fi
     if [ -z "$reply" ]; then
       echo "gh: HTTP 404: Not Found (https://api.github.com/graphql)" >&2
       echo '{"message":"Not Found"}'

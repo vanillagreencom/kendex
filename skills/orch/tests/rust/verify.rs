@@ -4168,6 +4168,75 @@ fn a_second_run_requests_no_second_review() {
     }
 }
 
+/// A head a human's open thread or objection holds, pushed after Copilot
+/// reviewed the head before it, is requested beside the `comments` or
+/// `changes_requested` verdict: the request goes out on that call, so the
+/// human's approval that later clears the thread or the objection waits on
+/// Copilot's review of the commit that answered it.
+#[test]
+fn a_head_a_thread_or_an_objection_holds_is_requested_beside_its_verdict() {
+    let earlier = with(
+        copilot_review(22, "COMMENTED", "Reviewed.", "2026-01-01T00:00:00Z"),
+        "commit_id",
+        json!(OTHER_SHA),
+    );
+    let human = |state: &str| json!({"id": 23, "user": {"login": "colleague", "type": "User"}, "body": "One question.", "state": state, "commit_id": HEAD, "submitted_at": "2026-01-01T00:00:00Z"});
+    for (name, decision, state, unresolved, verdict) in [
+        ("a human's open thread", "", "COMMENTED", 1, "comments"),
+        (
+            "a human's objection",
+            "CHANGES_REQUESTED",
+            "CHANGES_REQUESTED",
+            0,
+            "changes_requested",
+        ),
+    ] {
+        let mut gh = Github::review_world();
+        gh.answer(
+            &format!("pr view {PR}"),
+            review_view(
+                decision,
+                &[(COPILOT, "COMMENTED"), ("colleague", state)],
+                false,
+            ),
+        )
+        .answer(THREADS, threads_page(unresolved))
+        .answer(&reviews_path(), json!([earlier.clone(), human(state)]));
+        let held = ok_result(&gh.review(false, &[]));
+        assert_eq!(held["status"], "complete", "{name}: {held}");
+        assert_eq!(held["verdict"], verdict, "{name}: {held}");
+        assert_eq!(held["request"]["outcome"], "requested", "{name}: {held}");
+        assert_eq!(held["request"]["recorded_now"], true, "{name}: {held}");
+        assert_eq!(gh.requests(), 1, "{name}: {:?}", gh.log());
+        assert_eq!(
+            gh.head_record()["request"]["outcome"],
+            "requested",
+            "{name}"
+        );
+
+        // The human approves and the thread resolves: the approval waits on
+        // the Copilot review the first call asked for, and no second request
+        // goes out.
+        gh.answer(
+            &format!("pr view {PR}"),
+            review_view(
+                "APPROVED",
+                &[(COPILOT, "COMMENTED"), ("colleague", "APPROVED")],
+                false,
+            ),
+        )
+        .answer(THREADS, threads_page(0))
+        .answer(&reviews_path(), json!([earlier.clone(), human("APPROVED")]));
+        let approved = ok_result(&gh.review(false, &[]));
+        assert_eq!(approved["status"], "pending", "{name}: {approved}");
+        assert_eq!(
+            approved["copilot"]["state"], "pending",
+            "{name}: {approved}"
+        );
+        assert_eq!(gh.requests(), 1, "{name}: {:?}", gh.log());
+    }
+}
+
 /// Each verdict word is read from the head's reviews, threads and the
 /// period's budget, and recorded under `pr_review.verdict`: the aggregate
 /// approval or a latest approval with no objection, an objection, an open

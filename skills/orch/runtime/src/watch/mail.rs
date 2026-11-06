@@ -334,7 +334,7 @@ fn unread_value(newest: Option<(u64, &str)>, count: u64) -> String {
 /// Which lanes of the fleet have a mailbox the duty reads: a running lane
 /// whose kind's channel is a mailbox (`check_mail`'s `MAILLESS` filter),
 /// with its recorded root.
-fn readable(lane: &Lane) -> Result<Option<(bool, Drain)>> {
+fn readable(lane: &Lane) -> Result<Option<(Option<String>, Drain)>> {
     if lane.status != LaneStatus::Running {
         return Ok(None);
     }
@@ -344,7 +344,7 @@ fn readable(lane: &Lane) -> Result<Option<(bool, Drain)>> {
     let Some(root) = lane.mail_root.as_deref() else {
         return Err(invalid(&lane.item, "mail-root-unrecorded".into()));
     };
-    let hosted = lane.host.as_deref().is_some_and(|h| h != "local");
+    let hosted = lane.host.clone().filter(|h| h != "local");
     Ok(Some((
         hosted,
         Drain {
@@ -536,33 +536,32 @@ impl MailDuty {
         for lane in &fleet.lanes {
             match readable(lane) {
                 Ok(None) => {}
-                Ok(Some((is_hosted, mut drain))) => {
+                Ok(Some((host, mut drain))) => {
                     let cursor = MailCursor::parse(tick.baseline.get(LANE_MAIL, &drain.item));
                     drain.after = cursor.announced;
-                    if is_hosted {
-                        hosted.push(drain);
-                    } else {
-                        local.push(drain);
+                    match host {
+                        Some(host) => hosted.push((drain, host)),
+                        None => local.push(drain),
                     }
                 }
                 Err(e) => turn.refuse(&lane.item, e),
             }
         }
-        let mut read: Vec<(Drain, Drained, bool)> = self
+        let mut read: Vec<(Drain, Drained, Option<String>)> = self
             .drain_local(&local, turn)
             .into_iter()
-            .map(|(lane, drained)| (lane, drained, false))
+            .map(|(lane, drained)| (lane, drained, None))
             .collect();
-        for lane in &hosted {
-            match self.mailbox.drain(lane, true) {
-                Ok(drained) => read.push((lane.clone(), drained, true)),
+        for (lane, host) in &hosted {
+            match self.mailbox.drain(lane, Some(host)) {
+                Ok(drained) => read.push((lane.clone(), drained, Some(host.clone()))),
                 Err(refusal) => turn.refuse(&lane.item, refusal),
             }
         }
         // A replacement is read whole, once: a second mismatch would not end.
         let mut again_local = Vec::new();
         let mut again_hosted = Vec::new();
-        for (lane, drained, is_hosted) in &read {
+        for (lane, drained, host) in &read {
             let cursor = MailCursor::parse(tick.baseline.get(LANE_MAIL, &lane.item));
             if replaced(
                 cursor.announced,
@@ -574,16 +573,15 @@ impl MailDuty {
                     after: 0,
                     ..lane.clone()
                 };
-                if *is_hosted {
-                    again_hosted.push(whole);
-                } else {
-                    again_local.push(whole);
+                match host {
+                    Some(host) => again_hosted.push((whole, host.clone())),
+                    None => again_local.push(whole),
                 }
             }
         }
         let replaced_items: BTreeSet<&str> = again_local
             .iter()
-            .chain(&again_hosted)
+            .chain(again_hosted.iter().map(|(d, _)| d))
             .map(|d| d.item.as_str())
             .collect();
         let mut reread: BTreeMap<String, Drained> = self
@@ -591,8 +589,8 @@ impl MailDuty {
             .into_iter()
             .map(|(lane, drained)| (lane.item, drained))
             .collect();
-        for lane in &again_hosted {
-            match self.mailbox.drain(lane, true) {
+        for (lane, host) in &again_hosted {
+            match self.mailbox.drain(lane, Some(host)) {
                 Ok(drained) => {
                     reread.insert(lane.item.clone(), drained);
                 }

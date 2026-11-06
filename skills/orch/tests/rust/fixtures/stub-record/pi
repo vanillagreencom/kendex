@@ -9,7 +9,7 @@ argv="" first=1
 for arg in "$@"; do
   [ "$first" = 1 ] || argv="$argv,"
   first=0
-  argv="$argv\"$(printf '%s' "$arg" | sed 's/\\/\\\\/g; s/"/\\"/g')\""
+  argv="$argv\"$(printf '%s' "$arg" | sed 's/\\/\\\\/g; s/"/\\"/g' | awk 'NR > 1 { printf "%s", "\\n" } { printf "%s", $0 }')\""
 done
 printf '{"program":"%s","argv":[%s],"env":{"CLAUDE_CONFIG_DIR":"%s","PI_CODING_AGENT_DIR":"%s","CODEX_HOME":"%s","COPILOT_HOME":"%s"}}\n' \
   "$0" "$argv" "${CLAUDE_CONFIG_DIR-}" "${PI_CODING_AGENT_DIR-}" "${CODEX_HOME-}" "${COPILOT_HOME-}" > launch-record.json

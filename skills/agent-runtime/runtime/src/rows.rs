@@ -6,16 +6,15 @@
 //! shapes follow Claude Code's hook inputs, Pi's carrier and Copilot's
 //! camelCase payloads as that library names them.
 //!
-//! Every read is three-valued (decision 99): `Live(row)` is the last row,
-//! `Gone` a file that is absent or holds no row, `Unreadable` a file or a
-//! last row that could not be read. A verdict is read from the last row
-//! alone, as the library reads it, over the last `SPAN` lines.
+//! Every read is three-valued: `Live(row)` is the last row, `Gone` a file
+//! that is absent or holds no row, `Unreadable` a file or a last row that
+//! could not be read. A verdict is read from the last row alone, as the
+//! library reads it, over the last `SPAN` lines.
 
-// Every reading is matched variant by variant (decision 105).
+// Every reading is matched variant by variant.
 #![deny(clippy::wildcard_enum_match_arm)]
 
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -122,26 +121,19 @@ pub enum LaneVerdict {
 /// file is absent or holds no row, `Unreadable` where it, or the row, could
 /// not be read.
 pub fn last_row(file: &Path) -> Reading<Row> {
-    let f = match fs::File::open(file) {
-        Ok(f) => f,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Reading::Gone,
-        Err(_) => {
-            return Reading::Unreadable {
-                cause: "rows-file-unreadable",
-            };
-        }
-    };
-    let mut lines: Vec<String> = Vec::new();
-    for line in BufReader::new(f).lines() {
-        match line {
-            Ok(line) => lines.push(line),
-            Err(_) => {
-                return Reading::Unreadable {
-                    cause: "rows-file-unreadable",
-                };
-            }
-        }
+    match fs::read_to_string(file) {
+        Ok(text) => last_row_in(&text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Reading::Gone,
+        Err(_) => Reading::Unreadable {
+            cause: "rows-file-unreadable",
+        },
     }
+}
+
+/// The last row of a rows file's text, read as [`last_row`] reads the file:
+/// for a file read elsewhere, as through a lane's provider.
+pub fn last_row_in(text: &str) -> Reading<Row> {
+    let lines: Vec<&str> = text.lines().collect();
     let start = lines.len().saturating_sub(SPAN);
     let Some(last) = lines[start..].iter().rev().find(|l| !l.trim().is_empty()) else {
         return Reading::Gone;
@@ -280,7 +272,7 @@ mod tests {
     /// each harness's SessionEnd and StopFailure shapes, a Pi row with and
     /// without a limit message, a Copilot row, and the too-long prompt.
     /// Defect: a verdict that drifts from the library's, which reads the
-    /// same file for the same decision until the legacy watch retires.
+    /// same file for the same decision.
     #[test]
     fn the_session_verdict_follows_the_library_s_table_per_harness_form() {
         let rows: [(&str, SessionVerdict); 11] = [

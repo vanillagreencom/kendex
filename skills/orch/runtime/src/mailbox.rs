@@ -20,7 +20,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use agent_runtime::host;
+use agent_runtime::host::{self, Place};
 use serde::Deserialize;
 
 use crate::ops::mail::DirectiveSend;
@@ -420,22 +420,41 @@ impl Mailbox {
     }
 
     /// One run of the program: the verb first, then `args`, under the bound.
+    fn call(&self, verb: &'static str, args: &[&str]) -> Result<Answer, Refusal> {
+        self.call_on(verb, args, None)
+    }
+
+    /// [`Self::call`] with `lane-host`'s host named: a hosted lane's reads
+    /// go to the provider its record names, never the one the settings name.
     #[allow(
         clippy::disallowed_methods,
         reason = "the mailbox client's every `lane-mail` call, through agent-runtime's one runner under the `mail` tag and one bound; the duty writes nothing of the fleet through it"
     )]
-    fn call(&self, verb: &'static str, args: &[&str]) -> Result<Answer, Refusal> {
+    fn call_on(
+        &self,
+        verb: &'static str,
+        args: &[&str],
+        lane_host: Option<&str>,
+    ) -> Result<Answer, Refusal> {
         let mut argv = Vec::with_capacity(args.len() + 1);
         argv.push(verb);
         argv.extend_from_slice(args);
-        let output =
-            host::run_tagged(TAG, PROGRAM, &self.cli, verb, &argv, self.bound).map_err(|e| {
-                let cause = e.to_string();
-                match e {
-                    agent_runtime::Error::NotStarted { .. } => Refusal::NotStarted { verb, cause },
-                    _ => Refusal::Unanswered { verb, cause },
-                }
-            })?;
+        let env: Vec<(&str, &std::ffi::OsStr)> = lane_host
+            .map(|h| ("ORCH_LANE_HOST", std::ffi::OsStr::new(h)))
+            .into_iter()
+            .collect();
+        let place = Place {
+            cwd: None,
+            env: &env,
+        };
+        let output = host::run_tagged_in(TAG, PROGRAM, &self.cli, verb, &argv, place, self.bound)
+            .map_err(|e| {
+            let cause = e.to_string();
+            match e {
+                agent_runtime::Error::NotStarted { .. } => Refusal::NotStarted { verb, cause },
+                _ => Refusal::Unanswered { verb, cause },
+            }
+        })?;
         Ok(Answer {
             success: output.status.success(),
             status: output.status.code(),
@@ -521,8 +540,9 @@ impl Mailbox {
         Batch { read, refused }
     }
 
-    /// `drain --receipts` for one lane, hosted where `hosted`.
-    pub fn drain(&self, lane: &Drain, hosted: bool) -> Result<Drained, Refusal> {
+    /// `drain --receipts` for one lane; a hosted lane's through `lane-host`
+    /// under `host`, its record's host.
+    pub fn drain(&self, lane: &Drain, host: Option<&str>) -> Result<Drained, Refusal> {
         const VERB: &str = "drain";
         let after = lane.after.to_string();
         let root = lane.root.display().to_string();
@@ -535,10 +555,10 @@ impl Mailbox {
             &after,
             "--receipts",
         ];
-        if hosted {
+        if host.is_some() {
             args.push("--host");
         }
-        let stdout = self.call(VERB, &args)?.ok(VERB)?;
+        let stdout = self.call_on(VERB, &args, host)?.ok(VERB)?;
         let mut lines = stdout.lines().peekable();
         let drained = Drained::parse(VERB, &mut lines)?;
         if let Some(extra) = lines.next() {

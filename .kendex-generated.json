@@ -662,7 +662,6 @@
   ".agents/skills/orch/references/control-host-toolchain.conf",
   ".agents/skills/orch/references/copilot-head-notices.md",
   ".agents/skills/orch/references/copilot-runtime.md",
-  ".agents/skills/orch/references/copilot-wait.md",
   ".agents/skills/orch/references/design-review.md",
   ".agents/skills/orch/references/gates.md",
   ".agents/skills/orch/references/heartbeat-audit.md",

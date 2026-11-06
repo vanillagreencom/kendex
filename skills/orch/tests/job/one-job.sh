@@ -236,7 +236,7 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
   write_brief "$brief" "$scenario"
   request="$root/launch.json"
   jq -cn --arg item "$key" --arg wt "$wt" --arg home "$TMP_ROOT/home" --arg brief "$brief" --arg tracker "$tracker" \
-    '{op: "launch-lane", item: $item, harness: "claude", mail_root: $wt, account: $home, repo: "owner/repo", brief_file: $brief}
+    '{op: "launch-lane", item: $item, harness: "claude", mail_root: $wt, account: $home, model: "claude-fable-5-1", effort: "high", repo: "owner/repo", brief_file: $brief}
      + (if $tracker == "github" then {tracker: "github"} else {} end)' > "$request"
   launch_lane "$name" "$root" "$request" || return 0
   fleet="$main/tmp/workflow-state-oversee.json"
@@ -435,15 +435,17 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
   # --- the service boundary: the fake gh and the local remote are the job's
   # only services (PATH is sealed; origin's main is asserted above), and what
   # reaches gh is a tracker read or close of an issue of owner/repo, the
-  # open-PR probe of the item's branch or a verify-head read of owner/repo.
-  # An api call with any flag beside its path would be a write.
+  # open-PR probe of the item's branch, a verify-head read of owner/repo or
+  # the launch's read of its checkout's repository, which a GitHub item is
+  # bound to. An api call with any flag beside its path would be a write.
   assert_eq "$(awk -v k="$key" '
+      $0 == "repo view --json nameWithOwner -q .nameWithOwner" { next }
       $1 == "issue" && $2 == "view" && $3 ~ /^[0-9]+$/ && $4 == "--repo" && $5 == "owner/repo" { next }
       $1 == "issue" && $2 == "close" && $3 ~ /^[0-9]+$/ && $4 == "--repo" && $5 == "owner/repo" && $6 == "--reason" && $7 == "completed" && NF == 7 { next }
       index($0, "pr list --state open --head " k " ") == 1 { next }
       $1 == "api" && index($2, "repos/owner/repo/") == 1 && NF == 2 { next }
       { print "outside: " $0 }' <<<"$calls")" "" \
-    "$name: every gh call is a tracker read or close on owner/repo, the open-PR probe of the item's branch or a verify-head read of owner/repo"
+    "$name: every gh call is a tracker read or close on owner/repo, the open-PR probe of the item's branch, a verify-head read of owner/repo or the checkout's repository read"
   # --- local versus tracker: a GitHub item's tracker calls name its own issue
   # and close it once; a local item reaches no tracker.
   if [[ "$tracker" == github ]]; then

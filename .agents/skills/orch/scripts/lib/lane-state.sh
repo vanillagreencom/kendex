@@ -431,6 +431,31 @@ lane_process_start() { # PID
   awk '{ $1 = $1; print }' <<<"$out"
 }
 
+# Print a process's start in the form a recorded identity spells it, so the
+# two compare as text: the orch runtime records `ticks:N` on Linux, N the
+# start in clock ticks since boot (field 22 of /proc/PID/stat, counted past
+# the last `)` since the command name can hold blanks and `)`), and
+# `lstart:TEXT` elsewhere; this library records lane_process_start's bare
+# line. An empty line is a pid with no process; status 2 is no answer, a
+# `ticks:` start on a host without /proc included.
+lane_process_start_as() { # PID RECORDED
+  local stat start
+  local -a fields=()
+  case "$2" in
+    ticks:*)
+      lane_proc_readable || return 2
+      stat="$(cat -- "/proc/$1/stat" 2>/dev/null)" || stat=""
+      [[ -n "$stat" ]] || { printf '\n'; return 0; }
+      read -r -a fields <<<"${stat##*)}"
+      [[ "${fields[19]:-}" =~ ^[0-9]+$ ]] || return 2
+      printf 'ticks:%s\n' "${fields[19]}" ;;
+    lstart:*)
+      start="$(lane_process_start "$1")" || return 2
+      printf '%s\n' "${start:+lstart:$start}" ;;
+    *) lane_process_start "$1" ;;
+  esac
+}
+
 # Print a process's current directory. /proc answers on Linux; where there is
 # none, `lsof`, which macOS ships, answers instead. Status 1 is a directory the
 # read did not return, which a caller settles by lane_process_state: a process
@@ -691,9 +716,10 @@ lane_identity_status() { # PID START: 0 live, 3 ended, 1 unreadable
   [[ "$1" =~ ^[1-9][0-9]*$ && -n "$2" ]] || { LANE_IDENTITY_CAUSE=identity-invalid; return 1; }
   state="$(lane_process_state "$1")" || { LANE_IDENTITY_CAUSE=state-read-failed; return 1; }
   if [[ -n "$state" && "$state" != Z ]]; then
-    start="$(lane_process_start "$1")" || { LANE_IDENTITY_CAUSE=start-read-failed; return 1; }
-    # ps answering no process for a pid the state read found live is either
-    # that process exiting between the two reads, or no answer at all.
+    start="$(lane_process_start_as "$1" "$2")" || { LANE_IDENTITY_CAUSE=start-read-failed; return 1; }
+    # The start read answering no process for a pid the state read found
+    # live is either that process exiting between the two reads, or no
+    # answer at all.
     if [[ -z "$start" ]]; then
       state="$(lane_process_state "$1")" || { LANE_IDENTITY_CAUSE=state-read-failed; return 1; }
       [[ -z "$state" || "$state" == Z ]] || { LANE_IDENTITY_CAUSE=start-read-failed; return 1; }

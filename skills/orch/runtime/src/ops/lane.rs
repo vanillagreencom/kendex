@@ -34,7 +34,8 @@ use crate::state::{
 
 /// Open a lane for an item: judge the fleet cap, write its record as
 /// `preparing` and the intent to launch it. On a relaunch every optional
-/// field left out keeps the record's value, and `harness`, `account`,
+/// field left out keeps the record's value, bar `host` and `kind`, which
+/// are always the launch's own, and `harness`, `account`,
 /// `model` and `effort` reach the record only when the launch confirms,
 /// since the session that runs is the one that confirmed; on a first
 /// launch the record carries them from the start. `host` names where the
@@ -53,7 +54,9 @@ use crate::state::{
 /// lane runs under, spelled as agent-runtime's table spells it (one word,
 /// or `FLAG VALUE` as two) and recorded on the lane; left out, the launch
 /// runs the settings' posture, and a word the table lacks is refused
-/// before any intent.
+/// before any intent. `obligation` is the item's accepted lineage, written
+/// onto a record that carries none; one that differs from the record's is
+/// refused `obligation-conflict` before any intent.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LaunchLane {
     pub item: String,
@@ -100,6 +103,51 @@ pub struct LaunchLane {
     /// holder of one does not hold the launch. Recorded as `in_scope`.
     #[serde(default)]
     pub in_scope: Vec<String>,
+    #[serde(default)]
+    pub obligation: Option<Obligation>,
+}
+
+/// The item's original obligation as the overseer's accepted launch or
+/// transfer mapping states it, recorded as `lanes[].obligation` for the
+/// cycle reader: the four keys, each present, the parent pair named
+/// together or null together. Nothing else maps it: a tracker's current
+/// parent is no original mapping.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "ObligationKeys")]
+pub struct Obligation {
+    repo: String,
+    item: String,
+    parent_repo: Option<String>,
+    parent_item: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ObligationKeys {
+    repo: String,
+    item: String,
+    // A nullable key the request must still name: serde's own reading
+    // of an `Option` would take a missing key as null.
+    #[serde(deserialize_with = "Option::deserialize")]
+    parent_repo: Option<String>,
+    #[serde(deserialize_with = "Option::deserialize")]
+    parent_item: Option<String>,
+}
+
+impl TryFrom<ObligationKeys> for Obligation {
+    type Error = &'static str;
+
+    fn try_from(keys: ObligationKeys) -> std::result::Result<Self, Self::Error> {
+        if keys.parent_repo.is_some() != keys.parent_item.is_some() {
+            return Err("an obligation names parent_repo and parent_item together or neither");
+        }
+        Ok(Obligation {
+            repo: keys.repo,
+            item: keys.item,
+            parent_repo: keys.parent_repo,
+            parent_item: keys.parent_item,
+        })
+    }
 }
 
 impl LaunchLane {
@@ -179,11 +227,10 @@ impl LaunchLane {
 
     /// The optional fields a relaunch writes at `preparing`, in the lane
     /// record's order.
-    fn prepared(&self) -> [(&'static str, &Option<String>); 5] {
+    fn prepared(&self) -> [(&'static str, &Option<String>); 4] {
         [
             ("tracker", &self.tracker),
             ("repo", &self.repo),
-            ("kind", &self.kind),
             ("surface", &self.surface),
             ("over_cap", &self.over_cap),
         ]
@@ -720,6 +767,47 @@ fn room(path: &Path, r: &LaunchLane, replaces: Option<&str>, env: &Env, host: &H
     }
 }
 
+/// A launch on a named account names the model and the effort it spends
+/// that account on, on every harness, a relaunch alike: one naming no model
+/// runs the harness's default, whose window the account's judge never read,
+/// and one naming no effort its default level. Refused before any intent,
+/// the model first; the spellings are the words the harness's line takes.
+fn choice_named(r: &LaunchLane) -> Result<()> {
+    let (Some(account), Some(harness)) = (&r.account, Harness::parse(&r.harness)) else {
+        return Ok(());
+    };
+    let named = |word: &Option<String>| word.as_deref().is_some_and(|w| !w.is_empty());
+    let (models, efforts) = match harness {
+        Harness::Claude => ("--model", "--effort"),
+        Harness::Codex => ("-m,--model", "model_reasoning_effort="),
+        Harness::Copilot => ("--model", "--reasoning-effort"),
+        Harness::Pi => ("--model", "--thinking"),
+    };
+    let refused = |key: &'static str, spellings: &str| {
+        Error::from(agent_runtime::Error::refused(
+            key,
+            &[
+                ("harness", harness.name()),
+                ("lane", account),
+                ("spellings", spellings),
+            ],
+        ))
+    };
+    if !named(&r.model) {
+        return Err(refused("launch-model-missing", models));
+    }
+    // Pi spells its level on the model word, `provider/id:level`.
+    let level_on_model = harness == Harness::Pi
+        && r.model
+            .as_deref()
+            .and_then(|m| m.rsplit('/').next())
+            .is_some_and(|id| id.contains(':'));
+    if !named(&r.effort) && !level_on_model {
+        return Err(refused("launch-effort-missing", efforts));
+    }
+    Ok(())
+}
+
 pub(super) fn launch_lane(
     path: &Path,
     doc: &mut Document,
@@ -754,6 +842,7 @@ pub(super) fn launch_lane(
             ],
         )));
     }
+    choice_named(r)?;
     let cloud = kind == CLOUD_KIND;
     // The cap the request's kind is bounded by: a cloud session the cloud
     // cap, every other lane the lane cap.
@@ -809,6 +898,24 @@ pub(super) fn launch_lane(
             account: account.clone(),
         });
     }
+    // The item's lineage is bound once: a record's obligation stands over
+    // every later launch, and a request stating another is refused.
+    let obligation = r
+        .obligation
+        .as_ref()
+        .map(serde_json::to_value)
+        .transpose()?;
+    if let (Some(index), Some(stated)) = (position, &obligation)
+        && lanes[index]
+            .extra
+            .get("obligation")
+            .is_some_and(|known| !known.is_null() && known != stated)
+    {
+        return Err(Error::from(agent_runtime::Error::refused(
+            "obligation-conflict",
+            &[("item", &r.item)],
+        )));
+    }
     if let (Some(index), Some(ids)) = (position, &own) {
         let previous = &lanes[index];
         if previous.status.in_flight() {
@@ -845,6 +952,7 @@ pub(super) fn launch_lane(
                 scope_range: r.scope_range.as_ref(),
                 in_scope: &r.in_scope,
                 paths: &[],
+                checkout: Some(Path::new(&r.mail_root)),
             },
             env,
             host,
@@ -864,8 +972,8 @@ pub(super) fn launch_lane(
         });
     }
     // What the launch states of the lane beyond its selection: the Copilot
-    // grant its line carries and the tier its brief names, written on
-    // every launch as the record reads them.
+    // grant its line carries and the tier its brief names, as the record
+    // reads them.
     let allow_all = r.allow_all(host.accounts.map(|s| s.permission));
     let brief = match &r.brief_file {
         Some(file) => fs::read_to_string(file).map_err(|e| {
@@ -898,10 +1006,10 @@ pub(super) fn launch_lane(
                     state::set(lane, key, value.as_str());
                 }
             }
-            if r.host.is_some() {
-                state::set(lane, "host", r.host().map_or(Value::Null, Value::from));
-                state::set(lane, "kind", kind);
-            }
+            // The lane runs where this launch opens it, a request naming no
+            // host in a window here, whatever host the record named before.
+            state::set(lane, "host", r.host().map_or(Value::Null, Value::from));
+            state::set(lane, "kind", kind);
             // A hosted lane's root moves to its host once the host answers;
             // the checkout the launch ran from is where a relaunch runs again.
             if r.host().is_some() {
@@ -918,14 +1026,23 @@ pub(super) fn launch_lane(
             state::set(lane, "running_at", Value::Null);
             state::set(lane, "status", LaneStatus::Preparing.word());
             // What this launch states of the lane, over what the record
-            // keeps: a permission choice and a grant judged now. The tier
-            // stays the first launch's: a relaunch's brief opens the
-            // workflow with `start` whatever tier the item runs at.
+            // keeps: a permission choice and a grant judged now, and the
+            // lineage where the record binds none. A relaunch keeps the
+            // first launch's tier, since its brief opens the workflow with
+            // `start` whatever tier the item runs at; a launch over a `done`
+            // record opens the item's next phase, whose brief states its own.
             if let Value::String(permission) = r.permission_recorded() {
                 state::set(lane, "permission", permission.as_str());
             }
             if allow_all.is_some() {
                 state::set(lane, "allow_all", allow_all);
+            }
+            if let Some(obligation) = &obligation {
+                state::set(lane, "obligation", obligation.clone());
+            }
+            if relaunch.is_none() {
+                state::set(lane, "tier", tier.tier);
+                state::set(lane, "tier_inputs", tier.inputs());
             }
             state::set(lane, "launch", Value::Null);
             state::delete(lane, "prepare");
@@ -945,6 +1062,9 @@ pub(super) fn launch_lane(
             }
             if r.host().is_some() {
                 record["checkout"] = Value::String(r.mail_root.clone());
+            }
+            if let Some(obligation) = &obligation {
+                record["obligation"] = obligation.clone();
             }
             rows.push(record);
             let index = rows.len() - 1;
@@ -1945,7 +2065,7 @@ mod tests {
             .collect()
     }
 
-    /// Decision 97 at the cap, against processes this test holds: a lane
+    /// The cap, against processes this test holds: a lane
     /// whose recorded harness runs charges a slot and refuses the next lane
     /// at a cap of one; the same lane with its harness ended charges nothing
     /// though its status, pane and pending return still stand, so the next
@@ -2131,7 +2251,7 @@ mod tests {
         assert!(fleet(&path).intents.is_empty());
     }
 
-    /// Decision 97's deliberate hold and its release: a stopped lane with a
+    /// A deliberate hold and its release: a stopped lane with a
     /// `resume` reservation charges until its term under an injected clock
     /// and not at or after it; `release-lane` bound to the attempt drops it,
     /// the repeat is a no-op, and a release bound to an earlier attempt
@@ -2244,7 +2364,7 @@ mod tests {
         assert!(!after.contains_key("reservation"));
     }
 
-    /// Decision 108: a stopped lane whose parent is gone but whose detached
+    /// A stopped lane whose parent is gone but whose detached
     /// wake turn still runs holds its slot by that wake and refuses its own
     /// relaunch `harness-live` naming the wake's pid, so no second harness
     /// starts beside owned execution; an unreadable wake refuses
@@ -2321,6 +2441,8 @@ mod tests {
         let relaunch = |account: &Path| {
             Request::LaunchLane(Box::new(LaunchLane {
                 account: Some(format!("{}/", account.display())),
+                model: Some("opus".into()),
+                effort: Some("high".into()),
                 exclude_account: Some(spent.clone()),
                 ..launch_fields("KEN-4437")
             }))
@@ -2345,7 +2467,8 @@ mod tests {
 
     /// A relaunch keeps every field
     /// it does not write, drops `prepare` and `live_display`, and keeps the
-    /// key sequence of what it keeps. The harness, account,
+    /// key sequence of what it keeps; its host and kind are its own, a
+    /// window here for a request naming no host. The harness, account,
     /// model and effort it was asked for reach the record when the launch
     /// confirms, not at `preparing`. The confirmation
     /// writes all four, null where the
@@ -2377,7 +2500,8 @@ mod tests {
         let after = lane_doc(&path, "KEN-4437");
         let view = lane(&path, "KEN-4437");
         assert_eq!(view.status, LaneStatus::Preparing);
-        assert_eq!(view.kind.as_deref(), Some("claude-cloud"));
+        assert_eq!(view.kind.as_deref(), Some("local"));
+        assert_eq!(view.host, None);
         assert_eq!(view.surface.as_deref(), Some("cloud"));
         assert_eq!(view.over_cap.as_deref(), Some("cloud"));
         assert_eq!(view.account.as_deref(), Some("/home/u/.codex-lanes/c2"));
@@ -2431,7 +2555,11 @@ mod tests {
         assert_eq!(view.account.as_deref(), Some("/a/a1"));
         assert_eq!(view.model.as_deref(), Some("claude-opus-5-5"));
         assert_eq!(view.effort.as_deref(), Some("high"));
-        assert_eq!(view.kind.as_deref(), Some("claude-cloud"), "not supplied");
+        assert_eq!(
+            view.kind.as_deref(),
+            Some("local"),
+            "the launch's own, its request naming no host"
+        );
         // A relaunch that fails leaves the record's harness, account and
         // model as they were: no session of the requested ones ran.
         fs::write(&path, &text).unwrap();
@@ -2660,7 +2788,7 @@ mod tests {
         assert_eq!(keys(&after), expected);
     }
 
-    /// Decision 62: an effect's phase is written onto its open intent before
+    /// An effect's phase is written onto its open intent before
     /// the effect waits, a later phase replaces it, and a closed intent
     /// takes none.
     #[test]
@@ -2786,7 +2914,7 @@ mod tests {
         assert_eq!(body.lanes[1].status, LaneStatus::Running);
     }
 
-    /// Decision 83's guard: a lane whose recorded harness runs refuses a
+    /// The live-harness guard: a lane whose recorded harness runs refuses a
     /// bare close `lane-live`, an unreadable one `harness-unreadable`, and
     /// a recorded pane with no identity `lane-live`; `terminal` evidence
     /// admits the close whatever the harness reads, recorded on the intent;
@@ -2923,7 +3051,7 @@ mod tests {
         assert_eq!(row["source"], json!("linear"));
     }
 
-    /// Decision 98: a close on the `no-landing` disposition retires the
+    /// A close on the `no-landing` disposition retires the
     /// attempt and keeps the item's work: the lane reads stopped, its
     /// pending return, parked record, launch, recovery route and counters
     /// stay, and the fleet log carries the disposition. An unreadable

@@ -967,12 +967,18 @@ fn launch_record_of(cwd: &Path) -> Value {
 }
 
 /// A checkout at `path` for a launch to run in, made by `git` under the
-/// row's own isolation.
-fn init_checkout(path: &Path) {
+/// row's own isolation: a clone of the fleet's repository, its origin and
+/// the fleet's checkout's one, since a launch from a foreign repository is
+/// refused.
+fn init_checkout(fleet: &Fleet, path: &Path) {
     std::fs::create_dir_all(path).unwrap();
-    let out = program("git")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
+    let git = || {
+        let mut git = program("git");
+        git.env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1");
+        git
+    };
+    let out = git()
         .args([
             "-c",
             "gc.auto=0",
@@ -985,6 +991,19 @@ fn init_checkout(path: &Path) {
         .output()
         .unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
+    for checkout in [path, fleet.runner.state_dir()] {
+        let out = git()
+            .arg("-C")
+            .arg(checkout)
+            .args([
+                "config",
+                "remote.origin.url",
+                "https://github.com/o/fleet.git",
+            ])
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+    }
 }
 
 /// Defect: a lane launched under a narrower permission choice was relaunched
@@ -994,7 +1013,12 @@ fn init_checkout(path: &Path) {
 /// choice, the wall relaunch's request carries it, and the replacement the
 /// request starts through the real entry runs with the word and no bypass
 /// word; a released record, planted as `main` wrote it, carries the choice in
-/// `recovery.flags`, and its request carries the same word.
+/// `recovery.flags`, and its request carries the same word. Defect: a
+/// released lane whose flags carry a prompting choice no launch line carries
+/// (`--permission-mode plan`, which `main`'s launcher warned of and launched)
+/// retired and relaunched under the bypass default. Two such records, planted
+/// as `main` wrote them in the two-word and the `FLAG=VALUE` spelling, are
+/// refused before anything is stopped: no request, no relaunch.
 #[test]
 fn a_walled_lanes_relaunch_keeps_its_permission_choice() {
     let dir = tempfile::tempdir().unwrap();
@@ -1002,7 +1026,7 @@ fn a_walled_lanes_relaunch_keeps_its_permission_choice() {
     let server = Server::start(dir.path(), "fleet");
     let fleet = Fleet::new(&server);
     let work = root.join("KEN-5");
-    init_checkout(&work);
+    init_checkout(&fleet, &work);
     let spent = root.join("eclaude");
     let picked = root.join("bclaude");
     for account in [&spent, &picked] {
@@ -1016,6 +1040,7 @@ fn a_walled_lanes_relaunch_keeps_its_permission_choice() {
         "mail_root": work.display().to_string(),
         "account": spent.display().to_string(),
         "model": "opus",
+        "effort": "high",
         "permission": "--permission-mode dontAsk",
     });
     let report = effect_report(
@@ -1041,8 +1066,27 @@ fn a_walled_lanes_relaunch_keeps_its_permission_choice() {
         ),
         dir.path(),
     );
+    // A released record names its model and effort: `main`'s launch refused
+    // a lane on an account without either.
+    released["effort"] = json!("high");
     released["recovery"]["flags"] = json!("--model opus --permission-mode dontAsk");
-    fleet.set_lanes(vec![runtime, released]);
+    let mut lanes = vec![runtime, released];
+    for (item, name, flags) in [
+        ("KEN-7", "gh-7", "--model opus --permission-mode plan"),
+        ("KEN-8", "gh-8", "--model opus --permission-mode=plan"),
+    ] {
+        let own = root.join(name);
+        std::fs::create_dir_all(&own).unwrap();
+        let (pane, identity) = walled_claude(&server, &own, name, BANNER);
+        let mut prompting = relaunchable(
+            lane_record(item, name, "claude", &server, &pane, Some(&identity), &own),
+            &own,
+        );
+        prompting["effort"] = json!("high");
+        prompting["recovery"]["flags"] = json!(flags);
+        lanes.push(prompting);
+    }
+    fleet.set_lanes(lanes);
     let state = fleet.read();
     lane_driver!(server, fleet, readers, driver);
     driver.now = std::time::SystemTime::now()
@@ -1075,6 +1119,26 @@ fn a_walled_lanes_relaunch_keeps_its_permission_choice() {
         "{:?}",
         lines(&produced)
     );
+    for (item, name) in [("KEN-7", "gh-7"), ("KEN-8", "gh-8")] {
+        let refusal = format!(
+            "wall-relaunch-refused lane={name} reason=context-unavailable cause=permission-choice-unrepresentable"
+        );
+        assert!(
+            lines(&produced).contains(&refusal),
+            "{refusal}: {:?}",
+            lines(&produced)
+        );
+        for suffix in ["md", "close.json", "json"] {
+            let file = driver
+                .state_dir
+                .join(format!("wall-relaunch-{item}.{suffix}"));
+            assert!(
+                !file.exists(),
+                "a request for a refused lane: {}",
+                file.display()
+            );
+        }
+    }
     let started = driver.relaunches.borrow();
     assert_eq!(started.len(), 2);
     for relaunch in started.iter() {
@@ -2733,7 +2797,8 @@ impl HostedWorld {
         self.scripts.join("gh")
     }
 
-    /// The `lane-host` answers, by argv (or `<host> <argv>`).
+    /// The `lane-host` answers, by argv (or `<host> <argv>`); of two answers
+    /// to one argv, the later stands.
     fn plant_host(&self, answers: &[(&str, Value)]) {
         let map: serde_json::Map<String, Value> = answers
             .iter()
@@ -2744,6 +2809,15 @@ impl HostedWorld {
             Value::Object(map).to_string(),
         )
         .unwrap();
+    }
+
+    /// [`Self::plant_host`] over argvs a row composed.
+    fn plant_host_owned(&self, answers: &[(String, Value)]) {
+        let answers: Vec<(&str, Value)> = answers
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.clone()))
+            .collect();
+        self.plant_host(&answers);
     }
 
     /// The one `lane-close` answer.
@@ -3485,6 +3559,33 @@ fn hosted_pane_lane(server: &Server, item: &str, window: &str, dir: &Path) -> (V
     (lane, pane)
 }
 
+/// The provider's answers to the handoff read of a hosted lane at
+/// `/remote/<item>` whose checkout holds no handoff: its `.git` naming the
+/// clone `/x`, empty settings files, and an item state with no record in
+/// the clone's `tmp` and the root's. A row's own answer to one of these
+/// argvs, listed after, stands.
+fn no_handoff(item: &str) -> Vec<(String, Value)> {
+    let root = format!("/remote/{item}");
+    let mut answers = vec![(
+        format!("cat --item {item} {root}/.git"),
+        ok(&format!("gitdir: /x/.git/worktrees/{item}\n")),
+    )];
+    for file in [
+        "kendex.settings.toml",
+        ".kendex/settings.toml",
+        ".env.local",
+    ] {
+        answers.push((format!("cat --item {item} {root}/{file}"), ok("")));
+    }
+    for dir in ["/x", root.as_str()] {
+        answers.push((
+            format!("cat --item {item} {dir}/tmp/workflow-state-{item}.json"),
+            ok("{}"),
+        ));
+    }
+    answers
+}
+
 /// `oversee-watch:1477-1510` (`finished_hosted_lane_eligible`,
 /// `close_finished_hosted_lane` at `:4857`), `:4796` (the status verb), the
 /// case `744fd5727:skills/orch/tests/oversee_watch_hosted.sh` pinned as
@@ -3508,18 +3609,22 @@ fn a_merged_hosted_lane_whose_worktree_the_host_has_not_is_closed_at_lane_exited
     fleet.set_lanes(vec![one.clone(), two.clone(), three.clone()]);
     let state = fleet.read();
     let world = HostedWorld::new(dir.path());
-    world.plant_host(&[
-        ("capabilities", ok(SSH_LINE)),
-        ("status --item KEN-1 --harness claude", ok("exited\n")),
-        ("status --item KEN-2 --harness claude", ok("exited\n")),
-        ("status --item KEN-3 --harness claude", ok("exited\n")),
-        ("cat --item KEN-1 /remote/KEN-1/.git", answer(2, "")),
-        ("touch --item KEN-1", ok("")),
-        (
-            "cat --item KEN-2 /remote/KEN-2/.git",
-            ok("gitdir: /x/.git/worktrees/KEN-2\n"),
-        ),
-    ]);
+    let mut answers: Vec<(String, Value)> = ["KEN-1", "KEN-2", "KEN-3"]
+        .into_iter()
+        .flat_map(no_handoff)
+        .collect();
+    answers.extend(
+        [
+            ("capabilities", ok(SSH_LINE)),
+            ("status --item KEN-1 --harness claude", ok("exited\n")),
+            ("status --item KEN-2 --harness claude", ok("exited\n")),
+            ("status --item KEN-3 --harness claude", ok("exited\n")),
+            ("cat --item KEN-1 /remote/KEN-1/.git", answer(2, "")),
+            ("touch --item KEN-1", ok("")),
+        ]
+        .map(|(argv, answer)| (argv.to_owned(), answer)),
+    );
+    world.plant_host_owned(&answers);
     world.plant_close(ok("kept=/archive/KEN-1\n"));
     lane_driver!(server, fleet, readers, driver);
     driver.scripts = world.scripts.clone();
@@ -3548,11 +3653,6 @@ fn a_merged_hosted_lane_whose_worktree_the_host_has_not_is_closed_at_lane_exited
     assert_eq!(
         world.close_log(),
         vec![format!("--state-dir {} KEN-1", driver.state_dir.display())]
-    );
-    assert!(
-        !world.host_log().iter().any(|l| l.contains("KEN-3 /remote")),
-        "no merged row, no worktree read: {:?}",
-        world.host_log()
     );
     let marker = hosted::close_marker_path(
         lanes::watch_state_dir(&driver.settings.claim_store),
@@ -3589,12 +3689,17 @@ fn a_finished_hosted_close_the_tracker_hold_deferred_is_retried_while_its_line_s
     fleet.set_lanes(vec![one.clone()]);
     let state = fleet.read();
     let world = HostedWorld::new(dir.path());
-    world.plant_host(&[
-        ("capabilities", ok(SSH_LINE)),
-        ("status --item KEN-1 --harness claude", ok("exited\n")),
-        ("cat --item KEN-1 /remote/KEN-1/.git", answer(2, "")),
-        ("touch --item KEN-1", ok("")),
-    ]);
+    let mut answers = no_handoff("KEN-1");
+    answers.extend(
+        [
+            ("capabilities", ok(SSH_LINE)),
+            ("status --item KEN-1 --harness claude", ok("exited\n")),
+            ("cat --item KEN-1 /remote/KEN-1/.git", answer(2, "")),
+            ("touch --item KEN-1", ok("")),
+        ]
+        .map(|(argv, answer)| (argv.to_owned(), answer)),
+    );
+    world.plant_host_owned(&answers);
     world.plant_close(json!({"exit": 1, "stderr": format!("{}\n", quota_receipt(1_800_007_200))}));
     lane_driver!(server, fleet, readers, driver);
     driver.scripts = world.scripts.clone();
@@ -3842,6 +3947,9 @@ fn the_wall_relaunch_retires_the_walled_harness_and_relaunches_it_through_the_ru
         ),
         &checkout,
     );
+    // A released record names its model and effort: `main`'s launch refused
+    // a lane on an account without either.
+    record["effort"] = json!("high");
     record["account"] = json!(old_account.display().to_string());
     fleet.set_lanes(vec![record]);
     let state = fleet.read();
@@ -3945,6 +4053,9 @@ fn a_wall_relaunch_whose_replacement_effect_fails_is_said_failed_not_relaunched(
             ),
             &checkout,
         );
+        // A released record names its model and effort: `main`'s launch
+        // refused a lane on an account without either.
+        record["effort"] = json!("high");
         record["account"] = json!(old_account.display().to_string());
         let world = HostedWorld::new(dir.path());
         std::os::unix::fs::symlink(binary(), world.scripts.join("orch-runtime")).unwrap();
@@ -4095,6 +4206,9 @@ fn an_unconfirmed_wall_replacement_keeps_its_marker_until_its_launch_settles_and
             ),
             &checkout,
         );
+        // A released record names its model and effort: `main`'s launch
+        // refused a lane on an account without either.
+        record["effort"] = json!("high");
         record["account"] = json!(old_account.display().to_string());
         fleet.set_lanes(vec![record]);
         let scripts = dir.path().join("scripts");
@@ -4646,6 +4760,206 @@ fn a_hosted_lane_the_provider_reads_running_is_never_exited_off_its_transport_sh
     assert!(!log.iter().any(|l| l.contains("capture")), "{log:?}");
 }
 
+/// A provider standing for a remote host, for the rows that run the real
+/// `lane-host`: it declares the SSH kind with a local pane, reads its lanes'
+/// harness as running, serves `cat` of a host path from `disk` (the host's
+/// disk, the path under it; exit 2 for a file it has not), answers `touch`
+/// and logs every argv to the log beside it; the path to name as the
+/// record's host and the log.
+fn file_provider(dir: &Path, disk: &Path) -> (PathBuf, PathBuf) {
+    let path = dir.join("provider");
+    let log = dir.join("provider.log");
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/bash\nprintf '%s\\n' \"$*\" >> '{log}'\ncase \"$1\" in\n  capabilities) printf '{SSH_LINE}\\trelaunch=resume\\tpark=none\\taccounts=none\\tpool=plan\\tland=lane\\tpane=local\\n' ;;\n  status) echo running ;;\n  cat) [ -f '{disk}'\"$4\" ] || exit 2; exec cat -- '{disk}'\"$4\" ;;\n  touch) exit 0 ;;\n  *) exit 64 ;;\nesac\n",
+            log = log.display(),
+            disk = disk.display(),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        &path,
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
+    )
+    .unwrap();
+    (path, log)
+}
+
+/// The scripts directory a row runs the shipped `lane-host` dispatcher
+/// from: a `lane-host` that starts it under the test child's isolation (the
+/// scratch home its call slots count under, git's ceiling at the temporary
+/// root) from a directory no checkout holds, so it loads no project's
+/// settings, with `ORCH_LANE_HOST` as the duty sets it.
+fn real_lane_host(dir: &Path) -> PathBuf {
+    let scripts = dir.join("scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    let root = std::env::temp_dir();
+    let cwd = root.join("isolated-cwd");
+    let home = root.join("isolated-home");
+    for made in [&cwd, &home] {
+        std::fs::create_dir_all(made).unwrap();
+    }
+    let path = scripts.join("lane-host");
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\ncd '{cwd}' || exit 2\nexec env -i PATH='{path}' LANG=C.UTF-8 TMPDIR='{root}' HOME='{home}' GIT_CEILING_DIRECTORIES='{root}' ORCH_LANE_HOST=\"$ORCH_LANE_HOST\" '{lane_host}' \"$@\"\n",
+            cwd = cwd.display(),
+            path = tool_path(&[]),
+            root = root.display(),
+            home = home.display(),
+            lane_host = orch_scripts().join("lane-host").display(),
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(
+        &path,
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
+    )
+    .unwrap();
+    scripts
+}
+
+/// `text` written at `path` under the host's `disk`.
+fn on_disk(disk: &Path, path: &str, text: &str) {
+    let file = disk.join(path.trim_start_matches('/'));
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(file, text).unwrap();
+}
+
+/// Defect: a hosted Pi lane's session rows read on the watch's own disk at
+/// its root, a path on its host, so a lane walled on its host read no row,
+/// stayed unjudged and said nothing. Through the real `lane-host` to a
+/// provider serving the host's disk: the host's last row, a turn ended on
+/// the account's limit, is `usage-limit`; a file at the same path on this
+/// disk is never read.
+#[test]
+fn a_hosted_pi_lanes_rows_are_read_through_its_provider() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let pi = named_sleep(dir.path(), "pi");
+    let line = format!("printf 'pi drew this\\n'; exec {} 600", pi.display());
+    let pane = server.open_window("gh-5", dir.path(), &format!("bash -c \"{line}\""));
+    let identity = await_named(&server, &pane, "pi");
+    await_drawn(&server, &pane, "pi drew this");
+    let root = dir.path().join("remote").join("KEN-5");
+    let rows = root.join("tmp/lane-mail/KEN-5/session-rows.jsonl");
+    std::fs::create_dir_all(rows.parent().unwrap()).unwrap();
+    std::fs::write(
+        &rows,
+        "{\"harness\":\"pi\",\"event\":\"PreToolUse\",\"at\":2}\n",
+    )
+    .unwrap();
+    let disk = dir.path().join("host-disk");
+    on_disk(
+        &disk,
+        &rows.display().to_string(),
+        "{\"harness\":\"pi\",\"event\":\"Stop\",\"stop_reason\":\"error\",\"message\":\"429 Usage limit reached for this model\",\"at\":3}\n",
+    );
+    let (provider, log) = file_provider(dir.path(), &disk);
+    let mut record = lane_record(
+        "KEN-5",
+        "gh-5",
+        "pi",
+        &server,
+        &pane,
+        Some(&identity),
+        dir.path(),
+    );
+    record["host"] = json!(provider.display().to_string());
+    record["kind"] = json!("ssh");
+    record["mail_root"] = json!(root.display().to_string());
+    fleet.set_lanes(vec![record]);
+    let state = fleet.read();
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = real_lane_host(dir.path());
+    let produced = driver.pass(&state);
+    assert_eq!(
+        event_lines(&produced),
+        vec!["EVENT usage-limit gh-5 /home/me/.eclaude".to_owned()],
+        "{:?} {:?}",
+        lines(&produced),
+        produced.failed
+    );
+    let asked = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(
+        asked
+            .lines()
+            .any(|l| l == format!("cat --item KEN-5 {}", rows.display())),
+        "{asked}"
+    );
+}
+
+/// Defect: a hosted lane's handoff record, written by its workflow in its
+/// checkout's state on its host, never read, so a lane that handed off was
+/// never `handoff`. Through the real `lane-host` to a provider serving the
+/// host's disk: the record stands where the host's checkout keeps its
+/// state, under the clone its `.git` names and the state directory its
+/// settings name (none: `tmp`), and is `handoff` with the record under it
+/// once.
+#[test]
+fn a_hosted_lanes_handoff_is_read_through_its_provider() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let claude = named_sleep(dir.path(), "claude");
+    let line = format!("printf 'working\\n'; exec {} 600", claude.display());
+    let pane = server.open_window("gh-4", dir.path(), &format!("bash -c \"{line}\""));
+    let identity = await_named(&server, &pane, "claude");
+    let handoff = r#"{"merged":[],"remaining":["review"],"branch":"b","worktree":"/remote/KEN-4","open_pr":null,"traps":[]}"#;
+    let disk = dir.path().join("host-disk");
+    on_disk(
+        &disk,
+        "/remote/KEN-4/.git",
+        "gitdir: /remote/clone/.git/worktrees/KEN-4\n",
+    );
+    on_disk(
+        &disk,
+        "/remote/clone/tmp/workflow-state-KEN-4.json",
+        &format!("{{\"handoff\":{handoff}}}\n"),
+    );
+    let (provider, _) = file_provider(dir.path(), &disk);
+    let mut record = lane_record(
+        "KEN-4",
+        "gh-4",
+        "claude",
+        &server,
+        &pane,
+        Some(&identity),
+        dir.path(),
+    );
+    record["host"] = json!(provider.display().to_string());
+    record["kind"] = json!("ssh");
+    record["mail_root"] = json!("/remote/KEN-4");
+    fleet.set_lanes(vec![record]);
+    let state = fleet.read();
+    lane_driver!(server, fleet, readers, driver);
+    driver.scripts = real_lane_host(dir.path());
+    let first = driver.pass(&state);
+    let said: Vec<String> = lines(&first)
+        .into_iter()
+        .skip_while(|l| l != "EVENT handoff KEN-4")
+        .take(2)
+        .collect();
+    assert_eq!(
+        said,
+        vec!["EVENT handoff KEN-4".to_owned(), handoff.to_owned()],
+        "{:?} {:?}",
+        lines(&first),
+        first.failed
+    );
+    let second = driver.pass(&state);
+    assert!(
+        !lines(&second)
+            .iter()
+            .any(|l| l.starts_with("EVENT handoff")),
+        "{:?}",
+        lines(&second)
+    );
+}
+
 /// Defect: a hosted lane with no recorded pane keys its exit row on the
 /// empty pane key, which an absent row read as too, so the two-pass rule
 /// reported it on the first pass. The row standing is the first pass's
@@ -4808,12 +5122,14 @@ fn a_copilot_lanes_prompt_carries_the_policy_cause_its_session_record_reports() 
     ];
     let launch = |item: &str, account: Option<&Path>| -> Value {
         let work = root.join(item);
-        init_checkout(&work);
+        init_checkout(&fleet, &work);
         let mut request = json!({
             "op": "launch-lane",
             "item": item,
             "harness": "copilot",
             "mail_root": work.display().to_string(),
+            "model": "claude-opus-5.5",
+            "effort": "high",
         });
         if let Some(account) = account {
             request["account"] = json!(account.display().to_string());

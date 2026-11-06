@@ -1185,6 +1185,7 @@ impl CloudWorld {
                 "account": self.account.display().to_string(),
                 "host": "claude-cloud",
                 "model": "opus",
+                "effort": "high",
                 "brief_file": self.brief.display().to_string(),
             })
             .to_string(),
@@ -1266,6 +1267,7 @@ fn a_cloud_launch_pushes_the_branch_creates_the_session_through_the_cli_and_reco
             "host": "claude-cloud",
             "repo": "o/r",
             "model": "opus",
+            "effort": "high",
             "brief_file": brief.display().to_string(),
         })
         .to_string(),
@@ -1333,7 +1335,9 @@ fn a_cloud_launch_pushes_the_branch_creates_the_session_through_the_cli_and_reco
         .and_then(|(_, rest)| rest.split("\nconfig=").next())
         .expect("the CLI ran");
     assert!(
-        argv.starts_with("--model opus --cloud --output-format json -p Do the thing for CC-9.\n\n"),
+        argv.starts_with(
+            "--model opus --effort high --cloud --output-format json -p Do the thing for CC-9.\n\n"
+        ),
         "the description is the brief closed by the session words: {argv:?}"
     );
     assert!(
@@ -1526,4 +1530,71 @@ fn a_close_beside_a_live_cloud_create_is_refused_and_supersedes_it_once_its_op_i
         "the close names when the create's bound ends: {launch}"
     );
     assert_ne!(world.lane("CC-20")["status"], "preparing");
+}
+
+/// Defect: a cloud lane relaunched by hand with no host kept its record's
+/// `claude-cloud` host and kind while the relaunch opened its window on
+/// this machine, so the record charged the cloud cap and the watch's pane
+/// reads passed it over. Through the real `launch-lane`: a cloud launch
+/// records the cloud host and kind; with its session ended (the record
+/// stopped), a relaunch naming no host records no host and the `local`
+/// kind, and its launch is the local one.
+#[test]
+fn a_cloud_lanes_relaunch_naming_no_host_records_the_local_launch_it_makes() {
+    let dir = tempfile::tempdir().unwrap();
+    let world = cloud_world(dir.path());
+    let claude_log = dir.path().join("claude.log");
+    let init = world.run(&["state", "init", "--fleet"], &[]);
+    assert!(init.status.success(), "init: {}", stderr(&init));
+    let out = world.launch("CC-30", &[("CLAUDE_CLOUD_LOG", claude_log.as_path())]);
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    let lane = world.lane("CC-30");
+    assert_eq!(
+        (&lane["host"], &lane["kind"]),
+        (&json!("claude-cloud"), &json!("claude-cloud")),
+        "{lane}"
+    );
+    let state = world.root.join("workflow-state-oversee.json");
+    let mut fleet = world.fleet();
+    for lane in fleet["lanes"].as_array_mut().unwrap() {
+        if lane["item"] == "CC-30" {
+            lane["status"] = json!("stopped");
+        }
+    }
+    std::fs::write(&state, serde_json::to_vec_pretty(&fleet).unwrap()).unwrap();
+    let request = world.root.join("relaunch.json");
+    std::fs::write(
+        &request,
+        json!({
+            "op": "launch-lane",
+            "item": "CC-30",
+            "harness": "claude",
+            "mail_root": world.root.display().to_string(),
+            "account": world.account.display().to_string(),
+            "model": "opus",
+            "effort": "high",
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let out = world.run(
+        &["op", "--fleet", "--request", &request.display().to_string()],
+        &[],
+    );
+    let answer = reply(&out);
+    assert_eq!(answer["ok"], true, "{}", stderr(&out));
+    let lane = world.lane("CC-30");
+    assert_eq!(
+        (&lane["host"], &lane["kind"]),
+        (&Value::Null, &json!("local")),
+        "the relaunch records where it launched: {lane}"
+    );
+    // The launch it made is the local one: it needs the fleet's tmux
+    // session, which this world runs none of, where a cloud create needs
+    // none.
+    assert_eq!(
+        answer["result"]["effect"]["report"]["intent"]["observation"]["cause"],
+        "tmux-session-unresolved",
+        "{answer}"
+    );
 }

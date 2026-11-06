@@ -270,15 +270,45 @@ impl Lane {
         }
     }
 
-    /// Release every held turn and wait for it to end.
+    /// Release every held turn and wait for it to end. The held turns share
+    /// one fifo and any of them may read any line, so the held set is taken
+    /// before the first line is written: a liveness read between writes sees
+    /// a turn the previous line released and skips the line another still
+    /// waits on.
     fn release(&self, pids: &[u32]) {
         let _ = std::fs::remove_file(&self.hold);
-        for pid in pids.iter().filter(|pid| live(**pid)) {
+        let held: Vec<u32> = pids.iter().copied().filter(|pid| live(*pid)).collect();
+        for _ in &held {
             release_hold(&self.fifo, Duration::from_secs(10), || {
-                format!("the held turn {pid} never opened its fifo")
+                format!("the held turns {held:?} never opened their fifo")
             });
         }
         await_ended(pids);
+    }
+}
+
+/// A row that fails while a turn is held leaves no turn running past it:
+/// each recorded turn still running gets its line, written on a thread of
+/// its own since the write waits for the turn to open the fifo, and the
+/// teardown waits, bounded, for every one to end. Nothing here panics: it
+/// runs while a failed assertion unwinds.
+impl Drop for Lane {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.hold);
+        let held: Vec<u32> = std::fs::read_to_string(&self.capture)
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|line| line.trim().parse().ok())
+            .filter(|pid| live(*pid))
+            .collect();
+        for _ in &held {
+            let fifo = self.fifo.clone();
+            std::thread::spawn(move || std::fs::write(fifo, b"go\n"));
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while held.iter().any(|pid| live(*pid)) && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 }
 
@@ -460,11 +490,14 @@ fn a_second_wake_while_the_first_turn_runs_is_refused_before_any_status_read() {
     lane.release(&turns[2..]);
 }
 
-/// The lane record the recovery suites plant drifting from what the real
+/// The lane record the shell suites plant drifting from what the real
 /// `launch-lane` writes: `tests/lane_model_recovery.sh` and the hook's
 /// `lane-mail-model-switch.test.sh` read the permission words off the
-/// record the fixture holds, so the fixture is this launch's record, its
-/// root and its process, pane and clock values as placeholders.
+/// record the fixture holds, and `tests/lane-state.sh` and
+/// `tests/lane_close.sh` read its launch identity in the start's form, so
+/// the fixture is this launch's record, its root and its process, pane and
+/// clock values as placeholders and the start's form (`ticks:`) kept before
+/// its placeholder.
 #[test]
 fn the_recovery_suites_planted_record_is_the_real_launch_lanes() {
     let lane = Lane::new();
@@ -475,11 +508,14 @@ fn the_recovery_suites_planted_record_is_the_real_launch_lanes() {
         ("server", "@SERVER@"),
         ("server_start", "@SERVER_START@"),
         ("pid", "@PID@"),
-        ("start", "@START@"),
     ] {
         if record["launch"].get(field).is_some() {
             record["launch"][field] = json!(placeholder);
         }
+    }
+    if let Some(start) = record["launch"]["start"].as_str() {
+        let form = start.split_once(':').map_or("", |(form, _)| form);
+        record["launch"]["start"] = json!(format!("{form}:@START@"));
     }
     for (field, placeholder) in [
         ("session_id", "@SESSION_ID@"),

@@ -11,6 +11,8 @@
 #                  turn it is stale, and a quoted one is no wall; a Pi lane's
 #                  idle rows outrank the banner on its pane
 #   § input        Pi input waits on the base editor, not on idle rows alone
+#   § identity     a launch identity in the runtime's start form reads live
+#                  while its process runs and ended once it exits
 #   § capture      lane_pane_capture keeps the screen and reads remain-on-exit's
 #                  dead flag, under a UTF-8 client locale and under none
 #
@@ -121,6 +123,32 @@ assert_eq "$actual/$rc" idle/0 "idle rows over the empty base editor permit inpu
 rc=0
 lane_input_ready actual listed pi 100 "$PI_DRAFT" "" "" idle "" pi || rc=$?
 assert_eq "$actual/$rc" unjudged/1 "idle rows over a drafted editor refuse input: the editor is not ready"
+
+echo "=== lane-state § identity: the runtime's recorded start is read in its own form ==="
+
+# lane-close's local stop and the by-hand stop hand lane_identity_status the
+# launch identity a record names. The record is the one the runtime's
+# launch-lane writes (tests/fixtures/launch-lane/claude-dontask.json, held to
+# that producer by tests/rust/open_terminal.rs), its pid and start bound to a
+# process this suite holds: the start keeps the form the producer wrote, its
+# value the /proc start field the producer reads. Read as text in another
+# form, a running harness reads ended, and a stop with no pane stops nothing.
+if lane_proc_readable; then
+  sleep 60 &
+  IDENTITY_PID=$!
+  IDENTITY_TICKS="$(awk '{ print $22 }' "/proc/$IDENTITY_PID/stat")"
+  IDENTITY_RECORD="$(sed -e "s|\"@PID@\"|$IDENTITY_PID|" -e "s|@START@|$IDENTITY_TICKS|" \
+    "$(dirname "${BASH_SOURCE[0]}")/fixtures/launch-lane/claude-dontask.json")"
+  IDENTITY_START="$(jq -r '.launch.start' <<<"$IDENTITY_RECORD")"
+  rc=0
+  lane_identity_status "$(jq -r '.launch.pid' <<<"$IDENTITY_RECORD")" "$IDENTITY_START" || rc=$?
+  assert_eq "$rc/$LANE_IDENTITY_CAUSE" 0/ "a runtime-recorded launch identity reads live while its process runs"
+  kill "$IDENTITY_PID"
+  wait "$IDENTITY_PID" 2>/dev/null || :
+  rc=0
+  lane_identity_status "$IDENTITY_PID" "$IDENTITY_START" || rc=$?
+  assert_eq "$rc/$LANE_IDENTITY_CAUSE" 3/identity-stale "a runtime-recorded launch identity reads ended once its process exits"
+fi
 
 echo "=== lane-state § capture: the screen kept and remain-on-exit's dead flag read ==="
 

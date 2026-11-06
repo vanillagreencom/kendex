@@ -1068,3 +1068,86 @@ fn a_standing_refused_lane_is_said_on_the_mark_repeat_rule_across_polls() {
     );
     assert_eq!(w.baseline().get("lane-mail", "KEN-2"), None);
 }
+
+/// Defect: a hosted lane's mailbox drained through `lane-host` under the
+/// host the fleet's settings name, not the host its record names, so a lane
+/// launched on another provider (an `@host` preference entry) had its mail
+/// read where it is not: refused `host-unreachable` every turn, its notes
+/// never reaching the overseer. Two providers, the fleet's (`p1`, holding
+/// nothing for the lane) as the client's default and the record's (`p2`,
+/// holding the lane's mailbox): the lane's notice is delivered, and every
+/// read went to `p2`.
+#[test]
+fn a_hosted_lanes_mail_is_drained_under_the_host_its_record_names() {
+    let side = tempfile::tempdir().unwrap();
+    let side = std::fs::canonicalize(side.path()).unwrap();
+    let provider = |name: &str, holds: bool| -> PathBuf {
+        let log = side.join(format!("{name}.log"));
+        let (cat, touch) = if holds {
+            ("[ -f \"$4\" ] || exit 2; exec cat -- \"$4\"", "exit 0")
+        } else {
+            ("exit 2", "echo \"$0: no-sandbox item=$3\" >&2; exit 1")
+        };
+        let text = format!(
+            "#!/bin/bash\nprintf '%s\\n' \"$*\" >> '{}'\ncase \"$1\" in\n  capabilities) printf 'kind=ssh\\tlaunch=ssh\\tchannel=mailbox\\tfiles=verb\\tstatus=verb\\tstop=verb\\trelaunch=resume\\tpark=none\\taccounts=none\\tpool=plan\\tland=lane\\tpane=local\\n' ;;\n  cat) {cat} ;;\n  touch) {touch} ;;\n  list) exit 0 ;;\n  *) exit 64 ;;\nesac\n",
+            log.display()
+        );
+        let path = side.join(name);
+        std::fs::write(&path, text).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    };
+    let fleet_default = provider("p1", false);
+    let record_host = provider("p2", true);
+    // The client as the duty starts it, the fleet's provider its default.
+    let client = side.join("lane-mail");
+    std::fs::write(
+        &client,
+        format!(
+            "#!/bin/sh\n: \"${{ORCH_LANE_HOST:={}}}\"\nexport ORCH_LANE_HOST\nexec {} \"$@\"\n",
+            fleet_default.display(),
+            hold().display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&client, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let w = world(&client, 20);
+    let remote = w.root.join("remote").join(ITEM);
+    let dir = remote.join("tmp").join("lane-mail").join(ITEM);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("to-overseer.jsonl"),
+        format!("{}\n", notice("n-1", ITEM, "Rebased.")),
+    )
+    .unwrap();
+    let state = w.root.join(FLEET_FILE_NAME);
+    let mut fleet: Value = serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
+    fleet["lanes"][0]["host"] = json!(record_host.display().to_string());
+    fleet["lanes"][0]["kind"] = json!("ssh");
+    fleet["lanes"][0]["mail_root"] = json!(remote.display().to_string());
+    std::fs::write(&state, serde_json::to_string_pretty(&fleet).unwrap()).unwrap();
+    let clock = FakeClock::new();
+    let mut duty = w.duty();
+    let baseline = Baseline::default();
+    let tick = Tick {
+        duty: Duty::Mail,
+        now: Instant::now(),
+        wall: WALL,
+        baseline: &baseline,
+        clock: &clock,
+    };
+    let (produced, refused) = duty.turn(&tick).unwrap();
+    assert!(refused.is_empty(), "{refused:?}");
+    assert_eq!(
+        produced
+            .events
+            .iter()
+            .map(Event::render)
+            .collect::<Vec<_>>(),
+        ["EVENT lane-notice KEN-1 n-1", "  Rebased."]
+    );
+    let log =
+        |name: &str| std::fs::read_to_string(side.join(format!("{name}.log"))).unwrap_or_default();
+    assert_eq!(log("p1"), "", "no read under the fleet's provider");
+    assert!(log("p2").contains("to-overseer.jsonl"), "{}", log("p2"));
+}

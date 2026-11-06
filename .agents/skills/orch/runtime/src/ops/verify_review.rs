@@ -501,7 +501,11 @@ impl Gate<'_> {
             return self.permit(Verdict::new(OFF, "gate off".into()), record.as_ref());
         }
 
-        // The reviewers' state on the head, routed before any request.
+        // The reviewers' state on the head. An approval with no open thread
+        // is permitted as it stands; every other head takes its request
+        // before its verdict, so the commit that answers a thread or an
+        // objection is reviewed beside the answer, never left to an approval
+        // that clears them.
         let unresolved = review::unresolved_threads(&self.gh, &self.r.repo, self.r.pr)?;
         let copilot = if review::copilot_reviewed(&self.view) {
             Some(self.reviews()?.clone())
@@ -520,6 +524,8 @@ impl Gate<'_> {
             );
             return self.permit(Verdict::new("approved", reason), record.as_ref());
         }
+        let draft = self.view.draft && !marked;
+        let record = self.request(record, draft, marked)?;
         if !judged.approved
             && (judged.decision == "CHANGES_REQUESTED" || judged.changes_requested > 0)
         {
@@ -534,8 +540,6 @@ impl Gate<'_> {
             return Ok(Verdict::new("comments", reason));
         }
 
-        let draft = self.view.draft && !marked;
-        let record = self.request(record, draft, marked)?;
         let error = copilot
             .as_ref()
             .and_then(|reviews| reviews.latest.as_ref())

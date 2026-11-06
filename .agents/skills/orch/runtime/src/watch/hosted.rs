@@ -1,8 +1,8 @@
-//! The hosted readings of the lane duty: the preparation, stall, start-stall
-//! and long-lane readings of a hosted lane, its status verb and its
-//! finished-hosted close, over the fleet record's hosted lanes and inside
-//! the lane duty's pass (`watch::lanes`); and the provider calls a hosted
-//! launch makes.
+//! The hosted readings of the lane duty: the preparation, stall, start-stall,
+//! long-lane and handoff readings of a hosted lane, a Pi lane's session rows,
+//! its status verb and its finished-hosted close, over the fleet record's
+//! hosted lanes and inside the lane duty's pass (`watch::lanes`); and the
+//! provider calls a hosted launch makes.
 //!
 //! Every provider read is one `lane-host` call through the one runner under
 //! `ORCH_LANE_HOST=<the record's host>`, from the scripts directory the pass
@@ -47,8 +47,8 @@ use super::baseline::Change;
 use super::events::Event;
 use super::github::Gh;
 use super::lanes::{
-    Counters, Pass, clear, counters_of, fail, lane_name, set, step_of, validation_runs_of,
-    watch_state_dir,
+    Counters, HandoffReading, Pass, clear, counters_of, doc_of, fail, lane_name, set,
+    standing_record, step_of, validation_runs_of, watch_state_dir,
 };
 use super::tracker::{QUOTA_ROW, Quota};
 use crate::marker;
@@ -1678,14 +1678,32 @@ pub fn counters(scripts: &Path, lane: &Lane, out: &mut Produced) -> Counters {
 }
 
 /// The item's workflow state where a hosted checkout's own files put it,
-/// through the provider: under the state directory its settings files and
-/// private env file name (`settings::state_dir_named`), relative to the
-/// clone its `.git` names, as the checkout's own `workflow-state` resolves
-/// it. A `.git` the host cannot `cat` is a clone's own directory, confirmed
-/// by its `HEAD`, and the clone is the root. `Gone` is a worktree the host
-/// no longer has, or a checkout holding no state there; `Err` a file the
-/// host could not read, or one this reader cannot parse.
+/// through the provider ([`configured_state_path`]). `Gone` is a worktree
+/// the host no longer has, or a checkout holding no state there; `Err` a
+/// file the host could not read, or one this reader cannot parse.
 fn configured_state(scripts: &Path, lane: &Lane, root: &str) -> Result<Answer<String>, String> {
+    Ok(match configured_state_path(scripts, lane, root)? {
+        Some(path) => fetch(
+            scripts,
+            host_of(lane),
+            &lane.item,
+            &path.display().to_string(),
+        ),
+        None => Answer::Gone,
+    })
+}
+
+/// The host path of the item's workflow state under the state directory a
+/// hosted checkout's settings files and private env file name
+/// (`settings::state_dir_named`), relative to the clone its `.git` names, as
+/// the checkout's own `workflow-state` resolves it. A `.git` the host cannot
+/// `cat` is a clone's own directory, confirmed by its `HEAD`, and the clone
+/// is the root. `None` is a worktree the host no longer has.
+fn configured_state_path(
+    scripts: &Path,
+    lane: &Lane,
+    root: &str,
+) -> Result<Option<PathBuf>, String> {
     let host = host_of(lane);
     let clone = match fetch(scripts, host, &lane.item, &format!("{root}/.git")) {
         Answer::Live(gitfile) => match marker::git_dirs_of(&gitfile)
@@ -1694,7 +1712,7 @@ fn configured_state(scripts: &Path, lane: &Lane, root: &str) -> Result<Answer<St
             Some(clone) => clone,
             None => return Err(format!("gitfile-unread path={root}/.git")),
         },
-        Answer::Gone => return Ok(Answer::Gone),
+        Answer::Gone => return Ok(None),
         Answer::Unreadable { cause } => {
             match fetch(scripts, host, &lane.item, &format!("{root}/.git/HEAD")) {
                 Answer::Live(_) => PathBuf::from(root),
@@ -1720,12 +1738,63 @@ fn configured_state(scripts: &Path, lane: &Lane, root: &str) -> Result<Answer<St
     } else {
         clone.join(dir)
     };
-    Ok(fetch(
+    Ok(Some(state::item_path(&dir, &lane.item)))
+}
+
+/// A hosted lane's standing handoff through the provider, read in the
+/// places the local read names on the lane's host: the item's state under
+/// the checkout's configured state directory ([`configured_state_path`]),
+/// then under the lane root's `tmp`. The first standing record wins, else a
+/// place that could not be read, else none. `Err` is the read that failed,
+/// as the fields after `item=`.
+pub fn handoff(scripts: &Path, lane: &Lane) -> Result<HandoffReading, String> {
+    let Some(root) = root_of(lane) else {
+        return Ok(HandoffReading::None);
+    };
+    let mut places = Vec::new();
+    if let Some(path) =
+        configured_state_path(scripts, lane, root).map_err(|c| format!("cause={c}"))?
+    {
+        places.push(path.display().to_string());
+    }
+    let own = format!("{root}/tmp/workflow-state-{}.json", lane.item);
+    if !places.contains(&own) {
+        places.push(own);
+    }
+    let mut unread = None;
+    for place in places {
+        match fetch(scripts, host_of(lane), &lane.item, &place) {
+            Answer::Live(text) => match doc_of(&text) {
+                Some(doc) => {
+                    if let Some(record) = standing_record(&doc) {
+                        return Ok(HandoffReading::Stands { record });
+                    }
+                }
+                None => {
+                    unread.get_or_insert(format!("path={place} cause=state-unreadable"));
+                }
+            },
+            Answer::Gone => {}
+            Answer::Unreadable { cause } => {
+                unread.get_or_insert(format!("path={place} cause={cause}"));
+            }
+        }
+    }
+    unread.map_or(Ok(HandoffReading::None), Err)
+}
+
+/// A Pi lane's session rows through the provider: the file the lane's hook
+/// writes under its root's mailbox on the host.
+pub fn session_rows(scripts: &Path, lane: &Lane) -> Answer<String> {
+    let Some(root) = root_of(lane) else {
+        return Answer::Gone;
+    };
+    fetch(
         scripts,
-        host,
+        host_of(lane),
         &lane.item,
-        &state::item_path(&dir, &lane.item).display().to_string(),
-    ))
+        &format!("{root}/tmp/lane-mail/{}/session-rows.jsonl", lane.item),
+    )
 }
 
 // --- the finished-hosted close ------------------------------------------------

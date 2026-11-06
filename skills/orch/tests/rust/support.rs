@@ -1081,6 +1081,8 @@ pub fn effect_report(out: &Output) -> Value {
     answer["result"]["effect"]["report"].clone()
 }
 
+/// A launch of `item` on an account, naming the model and effort a launch
+/// on an account must.
 pub fn launch_request(item: &str, mail_root: &Path) -> Value {
     json!({
         "op": "launch-lane",
@@ -1088,6 +1090,8 @@ pub fn launch_request(item: &str, mail_root: &Path) -> Value {
         "harness": "claude",
         "mail_root": mail_root.display().to_string(),
         "account": mail_root.display().to_string(),
+        "model": "claude-fable-5-1",
+        "effort": "high",
     })
 }
 

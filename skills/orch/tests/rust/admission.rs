@@ -147,6 +147,29 @@ impl Fleet {
         self.command(args).output().expect("orch-runtime")
     }
 
+    /// A repository at `name` under the test directory, whose `origin`
+    /// is `origin` where one is named.
+    fn checkout(&self, name: &str, origin: Option<&str>) -> PathBuf {
+        let repo = self.dir.path().join(name);
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q", "-b", "main", "."]);
+        if let Some(url) = origin {
+            git(&repo, &["remote", "add", "origin", url]);
+        }
+        repo
+    }
+
+    /// The launch `request` applied under the settings `env` names.
+    fn op_with(&self, request: &Value, env: &[(&str, &str)]) -> Output {
+        let path = self.request_file("request", request);
+        let mut command =
+            self.command(&["op", "--fleet", "--request", &path.display().to_string()]);
+        for (name, value) in env {
+            command.env(name, value);
+        }
+        command.output().expect("orch-runtime")
+    }
+
     fn request_file(&self, name: &str, request: &Value) -> PathBuf {
         let path = self.dir.path().join(format!("{name}.json"));
         std::fs::write(&path, serde_json::to_vec(request).unwrap()).unwrap();
@@ -758,11 +781,12 @@ fn a_path_only_one_source_names_overlaps_the_holder() {
 
 /// Decision 118 (6): a container, by children or by the `agent:multi`
 /// label, is refused from its body before any record or intent; a GitHub
-/// item is read through gh.
+/// item is read through gh, launched from a checkout of its repository.
 #[test]
 fn an_ineligible_item_is_refused_from_its_body_before_any_record() {
     let fleet = Fleet::new();
     fleet.init_fleet();
+    let checkout = fleet.checkout("repo", Some("https://github.com/o/r.git"));
     fleet.item("KEN-P", "`src/a.sh`", 2, &[]);
     fleet.item("KEN-M", "`src/a.sh`", 0, &["agent:multi"]);
     std::fs::write(
@@ -789,7 +813,7 @@ fn an_ineligible_item_is_refused_from_its_body_before_any_record() {
                 "tracker": "github",
                 "repo": "o/r",
                 "harness": "claude",
-                "mail_root": fleet.state_dir().display().to_string(),
+                "mail_root": checkout.display().to_string(),
             }),
             "issue-7",
             "agent-multi",
@@ -802,10 +826,14 @@ fn an_ineligible_item_is_refused_from_its_body_before_any_record() {
         assert_eq!(fields, pairs(&[("item", item), ("cause", cause)]), "{item}");
     }
     assert_eq!(fleet.fleet(), before, "nothing written, no intent");
-    let gh_log = std::fs::read_to_string(fleet.dir.path().join("gh.log")).unwrap();
+    let reads: Vec<String> = fleet
+        .gh_log()
+        .into_iter()
+        .filter(|line| line.starts_with("issue "))
+        .collect();
     assert_eq!(
-        gh_log.trim(),
-        "issue view 7 --repo o/r --json body,labels",
+        reads,
+        ["issue view 7 --repo o/r --json body,labels"],
         "the GitHub item was read through gh, once"
     );
 }
@@ -1258,4 +1286,177 @@ fn two_contenders_on_one_path_are_judged_one_after_the_other() {
             .unwrap();
         assert_eq!(holder, first, "the second read the first's preparing row");
     }
+}
+
+/// Defect: a launch from a checkout of a repository the fleet neither is
+/// nor connects opened a lane there. With the fleet's state in its own
+/// repository (`o/fleet`): a checkout sharing its git directory, and a
+/// second clone whose origin names the same repository in another case,
+/// are its own and admitted; a checkout of `o/other` is refused
+/// `overseer-foreign` naming both before anything is read or written, and
+/// admitted once `ORCH_CONNECTED_REPOS` lists it; a directory in no
+/// checkout, and a checkout with no origin while the fleet connects
+/// repositories, are refused `overseer-unjudged` with the cause.
+#[test]
+fn a_launch_from_a_checkout_the_fleet_neither_owns_nor_connects_is_refused() {
+    let fleet = Fleet::new();
+    fleet.init_fleet();
+    git(&fleet.state_dir(), &["init", "-q", "-b", "main", "."]);
+    git(
+        &fleet.state_dir(),
+        &["remote", "add", "origin", "git@github.com:o/fleet.git"],
+    );
+    let launch_from = |item: &str, root: &Path| {
+        let mut request = launch(item, root);
+        request.as_object_mut().unwrap().remove("tracker");
+        request
+    };
+    let inside = fleet.state_dir().join("work");
+    std::fs::create_dir_all(&inside).unwrap();
+    let clone = fleet.checkout("clone", Some("https://github.com/O/Fleet"));
+    for (item, root) in [("KEN-1", &inside), ("KEN-2", &clone)] {
+        let out = fleet.op(&launch_from(item, root));
+        assert_eq!(reply(&out)["ok"], true, "{item}: {}", stderr(&out));
+    }
+    let other = fleet.checkout("other", Some("git@github.com:o/other.git"));
+    let before = fleet.fleet();
+    let (key, fields) = refusal(&fleet.op(&launch_from("KEN-3", &other)));
+    assert_eq!(key, "overseer-foreign");
+    assert_eq!(
+        fields,
+        pairs(&[
+            ("item", "KEN-3"),
+            ("repo", "o/other"),
+            ("overseer", "o/fleet"),
+            ("route", "connected-repos,peer-mail"),
+        ])
+    );
+    assert_eq!(fleet.fleet(), before, "a refusal writes nothing");
+    let bare = fleet.dir.path().join("bare");
+    std::fs::create_dir_all(&bare).unwrap();
+    let (key, fields) = refusal(&fleet.op(&launch_from("KEN-4", &bare)));
+    assert_eq!(key, "overseer-unjudged");
+    assert_eq!(
+        fields,
+        pairs(&[
+            ("cause", "checkout-root"),
+            ("path", bare.display().to_string().as_str())
+        ])
+    );
+    let connected = [("ORCH_CONNECTED_REPOS", "O/Other")];
+    let unnamed = fleet.checkout("unnamed", None);
+    let (key, fields) = refusal(&fleet.op_with(&launch_from("KEN-5", &unnamed), &connected));
+    assert_eq!(key, "overseer-unjudged");
+    assert_eq!(
+        fields,
+        pairs(&[
+            ("cause", "origin"),
+            ("path", unnamed.display().to_string().as_str())
+        ])
+    );
+    assert_eq!(fleet.fleet(), before, "an unjudged binding writes nothing");
+    let out = fleet.op_with(&launch_from("KEN-3", &other), &connected);
+    assert_eq!(reply(&out)["ok"], true, "connected: {}", stderr(&out));
+    assert_eq!(
+        fleet.lane("KEN-3")["mail_root"],
+        other.display().to_string()
+    );
+}
+
+/// Defect: an item of another repository or team than the checkout's was
+/// launched into it. A `github` item whose repository is not the one its
+/// checkout's origin names, and a `linear` item of another team than the
+/// fleet's `LINEAR_TEAM` (read through the linear package's real team
+/// formatter over a planted answer), are refused `item-foreign` before
+/// the item is read; a team the tracker cannot answer for is refused
+/// `item-repo-unresolved`; the item of the fleet's own team is read and
+/// admitted.
+#[test]
+fn an_item_of_another_repository_or_team_than_its_checkouts_is_refused() {
+    let fleet = Fleet::new();
+    fleet.init_fleet();
+    let checkout = fleet.checkout("repo", Some("https://github.com/o/r.git"));
+    let github = json!({
+        "op": "launch-lane",
+        "item": "issue-7",
+        "tracker": "github",
+        "repo": "o/x",
+        "harness": "claude",
+        "mail_root": checkout.display().to_string(),
+    });
+    let before = fleet.fleet();
+    let (key, fields) = refusal(&fleet.op(&github));
+    assert_eq!(key, "item-foreign");
+    assert_eq!(fields, pairs(&[("repo", "o/x"), ("route", "peer-mail")]));
+    assert!(
+        !fleet.gh_log().iter().any(|line| line.starts_with("issue ")),
+        "a foreign item is not read: {:?}",
+        fleet.gh_log()
+    );
+    let team = [("LINEAR_TEAM", "Kendex")];
+    fleet.item("CC-1", "`src/a.sh`", 0, &[]);
+    fleet.item("KEN-1", "`src/a.sh`", 0, &[]);
+    let (key, fields) = refusal(&fleet.op_with(&launch("KEN-1", &checkout), &team));
+    assert_eq!(key, "item-repo-unresolved");
+    assert_eq!(fields, pairs(&[("tracker", "linear"), ("team", "Kendex")]));
+    std::fs::write(
+        fleet.items_dir().join("team-Kendex.json"),
+        serde_json::to_vec(&json!({"team": {"id": "uuid-team", "name": "Kendex", "key": "KEN"}}))
+            .unwrap(),
+    )
+    .unwrap();
+    let (key, fields) = refusal(&fleet.op_with(&launch("CC-1", &checkout), &team));
+    assert_eq!(key, "item-foreign");
+    assert_eq!(fields, pairs(&[("repo", "CC"), ("route", "peer-mail")]));
+    assert_eq!(fleet.fleet(), before, "a refusal writes nothing");
+    let reads = fleet.linear_log();
+    assert!(
+        !reads.iter().any(|line| line.starts_with("issues get CC-1")),
+        "a foreign item is not read: {reads:?}"
+    );
+    let out = fleet.op_with(&launch("KEN-1", &checkout), &team);
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    assert!(
+        fleet
+            .linear_log()
+            .iter()
+            .any(|line| line == "issues get KEN-1 --with-bundle --format=safe"),
+        "the fleet's own team's item is read"
+    );
+}
+
+/// A review lane keyed on a pull request's number, the item `issue-N` of a
+/// `github` tracker: `gh issue view N` resolves the number through GitHub's
+/// `issueOrPullRequest` lookup (gh 2.103.3's own query; the client refuses a
+/// pull request only for `issue delete`, `transfer` and artifacts), so it
+/// answers the pull request's body and labels, the shape an issue's answer
+/// has. Through the real `launch-lane` over that answer, a body naming no
+/// Location: the lane is admitted after one `gh issue view` read, its
+/// labels judged and its touched set empty.
+#[test]
+fn a_review_lane_keyed_on_a_pull_request_number_is_admitted_on_its_body() {
+    let fleet = Fleet::new();
+    fleet.init_fleet();
+    let checkout = fleet.checkout("repo", Some("https://github.com/o/r.git"));
+    std::fs::write(
+        fleet.items_dir().join("12.json"),
+        br#"{"body": "Review the change.\n", "labels": [{"name": "review"}]}"#,
+    )
+    .unwrap();
+    let out = fleet.op(&json!({
+        "op": "launch-lane",
+        "item": "issue-12",
+        "tracker": "github",
+        "repo": "o/r",
+        "harness": "claude",
+        "mail_root": checkout.display().to_string(),
+    }));
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    assert_eq!(fleet.lane("issue-12")["touched"], json!([]));
+    let reads: Vec<String> = fleet
+        .gh_log()
+        .into_iter()
+        .filter(|line| line.starts_with("issue "))
+        .collect();
+    assert_eq!(reads, ["issue view 12 --repo o/r --json body,labels"]);
 }

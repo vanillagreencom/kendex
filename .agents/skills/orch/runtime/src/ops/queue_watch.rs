@@ -1193,15 +1193,14 @@ impl<'a> Wait<'a> {
 
     // --- the probe ---
 
-    /// What a probe may spend: the wait's remaining budget less the poll
+    /// What a probe may spend: up to the wait's deadline less the poll
     /// after it, so the probe's reads end where that poll is still owed;
-    /// none where no poll fits after it.
+    /// none once that cutoff has passed. The cutoff is counted from the
+    /// wait's start, never from a later clock read, so time passing
+    /// between two reads cannot carry it later.
     fn probe_budget(&self) -> Option<Budget<'a>> {
-        let left = self
-            .remaining()
-            .checked_sub(self.r.poll)
-            .filter(|left| !left.is_zero())?;
-        Some(Budget::until(self.clock, self.now() + left))
+        let cutoff = self.start + (self.r.max_wait - self.r.poll);
+        (self.now() < cutoff).then(|| Budget::until(self.clock, cutoff))
     }
 
     /// One `verify-pr` read of the pull request's own required checks

@@ -2126,6 +2126,21 @@ if proc_table_readable; then
   assert_eq "rc=$RC lane=$(proc_state_after "$LANE_PID") wait=$(exit_wait_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
     'rc=0 lane=gone wait=0 status=done' 'a local record with no pane stops the harness its launch identity names'
   kill -KILL "$LANE_PID" 2>/dev/null || true
+  # The runtime's launch-lane records the start in its own form
+  # (tests/fixtures/launch-lane/claude-dontask.json, held to that producer by
+  # tests/rust/open_terminal.rs), here the harness's /proc start field: read
+  # as ps text, the running harness reads ended and the stop with no pane
+  # stops nothing.
+  MAIL_ROOT="$LANE_ROOT" write_state running claude ''; : >"$ROWS"; printf '\n' >"$SCREEN"
+  start_local_harness claude
+  RUNTIME_START="$(jq -r '.launch.start' "$TEST_DIR/fixtures/launch-lane/claude-dontask.json")"
+  RUNTIME_START="${RUNTIME_START/@START@/$(awk '{ print $22 }' "/proc/$LANE_PID/stat")}"
+  jq --arg start "$RUNTIME_START" '.lanes[0].launch.start = $start' "$STATE" >"$STATE.tmp"
+  mv -- "$STATE.tmp" "$STATE"
+  PATH="$LOCAL_PATH" run_close "$SCRIPT"
+  assert_eq "rc=$RC lane=$(proc_state_after "$LANE_PID") wait=$(exit_wait_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
+    'rc=0 lane=gone wait=0 status=done' "a local record with no pane stops the harness the runtime's launch identity names"
+  kill -KILL "$LANE_PID" 2>/dev/null || true
   # A reboot leaves the record naming a pid and start that no longer run: with
   # no pane left, that stale identity is no harness to stop either.
   stale_windowless() { # SCRIPT
@@ -2532,8 +2547,9 @@ BRANCH_CONTROL="$(mutant park-branch '[[ "$pr_branch" == "$PARK_BRANCH" ]]' '[[ 
 HEAD_CONTROL="$(mutant park-head '[[ "$pr_head" == "$PARK_HEAD" ]]' '[[ true ]]')"
 CLEAN_HEAD_CONTROL="$(mutant park-clean-head '.head == $head' 'true')"
 CLEAN_BRANCH_CONTROL="$(mutant park-clean-branch '.branch == $branch' 'true')"
-# Restore the old number-only parse in a disposable script. The foreign park
-# assertion must reject that script before it reaches the host stop.
+# A disposable script whose park reads a bare number, its owner/repo#N parse
+# cut. The foreign park assertion must reject that script before it reaches
+# the host stop.
 BARE_PARSE_CONTROL="$(mutant park-bare-parse 'if [[ "$PARK_UNTIL_PR" =~ ^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]*)$ ]]; then' 'if false; then')"
 park_contract_row() { # SCRIPT MODE
   local script="$1" mode="$2" porcelain branch view="$PARK_VIEW" PARK_CONNECTED="" args=(--park --pr 7)

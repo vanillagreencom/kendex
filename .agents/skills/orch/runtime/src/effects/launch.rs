@@ -40,6 +40,26 @@ mod gate;
 /// The words that close a cloud session's description, after the brief:
 /// the branch it cloned and how it publishes.
 const CLOUD_SESSION_TEXT: &str = include_str!("cloud-session.txt");
+/// The words every local and hosted lane brief closes on, the text the
+/// watch's relaunch brief closes on: an unattended lane asks the overseer
+/// through its mailbox, never in a chat nobody reads.
+const UNATTENDED_TEXT: &str = include_str!("../watch/unattended.txt");
+
+/// `brief` closed by the unattended words on a line of their own, once: a
+/// brief that already ends with them is kept as it stands. They ride the
+/// brief, never a system-prompt flag (Pi's `--append-system-prompt` would
+/// stop it reading its own `APPEND_SYSTEM.md`).
+fn unattended(brief: &str) -> String {
+    let brief = brief.trim_end();
+    let words = UNATTENDED_TEXT.trim_end();
+    if brief.ends_with(words) {
+        brief.to_owned()
+    } else if brief.is_empty() {
+        words.to_owned()
+    } else {
+        format!("{brief}\n{words}")
+    }
+}
 /// The POSIX shell step a hosted Pi lane on the Copilot pool runs before
 /// its harness, inside the provider's login shell: it copies the
 /// github-copilot key variables its Pi `models.json` names and the host's
@@ -107,10 +127,12 @@ type Owner<'a> = &'a dyn Fn(Harness, &Path, &Path, &str) -> Reading<Option<PathB
 /// handoff that says `fresh`, starts fresh; a bound session under the same
 /// harness and account resumes. Pi resumes by session file, which the
 /// record does not carry, so a Pi lane starts fresh and says so. A relaunch
-/// on another account than the one the bound session was recorded under,
-/// or whose session file is absent from the destination home by its fixed
-/// id, starts fresh with `account-switched`: the context continues through
-/// the handoff record, never a transcript another account cannot read.
+/// on another account than the one the bound session was recorded under
+/// starts fresh with `account-switched`, and one whose bound session the
+/// destination home does not hold by its fixed id (its file absent, or a
+/// Copilot session that holds no event) with `session-absent`: the context
+/// continues through the handoff record, never a transcript another
+/// account cannot read.
 /// The destination is the home the lane's last confirmed launch recorded,
 /// where its bound session was written (a private Codex home links the
 /// account's store), in the mode it ran in; a lane that recorded none reads
@@ -207,7 +229,7 @@ fn route_of(
             }
             Reading::Gone => {
                 return Route::Fresh {
-                    cause: Some("account-switched"),
+                    cause: Some("session-absent"),
                 };
             }
             Reading::Unreadable { cause } => return Route::Refuse { cause },
@@ -293,9 +315,16 @@ fn prepare_launch(
         .ok_or_else(|| refused("harness-unknown", &[("harness", &r.harness)]))?;
     let cwd = PathBuf::from(&r.mail_root);
     check_directory("cwd-missing", &cwd)?;
-    if let Some(brief) = &r.brief_file {
-        read_brief(brief)?;
-    }
+    // The file the line reads is the brief closed by the unattended words,
+    // held beside the intent.
+    let brief = match &r.brief_file {
+        Some(file) => Some(
+            operation
+                .hold_brief(&unattended(&read_brief(file)?))
+                .map_err(Error::from)?,
+        ),
+        None => None,
+    };
     let recorded = match route {
         Route::Resume { home, .. } => home.clone(),
         Route::Fresh { .. } | Route::Refuse { .. } => None,
@@ -334,7 +363,7 @@ fn prepare_launch(
             model: r.model.as_deref(),
             effort: r.effort.as_deref(),
             cwd: &cwd,
-            brief: r.brief_file.as_deref(),
+            brief: brief.as_deref(),
             permission: None,
             question_tool: QuestionTool::Off,
             compaction: lane_compaction(harness),
@@ -965,7 +994,7 @@ fn hosted_launch(
         return Ok(operation.settle(Word::Failed, refusal_observation(&e)));
     }
     let brief = match r.brief_file.as_deref().map(read_brief).transpose() {
-        Ok(text) => text,
+        Ok(text) => text.map(|text| unattended(&text)),
         Err(e) => return Ok(operation.settle(Word::Failed, refusal_observation(&e))),
     };
     operation.record_phase(Phase::Preparing {
@@ -2014,6 +2043,7 @@ mod tests {
             repo_dir: None,
             scope_range: None,
             in_scope: Vec::new(),
+            obligation: None,
         }
     }
 
@@ -2093,9 +2123,9 @@ mod tests {
 
     /// The relaunch router. A bound session resumes under the same harness
     /// and account when the destination home holds its file; a request on
-    /// another account, or a destination with no file for the fixed id,
-    /// starts fresh with `account-switched`; a standing handoff that says
-    /// `fresh` and a changed harness keep their causes.
+    /// another account starts fresh with `account-switched`, a destination
+    /// with no file for the fixed id with `session-absent`; a standing
+    /// handoff that says `fresh` and a changed harness keep their causes.
     #[test]
     fn a_relaunch_on_another_account_or_without_its_session_file_starts_fresh() {
         let dir = tempfile::tempdir().unwrap();
@@ -2130,7 +2160,7 @@ mod tests {
         assert!(matches!(
             route_of(&lane, &same, None, Some(&a), owner),
             Route::Fresh {
-                cause: Some("account-switched")
+                cause: Some("session-absent")
             }
         ));
         fs::write(&file, "{}\n").unwrap();
@@ -2158,7 +2188,7 @@ mod tests {
 
     /// The relaunch route reads the destination session store for the bound
     /// id through the session owner's fixed-id lookup, for every resumable
-    /// harness and three-valued: absent starts fresh `account-switched`,
+    /// harness and three-valued: absent starts fresh `session-absent`,
     /// present resumes, unreadable refuses before any window. The working
     /// directory reaches the Claude arm alone: a Codex lane with no
     /// `mail_root` is still looked up.
@@ -2198,7 +2228,7 @@ mod tests {
                 &owner
             ),
             Route::Fresh {
-                cause: Some("account-switched")
+                cause: Some("session-absent")
             }
         ));
         assert!(matches!(
@@ -2210,7 +2240,7 @@ mod tests {
                 &owner
             ),
             Route::Fresh {
-                cause: Some("account-switched")
+                cause: Some("session-absent")
             }
         ));
         assert!(matches!(

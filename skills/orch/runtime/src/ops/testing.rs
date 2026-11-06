@@ -80,8 +80,8 @@ pub(super) fn no_clis() -> Clis {
 }
 
 /// The admission reads of a fixture launch: an item whose body names no
-/// Location, with no label and no child, and a range with no path, so the
-/// admission judges nothing from them.
+/// Location, with no label and no child, a range with no path, and a fleet
+/// in no checkout, so the admission judges nothing from them.
 pub(super) fn no_reads() -> AdmissionReads<'static> {
     AdmissionReads {
         clis: no_clis(),
@@ -93,6 +93,8 @@ pub(super) fn no_reads() -> AdmissionReads<'static> {
         }),
         range_paths: Box::new(|_: &Clis, _: &Path, _: &ScopeRange| Ok(Vec::new())),
         pulls: Box::new(|_: &Clis, _: Option<&str>, _: Option<&Path>| Ok(None)),
+        checkout: Box::new(|_: &Path| Ok(None)),
+        team_key: Box::new(|_: &Clis, _: &str| Err("unplanted".to_owned())),
     }
 }
 
@@ -203,6 +205,7 @@ pub(super) fn launch_fields(item: &str) -> LaunchLane {
         repo_dir: None,
         scope_range: None,
         in_scope: Vec::new(),
+        obligation: None,
     }
 }
 

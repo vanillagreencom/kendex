@@ -503,11 +503,6 @@ pub(super) fn lane_name(lane: &Lane) -> String {
     lane.window.clone().unwrap_or_else(|| lane.item.clone())
 }
 
-/// A lane on this machine: its record names no host, and no cloud kind.
-fn is_local(lane: &Lane) -> bool {
-    hosted::host_of(lane) == "local"
-}
-
 fn identity_of(lane: &Lane) -> Option<Identity> {
     let launch = lane.launch.as_ref()?;
     Some(Identity {
@@ -521,12 +516,14 @@ fn identity_word(identity: Option<&Identity>) -> String {
 }
 
 /// What a lane's host answers before its pane is read: the provider's
-/// status verb where the lane's kind declares one, and its capture where
-/// the kind's pane is the provider's own (`pane=verb`), asked only of a
-/// harness the status verb did not read as exited.
+/// status verb where the lane's kind declares one, its capture where the
+/// kind's pane is the provider's own (`pane=verb`), and a Pi lane's session
+/// rows where its files are the provider's (`files=verb`), the last two
+/// asked only of a harness the status verb did not read as exited.
 pub(super) struct HostRead {
     status: Option<Result<HostStatus, String>>,
     screen: Option<Result<String, String>>,
+    rows: Option<Answer<String>>,
 }
 
 impl HostRead {
@@ -546,7 +543,20 @@ impl HostRead {
             }
             (PaneKind::Verb, Some(Ok(HostStatus::Exited) | Err(_))) | (PaneKind::Local, _) => None,
         };
-        HostRead { status, screen }
+        let pi = lane.harness.as_deref().and_then(Harness::parse) == Some(Harness::Pi);
+        let rows = match (caps.files, &status) {
+            (Files::Verb, None | Some(Ok(HostStatus::Running))) if pi => {
+                Some(hosted::session_rows(scripts, lane))
+            }
+            (Files::Verb, None | Some(Ok(HostStatus::Running)))
+            | (Files::Verb, Some(Ok(HostStatus::Exited) | Err(_)))
+            | (Files::Local | Files::None, _) => None,
+        };
+        HostRead {
+            status,
+            screen,
+            rows,
+        }
     }
 }
 
@@ -584,22 +594,45 @@ fn read_lane<'a>(lane: &'a Lane, readers: &Readers, host: HostRead) -> Observed<
         Some(Ok(HostStatus::Running)) => true,
         None => false,
     };
-    let rows_file = (harness == Some(Harness::Pi))
-        .then(|| {
-            lane.mail_root.as_deref().map(|root| {
-                Path::new(root)
-                    .join("tmp")
-                    .join("lane-mail")
-                    .join(&lane.item)
-                    .join("session-rows.jsonl")
-            })
-        })
-        .flatten();
-    let rows_reading = rows_file.as_deref().map(|f| (readers.rows)(f));
-    let rows_key = rows_file.as_deref().and_then(|f| match rows::last_row(f) {
-        Reading::Live(row) => serde_json::to_string(&row).ok(),
-        Reading::Gone | Reading::Unreadable { .. } => None,
-    });
+    let (rows_reading, rows_key) = match host.rows {
+        Some(answer) => {
+            let row = match answer {
+                Answer::Live(text) => rows::last_row_in(&text),
+                Answer::Gone => Reading::Gone,
+                Answer::Unreadable { cause: _ } => Reading::Unreadable {
+                    cause: "rows-host-unread",
+                },
+            };
+            let key = match &row {
+                Reading::Live(row) => serde_json::to_string(row).ok(),
+                Reading::Gone | Reading::Unreadable { .. } => None,
+            };
+            let verdict = match row {
+                Reading::Live(row) => rows::judge_lane(&row),
+                Reading::Gone => Reading::Gone,
+                Reading::Unreadable { cause } => Reading::Unreadable { cause },
+            };
+            (Some(verdict), key)
+        }
+        None => {
+            let rows_file = (harness == Some(Harness::Pi))
+                .then(|| {
+                    lane.mail_root.as_deref().map(|root| {
+                        Path::new(root)
+                            .join("tmp")
+                            .join("lane-mail")
+                            .join(&lane.item)
+                            .join("session-rows.jsonl")
+                    })
+                })
+                .flatten();
+            let key = rows_file.as_deref().and_then(|f| match rows::last_row(f) {
+                Reading::Live(row) => serde_json::to_string(&row).ok(),
+                Reading::Gone | Reading::Unreadable { .. } => None,
+            });
+            (rows_file.as_deref().map(|f| (readers.rows)(f)), key)
+        }
+    };
     if let Some(screen) = host.screen {
         let state = classify(&Inputs {
             pane: None,
@@ -686,6 +719,7 @@ pub fn status(settings: &Settings, item: &str) -> crate::error::Result<Value> {
     let unjudged = |cause: String| HostRead {
         status: Some(Err(cause)),
         screen: None,
+        rows: None,
     };
     let (host, files) = match hosts.of(lane) {
         Err(cause) => (unjudged(cause), None),
@@ -865,7 +899,6 @@ pub fn observe(pass: &Pass) -> Produced {
     }
     let observed_lanes: Vec<&Lane> = observed.iter().map(|o| o.lane).collect();
     hosted::retry_pending_closes(&observed_lanes, pass, &hosts, &mut out);
-    handoffs(pass, &mut out);
     wall_pauses(&walls, pass, &mut out);
     hosted::prepare(pass, &mut out);
     hosted::cloud_stalls(pass, &hosts, &mut out);
@@ -873,6 +906,7 @@ pub fn observe(pass: &Pass) -> Produced {
         start_stall(lane, pass, &hosts, &mut out);
     }
     lane_long(pass, &hosts, &mut out);
+    handoffs(pass, &hosts, &mut out);
     if let Some(session) = pass.session {
         strays(session, pass, &mut out);
     }
@@ -920,31 +954,35 @@ pub enum HandoffReading {
 /// or parsed is unreadable, never no handoff; `.handoff` stands where it is
 /// an object with no `resumed_at`.
 pub fn handoff_read(path: &Path) -> HandoffReading {
-    let unreadable = || HandoffReading::Unreadable {
-        path: path.to_path_buf(),
-    };
-    let doc = match item_doc(path) {
-        Reading::Live(doc) => doc,
-        Reading::Gone => return HandoffReading::None,
-        Reading::Unreadable { cause: _ } => return unreadable(),
-    };
+    match item_doc(path) {
+        Reading::Live(doc) => match standing_record(&doc) {
+            Some(record) => HandoffReading::Stands { record },
+            None => HandoffReading::None,
+        },
+        Reading::Gone => HandoffReading::None,
+        Reading::Unreadable { cause: _ } => HandoffReading::Unreadable {
+            path: path.to_path_buf(),
+        },
+    }
+}
+
+/// An item state's standing handoff record, one JSON line.
+pub(super) fn standing_record(doc: &Document) -> Option<String> {
     match doc.get("handoff") {
         Some(Value::Object(record)) => match record.get("resumed_at") {
-            None | Some(Value::Null) => HandoffReading::Stands {
-                record: Value::Object(record.clone()).to_string(),
-            },
+            None | Some(Value::Null) => Some(Value::Object(record.clone()).to_string()),
             Some(
                 Value::Bool(_)
                 | Value::Number(_)
                 | Value::String(_)
                 | Value::Array(_)
                 | Value::Object(_),
-            ) => HandoffReading::None,
+            ) => None,
         },
         None
         | Some(
             Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_),
-        ) => HandoffReading::None,
+        ) => None,
     }
 }
 
@@ -988,22 +1026,41 @@ pub fn handoff_standing(state_dir: &Path, lane: &Lane) -> HandoffReading {
     }
 }
 
-/// The handoff read: every local lane's record, any status, read once; a
-/// standing record is `handoff` with the record under it once per record (the
-/// row keyed by the record's checksum, so a re-run between the event and the
-/// relaunch says nothing), a record the relaunch stamped clears the row, and a
-/// place that could not be read is the pass's partial failure with the other
-/// lanes' news standing. Rows of items no record names go.
-fn handoffs(pass: &Pass, out: &mut Produced) {
+/// The handoff read: every lane's record read once where its host's files
+/// are, a local lane's of any status on this disk and an in-flight lane's
+/// on a `files=verb` host through its provider; a standing record is
+/// `handoff` with the record under it once per record (the row keyed by the
+/// record's checksum, so a re-run between the event and the relaunch says
+/// nothing), a record the relaunch stamped clears the row, and a place that
+/// could not be read is the pass's partial failure with the other lanes'
+/// news standing. Rows of items no record names go.
+fn handoffs(pass: &Pass, hosts: &Hosts, out: &mut Produced) {
     let recorded: BTreeSet<&str> = pass.fleet.lanes.iter().map(|l| l.item.as_str()).collect();
     for item in pass.baseline.identities("handoff") {
         if !recorded.contains(item.as_str()) {
             out.changes.push(clear("handoff", &item));
         }
     }
-    for lane in pass.fleet.lanes.iter().filter(|l| is_local(l)) {
+    for lane in &pass.fleet.lanes {
         let item = lane.item.as_str();
-        match handoff_standing(pass.state_dir, lane) {
+        let reading = match hosts.of(lane).map(|caps| caps.files) {
+            Ok(Files::Local) => handoff_standing(pass.state_dir, lane),
+            Ok(Files::Verb) if lane.status.in_flight() => {
+                match hosted::handoff(pass.scripts, lane) {
+                    Ok(reading) => reading,
+                    Err(fields) => {
+                        fail(out, format!("handoff-read-failed item={item} {fields}"));
+                        continue;
+                    }
+                }
+            }
+            // A lane out of flight is not asked of its host, whose sandbox
+            // a park may have stopped; a kind with no files keeps no record
+            // here; a host whose line could not be read is the pass's
+            // failure already.
+            Ok(Files::Verb | Files::None) | Err(_) => continue,
+        };
+        match reading {
             HandoffReading::None => out.changes.push(clear("handoff", item)),
             HandoffReading::Unreadable { path } => fail(
                 out,
@@ -2290,24 +2347,25 @@ fn lane_state_dir(root: &Path) -> Result<PathBuf, String> {
 /// whatever its shape; `Gone` where the lane has written none, unreadable
 /// where the file is no object.
 pub(super) fn item_doc(path: &Path) -> Reading<Document> {
+    let unreadable = Reading::Unreadable {
+        cause: "state-unreadable",
+    };
     match std::fs::read_to_string(path) {
-        Ok(text) => match serde_json::from_str::<Value>(&text) {
-            Ok(Value::Object(doc)) => Reading::Live(doc),
-            Ok(
-                Value::Null
-                | Value::Bool(_)
-                | Value::Number(_)
-                | Value::String(_)
-                | Value::Array(_),
-            )
-            | Err(_) => Reading::Unreadable {
-                cause: "state-unreadable",
-            },
-        },
+        Ok(text) => doc_of(&text).map_or(unreadable, Reading::Live),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Reading::Gone,
-        Err(_) => Reading::Unreadable {
-            cause: "state-unreadable",
-        },
+        Err(_) => unreadable,
+    }
+}
+
+/// An item state's text as its JSON object; `None` for text that is no
+/// object.
+pub(super) fn doc_of(text: &str) -> Option<Document> {
+    match serde_json::from_str::<Value>(text) {
+        Ok(Value::Object(doc)) => Some(doc),
+        Ok(
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_),
+        )
+        | Err(_) => None,
     }
 }
 
