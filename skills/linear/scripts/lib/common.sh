@@ -13,6 +13,9 @@ LINEAR_LIMIT_ISSUE_DESC=100000 # Issues have no practical limit
 
 # Internal lib directory (underscore prefix avoids overwriting caller's SCRIPT_DIR)
 _LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Target settings are data; library sources, sibling commands and their shell
+# startup must retain the identities selected by the caller.
+readonly _LIB_DIR SCRIPT_DIR BASH BASH_ENV
 
 linear_canonical_existing_dir() {
     local path="$1"
@@ -1434,7 +1437,7 @@ resolve_team_node() {
 find_user_by_email() {
     local email="$1" vars result
     vars=$(jq -cn --arg email "$email" '{email: $email}') || return 1
-    result=$(graphql_pages 'query GetUserByEmail($email: String!, $after: String) { users(filter: {email: {eqIgnoreCase: $email}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id name email } } }' "$vars" users) || return 1
+    result=$(graphql_pages 'query GetUserByEmail($email: String!, $after: String) { users(filter: {email: {eqIgnoreCase: $email}}, after: $after) { pageInfo { hasNextPage endCursor } nodes { id name email url } } }' "$vars" users) || return 1
     jq -c '.users.nodes[0] // empty' <<<"$result"
 }
 

@@ -116,9 +116,9 @@ PY
 import pathlib, sys
 path = pathlib.Path(sys.argv[1])
 source = path.read_text()
-pattern = 'python3 "$SCRIPT_DIR/lib/lane-mail-store.py" cursor-put "$BOX/to-overseer.seen" "$COUNT"'
+pattern = '"${_KENDEX_JARVIS_PYTHON:-python3}" ${_KENDEX_JARVIS_PYTHON:+"caller-script" "$SCRIPT_DIR/lib"} "$SCRIPT_DIR/lib/lane-mail-store.py" cursor-put "$BOX/to-overseer.seen" "$COUNT"'
 assert source.count(pattern) == 1
-changed = source.replace(pattern, ': cursor-put "$BOX/to-overseer.seen" "$COUNT"')
+changed = source.replace(pattern, ': ' + pattern)
 assert changed != source
 path.write_text(changed)
 PY

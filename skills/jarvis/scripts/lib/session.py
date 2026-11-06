@@ -118,7 +118,7 @@ def environment(harness=None, *, policy=False):
 
 
 def home_state(home):
-    """The private state directory of the resolved HOME: its session record and its forward outbox."""
+    """The private runtime directory of the canonical home."""
     key = hashlib.sha256(os.fsencode(home)).hexdigest()
     return Path(os.environ.get("XDG_STATE_HOME") or Path.home() / ".local/state") / "kendex/jarvis" / key
 
@@ -1106,6 +1106,16 @@ def main():
             command.add_argument("--origin", choices=("app-off",))
         elif verb == "succeed":
             command.add_argument("--account-walled", action="store_true")
+    command = verbs.add_parser("owner-asks")
+    operations = command.add_subparsers(dest="action", required=True, parser_class=Arguments)
+    for action in ("list", "reply", "done", "later"):
+        operation = operations.add_parser(action)
+        operation.add_argument("--home", required=True)
+        if action == "list":
+            operation.add_argument("--view", choices=("active", "snoozed"), required=True)
+            operation.add_argument("--cursor")
+        else:
+            operation.add_argument("--id", required=True)
     args = parser.parse_args()
     if not clean(args.home) or (args.verb == "start" and not clean(args.account)):
         parser.error("path")
@@ -1123,6 +1133,10 @@ def main():
         parser.error("record")
     if args.verb == "main-host":
         return main_host(args)
+    if args.verb == "owner-asks":
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import owner_asks
+        return owner_asks.main(args, Session, Refusal)
     if args.verb in ("forward", "forward-drain") or (args.verb == "status" and args.main):
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import forward
