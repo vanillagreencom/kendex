@@ -11,7 +11,7 @@ The headline install is the curl script. The rest are package-manager entries th
 | Arch (from source) | `yay -S kendex` | app + CLI | [`arch/kendex/`](arch/kendex/) |
 | Arch (latest commit) | `yay -S kendex-git` | app + CLI | [`arch/kendex-git/`](arch/kendex-git/) |
 | Arch (latest commit, CLI) | `yay -S kendex-cli-git` | CLI | [`arch/kendex-cli-git/`](arch/kendex-cli-git/) |
-| Nix | `nix profile add github:vanillagreencom/kendex` | CLI | [`/flake.nix`](../flake.nix), [`nix/kendex-cli.nix`](nix/kendex-cli.nix) |
+| Nix | `nix profile add github:vanillagreencom/kendex#kendex-cli` | CLI | [`/flake.nix`](../flake.nix), [`nix/kendex-cli.nix`](nix/kendex-cli.nix) |
 | deb, rpm, Windows setup | download from the release | app + CLI | built by `release.yml` |
 | dmg | download from the release | app (CLI inside the bundle) | built by `release.yml` |
 | AppImage | download from the release | app | built by `release.yml` |
@@ -42,9 +42,9 @@ A flake that depends on the command pins kendex as an input and lists the packag
 
 `<commit>` is a commit on `main` or a release tag that carries `flake.nix`; the consumer's `flake.lock` records the commit either way. The `follows` line is optional: the nixpkgs it names must carry a `rustc` at least as new as the workspace `rust-version`, which is why the flake's own input is `nixos-unstable`.
 
-The package installs `bin/kendex` and nothing else: no desktop app and no `kendex://` handler. The command is wrapped with Git on its `PATH`, ahead of the caller's own, and it links libdbus-1 from the Nix store for the keyring's secret-service backend. A build of a pinned commit displays `<version>+git.<commit>`, as `kendex-cli-git` does; a build of a working tree with uncommitted changes displays the plain version.
+The package installs `bin/kendex` and nothing else: no desktop app and no `kendex://` handler. The command is wrapped with Git on its `PATH`, ahead of the caller's own, and it links libdbus-1 from the Nix store for the keyring's secret-service backend. A build of a commit displays `<version>+git.<commit>`, as `kendex-cli-git` does; a build of a working tree with uncommitted changes displays the plain version.
 
-`kendex update` does not replace a command in the read-only Nix store. Update the pin instead: `nix flake update kendex` in the consumer, or `nix profile upgrade kendex` for a profile install.
+`kendex update` refuses to replace a command in the Nix store. Move the pin instead: change `<commit>` in the consumer's input, or run `nix flake update kendex` where the input names no commit. A profile installed from `github:vanillagreencom/kendex#kendex-cli` takes `nix profile upgrade kendex-cli`.
 
 ## The four Arch packages
 
