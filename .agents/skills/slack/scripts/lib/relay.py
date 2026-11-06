@@ -200,10 +200,11 @@ TRIGGER = re.compile(r"[0-9A-Za-z._-]{1,255}")
 COMMAND_KEY = "command:"
 # A forwarded owner directive: a satellite Jarvis's `jarvis-session forward`
 # sends the request under this delivery key, its text ending in one
-# provenance line of these fields in this order. The relay judges this shape,
-# the key, the request time it shows and the words string alone: the
-# citation's forms and the word rule are the satellite's `forward` and the
-# main session's to judge.
+# provenance line of these fields in this order. The relay reads this shape,
+# the key, the request time, the words string, and the framing line with its
+# decoded request-text, to show them; it validates no citation and applies
+# no word rule, which are the satellite's `forward` and the main session's to
+# judge.
 FORWARD_KEY = re.compile(r"forward-[0-9a-f]{64}")
 FORWARD_LINE = re.compile(
     r"forwarded-request: satellite=(?P<satellite>\S+) request-ref=(?P<request_ref>\S+)"
@@ -216,9 +217,6 @@ FORWARD_LINE = re.compile(
 # without it is legacy, its whole text the request.
 FORWARD_FRAMING = "forwarded-confirmation: caller=unproved"
 FORWARD_REQUEST = re.compile(r"request-text: (\".*\")")
-# A request ref from VGS's audit log was heard by Jarvis Voice, VGS's voice
-# session; the record names no other session.
-VOICE_REF = "vgs-audit:"
 
 # Slack's answer when the reaction is already as the call would leave it, or
 # its message is gone: nothing is left to mark.
@@ -430,17 +428,18 @@ def forwarded(envelope: Dict) -> Optional[Dict[str, Optional[str]]]:
 
 def forward_root(citation: Dict[str, Optional[str]]) -> str:
     """The top-level post a forwarded directive's answers thread under, for
-    a person: the sending session and computer, the request time in each
-    reader's zone, how forwarding was confirmed and the request's words, so
-    the owner can catch a wrong one. A confirmation proves no caller, so the
-    post asks the owner to disown a request that is not theirs. References,
-    caller proof and exact stamps stay in the directive the main reads."""
-    source = citation["satellite"]
-    if str(citation["request_ref"]).startswith(VOICE_REF):
-        source = f"Jarvis Voice on {source}"
-    confirmed = {"words": f'with "{citation["words"]}"', "voice": "by voice", "physical": "physically"}
-    quoted = "\n".join(f"> {line}" if line else ">" for line in str(citation["request"]).split("\n"))
-    return (f"Forwarded from {source}, {local_time(str(citation['asked_at']))}, "
+    a person: the computer, the request time in each reader's zone, how
+    forwarding was confirmed and the request's words, so the owner can catch
+    a wrong one. The unproved caller chooses the words and the request, so
+    neither leaves its place in the post: the words stay one line as their
+    ASCII JSON spelling, and every line Markdown sees in the request stays
+    quoted. A confirmation proves no caller, so the post asks the owner to
+    disown a request that is not theirs. References, the unproved-caller
+    framing and exact stamps stay in the directive the main reads."""
+    words = json.dumps(citation["words"], ensure_ascii=True)
+    confirmed = {"words": f"with {words}", "voice": "by voice", "physical": "physically"}
+    quoted = "\n".join(f"> {line}" if line else ">" for line in str(citation["request"]).splitlines())
+    return (f"Forwarded from {citation['satellite']}, {local_time(str(citation['asked_at']))}, "
             f"confirmed {confirmed[str(citation['method'])]}:\n\n{quoted}\n\nNot your request? Reply in this thread.")
 
 

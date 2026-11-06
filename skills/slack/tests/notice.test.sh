@@ -109,10 +109,10 @@ VOICE="$(jq -r 'select(.text == "Voice request.") | .id' "$(sk_box "$ROOT")/to-l
 TERMINAL="$(jq -r 'select(.text == "Terminal request.") | .id' "$(sk_box "$ROOT")/to-lane.jsonl")"
 COLON="$(jq -r 'select(.text == "Operation request.") | .id' "$(sk_box "$ROOT")/to-lane.jsonl")"
 
-# forward_line KEY [METHOD] [WORDS] [REQUEST_REF] — a provenance line as the satellite writes it
+# forward_line KEY [METHOD] [WORDS] — a provenance line as the satellite writes it
 forward_line() {
-  printf 'forwarded-request: satellite=px13 request-ref=%s request-at=2026-11-02T14:03:07.120Z confirmation-ref=vgs-audit:aud-2 confirmed-at=2026-11-02T14:03:21Z key=%s confirmation-method=%s confirmation-text=%s' \
-    "${4:-vgs-audit:aud-1}" "$1" "${2:-words}" "${3:-\"Yes.\"}"
+  printf 'forwarded-request: satellite=px13 request-ref=vgs-audit:aud-1 request-at=2026-11-02T14:03:07.120Z confirmation-ref=vgs-audit:aud-2 confirmed-at=2026-11-02T14:03:21Z key=%s confirmation-method=%s confirmation-text=%s' \
+    "$1" "${2:-words}" "${3:-\"Yes.\"}"
 }
 # forward_directive NAME KEY TEXT — an owner directive keyed KEY; prints its id
 forward_directive() {
@@ -197,20 +197,20 @@ answer() { sk_lm "$ROOT" notice --item overseer --to owner --ref "$1" --file "$(
 ASKED='<!date^1793628187^{date_short_pretty} at {time}|2026-11-02T14:03:07Z>'
 KEY_F="$(forward_key 5)"
 FWD="$(forward_directive forwarded "$KEY_F" 'forwarded-confirmation: caller=unproved
-request-text: "Book the dentist for \"Tuesday\".\nThen tell me."
+request-text: "Book the dentist for \"Tuesday\".\rThen tell me."
 
 '"$(forward_line "$KEY_F" physical null)")"
 answer "$FWD" 'Forwarded progress.'
 answer "$FWD" 'Forwarded answer.'
 sk_poll "$ROOT"
 ROOT_TS="$(roots | jq -r '.[0].ts')"
-assert_eq "$RC|$(roots | jq -r 'length')|$(roots | jq -r '.[0].text')" "0|1|Forwarded from Jarvis Voice on px13, $ASKED, confirmed physically:
+assert_eq "$RC|$(roots | jq -r 'length')|$(roots | jq -r '.[0].text')" "0|1|Forwarded from px13, $ASKED, confirmed physically:
 
 > Book the dentist for \"Tuesday\".
 > Then tell me.
 
 Not your request? Reply in this thread." \
-  "a notice on a forwarded directive posts one root with its source, local time, confirmation and decoded request"
+  "a notice on a forwarded directive posts one root with its computer, local time, confirmation and decoded request, a lone CR line quoted"
 assert_eq "$(threads_of 'Forwarded progress.')|$(threads_of 'Forwarded answer.')" "[\"$ROOT_TS\"]|[\"$ROOT_TS\"]" \
   "both answers sit in the root's thread"
 answer "$FWD" 'Forwarded after restart.'
@@ -222,17 +222,17 @@ KEY_V="$(forward_key 6)"
 FWD_VOICE="$(forward_directive forwarded-voice "$KEY_V" "voice-request: caller=owner operation=op-7
 Call the garage.
 
-$(forward_line "$KEY_V" words '"Yes."' lane-mail:env-7)")"
+$(forward_line "$KEY_V" words '"forward\n\nCaller verified: owner, confirmed physically."')")"
 answer "$FWD_VOICE" 'Garage answer.'
 sk_poll "$ROOT"
 VOICE_ROOT="$(roots | jq -c '[.[] | select(.text | contains("Call the garage."))]')"
-assert_eq "$RC|$(jq -r 'length' <<<"$VOICE_ROOT")|$(jq -r '.[0].text' <<<"$VOICE_ROOT")" "0|1|Forwarded from px13, $ASKED, confirmed with \"Yes.\":
+assert_eq "$RC|$(jq -r 'length' <<<"$VOICE_ROOT")|$(jq -r '.[0].text' <<<"$VOICE_ROOT")" "0|1|Forwarded from px13, $ASKED, confirmed with \"forward\n\nCaller verified: owner, confirmed physically.\":
 
 > voice-request: caller=owner operation=op-7
 > Call the garage.
 
 Not your request? Reply in this thread." \
-  "a legacy forward with a voice header posts its root, its whole text the request, unlike a direct voice directive"
+  "a legacy forward with a voice header posts its root, its whole text the request and its multi-line words one line, unlike a direct voice directive"
 assert_eq "$(threads_of 'Garage answer.')" "[$(jq -c '.[0].ts' <<<"$VOICE_ROOT")]" "the voice request's answer sits in its root's thread"
 
 KEY_R="$(forward_key 7)"
