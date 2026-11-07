@@ -98,7 +98,7 @@ Repeat on each declared remote. Record hosts and their repositories in the consu
 
 ## Main and satellites
 
-Jarvis main is the one computer that runs Jarvis, the owner's main session. A Jarvis satellite is another of the owner's computers with a Jarvis home. It runs Jarvis Voice, not Jarvis, and forwards long work to Jarvis main.
+Jarvis is the owner's main long-running session. Jarvis Voice is the VGS voice session on any computer. Jarvis main is the one computer that runs Jarvis. A Jarvis satellite is another of the owner's computers with a Jarvis home, `~/dev/jarvis`. It runs Jarvis Voice, not Jarvis, and forwards long work to Jarvis main. Its [local console session](#satellite) and [forwarding](#forward) are described separately.
 
 `JARVIS_MAIN_HOST` selects the computer's role. Empty makes it Jarvis main; a Jarvis satellite sets `DEST:HOME`, where `DEST` is an SSH destination with no whitespace, `:` or `/` and no leading `-`, and `HOME` is the absolute path of the Jarvis home on Jarvis main. An invalid nonempty value remains a satellite and reports `setting-invalid`.
 
@@ -110,6 +110,8 @@ Never commit the value in `kendex.settings.toml`: the clone on Jarvis main would
 
 ### Satellite
 
+A Jarvis satellite also supports a local console session through the [session command](../workflows/session.md#session-command). This session handles local requests and confirmed forwards under [Forward](#forward), separately from Jarvis Voice.
+
 A Jarvis satellite handles local voice, windows, apps, files, screen and sign-ins. It forwards requests that act on accounts, the fleet, the home repository or anything outside this machine.
 
 Its watch-loop reads only its home, renews no Slack hold, runs no control-host pass and schedules no progress checkpoint. Owner-note sending refuses `role-satellite`; read-only resolution selects only local roots.
@@ -117,6 +119,8 @@ Its watch-loop reads only its home, renews no Slack hold, runs no control-host p
 Do not run [Read](#read), [Answer an ask](#answer-an-ask) or [Instruct](#instruct) on a Jarvis satellite. Tell the owner that Jarvis handles the request on Jarvis main. A repository's own lane-mail does not enforce the Jarvis role. Do not commit or push the Jarvis home repository from a Jarvis satellite; the package cannot observe those clone commits, so review holds this rule.
 
 ### Forward
+
+The satellite's watch-loop runs the [forward drain](../workflows/session.md#session-command) to retry queued forwards and read Jarvis main's answers. The local console session supports requests and confirmations through the same procedure below.
 
 1. Ask in the originating conversation, without a mailbox ask. Quote the exact request, name Jarvis main and say that the request and answer will appear in the owner's Slack channel. Ask for `forward` or `yes`, last and alone, so the confirmation names one question. Otherwise keep the request local. This consent authorizes forwarding, not the actions in the request; [On Jarvis main](#on-jarvis-main) owns action authorization. For a console request, ask with `lane-mail notice --item overseer --to owner --ref R --file PATH`, where `R` is its envelope id.
 2. Write one record under the home's `tmp/`. Run `.agents/skills/jarvis/scripts/jarvis-session forward --home HOME --record PATH`. Remove that file only after exit 0 or 75.

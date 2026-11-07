@@ -38,11 +38,11 @@ kendex add vanillagreencom/kendex --bundle jarvis --harness codex
 
 Jarvis runs as a session of your coding assistant in your Jarvis home. You give it requests in its terminal, through Slack or by voice. For each request it reads the guidance it needs, does the work or hands part of it to a specialist agent, checks the result and tells you what the evidence shows. It asks you before any step you keep for yourself. Open work stays in your tracker, and notes in the home let the next session carry on. These pages explain the current package and name the parts still being built.
 
-- **Jarvis** is the main assistant session, which keeps running.
-- **Jarvis Voice** is a voice session, such as the one in VGS, that hands long work to Jarvis.
+- **Jarvis** is the main long-running session.
+- **Jarvis Voice** is the VGS voice session on any computer.
 - **Jarvis main** is the computer that runs Jarvis.
-- **Jarvis satellite** is a computer that runs Jarvis Voice, not Jarvis, and forwards long work to Jarvis main.
-- **Jarvis home** is the folder with Jarvis's instructions, skills and memory. Keep it in a private Git repository of its own, not in a work project. Its committed files travel with the repository; scratch files and secrets stay on each computer.
+- **Jarvis satellite** is a computer that runs Jarvis Voice, not Jarvis, and forwards long work to Jarvis main. Its [local console session](references/agent-reach.md#satellite) and [forwarding](references/agent-reach.md#forward) are described separately.
+- **Jarvis home** is `~/dev/jarvis`, the folder with Jarvis's instructions, skills and memory. Keep it in a private Git repository of its own, not in a work project. Its committed files travel with the repository; scratch files and secrets stay on each computer.
 
 | Your question | Read |
 |---|---|
@@ -84,7 +84,7 @@ Run `kendex refresh` in your Jarvis home. It updates the package and leaves your
 
 1. If VGS starts Jarvis when you log in, turn off its Session at boot setting. Remove any login entry of your own that runs `jarvis-session start --origin boot`.
 2. On Pi or Copilot CLI, ask Jarvis to stop its event loop. There it runs as a separate background job.
-3. Stop the session with `.agents/skills/jarvis/scripts/jarvis-session stop --home .` from your Jarvis home.
+3. Stop the session with `.agents/skills/jarvis/scripts/jarvis-session stop --home .` from your Jarvis home. Run `.agents/skills/jarvis/scripts/jarvis-session status --home .` until it reads `stopped` or `off` before removing anything; stop and report if it reads `blocked` or `failed`.
 4. Stop and disable each service you set up that runs a script from this home's `.agents/skills/`, such as the 1Password broker.
 5. If the Slack relay on this computer also serves other checkouts, run `.agents/skills/slack/scripts/slack install` again from one of them, with one `--root` for each remaining checkout. If this home is its only checkout, run `systemctl --user disable --now slack-listen.service` and delete `~/.config/systemd/user/slack-listen.service`.
 6. Run `kendex remove jarvis --sweep` to remove the package and the packages only it needed. kendex turns off the commit checks before it removes commit-guards.
