@@ -493,7 +493,7 @@ During `ORCH_REPORT_QUIET_HOURS` (default midnight to 7 am in `ORCH_OWNER_TIME_Z
 
 A `write` refused as `notice=[FILE]` wrote and printed the report, which ends the event; nothing re-sends the notice, and a second `write` in the same minute is refused `report-exists`. Fix what the lines under it name, then send the notice by hand: `lane-mail notice --item overseer --to owner --attach [FILE] --file [SUMMARY_PATH]`. A hand send refused `owner-notice-repeated` means the first send landed: the owner holds that text, and the id it names is the receipt.
 
-Any other refused `render` or `write` names its cause on its first stderr line: fix it, and where it stands, tell the user the report is blocked and why, because the event repeats on every long pass until a report is written.
+Any other refused `render` or `write` names its cause on its first stderr line: fix it and run the report again, and where it stands, tell the user the report is blocked and why. The watch reports a due line once, not on every pass, so do not wait for the event to repeat.
 
 ### `triage`
 
