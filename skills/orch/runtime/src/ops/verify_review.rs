@@ -259,8 +259,9 @@ impl HeadRecord {
     }
 }
 
-/// `resent` marks a `requested` POST GitHub showed no sign of, sent once
-/// more: a second miss falls back as `unconfirmed`.
+/// `resent` marks a `requested` sent once more, its first POST answered by
+/// no Copilot work or work that ended with no review of the head: a miss
+/// after it falls back as `unconfirmed`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct RequestRecord {
     outcome: String,
@@ -306,6 +307,11 @@ impl RequestRecord {
 
     fn fallback(cause: &str, exit: Option<i32>) -> RequestRecord {
         RequestRecord::new(FALLBACK, None, Some(cause), exit)
+    }
+
+    /// Copilot's work in flight stood for this head's request.
+    fn stood_for_run(&self) -> bool {
+        self.outcome == EXISTING && self.reason.as_deref() == Some("existing-run")
     }
 
     fn report(&self, recorded_now: bool) -> RequestReport {
@@ -364,6 +370,9 @@ type Step<T> = std::result::Result<T, Stop>;
 
 /// What the locked read of an unconfirmed request found.
 enum Unconfirmed {
+    /// An `existing-run` whose work ended: claimed as `requested`, its
+    /// POST owed.
+    Claim,
     /// Its first miss: the `resent` mark written, the POST owed again.
     Resend,
     /// A miss after the resend: written `fallback cause=unconfirmed`.
@@ -640,8 +649,10 @@ impl Gate<'_> {
     }
 
     /// The head's request, claimed once and read after: a standing
-    /// `requested` GitHub shows no sign of is sent once more, then falls
-    /// back `unconfirmed`. A `draft` fallback lapses once the gate's mark
+    /// `requested` that drew no Copilot work, or whose work ended with no
+    /// review of the head, is sent once more, then falls back
+    /// `unconfirmed`; an `existing-run` whose run ended so is claimed and
+    /// sent (`confirm_request`). A `draft` fallback lapses once the gate's mark
     /// made the draft ready, or once the view and `pulls/N` both read it
     /// ready, so a call where the two reads disagree records and notifies
     /// nothing again.
@@ -762,18 +773,20 @@ impl Gate<'_> {
         Ok(claimed)
     }
 
-    /// A standing `requested` read against GitHub's record of it: Copilot's
-    /// work in flight, the pending request among it, or a Copilot review on
-    /// the head confirms it. A request whose work ended with no review of the
-    /// head, its check completed or cancelled or the request removed, is not
-    /// confirmed by its event: it is sent once more under its `resent`
-    /// mark, and a second miss falls back `unconfirmed` so the fallback
-    /// notice goes out.
+    /// A standing `requested`, or an `existing-run` that stood for one, read
+    /// against GitHub's record of it: Copilot's work in flight, the pending
+    /// request among it, or a Copilot review on the head confirms it. Work
+    /// that ended with no review of the head, its check completed or
+    /// cancelled or the request removed, confirms nothing: an
+    /// `existing-run` is claimed as `requested` and sent, a `requested` is
+    /// sent once more under its `resent` mark, and a miss after that falls
+    /// back `unconfirmed` so the fallback notice goes out. A head is asked
+    /// at most twice.
     fn confirm_request(&mut self, head: HeadRecord) -> Step<HeadRecord> {
         let Some(request) = head.request.clone() else {
             return Ok(head);
         };
-        if request.outcome != REQUESTED {
+        if request.outcome != REQUESTED && !request.stood_for_run() {
             return Ok(head);
         }
         let reviews = self.reviews()?.clone();
@@ -785,6 +798,10 @@ impl Gate<'_> {
         let (head, read) = self.update_head(|standing| {
             let mut head = standing.ok_or_else(|| shape(path, "heads"))?;
             let read = match &mut head.request {
+                Some(request) if request.stood_for_run() => {
+                    *request = RequestRecord::new(REQUESTED, None, None, None);
+                    Unconfirmed::Claim
+                }
                 Some(request) if request.outcome == REQUESTED && !request.resent => {
                     request.resent = true;
                     Unconfirmed::Resend
@@ -798,6 +815,10 @@ impl Gate<'_> {
             Ok((head.clone(), (head, read)))
         })?;
         match read {
+            Unconfirmed::Claim => {
+                self.reply.request = head.request.as_ref().map(|q| q.report(true));
+                self.post_request(head)
+            }
             Unconfirmed::Resend => self.post_request(head),
             Unconfirmed::FellBack => {
                 self.reply.request = head.request.as_ref().map(|q| q.report(true));

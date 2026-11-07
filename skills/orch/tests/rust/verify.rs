@@ -4606,9 +4606,11 @@ fn the_timeout_is_judged_on_the_recorded_stamp() {
 /// A request whose Copilot work ended with no review of the head, its check
 /// cancelled, is no landed request: the next call sends it once more, and
 /// the approval standing beside it waits on that review; a resend whose work
-/// ends the same way falls back `unconfirmed`, with no third request. The
-/// early request is planted as GitHub recorded it, earlier than the call
-/// that reads it, as a push-first head's request is.
+/// ends the same way falls back `unconfirmed`, with no third request, and
+/// the approval then completes the call. A run that stood for the request
+/// and ended so is claimed and sent the same way. The early request is
+/// planted as GitHub recorded it, earlier than the call that reads it, as a
+/// push-first head's request is.
 #[test]
 fn a_request_whose_work_ended_with_no_review_is_sent_once_more_then_falls_back() {
     let mut gh = Github::review_world();
@@ -4662,6 +4664,61 @@ fn a_request_whose_work_ended_with_no_review_is_sent_once_more_then_falls_back()
     assert_eq!(fell_back["request"]["cause"], "unconfirmed", "{fell_back}");
     assert_eq!(fell_back["request"]["recorded_now"], true, "{fell_back}");
     assert_eq!(gh.requests(), 2, "{:?}", gh.log());
+
+    // Copilot's run in flight stood for the request, and ended cancelled
+    // with no review: the next call claims the request and sends it, under
+    // the same bound of two requests on the head, the approval standing
+    // beside it waiting on that review until the fallback.
+    let mut gh = Github::review_world();
+    gh.answer(
+        &format!("pr view {PR}"),
+        review_view("APPROVED", &[("colleague", "APPROVED")], false),
+    )
+    .answer(
+        &check_runs(HEAD, 1),
+        check_runs_page(1, vec![copilot_check(31, "in_progress")]),
+    );
+    let running = ok_result(&gh.review(false, &[]));
+    assert_eq!(running["status"], "pending", "{running}");
+    assert_eq!(running["request"]["reason"], "existing-run", "{running}");
+    assert_eq!(gh.requests(), 0, "{:?}", gh.log());
+    gh.answer(
+        &check_runs(HEAD, 1),
+        check_runs_page(1, vec![cancelled(31, "2026-01-29T15:10:00Z")]),
+    );
+    let claimed = ok_result(&gh.review(false, &[]));
+    assert_eq!(claimed["status"], "pending", "{claimed}");
+    assert_eq!(claimed["copilot"]["state"], "pending", "{claimed}");
+    assert_eq!(claimed["request"]["outcome"], "requested", "{claimed}");
+    assert_eq!(claimed["request"]["recorded_now"], true, "{claimed}");
+    assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+    assert_eq!(gh.head_record()["request"]["outcome"], "requested");
+    let acts_path = gh.dir.path().join("replies.acts.json");
+    let mut acts: Value = serde_json::from_str(&fs::read_to_string(&acts_path).unwrap()).unwrap();
+    acts["events"][PR.to_string()][0]["created_at"] = json!("2026-01-29T15:00:00Z");
+    fs::write(&acts_path, acts.to_string()).unwrap();
+    let resent = ok_result(&gh.review(false, &[]));
+    assert_eq!(resent["status"], "pending", "{resent}");
+    assert_eq!(gh.requests(), 2, "{:?}", gh.log());
+    assert_eq!(gh.head_record()["request"]["resent"], true);
+    let acts: Value = serde_json::from_str(&fs::read_to_string(&acts_path).unwrap()).unwrap();
+    let again = acts["events"][PR.to_string()][1]["created_at"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    gh.answer(
+        &check_runs(HEAD, 1),
+        check_runs_page(
+            2,
+            vec![cancelled(31, "2026-01-29T15:10:00Z"), cancelled(32, &again)],
+        ),
+    );
+    let fell_back = ok_result(&gh.review(false, &[]));
+    assert_eq!(fell_back["request"]["outcome"], "fallback", "{fell_back}");
+    assert_eq!(fell_back["request"]["cause"], "unconfirmed", "{fell_back}");
+    assert_eq!(fell_back["status"], "complete", "{fell_back}");
+    assert_eq!(fell_back["verdict"], "approved", "{fell_back}");
+    assert_eq!(gh.requests(), 2, "{:?}", gh.log());
 }
 
 /// An off gate asks Copilot for nothing, yet Copilot's work already running
@@ -4698,6 +4755,342 @@ fn an_off_gate_holds_its_verdict_while_copilot_reviews_the_head() {
     assert_eq!(settled["verdict"], "off", "{settled}");
     assert_eq!(settled["copilot"]["state"], "none", "{settled}");
     assert_eq!(gh.requests(), 0, "{:?}", gh.log());
+}
+
+impl Github {
+    /// One `copilot-wait` through the built binary over the fake `gh`, its
+    /// bound one second on the real clock, so a wait that should answer at
+    /// once and does not ends quickly in `expired`.
+    fn copilot_wait(&self) -> Output {
+        let replies = self.dir.path().join("replies.json");
+        fs::write(&replies, serde_json::to_vec(&self.replies).unwrap()).unwrap();
+        support::isolated()
+            .args(["--state-dir", &self.dir.path().display().to_string()])
+            .args(["copilot-wait", "--repo", REPO, "--pr", &PR.to_string()])
+            .env("ORCH_COPILOT_HOLD_SECS", "1")
+            .env("PATH", support::tool_path(&[fixtures().as_path()]))
+            .env("GH_FAKE_REPLIES", &replies)
+            .env("GH_FAKE_LOG", self.dir.path().join("gh.log"))
+            .current_dir(self.dir.path())
+            .output()
+            .unwrap()
+    }
+
+    /// Every file under the world and its bytes, the fake's own map and log
+    /// aside.
+    fn files(&self) -> Vec<(String, Vec<u8>)> {
+        let mut files: Vec<(String, Vec<u8>)> = fs::read_dir(self.dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                !matches!(
+                    path.file_name().and_then(|n| n.to_str()),
+                    Some("replies.json" | "gh.log")
+                )
+            })
+            .map(|path| {
+                let bytes = if path.is_dir() {
+                    Vec::new()
+                } else {
+                    fs::read(&path).unwrap()
+                };
+                (path.display().to_string(), bytes)
+            })
+            .collect();
+        files.sort();
+        files
+    }
+
+    /// One run of the wait in the test, over the fake linked into the
+    /// world beside its map, on a clock that steps through each sleep and
+    /// hands the row the sleep's number to rewrite GitHub's answers.
+    fn copilot_wait_run(
+        &mut self,
+        bound: u64,
+        between: impl Fn(u32, &mut Map<String, Value>) + Sync + 'static,
+    ) -> orch_runtime::ops::copilot_wait::CopilotWaited {
+        let link = self.dir.path().join("gh");
+        if !link.exists() {
+            std::os::unix::fs::symlink(fixtures().join("gh"), &link).unwrap();
+        }
+        let map = self.dir.path().join("gh.json");
+        fs::write(&map, serde_json::to_vec(&self.replies).unwrap()).unwrap();
+        let clock = Stepped {
+            now: std::sync::Mutex::new((std::time::Instant::now(), 0)),
+            replies: std::sync::Mutex::new(self.replies.clone()),
+            map,
+            between: Box::new(between),
+        };
+        let request = orch_runtime::ops::copilot_wait::CopilotWait {
+            repo: REPO.to_owned(),
+            pr: PR,
+            bound: std::time::Duration::from_secs(bound),
+        };
+        orch_runtime::ops::copilot_wait::run(&request, &link, &clock).unwrap()
+    }
+}
+
+/// The detail gh's failed read keeps: the body the fixture's `fail` prints.
+const SERVER_ERROR: &str = "{\"message\":\"Server Error\"}";
+
+/// What a row does to GitHub's answers at a sleep, given its number.
+type Between = Box<dyn Fn(u32, &mut Map<String, Value>) + Sync>;
+
+/// A clock whose sleep passes at once: each sleep adds its time, counts
+/// itself, lets the row rewrite GitHub's answers and writes them back.
+struct Stepped {
+    now: std::sync::Mutex<(std::time::Instant, u32)>,
+    replies: std::sync::Mutex<Map<String, Value>>,
+    map: PathBuf,
+    between: Between,
+}
+
+impl orch_runtime::schedule::Clock for Stepped {
+    fn now(&self) -> std::time::Instant {
+        self.now.lock().unwrap().0
+    }
+
+    fn wall(&self) -> std::time::SystemTime {
+        std::time::SystemTime::UNIX_EPOCH
+    }
+
+    fn sleep(&self, d: std::time::Duration) {
+        let count = {
+            let mut now = self.now.lock().unwrap();
+            now.0 += d;
+            now.1 += 1;
+            now.1
+        };
+        let mut replies = self.replies.lock().unwrap();
+        (self.between)(count, &mut replies);
+        fs::write(&self.map, serde_json::to_vec(&*replies).unwrap()).unwrap();
+    }
+}
+
+/// The current-head Copilot wait is a read: with no Copilot work it answers
+/// `none` at once; a running check Copilot's review of the head already
+/// answered is `settled` with that review; a failed read is `unreadable`,
+/// never `none`. It requests nothing and writes nothing: the world's files
+/// stand as they were, the item's record among them.
+#[test]
+fn the_copilot_wait_reads_and_writes_nothing() {
+    let reviewed = copilot_review(32, "COMMENTED", "Reviewed.", "2026-01-29T15:12:00Z");
+    for (name, checks, reviews, fail, status, state) in [
+        (
+            "no work",
+            vec![],
+            json!([]),
+            false,
+            "complete",
+            Some("none"),
+        ),
+        (
+            "a running check its review answered",
+            vec![copilot_check(31, "in_progress")],
+            json!([reviewed]),
+            false,
+            "complete",
+            Some("settled"),
+        ),
+        (
+            "a failed check read",
+            vec![],
+            json!([]),
+            true,
+            "unreadable",
+            None,
+        ),
+    ] {
+        let mut gh = Github::review_world();
+        let count = checks.len();
+        gh.answer(&check_runs(HEAD, 1), check_runs_page(count, checks))
+            .answer(&reviews_path(), reviews);
+        if fail {
+            gh.fail(&check_runs(HEAD, 1));
+        }
+        let before = gh.files();
+        let result = ok_result(&gh.copilot_wait());
+        assert_eq!(result["status"], status, "{name}: {result}");
+        assert_eq!(result["head"], HEAD, "{name}: {result}");
+        match state {
+            Some(state) => assert_eq!(result["state"], state, "{name}: {result}"),
+            None => assert_eq!(
+                result["reason"], "check-runs-read-failed",
+                "{name}: {result}"
+            ),
+        }
+        if state == Some("settled") {
+            assert_eq!(result["review"], 32, "{name}: {result}");
+            assert_eq!(result["run"], 31, "{name}: {result}");
+        }
+        assert_eq!(gh.files(), before, "{name}: the wait wrote");
+        assert_eq!(gh.requests(), 0, "{name}: {:?}", gh.log());
+    }
+}
+
+/// The wait holds while Copilot's work on the head runs, reading it again
+/// every ten seconds of its own clock: work that ends in Copilot's review
+/// of the head is `settled` with that review; work still in flight at the
+/// bound, counted from the wait's own start, is `expired`; a head that
+/// moved drops the work seen on the one before and is read again.
+#[test]
+fn the_copilot_wait_holds_while_work_runs_and_ends_settled_expired_or_on_the_moved_head() {
+    let running = |gh: &mut Github| {
+        gh.answer(
+            &check_runs(HEAD, 1),
+            check_runs_page(1, vec![copilot_check(31, "in_progress")]),
+        );
+    };
+
+    let mut gh = Github::review_world();
+    running(&mut gh);
+    let reviews = reviews_path();
+    let settled = gh.copilot_wait_run(600, move |count, replies| {
+        if count == 2 {
+            replies.insert(
+                reviews.clone(),
+                json!({"body": [copilot_review(32, "COMMENTED", "Reviewed.", "2026-01-29T15:12:00Z")]}),
+            );
+        }
+    });
+    assert_eq!(
+        (
+            settled.status,
+            settled.state,
+            settled.review,
+            settled.run,
+            settled.waited
+        ),
+        ("complete", Some("settled"), Some(32), Some(31), 20),
+        "{settled:?}"
+    );
+
+    let mut gh = Github::review_world();
+    running(&mut gh);
+    let expired = gh.copilot_wait_run(30, |_, _| {});
+    assert_eq!(
+        (expired.status, expired.state, expired.run, expired.waited),
+        ("complete", Some("expired"), Some(31), 30),
+        "{expired:?}"
+    );
+    assert_eq!(gh.requests(), 0, "{:?}", gh.log());
+
+    let mut gh = Github::review_world();
+    running(&mut gh);
+    let view = format!("pr view {PR}");
+    let moved = gh.copilot_wait_run(600, move |count, replies| {
+        if count == 1 {
+            let mut body = review_view("", &[], false);
+            body["headRefOid"] = json!(MOVED);
+            replies.insert(view.clone(), json!({ "body": body }));
+            replies.insert(
+                check_runs(MOVED, 1),
+                json!({ "body": check_runs_page(0, vec![]) }),
+            );
+        }
+    });
+    assert_eq!(
+        (
+            moved.status,
+            moved.state,
+            moved.head.as_deref(),
+            moved.run,
+            moved.waited
+        ),
+        ("complete", Some("none"), Some(MOVED), None, 10),
+        "{moved:?}"
+    );
+}
+
+/// Every read the copilot-wait takes that fails or answers what GitHub
+/// never sends ends the wait `unreadable` with that read's cause, and no
+/// state, review or run read as a result: the check runs, the timeline
+/// (failed, an event of no kind, Copilot's review with no submission
+/// time), the head (failed, null, failed on the read that confirms it) and
+/// the reviews read that settles a running check. A failed read keeps
+/// gh's detail.
+#[test]
+fn the_copilot_wait_answers_each_failed_read_unreadable_with_its_cause() {
+    for (mode, reason, detail) in [
+        ("fail", "check-runs-read-failed", Some(SERVER_ERROR)),
+        ("timeline-fail", "timeline-read-failed", Some(SERVER_ERROR)),
+        ("timeline-invalid", "timeline-response-invalid", None),
+        (
+            "timeline-review-time-null",
+            "timeline-response-invalid",
+            None,
+        ),
+        ("invalid-head", "pull-request-response-invalid", None),
+        ("head-fail", "pull-request-read-failed", Some(SERVER_ERROR)),
+        (
+            "head-confirm-fail",
+            "pull-request-read-failed",
+            Some("gh: HTTP 403: Forbidden"),
+        ),
+        ("reviews-fail", "reviews-read-failed", Some(SERVER_ERROR)),
+    ] {
+        let mut gh = Github::review_world();
+        match mode {
+            "fail" => {
+                gh.fail(&check_runs(HEAD, 1));
+            }
+            "timeline-fail" => {
+                gh.fail(&timeline_path());
+            }
+            "timeline-invalid" => {
+                gh.answer(&timeline_path(), json!([{}]));
+            }
+            "timeline-review-time-null" => {
+                gh.answer(
+                    &timeline_path(),
+                    json!([
+                        {"event": "review_requested", "id": 73, "created_at": "2026-01-01T00:00:00Z", "requested_reviewer": {"login": COPILOT_REST}},
+                        {"event": "reviewed", "id": 81, "user": {"login": COPILOT_REST}, "commit_id": HEAD, "submitted_at": null}
+                    ]),
+                );
+            }
+            "invalid-head" => {
+                let mut body = review_view("", &[], false);
+                body["headRefOid"] = Value::Null;
+                gh.answer(&format!("pr view {PR}"), body);
+            }
+            "head-fail" => {
+                gh.fail(&format!("pr view {PR}"));
+            }
+            // The head's first read answers; the read that confirms it
+            // after the flight fails.
+            "head-confirm-fail" => {
+                std::os::unix::fs::symlink(fixtures().join("gh"), gh.dir.path().join("gh-answers"))
+                    .unwrap();
+                support::write_executable(
+                    &gh.dir.path().join("gh"),
+                    "#!/bin/bash\nhere=\"$(dirname \"$0\")\"\ncase \"$1 $2\" in\n  \"pr view\")\n    n=$(( $(cat \"$here/views\" 2>/dev/null || echo 0) + 1 ))\n    echo \"$n\" > \"$here/views\"\n    if [ \"$n\" -ge 2 ]; then echo 'gh: HTTP 403: Forbidden' >&2; exit 1; fi ;;\nesac\nexec \"$here/gh-answers\" \"$@\"\n",
+                );
+            }
+            _ => {
+                gh.answer(
+                    &check_runs(HEAD, 1),
+                    check_runs_page(1, vec![copilot_check(31, "in_progress")]),
+                )
+                .fail(&reviews_path());
+            }
+        }
+        let answer = gh.copilot_wait_run(600, |_, _| {});
+        assert_eq!(
+            (
+                answer.status,
+                answer.reason.as_deref(),
+                answer.detail.as_deref()
+            ),
+            ("unreadable", Some(reason), detail),
+            "{mode}: {answer:?}"
+        );
+        assert_eq!(
+            (answer.state, answer.review, answer.run),
+            (None, None, None),
+            "{mode}: {answer:?}"
+        );
+    }
 }
 
 /// Copilot's work in flight holds the call `pending` with its run while the
@@ -4737,9 +5130,44 @@ fn copilot_work_in_flight_holds_pending_within_the_bound_and_expires_past_it() {
             {"event": "review_requested", "id": 77, "created_at": "2026-01-01T00:00:00Z", "requested_reviewer": {"login": COPILOT_REST}},
             {"event": "reviewed", "submitted_at": "2026-01-01T00:05:00Z", "user": {"login": COPILOT_REST}}
         ]),
+    )
+    .answer(
+        &reviews_path(),
+        json!([copilot_review(41, "COMMENTED", "Looks fine.", "2026-01-01T00:05:00Z")]),
     );
     let result = ok_result(&gh.review(false, &[]));
     assert_eq!(result["copilot"]["state"], "none", "{result}");
+    assert_eq!(gh.requests(), 0, "{:?}", gh.log());
+
+    // Copilot's check in flight whose settlement's reviews read fails is
+    // unreadable, never settled: under a gate that asks for nothing and an
+    // off gate alike, the hold's read is the call's first reviews read.
+    for (name, requests, policy) in [
+        ("copilot requests off", "off", None),
+        (
+            "an off gate",
+            "on",
+            Some("[env]\nREVIEW_GATE_MODE = \"off\"\n"),
+        ),
+    ] {
+        let mut gh = Github::review_world();
+        if let Some(policy) = policy {
+            gh.policy(policy);
+        }
+        gh.answer(
+            &format!("pr view {PR}"),
+            review_view("APPROVED", &[("colleague", "APPROVED")], false),
+        )
+        .answer(
+            &check_runs(HEAD, 1),
+            check_runs_page(1, vec![copilot_check(31, "in_progress")]),
+        )
+        .fail(&reviews_path());
+        let result = ok_result(&gh.review(false, &[("PR_COPILOT_REQUESTS", requests)]));
+        assert_eq!(result["status"], "unreadable", "{name}: {result}");
+        assert_eq!(result["reason"], "reviews-read-failed", "{name}: {result}");
+        assert_eq!(gh.requests(), 0, "{name}: {:?}", gh.log());
+    }
 
     // A request GitHub removed is no work in flight: the gate asks again,
     // and the request it makes is the work the call then holds on.

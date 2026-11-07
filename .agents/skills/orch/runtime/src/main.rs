@@ -154,6 +154,17 @@ enum Verb {
         #[arg(long)]
         request: PathBuf,
     },
+    /// Wait while Copilot's work on a pull request's current head is in
+    /// flight, bounded by `ORCH_COPILOT_HOLD_SECS` from the wait's start:
+    /// `none`, `settled` or `expired`, a read that requests and writes
+    /// nothing.
+    CopilotWait {
+        /// `owner/name`.
+        #[arg(long)]
+        repo: String,
+        #[arg(long)]
+        pr: u64,
+    },
     /// Wait for a pull request's merge-queue outcome: its state and queue
     /// entry polled under a budget, what earlier polls saw recorded on the
     /// item before each next poll, an unresolved review thread while queued
@@ -1194,6 +1205,19 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 round,
             };
             serde_json::to_value(orch_runtime::proof::run(&settings, &item, &request)?)?
+        }
+        Verb::CopilotWait { repo, pr } => {
+            let settings = resolve_settings(&flags)?;
+            let request = orch_runtime::ops::copilot_wait::CopilotWait {
+                repo,
+                pr,
+                bound: orch_runtime::ops::copilot_wait::bound(&settings.review)?,
+            };
+            serde_json::to_value(orch_runtime::ops::copilot_wait::run(
+                &request,
+                Path::new("gh"),
+                &schedule::SystemClock,
+            )?)?
         }
         Verb::QueueWatch {
             item,

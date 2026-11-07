@@ -2002,12 +2002,23 @@ fn reached_context(_: &Caller, _: Option<&str>) -> Result<Marks, String> {
     ))
 }
 
+fn reached_context_off(_: &Caller, _: Option<&str>) -> Result<Marks, String> {
+    Ok(marks(
+        MarkKey::Reached(MarkKind::Context),
+        "910000",
+        "90",
+        Succession::Off,
+        "",
+    ))
+}
+
 /// Defect: a controller another lifecycle replaces told at its context mark
 /// to choose a successor and ask for the transfer its record refuses
 /// `succession-owned`. A live controller whose record names its succession
-/// command is handed that command under the mark line, with no successor
-/// walk, no transfer and no run of the command by the watch; the same
-/// record without the field keeps the succession route.
+/// command is handed that command under the mark line under either
+/// `ORCH_OVERSEER_SUCCESSION` value, with no successor walk, no transfer and
+/// no run of the command by the watch; the same record without the field
+/// keeps the setting's own line.
 #[test]
 fn a_controller_whose_record_names_a_succession_owner_is_handed_that_command_at_its_mark() {
     let dir = tempfile::tempdir().unwrap();
@@ -2032,47 +2043,37 @@ fn a_controller_whose_record_names_a_succession_owner_is_handed_that_command_at_
     record["succession"] = json!(["/h/bin/jarvis-session", "succeed", "--home", "/h/jarvis"]);
     fleet.set_overseer(record);
     let owned = fleet.read();
-    let mark =
-        format!("EVENT overseer-mark {pane} kind=context value=910000 mark=90 succession=on");
-    overseer_driver!(
-        server,
-        fleet,
-        reached_context,
-        no_walk,
-        readers,
-        transfers,
-        driver
+    let owner = "Hand this session over at the next safe point through the succession owner its record names: run /h/bin/jarvis-session succeed --home /h/jarvis and read its outcome; that owner replaces this controller, so choose no successor and ask for no transfer.".to_owned();
+    let route = hand_over(
+        dir.path(),
+        &pane,
+        "context",
+        "this session's own entry alone, ORCH_OVERSEER_PREFERENCE being unset; where this session's account has reached its headroom or rate mark, ORCH_OVERSEER_PREFERENCE=claude:standard:high,codex:standard:high without that account",
     );
-    assert_eq!(
-        lines(&driver.pass(&owned)),
-        vec![
-            mark.clone(),
-            "Hand this session over at the next safe point through the succession owner its record names: run /h/bin/jarvis-session succeed --home /h/jarvis and read its outcome; that owner replaces this controller, so choose no successor and ask for no transfer.".to_owned(),
-        ]
-    );
-    assert!(transfers.borrow().is_empty());
-    overseer_driver!(
-        server,
-        fleet,
-        reached_context,
-        no_walk,
-        readers2,
-        transfers2,
-        unowned
-    );
-    assert_eq!(
-        lines(&unowned.pass(&plain)),
-        vec![
-            mark,
-            hand_over(
-                dir.path(),
-                &pane,
-                "context",
-                "this session's own entry alone, ORCH_OVERSEER_PREFERENCE being unset; where this session's account has reached its headroom or rate mark, ORCH_OVERSEER_PREFERENCE=claude:standard:high,codex:standard:high without that account"
-            ),
-        ]
-    );
-    assert!(transfers2.borrow().is_empty());
+    let off = "ORCH_OVERSEER_SUCCESSION is off, so no successor opens: rewrite the overseer handoff file and ask the user to start a fresh overseer session.".to_owned();
+    type Judge = dyn Fn(&Caller, Option<&str>) -> Result<Marks, String>;
+    // The judge, the setting it reports, the fleet as read, the line under
+    // the mark.
+    let cases: [(&Judge, &str, &FleetState, &String); 4] = [
+        (&reached_context, "on", &owned, &owner),
+        (&reached_context_off, "off", &owned, &owner),
+        (&reached_context, "on", &plain, &route),
+        (&reached_context_off, "off", &plain, &off),
+    ];
+    for (judge, setting, state, line) in cases {
+        overseer_driver!(server, fleet, judge, no_walk, readers, transfers, driver);
+        assert_eq!(
+            lines(&driver.pass(state)),
+            vec![
+                format!(
+                    "EVENT overseer-mark {pane} kind=context value=910000 mark=90 succession={setting}"
+                ),
+                line.clone(),
+            ],
+            "succession={setting}"
+        );
+        assert!(transfers.borrow().is_empty(), "succession={setting}");
+    }
 }
 
 // U6h (step6-map § A10 row (6), § B "an overseer at its context limit";

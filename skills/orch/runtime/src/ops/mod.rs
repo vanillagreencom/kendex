@@ -26,6 +26,7 @@ pub mod accept;
 pub mod accounts;
 mod admission;
 mod controller;
+pub mod copilot_wait;
 mod item;
 mod lane;
 pub mod mail;

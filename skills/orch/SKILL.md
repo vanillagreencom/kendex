@@ -50,7 +50,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `plan-issues` | `PLAN_PATH linear\|github` | `workflows/plan-issues.md` | Convert plan items into issues |
 | `dev-start` | `[ISSUE_ID]` | `workflows/dev-start.md` | Delegate implementation |
 | `dev-fix` | `[ISSUE_ID]` | `workflows/dev-fix.md` | Delegate fix items |
-| `ci-fix` | `PR_NUMBER` \| `queue` | `workflows/ci-fix.md` | Analyze and fix CI failures |
+| `ci-fix` | `[PR_NUMBER]` | `workflows/ci-fix.md` | Analyze and fix a PR's CI failures, a merge-group run's included |
 | `review` | `[all]` \| `[last N]` \| `[HASH]` | `workflows/review.md` | On-demand review of local changes |
 | `review-codebase` | `[PATH]` | `workflows/review-codebase.md` | Whole-codebase fanout, findings only |
 | `review-pr` | `[PR_NUMBER]` | `workflows/review-pr.md` | Review cycle with fixes and QA |
@@ -104,7 +104,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `reconcile-work-items` | Read-only tracker sweep (parked containers, items stale past `RECONCILE_STALE_HOURS`, Done items with unchecked boxes). Exit 1 on findings |
 | `oversee-watch` | The transition entry for a repeat loop a released install started: that loop's pass hands its claim to `orch-runtime watch run --replace`, and every other call is refused. The fleet watch is `orch-runtime watch run`, started as [oversee § 4](workflows/oversee.md#4-watch-and-advance) states; its duties read every lane, local and hosted, the overseer's own session and the repositories, and append each pass's events to the log |
 | `oversee-cycle` | Record a merged lane's cycle or report per-class totals; fields, targets and repeated-miss rules: `--help` |
-| `oversee-succeed` | Write the handoff snapshot with `--write-only`, as [oversee § Succession](workflows/oversee.md#succession) step 3 requires. The hook's model-switch recovery runs the plain succession call detached |
+| `oversee-succeed` | Write the handoff snapshot with `--write-only`, as [oversee § Succession](workflows/oversee.md#succession) step 4 requires. The hook's model-switch recovery runs the plain succession call detached |
 | `overseer-approve` | Approve one exact PR head as the overseer's GitHub App from the token file `ORCH_OVERSEER_REVIEW_TOKEN_FILE` names, refusing `head-moved` when the live head does not start with the given one: [Copilot head notices](references/copilot-head-notices.md), `--help` |
 
 Every script takes `--help` bar `pr-view-json` and `resolve-base-branch`, whose only argument is a path, and `oversee-watch`, which serves a released repeat loop's pass alone. The review gate, CI and merge-queue waits, the runtime's `verify-review`, `verify-pr` and `queue-watch`: [gates.md](references/gates.md). Artifact checks: [artifact-checks.md](references/artifact-checks.md). Schemas: `schemas/workflow-state.md` (state file), `schemas/dev-return.md` (dev completion artifact), `schemas/dev-round.md` (fix-round item set), [review-finding.md](../reviewer/schemas/review-finding.md) (review/QA findings).

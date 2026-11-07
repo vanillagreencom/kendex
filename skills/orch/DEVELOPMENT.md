@@ -26,7 +26,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 That lib is where the four git environment variables are cleared, so a new suite adds the line rather than its own `unset`.
 
-Every test the runner discovers ships with the installed skill and must pass in a downstream project with no access to the kendex source checkout. Byte identity and idempotence of what an apply writes are covered upstream of the installed tree, in `crates/core/tests/byte_faithful.rs`.
+An installed skill omits its top-level `tests/`, so the runner's suites run from the catalog checkout. Byte identity and idempotence of what an apply writes are covered upstream of the installed tree, in `crates/core/tests/byte_faithful.rs`.
 
 Run probes that import Python fixtures with `python3 -B`. Bytecode caches under the catalog become render inputs.
 
@@ -53,7 +53,7 @@ The runtime at `runtime/` is its own Cargo workspace; run `cargo clippy --all-ta
 
 `overseer-approve`, `dev-validate-run` and `oversee-report` share `scripts/lib/gh-auth.sh`, which wraps the GitHub skill's helpers; the GitHub skill's `scripts/gh-auth-ladder` runs the same helpers for the runtime's watch. Each candidate is probed at most once, except the timed-out env token in step 1:
 
-1. Selected env token. `GH_TOKEN` or `GITHUB_TOKEN` set: validate with a bounded `gh api user`. A 403 naming an integration, which a GitHub App installation token gets, is validated again with a bounded `gh api installation/repositories`. A value with no known token prefix is selected only when that validation passes. A validation killed at `KENDEX_GITHUB_AUTH_TIMEOUT` (status 124) is asked once more before the keyring fallback, since the first call through an egress proxy can be the slow one; no suite holds the re-ask. One env token gets at most three checks in `oversee-report` and `gh-auth-ladder`, whose sanitize check comes first, each bounded by `KENDEX_GITHUB_AUTH_TIMEOUT`.
+1. Selected env token. `GH_TOKEN` or `GITHUB_TOKEN` set: validate with a bounded `gh api user`. A 403 naming an integration, which a GitHub App installation token gets, is validated again with a bounded `gh api installation/repositories`. A value with no known token prefix is selected only when that validation passes. A validation killed at `KENDEX_GITHUB_AUTH_TIMEOUT` (status 124) is asked once more before the keyring fallback, since the first call through an egress proxy can be the slow one, and a second killed check drops it. `tests/oversee_report.sh` holds that re-ask for `oversee-report`, and the github skill's `tests/env-first-auth.sh` holds it for `gh-auth-ladder`. One env token gets at most three checks in `oversee-report` and `gh-auth-ladder`, whose sanitize check comes first, each bounded by `KENDEX_GITHUB_AUTH_TIMEOUT`.
 2. Keyring fallback. That token failing: `env -u GH_TOKEN -u GITHUB_TOKEN gh auth status` once; on success, warn on stderr and unset the stale env token.
 3. Bot token. Keyring not recovering: unset the stale env tokens, then load a `GH_BOT_TOKEN` candidate from process env or project config. `op://` references resolve through `op read` only after the final source is selected. The `github.sh` router separately prefers a resolved `GH_BOT_TOKEN` over a resolved `GITHUB_TOKEN`, so bot access is not blocked by a user token.
 4. No-env keyring. No env token at startup and no bot token: probe keyring auth once.

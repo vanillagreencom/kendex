@@ -1133,6 +1133,16 @@ pub(crate) struct Work {
     pub(crate) started_at: Option<String>,
 }
 
+/// What the work reader finds on a head: Copilot's work in flight, an
+/// active check Copilot's review of the head already answered (its check
+/// and the review), or none.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Flight {
+    Work(Work),
+    Settled { check: Work, review: u64 },
+    None,
+}
+
 /// Whether a timeline actor is Copilot: the REST login with its suffix, or
 /// the bare `Copilot` the request events name it by.
 pub(super) fn copilot_actor(value: Option<&serde_json::Value>) -> bool {
@@ -1143,6 +1153,13 @@ pub(super) fn copilot_actor(value: Option<&serde_json::Value>) -> bool {
 }
 
 pub(super) fn copilot_work(gh: &Reader<'_>, repo: &str, pr: u64, head: &str) -> Read<Option<Work>> {
+    Ok(match copilot_flight(gh, repo, pr, head)? {
+        Flight::Work(work) => Some(work),
+        Flight::Settled { .. } | Flight::None => None,
+    })
+}
+
+pub(super) fn copilot_flight(gh: &Reader<'_>, repo: &str, pr: u64, head: &str) -> Read<Flight> {
     let checks = gh.collection::<CheckRunsPage>(
         Endpoint::CheckRuns,
         &format!("repos/{repo}/commits/{head}/check-runs?filter=all"),
@@ -1158,18 +1175,19 @@ pub(super) fn copilot_work(gh: &Reader<'_>, repo: &str, pr: u64, head: &str) -> 
         if active.id == 0 {
             return Err(Cause::ResponseInvalid(Endpoint::CheckRuns));
         }
+        let check = Work {
+            id: active.id,
+            started_at: active.started().map(str::to_owned),
+        };
         // GitHub can publish the submitted review before its check reads
         // completed; a review from before the check started answers an
         // earlier request, not this one.
         if let Some(started) = active.started()
-            && reviewed_since(gh, repo, pr, head, started)?
+            && let Some(review) = reviewed_since(gh, repo, pr, head, started)?
         {
-            return Ok(None);
+            return Ok(Flight::Settled { check, review });
         }
-        return Ok(Some(Work {
-            id: active.id,
-            started_at: active.started().map(str::to_owned),
-        }));
+        return Ok(Flight::Work(check));
     }
     let events: Vec<TimelineEvent> = gh.array(
         Endpoint::Timeline,
@@ -1223,7 +1241,7 @@ pub(super) fn copilot_work(gh: &Reader<'_>, repo: &str, pr: u64, head: &str) -> 
         }
     }
     let Some(request) = pending else {
-        return Ok(None);
+        return Ok(Flight::None);
     };
     let answered = copilot.iter().any(|check| {
         matches!(check.status, RunStatus::Completed)
@@ -1232,27 +1250,41 @@ pub(super) fn copilot_work(gh: &Reader<'_>, repo: &str, pr: u64, head: &str) -> 
                 .zip(request.started_at.as_deref())
                 .is_some_and(|(started, requested)| started >= requested)
     });
-    Ok(if answered { None } else { Some(request) })
+    Ok(if answered {
+        Flight::None
+    } else {
+        Flight::Work(request)
+    })
 }
 
-/// Whether Copilot submitted a review of `head` at or after `since`: an
+/// Copilot's last review of `head` submitted at or after `since`: an
 /// approval, a comment or a change request, never a pending or dismissed
 /// one.
-fn reviewed_since(gh: &Reader<'_>, repo: &str, pr: u64, head: &str, since: &str) -> Read<bool> {
+fn reviewed_since(
+    gh: &Reader<'_>,
+    repo: &str,
+    pr: u64,
+    head: &str,
+    since: &str,
+) -> Read<Option<u64>> {
     let reviews: Vec<Review> = gh.array(
         Endpoint::Reviews,
         &format!("repos/{repo}/pulls/{pr}/reviews"),
     )?;
     let reviewer = format!("{COPILOT_REVIEWER}[bot]");
-    Ok(reviews.iter().any(|review| {
-        matches!(&review.user, Nullable::Present(user) if user.login == reviewer)
-            && review.commit_id == Nullable::Present(head.to_owned())
-            && matches!(
-                review.state.as_str(),
-                "APPROVED" | "COMMENTED" | "CHANGES_REQUESTED"
-            )
-            && matches!(&review.submitted_at, Optional::Present(at) if at.as_str() >= since)
-    }))
+    Ok(reviews
+        .iter()
+        .rev()
+        .find(|review| {
+            matches!(&review.user, Nullable::Present(user) if user.login == reviewer)
+                && review.commit_id == Nullable::Present(head.to_owned())
+                && matches!(
+                    review.state.as_str(),
+                    "APPROVED" | "COMMENTED" | "CHANGES_REQUESTED"
+                )
+                && matches!(&review.submitted_at, Optional::Present(at) if at.as_str() >= since)
+        })
+        .map(|review| review.id))
 }
 
 #[cfg(test)]

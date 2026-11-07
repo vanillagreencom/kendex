@@ -10,7 +10,7 @@ use serde_json::Value;
 
 pub(crate) use super::Acted;
 use super::evidence;
-pub(crate) use super::evidence::Work;
+pub(crate) use super::evidence::{Flight, Work};
 use super::wire::{
     BranchProtected, ClassicProtection, LatestReview, Nullable, Optional, Pull,
     PullRequestParameters, PullRequestState, Review, ReviewView, Rule, RuleKind, ThreadsReply,
@@ -326,6 +326,12 @@ fn arrival(events: &[TimelineEvent], head: &str) -> Read<String> {
 /// timeline request no later Copilot review or removal answered.
 pub(crate) fn copilot_work(gh: &Gh, repo: &str, pr: u64, head: &str) -> Read<Option<Work>> {
     evidence::copilot_work(&Reader { gh }, repo, pr, head)
+}
+
+/// Copilot's flight on the head as the work reader judges it, for the
+/// current-head wait, which reports a settled check apart from no work.
+pub(crate) fn copilot_flight(gh: &Gh, repo: &str, pr: u64, head: &str) -> Read<Flight> {
+    evidence::copilot_flight(&Reader { gh }, repo, pr, head)
 }
 
 /// The unresolved review threads over every page. A partial reply, a

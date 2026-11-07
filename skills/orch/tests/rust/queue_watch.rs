@@ -38,6 +38,35 @@ const MERGED_AT: &str = "2026-07-24T10:00:00Z";
 /// seconds of real time at one advance per 20 ms.
 const RUN_OUT_ADVANCES: u32 = 3000;
 
+/// The wait's clock over the row's, freed once the run-out's advances are
+/// spent: a sleep after that panics in the wait's own thread, so a wait no
+/// deadline ends fails its row at the join instead of holding it.
+struct Freeable<'a> {
+    clock: &'a dyn Clock,
+    free: std::sync::atomic::AtomicBool,
+}
+
+impl Freeable<'_> {
+    fn freed(&self) -> bool {
+        self.free.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl Clock for Freeable<'_> {
+    fn now(&self) -> Instant {
+        self.clock.now()
+    }
+
+    fn wall(&self) -> SystemTime {
+        self.clock.wall()
+    }
+
+    fn sleep(&self, d: Duration) {
+        assert!(!self.freed(), "the wait slept again after its run-out");
+        self.clock.sleep(d);
+    }
+}
+
 fn env() -> Env {
     Env {
         now_secs: 1_769_700_000,
@@ -248,14 +277,18 @@ impl World {
             .count()
     }
 
-    /// A guard mutation's answer: the payload on success, a GraphQL
+    /// A guard mutation's answer: its payload type's fields on success
+    /// (`DequeuePullRequestPayload` the dequeued entry,
+    /// `DisablePullRequestAutoMergePayload` the pull request), a GraphQL
     /// `errors` body with gh's nonzero exit otherwise.
     fn mutation(&mut self, name: &str, ok: bool) -> &mut Self {
-        let reply = if ok {
-            json!({"body": {"data": {name: {"clientMutationId": null, "mergeQueueEntry": {"id": "MQE_1"}}}}})
-        } else {
+        let reply = if !ok {
             json!({"body": {"data": {name: null}, "errors": [{"message": format!("{name} refused")}]},
                    "exit": 1, "stderr": format!("gh: {name} refused")})
+        } else if name == "dequeuePullRequest" {
+            json!({"body": {"data": {name: {"clientMutationId": null, "mergeQueueEntry": {"id": "MQE_1"}}}}})
+        } else {
+            json!({"body": {"data": {name: {"clientMutationId": null, "pullRequest": {"id": NODE_ID}}}}})
         };
         self.replies.insert(format!("mutation {name}"), reply);
         self
@@ -355,13 +388,17 @@ impl World {
     ) -> Reply {
         self.write();
         let (item, programs, root) = (self.item.clone(), self.programs(), self.root());
+        let freeable = Freeable {
+            clock: wait_clock,
+            free: std::sync::atomic::AtomicBool::new(false),
+        };
         std::thread::scope(|s| {
-            let handle =
-                s.spawn(|| run(&item, request, &programs, &root, wait_clock, &env(), LOCK));
+            let handle = s.spawn(|| run(&item, request, &programs, &root, &freeable, &env(), LOCK));
             // The wait sleeps on a clock only this thread releases: run it
             // out by a bounded count of deadlines, as long in real time as
-            // the slowest fixture read's own bound, so a wait no advance ends
-            // is left to the scope's join, never spun on.
+            // the slowest fixture read's own bound. A wait no advance ended
+            // is woken with its clock freed, so its next sleep panics and
+            // the scope's join ends, never spun on or waited on.
             let run_out = |handle: &std::thread::ScopedJoinHandle<'_, _>| {
                 for _ in 0..RUN_OUT_ADVANCES {
                     if handle.is_finished() {
@@ -370,6 +407,10 @@ impl World {
                     clock.release(request.max_wait);
                     std::thread::sleep(Duration::from_millis(20));
                 }
+                freeable
+                    .free
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                clock.release(secs(365 * 86_400));
             };
             let driven =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drive(self, clock)));
@@ -384,7 +425,7 @@ impl World {
                 if std::time::Instant::now() >= bound {
                     let memory = self.memory();
                     run_out(&handle);
-                    let reply = handle.join().expect("the wait's thread");
+                    let reply = handle.join().map_err(|_| "its thread panicked");
                     panic!(
                         "the wait still polled after 60 s of real time; its memory then: {memory}; let run out it answered {reply:?}"
                     );

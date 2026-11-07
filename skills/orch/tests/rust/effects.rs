@@ -6649,38 +6649,82 @@ fn a_copilot_lanes_record_says_whether_its_line_grants_allow_all() {
 }
 
 #[test]
-fn a_refused_launch_keeps_the_refusals_detail_word_beside_the_dependencys_cause() {
+fn a_refused_launch_keeps_the_dependencys_cause_as_detail_or_beside_the_refusals_own() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let runner = Runner::new(&server, "stub-record");
     runner.init_fleet();
-    // The operator's `EXTENSIONS` flag off and no status line to fall back
-    // on: agent-runtime's trust preparation refuses the Copilot home with its
-    // own detail word and the status line's cause.
-    let account = dir.path().join("copilot-account");
-    std::fs::create_dir_all(&account).unwrap();
-    let settings = account.join("settings.json");
-    std::fs::write(
-        &settings,
-        r#"{"enabledFeatureFlags": {"EXTENSIONS": false}}"#,
-    )
-    .unwrap();
-    let mut request = launch_request("KEN-D1", runner.state_dir());
-    request["harness"] = json!("copilot");
-    request["account"] = json!(account.display().to_string());
-    let panes_before = server.panes().len();
-    let report = effect_report(&runner.op_fleet(&request));
-    let observation = &report["intent"]["observation"];
-    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
-    assert_eq!(observation["cause"], "no-context-reader", "{report}");
-    assert_eq!(
-        observation["file"],
-        settings.display().to_string(),
-        "{report}"
+    // Each home is refused by agent-runtime's trust preparation over its
+    // planted file. A Claude config that is not JSON names the parser's cause
+    // and no detail of its own. A Copilot home whose `EXTENSIONS` flag is off,
+    // with no status line to fall back on, names its own detail word beside
+    // the status line's cause. A `None` detail is the parser's text.
+    type Case<'a> = (
+        &'a str,
+        &'a str,
+        &'a str,
+        &'a str,
+        &'a str,
+        &'a str,
+        Option<&'a str>,
+        Option<&'a str>,
     );
-    assert_eq!(observation["detail"], "disabled", "{report}");
-    assert_eq!(observation["detail_cause"], "no-status-line", "{report}");
-    assert_eq!(server.panes().len(), panes_before, "no window: {report}");
+    let cases: [Case; 2] = [
+        (
+            "KEN-D1",
+            "claude",
+            ".claude.json",
+            "{not json",
+            "config-unreadable",
+            "path",
+            None,
+            None,
+        ),
+        (
+            "KEN-D2",
+            "copilot",
+            "settings.json",
+            r#"{"enabledFeatureFlags": {"EXTENSIONS": false}}"#,
+            "no-context-reader",
+            "file",
+            Some("disabled"),
+            Some("no-status-line"),
+        ),
+    ];
+    for (item, harness, file, text, key, file_field, detail, detail_cause) in cases {
+        let account = dir.path().join(format!("{harness}-account"));
+        std::fs::create_dir_all(&account).unwrap();
+        let planted = account.join(file);
+        std::fs::write(&planted, text).unwrap();
+        let mut request = launch_request(item, runner.state_dir());
+        request["harness"] = json!(harness);
+        request["account"] = json!(account.display().to_string());
+        let panes_before = server.panes().len();
+        let report = effect_report(&runner.op_fleet(&request));
+        let observation = &report["intent"]["observation"];
+        assert_eq!(report["intent"]["outcome"], "failed", "{item}: {report}");
+        assert_eq!(observation["cause"], key, "{item}: {report}");
+        assert_eq!(
+            observation[file_field],
+            planted.display().to_string(),
+            "{item}: {report}"
+        );
+        let observed = observation["detail"].as_str().unwrap_or_default();
+        match detail {
+            Some(word) => assert_eq!(observed, word, "{item}: {report}"),
+            None => assert!(!observed.is_empty(), "{item}: {report}"),
+        }
+        assert_eq!(
+            observation.get("detail_cause").and_then(Value::as_str),
+            detail_cause,
+            "{item}: {report}"
+        );
+        assert_eq!(
+            server.panes().len(),
+            panes_before,
+            "{item}: no window: {report}"
+        );
+    }
 }
 
 /// A hosted Copilot lane, whose home is on its host, and a hosted Pi lane

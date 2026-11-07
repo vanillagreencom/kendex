@@ -4,8 +4,7 @@ Analyze CI failures and route them to the right agent.
 
 | Command | Flow |
 |---------|------|
-| `ci-fix` \| `ci-fix [PR_NUMBER]` | § 1 → § 2 → § 3 → § 5 |
-| `ci-fix queue` | § 1 → § 2 → § 4 → § 5 |
+| `ci-fix` \| `ci-fix [PR_NUMBER]` | § 1 → § 2 → § 3 → § 5, with § 4 first for a merge-group run |
 
 **Caller context** (via `⤵`): managed `lifecycle` uses the caller's `issue_id`; standalone is the default.
 
@@ -15,7 +14,7 @@ Analyze CI failures and route them to the right agent.
 .agents/skills/github/scripts/github.sh pr-list-failing
 ```
 
-`ci-fix queue` uses `pr-list-failing --all`. With several failures and no argument, present them and ask which to fix:
+With several failures and no argument, present them and ask which to fix:
 
 Output: [Lane Output](../references/skill-rules.md#lane-output).
 
@@ -47,7 +46,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --
 
 ## 3. Classify And Route
 
-Formatting, obvious lint, and a missing import are fixed directly; a test failure, a build error, or non-obvious lint is delegated.
+Formatting, obvious lint, and a missing import are fixed directly; a test failure, a build error, or non-obvious lint is delegated. A failure in a merge-group run takes § 4 first, which names the PR whose commits caused it.
 
 Resolve the decision mode once for this post-PR workflow. Named stops use [SKILL.md § The Cycle](../SKILL.md#the-cycle).
 
@@ -64,7 +63,7 @@ git -C "[WORKTREE_PATH]" commit -am "fix([ISSUE_ID]): Resolve CI failure ([ERROR
 git -C "[WORKTREE_PATH]" push
 ```
 
-→ § 4 for a merge queue, otherwise § 5.
+→ § 5.
 
 ### 3.2 Delegated Fixes
 
@@ -111,28 +110,29 @@ Worktree: [WORKTREE_PATH]
 Report: what was fixed, the validate status, and any unrelated failures.
 </delegation_format>
 
-→ § 4 for a merge queue, otherwise § 5.
+→ § 5.
 
-## 4. Merge Queue Integration
+## 4. Merge-Group Failures
 
-For `ci-fix queue`, the failure is in a draft merge-group PR that may need dequeuing while it is fixed.
+A merge-group run, the one [merge-pr.md § 5](merge-pr.md#5-execute-the-merge) Recovery cycle step 1 points this workflow at as `[RUN_ID]`, runs on GitHub's temporary queue branch and carries no pull request. Its head carries this PR's commits on top of those of the PRs queued ahead of it. Read that head as `[GROUP_HEAD]`, the PR's base branch as `[BASE_REF]`, then the commits the head carries past that base:
 
 ```bash
-gh pr view [DRAFT_PR] --json commits --jq '.commits[].oid'
+env -u GH_REPO -u GITHUB_REPOSITORY gh run view [RUN_ID] --json headSha --jq .headSha
+env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json baseRefName --jq .baseRefName
+env -u GH_REPO -u GITHUB_REPOSITORY gh api "repos/{owner}/{repo}/compare/[BASE_REF]...[GROUP_HEAD]" --jq '.commits[] | [.sha, .commit.message] | @tsv'
 ```
 
-Cross-reference those commits with the original PRs to identify which file failed, which commit introduced it, and which PR that commit belongs to. A single identifiable PR routes to that PR's agent; a genuine cross-PR integration issue routes to the architecture reviewer for analysis. When the source stays unclear after that analysis, `auto-recommended` records `ci-source-unclear`; `ask` presents the evidence to the user.
+Cross-reference those commits with the original PRs to identify which file failed, which commit introduced it, and which PR that commit belongs to. A failure this PR's own commits cause takes § 3. Another single identifiable PR routes to that PR's agent; a genuine cross-PR integration issue routes to the architecture reviewer for analysis, delegated from this PR's worktree. When the source stays unclear after that analysis, `auto-recommended` records `ci-source-unclear`; `ask` presents the evidence to the user.
 
-For an integration issue, create a worktree from the draft branch (`worktree create [ISSUE_ID] "[DRAFT_BRANCH]" --pr [DRAFT_PR_NUMBER]`) and delegate analysis.
-
-Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the worktree just created from the draft branch.
+Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is this PR's worktree, resolved as § 3.1 resolves it.
 
 <delegation_format>
-Merge queue CI failure — integration issue across stacked PRs.
+Merge queue CI failure — integration issue across the PRs of one merge group.
 
-Draft PR: #[PR_NUMBER]
+PR: #[PR_NUMBER]
+Merge-group run: [RUN_ID]
 Worktree: [WORKTREE_PATH]
-Stack: [PRs in the stack with their domains]
+Group: [the PRs in the group with their domains]
 
 Error output:
 [error logs]
@@ -155,7 +155,7 @@ Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gat
 env PR_REVIEW_WAIT_SECS=300 .agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request "[WORKTREE_PATH]/tmp/verify-review-request-[STATE_KEY].json"
 ```
 
-Its reply's `mode` is `GATE_MODE`, the item's recorded one. `off` answers `complete` with verdict `off`: go to the CI wait; a `blocked` verdict under either mode takes the `blocked` row below. A refusal is no mode, so report it and stop. On `approval` the call has also requested Copilot on a new head Copilot has not reviewed, whatever the verdict: route its `request` by [Copilot requests](../references/gates.md#copilot-requests) before the verdict. Route the verdict:
+Its reply's `mode` is `GATE_MODE`, the item's recorded one. Under `off` the wait ends at its first reply: a `complete` verdict `off`, or a `pending copilot-pending` reply while Copilot's work runs on the head, which merge-pr § 5 step 1's call holds before the merge call, goes to the CI wait. A `blocked` verdict under either mode takes the `blocked` row below. A refusal is no mode, so report it and stop. On `approval` the call has also requested Copilot on a new head Copilot has not reviewed, whatever the verdict: route its `request` by [Copilot requests](../references/gates.md#copilot-requests) before the verdict. Route the verdict:
 
 - `approved` / `proceeded` → wait for CI. ci-fix writes no `pr_approval.reviewer_down` for `proceeded`; the caller records it. It is a LOCAL verdict — orch posts no status.
 - `comments` / `changes_requested` → new feedback on the fix push. Managed: return it to the caller's review-gate handling. Standalone: run that triage pass, then re-run this step.
