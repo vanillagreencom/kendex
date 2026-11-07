@@ -519,6 +519,8 @@ set-hook -g after-new-window "rename-window user-hook"
                             (self.root / "release").touch()
                             request.communicate(timeout=10)
                         else:
+                            if phase == "predecessor-ended":
+                                self.abandon_successor(transfer)
                             os.kill(identity["pid"], signal.SIGKILL)
                             request.communicate(timeout=10)
                     pause.unlink()
@@ -631,6 +633,8 @@ set-hook -g after-new-window "rename-window user-hook"
                         transfer = json.loads(self.record.read_text())
                         self.assertEqual(transfer["account"], str(alternative))
                         self.assertNotIn("spent_account", transfer["transfer"])
+                        if not adopted:
+                            self.abandon_successor(transfer)
                         os.kill(identity["pid"], signal.SIGKILL)
                         request.communicate(timeout=10)
                     pause.unlink()
@@ -917,8 +921,9 @@ set-hook -g after-new-window "rename-window user-hook"
 
     def test_adoption_recovery(self):
         # Before the unmanaged process ends, an interruption leaves it the
-        # only controller; after its end, the transfer fails and succeed
-        # completes it. The transition writes are succession's, one code path
+        # only controller; after its end, the successor's runner takes the
+        # transfer, and with that runner gone too the transfer fails and
+        # succeed completes it. The transition writes are succession's, one code path
         # for every harness, so one launch shape reaches each. A retry after a
         # refusal before the end follows the consumer's pane when the consumer
         # moves it, and a retry after the end keeps the brief Start named.
@@ -927,69 +932,73 @@ set-hook -g after-new-window "rename-window user-hook"
         script = skills / "jarvis/scripts/jarvis-session"
         pause = self.home / ".succession-pause.json"
         phases = ("saved", "waiting", "predecessor-ended", "confirmed", "brief-delivered", "complete")
+        rows = [(phase, edge, False) for phase in phases for edge in ("before", "after")] + [("confirmed", "after", True)]
         with patch.object(session_test, "SCRIPT", script):
-            for phase in phases:
-                for edge in ("before", "after"):
-                    with self.subTest(phase=phase, edge=edge):
-                        print("adoption-row: phase=" + phase + " edge=" + edge, flush=True)
-                        contents = self.handoff()
-                        consumer = self.unmanaged("claude")
-                        native_count = self.launched()
-                        argv = [str(script), "start", "--home", str(self.home), "--harness", "claude", "--account", str(self.account),
-                                "--mode", "new", "--origin", "manual", "--adopt-pane", consumer["pane"], "--adopt-pid", str(consumer["process"]["pid"])]
-                        briefed = (phase, edge) == ("predecessor-ended", "after")
-                        if briefed:
-                            argv += ["--brief-file", str(brief)]
-                        identity, request = self.paused(argv, pause, phase, edge, consumer["env"])
-                        with request:
-                            persisted = json.loads(self.record.read_text()) if self.record.exists() else None
-                            during, _ = self.call("status")
-                            unrecorded = (phase, edge) == ("saved", "before")
-                            completed = (phase, edge) == ("complete", "after")
-                            before_end = phase in ("saved", "waiting")
-                            self.assertEqual(during["state"], "stopped" if unrecorded else "running" if completed else "handing-over")
-                            self.assertEqual(self.process_live(consumer["harness"]), before_end)
-                            self.assertEqual(self.launched() - native_count,
-                                             1 if phase in ("confirmed", "brief-delivered", "complete") else 0)
-                            self.assertTrue(self.process_live(identity))
-                            os.kill(identity["pid"], signal.SIGKILL)
-                            request.communicate(timeout=10)
-                        pause.unlink()
-                        if unrecorded:
-                            self.assertEqual(self.call("status")[0]["state"], "stopped")
-                            self.assertTrue(self.process_live(consumer["harness"]))
-                            answer, code = self.adopt(consumer)
-                            self.assertEqual(code, 0, json.dumps(answer) + "\n" + self.stderr + "\n" + self.session_log())
-                        elif before_end:
-                            settled = self.wait("running")
-                            self.assertEqual(settled["terminal"]["pane"], consumer["pane"])
-                            self.assertTrue(self.process_live(consumer["harness"]))
-                            self.successor_ended()
-                            if edge == "after":
-                                # A move keeps the pane and its process but gives it another window.
-                                subprocess.run(["tmux", "-L", consumer["label"], "break-pane", "-d", "-s", consumer["pane"]],
-                                               capture_output=True, env=self.env, timeout=10, check=True)
-                                self.assertEqual((self.call("status")[0]["terminal"] or {}).get("pane"), consumer["pane"])
-                            self.retry()
-                        elif completed:
-                            self.assertEqual(self.wait("running")["terminal"], persisted["terminal"])
-                        else:
-                            settled = self.wait("failed", "handover-failed")
-                            self.assertTrue(settled["detail"])
-                            failed = json.loads(self.record.read_text())
-                            self.assertEqual(failed["transfer"]["handoff"], persisted["transfer"]["handoff"])
-                            self.assertEqual(Path(failed["transfer"]["handoff"]).read_text(), contents)
-                            self.successor_ended()
-                            self.retry()
-                        if not completed:
-                            self.wait()
-                        recovered = json.loads(self.record.read_text())
-                        self.assertEqual(recovered["transfer"]["phase"], "complete")
-                        self.adoption_ended(consumer)
-                        if briefed:
-                            self.assertEqual(self.prompts(recovered["pending"]["native_session_id"]), [private])
-                        self.call("stop")
-                        self.wait("stopped", persisted_stop=True)
+            for phase, edge, abandoned in rows:
+                with self.subTest(phase=phase, edge=edge, abandoned=abandoned):
+                    print("adoption-row: phase=" + phase + " edge=" + edge + " abandoned=" + str(abandoned).lower(), flush=True)
+                    contents = self.handoff()
+                    consumer = self.unmanaged("claude")
+                    native_count = self.launched()
+                    argv = [str(script), "start", "--home", str(self.home), "--harness", "claude", "--account", str(self.account),
+                            "--mode", "new", "--origin", "manual", "--adopt-pane", consumer["pane"], "--adopt-pid", str(consumer["process"]["pid"])]
+                    briefed = abandoned
+                    if briefed:
+                        argv += ["--brief-file", str(brief)]
+                    identity, request = self.paused(argv, pause, phase, edge, consumer["env"])
+                    with request:
+                        persisted = json.loads(self.record.read_text()) if self.record.exists() else None
+                        during, _ = self.call("status")
+                        unrecorded = (phase, edge) == ("saved", "before")
+                        completed = (phase, edge) == ("complete", "after")
+                        before_end = phase in ("saved", "waiting")
+                        self.assertEqual(during["state"], "stopped" if unrecorded else "running" if completed else "handing-over")
+                        self.assertEqual(self.process_live(consumer["harness"]), before_end)
+                        self.assertEqual(self.launched() - native_count,
+                                         1 if phase in ("confirmed", "brief-delivered", "complete") else 0)
+                        self.assertTrue(self.process_live(identity))
+                        if abandoned:
+                            self.abandon_successor(persisted)
+                        os.kill(identity["pid"], signal.SIGKILL)
+                        request.communicate(timeout=10)
+                    pause.unlink()
+                    if unrecorded:
+                        self.assertEqual(self.call("status")[0]["state"], "stopped")
+                        self.assertTrue(self.process_live(consumer["harness"]))
+                        answer, code = self.adopt(consumer)
+                        self.assertEqual(code, 0, json.dumps(answer) + "\n" + self.stderr + "\n" + self.session_log())
+                    elif before_end:
+                        settled = self.wait("running")
+                        self.assertEqual(settled["terminal"]["pane"], consumer["pane"])
+                        self.assertTrue(self.process_live(consumer["harness"]))
+                        self.successor_ended()
+                        if edge == "after":
+                            # A move keeps the pane and its process but gives it another window.
+                            subprocess.run(["tmux", "-L", consumer["label"], "break-pane", "-d", "-s", consumer["pane"]],
+                                           capture_output=True, env=self.env, timeout=10, check=True)
+                            self.assertEqual((self.call("status")[0]["terminal"] or {}).get("pane"), consumer["pane"])
+                        self.retry()
+                    elif completed or not abandoned:
+                        # A worker killed after the unmanaged process ended
+                        # leaves the transfer to the successor's runner.
+                        self.assertEqual(self.wait("running")["terminal"], persisted["terminal"])
+                    else:
+                        settled = self.wait("failed", "handover-failed")
+                        self.assertTrue(settled["detail"])
+                        failed = json.loads(self.record.read_text())
+                        self.assertEqual(failed["transfer"]["handoff"], persisted["transfer"]["handoff"])
+                        self.assertEqual(Path(failed["transfer"]["handoff"]).read_text(), contents)
+                        self.successor_ended()
+                        self.retry()
+                    if not completed:
+                        self.wait()
+                    recovered = json.loads(self.record.read_text())
+                    self.assertEqual(recovered["transfer"]["phase"], "complete")
+                    self.adoption_ended(consumer)
+                    if briefed:
+                        self.assertEqual(self.prompts(recovered["pending"]["native_session_id"]), [private])
+                    self.call("stop")
+                    self.wait("stopped", persisted_stop=True)
 
     def successor_ended(self):
         # The abandoned successor's pane follows its worker, and the home's
@@ -1070,6 +1079,85 @@ set-hook -g after-new-window "rename-window user-hook"
         self.assertIn(result.returncode, (0, 1), result.stderr)
         return result.returncode == 0
 
+    def test_reaped_predecessor_scope(self):
+        # A host stop of the predecessor's pane scope, such as a reaper of
+        # scopes whose pane process is gone, a logind session end or a
+        # terminal close, signals every process the scope still holds once
+        # that pane has ended: the worker succession detached from the pane
+        # and its children, the one process group signalled here. The
+        # successor finishes the transfer, and the record and session log name
+        # the worker and its signal. One row per worker stretch after the
+        # predecessor's end: before it saves that end, and while it awaits
+        # the successor's Start. A walled successor fails the transfer it
+        # took, as the worker's own failure does: the record releases it and
+        # the task window open beside it closes with its window.
+        skills = self.instrumented()
+        script = skills / "jarvis/scripts/jarvis-session"
+        pause = self.home / ".succession-pause.json"
+        brief, _, private = self.private_brief()
+        fixture = self.home / ".fixture.json"
+        with patch.object(session_test, "SCRIPT", script):
+            for phase, edge, walled in (("predecessor-ended", "before", False), ("brief-delivered", "after", False),
+                                        ("predecessor-ended", "before", True)):
+                with self.subTest(phase=phase, edge=edge, walled=walled):
+                    self.handoff()
+                    self.call("start", mode="new", brief=brief)
+                    self.wait()
+                    previous = json.loads(self.record.read_text())
+                    if walled:
+                        fixture.write_text(json.dumps(json.loads(fixture.read_text()) | {"auth_mode": "current"}))
+                        task = subprocess.run(["tmux", "-L", self.label, "new-window", "-d", "-t", "=jarvis", "-P", "-F", "#{pane_id}",
+                                               self.env["JARVIS_TEST_BASH"], "--noprofile", "--norc"],
+                                              capture_output=True, text=True, env=self.env, timeout=10, check=True).stdout.strip()
+                        subprocess.run(["tmux", "-L", self.label, "set-option", "-p", "-t", task, "@jarvis-task", "task-1"],
+                                       capture_output=True, env=self.env, timeout=10, check=True)
+                    identity, request = self.paused([str(script), "succeed", "--home", str(self.home)], pause, phase, edge, self.env)
+                    with request:
+                        transfer = json.loads(self.record.read_text())
+                        self.assertFalse(self.process_live(previous["process"]))
+                        os.killpg(identity["pid"], signal.SIGTERM)
+                        deadline = time.monotonic() + 10
+                        while self.process_live(identity):
+                            self.assertLess(time.monotonic(), deadline, "the signalled worker did not exit")
+                            time.sleep(0.05)
+                        request.communicate(timeout=10)
+                    pause.unlink()
+                    if walled:
+                        self.wait("failed", "handover-failed")
+                        self.successor_ended()
+                        failed = json.loads(self.record.read_text())
+                        self.assertNotIn("worker", failed)
+                        self.assertIsNone(failed["terminal"])
+                        self.assertEqual(failed["worker_ended"], {"pid": identity["pid"], "cause": "SIGTERM"})
+                        fixture.write_text(json.dumps(json.loads(fixture.read_text()) | {"auth_mode": None}))
+                        self.call("stop")
+                        self.wait("stopped", persisted_stop=True)
+                        continue
+                    settled = self.wait("running")
+                    self.assertEqual(settled["terminal"], transfer["terminal"])
+                    successor = json.loads(self.record.read_text())
+                    self.assertEqual(successor["transfer"]["phase"], "complete")
+                    self.assertEqual(successor["worker_ended"], {"pid": identity["pid"], "cause": "SIGTERM"})
+                    self.assertEqual(self.prompts(successor["pending"]["native_session_id"]), [private])
+                    # Operators read the keyed line in session.log.
+                    generation = "generation=" + str(successor["generation"])
+                    adopted = [line.split()[1:] for line in self.session_log().splitlines()
+                               if line.startswith("jarvis-session: transfer=adopted ") and generation in line.split()]
+                    self.assertEqual(adopted, [["transfer=adopted", generation, "worker=" + str(identity["pid"]), "cause=SIGTERM"]])
+                    self.call("stop")
+                    self.wait("stopped", persisted_stop=True)
+
+    def abandon_successor(self, transfer):
+        # The successor's pane, runner and native session end while the
+        # paused worker holds the record lock, so no runner takes the
+        # transfer that worker then leaves.
+        subprocess.run(["tmux", "-S", transfer["terminal"]["server"], "kill-window", "-t", transfer["terminal"]["pane"]],
+                       capture_output=True, env=self.env, timeout=10, check=True)
+        deadline = time.monotonic() + 10
+        while self.process_live(transfer["process"]):
+            self.assertLess(time.monotonic(), deadline, "the successor's runner outlived its pane")
+            time.sleep(0.05)
+
     def test_succession_recovery(self):
         skills = self.instrumented()
         script = skills / "jarvis/scripts/jarvis-session"
@@ -1079,70 +1167,78 @@ set-hook -g after-new-window "rename-window user-hook"
         # harness per launch shape, without and with a kickoff turn before
         # the brief, reaches each write; test_succession_contract launches
         # every harness. Each successor, a retry's included, takes Start's
-        # brief file.
+        # brief file. A worker killed after the predecessor's end leaves the
+        # transfer to the successor's runner; the abandoned row ends that
+        # runner first, which fails the transfer.
         brief, _, private = self.private_brief()
+        rows = [(phase, edge, False) for phase in phases for edge in ("before", "after")] + [("confirmed", "after", True)]
         with patch.object(session_test, "SCRIPT", script):
             for harness in ("claude", "codex"):
-                for phase in phases:
-                    for edge in ("before", "after"):
-                        with self.subTest(harness=harness, phase=phase, edge=edge):
-                            print("succession-row: harness=" + harness + " phase=" + phase + " edge=" + edge, flush=True)
-                            self.handoff()
-                            self.call("start", harness=harness, mode="new", brief=brief)
-                            self.wait()
-                            previous = json.loads(self.record.read_text())
-                            native_count = len(self.started())
-                            identity, request = self.paused([str(script), "succeed", "--home", str(self.home)], pause, phase, edge, self.env)
-                            with request:
-                                persisted = json.loads(self.record.read_text())
-                                during, _ = self.call("status")
-                                expected = "running" if (phase, edge) in (("saved", "before"), ("complete", "after")) else "handing-over"
-                                self.assertEqual(during["state"], expected)
-                                predecessor = previous["process"]
-                                old_live = subprocess.run([self.env["JARVIS_TEST_BASH"], str(skills / "jarvis/scripts/lib/session-backend.sh"),
-                                                           "worker-live", str(predecessor["pid"]), predecessor["started_at"]],
-                                                          capture_output=True, env=self.env, timeout=10)
-                                self.assertEqual(old_live.returncode, 0 if phase in ("saved", "waiting") else 1)
-                                self.assertEqual(len(self.started()) - native_count,
-                                                 1 if phase in ("confirmed", "brief-delivered", "complete") else 0)
-                                live = subprocess.run([self.env["JARVIS_TEST_BASH"], str(skills / "jarvis/scripts/lib/session-backend.sh"),
-                                                       "worker-live", str(identity["pid"]), identity["started_at"]],
+                for phase, edge, abandoned in rows:
+                    with self.subTest(harness=harness, phase=phase, edge=edge, abandoned=abandoned):
+                        print("succession-row: harness=" + harness + " phase=" + phase + " edge=" + edge
+                              + " abandoned=" + str(abandoned).lower(), flush=True)
+                        self.handoff()
+                        self.call("start", harness=harness, mode="new", brief=brief)
+                        self.wait()
+                        previous = json.loads(self.record.read_text())
+                        native_count = len(self.started())
+                        identity, request = self.paused([str(script), "succeed", "--home", str(self.home)], pause, phase, edge, self.env)
+                        with request:
+                            persisted = json.loads(self.record.read_text())
+                            during, _ = self.call("status")
+                            expected = "running" if (phase, edge) in (("saved", "before"), ("complete", "after")) else "handing-over"
+                            self.assertEqual(during["state"], expected)
+                            predecessor = previous["process"]
+                            old_live = subprocess.run([self.env["JARVIS_TEST_BASH"], str(skills / "jarvis/scripts/lib/session-backend.sh"),
+                                                       "worker-live", str(predecessor["pid"]), predecessor["started_at"]],
                                                       capture_output=True, env=self.env, timeout=10)
-                                self.assertEqual(live.returncode, 0)
-                                os.kill(identity["pid"], signal.SIGKILL)
-                                request.communicate(timeout=10)
-                            pause.unlink()
-                            before_end = phase in ("saved", "waiting")
-                            completed = (phase, edge) == ("complete", "after")
-                            if before_end or completed:
-                                settled = self.wait("running")
-                                owner = previous if before_end else persisted
-                                self.assertEqual(settled["terminal"], owner["terminal"])
-                            else:
-                                settled = self.wait("failed", "handover-failed")
-                                self.assertTrue(settled["detail"])
-                                deadline = time.monotonic() + 15
-                                while settled["terminal"] is not None and time.monotonic() < deadline:
-                                    time.sleep(0.05)
-                                    settled, _ = self.call("status")
-                                self.assertIsNone(settled["terminal"], self.session_log())
-                                # The app's Start/boot path cannot revive old history.
-                                start, code = self.call("start", harness=harness)
-                                self.assertEqual((start["state"], start["reason"], code), ("failed", "handover-failed", 1))
-                            self.assertIn("TASK-ref", (self.home / "state/handoff.md").read_text())
-                            self.retry()
-                            self.wait()
-                            recovered = json.loads(self.record.read_text())
-                            self.assertNotEqual(recovered["pending"]["native_session_id"], previous["pending"]["native_session_id"])
-                            self.assertIn("TASK-ref", Path(recovered["transfer"]["handoff"]).read_text())
-                            self.assertEqual(self.prompts(recovered["pending"]["native_session_id"]), [private])
-                            self.call("stop")
-                            self.wait("stopped", persisted_stop=True)
+                            self.assertEqual(old_live.returncode, 0 if phase in ("saved", "waiting") else 1)
+                            self.assertEqual(len(self.started()) - native_count,
+                                             1 if phase in ("confirmed", "brief-delivered", "complete") else 0)
+                            live = subprocess.run([self.env["JARVIS_TEST_BASH"], str(skills / "jarvis/scripts/lib/session-backend.sh"),
+                                                   "worker-live", str(identity["pid"]), identity["started_at"]],
+                                                  capture_output=True, env=self.env, timeout=10)
+                            self.assertEqual(live.returncode, 0)
+                            if abandoned:
+                                self.abandon_successor(persisted)
+                            os.kill(identity["pid"], signal.SIGKILL)
+                            request.communicate(timeout=10)
+                        pause.unlink()
+                        before_end = phase in ("saved", "waiting")
+                        completed = (phase, edge) == ("complete", "after")
+                        if before_end or completed or not abandoned:
+                            settled = self.wait("running")
+                            owner = previous if before_end else persisted
+                            self.assertEqual(settled["terminal"], owner["terminal"])
+                            if not (before_end or completed):
+                                self.assertEqual(json.loads(self.record.read_text())["worker_ended"],
+                                                 {"pid": identity["pid"], "cause": "unknown"})
+                        else:
+                            settled = self.wait("failed", "handover-failed")
+                            self.assertTrue(settled["detail"])
+                            deadline = time.monotonic() + 15
+                            while settled["terminal"] is not None and time.monotonic() < deadline:
+                                time.sleep(0.05)
+                                settled, _ = self.call("status")
+                            self.assertIsNone(settled["terminal"], self.session_log())
+                            # The app's Start/boot path cannot revive old history.
+                            start, code = self.call("start", harness=harness)
+                            self.assertEqual((start["state"], start["reason"], code), ("failed", "handover-failed", 1))
+                        self.assertIn("TASK-ref", (self.home / "state/handoff.md").read_text())
+                        self.retry()
+                        self.wait()
+                        recovered = json.loads(self.record.read_text())
+                        self.assertNotEqual(recovered["pending"]["native_session_id"], previous["pending"]["native_session_id"])
+                        self.assertIn("TASK-ref", Path(recovered["transfer"]["handoff"]).read_text())
+                        self.assertEqual(self.prompts(recovered["pending"]["native_session_id"]), [private])
+                        self.call("stop")
+                        self.wait("stopped", persisted_stop=True)
 
 
 if __name__ == "__main__":
     with native_launcher() as native:
         session_test.HARNESS = native
-        unittest.main(defaultTest=["SuccessionContract.test_succession_contract", "SuccessionContract.test_succession_identity", "SuccessionContract.test_succession_foreign_session", "SuccessionContract.test_succession_recovery", "SuccessionContract.test_account_succession", "SuccessionContract.test_started_choice_survives_succession", "SuccessionContract.test_pi_successor_skips_unlaunchable_entry", "SuccessionContract.test_missing_orch_keeps_predecessor",
+        unittest.main(defaultTest=["SuccessionContract.test_succession_contract", "SuccessionContract.test_succession_identity", "SuccessionContract.test_succession_foreign_session", "SuccessionContract.test_succession_recovery", "SuccessionContract.test_reaped_predecessor_scope", "SuccessionContract.test_account_succession", "SuccessionContract.test_started_choice_survives_succession", "SuccessionContract.test_pi_successor_skips_unlaunchable_entry", "SuccessionContract.test_missing_orch_keeps_predecessor",
                                    "SuccessionContract.test_known_wall_selection", "SuccessionContract.test_pi_known_wall_selection", "SuccessionContract.test_known_wall_retry", "SuccessionContract.test_fresh_wall_controller",
                                    "SuccessionContract.test_adoption_contract", "SuccessionContract.test_adoption_refusals", "SuccessionContract.test_adoption_recovery"])

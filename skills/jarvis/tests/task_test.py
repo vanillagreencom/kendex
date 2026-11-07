@@ -479,7 +479,9 @@ sys.exit(task.main())
         # A successor that fails after its predecessor ended leaves no
         # controller. Its tasks fail and close, so recovery can create the
         # managed session again: the worker fails in place, retried or
-        # stopped, or is killed and leaves the retry to end its successor.
+        # stopped, or is killed with its successor's window, whose runner
+        # would otherwise take the transfer, and leaves the retry to end the
+        # tasks.
         self.tmux("kill-session", "-t", "=jarvis")
         handoff = self.home / "state/handoff.md"
         handoff.parent.mkdir()
@@ -519,7 +521,10 @@ sys.exit(task.main())
                             while json.loads(self.record_path.read_text())["transfer"]["phase"] != "predecessor-ended":
                                 self.assertLess(time.monotonic(), deadline, self.record_path.read_text())
                                 time.sleep(0.05)
-                            os.kill(json.loads(self.record_path.read_text())["worker"]["pid"], signal.SIGKILL)
+                            transfer = json.loads(self.record_path.read_text())
+                            os.kill(transfer["worker"]["pid"], signal.SIGKILL)
+                            subprocess.run(["tmux", "-S", transfer["terminal"]["server"], "kill-window", "-t", transfer["terminal"]["pane"]],
+                                           env=self.env, capture_output=True, timeout=10, check=True)
                         else:
                             self.settle("failed", "handover-failed")
                             self.assertEqual(self.call("status", "--id", task["id"]).get("failure"), ended_by_controller)

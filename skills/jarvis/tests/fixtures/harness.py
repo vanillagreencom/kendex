@@ -263,14 +263,23 @@ def main():
         brief_taken(fixture, harness, identity, "Stop")
     else:
         print("Working to interrupt", flush=True)
-    if deferred and auth_mode != "current" and fixture.get("turn") != "text-only":
+    tool_call = deferred and auth_mode != "current" and fixture.get("turn") != "text-only"
+    if tool_call:
         if barrier:
             # A working pane after a kickoff turn is no proof of the brief:
             # the controller reads it twice before the stamp.
             await_inspections(Path(barrier), 2)
         # The Start brief's first tool call says the session took it.
         brief_taken(fixture, harness, identity, "PreToolUse")
-    sys.stdin.read()
+    # Each later prompt is another turn whose tool call stamps again, as the
+    # native hook retries at the session's next call: a successor's runner
+    # pastes the brief again when its worker ended between that paste and
+    # its record.
+    for later in sys.stdin:
+        with rows.open("a") as stream:
+            stream.write(json.dumps({"prompt": later.strip(), "id": identity, "harness": harness}) + "\n")
+        if tool_call:
+            brief_taken(fixture, harness, identity, "PreToolUse")
 
 
 if __name__ == "__main__":

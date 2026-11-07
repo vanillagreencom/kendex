@@ -32,7 +32,11 @@ def main():
         # harness detected at the call and nearest PID, and a moved pane. The
         # user-config rows each reject a server or pane that the user's tmux
         # config does not reach or that follows it: no config, the user's
-        # default-shell and the user's remain-on-exit.
+        # default-shell and the user's remain-on-exit. The reaped scope rows
+        # reject a worker that records no stop cause and a successor that
+        # does not take the transfer its worker left, before its native
+        # session starts and during its Start, and task windows a failed
+        # taken transfer leaves open.
         backend, session = "jarvis/scripts/lib/session-backend.sh", "jarvis/scripts/lib/session.py"
         defects = (("known wall exclusion", backend,
                     (('    exclude="${6:-}" mark=context caller="" OL_WALK_REFUSE_ID=""',
@@ -85,9 +89,23 @@ def main():
                     "test_user_tmux_config"),
                    ("controller pane exit", session,
                     (('                    self.tmux("set-option", "-p", "-t", pane, "remain-on-exit", "off")\n', ''),),
-                    "test_user_tmux_config"))
+                    "test_user_tmux_config"),
+                   ("recorded stop cause", session,
+                    (("            signal.signal(signal.SIGTERM, self._terminate)\n", "            pass\n"),),
+                    "test_reaped_predecessor_scope"),
+                   ("transfer taken before native start", session,
+                    (('worker_live({"worker": predecessor["process"]})):\n                        owner = self._take_transfer(record, identity)\n',
+                      'worker_live({"worker": predecessor["process"]})):\n                        return\n'),),
+                    "test_reaped_predecessor_scope"),
+                   ("transfer taken during Start", session,
+                    (("                                owner = self._take_transfer(record, identity)\n                                continue\n",
+                      "                                pass\n"),),
+                    "test_reaped_predecessor_scope"),
+                   ("tasks end with a failed taken transfer", session,
+                    (('                    self.end_task_session(window)\n', ""),),
+                    "test_reaped_predecessor_scope"))
         # The rows the latest change added, which its pre-change revision fails.
-        cases = ("test_user_tmux_config",)
+        cases = ("test_reaped_predecessor_scope",)
         if args.case and args.case not in {case for _, _, _, case in defects}:
             parser.error("no planted defect for case " + args.case)
         env = os.environ | {"JARVIS_TEST_SKILLS": str(skills), "JARVIS_TEST_NATIVE": str(native),
