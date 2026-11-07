@@ -43,6 +43,7 @@ Set non-secret defaults in `kendex.settings.toml` under `[env]`; keep tokens in 
 | `KENDEX_GITHUB_PR_VIEW_TIMEOUT` | Seconds allowed for `gh pr view` | `30` |
 | `PR_REVIEW_WAIT_SECS` | Watcher quiet period before an absent approval needs attention | `900` |
 | `KENDEX_GITHUB_GIT_HTTPS_FALLBACK` | `auto`, `never` or `always` for `git-https-auth` | `auto` |
+| `ORCH_GH_READ_TOKEN_FILE` | When set, `git-https-auth` gives HTTPS github.com targets gh's credential helper and clears an inherited `http.https://github.com/.extraheader` on every call it sends there | unset |
 
 The three timeouts are read to one decimal place; `0` means no bound, and a finer figure is refused rather than rounded.
 
