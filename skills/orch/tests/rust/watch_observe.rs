@@ -1001,10 +1001,12 @@ fn fleet_origin(fleet: &Fleet, checkout: &Path) {
 /// relaunch's request carries it, and the replacement the request starts
 /// through the real entry runs with the word and no bypass word; a released
 /// record, planted as `main` wrote it, carries the choice in
-/// `recovery.flags`, and its request carries the same word. Two such
-/// records, planted as `main` wrote them in the two-word and the
-/// `FLAG=VALUE` spelling, are refused before anything is stopped: no
-/// request, no relaunch.
+/// `recovery.flags`, and its request carries the same word. A prompting
+/// choice no launch line carries, `--permission-mode plan`, never
+/// relaunches under the bypass default: two released records carrying it
+/// in the two-word and the `FLAG=VALUE` spelling are refused
+/// `permission-choice-unrepresentable` before any request or stop, where
+/// the `dontAsk` records relaunch.
 #[test]
 fn a_walled_lanes_relaunch_keeps_its_permission_choice() {
     let dir = tempfile::tempdir().unwrap();
@@ -4339,9 +4341,10 @@ fn a_relaunch_the_launcher_answers_possibly_started_is_read_as_started_and_one_n
 // transfer.
 // ---------------------------------------------------------------------------
 
-/// A record the runtime's own start writes carries no launch line, so the
-/// held successor is the record's own typed fields: the transfer asked for
-/// carries them, a fresh session with no resume and no line.
+/// A record carrying no launch line, as the row plants it with the field
+/// removed, holds its successor in the record's own typed fields: the
+/// transfer asked for carries them, a fresh session with no resume and no
+/// line.
 #[test]
 fn a_dead_controller_is_replayed_from_its_records_own_fields_with_no_launch_line() {
     let dir = tempfile::tempdir().unwrap();

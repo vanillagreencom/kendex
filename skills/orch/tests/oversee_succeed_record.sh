@@ -768,7 +768,7 @@ state "$(record "$CALLER_PANE" "$H/.claude" claude-opus-5)"
 
 # --- the line a watch records at its start --------------------------------
 # A pane that names no harness, with no reading yet: nothing recorded, it is
-# refused as before.
+# refused.
 new_caller
 state none
 # The same pane with a record: the harness, account, model and effort are the
@@ -1047,7 +1047,7 @@ if (( RUNTIME_READY )); then
     "$RUST_FIXTURES/stub-record/codex|$CODEX_TRUST_HOME|1" \
     "and the real builder launches codex under the prepared trust home with its bypass word once" "$TMP_ROOT/replay.err"
 
-  # A codex predecessor's bypass line succeeded by claude (round-2 item 1):
+  # A codex predecessor's bypass line succeeded by claude:
   # the walk writes the bypass posture for another harness, and the builder
   # spells claude's bypass word once with its prompt-suppression values.
   new_caller

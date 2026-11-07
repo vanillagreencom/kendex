@@ -416,7 +416,7 @@ OUT="$(cd "$actual" && "$GUARD" --range "$actual_base" 2>&1)" || RC=$?
   && ok 'the shipped aggregate rejects a broken workflow through range selection' \
   || bad 'the shipped aggregate rejects a broken workflow through range selection' "$OUT"
 
-# PR #5200's changed orch scripts and libraries must reach the real hooks
+# A change to these orch scripts and libraries must reach the real hooks
 # and refresh readers. Preserve suite text for the mapper, but stop bodies
 # before execution: this row proves selection, not those suites' contracts.
 git -C "$actual" reset -q --hard "$actual_base"
@@ -461,8 +461,8 @@ else
   bad 'control: the copied fixture runtime selection could not be removed'
 fi
 
-# PR 5399's launch change includes the shared library, its source and render,
-# and the changed contract suites. Keep real reader text; the existing replay
+# A launch change spans the shared library, its source and render, and the
+# changed contract suites. Keep real reader text; the existing replay
 # fixtures replace suite bodies, so this proves selection and runner verdicts.
 git -C "$actual" reset -q --hard "$replay_base"
 for input in skills/orch/scripts/open-terminal skills/orch/scripts/lib/lane-launch.sh skills/orch/references/skill-rules.md; do

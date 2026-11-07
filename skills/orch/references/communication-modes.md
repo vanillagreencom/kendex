@@ -9,7 +9,7 @@
 | Value | Meaning |
 |-------|---------|
 | `ceo` | The session owns every technical decision. The user states intent and outcomes. Only a question in § Ask set reaches the user |
-| `engineer` | The package's original behaviour, with the same ask set |
+| `engineer` | Each key at its own default ([§ Composition](#composition)), with the same ask set |
 
 ## Standing rulings
 

@@ -2383,7 +2383,7 @@ exit 9
     def test_stop_without_an_identity_signals_only_the_named_harness_in_the_owned_worktree(self):
         # A lane launched before its prefix recorded an identity holds none,
         # as a create whose prefix nothing ran does: stop finds its harness by
-        # the worktree, as every stop did before identities were recorded.
+        # the worktree.
         self.assertEqual(self.create().returncode, 0)
         self.assertFalse((Path(self.row["clone"]) / ".git/lane-host-pid").exists())
         worktree = Path(self.row["clone"] + "-worktree")
@@ -2527,8 +2527,8 @@ fi
     def test_stop_signals_the_recorded_harness_after_its_worktree_is_gone(self):
         # merge-pr removes the item's worktree before its lane goes idle, and a
         # later create may make a tree at the same path: neither hides the
-        # recorded harness. The control is the removed-worktree guard the
-        # stop once ran, put back into a copy of the script.
+        # recorded harness. The control is a removed-worktree guard put into a
+        # copy of the script.
         lane = self.launch_lane()
         worktree = Path(self.row["clone"] + "-worktree")
         subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "worktree", "remove", "--force", str(worktree)],

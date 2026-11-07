@@ -449,7 +449,7 @@ the lane's mailbox cursor passed the directive: the lane has it. Nothing is owed
 
 ### `directive-unread [ITEM] [ID] age=[SECONDS]`
 
-the directive has waited past `ORCH_DIRECTIVE_UNREAD_SECS` with the lane's cursor short of it. Reach the lane by its state: wake an idle one per `oversee-lanes.md` § Talking to a lane, and any other by its row in [lane-reach.md § Wake refusals](lane-reach.md#wake-refusals). `directive-read` follows once it reads it.
+the directive has waited `ORCH_DIRECTIVE_UNREAD_SECS` or longer with the lane's cursor short of it: the watch reports it on the first mail turn at that age, and again every `ORCH_OVERSEER_MARK_REPEAT` mail turns while it stays unread. Reach the lane by its state: wake an idle one per `oversee-lanes.md` § Talking to a lane, and any other by its row in [lane-reach.md § Wake refusals](lane-reach.md#wake-refusals). `directive-read` follows once it reads it.
 
 ### `owner-note`
 

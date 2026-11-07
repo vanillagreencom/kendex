@@ -23,10 +23,9 @@ ORCH_STATE_DIR = "tmp"
 
 # Where state pruning, item close-out, mailbox compaction and SSH lane close
 # keep archives before removing records. An empty value uses FLEET_DIR/archive,
-# or $HOME/.fleet/archive when FLEET_DIR is unset. Set an absolute path outside
-# linked worktrees and state or mailbox folders so archives survive cleanup.
-# A configured value requires Python and a readable Git worktree list.
-# Relative paths and ~ are refused. TOML does not expand shell variables.
+# or $HOME/.fleet/archive when FLEET_DIR is unset. Where to place a configured
+# value, what it requires, and its refusal of a relative or ~ path:
+# references/settings.md. TOML does not expand shell variables.
 # ORCH_ARCHIVE_ROOT = "/path/to/archives"
 
 # Where the overseer keeps what it has already seen and which lanes it has
@@ -266,11 +265,12 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # pairs. Lanes are always discovered; this only renames them.
 # ORCH_LANE_ALIASES = "eclaude=work,mclaude=overflow"
 
-# Lanes never listed, measured or picked, and lanes retired from a date: the
-# runtime's judge picks such a lane until that UTC day and measures it after,
-# saying in the roster where its credential still answers; `lanes` alone lists
-# it retired unread. Each is named by its own name or its alias, never by a
-# path.
+# Lanes excluded, and lanes retired from a date, each named by its own name
+# or its alias, never by a path. The runtime's judge never picks an excluded
+# lane, and picks a retired one until that UTC day and measures it after,
+# saying in the roster where its credential still answers. What `lanes` lists
+# and reads for each, and the API grant a retired plan keeps: `lanes --help`,
+# ORCH_LANE_EXCLUDE and ORCH_LANE_RETIRE.
 # ORCH_LANE_EXCLUDE = "sclaude"
 # ORCH_LANE_RETIRE = "oldclaude=YYYY-MM-DD"
 

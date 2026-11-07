@@ -771,8 +771,10 @@ fn a_reconcile_holds_a_run_whose_manager_does_not_answer() {
 #[test]
 fn a_reconcile_closes_a_gone_runtime_run_and_owes_its_end_notice() {
     let w = World::new();
-    // A live process under a start no run recorded reads gone (as row (2)'s
-    // reused case does), so the job is gone with its sentinel standing.
+    // A live process under a start no run recorded reads gone (as the
+    // `reused` case of
+    // `reconcile_round_reads_a_started_run_by_its_job_identity_never_the_bare_pid`
+    // does), so the job is gone with its sentinel standing.
     let gone = Owned::sleep();
     let mut doc = w.state();
     let dir = w
@@ -2296,7 +2298,7 @@ fn a_later_red_row_at_the_same_tree_voids_the_earlier_pass() {
     );
 }
 
-/// § B's restack case through a recorded skip: the restacked head's skip
+/// A restack read through a recorded skip: the restacked head's skip
 /// names the validated run's head, whose row at its own tree is the
 /// branch's proof; the reader says which skip it read through.
 #[test]
@@ -2409,7 +2411,7 @@ fn a_restacked_trees_own_red_row_outranks_its_recorded_skip() {
         "--head",
         "h-restacked",
     ];
-    // The reviewer's construction: a pass, then a red, at the restacked tree.
+    // A pass, then a red, at the restacked tree.
     w.plant(
         &[
             original.clone(),

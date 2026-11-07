@@ -786,6 +786,8 @@ fn a_permission_word_the_launch_line_cannot_carry_is_refused_before_any_record()
     }
 }
 
+/// A launch on a named account that names no model runs the harness's
+/// default model, which spends an account window the judge never read.
 /// Through the real `launch-lane`: a launch naming an account and no model,
 /// or an empty one, on each harness, and a relaunch over a stopped record
 /// alike, is refused `launch-model-missing` naming the harness, the account

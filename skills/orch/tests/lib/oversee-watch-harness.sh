@@ -961,8 +961,8 @@ run_watch() {
   while [[ $# -gt 0 && "$1" != "--" ]]; do
     # A bare LINEAR_TEAM, no `=`, drops the name from the child environment
     # altogether — the shape `LINEAR_TEAM=` cannot express, since that exports
-    # an empty value. Both are inputs the script treats the same way, and the
-    # bare form is the one the Done-when names: no LINEAR_TEAM anywhere.
+    # an empty value. Both are inputs the script treats the same way; the
+    # bare form is the one with no LINEAR_TEAM anywhere.
     case "$1" in
       LINEAR_TEAM) team_args=() ;;
       ORCH_WATCH_LANE_AGE_SECS) age_args=() ;;

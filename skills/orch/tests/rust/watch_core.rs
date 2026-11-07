@@ -385,7 +385,7 @@ fn a_claim_rewritten_under_a_runner_ends_it_without_touching_the_record() {
     );
 }
 
-/// Row (b)'s sequence: a mail interval under the tick, a mail event every
+/// The busy-mail sequence: a mail interval under the tick, a mail event every
 /// 7 s tick for `ticks` ticks, the verification slot registered; the
 /// counters of both. The runner is stopped at the end.
 fn busy_mail_run(dir: &Path, clock: &FakeClock, ticks: usize) -> (Counting, Counting) {
@@ -485,7 +485,7 @@ fn a_restart_resumes_each_duty_from_its_own_stamp() {
     let settings = settings_in(dir.path(), 5);
     let clock = FakeClock::new();
     let start_wall = clock.wall_secs();
-    // Row (b)'s sequence to 6006 s: the heartbeat has fired, and the
+    // The busy-mail sequence to 6006 s: the heartbeat has fired, and the
     // verification slot last ran at 5880 s with its next due at 6120 s.
     let (_, verification) = busy_mail_run(dir.path(), &clock, 858);
     let last = *verification.at().last().unwrap();

@@ -558,10 +558,9 @@ copilot_ladder() { # ROW walled|check|context|below [SUCCEED_BIN] [caller|empty|
 # claude_argv — the claude successor's recorded lane and argv, `;`-joined.
 claude_argv() { if [[ -f "$TMP_ROOT/argv.claude" ]]; then tr '\n' ';' < "$TMP_ROOT/argv.claude"; else printf none; fi; }
 CLAUDE_SUCCESSOR="lane=$H/.eclaude;-n;overseer;--model;claude-opus-5-5;--effort;high;$BYPASS;$CLAUDE_COMPACT"
-# Its controls, one per rule: a walk that hands the caller's other words on,
-# as the cross-harness line once did, puts the Copilot words on the claude
-# line, and a walk that admits the numeric entry hands claude the Copilot
-# model spelling.
+# Its controls, one per rule: a walk that hands the caller's other words on
+# puts the Copilot words on the claude line, and a walk that admits the
+# numeric entry hands claude the Copilot model spelling.
 CARRYCTL="$(mutant_scripts carryctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$CARRYCTL/lib/overseer-launch.sh" '    LAUNCH_CHOICE_KEPT=()' '    launch_choice_strip "$source" "$@"'
 NUMCTL="$(mutant_scripts numctl lib/overseer-launch.sh)" || exit 1

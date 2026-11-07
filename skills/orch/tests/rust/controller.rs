@@ -1651,10 +1651,10 @@ fn a_publication_waits_for_the_predecessors_window_to_read() {
     assert_eq!(overseer["harness_pid"], server.pane_pid(&successor));
 }
 
-/// The state that crash leaves is a closed intent whose notice is recorded
-/// `owed`. The next reconcile, with no open intent to reconcile, sends that
-/// notice once and marks it `sent`; the reconcile after it sends nothing
-/// again.
+/// A crash between a job intent's failed outcome write and its send leaves
+/// a closed intent whose notice is recorded `owed`. The next reconcile,
+/// with no open intent to reconcile, sends that notice once and marks it
+/// `sent`; the reconcile after it sends nothing again.
 #[test]
 fn a_reconcile_sends_the_notice_a_closed_intent_still_owes_once() {
     let dir = tempfile::tempdir().unwrap();
