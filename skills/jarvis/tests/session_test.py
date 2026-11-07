@@ -1561,6 +1561,47 @@ class SessionContract(unittest.TestCase):
                 self.assertEqual(record, {"returncode": status, "signal": -status if status < 0 else None,
                                           "stdout": stdout, "stderr": stderr})
 
+    def test_native_fixture_reports_compiler_timeout(self):
+        # The CI failure record must retain output from a compiler that stalls.
+        # This timer-wiring row shortens only its child driver's compile limit.
+        compiler = self.root / "rustc"
+        compiler.write_text("#!" + sys.executable + "\n"
+                            "import os, signal\n"
+                            "os.write(1, b'compiler stdout \\xc3\\xa9\\n')\n"
+                            "os.write(2, b'compiler stderr \\xe2')\n"
+                            "signal.pause()\n")
+        compiler.chmod(0o755)
+        driver = """\
+import subprocess
+import sys
+from unittest.mock import patch
+from fixtures.harness import native_launcher
+
+run = subprocess.run
+def bounded_compile(*args, **kwargs):
+    kwargs["timeout"] = 1
+    return run(*args, **kwargs)
+
+try:
+    with patch("fixtures.harness.subprocess.run", side_effect=bounded_compile):
+        with native_launcher():
+            pass
+except RuntimeError as failure:
+    print(failure)
+    sys.exit(23)
+"""
+        environment = dict(os.environ)
+        environment.pop("JARVIS_TEST_NATIVE", None)
+        environment["PATH"] = str(self.root) + os.pathsep + environment["PATH"]
+        result = subprocess.run([sys.executable, "-c", driver], env=environment,
+                                cwd=HARNESS_SCRIPT.parent.parent, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 23, result.stdout + result.stderr)
+        category, record = result.stdout.removeprefix("native-fixture: ").split(" ", 1)
+        self.assertEqual(category, "compile-timeout")
+        self.assertEqual(json.loads(record), {"timeout": 1, "stdout": "compiler stdout é\n",
+                                              "stderr": "compiler stderr \\xe2"})
+        self.assertEqual(result.stderr, "")
+
     def test_cancelled_replacement_keeps_the_live_owner(self):
         for phase in ("pending", "running"):
             with self.subTest(predecessor_state=phase):
