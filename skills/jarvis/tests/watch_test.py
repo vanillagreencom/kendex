@@ -765,10 +765,10 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         self.assertEqual(text.count(case), 1)
         env_script.write_text(text.replace(case, case + '    [[ "$2" != "${UNRESOLVED:-}" ]] || exit 1\n'))
 
-        def watch_pass(home, roots, cursor, unresolved=""):
+        def watch_pass(home, roots, cursor, unresolved="", broken=""):
             self.registry.write_text("".join(str(root) + "\n" for root in roots))
             delivered = []
-            with patch.dict(os.environ, dict(self.env, UNRESOLVED=str(unresolved)), clear=True):
+            with patch.dict(os.environ, dict(self.env, UNRESOLVED=str(unresolved), BROKEN=str(broken)), clear=True):
                 output = self.module.mail_pass(BASH, home, "local", cursor, delivered)
             return output, json.loads(output.splitlines()[-1][8:])["roots"], delivered
 
@@ -816,6 +816,33 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                     self.assertNotIn(name + " first-", output)
                     self.assertNotIn(name + " second-", output)
                     self.assertEqual([row["id"] for row in delivered], [directive])
+
+        # A root whose mailbox another root reads takes the reader's outcome:
+        # one alert per failure, and a pass with no failure leaves no cause.
+        self.intercept_mail('[ "$(pwd -P)" != "${BROKEN:-}" ] || exit 3')
+        for name, passes in (
+                # The folder's own lookup fails, recovers and fails again.
+                ("nested-lookup", (("all", "nested", "", ["jarvis-home"]), ("all", "", "", []),
+                                   ("all", "nested", "", ["jarvis-home"]))),
+                # The folder fails a read, then the outer project takes the read back.
+                ("former-reader", (("nested", "", "nested", ["jarvis-home"]), ("all", "", "", []))),
+                # The folder holds the outer project's failure and reports it no
+                # second time when it takes the read over.
+                ("reader-read", (("all", "", "outer", ["outer"]), ("nested", "", "nested", []),
+                                 ("all", "", "", [])))):
+            with self.subTest(row=name):
+                outer = self.project(name + "/outer")
+                nested = outer / "packaging/jarvis-home"
+                nested.mkdir(parents=True)
+                root = dict(outer=outer, nested=nested)
+                listed = dict(all=[self.home, outer, nested], nested=[self.home, nested])
+                _, cursor, _ = watch_pass(self.home, listed[passes[0][0]], {})
+                for roots, unresolved, broken, alerts in passes:
+                    output, cursor, _ = watch_pass(self.home, listed[roots], cursor,
+                                                   root.get(unresolved, ""), root.get(broken, ""))
+                    self.assertEqual(re.findall(r"^EVENT root-unreachable repo=(\S+)", output, re.M), alerts)
+                    if not unresolved and not broken:
+                        self.assertEqual([key for key, record in cursor.items() if "cause" in record], [])
 
     def test_quoted_boundaries_and_text_limit(self):
         ordinary = 'print("hello") C:\\work\\file /a\\w+/ café'
@@ -1647,11 +1674,11 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         window = '"--since", min(row["at"] for row in waiting)'
         unlisted = 'alone = side == "local" and home not in roots'
         satellite = "roots = [home] if satellite else project_roots()"
-        shared = "if not isinstance(common, Path) or reader[common][1] == index]"
+        shared = "reader[common][1] if isinstance(common, Path) else root) for"
         nested = "test_nested_project_reads_its_outer_mailbox_once"
         for name, old, new in (
                 # Each root sharing a mailbox reads it separately.
-                (nested, shared, "]"),
+                (nested, shared, "root) for"),
                 # The first listed root reads a shared mailbox, not its own checkout.
                 (nested, "rank = (root != common, index)", "rank = (False, index)"),
                 # A new reader of a mailbox starts from its own cursor.
@@ -1660,6 +1687,10 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                 (nested, 'side == "local" and root == home)', "False)"),
                 # The last reader keeps no claim on the mailbox.
                 (nested, 'if field != "mailbox"}', 'if True}'),
+                # A root another root reads for keeps its own outcome.
+                (nested, "state[str(root)] = record", "pass"),
+                # It clears its failure but does not take the reader's.
+                (nested, 'if "cause" in read:', "if False:"),
                 ("test_relay_transitions_and_restart", 'if current != "ok" and (previous is None or previous == "ok"):',
                  'if current != "ok":'),
                 ("test_legacy_host_migration", 'spans=[self.canonical_span(span) for span in pending["retained"]]',

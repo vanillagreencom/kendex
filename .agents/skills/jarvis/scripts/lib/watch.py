@@ -392,13 +392,14 @@ def mailbox_root(bash, root):
 
 
 def mailbox_readers(bash, roots):
-    """Each root with its mailbox checkout or read failure, one root per mailbox.
+    """Each root as (root, mailbox checkout or read failure, the root that reads that mailbox).
 
     A project registered inside another's git tree resolves to the outer
     mailbox. The mailbox's own checkout reads it, else the first listed
-    root; a failed root is kept to report it. A listed home is always its
-    mailbox's own checkout: home_root takes its git top level, and
-    `kendex project list` notes a linked worktree, which listed_roots skips.
+    root; a failed root reads for itself, to report the failure. A listed
+    home is always its mailbox's own checkout: home_root takes its git top
+    level, and `kendex project list` notes a linked worktree, which
+    listed_roots skips.
     """
     resolved = []
     for root in roots:
@@ -410,10 +411,13 @@ def mailbox_readers(bash, roots):
     for index, (root, common) in enumerate(resolved):
         if isinstance(common, Path):
             rank = (root != common, index)
-            if common not in reader or rank < reader[common]:
-                reader[common] = rank
-    return [(root, common) for index, (root, common) in enumerate(resolved)
-            if not isinstance(common, Path) or reader[common][1] == index]
+            if common not in reader or rank < reader[common][0]:
+                reader[common] = (rank, root)
+    return [(root, common, reader[common][1] if isinstance(common, Path) else root) for root, common in resolved]
+
+
+# The record fields that follow a mailbox from reader to reader; to-lane first.
+MAILBOX_FIELDS = ("to-lane", "to-overseer", "unread")
 
 
 def mailbox_cursor(state, key, mailbox, own_lane):
@@ -430,7 +434,7 @@ def mailbox_cursor(state, key, mailbox, own_lane):
     record = dict(state.get(key, {}))
     last = next((other for other, value in state.items() if other != key and value.get("mailbox") == mailbox), None)
     if last is not None:
-        for field in ("to-overseer", "unread") if own_lane else ("to-lane", "to-overseer", "unread"):
+        for field in MAILBOX_FIELDS[1:] if own_lane else MAILBOX_FIELDS:
             if field in state[last]:
                 record[field] = state[last][field]
             else:
@@ -459,7 +463,9 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False):
         # Its to-lane read takes owner rows alone, so it never replaces a
         # listed root's full read of a shared mailbox, nor takes its cursors.
         readers += mailbox_readers(bash, [home])
-    for root, common in readers:
+    for root, common, reader in readers:
+        if reader != root:
+            continue
         boxes = ("to-lane",) if alone and root == home else ("to-lane", "to-overseer")
         key = str(root)
         prior = state.get(key, {})
@@ -540,6 +546,18 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False):
             if delivered is not None:
                 delivered.extend(root_delivered)
         state[key] = next_root
+    # A root whose mailbox another root reads has no read outcome of its
+    # own: its record takes the reader's outcome from this pass, so no field
+    # goes stale while the other root reads. It keeps its box cursors, which
+    # mailbox_cursor hands over.
+    for root, _, reader in readers:
+        if reader != root:
+            own, read = state.get(str(root), {}), state[str(reader)]
+            record = {field: own[field] for field in MAILBOX_FIELDS if field in own}
+            if "cause" in read:
+                record["cause"] = read["cause"]
+            if record or str(root) in state:
+                state[str(root)] = record
     return pass_output(side, state, events)
 
 
