@@ -17,9 +17,6 @@ ORCH_APPLE_LABELS = "ios macos"
 # takes the PR route instead: workflows/submit-pr.md § 2.1.
 # ORCH_DELIVERY = "push-base"
 
-# How a pull request is reviewed, merged and handed on, and how much of
-# that runs without asking you.
-
 # The folder where the per-issue state of a piece of work is kept. A folder
 # named on the command line outranks this setting.
 ORCH_STATE_DIR = "tmp"
@@ -45,7 +42,7 @@ WORKTREE_CLI = ""
 # Where lanes run. "local" runs them on this machine. "claude-cloud" runs
 # them in Claude Code's own cloud sessions. A path to a script runs them
 # wherever that script reaches. Each is a host kind (schemas/lane-host.md
-# § Host kinds). Credentials alone never send a lane to another machine.
+# § Host kinds); how lane-host resolves the value: schemas/lane-host.md.
 ORCH_LANE_HOST = "local"
 
 # The permission posture every launched lane and overseer runs under.
@@ -86,6 +83,10 @@ ORCH_LANE_OUTPUT = "quiet"
 # space left below it still holds one full validation.
 ORCH_ROUND_PRUNE_DISK_PCT = "75"
 
+# --- Review and CI ------------------------------------------------------------
+# How a pull request is reviewed, how long its waits run and how many rounds
+# its reviews and its CI fixes take.
+
 # Seconds of one review period before the timeout policy below applies. A
 # PR_REVIEW_WAIT_SECS= prefix on the call wins.
 PR_REVIEW_WAIT_SECS = "900"
@@ -105,17 +106,19 @@ PR_COPILOT_REQUESTS = "on"
 
 # Maximum seconds the review call, orch-runtime copilot-wait and
 # overseer-approve --hold-copilot hold on Copilot's work on a head, in whole
-# seconds above zero. What each holds, the start each counts from and each
-# reader's refusal of another value: references/settings.md, and for the
-# review call references/gates.md § Copilot requests. Requires the overseer
-# token app's repository Checks: read permission.
+# seconds above zero. Each reader's refusal of another value, and where
+# overseer-approve's hold starts: references/settings.md. What the review
+# call holds and from when: references/gates.md § Copilot requests;
+# copilot-wait's bound: workflows/review-pr-comments.md § 1. Requires the
+# overseer token app's repository Checks: read permission.
 ORCH_COPILOT_HOLD_SECS = "600"
 
 # Who reviews this repository's own kendex refresh pull request when no
-# approval reached it. "overseer" sends that head, matched by the exact
-# branch and the app's bot login below, to the overseer instead of Copilot;
-# every other pull request keeps its route. Read from the consumer's base
-# checkout. "overseer" with either identity key empty is refused.
+# approval reached it. "overseer" sends that head to the overseer instead
+# of Copilot; every other pull request keeps its route. How the head is
+# matched and where the setting is read:
+# references/copilot-head-notices.md § Consumer refresh approval.
+# "overseer" with either identity key below empty is refused.
 # values: copilot | overseer
 REVIEW_GATE_REFRESH_REVIEW = "copilot"
 
@@ -171,10 +174,8 @@ ORCH_ASK_WAIT_MINUTES = "120"
 # ORCH_OWNER_EMAIL = "owner@example.com"
 # ORCH_OWNER_ASK_LABEL = "owner-gated"
 
-# Who the session is talking to. "ceo" asks only about outcomes, in plain
-# language, and settles the two questions below and issue creation on its
-# own unless a setting answers them. "engineer" leaves each of those at its
-# own default. The ask set and the composition:
+# Who the session is talking to: "ceo" or "engineer". What each value
+# means, the questions that reach you and the defaults each value composes:
 # references/communication-modes.md.
 # values: ceo | engineer
 ORCH_USER_MODE = "ceo"
@@ -234,9 +235,8 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # allow.
 # ORCH_LANE_CLOSE_SECS = "15"
 
-# The tmux session every lane window opens in. Unset, a fleet launch uses the
-# session its oversee state records as tmux.session; how a launch records and
-# reads it, and its refusals: references/lane-directive.md § Tmux session.
+# The tmux session every lane window opens in. Which session a launch uses
+# with this unset, and its refusals: references/lane-directive.md § Tmux session.
 # With it set, open-terminal --wake and the orch runtime need no $TMUX: run
 # from outside tmux they reach that session on your own tmux server.
 # ORCH_TMUX_SESSION = "kendex"
@@ -315,10 +315,10 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # references/skill-rules.md § Round Closure.
 # ORCH_HANDOFF_HEADROOM_PCT = "3"
 
-# Who relaunches a lane its account walled: "auto" the watch, "ask" the
-# overseer, to whom the watch reports the wall. What the watch does and
-# reports under each value: references/oversee-events.md § Event kinds,
-# lane-relaunched and usage-limit.
+# Who relaunches a lane its account walled: "auto" the watch, where it can,
+# "ask" the overseer. When the watch does, and what it reports under each
+# value: references/oversee-events.md § Event kinds, lane-relaunched and
+# usage-limit.
 # ORCH_WALL_RELAUNCH = "auto"
 
 # Earlier context handoff percentage. Shared rule and boundary behavior:
@@ -424,16 +424,14 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # ORCH_OVERSEER_PREFERENCE = "claude:standard:high,codex:standard:high"
 
 # Lane defaults use harness[@host]:model:effort. @host names a host kind or
-# provider executable path for that entry; without it, the caller's host or
-# the resolved ORCH_LANE_HOST applies. Overseer preferences keep the grammar
-# above. When the overseer walks these entries:
+# provider executable path for that entry. Overseer preferences keep the
+# grammar above. When the overseer walks these entries:
 # workflows/oversee.md § 3 Lane directive, step 3.
-# The first eligible entry with room supplies the harness, host, model and effort.
-# Eligibility follows references/lane-directive.md § Lane preference. Explicit
-# models keep the caller's route. Unset or empty leaves that route unchanged.
-# A lane launch names its model, so a lane entry names an exact id or a claude
-# class: a codex or copilot class runs no model, which the launch refuses
-# (references/lane-directive.md § Lane preference).
+# Which entry the walk takes, and how an entry without @host is judged:
+# references/lane-directive.md § Lane preference.
+# A lane entry names an exact id or a claude class, since a codex or copilot
+# class runs no model; the launch's refusal of one:
+# references/lane-directive.md § Lane preference.
 # The final entry alone may end in :last, a last choice the walk holds back
 # under the rule in references/lane-directive.md § Lane preference.
 # Example: claude:standard:high,pi:github-copilot/gpt-6.1-sol:high:last
@@ -473,16 +471,17 @@ ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 # before the watch reports it as lane-prepare-stuck.
 # ORCH_WATCH_PREPARE_SECS = "1800"
 
-# Seconds after a lane's record goes running, at a launch or a relaunch, its
-# status file may still be missing before the watch reports it as
-# start-stalled, on every harness.
+# Seconds after a lane's record goes running, at a launch or a relaunch,
+# before the watch reports a lane that shows no start as start-stalled. What
+# counts as a start on each host kind:
+# references/oversee-events.md § Event kinds, start-stalled.
 # ORCH_WATCH_START_STALL_SECS = "600"
 
 # Minutes a stalled Claude cloud lane may leave its one directive unanswered,
 # nothing pushed, before the watch closes it as cloud-stall-closed; what
 # follows: references/oversee-events.md § Event kinds, cloud-stall-closed.
-# A fleet that sees repeated cloud stalls drops cloud from
-# ORCH_LANE_PREFERENCE instead of raising this.
+# What a fleet whose cloud lanes keep stalling does instead of raising this:
+# references/oversee-events.md § Event kinds, lane-stalled.
 # ORCH_CLOUD_STALL_MINUTES = "30"
 
 # Age threshold in seconds for lane-long on a running or parked lane.
@@ -493,8 +492,8 @@ ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 # ORCH_WATCH_MAIL_INTERVAL = "20"
 
 # Age in seconds past which a directive a lane has not read is reported as
-# directive-unread on the first mail pass past it, so the overseer can reach
-# the lane.
+# directive-unread; when it fires and how the overseer reaches the lane:
+# references/oversee-events.md § Event kinds, directive-unread.
 # ORCH_DIRECTIVE_UNREAD_SECS = "300"
 
 # Shared CI and receipt measurement: folders holding generated copies,

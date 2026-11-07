@@ -58,9 +58,8 @@ REVIEW_MAX_EXTERNAL_ROUNDS = "4"
 # On the Codex runtime, set the cap `spawn-adapter slots` reports.
 REVIEWER_SLOT_BUDGET = "0"
 
-# Who the overseer is talking to. "ceo" asks only about outcomes and decides
-# the rest itself; "engineer" leaves each choice at its own default
-# (skills/orch/references/communication-modes.md).
+# Who the overseer is talking to: "ceo" or "engineer"; what each value
+# means: skills/orch/references/communication-modes.md.
 # values: ceo | engineer
 ORCH_USER_MODE = "ceo"
 
@@ -113,8 +112,8 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 ORCH_OVERSEER_LANES = "18"
 
 # Repositories this overseer may launch lanes in beside kendex, blank-separated
-# OWNER/REPO; the runtime's launch refuses a fleet launch from any other as
-# overseer-foreign.
+# OWNER/REPO; the launch's refusal of a checkout of any other:
+# skills/orch/references/lane-directive.md § Launch gate.
 ORCH_CONNECTED_REPOS = "vanillagreencom/kendex-web"
 
 # The turn-end hook uses this pgrep -f pattern to find the session's wake process.
@@ -144,8 +143,9 @@ ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 # follows skills/orch/references/skill-rules.md § Round Closure.
 ORCH_HANDOFF_HEADROOM_PCT = "3"
 
-# The watch relaunches a lane its account walled; what it does and reports:
-# skills/orch/references/oversee-events.md § Event kinds, lane-relaunched.
+# The watch relaunches a lane its account walled where it can; when it does,
+# and what it reports:
+# skills/orch/references/oversee-events.md § Event kinds, lane-relaunched and usage-limit.
 ORCH_WALL_RELAUNCH = "auto"
 
 # Lane pane output. "quiet" prints one line per completed step and writes

@@ -56,7 +56,7 @@ Its bound is `ORCH_COPILOT_HOLD_SECS`, counted from the wait's own start. Route 
 
 The wait reads no lane mail between its reads. A lane idle between completion polls takes its mail by its harness's route in [watch-delivery.md § Lane mailbox monitor](../references/watch-delivery.md#lane-mailbox-monitor); a Codex lane holds its turn through the completion poll, so its mail waits for its next turn ([codex-runtime.md § Lane mailbox](../references/codex-runtime.md#lane-mailbox)).
 
-No other bot holds this read. Under `approval`, a thread Copilot posts after this read reaches the review gate's next call as `comments` ([gates.md § Copilot requests](../references/gates.md#copilot-requests)); under the `off` gate mode no gate call reads it, and a later thread reaches submit-pr's gate 3 and the readers [thread-read.md § What reads an open thread](../references/thread-read.md#what-reads-an-open-thread) lists. Bot prose is never a gate: emoji reactions, sticky comments, and checklist text carry no gating weight.
+No other bot holds this read. Under `approval`, a thread Copilot posts after this read reaches the review gate's next call as `comments` ([gates.md § The review call](../references/gates.md#the-review-call)); under the `off` gate mode no gate call reads it, and a later thread reaches submit-pr's gate 3 and the readers [thread-read.md § What reads an open thread](../references/thread-read.md#what-reads-an-open-thread) lists. Bot prose is never a gate: emoji reactions, sticky comments, and checklist text carry no gating weight.
 
 ```bash
 .agents/skills/github/scripts/github.sh pr-data "[PR_NUMBER]"

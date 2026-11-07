@@ -594,17 +594,19 @@ impl Gate<'_> {
         self.reply.mode = Some(mode.word().to_owned());
         let mut record = head_record(self.path, &self.doc, &self.view.head)?;
         // The ready mark comes under either mode: a push-first draft is made
-        // ready by its early request, which the gate's mode does not gate.
+        // ready by its first-head review call, which the gate's mode does not
+        // gate.
         let marked = self.mark_ready(&mut record)?;
         if mode == GateMode::Off {
             return self.permit(Verdict::new(OFF, "gate off".into()), record.as_ref());
         }
 
-        // The reviewers' state on the head, then its request: every head
-        // Copilot has not reviewed is requested before its verdict, an
-        // approval standing from an earlier commit included, so Copilot
-        // reviews the commit a push lands, and its work on the head, this
-        // request included, holds the approval until that review lands.
+        // The reviewers' state on the head, then its request, settled before
+        // its verdict, an approval standing from an earlier commit included,
+        // so Copilot reviews the commit a push lands; a refresh head,
+        // `PR_COPILOT_REQUESTS=off` and a kept draft send none (`ineligible`).
+        // Copilot's work on the head, this request included, holds the
+        // approval until that review lands.
         let unresolved = review::unresolved_threads(&self.gh, &self.r.repo, self.r.pr)?;
         let copilot = if review::copilot_reviewed(&self.view) {
             Some(self.reviews()?.clone())
