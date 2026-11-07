@@ -38,7 +38,7 @@ REASONS = {
     "starting": {"launching"}, "handing-over": {"succession"}, "stopping": {"stop-requested"},
     "stopped": {"never-started", "stopped", "ended"}, "off": {"app-off"},
     "blocked": {"app-off", "name-conflict", "record-unreadable", "sign-in-required", "selection-conflict", "tmux-missing", "app-missing",
-                "trust-required"},
+                "trust-required", "home-not-dedicated"},
     "failed": {"launch-failed", "handover-failed"},
 }
 # The full-bypass words each harness's CLI takes for an unattended launch.
@@ -47,7 +47,7 @@ PERMISSION_WORDS = {"claude": {"--dangerously-skip-permissions"}, "codex": {"--d
                     "copilot": {"--allow-all"}, "pi": set()}
 ANY_PERMISSION_WORD = set().union(*PERMISSION_WORDS.values())
 # A blocked answer whose detail tells the person what to do.
-DETAILED = {("blocked", "sign-in-required"), ("blocked", "trust-required")}
+DETAILED = {("blocked", "sign-in-required"), ("blocked", "trust-required"), ("blocked", "home-not-dedicated")}
 
 
 def validate(output, code, verb, duplicate_boot=False, adopt=False):
@@ -224,6 +224,347 @@ class MainHostContract(unittest.TestCase):
         self.assertNotIn("private-secret", result.stderr + result.stdout)
 
 
+def scratch_base():
+    """A scratch base outside every Git work tree: a home fixture there qualifies.
+
+    A lane's TMPDIR can lie under its worktree's tmp/, as the comment above
+    TEMP_BASE in skills/reviewer/scripts/mutation-stability records.
+    """
+    base = tempfile.gettempdir()
+    env = {key: value for key, value in os.environ.items()
+           if key not in {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"}}
+    found = subprocess.run(["git", "-c", "safe.directory=*", "-C", base, "rev-parse", "--show-toplevel"],
+                           env=env, capture_output=True, text=True, timeout=30)
+    return base if found.returncode == 128 else "/tmp"
+
+
+# The fixture's Codex file, comment included: a merge keeps every other byte.
+CODEX_FIXTURE = "# features this home turns on\n[features]\nhooks = true\n"
+
+
+class HomeInitContract(unittest.TestCase):
+    """jarvis-session init and the first manual Start write one set of starting files."""
+
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory(dir=scratch_base())
+        self.addCleanup(self.scratch.cleanup)
+        self.root = Path(self.scratch.name).resolve()
+        # No tmux on this PATH: every Start refuses after its initialization
+        # step, so a row reads that step's effect without a launch.
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        for tool in ("bash", "git", "cat", "flock", "mkdir", "rmdir", "sleep", "rm"):
+            found = shutil.which(tool)
+            if found:
+                (bin_dir / tool).symlink_to(found)
+        (bin_dir / "python3").symlink_to(sys.executable)
+        login = self.root / "login"
+        login.mkdir()
+        self.account = self.root / "account"
+        self.account.mkdir()
+        # git reads no caller repository: GIT_DIR and its siblings stay unset.
+        self.env = {"PATH": str(bin_dir), "HOME": str(login), "XDG_STATE_HOME": str(self.root / "state"),
+                    "XDG_CONFIG_HOME": str(login / ".config"), "GIT_CONFIG_NOSYSTEM": "1", "LANG": "C.UTF-8"}
+
+    def git_init(self, folder):
+        for words in (("init", "-q"), ("config", "gc.auto", "0"), ("config", "maintenance.auto", "false")):
+            subprocess.run(["git", "-C", str(folder), *words], env=self.env, check=True, capture_output=True)
+
+    def home(self, name, *, git=True):
+        """A folder after git init and kendex add: its harness files beside the layout."""
+        home = self.root / name
+        (home / ".agents/skills").mkdir(parents=True)
+        (home / ".claude").mkdir()
+        (home / ".claude/settings.json").write_text('{\n  "hooks": {\n    "Stop": []\n  }\n}\n')
+        (home / ".codex").mkdir()
+        (home / ".codex/config.toml").write_text(CODEX_FIXTURE)
+        (home / "kendex.toml").write_text("")
+        (home / ".gitignore").write_text("/tmp/\n")
+        if git:
+            self.git_init(home)
+        return home
+
+    def snapshot(self, home):
+        tree = {}
+        for path in sorted(home.rglob("*")):
+            relative = path.relative_to(home)
+            if relative.parts[0] == ".git":
+                continue
+            tree[str(relative)] = ("link", os.readlink(path)) if path.is_symlink() else (
+                ("dir",) if path.is_dir() else ("file", path.read_bytes()))
+        return tree
+
+    def run_init(self, home):
+        return subprocess.run([str(SCRIPT), "init", "--home", str(home)], env=self.env,
+                              capture_output=True, text=True, timeout=60)
+
+    def start(self, home, *words):
+        result = subprocess.run([str(SCRIPT), "start", "--home", str(home), "--harness", "claude",
+                                 "--account", str(self.account), *words],
+                                env=self.env, capture_output=True, text=True, timeout=60)
+        return validate(result.stdout, result.returncode, "start"), result
+
+    @staticmethod
+    def keyed(line):
+        # The init line is a program's read: a leading key, then key=value,
+        # where a value with spaces is a JSON string.
+        return dict(re.findall(r'(\S+?)=("(?:[^"\\]|\\.)*"|\S*)', line.split(" ", 1)[1]))
+
+    def unreadable(self, repository):
+        # A config line git cannot parse: every git version refuses to read
+        # this repository with exit 128.
+        with (repository / ".git/config").open("a") as config:
+            config.write("[core\n")
+
+    def record(self, home):
+        key = hashlib.sha256(os.fsencode(str(home))).hexdigest()
+        return self.root / "state/kendex/jarvis" / key / "jarvis-session.json"
+
+    def test_unqualified_folders_stay_unchanged(self):
+        project = self.root / "project"
+        project.mkdir()
+        self.git_init(project)
+        broken = self.root / "broken"
+        broken.mkdir()
+        self.git_init(broken)
+
+        def planted(home):
+            (home / "README.md").write_text("an ordinary project\n")
+            return home
+
+        def enclosed_by_unreadable():
+            home = self.home("broken/jarvis")
+            self.unreadable(broken)
+            return home
+
+        def own_unreadable():
+            home = self.home("unreadable")
+            self.unreadable(home)
+            return home
+
+        blocked, failed = ("blocked", "home-not-dedicated"), ("failed", "launch-failed")
+        enclosing = {"init": "refused", "cause": "inside-work-tree", "work-tree": json.dumps(str(project))}
+        rows = (
+            # name, folder, the init line's keys but git's detail, Start's answer
+            ("no-git", lambda: self.home("plain", git=False), {"init": "refused", "cause": "no-git"}, blocked),
+            ("inside-project", lambda: self.home("project/jarvis", git=False), enclosing, blocked),
+            ("nested-repository", lambda: self.home("project/nested"), enclosing, blocked),
+            ("other-entry", lambda: planted(self.home("busy")),
+             {"init": "refused", "cause": "other-entry", "entry": '"README.md"'}, blocked),
+            # git exits 128 for a repository it cannot read, as for none: an
+            # enclosing one must still keep the home from qualifying.
+            ("enclosing-unreadable", enclosed_by_unreadable,
+             {"init": "failed", "path": "..", "cause": "git-exit-128", "created": ""}, failed),
+            ("own-unreadable", own_unreadable, {"init": "failed", "path": ".", "cause": "git-exit-128", "created": ""}, failed),
+        )
+        for name, make, line, (state, reason) in rows:
+            with self.subTest(name=name):
+                home = make()
+                before = self.snapshot(home)
+                result = self.run_init(home)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual(result.stdout, "")
+                refusal = self.keyed(result.stderr.splitlines()[0])
+                refusal.pop("detail", None)
+                self.assertEqual(refusal, line)
+                self.assertEqual(self.snapshot(home), before)
+                answer, started = self.start(home)
+                self.assertEqual((answer["state"], answer["reason"], started.returncode), (state, reason, 1))
+                refusal = self.keyed(started.stderr.splitlines()[0])
+                refusal.pop("detail", None)
+                self.assertEqual(refusal, line)
+                self.assertEqual(self.snapshot(home), before)
+                self.assertFalse(self.record(home).exists())
+
+    def test_init_and_first_manual_start_write_the_same_home(self):
+        try:
+            import tomllib
+        except ImportError:
+            tomllib = None
+        homes = {}
+        for caller in ("init", "start"):
+            with self.subTest(caller=caller):
+                home = self.home(caller)
+                if caller == "init":
+                    result = self.run_init(home)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    report = json.loads(result.stdout)
+                    self.assertEqual((report["home"], sorted(report["created"]), report["kept"]),
+                                     (str(home), ["AGENTS.md", "memory/MEMORY.md", "state"], []))
+                    outcomes = {row["path"]: (row["key"], row["outcome"], row.get("cause")) for row in report["settings"]}
+                    self.assertEqual(outcomes, {
+                        ".claude/settings.json": ("autoMemoryEnabled", "merged", None),
+                        ".codex/config.toml": ("features.memories",) + (("merged", None) if tomllib else ("refused", "toml-reader-missing"))})
+                else:
+                    # A person's Start names the harness alone: manual and new.
+                    started = subprocess.run([str(SCRIPT), "start", "--home", str(home), "--harness", "claude"],
+                                             env=self.env, capture_output=True, text=True, timeout=60)
+                    answer = validate(started.stdout, started.returncode, "start")
+                    self.assertEqual((answer["state"], answer["reason"]), ("blocked", "tmux-missing"))
+                self.assertIn(".agents/skills/jarvis/persona.md", (home / "AGENTS.md").read_text())
+                self.assertEqual((home / ".claude/settings.json").read_text(),
+                                 '{\n  "autoMemoryEnabled": false,\n  "hooks": {\n    "Stop": []\n  }\n}\n')
+                self.assertEqual((home / ".codex/config.toml").read_text(),
+                                 "# features this home turns on\n[features]\nmemories = false\nhooks = true\n"
+                                 if tomllib else CODEX_FIXTURE)
+                homes[caller] = self.snapshot(home)
+                # Repeating either caller keeps every file it finds.
+                repeat = self.run_init(home)
+                self.assertEqual(repeat.returncode, 0, repeat.stderr)
+                report = json.loads(repeat.stdout)
+                self.assertEqual((report["created"], sorted(report["kept"])), ([], ["AGENTS.md", "memory/MEMORY.md", "state"]))
+                self.assertTrue(all(row["outcome"] in ("kept", "refused") for row in report["settings"]))
+                self.assertEqual(self.snapshot(home), homes[caller])
+        self.assertEqual(homes["init"], homes["start"])
+
+    def test_initialized_home_clone_starts(self):
+        # A clone carries AGENTS.md and memory/MEMORY.md but not an empty
+        # state/. Its first manual Start on another machine adds state/ alone,
+        # whatever else the person keeps in the home.
+        home = self.home("clone")
+        initialized = self.run_init(home)
+        self.assertEqual(initialized.returncode, 0, initialized.stderr)
+        (home / "state").rmdir()
+        (home / "README.md").write_text("my notes\n")
+        before = self.snapshot(home)
+        answer, started = self.start(home)
+        self.assertEqual((answer["state"], answer["reason"]), ("blocked", "tmux-missing"), started.stderr)
+        self.assertEqual(self.snapshot(home), dict(before, state=("dir",)))
+
+    def test_boot_and_app_starts_never_initialize(self):
+        origins = ("app-on", "boot") if BootReceiptScenario.applicable else ("app-on",)
+        for origin in origins:
+            with self.subTest(origin=origin):
+                home = self.home(origin)
+                before = self.snapshot(home)
+                answer, _ = self.start(home, "--mode", "resume", "--origin", origin)
+                self.assertEqual(answer["reason"], "tmux-missing")
+                self.assertEqual(self.snapshot(home), before)
+
+    def test_partial_home_keeps_user_content(self):
+        home = self.home("partial")
+        (home / "AGENTS.md").write_text("My own standing instructions.\n")
+        (home / ".claude/settings.json").write_text('{"autoMemoryEnabled": true}')
+        (home / ".codex/config.toml").write_text("[features]\nmemories = true\n")
+        kept = {path: (home / path).read_bytes() for path in ("AGENTS.md", ".claude/settings.json", ".codex/config.toml")}
+        result = self.run_init(home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual((sorted(report["created"]), report["kept"]), (["memory/MEMORY.md", "state"], ["AGENTS.md"]))
+        self.assertEqual({row["path"]: row["outcome"] for row in report["settings"]},
+                         {".claude/settings.json": "kept", ".codex/config.toml": "kept" if self.has_tomllib() else "refused"})
+        self.assertEqual({path: (home / path).read_bytes() for path in kept}, kept)
+
+    @staticmethod
+    def has_tomllib():
+        try:
+            import tomllib  # noqa: F401
+        except ImportError:
+            return False
+        return True
+
+    def test_native_settings_preserve_content(self):
+        # Native settings belong to the person. Compare bytes, including the
+        # line endings their editor wrote, not universal-newline readback.
+        outside = self.root / "outside.json"
+        outside.write_bytes(b"{}\r\n")
+        rows = (
+            # name, harness, input (None is absent), expected text, outcome, cause
+            ("claude-absent", "claude", None, '{\n  "autoMemoryEnabled": false\n}\n', "merged", None),
+            ("claude-empty-object", "claude", "{ \n}\n", '{\n  "autoMemoryEnabled": false\n \n}\n', "merged", None),
+            ("claude-compact", "claude", "{}", '{\n  "autoMemoryEnabled": false\n}', "merged", None),
+            ("claude-missing", "claude", ' \n{\n\t"theme": "café"\n}\n ',
+             ' \n{\n  "autoMemoryEnabled": false,\n\t"theme": "café"\n}\n ', "merged", None),
+            ("claude-true", "claude", '{\n"autoMemoryEnabled": true\n}\n', None, "kept", None),
+            ("claude-false", "claude", '{"autoMemoryEnabled": false}', None, "kept", None),
+            ("claude-unreadable", "claude", "{", None, "refused", "unreadable"),
+            ("claude-not-object", "claude", "[]\n", None, "refused", "shape"),
+            ("claude-linked", "claude", "linked", None, "refused", "linked"),
+            ("codex-absent", "codex", None, "[features]\nmemories = false\n", "merged", None),
+            ("codex-empty", "codex", "", "[features]\nmemories = false\n", "merged", None),
+            ("codex-no-table", "codex", 'model = "café"\n',
+             'model = "café"\n\n[features]\nmemories = false\n', "merged", None),
+            ("codex-no-final-newline", "codex", 'model = "café"',
+             'model = "café"\n\n[features]\nmemories = false\n', "merged", None),
+            ("codex-header", "codex", CODEX_FIXTURE,
+             "# features this home turns on\n[features]\nmemories = false\nhooks = true\n", "merged", None),
+            ("codex-commented-header", "codex", "# café\n\t[ features ] \t# native choices\nhooks = true\n",
+             "# café\n\t[ features ] \t# native choices\nmemories = false\nhooks = true\n", "merged", None),
+            ("codex-header-at-eof", "codex", "# café\n[features]",
+             "# café\n[features]\nmemories = false", "merged", None),
+            ("codex-true", "codex", "[features]\nmemories = true\n", None, "kept", None),
+            ("codex-false", "codex", "[features]\nmemories = false\n", None, "kept", None),
+            ("codex-unreadable", "codex", "[features\n", None, "refused", "unreadable"),
+            ("codex-inline-table", "codex", "features = { hooks = true }\n", None, "refused", "shape"),
+        )
+        for newline_name, newline in (("lf", "\n"), ("crlf", "\r\n")):
+            for name, harness, text, updated, outcome, cause in rows:
+                # Files with no newline have no convention; new lines use LF.
+                ending = newline if text and "\n" in text else "\n"
+                expected = (updated.replace("\n", ending).encode("utf-8") if updated is not None else
+                            text.replace("\n", newline).encode("utf-8"))
+                with self.subTest(newline=newline_name, name=name):
+                    home = self.home(newline_name + "-" + name)
+                    relative = ".claude/settings.json" if harness == "claude" else ".codex/config.toml"
+                    path = home / relative
+                    if text is None or cause == "linked":
+                        path.unlink()
+                        if cause == "linked":
+                            path.symlink_to(outside)
+                    else:
+                        path.write_bytes(text.replace("\n", newline).encode("utf-8"))
+                    before = self.snapshot(home).get(relative)
+                    if harness == "codex" and not self.has_tomllib():
+                        outcome, cause = "refused", "toml-reader-missing"
+                    result = self.run_init(home)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    row = next(row for row in json.loads(result.stdout)["settings"] if row["path"] == relative)
+                    self.assertEqual((row["outcome"], row.get("cause")), (outcome, cause))
+                    if outcome == "refused":
+                        refusals = [self.keyed(line) for line in result.stderr.splitlines()
+                                    if line.startswith("jarvis-session: init-settings=")]
+                        self.assertIn({"init-settings": "refused", "path": relative, "cause": cause}, refusals)
+                        self.assertEqual(self.snapshot(home).get(relative), before)
+                    else:
+                        self.assertEqual(path.read_bytes(), expected)
+                    after = self.snapshot(home)
+                    repeated = self.run_init(home)
+                    self.assertEqual(repeated.returncode, 0, repeated.stderr)
+                    self.assertEqual(self.snapshot(home), after)
+                    self.assertEqual(outside.read_bytes(), b"{}\r\n")
+
+    def test_home_init_controls(self):
+        # A source copy drops each guarantee while leaving its input reachable.
+        rows = (
+            ("enclosing-search", 'root = toplevel(home.parent, "..") if home.parent != home else None', "root = None",
+             "test_unqualified_folders_stay_unchanged", "(name='nested-repository')"),
+            ("unreadable-as-none", "if result.returncode == 128 and NOT_A_REPOSITORY.search(result.stderr):",
+             "if result.returncode == 128:", "test_unqualified_folders_stay_unchanged", "(name='enclosing-unreadable')"),
+            ("newline-translation", 'path.open(encoding="utf-8", newline="")', 'path.open(encoding="utf-8")',
+             "test_native_settings_preserve_content", "(newline='crlf', name='claude-missing')"),
+        )
+        for name, match, mutant, contract, row in rows:
+            with self.subTest(name=name):
+                skills = self.root / "control" / name / "skills"
+                scripts = skills / "jarvis/scripts"
+                shutil.copytree(SKILLS / "jarvis/scripts", scripts)
+                for dependency in ("mailbox", "orch"):
+                    (skills / dependency).symlink_to(SKILLS / dependency, target_is_directory=True)
+                source = scripts / "lib/home.py"
+                before = source.read_text()
+                self.assertEqual(before.count(match), 1)
+                changed = before.replace(match, mutant)
+                self.assertNotEqual(changed, before)
+                source.write_text(changed)
+                result = subprocess.run([str(ROOT / "skills/jarvis/tests/session.test.sh"),
+                                         "HomeInitContract." + contract, "-v"],
+                                        env=os.environ | {"JARVIS_TEST_SCRIPT": str(scripts / "jarvis-session")},
+                                        capture_output=True, text=True, timeout=120)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(row, result.stderr)
+                self.assertNotIn("name='no-git'", result.stderr)
+
+
 class SessionContract(unittest.TestCase):
     def setUp(self):
         self.owned_workers = []
@@ -231,6 +572,12 @@ class SessionContract(unittest.TestCase):
         self.root = Path(self.scratch.name).resolve()
         self.home = self.root / "home"
         self.home.mkdir()
+        # The fixture home has no Git repository and holds fixture files, so
+        # initialization would refuse it; its starting files skip that step.
+        (self.home / "AGENTS.md").write_text("fixture standing instructions\n")
+        (self.home / "memory").mkdir()
+        (self.home / "memory/MEMORY.md").write_text("# Memory index\n")
+        (self.home / "state").mkdir()
         self.account = self.root / "account"
         self.account.mkdir()
         self.rows = self.root / "rows.jsonl"
@@ -482,7 +829,6 @@ class SessionContract(unittest.TestCase):
         self.assertFalse(actual_record.is_relative_to(self.home))
         self.assertEqual(json.loads(actual_record.read_text())["home"], str(self.home))
         state = self.home / "state"
-        state.mkdir()
         (state / "jarvis-session.json").write_text("not a runtime record")
         self.assertEqual(before["cwd"], str(self.home))
         self.assertEqual(before["account"], json.loads(self.record.read_text())["effective_home"])
@@ -741,6 +1087,29 @@ class SessionContract(unittest.TestCase):
                 self.assertEqual(words, PERMISSION_WORDS[harness] if unattended else set())
                 self.call("stop")
                 self.wait("stopped", persisted_stop=True)
+
+    def test_person_start_defaults(self):
+        # A person's Start names the harness alone: the account directory the
+        # harness itself uses, a new context and the manual origin.
+        standard = Path(self.env["HOME"]) / ".claude"
+        configured = self.root / "configured"
+        for account in (standard, configured):
+            account.mkdir()
+        argv = [str(SCRIPT), "start", "--home", str(self.home), "--harness", "claude"]
+        rows = (
+            ("new-no-record", {}, standard),
+            # A repeat on the same account starts new: the mode default.
+            ("new-requested", {}, standard),
+            ("new-selection-changed", {"CLAUDE_CONFIG_DIR": str(configured)}, configured),
+        )
+        for expected, env, account in rows:
+            with self.subTest(reason=expected):
+                result = subprocess.run(argv, env=self.env | env, capture_output=True, text=True, timeout=60)
+                validate(result.stdout, result.returncode, "start")
+                answer = self.wait(reason=expected)
+                self.assertEqual((answer["account"], answer["origin"]), (str(account), "manual"))
+                self.call("stop")
+                self.wait("stopped")
 
     def test_first_launch_runs_in_its_created_pane(self):
         # The process tmux creates for a first Start is the one the record

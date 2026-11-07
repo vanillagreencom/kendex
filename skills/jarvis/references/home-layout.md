@@ -1,6 +1,6 @@
 # Home layout
 
-Read when setting up an assistant home, choosing a home path, starting a continuing session or reaching the managed session from a terminal.
+Read when setting up a Jarvis home, choosing a home path, starting a continuing session or reaching the managed session from a terminal.
 
 ## Paths
 
@@ -19,6 +19,31 @@ Read when setting up an assistant home, choosing a home path, starting a continu
 | `.env.local`, or the private env file selected by `KENDEX_ENV_FILE` | Local | Secrets stay on this machine; kendex creates the file with mode 600. |
 
 `kendex add` writes the managed local-state ignore block. When kendex saves a secret into a new private env file, it adds that file's ignore line. These lines keep scratch and secrets out of Git. You do not need to add them yourself.
+
+## Initialize
+
+`jarvis-session init --home HOME` writes the missing starting files of a Jarvis home. A person's first manual Start runs the same step when this machine holds no session record for HOME and a starting file is missing. A boot or `app-on` Start never runs it; an app calls `init` itself. A Start that leaves out `--account`, `--mode` and `--origin` uses `new`, `manual` and the account directory the harness itself uses: `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME` or `PI_CODING_AGENT_DIR` when set, otherwise `~/.claude`, `~/.codex`, `~/.copilot` or `~/.pi/agent`. The orch package's account resolver gives this answer. An app passes each value itself.
+
+A folder qualifies when it is its own Git root, lies inside no other Git work tree, and has no top-level entry beyond these names:
+
+- the paths above: `AGENTS.md`, `skills`, `memory`, `state`, `tmp` and `.env.local`; only `.env.local` counts as the private env file, so a home whose `KENDEX_ENV_FILE` names another top-level file does not qualify;
+- Git's `.git` and `.gitignore`;
+- kendex's `kendex.toml`, `kendex.settings.toml`, `.kendex-lock.json`, `.kendex-generated.json`, `.cache`, `.kendex` and `.kendex-local`;
+- the harness folders and files kendex writes: `.agents`, `.claude`, `.codex`, `.github`, `.pi`, `.opencode`, `.cursor`, `.gemini`, `.mcp.json`, `opencode.json` and `opencode.jsonc`.
+
+Make the home a new folder outside any project and run `git init` before `kendex add`, so `kendex add` can set up the commit-guards hooks. `git init` alone does not separate a folder inside a project from that project. When the enclosing project has kendex or harness files, `kendex add` there installs into the enclosing project; otherwise it installs into the folder, and this step refuses the folder as `inside-work-tree`.
+
+In a qualifying folder the step creates each missing starting file and keeps each existing one unchanged:
+
+- `AGENTS.md`, holding one line that routes to the installed `persona.md` and reuses persona text already loaded, so an app that supplies the persona does not load it twice;
+- `memory/MEMORY.md`, the memory index;
+- the `state/` folder.
+
+It creates no Git repository, handoff or other folder; their own writers create them when needed. A folder that already holds `AGENTS.md` and `memory/MEMORY.md` is an initialized home: Git does not carry an empty `state/` to a clone, so the step creates only that folder there and does not judge the folder again. A change to the starting text reaches only new homes, since `AGENTS.md` is yours.
+
+The step also adds each harness's vendor-memory switch when it is missing, so the home keeps one memory: `"autoMemoryEnabled": false` in `.claude/settings.json` when `.claude/` exists, and `memories = false` under `[features]` in `.codex/config.toml` when `.codex/` exists. A value already set stays. The step inserts its key and changes no other byte. A linked file, an unreadable file, or a table it cannot extend stays unchanged. The Codex edit needs Python 3.11 or newer.
+
+`init` prints one JSON object: `v`, the format version `1`; `home`; `created` and `kept` for the starting files; and `settings` rows with `path`, `key`, `outcome` (`merged`, `kept` or `refused`) and, when refused, `cause` (`linked`, `unreadable`, `shape`, `unwritable` or `toml-reader-missing`). Each refused row also prints `jarvis-session: init-settings=refused path=PATH cause=CAUSE` on stderr. A folder that does not qualify exits 1 with `jarvis-session: init=refused cause=CAUSE`, where CAUSE is `no-git`, `inside-work-tree` with `work-tree=` naming the top-level folder of the enclosing work tree as a JSON string, or `other-entry` with `entry=` naming the first other entry as a JSON string, followed by the separate-folder action; it writes nothing. A write that fails exits 1 with `jarvis-session: init=failed path=PATH cause=CAUSE created=LIST`. A Git read that fails, such as a repository Git cannot read, exits 1 with `jarvis-session: init=failed path=DIR cause=CAUSE created=`, where DIR is `.` for the home's own repository or `..` for the search for an enclosing one and CAUSE is `git-exit-N`, or `git-` and the error name when Git could not run, followed by `detail=` with Git's first error line as a JSON string when Git printed one; it writes nothing. A HOME that does not resolve exits 2. A first Start in a folder that does not qualify answers `blocked` with reason `home-not-dedicated` and prints the same refusal line; a failed write or Git read answers `failed` with reason `launch-failed` and prints the same failure line. On a successful first Start, the step adds only the refused settings lines to stderr.
 
 ## Copilot folder trust
 

@@ -141,6 +141,10 @@ case "$verb" in
     fi
     jq -cn --arg harness "$harness" --arg account "$account" --arg model "$model" --arg effort "$effort" --arg spent_account "$exclude" \
       '{harness:$harness,account:$account,model:$model,effort:$effort} + if $spent_account == "" then {} else {spent_account:$spent_account} end' ;;
+  account)
+    # The account a Start that names none runs on: orch's answer for HARNESS.
+    source "$SCRIPT_DIR/lib/lane-context.sh"
+    lane_context_caller_cfg "$1" ;;
   choice)
     # A Start's stated model and effort, read as task-prepare reads them.
     source "$ROOT/jarvis/scripts/lib/jarvis-env.sh"
