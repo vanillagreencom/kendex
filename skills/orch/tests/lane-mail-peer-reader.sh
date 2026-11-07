@@ -401,12 +401,12 @@ send 'No pair.'
 assert_eq "$(first_err)" "lane-mail: no-reader=$PEER cause=pane-gone" \
   "control: without the pair test a record naming no pane is judged as a pane"
 
-mutant gone-silent '    1) lm_notice no-reader "$ROOT" cause=pane-gone ;;' '    1) ;;'
+mutant gone-silent '    1) lm_reader_report no-reader "$ROOT" cause=pane-gone ;;' '    1) ;;'
 record "{\"server\":\"$GONE\",\"server_start\":$START,\"pane\":\"%9\"}"
 send 'Gone.'
 assert_eq "$(first_err)" "" "control: without the pane-gone notice a record naming a gone pane says nothing"
 
-mutant server-silent '    *) lm_notice reader-unjudged "$ROOT" cause=server ;;' '    *) ;;'
+mutant server-silent '    *) lm_reader_report reader-unjudged "$ROOT" cause=server "$TMUX_PANE_DETAIL" ;;' '    *) ;;'
 record "{\"server\":\"$LIVE\",\"server_start\":$START,\"pane\":\"%9\"}"
 printf '4242 %s %%9\n' "$START" > "$PANES"
 send 'Other server.'
@@ -419,7 +419,7 @@ send 'Bad start.'
 assert_eq "$(first_err)" "lane-mail: no-reader=$PEER cause=pane-gone" \
   "control: without the start test a start that is not epoch seconds is judged as a server's"
 
-mutant hosted-silent '    lm_notice reader-unjudged "$ROOT" cause=hosted' '    :'
+mutant hosted-silent '    lm_reader_report reader-unjudged "$ROOT" cause=hosted' '    :'
 hosted_send 'Hosted control.'
 assert_eq "$(first_err)" "" "control: without the hosted notice a hosted peer's reader goes unsaid"
 

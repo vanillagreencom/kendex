@@ -37,7 +37,7 @@ Refusal = watch.DestinationRefusal
 def send(bash, side, target, root, note):
     """The send's stdout; a timeout or a refusal of either side is a watch.Failure."""
     if side == "host":
-        return watch.checked(watch.host_args(target, "bash -c " + shlex.quote(HOST_SEND) + " owner-note " + shlex.quote(root)),
+        return watch.checked(watch.host_args(target, "bash -c " + shlex.quote(HOST_SEND) + " owner-note " + shlex.quote(root) + " --require-reader"),
                              data=note, operation="host-send")
     mail = Path(root) / LANE_MAIL
     if not mail.is_file():
@@ -45,7 +45,7 @@ def send(bash, side, target, root, note):
     with tempfile.NamedTemporaryFile(mode="w", prefix="owner-note-", suffix=".md") as payload:
         payload.write(note)
         payload.flush()
-        return watch.checked([bash, mail, "send", "--item", "overseer", "--directive", "--file", payload.name],
+        return watch.checked([bash, mail, "send", "--item", "overseer", "--directive", "--require-reader", "--file", payload.name],
                              root, operation="local-send")
 
 
@@ -69,6 +69,9 @@ def main():
         "to local and JARVIS_CONTROL_HOST roots; bare selection must be unique across them. With no additional "
         "alias, try JARVIS_CONTROL_HOST first, then this machine. JARVIS_CONTROL_USER names the control host "
         "account its overseers run as; listing and sending there then run as that account through `sudo -n`. "
+        "Sending requires the recorded overseer's pane to be live before appending; succession still accepts "
+        "mail while that recorded pane is between turns. An older lane-mail that lacks --require-reader "
+        "refuses option-unknown without appending: update its mailbox package before retrying. "
         "Read-only consumers use --resolve REPO without FILE. It prints one JSON object: destination "
         "(local or ssh:ALIAS), host (SSH alias or null), user (the account on that host, JARVIS_CONTROL_USER for "
         "the control host, or null for the SSH user), root (registered checkout path), and mailbox "

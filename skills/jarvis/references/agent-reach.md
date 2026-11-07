@@ -56,6 +56,9 @@ Report the actual cause in plain words. Do not retry or work around a refusal.
 |---|---|
 | `overseer-absent` or owner-note's `no-overseer` | Nothing was sent. With mailbox alone, offer the [directive install](#install). With orch, the agent's session must run `oversee register` in its own tmux pane. Offer [Control host setup](#control-host-setup) first for a session there. Owner-note's `no-overseer` means no tried machine listed a matching root with an overseer. |
 | `overseer-unreadable` | Nothing was sent. Report the fleet-record read failure. |
+| `no-reader` from owner-note | Nothing was sent. The recorded overseer is unnamed or its pane stopped. Offer registration or a fleet launch in the intended checkout. |
+| `reader-unjudged` from owner-note | Nothing was sent. Report the failed process or tmux read; do not treat it as a stopped overseer. |
+| `option-unknown=--require-reader` from owner-note | Nothing was sent. Update that checkout's mailbox package before retrying. |
 | `command-missing` or `file-unreadable` | Name the missing command or unreadable message file. |
 
 ## Install
@@ -85,7 +88,7 @@ The selected root's own mailbox judges whether its overseer exists. Report its a
 
 On each remote, `owner-note` discovers roots only from `ssh [HOST] kendex project list`, under that SSH user's registration. Where the control host's overseers run as another account, set `JARVIS_CONTROL_USER` to it: listing and sending on `JARVIS_CONTROL_HOST`, and the event source's passes there, then run as that account through `sudo -n`, and resolution names it as `user`. The SSH user needs passwordless sudo to it; a refused sudo refuses the send. A root qualifies only when its row has no note and its last path segment is `REPO`. A worktree row does not qualify. Starting or registering an overseer adds no project row.
 
-If a hosted overseer has no qualifying row, the legacy bare route can deliver to a local checkout with a stale overseer record instead. Report the receipt's actual side; `sent side=local` means local delivery. Offer to add the intended host's row. Where `JARVIS_CONTROL_USER` is set, run each `kendex project` command below on `JARVIS_CONTROL_HOST` as that account, the route owner-note takes, for example `ssh [HOST] "sudo -n -H -u [USER] -- bash -l -c 'cd && kendex project list'"`; as the SSH user it changes and shows a registry owner-note does not read.
+If a hosted overseer has no qualifying row, the legacy bare route can deliver to a local checkout whose recorded overseer is live instead. A recorded but stopped overseer refuses before delivery, without trying another machine. Report the receipt's actual side; `sent side=local` means local delivery. Offer to add the intended host's row. Where `JARVIS_CONTROL_USER` is set, run each `kendex project` command below on `JARVIS_CONTROL_HOST` as that account, the route owner-note takes, for example `ssh [HOST] "sudo -n -H -u [USER] -- bash -l -c 'cd && kendex project list'"`; as the SSH user it changes and shows a registry owner-note does not read.
 
 1. Show the user the repository and `ssh [HOST] kendex project add [MAIN_CHECKOUT]`. Run it only after approval, once per hosted repository. It writes nothing into the checkout and refuses an already listed path.
 2. Never run `kendex project discover --register` on a parent folder. It registers every project found; duplicate `REPO` basenames make owner-note refuse. With approval, remove the extra row on that machine through `kendex project remove [PATH]`.
