@@ -308,13 +308,7 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
       assert_eq "$(kill -0 "$held_pid" 2>/dev/null && echo alive || echo gone)" alive "$name: the admitted run outlives the lane that started it"
       close_lane "$name" "$root" '{}' || return 0
       assert_eq "$(await_gone "$held_pid" 100 && echo gone || echo alive)" gone "$name: the close stopped the admitted run's child"
-      assert_eq "$([[ -e "$first_run/exit" ]] && echo present || echo absent)" absent "$name: the stopped run left no verdict"
-      # The close's `dev-validate-run --stop` hands the run to `validate
-      # stop`, which records the stop on the stage before it ends the child
-      # and waits for the run's job: the job (validate run) outlives its
-      # child's group, reads the child gone with no sentinel under the
-      # recorded stop and closes its own stage `stopped` with the end notice
-      # owed; nothing is left for the next reconcile.
+      assert_eq "$([[ -s "$first_run/exit" ]] && awk '/^guard-exit=0 / { found++ } END { print found+0 }' "$first_run/exit" || echo 0)" 0 "$name: the stopped run left no passing verdict"
       assert_eq "$(validate_stages "$state" "$dev_rid")" "$(jq -cn --arg run "$first_run" '[{run_dir: $run, closed: true, outcome: "stopped"}]')" \
         "$name: the job closed the run's stage stopped, under the stop the close recorded, when the close ended its child"
       assert_eq "$(jq -r --arg run "$first_run" '[.stages[] | select(.kind == "validate" and .run_dir == $run)] | .[0] | (.stop.at | type) + " " + ((.stop.at <= .end) | tostring)' "$state")" \

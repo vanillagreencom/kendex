@@ -1,41 +1,10 @@
-//! The proof record's one reader (U6b, step6-map § A2, § C): the validate
-//! stages an item closed `pass` are its proof rows, and every reader of
-//! them, the round's own reuse, the submission, the restack after a base
-//! move and the recovery of a failed round, asks one question here: is the
-//! need's tree proven under the project's declaration? The answer is
-//! `complete` with the rows that prove it, `pending` where a `ci` row
-//! records required CI still to run, or `missing` naming the tree and the
-//! narrowest declared mode it lacks (decision 168 (2)).
-//!
-//! Applicable: a row whose tree is the need's and whose mode the
-//! declaration admits for the need, running the command the declaration
-//! names for that mode (decision 183 Q3: a passing range run publishes
-//! where the repository declares a range command and no CI gate; a
-//! repository declaring only the full command, or a CI gate, needs that).
-//! Complete: the applicable rows' coverage includes every change since the
-//! last accepted proof. A `full` row whose command reported the whole
-//! battery, or whose class was read over the whole branch, covers the tree
-//! whole; a `full` row with a class base covers its round only; a `range`
-//! row over base B covers B..tree; a scoped row covers nothing of the
-//! branch; a later row of any local mode at the same tree that did not
-//! pass voids the earlier pass. A row over a base other than the need's
-//! covers the need where the base's committed tree is itself proven: the
-//! caller supplies that tree read, and a base it cannot read is never
-//! coverage. A restack's recorded skip lends the validated run's tree to
-//! the restacked tree only where the restacked tree has no row of its own
-//! that did not pass: the tree asked about has evidence of its own, and
-//! its own evidence outranks the equivalence claim (decision 187 (1)).
-//!
-//! Nothing here runs a process or writes a record: the module is a
-//! function of the stages, the recorded restack skips and the declaration.
+//! Validation proof coverage under the project declaration.
+
 use serde::{Deserialize, Serialize};
 
 use crate::settings::ValidateSettings;
 use crate::state::{Stage, StageKind, StageOutcome, ValidateMode};
 
-/// Who asks: the dev round's own reuse and admission (decision 125 (6)),
-/// publication, the read after a base move, or the rerun of a failed
-/// round over the round's own rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Need {
@@ -66,6 +35,7 @@ impl Need {
 pub struct Declaration {
     pub cmd: String,
     pub range_cmd: Option<String>,
+    pub docs_cmd: Option<String>,
     pub ci_declared: bool,
     pub finding_prefix: String,
 }
@@ -76,6 +46,10 @@ impl Declaration {
         Declaration {
             cmd: settings.cmd.clone().unwrap_or_default(),
             range_cmd: settings.range_cmd.clone(),
+            docs_cmd: settings
+                .selection_cmd
+                .clone()
+                .or_else(|| settings.text_cmd.clone()),
             ci_declared: settings.ci_context.is_some(),
             finding_prefix: settings.finding_prefix.clone().unwrap_or_default(),
         }
@@ -87,6 +61,9 @@ impl Declaration {
     /// declared, and for publication where declared with no CI gate.
     fn admitted(&self, need: Need) -> Vec<(ValidateMode, &str)> {
         let mut modes = vec![(ValidateMode::Full, self.cmd.as_str())];
+        if let Some(cmd) = &self.docs_cmd {
+            modes.push((ValidateMode::Docs, cmd.as_str()));
+        }
         if let Some(range) = &self.range_cmd
             && (matches!(need, Need::Round | Need::Recovery) || !self.ci_declared)
         {
@@ -223,11 +200,6 @@ fn unpassed_at(tree: &str, s: &Stage) -> bool {
         && (s.end.is_none() || s.outcome != Some(StageOutcome::Pass))
 }
 
-/// A later row at `tree` that did not pass voids the pass at `pass`: later
-/// by its start second, or by its place in `stages[]` within the same
-/// second (the legacy `red_start >= pass_start` rule of
-/// `dev-validate-run`'s `find_bound_run`, with the record's order deciding
-/// a tie the second cannot).
 fn voided(stages: &[Stage], tree: &str, pass: &ProofRow) -> bool {
     stages
         .iter()
@@ -236,20 +208,25 @@ fn voided(stages: &[Stage], tree: &str, pass: &ProofRow) -> bool {
 }
 
 /// Whether the row is a pass that ran its own command: closed `pass`, not
-/// a reuse of an earlier row, not scoped (a scoped run covers nothing of
-/// the branch), and run with the declared finding prefix.
+/// a reuse of an earlier row, scoped only for a docs-only snapshot, and
+/// run with the declared finding prefix.
 fn own_pass(stage: &Stage, declaration: &Declaration) -> bool {
     stage.end.is_some()
         && stage.outcome == Some(StageOutcome::Pass)
         && stage.proof.as_ref().is_some_and(|p| {
-            p.reused.is_none() && !p.scoped && p.finding_prefix == declaration.finding_prefix
+            (p.mode != ValidateMode::Docs || p.docs_only)
+                && p.reused.is_none()
+                && (!p.scoped || (p.mode == ValidateMode::Docs && p.docs_only))
+                && p.finding_prefix == declaration.finding_prefix
         })
 }
 
 /// A `full` row that covers its tree whole: its command reported the whole
 /// battery, or its class was read over the whole branch.
 fn whole(row: &ProofRow) -> bool {
-    row.mode == ValidateMode::Full && (row.selection == "battery" || row.class_base.is_none())
+    row.mode == ValidateMode::Docs
+        || (row.mode == ValidateMode::Full
+            && (row.selection == "battery" || row.class_base.is_none()))
 }
 
 /// The base a partial row covers from: a range row's base, a full row's
@@ -258,7 +235,7 @@ fn partial_base(row: &ProofRow) -> Option<&str> {
     let base = match row.mode {
         ValidateMode::Range => row.base.as_str(),
         ValidateMode::Full => row.class_base.as_deref().unwrap_or_default(),
-        ValidateMode::Ci => "",
+        ValidateMode::Ci | ValidateMode::Docs => "",
     };
     (!base.is_empty()).then_some(base)
 }
@@ -300,13 +277,6 @@ pub fn read(
     if let Some(rows) = reader.covers(&r.tree, r.base.as_deref(), &mut vec![r.tree.clone()]) {
         return answer(Verdict::Complete, rows, None);
     }
-    // A restack whose head has a recorded skip: the validated run's tree is
-    // the restacked tree's equivalent (`restack-skip` owns that judgement);
-    // its rows prove the branch where they prove their own tree whole. The
-    // asked tree's own evidence outranks the equivalence: a row of its own
-    // that did not pass (a red, lost or stopped run at the restacked head,
-    // or one still open) refuses the skip, as it voids a pass at that tree
-    // (decision 187 (1)); a later pass at the asked tree is read directly.
     if r.need == Need::Restack
         && let Some(head) = r.head.as_deref()
         && let Some(skip) = skips.iter().rev().find(|s| s.head == head)
@@ -432,6 +402,427 @@ impl Reader<'_> {
     }
 }
 
+#[allow(
+    clippy::disallowed_methods,
+    reason = "restack equivalence reads git in a private object store and the project's changelog classifier"
+)]
+pub fn restack(
+    worktree: &std::path::Path,
+    base: &str,
+    env: &crate::ops::Env,
+) -> crate::error::Result<(String, i32)> {
+    use crate::validate::files;
+    use agent_runtime::host::{self, Place};
+    use std::ffi::OsStr;
+    use std::path::Path;
+    use std::time::Duration;
+    let retest = |cause: &str, path: Option<&str>, dir: Option<&Path>| {
+        (
+            format!(
+                "restack=retest cause={cause}{}{}",
+                path.map(|p| format!(" path={p}")).unwrap_or_default(),
+                dir.map(|d| format!(" run-dir={}", d.display()))
+                    .unwrap_or_default()
+            ),
+            1,
+        )
+    };
+    let run = match files::last_pass(worktree)? {
+        files::LastPass::Pass(run) => run,
+        files::LastPass::Red(dir) => return Ok(retest("newer-red", None, Some(&dir))),
+        files::LastPass::None => return Ok(retest("no-passing-run", None, None)),
+    };
+    let dir = Some(run.dir.as_path());
+    let scratch = crate::validate::Scratch::new(env)?;
+    let git_read = |args: &[&str]| {
+        crate::validate::git(worktree, "restack", args, &mut String::new())
+            .ok()
+            .flatten()
+            .map(|s| s.trim().to_owned())
+    };
+    let Some(new_base) = git_read(&["rev-parse", "--verify", "-q", &format!("{base}^{{commit}}")])
+    else {
+        return Ok(retest("base-unreadable", None, dir));
+    };
+    let Some(head) = git_read(&["rev-parse", "--verify", "-q", "HEAD^{commit}"]) else {
+        return Ok(retest("head-unreadable", None, dir));
+    };
+    let Some(objects) = git_read(&[
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-path",
+        "objects",
+    ]) else {
+        return Ok(retest("object-missing", None, dir));
+    };
+    let private = scratch.0.join("objects");
+    std::fs::create_dir(&private).map_err(|e| files::unreadable("objects", e))?;
+    let store = [
+        ("GIT_OBJECT_DIRECTORY", private.as_os_str()),
+        ("GIT_ALTERNATE_OBJECT_DIRECTORIES", OsStr::new(&objects)),
+        ("GIT_AUTHOR_NAME", OsStr::new("restack-skip")),
+        ("GIT_AUTHOR_EMAIL", OsStr::new("restack-skip@localhost")),
+        ("GIT_COMMITTER_NAME", OsStr::new("restack-skip")),
+        ("GIT_COMMITTER_EMAIL", OsStr::new("restack-skip@localhost")),
+    ];
+    let call = |program, executable: &Path, args: &[&str], input: Option<&[u8]>| {
+        let place = Place {
+            cwd: Some(worktree),
+            env: &store,
+        };
+        match input {
+            Some(bytes) => host::run_tagged_fed(
+                "proof",
+                program,
+                executable,
+                "restack",
+                args,
+                place,
+                bytes,
+                Duration::from_secs(120),
+            ),
+            None => host::run_tagged_in(
+                "proof",
+                program,
+                executable,
+                "restack",
+                args,
+                place,
+                Duration::from_secs(120),
+            ),
+        }
+    };
+    let git = |args: &[&str]| call("git", Path::new("git"), args, None).ok();
+    let Some(validated) = git(&[
+        "commit-tree",
+        run.get("tree"),
+        "-p",
+        run.get("head"),
+        "-m",
+        "restack: validated",
+    ])
+    .filter(|o| o.status.success()) else {
+        return Ok(retest("object-missing", None, dir));
+    };
+    let validated = host::stdout_text(&validated);
+    let Some(merged) = git(&[
+        "-c",
+        "merge.conflictStyle=merge",
+        "merge-tree",
+        "--write-tree",
+        "-z",
+        &new_base,
+        &validated,
+    ]) else {
+        return Ok(retest("merge-failed", None, dir));
+    };
+    if !matches!(merged.status.code(), Some(0 | 1)) {
+        return Ok(retest("merge-failed", None, dir));
+    }
+    let (tree, conflicts) = match merge_output(&merged.stdout) {
+        Ok(out) => out,
+        Err((cause, path)) => return Ok(retest(cause, path.as_deref(), dir)),
+    };
+    let Some(diff) = git(&[
+        "diff-tree",
+        "-r",
+        "-z",
+        "--no-renames",
+        &tree,
+        &format!("{head}^{{tree}}"),
+    ])
+    .filter(|o| o.status.success()) else {
+        return Ok(retest("diff-failed", None, dir));
+    };
+    let tokens: Vec<_> = diff
+        .stdout
+        .split(|b| *b == 0)
+        .filter(|s| !s.is_empty())
+        .collect();
+    if !tokens.len().is_multiple_of(2) {
+        return Ok(retest("diff-failed", None, dir));
+    }
+    for pair in tokens.chunks(2) {
+        let Ok(meta) = std::str::from_utf8(pair[0]) else {
+            return Ok(retest("path-shape", None, dir));
+        };
+        let Ok(path) = std::str::from_utf8(pair[1]) else {
+            return Ok(retest("path-shape", None, dir));
+        };
+        let words: Vec<_> = meta.trim_start_matches(':').split_whitespace().collect();
+        if words.len() != 5
+            || words[4] != "M"
+            || words[0] != words[1]
+            || !matches!(words[0], "100644" | "100755")
+        {
+            return Ok(retest("path-shape", Some(path), dir));
+        }
+        if !conflicts.iter().any(|(p, _)| p == path) {
+            return Ok(retest("path-unconflicted", Some(path), dir));
+        }
+    }
+    if conflicts.is_empty() {
+        return Ok((
+            format!(
+                "restack=skip condition=no-conflict run-dir={} validated-head={} head={head} paths=none",
+                run.dir.display(),
+                run.get("head")
+            ),
+            0,
+        ));
+    }
+    let classifier = worktree.join(".agents/skills/commit-guards/scripts/changelog-entries");
+    let mut args = vec!["--classify"];
+    args.extend(conflicts.iter().map(|(p, _)| p.as_str()));
+    let kinds = match call("changelog-entries", &classifier, &args, None) {
+        Ok(out) if out.status.success() => host::stdout_text(&out),
+        Err(agent_runtime::Error::NotStarted { .. }) => {
+            return Ok(retest("classifier-missing", None, dir));
+        }
+        _ => return Ok(retest("classifier-failed", None, dir)),
+    };
+    let kinds: Vec<_> = kinds.lines().collect();
+    if kinds.len() != conflicts.len() {
+        return Ok(retest("classifier-failed", None, dir));
+    }
+    for ((path, mode), kind) in conflicts.iter().zip(kinds) {
+        let Some((kind, named)) = kind.split_once('\t') else {
+            return Ok(retest("classifier-failed", None, dir));
+        };
+        if named != path {
+            return Ok(retest("classifier-failed", None, dir));
+        }
+        if !matches!(kind, "record" | "fragment" | "version") {
+            return Ok(retest("unclassified", Some(path), dir));
+        }
+        let Some(entry) =
+            git(&["ls-tree", "--full-tree", &head, "--", path]).filter(|o| o.status.success())
+        else {
+            return Ok(retest("path-shape", Some(path), dir));
+        };
+        if host::stdout_text(&entry).split_whitespace().next() != Some(mode.as_str()) {
+            return Ok(retest("path-shape", Some(path), dir));
+        }
+        let (Some(merged), Some(current)) = (
+            git(&["cat-file", "blob", &format!("{tree}:{path}")]).filter(|o| o.status.success()),
+            git(&["cat-file", "blob", &format!("{head}:{path}")]).filter(|o| o.status.success()),
+        ) else {
+            return Ok(retest("object-missing", Some(path), dir));
+        };
+        if kind == "version" {
+            let unversion = |bytes: &[u8]| {
+                call(
+                    "changelog-entries",
+                    &classifier,
+                    &["--unversion"],
+                    Some(bytes),
+                )
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| o.stdout)
+            };
+            let Some(current) = unversion(&current.stdout) else {
+                return Ok(retest("classifier-failed", Some(path), dir));
+            };
+            for side in [1, 2] {
+                let Some(merged) = merged_side(&merged.stdout, side) else {
+                    return Ok(retest("hunk", Some(path), dir));
+                };
+                let Some(merged) = unversion(&merged) else {
+                    return Ok(retest("classifier-failed", Some(path), dir));
+                };
+                if merged != current {
+                    return Ok(retest("hunk", Some(path), dir));
+                }
+            }
+        } else if changelog_rest(&merged.stdout, true)
+            .zip(changelog_rest(&current.stdout, false))
+            .is_none_or(|(a, b)| a != b)
+        {
+            return Ok(retest("hunk", Some(path), dir));
+        }
+    }
+    Ok((
+        format!(
+            "restack=skip condition=version-only run-dir={} validated-head={} head={head} paths={}",
+            run.dir.display(),
+            run.get("head"),
+            conflicts
+                .iter()
+                .map(|(p, _)| p.as_str())
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        0,
+    ))
+}
+
+type MergeOutput = (String, Vec<(String, String)>);
+fn merge_output(bytes: &[u8]) -> std::result::Result<MergeOutput, (&'static str, Option<String>)> {
+    let bad = || ("merge-failed", None);
+    let tokens: Vec<_> = bytes.split(|b| *b == 0).collect();
+    let tree = std::str::from_utf8(tokens.first().ok_or_else(bad)?)
+        .map_err(|_| bad())?
+        .to_owned();
+    if tree.is_empty() {
+        return Err(bad());
+    }
+    let mut conflicts: Vec<(String, String)> = Vec::new();
+    let mut index = 1;
+    while index < tokens.len() && !tokens[index].is_empty() {
+        let token = std::str::from_utf8(tokens[index]).map_err(|_| bad())?;
+        let (meta, path) = token.split_once('\t').ok_or_else(bad)?;
+        let mode = meta.split_whitespace().next().ok_or_else(bad)?;
+        let conflict = || ("conflict-kind", Some(path.to_owned()));
+        if !matches!(mode, "100644" | "100755") {
+            return Err(conflict());
+        }
+        if let Some((_, old)) = conflicts.iter().find(|(p, _)| p == path) {
+            if old != mode {
+                return Err(conflict());
+            }
+        } else {
+            conflicts.push((path.into(), mode.into()));
+        }
+        index += 1;
+    }
+    index += 1;
+    while index < tokens.len() && !tokens[index].is_empty() {
+        let count = std::str::from_utf8(tokens[index])
+            .map_err(|_| bad())?
+            .parse::<usize>()
+            .map_err(|_| bad())?;
+        let first = tokens
+            .get(index + 1)
+            .and_then(|p| std::str::from_utf8(p).ok())
+            .map(str::to_owned);
+        index = index.checked_add(count + 1).ok_or_else(bad)?;
+        let kind = std::str::from_utf8(tokens.get(index).ok_or_else(bad)?).map_err(|_| bad())?;
+        if kind.starts_with("CONFLICT") && kind != "CONFLICT (contents)" {
+            return Err(("conflict-kind", first));
+        }
+        tokens.get(index + 1).ok_or_else(bad)?;
+        index += 2;
+    }
+    Ok((tree, conflicts))
+}
+
+fn changelog_rest(bytes: &[u8], markers: bool) -> Option<Vec<String>> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let mut inside = false;
+    let mut kept = Vec::new();
+    for line in text.lines() {
+        if markers && !inside && (line == "<<<<<<<" || line.starts_with("<<<<<<< ")) {
+            inside = true;
+            continue;
+        }
+        if inside && (line == "=======" || line.starts_with("|||||||")) {
+            continue;
+        }
+        if inside && (line == ">>>>>>>" || line.starts_with(">>>>>>> ")) {
+            inside = false;
+            continue;
+        }
+        let allowed = line.trim().is_empty()
+            || line.starts_with([' ', '\t'])
+            || line.trim_start_matches('#').starts_with([' ', '\t']) && line.starts_with('#')
+            || ["- ", "* ", "+ ", "-\t", "*\t", "+\t"]
+                .iter()
+                .any(|p| line.starts_with(p));
+        if allowed {
+            continue;
+        }
+        if inside {
+            return None;
+        }
+        kept.push(line.to_owned());
+    }
+    (!inside).then_some(kept)
+}
+
+fn merged_side(bytes: &[u8], side: u8) -> Option<Vec<u8>> {
+    let text = std::str::from_utf8(bytes).ok()?;
+    let mut region = 0;
+    let mut out = String::new();
+    for line in text.lines() {
+        if region == 0 && (line == "<<<<<<<" || line.starts_with("<<<<<<< ")) {
+            region = 1;
+            continue;
+        }
+        if region == 1 && line == "=======" {
+            region = 2;
+            continue;
+        }
+        if region != 0 && (line == ">>>>>>>" || line.starts_with(">>>>>>> ")) {
+            if region != 2 {
+                return None;
+            }
+            region = 0;
+            continue;
+        }
+        if region == 0 || region == side {
+            out.push_str(line);
+            out.push('\n')
+        }
+    }
+    (region == 0).then(|| out.into_bytes())
+}
+
+pub(crate) fn project_rebase(text: &str, sha: &str) -> crate::error::Result<String> {
+    use std::collections::BTreeMap;
+    let invalid = |cause| crate::validate::files::unreadable("rebase-map-unreadable", cause);
+    if text.lines().any(|l| l.starts_with("rebase-unmapped: ")) {
+        return Err(invalid("rebase-unmapped"));
+    }
+    let valid = |s: &str| {
+        s.len() == 40
+            && s.bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    };
+    let mut hops = Vec::new();
+    let mut hop = None;
+    for line in text.lines() {
+        if line == "rebase-hop:" {
+            if let Some(old) = hop.take() {
+                hops.push(old);
+            }
+            hop = Some(BTreeMap::<String, String>::new());
+        } else if let Some(line) = line.strip_prefix("rebase-map: ") {
+            let mut words = line.split(' ');
+            let old = words.next().unwrap_or("");
+            let new = words.next().unwrap_or("");
+            if !valid(old) || !(valid(new) || new == "dropped") || words.next().is_some() {
+                return Err(invalid("map-sha"));
+            }
+            hop.as_mut()
+                .ok_or_else(|| invalid("restack-map-grammar"))?
+                .insert(old.into(), new.into());
+        } else {
+            return Err(invalid("restack-map-grammar"));
+        }
+    }
+    if let Some(hop) = hop {
+        hops.push(hop);
+    }
+    if hops.is_empty() || hops.iter().any(BTreeMap::is_empty) {
+        return Err(invalid("restack-map-grammar"));
+    }
+    let mut projected = sha.to_owned();
+    for hop in hops {
+        let original = projected.clone();
+        for (old, new) in hop {
+            if old.starts_with(&original) {
+                projected = if new == "dropped" {
+                    format!("dropped:{original}")
+                } else {
+                    new[..original.len()].to_owned()
+                };
+            }
+        }
+    }
+    Ok(projected)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -449,6 +840,7 @@ mod tests {
                 ValidateMode::Full => "full".into(),
                 ValidateMode::Range => "range".into(),
                 ValidateMode::Ci => "range".into(),
+                ValidateMode::Docs => "docs".into(),
             },
             class: "standard".into(),
             docs_only: false,
@@ -488,6 +880,7 @@ mod tests {
         Declaration {
             cmd: "full".into(),
             range_cmd: Some("range".into()),
+            docs_cmd: None,
             ci_declared: false,
             finding_prefix: String::new(),
         }

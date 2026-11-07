@@ -8,12 +8,13 @@
 # restack_skip.sh holds the skip check's own rows.
 # Step 3's head read comes after the push and before step 4, and prints the
 # head= of the range run's record. The full-mode route is workflow prose no
-# suite can make red; dev_validate_run.sh RESOLVE_ROWS holds --resolve-mode's
-# full answer with no run started.
+# suite can make red; tests/rust/validate.rs
+# range_resolution_uses_the_declared_command_and_records_the_resolved_base
+# holds --resolve-mode's full answer.
 # A live command is a line whose first text is [MAIN_REPO_ROOT]/ or
 # git -C [WT_PATH], which a commented or prose copy never is. Each pin has a
 # control a moved, commented or altered decoy cannot satisfy. The runner
-# itself is dev_validate_run.sh.
+# itself is the runtime's validation entry, which tests/rust/validate.rs holds.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -327,13 +328,14 @@ cat > "$TMP_ROOT/ci-bin/gh" <<'SH'
 set -euo pipefail
 case "$2" in
   status) exit 0 ;;
+  user) printf '{"login":"fixture"}\n' ;;
   view) printf '{"state":"OPEN","baseRefName":"main"}\n' ;;
   'repos/{owner}/{repo}/rules/branches/main')
     context=CI
     case "${PROOF_CI_WORLD:-required}" in empty|unrequired) context=Lint ;; esac
     printf '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"%s"}]}},{"type":"merge_queue"}]\n' "$context"
     [[ "${PROOF_CI_WORLD:-required}" != unreadable ]] || exit 1 ;;
-  'repos/{owner}/{repo}/branches/main') : ;;
+  'repos/{owner}/{repo}/branches/main') printf '{"name":"main","protected":true,"protection":{"enabled":true,"required_status_checks":{"enforcement_level":"off","contexts":[],"checks":[]}}}\n' ;;
   *) exit 9 ;;
 esac
 SH
@@ -352,14 +354,8 @@ assert_contains "$CI_RECORD" 'validate-mode=ci selection=unreported verdict=pend
 assert_contains "$CI_RECORD" "head=$(git -C "$CI_WT" rev-parse HEAD)" 'restack CI record binds the restacked head'
 assert_eq "$([[ -e "$TMP_ROOT/ci-restack-range-ran" || -e "$TMP_ROOT/ci-restack-full-ran" || -e "$TMP_ROOT/ci-restack-scoped-ran" ]] && echo ran || echo deferred)" deferred 'restack starts no local command'
 assert_eq "$(grep -c '^class-base=' "$CI_DIR/start" || :)" 0 'restack CI record names no class base'
-MUTANT_SCRIPTS="$(mutant_scripts ci-restack-scoped dev-validate-run)" || fixture_failed ci-scoped-mutant
-mutate_file "$MUTANT_SCRIPTS/dev-validate-run" '--restack)  once "$1" "$restack"; restack=true; shift ;;' '--restack)  shift ;;'
-PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$CI_COMMAND" "$CI_WT" main - "$MUTANT_SCRIPTS" > "$TMP_ROOT/ci-scoped-control.out" || fixture_failed ci-scoped-control
-assert_eq "$([[ -e "$TMP_ROOT/ci-restack-scoped-ran" ]] && echo ran || echo deferred)" ran 'control: a runner that ignores --restack runs the scoped suites on the restack'
-MUTANT_SCRIPTS="$(mutant_scripts ci-restack-mode dev-validate-run)" || fixture_failed ci-mutant
-mutate_file "$MUTANT_SCRIPTS/dev-validate-run" '"$validate_mode" == ci || "$pr_order" == push-first' '"$validate_mode" == ci || false'
-CI_RESOLVED="$(PATH="$TMP_ROOT/ci-bin:$PATH" live "$RESTACK_DOC" "$RESOLVE" "$CI_WT" main - "$MUTANT_SCRIPTS")" || fixture_failed ci-control
-assert_eq "$CI_RESOLVED" validate-mode=range 'control: dropping automatic CI breaks the push-first restack mode'
+# The restack rule these rows hold lives in the runtime's validation start,
+# where its must-fail control mutates it.
 
 # Execute the workflow's mode block for every order under a covered subset.
 for order in review-first open-first push-first; do
@@ -406,7 +402,8 @@ submit_none_check() { # DOC SOURCE
     block="$binding"$'\n'"$block"
     mode=
   fi
-  env -i PATH="$PATH" SUBMIT_VALIDATE_MODE="$mode" "$BASH" -uc "$block"
+  # HOME names the runtime cache the record read's built runtime is in.
+  env -i PATH="$PATH" HOME="$HOME" SUBMIT_VALIDATE_MODE="$mode" "$BASH" -uc "$block"
 }
 SUBMIT_DOC="$REPO_ROOT/skills/orch/workflows/submit-pr.md"
 for source in receipt run; do
@@ -449,6 +446,7 @@ merge_proof() { # WT [SCRIPTS] [merge|submit]
   block="${block//\[PREPARED_HEAD\]/${PROOF_PUBLISHED_HEAD:-$(git -C "$wt" rev-parse HEAD)}}"
   block="${block//\[PREPARED_BASE\]/${PROOF_LIVE_BASE:-$(git -C "$wt" rev-parse origin/main)}}"
   block="${block//\[WORKTREE_PATH\]/$wt}"
+  block="${block//\[BASE_BRANCH\]/main}"
   (cd "$wt" && env -u ORCH_STATE_DIR -u DEV_VALIDATE_CI_CONTEXT -u DEV_VALIDATE_SELECTION_CMD \
     -u ORCH_PR_ORDER PATH="$TMP_ROOT/ci-bin:$PATH" "$BASH" -euo pipefail -c "$block"$'\n''echo merge-admitted')
 }
@@ -460,8 +458,6 @@ record_skip() { # WT LINE
   "$STATE" --state-dir "$1/tmp" update KEN-1 --arg head "$head" --arg validated "$validated" \
     '.restack_skips=[{head:$head,validated_head:$validated,condition:"no-conflict",paths:[]}]'
 }
-MUTANT_PROOF="$(mutant_scripts missing-proof-refusal dev-validate-run)" || fixture_failed proof-control
-mutate_file "$MUTANT_PROOF/dev-validate-run" $'    exit 1\n  fi\n  # Read against an empty default' $'    : # exit 1\n    exit 0\n  fi\n  # Read against an empty default'
 # The submission route uses the real guarded push with only network replaced.
 printf '#!/bin/sh\nexit 0\n' > "$NETWORK_PUSH"
 for cause in timeout host; do
@@ -516,8 +512,6 @@ for cause in timeout host; do
         assert_eq "$proof_rc ${OUT##*$'\n'}" '0 merge-admitted' "$cause $route admits the existing CI route"
       else
         assert_eq "$proof_rc ${OUT##*$'\n'}" "1 validation-proof=missing ci-fallback=$want" "$cause $route holds merge and queue for $PROOF_CI_WORLD CI"
-        CONTROL_OUT="$(merge_proof "$PROOF_WT" "$MUTANT_PROOF" "$route")" || fixture_failed proof-control-run
-        assert_eq "${CONTROL_OUT##*$'\n'}" merge-admitted 'control: removing refusal while retaining invocation permits uncovered merge'
       fi
     done
   done

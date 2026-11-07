@@ -5,10 +5,10 @@ Run one verification pass from the consumer's base checkout. A scheduler can sta
 ## 1. Read open checks
 
 ```bash
-.agents/skills/orch/scripts/reconcile-work-items
+.agents/skills/orch/scripts/orch-runtime reconcile-items
 ```
 
-Exit 1 carries findings and usable box lines. Exit 2 is a failed read: report its diagnostic. Keep the box lines supplied by the invoking watch event or heartbeat, including boxes that reconciliation omits. For each `due` or `overdue` box from either source, read the item and its comments live. Read each box once in this pass. Also handle items with no open boxes through the completion route below. Report invalid boxes with their diagnostics.
+Read the JSON reply. A successful reply carries `result.findings`, `result.lines` and `result.counts`; findings are data and the command exits 0. A refused reply exits 1; report its diagnostic. A usage error exits 2. Keep the box lines supplied by the invoking watch event or heartbeat, including boxes that reconciliation omits. For each `due` or `overdue` box from either source, read the item and its comments live. Read each box once in this pass. Also handle items with no open boxes through the completion route below. Report invalid boxes with their diagnostics.
 
 For each `verifying-merge-unread` item without usable watch box lines, read the item's linked merged pull requests live in their own repositories. Use the linked-PR read in [oversee-events.md § Verification](../references/oversee-events.md#event-kinds), also requesting `mergeCommit` for release checks. Load the checklist library as [reconcile-work-items](../scripts/reconcile-work-items) does. Read and use `verifying_parse` and `verifying_judge` in [verifying.sh](../scripts/lib/verifying.sh) with their existing argument contracts. Supply the live item, the latest linked merge time, each repository's linked merge evidence and the current time. These helpers own box parsing, release checks and deadline status. Apply the same evidence and completion route below to their due or overdue boxes. Keep waiting and blocked boxes open. If linked merge evidence is absent or unreadable, report the item, its open boxes and the failed read. Do not repeat the watch's repository search.
 
@@ -20,7 +20,7 @@ When the deadline arrives with no evidence and no proved defect, read the item's
 
 - With no earlier rewrite, rewrite the box once. Point `Where:` to readable evidence, or set `Trigger:` to the expected sample's UTC time and `Deadline:` within 72 hours of that time. Preserve the pass condition. Save the current full description under `tmp/` and write it through `linear.sh issues update [ITEM] --description-file [FILE]`, with no state option. Comment `acceptance unverified: <cause>; check rewritten`, naming the box and its old and new check fields.
 - If the rewritten box reaches its deadline without evidence, send one owner ask on the same item. Offer two options: drop the check, or keep waiting and give a date. Under an overseer, use [communication-modes.md § Owner asks](../references/communication-modes.md#owner-asks). With no overseer, use § 3's tracker route. Read existing comments before asking so a later pass reuses the open ask.
-- On drop, comment the person's reason and use § 1's completion route to tick the box with that comment as evidence. On keep waiting, set `Trigger:` to the person's date in UTC and keep `Deadline:` within 72 hours of it. Record the answer and changed fields on the item. A later missing-sample deadline uses the same person's decision route, without another automatic rewrite.
+- On drop, keep the box unticked. Hand the check’s criterion, the person’s reason and the person’s authority to the Linear completion owner’s retire route (KEN-4540). While that route is unavailable, record those three facts in an owner comment on the item and name KEN-4540 as the completion owner. On keep waiting, set `Trigger:` to the person's date in UTC and keep `Deadline:` within 72 hours of it. Record the answer and changed fields on the item. A later missing-sample deadline uses the same person's decision route, without another automatic rewrite.
 
 A deadline moves only through that one rewrite or the person's dated answer. A proved failed check follows § 1's acceptance rule.
 

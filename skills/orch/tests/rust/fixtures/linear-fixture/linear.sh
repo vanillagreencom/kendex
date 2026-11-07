@@ -20,6 +20,12 @@ here="$(dirname "${BASH_SOURCE[0]}")"
 : "${LINEAR_FAKE_REPLIES:=$here/linear.json}"
 : "${LINEAR_FAKE_LOG:=$here/linear.log}"
 printf '%s\n' "$*" >> "$LINEAR_FAKE_LOG"
+if [ "${1:-} ${2:-}" = 'issues get' ] && [ -f "$here/owner-repair.json" ]; then
+  real="$(python3 -B -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve().parents[5] / "linear/scripts")' "${BASH_SOURCE[0]}")"
+  source "$real/lib/formatters.sh"
+  format_issue_single "$(cat "$here/owner-repair.json")"
+  exit 0
+fi
 if [ "${1:-}" = done-when ]; then
   real="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../../../../../linear/scripts" && pwd)/linear.sh"
   exec "$real" "$@"
@@ -34,6 +40,9 @@ if [ -z "$reply" ]; then
   exit 1
 fi
 jq -r '.stderr // empty' <<<"$reply" >&2
+if [ "$key" = 'issues update' ] && [ "${4:-}" = --description ] && [ "$(jq -r '.exit // 0' <<<"$reply")" = 0 ]; then
+  jq -cn --arg id "$3" --arg d "$5" '{issue:{identifier:$id,description:$d}}' >"$here/owner-repair.json"
+fi
 if jq -e 'has("text")' <<<"$reply" >/dev/null; then
   jq -rj '.text' <<<"$reply"
 elif jq -e 'has("body")' <<<"$reply" >/dev/null; then

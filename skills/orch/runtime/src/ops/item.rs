@@ -950,6 +950,9 @@ fn read_job(job: &ValidateJob) -> RunRead {
             }
         },
     };
+    if runner == "attached" {
+        return read_attached(job, pid, start);
+    }
     match (runner.as_str(), unit, pid, start) {
         ("systemd", Some(unit), _, _) => {
             let service = format!("{unit}.service");
@@ -1002,6 +1005,41 @@ fn read_job(job: &ValidateJob) -> RunRead {
             Reading::Unreadable { cause } => RunRead::Unreadable(format!("job pid {pid}: {cause}")),
         },
         (runner, _, _, _) => RunRead::Unreadable(format!("job runner {runner:?}: no identity")),
+    }
+}
+
+/// A foreground run's job is the caller's own process, which leads no group
+/// of its own, while the command it started leads one: the executor is read
+/// by its identity, and once it is gone the command it recorded in the run
+/// directory holds the run until that command's group ends.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a foreground run's executor is read by its recorded identity for the stage's reconcile; nothing is signalled here"
+)]
+fn read_attached(job: &ValidateJob, pid: Option<u32>, start: Option<String>) -> RunRead {
+    let (Some(pid), Some(start)) = (pid, start) else {
+        return RunRead::Unreadable("job runner \"attached\": no identity".to_owned());
+    };
+    match process::still_runs(&Identity { pid, start }) {
+        Reading::Live(_) => return RunRead::Live { pid },
+        Reading::Unreadable { cause } => {
+            return RunRead::Unreadable(format!("job pid {pid}: {cause}"));
+        }
+        Reading::Gone => {}
+    }
+    let Some(run_dir) = Path::new(&job.record).parent() else {
+        return RunRead::Unreadable(format!("job record {}: no run directory", job.record));
+    };
+    match crate::validate::run::command_reading(run_dir) {
+        Ok(Some(Reading::Live(()))) => RunRead::Live { pid },
+        Ok(Some(Reading::Unreadable { cause })) => {
+            RunRead::Unreadable(format!("command of job pid {pid}: {cause}"))
+        }
+        Ok(Some(Reading::Gone) | None) => RunRead::Gone {
+            outcome: StageOutcome::Lost,
+            cause: RunCause::ProcessGone,
+        },
+        Err(e) => RunRead::Unreadable(format!("command of job pid {pid}: {e}")),
     }
 }
 

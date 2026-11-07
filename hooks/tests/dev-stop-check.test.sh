@@ -29,6 +29,11 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/dev-stop-check.sh}"
 ORCH="$(cd "$TEST_DIR/../../skills/orch" && pwd)"
+# The reader runs orch's built runtime from the caller's cache, which the
+# rows' own homes do not hold.
+# shellcheck source=../../skills/agent-runtime/scripts/lib/key.sh
+. "$TEST_DIR/../../skills/agent-runtime/scripts/lib/key.sh"
+RUNTIME_CACHE="$(agent_runtime_cache)"
 
 PASS=0
 FAIL=0
@@ -58,9 +63,15 @@ RUN_DIR="$TMP_ROOT/cwd"
 mkdir -p "$RUN_DIR" "$TMP_ROOT/home"
 
 # --- The worktrees ----------------------------------------------------------
+# A run directory as orch's shell producer leaves it while its child runs:
+# the start record and the launcher's runner record written before the
+# launch; each row adds the child's bare pid and, once it ends, its verdict.
 plant_run() { # WORKTREE -> the run directory
-  mkdir -p "$1/tmp/dev-validate-planted"
-  printf '%s' "$1/tmp/dev-validate-planted"
+  local dir="$1/tmp/dev-validate-planted"
+  mkdir -p "$dir"
+  printf 'worktree=%s\ntimeout-bin=timeout\nstart=1769600000\ntimeout-secs=3600\npoll-secs=30\ncap-secs=3640\nclass=standard\ndocs-only=false\nvalidate-mode=full\nvalidate-base=\nhead=%040d\n' "$1" 0 >"$dir/start"
+  printf 'runner=setsid\nline=runner=setsid reason=no-linger\n' >"$dir/runner"
+  printf '%s' "$dir"
 }
 WT_LIVE="$TMP_ROOT/wt.live"
 RUN_LIVE="$(plant_run "$WT_LIVE")"
@@ -176,7 +187,8 @@ transcript hold-only "$(claude_hold "$RUN_LIVE")"
 # dev-validate-run that cannot answer, as a catalog checkout holds orch's
 # source, which the walk stops short of. `global` installs it under a harness
 # root moved out of the home (CODEX_HOME elsewhere), beside the home's shared
-# tree.
+# tree. `unbuilt` is the `orch` install on a host whose runtime cache holds no
+# build, where the real reader answers its setup line.
 world_hook() { # WORLD -> the hook's path
   case "$1" in
     shared | codex) printf '%s' "$TMP_ROOT/world.$1/.codex/hooks/dev-stop-check.sh" ;;
@@ -214,7 +226,7 @@ install_world() { # NAME
   reader="$(world_reader "$1")"
   mkdir -p "${hook%/*}"
   case "$1" in
-    orch | shared | global)
+    orch | shared | global | unbuilt)
       mkdir -p "${reader%/orch/scripts/dev-validate-run}"
       ln -s "$ORCH" "${reader%/scripts/dev-validate-run}"
       ;;
@@ -227,9 +239,16 @@ install_world() { # NAME
       ;;
   esac
 }
-for world in orch bare failing shared codex global; do
+for world in orch bare failing shared codex global unbuilt; do
   install_world "$world"
 done
+mkdir -p "$TMP_ROOT/cache.unbuilt"
+world_cache() { # WORLD
+  case "$1" in
+    unbuilt) printf '%s' "$TMP_ROOT/cache.unbuilt" ;;
+    *) printf '%s' "$RUNTIME_CACHE" ;;
+  esac
+}
 
 # A PATH holding only the named tools, for the rows that take one away.
 farm() { # NAME TOOL...
@@ -251,17 +270,18 @@ payload() { # AGENT-TRANSCRIPT PARENT-TRANSCRIPT ACTIVE
 }
 
 run_hook() { # WORLD PAYLOAD [PATH]
-  local hook home cwd
+  local hook home cwd cache
   hook="$(world_hook "$1")"
   home="$(world_home "$1")"
   cwd="$(world_cwd "$1")"
+  cache="$(world_cache "$1")"
   cp "$HOOK" "$hook"
   set +e
   if [ -n "${3:-}" ]; then
-    (cd "$cwd" && env -i HOME="$home" PWD="$cwd" PATH="$3" \
+    (cd "$cwd" && env -i HOME="$home" PWD="$cwd" PATH="$3" AGENT_RUNTIME_CACHE="$cache" \
       GIT_CEILING_DIRECTORIES="$TMP_ROOT" "$BASH_BIN" "$hook" <<<"$2") >"$OUT_FILE" 2>"$ERR_FILE"
   else
-    (cd "$cwd" && env HOME="$home" GIT_CEILING_DIRECTORIES="$TMP_ROOT" \
+    (cd "$cwd" && env HOME="$home" AGENT_RUNTIME_CACHE="$cache" GIT_CEILING_DIRECTORIES="$TMP_ROOT" \
       "$BASH_BIN" "$hook" <<<"$2") >"$OUT_FILE" 2>"$ERR_FILE"
   fi
   rc=$?
@@ -313,6 +333,7 @@ stop_rows() {
     case "$under" in
       wait) grep -Fxq -- "$(world_reader "$world") --wait --run-dir $RUN_LIVE" "$ERR_FILE" && extra=" under=wait" || extra=" under=none" ;;
       cause) grep -Fxq -- "dev-validate-run: stub cannot read" "$ERR_FILE" && extra=" under=cause" || extra=" under=none" ;;
+      setup) grep -q -- "^orch-runtime: setup-required key=" "$ERR_FILE" && extra=" under=setup" || extra=" under=none" ;;
     esac
     if [ "$first_want" = - ] && { [ -s "$OUT_FILE" ] || [ -s "$ERR_FILE" ]; }; then
       extra="$extra output=present"
@@ -345,6 +366,8 @@ a worktree since removed passes|orch|-|agent:removed|0|-|-
 a transcript naming no worktree passes|orch|-|agent:none|0|-|-
 a reader that cannot answer is refused with its words|failing|-|agent:live-claude|2|dev-stop-check: unread=$WT_LIVE|cause
 a reader that cannot answer on a continued stop is reported, not held|failing|-|active:live-claude|0|dev-stop-check: unread=$WT_LIVE|cause
+a reader whose runtime is not built holds the stop with its setup line|unbuilt|-|agent:live-claude|2|dev-stop-check: unread=$WT_LIVE|setup
+a reader whose runtime is not built on a continued stop is reported, not held|unbuilt|-|active:live-claude|0|dev-stop-check: unread=$WT_LIVE|setup
 a reader in the shared tree beside the hook is found|shared|-|agent:live-claude|2|dev-stop-check: running=$RUN_LIVE|wait
 a reader in the repository's shared tree is found at its root, not past it|codex|-|agent:live-claude|2|dev-stop-check: running=$RUN_LIVE|wait
 a reader in the home's shared tree is found for a harness root outside the home|global|-|agent:live-claude|2|dev-stop-check: running=$RUN_LIVE|wait

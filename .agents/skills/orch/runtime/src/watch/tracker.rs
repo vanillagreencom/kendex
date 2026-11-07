@@ -48,6 +48,8 @@ use crate::watch::{Body, Change, Event, Produced, Tick};
 
 use super::github;
 
+pub mod reconcile_items;
+
 /// The bound on one tracker call: a `--max` read walks every page inside
 /// the CLI, so the bound covers a chain, not a page.
 const TRACKER_TIMEOUT: Duration = Duration::from_secs(300);
@@ -141,8 +143,6 @@ pub struct OwedItem {
     pub delivery: Option<String>,
 }
 
-/// One item the verification duty judges: a Verifying item, or a
-/// container whose children all ended (`lib/verifying.sh`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct VerifyingItem {
     pub id: String,
@@ -671,6 +671,29 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
     Ok(produced)
 }
 
+fn completed_containers<'a>(
+    candidates: impl Iterator<Item = (&'a str, &'a str, bool)>,
+    children: impl Iterator<Item = (&'a str, &'a str)>,
+) -> BTreeSet<String> {
+    let mut by_parent: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (parent, kind) in children {
+        if !parent.is_empty() {
+            by_parent.entry(parent).or_default().push(kind);
+        }
+    }
+    candidates
+        .filter(|(_, kind, bundle)| !bundle && !matches!(*kind, "completed" | "canceled"))
+        .filter(|(id, _, _)| {
+            by_parent.get(id).is_some_and(|kinds| {
+                kinds
+                    .iter()
+                    .all(|kind| matches!(*kind, "completed" | "canceled"))
+            })
+        })
+        .map(|(id, _, _)| id.to_owned())
+        .collect()
+}
+
 /// The tracker's own reads, in order, each once: the team's statuses, its
 /// open items, the children of the container candidates, the lane items'
 /// terminal states, the owner's tracker answers and the due tracker asks,
@@ -725,8 +748,6 @@ fn read_tracker(
             return Err(invalid("issues", "state_type", &item.state_type));
         }
     }
-    // The children of every container candidate, one batch, so a container
-    // whose children all ended reads Verifying (`lib/verifying.sh`).
     let candidates: Vec<&str> = items
         .iter()
         .filter(|i| !i.in_pr_bundle)
@@ -761,25 +782,14 @@ fn read_tracker(
             }
         }
     }
-    let containers: BTreeSet<String> = {
-        let mut by_parent: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-        for (id, (parent, kind)) in &state_types {
-            if !parent.is_empty() {
-                by_parent.entry(parent).or_default().push(kind);
-            }
-            let _ = id;
-        }
-        by_parent
-            .into_iter()
-            .filter(|(_, kinds)| kinds.iter().all(|k| *k == "completed" || *k == "canceled"))
-            .filter_map(|(parent, _)| {
-                items
-                    .iter()
-                    .find(|i| i.id == parent && !i.in_pr_bundle)
-                    .map(|i| i.id.clone())
-            })
-            .collect()
-    };
+    let containers = completed_containers(
+        items
+            .iter()
+            .map(|i| (i.id.as_str(), i.state_type.as_str(), i.in_pr_bundle)),
+        state_types
+            .values()
+            .map(|(parent, kind)| (parent.as_str(), kind.as_str())),
+    );
     // The lane items' terminal states, one batch (`lane-close
     // --terminal-state`), for every parked or stopped linear-tracked lane.
     let lane_items: Vec<&str> = fleet
@@ -1164,19 +1174,34 @@ fn read_owner_tracker_answers(
         ) else {
             return unread("issues-format");
         };
-        match linear.call(
+        if let Ok(Answered::Quota(quota)) = linear.call(
             "owner-repair",
             &["issues", "update", &item.id, "--description", &repaired],
         ) {
-            Ok(Answered::Value(_)) => {}
-            Ok(Answered::Quota(quota)) => return Ok(Answered::Quota(quota)),
-            Err(_) => {
-                let _ = writeln!(
-                    std::io::stderr(),
-                    "lane-mail: tracker-unwritten issue={} cause=description",
-                    item.id
-                );
+            return Ok(Answered::Quota(quota));
+        }
+        // The write's own reply can be lost or claim a write that did not
+        // land: the item read back says whether it carries the repair. A
+        // tracker write is advisory, so one that did not land is said and
+        // holds none of the owner's answers; the next pass reads the
+        // description again and repairs only one still missing.
+        let landed = match linear.json::<OwnerItem>(
+            "owner-repair-read-back",
+            &["issues", "get", &item.id, "--format=safe"],
+        ) {
+            Ok(Answered::Value(read)) => {
+                read.id == item.id
+                    && matches!(&read.description, Nullable::Present(text) if text == &repaired)
             }
+            Ok(Answered::Quota(quota)) => return Ok(Answered::Quota(quota)),
+            Err(_) => false,
+        };
+        if !landed {
+            let _ = writeln!(
+                std::io::stderr(),
+                "lane-mail: tracker-unwritten issue={} cause=description",
+                item.id
+            );
         }
     }
     if items.is_empty() {

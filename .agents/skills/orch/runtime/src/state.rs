@@ -425,6 +425,7 @@ pub enum ValidateMode {
     Full,
     Range,
     Ci,
+    Docs,
 }
 
 impl ValidateMode {
@@ -434,6 +435,7 @@ impl ValidateMode {
             ValidateMode::Full => "full",
             ValidateMode::Range => "range",
             ValidateMode::Ci => "ci",
+            ValidateMode::Docs => "docs",
         }
     }
 }
@@ -508,7 +510,8 @@ pub enum Reused {
 pub struct ValidateJob {
     /// The launcher's record, `<run_dir>/runner`.
     pub record: String,
-    /// `systemd`, `setsid`, or `none` where the start ran nothing.
+    /// `systemd`, `setsid`, `attached` where the caller's own process runs
+    /// it in the foreground, or `none` where the start ran nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runner: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

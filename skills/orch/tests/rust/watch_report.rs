@@ -242,12 +242,71 @@ impl World {
         }
     }
 
+    fn real_report_github(&self) -> PathBuf {
+        let path = self.path().join("real-github");
+        let actual = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../github/scripts/github.sh")
+            .canonicalize()
+            .unwrap();
+        let text = format!(
+            "#!/bin/sh\ncd '{}' || exit 1\nexec env -i HOME='{}' PATH='{}' LANG=C.UTF-8 TMPDIR='{}' GH_TOKEN=fixture GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null '{}' \"$@\"\n",
+            self.path().display(),
+            self.path().display(),
+            tool_path(&[self.path()]),
+            std::env::temp_dir().display(),
+            actual.display()
+        );
+        write_executable(&path, text);
+        path
+    }
+
+    fn real_report_mail(&self) -> PathBuf {
+        let path = self.path().join("real-lane-mail");
+        let actual = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../mailbox/scripts/lane-mail")
+            .canonicalize()
+            .unwrap();
+        let text = format!(
+            "#!/bin/sh\nexec env -i HOME='{}' PATH='{}' LANG=C.UTF-8 TMPDIR='{}' GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CEILING_DIRECTORIES='{}' '{}' \"$@\"\n",
+            self.path().display(),
+            tool_path(&[]),
+            std::env::temp_dir().display(),
+            self.path().display(),
+            actual.display()
+        );
+        write_executable(&path, text);
+        path
+    }
+
     fn report_context(&self) -> report::Context {
+        if !self.path().join(".git").exists() {
+            for args in [
+                vec!["init", "--quiet"],
+                vec!["config", "gc.auto", "0"],
+                vec!["config", "maintenance.auto", "false"],
+            ] {
+                let out = program("git")
+                    .arg("-C")
+                    .arg(self.path())
+                    .args(args)
+                    .output()
+                    .unwrap();
+                assert!(
+                    out.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+        }
+        let mut settings = self.settings.clone();
+        settings.lane_mail_cli = self.real_report_mail();
         report::Context {
             fleet: self.fleet_path(),
-            settings: self.settings.clone(),
-            github: self.path().join("github.sh"),
+            settings,
+            github: self.real_report_github(),
+            gh: self.path().join("gh"),
             repos: vec!["owner/repo".to_owned()],
+            shared: Default::default(),
         }
     }
 }
@@ -559,6 +618,7 @@ fn report_fleet(overseer: Option<Value>) -> Value {
              "cycle": {"commit": "0123456789abcdef0123456789abcdef01234567",
                        "stamps": {"launched": "2026-09-20T00:00:00Z", "first_commit": "2026-09-20T00:01:00Z"}}},
             {"item": "KEN-4", "status": "parked", "launched_at": "2026-09-20T00:00:00Z",
+             "cycle": {"stamps": {"first_commit": "2026-09-20T00:10:00Z"}},
              "parked": {"pr": 14, "head": "abc", "repo": "owner/repo", "at": "2026-09-27T00:00:00Z"}},
             {"item": "KEN-2", "status": "stopped", "launched_at": "2026-09-20T00:00:00Z",
              "pending_pr": {"pr": 15, "head": "def"}},
@@ -578,89 +638,38 @@ const REPORT_BODY: [&str; 4] = [
     "  first-commit KEN-1 launched=2026-09-21T00:00:00Z first_commit=none secs=- tier=-",
 ];
 
-/// `oversee-report due`'s answer through the fixture: one `report-due` line
-/// with the four span lines, nothing while it stands, the row cleared when
-/// the report is written, the line again on a new reason; exit 1, two lines
-/// and a line of another shape each refuse `report-unjudged` with the exit
-/// and the answer.
+/// The report duty's own due judgement: one `report-due` line with the four
+/// span lines, nothing while it stands, the row cleared once a report file
+/// is written, and a mailbox the duty cannot read refuses the pass rather
+/// than read as no owner report.
 #[test]
-fn report_due_prints_once_per_due_with_its_reason_and_a_bad_answer_is_report_unjudged() {
+fn report_due_prints_once_and_file_cadence_clears_it_without_a_script_answer() {
     let world = World::new();
     world.write_fleet(&report_fleet(None));
-    world.plant(
-        "github.json",
-        &json!({"pr-timeline 14 owner/repo": {"body": {"pr": 14, "stamps": {"first_commit": "2026-09-20T00:10:00Z"}}}}),
-    );
     let clock = FakeClock::new();
-    let wall = clock.wall_secs();
+    let now = epoch("2026-10-02T00:00:01Z");
     let mut body = report::body(world.report_context());
     let mut baseline = Baseline::default();
-    let due = "report-due reason=minutes since=2026-10-01T00:00:00Z";
-    world.plant("oversee-report.json", &json!({"text": format!("{due}\n")}));
-    let produced = pass(Duty::Report, &mut body, &mut baseline, &clock, wall).unwrap();
+    let due = "report-due reason=minutes since=2026-09-20T00:00:00Z";
+    let produced = pass(Duty::Report, &mut body, &mut baseline, &clock, now).unwrap();
     let mut want = vec![format!("EVENT {due}")];
     want.extend(REPORT_BODY.iter().map(|l| (*l).to_owned()));
     assert_eq!(rendered(&produced), want);
     assert_eq!(baseline.get("report-due", "fleet"), Some(due));
-    assert_eq!(
-        lines(&world.path().join("oversee-report.log")),
-        vec![format!(
-            "due --state {} --repo owner/repo",
-            world.fleet_path().display()
-        )]
-    );
-    assert_eq!(
-        lines(&world.path().join("github.log")),
-        vec![
-            "pr-timeline 14 --repo owner/repo".to_owned(),
-            "pr-timeline 15 --repo owner/repo".to_owned()
-        ],
-        "a lane with a recorded cycle reads no timeline"
-    );
-    let again = pass(Duty::Report, &mut body, &mut baseline, &clock, wall + 240).unwrap();
-    assert_eq!(
-        rendered(&again),
-        Vec::<String>::new(),
-        "a standing due report is said once"
-    );
-    assert!(again.changes.is_empty(), "{again:?}");
-    // The report was written: the judge answers nothing, the row clears.
-    std::fs::remove_file(world.path().join("oversee-report.json")).unwrap();
-    let written = pass(Duty::Report, &mut body, &mut baseline, &clock, wall + 480).unwrap();
-    assert_eq!(rendered(&written), Vec::<String>::new());
+    let again = pass(Duty::Report, &mut body, &mut baseline, &clock, now + 240).unwrap();
+    assert!(again.events.is_empty());
+    let dir = &world.settings.store.progress_report_dir;
+    std::fs::create_dir_all(dir).unwrap();
+    let report = dir.join("10-02-00-00.md");
+    std::fs::write(&report, "report").unwrap();
+    set_modified(&report, now + 300);
+    let cleared = pass(Duty::Report, &mut body, &mut baseline, &clock, now + 480).unwrap();
+    assert!(cleared.events.is_empty());
     assert_eq!(baseline.get("report-due", "fleet"), None);
-    let issues = "report-due reason=issues since=2026-10-01T00:00:00Z landed=3";
-    world.plant(
-        "oversee-report.json",
-        &json!({"text": format!("{issues}\n")}),
-    );
-    let produced = pass(Duty::Report, &mut body, &mut baseline, &clock, wall + 720).unwrap();
-    assert_eq!(rendered(&produced)[0], format!("EVENT {issues}"));
-    assert_eq!(rendered(&produced).len(), 5);
-    // A bad answer is `report-unjudged`, never silence.
-    let bad: [(Value, &str); 3] = [
-        (
-            json!({"exit": 1, "text": "oversee-report: setting ORCH_REPORT_EVERY_MINUTES:x\n"}),
-            "1",
-        ),
-        (json!({"text": format!("{due}\n{due}\n")}), "0"),
-        (json!({"text": "report due reason=minutes\n"}), "0"),
-    ];
-    for (reply, exit) in bad {
-        world.plant("oversee-report.json", &reply);
-        let err = pass(Duty::Report, &mut body, &mut baseline, &clock, wall + 960).unwrap_err();
-        assert_eq!(err.key(), "report-unjudged", "{reply}");
-        assert!(
-            err.fields().contains(&("exit".to_owned(), exit.to_owned())),
-            "{reply}: {:?}",
-            err.fields()
-        );
-    }
-    assert_eq!(
-        baseline.get("report-due", "fleet"),
-        Some(issues),
-        "a refused pass moves no row"
-    );
+    let mailbox = world.path().join("tmp/lane-mail/overseer");
+    std::fs::create_dir_all(&mailbox).unwrap();
+    std::fs::create_dir(mailbox.join("to-overseer.jsonl")).unwrap();
+    assert!(pass(Duty::Report, &mut body, &mut baseline, &clock, now + 600).is_err());
 }
 
 /// Neither verification nor the report waits on a controller. The same
@@ -671,7 +680,6 @@ fn report_due_prints_once_per_due_with_its_reason_and_a_bad_answer_is_report_unj
 fn verification_and_report_run_with_the_controller_dead_walled_and_off() {
     let clock = FakeClock::new();
     let now = epoch("2026-10-02T00:00:01Z");
-    let due = "report-due reason=minutes since=2026-10-01T00:00:00Z";
     let controllers: [(&str, Option<Value>); 3] = [
         ("absent", None),
         (
@@ -694,7 +702,6 @@ fn verification_and_report_run_with_the_controller_dead_walled_and_off() {
             "github.json",
             &json!({"pr-timeline 14 owner/repo": {"body": {"stamps": {"first_commit": "2026-09-20T00:10:00Z"}}}}),
         );
-        world.plant("oversee-report.json", &json!({"text": format!("{due}\n")}));
         let shared = shared_with(vec![verifying_item("KEN-1", "1", DEADLINE_BOXES, false)]);
         let mut verifying = verifying::body(world.verifying_context(shared, Lines::default()));
         let mut report = report::body(world.report_context());
@@ -2288,7 +2295,7 @@ fn retention_keeps_a_receipt_written_after_its_intent_closed() {
     set_modified(&receipt, wall - 60);
     let pruned = world.pass(wall).unwrap();
     assert_eq!(pruned.paths.len(), 1, "{:?}", pruned.paths);
-    assert!(!request.exists(), "the old request leaves");
+    assert!(!request.exists(), "the superseded request leaves");
     assert!(receipt.exists(), "the late receipt stands");
 }
 
@@ -2971,4 +2978,665 @@ fn retention_keeps_an_item_state_that_names_a_standing_linked_worktree_and_takes
             "{name} kept={kept}"
         );
     }
+}
+
+#[test]
+fn report_owner_notice_waits_for_quiet_end_and_keeps_the_last_sent_window() {
+    let world = World::new();
+    world.write_fleet(&json!({"issue_id":"oversee","lanes":[{"item":"KEN-1","status":"done","launched_at":"2026-10-01T06:00:00Z"}]}));
+    let ctx = world.report_context();
+    std::fs::create_dir_all(&ctx.settings.store.progress_report_dir).unwrap();
+    let noise = ctx.settings.store.progress_report_dir.join("unrelated.txt");
+    std::fs::write(&noise, "Another owner notice.").unwrap();
+    let notice = program(world.real_report_mail())
+        .current_dir(world.path())
+        .args(["notice", "--item", "overseer", "--to", "owner", "--root"])
+        .arg(world.path())
+        .arg("--file")
+        .arg(&noise)
+        .arg("--attach")
+        .arg(&noise)
+        .output()
+        .unwrap();
+    assert!(
+        notice.status.success(),
+        "{}",
+        String::from_utf8_lossy(&notice.stderr)
+    );
+    let summary = world.path().join("summary.txt");
+    std::fs::write(&summary, "Work completed.\nWaiting on you: Nothing.\n").unwrap();
+    let night = epoch("2026-10-01T09:00:00Z");
+    let morning = epoch("2026-10-01T14:00:00Z");
+    let night_report = report::write(&ctx, night, &summary, false).unwrap();
+    assert!(night_report["notice_id"].is_null(), "{night_report}");
+    let mail = orch_runtime::mailbox::Mailbox::new(ctx.settings.lane_mail_cli.clone());
+    assert_eq!(
+        mail.events(world.path())
+            .unwrap()
+            .iter()
+            .filter(|e| e.kind() == "notice")
+            .count(),
+        1
+    );
+    let clock = FakeClock::new();
+    let mut baseline = Baseline::default();
+    let mut body = report::body(world.report_context());
+    let produced = pass(Duty::Report, &mut body, &mut baseline, &clock, morning).unwrap();
+    assert_eq!(
+        rendered(&produced)[0],
+        "EVENT report-due reason=minutes since=2026-10-01T06:00:00Z"
+    );
+    let sent = report::write(&ctx, morning, &summary, false).unwrap();
+    assert!(sent["notice_id"].as_str().is_some(), "{sent}");
+    let events = mail.events(world.path()).unwrap();
+    let notice = events
+        .iter()
+        .find(|e| e.attach.as_deref() == sent["path"].as_str())
+        .unwrap();
+    assert_eq!(notice.attach.as_deref(), sent["path"].as_str());
+    assert_eq!(
+        notice.text.as_deref(),
+        Some("Work completed.\nWaiting on you: Nothing.")
+    );
+    assert_eq!(report::due(&ctx, morning + 60, None).unwrap(), None);
+    let body = sent["body"].as_str().unwrap();
+    assert!(body.contains(
+        "Issues created: unread; source: Linear, all teams; window: 2026-10-01T06:00:00Z"
+    ));
+    assert_eq!(
+        std::fs::read_to_string(sent["path"].as_str().unwrap()).unwrap(),
+        body
+    );
+    let retry = report::write(&ctx, morning, &summary, false).unwrap();
+    assert_eq!(retry["notice_id"], sent["notice_id"]);
+    assert_eq!(
+        mail.events(world.path())
+            .unwrap()
+            .iter()
+            .filter(|e| e.kind() == "notice")
+            .count(),
+        2
+    );
+    std::fs::write(&summary, "Different summary.").unwrap();
+    assert!(report::write(&ctx, morning, &summary, false).is_err());
+    assert_eq!(
+        std::fs::read_to_string(sent["path"].as_str().unwrap()).unwrap(),
+        body
+    );
+}
+
+#[test]
+fn report_quiet_boundaries_wrap_and_session_cadence_uses_sent_files() {
+    let policy = |quiet: &str| {
+        report::Policy::read(|key| match key {
+            "ORCH_REPORT_QUIET_HOURS" => Some(quiet.to_owned()),
+            _ => None,
+        })
+        .unwrap()
+    };
+    for (hours, stamp, want) in [
+        ("0-7", "2026-10-01T07:00:00Z", true),
+        ("0-7", "2026-10-01T14:00:00Z", false),
+        ("23-7", "2026-10-01T06:00:00Z", true),
+        ("23-7", "2026-10-01T14:00:00Z", false),
+        ("", "2026-10-01T09:00:00Z", false),
+    ] {
+        assert_eq!(
+            policy(hours).quiet_at(epoch(stamp)).unwrap(),
+            want,
+            "{hours} {stamp}"
+        );
+    }
+    for (key, value) in [
+        ("ORCH_REPORT_QUIET_HOURS", "25-7"),
+        ("ORCH_REPORT_QUIET_HOURS", "7-7"),
+        ("ORCH_OWNER_TIME_ZONE", "Mars/Olympus"),
+        ("ORCH_OWNER_TIME_ZONE", "America"),
+        ("ORCH_REPORT_EVERY_MINUTES", "01"),
+        ("ORCH_REPORT_EVERY_MINUTES", "+5"),
+        ("ORCH_REPORT_QUIET_HOURS", "+1-7"),
+        ("ORCH_REPORT_UPCOMING", "-1"),
+    ] {
+        assert!(
+            report::Policy::read(|k| (k == key).then(|| value.to_owned())).is_err(),
+            "{key}={value}"
+        );
+    }
+    let world = World::new();
+    world.write_fleet(&json!({"issue_id":"oversee","lanes":[]}));
+    let ctx = world.report_context();
+    let start = epoch("2026-10-01T06:00:00Z");
+    let session = report::Session { start, fleet: None };
+    assert_eq!(
+        report::due(&ctx, start + 10800, Some(&session)).unwrap(),
+        None
+    );
+    let morning = epoch("2026-10-01T14:00:00Z");
+    assert_eq!(
+        report::due(&ctx, morning, Some(&session)).unwrap(),
+        Some("report-due reason=minutes since=2026-10-01T06:00:00Z".to_owned())
+    );
+}
+
+#[test]
+fn report_render_reads_real_git_and_linear_formatters_and_names_its_window() {
+    let world = World::new();
+    let _ = world.report_context();
+    let actual = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let scripts = world.path().join(".agents/skills/orch/scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::os::unix::fs::symlink(
+        actual
+            .join("orch/scripts/resolve-base-branch")
+            .canonicalize()
+            .unwrap(),
+        scripts.join("resolve-base-branch"),
+    )
+    .unwrap();
+    let libs = world.path().join(".agents/skills/github/scripts/lib");
+    std::fs::create_dir_all(&libs).unwrap();
+    std::os::unix::fs::symlink(
+        actual
+            .join("github/scripts/lib/gh-repo.sh")
+            .canonicalize()
+            .unwrap(),
+        libs.join("gh-repo.sh"),
+    )
+    .unwrap();
+    let origin = world.path().join("source");
+    std::fs::create_dir(&origin).unwrap();
+    let git = |root: &Path, args: &[&str], at: Option<&str>| {
+        let mut cmd = program("git");
+        cmd.arg("-C").arg(root).args(args);
+        if let Some(at) = at {
+            cmd.env("GIT_AUTHOR_DATE", at).env("GIT_COMMITTER_DATE", at);
+        }
+        let out = cmd.output().unwrap();
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    git(&origin, &["init", "--quiet", "-b", "trunk"], None);
+    git(&origin, &["config", "gc.auto", "0"], None);
+    git(&origin, &["config", "maintenance.auto", "false"], None);
+    git(
+        &origin,
+        &[
+            "commit",
+            "--quiet",
+            "--allow-empty",
+            "-m",
+            "Ship the report (#50)",
+        ],
+        Some("2026-09-29T10:00:00Z"),
+    );
+    git(
+        &origin,
+        &[
+            "commit",
+            "--quiet",
+            "--allow-empty",
+            "-m",
+            "More work (#52)",
+        ],
+        Some("2026-09-29T10:30:00Z"),
+    );
+    git(&origin, &["checkout", "--quiet", "-b", "side"], None);
+    git(
+        &origin,
+        &["commit", "--quiet", "--allow-empty", "-m", "Revert #52"],
+        Some("2026-09-29T11:00:00Z"),
+    );
+    git(&origin, &["checkout", "--quiet", "trunk"], None);
+    git(
+        &origin,
+        &[
+            "merge",
+            "--quiet",
+            "--no-ff",
+            "side",
+            "-m",
+            "Merge pull request #53 from owner/side",
+        ],
+        Some("2026-09-29T11:30:00Z"),
+    );
+    git(
+        world.path(),
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+        None,
+    );
+    git(world.path(), &["fetch", "--quiet", "origin"], None);
+    git(
+        world.path(),
+        &["remote", "set-head", "origin", "trunk"],
+        None,
+    );
+    git(
+        &origin,
+        &[
+            "commit",
+            "--quiet",
+            "--allow-empty",
+            "-m",
+            "Revert #50 (#51)",
+        ],
+        Some("2026-09-29T12:00:00Z"),
+    );
+    let linear = world.path().join("report-linear");
+    let formatter = actual
+        .join("linear/scripts/lib/formatters.sh")
+        .canonicalize()
+        .unwrap();
+    let script = format!(
+        r#"#!/bin/bash
+set -euo pipefail
+source '{}'
+printf '%s\n' "$*" >> '{}'
+case "$1 $2" in
+  'labels list') format_labels_list '{{"issueLabels":{{"nodes":[{{"id":"bug","name":"Bug"}},{{"id":"feature","name":"feature"}}]}}}}' ;;
+  'issues list') format_issues_list '{{"issues":{{"nodes":[]}}}}' ;;
+  *) exit 1 ;;
+esac
+"#,
+        formatter.display(),
+        world.path().join("report-linear.args").display()
+    );
+    write_executable(&linear, script);
+    world.write_fleet(&json!({"issue_id":"oversee","lanes":[{"item":"KEN-1","status":"done","launched_at":"2026-09-29T06:00:00Z"}],"launch_queue":["KEN-1","KEN-2"]}));
+    world.plant("gh.json", &json!({}));
+    let output = isolated()
+        .current_dir(world.path())
+        .arg("--state-dir")
+        .arg(world.path())
+        .args([
+            "report",
+            "render",
+            "--repo",
+            "owner/repo",
+            "--credential-selected",
+        ])
+        .env("PATH", tool_path(&[world.path()]))
+        .env("HOME", world.path().join("home"))
+        .env("GH_REPO", "owner/repo")
+        .env("LINEAR_TEAM", "kendex")
+        .env("GH_FAKE_REPLIES", world.path().join("gh.json"))
+        .env("GH_FAKE_LOG", world.path().join("gh.args"))
+        .env("OVERSEE_WATCH_TRACKER", &linear)
+        .env("LANE_MAIL_CLI", world.real_report_mail())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let body = reply["result"]["body"].as_str().unwrap();
+    assert!(
+        body.contains(
+            "Escapes: this week 0, last week 0, the week the review cap fell to 1 (2026-09-28) 1"
+        ),
+        "{body}"
+    );
+    assert!(
+        body.contains("- Queued KEN-2: launch admission pending."),
+        "{body}"
+    );
+    assert!(!body.contains("- Queued KEN-1:"), "{body}");
+    assert!(
+        body.contains(
+            "Issues created: unread; source: Linear, all teams; window: 2026-09-29T06:00:00Z"
+        ),
+        "{body}"
+    );
+    assert!(
+        std::fs::read_to_string(world.path().join("report-linear.args"))
+            .unwrap()
+            .contains("issues list --label Bug --created-since")
+    );
+    assert!(
+        std::fs::read_to_string(world.path().join("report-linear.args"))
+            .unwrap()
+            .contains("--team kendex")
+    );
+    assert_eq!(body.matches("> **").count(), 3);
+}
+
+#[test]
+fn report_notice_reads_its_attachment_after_a_lost_reply_and_retries_a_refused_send() {
+    for mode in ["lost", "refused"] {
+        let world = World::new();
+        world.write_fleet(&json!({"issue_id":"oversee","lanes":[{"item":"KEN-1","status":"done","launched_at":"2026-10-01T06:00:00Z"}]}));
+        let mut ctx = world.report_context();
+        if mode == "lost" {
+            let actual = ctx.settings.store.progress_report_dir.clone();
+            std::fs::create_dir_all(&actual).unwrap();
+            let link = world.path().join("reports-link");
+            std::os::unix::fs::symlink(actual, &link).unwrap();
+            ctx.settings.store.progress_report_dir = link;
+        }
+
+        let real = ctx.settings.lane_mail_cli.clone();
+        let wrapper = world.path().join("report-mail-interrupted");
+        let script = if mode == "lost" {
+            format!(
+                "#!/bin/sh\nif [ \\\"$1\\\" = notice ]; then\n  '{}' \\\"$@\\\" >/dev/null || exit $?\n  kill -KILL \\\"$$\\\"\nelse\n  exec '{}' \\\"$@\\\"\nfi\n",
+                real.display(),
+                real.display()
+            )
+        } else {
+            format!(
+                "#!/bin/sh\nif [ \\\"$1\\\" = notice ]; then\n  exec '{}' \\\"$@\\\" --file '{}'/missing-summary\nelse\n  exec '{}' \\\"$@\\\"\nfi\n",
+                real.display(),
+                world.path().display(),
+                real.display()
+            )
+        };
+        write_executable(&wrapper, script.replace("\\\"", "\""));
+        ctx.settings.lane_mail_cli = wrapper;
+        let summary = world.path().join("summary.txt");
+        std::fs::write(&summary, "The report is ready.").unwrap();
+        let now = epoch("2026-10-01T14:00:00Z");
+        let first = report::write(&ctx, now, &summary, false);
+        if mode == "refused" {
+            assert!(first.is_err(), "{first:?}");
+        } else {
+            assert!(first.is_ok(), "{first:?}");
+        }
+        ctx.settings.lane_mail_cli = real;
+        let confirmed = report::write(&ctx, now + 1, &summary, false).unwrap();
+        assert!(confirmed["notice_id"].as_str().is_some(), "{confirmed}");
+        let events = orch_runtime::mailbox::Mailbox::new(ctx.settings.lane_mail_cli.clone())
+            .events(world.path())
+            .unwrap();
+        assert_eq!(
+            events.iter().filter(|e| e.kind() == "notice").count(),
+            1,
+            "{mode}"
+        );
+        assert_eq!(
+            std::fs::metadata(confirmed["path"].as_str().unwrap())
+                .unwrap()
+                .modified()
+                .unwrap()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            now
+        );
+    }
+}
+
+#[test]
+fn report_due_counts_distinct_direct_push_items_and_preserves_a_capped_old_window() {
+    let world = World::new();
+    let mut ctx = world.report_context();
+    ctx.repos.clear();
+    ctx.settings.report.minutes = 0;
+    ctx.settings.report.issues = 2;
+    let now = epoch("2026-10-02T14:00:00Z");
+    let fleet = |start: &str, rows: Vec<Value>| json!({"issue_id":"oversee","lanes":[{"item":"KEN-1","status":"done","launched_at":start}],"fleet_log":rows});
+    let cycle = |item: &str, at: u64| json!({"item":item,"at":clock::iso_utc(at),"kind":"cycle","text":format!("cycle item={item} commit=abcdef1")});
+    for (rows, want) in [
+        (vec![cycle("KEN-1", now - 1), cycle("KEN-1", now - 2)], None),
+        (
+            vec![cycle("KEN-1", now - 1), cycle("KEN-2", now - 2)],
+            Some("report-due reason=issues since=2026-10-02T06:00:00Z landed=2"),
+        ),
+        (vec![cycle("KEN-1", now), cycle("KEN-2", now + 1)], None),
+    ] {
+        world.write_fleet(&fleet("2026-10-02T06:00:00Z", rows));
+        assert_eq!(report::due(&ctx, now, None).unwrap().as_deref(), want);
+    }
+    world.write_fleet(&fleet(
+        "2026-09-01T06:00:00Z",
+        vec![cycle("KEN-1", now - 1)],
+    ));
+    assert_eq!(
+        report::due(&ctx, now, None).unwrap().as_deref(),
+        Some("report-due reason=issues since=2026-09-01T06:00:00Z landed=1")
+    );
+    assert!(
+        report::render(&ctx, now)
+            .unwrap()
+            .contains("`Next report: after 2 distinct landed items`")
+    );
+    ctx.settings.report.enabled = false;
+    assert_eq!(report::due(&ctx, now, None).unwrap(), None);
+    assert!(
+        report::render(&ctx, now)
+            .unwrap()
+            .contains("`Next report: cadence disabled`")
+    );
+    ctx.settings.report.enabled = true;
+    ctx.settings.report.issues = 0;
+    assert_eq!(report::due(&ctx, now, None).unwrap(), None);
+    assert!(
+        report::render(&ctx, now)
+            .unwrap()
+            .contains("`Next report: cadence disabled`")
+    );
+}
+
+#[test]
+fn report_completed_searches_the_window_and_excludes_unowned_late_and_capped_merges() {
+    let world = World::new();
+    world.write_fleet(&json!({"issue_id":"oversee","lanes":[{"item":"KEN-1","status":"done","launched_at":"2026-10-01T06:00:00Z"}],"fleet_log":[
+        {"kind":"use1","at":"2026-10-01T07:00:00Z","outcome":"fallback"},
+        {"kind":"use1","at":"2026-10-01T08:00:00Z","outcome":"new-value"},
+        {"kind":"use1","at":"2026-10-01T14:00:00Z","outcome":"fallback"}
+    ]}));
+    let pull = |number, branch, owner, at| json!({"body":{"number":number,"state":"closed","title":"Report actual completed work","body":"","merged_at":at,"head":{"ref":branch,"repo":{"owner":{"login":owner}}}}});
+    let search = "search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20merged%3A%3E%3D2026-10-01T06%3A00%3A00Z&per_page=100&page=1";
+    let items: Vec<Value> = (1..=4)
+        .map(|n| json!({"number":n,"pull_request":{}}))
+        .collect();
+    let hits =
+        |total: u64| json!({"body":{"total_count":total,"incomplete_results":false,"items":items}});
+    let mut planted = json!({
+        "repos/owner/repo/pulls/1": pull(1,"ken-1","owner","2026-10-01T07:00:00Z"),
+        "repos/owner/repo/pulls/2": pull(2,"other","owner","2026-10-01T08:00:00Z"),
+        "repos/owner/repo/pulls/3": pull(3,"ken-1","fork","2026-10-01T08:00:00Z"),
+        "repos/owner/repo/pulls/4": pull(4,"ken-1","owner","2026-10-01T14:00:00Z")
+    });
+    planted[search] = hits(4);
+    world.plant("gh.json", &planted);
+    let ctx = world.report_context();
+    let now = epoch("2026-10-01T14:00:00Z");
+    let body = report::render(&ctx, now).unwrap();
+    assert!(
+        body.contains("Report actual completed work ([owner/repo#1]"),
+        "{body}"
+    );
+    assert!(
+        body.contains(
+            "Use 1: approved-on-rerequest=0 fallback=1 declined-unchanged=0 unrecognized=1"
+        ),
+        "{body}"
+    );
+    for number in [2, 3, 4] {
+        assert!(!body.contains(&format!("[owner/repo#{number}]")), "{body}");
+    }
+    planted[search] = hits(1000);
+    world.plant("gh.json", &planted);
+    let body = report::render(&ctx, now).unwrap();
+    assert!(
+        body.contains("- Unread; source: GitHub; cause: ") && body.contains("github-capped"),
+        "{body}"
+    );
+}
+
+#[test]
+fn report_write_binds_a_relative_summary_before_the_mailbox_changes_directory() {
+    let world = World::new();
+    let _ = world.report_context();
+    world.write_fleet(&json!({"issue_id":"oversee","lanes":[]}));
+    let caller = world.path().join("caller");
+    std::fs::create_dir(&caller).unwrap();
+    std::fs::write(
+        caller.join("summary.txt"),
+        "Report from the caller directory.",
+    )
+    .unwrap();
+    let out = isolated()
+        .current_dir(&caller)
+        .arg("--state-dir")
+        .arg(world.path())
+        .args([
+            "report",
+            "write",
+            "--summary-file",
+            "summary.txt",
+            "--credential-selected",
+        ])
+        .env("HOME", world.path().join("home"))
+        .env("LANE_MAIL_CLI", world.real_report_mail())
+        .env("ORCH_REPORT_QUIET_HOURS", "")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(reply["result"]["notice_id"].as_str().is_some(), "{reply}");
+    let events = orch_runtime::mailbox::Mailbox::new(world.real_report_mail())
+        .events(world.path())
+        .unwrap();
+    let notice = events
+        .iter()
+        .find(|e| e.attach.as_deref() == reply["result"]["path"].as_str())
+        .unwrap();
+    assert_eq!(
+        notice.text.as_deref(),
+        Some("Report from the caller directory.")
+    );
+}
+
+/// The standalone render reads GitHub under the github skill's credential
+/// ladder, never under a stale inherited token alone: with `GH_TOKEN`
+/// revoked and no keyring, the project's `GH_BOT_TOKEN` reads Completed;
+/// with no credential working, the render refuses `auth-failed`. `gh`
+/// answers by the token it is given, as GitHub answers a revoked one.
+#[test]
+fn report_render_reads_github_under_the_credential_ladder() {
+    let world = World::new();
+    let _ = world.report_context();
+    let actual = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let skill = world.path().join(".agents/skills/github");
+    std::fs::create_dir_all(&skill).unwrap();
+    std::os::unix::fs::symlink(
+        actual.join("github/scripts").canonicalize().unwrap(),
+        skill.join("scripts"),
+    )
+    .unwrap();
+    let bin = world.path().join("token-gh");
+    std::fs::create_dir(&bin).unwrap();
+    write_executable(
+        &bin.join("gh"),
+        format!(
+            "#!/bin/sh\nif [ \"${{GH_TOKEN:-}}\" != good ]; then\n  echo 'gh: Bad credentials (HTTP 401)' >&2\n  exit 1\nfi\nif [ \"$1 $2\" = 'api user' ]; then\n  echo bot\n  exit 0\nfi\nexec '{}' \"$@\"\n",
+            world.path().join("gh").display()
+        ),
+    );
+    let now = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let launched = clock::iso_utc(now - 3600);
+    world.write_fleet(&json!({"issue_id":"oversee","lanes":[{"item":"KEN-1","status":"done","launched_at":launched}]}));
+    let search = format!(
+        "search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20merged%3A%3E%3D{}&per_page=100&page=1",
+        launched.replace(':', "%3A")
+    );
+    let mut planted = json!({"repos/owner/repo/pulls/1": {"body":{"number":1,"state":"closed","title":"Ship the ladder","body":"","merged_at":clock::iso_utc(now - 60),"head":{"ref":"ken-1","repo":{"owner":{"login":"owner"}}}}}});
+    planted[search.as_str()] = json!({"body":{"total_count":1,"incomplete_results":false,"items":[{"number":1,"pull_request":{}}]}});
+    world.plant("gh.json", &planted);
+    let render = |bot: Option<&str>| {
+        let mut cmd = isolated();
+        cmd.current_dir(world.path())
+            .arg("--state-dir")
+            .arg(world.path())
+            .args(["report", "render", "--repo", "owner/repo"])
+            .env("PATH", tool_path(&[bin.as_path()]))
+            .env("HOME", world.path().join("home"))
+            .env("GH_TOKEN", "revoked")
+            .env("GH_FAKE_REPLIES", world.path().join("gh.json"))
+            .env("GH_FAKE_LOG", world.path().join("gh.args"))
+            .env("LANE_MAIL_CLI", world.real_report_mail());
+        if let Some(token) = bot {
+            cmd.env("GH_BOT_TOKEN", token);
+        }
+        let out = cmd.output().unwrap();
+        let reply: Value = serde_json::from_slice(&out.stdout).unwrap_or_else(|_| {
+            panic!(
+                "{}\n{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            )
+        });
+        (out.status.success(), reply)
+    };
+    let (ok, reply) = render(Some("good"));
+    assert!(ok, "{reply}");
+    let body = reply["result"]["body"].as_str().unwrap();
+    assert!(
+        body.contains("- KEN-1: Ship the ladder ([owner/repo#1]"),
+        "{body}"
+    );
+    let (ok, reply) = render(None);
+    assert!(!ok, "{reply}");
+    assert_eq!(reply["refusal"]["key"], "auth-failed", "{reply}");
+}
+
+/// A session's due reads the fleet record it names and no other: with the
+/// landed-item trigger on, a fleet record on the host holding a landed item
+/// is not counted by a session due that names no `--state`, and is counted
+/// once the same due names it.
+#[test]
+fn report_session_due_counts_only_the_fleet_it_names() {
+    let world = World::new();
+    let _ = world.report_context();
+    let now = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let start = now - 3600;
+    world.write_fleet(&json!({"issue_id":"oversee",
+        "lanes":[{"item":"KEN-1","status":"done","launched_at":clock::iso_utc(start)}],
+        "fleet_log":[{"item":"KEN-1","at":clock::iso_utc(now - 60),"kind":"cycle","text":"cycle item=KEN-1 commit=abcdef1"}]}));
+    let due = |state: Option<PathBuf>| {
+        let mut cmd = isolated();
+        cmd.current_dir(world.path())
+            .arg("--state-dir")
+            .arg(world.path())
+            .args(["report", "due", "--session-start", &start.to_string()])
+            .env("HOME", world.path().join("home"))
+            .env("LANE_MAIL_CLI", world.real_report_mail())
+            .env("ORCH_REPORT_QUIET_HOURS", "")
+            .env("ORCH_REPORT_EVERY_MINUTES", "0")
+            .env("ORCH_REPORT_EVERY_ISSUES", "1");
+        if let Some(path) = state {
+            cmd.arg("--state").arg(path).arg("--credential-selected");
+        }
+        let out = cmd.output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+        reply["result"]["line"].clone()
+    };
+    assert_eq!(due(None), Value::Null);
+    assert_eq!(
+        due(Some(world.fleet_path())),
+        json!(format!(
+            "report-due reason=issues since={} landed=1",
+            clock::iso_utc(start)
+        ))
+    );
 }

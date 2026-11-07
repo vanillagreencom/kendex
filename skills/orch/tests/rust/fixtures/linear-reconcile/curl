@@ -1,0 +1,39 @@
+#!/usr/bin/python3
+import json
+import sys
+from pathlib import Path
+
+root = Path.cwd()
+config = sys.stdin.read()
+line = next(line for line in config.splitlines() if line.startswith('data = '))
+payload = json.loads(json.loads(line[len('data = '):]))
+query = payload['query']
+variables = payload.get('variables') or {}
+rows = json.loads((root / 'issues.json').read_text())['issues']['nodes']
+identifier = variables.get('id', '').removeprefix('uuid-')
+page = {'hasNextPage': False, 'endCursor': None}
+if 'issueUpdate(id:' in query:
+    row = next(row for row in rows if row['identifier'] == identifier)
+    if not (root / 'write.drop').exists():
+        fields = variables['input']
+        if 'description' in fields:
+            row['description'] = fields['description']
+        if 'stateId' in fields:
+            row['state'] = {'state-done': {'name':'Done','type':'completed'},
+                'state-verifying': {'name':'Verifying','type':'started'}}[fields['stateId']]
+        (root / 'issues.json').write_text(json.dumps({'issues': {'nodes': rows}}))
+    if (root / 'write.lost').exists():
+        sys.exit(1)
+    data = {'issueUpdate': {'success': True, 'issue': row}}
+elif 'issue(id:' in query:
+    data = {'issue': next(row for row in rows if row['identifier'] == identifier)}
+elif 'workflowStates(filter:' in query:
+    state = variables['name']
+    data = {'workflowStates': {'pageInfo': page, 'nodes': [{'id': 'state-' + state.lower(),
+        'type': 'completed' if state == 'Done' else 'started'}]}}
+elif 'teams(filter:' in query:
+    data = {'teams': {'pageInfo': page, 'nodes': [{'id': '7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47', 'key':'T', 'name':'Test'}]}}
+else:
+    print('unhandled GraphQL query: ' + query, file=sys.stderr)
+    sys.exit(2)
+print(json.dumps({'data': data}), end='___HTTP_CODE___200')

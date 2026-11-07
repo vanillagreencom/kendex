@@ -1,0 +1,733 @@
+#![allow(
+    clippy::disallowed_methods,
+    reason = "isolated process rows create their own fixture files and children"
+)]
+mod support;
+
+use orch_runtime::ops::approve::{self, ApproveHead, Status};
+use orch_runtime::schedule::Clock;
+use orch_runtime::settings::{self, Flags, Roots};
+use orch_runtime::state::Locking;
+use serde_json::{Value, json};
+use std::fs;
+use std::os::unix::fs::{PermissionsExt, symlink};
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant, SystemTime};
+
+const HEAD: &str = "0123456789abcdef0123456789abcdef01234567";
+const MOVED: &str = "01234567fedcba9876543210fedcba9876543210";
+const TOKEN: &str = "ghs_fixtureApprovalFileToken";
+const LANE_TOKEN: &str = "ghs_fixtureLaneToken";
+
+fn world() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let catalog = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    fs::create_dir_all(root.join(".agents/skills")).unwrap();
+    symlink(catalog.join("github"), root.join(".agents/skills/github")).unwrap();
+    fs::create_dir(root.join("bin")).unwrap();
+    support::write_executable(&root.join("bin/gh"), include_str!("fixtures/approve-gh"));
+    fs::write(root.join("token"), format!("{TOKEN}\n")).unwrap();
+    fs::set_permissions(root.join("token"), fs::Permissions::from_mode(0o600)).unwrap();
+    fs::write(root.join("body"), "Each decline holds.\n\"Quoted\" line\n").unwrap();
+    fs::write(
+        root.join("item.json"),
+        include_str!("fixtures/workflow-state-KEN-4687.json"),
+    )
+    .unwrap();
+    answer(root, json!({}));
+    dir
+}
+
+fn answer(root: &Path, value: Value) {
+    fs::write(root.join("answer.json"), value.to_string()).unwrap();
+}
+
+fn request(root: &Path) -> ApproveHead {
+    ApproveHead {
+        repo: "o/r".into(),
+        pr: 42,
+        head: HEAD[..8].into(),
+        body_file: root.join("body"),
+        hold_copilot: false,
+    }
+}
+
+fn posts(root: &Path) -> usize {
+    fs::read_to_string(root.join("posts"))
+        .unwrap_or_default()
+        .lines()
+        .count()
+}
+
+/// Every gh call so far, as the fixture logged it: the `GH_TOKEN` it ran
+/// under and its arguments.
+fn calls(root: &Path) -> Vec<(Value, Vec<String>)> {
+    fs::read_to_string(root.join("gh.log"))
+        .unwrap_or_default()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect()
+}
+
+/// Run the named row again as a child of this test binary, in a fresh
+/// world, under the approval's settings in its environment and `extra`;
+/// `None` in the child itself, which then runs the row's body.
+fn child_with(name: &str, extra: &[(&str, &str)]) -> Option<tempfile::TempDir> {
+    if std::env::var("APPROVE_CHILD").ok().as_deref() == Some(name) {
+        return None;
+    }
+    let dir = world();
+    let tools = dir.path().join("tools");
+    fs::create_dir(&tools).unwrap();
+    for name in [
+        "bash", "env", "git", "jq", "dirname", "mktemp", "cat", "rm", "sed", "grep", "tr", "sleep",
+        "date", "wc", "head", "sh", "chmod",
+    ] {
+        symlink(Path::new("/usr/bin").join(name), tools.join(name)).unwrap();
+    }
+    let child_path = if name == "an_unstarted_post_clears_its_claim_and_can_retry" {
+        std::env::join_paths([dir.path().join("bin"), tools]).unwrap()
+    } else {
+        support::tool_path(&[&dir.path().join("bin")]).into()
+    };
+    let mut command = support::program(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", name, "--nocapture"])
+        .env("APPROVE_CHILD", name)
+        .env("APPROVE_ROOT", dir.path())
+        .env("PATH", child_path)
+        .env("ORCH_OVERSEER_REVIEW_TOKEN_FILE", dir.path().join("token"))
+        .env("ORCH_OVERSEER_REVIEW_LOGIN", "review-app[bot]")
+        .env("GH_TOKEN", LANE_TOKEN)
+        .current_dir(dir.path());
+    for (key, value) in extra {
+        command.env(key, value);
+    }
+    let output = command.output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Some(dir)
+}
+
+fn child(name: &str) -> Option<tempfile::TempDir> {
+    child_with(name, &[])
+}
+
+fn root() -> PathBuf {
+    PathBuf::from(std::env::var_os("APPROVE_ROOT").unwrap())
+}
+
+/// A clock whose sleep passes at once: each sleep adds its time, counts
+/// itself and hands the row its number, to rewrite GitHub's answers.
+struct Stepped<'a> {
+    now: Mutex<(Instant, u32)>,
+    between: &'a (dyn Fn(u32) + Sync),
+}
+
+impl Clock for Stepped<'_> {
+    fn now(&self) -> Instant {
+        self.now.lock().unwrap().0
+    }
+
+    fn wall(&self) -> SystemTime {
+        SystemTime::UNIX_EPOCH
+    }
+
+    fn sleep(&self, d: Duration) {
+        let count = {
+            let mut now = self.now.lock().unwrap();
+            now.0 += d;
+            now.1 += 1;
+            now.1
+        };
+        (self.between)(count);
+    }
+}
+
+/// One approval in the row's process, over its settings and environment,
+/// on a stepped clock: `between` sees each sleep's number. The sleeps it
+/// took come back beside the answer.
+fn run_stepped(
+    root: &Path,
+    request: &ApproveHead,
+    between: &(dyn Fn(u32) + Sync),
+) -> (orch_runtime::Result<approve::ApprovedHead>, u32) {
+    let settings = settings::load(
+        &Roots {
+            project: root.into(),
+            common: root.into(),
+        },
+        &std::env::vars_os().collect::<Vec<_>>(),
+        &Flags {
+            state_dir: None,
+            private_env: true,
+        },
+    )
+    .unwrap();
+    let clock = Stepped {
+        now: Mutex::new((Instant::now(), 0)),
+        between,
+    };
+    let answer = approve::run(
+        &root.join("item.json"),
+        request,
+        &settings,
+        Locking::FLOCK,
+        &clock,
+    );
+    let sleeps = clock.now.lock().unwrap().1;
+    (answer, sleeps)
+}
+
+fn run(root: &Path, request: &ApproveHead) -> orch_runtime::Result<approve::ApprovedHead> {
+    run_stepped(root, request, &|_| {}).0
+}
+
+#[test]
+fn a_prefix_approval_persists_before_post_and_replays_once() {
+    let dir = world();
+    let root = dir.path();
+    fs::write(root.join("request.json"), serde_json::to_vec(&json!({"op":"approve-head","repo":"o/r","pr":42,"head":&HEAD[..8],"body_file":root.join("body")})).unwrap()).unwrap();
+    for repo in ["o/r", "O/R"] {
+        let mut request: Value =
+            serde_json::from_slice(&fs::read(root.join("request.json")).unwrap()).unwrap();
+        request["repo"] = json!(repo);
+        fs::write(root.join("request.json"), request.to_string()).unwrap();
+        let output = support::isolated()
+            .current_dir(root)
+            .env("PATH", support::tool_path(&[&root.join("bin")]))
+            .env("ORCH_OVERSEER_REVIEW_TOKEN_FILE", root.join("token"))
+            .env("ORCH_OVERSEER_REVIEW_LOGIN", "review-app[bot]")
+            .env("GH_TOKEN", LANE_TOKEN)
+            .args(["op", "--file"])
+            .arg(root.join("item.json"))
+            .arg("--request")
+            .arg(root.join("request.json"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(reply["result"]["status"], "confirmed");
+        assert_eq!(reply["result"]["head"], HEAD);
+        assert!(!String::from_utf8_lossy(&output.stdout).contains(TOKEN));
+    }
+    assert_eq!(posts(root), 1);
+    let payload: Value =
+        serde_json::from_str(&fs::read_to_string(root.join("payload.json")).unwrap()).unwrap();
+    assert_eq!(
+        payload,
+        json!({"event":"APPROVE","commit_id":HEAD,"body":"Each decline holds.\n\"Quoted\" line\n"})
+    );
+    let log = fs::read_to_string(root.join("gh.log")).unwrap();
+    assert!(
+        log.lines()
+            .any(|l| l.contains(LANE_TOKEN) && l.contains("graphql"))
+    );
+    assert!(log.lines().any(|l| l.contains(TOKEN) && l.contains("POST")));
+}
+
+#[test]
+fn a_moved_or_unread_head_never_posts() {
+    if child("a_moved_or_unread_head_never_posts").is_some() {
+        return;
+    }
+    let root = root();
+    let r = request(&root);
+    for (head, exit, key) in [
+        (MOVED, 0, "head-moved"),
+        ("junk", 0, "head-read-failed"),
+        (HEAD, 1, "head-read-failed"),
+    ] {
+        answer(&root, json!({"head":head,"head_exit":exit}));
+        let mut r = r.clone();
+        r.head = HEAD.into();
+        assert_eq!(run(&root, &r).unwrap_err().key(), key);
+        assert_eq!(posts(&root), 0);
+    }
+}
+
+#[test]
+fn lost_answers_stay_unknown_and_repeat_only_reads_back() {
+    if let Ok(mode) = std::env::var("APPROVE_CHILD") {
+        let root = root();
+        let r = request(&root);
+        let expected = if mode.ends_with("landed") {
+            Status::Confirmed
+        } else {
+            Status::Unknown
+        };
+        assert_eq!(run(&root, &r).unwrap().status, expected);
+        assert_eq!(run(&root, &r).unwrap().status, expected);
+        assert_eq!(posts(&root), 1);
+        return;
+    }
+    for mode in [
+        "lost",
+        "transport",
+        "server-quoted",
+        "unread",
+        "lost-landed",
+        "refused-landed",
+    ] {
+        let dir = world();
+        let root = dir.path();
+        answer(root, json!({"post":mode}));
+        let output = support::program(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "lost_answers_stay_unknown_and_repeat_only_reads_back",
+                "--nocapture",
+            ])
+            .env("APPROVE_CHILD", mode)
+            .env("APPROVE_ROOT", root)
+            .env("PATH", support::tool_path(&[&root.join("bin")]))
+            .env("ORCH_OVERSEER_REVIEW_TOKEN_FILE", root.join("token"))
+            .env("ORCH_OVERSEER_REVIEW_LOGIN", "review-app[bot]")
+            .env("GH_TOKEN", LANE_TOKEN)
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{mode}: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn a_refused_post_is_not_an_unknown_or_a_second_attempt() {
+    if child("a_refused_post_is_not_an_unknown_or_a_second_attempt").is_some() {
+        return;
+    }
+    let root = root();
+    let r = request(&root);
+    for mode in ["refused", "auth", "scopes"] {
+        answer(&root, json!({"post":mode}));
+        for _ in 0..2 {
+            assert_eq!(run(&root, &r).unwrap().status, Status::Refused, "{mode}");
+        }
+        let mut record: Value =
+            serde_json::from_slice(&fs::read(root.join("item.json")).unwrap()).unwrap();
+        record.as_object_mut().unwrap().remove("head_approvals");
+        fs::write(root.join("item.json"), record.to_string()).unwrap();
+    }
+    assert_eq!(posts(&root), 3);
+}
+
+#[test]
+fn copilot_work_that_ends_inside_the_hold_approves_nothing_and_the_retry_checks_replies() {
+    if child("copilot_work_that_ends_inside_the_hold_approves_nothing_and_the_retry_checks_replies")
+        .is_some()
+    {
+        return;
+    }
+    let root = root();
+    let mut r = request(&root);
+    r.hold_copilot = true;
+    answer(&root, json!({"work":"in_progress", "reply":"bad"}));
+    let ends = |count: u32| {
+        if count == 2 {
+            answer(&root, json!({"reply":"bad"}));
+        }
+    };
+    let (finished, sleeps) = run_stepped(&root, &r, &ends);
+    assert_eq!(finished.unwrap().status, Status::Finished);
+    assert_eq!(sleeps, 2);
+    assert_eq!(posts(&root), 0);
+    // Every Copilot read ran as the app, not the lane the caller's
+    // environment names.
+    let copilot: Vec<_> = calls(&root)
+        .into_iter()
+        .filter(|(_, args)| {
+            args.first().is_some_and(|a| a == "pr")
+                || args.iter().any(|a| {
+                    a.contains("/check-runs")
+                        || a.contains("/timeline")
+                        || a.ends_with("/reviews?per_page=100&page=1")
+                })
+        })
+        .collect();
+    assert!(copilot.len() >= 4, "{copilot:?}");
+    assert!(
+        copilot.iter().all(|(token, _)| token == TOKEN),
+        "{copilot:?}"
+    );
+    assert_eq!(run(&root, &r).unwrap_err().key(), "review-replies");
+    assert_eq!(posts(&root), 0);
+    answer(&root, json!({}));
+    assert_eq!(run(&root, &r).unwrap().status, Status::Confirmed);
+}
+
+#[test]
+fn an_expired_hold_approves_only_the_original_full_head() {
+    if child_with(
+        "an_expired_hold_approves_only_the_original_full_head",
+        &[("ORCH_COPILOT_HOLD_SECS", "30")],
+    )
+    .is_some()
+    {
+        return;
+    }
+    let root = root();
+    let mut r = request(&root);
+    r.hold_copilot = true;
+    // The live head re-read after the bound has moved.
+    answer(&root, json!({"work":"queued", "head_move_on":2}));
+    let (moved, sleeps) = run_stepped(&root, &r, &|_| {});
+    assert_eq!(moved.unwrap_err().key(), "head-moved");
+    assert_eq!(sleeps, 3);
+    assert_eq!(posts(&root), 0);
+    // The head moved while the wait ran.
+    fs::remove_file(root.join("head_reads")).unwrap();
+    answer(&root, json!({"work":"queued"}));
+    let moves = |count: u32| {
+        if count == 1 {
+            answer(&root, json!({"view_head":MOVED}));
+        }
+    };
+    let (followed, _) = run_stepped(&root, &r, &moves);
+    assert_eq!(followed.unwrap_err().key(), "head-moved");
+    assert_eq!(posts(&root), 0);
+    // Work still in flight at the bound on the same head approves it.
+    fs::remove_file(root.join("head_reads")).unwrap();
+    answer(&root, json!({"work":"queued"}));
+    let (expired, _) = run_stepped(&root, &r, &|_| {});
+    let expired = expired.unwrap();
+    assert_eq!(
+        (expired.status, expired.head),
+        (Status::Confirmed, HEAD.into())
+    );
+    assert_eq!(posts(&root), 1);
+}
+
+#[test]
+fn a_running_check_its_review_answered_holds_nothing() {
+    if child("a_running_check_its_review_answered_holds_nothing").is_some() {
+        return;
+    }
+    let root = root();
+    let mut r = request(&root);
+    r.hold_copilot = true;
+    answer(&root, json!({"work":"settled"}));
+    let (approved, sleeps) = run_stepped(&root, &r, &|_| {});
+    assert_eq!(approved.unwrap().status, Status::Confirmed);
+    assert_eq!(sleeps, 0);
+    assert_eq!(posts(&root), 1);
+}
+
+#[test]
+fn unread_copilot_work_and_reply_heads_refuse_before_the_claim() {
+    if child("unread_copilot_work_and_reply_heads_refuse_before_the_claim").is_some() {
+        return;
+    }
+    let root = root();
+    let mut r = request(&root);
+    r.hold_copilot = true;
+    answer(&root, json!({"work":"fail"}));
+    assert_eq!(run(&root, &r).unwrap_err().key(), "copilot-read-failed");
+    r.hold_copilot = false;
+    answer(&root, json!({"reply_head":MOVED}));
+    assert_eq!(run(&root, &r).unwrap_err().key(), "review-replies");
+    assert_eq!(posts(&root), 0);
+}
+
+#[test]
+fn only_the_exact_apps_approval_confirms_a_lost_post() {
+    if child("only_the_exact_apps_approval_confirms_a_lost_post").is_some() {
+        return;
+    }
+    let root = root();
+    let r = request(&root);
+    answer(&root, json!({"post":"lost"}));
+    assert_eq!(run(&root, &r).unwrap().status, Status::Unknown);
+    for (state, login, head) in [
+        ("COMMENTED", "review-app[bot]", HEAD),
+        ("APPROVED", "other[bot]", HEAD),
+        ("APPROVED", "review-app[bot]", MOVED),
+    ] {
+        answer(
+            &root,
+            json!({"reviews":[{"state":state,"user":{"login":login},"commit_id":head}]}),
+        );
+        assert_eq!(run(&root, &r).unwrap().status, Status::Unknown);
+    }
+    answer(
+        &root,
+        json!({"reviews":[{"state":"APPROVED","user":{"login":"review-app[bot]"},"commit_id":HEAD}]}),
+    );
+    assert_eq!(run(&root, &r).unwrap().status, Status::Confirmed);
+    assert_eq!(posts(&root), 1);
+}
+
+#[test]
+fn invalid_credentials_refuse_without_any_github_call() {
+    if child("invalid_credentials_refuse_without_any_github_call").is_some() {
+        return;
+    }
+    let root = root();
+    let r = request(&root);
+    fs::set_permissions(root.join("token"), fs::Permissions::from_mode(0o640)).unwrap();
+    assert_eq!(run(&root, &r).unwrap_err().key(), "credential");
+    assert!(!root.join("gh.log").exists());
+}
+
+#[test]
+fn an_unstarted_post_clears_its_claim_and_can_retry() {
+    if child("an_unstarted_post_clears_its_claim_and_can_retry").is_some() {
+        return;
+    }
+    let root = root();
+    let r = request(&root);
+    answer(&root, json!({"remove_gh_after_replies":true}));
+    assert_eq!(run(&root, &r).unwrap().status, Status::Refused);
+    assert_eq!(posts(&root), 0);
+    support::write_executable(&root.join("bin/gh"), include_str!("fixtures/approve-gh"));
+    answer(&root, json!({}));
+    assert_eq!(run(&root, &r).unwrap().status, Status::Confirmed);
+    assert_eq!(posts(&root), 1);
+}
+
+#[test]
+fn a_lost_post_is_read_back_after_the_live_head_moves() {
+    if child("a_lost_post_is_read_back_after_the_live_head_moves").is_some() {
+        return;
+    }
+    let root = root();
+    let r = request(&root);
+    answer(&root, json!({"post":"lost"}));
+    assert_eq!(run(&root, &r).unwrap().status, Status::Unknown);
+    answer(
+        &root,
+        json!({"head":MOVED, "reviews":[{"state":"APPROVED","user":{"login":"review-app[bot]"},"commit_id":HEAD}]}),
+    );
+    let result = run(&root, &r).unwrap();
+    assert_eq!(result.status, Status::Confirmed);
+    assert_eq!(result.head, HEAD);
+    assert_eq!(posts(&root), 1);
+}
+
+#[test]
+fn invalid_requests_and_unread_bodies_never_read_github() {
+    if child("invalid_requests_and_unread_bodies_never_read_github").is_some() {
+        return;
+    }
+    let root = root();
+    for (repo, pr, head, file, key) in [
+        ("o/r", 0, HEAD, "body", "approval-request"),
+        ("o/r/more", 42, HEAD, "body", "approval-request"),
+        ("o/r", 42, "ABCDEF1", "body", "approval-request"),
+        ("o/r", 42, "123456", "body", "approval-request"),
+        ("o/r", 42, HEAD, "absent", "body-file"),
+    ] {
+        let mut r = request(&root);
+        r.repo = repo.into();
+        r.pr = pr;
+        r.head = head.into();
+        r.body_file = root.join(file);
+        assert_eq!(run(&root, &r).unwrap_err().key(), key);
+    }
+    assert!(!root.join("gh.log").exists());
+}
+
+#[test]
+fn unread_review_evidence_never_claims_an_attempt() {
+    if child("unread_review_evidence_never_claims_an_attempt").is_some() {
+        return;
+    }
+    let root = root();
+    let r = request(&root);
+    for mode in ["bad", "unavailable", "malformed", "body-findings"] {
+        answer(&root, json!({"reply":mode}));
+        assert_eq!(run(&root, &r).unwrap_err().key(), "review-replies");
+        assert_eq!(posts(&root), 0);
+        let doc: Value =
+            serde_json::from_slice(&fs::read(root.join("item.json")).unwrap()).unwrap();
+        assert!(doc["head_approvals"]["o/r#42"][HEAD]["attempt"].is_null());
+    }
+}
+
+#[test]
+fn reader_absence_uses_the_file_and_keyring_preserves_the_viewer() {
+    if std::env::var("APPROVE_CHILD").is_ok() {
+        let root = root();
+        assert_eq!(
+            run(&root, &request(&root)).unwrap().status,
+            Status::Confirmed
+        );
+        return;
+    }
+    for keyring in [false, true] {
+        let dir = world();
+        let root = dir.path();
+        answer(root, json!({"keyring":keyring}));
+        let out = support::program(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "reader_absence_uses_the_file_and_keyring_preserves_the_viewer",
+                "--nocapture",
+            ])
+            .env("APPROVE_CHILD", "reader")
+            .env("APPROVE_ROOT", root)
+            .env("PATH", support::tool_path(&[&root.join("bin")]))
+            .env("ORCH_OVERSEER_REVIEW_TOKEN_FILE", root.join("token"))
+            .env("ORCH_OVERSEER_REVIEW_LOGIN", "review-app[bot]")
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{} {}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let (token, _) = calls(root)
+            .into_iter()
+            .find(|(_, args)| args.get(1).is_some_and(|a| a == "graphql"))
+            .unwrap();
+        assert_eq!(token, if keyring { Value::Null } else { json!(TOKEN) });
+    }
+}
+
+#[test]
+fn a_lost_post_with_unread_reviews_stays_unknown() {
+    if child("a_lost_post_with_unread_reviews_stays_unknown").is_some() {
+        return;
+    }
+    let root = root();
+    let r = request(&root);
+    for read in ["fail", "malformed"] {
+        answer(&root, json!({"post":"lost", "read_back":read}));
+        for _ in 0..2 {
+            assert_eq!(run(&root, &r).unwrap().status, Status::Unknown);
+        }
+    }
+    assert_eq!(posts(&root), 1);
+}
+
+#[test]
+fn settings_load_the_token_and_login_from_data_files() {
+    let dir = world();
+    let root = dir.path();
+    fs::write(
+        root.join("kendex.settings.toml"),
+        "[env]\nORCH_OVERSEER_REVIEW_LOGIN = 'settings-app[bot]'\nORCH_COPILOT_HOLD_SECS = '12'\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join(".env.local"),
+        format!(
+            "ORCH_OVERSEER_REVIEW_TOKEN_FILE='{}'\nORCH_OVERSEER_REVIEW_LOGIN='review-app[bot]'\n",
+            root.join("token").display()
+        ),
+    )
+    .unwrap();
+    let loaded = settings::load(
+        &Roots {
+            project: root.into(),
+            common: root.into(),
+        },
+        &[],
+        &Flags {
+            state_dir: None,
+            private_env: true,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        loaded.review.approval_login.as_deref(),
+        Some("review-app[bot]")
+    );
+    assert_eq!(
+        loaded.review.approval_token_file.as_deref(),
+        Some(root.join("token").as_path())
+    );
+    assert_eq!(loaded.review.copilot_hold, "12");
+}
+
+#[test]
+fn the_hold_bound_is_read_by_the_one_settings_reader() {
+    if child("the_hold_bound_is_read_by_the_one_settings_reader").is_some() {
+        return;
+    }
+    let root = root();
+    let mut r = request(&root);
+    r.hold_copilot = true;
+    for value in ["0", "01", "+1", "invalid", "1.0"] {
+        fs::write(
+            root.join("kendex.settings.toml"),
+            format!("[env]\nORCH_COPILOT_HOLD_SECS='{value}'\n"),
+        )
+        .unwrap();
+        assert_eq!(
+            run(&root, &r).unwrap_err().key(),
+            "copilot-hold-setting",
+            "{value}"
+        );
+    }
+    assert_eq!(posts(&root), 0);
+    // An empty value declares nothing: the default bound holds.
+    fs::write(
+        root.join("kendex.settings.toml"),
+        "[env]\nORCH_COPILOT_HOLD_SECS=''\n",
+    )
+    .unwrap();
+    assert_eq!(run(&root, &r).unwrap().status, Status::Confirmed);
+}
+
+#[test]
+fn the_configured_viewer_can_answer_a_body_only_finding() {
+    if child("the_configured_viewer_can_answer_a_body_only_finding").is_some() {
+        return;
+    }
+    let root = root();
+    let r = request(&root);
+    answer(&root, json!({"reply":"lane-disposition"}));
+    assert_eq!(run(&root, &r).unwrap().status, Status::Confirmed);
+    assert_eq!(posts(&root), 1);
+}
+
+#[test]
+fn a_private_reader_identity_survives_the_approval_file_credential() {
+    for key in ["GH_TOKEN", "GITHUB_TOKEN", "GH_BOT_TOKEN"] {
+        let dir = world();
+        let root = dir.path();
+        fs::write(root.join(".env.local"), format!("{key}='{LANE_TOKEN}'\n")).unwrap();
+        answer(root, json!({"reply":"lane-disposition"}));
+        fs::write(root.join("request.json"),serde_json::to_vec(&json!({"op":"approve-head","repo":"o/r","pr":42,"head":HEAD,"body_file":root.join("body")})).unwrap()).unwrap();
+        let out = support::program(support::binary())
+            .current_dir(root)
+            .env("PATH", support::tool_path(&[&root.join("bin")]))
+            .env("ORCH_OVERSEER_REVIEW_TOKEN_FILE", root.join("token"))
+            .env("ORCH_OVERSEER_REVIEW_LOGIN", "review-app[bot]")
+            .args(["op", "--file"])
+            .arg(root.join("item.json"))
+            .arg("--request")
+            .arg(root.join("request.json"))
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{key}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let result: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(result["result"]["status"], "confirmed", "{key}: {result}");
+        assert_eq!(posts(root), 1);
+    }
+}

@@ -68,6 +68,13 @@ enum Verb {
         #[arg(long)]
         effect_exit: bool,
     },
+    /// Read the live tracker and report lifecycle findings and verification boxes.
+    ReconcileItems {
+        #[arg(long)]
+        stale_hours: Option<u64>,
+        #[arg(long)]
+        gh_cli: Option<PathBuf>,
+    },
     /// Re-observe every open intent by its recorded identity and complete or
     /// mark each, starting no new effect.
     Reconcile {
@@ -81,6 +88,25 @@ enum Verb {
         target: Target,
         #[arg(long)]
         intent: String,
+    },
+    /// Judge, render or publish the owner progress report.
+    Report {
+        #[arg(value_parser = ["due", "render", "write"])]
+        action: String,
+        #[arg(long)]
+        state: Option<PathBuf>,
+        #[arg(long)]
+        session_start: Option<u64>,
+        #[arg(long)]
+        repo: Vec<String>,
+        #[arg(long)]
+        summary_file: Option<PathBuf>,
+        #[arg(long)]
+        succession: bool,
+        /// The credential ladder ran and this process was started again
+        /// under its selection.
+        #[arg(long, hide = true)]
+        credential_selected: bool,
     },
     /// The standing scheduler over one fleet state.
     Watch {
@@ -255,6 +281,15 @@ fn parse_need(word: &str) -> std::result::Result<orch_runtime::ops::proof::Need,
 /// The validation run's verbs.
 #[derive(Subcommand)]
 enum ValidateOp {
+    /// Run or inspect validation through the catalog command entry.
+    Entry(Box<orch_runtime::validate::entry::Args>),
+    /// Read the project validation mode without starting a command.
+    Mode {
+        #[arg(long)]
+        worktree: PathBuf,
+        #[arg(long)]
+        base: Option<String>,
+    },
     /// Resolve the mode from the project's declaration, classify the
     /// worktree, judge reuse over the item's proof rows, record the proof
     /// and the job on the round's admitted run, write the run directory
@@ -286,6 +321,12 @@ enum ValidateOp {
         /// Run the command whatever earlier row would answer it.
         #[arg(long)]
         fresh: bool,
+        #[arg(long)]
+        foreground: bool,
+        #[arg(long)]
+        reproduce: bool,
+        #[arg(long)]
+        restack: bool,
     },
     /// The run's job: run the kept executor as the bounded child, close
     /// the stage once with the lane's end notice owed, send it and mark it.
@@ -896,6 +937,66 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             "agent_runtime_protocol": agent_runtime::protocol::PROTOCOL,
         }),
         Verb::State { op } => state_verb(op, &flags, locking)?,
+        Verb::Report {
+            action,
+            state,
+            session_start,
+            repo,
+            summary_file,
+            succession,
+            credential_selected,
+        } => {
+            let invalid = match action.as_str() {
+                "due" => summary_file.is_some() || succession,
+                "render" => summary_file.is_some() || succession || session_start.is_some(),
+                "write" => session_start.is_some(),
+                _ => unreachable!("clap checks report actions"),
+            };
+            if invalid {
+                return Err(
+                    agent_runtime::Error::refused("report-args", &[("action", &action)]).into(),
+                );
+            }
+            let settings = resolve_settings(&flags)?;
+            // A due judged on minutes alone, or a session's due with no fleet
+            // state named, reads no GitHub, so asks no credential of it either.
+            let reads_github = action != "due"
+                || (settings.report.enabled
+                    && settings.report.issues > 0
+                    && (state.is_some() || session_start.is_none()));
+            if reads_github && !credential_selected {
+                return Err(reexec_with_github_auth(&settings));
+            }
+            let now = system_env()?.now_secs;
+            let session = session_start.map(|start| watch::report::Session {
+                start,
+                fleet: state.clone(),
+            });
+            let ctx = watch::report::Context {
+                fleet: state.unwrap_or_else(|| state::fleet_path(&settings.state_dir)),
+                github: settings
+                    .roots
+                    .project
+                    .join(".agents/skills/github/scripts/github.sh"),
+                settings,
+                gh: PathBuf::from("gh"),
+                repos: repo,
+                shared: Default::default(),
+            };
+            match action.as_str() {
+                "due" => {
+                    serde_json::json!({"line": watch::report::due(&ctx, now, session.as_ref())?})
+                }
+                "render" => serde_json::json!({"body": watch::report::render(&ctx, now)?}),
+                "write" => {
+                    let summary = summary_file.ok_or_else(|| {
+                        agent_runtime::Error::refused("report-summary", &[("cause", "missing")])
+                    })?;
+                    watch::report::write(&ctx, now, &summary, succession)?
+                }
+                _ => unreachable!("clap checks the report action"),
+            }
+        }
         Verb::Op {
             target,
             request,
@@ -926,6 +1027,15 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     Path::new("gh"),
                     &env,
                     locking,
+                )?)?);
+            }
+            if let Request::ApproveHead(r) = &request {
+                return Ok(serde_json::to_value(ops::approve::run(
+                    &path,
+                    r,
+                    &settings,
+                    locking,
+                    &schedule::SystemClock,
                 )?)?);
             }
             // The review gate reads the pull request first, makes the one
@@ -1077,6 +1187,18 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &schedule::SystemClock,
             )?)?
         }
+        Verb::ReconcileItems {
+            stale_hours,
+            gh_cli,
+        } => {
+            let settings = resolve_settings(&flags)?;
+            serde_json::to_value(watch::tracker::reconcile_items::run(
+                &settings,
+                stale_hours,
+                gh_cli.as_deref(),
+                system_env()?.now_secs,
+            )?)?
+        }
         Verb::Accounts { op } => accounts_verb(op, &flags)?,
         Verb::Watch { op } => watch_verb(op, &flags, locking)?,
         Verb::Lane {
@@ -1131,6 +1253,24 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             serde_json::to_value(admit(&path, &request, &env, locking, &settings)?)?
         }
         Verb::Validate {
+            op: ValidateOp::Entry(args),
+        } => {
+            std::process::exit(orch_runtime::validate::entry::dispatch(
+                &args,
+                &flags,
+                &system_env()?,
+                locking,
+            ));
+        }
+        Verb::Validate {
+            op: ValidateOp::Mode { worktree, base },
+        } => {
+            let settings = orch_runtime::validate::entry::resolve_at(&worktree, &flags)?;
+            let mode =
+                orch_runtime::validate::entry::mode(&settings, &worktree, base, &system_env()?)?;
+            serde_json::json!({"mode": mode})
+        }
+        Verb::Validate {
             op:
                 ValidateOp::Start {
                     item,
@@ -1142,6 +1282,9 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     caller,
                     poll,
                     fresh,
+                    foreground,
+                    reproduce,
+                    restack,
                 },
         } => {
             let settings = resolve_settings(&flags)?;
@@ -1156,10 +1299,23 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 caller,
                 poll,
                 fresh,
+                foreground,
+                reproduce,
+                restack,
             };
-            serde_json::to_value(orch_runtime::validate::start(
-                &settings, &request, &env, locking,
-            )?)?
+            let mut started = orch_runtime::validate::start(&settings, &request, &env, locking)?;
+            if request.foreground && started.launched {
+                started.outcome = orch_runtime::validate::run::run(
+                    &settings,
+                    &started.item,
+                    &started.round_id,
+                    &started.run_dir,
+                    &env,
+                    locking,
+                )?
+                .outcome;
+            }
+            serde_json::to_value(started)?
         }
         Verb::Validate {
             op:
@@ -1276,12 +1432,13 @@ const GH_AUTH_LADDER_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 const CREDENTIAL_SELECTED: &str = "--credential-selected";
 
 /// Select the GitHub credential this process and every `gh` it starts read
-/// with, once, before the claim, so a watch that cannot read GitHub never
-/// stands as the fleet's watch: the github skill's ladder prints the two
-/// token variables as it leaves them, and this process starts itself again
-/// in place under that environment with `--credential-selected`, which
-/// changes no running thread's environment and keeps the pid and start the
-/// launcher recorded. A ladder with no working candidate refuses
+/// with, once: before the claim, so a watch that cannot read GitHub never
+/// stands as the fleet's watch, and before a report's GitHub reads, so a
+/// stale inherited token leaves no window unread: the github skill's ladder
+/// prints the two token variables as it leaves them, and this process
+/// starts itself again in place under that environment with
+/// `--credential-selected`, which changes no running thread's environment
+/// and keeps the pid and start the launcher recorded. A ladder with no working candidate refuses
 /// `auth-failed`; one that cannot be run, and a restart that fails, refuse
 /// with their cause. Returns only the refusal.
 #[allow(
@@ -1423,7 +1580,7 @@ fn watch_verb(op: WatchOp, flags: &Flags, locking: Locking) -> Result<serde_json
                 &env,
                 locking,
             );
-            watch::report::register(&mut runner, &path, &settings, repos.clone());
+            watch::report::register(&mut runner, &path, &settings, repos.clone(), shared.clone());
             watch::retention::register(&mut runner, &path, &settings, locking)?;
             watch::github::register(&mut runner, &path, &settings, since.clone(), repos, shared)?;
             watch::mail::register(&mut runner, &path, &settings)?;

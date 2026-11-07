@@ -7,6 +7,8 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$TEST_DIR/lib/guard-world.sh"
 TIMING_PATH="$PATH"
+source "$REPO/skills/agent-runtime/scripts/lib/key.sh"
+TIMING_RUNTIME_CACHE="$(agent_runtime_cache)"
 
 if [ "${1:-all}" != timing ]; then
 SUITE_LOG="$TMP/suites"
@@ -591,7 +593,7 @@ git -C "$timing" config maintenance.auto false
 timing_suite=harness-smoke.test
 timing_pair=orch-shard-partition.test
 timing_tests=tools/tests
-timing_env=(env -i PATH="$TIMING_PATH" HOME="$TMP" LC_ALL=C ORCH_STATE_DIR="$timing/tmp")
+timing_env=(env -i PATH="$TIMING_PATH" HOME="$TMP" LANG=C.UTF-8 LC_ALL=C TMPDIR="${TMPDIR:-$TMP}" AGENT_RUNTIME_CACHE="$TIMING_RUNTIME_CACHE" ORCH_STATE_DIR="$timing/tmp")
 timing_run() {
   RC=0
   OUT="$("${timing_env[@]}" "$@" 2>&1)" || RC=$?
@@ -638,7 +640,9 @@ for row in 'single|413' 'pair|' 'partition|' 'full|' 'mixed|' 'uncovered|' 'shar
       git -C "$timing" checkout -- "$timing_tests/$timing_suite.sh"
       printf '# selected\n' >> "$timing/$timing_tests/$timing_pair.sh" ;;
     mixed) printf '\n' >> "$timing/ui/package.json" ;;
-    uncovered) printf '# selected\n' >> "$timing/skills/orch/tests/dev_validate_run_selection.sh" ;;
+    uncovered)
+      printf '# selected\n' > "$timing/skills/orch/tests/selection_uncovered.sh"
+      git -C "$timing" add skills/orch/tests/selection_uncovered.sh ;;
     shard-total)
       shard_suite=guards-tools.test
       printf '#!/usr/bin/env bash\nexit 0\n' > "$timing/$timing_tests/$shard_suite.sh"

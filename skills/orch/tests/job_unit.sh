@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Tests for lib/job-unit.sh through its executable interface, the contract a
 # markdown recipe calls: --help, name, launch, attach, end, stop, kill-group
-# and stop-job. The
-# containment each runner gives, the fallbacks behind a failing systemd-run,
-# and each rule --stop applies are pinned through dev-validate-run, which
-# sources the same functions, in dev_validate_run.sh.
+# and stop-job, with the fallbacks behind a failing systemd-run and each rule
+# under which a stop leaves a group alone. The unit rows run only where a user
+# manager answers.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -359,6 +358,58 @@ if command -v setsid >/dev/null 2>&1; then
   assert_eq "$RC $(proc_state_after "$JOB_PID")" "0 gone" \
     "end on a setsid record kills the group its leader names"
 
+  # The kill-group rules under which the group is left alone. A process with
+  # the job's argv that leads no group of its own is not the job's group.
+  sleep 30 &
+  member=$!
+  run "$JOB_UNIT" kill-group "$member" "*sleep 30"
+  assert_eq "$RC $(proc_state_after "$member")" "1 alive" \
+    "kill-group on a matching process that leads no group exits 1 and leaves it running"
+  mutant no-leader-check '  [[ "${pgid// /}" == "$pid" ]] || return 1' '  :'
+  run "$MUTANT" kill-group "$member" "*sleep 30"
+  assert_eq "$RC" "0" "control: without the leader check a process outside its own group passes as the job"
+  kill -KILL "$member" 2>/dev/null || :
+  wait "$member" 2>/dev/null || :
+  # A job whose group cannot be read while it runs is a failure named by its
+  # step, never a group found gone; one that ends before its group is read
+  # leaves nothing to end. The farm `ps` answers the argv and refuses the
+  # group read, ending the job first where the row asks it to.
+  mkdir -p "$TMP_ROOT/pgid-unread"
+  printf '#!/usr/bin/env bash\ncase "$*" in *pgid=*) [[ -z "${END_FIRST:-}" ]] || { kill -KILL "${@: -1}"; n=0; while kill -0 "${@: -1}" 2>/dev/null && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n + 1)); done; }; exit 1 ;; esac\nexec /bin/ps "$@"\n' \
+    > "$TMP_ROOT/pgid-unread/ps"
+  chmod +x "$TMP_ROOT/pgid-unread/ps"
+  launch_setsid_job "$record" "$TMP_ROOT/setsid-5.pid"
+  run env PATH="$TMP_ROOT/pgid-unread:$PATH" "$JOB_UNIT" kill-group "$JOB_PID" "*sleep 30"
+  assert_eq "$RC $ERR $(proc_state_after "$JOB_PID")" "2 job-unit: kill-group-failed pid=$JOB_PID step=read alive" \
+    "kill-group on a running job whose group cannot be read refuses kill-group-failed step=read and leaves it running"
+  run env PATH="$TMP_ROOT/pgid-unread:$PATH" END_FIRST=1 "$JOB_UNIT" kill-group "$JOB_PID" "*sleep 30"
+  assert_eq "$RC $ERR" "1 " "kill-group on a job that ends before its group is read exits 1 with nothing to end"
+  mutant no-gone-check '    kill -0 "$pid" 2>/dev/null || return 1' '    :'
+  launch_setsid_job "$record" "$TMP_ROOT/setsid-6.pid"
+  run env PATH="$TMP_ROOT/pgid-unread:$PATH" END_FIRST=1 "$MUTANT" kill-group "$JOB_PID" "*sleep 30"
+  assert_eq "$RC" "2" "control: without the gone check a job that ended reads as a group that could not be read"
+
+  # The teardown sends SIGTERM first, so the job's own trap runs before the
+  # grace's SIGKILL, as a unit's stop sends it.
+  term_job() { # SCRIPT RECORD MARKER
+    local pidfile="$TMP_ROOT/term.pid"
+    rm -f -- "$pidfile" "$3"
+    run env PATH="$FARM" "$1" launch validate-term "$2" --cap 60 -- bash -c \
+      'trap "echo term > \"$1\"; exit 0" TERM; echo $$ > "$0"; n=0; while [ "$n" -lt 300 ]; do sleep 0.1; n=$((n + 1)); done' \
+      "$pidfile" "$3"
+    JOB_PID=""
+    n=0
+    while [[ -z "$JOB_PID" ]] && (( n < 50 )); do JOB_PID="$(cat "$pidfile" 2>/dev/null || true)"; sleep 0.1; n=$((n + 1)); done
+    run "$1" stop-job "$2" "$JOB_PID" "*echo term*"
+    proc_state_after "$JOB_PID" >/dev/null
+    cat "$3" 2>/dev/null || echo none
+  }
+  assert_eq "$(term_job "$JOB_UNIT" "$TMP_ROOT/term.record" "$TMP_ROOT/term.marker")" "term" \
+    "stop-job sends a setsid job's group SIGTERM first, and its trap runs"
+  mutant kill-first '  kill -TERM -- "-$1" 2>/dev/null || return 0' '  kill -KILL -- "-$1" 2>/dev/null || return 0'
+  assert_eq "$(term_job "$MUTANT" "$TMP_ROOT/term.record" "$TMP_ROOT/term.marker")" "none" \
+    "control: a teardown that opens with SIGKILL runs no trap"
+
   # A child that exited before its row was read is a launch failure by its
   # status: a setsid that cannot start the job, read through a `cat` that
   # answers after the child is gone, so the row is not raced by the exit.
@@ -616,6 +667,41 @@ done
 run env PATH="$NO_RUNNER" "$JOB_UNIT" launch validate-id-1 "$TMP_ROOT/none.record" --cap 60 -- sleep 30
 assert_eq "$RC $ERR" "2 job-unit: missing-command commands=setsid" \
   "a host with neither runner exits 2 naming setsid"
+
+# A manager that lingers but cannot start the probe unit is passed over for
+# setsid, the line carrying systemd-run's own first words.
+if command -v setsid >/dev/null 2>&1; then
+  mkdir -p "$TMP_ROOT/probe-failed"
+  printf '#!/bin/sh\necho "Failed to connect to bus: No medium found" >&2\nexit 1\n' > "$TMP_ROOT/probe-failed/systemd-run"
+  chmod +x "$TMP_ROOT/probe-failed/systemd-run"
+  probe_launch() { # SCRIPT
+    run env PATH="$TMP_ROOT/probe-failed:$TMP_ROOT/linger:$FARM" "$1" launch validate-probe "$TMP_ROOT/probe.record" --cap 60 \
+      -- bash -c 'echo $$ > "$0"; exec sleep 30' "$TMP_ROOT/probe.pid"
+    JOB_PID="$(wait_job "$TMP_ROOT/probe.pid")" || :
+    sed 's/ pid=[0-9]* start=ticks:[0-9]*//' <<<"$RC $OUT"
+    "$JOB_UNIT" kill-group "$JOB_PID" "*sleep 30" >/dev/null 2>&1 || :
+  }
+  assert_eq "$(probe_launch "$JOB_UNIT")" "0 runner=setsid reason=probe-failed detail=Failed to connect to bus: No medium found" \
+    "a manager whose probe unit cannot start is passed over for setsid, named with systemd-run's words"
+  mutant probe-words 'reason=probe-failed detail=${probe_err%%' 'reason=probe-failed detail=${linger%%'
+  assert_eq "$(probe_launch "$MUTANT")" "0 runner=setsid reason=probe-failed detail=yes" \
+    "control: a fallback line that names another read's answer drops systemd-run's words"
+fi
+
+# A unit the manager will not stop fails the stop by name; one the manager no
+# longer has ended on its own. The stub stands for systemctl's two answers.
+mkdir -p "$TMP_ROOT/stop-refused"
+printf '#!/bin/sh\ncase "$*" in *" stop "*) echo "Failed to stop orch-x.service: Access denied" >&2; exit 1 ;; esac\necho "${STOP_LOAD:-loaded}"\n' \
+  > "$TMP_ROOT/stop-refused/systemctl"
+chmod +x "$TMP_ROOT/stop-refused/systemctl"
+run env PATH="$TMP_ROOT/stop-refused:$PATH" "$JOB_UNIT" stop orch-x
+assert_eq "$RC $ERR" "2 job-unit: stop-failed unit=orch-x.service detail=Failed to stop orch-x.service: Access denied" \
+  "a unit the manager refuses to stop fails stop-failed naming the unit and the manager's words"
+run env PATH="$TMP_ROOT/stop-refused:$PATH" STOP_LOAD=not-found "$JOB_UNIT" stop orch-x
+assert_eq "$RC $ERR" "1 " "a unit the manager has no record of exits 1, nothing stopped"
+mutant stop-not-found '&& [[ "$load" == not-found ]]; then' '&& false; then'
+run env PATH="$TMP_ROOT/stop-refused:$PATH" STOP_LOAD=not-found "$MUTANT" stop orch-x
+assert_eq "$RC" "2" "control: without the not-found read an ended unit is a stop failure"
 
 # --- A launch where a user manager answers ------------------------------------------
 # Which runner this host gives is read off the executable's own answer: a host

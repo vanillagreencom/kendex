@@ -1,0 +1,8 @@
+#!/bin/bash
+set -euo pipefail
+case "${1:-}:${2:-}" in
+  auth:status) exit "${VALIDATE_AUTH_STATUS:-0}" ;;
+  api:user) printf '{"login":"fixture"}\n'; exit "${VALIDATE_AUTH_STATUS:-0}" ;;
+esac
+here="$(cd "${BASH_SOURCE[0]%/*}" && pwd)"
+exec "$here/../gh/gh" "$@"

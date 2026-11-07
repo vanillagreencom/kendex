@@ -95,18 +95,15 @@ Use communication's [opening question](../../communication/references/questions.
 
 At each report, apply [§ Handoff](#handoff)'s hold check before counting ready items. Count items whose hold was dropped as ready, then apply `oversee.md` § 2 Select Work.
 
-```text
-Landed: [WHAT SHIPPED AND WHAT IT CHANGES FOR THE USER]
-Escapes: [MERGED PULL REQUESTS A REVERT OR A BUG ISSUE'S REGRESSED-BY LINE NAMED WITHIN 14 DAYS: THIS WEEK, LAST WEEK, THE WEEK THE REVIEW CAP FELL TO 1]
-Running: [WHAT IS IN FLIGHT AND WHEN IT LANDS]
-Validation: [EACH RUNNING LANE: MINUTES SPENT VALIDATING, IN TOTAL AND PER ROUND OR RESTACK, THEN RESTACK RE-TESTS SKIPPED]
-Rounds: [EACH RUNNING LANE: review_rounds, fix_receipts, validation_runs, restacks, repeated_class_rounds; UNAVAILABLE COUNTS READ unread]
-Use 1: [HEADS SINCE THE LAST REPORT BY OUTCOME: APPROVED BY COPILOT ON RE-REQUEST, OVERSEER FALLBACK, DECLINES ON AN UNCHANGED HEAD]
-Next: [WHAT STARTS AFTER THAT]
-Waiting on you: [EACH OPEN QUESTION WITH WHAT ITS DEADLINE DOES AND WHEN, THEN EACH LANE BLOCKER, OR none]
-```
+Use `orch-runtime report render --state [FLEET] --repo [OWNER/REPO]` to read the report. To publish it, use `orch-runtime report write` with the same flags and `--summary-file [FILE]`. Add `--succession` for a handover report. The reply's `result` contains `body`, `path` and `notice_id`; a quiet report has a null notice id. Keep the returned path and notice id with the report receipt.
 
-The chat and the report file keep these rows. For the owner's written summary, read communication's [reports and template](../../communication/references/reports.md). `scripts/oversee-report write` runs the advisory summary check of Jarvis's `check-summary` call, held to the mrkdwn of its file comment, then sends on the writer's word; its `--help` defines the keyed output. The Validation line per lane comes from that lane's workflow state `validate_rounds`, which `dev-artifact-check` and `worktree-push` write, so the owner sees what each round's and each restack's validation cost, and from its `restack_skips`, which [`merge-pr-restack.md`](../workflows/merge-pr-restack.md) step 2 writes, so the owner sees each restack that skipped its re-test, counted apart from the runs. The Rounds row uses the five counts defined in [oversee-events.md § lane-long](oversee-events.md#event-kinds). It reads `Rounds: none` with no running lane. The Escapes line is `oversee-report --help`'s count, so the owner sees whether one review cycle before the pull request lets more defects through. A bug issue counts only through its `Regressed-by: #N` line, which project-management's `templates/issue-description-template.md` writes where the pull request that caused the defect is known; an issue that names a pull request only as its source is not an escape. The Use 1 line counts the fleet log's `use1` rows, which the overseer writes under [copilot-head-notices.md § Use 1 rows](copilot-head-notices.md#use-1-rows), one row per head approved through a Copilot head notice or the `awaiting-stale` fallback, so the owner sees each such head's route: approved by Copilot on re-request, overseer fallback, or declines on an unchanged head. Waiting on you reads the unresolved owner asks from `lane-mail pending --item overseer --to owner`, one record for the report, the relay and the chat. Format it under communication's [Waiting on you](../../communication/references/reports.md#waiting-on-you).
+Read communication's [reports and template](../../communication/references/reports.md) for the owner's summary. Keep the three opening quote blocks separate. Put Numbers before Completed. Give merged, created, verified and cancelled counts across all Linear teams since the previous owner report, each with its source and window. Keep a count unread when its source has no reading. Then give post-merge checks waiting, active workers and workers past 3.5 hours with their work and identity. Keep issue stage age separate from job duration. Continue with Completed, In progress, Blocked, linked Issues created, Waiting on you, per-account Headroom remaining, self-analysis and Next report. Each Bad line names its fix in that bullet.
+
+The report uses the last report attachment confirmed in the owner mailbox as its content window. Written files also advance the file cadence. During quiet hours the runtime writes the file and sends no notice. The morning report covers the unsent window. A failed delivery leaves the owner window unchanged. Repeat the same write with the same summary to reconcile its receipt; different content under the same report name refuses replacement.
+
+The Escapes line counts a merged pull request once, in the week of its first finding within 14 days of the merge. A finding is a revert subject or a bug issue's plain or bold `Regressed-by: #N` line. A source citation alone is no finding. The count reads the default branch on origin and the project's bug labels through Linear. An unread source leaves Escapes unread.
+
+Waiting on you reads unresolved owner asks through the mailbox. Show a reserved ask as answered when its resolution stands, and keep it pending until it closes. Format questions under communication's [Waiting on you](../../communication/references/reports.md#waiting-on-you).
 
 ## Owner-only verification
 

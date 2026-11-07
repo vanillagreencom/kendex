@@ -421,11 +421,6 @@ if [ -n "$DIRECT_SUITE" ]; then
 fi
 
 matches() { # BASE FILTER
-  # Exact callers select every part of the physical suite.
-  if [ "$TEST_DIR" = "$ORCH_TEST_DIR" ] &&
-    [ "$1" = dev_validate_run_selection ] && [ "$2" = =dev_validate_run ]; then
-    return 0
-  fi
   if [ "$TEST_DIR" = "$ORCH_TEST_DIR" ]; then
     case "$1:$2" in
       open-terminal-lane-hosted-*:=open-terminal-lane-hosted) return 0 ;;
@@ -697,9 +692,6 @@ while [ "$finished" -lt "$RUN" ]; do
       printf 'start suite=%s\n' "${SUITES[next]}"
       suite_file="${SUITE_FILES[next]}"
       suite_args=("$suite_file")
-      if [ "$suite_file" = "$ORCH_TEST_DIR/dev_validate_run.sh" ]; then
-        suite_args+=(runner)
-      fi
       suite_environment "$suite_file" || { status=$?; stop_suites; exit "$status"; }
       PATH="$SUITE_PATH" "${KENDEX_GROUP_LEADER[@]}" bash "${suite_args[@]}" >"$OUT_DIR/${SUITES[next]}.out" 2>&1 </dev/null &
       SLOT_PID[k]=$!

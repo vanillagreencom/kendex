@@ -97,6 +97,24 @@ mutant_scripts() {
     cp -R "$orch_src/../../change-scope/scripts" "$change_scope/scripts" || _mutant_scripts_refuse copy-failed "$change_scope"
     cp -R "$orch_src/../../change-scope/references" "$change_scope/references" || _mutant_scripts_refuse copy-failed "$change_scope"
   fi
+  # A fixture's shell entries run the built runtime from its complete catalog
+  # layout, so its cache key includes the real runtime and required sibling.
+  local runtime_entry runtime_cache
+  runtime_cache="$(bash -c '. "$1"; agent_runtime_cache' _ "$orch_src/../../agent-runtime/scripts/lib/key.sh")" \
+    || _mutant_scripts_refuse runtime-cache-failed "$orch_src"
+  for runtime_entry in "$dir/orch-runtime" "$sibling/scripts/orch-runtime" "${sibling%/mailbox}/orch/scripts/orch-runtime"; do
+    [[ -f "$runtime_entry" ]] || continue
+    [[ "${2:-}" != orch-runtime ]] || continue
+    perl -e '
+      use strict; use warnings;
+      my ($real, $cache, $file) = @ARGV;
+      unlink($file) or die "runtime fixture unlink: $!\n" if -l $file;
+      open my $out, ">", $file or die "runtime fixture write: $!\n";
+      print {$out} "#!/usr/bin/env bash\nexport AGENT_RUNTIME_CACHE=\"$cache\"\nexec \"$real\" \"\$@\"\n" or die "runtime fixture output: $!\n";
+      close $out or die "runtime fixture close: $!\n";
+      chmod 0755, $file or die "runtime fixture mode: $!\n";
+    ' -- "$orch_src/orch-runtime" "$runtime_cache" "$runtime_entry" || _mutant_scripts_refuse runtime-failed "$runtime_entry"
+  done
   printf '%s\n' "$dir"
 }
 
@@ -169,8 +187,8 @@ growth_round_write() {
 # seconds, and a sentinel recording EXIT, 0 by default; EXIT "none" leaves the
 # run unfinished, with neither, and "no-verdict" records the bound ending it,
 # as the runner's child does. The receipt reads it back through
-# dev-validate-run --record, which dev_validate_run.sh pins against runs the
-# script itself wrote. Prints DIR.
+# dev-validate-run --record. The Rust validation rows read the same record
+# from a command the executor ran. Prints DIR.
 validate_run_dir() {
   mkdir -p "$1"
   printf 'validate-mode=%s\n' "$2" > "$1/start"

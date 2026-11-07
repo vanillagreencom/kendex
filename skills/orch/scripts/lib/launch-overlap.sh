@@ -1,8 +1,10 @@
 # shellcheck shell=bash
 #
-# Owner: the file-overlap hold (../../workflows/oversee.md § 2). open-terminal
-# refuses a fleet launch on overlap_judge and oversee-report labels its Next
-# rows from it; which queue keys the report judges is its --help Next row's.
+# The file-overlap hold oversee-report labels its Next rows from
+# (overlap_judge); item-tier reads its Location line pattern. Which queue keys
+# the report judges is its --help Next row's. The launch's own hold is the
+# runtime's admission (../../workflows/oversee.md § 2), which refuses only a
+# file a live lane shares, so a key this holds can launch.
 # Every JSON value reaches jq on stdin, never argv: a pull request's files or
 # a grep's matches can pass the kernel's per-argument limit. Callers source
 # lib/lane-state.sh first, whose lane_key_tracker names a lane record's

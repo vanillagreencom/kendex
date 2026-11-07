@@ -1,0 +1,19 @@
+#!/bin/bash
+set -euo pipefail
+case "${1:-}:${2:-}" in --user:show) ;; --user:stop) exit 0 ;; *) exit 1 ;; esac
+service=""
+for word in "$@"; do service="$word"; done
+unit="${service%.service}"
+state="${VALIDATE_MANAGER_DIR:?}/$unit.state"
+if [ -f "$state" ]; then
+  [ "$(cat "$state")" != unread ] || exit 1
+  cat "$state"
+  exit 0
+fi
+pid_file="$VALIDATE_MANAGER_DIR/$unit.pid"
+if [ -f "$pid_file" ]; then
+  pid="$(cat "$pid_file")"
+  status="$(ps -p "$pid" -o stat= 2>/dev/null)" || status=""
+  case "$status" in ''|*Z*) ;; *) printf 'loaded\nactive\n'; exit 0 ;; esac
+fi
+printf 'not-found\ninactive\n'

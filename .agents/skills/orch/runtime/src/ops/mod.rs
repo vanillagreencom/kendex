@@ -25,6 +25,7 @@
 pub mod accept;
 pub mod accounts;
 mod admission;
+pub mod approve;
 mod controller;
 pub mod copilot_wait;
 mod item;
@@ -234,6 +235,7 @@ pub enum Request {
     /// head owes, then record; `ops::verify_review` runs it, since the
     /// reads and the request come before its writes.
     VerifyReview(VerifyReview),
+    ApproveHead(approve::ApproveHead),
     ReconcileRound(ReconcileRound),
     RecordHandoff(Box<RecordHandoff>),
     ResumeHandoff(ResumeHandoff),
@@ -282,6 +284,7 @@ impl Request {
             Request::VerifyHead(_) => "verify-head",
             Request::VerifyPr(_) => "verify-pr",
             Request::VerifyReview(_) => "verify-review",
+            Request::ApproveHead(_) => "approve-head",
             Request::ReconcileRound(_) => "reconcile-round",
             Request::RecordHandoff(_) => "record-handoff",
             Request::ResumeHandoff(_) => "resume-handoff",
@@ -308,6 +311,7 @@ impl Request {
             | Request::VerifyHead(_)
             | Request::VerifyPr(_)
             | Request::VerifyReview(_)
+            | Request::ApproveHead(_)
             | Request::ReconcileRound(_)
             | Request::RecordHandoff(_)
             | Request::ResumeHandoff(_)
@@ -484,6 +488,7 @@ fn reread_on_record_changed(request: &Request) -> bool {
         | Request::VerifyHead(_)
         | Request::VerifyPr(_)
         | Request::VerifyReview(_)
+        | Request::ApproveHead(_)
         | Request::ReconcileRound(_)
         | Request::RecordHandoff(_)
         | Request::ResumeHandoff(_)
@@ -618,9 +623,10 @@ pub fn item_transition(
             path, doc, r, env,
         )?))),
         Request::RecordQueueWatch(r) => Ok(Report::RecordQueueWatch(queue_watch::record(doc, r)?)),
-        Request::VerifyHead(_) | Request::VerifyPr(_) | Request::VerifyReview(_) => {
-            Err(Error::OpNotTransition { op: request.name() })
-        }
+        Request::VerifyHead(_)
+        | Request::VerifyPr(_)
+        | Request::VerifyReview(_)
+        | Request::ApproveHead(_) => Err(Error::OpNotTransition { op: request.name() }),
         Request::LaunchLane(_)
         | Request::AdoptSession(_)
         | Request::RequestTransfer(_)
@@ -725,6 +731,7 @@ pub fn fleet_transition(
         | Request::VerifyHead(_)
         | Request::VerifyPr(_)
         | Request::VerifyReview(_)
+        | Request::ApproveHead(_)
         | Request::ReconcileRound(_)
         | Request::RecordHandoff(_)
         | Request::ResumeHandoff(_)

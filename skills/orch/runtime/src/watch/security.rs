@@ -268,20 +268,37 @@ enum ReadEnd<T> {
     Invalid,
 }
 
-/// The current process's effective uid, for the token file's ownership
-/// (`-O`); none where the kernel's record cannot be read.
+// Credential ownership follows the effective uid on Unix hosts with no proc filesystem.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the credential reader asks the system id utility for the effective uid on each supported Unix host; this is a bounded read, not an act"
+)]
 fn effective_uid() -> Option<u32> {
-    let status = std::fs::read_to_string("/proc/self/status").ok()?;
-    let line = status.lines().find(|l| l.starts_with("Uid:"))?;
-    line.split_whitespace().nth(2)?.parse().ok()
+    let output = agent_runtime::host::run_tagged(
+        "credentials",
+        "id",
+        Path::new("/usr/bin/id"),
+        "effective-uid",
+        &["-u"],
+        std::time::Duration::from_secs(2),
+    )
+    .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    std::str::from_utf8(&output.stdout)
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
 }
 
-/// `orch_token_file_read` (`lib/gh-auth.sh:32`): the installation token
+/// The installation token
 /// the fleet renews in `file`, refused with its cause unless the file is a
 /// regular file owned by this process with no group or other bits, under a
 /// parent owned by this process with no group or other write bit, holding
 /// one word under the cap. The refusal names the path judged.
-fn read_token(file: Option<&Path>) -> std::result::Result<String, (String, String)> {
+pub(crate) fn read_token(file: Option<&Path>) -> std::result::Result<String, (String, String)> {
     let Some(file) = file.filter(|f| !f.as_os_str().is_empty()) else {
         return Err((String::new(), "unset".to_owned()));
     };
@@ -292,12 +309,12 @@ fn read_token(file: Option<&Path>) -> std::result::Result<String, (String, Strin
     };
     let parent = file.parent().filter(|p| !p.as_os_str().is_empty());
     let parent = parent.unwrap_or(Path::new("."));
-    let uid = effective_uid();
+    let uid = effective_uid().ok_or_else(|| (shown.clone(), "uid-unreadable".to_owned()))?;
     let parent_meta = std::fs::metadata(parent)
         .map_err(|_| (parent.display().to_string(), "malformed".to_owned()))?;
     for (path, meta, bits) in [(file, &meta, 0o077), (parent, &parent_meta, 0o022)] {
         let shown = path.display().to_string();
-        if uid.is_none_or(|uid| meta.uid() != uid) {
+        if meta.uid() != uid {
             return Err((shown, "not-owned".to_owned()));
         }
         let mode = meta.mode() & 0o7777;
@@ -305,7 +322,11 @@ fn read_token(file: Option<&Path>) -> std::result::Result<String, (String, Strin
             return Err((shown, format!("mode-{mode:o}")));
         }
     }
-    let bytes = std::fs::read(file).map_err(|_| (shown.clone(), "malformed".to_owned()))?;
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    std::fs::File::open(file)
+        .and_then(|reader| reader.take(TOKEN_CAP as u64).read_to_end(&mut bytes))
+        .map_err(|_| (shown.clone(), "malformed".to_owned()))?;
     if bytes.len() >= TOKEN_CAP {
         return Err((shown, "too-long".to_owned()));
     }
@@ -390,8 +411,7 @@ fn standing_bot_fix(baseline: &Baseline) -> BTreeMap<String, String> {
 /// no alert kind or no whole number is the record's `invalid`.
 fn recorded(verdicts: &[Value]) -> Option<BTreeSet<String>> {
     let mut out = BTreeSet::new();
-    // Each field as the legacy's `"\(.repo)\t\(.kind)\t\(.number)"` rendered
-    // it: a string's text, `null` for an absent one, any other value's JSON,
+    // A field is a string's text, `null` when absent, or its JSON.
     // so a row missing a field is `invalid`, not skipped.
     let text = |value: Option<&Value>| match value {
         None | Some(Value::Null) => "null".to_owned(),
@@ -784,9 +804,6 @@ pub(super) fn pass(
 mod tests {
     use super::*;
 
-    /// The cause table (`SECURITY_CAUSES`, `security_read_cause`) on the
-    /// words the legacy suite pins (`oversee_watch_security.sh`), the
-    /// manifest encoding, and the row validation.
     #[test]
     fn a_failed_reads_cause_is_githubs_own_words_then_its_status() {
         let rows = [
@@ -864,9 +881,6 @@ mod tests {
         );
         let bad = vec![serde_json::json!({"repo": "owner/repo", "kind": "npm", "number": 7})];
         assert_eq!(recorded(&bad), None);
-        // A row missing a field reads `null` there, as the legacy's jq
-        // rendered it, and is the record's `invalid`; an all-empty row is
-        // skipped as the legacy skipped it.
         let missing = vec![serde_json::json!({"repo": "owner/repo", "number": 7})];
         assert_eq!(recorded(&missing), None);
         let empty = vec![serde_json::json!({"repo": "", "kind": "", "number": ""})];

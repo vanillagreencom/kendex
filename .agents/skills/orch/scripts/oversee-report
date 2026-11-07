@@ -238,11 +238,14 @@ Rows:
                   have no lanes[] record, whatever its status: a record is
                   written at launch, so a key with one has launched.
                   A key whose spelling names its tracker (not issue-N)
-                  that the launch's file-overlap hold would refuse
-                  reads `ITEM (held by HOLDER: FILE)`, judged by the same
-                  lib/launch-overlap.sh as the first --repo's item, in
-                  this checkout, against that repository's held lanes and
-                  open same-repository pull requests. A Location line
+                  that lib/launch-overlap.sh holds reads
+                  `ITEM (held by HOLDER: FILE)`, judged as the first
+                  --repo's item, in this checkout, against that
+                  repository's in-flight lanes and open same-repository
+                  pull requests. That hold is this report's own: the
+                  runtime's launch refuses only a file a live lane shares
+                  and records a rebase obligation for any other holder,
+                  so an item read held here can launch. A Location line
                   that names no backticked path, the key's or a held
                   lane's item's, reads `ITEM (overlap unread: READ)`, READ
                   being location or lane:ITEM:location; any other read it

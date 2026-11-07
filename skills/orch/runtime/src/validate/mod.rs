@@ -1,20 +1,7 @@
-//! The validation run's start: one verb, `orch-runtime validate start`, that
-//! reads the project's declaration, the worktree's snapshot and class, the CI
-//! admission and the selector's preview, judges reuse over the proof rows
-//! already on the item's stages, writes the proof facts and the launcher's
-//! record path on the admitted stage, writes the run directory the kept
-//! executor reads, and launches `orch-runtime validate run` detached through
-//! the job launcher, writing the launcher's answer on the stage after it. The
-//! reads come first and the records follow (read-then-record); the executor
-//! is `dev-validate-run --child`. `run` holds the job.
-//!
-//! The mode resolver: a fix round, one that names a base, takes the narrowest
-//! mode the declaration admits for its kind: `ci` where the CI context is
-//! declared and the base's rules require it, else `range` where the range
-//! command is declared, else the whole battery; an implement round runs the
-//! whole battery. A `full` request on a project declaring a narrower mode needs
-//! a cause, and both are recorded.
+//! Validation admission, mode resolution and run records.
 
+pub mod entry;
+pub mod files;
 pub mod run;
 
 use std::ffi::OsStr;
@@ -41,6 +28,7 @@ use crate::state::{
 
 /// The poll interval a start records when the caller names none.
 pub const POLL_DEFAULT: u64 = 30;
+pub const JOB_UNIT_UNCONFIRMED: i32 = 6;
 /// The seconds between the bound's SIGTERM and its SIGKILL, job-unit's
 /// grace, which the cap carries so the sentinel lands inside a wait.
 pub const KILL_GRACE: u64 = 10;
@@ -48,8 +36,6 @@ pub const KILL_GRACE: u64 = 10;
 const READ_TIMEOUT: Duration = Duration::from_secs(120);
 /// How long the selector's preview may take.
 const SELECTION_TIMEOUT: Duration = Duration::from_secs(600);
-/// How long the job launcher may take to answer.
-const LAUNCH_TIMEOUT: Duration = Duration::from_secs(60);
 /// The run directory's name prefix.
 const RUN_DIR_PREFIX: &str = "dev-validate-";
 /// The run inventory the lane facts and the report read.
@@ -71,6 +57,9 @@ pub struct StartRequest {
     pub poll: u64,
     /// Run the command whatever earlier row would answer it.
     pub fresh: bool,
+    pub foreground: bool,
+    pub reproduce: bool,
+    pub restack: bool,
 }
 
 /// The start's reply: the fields of the `state=started` line, the
@@ -212,7 +201,7 @@ fn at<'a>(worktree: &'a Path, env: &'a [(&'a str, &'a OsStr)]) -> Place<'a> {
     }
 }
 
-fn git(
+pub(crate) fn git(
     worktree: &Path,
     operation: &'static str,
     args: &[&str],
@@ -244,18 +233,20 @@ struct Classified {
 
 /// The scratch directory a classification writes its objects, index and
 /// paths into: removed with the start.
-struct Scratch(PathBuf);
+pub(crate) struct Scratch(pub(crate) PathBuf);
 
 impl Scratch {
     #[allow(
         clippy::disallowed_methods,
-        reason = "the classification's scratch store, a private object directory beside a copied index as `dev-validate-run`'s `classify` makes it; removed when the start ends"
+        reason = "the classification's scratch store, a private object directory beside a copied index for snapshot classification; removed when the start ends"
     )]
-    fn new(env: &Env) -> Result<Scratch> {
+    pub(crate) fn new(env: &Env) -> Result<Scratch> {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let dir = std::env::temp_dir().join(format!(
-            "orch-validate-{}-{}",
+            "orch-validate-{}-{}-{}",
             std::process::id(),
-            env.nonce
+            env.nonce,
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         fs::create_dir(&dir).map_err(|e| Error::ValidateUnreadable {
             read: "scratch",
@@ -282,6 +273,10 @@ fn sibling(settings: &Settings, name: &str) -> PathBuf {
         .parent()
         .map(|d| d.join(name))
         .unwrap_or_else(|| PathBuf::from(name))
+}
+
+fn group_leader(settings: &Settings) -> PathBuf {
+    sibling(settings, "../../github/scripts/lib/group-leader.sh")
 }
 
 /// The classifier: harness-ci's wrapper where that sibling is installed,
@@ -323,7 +318,7 @@ fn base_branch(settings: &Settings, worktree: &Path, log: &mut String) -> Result
 /// class on no evidence would skip lanes the diff needs.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the classification copies the worktree's index into the scratch store, as `dev-validate-run`'s `classify` does, so the snapshot leaves HEAD, the index and the tree as they were"
+    reason = "the classification copies the worktree's index into the scratch store, for snapshot classification, so the snapshot leaves HEAD, the index and the tree as they were"
 )]
 fn classify(
     settings: &Settings,
@@ -377,7 +372,17 @@ fn classify(
         return Ok(unrecorded(out));
     }
     match fs::copy(&index, &scratch_index) {
-        Ok(_) => {}
+        Ok(_) => {
+            let restored = fs::metadata(&index)
+                .and_then(|m| m.modified())
+                .and_then(|modified| {
+                    fs::File::open(&scratch_index)?
+                        .set_times(fs::FileTimes::new().set_modified(modified))
+                });
+            if restored.is_err() {
+                return Ok(unrecorded(out));
+            }
+        }
         Err(e) if e.kind() == ErrorKind::NotFound => {}
         Err(_) => return Ok(unrecorded(out)),
     }
@@ -456,28 +461,31 @@ fn classify(
         "--repo",
         &wt,
     ]);
-    let mut class_log = String::new();
-    let answer = run_in(
+    let answer = match host::run_tagged_in(
+        "validate",
         "change-scope",
         &program,
         "class",
         &args,
         at(worktree, &store),
         READ_TIMEOUT,
-        &mut class_log,
-    );
-    let answer = match answer {
-        Ok(a) => a,
-        Err(e) => {
-            out.fallback = Some(format!("classifier-absent:{e}"));
+    ) {
+        Ok(answer) => answer,
+        Err(_) => {
+            out.fallback = Some("classifier-absent".to_owned());
             return Ok(out);
         }
     };
+    let class_log = host::stderr_text(&answer);
     log.push_str(&class_log);
-    let Some(answer) = answer else {
-        out.fallback = Some("classifier-exit".to_owned());
+    if !answer.status.success() {
+        out.fallback = Some(format!(
+            "classifier-exit-{}",
+            answer.status.code().unwrap_or(1)
+        ));
         return Ok(out);
-    };
+    }
+    let answer = host::stdout_text(&answer);
     let class = answer
         .lines()
         .find_map(|l| l.strip_prefix("change_class="))
@@ -582,7 +590,7 @@ fn preview_selection(
     ];
     let answer = run_in(
         "bash",
-        Path::new("bash"),
+        Path::new("/bin/bash"),
         "selection",
         &["-c", cmd],
         at(worktree, &env),
@@ -592,15 +600,21 @@ fn preview_selection(
     let Some(answer) = answer else {
         return Ok(Preview::default());
     };
+    let selections: Vec<_> = answer
+        .lines()
+        .filter(|l| l.starts_with("selection="))
+        .collect();
+    let estimates: Vec<_> = answer
+        .lines()
+        .filter_map(|l| l.strip_prefix("expected-secs="))
+        .collect();
     Ok(Preview {
-        selection: answer
-            .lines()
-            .find(|l| l.starts_with("selection="))
-            .map(str::to_owned),
-        expected_secs: answer
-            .lines()
-            .find_map(|l| l.strip_prefix("expected-secs="))
-            .and_then(|n| n.parse().ok()),
+        selection: (selections.len() == 1).then(|| selections[0].to_owned()),
+        expected_secs: if estimates.len() == 1 && estimates[0].bytes().all(|b| b.is_ascii_digit()) {
+            estimates[0].parse().ok()
+        } else {
+            None
+        },
     })
 }
 
@@ -691,10 +705,48 @@ fn segment(base: &str) -> String {
 /// in the worktree, as `ci_runs_validation` reads them; `None` where
 /// either read failed or the protection payload was withheld.
 fn required_contexts(
+    settings: &Settings,
     worktree: &Path,
     base: &str,
     log: &mut String,
 ) -> Result<Option<(Vec<String>, bool)>> {
+    let ladder = sibling(settings, "../../github/scripts/gh-auth-ladder");
+    let wt = worktree.display().to_string();
+    let selected = match run_in(
+        "gh-auth-ladder",
+        &ladder,
+        "credentials",
+        &["--project", &wt],
+        at(worktree, &[]),
+        READ_TIMEOUT,
+        log,
+    ) {
+        Ok(Some(selected)) => selected,
+        Ok(None) => return Ok(None),
+        Err(error) => {
+            log.push_str(&error.to_string());
+            return Ok(None);
+        }
+    };
+    let mut credentials = Vec::<(String, std::ffi::OsString)>::new();
+    for line in selected.lines() {
+        let Some((name, value)) = line.split_once('=') else {
+            return Ok(None);
+        };
+        if !matches!(name, "GH_TOKEN" | "GITHUB_TOKEN")
+            || credentials.iter().any(|(key, _)| key == name)
+        {
+            return Ok(None);
+        }
+        credentials.push((name.into(), value.into()));
+    }
+    if credentials.len() != 2 {
+        return Ok(None);
+    }
+    let environment: Vec<_> = credentials
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_os_str()))
+        .collect();
     let seg = segment(base);
     let rules_path = format!("repos/{{owner}}/{{repo}}/rules/branches/{seg}");
     let Some(rules) = run_in(
@@ -702,7 +754,7 @@ fn required_contexts(
         Path::new("gh"),
         "rules",
         &["api", &rules_path],
-        at(worktree, &[]),
+        at(worktree, &environment),
         READ_TIMEOUT,
         log,
     )?
@@ -741,7 +793,7 @@ fn required_contexts(
         Path::new("gh"),
         "branch",
         &["api", &branch_path],
-        at(worktree, &[]),
+        at(worktree, &environment),
         READ_TIMEOUT,
         log,
     )?
@@ -840,7 +892,7 @@ fn ci_admission(
         }
         PrView::Open { base } => base,
     };
-    let Some((contexts, queue)) = required_contexts(worktree, &base, log)? else {
+    let Some((contexts, queue)) = required_contexts(settings, worktree, &base, log)? else {
         return Ok(CiAdmission::Fallback("rules-unread".to_owned()));
     };
     if !contexts.iter().any(|c| c == context) {
@@ -876,6 +928,7 @@ struct Resolved {
     paths: Vec<String>,
     /// The sentinel and log a run that runs nothing records at once.
     ran_nothing: Option<RanNothing>,
+    orphaned: Option<String>,
 }
 
 /// A start that launches no command: required CI pending, or an earlier
@@ -959,6 +1012,31 @@ fn resolve(
             return Err(Error::BaseInvalid { base: base.clone() });
         };
         base_sha = sha.trim().to_owned();
+        let map = git(
+            worktree,
+            "rebase-map",
+            &[
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "kendex-rebase-map",
+            ],
+            &mut log,
+        )?
+        .ok_or_else(|| files::unreadable("rebase-map-unreadable", "git-path"))?;
+        match fs::symlink_metadata(&map) {
+            Ok(_) => {
+                let text = fs::read_to_string(&map)
+                    .map_err(|e| files::unreadable("rebase-map-unreadable", e))?;
+                let projected = crate::ops::proof::project_rebase(&text, &base_sha)?;
+                if !projected.starts_with("dropped:") {
+                    base_sha = projected;
+                }
+            }
+            Err(e) if e.kind() == ErrorKind::NotFound => {}
+            Err(e) => return Err(files::unreadable("rebase-map-unreadable", e)),
+        }
+
         if git(
             worktree,
             "merge-base",
@@ -993,7 +1071,17 @@ fn resolve(
             log,
         )
     };
+    let branch_docs = read("", &mut log)?;
     let mut class = read(&class_base, &mut log)?;
+    let docs_mode = !req.reproduce
+        && branch_docs.docs_only
+        && branch_docs.fallback.is_none()
+        && (settings.validate.selection_cmd.is_some() || settings.validate.text_cmd.is_some());
+    if docs_mode {
+        class = read("", &mut log)?;
+        class_base.clear();
+        base_sha.clear();
+    }
     let order = pr_order(settings, worktree, &mut log)?;
     let mut ci_fallback: Option<String> = None;
     let mut ci_event = String::new();
@@ -1005,7 +1093,10 @@ fn resolve(
     // covers the change; so does a fix round the declaration lets defer
     // (its narrowest mode).
     let may_defer = fix_round && req.mode.is_none() && settings.validate.ci_context.is_some();
-    if mode == ValidateMode::Ci || order == "push-first" || may_defer {
+    if !docs_mode
+        && !req.reproduce
+        && (mode == ValidateMode::Ci || order == "push-first" || may_defer)
+    {
         ci_attempted = true;
         let branch = read("", &mut log)?;
         if requested != ValidateMode::Full {
@@ -1014,7 +1105,7 @@ fn resolve(
         match ci_admission(settings, worktree, &branch, &order, &mut log)? {
             CiAdmission::Admitted { event } => {
                 ci_event = event;
-                if settings.validate.selection_cmd.is_none() {
+                if req.restack || settings.validate.selection_cmd.is_none() {
                     mode = ValidateMode::Ci;
                 } else {
                     previewed = true;
@@ -1084,6 +1175,10 @@ fn resolve(
             base_sha = mb.trim().to_owned();
         }
     }
+    if docs_mode {
+        mode = ValidateMode::Docs;
+        base_sha.clear();
+    }
     let mut cmd = match mode {
         ValidateMode::Full => settings
             .validate
@@ -1094,11 +1189,18 @@ fn resolve(
             })?,
         ValidateMode::Range => settings.validate.range_cmd.clone().unwrap_or_default(),
         ValidateMode::Ci => String::new(),
+        ValidateMode::Docs => settings.validate.text_cmd.clone().unwrap_or_default(),
     };
     let mut scoped = false;
     // The selector's own preview for a local run, and the scoped start
     // where CI cannot see the head yet.
-    if mode != ValidateMode::Ci && !previewed && settings.validate.selection_cmd.is_some() {
+    if !docs_mode
+        && !req.reproduce
+        && !req.restack
+        && mode != ValidateMode::Ci
+        && !previewed
+        && settings.validate.selection_cmd.is_some()
+    {
         preview = preview_selection(
             settings,
             worktree,
@@ -1137,7 +1239,7 @@ fn resolve(
             }
         }
     }
-    if mode == ValidateMode::Ci && settings.validate.selection_cmd.is_some() {
+    if mode == ValidateMode::Ci && !req.restack && settings.validate.selection_cmd.is_some() {
         scoped = true;
     }
     if scoped {
@@ -1169,6 +1271,32 @@ fn resolve(
     } else if mode == ValidateMode::Ci {
         class_base.clear();
     }
+    if docs_mode {
+        mode = ValidateMode::Docs;
+        scoped = settings.validate.selection_cmd.is_some();
+        cmd = settings
+            .validate
+            .selection_cmd
+            .clone()
+            .or_else(|| settings.validate.text_cmd.clone())
+            .unwrap_or_default();
+        preview = if scoped {
+            preview_selection(
+                settings,
+                worktree,
+                &class,
+                &paths_file,
+                "",
+                ValidateMode::Docs,
+                &mut log,
+            )?
+        } else {
+            Preview::default()
+        };
+        class_base.clear();
+        base_sha.clear();
+        ci_fallback = None;
+    }
     let timeout_secs = settings.validate.timeout.as_secs();
     let finding_prefix = settings.validate.finding_prefix.clone().unwrap_or_default();
     let head = git(
@@ -1183,7 +1311,7 @@ fn resolve(
     // "A start reads the worktree's earlier runs"), judged over the item's
     // own proof rows.
     let mut reused = None;
-    if mode != ValidateMode::Ci && !req.fresh && class.fallback.is_none() {
+    if mode != ValidateMode::Ci && !req.fresh && !req.reproduce && class.fallback.is_none() {
         let want = Want {
             cmd: cmd.clone(),
             class: class.class.clone(),
@@ -1247,10 +1375,27 @@ fn resolve(
                 sentinel: format!("guard-exit=0 at={at}\n"),
             })
         }
-        (None, ValidateMode::Full | ValidateMode::Range, _) | (None, ValidateMode::Ci, true) => {
-            None
-        }
+        (None, ValidateMode::Full | ValidateMode::Range | ValidateMode::Docs, _)
+        | (None, ValidateMode::Ci, true) => None,
     };
+    if ran_nothing.is_none() {
+        if !fs::metadata(group_leader(settings)).is_ok_and(|m| m.is_file()) {
+            return Err(files::unreadable(
+                "group-leader-missing",
+                group_leader(settings).display(),
+            ));
+        }
+        use std::os::unix::fs::PermissionsExt;
+        let perl = std::env::var_os("PATH").is_some_and(|path| {
+            std::env::split_paths(&path).any(|dir| {
+                fs::metadata(dir.join("perl"))
+                    .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            })
+        });
+        if !perl {
+            return Err(files::unreadable("missing-command", "commands=perl"));
+        }
+    }
     let selection = match preview.selection.as_deref() {
         Some("selection=all") => "all",
         Some("selection=subset") => "subset",
@@ -1285,13 +1430,14 @@ fn resolve(
         class_log: log,
         paths: class.paths,
         ran_nothing,
+        orphaned: orphaned_sha,
     })
 }
 
 // --- The run directory ------------------------------------------------------------
 
 /// The run's `start` record, line for line in the form the executor reads.
-fn start_record(worktree: &Path, proof: &Proof, start: u64) -> String {
+fn start_record(worktree: &Path, proof: &Proof, start: u64, orphaned: Option<&str>) -> String {
     let mut text = String::new();
     let mut line = |l: String| {
         text.push_str(&l);
@@ -1313,6 +1459,9 @@ fn start_record(worktree: &Path, proof: &Proof, start: u64) -> String {
         line("scoped=true".to_owned());
     }
     line(format!("validate-base={}", proof.base));
+    if let Some(base) = orphaned {
+        line(format!("validate-base-orphaned={base}"));
+    }
     if let Some(cause) = &proof.ci_fallback {
         line(format!("ci-fallback={cause}"));
     }
@@ -1348,6 +1497,7 @@ fn write_run_dir(
     run_dir: &Path,
     resolved: &Resolved,
     start: u64,
+    locking: Locking,
 ) -> std::result::Result<(), String> {
     fs::create_dir_all(worktree.join("tmp")).map_err(|e| format!("tmp: {e}"))?;
     match fs::create_dir(run_dir) {
@@ -1358,6 +1508,9 @@ fn write_run_dir(
     let write = |name: &str, text: &str| {
         fs::write(run_dir.join(name), text).map_err(|e| format!("{name}: {e}"))
     };
+    // The job's error log stands before any record: it is the mark that tells
+    // the runtime's start from the shell producer's, which writes none.
+    write("job.err", "")?;
     write("class.log", &resolved.class_log)?;
     let mut paths = resolved.paths.join("\n");
     if !resolved.paths.is_empty() {
@@ -1365,33 +1518,45 @@ fn write_run_dir(
     }
     write("paths", &paths)?;
     write("cmd", &resolved.proof.cmd)?;
-    write("start", &start_record(worktree, &resolved.proof, start))?;
-    // The inventory the lane facts and the report read: a header, then
-    // one run directory name per start record.
-    let mut names: Vec<String> = fs::read_dir(worktree.join("tmp"))
-        .map_err(|e| format!("tmp: {e}"))?
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| {
-            entry
-                .file_name()
-                .to_str()
-                .is_some_and(|n| n.starts_with(RUN_DIR_PREFIX))
-                && fs::metadata(entry.path().join("start")).is_ok()
-        })
-        .filter_map(|entry| entry.file_name().to_str().map(str::to_owned))
-        .collect();
-    names.sort();
-    let mut index = String::from("dev-validate-runs-v1\n");
-    for name in names {
-        index.push_str(&name);
-        index.push('\n');
-    }
-    let scratch = worktree
-        .join("tmp")
-        .join(format!(".{RUN_INDEX}.{}", std::process::id()));
-    fs::write(&scratch, index).map_err(|e| format!("{RUN_INDEX}: {e}"))?;
-    fs::rename(&scratch, worktree.join("tmp").join(RUN_INDEX))
-        .map_err(|e| format!("{RUN_INDEX}: {e}"))?;
+    write(
+        "start",
+        &start_record(
+            worktree,
+            &resolved.proof,
+            start,
+            resolved.orphaned.as_deref(),
+        ),
+    )?;
+    state::locked(&worktree.join("tmp").join(RUN_INDEX), locking, || {
+        let mut names = Vec::new();
+        for entry in
+            fs::read_dir(worktree.join("tmp")).map_err(|e| files::unreadable("run-index", e))?
+        {
+            let entry = entry.map_err(|e| files::unreadable("run-index", e))?;
+            let name = entry.file_name();
+            let Some(name) = name.to_str().filter(|n| n.starts_with(RUN_DIR_PREFIX)) else {
+                continue;
+            };
+            match fs::metadata(entry.path().join("start")) {
+                Ok(_) => names.push(name.to_owned()),
+                Err(e) if e.kind() == ErrorKind::NotFound => {}
+                Err(e) => return Err(files::unreadable("run-index", e)),
+            }
+        }
+        names.sort();
+        let mut index = String::from("dev-validate-runs-v1\n");
+        for name in names {
+            index.push_str(&name);
+            index.push('\n');
+        }
+        let scratch = worktree
+            .join("tmp")
+            .join(format!(".{RUN_INDEX}.{}", std::process::id()));
+        fs::write(&scratch, index)
+            .and_then(|_| fs::rename(&scratch, worktree.join("tmp").join(RUN_INDEX)))
+            .map_err(|e| files::unreadable("run-index", e))
+    })
+    .map_err(|e| e.to_string())?;
     if let Some(ran_nothing) = &resolved.ran_nothing {
         write("log", &ran_nothing.log)?;
         let at = ran_nothing
@@ -1435,57 +1600,33 @@ fn started_line(run_dir: &Path, proof: &Proof) -> String {
     )
 }
 
-/// Ask the job launcher for the run's job: `validate run` under the
-/// worktree's name with the cap as the unit's bound, the record beside the
-/// run as the executor reads it.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the validation start's one ask of the job launcher, the job's record on the stage from before the ask"
+    reason = "the admitted validation launch uses the shared recorded launcher"
 )]
 fn ask_launcher(
-    settings: &Settings,
+    _settings: &Settings,
     worktree: &Path,
     run_dir: &Path,
     item: &str,
     round: &str,
     cap_secs: u64,
 ) -> Launch {
-    let job_unit = settings.job_unit.clone();
-    if !fs::metadata(&job_unit).is_ok_and(|m| m.is_file()) {
-        return Launch::Refused {
-            cause: format!("job-unit-missing {}", job_unit.display()),
-        };
-    }
     let exe = match std::env::current_exe() {
-        Ok(exe) => exe.display().to_string(),
+        Ok(exe) => exe,
         Err(e) => {
             return Launch::Refused {
-                cause: format!("exe-unread {e}"),
+                cause: e.to_string(),
             };
         }
     };
-    let name = format!(
-        "validate-{}",
-        worktree
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default()
-    );
-    let record = run_dir.join("runner");
-    let record_text = record.display().to_string();
-    let cap = cap_secs.to_string();
-    let state_dir = settings.state_dir.display().to_string();
+    let state = _settings.state_dir.display().to_string();
     let rd = run_dir.display().to_string();
+    let executable = exe.display().to_string();
     let args = [
-        "launch",
-        &name,
-        &record_text,
-        "--cap",
-        &cap,
-        "--",
-        &exe,
+        &*executable,
         "--state-dir",
-        &state_dir,
+        &state,
         "validate",
         "run",
         "--item",
@@ -1495,85 +1636,96 @@ fn ask_launcher(
         "--run-dir",
         &rd,
     ];
-    let place = Place {
-        cwd: Some(worktree),
-        env: &[],
-    };
-    match host::run_tagged_in(
-        "validate",
-        "job-unit",
-        &job_unit,
-        "launch",
+    let name = format!(
+        "validate-{}",
+        worktree.file_name().unwrap_or_default().to_string_lossy()
+    );
+    let answer = effects::launch_recorded(
+        &name,
+        &rd,
+        &run_dir.join("runner"),
         &args,
-        place,
-        LAUNCH_TIMEOUT,
+        Some(&run_dir.join("job.err")),
+        Some(Duration::from_secs(cap_secs)),
+        &crate::schedule::SystemClock,
+    );
+    launch_answer(answer.read, answer.line, answer.failed, answer.unanswered)
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the foreground executor records its owner before it starts a command"
+)]
+fn attached(run_dir: &Path, env: &Env) -> Launch {
+    let Some(owner) = &env.owner else {
+        return Launch::Refused {
+            cause: "owner-unreadable".to_owned(),
+        };
+    };
+    if let Err(e) = fs::write(
+        run_dir.join("runner"),
+        format!(
+            "runner=attached\npid={}\nstart={}\nline=runner=attached\n",
+            owner.pid, owner.start
+        ),
     ) {
-        // The started job is the one its record names, read by the one
-        // reader of that record; a record naming no unit or leader identity
-        // leaves the job for the round's reconcile to read from it.
-        Ok(out) if out.status.success() => match effects::read_handle(&record) {
-            SidecarRead::Present(JobHandle::Unit { unit }) => Launch::Started {
-                runner: "systemd".to_owned(),
-                unit: Some(unit),
-                pid: None,
-                start: None,
-                line: host::stdout_text(&out),
-            },
-            SidecarRead::Present(JobHandle::Group(identity)) => Launch::Started {
-                runner: "setsid".to_owned(),
-                unit: None,
-                pid: Some(identity.pid),
-                start: Some(identity.start),
-                line: host::stdout_text(&out),
-            },
-            SidecarRead::Present(JobHandle::Pgid(pgid)) => Launch::Unanswered {
-                cause: format!("launcher-record-key pgid={pgid}"),
-            },
-            SidecarRead::Failed { status } => Launch::Unanswered {
-                cause: format!("launcher-record-ended status={status}"),
-            },
-            SidecarRead::Absent => Launch::Unanswered {
-                cause: "launcher-record-absent".to_owned(),
-            },
-            SidecarRead::Unreadable { cause } => Launch::Unanswered {
-                cause: format!("launcher-record-unreadable cause={cause}"),
-            },
-        },
-        // An end with no status, or the launcher's own possibly-started
-        // answer, may have started the job.
-        Ok(out) if out.status.code().is_none() => Launch::Unanswered {
-            cause: out.status.to_string(),
-        },
-        Ok(out) if out.status.code() == Some(JOB_UNIT_UNCONFIRMED) => Launch::Unanswered {
-            cause: host::stderr_text(&out)
-                .lines()
-                .next()
-                .unwrap_or_default()
-                .to_owned(),
-        },
-        Ok(out) => Launch::Refused {
-            cause: host::stderr_text(&out)
-                .lines()
-                .next()
-                .unwrap_or_default()
-                .to_owned(),
-        },
-        // A launcher that never started ran nothing; one that gave no answer
-        // in the bound may have.
-        Err(e @ agent_runtime::Error::NotStarted { .. }) => Launch::Refused {
+        return Launch::Refused {
             cause: e.to_string(),
-        },
-        Err(e) => Launch::Unanswered {
-            cause: e.to_string(),
-        },
+        };
+    }
+    Launch::Started {
+        runner: "attached".to_owned(),
+        unit: None,
+        pid: u32::try_from(owner.pid).ok(),
+        start: Some(owner.start.clone()),
+        line: "runner=attached".to_owned(),
     }
 }
 
-/// The job launcher's status for a job that may have started with nothing
-/// able to say (`launch-unconfirmed`, `lib/job-unit.sh`'s launch).
-pub const JOB_UNIT_UNCONFIRMED: i32 = 6;
+fn launch_answer(
+    read: SidecarRead,
+    line: String,
+    failed: Option<String>,
+    unanswered: bool,
+) -> Launch {
+    if unanswered || (failed.is_some() && matches!(read, SidecarRead::Present(_))) {
+        return Launch::Unanswered {
+            cause: failed.unwrap_or(line),
+        };
+    }
+    match read {
+        SidecarRead::Present(JobHandle::Unit { unit }) => Launch::Started {
+            runner: "systemd".to_owned(),
+            unit: Some(unit),
+            pid: None,
+            start: None,
+            line,
+        },
+        SidecarRead::Present(JobHandle::Group(identity)) => Launch::Started {
+            runner: "setsid".to_owned(),
+            unit: None,
+            pid: Some(identity.pid),
+            start: Some(identity.start),
+            line,
+        },
+        SidecarRead::Present(JobHandle::Pgid(pgid)) => Launch::Unanswered {
+            cause: format!("pgid={pgid}"),
+        },
+        SidecarRead::Failed { status } => Launch::Refused {
+            cause: failed.unwrap_or(status),
+        },
+        SidecarRead::Absent => Launch::Refused {
+            cause: failed.unwrap_or_else(|| "launcher-unrecorded".to_owned()),
+        },
+        SidecarRead::Unreadable { cause } => Launch::Unanswered { cause },
+    }
+}
 
 /// Start a validation run: read, record, launch.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "validation admission serializes the host check, stage record and launch under the worktree lock"
+)]
 pub fn start(
     settings: &Settings,
     req: &StartRequest,
@@ -1591,7 +1743,6 @@ pub fn start(
     };
     let path = state::item_path(&settings.state_dir, &item);
     let snapshot = load(&path)?.ok_or_else(|| Error::RecordMissing { path: path.clone() })?;
-    let stages = snapshot.view::<ItemState>(&path)?.stages;
     let worktree: Option<String> = state::field(&path, &snapshot.doc, "worktree")?;
     let worktree = worktree
         .filter(|w| !w.is_empty())
@@ -1600,145 +1751,158 @@ pub fn start(
         read: "worktree",
         cause: format!("{worktree}: {e}"),
     })?;
-    // One run at a time per round, judged before any read.
-    if let Some(open) = stages.iter().find(|s| {
-        s.kind == StageKind::Validate
-            && s.round_id.as_deref() == Some(&round)
-            && s.end.is_none()
-            && s.job.is_some()
-    }) {
-        return Err(Error::RunLive {
-            round_id: round,
-            run_dir: open.run_dir.clone().unwrap_or_default(),
+    fs::create_dir_all(worktree.join("tmp")).map_err(|e| files::unreadable("tmp", e))?;
+    state::locked(&worktree.join("tmp/validation-start"), locking, || {
+        let snapshot = load(&path)?.ok_or_else(|| Error::RecordMissing { path: path.clone() })?;
+        let stages = snapshot.view::<ItemState>(&path)?.stages;
+        if let Some((dir, _)) = files::live(&worktree)? {
+            return Err(Error::RunLive {
+                round_id: round,
+                run_dir: dir.display().to_string(),
+            });
+        }
+        // One run at a time per round, judged before any read.
+        if let Some(open) = stages.iter().find(|s| {
+            s.kind == StageKind::Validate
+                && s.round_id.as_deref() == Some(&round)
+                && s.end.is_none()
+                && s.job.is_some()
+        }) {
+            return Err(Error::RunLive {
+                round_id: round,
+                run_dir: open.run_dir.clone().unwrap_or_default(),
+            });
+        }
+        let scratch = Scratch::new(env)?;
+        let resolved = resolve(settings, &scratch, &worktree, &stages, req, env)?;
+        let run_dir_given = req.run_dir.clone().or_else(|| {
+            stages
+                .iter()
+                .rev()
+                .find(|s| {
+                    s.kind == StageKind::Validate
+                        && s.round_id.as_deref() == Some(&round)
+                        && s.end.is_none()
+                })
+                .and_then(|s| s.run_dir.clone())
         });
-    }
-    let scratch = Scratch::new(env)?;
-    let resolved = resolve(settings, &scratch, &worktree, &stages, req, env)?;
-    let run_dir_given = req.run_dir.clone().or_else(|| {
-        stages
-            .iter()
-            .rev()
-            .find(|s| {
-                s.kind == StageKind::Validate
-                    && s.round_id.as_deref() == Some(&round)
-                    && s.end.is_none()
-            })
-            .and_then(|s| s.run_dir.clone())
-    });
-    // The record: the proof and the launcher's record path on the stage,
-    // before the run directory exists and before the launcher is asked.
-    let started = apply(
-        &path,
-        Validate::Start(Box::new(RecordStart {
-            round_id: round.clone(),
-            run_dir: run_dir_given,
-            proof: resolved.proof.clone(),
-        })),
-        env,
-        locking,
-    )?;
-    let Validated::Start(started) = started else {
-        unreachable!("a start reports its start")
-    };
-    let (run_id, run_dir, start_secs) = (started.run_id, started.run_dir, started.start);
-    let run_dir_path = PathBuf::from(&run_dir);
-    let launched = match write_run_dir(&worktree, &run_dir_path, &resolved, start_secs) {
-        Err(cause) => Launch::Refused { cause },
-        Ok(()) => match &resolved.ran_nothing {
-            Some(_) => Launch::Started {
-                runner: "none".to_owned(),
-                unit: None,
-                pid: None,
-                start: None,
-                line: "runner=none".to_owned(),
-            },
-            None => ask_launcher(
-                settings,
-                &worktree,
-                &run_dir_path,
-                &item,
-                &round,
-                resolved.proof.cap_secs,
-            ),
-        },
-    };
-    let recorded = apply(
-        &path,
-        Validate::Launch(RecordLaunch {
-            round_id: round.clone(),
-            run_dir: run_dir.clone(),
-            launch: launched.clone(),
-        }),
-        env,
-        locking,
-    )?;
-    let Validated::Launch(recorded) = recorded else {
-        unreachable!("a launch reports its launch")
-    };
-    match launched {
-        Launch::Refused { cause } => {
-            return Err(Error::ValidateLaunchFailed { run_dir, cause });
-        }
-        Launch::Unanswered { cause } => {
-            return Err(Error::Runtime(agent_runtime::Error::refused(
-                "launch-unanswered",
-                &[("run_dir", &run_dir), ("cause", &cause)],
-            )));
-        }
-        Launch::Started { .. } => {}
-    }
-    let mut outcome = recorded.outcome;
-    if resolved.ran_nothing.is_some() {
-        // The run ran nothing and its sentinel stands: the stage closes now,
-        // and the caller holds the verdict, so no notice is owed.
-        let sentinel = fs::read_to_string(run_dir_path.join("exit")).unwrap_or_default();
-        let word = crate::ops::validate::sentinel_outcome(sentinel.trim_end())
-            .unwrap_or(StageOutcome::Lost);
-        let ended = apply(
+        // The record: the proof and the launcher's record path on the stage,
+        // before the run directory exists and before the launcher is asked.
+        let started = apply(
             &path,
-            Validate::End(RecordEnd {
+            Validate::Start(Box::new(RecordStart {
+                round_id: round.clone(),
+                run_dir: run_dir_given,
+                proof: resolved.proof.clone(),
+            })),
+            env,
+            locking,
+        )?;
+        let Validated::Start(started) = started else {
+            unreachable!("a start reports its start")
+        };
+        let (run_id, run_dir, start_secs) = (started.run_id, started.run_dir, started.start);
+        let run_dir_path = PathBuf::from(&run_dir);
+        let launched = match write_run_dir(&worktree, &run_dir_path, &resolved, start_secs, locking)
+        {
+            Err(cause) => Launch::Refused { cause },
+            Ok(()) => match &resolved.ran_nothing {
+                Some(_) => Launch::Started {
+                    runner: "none".to_owned(),
+                    unit: None,
+                    pid: None,
+                    start: None,
+                    line: "runner=none".to_owned(),
+                },
+                None if req.foreground => attached(&run_dir_path, env),
+                None => ask_launcher(
+                    settings,
+                    &worktree,
+                    &run_dir_path,
+                    &item,
+                    &round,
+                    resolved.proof.cap_secs,
+                ),
+            },
+        };
+        let recorded = apply(
+            &path,
+            Validate::Launch(RecordLaunch {
                 round_id: round.clone(),
                 run_dir: run_dir.clone(),
-                outcome: word,
-                end: None,
-                seconds: None,
-                selection: None,
-                notice: None,
+                launch: launched.clone(),
             }),
             env,
             locking,
         )?;
-        if let Validated::End(ended) = ended {
-            outcome = ended.outcome;
+        let Validated::Launch(recorded) = recorded else {
+            unreachable!("a launch reports its launch")
+        };
+        match launched {
+            Launch::Refused { cause } => {
+                return Err(Error::ValidateLaunchFailed { run_dir, cause });
+            }
+            Launch::Unanswered { cause } => {
+                return Err(Error::Runtime(agent_runtime::Error::refused(
+                    "launch-unanswered",
+                    &[("run_dir", &run_dir), ("cause", &cause)],
+                )));
+            }
+            Launch::Started { .. } => {}
         }
-    }
-    let job = load(&path)?
-        .and_then(|s| s.view::<ItemState>(&path).ok())
-        .and_then(|item| {
-            item.stages
-                .into_iter()
-                .find(|s| s.kind == StageKind::Validate && s.run_dir.as_deref() == Some(&run_dir))
+        let mut outcome = recorded.outcome;
+        if resolved.ran_nothing.is_some() {
+            // The run ran nothing and its sentinel stands: the stage closes now,
+            // and the caller holds the verdict, so no notice is owed.
+            let sentinel = fs::read_to_string(run_dir_path.join("exit")).unwrap_or_default();
+            let word = crate::ops::validate::sentinel_outcome(sentinel.trim_end())
+                .unwrap_or(StageOutcome::Lost);
+            let ended = apply(
+                &path,
+                Validate::End(RecordEnd {
+                    round_id: round.clone(),
+                    run_dir: run_dir.clone(),
+                    outcome: word,
+                    end: None,
+                    seconds: None,
+                    selection: None,
+                    notice: None,
+                }),
+                env,
+                locking,
+            )?;
+            if let Validated::End(ended) = ended {
+                outcome = ended.outcome;
+            }
+        }
+        let job = load(&path)?
+            .and_then(|s| s.view::<ItemState>(&path).ok())
+            .and_then(|item| {
+                item.stages.into_iter().find(|s| {
+                    s.kind == StageKind::Validate && s.run_dir.as_deref() == Some(&run_dir)
+                })
+            })
+            .and_then(|s| s.job);
+        let proof = &resolved.proof;
+        Ok(StartReply {
+            item,
+            round_id: round,
+            run_id,
+            log: format!("{run_dir}/log"),
+            sentinel: format!("{run_dir}/exit"),
+            timeout_secs: proof.timeout_secs,
+            poll_secs: proof.poll_secs,
+            cap_secs: proof.cap_secs,
+            class: proof.class.clone(),
+            docs_only: proof.docs_only,
+            class_fallback: proof.class_fallback.clone(),
+            mode: proof.mode,
+            base: proof.base.clone(),
+            started_line: started_line(&run_dir_path, proof),
+            launched: resolved.ran_nothing.is_none(),
+            job,
+            outcome,
+            run_dir,
         })
-        .and_then(|s| s.job);
-    let proof = &resolved.proof;
-    Ok(StartReply {
-        item,
-        round_id: round,
-        run_id,
-        log: format!("{run_dir}/log"),
-        sentinel: format!("{run_dir}/exit"),
-        timeout_secs: proof.timeout_secs,
-        poll_secs: proof.poll_secs,
-        cap_secs: proof.cap_secs,
-        class: proof.class.clone(),
-        docs_only: proof.docs_only,
-        class_fallback: proof.class_fallback.clone(),
-        mode: proof.mode,
-        base: proof.base.clone(),
-        started_line: started_line(&run_dir_path, proof),
-        launched: resolved.ran_nothing.is_none(),
-        job,
-        outcome,
-        run_dir,
     })
 }

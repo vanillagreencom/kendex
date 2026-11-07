@@ -75,11 +75,17 @@ pub fn bound(settings: &ReviewSettings) -> Result<Duration> {
 /// moved drops the work seen on the one before and is read again within the
 /// same bound. A wait that ends on no work reads the head once more, and a
 /// moved head is read again within the bound.
+pub fn run(r: &CopilotWait, gh_program: &Path, clock: &dyn Clock) -> Result<CopilotWaited> {
+    run_with(r, &Gh::new(gh_program), clock)
+}
+
+/// [`run`] over a `gh` handle the caller built, with the credential it
+/// carries.
 #[allow(
     clippy::disallowed_methods,
     reason = "the current-head wait reads its own bound and sleeps between its reads on the clock it is given; it reads GitHub through gh and writes nothing"
 )]
-pub fn run(r: &CopilotWait, gh_program: &Path, clock: &dyn Clock) -> Result<CopilotWaited> {
+pub(crate) fn run_with(r: &CopilotWait, gh: &Gh, clock: &dyn Clock) -> Result<CopilotWaited> {
     verify::validate_repo(&r.repo)?;
     if r.pr == 0 {
         return Err(Error::VerifyRequestInvalid {
@@ -87,7 +93,6 @@ pub fn run(r: &CopilotWait, gh_program: &Path, clock: &dyn Clock) -> Result<Copi
             value: r.pr.to_string(),
         });
     }
-    let gh = Gh::new(gh_program);
     let start = clock.now();
     let waited = || clock.now().saturating_duration_since(start);
     let mut answer = CopilotWaited {
@@ -112,7 +117,7 @@ pub fn run(r: &CopilotWait, gh_program: &Path, clock: &dyn Clock) -> Result<Copi
         answer
     };
     loop {
-        let head = match review::view(&gh, &r.repo, r.pr) {
+        let head = match review::view(gh, &r.repo, r.pr) {
             Ok(view) => view.head,
             Err(cause) => return Ok(failed(answer, cause, waited())),
         };
@@ -121,7 +126,7 @@ pub fn run(r: &CopilotWait, gh_program: &Path, clock: &dyn Clock) -> Result<Copi
             answer.started_at = None;
             answer.head = Some(head.clone());
         }
-        let flight = match review::copilot_flight(&gh, &r.repo, r.pr, &head) {
+        let flight = match review::copilot_flight(gh, &r.repo, r.pr, &head) {
             Ok(flight) => flight,
             Err(cause) => return Ok(failed(answer, cause, waited())),
         };
@@ -144,7 +149,7 @@ pub fn run(r: &CopilotWait, gh_program: &Path, clock: &dyn Clock) -> Result<Copi
                 ("settled", Some(review))
             }
             Flight::None if answer.run.is_some() => {
-                let reviews = match review::copilot_reviews(&gh, &r.repo, r.pr, &head) {
+                let reviews = match review::copilot_reviews(gh, &r.repo, r.pr, &head) {
                     Ok(reviews) => reviews,
                     Err(cause) => return Ok(failed(answer, cause, waited())),
                 };
@@ -152,7 +157,7 @@ pub fn run(r: &CopilotWait, gh_program: &Path, clock: &dyn Clock) -> Result<Copi
             }
             Flight::None => ("none", None),
         };
-        let confirmed = match review::view(&gh, &r.repo, r.pr) {
+        let confirmed = match review::view(gh, &r.repo, r.pr) {
             Ok(view) => view.head,
             Err(cause) => return Ok(failed(answer, cause, waited())),
         };

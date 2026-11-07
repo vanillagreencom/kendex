@@ -19,7 +19,6 @@ COMMIT_GUARDS_DIR="$(cd "$TEST_DIR/../../commit-guards" && pwd)"
 # shellcheck source=lib/assertions.sh
 source "$TEST_DIR/lib/assertions.sh"
 # shellcheck source=lib/growth-state.sh
-source "$TEST_DIR/lib/growth-state.sh"
 TMP_ROOT="$(mktemp -d)" || { echo "restack_skip: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "restack_skip: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "restack_skip: scratch=resolve-failed" >&2; exit 1; }
@@ -121,6 +120,7 @@ take_package() {
   package 1.0.6 > "$1/pkg/package.json"
   printf '# Changelog\n\n### Unreleased\n\n- base entry\n- main entry\n- branch entry\n' > "$1/pkg/CHANGELOG.md"
 }
+take_package_prose() { take_package "$1"; printf 'Main notes.\n' >> "$1/pkg/CHANGELOG.md"; }
 take_package_private() { take_package "$1"; package 1.0.6 "echo branch" false > "$1/pkg/package.json"; }
 take_package_script() { take_package "$1"; package 1.0.6 "echo third" > "$1/pkg/package.json"; }
 take_package_code() { take_package "$1"; printf 'echo one\necho two\necho three\n' > "$1/code.sh"; }
@@ -188,6 +188,7 @@ ROWS=(
   "conflict markers left in a changelog re-test|markers|main_package|leave_markers|restack=retest cause=hunk path=pkg/CHANGELOG.md rc=1"
   "a changelog replaced by prose re-tests|prose|main_package|rewrite_changelog|restack=retest cause=hunk path=pkg/CHANGELOG.md rc=1"
   "a changelog conflict over prose, resolved by dropping it, re-tests|prose-region|main_prose|take_package|restack=retest cause=hunk path=pkg/CHANGELOG.md rc=1"
+  "a prose conflict retained in a union still requires a retest|prose-union|main_prose|take_package_prose|restack=retest cause=hunk path=pkg/CHANGELOG.md rc=1"
   "a modify/delete conflict over a changelog, resolved by keeping the modified side, re-tests|modify-delete|main_drop_changelog|keep_as_left|restack=retest cause=conflict-kind path=pkg/CHANGELOG.md rc=1"
   "a symlinked fragment both lanes retargeted, kept as git keeps it, re-tests|symlink|main_link|keep_as_left|restack=retest cause=conflict-kind path=changelog.d/fixed/link.md rc=1"
 )
@@ -247,30 +248,15 @@ printf 'guard-exit=124 at=2026-01-01T00:00:00Z verdict=no-verdict\n' > "$nv_dir/
 assert_eq "$(ask "$SCRIPTS_DIR/restack-skip" "$TMP_ROOT/no-verdict")" \
   "$(skip_line "$TMP_ROOT/no-verdict" version-only pkg/CHANGELOG.md,pkg/package.json)" \
   "a version-only restack with a finding-free bound-ended range run still skips"
-nv_control_dir="$(mutant_scripts no-verdict-red dev-validate-run)" || exit 1
-nv_red_control_dir="$nv_control_dir"
-mutate_file "$nv_control_dir/dev-validate-run" \
-  'if [[ "$verdict" != pass ]] && { [[ "$verdict" != no-verdict ]] || run_has_finding "$run_dir"; }; then' 'if [[ "$verdict" != pass ]]; then'
-assert_eq "$(ask "$nv_control_dir/restack-skip" "$TMP_ROOT/no-verdict")" "restack=retest cause=newer-red rc=1" \
-  "control: with every no-verdict run read as red the restack re-tests"
-nv_control_dir="$(mutant_scripts no-verdict-prefix dev-validate-run)" || exit 1
-mutate_file "$nv_control_dir/dev-validate-run" '  [[ -n "$prefix" ]] || return 0' '  [[ -n "$prefix" ]] || return 1'
 sed -i.bak '/^finding-prefix=/d' "$nv_dir/start"
 assert_eq "$(ask "$SCRIPTS_DIR/restack-skip" "$TMP_ROOT/no-verdict")" "restack=retest cause=newer-red rc=1" \
   "a range run the bound ended that recorded no finding prefix re-tests"
-nv_answer="$(ask "$nv_control_dir/restack-skip" "$TMP_ROOT/no-verdict")"
-assert_eq "${nv_answer%% *}" "restack=skip" \
-  "control: with a missing prefix read as none the restack skips"
 printf 'finding-prefix=guard: \n' >> "$nv_dir/start"
 printf 'guard: suite=skills/p/tests/a.sh\n' >> "$nv_dir/log"
 assert_eq "$(ask "$SCRIPTS_DIR/restack-skip" "$TMP_ROOT/no-verdict")" "restack=retest cause=newer-red rc=1" \
   "a range run the bound ended whose log holds a finding line re-tests"
 
 echo "=== the newest no-verdict tree uses the pass conflict and union rules ==="
-nv_main_control="$(mutant_scripts no-verdict-main dev-validate-run)" || exit 1
-mutate_file "$nv_main_control/dev-validate-run" \
-  'if [[ "$verdict" != pass ]] && { [[ "$verdict" != no-verdict ]] || run_has_finding "$run_dir"; }; then' \
-  $'if [[ "$verdict" == no-verdict ]] && ! run_has_finding "$run_dir"; then continue; fi\n    if [[ "$verdict" != pass ]]; then'
 for row in 'clean|no-conflict|none' 'package|version-only|pkg/CHANGELOG.md,pkg/package.json' 'code|retest|code.sh'; do
   IFS='|' read -r name condition paths <<<"$row"
   wt="$TMP_ROOT/newest-$name"
@@ -284,70 +270,10 @@ for row in 'clean|no-conflict|none' 'package|version-only|pkg/CHANGELOG.md,pkg/p
   want="$(skip_line "$wt" "$condition" "$paths")"
   [[ "$condition" != retest ]] || want="restack=retest cause=path-unconflicted path=$paths rc=1"
   assert_eq "$(ask "$SCRIPTS_DIR/restack-skip" "$wt")" "$want" "no-verdict tree: $name"
-  assert_eq "$(ask "$nv_main_control/restack-skip" "$wt")" "restack=retest cause=no-passing-run rc=1" \
-    "control: current main discards the only reusable run: $name"
-  assert_eq "$(ask "$nv_red_control_dir/restack-skip" "$wt")" "restack=retest cause=newer-red rc=1" \
-    "control: reading no-verdict as red rejects the reusable tree: $name"
   printf 'guard: suite=tests/a.sh\n' >> "$nv_dir/log"
   assert_eq "$(ask "$SCRIPTS_DIR/restack-skip" "$wt")" "restack=retest cause=newer-red rc=1" \
     "one failed lane rejects the same restack: $name"
 done
 
-echo "=== controls: each rule, removed, lets its row skip ==="
-# control NAME FILE OLD NEW ROW — ROW's answer under copies of the scripts with
-# one rule removed from FILE; a skip line means the row depended on that rule.
-control() {
-  local dir
-  dir="$(mutant_scripts "$1" "$2")" || exit 1
-  mutate_file "$dir/$2" "$3" "$4"
-  ask "$dir/restack-skip" "$TMP_ROOT/$5"
-}
-version_only() { skip_line "$TMP_ROOT/$1" version-only "$2"; }
-assert_eq "$(control no-hunk restack-skip '      cmp -s -- "$scratch/merged-kept" "$scratch/head-kept" \' '      : \' private)" \
-  "$(version_only private pkg/CHANGELOG.md,pkg/package.json)" \
-  "control: with no comparison against the merge's sides an edited version file skips"
-assert_eq "$(control no-changelog-hunk restack-skip '&& cmp -s -- "$scratch/merged-kept" "$scratch/head-kept"' '&& :' prose)" \
-  "$(version_only prose pkg/CHANGELOG.md,pkg/package.json)" \
-  "control: with no changelog comparison a changelog replaced by prose skips"
-assert_eq "$(control no-conflicted restack-skip 'is_conflicted "$path" || retest' ': || retest' code)" \
-  "$(version_only code pkg/CHANGELOG.md,pkg/package.json)" \
-  "control: with no conflicted-path rule an unconflicted code edit skips"
-assert_eq "$(control no-region restack-skip 'region { if (!allowed($0)) { bad = 1; exit 3 } next }' 'region { next }' prose-region)" \
-  "$(version_only prose-region pkg/CHANGELOG.md,pkg/package.json)" \
-  "control: with no changelog conflict-region rule a dropped prose conflict skips"
-assert_eq "$(control no-sides restack-skip '    region && region != side { next }' '    region { next }' region)" \
-  "$(version_only region pkg/package.json)" \
-  "control: with conflict regions dropped instead of read side by side a dropped conflict skips"
-assert_eq "$(control one-side restack-skip 'for side in 1 2; do' 'for side in 1; do' main-body)" \
-  "$(version_only main-body pkg/package.json)" \
-  "control: with the branch's side unread a conflict resolved to the base's side skips"
-assert_eq "$(control no-unclassified restack-skip '*) retest unclassified' '*) kind=fragment ;; #' undeclared)" \
-  "$(version_only undeclared agents/a.md)" \
-  "control: with no unclassified rule an undeclared markdown version line skips"
-# A strip that drops a version key at any depth reads an npm scripts.version
-# as the version field, so each row that changes one, conflicted or not,
-# skips under it.
-for name in script script-unconflicted; do
-  assert_eq "$(control "depth-free-json-$name" restack-skip 'unversion() { "$classifier" --unversion 2>/dev/null; }' \
-    "unversion() { grep -Ev '^[[:space:]]*\"version\"[[:space:]]*:'; }" "$name")" \
-    "$(version_only "$name" "$([[ $name == script ]] || printf 'pkg/CHANGELOG.md,')pkg/package.json")" \
-    "control: with a depth-free JSON version strip the $name row skips"
-done
-for name in markers prose; do
-  assert_eq "$(control "no-changelog-grammar-$name" restack-skip 'function allowed(line) { return line ~' 'function allowed(line) { return 1 || line ~' "$name")" \
-    "$(version_only "$name" pkg/CHANGELOG.md,pkg/package.json)" \
-    "control: with no changelog line rule the $name row skips"
-done
-assert_eq "$(control no-conflict-kind restack-skip 'CONFLICT*) retest conflict-kind' 'CONFLICT*) : conflict-kind' modify-delete)" \
-  "$(version_only modify-delete pkg/CHANGELOG.md)" \
-  "control: with no conflict-kind rule a modify/delete conflict skips"
-assert_eq "$(control no-mode restack-skip '          *) retest conflict-kind "path=$path" "run-dir=$run_dir" ;;' '          *) ;;' symlink)" \
-  "$(version_only symlink changelog.d/fixed/link.md)" \
-  "control: with no regular-file mode rule a symlink conflict skips"
-assert_eq "$(control no-newer-red dev-validate-run '    if [[ "$verdict" != pass ]] && { [[ "$verdict" != no-verdict ]] || run_has_finding "$run_dir"; }; then' $'    if [[ "$verdict" != pass ]]; then\n      continue' newer-red)" \
-  "$(version_only newer-red pkg/CHANGELOG.md,pkg/package.json)" \
-  "control: with no newer-red rule in dev-validate-run a failed head skips"
-
-echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

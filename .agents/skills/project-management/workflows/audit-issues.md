@@ -62,10 +62,10 @@ Every mode runs:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh labels list --max --format=safe
-.agents/skills/orch/scripts/reconcile-work-items
+.agents/skills/orch/scripts/orch-runtime reconcile-items
 ```
 
-Run `reconcile-work-items` only where the orch skill is installed (skip the line otherwise). Exit 0 is a clean tracker; exit 1 is findings — carry them into the audit as facts; exit 2 is a broken sweep to fix before auditing.
+Run `orch-runtime reconcile-items` only where the orch skill is installed. Read `result.findings` and `result.lines` from its successful JSON reply and carry them into the audit as facts. A refused reply exits 1; fix the failed read before auditing. A usage error exits 2. A dropped verification check stays unticked: hand its criterion, the person’s reason and authority to the Linear completion owner’s retire route (KEN-4540); while that route is unavailable, record those facts in an owner comment naming KEN-4540.
 
 Keep the issue-label inventory for every create/update preflight.
 

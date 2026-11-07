@@ -1,0 +1,22 @@
+#!/bin/bash
+set -euo pipefail
+unit=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --unit=*) unit="${1#--unit=}" ;;
+    --) shift; break ;;
+  esac
+  shift
+done
+[ -n "$unit" ] || exit 0
+mkdir -p "${VALIDATE_MANAGER_DIR:?}"
+printf '%s\n' "$unit" >> "$VALIDATE_MANAGER_DIR/launches"
+[ -z "${VALIDATE_AT_LAUNCH:-}" ] || cp -- "${ORCH_STATE_DIR:?}/workflow-state-KEN-4687.json" "$VALIDATE_AT_LAUNCH"
+case "${VALIDATE_START_ANSWER:-success}" in
+  refused) printf 'loaded\nfailed\n' > "$VALIDATE_MANAGER_DIR/$unit.state"; exit 1 ;;
+  unread) printf 'unread\n' > "$VALIDATE_MANAGER_DIR/$unit.state"; exit 1 ;;
+  record-only) printf 'loaded\nactive\n' > "$VALIDATE_MANAGER_DIR/$unit.state"; exit 0 ;;
+esac
+setsid "$@" </dev/null >/dev/null 2>&1 &
+printf '%s\n' "$!" > "$VALIDATE_MANAGER_DIR/$unit.pid"
+[ "${VALIDATE_START_ANSWER:-success}" != lost ] || exit 1

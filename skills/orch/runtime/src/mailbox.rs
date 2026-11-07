@@ -1,7 +1,10 @@
-//! The mailbox client: the one Rust owner of every
-//! `lane-mail` call the runtime makes, each through agent-runtime's
-//! one runner under the tag `mail` and under one bound, and each reply
-//! decoded into typed records at this boundary. A program that never
+//! The mailbox client: the watch's mailbox reads, the owner asks' answers
+//! and closes, directive sends, lane notices and the report's owner notice,
+//! each a `lane-mail` call through agent-runtime's one runner under the tag
+//! `mail` and under one bound, and each reply decoded into typed records at
+//! this boundary. Four calls run `lane-mail` from their own modules: the job
+//! effect's and the owner alert's owner notices, the retention duty's
+//! `compact` and the close's `pending` read. A program that never
 //! started, one that gave no answer, a nonzero exit and a reply the decoder
 //! cannot read are each a typed [`Refusal`] that stops the one read it
 //! answered; no refusal is ever read as an empty mailbox. A program that
@@ -142,6 +145,16 @@ pub struct Envelope {
     pub by: Option<String>,
     #[serde(default)]
     pub text: Option<String>,
+    #[serde(default)]
+    pub to: Option<String>,
+    #[serde(default)]
+    pub attach: Option<String>,
+    #[serde(default)]
+    pub reserved: Option<bool>,
+    #[serde(default)]
+    pub deadline: Option<String>,
+    #[serde(default)]
+    pub recommend: Option<String>,
     /// `events --box` alone: the envelope's logical line.
     #[serde(default)]
     pub line: Option<u64>,
@@ -815,6 +828,69 @@ impl Mailbox {
         id_field(line)
             .map(|id| Noticed::Sent { id })
             .ok_or_else(|| reply(VERB, "receipt", line))
+    }
+
+    /// `events --item overseer` at the main checkout `root`: both of the
+    /// overseer's boxes whole, the overseer's own sends among them.
+    pub fn events(&self, root: &Path) -> Result<Vec<Envelope>, Refusal> {
+        const VERB: &str = "events";
+        let root = root.display().to_string();
+        let stdout = self
+            .call(VERB, &["--item", "overseer", "--root", &root])?
+            .ok(VERB)?;
+        stdout
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| envelope(VERB, l))
+            .collect()
+    }
+
+    /// The owner notice carrying `attach`, run in `root`, where the program
+    /// resolves the progress-report directory the attachment must sit in.
+    /// The answer is the overseer box read back: the program's own exit
+    /// cannot tell a lost reply, a minute-window `duplicate` or a day-window
+    /// `owner-notice-repeated` naming another attachment from a send that
+    /// landed, so only an owner notice carrying this attachment is a
+    /// receipt, and one already standing sends nothing again.
+    pub fn report_notice(
+        &self,
+        root: &Path,
+        attach: &Path,
+        summary: &Path,
+    ) -> Result<String, Refusal> {
+        const VERB: &str = "notice";
+        let attach = attach.display().to_string();
+        let confirmed = |events: Vec<Envelope>| {
+            events
+                .into_iter()
+                .find(|e| {
+                    e.kind() == "notice"
+                        && e.to.as_deref() == Some("owner")
+                        && e.attach.as_deref() == Some(&attach)
+                })
+                .and_then(|e| e.id)
+        };
+        if let Some(id) = confirmed(self.events(root)?) {
+            return Ok(id);
+        }
+        let root_text = root.display().to_string();
+        let summary = summary.display().to_string();
+        let answer = self.call_on(
+            VERB,
+            &[
+                "--item", "overseer", "--root", &root_text, "--to", "owner", "--attach", &attach,
+                "--file", &summary,
+            ],
+            None,
+            Some(root),
+        )?;
+        if let Some(id) = confirmed(self.events(root)?) {
+            return Ok(id);
+        }
+        if !answer.success {
+            return Err(answer.refused(VERB));
+        }
+        Err(reply(VERB, "attachment-unconfirmed", &answer.stdout))
     }
 }
 

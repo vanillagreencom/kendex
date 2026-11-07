@@ -1,22 +1,11 @@
-//! The validation job: the detached process the launcher started for one run.
-//! It runs the executor, `dev-validate-run --child --run-dir D`, as its
-//! bounded child through the one runner, reads the sentinel the child wrote,
-//! closes the stage once with the lane's end notice recorded `owed` in the
-//! same write, sends the notice through the mailbox program and marks it
-//! `sent` or `unsent:<cause>`. A second run of the same job changes nothing:
-//! the close is recorded and the notice's mark is what it was. `deliver_owed`
-//! is the continuation a crash between the close and the send left behind,
-//! run by the item's next `reconcile-round`. `stop` is the job's counterpart:
-//! the intentional stop recorded on the stage before the job is ended, so the
-//! job's own close and the reconcile's both read the run as `stopped`, never
-//! `lost`.
+//! Validation execution, stage completion and completion notices.
+
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use agent_runtime::clock;
-use agent_runtime::host::{self, Place};
 use serde::Serialize;
 
 use super::{KILL_GRACE, apply, item_of_run_dir, load};
@@ -36,7 +25,6 @@ use crate::state::{
 const NOTICE_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long the launcher's stop is given: the setsid teardown's TERM grace
 /// and KILL, or the user manager's own stop of the unit.
-const STOP_TIMEOUT: Duration = Duration::from_secs(120);
 /// How long the stop waits for the job it ended to read gone: on the setsid
 /// route the job outlives its child's group and closes the stage itself
 /// (its close and its notice's send), on the unit route the manager ended
@@ -109,32 +97,288 @@ fn start_field(run_dir: &Path, key: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// Run the executor as this job's bounded child, in a session of its own
-/// so it leads its own process group: the group the child's own
-/// `job_unit_end` tears down, and the one `validate stop` ends by its
-/// recorded pid through the launcher. The bound is the cap plus the
-/// child's own teardown grace; a child the bound ends leaves no sentinel,
-/// which reads as lost.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the validation job's one run of the kept executor through the one runner, bounded by the run's cap"
+    reason = "the executor owns its command group and reaps it on every return"
 )]
-fn run_child(settings: &Settings, worktree: &Path, run_dir: &Path, cap_secs: u64) {
-    let cli = settings.dev_validate_cli.display().to_string();
-    let rd = run_dir.display().to_string();
-    let place = Place {
-        cwd: Some(worktree),
-        env: &[],
+pub fn execute(
+    run_dir: &Path,
+    clock: &dyn crate::schedule::Clock,
+    group_leader: &Path,
+) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::process::{CommandExt, ExitStatusExt};
+    use std::process::{Command, Stdio};
+    let fail = |read, cause: String| Error::ValidateUnreadable { read, cause };
+    let start = super::files::fields(&run_dir.join("start"))?;
+    let field = |key: &str| start.get(key).map(String::as_str).unwrap_or("");
+    let timeout = field("timeout-secs")
+        .parse::<u64>()
+        .ok()
+        .filter(|n| *n > 0)
+        .ok_or_else(|| fail("timeout-secs", field("timeout-secs").to_owned()))?;
+    let command =
+        fs::read_to_string(run_dir.join("cmd")).map_err(|e| fail("cmd", e.to_string()))?;
+    match fs::read_to_string(run_dir.join("exit")) {
+        Ok(s) if validate::sentinel_outcome(s.trim_end()).is_some() => return Ok(()),
+        Ok(s) => return Err(fail("sentinel", s)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(fail("sentinel", e.to_string())),
+    }
+    let mut claim = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(run_dir.join("execution"))
+        .map_err(|e| fail("execution-unanswered", e.to_string()))?;
+    execution_mark(&mut claim, "not-started")?;
+    let mut log = fs::File::create(run_dir.join("log")).map_err(|e| fail("log", e.to_string()))?;
+    let runner = super::files::fields(&run_dir.join("runner"))?;
+    let line = runner
+        .get("line")
+        .filter(|line| !line.is_empty())
+        .ok_or_else(|| fail("runner-unreadable", run_dir.display().to_string()))?;
+    writeln!(log, "{line}").map_err(|e| fail("log", e.to_string()))?;
+    let paths = run_dir.join("paths");
+    let began = clock.now();
+    let started = clock
+        .wall()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    // A validation command inherits the caller's environment, with the recorded
+    // classification and base replacing any inherited validation context.
+    let stdout = log.try_clone().map_err(|e| fail("log", e.to_string()))?;
+    execution_mark(&mut claim, "attempted")?;
+    let child = Command::new("/bin/bash")
+        .args([
+            "-c",
+            ". \"$1\"; exec \"${KENDEX_GROUP_LEADER[@]}\" /bin/bash -c \"$2\"",
+            "_",
+            &group_leader.display().to_string(),
+            &command,
+        ])
+        .current_dir(field("worktree"))
+        .process_group(0)
+        .env("DEV_VALIDATE_CLASS", field("class"))
+        .env("DEV_VALIDATE_DOCS_ONLY", field("docs-only"))
+        .env("DEV_VALIDATE_BASE", field("validate-base"))
+        .env(
+            "DEV_VALIDATE_SCOPED",
+            if field("scoped") == "true" {
+                "true"
+            } else {
+                "false"
+            },
+        )
+        .env("DEV_VALIDATE_MODE", field("validate-mode"))
+        .env("DEV_VALIDATE_PATHS", &paths)
+        .stdin(Stdio::null())
+        .stdout(stdout)
+        .stderr(log)
+        .spawn();
+    let child = match child {
+        Ok(child) => child,
+        Err(error) => {
+            execution_mark(&mut claim, "not-started")?;
+            return Err(fail("command-not-started", error.to_string()));
+        }
     };
-    let _ = host::run_tagged_in(
-        "validate",
-        "setsid",
-        Path::new("setsid"),
-        "child",
-        &["-w", &cli, "--child", "--run-dir", &rd],
-        place,
-        Duration::from_secs(cap_secs + 2 * KILL_GRACE),
-    );
+    let mut group = CommandGroup {
+        child,
+        ended: false,
+    };
+    let pid = group.child.id();
+    atomic(run_dir, "pid", &format!("{pid}\n"))?;
+    let mut command_record = CommandRecord { pid, start: None };
+    atomic(run_dir, "command", &serde_json::to_string(&command_record)?)?;
+    match agent_runtime::process::identity(pid) {
+        agent_runtime::reading::Reading::Live(id) => {
+            command_record.start = Some(id.start);
+            atomic(run_dir, "command", &serde_json::to_string(&command_record)?)?;
+        }
+        agent_runtime::reading::Reading::Gone => {}
+        agent_runtime::reading::Reading::Unreadable { cause } => {
+            return Err(fail("command-identity", cause.to_owned()));
+        }
+    }
+    let deadline = began + Duration::from_secs(timeout);
+    // Keep the owned leader unreaped until its group is empty. Its kernel
+    // number cannot be reused while cleanup reads the group's members.
+    let bounded = loop {
+        match agent_runtime::process::identity(pid) {
+            agent_runtime::reading::Reading::Gone => break false,
+            agent_runtime::reading::Reading::Live(_) if clock.now() >= deadline => break true,
+            agent_runtime::reading::Reading::Live(_) => clock.sleep(Duration::from_millis(100)),
+            agent_runtime::reading::Reading::Unreadable { cause } => {
+                return Err(fail("command-status", cause.to_owned()));
+            }
+        }
+    };
+    if !bounded {
+        atomic(run_dir, "own-exit", "")?;
+    }
+    let status = group.end()?;
+    let status = if bounded {
+        124
+    } else {
+        status
+            .code()
+            .unwrap_or_else(|| 128 + status.signal().unwrap_or(0))
+    };
+    let ended = clock
+        .wall()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let started_at = agent_runtime::clock::iso_utc(started);
+    let ended_at = agent_runtime::clock::iso_utc(ended);
+    let suffix = if bounded {
+        " verdict=no-verdict"
+    } else if status == 3 {
+        " verdict=no-verdict cause=host"
+    } else {
+        ""
+    };
+    atomic(
+        run_dir,
+        "timing",
+        &format!(
+            "started-at={started_at}\nended-at={ended_at}\nseconds={}\n",
+            ended.saturating_sub(started)
+        ),
+    )?;
+    atomic(
+        run_dir,
+        "exit",
+        &format!("guard-exit={status} at={ended_at}{suffix}\n"),
+    )
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the executor publishes each run file whole before its reader can observe it"
+)]
+fn atomic(dir: &Path, name: &str, text: &str) -> Result<()> {
+    let part = dir.join(format!("{name}.part"));
+    fs::write(&part, text)
+        .and_then(|_| fs::rename(&part, dir.join(name)))
+        .map_err(|e| Error::ValidateUnreadable {
+            read: "run-file",
+            cause: format!("{name}: {e}"),
+        })
+}
+
+fn execution_mark(file: &mut fs::File, status: &str) -> Result<()> {
+    use std::io::{Seek, Write};
+    file.set_len(0)
+        .and_then(|_| file.rewind())
+        .and_then(|_| writeln!(file, "{status}"))
+        .map_err(|e| super::files::unreadable("execution-unanswered", e))
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CommandRecord {
+    pid: u32,
+    start: Option<String>,
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the run's command identity is read before a new start can use its host"
+)]
+pub(crate) fn command_reading(
+    run_dir: &Path,
+) -> Result<Option<agent_runtime::reading::Reading<()>>> {
+    let bytes = match fs::read(run_dir.join("command")) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let claim = match fs::read_to_string(run_dir.join("execution")) {
+                Ok(claim) => claim,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(e) => return Err(super::files::unreadable("execution", e)),
+            };
+            if claim == "not-started\n" {
+                return Ok(Some(agent_runtime::reading::Reading::Gone));
+            }
+            let pid = fs::read_to_string(run_dir.join("pid"))
+                .ok()
+                .and_then(|p| p.trim().parse().ok());
+            return Ok(Some(match pid {
+                Some(pid) => crate::effects::pgid_reading(pid),
+                None => agent_runtime::reading::Reading::Unreadable {
+                    cause: "execution-unanswered",
+                },
+            }));
+        }
+        Err(e) => return Err(super::files::unreadable("command-identity", e)),
+    };
+    let record: CommandRecord = serde_json::from_slice(&bytes)?;
+    Ok(Some(match record.start {
+        Some(start) => crate::effects::group_reading(&agent_runtime::process::Identity {
+            pid: record.pid,
+            start,
+        }),
+        None => crate::effects::pgid_reading(record.pid),
+    }))
+}
+
+struct CommandGroup {
+    child: std::process::Child,
+    ended: bool,
+}
+impl CommandGroup {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the command owner ends every readable identity in its group and reaps its child"
+    )]
+    fn end(&mut self) -> Result<std::process::ExitStatus> {
+        use agent_runtime::{process, reading::Reading};
+        let rows = process::table().map_err(|e| Error::ValidateUnreadable {
+            read: "command-group",
+            cause: e.cause.to_owned(),
+        })?;
+        let mut identities = Vec::new();
+        for row in rows.iter().filter(|row| row.pgrp == self.child.id()) {
+            match process::identity(row.pid) {
+                Reading::Live(id) => identities.push(id),
+                Reading::Gone => {}
+                Reading::Unreadable { cause } => {
+                    return Err(Error::ValidateUnreadable {
+                        read: "command-group",
+                        cause: cause.to_owned(),
+                    });
+                }
+            }
+        }
+        match process::stop_identities(&identities, Duration::from_secs(KILL_GRACE))? {
+            process::Stop::AlreadyGone | process::Stop::Stopped { .. } => {}
+            other => {
+                return Err(Error::ValidateUnreadable {
+                    read: "command-group-unconfirmed",
+                    cause: format!("{other:?}"),
+                });
+            }
+        }
+        let status = self.child.wait().map_err(|e| Error::ValidateUnreadable {
+            read: "command-reap",
+            cause: e.to_string(),
+        })?;
+        self.ended = true;
+        Ok(status)
+    }
+}
+impl Drop for CommandGroup {
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "an executor error still ends and reaps the command it owns"
+    )]
+    fn drop(&mut self) {
+        if !self.ended {
+            let _ = self.end();
+            let _ = self.child.kill();
+            let _ = self.child.wait();
+        }
+    }
 }
 
 /// What the run left: the outcome its sentinel named, or, with no sentinel
@@ -153,20 +397,17 @@ struct Left {
 /// Read the run directory once the child ended, `stopped` being whether the
 /// stage records a `validate stop`.
 fn read_left(run_dir: &Path, stopped: bool) -> Left {
-    let log = run_dir.join("log");
     let sentinel = match fs::read_to_string(run_dir.join("exit")) {
         Ok(text) => Some(text.trim_end().to_owned()),
         Err(_) => None,
     };
-    let selection = fs::read_to_string(&log).ok().and_then(|text| {
-        text.lines()
-            .rfind(|l| l.starts_with("validate:"))
-            .and_then(|l| l.split(' ').find_map(|w| w.strip_prefix("selection=")))
-            .map(str::to_owned)
-    });
+    let selection = super::files::RunFile::read(run_dir)
+        .ok()
+        .and_then(|run| run.selection().ok())
+        .map(|(_, selection)| selection);
     let outcome = match sentinel.as_deref().and_then(validate::sentinel_outcome) {
+        _ if stopped => StageOutcome::Stopped,
         Some(word) => word,
-        None if stopped => StageOutcome::Stopped,
         None => StageOutcome::Lost,
     };
     let at = sentinel.as_deref().and_then(|line| {
@@ -432,7 +673,12 @@ pub fn run(
                 .map(Path::to_path_buf)
                 .unwrap_or_default()
         });
-    run_child(settings, &worktree, &run_dir_path, proof.cap_secs);
+    let _ = (worktree, proof);
+    execute(
+        &run_dir_path,
+        &crate::schedule::SystemClock,
+        &super::group_leader(settings),
+    )?;
     // The close's own clock: the child ran for up to the run's bound.
     let env = &env_now(env);
     // The stage as it stands once the child ended: a `validate stop` that
@@ -560,49 +806,125 @@ pub enum JobState {
     Unreadable,
 }
 
-/// End the run's job through the launcher's own stop, `job-unit stop-job
-/// RECORD PID ARGV_GLOB`: the unit by the exact name its record carries, the
-/// setsid group by the child's pid while that pid still runs this run's
-/// executor (a pid the system reused is left alone). Exit 0 ended it, 1 found
-/// nothing to end; anything else is the launcher's keyed line, refused
-/// `stop-failed`.
+/// End the recorded command group before its executor. Unreadable identities
+/// remain owed; a reused process number is left alone.
 #[allow(
     clippy::disallowed_methods,
     reason = "the stop's one ask of the job launcher to end the run's job by its recorded identity, after the stop was recorded on the stage"
 )]
-fn end_job(settings: &Settings, run_dir: &str, job: &ValidateJob) -> Result<JobEnded> {
-    let pid = fs::read_to_string(Path::new(run_dir).join("pid"))
-        .map(|t| t.trim().to_owned())
-        .unwrap_or_default();
-    let name = Path::new(run_dir)
-        .file_name()
-        .and_then(OsStr::to_str)
-        .unwrap_or(run_dir);
-    let glob = format!("* --child --run-dir */tmp/{name}");
-    let out = host::run_tagged(
-        "validate",
-        "job-unit",
-        &settings.job_unit,
-        "stop-job",
-        &["stop-job", &job.record, &pid, &glob],
-        STOP_TIMEOUT,
-    )
-    .map_err(|e| Error::ValidateStopFailed {
-        run_dir: run_dir.to_owned(),
-        cause: e.to_string(),
-    })?;
-    match out.status.code() {
-        Some(0) => Ok(JobEnded::Signalled),
-        Some(1) => Ok(JobEnded::AlreadyGone),
-        _ => Err(Error::ValidateStopFailed {
-            run_dir: run_dir.to_owned(),
-            cause: host::stderr_text(&out)
-                .lines()
-                .next()
-                .unwrap_or_default()
-                .to_owned(),
-        }),
+fn end_job(_settings: &Settings, run_dir: &str, _job: &ValidateJob) -> Result<JobEnded> {
+    stop_files(Path::new(run_dir)).map(|answer| {
+        if answer.is_some() {
+            JobEnded::Signalled
+        } else {
+            JobEnded::AlreadyGone
+        }
+    })
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a validation stop ends its recorded command group before stopping the executor that owns its close"
+)]
+pub(crate) fn stop_files(run_dir: &Path) -> Result<Option<&'static str>> {
+    atomic(run_dir, "stop", "stop-requested\n")?;
+    let mut stopped = false;
+    match fs::read(run_dir.join("command")) {
+        Ok(bytes) => {
+            let record: CommandRecord = serde_json::from_slice(&bytes)?;
+            let start = record.start.ok_or_else(|| {
+                super::files::unreadable("stop-unreadable", "command identity was not recorded")
+            })?;
+            stopped = crate::effects::stop_group(&agent_runtime::process::Identity {
+                pid: record.pid,
+                start,
+            })?;
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let run = super::files::RunFile::read(run_dir)?;
+            let runner = super::files::fields(&run_dir.join("runner"))
+                .ok()
+                .and_then(|r| r.get("runner").cloned());
+            let bare = super::files::bare_pid(&run)?;
+            // A shell start whose child never ran and whose launcher wrote no
+            // runner record names nothing the shell producer's stop would read.
+            if matches!(bare, super::files::BarePid::Unstarted)
+                && fs::symlink_metadata(run_dir.join("runner"))
+                    .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+            {
+                return Ok(None);
+            }
+            if !matches!(bare, super::files::BarePid::Absent)
+                && !matches!(runner.as_deref(), Some("setsid" | "attached" | "systemd"))
+            {
+                return Err(super::files::unreadable(
+                    "stop-unreadable",
+                    format!("run-dir={} record-unreadable", run_dir.display()),
+                ));
+            }
+            match bare {
+                // A bare pid's record names no identity: a unit is stopped by
+                // the name its record carries, below, and any other child's
+                // group by the child its argv names.
+                super::files::BarePid::Live(_)
+                | super::files::BarePid::Unstarted
+                | super::files::BarePid::Gone
+                | super::files::BarePid::Other
+                    if runner.as_deref() == Some("systemd") => {}
+                super::files::BarePid::Live(pid) => {
+                    let ended = match agent_runtime::process::identity(pid) {
+                        agent_runtime::reading::Reading::Live(identity) => {
+                            crate::effects::stop_group(&identity)?
+                        }
+                        agent_runtime::reading::Reading::Gone => false,
+                        agent_runtime::reading::Reading::Unreadable { cause } => {
+                            return Err(super::files::unreadable(
+                                "stop-unreadable",
+                                format!("run-dir={} pid={pid} {cause}", run_dir.display()),
+                            ));
+                        }
+                    };
+                    let word = if runner.as_deref() == Some("attached") {
+                        "attached"
+                    } else {
+                        "setsid"
+                    };
+                    return Ok(ended.then_some(word));
+                }
+                super::files::BarePid::Unstarted
+                | super::files::BarePid::Gone
+                | super::files::BarePid::Other => return Ok(None),
+                super::files::BarePid::Absent => {
+                    if command_reading(run_dir)?.is_some_and(|reading| {
+                        !matches!(reading, agent_runtime::reading::Reading::Gone)
+                    }) || !matches!(
+                        super::files::runner_reading(&run),
+                        agent_runtime::reading::Reading::Gone
+                    ) {
+                        return Err(super::files::unreadable(
+                            "stop-unreadable",
+                            format!("run-dir={} execution-unanswered", run_dir.display()),
+                        ));
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            return Err(Error::ValidateStopFailed {
+                run_dir: run_dir.display().to_string(),
+                cause: e.to_string(),
+            });
+        }
     }
+    let runner = super::files::fields(&run_dir.join("runner"));
+    if runner
+        .as_ref()
+        .is_ok_and(|r| r.get("runner").is_some_and(|v| v == "attached"))
+    {
+        return Ok(stopped.then_some("attached"));
+    }
+    let runner = crate::effects::stop_recorded(&run_dir.join("runner"))?;
+    Ok(runner.or(stopped.then_some("setsid")))
 }
 
 /// Wait, bounded, for the job to read gone by its recorded identity.
@@ -686,7 +1008,11 @@ pub fn stop(
         unreachable!("the stop stands on a started run")
     };
     let ended = end_job(settings, run_dir, &job)?;
-    let job_state = wait_job_gone(&job);
+    let job_state = if job.runner.as_deref() == Some("attached") {
+        JobState::Live
+    } else {
+        wait_job_gone(&job)
+    };
     // The finishing transition's own clock: the stop and the wait took time.
     let env = &env_now(env);
     deliver_owed(settings, &path, env, locking)?;

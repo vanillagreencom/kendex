@@ -1,20 +1,4 @@
-//! The verification duty (decision 121 Q5, Q8; step5-map § A5): the
-//! Verifying items the tracker duty read, each judged box by box as the
-//! legacy `verifying_read` judged them (`oversee-watch:5492-5623` over
-//! `lib/verifying.sh`): the Done-when boxes through the linear CLI's own
-//! parser (decision 9's `done-when parse`), the merge the release and
-//! `+Nh` boxes count from, read per merged key of the GitHub duty's merged
-//! index, the release publications a release box waits on, and each box's
-//! status on this pass's clock. The `verifying` lines are handed to the
-//! heartbeat through [`Lines`]; the `verifying-deadline` rows and their
-//! event lines are the duty's own, the event handed back before the row
-//! that settles it (the runner's `commit` keeps that order), so a crash
-//! between the two reprints the deadline once and never loses it.
-//!
-//! The duty reads nothing of the controller (Q8): a dead, walled or absent
-//! overseer changes nothing it does. It makes no second tracker read: the
-//! items are the tracker duty's last pass's, so an inventory the tracker
-//! has not read yet is nothing to judge, not an empty one.
+//! The watch and reconciliation share one checklist, merge and release judgment.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
@@ -66,9 +50,6 @@ pub fn body<'a>(ctx: Context) -> Body<'a> {
     Box::new(move |tick: &Tick| run(&ctx, tick))
 }
 
-/// Register the duty on `runner` (decision 153), reading the tracker and
-/// GitHub duties' slot `shared`; the lines slot the heartbeat reads is
-/// returned.
 pub fn register(runner: &mut Runner<'_>, settings: &Settings, shared: Shared) -> Lines {
     let lines = Lines::default();
     runner.register(
@@ -83,8 +64,6 @@ pub fn register(runner: &mut Runner<'_>, settings: &Settings, shared: Shared) ->
     lines
 }
 
-/// A note the legacy wrote on stderr beside a pass that went on: the
-/// item's judgement is unread or invalid, the other items proceed.
 fn note(key: &str, id: &str, cause: &str) {
     let _ = writeln!(std::io::stderr(), "{key} issue={id}\n{cause}");
 }
@@ -182,7 +161,6 @@ impl Judged {
         )
     }
 
-    /// The due key the row holds and the event carries (`:5574`).
     fn due_key(&self) -> String {
         format!(
             "box={} trigger={} status={} deadline={}",
@@ -309,7 +287,7 @@ fn gh_json(
 /// refusal (an item that is not Verifying), or the call's failure.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the verification duty's one call of the linear CLI's own Done-when parser per item through the one runner under its tag; it reads nothing (decision 9)"
+    reason = "the verification duty's one call of the linear CLI's own Done-when parser per item through the one runner under its tag; it reads nothing"
 )]
 fn parse(settings: &Settings, description: &str) -> Result<std::result::Result<Parsed, String>> {
     let out = host::run_tagged(
@@ -339,7 +317,7 @@ struct Merge {
     oids: BTreeMap<String, Option<String>>,
 }
 
-/// The merge an item's boxes count from (`merged_item_read`): the latest
+/// The merge an item's boxes count from: the latest
 /// `merged_at` among the merged index's keys for it, and the merge commit
 /// per repository. `None` where the index names no key: unread for a box
 /// that needs it.
@@ -379,20 +357,94 @@ fn merge_of(
     Ok(merged.map(|at| Merge { at, oids }))
 }
 
-/// A bash pattern (`[[ $tag == $glob ]]`) over `*` and `?`; a bracket
-/// class is matched as its literal characters.
+/// A bash pattern (`[[ $tag == $glob ]]`): `*`, `?`, a bracket expression
+/// and a backslash quoting the next character. Extended patterns are not
+/// read: bash reads them there on some hosts and not on others.
 fn glob_matches(glob: &str, text: &str) -> bool {
     fn go(g: &[char], t: &[char]) -> bool {
         match g.split_first() {
             None => t.is_empty(),
             Some(('*', rest)) => (0..=t.len()).any(|i| go(rest, &t[i..])),
             Some(('?', rest)) => !t.is_empty() && go(rest, &t[1..]),
+            Some(('[', rest)) => match t.first().map(|c| (c, bracket(rest, *c))) {
+                Some((_, Some((hit, len)))) => hit && go(&rest[len..], &t[1..]),
+                Some((c, None)) => *c == '[' && go(rest, &t[1..]),
+                None => false,
+            },
+            Some(('\\', [quoted, rest @ ..])) => t.first() == Some(quoted) && go(rest, &t[1..]),
             Some((c, rest)) => t.first() == Some(c) && go(rest, &t[1..]),
         }
     }
     let g: Vec<char> = glob.chars().collect();
     let t: Vec<char> = text.chars().collect();
     go(&g, &t)
+}
+
+/// The bracket expression `g` opens, past its `[`, against `c`: whether it
+/// holds `c` and how many characters it spans with its `]`; `None` where no
+/// `]` closes it, so the `[` is itself. A leading `!` or `^` negates it, a
+/// `]` first in it is itself, as is a `-` that ends a range nowhere.
+fn bracket(g: &[char], c: char) -> Option<(bool, usize)> {
+    let negated = matches!(g.first(), Some('!' | '^'));
+    let mut i = usize::from(negated);
+    let start = i;
+    let mut hit = false;
+    loop {
+        let x = *g.get(i)?;
+        if x == ']' && i > start {
+            return Some((hit != negated, i + 1));
+        }
+        if x == '[' && g.get(i + 1) == Some(&':') {
+            let name_end =
+                (i + 2..g.len().saturating_sub(1)).find(|&j| g[j] == ':' && g[j + 1] == ']');
+            if let Some(end) = name_end {
+                let name: String = g[i + 2..end].iter().collect();
+                hit |= class_holds(&name, c);
+                i = end + 2;
+                continue;
+            }
+        }
+        let (low, next) = match x {
+            '\\' => (*g.get(i + 1)?, i + 2),
+            _ => (x, i + 1),
+        };
+        match (g.get(next), g.get(next + 1)) {
+            (Some('-'), Some(&high)) if high != ']' => {
+                let (high, after) = match high {
+                    '\\' => (*g.get(next + 2)?, next + 3),
+                    _ => (high, next + 2),
+                };
+                hit |= (low..=high).contains(&c);
+                i = after;
+            }
+            _ => {
+                hit |= low == c;
+                i = next;
+            }
+        }
+    }
+}
+
+/// A `[:name:]` class of a bracket expression; a name bash has no class
+/// for holds nothing.
+fn class_holds(name: &str, c: char) -> bool {
+    match name {
+        "alnum" => c.is_alphanumeric(),
+        "alpha" => c.is_alphabetic(),
+        "ascii" => c.is_ascii(),
+        "blank" => c == ' ' || c == '\t',
+        "cntrl" => c.is_control(),
+        "digit" => c.is_ascii_digit(),
+        "graph" => !c.is_control() && !c.is_whitespace(),
+        "lower" => c.is_lowercase(),
+        "print" => !c.is_control(),
+        "punct" => c.is_ascii_punctuation(),
+        "space" => c.is_whitespace(),
+        "upper" => c.is_uppercase(),
+        "word" => c.is_alphanumeric() || c == '_',
+        "xdigit" => c.is_ascii_hexdigit(),
+        _ => false,
+    }
 }
 
 /// The releases of `repo`, every page, as `(published epoch, tag)` for the
@@ -434,9 +486,6 @@ fn releases(
     Ok(out)
 }
 
-/// `verifying_judge`: the release boxes resolved, the `+Nh` deadlines
-/// counted and each box's status at `now`. `Err` is the legacy's rc 2
-/// (unread) with its key and cause.
 fn judge(
     gh: &Path,
     boxes: &mut [Judged],
@@ -527,21 +576,29 @@ fn judge(
 
 // --- the pass ------------------------------------------------------------------------------
 
-/// What one item's judgement settled.
-enum Item {
+#[derive(Debug, Default, serde::Serialize)]
+pub(super) struct Counts {
+    pub due: u64,
+    pub overdue: u64,
+    pub blocked: u64,
+    pub waiting: u64,
+}
+
+pub(super) enum Item {
     /// The lines and the row key, with the due keys the event lines carry.
     Read {
         lines: Vec<String>,
         key: String,
         due: Vec<String>,
+        counts: Counts,
     },
     /// Unread this pass: the prior row stands.
-    Unread,
+    Unread { key: &'static str, cause: String },
     /// Invalid: no row, the pass goes on.
     Invalid,
 }
 
-fn judge_item(
+pub(super) fn judge_item(
     ctx: &Context,
     item: &VerifyingItem,
     merged_keys: Option<&[String]>,
@@ -568,14 +625,15 @@ fn judge_item(
             Ok(merged) => merged,
             Err(cause) => {
                 note("verifying-merge-unread", &item.id, &cause);
-                return Ok(Item::Unread);
+                return Ok(Item::Unread {
+                    key: "verifying-merge-unread",
+                    cause,
+                });
             }
         }
     } else {
         None
     };
-    // The item's open blockers, from the tracker's read: `blocked` after
-    // `overdue` and before `waiting` (`lib/verifying.sh:141`, `:152`).
     let blocked = &item.blocked_by_open;
     if let Err((key, cause)) = judge(
         &ctx.gh,
@@ -586,7 +644,7 @@ fn judge_item(
         read,
     ) {
         note(key, &item.id, &cause);
-        return Ok(Item::Unread);
+        return Ok(Item::Unread { key, cause });
     }
     let mut lines: Vec<String> = boxes.iter().map(|b| b.line(&item.id, blocked)).collect();
     let due: Vec<String> = boxes
@@ -602,7 +660,22 @@ fn judge_item(
     } else {
         due.join("|")
     };
-    Ok(Item::Read { lines, key, due })
+    let mut counts = Counts::default();
+    for b in &boxes {
+        match b.status {
+            "due" => counts.due += 1,
+            "overdue" => counts.overdue += 1,
+            "blocked" => counts.blocked += 1,
+            "waiting" => counts.waiting += 1,
+            _ => unreachable!("the box judge assigns one status"),
+        }
+    }
+    Ok(Item::Read {
+        lines,
+        key,
+        due,
+        counts,
+    })
 }
 
 fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
@@ -613,7 +686,6 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
             return Ok(Produced::default());
         };
         let mut items = tracker.verifying.clone();
-        // The legacy's `group_by(.id)` sorted the items by id.
         items.sort_by(|a, b| a.id.cmp(&b.id));
         let index = latest
             .github
@@ -623,9 +695,6 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
         (items, index)
     };
     let mut produced = Produced::default();
-    // The legacy printed every deadline's `EVENT` line, then the `verifying`
-    // lines of the boxes those named (`VERIFYING_EVENT_LINES`, at the pass's
-    // end), so the block is the same two runs of lines here.
     let mut event_lines: Vec<String> = Vec::new();
     let mut all_lines = Vec::new();
     let mut held: BTreeSet<String> = BTreeSet::new();
@@ -641,13 +710,15 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
         let prior = tick.baseline.get(DEADLINE_ROW, &item.id);
         match judged {
             Item::Invalid => {}
-            Item::Unread => {
+            Item::Unread { .. } => {
                 // An unread item cannot clear a previously reported deadline.
                 if prior.is_some() {
                     held.insert(item.id.clone());
                 }
             }
-            Item::Read { lines, key, due } => {
+            Item::Read {
+                lines, key, due, ..
+            } => {
                 held.insert(item.id.clone());
                 all_lines.extend(lines.iter().cloned());
                 if prior != Some(key.as_str()) {
@@ -721,18 +792,30 @@ mod tests {
             ("app-*-release", "app-2026.10-release", true),
             ("exact", "exact", true),
             ("exact", "exact1", false),
+            ("v[0-9]", "v1", true),
+            ("v[0-9]", "va", false),
+            ("v[0-9]", "v[0-9]", false),
+            ("v[!0-9]", "vb", true),
+            ("v[!0-9]", "v1", false),
+            ("v[^0-9]", "vb", true),
+            ("v[a-]", "v-", true),
+            ("v[]]", "v]", true),
+            ("v[", "v[", true),
+            ("v[1", "v[1", true),
+            ("v[1", "v1", false),
+            ("v[ab", "vab", false),
+            ("v\\*", "v*", true),
+            ("v\\*", "vx", false),
+            ("v[[:alpha:]]", "va", true),
+            ("v[[:alpha:]]", "v1", false),
         ];
         for (glob, tag, want) in rows {
             assert_eq!(glob_matches(glob, tag), want, "{glob} {tag}");
         }
     }
 
-    /// The legacy status order (`oversee-events.md` § Verification):
-    /// overdue past the deadline whatever else holds, blocked on an open
-    /// blocker, waiting on an unfired trigger, else due; a `+Nh` merge box
-    /// counts from the merge and is unread without it.
     #[test]
-    fn a_box_takes_its_status_in_the_legacy_order() {
+    fn overdue_precedes_blockers_and_unfired_triggers() {
         let gh = PathBuf::from("gh");
         let mut read = BTreeMap::new();
         let make = |kind: &str, trigger_epoch: Option<u64>, deadline_epoch: Option<u64>| Judged {

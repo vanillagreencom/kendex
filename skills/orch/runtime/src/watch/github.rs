@@ -1218,6 +1218,76 @@ fn own_pulls(gh: &Gh, repo: &str, item: &str, since_iso: Option<&str>) -> Result
     Ok(pulls)
 }
 
+/// A lane item's own pull request merged inside a report's window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Completion {
+    pub item: String,
+    pub repo: String,
+    pub number: u64,
+    pub at: u64,
+    pub title: String,
+}
+
+/// The lane items' own pull requests merged at or after `since` and before
+/// `until`, oldest first: one search per repository for its merges since
+/// the floor, bounded by the search endpoint's cap, each hit read by number
+/// and judged by the lane-own rule for every item, its parked pull request
+/// counted where the park names this repository.
+pub(super) fn report_merges(
+    gh: &Gh,
+    repos: &[String],
+    lanes: &[Lane],
+    since: u64,
+    until: u64,
+) -> Result<Vec<Completion>> {
+    let floor = agent_runtime::clock::iso_utc(since);
+    let mut rows = Vec::new();
+    for repo in repos {
+        let owner = repo.split('/').next().unwrap_or(repo);
+        let query = format!("repo:{repo} is:pr is:merged merged:>={floor}");
+        let search_path = format!("search/issues?q={}", encoded(&query));
+        for hit in search(gh, &search_path, repo, "report")? {
+            if hit.pull_request.present().is_none() {
+                continue;
+            }
+            let path = format!("repos/{repo}/pulls/{}", hit.number);
+            let Some(pull) = gh.object::<Pull>("report-merges", &path)? else {
+                return Err(refused(
+                    "github-read-failed",
+                    &[("read", "report-merges"), ("path", &path)],
+                ));
+            };
+            let Some(at) = merged_at(&pull, Some(since)).filter(|at| *at < until) else {
+                continue;
+            };
+            for lane in lanes {
+                let parked = lane
+                    .extra
+                    .get("parked")
+                    .filter(|p| {
+                        p.get("repo")
+                            .and_then(Value::as_str)
+                            .is_some_and(|r| r.eq_ignore_ascii_case(repo))
+                    })
+                    .and_then(|p| p.get("pr"))
+                    .and_then(Value::as_u64);
+                let row = Completion {
+                    item: lane.item.clone(),
+                    repo: repo.clone(),
+                    number: pull.number,
+                    at,
+                    title: pull.title.clone(),
+                };
+                if lane_own(&pull, &lane.item, owner, parked) && !rows.contains(&row) {
+                    rows.push(row);
+                }
+            }
+        }
+    }
+    rows.sort_by_key(|row| row.at);
+    Ok(rows)
+}
+
 /// Whether `workflow` is absent from `repo`, proved by a complete,
 /// successful workflow list alone.
 fn workflow_absent(gh: &Gh, repo: &str, workflow: &str) -> Result<bool> {

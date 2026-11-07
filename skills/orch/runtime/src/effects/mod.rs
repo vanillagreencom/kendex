@@ -63,7 +63,10 @@ mod transfer;
 
 pub(crate) use operation::Recorded;
 pub use operation::job::{JobStarted, NoticeUnmarked};
-pub(crate) use operation::job::{group_reading, pgid_reading, read_handle};
+pub(crate) use operation::job::{
+    group_reading, launch_recorded, pgid_reading, read_handle, recorded_live, stop_group,
+    stop_recorded,
+};
 pub(crate) use operation::{JobHandle, SidecarRead};
 
 use std::path::{Path, PathBuf};
@@ -144,6 +147,7 @@ fn has_live_effect(request: &Request) -> bool {
         | Request::VerifyHead(_)
         | Request::VerifyPr(_)
         | Request::VerifyReview(_)
+        | Request::ApproveHead(_)
         | Request::ReconcileRound(_)
         | Request::RecordHandoff(_)
         | Request::ResumeHandoff(_)
@@ -345,6 +349,7 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
                     | Request::VerifyHead(_)
                     | Request::VerifyPr(_)
                     | Request::VerifyReview(_)
+                    | Request::ApproveHead(_)
                     | Request::ReconcileRound(_)
                     | Request::RecordHandoff(_)
                     | Request::ResumeHandoff(_)
@@ -399,6 +404,7 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
         | Request::VerifyHead(_)
         | Request::VerifyPr(_)
         | Request::VerifyReview(_)
+        | Request::ApproveHead(_)
         | Request::ReconcileRound(_)
         | Request::RecordHandoff(_)
         | Request::ResumeHandoff(_)

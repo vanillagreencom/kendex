@@ -1,0 +1,133 @@
+#!/usr/bin/python3
+import json
+import os
+from pathlib import Path
+import signal
+import sys
+
+root = Path.cwd()
+cfg = json.loads((root / 'answer.json').read_text())
+a = sys.argv[1:]
+with (root / 'gh.log').open('a') as log:
+    log.write(json.dumps([os.environ.get('GH_TOKEN'), a]) + '\n')
+head = cfg.get('head', '0123456789abcdef0123456789abcdef01234567')
+review = {'id': 91, 'state': 'APPROVED', 'user': {'login': 'review-app[bot]'}, 'commit_id': head}
+copilot = 'copilot-pull-request-reviewer'
+started = '2026-01-29T15:10:00Z'
+def out(value):
+    print(json.dumps(value))
+    sys.exit(0)
+def refused():
+    print('gh: Forbidden (HTTP 403)', file=sys.stderr)
+    sys.exit(1)
+# The typed Copilot reads, in the exact forms the runtime sends.
+view = ['pr', 'view', '42', '--repo', 'o/r', '--json',
+        'headRefOid,baseRefName,state,isDraft,reviewDecision,latestReviews,author']
+if a == view:
+    out({'headRefOid': cfg.get('view_head', head), 'baseRefName': 'main', 'state': 'OPEN',
+         'isDraft': False, 'reviewDecision': None, 'latestReviews': [],
+         'author': {'login': 'app/lane-app'}})
+if a == ['api', 'repos/o/r/commits/' + cfg.get('view_head', head) + '/check-runs?filter=all&per_page=100&page=1']:
+    work = cfg.get('work')
+    if work == 'fail':
+        refused()
+    status = 'in_progress' if work == 'settled' else work
+    rows = [] if not work else [{
+        'id': 72, 'node_id': 'CR_72', 'name': copilot, 'status': status, 'conclusion': None,
+        'check_suite': None, 'started_at': started, 'completed_at': None,
+        'html_url': None, 'details_url': None}]
+    out({'total_count': len(rows), 'check_runs': rows})
+if a == ['api', 'repos/o/r/issues/42/timeline?per_page=100&page=1']:
+    out(cfg.get('timeline', []))
+if a == ['api', 'repos/o/r/pulls/42/reviews?per_page=100&page=1']:
+    rows = []
+    if cfg.get('work') == 'settled':
+        rows = [{'id': 61, 'user': {'login': copilot + '[bot]', 'type': 'Bot'}, 'body': 'Reviewed.',
+                 'state': 'COMMENTED', 'commit_id': head, 'submitted_at': '2026-01-29T15:12:00Z'}]
+    out(rows)
+# The approval's own calls.
+if a == ['auth', 'status']:
+    sys.exit(0 if cfg.get('keyring') else 1)
+if a == ['api', 'repos/o/r/pulls/42', '--jq', '.head.sha']:
+    counter = root / 'head_reads'
+    count = int(counter.read_text()) + 1 if counter.exists() else 1
+    counter.write_text(str(count))
+    print('01234567fedcba9876543210fedcba9876543210' if cfg.get('head_move_on') == count else head)
+    sys.exit(cfg.get('head_exit', 0))
+if a == ['api', '--method', 'POST', 'repos/o/r/pulls/42/reviews', '--input', '-']:
+    with (root / 'posts').open('a') as posts:
+        posts.write('post\n')
+    record = json.loads((root / 'item.json').read_text())
+    entry = record['head_approvals']['o/r#42'][head]
+    assert entry['attempt']['state'] == 'attempted', 'POST without the once record'
+    payload = json.loads(sys.stdin.read())
+    (root / 'payload.json').write_text(json.dumps(payload))
+    mode = cfg.get('post', 'ok')
+    if mode in ('lost-landed', 'refused-landed') or mode == 'ok':
+        (root / 'landed.json').write_text(json.dumps(review))
+    if mode == 'lost' or mode == 'lost-landed':
+        os.kill(os.getpid(), signal.SIGTERM)
+    if mode == 'auth':
+        sys.exit(4)
+    if mode.startswith('refused'):
+        print('gh: Unprocessable Entity (HTTP 422)', file=sys.stderr)
+        sys.exit(1)
+    if mode == 'scopes':
+        print('gh: Not Found (HTTP 404)', file=sys.stderr)
+        print('gh: This API operation needs the "repo" scope. To request it, run:  gh auth refresh -h github.com -s repo', file=sys.stderr)
+        sys.exit(1)
+    if mode == 'unread':
+        print('{}')
+        sys.exit(0)
+    if mode == 'server-quoted':
+        print('gh: upstream (HTTP 422) (HTTP 500)', file=sys.stderr)
+        sys.exit(1)
+    if mode == 'transport':
+        print('Post "https://api.github.com/repos/o/r/pulls/42/reviews": EOF', file=sys.stderr)
+        sys.exit(1)
+    out(review)
+if a == ['api', 'repos/o/r/pulls/42/reviews', '--paginate', '--slurp']:
+    if cfg.get('read_back') == 'fail':
+        refused()
+    if cfg.get('read_back') == 'malformed':
+        out({})
+    landed = root / 'landed.json'
+    rows = [json.loads(landed.read_text())] if landed.exists() else cfg.get('reviews', [])
+    out([rows])
+# The github reply checker's reads, as its router sends them.
+if a == ['api', 'user'] or a == ['api', 'user', '--jq', '.login']:
+    if '--jq' in a:
+        print('lane-app[bot]')
+        sys.exit(0)
+    out({'login': 'lane-app[bot]', 'id': 2002})
+if a[:2] == ['api', 'graphql']:
+    if any('viewer {' in x for x in a):
+        viewer = {'login':'review-app[bot]', 'databaseId':4004} if os.environ.get('GH_TOKEN') == 'ghs_fixtureApprovalFileToken' else {'login':'lane-app[bot]', 'databaseId':2002}
+        out({'data': {'viewer': viewer}})
+    threads = []
+    if cfg.get('reply') == 'bad':
+        threads = [{'comments': {'totalCount': 2, 'nodes': [
+            {'author': {'login': 'copilot-pull-request-reviewer', '__typename': 'Bot', 'databaseId': 3003}, 'authorAssociation': 'NONE', 'body': 'The value can be empty.'},
+            {'author': {'login': 'lane-app', '__typename': 'Bot', 'databaseId': 2002}, 'authorAssociation': 'CONTRIBUTOR', 'body': 'Tracked separately.'}]}}]
+    out({'data': {'repository': {'pullRequest': {'reviewThreads': {'pageInfo': {'hasNextPage': False, 'endCursor': None}, 'nodes': threads}}}}})
+url = a[1].lower() if len(a) > 1 else ''
+if url == 'repos/o/r/pulls/42':
+    out({'head': {'sha': cfg.get('reply_head', head)}, 'user': {'login': 'author', 'type': 'User', 'id': 1001}})
+if url == 'repos/o/r/pulls/42/reviews?per_page=100' and a[2:] == ['--paginate']:
+    if cfg.get('remove_gh_after_replies'):
+        (root / 'bin/gh').unlink()
+    if cfg.get('reply') == 'unavailable':
+        sys.exit(1)
+    if cfg.get('reply') == 'malformed':
+        out({})
+    if cfg.get('reply') in ('body-findings', 'lane-disposition'):
+        out([{'id': 5539256602, 'state':'COMMENTED', 'commit_id': head,
+              'user': {'login':'copilot-pull-request-reviewer[bot]', 'type':'Bot', 'id':3003},
+              'author_association':'NONE', 'body':'<!-- ccr-overview-v2 -->\n\n### Changes recommended\n\n**0 open findings**'}])
+    out([])
+if '/comments' in url:
+    if cfg.get('reply') == 'lane-disposition':
+        out([{'user': {'login':'lane-app[bot]', 'type':'Bot', 'id':2002}, 'author_association':'CONTRIBUTOR', 'body':'Dispositions at ' + head + '\nreview:5539256602 - Declined: the caller rejects empty values before the read.'}])
+    out([])
+print('unplanted gh call: ' + repr(a), file=sys.stderr)
+sys.exit(1)

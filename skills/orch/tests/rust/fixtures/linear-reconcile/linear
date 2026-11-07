@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+here="$(dirname "${BASH_SOURCE[0]}")"
+real="$(python3 -B -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve().parents[5] / "linear/scripts")' "${BASH_SOURCE[0]}")"
+printf '%s\n' "$*" >>"$here/linear.log"
+if [[ "${1:-}" == done-when ]]; then
+  exec "$real/linear.sh" "$@"
+fi
+source "$real/lib/formatters.sh"
+case "${1:-} ${2:-}" in
+  'issues list')
+    [[ ! -f "$here/read.fail" ]] || exit 1
+    raw="$(cat "$here/issues.json")"
+    prev=""
+    for word in "$@"; do
+      if [[ "$prev" == --state ]]; then
+        raw="$(jq --arg states "$word" '.issues.nodes |= map(select(.state.name as $name | $states | split(",") | index($name)))' <<<"$raw")"
+      fi
+      prev="$word"
+    done
+    format_issues_list "$raw"
+    ;;
+  'issues get')
+    raw="$(jq -c --arg id "$3" '{issue:(.issues.nodes[] | select(.identifier == $id))}' "$here/issues.json")"
+    format_issue_single "$raw"
+    ;;
+  'issues update' | 'issues complete')
+    cd -- "$here"
+    export PATH="$here:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_TEAM=T LINEAR_RETRY_BASE_DELAY=0
+    exec /bin/bash "$real/linear.sh" "$@"
+    ;;
+  'statuses list')
+    format_states_list '{"workflowStates":{"nodes":[{"id":"todo","name":"Todo","type":"unstarted"}]}}'
+    ;;
+  'comments bulk-list')
+    printf '{'
+    comma=""
+    shift 2
+    for id in "$@"; do
+      [[ "$id" != --format=safe ]] || continue
+      printf '%s"%s":' "$comma" "$id"
+      raw='{"issue":{"comments":{"nodes":[]}}}'
+      [[ ! -f "$here/comments-$id.json" ]] || raw="$(cat "$here/comments-$id.json")"
+      format_comments_list "$raw"
+      comma=,
+    done
+    printf '}\n'
+    ;;
+  *) exit 2 ;;
+esac

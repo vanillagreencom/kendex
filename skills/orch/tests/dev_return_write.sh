@@ -21,6 +21,8 @@ ROUND_WRITE="$REPO_ROOT/skills/orch/scripts/dev-round-write"
 STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
+source "$REPO_ROOT/skills/agent-runtime/scripts/lib/key.sh"
+VALIDATION_CACHE="$(agent_runtime_cache)" || exit 1
 # shellcheck source=lib/assertions.sh
 source "$TEST_DIR/lib/assertions.sh"
 TMP_ROOT="$(mktemp -d)" || { echo "dev_return_write: scratch=mktemp-failed" >&2; exit 1; }
@@ -114,7 +116,7 @@ run() {
   mkdir -p "$RUN"
   ERR="$RUN/stderr"
   set +e
-  OUT=$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT" LC_ALL=C \
+  OUT=$(env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$TMP_ROOT" LC_ALL=C AGENT_RUNTIME_CACHE="$VALIDATION_CACHE" \
     COMMIT_GUARDS_BYTE_CEILING_KB="${COMMIT_GUARDS_BYTE_CEILING_KB:-}" \
     COMMIT_GUARDS_BYTE_WARN_PCT="${COMMIT_GUARDS_BYTE_WARN_PCT:-}" \
     "$WRITE" ${args[@]+"${args[@]}"} 2>"$ERR")
@@ -182,14 +184,6 @@ assert_eq "$(env ORCH_STATE_DIR="$WT/tmp" "$CHECK" --worktree "$WT" --issue issu
   "the record round-trips through round-mode acceptance"
 
 echo "=== the record's variable fields, one written artifact per row ==="
-# No labels is an empty list; --no-summary is summary_posted false; a FAILING
-# verdict is recorded verbatim; --summary-file and --summary embed the text
-# without marking it posted; --recovered-text embeds a transcript's report and
-# marks the record recovered; a fix carries its items with numeric n and the
-# three decisions; a bundled implement aggregates labels; the note is the
-# additive channel for a caveat the enumeration cannot express, present and
-# null when omitted; leading-dash prose is a value unless it is this script's
-# own flag; a successful write leaves no temp file behind.
 table \
   "no labels, --no-summary and a FAILING verdict|--worktree $WT --kind implement --issue issue-100 --round-id 5-5 --branch b --commit %H --validate FAILING:+lint,build --no-summary|rc=0 written=yes .qa_labels|tojson=[] .summary_posted=false .validate=FAILING:+lint,build roundtrip=valid" \
   "--summary-file embeds the file and keeps summary_posted false|--worktree $WT --kind implement --issue issue-gh --round-id 6-6 --branch b --commit %H --validate pass --validate-run-dir $VRUN --no-summary --summary-file $SUMMARY_FILE|rc=0 .summary|split(\"\\n\")[0]=##+Completion+Summary .summary_posted=false" \
@@ -947,8 +941,8 @@ echo "=== every refusal exits 2 on its own guard and writes nothing ==="
 table \
   "a bad --kind|--worktree $WT --kind review --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN|rc=2 stderr~dev-return-write:+invalid-kind+value=review=true" \
   "a pass with no run directory|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass|rc=2 stderr~dev-return-write:+required+options=--validate-run-dir,--validate-record+validate=pass=true" \
-  "a run directory whose mode is outside the three|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN_BAD|rc=2 stderr~dev-return-write:+run-record-unreadable+path=$VRUN_BAD+cause=dev-validate-run:+record-unreadable+path=$VRUN_BAD/start+validate-mode=class=true" \
-  "a run directory with no start record|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $TMP_ROOT/validate-run-empty|rc=2 stderr~dev-return-write:+run-record-unreadable+path=$TMP_ROOT/validate-run-empty+cause=dev-validate-run:+no-run+path=$TMP_ROOT/validate-run-empty/start=true" \
+  "a run directory whose mode is outside the supported set|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN_BAD|rc=2 stderr~dev-return-write:+run-record-unreadable+path=$VRUN_BAD+cause=dev-validate-run:+invalid-mode+cause=class=true" \
+  "a run directory with no start record|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $TMP_ROOT/validate-run-empty|rc=2 stderr~dev-return-write:+run-record-unreadable+path=$TMP_ROOT/validate-run-empty+cause=dev-validate-run:+record+cause=$TMP_ROOT/validate-run-empty/start:=true" \
   "a pass naming a run that failed|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN_FAILED|rc=2 stderr~dev-return-write:+validate-disagrees+validate=pass+run=FAILING=true" \
   "a pass naming a run the timeout ended|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate pass --validate-run-dir $VRUN_CUT|rc=2 stderr~dev-return-write:+validate-disagrees+validate=pass+run=no-verdict=true" \
   "no-verdict naming a run that failed|--worktree $WT --kind implement --issue i --round-id $RID --branch b --commit c --validate no-verdict --validate-run-dir $VRUN_FAILED|rc=2 stderr~dev-return-write:+validate-disagrees+validate=no-verdict+run=FAILING=true" \
@@ -998,11 +992,6 @@ table \
 assert_eq "$(compgen -G "$WT/tmp/dev-return-issue-noitems-$RID*.json" >/dev/null && echo yes || echo no)" "no" "a rejected invocation writes no artifact at the target path"
 
 echo "=== a receipt is keyed by its run: a later run of the round writes beside a failing first ==="
-# The recovery allowance is the runtime's (`record-validation-admission
-# {attempt: next}`, decision 125 (2)): a later run of the round has its own
-# stage and its own receipt. The writer refuses only to overwrite a failing
-# receipt; the checker reads the receipt of the run the round's newest
-# validate stage names, and the earlier one stays readable in file mode.
 for keyed_case in implement fix; do
   RW="$(new_repo "keyed-$keyed_case")"
   git -C "$RW" switch -q -c keyed

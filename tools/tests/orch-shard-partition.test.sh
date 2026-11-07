@@ -406,12 +406,10 @@ for PARTITION_RUNNER_OS in Linux macOS; do
     done
     check "$name has one family owner on $PARTITION_RUNNER_OS" "1" "$claims"
   done <<< "$family_rows"
-  for name in dev_validate_run dev_validate_run_selection; do
-    grep -qxF "$name" "$TMP/orch-dev.names" && ok "$name runs in the $PARTITION_RUNNER_OS dev profile" || bad "$name is lost from the dev profile"
-    ! grep -qxF "$name" "$TMP/orch-state.names" && ok "$name leaves the $PARTITION_RUNNER_OS state profile" || bad "$name remains in the state profile"
-  done
-  check "the exact validation alias retains both physical suites on $PARTITION_RUNNER_OS" \
-    $'dev_validate_run\ndev_validate_run_selection' "$(selected '=dev_validate_run')"
+  rc=0
+  selected '=dev_validate_run' > "$TMP/retired-validation.names" 2> "$TMP/retired-validation.err" || rc=$?
+  [ "$rc" -ne 0 ] && ok "an absent exact suite refuses on $PARTITION_RUNNER_OS" || bad "an absent exact suite reports success on $PARTITION_RUNNER_OS"
+  [ ! -s "$TMP/retired-validation.names" ] && ok "an absent exact suite selects nothing on $PARTITION_RUNNER_OS" || bad "an absent exact suite selects another suite on $PARTITION_RUNNER_OS"
   # A planted assertion uses a private suite file and the workflow profile's
   # real entry. A selected failure must propagate to the shard verdict.
   while IFS='|' read -r name profile; do

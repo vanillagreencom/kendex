@@ -228,11 +228,6 @@ const DEFAULT_QUEUE_WAIT_PROBE_INTERVAL_SECS: u32 = 120;
 pub const ARCHIVE_ROOT_KEY: &str = "ORCH_ARCHIVE_ROOT";
 /// The fleet directory the default archive root sits under.
 pub const FLEET_DIR_KEY: &str = "FLEET_DIR";
-/// The report judge the report duty calls each long cadence; empty finds
-/// the installed orch package's own.
-pub const REPORT_CLI_KEY: &str = "OVERSEE_WATCH_REPORT";
-/// The orch package's report judge under the project's install.
-pub const REPORT_CLI_DEFAULT: &str = ".agents/skills/orch/scripts/oversee-report";
 /// The account reader the heartbeat's roster and owed verdicts run;
 /// empty finds the installed orch package's own.
 pub const LANES_CLI_KEY: &str = "OVERSEE_WATCH_LANES";
@@ -376,6 +371,8 @@ const GIT_TIMEOUT: Duration = Duration::from_secs(15);
 /// The keys this runtime reads from the private env file.
 const READ_KEYS: &[&str] = &[
     TRACKER_CLI_KEY,
+    "RECONCILE_STALE_HOURS",
+    "RECONCILE_GH_CLI",
     PR_WATCH_CLI_KEY,
     SECURITY_ALERTS_KEY,
     SECURITY_ALERT_TOKEN_FILE_KEY,
@@ -404,6 +401,7 @@ const READ_KEYS: &[&str] = &[
     DEV_VALIDATE_RANGE_CMD_KEY,
     DEV_VALIDATE_CI_CONTEXT_KEY,
     DEV_VALIDATE_SELECTION_CMD_KEY,
+    "DEV_VALIDATE_TEXT_CMD",
     DEV_VALIDATE_FINDING_PREFIX_KEY,
     DEV_VALIDATE_TIMEOUT_SECS_KEY,
     DELIVERY_KEY,
@@ -431,9 +429,20 @@ const READ_KEYS: &[&str] = &[
     QUEUE_WAIT_ARM_GRACE_KEY,
     QUEUE_WAIT_CONFIRM_POLLS_KEY,
     QUEUE_WAIT_PROBE_INTERVAL_KEY,
-    REPORT_CLI_KEY,
+    "ORCH_REPORT",
+    "ORCH_REPORT_EVERY_MINUTES",
+    "ORCH_REPORT_EVERY_ISSUES",
+    "ORCH_REPORT_UPCOMING",
+    "ORCH_REPORT_QUIET_HOURS",
+    "ORCH_OWNER_TIME_ZONE",
     LANES_CLI_KEY,
     COPILOT_HOLD_SECS_KEY,
+    "ORCH_OVERSEER_REVIEW_TOKEN_FILE",
+    "ORCH_OVERSEER_REVIEW_LOGIN",
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_BOT_TOKEN",
+    "GH_HOST",
     REVIEW_WAIT_SECS_KEY,
     REVIEW_ON_TIMEOUT_KEY,
     COPILOT_REQUESTS_KEY,
@@ -605,6 +614,7 @@ pub struct ValidateSettings {
     pub range_cmd: Option<String>,
     pub ci_context: Option<String>,
     pub selection_cmd: Option<String>,
+    pub text_cmd: Option<String>,
     pub finding_prefix: Option<String>,
     pub timeout: Duration,
     pub delivery: Delivery,
@@ -697,6 +707,8 @@ pub struct Alias {
 pub struct Settings {
     pub roots: Roots,
     pub reads: ReadSettings,
+    pub reconcile_stale_hours: String,
+    pub reconcile_gh_cli: PathBuf,
     pub state_dir: PathBuf,
     pub tmux_session: Option<String>,
     pub verify: Duration,
@@ -735,7 +747,7 @@ pub struct Settings {
     pub retention_days: u32,
     pub queue_watch: QueueWatchSettings,
     pub archive_root: ArchiveRoot,
-    pub report_cli: PathBuf,
+    pub report: crate::watch::report::Policy,
     pub lanes_cli: PathBuf,
     pub accounts: AccountSettings,
     pub store: StoreSettings,
@@ -765,13 +777,17 @@ pub struct StoreSettings {
     pub ci_fix_max_cycles: u64,
 }
 
-/// The review gate's settings as read: the hold on Copilot's work in
-/// flight, the reviewer's period, what a spent period answers, and
-/// whether Copilot is asked at all. Each is carried as its text (the
-/// default where unset), since the review gate is the one verb that
-/// reads them and the one that refuses a value outside its form.
+/// The review settings as read: the overseer app's approval credential
+/// and login with the reader credentials its reply check keeps, then the
+/// hold on Copilot's work in flight, the reviewer's period, what a spent
+/// period answers, and whether Copilot is asked at all. The last four are
+/// carried as their text (the default where unset), since the verbs that
+/// read them refuse a value outside its form.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewSettings {
+    pub approval_token_file: Option<PathBuf>,
+    pub approval_login: Option<String>,
+    pub approval_reader_env: Vec<(String, String)>,
     pub copilot_hold: String,
     pub wait: String,
     pub on_timeout: String,
@@ -1193,6 +1209,7 @@ pub fn load(
         range_cmd: command(DEV_VALIDATE_RANGE_CMD_KEY),
         ci_context: command(DEV_VALIDATE_CI_CONTEXT_KEY),
         selection_cmd: command(DEV_VALIDATE_SELECTION_CMD_KEY),
+        text_cmd: command("DEV_VALIDATE_TEXT_CMD"),
         finding_prefix,
         timeout: validate_timeout,
         delivery,
@@ -1237,7 +1254,7 @@ pub fn load(
             ArchiveRoot::Default(fleet.join("archive"))
         }
     };
-    let report_cli = program(REPORT_CLI_KEY, REPORT_CLI_DEFAULT);
+    let report = crate::watch::report::Policy::read(|key| get(key).map(str::to_owned))?;
     let lanes_cli = program(LANES_CLI_KEY, LANES_CLI_DEFAULT);
     // The accounts judge's keys, held to `lanes`' own grammar
     // (`validate_lane_settings`, `pct_valid`): a retirement names a lane
@@ -1480,6 +1497,12 @@ pub fn load(
     };
     let text = |key: &str, default: &str| get(key).unwrap_or(default).to_owned();
     let review = ReviewSettings {
+        approval_token_file: get("ORCH_OVERSEER_REVIEW_TOKEN_FILE").map(PathBuf::from),
+        approval_login: get("ORCH_OVERSEER_REVIEW_LOGIN").map(str::to_owned),
+        approval_reader_env: ["GH_TOKEN", "GITHUB_TOKEN", "GH_BOT_TOKEN", "GH_HOST"]
+            .into_iter()
+            .filter_map(|key| values.get(key).map(|v| (key.to_owned(), v.clone())))
+            .collect(),
         copilot_hold: text(COPILOT_HOLD_SECS_KEY, DEFAULT_COPILOT_HOLD_SECS),
         wait: text(REVIEW_WAIT_SECS_KEY, DEFAULT_REVIEW_WAIT_SECS),
         on_timeout: text(REVIEW_ON_TIMEOUT_KEY, "proceed"),
@@ -1488,6 +1511,15 @@ pub fn load(
     Ok(Settings {
         roots: roots.clone(),
         reads,
+        reconcile_stale_hours: get("RECONCILE_STALE_HOURS")
+            .filter(|s| !s.is_empty())
+            .unwrap_or("24")
+            .to_owned(),
+        reconcile_gh_cli: PathBuf::from(
+            get("RECONCILE_GH_CLI")
+                .filter(|s| !s.is_empty())
+                .unwrap_or("gh"),
+        ),
         state_dir,
         store,
         review,
@@ -1517,7 +1549,7 @@ pub fn load(
         retention_days,
         queue_watch,
         archive_root,
-        report_cli,
+        report,
         lanes_cli,
         accounts,
     })
@@ -2393,29 +2425,26 @@ mod tests {
     }
 
     /// A mistyped retention never reads as the default, nor a count of
-    /// none, which keeps nothing a day; a report or account program is read
-    /// from its own key alone. A set value is taken as given,
+    /// none, which keeps nothing a day; the account program is read from its
+    /// own key alone. A set value is taken as given,
     /// and a value outside `[1-9][0-9]*` is refused by key and value.
     #[test]
-    fn the_retention_report_and_lanes_keys_take_their_defaults_and_refuse_by_key_and_value() {
+    fn the_retention_and_lanes_keys_take_their_defaults_and_refuse_by_key_and_value() {
         let dir = tempfile::tempdir().unwrap();
         let roots = roots_in(dir.path());
         let settings = load(&roots, &env(&[]), &FLAGS).unwrap();
         assert_eq!(settings.retention_days, 5);
-        assert_eq!(settings.report_cli, roots.project.join(REPORT_CLI_DEFAULT));
         assert_eq!(settings.lanes_cli, roots.project.join(LANES_CLI_DEFAULT));
         let settings = load(
             &roots,
             &env(&[
                 (RECORD_RETENTION_DAYS_KEY, "12"),
-                (REPORT_CLI_KEY, "/opt/oversee-report"),
                 (LANES_CLI_KEY, "/opt/lanes"),
             ]),
             &FLAGS,
         )
         .unwrap();
         assert_eq!(settings.retention_days, 12);
-        assert_eq!(settings.report_cli, PathBuf::from("/opt/oversee-report"));
         assert_eq!(settings.lanes_cli, PathBuf::from("/opt/lanes"));
         for value in ["0", "05", "x", "-1", "5d", "+5"] {
             let err =

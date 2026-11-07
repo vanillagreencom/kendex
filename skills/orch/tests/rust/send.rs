@@ -709,29 +709,32 @@ fn validation_world() -> (World, PathBuf) {
 }
 
 impl World {
-    /// The binary on the item beside the fleet, with the validate rows'
-    /// fixtures: the child executor, the classifier, the launcher
-    /// recording only, the declaration.
     fn validate(&self, args: &[&str], extra: &[(&str, &str)]) -> Output {
-        let f = fixtures();
+        let scripts = orch_scripts();
         let mut command = isolated();
         command
             .arg("--state-dir")
             .arg(&self.root)
             .args(args)
-            .env(
-                "DEV_VALIDATE_CLI",
-                f.join("dev-validate-child/dev-validate-run"),
-            )
+            .env("DEV_VALIDATE_CLI", scripts.join("dev-validate-run"))
             .env(
                 "CHANGE_SCOPE_PATHS_CLI",
-                f.join("change-scope-fixture/harness-only"),
+                scripts.join("../../change-scope/scripts/harness-only"),
             )
-            .env("ORCH_JOB_UNIT", f.join("job-unit-real/job-unit"))
-            .env("JOB_UNIT_RECORD_ONLY", "1")
             .env("DEV_VALIDATE_CMD", "echo full")
-            .env("DEV_VALIDATE_TIMEOUT_SECS", "20");
+            .env("DEV_VALIDATE_TIMEOUT_SECS", "20")
+            .env("ORCH_PR_ORDER", "review-first")
+            .env("ORCH_DELIVERY", "push-base")
+            .env("VALIDATE_START_ANSWER", "record-only")
+            .env("VALIDATE_MANAGER_DIR", self.root.join("manager"));
         self.env(&mut command, extra);
+        command.env(
+            "PATH",
+            tool_path(&[
+                &fixtures().join("validate-tools"),
+                &fixtures().join("claude-cloud"),
+            ]),
+        );
         command.output().unwrap()
     }
 

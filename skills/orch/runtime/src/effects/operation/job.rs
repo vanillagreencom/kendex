@@ -152,6 +152,7 @@ impl Op {
             | Request::VerifyHead(_)
             | Request::VerifyPr(_)
             | Request::VerifyReview(_)
+            | Request::ApproveHead(_)
             | Request::ReconcileRound(_)
             | Request::RecordHandoff(_)
             | Request::ResumeHandoff(_)
@@ -224,10 +225,534 @@ enum Runner {
 /// What a launch left: the sidecar's reading, which the launcher knows
 /// without reading its record back, the runner line the reply carries, and
 /// the cause where nothing runs or the launch ended after its fork.
-struct Launched {
-    read: SidecarRead,
-    line: String,
-    failed: Option<String>,
+pub(crate) struct Launched {
+    pub(crate) unanswered: bool,
+    pub(crate) read: SidecarRead,
+    pub(crate) line: String,
+    pub(crate) failed: Option<String>,
+}
+
+pub(crate) struct Launcher<'a> {
+    clock: &'a dyn crate::schedule::Clock,
+}
+
+impl Launcher<'_> {
+    fn now(&self) -> std::time::Instant {
+        self.clock.now()
+    }
+    fn sleep(&self, duration: Duration) {
+        self.clock.sleep(duration);
+    }
+    /// The unit route: the record pre-written with the unit's name, then
+    /// `systemd-run --user` with the caller's directory, environment,
+    /// open-file limits and, where the caller runs in a user-manager slice,
+    /// that slice with its task and memory caps, so a warden that reads
+    /// units outside an agent's slice as escaped work sees the job inside
+    /// it. A `systemd-run` that never started, or one that exited before it
+    /// asked a manager anything (`ASKED_NOTHING`), proves no unit was asked
+    /// for, and falls to `setsid` (`Err` with the reason). Every other
+    /// failure is read back as the reconcile reads a unit: one read ended
+    /// ends the launch, and any other answer is the job, held by its unit
+    /// until its claim or a reconcile reads it. `systemd-run`'s exit status
+    /// does not tell a refusal the manager answered from a bus error or a
+    /// client timeout after the manager acted, and `--collect` unloads a
+    /// unit once it ends, so the manager's having no record of the unit may
+    /// be a job that ran.
+    fn launch_unit(
+        &self,
+        record: &Path,
+        unit: &str,
+        argv: &[&str],
+        stderr: Option<&Path>,
+        cap: Option<Duration>,
+    ) -> std::result::Result<Launched, String> {
+        let line = format!("runner=systemd unit={unit}");
+        if let Err(e) = write_record(
+            record,
+            &format!("runner=systemd\nunit={unit}\nline={line}\n"),
+        ) {
+            return Ok(Launched {
+                unanswered: false,
+                read: SidecarRead::Absent,
+                line,
+                failed: Some(format!(
+                    "record-unwritable path={} cause={e}",
+                    record.display()
+                )),
+            });
+        }
+        let cwd = std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| ".".to_owned());
+        let service = format!("{unit}.service");
+        let mut words: Vec<String> = vec![
+            "--user".to_owned(),
+            "--quiet".to_owned(),
+            "--collect".to_owned(),
+            format!("--unit={unit}"),
+            format!("--working-directory={cwd}"),
+            "-p".to_owned(),
+            format!("TimeoutStopSec={}", KILL_GRACE.as_secs()),
+            "-p".to_owned(),
+            "IgnoreSIGPIPE=no".to_owned(),
+        ];
+        if let Some(cap) = cap {
+            words.extend(["-p".to_owned(), format!("RuntimeMaxSec={}", cap.as_secs())]);
+        }
+        if let Some((soft, hard)) = nofile_limits() {
+            words.push("-p".to_owned());
+            words.push(format!("LimitNOFILE={soft}:{hard}"));
+        }
+        if let Some(cgroup) = own_cgroup() {
+            if let Some(slice) = slice_of(&cgroup) {
+                words.push(format!("--slice={slice}"));
+            }
+            let dir = Path::new("/sys/fs/cgroup").join(cgroup.trim_start_matches('/'));
+            if let Some(cap) = cgroup_cap(&dir, "pids.max") {
+                words.push("-p".to_owned());
+                words.push(format!("TasksMax={cap}"));
+            }
+            if let Some(cap) = cgroup_cap(&dir, "memory.high") {
+                words.push("-p".to_owned());
+                words.push(format!("MemoryHigh={cap}"));
+            }
+        }
+        if let Some(err) = stderr {
+            words.push("-p".to_owned());
+            words.push(format!("StandardError=append:{}", err.display()));
+        }
+        // A unit inherits the manager's environment, not the caller's, so
+        // every exported variable a unit can carry is handed over, the
+        // client reading each value from the environment it is given.
+        let env = client_env();
+        words.extend(unit_setenv());
+        words.push("--".to_owned());
+        // The manager expands `${NAME}` in a unit's command line, and `$$`
+        // is its spelling of one literal `$`.
+        words.extend(argv.iter().map(|word| word.replace('$', "$$")));
+        let args: Vec<&str> = words.iter().map(String::as_str).collect();
+        let detail = match host::run_tagged_alone(
+            "job",
+            "systemd-run",
+            Path::new("systemd-run"),
+            "launch",
+            &args,
+            &runner_env(&env),
+            JOB_LAUNCH_TIMEOUT,
+        ) {
+            Ok(out) if out.status.success() => {
+                return Ok(Launched {
+                    unanswered: false,
+                    read: SidecarRead::Present(JobHandle::Unit {
+                        unit: unit.to_owned(),
+                    }),
+                    line,
+                    failed: None,
+                });
+            }
+            Ok(out) => match out.status.code() {
+                Some(_) => {
+                    let stderr = host::stderr_text(&out);
+                    if let Some(refusal) = asked_nothing(&stderr) {
+                        return Err(format!("unit-launch-failed detail={refusal}"));
+                    }
+                    call_line(&stderr)
+                }
+                None => "signal".to_owned(),
+            },
+            Err(e @ agent_runtime::Error::NotStarted { .. }) => {
+                return Err(format!("unit-launch-failed detail={e}"));
+            }
+            Err(e) => e.to_string(),
+        };
+        match unit_end(unit) {
+            Some(JobEnd::UnitEnded { state }) => {
+                let status = format!("unit-{state}");
+                let ended = ended_record(record, "systemd", &status, None, &line);
+                Ok(Launched {
+                    unanswered: false,
+                    read: SidecarRead::Failed {
+                        status: status.clone(),
+                    },
+                    line,
+                    failed: Some(format!(
+                        "launch-failed unit={service} active={state} detail={detail}{ended}"
+                    )),
+                })
+            }
+            Some(end @ (JobEnd::Exited | JobEnd::Claimed)) => {
+                unreachable!("a unit's read answers no {end:?}")
+            }
+            Some(JobEnd::UnitGone) | None => Ok(Launched {
+                unanswered: true,
+                read: SidecarRead::Present(JobHandle::Unit {
+                    unit: unit.to_owned(),
+                }),
+                line: format!("{line} start-unconfirmed detail={detail}"),
+                failed: None,
+            }),
+        }
+    }
+
+    /// The `setsid` route: the record pre-written with the runner and the
+    /// reason, the child started under `setsid`, which execs it in a
+    /// session of its own without forking, so the child's pid is the job's;
+    /// its start is then read from the kernel's table and recorded before
+    /// this returns. A child that has already exited when its row is read
+    /// is a launch that failed, by its status; a row that cannot be read
+    /// ends the child and refuses the launch; a record that cannot be
+    /// rewritten with the identity ends the child the same way, so nothing
+    /// runs unrecorded. Each of those unwinds the child's whole group and
+    /// reads it empty before the launch is reported ended; a group that
+    /// does not read empty stands by its key.
+    fn launch_setsid(
+        &self,
+        record: &Path,
+        reason: &str,
+        argv: &[&str],
+        stderr: Option<&Path>,
+    ) -> Launched {
+        let line = format!("runner=setsid reason={reason}");
+        let ended = |status: &str, cause: String| Launched {
+            unanswered: false,
+            read: SidecarRead::Failed {
+                status: status.to_owned(),
+            },
+            line: line.clone(),
+            failed: Some(cause),
+        };
+        if let Err(e) = write_record(record, &format!("runner=setsid\nline={line}\n")) {
+            return Launched {
+                unanswered: false,
+                read: SidecarRead::Absent,
+                line,
+                failed: Some(format!(
+                    "record-unwritable path={} cause={e}",
+                    record.display()
+                )),
+            };
+        }
+        let stderr = match stderr {
+            Some(err) => match std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(err)
+            {
+                Ok(file) => Some(file),
+                Err(e) => {
+                    let status = "stderr-unwritable";
+                    let noted = ended_record(record, "setsid", status, None, &line);
+                    return ended(
+                        status,
+                        format!("launch-failed path={} cause={e}{noted}", err.display()),
+                    );
+                }
+            },
+            None => None,
+        };
+        let mut child = match host::start_detached(
+            "job",
+            "setsid",
+            Path::new("setsid"),
+            "launch",
+            argv,
+            host::Place::default(),
+            stderr,
+        ) {
+            Ok(child) => child,
+            Err(e) => {
+                let status = "setsid-unrun";
+                let noted = ended_record(record, "setsid", status, None, &line);
+                return ended(status, format!("launch-failed cause={e}{noted}"));
+            }
+        };
+        let pid = child.pid();
+        let identity = match process::identity(pid) {
+            Reading::Live(identity) => identity,
+            Reading::Gone => {
+                // The child exited before its row was read: a launch that
+                // failed, by its status. An exited leader proves nothing
+                // about what it started: its group is torn down and read
+                // empty before the launch is reported ended.
+                let status = match child.reap() {
+                    Ok(status) => exit_word(status),
+                    Err(e) => format!("exited-unread-{e}"),
+                };
+                let forked = Forked {
+                    pgid: pid,
+                    leader: None,
+                };
+                return self.unwound(record, &line, &status, None, forked);
+            }
+            Reading::Unreadable { cause } => {
+                let status = "identity-unread";
+                self.end_child(&mut child, None);
+                return self.unwound(
+                    record,
+                    &line,
+                    status,
+                    Some(format!("cause={cause}")),
+                    Forked {
+                        pgid: pid,
+                        leader: None,
+                    },
+                );
+            }
+        };
+        let line = format!("{line} pid={pid} start={}", identity.start);
+        if let Err(e) = write_record(
+            record,
+            &format!(
+                "runner=setsid\npid={pid}\nstart={}\nline={line}\n",
+                identity.start
+            ),
+        ) {
+            // The identity was read but could not be recorded: the child is
+            // ended the same way, so nothing runs unrecorded.
+            let status = "record-unwritable";
+            self.end_child(&mut child, Some(&identity));
+            return self.unwound(
+                record,
+                &line,
+                status,
+                Some(format!("path={} cause={e}", record.display())),
+                Forked {
+                    pgid: pid,
+                    leader: Some(identity),
+                },
+            );
+        }
+        Launched {
+            unanswered: false,
+            read: SidecarRead::Present(JobHandle::Group(identity)),
+            line,
+            failed: None,
+        }
+    }
+
+    /// End the child this launch forked, by its own pid first: it may not
+    /// have run its own `setsid` yet, so it leads no process group and a
+    /// group teardown alone would miss it. TERM, the grace, then KILL; by
+    /// identity through the one stop where its start was read, by the
+    /// `kill` program otherwise. Neither the signal's answer nor the wait is
+    /// the launch's answer: `unwound` reads the child by its key after this.
+    /// A child that still runs after the KILL's grace is never waited for; its
+    /// handle's drop reaps it.
+    fn end_child(&self, child: &mut host::Detached, identity: Option<&Identity>) {
+        let exited = |child: &mut host::Detached| matches!(child.exited(), Ok(Some(_)));
+        if let Some(identity) = identity {
+            let _ = process::stop_identities(std::slice::from_ref(identity), KILL_GRACE);
+        } else {
+            let pid = child.pid().to_string();
+            for signal in ["-TERM", "-KILL"] {
+                let _ = host::run_tagged(
+                    "job",
+                    "kill",
+                    Path::new("kill"),
+                    "signal",
+                    &[signal, &pid],
+                    UNIT_READ_TIMEOUT,
+                );
+                let deadline = self.now() + KILL_GRACE;
+                while !exited(child) && self.now() < deadline {
+                    self.sleep(POLL);
+                }
+                if exited(child) {
+                    break;
+                }
+            }
+        }
+        let deadline = self.now() + KILL_GRACE;
+        while !exited(child) && self.now() < deadline {
+            self.sleep(POLL);
+        }
+    }
+
+    /// A launch ended after its fork: the group the child led (its pgid
+    /// being its pid) torn down by every live member's identity and read
+    /// in the kernel's table, the record rewritten with `status`, and the
+    /// launch reported with its cause. A group that reads empty is nothing
+    /// started; one that does not, or a table that cannot be read, holds
+    /// the job `unwound-failed` by the leader's identity where it was read,
+    /// else by the group key alone, which every post-fork path holds. Both
+    /// keys read the child itself as well as its group, so a child its launch
+    /// could not end holds the job though it never ran its own `setsid`.
+    fn unwound(
+        &self,
+        record: &Path,
+        line: &str,
+        status: &str,
+        detail: Option<String>,
+        forked: Forked,
+    ) -> Launched {
+        let Forked { pgid, leader } = forked;
+        let mut members = Vec::new();
+        if let Ok(rows) = process::table() {
+            for row in rows.iter().filter(|row| row.pgrp == pgid) {
+                if let Reading::Live(member) = process::identity(row.pid) {
+                    members.push(member);
+                }
+            }
+        }
+        if !members.is_empty() {
+            let _ = process::stop_identities(&members, KILL_GRACE);
+        }
+        let cause = match detail {
+            Some(detail) => format!("launch-failed status={status} {detail}"),
+            None => format!("launch-failed status={status}"),
+        };
+        if pgid_end(pgid).is_some() {
+            let noted = ended_record(record, "setsid", status, None, line);
+            return Launched {
+                unanswered: false,
+                read: SidecarRead::Failed {
+                    status: status.to_owned(),
+                },
+                line: line.to_owned(),
+                failed: Some(format!("{cause}{noted}")),
+            };
+        }
+        let handle = match leader {
+            Some(identity) => JobHandle::Group(identity),
+            None => JobHandle::Pgid(pgid),
+        };
+        let noted = ended_record(record, "setsid", "unwound-failed", Some(&handle), line);
+        Launched {
+            unanswered: false,
+            read: SidecarRead::Present(handle),
+            line: line.to_owned(),
+            failed: Some(format!("{cause} group=unwound-failed{noted}")),
+        }
+    }
+}
+
+pub(crate) fn launch_recorded(
+    name: &str,
+    key: &str,
+    record: &Path,
+    argv: &[&str],
+    stderr: Option<&Path>,
+    cap: Option<Duration>,
+    clock: &dyn crate::schedule::Clock,
+) -> Launched {
+    let launcher = Launcher { clock };
+    let runner = match probe_manager() {
+        Runner::Unit(_) => Runner::Unit(unit_name(name, key)),
+        other => other,
+    };
+    let runner = match runner {
+        Runner::Unit(unit) => match launcher.launch_unit(record, &unit, argv, stderr, cap) {
+            Ok(answer) => return answer,
+            Err(reason) => Runner::Setsid { reason },
+        },
+        other => other,
+    };
+    let Runner::Setsid { reason } = runner else {
+        unreachable!()
+    };
+    launcher.launch_setsid(record, &reason, argv, stderr)
+}
+
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the recorded group is stopped by each member's observed start identity"
+)]
+pub(crate) fn stop_group(identity: &Identity) -> Result<bool> {
+    let rows = process::table().map_err(|e| {
+        Error::Runtime(agent_runtime::Error::refused(
+            "stop-unreadable",
+            &[("cause", e.cause)],
+        ))
+    })?;
+    if matches!(process::still_runs(identity), Reading::Gone)
+        && (rows.iter().any(|r| r.pid == identity.pid)
+            || !rows.iter().any(|r| r.pgrp == identity.pid))
+    {
+        return Ok(false);
+    }
+    let mut members = Vec::new();
+    for row in rows.iter().filter(|r| r.pgrp == identity.pid) {
+        match process::identity(row.pid) {
+            Reading::Live(id) => members.push(id),
+            Reading::Gone => {}
+            Reading::Unreadable { cause } => {
+                return Err(Error::Runtime(agent_runtime::Error::refused(
+                    "stop-unreadable",
+                    &[("cause", cause)],
+                )));
+            }
+        }
+    }
+    match process::stop_identities(&members, KILL_GRACE)? {
+        process::Stop::AlreadyGone => Ok(false),
+        process::Stop::Stopped { .. } => Ok(true),
+        other @ (process::Stop::IdentityStale
+        | process::Stop::Timeout { .. }
+        | process::Stop::Unreadable { .. }) => Err(Error::Runtime(agent_runtime::Error::refused(
+            "stop-unconfirmed",
+            &[("reading", &format!("{other:?}"))],
+        ))),
+    }
+}
+
+pub(crate) fn recorded_live(record: &Path) -> Reading<()> {
+    match read_handle(record) {
+        SidecarRead::Present(JobHandle::Unit { unit }) => match unit_end(&unit) {
+            Some(JobEnd::UnitGone | JobEnd::UnitEnded { .. }) => Reading::Gone,
+            None => Reading::Unreadable {
+                cause: "unit-unsettled",
+            },
+            Some(JobEnd::Exited | JobEnd::Claimed) => unreachable!(),
+        },
+        SidecarRead::Present(JobHandle::Group(id)) => group_reading(&id),
+        SidecarRead::Present(JobHandle::Pgid(pgid)) => pgid_reading(pgid),
+        SidecarRead::Absent | SidecarRead::Failed { .. } => Reading::Gone,
+        SidecarRead::Unreadable { .. } => Reading::Unreadable {
+            cause: "runner-unreadable",
+        },
+    }
+}
+
+pub(crate) fn stop_recorded(record: &Path) -> Result<Option<&'static str>> {
+    match read_handle(record) {
+        SidecarRead::Present(JobHandle::Unit { unit }) => {
+            let out = host::run_tagged(
+                "validate",
+                "systemctl",
+                Path::new("systemctl"),
+                "stop",
+                &["--user", "stop", &format!("{unit}.service")],
+                UNIT_READ_TIMEOUT,
+            )?;
+            if out.status.success() {
+                Ok(Some("systemd"))
+            } else if matches!(
+                unit_end(&unit),
+                Some(JobEnd::UnitGone | JobEnd::UnitEnded { .. })
+            ) {
+                Ok(None)
+            } else {
+                Err(Error::Runtime(agent_runtime::Error::refused(
+                    "stop-failed",
+                    &[("unit", &unit)],
+                )))
+            }
+        }
+        SidecarRead::Present(JobHandle::Group(identity)) => {
+            if stop_group(&identity)? {
+                Ok(Some("setsid"))
+            } else {
+                Ok(None)
+            }
+        }
+        SidecarRead::Failed { .. } | SidecarRead::Absent => Ok(None),
+        SidecarRead::Present(JobHandle::Pgid(_)) | SidecarRead::Unreadable { .. } => {
+            Err(Error::Runtime(agent_runtime::Error::refused(
+                "stop-unreadable",
+                &[("record", &record.display().to_string())],
+            )))
+        }
+    }
 }
 
 /// Hand a just-persisted transfer or stop to a detached job: write the
@@ -459,390 +984,15 @@ impl Operation<'_> {
     ) -> Result<Launched> {
         self.obligations.ask_job(record);
         self.write()?;
-        let runner = match probe_manager() {
-            Runner::Unit(_) => Runner::Unit(unit_name(name, self.intent_id())),
-            setsid => setsid,
-        };
-        let runner = match runner {
-            Runner::Unit(unit) => match self.launch_unit(record, &unit, argv, stderr) {
-                Ok(launched) => return Ok(launched),
-                Err(reason) => Runner::Setsid { reason },
-            },
-            setsid => setsid,
-        };
-        let Runner::Setsid { reason } = runner else {
-            unreachable!("the unit route returned or fell to setsid")
-        };
-        Ok(self.launch_setsid(record, &reason, argv, stderr))
-    }
-
-    /// The unit route: the record pre-written with the unit's name, then
-    /// `systemd-run --user` with the caller's directory, environment,
-    /// open-file limits and, where the caller runs in a user-manager slice,
-    /// that slice with its task and memory caps, so a warden that reads
-    /// units outside an agent's slice as escaped work sees the job inside
-    /// it. A `systemd-run` that never started, or one that exited before it
-    /// asked a manager anything (`ASKED_NOTHING`), proves no unit was asked
-    /// for, and falls to `setsid` (`Err` with the reason). Every other
-    /// failure is read back as the reconcile reads a unit: one read ended
-    /// ends the launch, and any other answer is the job, held by its unit
-    /// until its claim or a reconcile reads it. `systemd-run`'s exit status
-    /// does not tell a refusal the manager answered from a bus error or a
-    /// client timeout after the manager acted, and `--collect` unloads a
-    /// unit once it ends, so the manager's having no record of the unit may
-    /// be a job that ran.
-    fn launch_unit(
-        &self,
-        record: &Path,
-        unit: &str,
-        argv: &[&str],
-        stderr: Option<&Path>,
-    ) -> std::result::Result<Launched, String> {
-        let line = format!("runner=systemd unit={unit}");
-        if let Err(e) = write_record(
+        Ok(launch_recorded(
+            name,
+            self.intent_id(),
             record,
-            &format!("runner=systemd\nunit={unit}\nline={line}\n"),
-        ) {
-            return Ok(Launched {
-                read: SidecarRead::Absent,
-                line,
-                failed: Some(format!(
-                    "record-unwritable path={} cause={e}",
-                    record.display()
-                )),
-            });
-        }
-        let cwd = std::env::current_dir()
-            .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| ".".to_owned());
-        let service = format!("{unit}.service");
-        let mut words: Vec<String> = vec![
-            "--user".to_owned(),
-            "--quiet".to_owned(),
-            "--collect".to_owned(),
-            format!("--unit={unit}"),
-            format!("--working-directory={cwd}"),
-            "-p".to_owned(),
-            format!("TimeoutStopSec={}", KILL_GRACE.as_secs()),
-            "-p".to_owned(),
-            "IgnoreSIGPIPE=no".to_owned(),
-        ];
-        if let Some((soft, hard)) = nofile_limits() {
-            words.push("-p".to_owned());
-            words.push(format!("LimitNOFILE={soft}:{hard}"));
-        }
-        if let Some(cgroup) = own_cgroup() {
-            if let Some(slice) = slice_of(&cgroup) {
-                words.push(format!("--slice={slice}"));
-            }
-            let dir = Path::new("/sys/fs/cgroup").join(cgroup.trim_start_matches('/'));
-            if let Some(cap) = cgroup_cap(&dir, "pids.max") {
-                words.push("-p".to_owned());
-                words.push(format!("TasksMax={cap}"));
-            }
-            if let Some(cap) = cgroup_cap(&dir, "memory.high") {
-                words.push("-p".to_owned());
-                words.push(format!("MemoryHigh={cap}"));
-            }
-        }
-        if let Some(err) = stderr {
-            words.push("-p".to_owned());
-            words.push(format!("StandardError=append:{}", err.display()));
-        }
-        // A unit inherits the manager's environment, not the caller's, so
-        // every exported variable a unit can carry is handed over, the
-        // client reading each value from the environment it is given.
-        let env = client_env();
-        words.extend(unit_setenv());
-        words.push("--".to_owned());
-        // The manager expands `${NAME}` in a unit's command line, and `$$`
-        // is its spelling of one literal `$`.
-        words.extend(argv.iter().map(|word| word.replace('$', "$$")));
-        let args: Vec<&str> = words.iter().map(String::as_str).collect();
-        let detail = match host::run_tagged_alone(
-            "job",
-            "systemd-run",
-            Path::new("systemd-run"),
-            "launch",
-            &args,
-            &runner_env(&env),
-            JOB_LAUNCH_TIMEOUT,
-        ) {
-            Ok(out) if out.status.success() => {
-                return Ok(Launched {
-                    read: SidecarRead::Present(JobHandle::Unit {
-                        unit: unit.to_owned(),
-                    }),
-                    line,
-                    failed: None,
-                });
-            }
-            Ok(out) => match out.status.code() {
-                Some(_) => {
-                    let stderr = host::stderr_text(&out);
-                    if let Some(refusal) = asked_nothing(&stderr) {
-                        return Err(format!("unit-launch-failed detail={refusal}"));
-                    }
-                    call_line(&stderr)
-                }
-                None => "signal".to_owned(),
-            },
-            Err(e @ agent_runtime::Error::NotStarted { .. }) => {
-                return Err(format!("unit-launch-failed detail={e}"));
-            }
-            Err(e) => e.to_string(),
-        };
-        match unit_end(unit) {
-            Some(JobEnd::UnitEnded { state }) => {
-                let status = format!("unit-{state}");
-                let ended = ended_record(record, "systemd", &status, None, &line);
-                Ok(Launched {
-                    read: SidecarRead::Failed {
-                        status: status.clone(),
-                    },
-                    line,
-                    failed: Some(format!(
-                        "launch-failed unit={service} active={state} detail={detail}{ended}"
-                    )),
-                })
-            }
-            Some(end @ (JobEnd::Exited | JobEnd::Claimed)) => {
-                unreachable!("a unit's read answers no {end:?}")
-            }
-            Some(JobEnd::UnitGone) | None => Ok(Launched {
-                read: SidecarRead::Present(JobHandle::Unit {
-                    unit: unit.to_owned(),
-                }),
-                line: format!("{line} start-unconfirmed detail={detail}"),
-                failed: None,
-            }),
-        }
-    }
-
-    /// The `setsid` route: the record pre-written with the runner and the
-    /// reason, the child started under `setsid`, which execs it in a
-    /// session of its own without forking, so the child's pid is the job's;
-    /// its start is then read from the kernel's table and recorded before
-    /// this returns. A child that has already exited when its row is read
-    /// is a launch that failed, by its status; a row that cannot be read
-    /// ends the child and refuses the launch; a record that cannot be
-    /// rewritten with the identity ends the child the same way, so nothing
-    /// runs unrecorded. Each of those unwinds the child's whole group and
-    /// reads it empty before the launch is reported ended; a group that
-    /// does not read empty stands by its key.
-    fn launch_setsid(
-        &self,
-        record: &Path,
-        reason: &str,
-        argv: &[&str],
-        stderr: Option<&Path>,
-    ) -> Launched {
-        let line = format!("runner=setsid reason={reason}");
-        let ended = |status: &str, cause: String| Launched {
-            read: SidecarRead::Failed {
-                status: status.to_owned(),
-            },
-            line: line.clone(),
-            failed: Some(cause),
-        };
-        if let Err(e) = write_record(record, &format!("runner=setsid\nline={line}\n")) {
-            return Launched {
-                read: SidecarRead::Absent,
-                line,
-                failed: Some(format!(
-                    "record-unwritable path={} cause={e}",
-                    record.display()
-                )),
-            };
-        }
-        let stderr = match stderr {
-            Some(err) => match std::fs::OpenOptions::new()
-                .append(true)
-                .create(true)
-                .open(err)
-            {
-                Ok(file) => Some(file),
-                Err(e) => {
-                    let status = "stderr-unwritable";
-                    let noted = ended_record(record, "setsid", status, None, &line);
-                    return ended(
-                        status,
-                        format!("launch-failed path={} cause={e}{noted}", err.display()),
-                    );
-                }
-            },
-            None => None,
-        };
-        let mut child = match host::start_detached(
-            "job",
-            "setsid",
-            Path::new("setsid"),
-            "launch",
             argv,
-            host::Place::default(),
             stderr,
-        ) {
-            Ok(child) => child,
-            Err(e) => {
-                let status = "setsid-unrun";
-                let noted = ended_record(record, "setsid", status, None, &line);
-                return ended(status, format!("launch-failed cause={e}{noted}"));
-            }
-        };
-        let pid = child.pid();
-        let identity = match process::identity(pid) {
-            Reading::Live(identity) => identity,
-            Reading::Gone => {
-                // The child exited before its row was read: a launch that
-                // failed, by its status. An exited leader proves nothing
-                // about what it started: its group is torn down and read
-                // empty before the launch is reported ended.
-                let status = match child.reap() {
-                    Ok(status) => exit_word(status),
-                    Err(e) => format!("exited-unread-{e}"),
-                };
-                let forked = Forked {
-                    pgid: pid,
-                    leader: None,
-                };
-                return self.unwound(record, &line, &status, None, forked);
-            }
-            Reading::Unreadable { cause } => {
-                let status = "identity-unread";
-                self.end_child(&mut child, None);
-                return self.unwound(
-                    record,
-                    &line,
-                    status,
-                    Some(format!("cause={cause}")),
-                    Forked {
-                        pgid: pid,
-                        leader: None,
-                    },
-                );
-            }
-        };
-        let line = format!("{line} pid={pid} start={}", identity.start);
-        if let Err(e) = write_record(
-            record,
-            &format!(
-                "runner=setsid\npid={pid}\nstart={}\nline={line}\n",
-                identity.start
-            ),
-        ) {
-            // The identity was read but could not be recorded: the child is
-            // ended the same way, so nothing runs unrecorded.
-            let status = "record-unwritable";
-            self.end_child(&mut child, Some(&identity));
-            return self.unwound(
-                record,
-                &line,
-                status,
-                Some(format!("path={} cause={e}", record.display())),
-                Forked {
-                    pgid: pid,
-                    leader: Some(identity),
-                },
-            );
-        }
-        Launched {
-            read: SidecarRead::Present(JobHandle::Group(identity)),
-            line,
-            failed: None,
-        }
-    }
-
-    /// End the child this launch forked, by its own pid first: it may not
-    /// have run its own `setsid` yet, so it leads no process group and a
-    /// group teardown alone would miss it. TERM, the grace, then KILL; by
-    /// identity through the one stop where its start was read, by the
-    /// `kill` program otherwise. Neither the signal's answer nor the wait is
-    /// the launch's answer: `unwound` reads the child by its key after this.
-    /// A child that still runs after the KILL's grace is never waited for; its
-    /// handle's drop reaps it.
-    fn end_child(&self, child: &mut host::Detached, identity: Option<&Identity>) {
-        let exited = |child: &mut host::Detached| matches!(child.exited(), Ok(Some(_)));
-        if let Some(identity) = identity {
-            let _ = process::stop_identities(std::slice::from_ref(identity), KILL_GRACE);
-        } else {
-            let pid = child.pid().to_string();
-            for signal in ["-TERM", "-KILL"] {
-                let _ = host::run_tagged(
-                    "job",
-                    "kill",
-                    Path::new("kill"),
-                    "signal",
-                    &[signal, &pid],
-                    UNIT_READ_TIMEOUT,
-                );
-                let deadline = self.now() + KILL_GRACE;
-                while !exited(child) && self.now() < deadline {
-                    self.sleep(POLL);
-                }
-                if exited(child) {
-                    break;
-                }
-            }
-        }
-        let deadline = self.now() + KILL_GRACE;
-        while !exited(child) && self.now() < deadline {
-            self.sleep(POLL);
-        }
-    }
-
-    /// A launch ended after its fork: the group the child led (its pgid
-    /// being its pid) torn down by every live member's identity and read
-    /// in the kernel's table, the record rewritten with `status`, and the
-    /// launch reported with its cause. A group that reads empty is nothing
-    /// started; one that does not, or a table that cannot be read, holds
-    /// the job `unwound-failed` by the leader's identity where it was read,
-    /// else by the group key alone, which every post-fork path holds. Both
-    /// keys read the child itself as well as its group, so a child its launch
-    /// could not end holds the job though it never ran its own `setsid`.
-    fn unwound(
-        &self,
-        record: &Path,
-        line: &str,
-        status: &str,
-        detail: Option<String>,
-        forked: Forked,
-    ) -> Launched {
-        let Forked { pgid, leader } = forked;
-        let mut members = Vec::new();
-        if let Ok(rows) = process::table() {
-            for row in rows.iter().filter(|row| row.pgrp == pgid) {
-                if let Reading::Live(member) = process::identity(row.pid) {
-                    members.push(member);
-                }
-            }
-        }
-        if !members.is_empty() {
-            let _ = process::stop_identities(&members, KILL_GRACE);
-        }
-        let cause = match detail {
-            Some(detail) => format!("launch-failed status={status} {detail}"),
-            None => format!("launch-failed status={status}"),
-        };
-        if pgid_end(pgid).is_some() {
-            let noted = ended_record(record, "setsid", status, None, line);
-            return Launched {
-                read: SidecarRead::Failed {
-                    status: status.to_owned(),
-                },
-                line: line.to_owned(),
-                failed: Some(format!("{cause}{noted}")),
-            };
-        }
-        let handle = match leader {
-            Some(identity) => JobHandle::Group(identity),
-            None => JobHandle::Pgid(pgid),
-        };
-        let noted = ended_record(record, "setsid", "unwound-failed", Some(&handle), line);
-        Launched {
-            read: SidecarRead::Present(handle),
-            line: line.to_owned(),
-            failed: Some(format!("{cause} group=unwound-failed{noted}")),
-        }
+            None,
+            self.clock,
+        ))
     }
 
     /// Read the launcher's record into the set: the sidecar obligation is
@@ -2353,10 +2503,16 @@ mod tests {
             start: "ticks:1".to_owned(),
         };
         let asked = std::time::Instant::now();
-        operation.end_child(&mut child, Some(&not_its_start));
+        Launcher {
+            clock: operation.clock,
+        }
+        .end_child(&mut child, Some(&not_its_start));
         let waited = asked.elapsed();
         let running = matches!(process::identity(pid), Reading::Live(_));
-        let launched = operation.unwound(
+        let launched = Launcher {
+            clock: operation.clock,
+        }
+        .unwound(
             &record,
             "runner=setsid reason=fixture",
             "record-unwritable",

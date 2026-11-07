@@ -6276,6 +6276,48 @@ fn a_request_falls_back_with_its_cause() {
     }
 }
 
+/// gh's own status line decides a refused request, never a status the
+/// server's message quotes: a 500 whose message reads `upstream (HTTP
+/// 422)`, which gh 2.103.3 prints as `gh: upstream (HTTP 422) (HTTP 500)`,
+/// may have reached GitHub, so the request stands and the next call sends
+/// it once more; a 404 followed by gh's scope hint, and a bare `gh: HTTP
+/// 404`, are GitHub's refusals and fall back.
+#[test]
+fn only_ghs_own_status_line_reads_a_request_as_refused() {
+    let post = format!("POST repos/{REPO}/pulls/{PR}/requested_reviewers");
+    let mut gh = Github::review_world();
+    gh.refused(&post, 500, "upstream (HTTP 422)");
+    let lost = ok_result(&gh.review(false, &[]));
+    assert_eq!(lost["status"], "unreadable", "{lost}");
+    assert_eq!(lost["reason"], "request-review-read-failed", "{lost}");
+    assert_eq!(gh.head_record()["request"]["outcome"], "requested");
+    gh.answer(&post, json!({}));
+    let next = ok_result(&gh.review(false, &[]));
+    assert_eq!(next["request"]["outcome"], "requested", "{next}");
+    assert_eq!(gh.requests(), 2, "{:?}", gh.log());
+
+    for (stdout, stderr) in [
+        (
+            "{\"message\":\"Not Found\"}",
+            "gh: Not Found (HTTP 404)\ngh: This API operation needs the \"repo\" scope. To request it, run:  gh auth refresh -h github.com -s repo",
+        ),
+        ("", "gh: HTTP 404"),
+    ] {
+        let mut gh = Github::review_world();
+        gh.replies.insert(
+            post.clone(),
+            json!({"text": stdout, "stderr": stderr, "exit": 1}),
+        );
+        let result = ok_result(&gh.review(false, &[]));
+        assert_eq!(
+            result["request"]["outcome"], "fallback",
+            "{stderr}: {result}"
+        );
+        assert_eq!(result["request"]["cause"], "refused", "{stderr}: {result}");
+        assert_eq!(gh.requests(), 1, "{stderr}: {:?}", gh.log());
+    }
+}
+
 /// With `mark_ready`, an open draft is marked ready, the mark recorded
 /// under the head before the act and the flag read after, and the request
 /// then goes out on the confirmed head.

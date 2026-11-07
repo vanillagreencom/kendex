@@ -554,8 +554,7 @@ job_unit_pid_is() { # PID ARGV_GLOB
   [[ "$args" == $2 ]] || return 1
 }
 
-# Each `|| return 1` line below is a rule under which the group is left alone;
-# dev_validate_run.sh holds one planted record and one control per such line.
+# Each `|| return 1` line below is a rule under which the group is left alone.
 job_unit_kill_group() { # PID ARGV_GLOB
   local pid="$1" pgid is=0
   JOB_UNIT_ERROR="" JOB_UNIT_ERROR_KEY=""

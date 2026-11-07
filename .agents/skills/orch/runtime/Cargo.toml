@@ -47,6 +47,10 @@ name = "effects"
 path = "../tests/rust/effects.rs"
 
 [[test]]
+name = "approve"
+path = "../tests/rust/approve.rs"
+
+[[test]]
 name = "item"
 path = "../tests/rust/item.rs"
 
@@ -113,6 +117,10 @@ path = "../tests/rust/walk.rs"
 [[test]]
 name = "open_terminal"
 path = "../tests/rust/open_terminal.rs"
+
+[[test]]
+name = "reconcile_items"
+path = "../tests/rust/reconcile_items.rs"
 
 [[test]]
 name = "state"

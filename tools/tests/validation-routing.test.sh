@@ -65,7 +65,7 @@ for mode in full ci; do
 done
 
 # A committed documentation change must reach its reader when CI refuses
-# coverage. Passing HEAD as the base would hide the failing reader.
+# coverage. The merge base includes the committed reader failure.
 printf 'tmp/\n' > "$R/.gitignore"
 git -C "$R" add -A
 git -C "$R" commit -q -m before-document
@@ -92,21 +92,14 @@ READER_LOG="$TMP/reader-log"
 export READER_LOG
 branch="$("$REPO/skills/orch/scripts/resolve-base-branch" "$R")"
 merge_base="$(git -C "$R" merge-base HEAD "origin/$branch")"
-for base in "$merge_base" HEAD; do
-  : > "$ROUTE_LOG"
-  : > "$READER_LOG"
-  RC=0
-  OUT="$(cd "$R" && env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_RANGE_CMD -u DEV_VALIDATE_SELECTION_CMD \
-    PATH="$R/bin:$PATH" "$REPO/skills/orch/scripts/dev-validate-run" --worktree "$R" --validate-mode ci --base "$base" --poll 1 2>&1)" || RC=$?
-  if [ "$base" = HEAD ]; then
-    [ "$RC" -eq 0 ] && [ ! -s "$READER_LOG" ] && [[ $OUT == *validate=pass* ]] \
-      && ok 'control: HEAD hides the committed document failure' || bad 'control: HEAD hides the committed document failure' "$OUT"
-  else
-    [ "$RC" -ne 0 ] && [ "$(cat "$READER_LOG")" = reader ] && grep -qF -- "--range $BASE" "$ROUTE_LOG" \
-      && [[ $OUT == *validate=FAILING* ]] \
-      && ok 'CI fallback reaches the failing committed document reader' || bad 'CI fallback reaches the failing committed document reader' "$OUT"
-  fi
-done
+: > "$ROUTE_LOG"
+: > "$READER_LOG"
+RC=0
+OUT="$(cd "$R" && env -u DEV_VALIDATE_CMD -u DEV_VALIDATE_RANGE_CMD -u DEV_VALIDATE_SELECTION_CMD \
+  PATH="$R/bin:$PATH" "$REPO/skills/orch/scripts/dev-validate-run" --worktree "$R" --validate-mode ci --base "$merge_base" --poll 1 2>&1)" || RC=$?
+[ "$RC" -ne 0 ] && [ "$(cat "$READER_LOG")" = reader ] && grep -qF -- "--range $BASE" "$ROUTE_LOG" \
+  && [[ $OUT == *validate=FAILING* ]] \
+  && ok 'CI fallback reaches the failing committed document reader' || bad 'CI fallback reaches the failing committed document reader' "$OUT"
 
 # Private settings regress each executable route. The same assertions redden.
 for setting in DEV_VALIDATE_CMD DEV_VALIDATE_SELECTION_CMD; do

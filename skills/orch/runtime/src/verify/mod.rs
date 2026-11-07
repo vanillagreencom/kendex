@@ -44,6 +44,7 @@ pub mod review;
 mod selection;
 pub mod wire;
 
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -575,15 +576,18 @@ impl<'a> Budget<'a> {
 /// `gh` through agent-runtime's one process runner: `program`, a bare
 /// `gh` resolved on this process's PATH, or the path the caller already
 /// runs `gh` by, with this process's environment, so the caller's GitHub
-/// authentication is the one used. One call is the arguments after the
-/// program, as `gh api PATH`, the GraphQL form `gh api graphql -f query=…`
-/// or `gh pr view N`, answered with what it printed and whether it exited
-/// zero (`Answer`). The runner's operation word is the call's first
-/// argument, `api` or `pr`. A handle built `within` a budget refuses a
-/// call past it and bounds each call by what is left.
+/// authentication is the one used; a handle built `with_env` adds its
+/// variables, so a credential the caller loaded is used instead. One call
+/// is the arguments after the program, as `gh api PATH`, the GraphQL form
+/// `gh api graphql -f query=…` or `gh pr view N`, answered with what it
+/// printed and whether it exited zero (`Answer`). The runner's operation
+/// word is the call's first argument, `api` or `pr`. A handle built
+/// `within` a budget refuses a call past it and bounds each call by what
+/// is left.
 pub(crate) struct Gh<'a> {
     program: PathBuf,
     budget: Option<Budget<'a>>,
+    env: Vec<(String, OsString)>,
 }
 
 impl<'a> Gh<'a> {
@@ -591,6 +595,7 @@ impl<'a> Gh<'a> {
         Gh {
             program: program.to_path_buf(),
             budget: None,
+            env: Vec::new(),
         }
     }
 
@@ -598,6 +603,15 @@ impl<'a> Gh<'a> {
         Gh {
             program: program.to_path_buf(),
             budget: Some(budget),
+            env: Vec::new(),
+        }
+    }
+
+    pub(crate) fn with_env(program: &Path, env: Vec<(String, OsString)>) -> Gh<'a> {
+        Gh {
+            program: program.to_path_buf(),
+            budget: None,
+            env,
         }
     }
 
@@ -667,7 +681,24 @@ impl<'a> Gh<'a> {
                 left => GH_TIMEOUT.min(left),
             },
         };
-        let output = host::run_tagged("verify", "gh", &self.program, operation, args, timeout);
+        let env: Vec<(&str, &OsStr)> = self
+            .env
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_os_str()))
+            .collect();
+        let place = host::Place {
+            cwd: None,
+            env: &env,
+        };
+        let output = host::run_tagged_in(
+            "verify",
+            "gh",
+            &self.program,
+            operation,
+            args,
+            place,
+            timeout,
+        );
         // An answer that arrived past the budget is no answer: the wait it
         // served has moved on.
         if self
