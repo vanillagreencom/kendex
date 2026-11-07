@@ -12,6 +12,7 @@ import re
 import select
 import shlex
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -47,6 +48,10 @@ Ownership = namedtuple("Ownership", "kind mark binding")
 class Refusal(Exception):
     def __init__(self, reason, detail="", state="blocked"):
         self.reason, self.detail, self.state = reason, detail, state
+
+
+class Terminated(Exception):
+    """A signal stopped the worker; the message names it."""
 
 
 def clean(value):
@@ -134,6 +139,7 @@ class Session:
         self.deadline = time.monotonic() + CALL_SECONDS
         self.env = environment() if env is None else env
         self.emitted = False
+        self.terminated = None
 
     def run(self, argv, *, input=None, check=True, env=None):
         self.operation = argv[3] if argv[0] == "tmux" else argv[2] if argv[0] == BASH else Path(argv[0]).name
@@ -149,7 +155,9 @@ class Session:
         return result
 
     def failure_log(self, key, failure):
-        frame = next(frame for frame in reversed(traceback.extract_tb(failure.__traceback__)) if frame.filename == __file__)
+        # A signal's own handler frame names no operation: the frame it interrupted does.
+        frame = next(frame for frame in reversed(traceback.extract_tb(failure.__traceback__))
+                     if frame.filename == __file__ and frame.name != "_terminate")
         operation = self.operation if frame.name == "run" else frame.line or frame.name
         print(f"jarvis-session: {key} operation={json.dumps(operation)} cause={type(failure).__name__}"
               + (f" errno={errno.errorcode.get(failure.errno, failure.errno)}" if isinstance(failure, OSError) else "")
@@ -320,6 +328,8 @@ os.execvpe(argv[0],argv,env)
                             state, reason, detail = "running", "existing", ""
                             view = record["predecessor"]
                             terminal = self.terminal(view)
+                        elif self.successor_adopts(record):
+                            state, reason = "handing-over", "succession"
                         else:
                             state, reason, detail = "failed", "handover-failed", "Retry jarvis-session succeed for this home."
         return {"v": 1, "state": state, "reason": reason,
@@ -422,6 +432,15 @@ os.execvpe(argv[0],argv,env)
         if result.returncode > 1:
             raise Refusal("record-unreadable")
         return result.returncode == 0
+
+    def successor_adopts(self, record):
+        # The one rule that a transfer is the successor runner's to finish,
+        # read by status, a succeed retry, the runner and an ending worker: a
+        # worker that ended without the failure path that drops its identity,
+        # a live successor pane and an ended predecessor terminal. The runner
+        # starts the transfer once the predecessor's process, already stopped
+        # with its terminal, has exited (successor).
+        return "worker" in record and bool(self.terminal(record)) and not self.terminal(record.get("predecessor"))
 
     def confirmed_history(self, record):
         if not record:
@@ -626,7 +645,7 @@ os.execvpe(argv[0],argv,env)
             if record.get("intent") == "succeed" and transfer.get("phase") != "complete":
                 spent_account = transfer.get("spent_account", "")
             if record.get("intent") == "succeed" and record["state"] != "running":
-                if self.worker_live(record):
+                if self.worker_live(record) or self.successor_adopts(record):
                     return self.answer(record), 0
                 # End an abandoned waiting or native successor before retrying.
                 # Its predecessor remains the only possible controller.
@@ -693,16 +712,35 @@ os.execvpe(argv[0],argv,env)
         return self.answer(next_record), 0
 
     def successor(self, generation):
+        # The native session draws this pane, so the runner's diagnostics
+        # join the worker's in the session log; the native child keeps the
+        # pane's own descriptors.
+        sys.stdout = sys.stderr = (self.path.parent / "session.log").open("a", buffering=1)
+        # The pane's own binding is the native session's alone: a runner that
+        # takes the transfer writes into this pane as the worker does, from
+        # outside it (pane-write refuses its own pane).
+        native_env = dict(self.env, **{key: os.environ[key] for key in ("TMUX", "TMUX_PANE") if key in os.environ})
+        self.env = {key: value for key, value in self.env.items() if key not in ("TMUX", "TMUX_PANE")}
+        identity = json.loads(self.backend("process", os.getpid()).stdout)
+        owner = None
         # This pane waits on the same record. It cannot start native work
-        # until the worker has saved the predecessor's end.
+        # until the predecessor has ended.
         while time.monotonic() < self.deadline:
             with self.locked():
                 record = self.read()
                 if not self._current_request(record, generation, "succeed"):
                     return
+                phase = record["transfer"]["phase"]
                 if not self.worker_live(record):
-                    return
-                if record["transfer"]["phase"] == "predecessor-ended":
+                    # Any other end of the worker leaves the predecessor in
+                    # control, or a failure the worker already wrote.
+                    if not self.successor_adopts(record):
+                        return
+                    # No native session starts beside the predecessor's.
+                    process = record["predecessor"].get("process")
+                    if not (process and self.worker_live({"worker": process})):
+                        owner = self._take_transfer(record, identity)
+                if owner or phase not in ("saved", "waiting"):
                     command = record["launch"]["command"]
                     break
             time.sleep(0.2)
@@ -710,21 +748,26 @@ os.execvpe(argv[0],argv,env)
             return
         # The waiting process is already inside its new pane. The native
         # identity hook needs that pane's tmux binding, not the caller's.
-        native_env = dict(self.env, **{key: os.environ[key] for key in ("TMUX", "TMUX_PANE") if key in os.environ})
-        identity = json.loads(self.backend("process", os.getpid()).stdout)
         native = subprocess.Popen([BASH, "--noprofile", "--norc", "-c", command + '; result=$?; exit "$result"'],
                                   cwd=self.home, env=native_env)
         try:
-            while native.poll() is None:
+            while not owner and native.poll() is None:
                 record = self.read()
                 if record["generation"] != generation or record.get("intent") != "succeed" or record["transfer"]["phase"] == "complete":
                     return native.wait()
                 if not self.worker_live(record):
-                    if self.read() != record:
-                        continue
+                    with self.locked():
+                        if self.read() != record:
+                            continue
+                        if self.successor_adopts(record):
+                            owner = self._take_transfer(record, identity)
+                            continue
+                    # The worker's failure path ended this transfer.
                     self.backend("stop-process", identity["pid"], identity["started_at"], record["harness"])
                     return
                 time.sleep(0.2)
+            if owner:
+                return self._finish_transfer(native, generation, owner)
         finally:
             if native.poll() is None:
                 native.terminate()
@@ -734,6 +777,60 @@ os.execvpe(argv[0],argv,env)
                     native.kill()
                     native.wait(timeout=2)
         return native.returncode
+
+    def _take_transfer(self, record, identity):
+        # The worker ended after the predecessor did, so this runner finishes
+        # the transfer in its place: no host stop of the caller's scope or
+        # process tree can then end a successor. From this write, status,
+        # Start and a succeed retry read the runner as the live worker. The
+        # caller holds the lock. A worker that caught its stop signal
+        # recorded the cause; any other end leaves it unknown. A worker that
+        # ended between the brief's paste and its record leaves the brief
+        # unrecorded, and this runner pastes it again: a repeated brief costs
+        # the session one turn, a brief taken as delivered but never pasted
+        # fails the transfer at its bound.
+        ended = record.get("worker_ended") or {"pid": record["worker"]["pid"], "cause": "unknown"}
+        if record["transfer"]["phase"] == "waiting":
+            record["transfer"]["phase"] = "predecessor-ended"
+            record.update(state="starting", reason="launching")
+        record.update(worker=identity, worker_ended=ended)
+        # The runner takes the one launch bound a worker has.
+        self.deadline = time.monotonic() + CALL_SECONDS
+        self.write(record)
+        print("jarvis-session: transfer=adopted generation=" + str(record["generation"])
+              + " worker=" + str(ended["pid"]) + " cause=" + ended["cause"], flush=True)
+        return record["account_var"], record["launch"]["kickoff"]
+
+    def _finish_transfer(self, native, generation, owner):
+        # The runner confirms the Start it took as the worker would. Its
+        # failure ends the transfer as the worker's own failure after the
+        # predecessor's end does, and this pane closes once the runner returns.
+        try:
+            while native.poll() is None:
+                if self._start_pass("succeed", generation, *owner):
+                    return native.wait()
+                time.sleep(0.2)
+            raise Refusal("launch-failed", "The Jarvis session ended before it accepted its Start procedure.", "failed")
+        except (Refusal, OSError, ValueError, subprocess.TimeoutExpired) as failure:
+            self.failure_log("transfer-failed", failure)
+            self.deadline = time.monotonic() + CALL_SECONDS
+            with self.locked():
+                record = self.read()
+                if self._current_request(record, generation, "succeed"):
+                    self._fail_transfer(record)
+            return 1
+
+    def _fail_transfer(self, record):
+        # A succession that fails after its predecessor ended leaves no
+        # controller. The caller holds the lock and has closed every
+        # successor window but the one it runs in, a runner's, which the
+        # record releases first and which then ends with the task windows.
+        window = (record.get("terminal") or {}).get("window")
+        record.update(state="failed", reason="handover-failed", history=None, terminal=None,
+                      detail="Retry jarvis-session succeed for this home. Check the session log if it fails again.")
+        record.pop("worker", None)
+        self.write(record)
+        self.end_task_session(window)
 
     def stop(self, origin):
         with self.locked():
@@ -766,7 +863,7 @@ os.execvpe(argv[0],argv,env)
             self.write(record)
             return self.answer(record), 0
 
-    def end_task_session(self):
+    def end_task_session(self, ending=None):
         # Task windows open in the controller's session, so once no controller
         # remains they alone hold its name against the next Start. One server
         # command ends the session only while every window in it holds a pane
@@ -775,9 +872,13 @@ os.execvpe(argv[0],argv,env)
         # window, such as a Pi pane agent's, carries no mark of its own.
         # A session left standing refuses that Start with name-conflict, so a
         # failure here is logged and never fails the controller's own end.
+        # ENDING names the window of a controller that ends with the session.
         if not shutil.which("tmux"):
             return
-        unmarked = "#{W:#{?#{P:#{?#{@jarvis-task},x,}},,x}}"
+        marked = "#{?#{P:#{?#{@jarvis-task},x,}},,x}"
+        if ending:
+            marked = "#{?#{==:#{window_id}," + ending + "},," + marked + "}"
+        unmarked = "#{W:" + marked + "}"
         try:
             self.tmux("if-shell", "-F", "-t", "=jarvis:", "#{==:" + unmarked + ",}", "kill-session -t =jarvis", check=False)
         except (OSError, subprocess.TimeoutExpired) as failure:
@@ -828,7 +929,98 @@ os.execvpe(argv[0],argv,env)
         elif not window:
             self.end_task_session()
 
+    def _start_pass(self, verb, generation, var, kickoff):
+        # One pass of a launch's confirmation, True once the request needs no
+        # other: the worker's, or a successor runner's that took the transfer.
+        # One bound covers native identity and the taking of the Start brief.
+        # Backend operations share it; inspection never renews the launch.
+        # The pane is read outside the record lock, which holds only each
+        # read, decision and write, the brief's paste among them: a native
+        # hook's stamp waits on that lock for SESSION_ROWS_WAIT
+        # (orch session-rows.sh), 2 s, far above that hold.
+        if time.monotonic() >= self.deadline:
+            raise Refusal("launch-failed", "Jarvis did not complete Start within its launch bound.", "failed")
+        record = self.read()
+        if not self._current_request(record, generation, verb):
+            return True
+        if not self.terminal(record):
+            raise Refusal("launch-failed", "The Jarvis session ended before it accepted its Start procedure.", "failed")
+        launch, terminal = record["launch"], record["terminal"]
+        identity = record.get("pending") or {}
+        # The native hook's stamp at the first tool call, or Claude
+        # Code turn end, after the brief: the session's own word that
+        # it took it. The pane is still read, so a sign-in wall, a
+        # trust question or another account refuses the Start before
+        # either stamp counts.
+        taken = record.get("brief_delivered") and identity.get("brief_taken")
+        observed = self.backend(
+            "inspect", terminal["server"], terminal["pane"], record["harness"], var, record["account"],
+            "confirmed" if identity.get("started_at") else "pending", identity.get("observed_account", ""),
+            "delivered" if record.get("brief_delivered") else "undelivered").stdout
+        observed, _, dialog = observed.partition("\n")
+        with self.locked():
+            inspected = record
+            record = self.read()
+            if not self._current_request(record, generation, verb):
+                return True
+            # The pane answered for the record it was read against.
+            if any(record.get(key) != inspected.get(key) for key in ("pending", "brief_delivered")):
+                return False
+            if observed == "auth":
+                raise Refusal("sign-in-required", "Sign in to " + record["harness"] + " and retry Start.")
+            if observed == "wrong-account":
+                raise Refusal("selection-conflict")
+            if observed == "trust":
+                raise Refusal("trust-required", dialog_question(dialog))
+            if identity.get("native_session_id") and identity.get("started_at") and observed in ("idle", "working"):
+                if verb == "succeed" and not record.get("identity_verified"):
+                    record["transfer"]["phase"] = "confirmed"
+                record["identity_verified"] = True
+                record["history"] = self.confirmed_history(record)
+                self.write(record)
+            # Copilot CLI and Codex run their kickoff turn first, and
+            # the pane cannot tell that turn's first frames, or
+            # Copilot's composer during it, from its end: their brief
+            # waits for the native turn-end hook's kickoff_ended stamp
+            # (orch session-rows.sh), after identity was verified. A
+            # kickoff turn's working pane is no turn on the brief, so
+            # only the brief-taken stamp then says it took the brief.
+            if identity.get("native_session_id") and identity.get("started_at") and not record.get("brief_delivered") and ((record.get("identity_verified") and identity.get("kickoff_ended")) if kickoff else observed in ("idle", "working")):
+                prompt = self.path.parent / ("start-" + str(generation) + ".txt")
+                stream = prompt.open("x")
+                try:
+                    with stream:
+                        stream.write(launch["brief"])
+                    self.backend("deliver", terminal["server"], terminal["pane"], record["harness"], prompt)
+                finally:
+                    prompt.unlink()
+                record["brief_delivered"] = True
+                if verb == "succeed":
+                    record["transfer"]["phase"] = "brief-delivered"
+                self.write(record)
+            elif record.get("brief_delivered") and (taken or (observed == "working" and not kickoff)):
+                record.update(state="running", reason=launch["reason"], detail="")
+                if verb == "succeed":
+                    record["transfer"]["phase"] = "complete"
+                record.pop("predecessor", None)
+                record.pop("launch", None)
+                record.pop("controller_state", None)
+                self.write(record)
+                return True
+        return False
+
+    def _terminate(self, signum, frame):
+        # A host stop of the caller's scope or process tree signals the
+        # worker; the failure path records that cause before it exits.
+        if self.terminated is None:
+            self.terminated = signal.Signals(signum).name
+            raise Terminated(self.terminated)
+
     def worker(self, verb, generation):
+        if verb == "succeed":
+            # A Start worker's abrupt end leaves its launch for the next
+            # Start to acquire, so only succession records the stop.
+            signal.signal(signal.SIGTERM, self._terminate)
         self.deadline = time.monotonic() + CALL_SECONDS
         acquired = None
         transferred = False
@@ -899,7 +1091,7 @@ os.execvpe(argv[0],argv,env)
                 if succeeding:
                     process = self.tmux("display-message", "-p", "-t", pane, "#{pane_pid}").stdout.strip()
                     record["process"] = json.loads(self.backend("process", process).stdout)
-                    record["launch"]["command"] = prepared["line"]
+                    record["launch"].update(command=prepared["line"], kickoff=prepared["kickoff"])
                     record["transfer"]["phase"] = "waiting"
                 self.write(record)
                 transferred = True
@@ -914,83 +1106,9 @@ os.execvpe(argv[0],argv,env)
                     process = self.tmux("display-message", "-p", "-t", pane, "#{pane_pid}").stdout.strip()
                     record["process"] = json.loads(self.backend("process", process).stdout)
                     self.write(record)
-            # One bound covers native identity and the taking of the Start brief.
-            # Backend operations share it; inspection never renews the launch.
-            # The pane is read outside the record lock, which holds only each
-            # read, decision and write, the brief's paste among them: a native
-            # hook's stamp waits on that lock for SESSION_ROWS_WAIT
-            # (orch session-rows.sh), 2 s, far above that hold.
-            while True:
-                if time.monotonic() >= self.deadline:
-                    raise Refusal("launch-failed", "Jarvis did not complete Start within its launch bound.", "failed")
-                record = self.read()
-                if not self._current_request(record, generation, verb):
-                    return
-                if not self.terminal(record):
-                    raise Refusal("launch-failed", "The Jarvis session ended before it accepted its Start procedure.", "failed")
-                identity = record.get("pending") or {}
-                # The native hook's stamp at the first tool call, or Claude
-                # Code turn end, after the brief: the session's own word that
-                # it took it. The pane is still read, so a sign-in wall, a
-                # trust question or another account refuses the Start before
-                # either stamp counts.
-                taken = record.get("brief_delivered") and identity.get("brief_taken")
-                observed = self.backend(
-                    "inspect", socket, pane, record["harness"], prepared["var"], record["account"],
-                    "confirmed" if identity.get("started_at") else "pending", identity.get("observed_account", ""),
-                    "delivered" if record.get("brief_delivered") else "undelivered").stdout
-                observed, _, dialog = observed.partition("\n")
-                with self.locked():
-                    inspected = record
-                    record = self.read()
-                    if not self._current_request(record, generation, verb):
-                        return
-                    # The pane answered for the record it was read against.
-                    if any(record.get(key) != inspected.get(key) for key in ("pending", "brief_delivered")):
-                        continue
-                    if observed == "auth":
-                        raise Refusal("sign-in-required", "Sign in to " + record["harness"] + " and retry Start.")
-                    if observed == "wrong-account":
-                        raise Refusal("selection-conflict")
-                    if observed == "trust":
-                        raise Refusal("trust-required", dialog_question(dialog))
-                    if identity.get("native_session_id") and identity.get("started_at") and observed in ("idle", "working"):
-                        if succeeding and not record.get("identity_verified"):
-                            record["transfer"]["phase"] = "confirmed"
-                        record["identity_verified"] = True
-                        record["history"] = self.confirmed_history(record)
-                        self.write(record)
-                    # Copilot CLI and Codex run their kickoff turn first, and
-                    # the pane cannot tell that turn's first frames, or
-                    # Copilot's composer during it, from its end: their brief
-                    # waits for the native turn-end hook's kickoff_ended stamp
-                    # (orch session-rows.sh), after identity was verified. A
-                    # kickoff turn's working pane is no turn on the brief, so
-                    # only the brief-taken stamp then says it took the brief.
-                    if identity.get("native_session_id") and identity.get("started_at") and not record.get("brief_delivered") and ((record.get("identity_verified") and identity.get("kickoff_ended")) if prepared["kickoff"] else observed in ("idle", "working")):
-                        prompt = self.path.parent / ("start-" + str(generation) + ".txt")
-                        stream = prompt.open("x")
-                        try:
-                            with stream:
-                                stream.write(launch["brief"])
-                            self.backend("deliver", socket, pane, record["harness"], prompt)
-                        finally:
-                            prompt.unlink()
-                        record["brief_delivered"] = True
-                        if succeeding:
-                            record["transfer"]["phase"] = "brief-delivered"
-                        self.write(record)
-                    elif record.get("brief_delivered") and (taken or (observed == "working" and not prepared["kickoff"])):
-                        record.update(state="running", reason=launch["reason"], detail="")
-                        if succeeding:
-                            record["transfer"]["phase"] = "complete"
-                        record.pop("predecessor", None)
-                        record.pop("launch", None)
-                        record.pop("controller_state", None)
-                        self.write(record)
-                        return
+            while not self._start_pass(verb, generation, prepared["var"], prepared["kickoff"]):
                 time.sleep(0.2)
-        except (Refusal, OSError, ValueError, subprocess.TimeoutExpired) as failure:
+        except (Refusal, OSError, ValueError, subprocess.TimeoutExpired, Terminated) as failure:
             self.failure_log("worker-failed", failure)
             if verb == "start" and (isinstance(failure, subprocess.TimeoutExpired) or time.monotonic() >= self.deadline):
                 failure = Refusal("launch-failed", "Jarvis did not complete Start within its launch bound.", "failed")
@@ -1003,6 +1121,13 @@ os.execvpe(argv[0],argv,env)
                         self.failure_log("cleanup-failed", teardown)
                 record = self.read()
                 if not self._current_request(record, generation, verb):
+                    raise
+                ended = {"pid": os.getpid(), "cause": self.terminated} if self.terminated else None
+                if ended and self.successor_adopts(record):
+                    # The successor's runner takes the transfer once this
+                    # worker exits.
+                    record["worker_ended"] = ended
+                    self.write(record)
                     raise
                 record["history"] = self.confirmed_history(record)
                 if verb in ("start", "succeed") and (not acquired or transferred):
@@ -1020,7 +1145,7 @@ os.execvpe(argv[0],argv,env)
                 live = record if self.terminal(record) else predecessor if self.terminal(predecessor) else None
                 if live and self.ownership(live).kind != "adopted":
                     record = self.retain_live(record, live)
-                elif not live:
+                elif not live and verb != "succeed":
                     self.end_task_session()
                     if verb == "stop":
                         record.update(state="off" if record["app_off"] else "stopped",
@@ -1030,11 +1155,13 @@ os.execvpe(argv[0],argv,env)
                                       reason=failure.reason if isinstance(failure, Refusal) else "launch-failed",
                                       detail=failure.detail if isinstance(failure, Refusal) else "Jarvis could not start. Check the session log.",
                                       terminal=None)
-                    if verb == "succeed":
-                        record.update(state="failed", reason="handover-failed", history=None,
-                                      detail="Retry jarvis-session succeed for this home. Check the session log if it fails again.")
-                record.pop("worker", None)
-                self.write(record)
+                if ended:
+                    record["worker_ended"] = ended
+                if not live and verb == "succeed":
+                    self._fail_transfer(record)
+                else:
+                    record.pop("worker", None)
+                    self.write(record)
             raise
 
 
