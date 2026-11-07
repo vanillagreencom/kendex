@@ -430,10 +430,7 @@ def forward_root(citation: Dict[str, Optional[str]]) -> str:
     """The top-level post a forwarded directive's answers thread under, for
     a person: the computer, the request time in each reader's zone, how
     forwarding was confirmed and the request's words, so the owner can catch
-    a wrong one. The unproved caller chooses the words and the request, so
-    neither leaves its place in the post: the words stay one line as their
-    ASCII JSON spelling, and every line Markdown sees in the request stays
-    quoted. A confirmation proves no caller, so the post asks the owner to
+    a wrong one. A confirmation proves no caller, so the post asks the owner to
     disown a request that is not theirs. References, the unproved-caller
     framing and exact stamps stay in the directive the main reads."""
     words = json.dumps(citation["words"], ensure_ascii=True)
