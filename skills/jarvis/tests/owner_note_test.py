@@ -61,7 +61,7 @@ class OwnerNote(MailWorld):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), {
             "destination": destination, "host": destination[4:] if destination.startswith("ssh:") else None,
-            "root": str(root), "mailbox": str(root / ".agents/skills/mailbox/scripts/lane-mail")})
+            "user": None, "root": str(root), "mailbox": str(root / ".agents/skills/mailbox/scripts/lane-mail")})
 
     def test_routes(self):
         # Resolution names the first registered route; sending alone can fall
@@ -107,6 +107,71 @@ class OwnerNote(MailWorld):
                     self.assertEqual(set(calls), {"host.example"})
                 else:
                     self.assertEqual(calls, [])
+
+    def control_user_world(self):
+        """The control host as its SSH user, holding a clone whose recorded overseer
+        stopped, and as the `overseer` account the shim sudo reaches, holding the clone
+        its live overseer reads; returns (base, ssh-user clone, overseer clone, env)."""
+        base, sides = self.world("control-user", [("app", True)], [])
+        account = base / "overseer-account"
+        clone = make_project(account / "dev/app")
+        (account / "tmp").mkdir()
+        (account / "registry").write_text(str(clone) + "\n")
+        # A login shell may reset PATH; the account's own profile puts its
+        # tools on it, as a real host account's does for kendex.
+        (account / ".bash_profile").write_text('PATH=%s:"$PATH"\n' % self.bin)
+        self.executable("sudo", '#!/bin/sh\n'
+                        '[ "$1 $2 $3 $5" = "-n -H -u --" ] || { echo "sudo: unexpected $*" >&2; exit 97; }\n'
+                        '[ "$4" = overseer ] || { echo "sudo: unknown user $4" >&2; exit 1; }\n'
+                        'shift 5\ncd /\n'
+                        'HOME="$ACCOUNT" REGISTRY="$ACCOUNT/registry" TMPDIR="$ACCOUNT/tmp" exec "$@"\n')
+        env = dict(self.env, SSH_LOG=str(base / "ssh.log"), REMOTE_HOME=str(base / "remote-home"),
+                   REMOTE_REGISTRY=str(base / "remote-registry"), REMOTE_TMP=str(base / "remote-tmp"),
+                   ACCOUNT=str(account), JARVIS_CONTROL_HOST="host.example", JARVIS_CONTROL_USER="overseer")
+        return base, sides["remote"][0], clone, env
+
+    def test_control_user(self):
+        # A control host whose overseers run as another account: listing and
+        # sending run there as that account, never into the SSH user's clone.
+        base, stale, clone, env = self.control_user_world()
+        result = self.command([BASH, self.scripts / "owner-note", "app", self.note], self.home, env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([(row["kind"], row["from"], row["text"]) for row in self.box(clone, "to-lane")],
+                         [("directive", "owner", NOTE.rstrip("\n") + "\n\n" + FOOTER)])
+        self.assertEqual(self.box(stale, "to-lane"), [])
+        self.assertEqual(list((base / "overseer-account/tmp").iterdir()), [])
+        resolution = self.command([BASH, self.scripts / "owner-note", "--resolve", "app"], self.home, env)
+        self.assertEqual(resolution.returncode, 0, resolution.stderr)
+        self.assertEqual(json.loads(resolution.stdout), {
+            "destination": "ssh:host.example", "host": "host.example", "user": "overseer", "root": str(clone),
+            "mailbox": str(clone / ".agents/skills/mailbox/scripts/lane-mail")})
+
+    def test_control_user_instrument_control(self):
+        # Listing and sending as the SSH user land the note in the clone whose
+        # recorded overseer stopped, and must fail test_control_user.
+        with tempfile.TemporaryDirectory() as folder:
+            copy = Path(folder) / "jarvis/scripts"
+            shutil.copytree(SCRIPTS, copy)
+            for name in ("mailbox", "orch"):
+                Path(folder, name).symlink_to(REPO / "skills" / name, target_is_directory=True)
+            path = copy / "lib/watch.py"
+            source = path.read_text()
+            old = "    if destination.user:\n"
+            self.assertEqual(source.count(old), 1)
+            mutant = source.replace(old, "    if False:\n")
+            self.assertNotEqual(source, mutant)
+            compile(mutant, str(path), "exec")
+            path.write_text(mutant)
+            case = OwnerNote(methodName="test_control_user")
+            case.scripts = copy
+            case.setUp()
+            try:
+                with self.assertRaises(AssertionError):
+                    case.test_control_user()
+                written = case.box(case.root / "control-user/remote/app", "to-lane")
+                self.assertEqual([row["text"] for row in written], [NOTE.rstrip("\n") + "\n\n" + FOOTER])
+            finally:
+                case.doCleanups()
 
     def test_satellite_instructs_no_overseer(self):
         base, sides = self.world("satellite", [("app", True)], [("app", True)])
@@ -227,7 +292,7 @@ class OwnerNote(MailWorld):
             source = path.read_text()
             old = '            print(json.dumps({"destination": target.key'
             self.assertEqual(source.count(old), 1)
-            mutant = source.replace(old, '            send(args.bash, "host", target.host, root, "unwanted directive")\n' + old)
+            mutant = source.replace(old, '            send(args.bash, "host", target, root, "unwanted directive")\n' + old)
             self.assertNotEqual(source, mutant)
             compile(mutant, str(path), "exec")
             path.write_text(mutant)

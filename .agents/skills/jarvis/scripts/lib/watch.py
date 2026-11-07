@@ -29,7 +29,9 @@ FORWARD_EVERY_SECS = 60
 # A machine's role from JARVIS_MAIN_HOST: kind main, satellite or invalid. An
 # invalid value is still a satellite, so a typo never makes a second main.
 Role = namedtuple("Role", "kind dest home")
-Destination = namedtuple("Destination", "key host")
+# user is the account owner-note discovers and sends as on that host, None
+# for the SSH user.
+Destination = namedtuple("Destination", "key host user")
 
 
 class DestinationRefusal(Exception):
@@ -38,7 +40,7 @@ class DestinationRefusal(Exception):
 
 def destinations(settings):
     """The main's declared machines; a satellite never discovers fleet roots."""
-    local = Destination("local", None)
+    local = Destination("local", None, None)
     if role(settings).kind != "main":
         return (local,)
     hosts = []
@@ -50,12 +52,24 @@ def destinations(settings):
             raise DestinationRefusal("setting-invalid", "JARVIS_REMOTE_HOSTS", host)
         if host not in hosts:
             hosts.append(host)
-    return (local, *(Destination("ssh:" + host, host) for host in hosts))
+    user = settings.get("JARVIS_CONTROL_USER", "") or None
+    return (local, *(Destination("ssh:" + host, host, user if host == control else None) for host in hosts))
+
+
+def host_args(destination, command):
+    """The ssh argv that runs the shell text COMMAND on the destination's host, as its user where it names one."""
+    if destination.user:
+        # sudo -n refuses rather than prompts. sudo -i would hand the command
+        # to the login shell with each `$` unescaped, so "$1" inside it
+        # expands there (sudo 1.9.15p5); bash -l is that login, from that
+        # user's home, with every argument kept verbatim.
+        command = "sudo -n -H -u %s -- bash -l -c %s" % (shlex.quote(destination.user), shlex.quote("cd && " + command))
+    return ["ssh", destination.host, command]
 
 
 def destination_roots(destination):
     if destination.host:
-        return listed_roots(checked(["ssh", destination.host, "kendex project list"], operation="project-list"))
+        return listed_roots(checked(host_args(destination, "kendex project list"), operation="project-list"))
     return listed_roots(checked(["kendex", "project", "list"], operation="project-list"))
 
 
@@ -282,7 +296,7 @@ def listed_roots(text):
 
 def project_roots():
     try:
-        roots = destination_roots(Destination("local", None))
+        roots = destination_roots(Destination("local", None, None))
     except Failure as error:
         raise Failure(*error.record["key"], "kendex-missing fix=install-kendex-on-host-PATH " + str(error)) from error
     return [Path(root).expanduser().resolve() for root in roots]

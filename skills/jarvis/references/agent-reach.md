@@ -83,7 +83,7 @@ A main's `JARVIS_REMOTE_HOSTS` adds whitespace-separated SSH aliases to local ro
 
 The selected root's own mailbox judges whether its overseer exists. Report its actual send cause. Declaring a machine grants reach, never approval of a directive.
 
-On each remote, `owner-note` discovers roots only from `ssh [HOST] kendex project list`, under that SSH user's registration. A root qualifies only when its row has no note and its last path segment is `REPO`. A worktree row does not qualify. Starting or registering an overseer adds no project row.
+On each remote, `owner-note` discovers roots only from `ssh [HOST] kendex project list`, under that SSH user's registration. Where the control host's overseers run as another account, set `JARVIS_CONTROL_USER` to it: listing and sending on `JARVIS_CONTROL_HOST` then run as that account through `sudo -n`, and resolution names it as `user`. The SSH user needs passwordless sudo to it; a refused sudo refuses the send. A root qualifies only when its row has no note and its last path segment is `REPO`. A worktree row does not qualify. Starting or registering an overseer adds no project row.
 
 If a hosted overseer has no qualifying row, the legacy bare route can deliver to a local checkout with a stale overseer record instead. Report the receipt's actual side; `sent side=local` means local delivery. Offer to add the intended host's row:
 
