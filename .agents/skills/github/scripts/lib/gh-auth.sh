@@ -497,11 +497,9 @@ kendex_github_git_should_use_https_fallback() {
   kendex_github_git_repo_has_remote_matching "$work_dir" kendex_github_git_url_is_github_ssh
 }
 
-# A session that names its GitHub read token file (fleet's gh-read contract)
-# reaches HTTPS github.com through gh's credential helper alone: an inherited
-# extraheader, such as an admin's copied Authorization header, would be sent
-# ahead of the helper and act as that admin. Independent of the SSH fallback
-# mode, which governs SSH rewriting only.
+# A read-token session whose target is already HTTPS github.com. Its call
+# goes through gh's helper whatever the SSH fallback mode, which governs SSH
+# rewriting only.
 kendex_github_git_should_use_read_token() {
   local work_dir
   [[ -n "${ORCH_GH_READ_TOKEN_FILE:-}" ]] || return 1
@@ -564,26 +562,37 @@ kendex_github_git_collect_https_rewrites() {
 }
 
 kendex_github_git() {
-  local work_dir rewrite read_token=0
+  local work_dir rewrite read_https=0 rewrite_ssh=0
   local -a git_args=()
   if kendex_github_git_should_use_read_token "$@"; then
-    read_token=1
+    read_https=1
   fi
-  if kendex_github_git_should_use_https_fallback "$@" && kendex_github_git_https_auth_available; then
-    work_dir="$(kendex_github_git_work_dir_from_args "$@")"
+  # A read-token HTTPS target asks gh nothing first: fleet's gh entry
+  # (/opt/fleet/lib/gh-read/gh, the FLT-1529 contract) reads the token file
+  # and refuses when it cannot, so the call fails rather than fall back to
+  # another credential. Nothing in this tree reads that file.
+  if kendex_github_git_should_use_https_fallback "$@"; then
+    if [[ "$read_https" -eq 1 ]] || kendex_github_git_https_auth_available; then
+      rewrite_ssh=1
+    fi
+  fi
+  if [[ "$rewrite_ssh" -eq 1 || "$read_https" -eq 1 ]]; then
     git_args=(-c credential.helper= -c credential.helper='!gh auth git-credential')
+  fi
+  if [[ "$rewrite_ssh" -eq 1 ]]; then
+    work_dir="$(kendex_github_git_work_dir_from_args "$@")"
     while IFS= read -r rewrite; do
       [[ -n "$rewrite" ]] || continue
       git_args+=(-c "url.https://github.com/.insteadOf=$rewrite")
     done < <(kendex_github_git_collect_https_rewrites "$work_dir" "$@" | awk 'NF && !seen[$0]++')
-  elif [[ "$read_token" -eq 1 ]]; then
-    # No gh auth probe here: with no readable token file gh refuses, and the
-    # call fails rather than fall back to another credential.
-    git_args=(-c credential.helper= -c credential.helper='!gh auth git-credential')
   fi
-  if [[ "$read_token" -eq 1 ]]; then
-    # An empty http.extraHeader resets git's header list (git-config); at
-    # this URL scope it also outranks an inherited header scoped as widely.
+  # Every call given the helper reaches https://github.com/, an SSH remote
+  # through the rewrites. A read-token session reaches it through gh alone:
+  # an inherited extraheader, such as an admin's copied Authorization header,
+  # is sent ahead of any helper. An empty http.extraHeader resets git's
+  # header list (git-config); at this URL scope it also outranks an inherited
+  # header scoped as widely.
+  if [[ -n "${ORCH_GH_READ_TOKEN_FILE:-}" && ( "$rewrite_ssh" -eq 1 || "$read_https" -eq 1 ) ]]; then
     git_args+=(-c http.https://github.com/.extraheader=)
   fi
 

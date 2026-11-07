@@ -4,8 +4,9 @@
 # a host alias) and gh auth holds; an HTTPS or non-GitHub remote, a disabled
 # fallback, a failing gh auth or an unreadable auth bound leave git alone,
 # the bound named on stderr. Under a read token file an HTTPS github.com
-# remote gets the helper and an empty extraheader in place of an inherited
-# one. Nothing is persisted into the repository.
+# remote gets the helper with no gh auth probe, and every call reaching
+# https://github.com/ an empty extraheader in place of an inherited one.
+# Nothing is persisted into the repository.
 #
 # A row is `label|remote|env|helper|rewrites|header|err`:
 #   remote    the repository's origin: `ssh` (git@github.com:), `alias`
@@ -205,7 +206,7 @@ run_table() {
 run_table "the wrapped git's config" "\
 a GitHub SSH remote gets the gh helper after a reset and every github.com rewrite, nothing persisted|ssh|-|reset,gh|git@github.com:,ssh://git@github.com/,ssh://git@github.com:22/,ssh://git@github.com:443/|-|-
 a GitHub SSH host alias adds its own rewrite|alias|-|reset,gh|git@github.com:,ssh://git@github.com/,ssh://git@github.com:22/,ssh://git@github.com:443/,git@github-vg-claude:|-|-
-an HTTPS remote stays on plain git|https|-|-|-|-|-
+an HTTPS remote stays on plain git, an inherited extraheader reaching it|https|header|-|-|inherited|-
 a non-GitHub remote stays on plain git|local|-|-|-|-|-
 the fallback can be disabled|ssh|mode:never|-|-|-|-
 always forces the fallback on a remote that would not ask for it|https|mode:always|reset,gh|git@github.com:,ssh://git@github.com/,ssh://git@github.com:22/,ssh://git@github.com:443/|-|-
@@ -214,10 +215,10 @@ an ssh:// alias remote with a port adds its three rewrites|sshurl|-|reset,gh|git
 a failing gh auth leaves the SSH path unchanged, gh's refusal passed through|ssh|auth:fail|-|-|-|not logged in
 an unreadable auth bound leaves the SSH path unchanged and names the bound|ssh|bound:2.55|-|-|-|bound=2.55
 an env token gh refuses leaves the SSH path unchanged, silently|ssh|token:ghp_stubtoken auth:fail|-|-|-|-
-an HTTPS remote keeps an inherited extraheader with no read token file|https|header|-|-|inherited|-
 an HTTPS remote under a read token file gets the gh helper and an empty extraheader over the inherited one|https|read header|reset,gh|-|reset|-
 a read token file outranks a disabled SSH fallback on an HTTPS remote|https|read header mode:never|reset,gh|-|reset|-
-a read token file adds nothing to a GitHub SSH remote|ssh|read|reset,gh|git@github.com:,ssh://git@github.com/,ssh://git@github.com:22/,ssh://git@github.com:443/|-|-
+a GitHub SSH remote rewritten under a read token file gets an empty extraheader over the inherited one|ssh|read header|reset,gh|git@github.com:,ssh://git@github.com/,ssh://git@github.com:22/,ssh://git@github.com:443/|reset|-
+always adds the rewrites to a read-token HTTPS remote without probing gh auth|https|read header mode:always auth:fail|reset,gh|git@github.com:,ssh://git@github.com/,ssh://git@github.com:22/,ssh://git@github.com:443/|reset|-
 a read token file leaves a non-GitHub remote on plain git|local|read header|-|-|inherited|-
 "
 
