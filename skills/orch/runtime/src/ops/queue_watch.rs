@@ -413,8 +413,6 @@ struct QueueRepository {
 struct QueuePull {
     #[serde(default)]
     id: Option<String>,
-    #[serde(default, rename = "isInMergeQueue")]
-    in_queue: bool,
     #[serde(default, rename = "mergeQueueEntry")]
     entry: Option<QueueEntry>,
     #[serde(default, rename = "autoMergeRequest")]
@@ -513,7 +511,9 @@ struct QueueRead {
 
 impl QueueRead {
     fn of(pull: QueuePull) -> QueueRead {
-        let in_queue = pull.in_queue || pull.entry.is_some();
+        // GitHub answers an entry exactly while the pull request is in the
+        // queue, so the entry is membership's one reading.
+        let in_queue = pull.entry.is_some();
         let (queue_state, position, head, ahead) = match pull.entry {
             None => (String::new(), None, None, None),
             Some(entry) => {
@@ -875,7 +875,7 @@ impl<'a> Wait<'a> {
 
     fn read_queue(&mut self) -> std::result::Result<QueueRead, ReadEnd> {
         let query = format!(
-            "query {{ repository(owner: {}, name: {}) {{ pullRequest(number: {}) {{ id isInMergeQueue mergeQueueEntry {{ state position headCommit {{ oid }} mergeQueue {{ entries(first: 100) {{ nodes {{ position headCommit {{ oid }} pullRequest {{ number }} }} }} }} }} autoMergeRequest {{ enabledAt }} }} }} }}",
+            "query {{ repository(owner: {}, name: {}) {{ pullRequest(number: {}) {{ id mergeQueueEntry {{ state position headCommit {{ oid }} mergeQueue {{ entries(first: 100) {{ nodes {{ position headCommit {{ oid }} pullRequest {{ number }} }} }} }} }} autoMergeRequest {{ enabledAt }} }} }} }}",
             self.owner, self.name, self.r.pr
         );
         let query = format!("query={query}");

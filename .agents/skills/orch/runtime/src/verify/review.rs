@@ -322,8 +322,8 @@ fn arrival(events: &[TimelineEvent], head: &str) -> Read<String> {
 }
 
 /// Copilot's work in flight on the head: a queued or in-progress Copilot
-/// check, else a pending timeline request no later Copilot review or
-/// removal answered.
+/// check its submitted review of the head has not answered, else a pending
+/// timeline request no later Copilot review or removal answered.
 pub(crate) fn copilot_work(gh: &Gh, repo: &str, pr: u64, head: &str) -> Read<Option<Work>> {
     evidence::copilot_work(&Reader { gh }, repo, pr, head)
 }

@@ -20,7 +20,7 @@ use orch_runtime::ops::queue_watch::{Programs, QueueWatch, Reply, run};
 use orch_runtime::schedule::Clock;
 use orch_runtime::state::Locking;
 use serde_json::{Map, Value, json};
-use support::{FakeClock, fixtures, tool_path};
+use support::{FakeClock, fixtures, tool_path, write_executable};
 
 const ITEM: &str = include_str!("fixtures/workflow-state-KEN-4687.json");
 const ITEM_ID: &str = "KEN-4687";
@@ -34,6 +34,9 @@ const LOCK: Locking = Locking::FLOCK;
 /// progress read counts.
 const QUEUE_HEAD: &str = "aaa111";
 const MERGED_AT: &str = "2026-07-24T10:00:00Z";
+/// How many deadlines a wait the row no longer drives is run out by: 60
+/// seconds of real time at one advance per 20 ms.
+const RUN_OUT_ADVANCES: u32 = 3000;
 
 fn env() -> Env {
     Env {
@@ -72,7 +75,6 @@ fn queue_body(pull: Value) -> Value {
 fn in_queue(head: Option<&str>) -> Value {
     queue_body(json!({
         "id": NODE_ID,
-        "isInMergeQueue": true,
         "mergeQueueEntry": {
             "state": "QUEUED",
             "position": 1,
@@ -86,7 +88,6 @@ fn in_queue(head: Option<&str>) -> Value {
 fn armed_only() -> Value {
     queue_body(json!({
         "id": NODE_ID,
-        "isInMergeQueue": false,
         "mergeQueueEntry": null,
         "autoMergeRequest": {"enabledAt": "2026-07-24T10:00:00Z"}
     }))
@@ -95,7 +96,6 @@ fn armed_only() -> Value {
 fn out() -> Value {
     queue_body(json!({
         "id": NODE_ID,
-        "isInMergeQueue": false,
         "mergeQueueEntry": null,
         "autoMergeRequest": null
     }))
@@ -113,7 +113,6 @@ fn in_queue_armed(enabled_at: Option<&str>) -> Value {
 fn held_behind(ahead: u64) -> Value {
     queue_body(json!({
         "id": NODE_ID,
-        "isInMergeQueue": true,
         "mergeQueueEntry": {
             "state": "QUEUED",
             "position": 2,
@@ -359,26 +358,32 @@ impl World {
         std::thread::scope(|s| {
             let handle =
                 s.spawn(|| run(&item, request, &programs, &root, wait_clock, &env(), LOCK));
-            let driven =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drive(self, clock)));
-            if let Err(failure) = driven {
-                // The wait sleeps on a clock only this thread releases: run it
-                // out, so the row fails with the drive's panic instead of
-                // hanging the scope that joins it.
-                while !handle.is_finished() {
+            // The wait sleeps on a clock only this thread releases: run it
+            // out by a bounded count of deadlines, as long in real time as
+            // the slowest fixture read's own bound, so a wait no advance ends
+            // is left to the scope's join, never spun on.
+            let run_out = |handle: &std::thread::ScopedJoinHandle<'_, _>| {
+                for _ in 0..RUN_OUT_ADVANCES {
+                    if handle.is_finished() {
+                        return;
+                    }
                     clock.release(request.max_wait);
                     std::thread::sleep(Duration::from_millis(20));
                 }
+            };
+            let driven =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drive(self, clock)));
+            if let Err(failure) = driven {
+                // Run out, so the row fails with the drive's panic instead of
+                // hanging the scope that joins it.
+                run_out(&handle);
                 std::panic::resume_unwind(failure);
             }
             let bound = std::time::Instant::now() + secs(60);
             while !handle.is_finished() {
                 if std::time::Instant::now() >= bound {
                     let memory = self.memory();
-                    while !handle.is_finished() {
-                        clock.release(request.max_wait);
-                        std::thread::sleep(Duration::from_millis(20));
-                    }
+                    run_out(&handle);
                     let reply = handle.join().expect("the wait's thread");
                     panic!(
                         "the wait still polled after 60 s of real time; its memory then: {memory}; let run out it answered {reply:?}"
@@ -728,16 +733,16 @@ fn never_armed_past_the_grace_is_not_queued() {
 fn queue_errors_array_is_an_error_never_not_queued() {
     let mut world = World::new();
     world.queue(json!({
-        "body": {"data": null, "errors": [{"message": "Field 'isInMergeQueue' doesn't exist"}]},
+        "body": {"data": null, "errors": [{"message": "Field 'mergeQueueEntry' doesn't exist"}]},
         "exit": 1,
-        "stderr": "gh: Field 'isInMergeQueue' doesn't exist"
+        "stderr": "gh: Field 'mergeQueueEntry' doesn't exist"
     }));
     let request = world.request(10, 30);
     let reply = world.wait(&request, |_, _| {});
     assert_eq!((reply.status, reply.verdict), ("error", "unknown"));
     let error = reply.error.unwrap_or_default();
     assert!(
-        error.starts_with("queue-rejected") && error.contains("isInMergeQueue"),
+        error.starts_with("queue-rejected") && error.contains("mergeQueueEntry"),
         "{error}"
     );
 }
@@ -864,7 +869,7 @@ fn a_merged_pull_request_is_merged_whatever_mergeable_says_and_keeps_its_queue_m
         "{reply:?}"
     );
     assert!(
-        !world.gh_log().iter().any(|l| l.contains("isInMergeQueue")),
+        !world.gh_log().iter().any(|l| l.contains("mergeQueueEntry")),
         "{:?}",
         world.gh_log()
     );
@@ -885,7 +890,7 @@ fn a_closed_pull_request_is_closed_without_merge_before_any_queue_read() {
         "{reply:?}"
     );
     assert!(
-        !world.gh_log().iter().any(|l| l.contains("isInMergeQueue")),
+        !world.gh_log().iter().any(|l| l.contains("mergeQueueEntry")),
         "{:?}",
         world.gh_log()
     );
@@ -1693,8 +1698,6 @@ fn the_last_poll_before_the_deadline_runs_no_probe() {
 /// the wait was due to end.
 #[test]
 fn a_probe_answered_past_the_deadline_is_no_reading() {
-    use std::os::unix::fs::PermissionsExt;
-
     let mut world = World::new();
     world
         .witness("bound-run-failed-own-check")
@@ -1706,8 +1709,7 @@ fn a_probe_answered_past_the_deadline_is_no_reading() {
     let wrapper = format!(
         "#!/bin/bash\nhere=\"$(dirname \"$0\")\"\ncase \"$*\" in\n  *\"commits/{HEAD}/check-runs?filter=all\"*)\n    : > \"$here/probe-entered\"\n    while [ ! -f \"$here/probe-released\" ]; do sleep 0.01; done ;;\nesac\nexec \"$here/gh-answers\" \"$@\"\n"
     );
-    fs::write(root.join("gh"), wrapper).unwrap();
-    fs::set_permissions(root.join("gh"), fs::Permissions::from_mode(0o755)).unwrap();
+    write_executable(&root.join("gh"), wrapper);
     let request = probe_request(&world, 3);
     let reply = world.wait(&request, |world, clock| {
         let entered = world.root().join("probe-entered");
@@ -1759,8 +1761,6 @@ impl Clock for Ticking<'_> {
 /// that cutoff is no reading, never the failed check it carries.
 #[test]
 fn time_between_the_probes_clock_reads_never_moves_its_cutoff() {
-    use std::os::unix::fs::PermissionsExt;
-
     const TICK: Duration = Duration::from_millis(1);
     let mut world = World::new();
     world
@@ -1771,8 +1771,7 @@ fn time_between_the_probes_clock_reads_never_moves_its_cutoff() {
     // check suite's runs, until the row releases it.
     fs::rename(root.join("gh"), root.join("gh-answers")).unwrap();
     let wrapper = "#!/bin/bash\nhere=\"$(dirname \"$0\")\"\ncase \"$*\" in\n  *\"check-suites/5000300/check-runs\"*)\n    : > \"$here/probe-entered\"\n    while [ ! -f \"$here/probe-released\" ]; do sleep 0.01; done ;;\nesac\nexec \"$here/gh-answers\" \"$@\"\n";
-    fs::write(root.join("gh"), wrapper).unwrap();
-    fs::set_permissions(root.join("gh"), fs::Permissions::from_mode(0o755)).unwrap();
+    write_executable(&root.join("gh"), wrapper);
     let request = probe_request(&world, 10);
     let clock = FakeClock::new();
     let ticking = Ticking {
@@ -1811,8 +1810,6 @@ fn time_between_the_probes_clock_reads_never_moves_its_cutoff() {
 /// reads take tens of milliseconds.
 #[test]
 fn a_hung_probe_read_is_ended_at_what_its_budget_has_left() {
-    use std::os::unix::fs::PermissionsExt;
-
     let mut world = World::new();
     world
         .witness("bound-run-failed-own-check")
@@ -1825,8 +1822,7 @@ fn a_hung_probe_read_is_ended_at_what_its_budget_has_left() {
     let wrapper = format!(
         "#!/bin/bash\nhere=\"$(dirname \"$0\")\"\ncase \"$*\" in\n  *\"commits/{HEAD}/check-runs?filter=all\"*)\n    [ -p \"$here/hold\" ] || mkfifo \"$here/hold\"\n    exec 3<>\"$here/hold\"\n    read -t 8 -u 3 || true ;;\nesac\nexec \"$here/gh-answers\" \"$@\"\n"
     );
-    fs::write(root.join("gh"), wrapper).unwrap();
-    fs::set_permissions(root.join("gh"), fs::Permissions::from_mode(0o755)).unwrap();
+    write_executable(&root.join("gh"), wrapper);
     let request = probe_request(&world, 3);
     let reply = world.wait(&request, |_, _| {});
     assert_eq!(

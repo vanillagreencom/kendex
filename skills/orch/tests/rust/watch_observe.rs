@@ -1992,6 +1992,89 @@ fn the_mark_line_carries_the_succession_s_handling_under_it() {
     assert!(transfers3.borrow().is_empty());
 }
 
+fn reached_context(_: &Caller, _: Option<&str>) -> Result<Marks, String> {
+    Ok(marks(
+        MarkKey::Reached(MarkKind::Context),
+        "910000",
+        "90",
+        Succession::On,
+        "",
+    ))
+}
+
+/// Defect: a controller another lifecycle replaces told at its context mark
+/// to choose a successor and ask for the transfer its record refuses
+/// `succession-owned`. A live controller whose record names its succession
+/// command is handed that command under the mark line, with no successor
+/// walk, no transfer and no run of the command by the watch; the same
+/// record without the field keeps the succession route.
+#[test]
+fn a_controller_whose_record_names_a_succession_owner_is_handed_that_command_at_its_mark() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let fleet = Fleet::new(&server);
+    let claude = named_sleep(dir.path(), "claude");
+    let pane = server.open_window(
+        "overseer",
+        dir.path(),
+        &format!(
+            "bash -c \"printf '\\xe2\\x9d\\xaf\\xc2\\xa0\\n'; exec {} 600\"",
+            claude.display()
+        ),
+    );
+    let identity = await_named(&server, &pane, "claude");
+    let window = window_of(&server, &pane);
+    let mut record = overseer_at(&server, &pane, &window, dir.path());
+    record["harness_pid"] = json!(identity.pid.to_string());
+    record["harness_start"] = json!(identity.start);
+    fleet.set_overseer(record.clone());
+    let plain = fleet.read();
+    record["succession"] = json!(["/h/bin/jarvis-session", "succeed", "--home", "/h/jarvis"]);
+    fleet.set_overseer(record);
+    let owned = fleet.read();
+    let mark =
+        format!("EVENT overseer-mark {pane} kind=context value=910000 mark=90 succession=on");
+    overseer_driver!(
+        server,
+        fleet,
+        reached_context,
+        no_walk,
+        readers,
+        transfers,
+        driver
+    );
+    assert_eq!(
+        lines(&driver.pass(&owned)),
+        vec![
+            mark.clone(),
+            "Hand this session over at the next safe point through the succession owner its record names: run /h/bin/jarvis-session succeed --home /h/jarvis and read its outcome; that owner replaces this controller, so choose no successor and ask for no transfer.".to_owned(),
+        ]
+    );
+    assert!(transfers.borrow().is_empty());
+    overseer_driver!(
+        server,
+        fleet,
+        reached_context,
+        no_walk,
+        readers2,
+        transfers2,
+        unowned
+    );
+    assert_eq!(
+        lines(&unowned.pass(&plain)),
+        vec![
+            mark,
+            hand_over(
+                dir.path(),
+                &pane,
+                "context",
+                "this session's own entry alone, ORCH_OVERSEER_PREFERENCE being unset; where this session's account has reached its headroom or rate mark, ORCH_OVERSEER_PREFERENCE=claude:standard:high,codex:standard:high without that account"
+            ),
+        ]
+    );
+    assert!(transfers2.borrow().is_empty());
+}
+
 // U6h (step6-map § A10 row (6), § B "an overseer at its context limit";
 // decisions 126 (2), 176 (1) (d)): the overseer's context record, judged
 // beside a live session.

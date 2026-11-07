@@ -73,6 +73,13 @@ set -euo pipefail
 if [[ -n "${STUB_GH_TOKEN_EXIT:-}" && -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
   exit "$STUB_GH_TOKEN_EXIT"
 fi
+# The first STUB_GH_TOKEN_TIMEOUTS calls that carry a token end as the bound
+# ends a killed one, status 124, counted in STUB_GH_KILLED.
+if [[ -n "${STUB_GH_TOKEN_TIMEOUTS:-}" && -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]; then
+  killed=$(( $(cat "$STUB_GH_KILLED" 2>/dev/null || echo 0) + 1 ))
+  echo "$killed" >"$STUB_GH_KILLED"
+  [[ "$killed" -gt "$STUB_GH_TOKEN_TIMEOUTS" ]] || exit 124
+fi
 
 _token_ok() {
   local tok="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
@@ -470,6 +477,27 @@ sanitize_run STUB_GH_TOKEN_EXIT=125
 assert_contains "$(cat "$TMP_ROOT/sanitize.err")" \
   "unsetting them and using gh keyring auth" \
   "a gh that exits 125 under a readable bound is an ordinary auth failure"
+
+# gh-auth-ladder, the credential a long-running reader starts under: a check
+# the bound killed (124) says nothing against the env token, so the ladder
+# asks it once more, and only once, before it drops the token. The sanitize
+# check ahead of it meets the first killed check and keeps the token.
+ladder_run() { # TIMEOUTS — the exit status and the token checks gh answered
+  local rc=0
+  : >"$TMP_ROOT/ladder.calls"
+  rm -f "$TMP_ROOT/ladder.killed"
+  (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
+    env STUB_GH_CALLS="$TMP_ROOT/ladder.calls" STUB_GH_TOKEN_TIMEOUTS="$1" \
+      STUB_GH_KILLED="$TMP_ROOT/ladder.killed" GH_TOKEN=dtn_PLACEHOLDER \
+      bash "$REPO_ROOT/skills/github/scripts/gh-auth-ladder" --project "$TMP_ROOT/repo") \
+    >"$TMP_ROOT/ladder.out" 2>"$TMP_ROOT/ladder.err" || rc=$?
+  printf 'rc=%s checks=%s' "$rc" "$(grep -c '^api user' "$TMP_ROOT/ladder.calls")"
+}
+assert_eq "$(ladder_run 2)|$(head -1 "$TMP_ROOT/ladder.out")" "rc=0 checks=3|GH_TOKEN=dtn_PLACEHOLDER" \
+  "the ladder asks an env token the bound killed once more, and selects it"
+assert_eq "$(ladder_run 3)|$(head -1 "$TMP_ROOT/ladder.err")" \
+  "rc=2 checks=3|gh-auth-ladder: auth-failed service=github" \
+  "a re-ask the bound kills too drops the token, never asked a third time"
 
 # The same collision on the op side. The status is what github-api.sh branches
 # on, so calling op's own 125 a bad setting suppresses the "Run: op signin"

@@ -8,6 +8,20 @@ fn binary() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_agent-runtime"))
 }
 
+/// `text` as the executable `path`, written by a child shell: a write
+/// descriptor open in this process leaks into any sibling test's child
+/// between its fork and exec, and an exec of the file meanwhile fails with
+/// ETXTBSY.
+fn write_executable(path: &std::path::Path, text: impl AsRef<str>) {
+    let written = Command::new("sh")
+        .args(["-c", "printf '%s' \"$2\" > \"$1\" && chmod 755 \"$1\"", "_"])
+        .arg(path)
+        .arg(text.as_ref())
+        .status()
+        .unwrap();
+    assert!(written.success(), "write-executable {}", path.display());
+}
+
 #[test]
 fn version_prints_the_protocol_reply() {
     let out = Command::new(binary()).arg("version").output().unwrap();
@@ -451,12 +465,10 @@ impl PrivatePane {
     /// `dir`, so the kernel names the pane's process for that harness, whose
     /// body is `script`; it ends with the pane.
     fn run_stub(&self, dir: &std::path::Path, name: &str, script: &str) {
-        use std::os::unix::fs::PermissionsExt;
         let bin = dir.join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         let stub = bin.join(name);
-        std::fs::write(&stub, format!("#!/bin/bash\n{script}read -r _\n")).unwrap();
-        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+        write_executable(&stub, format!("#!/bin/bash\n{script}read -r _\n"));
         self.run(&stub);
     }
 
@@ -784,7 +796,6 @@ fn an_unreadable_session_store_binds_nothing_and_names_its_cause() {
 /// recording nothing when `drops`. Returns its path.
 #[cfg(unix)]
 fn turns_stub(dir: &std::path::Path, home: &std::path::Path, drops: bool) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     let bin = dir.join(if drops { "drops" } else { "keeps" });
     std::fs::create_dir_all(&bin).unwrap();
     let stub = bin.join("claude");
@@ -797,8 +808,7 @@ fn turns_stub(dir: &std::path::Path, home: &std::path::Path, drops: bool) -> Pat
         "#!/bin/bash\nhome='{}'\nsession=stub\nwhile [ $# -gt 0 ]; do case \"$1\" in --session-id) session=\"$2\"; shift ;; esac; shift; done\nslug=\"${{PWD//[\\/.]/-}}\"\nmkdir -p \"$home/projects/$slug\"\nrows=\"$home/projects/$slug/$session.jsonl\"\n: > \"$rows\"\nprintf '\\xe2\\x9d\\xaf\\xc2\\xa0\\n  ? for shortcuts\\n'\nwhile IFS= read -r line; do\n  {record}\n  printf '\\xe2\\x9d\\xaf\\xc2\\xa0\\n'\ndone\n",
         home.display()
     );
-    std::fs::write(&stub, script).unwrap();
-    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write_executable(&stub, script);
     stub
 }
 
@@ -1004,7 +1014,6 @@ fn deliver_confirms_by_the_fixed_file_s_user_turn_and_never_by_the_paste_alone()
 #[cfg(unix)]
 fn a_launch_whose_line_never_reached_its_window_closes_it_and_one_whose_paste_went_unanswered_keeps_its_record()
  {
-    use std::os::unix::fs::PermissionsExt;
     let real = std::env::var_os("PATH")
         .and_then(|path| {
             std::env::split_paths(&path)
@@ -1023,16 +1032,13 @@ fn a_launch_whose_line_never_reached_its_window_closes_it_and_one_whose_paste_we
         let pane = PrivatePane::start(&root);
         let shims = root.join("refusing-tmux");
         std::fs::create_dir(&shims).unwrap();
-        std::fs::write(
-            shims.join("tmux"),
+        write_executable(
+            &shims.join("tmux"),
             format!(
                 "#!/bin/bash\nfor arg in \"$@\"; do [ \"$arg\" != {verb} ] || {{ echo refused >&2; exit 1; }}; done\nexec '{}' \"$@\"\n",
                 real.display()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(shims.join("tmux"), std::fs::Permissions::from_mode(0o755))
-            .unwrap();
+        );
         let intent = root.join("intent.json");
         std::fs::write(
             &intent,
@@ -1172,7 +1178,6 @@ fn a_launch_whose_record_cannot_be_written_closes_its_window_or_names_the_one_it
 /// naming the session and the window, which stands.
 #[test]
 fn a_new_window_tmux_refused_is_refused_and_one_that_gave_no_answer_is_unanswered() {
-    use std::os::unix::fs::PermissionsExt;
     let real = std::env::var_os("PATH")
         .and_then(|path| {
             std::env::split_paths(&path)
@@ -1194,16 +1199,13 @@ fn a_new_window_tmux_refused_is_refused_and_one_that_gave_no_answer_is_unanswere
         let pane = PrivatePane::start(&root);
         let shims = root.join("answering-tmux");
         std::fs::create_dir(&shims).unwrap();
-        std::fs::write(
-            shims.join("tmux"),
+        write_executable(
+            &shims.join("tmux"),
             format!(
                 "#!/bin/bash\nreal='{}'\nfor arg in \"$@\"; do [ \"$arg\" != new-window ] || {{ {answer}; }}; done\nexec \"$real\" \"$@\"\n",
                 real.display()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(shims.join("tmux"), std::fs::Permissions::from_mode(0o755))
-            .unwrap();
+        );
         let intent = root.join("intent.json");
         std::fs::write(
             &intent,
@@ -1251,17 +1253,14 @@ fn a_new_window_tmux_refused_is_refused_and_one_that_gave_no_answer_is_unanswere
 /// `uid-unread` before any tmux call.
 #[test]
 fn a_launch_whose_uid_cannot_be_read_refuses_and_names_no_socket() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
     let shims = root.join("failing-id");
     std::fs::create_dir(&shims).unwrap();
-    std::fs::write(
-        shims.join("id"),
+    write_executable(
+        &shims.join("id"),
         "#!/bin/bash\necho 'id: unread' >&2\nexit 1\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(shims.join("id"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let intent = root.join("intent.json");
     std::fs::write(
         &intent,

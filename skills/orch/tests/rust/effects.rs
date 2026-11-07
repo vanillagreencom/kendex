@@ -20,7 +20,6 @@
 #[path = "support.rs"]
 mod support;
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -3661,7 +3660,6 @@ fn a_close_whose_validation_root_is_unreadable_holds_the_validation_owed() {
 /// over a running harness.
 #[test]
 fn a_send_reply_reported_failed_that_ran_the_line_reads_the_receipt() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let mut runner = Runner::new(&server, "stub-survivor");
@@ -3671,7 +3669,7 @@ fn a_send_reply_reported_failed_that_ran_the_line_reads_the_receipt() {
     std::fs::create_dir_all(&tools).unwrap();
     let copy = runner.state_dir().join("receipt-copy");
     let shim = tools.join("tmux");
-    std::fs::write(
+    write_executable(
         &shim,
         format!(
             "#!/bin/bash\nsk=; en=; kp=\nfor a in \"$@\"; do\n  [ \"$a\" = send-keys ] && sk=1\n  [ \"$a\" = Enter ] && en=1\n  [ \"$a\" = kill-pane ] && kp=1\ndone\nif [ -n \"$sk\" ] && [ -n \"$en\" ]; then {real} \"$@\"; echo 'tmux: timed out' >&2; exit 1; fi\nif [ -n \"$kp\" ]; then sleep 2; cat {state}/intents/*.pane > {copy} 2>/dev/null; fi\nexec {real} \"$@\"\n",
@@ -3679,9 +3677,7 @@ fn a_send_reply_reported_failed_that_ran_the_line_reads_the_receipt() {
             state = runner.state_dir().display(),
             copy = copy.display(),
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     runner.tools = Some(tools);
     let report = effect_report(&runner.op_fleet(&launch_request("KEN-N", runner.state_dir())));
     let receipt: Value =
@@ -6652,6 +6648,41 @@ fn a_copilot_lanes_record_says_whether_its_line_grants_allow_all() {
     );
 }
 
+#[test]
+fn a_refused_launch_keeps_the_refusals_detail_word_beside_the_dependencys_cause() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-record");
+    runner.init_fleet();
+    // The operator's `EXTENSIONS` flag off and no status line to fall back
+    // on: agent-runtime's trust preparation refuses the Copilot home with its
+    // own detail word and the status line's cause.
+    let account = dir.path().join("copilot-account");
+    std::fs::create_dir_all(&account).unwrap();
+    let settings = account.join("settings.json");
+    std::fs::write(
+        &settings,
+        r#"{"enabledFeatureFlags": {"EXTENSIONS": false}}"#,
+    )
+    .unwrap();
+    let mut request = launch_request("KEN-D1", runner.state_dir());
+    request["harness"] = json!("copilot");
+    request["account"] = json!(account.display().to_string());
+    let panes_before = server.panes().len();
+    let report = effect_report(&runner.op_fleet(&request));
+    let observation = &report["intent"]["observation"];
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    assert_eq!(observation["cause"], "no-context-reader", "{report}");
+    assert_eq!(
+        observation["file"],
+        settings.display().to_string(),
+        "{report}"
+    );
+    assert_eq!(observation["detail"], "disabled", "{report}");
+    assert_eq!(observation["detail_cause"], "no-status-line", "{report}");
+    assert_eq!(server.panes().len(), panes_before, "no window: {report}");
+}
+
 /// A hosted Copilot lane, whose home is on its host, and a hosted Pi lane
 /// billing a Claude seat are refused before the provider creates anything;
 /// a hosted Pi lane on its own root is judged on its host's files once
@@ -6760,16 +6791,14 @@ fn a_hosted_pi_lane_on_the_copilot_pool_hands_its_pane_agents_the_login_environm
     // The Pi stand-in: it reads the two names, splits a pane agent off the
     // way pi-agents-tmux does and stands.
     let pi = world.tools.join("pi");
-    std::fs::write(
+    write_executable(
         &pi,
         format!(
             "#!/bin/bash\nprintf '%s|%s\\n' \"${{POOL_KEY-unset}}\" \"${{HTTPS_PROXY-unset}}\" > '{}'\ntmux split-window -d -t \"$TMUX_PANE\" \"/bin/bash '{}'\"\nprintf 'pi starting\\n'\nwhile read -r line; do :; done\n",
             parent_env.display(),
             child.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&pi, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let path = world.scripts.join("lane-host.json");
     let mut answers: Value =
         serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
@@ -7090,12 +7119,10 @@ fn a_reconciled_pi_lane_on_a_seat_binds_its_session_under_pis_root_not_the_seat(
     let bin = dir.path().join("pi-bin");
     std::fs::create_dir_all(&bin).unwrap();
     let pi = bin.join("pi");
-    std::fs::write(
+    write_executable(
         &pi,
         "#!/bin/bash\nprintf '%s\\n' '────────────────────────────────' '────────────────────────────────' '~/work (main)' '0.4%/1.0M'\nwhile IFS= read -r _line; do :; done\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&pi, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    );
     runner.env.push((
         "ORCH_HARNESS_BINARIES".to_owned(),
         format!("pi={}", pi.display()),
@@ -7592,15 +7619,13 @@ fn the_model_switch_recovery_stops_through_the_runtime_and_relaunches_over_the_r
             let working = dir.path().join("working");
             std::fs::create_dir_all(&working).unwrap();
             let stub = working.join("claude");
-            std::fs::write(
+            write_executable(
                 &stub,
                 format!(
                     "#!/bin/bash\nprintf '\\xe2\\x9d\\xaf\\xc2\\xa0\\n'\nprintf '  ? for shortcuts\\n'\nIFS= read -r line\nprintf '\\xe2\\x9d\\xaf %s\\n' \"$line\"\nprintf '%s\\n' '* Thinking... (esc to interrupt)'\nexec 9<>'{}'\nread -r -t 30 -u 9 _\nexit 0\n",
                     hold.display()
                 ),
-            )
-            .unwrap();
-            std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+            );
             runner.stub = stub;
         }
         let mut request = launch_request("KEN-R", &work);

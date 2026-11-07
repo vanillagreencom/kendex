@@ -2382,7 +2382,7 @@ fn malformed_rows() -> Vec<Malformed> {
                 *gh = bound_world();
                 gh.answer(
                     GRAPHQL,
-                    json!({"data": {"nodes": {"__typename": "CheckSuite"}}}),
+                    json!({"data": {"nodes": {"__typename": "CheckSuite", "id": "CS_1", "databaseId": 1, "workflowRun": null}}}),
                 );
             },
             cause: "workflow-files-response-invalid",
@@ -4146,19 +4146,24 @@ fn a_second_run_requests_no_second_review() {
 
     // The reviews read failing, or the timeline read failing, is unreadable:
     // no request goes out on identities that could not be read, and nothing
-    // is claimed under the head. Copilot's check in flight ends the work
-    // read before its own timeline read, so the reviews' timeline read is
-    // the one that meets the failure.
-    for (name, failing, reason) in [
-        ("the reviews", reviews_path(), "reviews-read-failed"),
-        ("the timeline", timeline_path(), "timeline-read-failed"),
+    // is claimed under the head. The reviews case runs with no Copilot
+    // check, whose settlement would read the reviews too; in the timeline
+    // case Copilot's check in flight ends the work read before its own
+    // timeline read, so the reviews' timeline read is the one that meets
+    // the failure.
+    for (name, failing, reason, checks) in [
+        ("the reviews", reviews_path(), "reviews-read-failed", vec![]),
+        (
+            "the timeline",
+            timeline_path(),
+            "timeline-read-failed",
+            vec![copilot_check(31, "in_progress")],
+        ),
     ] {
         let mut gh = Github::review_world();
-        gh.answer(
-            &check_runs(HEAD, 1),
-            check_runs_page(1, vec![copilot_check(31, "in_progress")]),
-        )
-        .fail(&failing);
+        let count = checks.len();
+        gh.answer(&check_runs(HEAD, 1), check_runs_page(count, checks))
+            .fail(&failing);
         let result = ok_result(&gh.review(false, &[]));
         assert_eq!(result["status"], "unreadable", "{name}: {result}");
         assert_eq!(result["reason"], reason, "{name}: {result}");
@@ -4175,8 +4180,9 @@ fn a_second_run_requests_no_second_review() {
 /// review of that commit and no thread open, is no review of the head the
 /// push landed: the call requests Copilot on it, and the approval waits on
 /// that review, the request standing and then Copilot's check running, as
-/// the released merge flow waited on the head's Copilot work before merging;
-/// one request goes out throughout.
+/// the released merge flow waited on the head's Copilot work before merging,
+/// until Copilot's review of the head lands, its check still running; one
+/// request goes out throughout.
 #[test]
 fn an_approval_from_before_a_push_draws_copilot_to_the_pushed_head() {
     let mut gh = Github::review_world();
@@ -4216,6 +4222,71 @@ fn an_approval_from_before_a_push_draws_copilot_to_the_pushed_head() {
     assert_eq!(running["status"], "pending", "{running}");
     assert_eq!(running["copilot"]["run"], 31, "{running}");
     assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+    // GitHub publishes Copilot's review before its check reads completed: a
+    // review of the head submitted at or after the check's start settles
+    // the check; an older review, one of another head, a dismissed one or
+    // another reviewer's does not.
+    let earlier = with(
+        copilot_review(22, "COMMENTED", "Reviewed.", "2026-01-01T00:00:00Z"),
+        "commit_id",
+        json!(OTHER_SHA),
+    );
+    let human = json!({"id": 24, "user": {"login": "colleague", "type": "User"}, "body": "Approved.", "state": "APPROVED", "commit_id": OTHER_SHA, "submitted_at": "2026-01-01T00:00:00Z"});
+    let running_at = "2026-01-29T15:12:00Z";
+    let on = |state: &str, commit: &str, submitted: &str| {
+        with(
+            copilot_review(32, state, "Reviewed.", submitted),
+            "commit_id",
+            json!(commit),
+        )
+    };
+    for (name, review, settled) in [
+        (
+            "a review of the head from before the check started",
+            on("COMMENTED", HEAD, "2026-01-29T15:09:59Z"),
+            false,
+        ),
+        (
+            "a review of another head after the check started",
+            on("COMMENTED", OTHER_SHA, running_at),
+            false,
+        ),
+        (
+            "a dismissed review of the head",
+            on("DISMISSED", HEAD, running_at),
+            false,
+        ),
+        (
+            "another reviewer's review of the head",
+            json!({"id": 33, "user": {"login": "colleague", "type": "User"}, "body": "Still fine.", "state": "APPROVED", "commit_id": HEAD, "submitted_at": running_at}),
+            false,
+        ),
+        (
+            "a review of the head as the check started",
+            on("COMMENTED", HEAD, STARTED),
+            true,
+        ),
+        (
+            "a review of the head while the check runs",
+            on("COMMENTED", HEAD, running_at),
+            true,
+        ),
+    ] {
+        gh.answer(
+            &reviews_path(),
+            json!([earlier.clone(), human.clone(), review]),
+        );
+        let result = ok_result(&gh.review(false, &[]));
+        if settled {
+            assert_eq!(result["status"], "complete", "{name}: {result}");
+            assert_eq!(result["verdict"], "approved", "{name}: {result}");
+            assert_eq!(result["copilot"]["state"], "none", "{name}: {result}");
+        } else {
+            assert_eq!(result["status"], "pending", "{name}: {result}");
+            assert_eq!(result["copilot"]["run"], 31, "{name}: {result}");
+        }
+        assert_eq!(gh.requests(), 1, "{name}: {:?}", gh.log());
+    }
 }
 
 /// A head a human's open thread or objection holds, pushed after Copilot
@@ -4418,7 +4489,8 @@ fn each_verdict_word_is_read_from_the_head() {
         assert_eq!(result["recorded"]["replaced"], false, "{}", row.name);
     }
 
-    // An off gate is the verdict before any review read.
+    // An off gate is the verdict before any review read; only Copilot's
+    // work on the head is read, for the hold.
     let gh = Github::review_world();
     gh.policy("[env]\nREVIEW_GATE_MODE = \"off\"\n");
     let result = ok_result(&gh.review(false, &[]));
@@ -4428,9 +4500,13 @@ fn each_verdict_word_is_read_from_the_head() {
     assert_eq!(gh.review_record()["mode"], "off");
     assert_eq!(
         gh.log(),
-        vec![format!(
-            "pr view {PR} --repo {REPO} --json headRefOid,baseRefName,state,isDraft,reviewDecision,latestReviews,author"
-        )]
+        vec![
+            format!(
+                "pr view {PR} --repo {REPO} --json headRefOid,baseRefName,state,isDraft,reviewDecision,latestReviews,author"
+            ),
+            format!("api {}", check_runs(HEAD, 1)),
+            format!("api {}", timeline_path()),
+        ]
     );
 
     // A second error after the retry is the fallback cause the overseer
@@ -4525,6 +4601,103 @@ fn the_timeout_is_judged_on_the_recorded_stamp() {
     let third = ok_result(&gh.review(false, &[("PR_REVIEW_ON_TIMEOUT", "block")]));
     assert_eq!(third["status"], "pending", "{third}");
     assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+}
+
+/// A request whose Copilot work ended with no review of the head, its check
+/// cancelled, is no landed request: the next call sends it once more, and
+/// the approval standing beside it waits on that review; a resend whose work
+/// ends the same way falls back `unconfirmed`, with no third request. The
+/// early request is planted as GitHub recorded it, earlier than the call
+/// that reads it, as a push-first head's request is.
+#[test]
+fn a_request_whose_work_ended_with_no_review_is_sent_once_more_then_falls_back() {
+    let mut gh = Github::review_world();
+    gh.answer(
+        &format!("pr view {PR}"),
+        review_view("APPROVED", &[("colleague", "APPROVED")], false),
+    );
+    let first = ok_result(&gh.review(false, &[]));
+    assert_eq!(first["status"], "pending", "{first}");
+    assert_eq!(first["request"]["outcome"], "requested", "{first}");
+    assert_eq!(gh.requests(), 1, "{:?}", gh.log());
+    let acts_path = gh.dir.path().join("replies.acts.json");
+    let mut acts: Value = serde_json::from_str(&fs::read_to_string(&acts_path).unwrap()).unwrap();
+    acts["events"][PR.to_string()][0]["created_at"] = json!("2026-01-29T15:00:00Z");
+    fs::write(&acts_path, acts.to_string()).unwrap();
+    let cancelled = |id: u64, started: &str| {
+        with(
+            with(
+                copilot_check(id, "completed"),
+                "conclusion",
+                json!("cancelled"),
+            ),
+            "started_at",
+            json!(started),
+        )
+    };
+    gh.answer(
+        &check_runs(HEAD, 1),
+        check_runs_page(1, vec![cancelled(31, "2026-01-29T15:00:30Z")]),
+    );
+    let resent = ok_result(&gh.review(false, &[]));
+    assert_eq!(resent["status"], "pending", "{resent}");
+    assert_eq!(resent["copilot"]["state"], "pending", "{resent}");
+    assert_eq!(resent["request"]["outcome"], "requested", "{resent}");
+    assert_eq!(gh.requests(), 2, "{:?}", gh.log());
+    assert_eq!(gh.head_record()["request"]["resent"], true);
+    let acts: Value = serde_json::from_str(&fs::read_to_string(&acts_path).unwrap()).unwrap();
+    let again = acts["events"][PR.to_string()][1]["created_at"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    gh.answer(
+        &check_runs(HEAD, 1),
+        check_runs_page(
+            2,
+            vec![cancelled(31, "2026-01-29T15:00:30Z"), cancelled(32, &again)],
+        ),
+    );
+    let fell_back = ok_result(&gh.review(false, &[]));
+    assert_eq!(fell_back["request"]["outcome"], "fallback", "{fell_back}");
+    assert_eq!(fell_back["request"]["cause"], "unconfirmed", "{fell_back}");
+    assert_eq!(fell_back["request"]["recorded_now"], true, "{fell_back}");
+    assert_eq!(gh.requests(), 2, "{:?}", gh.log());
+}
+
+/// An off gate asks Copilot for nothing, yet Copilot's work already running
+/// on the head holds its verdict `pending` within the hold, until Copilot's
+/// review of the head lands or the hold passes, as under `approval`.
+#[test]
+fn an_off_gate_holds_its_verdict_while_copilot_reviews_the_head() {
+    let mut gh = Github::review_world();
+    gh.policy("[env]\nREVIEW_GATE_MODE = \"off\"\n");
+    gh.answer(
+        &check_runs(HEAD, 1),
+        check_runs_page(1, vec![copilot_check(31, "in_progress")]),
+    );
+    let held = ok_result(&gh.review(false, &[]));
+    assert_eq!(held["status"], "pending", "{held}");
+    assert_eq!(held["mode"], "off", "{held}");
+    assert_eq!(held["copilot"]["run"], 31, "{held}");
+    let past = stamp_ago(601);
+    gh.set_head("at", json!(past));
+    let expired = ok_result(&gh.review(false, &[]));
+    assert_eq!(expired["verdict"], "off", "{expired}");
+    assert_eq!(expired["copilot"]["state"], "expired", "{expired}");
+    gh.set_head("at", json!(stamp_ago(0)));
+    gh.answer(
+        &reviews_path(),
+        json!([copilot_review(
+            32,
+            "COMMENTED",
+            "Reviewed.",
+            "2026-01-29T15:12:00Z"
+        )]),
+    );
+    let settled = ok_result(&gh.review(false, &[]));
+    assert_eq!(settled["verdict"], "off", "{settled}");
+    assert_eq!(settled["copilot"]["state"], "none", "{settled}");
+    assert_eq!(gh.requests(), 0, "{:?}", gh.log());
 }
 
 /// Copilot's work in flight holds the call `pending` with its run while the

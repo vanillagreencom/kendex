@@ -1588,20 +1588,14 @@ fn a_cloud_stall_close_cut_by_a_crash_is_not_asked_again_by_the_next_run() {
     // fixture's, its map and log in `bin`.
     let bin = state_dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
-    std::fs::write(
-        bin.join("gh"),
+    write_executable(
+        &bin.join("gh"),
         format!(
             "#!/bin/bash\nif [ \"${{1:-}}\" = auth ] && [ \"${{2:-}}\" = status ]; then exit 0; fi\nexport GH_FAKE_REPLIES={0}/gh.json GH_FAKE_LOG={0}/gh.log\nexec {1} \"$@\"\n",
             bin.display(),
             fixtures().join("gh/gh").display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(
-        bin.join("gh"),
-        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
-    )
-    .unwrap();
+    );
     std::fs::write(
         bin.join("gh.json"),
         json!({"repos/o/r/pulls?head=o:cc-1&state=open": {"body": [{"head": {"sha": "aaa111"}, "body": "", "draft": true}]}})

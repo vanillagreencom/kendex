@@ -2252,16 +2252,13 @@ fn the_predecessors_close_never_discharges_the_runners_pane() {
     let tools = dir.path().join("tools");
     std::fs::create_dir_all(&tools).unwrap();
     let shim = tools.join("tmux");
-    std::fs::write(
+    write_executable(
         &shim,
         format!(
             "#!/bin/bash\nfor a in \"$@\"; do [ \"$a\" = kill-window ] && k=1; [ \"$a\" = '{window}' ] && w=1; done\n[ -n \"$k\" ] && [ -n \"$w\" ] && {{ echo refused >&2; exit 1; }}\nexec {} \"$@\"\n",
             which_tmux()
         ),
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     runner.tools = Some(tools);
     let first = runner.reconcile_one();
     assert_eq!(first["intent"]["outcome"], "unconfirmed", "{first}");
@@ -2579,8 +2576,8 @@ fn a_unit_start_whose_reply_and_state_read_are_lost_keeps_the_unit_standing() {
     let started = text
         .strip_suffix("exit 0\n")
         .expect("the fake ends on its answer");
-    std::fs::write(&launcher, format!("{started}exit 1\n")).unwrap();
-    std::fs::write(bin.join("systemctl"), "#!/bin/bash\nexit 1\n").unwrap();
+    write_executable(&launcher, format!("{started}exit 1\n"));
+    write_executable(&bin.join("systemctl"), "#!/bin/bash\nexit 1\n");
     runner.tools = Some(bin.clone());
     runner
         .env
@@ -2658,7 +2655,6 @@ impl Drop for ReleasedLoop<'_> {
 
 #[test]
 fn a_released_watch_loop_running_across_an_upgrade_hands_its_claim_to_one_runtime_watch() {
-    use std::os::unix::fs::PermissionsExt;
     use std::os::unix::process::CommandExt;
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
@@ -2682,8 +2678,10 @@ fn a_released_watch_loop_running_across_an_upgrade_hands_its_claim_to_one_runtim
     )
     .unwrap();
     let entry = scripts.join("oversee-watch");
-    std::fs::copy(fixtures().join("released-watch-loop/oversee-watch"), &entry).unwrap();
-    std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write_executable(
+        &entry,
+        std::fs::read_to_string(fixtures().join("released-watch-loop/oversee-watch")).unwrap(),
+    );
     let err = runner.state_dir().join("loop.err");
     let mut command = program(&entry);
     runner.apply_env(&mut command);
@@ -2708,7 +2706,10 @@ fn a_released_watch_loop_running_across_an_upgrade_hands_its_claim_to_one_runtim
     // The upgrade writes the shipped entry over the path the loop runs as
     // each pass, renamed into place.
     let next = scripts.join(".oversee-watch.next");
-    std::fs::copy(shipped_scripts().join("oversee-watch"), &next).unwrap();
+    write_executable(
+        &next,
+        std::fs::read_to_string(shipped_scripts().join("oversee-watch")).unwrap(),
+    );
     std::fs::rename(&next, &entry).unwrap();
     let deadline = Instant::now() + SETTLE;
     let status = loop {
@@ -2742,7 +2743,6 @@ fn a_released_watch_loop_running_across_an_upgrade_hands_its_claim_to_one_runtim
 #[test]
 fn a_released_watch_loop_upgraded_before_setup_keeps_its_claim_until_the_runtime_is_built_then_migrates()
  {
-    use std::os::unix::fs::PermissionsExt;
     use std::os::unix::process::CommandExt;
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
@@ -2769,7 +2769,10 @@ fn a_released_watch_loop_upgraded_before_setup_keeps_its_claim_until_the_runtime
         package.join("agent-runtime/scripts/lib"),
     )
     .unwrap();
-    std::fs::copy(shipped.join("orch-runtime"), scripts.join("orch-runtime")).unwrap();
+    write_executable(
+        &scripts.join("orch-runtime"),
+        std::fs::read_to_string(shipped.join("orch-runtime")).unwrap(),
+    );
     let cache = runner.state_dir().join("cache");
     runner.env.push((
         "AGENT_RUNTIME_CACHE".to_owned(),
@@ -2779,8 +2782,10 @@ fn a_released_watch_loop_upgraded_before_setup_keeps_its_claim_until_the_runtime
         .state_dir()
         .join(orch_runtime::state::FLEET_FILE_NAME);
     let entry = scripts.join("oversee-watch");
-    std::fs::copy(fixtures().join("released-watch-loop/oversee-watch"), &entry).unwrap();
-    std::fs::set_permissions(&entry, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write_executable(
+        &entry,
+        std::fs::read_to_string(fixtures().join("released-watch-loop/oversee-watch")).unwrap(),
+    );
     let err = runner.state_dir().join("loop.err");
     let mut command = program(&entry);
     runner.apply_env(&mut command);
@@ -2803,7 +2808,10 @@ fn a_released_watch_loop_upgraded_before_setup_keeps_its_claim_until_the_runtime
         claim().is_some_and(|c| c.pid == loop_pid && c.start.is_none())
     });
     let next = scripts.join(".oversee-watch.next");
-    std::fs::copy(shipped.join("oversee-watch"), &next).unwrap();
+    write_executable(
+        &next,
+        std::fs::read_to_string(shipped.join("oversee-watch")).unwrap(),
+    );
     std::fs::rename(&next, &entry).unwrap();
     // Two passes answer the wrapper's refusal and the loop runs on with its
     // claim.
@@ -2962,7 +2970,6 @@ fn a_dead_recovery_whose_transfer_fails_is_said_and_asked_once_more_then_reporte
 #[test]
 fn a_brief_refused_before_its_paste_is_typed_on_the_repeat_and_one_whose_paste_went_unanswered_never_twice()
  {
-    use std::os::unix::fs::PermissionsExt;
     // (the tmux verb refused once, the note, the repeat's outcome, the
     // turns the runner recorded after the repeat)
     let cases = [
@@ -2997,13 +3004,11 @@ for arg in "$@"; do
 done
 exec "__TMUX__" "$@"
 "#;
-        std::fs::write(
+        write_executable(
             &shim,
             body.replace("__VERB__", verb)
                 .replace("__TMUX__", &which_tmux()),
-        )
-        .unwrap();
-        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         runner.env.push((
             "REFUSE_COUNT".to_owned(),
             work.join("refuse-count").display().to_string(),
@@ -3092,7 +3097,6 @@ fn a_transfer_asked_with_effect_exit_answers_its_jobs_outcome_not_its_start() {
 
 #[test]
 fn a_notice_whose_send_got_no_answer_is_sent_once_more_by_the_heartbeat_and_never_by_a_walk() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let mut runner = suite_runner(&server, "stub-unconfirmed");
@@ -3107,7 +3111,7 @@ fn a_notice_whose_send_got_no_answer_is_sent_once_more_by_the_heartbeat_and_neve
     let sends = work.join("notices.log");
     let lost = work.join("notice-lost");
     let mailbox = work.join("lane-mail-lossy");
-    std::fs::write(
+    write_executable(
         &mailbox,
         format!(
             "#!/bin/bash\nif [ \"${{1:-}}\" = notice ]; then\n  printf 'notice\\n' >> '{sends}'\n  if [ ! -e '{lost}' ]; then : > '{lost}'; kill -KILL $$; fi\n  exit 0\nfi\nexec '{quiet}' \"$@\"\n",
@@ -3115,9 +3119,7 @@ fn a_notice_whose_send_got_no_answer_is_sent_once_more_by_the_heartbeat_and_neve
             lost = lost.display(),
             quiet = fixtures().join("lane-mail-quiet/lane-mail").display(),
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&mailbox, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     runner
         .env
         .push(("LANE_MAIL_CLI".to_owned(), mailbox.display().to_string()));
@@ -3458,7 +3460,6 @@ fn the_callers_argv_reaches_the_launch_as_given_under_the_posture_it_spells() {
 /// a new controller operation is not refused `intent-open`.
 #[test]
 fn a_stop_unread_before_any_signal_fails_before_retirement_and_restores_the_pending() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let mut runner = suite_runner(&server, "stub-confirm");
@@ -3479,15 +3480,13 @@ fn a_stop_unread_before_any_signal_fails_before_retirement_and_restores_the_pend
     let tools = dir.path().join("tools");
     std::fs::create_dir_all(&tools).unwrap();
     let ps = tools.join("ps");
-    std::fs::write(
+    write_executable(
         &ps,
         format!(
             "#!/bin/bash\nfor a; do last=$a; done\nif [ \"$last\" = {pid} ]; then exit 2; fi\nexec /usr/bin/ps \"$@\"\n",
             pid = predecessor.pid()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&ps, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     runner.tools = Some(tools);
     runner.transfer_started(&transfer_request(&server, runner.state_dir()));
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
@@ -3778,13 +3777,14 @@ fn the_reconcile_reads_a_launcher_record_three_valued() {
 /// claims. The op's environment reaches the job as the launcher's own.
 /// Returns `bin` and the environment the op carries for the watch.
 fn watch_world(dir: &Path) -> (std::path::PathBuf, Vec<(String, String)>) {
-    use std::os::unix::fs::PermissionsExt;
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     for fake in ["systemd-run", "systemctl", "loginctl"] {
         let to = bin.join(fake);
-        std::fs::copy(fixtures().join("cutover-fakes").join(fake), &to).unwrap();
-        std::fs::set_permissions(&to, std::fs::Permissions::from_mode(0o755)).unwrap();
+        write_executable(
+            &to,
+            std::fs::read_to_string(fixtures().join("cutover-fakes").join(fake)).unwrap(),
+        );
     }
     std::os::unix::fs::symlink(fixtures().join("gh-auth-fixture/gh"), bin.join("gh")).unwrap();
     github_skill_under(dir);
@@ -3795,15 +3795,13 @@ fn watch_world(dir: &Path) -> (std::path::PathBuf, Vec<(String, String)>) {
     )
     .unwrap();
     let wrapper = dir.join("orch-runtime");
-    std::fs::write(
+    write_executable(
         &wrapper,
         format!(
             "#!/bin/bash\nexec \"{}\" --no-private-env \"$@\"\n",
             binary().display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let env = vec![
         ("ORCH_SECURITY_ALERTS".to_owned(), "off".to_owned()),
         (
@@ -3998,7 +3996,6 @@ fn start_controller_launches_the_fleet_watch_and_a_refused_launch_is_unconfirmed
 /// the record said when the send ran. Written beside the fleet state,
 /// executable; the path.
 fn snapshot_mailbox(runner: &Runner, snapshot: &Path, log: &Path) -> std::path::PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     let fleet = runner.state_dir().join("workflow-state-oversee.json");
     let script = [
         "#!/bin/bash".to_owned(),
@@ -4017,8 +4014,7 @@ fn snapshot_mailbox(runner: &Runner, snapshot: &Path, log: &Path) -> std::path::
     ]
     .join("\n");
     let path = runner.state_dir().join("lane-mail");
-    std::fs::write(&path, script).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write_executable(&path, script);
     path
 }
 
@@ -4588,7 +4584,6 @@ fn codex_turns(home: &Path) -> Vec<String> {
 #[test]
 fn a_unit_start_whose_answer_was_lost_or_failed_after_the_manager_acted_is_held_by_its_unit_and_never_launched_again()
  {
-    use std::os::unix::fs::PermissionsExt;
     // (the case, how the fake `systemd-run` ends once the unit started)
     for (case, ending) in [
         ("signal", "kill -KILL $$\n"),
@@ -4612,13 +4607,9 @@ fn a_unit_start_whose_answer_was_lost_or_failed_after_the_manager_acted_is_held_
             .expect("the fake ends its start with exit 0")
             .to_owned()
             + ending;
-        std::fs::write(bin.join("systemd-run"), lost).unwrap();
+        write_executable(&bin.join("systemd-run"), lost);
         let show_gone = "#!/bin/bash\nd=\"$(cd \"$(dirname \"$0\")\" && pwd)\"\nprintf 'systemctl %s\\n' \"$*\" >> \"$d/systemd.log\"\ncase \" $* \" in\n  *\" show \"*) echo not-found; echo inactive; exit 0 ;;\nesac\nlast=\"${!#}\"\nunit=\"${last%.service}\"\n[[ -f \"$d/units/$unit\" ]] || exit 5\npid=\"$(<\"$d/units/$unit\")\"\nrm -f \"$d/units/$unit\"\nkill -TERM -- \"-$pid\" 2>/dev/null || true\nexit 0\n";
-        std::fs::write(bin.join("systemctl"), show_gone).unwrap();
-        for fake in ["systemd-run", "systemctl"] {
-            std::fs::set_permissions(bin.join(fake), std::fs::Permissions::from_mode(0o755))
-                .unwrap();
-        }
+        write_executable(&bin.join("systemctl"), show_gone);
         runner.tools = Some(bin.clone());
         let state = runner
             .state_dir()
@@ -5133,7 +5124,7 @@ fn model_switch(
     record: &Value,
 ) -> (std::process::Output, Value) {
     use std::io::Write;
-    use std::os::unix::fs::{PermissionsExt, symlink};
+    use std::os::unix::fs::symlink;
     let git = program("git")
         .args(["init", "-q"])
         .arg(work)
@@ -5159,8 +5150,7 @@ fn model_switch(
     .unwrap();
     let succeed = scripts.join("oversee-succeed");
     std::fs::remove_file(&succeed).unwrap();
-    std::fs::write(&succeed, "#!/bin/sh\nexit 0\n").unwrap();
-    std::fs::set_permissions(&succeed, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write_executable(&succeed, "#!/bin/sh\nexit 0\n");
     let session = record["session_id"].as_str().unwrap();
     let payload = json!({
         "session_id": session,
@@ -6746,7 +6736,6 @@ fn a_succession_publishes_the_line_of_the_successor_it_launched_never_the_predec
 /// `predecessor-not-live` before any window opens, the pending put back.
 #[test]
 fn a_predecessor_that_is_not_the_live_recorded_controller_is_refused_with_nothing_opened() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let runner = suite_runner(&server, "stub-confirm");
@@ -6766,12 +6755,10 @@ fn a_predecessor_that_is_not_the_live_recorded_controller_is_refused_with_nothin
     )
     .unwrap();
     let private = runner.state_dir().join("orch-runtime-private");
-    std::fs::write(
+    write_executable(
         &private,
         format!("#!/bin/bash\nexec \"{}\" \"$@\"\n", binary().display()),
-    )
-    .unwrap();
-    std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let launch = |pane: &str| {
         workflow_launch(
             &runner,

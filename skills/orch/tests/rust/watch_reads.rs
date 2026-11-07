@@ -1305,18 +1305,19 @@ fn merged_pull(number: u64, branch: &str) -> Value {
         "head": {"ref": branch, "repo": {"owner": {"login": "owner"}}}})
 }
 
-/// pr-timeline's one GraphQL read of the merged pull request 7.
+/// pr-timeline's one GraphQL read of the merged pull request 7, its three
+/// selections of `commits` planted under their arguments.
 fn timeline_seven() -> Value {
     json!({"body": {"data": {"repository": {"pullRequest": {
-        "number": 7, "state": "MERGED", "createdAt": "2026-09-20T09:10:00Z", "mergedAt": "2026-09-20T11:20:00Z",
+        "number": 7, "state": "MERGED", "body": "", "createdAt": "2026-09-20T09:10:00Z", "mergedAt": "2026-09-20T11:20:00Z",
         "author": {"login": "lane-app"}, "headRefName": "", "headRepository": null,
         "mergeCommit": {"__typename": "Commit", "oid": "m1",
-            "checkSuites": {"__typename": "CheckSuiteConnection", "pageInfo": {"hasNextPage": false}, "nodes": []}},
-        "firstCommit": {"nodes": [{"commit": {"authoredDate": "2026-09-20T09:00:00Z"}}]},
-        "headCommit": {"nodes": [{"commit": {"__typename": "Commit", "oid": "h2", "committedDate": "2026-09-20T10:10:00Z",
+            "checkSuites": {"__typename": "CheckSuiteConnection", "pageInfo": {"hasNextPage": false, "endCursor": null}, "nodes": []}},
+        "commits(first: 1)": {"nodes": [{"commit": {"authoredDate": "2026-09-20T09:00:00Z"}}]},
+        "commits(last: 1)": {"nodes": [{"commit": {"__typename": "Commit", "oid": "h2", "committedDate": "2026-09-20T10:10:00Z",
             "status": {"context": {"state": "SUCCESS", "createdAt": "2026-09-20T10:25:00Z"}},
-            "checkSuites": {"__typename": "CheckSuiteConnection", "pageInfo": {"hasNextPage": false}, "nodes": []}}}]},
-        "commits": {"totalCount": 0, "nodes": []},
+            "checkSuites": {"__typename": "CheckSuiteConnection", "pageInfo": {"hasNextPage": false, "endCursor": null}, "nodes": []}}}]},
+        "commits(last: 100)": {"totalCount": 0, "nodes": []},
         "reviews": {"totalCount": 0, "nodes": []},
         "timelineItems": {"pageInfo": {"hasNextPage": false}, "nodes": []}
     }}}}})

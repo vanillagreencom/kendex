@@ -768,19 +768,16 @@ fn two_events_apart_give_two_user_rows_with_the_stub_idle_between() {
 /// repeat for that state types nothing; a later unread state types once.
 #[test]
 fn a_mark_before_the_paste_pastes_nothing_on_the_repeat_and_a_later_state_pastes_once() {
-    use std::os::unix::fs::PermissionsExt;
     let real = agent_runtime();
     let fleet = Fleet::new();
     let crash = fleet.root.join("agent-runtime-crash");
-    std::fs::write(
+    write_executable(
         &crash,
         format!(
             "#!/bin/bash\ncase \" $* \" in *' --turns-before '*) exit 137 ;; esac\nexec '{}' \"$@\"\n",
             real.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&crash, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let pane = fleet.open("KEN-1", "claude", "lead-1", &[]);
     fleet.server.await_composer(&pane.id);
     fleet.set_lanes(vec![fleet.lane("KEN-1", "claude", &pane)]);
@@ -819,7 +816,6 @@ fn a_mark_before_the_paste_pastes_nothing_on_the_repeat_and_a_later_state_pastes
 
 #[test]
 fn a_wake_whose_line_never_reached_the_pane_types_it_on_the_next_pass() {
-    use std::os::unix::fs::PermissionsExt;
     let real = agent_runtime();
     let fleet = Fleet::new();
     // The tmux the agent-runtime runs refuses its first load-buffer, before
@@ -827,27 +823,23 @@ fn a_wake_whose_line_never_reached_the_pane_types_it_on_the_next_pass() {
     let shims = fleet.root.join("refusing-tmux");
     std::fs::create_dir(&shims).unwrap();
     let count = fleet.root.join("load-count");
-    std::fs::write(
-        shims.join("tmux"),
+    write_executable(
+        &shims.join("tmux"),
         format!(
             "#!/bin/bash\nfor arg in \"$@\"; do\n  if [ \"$arg\" = load-buffer ] && [ ! -e '{count}' ]; then\n    : > '{count}'\n    echo refused >&2\n    exit 1\n  fi\ndone\nexec '{tmux}' \"$@\"\n",
             count = count.display(),
             tmux = which_tmux(),
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(shims.join("tmux"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let refusing = fleet.root.join("agent-runtime-refusing");
-    std::fs::write(
+    write_executable(
         &refusing,
         format!(
             "#!/bin/bash\nPATH='{}':\"$PATH\" exec '{}' \"$@\"\n",
             shims.display(),
             real.display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(&refusing, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let pane = fleet.open("KEN-1", "claude", "lead-1", &[]);
     fleet.server.await_composer(&pane.id);
     fleet.set_lanes(vec![fleet.lane("KEN-1", "claude", &pane)]);

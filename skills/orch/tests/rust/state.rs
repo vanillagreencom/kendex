@@ -1452,7 +1452,6 @@ fn state_remove_waits_on_the_records_lock_a_writer_holds() {
 /// archives the record holding it and removes the record, its lock staying.
 #[test]
 fn state_remove_keeps_a_shell_store_update_in_flight() {
-    use std::os::unix::fs::PermissionsExt;
     let store = Store::new();
     store.init(ITEM);
     store.init_fleet();
@@ -1460,7 +1459,7 @@ fn state_remove_keeps_a_shell_store_update_in_flight() {
     let tools = store.dir.path().join("bin");
     fs::create_dir(&tools).unwrap();
     let jq = tools.join("jq");
-    fs::write(
+    support::write_executable(
         &jq,
         r#"#!/bin/sh
 case "$*" in
@@ -1477,9 +1476,7 @@ case "$*" in
   *) exec "$REAL_JQ" "$@" ;;
 esac
 "#,
-    )
-    .unwrap();
-    fs::set_permissions(&jq, fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let ready = store.dir.path().join("ready");
     let release = store.dir.path().join("release");
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/workflow-state");
@@ -1536,7 +1533,6 @@ esac
 /// file stand, and the archive holds the landed update and not the late one.
 #[test]
 fn state_remove_leaves_a_shell_update_waiting_on_its_lock_no_record_to_write() {
-    use std::os::unix::fs::PermissionsExt;
     let store = Store::new();
     store.init(ITEM);
     store.init_fleet();
@@ -1561,7 +1557,7 @@ fn state_remove_leaves_a_shell_update_waiting_on_its_lock_no_record_to_write() {
     let tools = store.dir.path().join("bin");
     fs::create_dir(&tools).unwrap();
     let tar = tools.join("tar");
-    fs::write(
+    support::write_executable(
         &tar,
         r#"#!/bin/sh
 : > "$HOLD_READY"
@@ -1573,9 +1569,7 @@ while [ ! -e "$HOLD_RELEASE" ]; do
 done
 exec "$REAL_TAR" "$@"
 "#,
-    )
-    .unwrap();
-    fs::set_permissions(&tar, fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let ready = store.dir.path().join("ready");
     let release = store.dir.path().join("release");
     let mut remove = support::isolated();
@@ -1696,7 +1690,6 @@ fn state_remove_retires_the_session_rows_of_a_pane_the_server_no_longer_holds() 
 /// holds the lock: it waits, and the record keeps both writes.
 #[test]
 fn a_reinitialized_item_keeps_both_old_and_new_lock_writers() {
-    use std::os::unix::fs::PermissionsExt;
     use std::process::Stdio;
     if real("flock").is_empty() {
         // Without flock(1) the shell's mkdir mutex is the lock, and the
@@ -1742,8 +1735,7 @@ esac
     ];
     for (name, text) in fixtures {
         let path = tools.join(name);
-        fs::write(&path, text).unwrap();
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        support::write_executable(&path, text);
     }
     let at = |name: &str| store.dir.path().join(name);
     let wait = |file: &Path| {
@@ -1823,7 +1815,6 @@ esac
 /// pass's own tmux read after that: the record stands, updated.
 #[test]
 fn retention_keeps_a_record_written_after_its_selection() {
-    use std::os::unix::fs::PermissionsExt;
     let store = Store::new();
     store.init("KEN-9");
     let record = store.item_path("KEN-9");
@@ -1842,7 +1833,7 @@ fn retention_keeps_a_record_written_after_its_selection() {
     let tools = store.dir.path().join("tools");
     fs::create_dir(&tools).unwrap();
     let shim = tools.join("tmux");
-    fs::write(
+    support::write_executable(
         &shim,
         r#"#!/bin/sh
 if [ ! -e "$WROTE" ]; then
@@ -1851,9 +1842,7 @@ if [ ! -e "$WROTE" ]; then
 fi
 exec "$REAL_TMUX" "$@"
 "#,
-    )
-    .unwrap();
-    fs::set_permissions(&shim, fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/workflow-state");
     let out = support::isolated()
         .arg("--state-dir")

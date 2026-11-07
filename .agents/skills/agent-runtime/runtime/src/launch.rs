@@ -528,7 +528,6 @@ impl LaunchCommand {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::os::unix::fs::PermissionsExt;
     use std::process::Command;
 
     use super::*;
@@ -570,8 +569,7 @@ mod tests {
     /// prints its environment one `NAME=VALUE` a line.
     fn child_env(dir: &Path, mut i: LaunchIntent) -> BTreeMap<String, String> {
         let recorder = dir.join("show-env");
-        fs::write(&recorder, "#!/bin/sh\nexec env\n").unwrap();
-        fs::set_permissions(&recorder, fs::Permissions::from_mode(0o755)).unwrap();
+        crate::host::write_executable(&recorder, "#!/bin/sh\nexec env\n");
         i.cwd = dir.to_path_buf();
         i.program = Some(recorder);
         let line = build(&i).unwrap().shell_line();
@@ -871,8 +869,7 @@ mod tests {
         let brief = brief_dir.join("it's $x.md");
         fs::write(&brief, "line one 'quoted' $HOME `x`\nline two\n").unwrap();
         let recorder = dir.path().join("record-args");
-        fs::write(&recorder, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n").unwrap();
-        fs::set_permissions(&recorder, fs::Permissions::from_mode(0o755)).unwrap();
+        crate::host::write_executable(&recorder, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n");
         let mut i = intent(Harness::Codex);
         i.home = Some(dir.path().join(".1codex"));
         i.cwd = dir.path().to_path_buf();

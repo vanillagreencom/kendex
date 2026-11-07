@@ -1076,7 +1076,7 @@ mod tests {
         let release = root.join("mail-release");
         let received = root.join("mail-received");
         let mail = root.join("lane-mail");
-        std::fs::write(
+        crate::write_executable(
             &mail,
             format!(
                 "#!/bin/sh\nwhile [ \"$1\" != --file ]; do shift; done\n: > '{}'\nn=0\nwhile [ ! -e '{}' ]; do n=$((n + 1)); [ \"$n\" -lt 3000 ] || exit 98; sleep 0.01; done\ncat -- \"$2\" > '{}'\n",
@@ -1084,10 +1084,7 @@ mod tests {
                 release.display(),
                 received.display()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&mail, std::os::unix::fs::PermissionsExt::from_mode(0o755))
-            .unwrap();
+        );
         let mut settings = settings(&root);
         settings.lane_mail_cli = mail;
         std::thread::scope(|scope| {

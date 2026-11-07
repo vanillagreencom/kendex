@@ -2307,16 +2307,7 @@ impl Producer {
         ] {
             std::fs::create_dir_all(root.join(sub)).unwrap();
         }
-        let executable = |name: &str, text: &str| {
-            let path = root.join("bin").join(name);
-            std::fs::write(&path, text).unwrap();
-            std::fs::set_permissions(
-                &path,
-                <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
-            )
-            .unwrap();
-        };
-        executable("tmux", "#!/bin/sh\nexit 0\n");
+        write_executable(&root.join("bin/tmux"), "#!/bin/sh\nexit 0\n");
         std::os::unix::fs::symlink(fixtures().join("usage-curl/curl"), root.join("bin/curl"))
             .unwrap();
         let git = program("git")
@@ -4587,7 +4578,6 @@ fn each_endpoint_shape_is_read_as_its_recorded_body() {
 
 #[test]
 fn the_copilot_login_is_read_from_the_config_or_the_keyring_and_the_statement_stands_in() {
-    use std::os::unix::fs::PermissionsExt;
     let mut world = World::new(&[]);
     world.write_fleet(Vec::new(), None);
     let mut acopilot = measured("acopilot", 20, 10);
@@ -4620,12 +4610,10 @@ fn the_copilot_login_is_read_from_the_config_or_the_keyring_and_the_statement_st
         format!("{}=250/1000", world.dir("scopilot")),
     ));
     let secret_tool = world.path().join("bin/secret-tool");
-    std::fs::write(
+    write_executable(
         &secret_tool,
         "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$USAGE_FIXTURE_DIR/secret-tool.log\"\ncase \"$5\" in *:github) printf '[/org/freedesktop/secrets/collection/login/7]\\nlabel = keyring:probe@copilot-cli\\nsecret = gho_keyring\\n' ;; esac\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&secret_tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let pool = |remaining: u64| {
         json!({"quota_snapshots": {"premium_interactions": {"entitlement": 1000, "remaining": remaining}},
                "quota_reset_date_utc": "2099-10-01"})

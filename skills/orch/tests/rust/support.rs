@@ -307,12 +307,7 @@ fn publish(dir: &Path, name: &str, text: &str) -> PathBuf {
         std::process::id(),
         std::thread::current().id()
     ));
-    std::fs::write(&tmp, text).expect("a published executable");
-    std::fs::set_permissions(
-        &tmp,
-        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
-    )
-    .expect("a published executable's mode");
+    write_executable(&tmp, text);
     std::fs::rename(&tmp, &path).expect("a published executable in place");
     path
 }
@@ -372,8 +367,12 @@ pub fn stub(name: &str) -> PathBuf {
 /// test process holds open for writing is held by every other test thread's
 /// child between its fork and its exec as well, and running it then fails
 /// `ETXTBSY`; a rename into place keeps that same file, so it does not help.
+/// The child takes this process's `PATH`, not [`isolation_env`]'s: the tools
+/// that path names are written here.
 pub fn write_executable(path: &Path, text: impl AsRef<str>) {
-    let out = program("sh")
+    let out = Command::new("sh")
+        .env_clear()
+        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
         .args([
             "-c",
             "printf '%s' \"$1\" > \"$2\" && chmod 755 \"$2\"",

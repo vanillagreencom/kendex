@@ -2228,9 +2228,16 @@ fn mark_check(record: &Record, key: &str, marks: Option<&Marks>, pass: &Pass, ou
                 preference.unwrap_or(crate::settings::DEFAULT_OVERSEER_PREFERENCE)
             ),
         };
-        let sentence = match marks.succession {
-            Succession::Off => "ORCH_OVERSEER_SUCCESSION is off, so no successor opens: rewrite the overseer handoff file and ask the user to start a fresh overseer session.".to_owned(),
-            Succession::On => format!(
+        // A controller another lifecycle replaces is handed over by that
+        // owner alone, whatever the setting: the setting governs orch's own
+        // transfer, which refuses this record.
+        let sentence = match (record.succession(), marks.succession) {
+            (Some(words), Succession::On | Succession::Off) => format!(
+                "Hand this session over at the next safe point through the succession owner its record names: run {} and read its outcome; that owner replaces this controller, so choose no successor and ask for no transfer.",
+                words.join(" ")
+            ),
+            (None, Succession::Off) => "ORCH_OVERSEER_SUCCESSION is off, so no successor opens: rewrite the overseer handoff file and ask the user to start a fresh overseer session.".to_owned(),
+            (None, Succession::On) => format!(
                 "Hand this session over at the next safe point: write the overseer handoff file, choose the successor with orch-runtime successor --fleet --cwd {} --predecessor {} --mark {kind} (it walks {walks}) and ask orch-runtime op --fleet --effect-exit for request-transfer with cause live, its .result.successor as the successor and its .result.expected as the expected record, which answers the transfer's own outcome.",
                 text(record.raw.get("cwd")).unwrap_or_else(|| "[CHECKOUT]".to_owned()),
                 record.pane,

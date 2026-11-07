@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 mod support;
 
 use serde_json::{Value, json};
-use support::{Owned, fixtures, program, reply, stderr, tool_path};
+use support::{Owned, fixtures, program, reply, stderr, tool_path, write_executable};
 
 const ITEM: &str = include_str!("fixtures/workflow-state-KEN-4687.json");
 /// The fixture's open dev round.
@@ -395,7 +395,6 @@ fn a_launch_whose_answer_was_lost_keeps_its_stage_open_until_the_reconcile_reads
 #[test]
 fn a_unit_start_whose_answer_and_read_are_lost_keeps_its_live_run_open_until_the_reconcile_reads_the_unit()
  {
-    use std::os::unix::fs::PermissionsExt;
     let w = World::new();
     // A lingering manager that starts the unit, loses the start's answer,
     // and answers the unit read only once the row has planted its answer.
@@ -417,8 +416,7 @@ fn a_unit_start_whose_answer_and_read_are_lost_keeps_its_live_run_open_until_the
         ("systemctl", systemctl),
         ("loginctl", "#!/bin/bash\necho yes\n".to_owned()),
     ] {
-        fs::write(tools.join(name), text).unwrap();
-        fs::set_permissions(tools.join(name), fs::Permissions::from_mode(0o755)).unwrap();
+        write_executable(&tools.join(name), text);
     }
     let hold = w.root.join("child-hold");
     assert!(program("mkfifo").arg(&hold).status().unwrap().success());
@@ -1299,7 +1297,6 @@ fn the_jobs_close_records_the_sentinels_time_and_reports_the_runs_seconds() {
 /// skill's `scripts/lib` two directories from orch's `scripts`, where the
 /// script sources its lock library.
 fn scripts_tree(w: &World) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     let real = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../scripts")
         .canonicalize()
@@ -1323,15 +1320,13 @@ fn scripts_tree(w: &World) -> PathBuf {
         std::os::unix::fs::symlink(entry.path(), tree.join(entry.file_name())).unwrap();
     }
     let wrapper = tree.join("orch-runtime");
-    fs::write(
+    write_executable(
         &wrapper,
         format!(
             "#!/bin/bash\nexec {} --no-private-env --state-dir \"${{ORCH_STATE_DIR:?}}\" \"$@\"\n",
             support::binary().display()
         ),
-    )
-    .unwrap();
-    fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755)).unwrap();
+    );
     tree
 }
 
@@ -1366,7 +1361,6 @@ fn await_gone(pid: u32, what: &str) {
 /// on either route.
 #[test]
 fn a_stop_records_its_intent_before_ending_the_job_and_the_stage_closes_stopped_on_both_routes() {
-    use std::os::unix::fs::PermissionsExt;
     for route in ["setsid", "systemd"] {
         let w = World::new();
         let tree = scripts_tree(&w);
@@ -1395,14 +1389,12 @@ fn a_stop_records_its_intent_before_ending_the_job_and_the_stage_closes_stopped_
             // The user manager: a stop ends the unit's job and its executor;
             // a show after it reads the unit gone.
             let systemctl = fake.join("systemctl");
-            fs::write(
+            write_executable(
                 &systemctl,
                 format!(
                     "#!/bin/bash\ncase \"$*\" in\n*' stop '*) kill -TERM -- -{child}; kill -TERM -- {job}; exit 0;;\n*) printf 'not-found\\ninactive\\n';;\nesac\n"
                 ),
-            )
-            .unwrap();
-            fs::set_permissions(&systemctl, fs::Permissions::from_mode(0o755)).unwrap();
+            );
             fs::write(
                 Path::new(&dir).join("runner"),
                 "runner=systemd\nunit=fixture-validation\nline=runner=systemd unit=fixture-validation\n",

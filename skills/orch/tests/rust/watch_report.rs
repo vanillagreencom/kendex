@@ -23,7 +23,6 @@
 #[path = "support.rs"]
 mod support;
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -106,8 +105,7 @@ impl World {
             std::os::unix::fs::symlink(fix.join(fixture), dir.path().join(name)).unwrap();
         }
         let mail = dir.path().join("lane-mail-fixture");
-        std::fs::write(&mail, LANE_MAIL_FIXTURE).unwrap();
-        std::fs::set_permissions(&mail, std::fs::Permissions::from_mode(0o755)).unwrap();
+        write_executable(&mail, LANE_MAIL_FIXTURE);
         let at = |name: &str| dir.path().join(name).display().to_string();
         // The accounts the listing lists are planted under `home` with
         // their records, served for a day of the fake clock; no usage
@@ -2401,7 +2399,7 @@ fn retention_leaves_an_item_record_a_shell_writer_holds() {
     let tools = world.path().join("bin");
     std::fs::create_dir(&tools).unwrap();
     let jq = tools.join("jq");
-    std::fs::write(
+    write_executable(
         &jq,
         r#"#!/bin/sh
 case "$*" in
@@ -2418,9 +2416,7 @@ case "$*" in
   *) exec "$REAL_JQ" "$@" ;;
 esac
 "#,
-    )
-    .unwrap();
-    std::fs::set_permissions(&jq, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     let ready = world.path().join("ready");
     let release = world.path().join("release");
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/workflow-state");
@@ -2555,7 +2551,7 @@ fn retention_keeps_a_lane_relaunched_during_its_archive() {
         // runs again as a child with the fixture first on it.
         let dir = tempfile::tempdir().unwrap();
         let shim = dir.path().join("tar");
-        std::fs::write(
+        write_executable(
             &shim,
             r#"#!/bin/bash
 set -euo pipefail
@@ -2567,9 +2563,7 @@ state="/${record%/*}"
 printf 'new turn\n' >> "$state/lane-mail/KEN-9/to-lane.jsonl"
 exec "$REAL_TAR" "${args[@]}"
 "#,
-        )
-        .unwrap();
-        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         let out = program(std::env::current_exe().unwrap())
             .args([
                 "--exact",

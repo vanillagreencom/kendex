@@ -17,7 +17,6 @@
 #[path = "support.rs"]
 mod support;
 
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{Duration, Instant};
@@ -42,11 +41,6 @@ fn fixture() -> PathBuf {
         .join("tests/fixtures/launch-lane/claude-dontask.json")
 }
 
-fn executable(path: &Path, text: &str) {
-    std::fs::write(path, text).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
-}
-
 /// The shipped scripts as a directory of links under `root`, the mailbox
 /// skill linked beside them as the store's lock library expects, so the
 /// entry resolves its libraries beside itself and no checkout above it is a
@@ -68,7 +62,7 @@ fn linked_scripts(root: &Path, name: &str, edit: Option<(&str, &str)>) -> PathBu
             "the control's one site: {old}"
         );
         std::fs::remove_file(dir.join("open-terminal")).unwrap();
-        executable(&dir.join("open-terminal"), &text.replace(old, new));
+        write_executable(&dir.join("open-terminal"), text.replace(old, new));
     }
     dir
 }
@@ -157,25 +151,25 @@ impl Lane {
         let hold = root.join("hold");
         let fifo = root.join("wake.fifo");
         mkfifo(&fifo);
-        executable(
+        write_executable(
             &bin.join("claude"),
-            &format!(
+            format!(
                 "#!/bin/bash\nprintf '%s\\n' \"$$\" >> '{}'\n[ -e '{}' ] || exit 0\nexec 9<>'{}'\nread -r -t 60 -u 9 _\n",
                 capture.display(),
                 hold.display(),
                 fifo.display()
             ),
         );
-        executable(
+        write_executable(
             &bin.join("worktree"),
-            &format!(
+            format!(
                 "#!/bin/sh\n[ \"$1\" = path ] || exit 1\nprintf '%s\\n' '{}'\n",
                 work.display()
             ),
         );
-        executable(
+        write_executable(
             &bin.join("orch-runtime"),
-            &format!(
+            format!(
                 "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexec '{}' --no-private-env \"$@\"\n",
                 calls.display(),
                 binary().display()

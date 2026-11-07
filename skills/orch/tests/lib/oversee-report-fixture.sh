@@ -59,6 +59,13 @@ case "$verb" in
     [[ ! -f "$CASE/auth-fail" ]] || { echo "You are not logged into any GitHub hosts." >&2; exit 1; }
     echo "Logged in" ;;
   "api user")
+    # api-user-timeouts N: the first N checks end as the bound ends a killed
+    # one, status 124, the status the shared bounded runner hands back.
+    if [[ -f "$CASE/api-user-timeouts" ]]; then
+      killed=$(( $(cat "$CASE/api-user-killed" 2>/dev/null || echo 0) + 1 ))
+      echo "$killed" > "$CASE/api-user-killed"
+      [[ "$killed" -gt "$(cat "$CASE/api-user-timeouts")" ]] || exit 124
+    fi
     [[ "${GH_TOKEN:-}" != ghp_stale* ]] || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
     echo "someone" ;;
   "pr list")

@@ -580,16 +580,10 @@ fn an_explicit_model_is_taken_as_named_and_a_class_resolves_through_kendex() {
     // and asks the judge nothing.
     let mut broken = World::new(&[("ORCH_LANE_PREFERENCE", "claude:standard:high")]);
     std::fs::remove_file(broken.bin().join("kendex")).unwrap();
-    std::fs::write(
-        broken.bin().join("kendex"),
+    write_executable(
+        &broken.bin().join("kendex"),
         "#!/bin/sh\necho 'Error: invalid manifest' >&2\nexit 1\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(
-        broken.bin().join("kendex"),
-        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
-    )
-    .unwrap();
+    );
     broken.plant_listing(&[measured("aclaude", 20, 5)]);
     let (key, fields) = broken.refused(&["--source-harness", "claude"]);
     assert_eq!(key, "preference-class-unread");

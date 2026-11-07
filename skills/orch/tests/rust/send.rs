@@ -75,11 +75,6 @@ fn init_repo(root: &Path) {
     git(root, &["config", "maintenance.auto", "false"]);
 }
 
-fn script(path: &Path, text: &str) {
-    std::fs::write(path, text).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
-}
-
 fn world() -> World {
     let dir = tempfile::tempdir().unwrap();
     let aux = tempfile::tempdir().unwrap();
@@ -145,18 +140,18 @@ fn world() -> World {
     }
     let lanes_log = aux.path().join("lanes.log");
     std::fs::remove_file(orch.join("lanes")).unwrap();
-    script(
+    write_executable(
         &orch.join("lanes"),
-        &format!(
+        format!(
             "#!/bin/bash\nprintf 'dirs=%s argv=%s\\n' \"${{ORCH_LANE_DIRS:-}}\" \"$*\" >> {}\nprintf '%s\\n' \"${{LANES_LISTING:-[]}}\"\nexit \"${{LANES_RC:-0}}\"\n",
             lanes_log.display()
         ),
     );
     let state_log = aux.path().join("workflow-state.log");
     std::fs::remove_file(orch.join("workflow-state")).unwrap();
-    script(
+    write_executable(
         &orch.join("workflow-state"),
-        &format!(
+        format!(
             "#!/bin/bash\nprintf '%s\\n' \"$*\" >> {}\nexec {} \"$@\"\n",
             state_log.display(),
             orch_scripts().join("workflow-state").display()
@@ -259,9 +254,9 @@ impl World {
     /// taken and before any receipt.
     fn killable_lane_mail(&self) -> PathBuf {
         let wrapper = self._aux.path().join("lane-mail-killable");
-        script(
+        write_executable(
             &wrapper,
-            &format!(
+            format!(
                 "#!/bin/bash\nexport CLAUDE_CLOUD_KILL=\"$$\"\nexec {} \"$@\"\n",
                 self.lane_mail.display()
             ),
@@ -966,9 +961,9 @@ impl World {
         )
         .unwrap();
         let wrapper = dir.join("lane-mail-second-walker");
-        script(
+        write_executable(
             &wrapper,
-            &format!(
+            format!(
                 "#!/bin/bash\n\
                  set -u\n\
                  d={dir}\n\
@@ -1127,9 +1122,9 @@ fn cloud_world(dir: &Path) -> CloudWorld {
     std::fs::write(&brief, "Do the thing for CC-9.\n").unwrap();
     let worktree_log = dir.join("worktree.log");
     let worktree = dir.join("worktree");
-    script(
+    write_executable(
         &worktree,
-        &format!(
+        format!(
             "#!/bin/bash\nprintf '%s\\n' \"$*\" >> {log}\ncase \"$1\" in\n  create) git -C {root} worktree add -q --no-checkout {root}/wt/$2 -b $2 >&2 || exit 1; printf '%s\\n' {root}/wt/$2 ;;\n  push) exit 0 ;;\n  *) exit 64 ;;\nesac\n",
             log = worktree_log.display(),
             root = root.display()

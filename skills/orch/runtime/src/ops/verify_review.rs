@@ -763,12 +763,12 @@ impl Gate<'_> {
     }
 
     /// A standing `requested` read against GitHub's record of it: Copilot's
-    /// work, a request event for Copilot since the head's record was
-    /// written or a Copilot review on the head confirms it; with none, it
-    /// is sent once more under its `resent` mark, and a second miss falls
-    /// back `unconfirmed` so the fallback notice goes out. The event is read
-    /// from the record's stamp, not the head's arrival: a commit's
-    /// committer date can precede a request made on the head before it.
+    /// work in flight, the pending request among it, or a Copilot review on
+    /// the head confirms it. A request whose work ended with no review of the
+    /// head, its check completed or cancelled or the request removed, is not
+    /// confirmed by its event: it is sent once more under its `resent`
+    /// mark, and a second miss falls back `unconfirmed` so the fallback
+    /// notice goes out.
     fn confirm_request(&mut self, head: HeadRecord) -> Step<HeadRecord> {
         let Some(request) = head.request.clone() else {
             return Ok(head);
@@ -777,13 +777,7 @@ impl Gate<'_> {
             return Ok(head);
         }
         let reviews = self.reviews()?.clone();
-        let landed = self.work()?.is_some()
-            || reviews
-                .requested_at
-                .as_deref()
-                .is_some_and(|at| at >= head.at.as_str())
-            || reviews.latest.is_some()
-            || reviews.any_non_error;
+        let landed = self.work()?.is_some() || reviews.latest.is_some() || reviews.any_non_error;
         if landed {
             return Ok(head);
         }
@@ -993,8 +987,9 @@ impl Gate<'_> {
     /// The one judgement before a verdict that permits a merge is
     /// published: a regression blocker standing open refuses it, and
     /// Copilot's work in flight within its hold keeps it `pending`, the
-    /// review the gate itself asked for included. An `off` gate awaits no
-    /// Copilot work.
+    /// review the gate itself asked for included. The hold stands under
+    /// either gate mode: an `off` gate asks Copilot for nothing, yet a
+    /// review already running on the head still lands before the merge.
     fn permit(&mut self, verdict: Verdict, record: Option<&HeadRecord>) -> Step<Verdict> {
         if let Some(location) = regression_blocker(self.path, &loaded(self.path)?.doc)? {
             return Ok(Verdict::new(
@@ -1002,9 +997,7 @@ impl Gate<'_> {
                 format!("regression-open location={location}"),
             ));
         }
-        if verdict.word != OFF
-            && let Some(remaining) = self.hold(record)?
-        {
+        if let Some(remaining) = self.hold(record)? {
             let run = self
                 .reply
                 .copilot

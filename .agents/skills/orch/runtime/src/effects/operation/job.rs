@@ -2532,7 +2532,6 @@ mod tests {
     /// marks it `sent`; a third changes nothing and sends nothing again.
     #[test]
     fn an_outcome_committed_without_its_send_owes_a_notice_the_next_outcome_sends_once() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let roots = crate::settings::Roots {
             project: dir.path().into(),
@@ -2549,15 +2548,13 @@ mod tests {
         .unwrap();
         let calls = dir.path().join("mail-calls");
         let mail = dir.path().join("lane-mail");
-        std::fs::write(
+        crate::write_executable(
             &mail,
             format!(
                 "#!/bin/bash\nprintf '%s\\n' \"$*\" >> '{}'\n",
                 calls.display()
             ),
-        )
-        .unwrap();
-        std::fs::set_permissions(&mail, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         settings.lane_mail_cli = mail;
         let owner = Owner {
             pid: 77,
@@ -2763,7 +2760,6 @@ mod tests {
     /// notice, and the claimant's state is the answer.
     #[test]
     fn a_claimed_deadline_announces_nothing() {
-        use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let roots = crate::settings::Roots {
             project: dir.path().into(),
@@ -2780,12 +2776,10 @@ mod tests {
         .unwrap();
         let called = dir.path().join("mail-called");
         let mail = dir.path().join("lane-mail");
-        std::fs::write(
+        crate::write_executable(
             &mail,
             format!("#!/bin/bash\nprintf 'called' > '{}'\n", called.display()),
-        )
-        .unwrap();
-        std::fs::set_permissions(&mail, std::fs::Permissions::from_mode(0o755)).unwrap();
+        );
         settings.lane_mail_cli = mail;
         let owner = Owner {
             pid: 77,

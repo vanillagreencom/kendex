@@ -561,17 +561,7 @@ mod tests {
     fn a_probe_counts_one_start_under_probe_and_a_missing_binary_is_refused() {
         let dir = tempfile::tempdir().unwrap();
         let stub = dir.path().join("claude");
-        // A child shell writes the stand-in: a write descriptor open in
-        // this process leaks into any sibling test's child between its
-        // fork and exec, and an exec of the file meanwhile fails with
-        // ETXTBSY.
-        let written = std::process::Command::new("sh")
-            .args(["-c", "printf '%s' \"$2\" > \"$1\" && chmod 755 \"$1\"", "_"])
-            .arg(&stub)
-            .arg("#!/bin/sh\nprintf '\\n2.1.0 (Claude Code)\\n'\n")
-            .status()
-            .unwrap();
-        assert!(written.success());
+        host::write_executable(&stub, "#!/bin/sh\nprintf '\\n2.1.0 (Claude Code)\\n'\n");
         let before = host::counts().of("claude", Some("probe"));
         let installed = probe_executable(Harness::Claude, stub.as_os_str()).unwrap();
         assert!(matches!(installed.harness, Harness::Claude));

@@ -74,7 +74,7 @@ use super::wire::{
     Rule, RuleKind, RunsPage, StatusState, Workflow, WorkflowRun, WorkflowState, WorkflowsPage,
     WorkflowsParameters, run_in_url,
 };
-use super::wire::{RunStatus, TimelineEvent};
+use super::wire::{Review, RunStatus, TimelineEvent};
 use super::{Cause, Endpoint, Gh, Read, Reader, segment};
 
 /// GitHub's bound on a filtered run search: a `head_sha` search answers at
@@ -1121,7 +1121,8 @@ fn proof(run: &RunEvidence, node: &CheckSuiteNode) -> Option<SourceProof> {
 }
 
 /// Copilot's work in flight on a head: a queued or in-progress Copilot
-/// check run, by its id and start, else a pending request on the
+/// check run, by its id and start, unless Copilot's review of the head
+/// was submitted at or after that start, else a pending request on the
 /// timeline. A request stays pending until a later Copilot review, a
 /// removal, or a completed Copilot check started at or after it; its
 /// start is the event's time, since the request names no head. A member
@@ -1156,6 +1157,14 @@ pub(super) fn copilot_work(gh: &Reader<'_>, repo: &str, pr: u64, head: &str) -> 
     {
         if active.id == 0 {
             return Err(Cause::ResponseInvalid(Endpoint::CheckRuns));
+        }
+        // GitHub can publish the submitted review before its check reads
+        // completed; a review from before the check started answers an
+        // earlier request, not this one.
+        if let Some(started) = active.started()
+            && reviewed_since(gh, repo, pr, head, started)?
+        {
+            return Ok(None);
         }
         return Ok(Some(Work {
             id: active.id,
@@ -1224,6 +1233,26 @@ pub(super) fn copilot_work(gh: &Reader<'_>, repo: &str, pr: u64, head: &str) -> 
                 .is_some_and(|(started, requested)| started >= requested)
     });
     Ok(if answered { None } else { Some(request) })
+}
+
+/// Whether Copilot submitted a review of `head` at or after `since`: an
+/// approval, a comment or a change request, never a pending or dismissed
+/// one.
+fn reviewed_since(gh: &Reader<'_>, repo: &str, pr: u64, head: &str, since: &str) -> Read<bool> {
+    let reviews: Vec<Review> = gh.array(
+        Endpoint::Reviews,
+        &format!("repos/{repo}/pulls/{pr}/reviews"),
+    )?;
+    let reviewer = format!("{COPILOT_REVIEWER}[bot]");
+    Ok(reviews.iter().any(|review| {
+        matches!(&review.user, Nullable::Present(user) if user.login == reviewer)
+            && review.commit_id == Nullable::Present(head.to_owned())
+            && matches!(
+                review.state.as_str(),
+                "APPROVED" | "COMMENTED" | "CHANGES_REQUESTED"
+            )
+            && matches!(&review.submitted_at, Optional::Present(at) if at.as_str() >= since)
+    }))
 }
 
 #[cfg(test)]

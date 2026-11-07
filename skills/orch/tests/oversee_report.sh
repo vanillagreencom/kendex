@@ -284,6 +284,21 @@ assert_eq "$RC|$OUT" "0|report-due reason=issues since=$(at -60) landed=1" "due,
 touch "$CASE/auth-fail"
 run ORCH_REPORT_EVERY_ISSUES=1 GH_TOKEN=ghp_stale0000 -- due --state "$CASE/state.json" --repo owner/repo
 assert_eq "$RC|$(first_err)" "2|oversee-report: auth-failed=github" "due, no credential works: refused as auth-failed"
+# A check the bound kills (124) says nothing against the env token: the
+# ladder asks it once more, and only once, before dropping it. The prologue's
+# sanitize check meets the first killed check and keeps the token.
+seed_fleet auth_slow_token
+touch "$CASE/auth-fail"
+echo 2 > "$CASE/api-user-timeouts"
+run GH_TOKEN=ghp_slow0000 -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$OUT|$(grep -c '^api user' "$CASE/gh.calls")" "0|$WANT|3" \
+  "render, the bound kills the env token's ladder check: asked once more, it reads the same rows"
+seed_fleet auth_slow_token_again
+touch "$CASE/auth-fail"
+echo 3 > "$CASE/api-user-timeouts"
+run GH_TOKEN=ghp_slow0000 -- render --state "$CASE/state.json" --repo owner/repo
+assert_eq "$RC|$(first_err)|$(grep -c '^api user' "$CASE/gh.calls")" "2|oversee-report: auth-failed=github|3" \
+  "render, the bound kills the re-ask too: refused as auth-failed, never asked a third time"
 
 echo "=== render: nothing since the last report ==="
 new_case render_empty

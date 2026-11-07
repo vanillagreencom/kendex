@@ -39,3 +39,22 @@ pub mod verify;
 pub mod watch;
 
 pub use error::{Error, Result};
+
+/// `text` as the executable `path`, written by a child shell: a write
+/// descriptor open in this process leaks into any sibling test's child
+/// between its fork and exec, and an exec of the file meanwhile fails with
+/// ETXTBSY.
+#[cfg(test)]
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the lib tests' one writer of an executable they run: a child shell, so the test process never holds the file open for writing"
+)]
+pub(crate) fn write_executable(path: &std::path::Path, text: impl AsRef<str>) {
+    let written = std::process::Command::new("sh")
+        .args(["-c", "printf '%s' \"$2\" > \"$1\" && chmod 755 \"$1\"", "_"])
+        .arg(path)
+        .arg(text.as_ref())
+        .status()
+        .unwrap();
+    assert!(written.success(), "write-executable {}", path.display());
+}

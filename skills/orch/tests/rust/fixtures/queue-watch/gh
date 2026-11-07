@@ -9,8 +9,7 @@
 # mutations come as the github package's `merge-queue-mutation` sends them,
 # the node id a variable after the query. A reply's `data` is projected
 # onto the query's selection (`../gh/select.jq`), as GitHub answers only the
-# fields a query selects; the queue read is keyed by `isInMergeQueue` or
-# `mergeQueueEntry`, so a query that drops one still reaches its reply.
+# fields a query selects; the queue read is keyed by `mergeQueueEntry`.
 # Every other call (`pr view`, `gh api PATH`, the node queries) goes to the
 # verify-head fake with the same map and log, so a row whose probe reaches
 # `verify-pr` hands it one of its recorded witnesses. Every call appends its
@@ -26,7 +25,7 @@ if [ "${1:-}" = api ] && [ "${2:-}" = graphql ] && [ "${3:-}" = -f ]; then
   case "$query" in
     "mutation"*"disablePullRequestAutoMerge("*) key="mutation disablePullRequestAutoMerge" ;;
     "mutation"*"dequeuePullRequest("*) key="mutation dequeuePullRequest" ;;
-    *isInMergeQueue*|*mergeQueueEntry*) key="queue" ;;
+    *mergeQueueEntry*) key="queue" ;;
     *) key="" ;;
   esac
   if [ -n "$key" ]; then

@@ -405,11 +405,18 @@ pub(super) const GATE_REFUSED: &str = "launch-gate-refused";
 /// A preparation refusal as the launch's observation: its key as `cause`
 /// and every value it acted on beside it (the path, the harness, the
 /// program), so the record a person reads names what to repair; a
-/// dependency's own cause rides as `detail`.
+/// dependency's own cause rides as `detail`, or as `detail_cause` where the
+/// refusal names a `detail` of its own.
 fn refusal_observation(e: &crate::error::Error) -> Value {
+    let fields = e.fields();
+    let cause_as = if fields.iter().any(|(field, _)| field == "detail") {
+        "detail_cause"
+    } else {
+        "detail"
+    };
     let mut observation = json!({"cause": e.key()});
-    for (field, value) in e.fields() {
-        let field = if field == "cause" { "detail" } else { &field };
+    for (field, value) in fields {
+        let field = if field == "cause" { cause_as } else { &field };
         observation[field] = json!(value);
     }
     observation

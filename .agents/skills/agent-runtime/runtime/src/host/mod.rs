@@ -644,6 +644,21 @@ pub fn stderr_text(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).trim().to_owned()
 }
 
+/// `text` as the executable `path`, written by a child shell: a write
+/// descriptor open in this process leaks into any sibling test's child
+/// between its fork and exec, and an exec of the file meanwhile fails with
+/// ETXTBSY.
+#[cfg(test)]
+pub(crate) fn write_executable(path: &Path, text: impl AsRef<str>) {
+    let written = Command::new("sh")
+        .args(["-c", "printf '%s' \"$2\" > \"$1\" && chmod 755 \"$1\"", "_"])
+        .arg(path)
+        .arg(text.as_ref())
+        .status()
+        .unwrap();
+    assert!(written.success(), "write-executable {}", path.display());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -652,18 +667,10 @@ mod tests {
 
     /// An executable of this test's own under `dir`, named `name` so the
     /// counter's key is nobody else's in this test binary, running `script`
-    /// as `sh`. A child shell writes it: a write descriptor open in this
-    /// process leaks into any sibling test's child between its fork and
-    /// exec, and an exec of the file meanwhile fails with ETXTBSY.
+    /// as `sh`.
     fn stub(dir: &Path, name: &str, script: &str) -> std::path::PathBuf {
         let path = dir.join(name);
-        let written = Command::new("sh")
-            .args(["-c", "printf '%s' \"$2\" > \"$1\" && chmod 755 \"$1\"", "_"])
-            .arg(&path)
-            .arg(format!("#!/bin/sh\n{script}"))
-            .status()
-            .unwrap();
-        assert!(written.success());
+        write_executable(&path, format!("#!/bin/sh\n{script}"));
         path
     }
 

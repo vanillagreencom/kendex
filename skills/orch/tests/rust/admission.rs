@@ -1529,20 +1529,14 @@ fn a_review_lane_keyed_on_a_pull_request_number_is_admitted_on_its_body() {
     let bin = fleet.dir.path().join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let dispatch = bin.join("gh");
-    std::fs::write(
+    write_executable(
         &dispatch,
         format!(
             "#!/bin/bash\nif [ \"${{1:-}}\" = issue ]; then exec {} \"$@\"; fi\nexec {} \"$@\"\n",
             fixtures().join("gh-issue/gh").display(),
             fixtures().join("gh/gh").display()
         ),
-    )
-    .unwrap();
-    std::fs::set_permissions(
-        &dispatch,
-        std::os::unix::fs::PermissionsExt::from_mode(0o755),
-    )
-    .unwrap();
+    );
     let path = support::tool_path(&[bin.as_path()]);
     let out = fleet.op_with(
         &json!({
