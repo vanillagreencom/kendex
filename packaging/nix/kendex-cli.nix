@@ -10,6 +10,7 @@
   versionCheckHook,
   dbus,
   gitMinimal,
+  curl,
   src,
   # The commit a pinned flake input was fetched at, or null for a tree with
   # uncommitted changes. A build of a commit names it the way the Arch
@@ -59,10 +60,11 @@ rustPlatform.buildRustPackage {
   # The command materializes catalogs with git, 2.41 or newer for
   # `--attr-source`. The minimal build keeps HTTPS fetches and drops the
   # Perl, Python and manual pages the full one would add to the closure.
+  # Registry collection reads, login and submission also execute curl.
   # Prefixed, not replaced, so the harness CLIs and tools a package runs
   # still resolve from the person's own PATH.
   postInstall = ''
-    wrapProgram $out/bin/kendex --prefix PATH : ${lib.makeBinPath [ gitMinimal ]}
+    wrapProgram $out/bin/kendex --prefix PATH : ${lib.makeBinPath [ gitMinimal curl ]}
   '';
 
   meta = {
