@@ -10,6 +10,10 @@ const DEBIAN: &str = "PRETTY_NAME=\"Debian GNU/Linux 12\"\nID=debian\n";
 const PACKAGED_IMAGE: &str = "/usr/lib/kendex/kendex.AppImage";
 const PACKAGED_BINARY: &str = "/usr/lib/kendex/kendex-app";
 const PACKAGED_COMMAND: &str = "/usr/bin/kendex";
+/// What `current_exe` resolves to under the flake's package: the binary
+/// its wrapper execs, beside the wrapper in the store path's `bin/`.
+const NIX_COMMAND: &str =
+    "/nix/store/27az7xdcw8inf4wip88x5b31izfhyry5-kendex-cli-1.20.0/bin/.kendex-wrapped";
 
 /// Every host fact the resolver reads, stated up front.
 #[derive(Default)]
@@ -489,6 +493,12 @@ fn for_cli_names_the_channel_of_each_binary_layout() {
             PACKAGED_COMMAND,
             Fake::default().os_release(ARCH).on_path("paru"),
             InstallChannel::Unknown,
+        ),
+        (
+            "the flake's command, which root can write on a writable store",
+            NIX_COMMAND,
+            Fake::default().replaceable(NIX_COMMAND),
+            managed(NIX, NIX_UPDATE),
         ),
     ];
     for (label, exe, probe, expected) in rows {
@@ -1182,6 +1192,10 @@ fn each_installer_is_named_as_itself() {
     assert_eq!(
         named(for_cli(Path::new(PACKAGED_COMMAND), &arch)),
         "an AUR helper"
+    );
+    assert_eq!(
+        named(for_cli(Path::new(NIX_COMMAND), &Fake::default())),
+        "Nix"
     );
     assert_ne!(HOMEBREW, AUR_HELPER);
 }

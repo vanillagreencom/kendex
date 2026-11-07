@@ -1,6 +1,6 @@
 # Install channels
 
-The headline install is the curl script. The rest are package-manager entries that point at the same GitHub release artifacts. On Linux and macOS the app and the CLI install together; the CLI is also available on its own.
+The headline install is the curl script. It and the binary package-manager entries use GitHub release artifacts. The source-based Arch entries and the Nix flake build from this repository. On Linux and macOS the app and the CLI install together; the CLI is also available on its own.
 
 | Channel | Command | Installs | Recipe |
 |---|---|---|---|
@@ -11,11 +11,40 @@ The headline install is the curl script. The rest are package-manager entries th
 | Arch (from source) | `yay -S kendex` | app + CLI | [`arch/kendex/`](arch/kendex/) |
 | Arch (latest commit) | `yay -S kendex-git` | app + CLI | [`arch/kendex-git/`](arch/kendex-git/) |
 | Arch (latest commit, CLI) | `yay -S kendex-cli-git` | CLI | [`arch/kendex-cli-git/`](arch/kendex-cli-git/) |
+| Nix | `nix profile add github:vanillagreencom/kendex#kendex-cli` | CLI | [`/flake.nix`](../flake.nix), [`nix/kendex-cli.nix`](nix/kendex-cli.nix) |
 | deb, rpm, Windows setup | download from the release | app + CLI | built by `release.yml` |
 | dmg | download from the release | app (CLI inside the bundle) | built by `release.yml` |
 | AppImage | download from the release | app | built by `release.yml` |
 
 The desktop app binary is named `kendex-app`, after its cargo package, and every channel that installs both keeps it off `PATH` (on Linux the AppImage or the plain `kendex-app` binary, on macOS the `.app` bundle) so the `kendex` command is the CLI. That name is also what a Linux launcher matches a running window against, which is why both the curl script and the Arch packages put `StartupWMClass=kendex-app` in the desktop entry they write.
+
+## Nix flake
+
+The repository root is a flake. On `x86_64-linux` and `aarch64-linux` it exposes the command as `packages.<system>.kendex-cli`, which is also `packages.<system>.default`. Nix builds it from source at the revision the flake reference names, with the version from the workspace `Cargo.toml` and the dependencies from `Cargo.lock`. No binary cache serves it, so the first install compiles the command.
+
+A flake that depends on the command pins kendex as an input and lists the package wherever it declares packages, such as `environment.systemPackages`, `home.packages` or a derivation's `propagatedBuildInputs`:
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    kendex = {
+      url = "github:vanillagreencom/kendex/<commit>";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+  };
+
+  outputs = { nixpkgs, kendex, ... }: {
+    # kendex.packages.${system}.kendex-cli
+  };
+}
+```
+
+`<commit>` is a commit on `main` or a release tag that carries `flake.nix`; the consumer's `flake.lock` records the commit either way. The `follows` line is optional: the nixpkgs it names must carry a `rustc` at least as new as the workspace `rust-version`, which is why the flake's own input is `nixos-unstable`.
+
+The package installs `bin/kendex` and nothing else: no desktop app and no `kendex://` handler. The command is wrapped with Git and curl on its `PATH`, ahead of the caller's own, and it links libdbus-1 from the Nix store for the keyring's secret-service backend. A build of a commit displays `<version>+git.<commit>`, as `kendex-cli-git` does; a build of a working tree with uncommitted changes displays the plain version.
+
+`kendex update` refuses to replace a command in the Nix store, whoever runs it, and names Nix as its installer; the desktop app's update card does the same. Move the pin instead: change `<commit>` in the consumer's input, or run `nix flake update kendex` where the input names no commit. A profile installed from `github:vanillagreencom/kendex#kendex-cli` takes `nix profile upgrade kendex-cli`.
 
 ## The four Arch packages
 
@@ -58,7 +87,7 @@ The formula's counterpart to Arch's epoch is `version_scheme 1`: brew compares t
 
 ## Publishing
 
-Nothing pulls from this repository: two workflows push the recipes out, and a hand edit in the AUR or the tap is overwritten by the next run.
+Two workflows push the Arch and Homebrew recipes out. A hand edit in the AUR or the tap is overwritten by the next run. Nix consumers fetch the flake directly from this repository at the revision their pin names; no publishing workflow is needed.
 
 **Arch** (`.github/workflows/publish-aur.yml`, `tools/publish-aur`): carries the four packages above, and runs on every push to `main` that touches `packaging/arch/`, the two tools, or the workflow itself, and copies each package's `PKGBUILD` + `.SRCINFO` into a clone of `ssh://aur@aur.archlinux.org/<name>.git`, committing and pushing only what differs. Before a package is pushed, its recipe is checked for a target still pinned to the all-zero placeholder, which defers the whole package (a keyed `deferred=` line in the log, exit 0): the recipe is pushed whole or not at all, so a placeholder would reach every user on that target as a package that fails makepkg's validity check. Then every download the recipe pins is fetched and hashed: a download that is absent, or whose bytes do not hash to the pin, defers the package the same way until the release is up, so a version bump merged ahead of its tag is harmless: publishing a stable draft runs a secret-free release-event job that dispatches the publisher on `main`. The release workflow explicitly dispatches the same main publisher after candidate publication, because its `GITHUB_TOKEN` release event starts no other workflow. A file the AUR tracks that the recipe no longer names is removed on the next publish, and the remote check reports one as drift. An unreachable host or an unexpected HTTP status fails the run instead: neither is a release that has not happened yet. `kendex-git` and `kendex-cli-git` have only a git source and are never deferred. An AUR name nobody has pushed yet is a first publication (`new=<package>`), not a fault. A package's file set is `PKGBUILD`, `.SRCINFO` and every companion file its recipe names (`tools/check-aur-sync --print-files`); a named file that is missing is a drift finding before anything is published. The published files are diffed against the AUR afterwards, and a weekly job compares the packages that are publishable that day (`tools/publish-aur --publishable`, then `tools/check-aur-sync --remote` on them) and reports drift without publishing; a deferred package is expected to differ and is left out.
 

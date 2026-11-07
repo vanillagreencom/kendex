@@ -15,7 +15,7 @@ An attacker who can serve the feed could offer a genuine older download, or anot
 - Do verify every download against the digest document at `crates/core/src/release_digests.rs`; a genuinely signed document for another release or target is refused, as is one the key does not cover.
 - Do fail a release lane that produced no signature rather than publish a command no client can verify.
 - Do pin one updater key in two places that rotate together, `crates/app/tauri.conf.json` and `crates/core/src/update_feed.rs`, held equal by `crates/app/tests/tauri_config.rs`.
-- Do replace a command only where its path is writable and outside a system prefix; a package-manager prefix names its package, asked of pacman, dpkg or rpm, and the card says which.
+- Do replace a command only where its path is writable and outside a package-manager prefix, and name the manager that owns one: a Homebrew prefix or the Nix store by the prefix alone, a distro prefix by the package pacman, dpkg or rpm names. The card says which.
 - Do keep release-only bundle settings in the overlays under `crates/app/release/`, never in `tauri.conf.json`, which tauri-build reads at compile time.
 - Do let `inside_the_app` in `crates/core/src/install_channel.rs` be the one judge of a command an installer put inside the desktop app: it is the app's to update, and no verb records it as the installed command.
 - Never let a release build honour `KENDEX_UPDATE_FEED`; a debug build alone does.

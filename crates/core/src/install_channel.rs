@@ -18,10 +18,23 @@ const BREW_PREFIXES: [&str; 3] = [
     "/home/linuxbrew/.linuxbrew/",
 ];
 
+/// The Nix store. Nothing in it is replaced in place: a store path is
+/// immutable, its hash names its contents, and a profile or a flake moves
+/// to a new path rather than rewriting the old one. Root can write it on a
+/// single-user or containerised install, which is why the prefix decides
+/// and the write probe never runs.
+const NIX_STORE: &str = "/nix/store/";
+
 /// What to call the installer that owns a path. Fixed text, decided by
 /// which branch of the detection ran, so no value read off the machine
 /// ever reaches it — the rule the command string already lives under.
 const HOMEBREW: &str = "Homebrew";
+const NIX: &str = "Nix";
+/// The two routes `packaging/README.md` § Nix flake gives: the profile the
+/// table's install command creates, and the input a consuming flake pins.
+/// Which of the two put this store path here is not on the machine to read.
+const NIX_UPDATE: &str =
+    "nix profile upgrade kendex-cli, or move the kendex input in the flake that pins it";
 /// Every Arch arm gets the class, never the tool. `paru` sitting on `PATH`
 /// today says nothing about what fetched the package, so naming it would
 /// be inventing the one fact this build does not have.
@@ -389,6 +402,12 @@ pub fn package_owner(exe: &Path, probe: &dyn HostProbe) -> Option<InstallChannel
         return Some(InstallChannel::Managed {
             manager: HOMEBREW.to_owned(),
             command: "brew upgrade kendex-cli".to_owned(),
+        });
+    }
+    if starts_with_any(exe, &[NIX_STORE]) {
+        return Some(InstallChannel::Managed {
+            manager: NIX.to_owned(),
+            command: NIX_UPDATE.to_owned(),
         });
     }
     system_channel(exe, probe)

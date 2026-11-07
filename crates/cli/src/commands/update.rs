@@ -86,9 +86,9 @@ pub fn run(env: &Env, force: bool, git: bool) -> CliResult {
 /// download is held to, and the target this build was made for. Which arm
 /// a person lands on is the channel, and a package-managed one is the arm
 /// no test can reach by running: `for_cli` judges the real `current_exe`,
-/// which nothing here can place under `/usr` or a brew prefix. The key and
-/// the target are arguments for the same reason core's key is — a test
-/// holds a release it signed itself, for a target it names.
+/// which nothing here can place under `/usr`, a brew prefix or the Nix
+/// store. The key and the target are arguments for the same reason core's
+/// key is — a test holds a release it signed itself, for a target it names.
 #[allow(clippy::too_many_arguments)]
 fn run_on_channel(
     env: &Env,
