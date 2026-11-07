@@ -16,7 +16,7 @@ import tempfile
 import time
 import unittest
 from unittest.mock import patch
-from mail_world import make_project
+from mail_world import control_account, make_project
 
 REPO = Path(__file__).resolve().parents[3]
 SCRIPTS = REPO / "skills/jarvis/scripts"
@@ -231,6 +231,35 @@ class Producer(unittest.TestCase):
         expected.extend((side, str(new_root), "new root retained history")
                         for side in ("local", "ssh:alpha", "ssh:beta", "ssh:gamma"))
         self.assertCountEqual(observed, expected)
+
+    def test_control_user_passes(self):
+        # With JARVIS_CONTROL_USER set, the control host's mail and presence
+        # passes read and renew the account's clone, the one owner-note sends
+        # to, never the SSH user's clone of the same repository.
+        clones = {}
+        for name, base in (("ssh-user", self.root / "remote-home"), ("account", self.root / "overseer-account")):
+            clones[name] = make_project(base / "dev/app")
+            clones[name].joinpath("kendex.settings.toml").write_text('[env]\nSLACK_JARVIS_SESSION_FILE = "hold"\n')
+            self.mail(clones[name], "notice", "reply in the " + name + " clone", "--to", "owner")
+        remote_registry = self.root / "remote-registry"
+        remote_registry.write_text(str(clones["ssh-user"]) + "\n")
+        control_account(self.executable, self.bin, self.root / "overseer-account", [clones["account"]])
+        self.executable("ssh", '#!/bin/sh\nshift\ncd "$REMOTE_HOME" || exit 1\n'
+                        'HOME="$REMOTE_HOME" REGISTRY="$REMOTE_REGISTRY" exec sh -c "$*"\n')
+        self.env.update(REMOTE_HOME=str(self.root / "remote-home"), REMOTE_REGISTRY=str(remote_registry),
+                        ACCOUNT=str(self.root / "overseer-account"))
+        self.settings.update(JARVIS_CONTROL_HOST="alpha", JARVIS_CONTROL_USER="overseer")
+        with patch.dict(os.environ, self.env, clear=True), contextlib.redirect_stdout(io.StringIO()), \
+                patch.object(self.module.Watch, "live", lambda watch, now=None: True):
+            watch = self.watch()
+            [(side, output, error, _)] = watch.acquire(0, "ssh:alpha")
+            presence = watch.presence("ssh:alpha")
+        self.assertIsNone(error)
+        self.assertEqual(re.findall(r"^EVENT mail repo=app file=to-overseer destination=ssh:alpha root=(\S+)$",
+                                    output, re.M), [str(clones["account"])])
+        self.assertIn("reply in the account clone", output)
+        self.assertEqual([tuple(row) for row in presence], [(str(clones["account"]), "ok", None)])
+        self.assertEqual([clone.joinpath("hold").exists() for clone in clones.values()], [False, True])
 
     def test_initial_pass_refusals_leave_state_unchanged(self):
         self.mail(self.peer, "notice", "retained through refusal", "--to", "owner")

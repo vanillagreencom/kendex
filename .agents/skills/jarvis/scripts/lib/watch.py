@@ -29,8 +29,9 @@ FORWARD_EVERY_SECS = 60
 # A machine's role from JARVIS_MAIN_HOST: kind main, satellite or invalid. An
 # invalid value is still a satellite, so a typo never makes a second main.
 Role = namedtuple("Role", "kind dest home")
-# user is the account owner-note discovers and sends as on that host, None
-# for the SSH user.
+# user is the account every command on that host runs as: owner-note's
+# listing and send, and the loop's mail and presence passes. None is the SSH
+# user.
 Destination = namedtuple("Destination", "key host user")
 
 
@@ -57,7 +58,8 @@ def destinations(settings):
 
 
 def host_args(destination, command):
-    """The ssh argv that runs the shell text COMMAND on the destination's host, as its user where it names one."""
+    """The ssh argv that runs the shell text COMMAND on the destination's host, as its user where it names one.
+    COMMAND's stdin is the ssh child's stdin on either route."""
     if destination.user:
         # sudo -n refuses rather than prompts. sudo -i would hand the command
         # to the login shell with each `$` unescaped, so "$1" inside it
@@ -845,7 +847,7 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
 
     def remote(self, destination):
         args = ["--side", destination.key, "--cursor", json.dumps(self.cursors.get(destination.key, {}))]
-        return run(["ssh", destination.host, "bash -s"], data=self.remote_command(args))
+        return run(host_args(destination, "bash -s"), data=self.remote_command(args))
 
     def presence(self, side):
         try:
@@ -868,7 +870,7 @@ with tempfile.TemporaryDirectory(prefix='jarvis-pass-') as folder:
         # Each host operation requests current local permission. The host
         # supplies the touch timestamp before its final permission request.
         with tempfile.TemporaryFile(mode="w+") as errors:
-            process = subprocess.Popen(["ssh", destination.host, "bash -s"],
+            process = subprocess.Popen(host_args(destination, "bash -s"),
                                        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors,
                                        text=True, bufsize=1)
             try:

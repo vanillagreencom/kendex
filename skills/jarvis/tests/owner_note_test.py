@@ -1,11 +1,12 @@
 """owner-note resolves registered routes without mail effects and sends directives."""
 import json
 from pathlib import Path
+import shlex
 import shutil
 import tempfile
 import unittest
 
-from mail_world import BASH, REPO, SCRIPTS, MailWorld, make_project
+from mail_world import BASH, REPO, SCRIPTS, MailWorld, control_account, make_project
 
 NOTE = "Check the release notes.\nThen report.\n"
 # The overseer's directive 1792369993-3375997-24882 fixes these exact bytes.
@@ -111,35 +112,30 @@ class OwnerNote(MailWorld):
     def control_user_world(self):
         """The control host as its SSH user, holding a clone whose recorded overseer
         stopped, and as the `overseer` account the shim sudo reaches, holding the clone
-        its live overseer reads; returns (base, ssh-user clone, overseer clone, env)."""
+        its live overseer reads; returns (ssh-user clone, overseer clone, sudo log, env)."""
         base, sides = self.world("control-user", [("app", True)], [])
         account = base / "overseer-account"
         clone = make_project(account / "dev/app")
-        (account / "tmp").mkdir()
-        (account / "registry").write_text(str(clone) + "\n")
-        # A login shell may reset PATH; the account's own profile puts its
-        # tools on it, as a real host account's does for kendex.
-        (account / ".bash_profile").write_text('PATH=%s:"$PATH"\n' % self.bin)
-        self.executable("sudo", '#!/bin/sh\n'
-                        '[ "$1 $2 $3 $5" = "-n -H -u --" ] || { echo "sudo: unexpected $*" >&2; exit 97; }\n'
-                        '[ "$4" = overseer ] || { echo "sudo: unknown user $4" >&2; exit 1; }\n'
-                        'shift 5\ncd /\n'
-                        'HOME="$ACCOUNT" REGISTRY="$ACCOUNT/registry" TMPDIR="$ACCOUNT/tmp" exec "$@"\n')
+        log = control_account(self.executable, self.bin, account, [clone])
         env = dict(self.env, SSH_LOG=str(base / "ssh.log"), REMOTE_HOME=str(base / "remote-home"),
                    REMOTE_REGISTRY=str(base / "remote-registry"), REMOTE_TMP=str(base / "remote-tmp"),
                    ACCOUNT=str(account), JARVIS_CONTROL_HOST="host.example", JARVIS_CONTROL_USER="overseer")
-        return base, sides["remote"][0], clone, env
+        return sides["remote"][0], clone, log, env
 
     def test_control_user(self):
         # A control host whose overseers run as another account: listing and
         # sending run there as that account, never into the SSH user's clone.
-        base, stale, clone, env = self.control_user_world()
+        stale, clone, log, env = self.control_user_world()
         result = self.command([BASH, self.scripts / "owner-note", "app", self.note], self.home, env)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([(row["kind"], row["from"], row["text"]) for row in self.box(clone, "to-lane")],
                          [("directive", "owner", NOTE.rstrip("\n") + "\n\n" + FOOTER)])
         self.assertEqual(self.box(stale, "to-lane"), [])
-        self.assertEqual(list((base / "overseer-account/tmp").iterdir()), [])
+        # Both accounts share this filesystem, so where the note lands cannot
+        # show who sent it; the account's sudo log does.
+        calls = [row.split("\t", 1) for row in log.read_text().splitlines()]
+        self.assertEqual([(user, "kendex project list" in command, "owner-note " + shlex.quote(str(clone)) in command)
+                          for user, command in calls], [("overseer", True, False), ("overseer", False, True)])
         resolution = self.command([BASH, self.scripts / "owner-note", "--resolve", "app"], self.home, env)
         self.assertEqual(resolution.returncode, 0, resolution.stderr)
         self.assertEqual(json.loads(resolution.stdout), {
