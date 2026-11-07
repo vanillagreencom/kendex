@@ -455,8 +455,8 @@ class LaneHostCallersTests(unittest.TestCase):
     """Provider calls that read or change host state run scripts/lane-host,
     where the per-home bound is taken. Capabilities is local metadata and
     takes no slot."""
-    # Include the caller's own argv forwarded whole, which is how
-    # open-terminal's host_transport hands its bounded verbs on.
+    # A forwarded "$@" counts as a bounded verb: a function that hands its
+    # caller's argv on runs whichever verb that caller names.
     BOUNDED_VERB = re.compile(r"(?:create|wait|read-many|cat|put|append|touch|status|stop|stop-sandbox|start|close|list|accounts|capture|send|viewer-prefix|\$@)")
     # Keywords, `!`, environment assignments and optional argv prefixes, then
     # the command word and the word after it. A prefix is an array expanded
@@ -538,13 +538,13 @@ class LaneHostCallersTests(unittest.TestCase):
                            if self.target(scripts, path, word, function) == "wrapper")
         # Members the extractor must reach, or it is the extractor that broke.
         for member in (("lane-mail", '"$ORCH_SCRIPTS/lane-host"'), ("lane-close", '"$LANE_HOST"'),
-                       ("lib/lane-gitfile.sh", '"$1"'), ("open-terminal", '"$SCRIPT_DIR/lane-host"')):
+                       ("lib/lane-gitfile.sh", '"$1"'), ("lanes", '"$SCRIPT_DIR/lane-host"')):
             self.assertIn(member, wrapper, "the site extractor no longer reaches a known wrapper call")
 
     def test_a_direct_provider_call_is_named(self):
         # A row naming None plants a line that needs no provider slot.
         rows = [("lane-mail", '  "$ORCH_LANE_HOST" cat --item "$ITEM" /remote\n', "lane-mail"),
-                ("open-terminal", '  "$LANE_HOST" touch --item "$1"\n', "open-terminal"),
+                ("lane-close", '  "$host" touch --item "$ITEM"\n', "lane-close"),
                 ("lanes", '  "$SCRIPT_DIR/lane-host-ssh" cat --item "$ITEM" /remote\n', "lanes"),
                 ("oversee-watch", '  lane_host_fetch "$ORCH_LANE_HOST" "$1" /remote "$WORK_DIR/x" "$WORK_DIR/e"\n', "lib/lane-gitfile.sh"),
                 ("lane-mail", '  "${KENDEX_GROUP_LEADER[@]}" "$ORCH_LANE_HOST" cat --item "$ITEM" /remote\n', "lane-mail"),

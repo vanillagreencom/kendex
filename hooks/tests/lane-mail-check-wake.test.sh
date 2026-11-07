@@ -15,6 +15,11 @@ SELECTED=""
 if [ "${1:-}" = --wake-row ]; then SELECTED=$2; fi
 REARM='sh "[RUN_DIR]/follow.sh" "[RUN_DIR]/watch.log" [NEXT_LINE]'
 JARVIS_START='run-jarvis-wake --resume'
+# Codex's Stop payload names the session's rollout as `transcript_path`
+# (Codex hooks reference, CLI 0.160.0): the file under the codex home whose
+# name ends in the session id, here carrying one token count.
+CODEX_ROLLOUT="$OVERSEER_HOME_DIR/sessions/2026/11/07/rollout-2026-11-07T00-00-00-s1.jsonl"
+CODEX_TOKENS=100000
 
 # CASE|HARNESS|EXIT|STDERR-KEY|DECISION|CONTEXT-KEY|COMMAND-COUNT[|WAKE-NOTICE]
 # Stop, Codex Stop and Copilot agentStop are held. Pi's carrier can make only
@@ -26,11 +31,18 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
   wake_overseer "wake-$scenario-$harness" "$harness"
   command=$REARM
   payload='{"session_id":"s1","stop_hook_active":false}'
-  if [ "$harness" = copilot ]; then
-    payload=$(jq -nc --arg p "$COP_HOME/session-state/s1/events.jsonl" '{sessionId:"s1",transcriptPath:$p,timestamp:1}') || exit 1
-  fi
+  case "$harness" in
+    copilot)
+      payload=$(jq -nc --arg p "$COP_HOME/session-state/s1/events.jsonl" '{sessionId:"s1",transcriptPath:$p,timestamp:1}') || exit 1
+      ;;
+    codex)
+      mkdir -p "${CODEX_ROLLOUT%/*}"
+      usage_line codex "$CODEX_TOKENS" > "$CODEX_ROLLOUT"
+      payload=$(jq -nc --arg p "$CODEX_ROLLOUT" '{session_id:"s1",stop_hook_active:false,transcript_path:$p}') || exit 1
+      ;;
+  esac
   case "$scenario" in
-    armed) start_wake_watch repeat; start_follow ;;
+    armed | unbuilt-lookup) start_wake_watch repeat; start_follow ;;
     succession-stale | succession-armed)
       # A succession's claim names the live log beside the fleet state. An
       # idle linked reader cannot arm a follow running on an old log.
@@ -106,6 +118,10 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
     # setup): the wake check is void, says so naming the setup, and holds
     # nothing.
     unbuilt-runtime) runtime_stub "$LANE/.claude/skills/orch/scripts" unbuilt ;;
+    # A Codex turn end naming no transcript, on a host where agent-runtime is
+    # not built, as no world here builds it: the lookup by the session id
+    # gives no answer, a gap the turn end reports and passes.
+    unbuilt-lookup) payload='{"session_id":"s1","stop_hook_active":false}' ;;
     empty-keys) CALL_ENV+=(ORCH_WAKE_PROCESS= ORCH_WAKE_START=) ;;
     incomplete-jarvis) CALL_ENV+=(ORCH_WAKE_START=); command="" ;;
   esac
@@ -161,6 +177,7 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
         output="objects=1 reason=1"
         tokens=100000
         ;;
+      codex) reason=-; output="objects=0 reason=-"; tokens=$CODEX_TOKENS ;;
       *) reason=-; output="objects=0 reason=-"; tokens=null ;;
     esac
     got="$got row=$row record=$record notices=$notices objects=$objects reason=$reason"
@@ -217,6 +234,7 @@ missing-cwd|claude|0|record|-|-|0
 unreadable-record|claude|0|runtime|-|-|0
 gone-claim|claude|0|-|-|-|0
 unbuilt-runtime|claude|0|setup|-|-|0
+unbuilt-lookup|codex|0|session-lookup-unavailable=codex|-|-|0
 incomplete-jarvis|claude|0|wake-setting=ORCH_WAKE_START|-|-|0
 ROWS
 

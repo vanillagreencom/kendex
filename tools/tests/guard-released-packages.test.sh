@@ -185,15 +185,27 @@ run_release "$TMP/released/kendex" "$MUTANT_TOOLS/guard"
   && ok 'control: including a noncaller runs its failing suite' || bad 'control: including a noncaller runs its failing suite' "$RC $OUT"
 git -C "$R" reset -q --hard "$BASE"
 
-# The existing runner owns which orch suites run alone. Discover one of its
-# names, then prove native dispatch puts it after a pooled suite even with a
-# single worker. No elapsed-time assertion or second isolation list is needed.
-alone_names="$(sed -n '/^ALONE=(/,/^)/p' "$REPO/skills/orch/tests/run-all.sh" | sed '1d;$d' | awk '{print $1}')"
-[ -n "$alone_names" ] || { bad 'runner isolation name is available'; exit 1; }
-alone_name=${alone_names%%$'\n'*}
+# The existing runner owns which orch suites run alone, through its ALONE
+# list. The copy this leg runs names a suite of its own there, whatever the
+# list holds, and native dispatch must start it after a pooled suite even
+# with a single worker. Its name sorts ahead of the pooled one, so only the
+# hold puts it last. No elapsed-time assertion or second isolation list is
+# needed.
+alone_name=aaa-alone
 mkdir -p "$R/skills/orch/tests/lib" "$TMP/native/tools" "$TMP/native/skills/orch" "$TMP/one-worker"
 cp "$GUARD" "$TMP/native/tools/guard"
 cp "$REPO/skills/orch/tests/run-all.sh" "$R/skills/orch/tests/run-all.sh"
+python3 - "$R/skills/orch/tests/run-all.sh" "$alone_name" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+source = path.read_text()
+needle = '\nALONE=(\n'
+assert source.count(needle) == 1
+planted = source.replace(needle, needle + '  ' + sys.argv[2] + '\n')
+assert planted != source
+path.write_text(planted)
+PY
 cp "$REPO/skills/orch/tests/lib/git-env.sh" "$R/skills/orch/tests/lib/git-env.sh"
 cp "$REPO/skills/orch/tests/lib/suite-process.sh" "$R/skills/orch/tests/lib/suite-process.sh"
 ln -s "$R/skills/orch/tests" "$TMP/native/skills/orch/tests"
