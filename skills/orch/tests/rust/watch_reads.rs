@@ -3,10 +3,10 @@
 //! failure refusing the inventory and never reading as an empty set, the
 //! quota receipt holding the tracker reads alone, the recorded watch's
 //! answers on its own fixtures, the triage key, the terminal close, the
-//! heartbeat's inputs, and the GitHub duty's split from the tracker's: the reducer
-//! pass, the security alerts, the outside contributions, the budget scan,
-//! the owner's tracker answers and the due tracker asks. Each row names
-//! the defect it catches at its doc comment.
+//! heartbeat's inputs, and the GitHub duty's split from the tracker's: the
+//! reducer pass, the security alerts, the outside contributions, the budget
+//! scan, the owner's tracker answers and the due tracker asks. Each row's
+//! name carries the defect it catches.
 //!
 //! Most rows call the duty's body on a hand-built tick and apply what it
 //! produced to the baseline themselves, as the runner's `commit` does; the
@@ -404,11 +404,9 @@ fn set(kind: &str, identity: &str, value: &str) -> Change {
     }
 }
 
-/// A dependency failure never becomes an empty or
-/// passing inventory. Defect: a refused tracker call, a short page or a
-/// malformed member read as the whole inventory, closing or triaging on
-/// nothing. Each row refuses with its cause key and field, and nothing
-/// of the pass moves: no line, no row, no call past the failed one.
+/// A dependency failure never becomes an empty or passing inventory. Each
+/// row refuses with its cause key and field, and nothing of the pass moves:
+/// no line, no row, no call past the failed one.
 #[test]
 fn an_auth_failure_a_short_page_and_a_malformed_member_each_refuse_their_inventory() {
     let clock = FakeClock::new();
@@ -531,13 +529,9 @@ fn an_auth_failure_a_short_page_and_a_malformed_member_each_refuse_their_invento
     }
 }
 
-/// Defect: the tracker's quota refusal read
-/// as a failed pass (stopping the GitHub reads and the closes with it) or
-/// as an empty tracker (closing nothing, triaging nothing, forever), or a
-/// hold that no reset ends. The receipt is held as a typed row; while it
-/// holds, a pass makes no tracker call and fails nothing, the GitHub reads
-/// and the mail duty run on; at the reset the row clears and the tracker
-/// is read again.
+/// The receipt is held as a typed row; while it holds, a pass makes no
+/// tracker call and fails nothing, the GitHub reads and the mail duty run
+/// on; at the reset the row clears and the tracker is read again.
 #[test]
 fn the_quota_receipt_holds_tracker_reads_until_its_reset_and_nothing_else() {
     let mut world = World::new();
@@ -640,9 +634,8 @@ fn the_quota_receipt_holds_tracker_reads_until_its_reset_and_nothing_else() {
     );
 }
 
-/// On the real body: the `linear-hold` fixture holds
-/// the tracker's first call on a FIFO while the clock passes three mail
-/// intervals. Defect: a tracker read holding the mail turns.
+/// On the real body: the `linear-hold` fixture holds the tracker's first
+/// call on a FIFO while the clock passes three mail intervals.
 #[test]
 fn a_tracker_read_held_on_the_fifo_delays_no_mail_run() {
     let mut world = World::new();
@@ -738,12 +731,10 @@ fn a_tracker_read_held_on_the_fifo_delays_no_mail_run() {
 }
 
 /// The recorded watch's answer on its triage world (`recorded/triage.out`:
-/// KEN-1, KEN-2 and KEN-4; KEN-3 kept, KEN-5 before the floor). Defect: an
-/// item raised on every pass while unresolved, or an item whose state or newest
-/// comment moved not raised again, or an acknowledged item raised. The
-/// first pass raises the three; the second raises nothing; a comment on
-/// KEN-2 raises it once; a verdict on KEN-1 clears its row; the items are
-/// read in one list and the comments in one batch.
+/// KEN-1, KEN-2 and KEN-4; KEN-3 kept, KEN-5 before the floor). The first
+/// pass raises the three; the second raises nothing; a comment on KEN-2
+/// raises it once; a verdict on KEN-1 clears its row; the items are read in
+/// one list and the comments in one batch.
 #[test]
 fn an_unchanged_item_emits_no_line_and_a_moved_key_raises_it_once() {
     let mut world = World::new();
@@ -846,10 +837,8 @@ fn an_unchanged_item_emits_no_line_and_a_moved_key_raises_it_once() {
     );
 }
 
-/// The recorded watch's answer on the owed world (`recorded/owed.lines`: nine lines with their state,
-/// priority and lane). Defect: an item in flight, queued or done read as
-/// owed, a record's fields lost, or the Verifying items dropped from the
-/// inventory the verification duty reads. The owed rows match the
+/// The recorded watch's answer on the owed world (`recorded/owed.lines`:
+/// nine lines with their state, priority and lane). The owed rows match the
 /// recorded lines field for field, in the recorded order; the wall verdict
 /// is the heartbeat's.
 #[test]
@@ -868,7 +857,7 @@ fn the_owed_inventory_matches_the_legacys_recorded_lines() {
     assert_eq!(recorded.len(), 9, "the legacy's nine owed lines");
     // The suite's items carry id, state and priority; the CLI's owed select
     // carries the rest, filled here as the CLI would, and the team's open
-    // states filter drops KEN-8 (Done) as the stub's `--state` did.
+    // states filter drops KEN-8 (Done), as the recorded run's `--state` does.
     let items: Vec<Value> = tracker_out
         .iter()
         .filter(|i| i["state"] != "Done")
@@ -979,10 +968,8 @@ fn the_owed_inventory_matches_the_legacys_recorded_lines() {
 /// The recorded watch's answer on the merged fixture
 /// (`recorded/merged.lines`: #1 on the branch and #2 by title scope; #3 a
 /// fork, #4 a mention, #5 before the floor; nothing on the second pass).
-/// Defect: a mention or a fork read as the lane's delivery, a merge before
-/// the floor reported, a key reported twice across passes, or the search
-/// read without its total. The two lines print once, in the recorded
-/// order; the search and the head list are each read once per repository.
+/// The two lines print once, in the recorded order; the search and the head
+/// list are each read once per repository.
 #[test]
 fn the_merged_index_matches_the_legacys_recorded_lines() {
     let mut world = World::new();
@@ -1074,13 +1061,10 @@ fn the_merged_index_matches_the_legacys_recorded_lines() {
     );
 }
 
-/// Defect: an item the tracker shows ended left with a live lane record, a
-/// close asked twice for one item, or a refused close asked again on the
-/// next pass under the same key. A stopped lane whose item is Done with
-/// every box checked gets one `close-owned-resources` request, its line
-/// prints and the record reads done; one whose item is Done with an open
-/// box stays open; a canceled one closes; a refused close prints its line
-/// and is held under its key.
+/// A stopped lane whose item is Done with every box checked gets one
+/// `close-owned-resources` request, its line prints and the record reads
+/// done; one whose item is Done with an open box stays open; a canceled one
+/// closes; a refused close prints its line and is held under its key.
 #[test]
 fn a_terminal_item_with_no_recorded_close_gets_one_close_request() {
     let lane = |item: &str| {
@@ -1323,12 +1307,9 @@ fn timeline_seven() -> Value {
     }}}}})
 }
 
-/// Defect: an ended lane closed with its merge's cycle never recorded, the
-/// lane-side state it is read from removed by the close, so the merge
-/// metrics were lost unless the overseer recorded them by hand. Through the
-/// real tracker duty, the real `oversee-cycle` and the real `pr-timeline`
-/// over the `gh` fixture's GraphQL answer, and for a hosted lane the real
-/// `lane-host` to the fixture provider, a table of cases:
+/// Through the real tracker duty, the real `oversee-cycle` and the real
+/// `pr-timeline` over the `gh` fixture's GraphQL answer, and for a hosted
+/// lane the real `lane-host` to the fixture provider, a table of cases:
 ///
 /// - a hosted parked lane whose item ended at its merge, read ended before
 ///   the GitHub duty (which runs after the tracker on the shared cadence)
@@ -1581,10 +1562,8 @@ fn an_open_terminal_close_the_watch_asked_is_settled_by_its_own_next_pass() {
     assert_eq!(close(&world)["outcome"], "confirmed", "{}", close(&world));
 }
 
-/// Defect: the heartbeat's capacity line naming an
-/// item a lane holds, a queued item or a blocked one, or missing a Backlog
-/// item. The slot the heartbeat body reads names the open items with no
-/// open blocker that no lane holds and the queue does not name, sorted.
+/// The slot the heartbeat body reads names the open items with no open
+/// blocker that no lane holds and the queue does not name, sorted.
 #[test]
 fn the_heartbeat_slot_names_the_open_unblocked_items_no_lane_holds() {
     let mut world = World::new();
@@ -1630,9 +1609,7 @@ fn the_heartbeat_slot_names_the_open_unblocked_items_no_lane_holds() {
 }
 
 /// The terminal state read of a GitHub-tracked item and a container's
-/// Verifying reading, both through the one batch each. Defect: a
-/// container whose children all ended missing from the verification
-/// inventory, or a closed GitHub issue read as open.
+/// Verifying reading, both through the one batch each.
 #[test]
 fn containers_and_github_tracked_items_are_read_in_their_batches() {
     let mut world = World::new();
@@ -1747,11 +1724,7 @@ fn plant_token(world: &World, token: &str) -> PathBuf {
     path
 }
 
-/// The reducer pass, the recorded bytes. Defect: the reducer run without
-/// `GH_REPO` or with a flag, a repository's standing attention on the first
-/// pass of a run reported as news, a new key not reported, a standing key reported again, an error
-/// key baselined on the first pass, or a reducer's global failure (nonzero,
-/// no line) read as no attention. The fixture logs its environment.
+/// The reducer pass, the recorded bytes. The fixture logs its environment.
 #[test]
 fn the_reducer_runs_per_repository_with_gh_repo_and_a_rising_edge_is_news_once() {
     let mut world = World::new();
@@ -1881,12 +1854,10 @@ fn the_reducer_runs_per_repository_with_gh_repo_and_a_rising_edge_is_news_once()
     assert_eq!(baseline, Baseline::default());
 }
 
-/// The recorded bytes of a merge replay: a rolling refresh has no item, so its
-/// `refresh-ready` identity is kept by number once the reducer's line
+/// The recorded bytes of a merge replay: a rolling refresh has no item, so
+/// its `refresh-ready` identity is kept by number once the reducer's line
 /// clears, until the pull request merges (one `EVENT merged 1144
-/// kendex/refresh <repo>`) or closes unmerged. Defect: the identity dropped
-/// at approval, so its merge is never the fleet's `merged` line, or the
-/// line printed twice.
+/// kendex/refresh <repo>`) or closes unmerged.
 #[test]
 fn a_refresh_identity_is_kept_until_its_pull_request_merges_once() {
     let repo = "vanillagreencom/hyprtrade";
@@ -1958,13 +1929,8 @@ fn a_refresh_identity_is_kept_until_its_pull_request_merges_once() {
     );
 }
 
-/// The alert pass, the recorded bytes (`LINE_DEPENDABOT pr=12`, `LINE_CODE`, `LINE_SECRET`, the repeats,
-/// the unread line). Defect: an alert read without the installation token
-/// or every other read with it, an alert reported once and then forgotten
-/// while no verdict stands, a failed list read as no alerts (its rows
-/// dropped, its alerts news again when the read returns), a standing
-/// failure printing its unread line every pass, or a recorded verdict not
-/// silencing its alert.
+/// The alert pass, the recorded bytes (`LINE_DEPENDABOT pr=12`,
+/// `LINE_CODE`, `LINE_SECRET`, the repeats, the unread line).
 #[test]
 fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_alerts() {
     let url = "https://github.com/owner/repo/security";
@@ -2173,11 +2139,7 @@ fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_ale
     );
 }
 
-/// The contribution pass, the recorded bytes. Defect: a fleet author (a bot, an owner, a member, a collaborator,
-/// a private member whose permission is admin) reported, an outside pull
-/// request or issue reported on every pass, a pushed head not reported
-/// again, the permission read repeated for one login in a pass, or a
-/// failed list read as no contributions.
+/// The contribution pass, the recorded bytes.
 #[test]
 fn outside_contributions_are_reported_once_and_a_pull_request_again_on_a_new_head() {
     let head_a = "a".repeat(40);
@@ -2305,10 +2267,7 @@ fn outside_contributions_are_reported_once_and_a_pull_request_again_on_a_new_hea
 }
 
 /// The budget scan, the recorded bytes of the event and the row's raw
-/// compact JSON. Defect: a non-producer run (a pull request
-/// event) read for annotations, a producer's warnings reported more than
-/// once, duplicate warnings across jobs repeated, or the row's bytes moved
-/// by a repeat pass.
+/// compact JSON.
 #[test]
 fn the_budget_scan_reports_a_completed_producer_run_once_and_keeps_its_row_bytes() {
     let suite = "run-all-budget run=202 attempt=2 os=Linux shard=orch-state suite=slow seconds=301 bound=900 review=300 margin-percent=125";
@@ -2429,14 +2388,12 @@ fn the_budget_scan_reports_a_completed_producer_run_once_and_keeps_its_row_bytes
     }
 }
 
-/// The split. Defect: a GitHub refusal discarding the tracker pass's news
-/// and closes, and the tracker's own GitHub read, one stopped
-/// GitHub-tracked lane's issue, refused, discarding them too, where each
-/// lane's end is read on its own and the pass goes on. Through the runner
-/// with both duties: every gh read fails, the tracker's triage lines and
-/// the Linear lane's close land, the GitHub lane stays stopped with no
-/// verdict, the tracker's partial failure is one counted line after its
-/// news, and the GitHub duty's failure line names `step=github`.
+/// The GitHub duty's refusal leaves the tracker's pass standing, each
+/// lane's end read on its own. Through the runner with both duties: every
+/// gh read fails, the tracker's triage lines and the Linear lane's close
+/// land, the GitHub lane stays stopped with no verdict, the tracker's
+/// partial failure is one counted line after its news, and the GitHub
+/// duty's failure line names `step=github`.
 #[test]
 fn a_github_refusal_leaves_the_trackers_triage_line_and_close_intact() {
     let mut world = World::new();
@@ -2546,15 +2503,11 @@ fn a_github_refusal_leaves_the_trackers_triage_line_and_close_intact() {
     );
 }
 
-/// Defect: the open
-/// blockers the tracker reads dropped on the way to the verification duty,
-/// so a blocked Verifying box reads `due` with `blocked_by=-` and the
-/// heartbeat raises work whose prerequisite is open. The tracker body reads
-/// the item with its blocker, the verification body judges the slot it
-/// left: the box is `blocked` and names the blocker, with no deadline
-/// event; once the blocker closes the box is due and the event fires. The
-/// lines and the event are the recorded watch's bytes on the suite's own
-/// world.
+/// The tracker body reads the item with its blocker, the verification body
+/// judges the slot it left: the box is `blocked` and names the blocker,
+/// with no deadline event; once the blocker closes the box is due and the
+/// event fires. The lines and the event are the recorded watch's bytes on
+/// the suite's own world.
 #[test]
 fn an_open_blocker_read_by_the_tracker_holds_the_verifying_box_blocked_until_it_closes() {
     const NOW: u64 = 1_790_899_201; // 2026-10-02T00:00:01Z, `verifying_one`'s clock
@@ -2645,12 +2598,7 @@ fn an_open_blocker_read_by_the_tracker_holds_the_verifying_box_blocked_until_it_
 }
 
 /// The owner's tracker answers, the description repair and the due tracker
-/// asks. Defect: a posted ask's owner comment not
-/// handed back as its answer under the comment's delivery id, the question
-/// comment or another author's comment handed back, a description that
-/// lost its action line left unrepaired (or repaired every pass), a due
-/// tracker ask not closed after a whole read, or closed after an unread
-/// one. The reads go through the linear fixture under the tracker's quota
+/// asks. The reads go through the linear fixture under the tracker's quota
 /// rule and the mailbox fixture logs every verb.
 #[test]
 fn owner_tracker_answers_are_handed_back_and_due_tracker_asks_closed_after_a_whole_read() {
@@ -3000,13 +2948,11 @@ fn lane_status_carries_the_lane_long_counts_read_from_the_items_state() {
     assert_eq!(answer["result"]["stage"], "none", "{answer}");
 }
 
-/// Defect: a provider that answers `running` of a `pane=local` kind, the
-/// static ssh provider among them, lost to the local transport pane, whose
-/// own foreground is a shell: `lane status` read the harness it had just
-/// confirmed as `exited`. The provider's answer is the process proof for
-/// both pane kinds and the local pane is judged with it: a shell drawing
-/// Codex's idle screen reads `idle`, with one status call and no capture; a
-/// provider line naming no `pane` is the same kind.
+/// A `pane=local` kind's transport pane holds a shell in its foreground, so
+/// the provider's answer is the process proof for both pane kinds and the
+/// local pane is judged with it: a shell drawing Codex's idle screen reads
+/// `idle`, with one status call and no capture; a provider line naming no
+/// `pane` is the same kind.
 #[test]
 fn lane_status_keeps_a_providers_running_answer_over_a_local_transport_shell() {
     let dir = tempfile::tempdir().unwrap();
@@ -3057,18 +3003,14 @@ fn lane_status_keeps_a_providers_running_answer_over_a_local_transport_shell() {
     }
 }
 
-/// Defect: the counts read `<worktree>/tmp` whatever state directory the
-/// lane's checkout names, so a lane on a configured directory read a stale
-/// or absent state as counts and `unread`, and a lane in a linked worktree,
-/// every local orch lane, read its own `tmp` where its main checkout keeps
-/// the state. The counts read the state where the checkout's own files put
-/// it: a local repository whose settings file names `records`, with a decoy
-/// under `tmp`; a checkout whose private env file outranks its settings
-/// file; two worktrees of a real `git worktree add`, each `.git` a gitfile,
-/// the state under the main checkout's `records` or `tmp` over decoys in
-/// the worktree's own; a hosted checkout whose settings file comes through
-/// the provider's `cat`, the state under the clone its `.git` names where
-/// its `tmp` holds none, the clone's own `.git` directory and a worktree's
+/// The counts read the state where the checkout's own files put it: a local
+/// repository whose settings file names `records`, with a decoy under
+/// `tmp`; a checkout whose private env file outranks its settings file; two
+/// worktrees of a real `git worktree add`, each `.git` a gitfile, the state
+/// under the main checkout's `records` or `tmp` over decoys in the
+/// worktree's own; a hosted checkout whose settings file comes through the
+/// provider's `cat`, the state under the clone its `.git` names where its
+/// `tmp` holds none, the clone's own `.git` directory and a worktree's
 /// gitfile alike.
 #[test]
 fn lane_status_reads_the_counts_under_the_state_directory_the_lanes_checkout_names() {

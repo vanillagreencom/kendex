@@ -10,9 +10,9 @@
 # `context_window` is refused at launch.
 #
 # Pi has no launch word for compaction. Its switch is `compaction.enabled` in
-# its settings file, so open-terminal reads that value before a Pi launch
-# instead (lane_adapter_pi_compaction_on, or lane_adapter_pi_compaction_judge
-# on a hosted lane's files) and refuses one Pi would compact. pi-qol's budget
+# its settings file, so a launch reads that value instead and refuses one Pi
+# would compact: the runtime's launch gate for a lane (effects/launch/gate.rs),
+# lane_adapter_pi_compaction_on for an overseer succession. pi-qol's budget
 # guard and idle trigger read the same key and never compact while it is off,
 # so this one key covers every automatic compaction in a kendex Pi install.
 #
@@ -104,8 +104,7 @@ lane_adapter_pi_compaction_on() { # DIR
 }
 
 # The same answer over the user settings file USER and the project file
-# PROJECT, wherever they were read from: open-terminal judges a hosted lane on
-# copies of its host's files.
+# PROJECT, wherever they were read from.
 lane_adapter_pi_compaction_judge() { # USER PROJECT
   local user
   lane_adapter_pi_enabled "$1" || return 2
@@ -151,8 +150,7 @@ lane_adapter_pi_window_read() { # DIR
 }
 
 # The same answer over the package roots ROOT..., the first holding a carrier
-# deciding, wherever they were read from: open-terminal judges a hosted lane on
-# copies of its host's carrier.
+# deciding, wherever they were read from.
 lane_adapter_pi_carrier_sends() { # ROOT...
   local root
   for root in "$@"; do
@@ -167,8 +165,8 @@ lane_adapter_pi_carrier_sends() { # ROOT...
 # turn in an idle lane when its overseer's mail lands: 0 where the installed
 # carrier, the project's or else the user's, lists the lane mail wake among
 # the extensions its package.json gives Pi to load, 1 where none installed
-# does or its package.json does not read. open-terminal refuses a fleet launch
-# without the wake; Pi lanes arm no mailbox monitor.
+# does or its package.json does not read. The runtime's launch gate refuses a
+# lane launch without the wake; Pi lanes arm no mailbox monitor.
 lane_adapter_pi_mail_wake() { # DIR
   lane_adapter_pi_carrier_wakes "$1/.pi/packages" "$(lane_adapter_pi_agent_dir)/packages"
 }

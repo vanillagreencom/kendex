@@ -152,7 +152,7 @@ scope_current_run() {
               })
             # Rank by when the run last executed, tiebroken by run id — but only
             # when every run here is settled and timestamped. Otherwise rank by
-            # run id alone, which is the previous behaviour.
+            # run id alone.
             | (if all(.[]; (.pending | not) and (.last_start != ""))
                then map(.rank = [.last_start, .runid])
                else map(.rank = ["", .runid])

@@ -136,21 +136,20 @@ pub(super) enum JobEnd {
     /// The group's identity read gone through the one identity reader.
     Exited,
     /// The fleet watch's claim names a live runtime identity: the job is
-    /// the fleet's from here (step6-map A7), not this intent's.
+    /// the fleet's from here, not this intent's.
     Claimed,
 }
 
 /// What ended the worktree's validation obligation: the runner's answer
 /// that every run is stopped, or the lane moved under the close, so the
-/// worktree's runs belong to the session that now holds the lane (decision
-/// 124e (24)).
+/// worktree's runs belong to the session that now holds the lane.
 pub(super) enum ValidationEnd {
     Stopped,
     LaneMoved,
 }
 
-/// Why the close kept the lane's worktree instead of removing it (decision
-/// 128 (9)): each a read of the worktree itself through the handle's runner,
+/// Why the close kept the lane's worktree instead of removing it: each a
+/// read of the worktree itself through the handle's runner,
 /// recorded as the lane's `kept` reason.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::effects) enum KeptReason {
@@ -234,8 +233,7 @@ pub(super) enum ReceiptEnd {
 /// The acting method checks the key still stands in its own set and refuses
 /// `token-stale` where it does not; whether that set is still the record's
 /// is the store's judgement, made at the write that precedes every act: a
-/// set replaced since the handle read it refuses `set-replaced` (decision
-/// 124f (26)).
+/// set replaced since the handle read it refuses `set-replaced`.
 pub(in crate::effects) struct Standing<K> {
     key: K,
 }
@@ -359,11 +357,9 @@ impl Obligations {
         }
     }
 
-    /// The set the intent recorded, where it recorded one.
-    /// The set the intent records, where it records one. A record with a
-    /// row under no role is refused `role-missing`: the set alone selects
-    /// the harness, the pane and the wake by role, and
-    /// only an unreleased build of this runtime ever wrote one without.
+    /// A record with a row under no role is refused `role-missing`: the set
+    /// alone selects the harness, the pane and the wake by role, and no
+    /// released writer writes a row without one.
     pub(super) fn recorded(intent: &Intent) -> Result<Option<Obligations>> {
         let Some(record) = intent.obligations.clone() else {
             return Ok(None);
@@ -692,7 +688,7 @@ impl Obligations {
     }
 
     /// One more independent stale reading of `id`, recorded; the count so
-    /// far. Decision 66's rule for every recorded key: the second settles.
+    /// far. The rule for every recorded key: the second settles.
     pub(super) fn note_stale(&mut self, id: &Identity) -> u64 {
         let count = self
             .record
@@ -981,7 +977,7 @@ impl Obligations {
 
     /// The standing obligations as an observation carries them: one JSON
     /// object per handle, keyed by `kind`, the form a reconcile's `remaining`
-    /// has always had.
+    /// takes.
     pub(super) fn value(&self) -> Value {
         Value::Array(
             self.record
@@ -1575,7 +1571,7 @@ mod tests {
 
     #[test]
     fn a_handle_read_on_the_way_is_an_obligation_until_its_own_end() {
-        // Decision 67: the foreground found in the recorded pane is stopped by
+        // The foreground found in the recorded pane is stopped by
         // its own identity; its stop settles it and nothing else.
         let mut obligations =
             Obligations::of_launch(Some(&launch(Some("%7"), Some(4242), None, None)), None);
@@ -1683,7 +1679,7 @@ mod tests {
         }
     }
 
-    /// Decision 115 (A): the receipt is an obligation from the ask on, until
+    /// The receipt is an obligation from the ask on, until
     /// read; the window possibly opened is settled by the server's end or
     /// replaced by the pane the creating call printed; a receipt invalid or
     /// unreadable stands, one absent past the bound or read is settled.
@@ -1751,10 +1747,10 @@ mod tests {
         );
     }
 
-    /// Decision 115 (B): the launcher's record is an obligation from the ask
+    /// The launcher's record is an obligation from the ask
     /// until read; the handle it names stands until its unit or group is
-    /// read ended; an unreadable record stands as the job unread. Decision
-    /// 184 (6): the obligation carries the record's address, and a read of
+    /// read ended; an unreadable record stands as the job unread. The
+    /// obligation carries the record's address, and a read of
     /// another address settles nothing of it.
     #[test]
     fn a_job_asked_of_its_launcher_stands_until_its_record_and_handle_are_read() {
@@ -1836,7 +1832,7 @@ mod tests {
         assert_eq!(discharged_by(&none), vec!["sidecar-absent"]);
     }
 
-    /// Decision 115 (A): a publication consumes the whole set. The runner's
+    /// A publication consumes the whole set. The runner's
     /// own pane and identity pass to the record it publishes; a predecessor
     /// handle still standing keeps the set unsettled, and so does the receipt
     /// until its own read discharges it.
@@ -1916,7 +1912,7 @@ mod tests {
         );
     }
 
-    /// Decision 115 (A): the token is minted from the record alone. A record
+    /// The token is minted from the record alone. A record
     /// that says the intent signalled mints none on any later run, so a
     /// refusal site reached then holds instead; the bootstrap of an intent
     /// without a record is the initial writer's set, and a recorded set is

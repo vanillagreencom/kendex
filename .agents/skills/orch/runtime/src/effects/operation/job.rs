@@ -1525,7 +1525,8 @@ fn slice_of(cgroup: &str) -> Option<String> {
 
 /// A cgroup v2 limit file's value where it is a whole number; nothing where
 /// it reads `max` (no limit), is absent (a controller the cgroup lacks) or
-/// cannot be read, since the manager refuses `max` as a property value.
+/// cannot be read, since the client's parser refuses `max` as a property
+/// value after the connect, with nothing sent to the manager.
 fn cgroup_cap(dir: &Path, file: &str) -> Option<String> {
     let value = std::fs::read_to_string(dir.join(file)).ok()?;
     let value = value.trim();
@@ -2057,8 +2058,7 @@ mod tests {
         assert_eq!(unit_state("", ""), None);
     }
 
-    /// Defect: a group the launcher could not read empty discharged by the
-    /// leader's exit alone. A launcher record ended
+    /// A launcher record ended
     /// `unwound-failed` with the leader's identity names the job group, read
     /// by its pgid on every reconcile. The leader lives: the group stands. The
     /// leader exits leaving a member in its group: the group still stands,
@@ -2188,11 +2188,11 @@ mod tests {
         );
     }
 
-    /// Defect: an environment variable `systemd-run` refuses before it sends
-    /// anything handed to it, so every unit start fails on every attempt:
-    /// a name outside shell syntax, a value that is not UTF-8, or one holding
-    /// a Unicode noncharacter. Every other value the client accepts and sends
-    /// (measured on systemd 262): control characters, `=`, an empty value.
+    /// `systemd-run` refuses, before it sends anything, a variable whose name
+    /// is outside shell syntax or whose value is not UTF-8 or holds a Unicode
+    /// noncharacter, and every unit start handed one fails on every attempt.
+    /// Every other value the client accepts and sends (measured on systemd
+    /// 262): control characters, `=`, an empty value.
     #[test]
     fn an_environment_variable_a_unit_cannot_carry_is_never_handed_to_systemd_run() {
         use std::os::unix::ffi::OsStrExt;
@@ -2223,8 +2223,7 @@ mod tests {
         }
     }
 
-    /// Defect: a group held while an unrelated process holds its leader's
-    /// pid. The leader's identity names another start than the process now
+    /// The leader's identity names another start than the process now
     /// at that pid, which runs in this test's own group or leads a group of
     /// its own (its group the pid itself, as every `setsid` child, service
     /// and shell job does): the leader reads gone, and the group reads ended.
@@ -2287,10 +2286,7 @@ mod tests {
         }
     }
 
-    /// Defect: a launch that waits without bound on a child its stop could
-    /// not end, reads that child's empty group as nothing started, or holds
-    /// it by a key the next read releases while the child runs. The stop
-    /// names a start that is not the child's, so it signals nothing and the
+    /// The stop names a start that is not the child's, so it signals nothing and the
     /// child runs on: the launch stops waiting once the KILL's grace has
     /// passed and holds the job by its group's key though that group reads
     /// empty, the child never having run its
@@ -2401,8 +2397,7 @@ mod tests {
         assert!(after_end.is_empty(), "the child ended: {after_end:?}");
     }
 
-    /// Defect: a start made up for a leader that exited before its start was
-    /// read. A launcher record ended `unwound-failed` with the group key alone,
+    /// A launcher record ended `unwound-failed` with the group key alone,
     /// the leader having exited before its start was read, names the job
     /// group by its pgid. A member still in that group holds the job; the
     /// member ending reads the group empty and discharges the job
@@ -2430,7 +2425,7 @@ mod tests {
             owner: None,
         };
         // The group: a session leader that forks a member into its group,
-        // names both, and exits at once, as the probe's job did.
+        // names both, and exits at once.
         let pids = dir.path().join("pids");
         let mut leader = std::process::Command::new("setsid")
             .arg("bash")
@@ -2523,8 +2518,7 @@ mod tests {
         );
     }
 
-    /// Defect: a notice lost to a crash between the outcome's write and its
-    /// send, or sent twice. A failed outcome committed through the store
+    /// A failed outcome committed through the store
     /// alone, the state a crash between the outcome's write and the send
     /// leaves, records its notice `owed` with its fleet-log row and sends
     /// nothing. The next outcome of the same intent under the same owner,
@@ -2646,7 +2640,7 @@ mod tests {
         assert_eq!(sent_calls(), 1, "a sent notice is never sent again");
     }
 
-    /// Defect: a repeat replacing a claimant's files. A job's claim lands
+    /// A job's claim lands
     /// after the reconcile read the prior job ended and before the repeat
     /// launcher touches the job's files. The repeat's first owner-conditional
     /// write yields to the claimant, so the claimant's request and record
@@ -2753,8 +2747,7 @@ mod tests {
         assert_eq!(after.owner, Some(claimant));
     }
 
-    /// Defect: a stale failure announced over a job that claimed. A job's
-    /// claim lands after the launcher's last loop read and before its `fail`;
+    /// A job's claim lands after the launcher's last loop read and before its `fail`;
     /// the launcher's outcome write yields to the claimant, so nothing is
     /// announced: the mailbox program is never run, the intent carries no
     /// notice, and the claimant's state is the answer.

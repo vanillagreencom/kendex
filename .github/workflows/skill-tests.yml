@@ -56,11 +56,11 @@ name: Skill Tests
 # ceiling: TEN MINUTES, past which a shard is split even where its Linux leg
 # sits inside five. Run 36195213656, the first with every split below in
 # place, has legs past their figure on both runners, and none is split here.
-# The orch legs among them ran their suites one at a time;
-# skills/orch/tests/run-all.sh now runs a shard's suites `nproc` at a time
-# and prints one `suite=<name> seconds=<n>` line per suite, so their next CI
-# run re-measures them, and the comment above the orch shard steps holds
-# run 36195213656's figures. `worktree` on macOS, `linear` and `rest` on
+# The orch legs among them ran their suites one at a time there;
+# skills/orch/tests/run-all.sh runs a shard's suites `nproc` at a time
+# and prints one `suite=<name> seconds=<n>` line per suite, so each orch
+# leg's log re-measures them, and the comment above the orch shard steps
+# holds run 36195213656's figures. `worktree` on macOS, `linear` and `rest` on
 # Linux, and `guards-tools` and `guards-tools-tail` on both runners do not
 # run through run-all.sh and stand past their figure pending a split.
 #
@@ -623,11 +623,11 @@ jobs:
           # diffutils)` — and never for the bare word: Apple's grep advertises
           # itself as `grep (BSD grep, GNU compatible)`, so the word alone reds
           # this leg on the very build it exists to run against.
-          # Every utility whose BSD behaviour a suite or a shipped script now
-          # depends on, not just the five the leg used to install: a coreutils
-          # gnubin arriving on PATH would make wc, paste, touch, date, mktemp
-          # and seq GNU while the rest stayed Apple's, and this assertion would
-          # stay green over a userland the leg no longer measures.
+          # Every utility whose BSD behaviour a suite or a shipped script
+          # depends on: a coreutils gnubin arriving on PATH would make wc,
+          # paste, touch, date, mktemp and seq GNU while the rest stayed
+          # Apple's, and an assertion that skipped them would stay green over
+          # a userland the leg does not measure.
           for c in sed grep awk find diff ps wc paste touch date mktemp seq; do
             resolved="$(command -v "$c")" || resolved=""
             case "$resolved" in
@@ -760,8 +760,8 @@ jobs:
       # Source reductions retained all 72 orch-state suites, but run
       # 38164401517 still took 1383s on macOS. run-all.sh owns the family
       # profiles and their complement. Dev/review names enter `orch-dev`,
-      # including names that also carry lane or workflow-state, and so does
-      # the oversee launch family.
+      # including names that also carry lane or workflow-state, and so do
+      # the `oversee_launch*` suites of `scripts/oversee register`.
       # On Linux, the account-reader `lanes*` family joins `orch-dev`;
       # `orch-state` keeps the other lane/workflow-state names. `orch-rest`
       # takes the remaining suites after these families. The macOS
@@ -790,15 +790,12 @@ jobs:
       # than a name prefix, since open-terminal-lane alone was 229s of its
       # 597s on that run, so that is where a name partition stops.
       #
-      # `orch-oversee` then ran 14m37s-14m47s on main's own orch pull requests
-      # and was cancelled at 15m16s on PR #2902, having spent oversee_succeed
-      # 191s and oversee_report 29s among its suites. `orch-oversee-succeed`
-      # takes the succession and report suites by name (463s on that run),
-      # and `orch-oversee` keeps every other oversee suite, so a new oversee
-      # suite lands in `orch-oversee` and never in neither. Run 36195213656,
-      # PR #2902's own run with the split in place, confirms it: both shards
-      # finished inside each leg's job ceiling, by the per-suite paragraph
-      # above.
+      # With the succession and report suites, `orch-oversee` ran 14m37s-14m47s
+      # and was cancelled at its 15m16s ceiling. `orch-oversee-succeed` takes
+      # those suites by name, and `orch-oversee` keeps every other oversee
+      # suite, so a new oversee suite lands in `orch-oversee` and never in
+      # neither. On run 36195213656 both shards finished inside each leg's job
+      # ceiling, by the per-suite paragraph above.
       - name: tmux for pane delivery tests
         if: matrix.shard == 'orch-terminal' || matrix.shard == 'orch-oversee' || matrix.shard == 'orch-oversee-succeed' || matrix.shard == 'orch-dev' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'node' || matrix.shard == 'rest'
         run: |
@@ -841,7 +838,7 @@ jobs:
         if: matrix.shard == 'orch-oversee-succeed'
         run: bash skills/orch/tests/run-all.sh --shard orch-oversee-succeed
 
-      - name: 'orch suites: the dev and review round-artifact suites, oversee launch and owed work'
+      - name: 'orch suites: the dev and review round-artifact suites, oversee register and owed work'
         if: matrix.shard == 'orch-dev'
         run: bash skills/orch/tests/run-all.sh --shard orch-dev
 
@@ -1904,7 +1901,7 @@ jobs:
       # 2026-10-09: 37882328114, 37880822013, 37880007749, 37879167232,
       # 37878878860, 37876175474, 37875494584, 37875447295, 37872580775,
       # 37872477875, 37872452783, 37867125177, 37866360021, 37865707185,
-      # 37865455977. Raw job timestamps and rest logs are attached to KEN-3530.
+      # 37865455977.
       # Step maxima: render-lint 382s, unsplit rest 618s, verify-lock 538s.
       # Each bound is ceil(maximum * 1.25 / 60): 8, 13, 12 minutes.
       # CLI job ceilings reserve 20 minutes for compile + this test bound +
@@ -1915,10 +1912,10 @@ jobs:
       # Historical apply_locked:: work finished within 136.405s of the
       # integration harness starting, including preceding and concurrent
       # tests. This is an estimate, not a standalone leg measurement.
-      # Across KEN-4013's merge-group sample, apply-locked's test step had
-      # a 205s median and 356s maximum; rest's median was 764s against its
-      # 780s limit. Moving non-verification refresh tests into apply-locked
-      # uses that existing leg's room. verify_ remains with verify-lock.
+      # Across a merge-group sample, apply-locked's test step had a 205s
+      # median and 356s maximum; rest's median was 764s against its 780s
+      # limit. The non-verification refresh tests run in apply-locked, which
+      # has that room. verify_ remains with verify-lock.
       # The split removes that family from rest to meet the 600s split figure;
       # hosted PR timing must confirm both legs, independently of their bounds.
       # All filters are libtest substrings; new integration tests still land

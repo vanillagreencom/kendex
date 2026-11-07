@@ -854,9 +854,9 @@ mod tests {
     use crate::ops::mail::{Credit, SendResult};
 
     /// The drain's wire form, decoded field by field, and the three short
-    /// forms refused by name: a reply with no receipts section, a header
-    /// that is not one and an envelope that is not JSON. Defect: a cut-off
-    /// reply read as a lane with nothing new.
+    /// forms refused by name, so a cut-off reply is never read as a lane
+    /// with nothing new: a reply with no receipts section, a header that is
+    /// not one and an envelope that is not JSON.
     #[test]
     fn a_drain_decodes_whole_and_a_short_or_malformed_one_is_refused() {
         let text = "count=3 first=a-1\n{\"id\":\"a-2\",\"kind\":\"ask\",\"options\":[\"x\",\"y\"],\"text\":\"Go?\"}\n{\"id\":\"a-3\",\"kind\":\"notice\"}\nreceipts cursor=2 count=4 first=d-1\n1 d-1 1769700000\n3 d-3 \n";

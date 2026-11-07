@@ -55,7 +55,7 @@
 #         and binding_resets_at null, and its verdict is walled at or below
 #         ORCH_LANE_CLOUD_CREDIT_FLOOR. --local and --cache-only read no host
 #         capabilities either, so they judge every record on plan.
-#         A weekly wall oversee-watch recorded from a lane's harness banner
+#         A weekly wall the fleet watch recorded from a lane's harness banner
 #         (lib/account-wall.sh) holds that account's `weekly_pct` at 100 until
 #         the reset the banner stated, whatever the usage endpoint reads; a
 #         record that cannot be read reads the lane `error`.
@@ -81,8 +81,8 @@
 #         and a `rate_limited` lane carrying a figure are pickable. The split
 #         matters because `expired` is the one word an operator answers by
 #         logging in again, or for a Codex lane by the codex command its
-#         `detail` names — `open-terminal` turns it into that remedy line — so
-#         it goes only to a login proven dead and to those Codex outcomes.
+#         `detail` names, so it goes only to a login proven dead and to those
+#         Codex outcomes.
 #         An endpoint refusal names its HTTP code in `detail` unless a Claude
 #         usage 401 or 403 has a profile that confirms an ended plan. That
 #         refusal reads `plan_ended`, its detail naming the free plan and
@@ -99,7 +99,7 @@
 #         disagree — a local copy that can no longer be renewed reads
 #         `expired` while the host's keeps working — and a launch on that
 #         provider runs under the host's. A fleet with no provider lists the
-#         local config dirs alone, as before.
+#         local config dirs alone.
 #   host-accounts  Print the accounts the CONFIGURED PROVIDER reports holding a
 #         credential for, one validated row per account, as `list` reads them:
 #         the same field rules, the same account-and-harness requirement and the
@@ -272,7 +272,7 @@
 #         it does for `list`.
 #         `pick --lane` judges its one account by this same rule, and a dir
 #         the provider reports with a reading is judged even where discovery
-#         does not reach it. The overseer's own picks (oversee launch, the
+#         does not reach it. The overseer's own picks (the successor's launch, the
 #         succession walk and capacity count, oversee-succeed's headroom
 #         mark) use the configured provider for Claude accounts too: its
 #         stored token can back a local session with no local credentials file.
@@ -333,7 +333,7 @@
 #         own expiry. Nothing inside the directory is
 #         read. Prints the resolved config dir on stdout, or nothing for an
 #         unknown bare name. A bare name resolves the first local alias match
-#         in list's inventory. `open-terminal` asks it for every named --lane.
+#         in list's inventory.
 #
 # Options:
 #   --harness NAME   claude, codex, copilot, or all (default: all for list,
@@ -572,7 +572,7 @@
 #                      or Pi Anthropic API credit must exceed (default 10,
 #                      provisional; see `pick`). Refused, before any lane is
 #                      measured, when it is not a whole number 0 or more.
-#                      `list` walls a grant at it, so oversee-watch reports
+#                      `list` walls a grant at it, so the fleet watch reports
 #                      a running lane's grant reaching it as an `account`
 #                      event; raise it for more margin before a round.
 #   ORCH_LANE_CLOUD_REPOS  Comma-separated `<name>=<owner>/<repo>` pairs, one
@@ -582,7 +582,7 @@
 #   ORCH_LANES_USAGE_TTL  Seconds a cached usage figure is reused (default 300;
 #                      0 disables ordinary figures, but not the live usage-429
 #                      retained-figure policy). Keep it at least the longest watch
-#                      interval on the host — `oversee-watch --interval`
+#                      interval on the host — `orch-runtime watch run --interval`
 #                      defaults to 240 — because a TTL under that interval has
 #                      every pass find the figure expired and fetch again. The
 #                      provider's `accounts` answer is cached under the same
@@ -776,8 +776,8 @@
 #   Refreshing rotates the refresh token in the credentials file, which other
 #   tools on the machine share (a Waybar usage widget doing the same thing is
 #   the reference case), so the write takes the same lock the reference
-#   implementation uses and re-reads the credentials under it. Leaving the
-#   renewal opt-in instead left every idle account reading `expired` and `pick`
+#   implementation uses and re-reads the credentials under it. An opt-in
+#   renewal would leave every idle account reading `expired` and `pick`
 #   choosing nothing, which is the failure it exists to prevent.
 #
 # Why a Codex token is renewed by the Codex CLI:
@@ -1386,8 +1386,7 @@ split_http_answer() { # ANSWER
 
 # What an HTTP refusal of a lane's own request means for the lane, with the
 # caller's own reading of every other code as $2. `expired` asks the operator to
-# log in again — `open-terminal` turns it into that remedy line — so an HTTP
-# refusal the account will survive must never take it.
+# log in again, so an HTTP refusal the account will survive must never take it.
 http_refusal_status() { # CODE DEFAULT
 	case "$1" in
 		429) printf 'rate_limited' ;;
@@ -2627,13 +2626,13 @@ emit_lane() {
 	# whose token had not expired, and one whose renewal failed, are both false.
 	# `through` is the credential this row was measured through: `local` for a
 	# config dir on this machine, `host` for a row the provider reported. Carried
-	# in the record itself so no listing stamps it afterwards, which cost the
+	# in the record itself so no listing stamps it afterwards, which would cost the
 	# whole listing one jq pass whether or not a provider was configured.
 	local alias="$1" harness="$2" dir="$3" status="$4" detail="$5" plan="$6" buckets="$7" age="${8:-null}" refreshable="${9:-false}" through="${10:-local}" prior="${11:-}" elapsed="${12:-null}" sample_claims="${13:-1}" sample_at="${14:-null}"
 	lane_retire_date "$dir" silent
 	[[ -n "$prior" ]] || prior='{}'
 	# No-figure callers pass empty buckets. In a cache-only listing, the wall
-	# oversee-watch recorded cannot supply the missing usage reading. Parsed
+	# the fleet watch recorded cannot supply the missing usage reading. Parsed
 	# figures and ordinary listings retain the existing wall overlay.
 	if [[ "$CACHE_ONLY" != true || "$buckets" != '{}' ]]; then
 		buckets="$(account_wall_buckets "$PROJECT_ROOT" "$dir" "$buckets")" || { buckets='{}' status=error detail="wall record unreadable"; }
@@ -2889,7 +2888,7 @@ host_lane_rows() { # HARNESS [READINGS [MODEL]]
 # come back here.
 #
 # No provider has to implement the verb: an absent one exits 2 and this
-# listing stays the local reading it always was.
+# listing is the local reading alone.
 #
 # This function is the ONE reader of the protocol. `lanes host-accounts` prints
 # what it validated, so a caller asking whether the host holds an account asks
@@ -3129,10 +3128,10 @@ host_accounts_answer() { # HOST [SAMPLE|RECORD] — rows or their sampled body; 
 	local -a bound=()
 	# Read through the same cache every usage figure in this script uses, keyed on
 	# the PROVIDER rather than on a harness and a config dir, since one answer
-	# covers every account it names. Without it the fleet inventory forked a
-	# provider call on every invocation, unbounded and never reused, and on a
-	# provider that will never implement the verb it paid that fork to be told so
-	# again. `--no-cache` refreshes it; the launcher's own read passes that flag,
+	# covers every account it names. Without it the fleet inventory would fork a
+	# provider call on every invocation, unbounded and never reused, and a
+	# provider that never implements the verb would pay that fork each time to be
+	# told so again. `--no-cache` refreshes it; the launcher's own read passes that flag,
 	# because which accounts a host holds decides a gate rather than reporting a
 	# figure. `pick` reads through the cache, since what it takes from the answer
 	# is usage windows, read on the TTL every window has.
@@ -3169,8 +3168,8 @@ host_accounts_answer() { # HOST [SAMPLE|RECORD] — rows or their sampled body; 
 	done
 	# The verb is OPTIONAL, so its absence is not news: exit 2 is the protocol's
 	# "this provider does not implement the verb" (schemas/lane-host.md), and a
-	# provider that answers it that way leaves this listing exactly the local
-	# reading it has always been, with nothing on stderr. Its own bytes are
+	# provider that answers it that way leaves this listing the local reading
+	# alone, with nothing on stderr. Its own bytes are
 	# held back until the status says which case it is, because the shipped
 	# reference provider answers an unknown verb with its parser's whole usage
 	# message and a listing the overseer runs constantly must not carry that.
@@ -3329,8 +3328,8 @@ render_table() {
 #
 # 4 is not a refusal a launcher inherits: a directory outside the discovery
 # glob, or outside ORCH_LANE_DIRS where that is set, and not reported with a
-# reading by the provider, has no record here and never had one, so a launch onto it is judged by whatever gate the launcher
-# had before this question existed.
+# reading by the provider, has no record here, so a launch onto it is judged by the
+# launcher's own gate.
 #
 # A lane whose usage could not be fetched has status other than ok and answers
 # 5, not 3: it is a window nobody read, and the caller names the read rather
@@ -3626,9 +3625,9 @@ cmd_pick_lane() {
 # `fleet` form, whose fifth field is that state file.
 #
 # A seat stays while its fleet state records it, whether or not that overseer
-# still runs: no liveness judgement of a recorded overseer exists as a callable
-# owner (`oversee launch` inlines its own), so a stopped fleet's seat stays
-# protected until an overseer launch or register rewrites the record.
+# still runs: no liveness judgement of a recorded overseer is read here, so a
+# stopped fleet's seat stays protected until an overseer launch or register
+# rewrites the record.
 #
 # The seats land in SEATS; a failure leaves SEATS_STEP and SEATS_STATE naming
 # the step and the state it could not read, for the caller's refusal.
@@ -4006,8 +4005,8 @@ CODEX_USAGE_URL="${ORCH_LANES_CODEX_USAGE_URL:-https://chatgpt.com/backend-api/w
 # ~5h, with tolerance — Codex reports window durations that vary by account.
 SESSION_WINDOW_S=18000
 
-# At least the longest watch interval on the host: `oversee-watch --interval`
-# defaults to 240, and a TTL under that guarantees every pass finds the figure
+# At least the longest watch interval on the host: `orch-runtime watch run
+# --interval` defaults to 240, and a TTL under that guarantees every pass finds the figure
 # expired and fetches, which is the burst this cache exists to bound.
 USAGE_TTL="${ORCH_LANES_USAGE_TTL:-300}"
 # How long a reader waits for the host-wide refresh lock. The holder refreshes
@@ -4286,7 +4285,7 @@ case "$SUB" in
 		out='[]'
 		[[ "$HARNESS" == pi ]] || out="$(collect_lanes "$HARNESS")" || exit 1
 		# Asked only where a provider is configured. A fleet with no provider
-		# reads the local config dirs and nothing else, exactly as before. One
+		# reads the local config dirs and nothing else. One
 		# read: `all` carries the grant rows beside the other harnesses' rows.
 		host_pool=plan
 		if [[ "$LOCAL_ONLY" != true && "${ORCH_LANE_HOST:-local}" != local ]]; then
@@ -4301,7 +4300,7 @@ case "$SUB" in
 		# host, lane_pick_pool's answer; a Pi record here is an API grant, the
 		# pool an anthropic/ model spends. The cloud credit is a Claude
 		# account's, and the one kind declaring it launches Claude alone
-		# (open-terminal, cloud-session-invalid): another harness's lane in that
+		# (the runtime's launch, cloud-session-invalid): another harness's lane in that
 		# fleet runs on another host, so its record keeps its plan answer.
 		# Retirement ends a cloud credit, so a cloud-credit record takes the
 		# dates a pick of that pool takes.
@@ -4314,7 +4313,7 @@ case "$SUB" in
 		done
 		TIER_RETIRE='{}'
 		[[ "$host_pool" != cloud-credit ]] || lane_tier_retire "$out" || exit 1
-		# The verdict is the reading's: `walled` tells oversee-watch the wall is
+		# The verdict is the reading's: `walled` tells the fleet watch the wall is
 		# reached and lifts at binding_resets_at, which a projection does not
 		# say. The projection rides beside it for a reader weighing the claims.
 		# A grant is judged by with_lane_tier, as pick judges it, so its

@@ -8,8 +8,8 @@
 # and fixture_runtime_start_perform.
 #
 # fixture_runtime_start_perform DIR — write DIR/.orch-runtime-start, the
-# performer a runtime stand-in hands a `start-controller` request to
-# (`oversee launch`'s): it performs the start as the runtime's
+# performer a runtime stand-in hands a first launch's `start-controller`
+# request to: it performs the start as the runtime's
 # confirmed arm records it (runtime/src/ops/controller.rs §
 # record_transfer_outcome, effects/transfer.rs § succeed) through the
 # launcher's own adapter call and record writer: the request's controller
@@ -69,7 +69,7 @@ EOF
 # fixture_runtime_stub DIR [RECORD_DIR] — write DIR/orch-runtime, replacing a
 # link to the real wrapper there (a mutant scripts directory links every
 # script), the start performer beside it, and beside that the walk's
-# stand-in `oversee launch` asks for a first controller: `successor --fleet
+# stand-in a first launch asks for its controller: `successor --fleet
 # --cwd DIR` answered by the shell walk beside the launcher
 # (lib/overseer-launch.sh § ol_walk) in the verb's reply shape, and `state
 # exists|init --fleet` and `state get --fleet POINTER` answered through the

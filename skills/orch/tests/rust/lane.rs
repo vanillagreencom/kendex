@@ -269,15 +269,14 @@ fn refusal_fields(answer: &Value) -> HashMap<String, String> {
         .collect()
 }
 
-/// Defect: a relaunch refused for room on its own lane's charge, or a
-/// relaunch admitted onto an account another lane has filled. The
-/// account's session window leaves room for no second lane. KEN-1's
-/// record stands stopped with a reservation (a charge) and KEN-2 runs live
-/// on the account: KEN-1's relaunch is refused `account-walled` on KEN-2's
-/// charge and its own as the candidate (two lanes' projection, not three)
-/// and moves nothing; with KEN-2 ended it is admitted, its own reservation
-/// left out of the judgement as the relaunch drops it, and its record
-/// carries none after.
+/// A relaunch is judged without its own lane's charge, and never admitted
+/// onto an account another lane has filled. The account's session window
+/// leaves room for no second lane. KEN-1's record stands stopped with a
+/// reservation (a charge) and KEN-2 runs live on the account: KEN-1's
+/// relaunch is refused `account-walled` on KEN-2's charge and its own as
+/// the candidate (two lanes' projection, not three) and moves nothing; with
+/// KEN-2 ended it is admitted, its own reservation left out of the
+/// judgement as the relaunch drops it, and its record carries none after.
 #[test]
 fn a_relaunch_is_judged_with_its_own_lanes_charge_left_out() {
     let mut fleet = Fleet::new(4);
@@ -339,14 +338,12 @@ fn a_relaunch_is_judged_with_its_own_lanes_charge_left_out() {
     );
 }
 
-/// Defect: a launch with no record judged as if it
-/// replaced a lane, a standing charge dropped for a stranger; a launch
-/// admitted on a listing nobody could read; a launch onto an
-/// account the listing has no row for refused where the shell launcher
-/// proceeded as given. KEN-1's reservation on the account counts against a
+/// A launch with no record replaces no lane, so every standing charge
+/// counts against it. KEN-1's reservation on the account counts against a
 /// fresh launch of KEN-3, refused `account-walled` on that one charge with
 /// no record written; the listing made unreadable refuses it
-/// `account-unjudged`; an account with no row is admitted unjudged.
+/// `account-unjudged`; an account with no row is admitted unjudged, the
+/// launch proceeding as given.
 #[test]
 fn a_launch_with_no_record_is_judged_fresh_and_an_unread_listing_admits_nothing() {
     let mut fleet = Fleet::new(4);
@@ -403,12 +400,10 @@ fn a_launch_with_no_record_is_judged_fresh_and_an_unread_listing_admits_nothing(
     assert_eq!(fleet.lane("KEN-3")["account"], "/home/me/.other");
 }
 
-/// Defect: a launch onto an account the
-/// word refuses, reserved or retired from its day, refused `account-walled`
-/// with the wall's figures for an account that has room, sending the
-/// operator to a usage wall that is not there. The refusal is the word's
-/// own key, its line naming the word, or the day and who stated it, with
-/// no window's figure; nothing is written.
+/// An account its word refuses, reserved or retired from its day, may have
+/// room, so the refusal is the word's own key, never `account-walled` with
+/// the wall's figures: its line naming the word, or the day and who stated
+/// it, with no window's figure; nothing is written.
 #[test]
 fn a_named_reserved_or_retired_account_is_refused_by_its_word_and_writes_nothing() {
     let mut fleet = Fleet::new(4);
@@ -733,11 +728,9 @@ fn a_close_needs_a_ground_asks_the_mailbox_and_then_ends_the_harness() {
     assert_eq!(row["source"], "linear");
 }
 
-/// Defect: a close that interrupts a turn (the model-switch recovery's
-/// ground) stopping a harness that holds an unanswered ask. Through the
-/// executable: the `no-landing` close with `interrupt` asks the mailbox
-/// before anything else and refuses `ask-unanswered` while one stands, the
-/// harness still live and the lane running.
+/// Through the executable: the `no-landing` close with `interrupt` asks the
+/// mailbox before anything else and refuses `ask-unanswered` while one
+/// stands, the harness still live and the lane running.
 #[test]
 fn an_interrupting_close_still_refuses_an_unanswered_ask() {
     let fleet = Fleet::new(4);
@@ -769,11 +762,8 @@ fn an_interrupting_close_still_refuses_an_unanswered_ask() {
     assert_eq!(asking.lane("KEN-A")["status"], "running");
 }
 
-/// Defect: a permission word the harness's launch line cannot carry
-/// faithfully (a value its table lacks, or a two-word spelling given in
-/// part) widened to the posture's own. Through the executable: each is
-/// refused `permission-unrepresentable` naming the harness and the word,
-/// and nothing is written.
+/// Through the executable: each is refused `permission-unrepresentable`
+/// naming the harness and the word, and nothing is written.
 #[test]
 fn a_permission_word_the_launch_line_cannot_carry_is_refused_before_any_record() {
     let fleet = Fleet::new(4);
@@ -796,14 +786,11 @@ fn a_permission_word_the_launch_line_cannot_carry_is_refused_before_any_record()
     }
 }
 
-/// Defect: a lane launched on an account with no model ran the harness's
-/// default model, whose window the account's judge never read (the walk's
-/// `harness-default` answer among them). Through the real `launch-lane`: a
-/// launch naming an account and no model, or an empty one, on each harness,
-/// and a relaunch over a stopped record alike, is refused
-/// `launch-model-missing` naming the harness, the account and the line's
-/// model spellings, before any record; a launch naming no account is not
-/// judged here.
+/// Through the real `launch-lane`: a launch naming an account and no model,
+/// or an empty one, on each harness, and a relaunch over a stopped record
+/// alike, is refused `launch-model-missing` naming the harness, the account
+/// and the line's model spellings, before any record; a launch naming no
+/// account is not judged here.
 #[test]
 fn a_launch_on_an_account_naming_no_model_is_refused_before_any_record() {
     let fleet = Fleet::new(4);
@@ -856,11 +843,10 @@ fn a_launch_on_an_account_naming_no_model_is_refused_before_any_record() {
     );
 }
 
-/// Defect: a lane launched on an account with no effort ran its harness's
-/// default level. Through the real `launch-lane`: a launch naming an
-/// account and a model but no effort is refused `launch-effort-missing`
-/// with the line's effort spellings, before any record; a Pi model carrying
-/// its level (`provider/id:level`) names the effort.
+/// Through the real `launch-lane`: a launch naming an account and a model
+/// but no effort is refused `launch-effort-missing` with the line's effort
+/// spellings, before any record; a Pi model carrying its level
+/// (`provider/id:level`) names the effort.
 #[test]
 fn a_launch_on_an_account_naming_no_effort_is_refused_before_any_record() {
     let fleet = Fleet::new(4);
@@ -1416,15 +1402,13 @@ fn two_contenders_at_cap_minus_one_admit_exactly_one_under_the_launch_lock() {
     assert_eq!(fleet.fleet()["lanes"].as_array().unwrap().len(), 1);
 }
 
-/// Defect: the cloud cap went unread, so a cloud session at its cap was
-/// admitted and a lane at the lane cap refused a cloud session. Through
-/// the real `launch-lane` at a lane cap of one and a cloud cap of one: a
-/// running cloud session refuses the next session `cap-reached` naming the
-/// cloud setting and writes nothing, and charges no lane slot, so a lane
-/// is admitted beside it; a live lane at the lane cap charges no cloud
-/// slot, so a session is admitted beside it; `over_cap` admits a session
-/// past the cloud cap and is recorded; with no cloud setting the tenth
-/// running session fills the cap; and a stopped session's standing
+/// Through the real `launch-lane` at a lane cap of one and a cloud cap of
+/// one: a running cloud session refuses the next session `cap-reached`
+/// naming the cloud setting and writes nothing, and charges no lane slot,
+/// so a lane is admitted beside it; a live lane at the lane cap charges no
+/// cloud slot, so a session is admitted beside it; `over_cap` admits a
+/// session past the cloud cap and is recorded; with no cloud setting the
+/// tenth running session fills the cap; and a stopped session's standing
 /// reservation holds its slot until it lapses.
 #[test]
 fn a_cloud_session_is_bounded_by_the_cloud_cap_and_charges_no_lane_slot() {
@@ -1567,15 +1551,12 @@ fn age(path: &Path, secs: u64) {
     std::fs::File::open(path).unwrap().set_modified(at).unwrap();
 }
 
-/// Defect: an item's close-out that takes a sibling item's files whose key
-/// extends its own, its mailbox or its record's lock, or that removes
-/// before its archive stands, so a crash between leaves no copy. `state
-/// remove` through the executable on a directory with no fleet state: the
-/// item's state, status file, handoff and run directory leave, the mailbox
-/// and the record's lock stay, the siblings stand, the archive the reply
-/// names holds every path that left beside the mailbox and the `--archive`
-/// path, and the directory's own retention ran, since no watch runs it
-/// there, taking another item's expired record.
+/// `state remove` through the executable on a directory with no fleet
+/// state: the item's state, status file, handoff and run directory leave,
+/// the mailbox and the record's lock stay, the siblings stand, the archive
+/// the reply names holds every path that left beside the mailbox and the
+/// `--archive` path, and the directory's own retention ran, since no watch
+/// runs it there, taking another item's expired record.
 #[test]
 fn state_remove_takes_the_items_files_after_their_archive_and_leaves_its_siblings() {
     let fleet = Fleet::new(1);
@@ -1678,11 +1659,9 @@ fn state_remove_takes_the_items_files_after_their_archive_and_leaves_its_sibling
     );
 }
 
-/// Defect: a removal that fails part way reported without the archive that
-/// already holds the path, so the operator cannot find the copy. A run
-/// directory whose mode forbids unlinking inside it: the close-out refuses
-/// `remove-failed` naming the archive, which holds the file, and the file
-/// still stands.
+/// A run directory whose mode forbids unlinking inside it: the close-out
+/// refuses `remove-failed` naming the archive, which holds the file, and
+/// the file still stands.
 #[test]
 fn state_remove_refuses_a_failed_removal_naming_the_archive_that_holds_the_path() {
     let fleet = Fleet::new(1);

@@ -4,8 +4,8 @@
 # entries send, and every paste, goes through pane_write: the successor line
 # overseer-host-tmux's create types into the window it opens, and the lines a
 # Jarvis session and lane-close type, such as a harness dialog's answer. A raw
-# `tmux paste-buffer -t ""` types into whatever pane the caller sits in, which
-# is how an overseer pasted `/exit` into itself; a write into a pane whose
+# `tmux paste-buffer -t ""` types into whatever pane the caller sits in, an
+# overseer's own among them; a write into a pane whose
 # process has changed lands its keystrokes in a process nobody meant. Both are refused here, before anything is typed.
 #
 # Hosted pane input uses lane-host send when the caller selects KIND host.

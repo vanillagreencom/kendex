@@ -1816,12 +1816,12 @@ fn keyed_lines(text: &str) -> impl Iterator<Item = (&str, &str)> {
 
 /// What the worktree package's `remove` answered: its exit, whether it
 /// reported the worktree removed (`worktree-removed` on stdout, the
-/// `remove` arm's last line, `skills/worktree/scripts/worktree:3719`), and
+/// `remove` arm's last line), and
 /// its keyed stderr lines, among which `lane-mail-move-failed` says a lane
 /// mailbox could not be moved and nothing was removed
-/// (`git_remove_worktree`, `worktree:2569`), and `lane-mail-kept` names a
+/// (`git_remove_worktree`), and `lane-mail-kept` names a
 /// mailbox kept beside the main checkout's after the removal
-/// (`lane_mail_settle`, `worktree:2495`); `worktree remove --help` § Lane
+/// (`lane_mail_settle`); `worktree remove --help` § Lane
 /// mailboxes states both.
 struct RemoveReply {
     status: i32,

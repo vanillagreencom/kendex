@@ -4,7 +4,7 @@
 # account's usage numbers while the claim's pane lives.
 #
 # Home: $OVERSEE_WATCH_STATE_DIR/claims, else <project root>/tmp/oversee-watch/
-# claims — the directory oversee-watch keeps its own state in.
+# claims — the directory the fleet watch keeps its claim store in.
 #
 # A claim is live while its tmux pane is. The liveness key is
 # `<server pid> <pane id>`: pane ids restart at %0 on a separate tmux server, so the
@@ -244,12 +244,9 @@ lane_claims_pid_runs() {
   [[ "$rc" -ne 1 ]]
 }
 
-# The one answer to which oversee lane records are lanes in flight, as jq
-# definitions a caller prefixes to its own program: oversee-watch carries the
-# running records. open-terminal counts the in_flight
-# records against their cap, so a resume in the same cap adds no lane. The watch and
-# the cap cannot describe two different fleets. Hand-appended entries that are
-# not objects are no lane.
+# The one shell answer to which oversee lane records are lanes in flight, as
+# jq definitions a caller prefixes to its own program (lib/launch-overlap.sh).
+# Hand-appended entries that are not objects are no lane.
 LANE_RUNNING_JQ='def running: type == "object" and .status == "running";
 def held: running or (type == "object" and .status == "preparing");
 def in_flight: held or (type == "object" and .status == "parked");'

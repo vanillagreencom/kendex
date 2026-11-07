@@ -2069,8 +2069,8 @@ mod tests {
     }
 
     /// A cloud create whose CLI never started made nothing, so it is
-    /// refused and a second launch may ask again. Defect: the run read as
-    /// no answer, holding the launch for a person over nothing.
+    /// refused and a second launch may ask again, never held for a person
+    /// over nothing.
     #[test]
     fn a_cloud_create_whose_cli_never_started_is_refused() {
         let dir = tempfile::tempdir().unwrap();
@@ -2082,9 +2082,9 @@ mod tests {
     }
 
     /// A cloud create whose CLI started and ended by a signal gave no
-    /// answer, so a session may exist and the create is unknown. Defect:
-    /// the end read as a refusal, which lets a second launch create a
-    /// second session beside one that may stand.
+    /// answer, so a session may exist and the create is unknown, never a
+    /// refusal that lets a second launch create a second session beside one
+    /// that may stand.
     #[test]
     fn a_cloud_create_whose_cli_is_killed_is_unknown() {
         let dir = tempfile::tempdir().unwrap();
@@ -2098,9 +2098,9 @@ mod tests {
     /// The worktree package read by the runner's three values. One that
     /// never started made nothing and fails the launch; one that started
     /// and outran its bound, or that a signal ended, may have made the
-    /// worktree or the push, so it is unknown. Defects: a start that
-    /// failed held for a person over nothing; a create or push that may
-    /// have acted settled failed.
+    /// worktree or the push, so it is unknown: a start that failed is never
+    /// held for a person over nothing, and a create or push that may have
+    /// acted is never settled failed.
     #[test]
     fn the_worktree_package_never_started_fails_and_one_with_no_answer_is_unknown() {
         let dir = tempfile::tempdir().unwrap();

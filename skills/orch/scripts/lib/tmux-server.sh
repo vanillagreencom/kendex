@@ -1,10 +1,10 @@
 # shellcheck shell=bash
 #
 # The one rule for which tmux server a lane verb reaches, and whether it has
-# one to reach at all. `open-terminal`, `oversee-watch` and `oversee launch`
-# each drive tmux windows and once required `$TMUX`, so a verb run from
-# outside tmux, a job unit or another runtime's session, refused although the
-# person's tmux server was running. `ORCH_TMUX_SESSION` names the fleet's
+# one to reach at all. A verb that drives tmux windows can run outside tmux,
+# from a job unit or another runtime's session, while the person's tmux
+# server runs, so `$TMUX` alone cannot say which server it reaches.
+# `ORCH_TMUX_SESSION` names the fleet's
 # session, and with it set the verb reaches that session on the person's own
 # server, the one tmux itself opens when `$TMUX` is unset: the socket it
 # derives from their uid. Every tmux call the verb then makes goes to that

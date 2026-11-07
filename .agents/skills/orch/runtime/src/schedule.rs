@@ -1,13 +1,13 @@
 //! The standing scheduler's due times and the one clock: every duty has its
 //! own cadence and its own due time. Running one duty, or an event that
 //! makes it due now, moves no other duty's deadline; in particular mail
-//! activity never resets the heartbeat (decision 121, Q5).
+//! activity never resets the heartbeat.
 //!
 //! The logic reads no clock of its own. The runner (`watch`) passes the
 //! instant it is acting at, so a test drives a schedule with instants it
 //! chooses and asserts ordering without waiting. [`Clock`] is the one clock
-//! every wait and every wall-clock moment of the runtime reads (decision
-//! 121, Q16): `main.rs` builds it and hands it to the operation handle and
+//! every wait and every wall-clock moment of the runtime reads:
+//! `main.rs` builds it and hands it to the operation handle and
 //! the runner alike, so a test supplies one fake and drives both.
 
 use std::time::{Duration, Instant, SystemTime};
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 /// The duties the fleet watch runs on one clock: the mail turn, the pane and
 /// process observations, tracker work, verification, the report check, the
-/// reconcile of every open intent (decision 121, Q4) and the heartbeat. The
+/// reconcile of every open intent and the heartbeat. The
 /// serialized word is [`Duty::word`], the key of a duty's baseline row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -28,10 +28,10 @@ pub enum Duty {
     Report,
     Reconcile,
     Heartbeat,
-    // U5g: the wake of a lead or lane idle with unread mail, on the mail
+    // The wake of a lead or lane idle with unread mail, on the mail
     // cadence, on the shared thread, last in the tie order.
     Wake,
-    // U5e2: the GitHub inventories (decision 162 (2)): the merged index,
+    // The GitHub inventories: the merged index,
     // the parked dependency, the refresh and main-branch incidents, the
     // reducer pass, the alerts and the outside contributions, on the long
     // cadence, on the shared thread, after the tracker so a pass reads the
@@ -39,8 +39,8 @@ pub enum Duty {
     // word is one, `github`, which the case rule would split.
     #[serde(rename = "github")]
     GitHub,
-    // U5f: the retention duty (decisions 141 (1), (2); step5-map § A11):
-    // the event log's rotated segments and each ended lane's paths judged
+    // The retention duty: the event log's rotated segments and each ended
+    // lane's paths judged
     // by their own recorded end, on the long cadence, on the shared thread,
     // last in the tie order.
     Retention,
@@ -56,11 +56,8 @@ impl Duty {
         Duty::Report,
         Duty::Reconcile,
         Duty::Heartbeat,
-        // U5g
         Duty::Wake,
-        // U5e2
         Duty::GitHub,
-        // U5f
         Duty::Retention,
     ];
 
@@ -74,11 +71,8 @@ impl Duty {
             Duty::Report => "report",
             Duty::Reconcile => "reconcile",
             Duty::Heartbeat => "heartbeat",
-            // U5g
             Duty::Wake => "wake",
-            // U5e2
             Duty::GitHub => "github",
-            // U5f
             Duty::Retention => "retention",
         }
     }
@@ -87,11 +81,10 @@ impl Duty {
 /// Where a cadence counts from once the duty ran.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Anchor {
-    /// The next due time is the run's start plus the cadence (the legacy
-    /// long pass: `LONG_DUE = started + INTERVAL`).
+    /// The next due time is the run's start plus the cadence (the long
+    /// pass).
     Start,
-    /// The next due time is the run's end plus the cadence (the legacy mail
-    /// turn: `MAIL_DUE = now + MAIL_INTERVAL` after the turn).
+    /// The next due time is the run's end plus the cadence (the mail turn).
     End,
 }
 
@@ -110,7 +103,7 @@ pub struct Cadences {
 }
 
 impl Cadences {
-    /// The cadences the watch settings name (step5-map F1): the mail interval
+    /// The cadences the watch settings name: the mail interval
     /// end to start; every long-pass duty at `interval` start to start; the
     /// heartbeat every `max_loops × interval` from the last heartbeat.
     pub fn of_settings(mail: Duration, interval: Duration, max_loops: u32) -> Cadences {
@@ -130,7 +123,7 @@ impl Cadences {
         }
     }
 
-    /// The legacy watch's defaults: `ORCH_WATCH_MAIL_INTERVAL=20`,
+    /// The watch's defaults: `ORCH_WATCH_MAIL_INTERVAL=20`,
     /// `--interval 240`, `--max-loops 25`.
     pub fn legacy() -> Cadences {
         Cadences::of_settings(Duration::from_secs(20), Duration::from_secs(240), 25)
@@ -145,20 +138,17 @@ impl Cadences {
             | Duty::Report
             | Duty::Reconcile => self.long,
             Duty::Heartbeat => self.heartbeat,
-            // U5g: the mail cadence.
             Duty::Wake => self.mail,
-            // U5e2: the long cadence.
             Duty::GitHub => self.long,
-            // U5f: the long cadence.
             Duty::Retention => self.long,
         }
     }
 }
 
-/// The one clock the scheduler and every effect wait read (decision 121,
-/// Q16): `main.rs` builds it and hands it down, so a test supplies the
+/// The one clock the scheduler and every effect wait read: `main.rs`
+/// builds it and hands it down, so a test supplies the
 /// instants it wants and a bound can be waited without real time passing.
-/// The effects reach it only through the operation handle (decision 124c).
+/// The effects reach it only through the operation handle.
 /// `Sync`, since the runner's two duty threads share one.
 pub trait Clock: Sync {
     fn now(&self) -> Instant;
@@ -176,7 +166,7 @@ pub struct SystemClock;
 
 /// The system clock's own reads and its sleep, each behind the one injected
 /// clock: the allowance sits on each method alone, so a method added to the
-/// trait and this impl needs its own registered site (decision 124i (35)).
+/// trait and this impl needs its own registered site.
 impl Clock for SystemClock {
     #[allow(
         clippy::disallowed_methods,
@@ -209,7 +199,7 @@ struct Entry {
 }
 
 /// The due time of a set of duties: the duties one thread of the runner
-/// owns (decision 121, Q16: mail on its own thread, the rest on one).
+/// owns (mail on its own thread, the rest on one).
 #[derive(Debug, Clone)]
 pub struct Schedule {
     entries: Vec<Entry>,
@@ -323,11 +313,8 @@ mod tests {
             (Duty::Report, 240, Anchor::Start),
             (Duty::Reconcile, 240, Anchor::Start),
             (Duty::Heartbeat, 6000, Anchor::Start),
-            // U5g
             (Duty::Wake, 20, Anchor::End),
-            // U5e2
             (Duty::GitHub, 240, Anchor::Start),
-            // U5f
             (Duty::Retention, 240, Anchor::Start),
         ];
         for (duty, every, anchor) in rows {
@@ -412,11 +399,10 @@ mod tests {
         assert_eq!(empty.next_due(), None);
     }
 
-    // U5e2: the serialized word is the duty's word (decision 162 (2)).
     /// The word a duty's baseline row and `watch status` carry is
-    /// [`Duty::word`] for every duty. Defect: a duty whose serialized name
-    /// the case rule renders apart from its word (`git-hub`), so its pass
-    /// stamp is read under one key and reported under another.
+    /// [`Duty::word`] for every duty: a serialized name the case rule
+    /// renders apart from its word (`git-hub`) reads a pass stamp under
+    /// one key and reports it under another.
     #[test]
     fn every_duty_serializes_as_its_word() {
         for duty in Duty::ALL {

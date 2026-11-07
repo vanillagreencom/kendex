@@ -411,7 +411,7 @@ pub fn read_from(cwd: &Path, item: &str) -> Reading<String> {
     clippy::disallowed_methods,
     reason = "the marker read by its path, three-valued: absent is no launch record"
 )]
-pub fn read_in(common: &Path, item: &str) -> Reading<String> {
+fn read_in(common: &Path, item: &str) -> Reading<String> {
     let Ok(item) = item_name(item) else {
         return Reading::Unreadable {
             cause: "marker-item-invalid",
@@ -455,12 +455,12 @@ mod tests {
         );
     }
 
-    /// Defect: a row run inside a git hook reads the hook's repository in
-    /// place of the checkout it names, since the hook's environment carries
-    /// `GIT_DIR`, `GIT_INDEX_FILE` and `GIT_CONFIG_PARAMETERS` and git
-    /// honours `GIT_DIR` over `-C`. The row runs itself as a child with an
-    /// outer repository's variables inherited, as a hook hands them, and
-    /// the child's `checkout` reads the checkout it names.
+    /// A row run inside a git hook inherits the hook's repository-local
+    /// variables, and git honours `GIT_DIR` and `GIT_COMMON_DIR` over `-C`
+    /// and `GIT_WORK_TREE` over the checkout it finds: the three of git's
+    /// listing that move the roots `located` reads. The row runs itself as
+    /// a child with an outer repository's values of the three inherited,
+    /// and the child's `checkout` reads the checkout it names.
     #[test]
     fn a_row_run_under_a_git_hooks_variables_reads_the_checkout_it_names() {
         const NAME: &str =
@@ -470,6 +470,7 @@ mod tests {
             let found = checkout(&inner).unwrap();
             assert_eq!(found.root, inner);
             assert_eq!(found.git_dir, inner.join(".git"));
+            assert_eq!(found.common, inner.join(".git"));
             return;
         }
         let dir = tempfile::tempdir().unwrap();
@@ -482,8 +483,8 @@ mod tests {
             .args(["--exact", NAME, "--nocapture"])
             .env("MARKER_HOOK_CHILD", &inner)
             .env("GIT_DIR", outer.join(".git"))
-            .env("GIT_INDEX_FILE", outer.join(".git/index"))
-            .env("GIT_CONFIG_PARAMETERS", "'core.bare=true'")
+            .env("GIT_WORK_TREE", &outer)
+            .env("GIT_COMMON_DIR", outer.join(".git"))
             .output()
             .unwrap();
         let stdout = String::from_utf8_lossy(&out.stdout);

@@ -2,7 +2,7 @@
 
 The read [merge-pr.md](../workflows/merge-pr.md) § 3.3 runs before its gate wait and before every merge call. `pr-merge` resolves no thread and counts no open one, so this read is the lane's own: the reply check every `pr-merge` call runs reads what each thread's replies say, never whether the thread is open. It runs under every gate mode and on every change class.
 
-Bind the pull request's head as `[READ_HEAD]` by the first command below, then read its open threads. No Copilot wait runs here, and the triage's current-head wait ([review-pr-comments.md § 1](../workflows/review-pr-comments.md#1-fetch-and-parse)) holds no merge call: under either gate mode, merge-pr § 5 step 1's review call after this read holds every merge call while Copilot's work on the head runs within `ORCH_COPILOT_HOLD_SECS` and its review of the head has not been submitted ([gates.md § Copilot requests](gates.md#copilot-requests)). Under `approval` a thread Copilot posts reaches that call as `comments`, which returns to this read; under `off` the call counts no thread, so that step runs this read once more after its call.
+Bind the pull request's head as `[READ_HEAD]` by the first command below, then read its open threads. No Copilot wait runs here, and the triage's current-head wait ([review-pr-comments.md § 1](../workflows/review-pr-comments.md#1-fetch-and-parse)) holds no merge call: under either gate mode, merge-pr § 5 step 1's review call after this read holds every merge call while Copilot's work on the head runs within `ORCH_COPILOT_HOLD_SECS` and its review of the head has not been submitted ([gates.md § Copilot requests](gates.md#copilot-requests)). Under `approval` a thread Copilot posts reaches that call as `comments`, which returns to this read; under the `off` gate mode the call counts no thread, so that step runs this read once more after its call.
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefOid --jq .headRefOid
@@ -29,7 +29,7 @@ A nonzero count takes `⤵ workflows/review-pr-comments.md [PR_NUMBER] § 1-8 �
 
 Four readers check open threads:
 
-- This read, from merge-pr § 3.2 before the `not_approved` wait, and from merge-pr § 5 step 1 before every merge call, under `off` once more after that step's review call. The § 5 read covers the entries that skip § 3.2: a [micro.md](../workflows/micro.md) § 4 entry and every return from the merge cycles.
+- This read, from merge-pr § 3.2 before the `not_approved` wait, and from merge-pr § 5 step 1 before every merge call, under the `off` gate mode once more after that step's review call. The § 5 read covers the entries that skip § 3.2: a [micro.md](../workflows/micro.md) § 4 entry and every return from the merge cycles.
 - `queue-watch`'s late-findings guard, on a thread posted after this read while the PR is armed or queued. Its `dequeued` verdict takes merge-pr § 5 step 1's Late-findings triage, which runs this read.
 - `ci-classify-refusal`, before a same-head retry. Read `ci-classify-refusal --help` for its thread and retry contract. [merge-attempt.md § Exit routing](merge-attempt.md#exit-routing) routes the emitted result.
 - GitHub, only where the base branch's ruleset requires thread resolution: `pr-merge --help` § Approvals and review threads.

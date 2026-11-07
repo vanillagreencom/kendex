@@ -164,7 +164,7 @@ new_caller() {
 CALLER_FLAGS=("$BYPASS")
 run_succeed() {
   fixture_watch_neighbor "${SUCCEED_BIN:-$SUCCEED}"
-  # The runtime the succession is handed to (decision 76): a stand-in beside
+  # The runtime the succession is handed to: a stand-in beside
   # the script that records the request; the successor's line is then run
   # once through the harness stubs, so `launched` reads what it gets.
   fixture_runtime_stub "$(dirname "${SUCCEED_BIN:-$SUCCEED}")" "$TMP_ROOT"
@@ -277,8 +277,9 @@ for row in \
     "context succession from $harness/$model_source honors preference [$pref]" "$TMP_ROOT/out"
 done
 
-# Run only this changed contract on private mutants: restoring the old
-# default, or losing the context-only model, must redden its assertion.
+# Run only this contract on private mutants: a context succession keeping
+# the fallback default, or losing the context-only model, must redden its
+# assertion.
 CONTEXTCTL="$(mutant_scripts contextctl lib/overseer-launch.sh)" || exit 1
 mutate_file "$CONTEXTCTL/lib/overseer-launch.sh" \
   '  [[ "${1:-}" != context ]] || fallback=""' '  : # [[ "${1:-}" != context ]] || fallback=""'

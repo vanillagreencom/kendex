@@ -1287,9 +1287,8 @@ mod tests {
         }
     }
 
-    /// Defect: an intent id that repeats on one target, so a sequence of
-    /// operations there sticks. Each sequence completes, every intent closed
-    /// and no two sharing an id.
+    /// Each sequence completes, every intent closed and no two sharing an
+    /// id: an intent id that repeats on one target sticks the sequence.
     #[test]
     fn intent_sequences_on_one_target_complete() {
         struct Row {

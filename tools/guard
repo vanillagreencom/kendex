@@ -538,7 +538,7 @@ rendered_in_skill() { # REL: a path inside a skill, carried by its render
   done
 }
 
-# Plugin callback suites below scripts/ entered consumer test discovery.
+# A plugin callback suite below scripts/ enters consumer test discovery.
 # GitHub cannot enforce catalog directory placement, so this guard holds it.
 # Top-level test trees do not render; examples carry their own test content.
 while IFS= read -r f; do
@@ -737,8 +737,8 @@ ROWS
 # One run scoping: skills/github/scripts/lib/ci-run-correlation.sh holds the
 # scope_current_run and the jq taxonomy (def bucket, def runid, def red, def
 # required_only) that the GitHub commands source. A caller carrying its own
-# copy is the drift the library ended; the scan reads the spelling those
-# files use.
+# copy drifts from the library; the scan reads the spelling those files
+# use.
 scan '^scope_current_run\(\)|def (bucket|runid|red|required_only)[(:]' '^skills/github/scripts/commands/[^/]+\.sh$'
 [ -n "$hits" ] && {
   say ci-correlation-copy "$(count_lines "$hits")"
@@ -872,7 +872,7 @@ fi
 # through the shared rooted() helper, on the next source line, and that call
 # must take the root just declared — the follow-line test is built from the
 # declared name, so rooting some other binding does not clear it. Diff-scoped:
-# older fixtures predate the helper and are not rewritten to satisfy it.
+# a fixture that does not use the helper is not rewritten to satisfy it.
 temp_fixture_diff=$(git diff --no-color --unified=100000 --no-ext-diff --text "${diff_against[@]}" -- 'crates/*/tests/*.rs') ||
   say fixture-diff unreadable
 # A diff against the range's base cannot show a file git does not track, so
@@ -2256,9 +2256,9 @@ if [ "$MODE" != default ] && lane_on shell_shards; then
 fi
 [ -n "$suite_selection" ] || suite_selection=all
 # The workflow records per-suite Linux and macOS ranges from named merge groups.
-# Use the largest observed maximum, never shard sums or the job bound. run-all.sh now
+# Use the largest observed maximum, never shard sums or the job bound. run-all.sh
 # publishes suite=<name> seconds=<n> for new samples; no complete timing inventory
-# exists yet. These observations cover suite-file changes alone: a full run or
+# exists. These observations cover suite-file changes alone: a full run or
 # other changed inputs can also launch untimed compiler and UI work.
 selection_expected_secs() {
   local estimate

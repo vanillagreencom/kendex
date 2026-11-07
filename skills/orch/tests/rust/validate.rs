@@ -4,12 +4,6 @@
 //! that snapshots the record at the send. Every child a row starts goes
 //! through `support::program`; the detached job the real launcher starts
 //! inherits the binary's own environment.
-//!
-//! The rows replace `tests/dev_validate_run.sh`'s mode-resolution rows
-//! (`744fd5727:skills/orch/tests/dev_validate_run.sh:600-682`, "The mode
-//! picks the command" and "--resolve-mode names the mode") and its
-//! `--run-id` rows (`:1109-1154`, "the directory the admission named"),
-//! whose guarantees the runtime now holds.
 #![allow(
     clippy::disallowed_methods,
     reason = "the process tests run the built binary and hold owned children"
@@ -254,13 +248,13 @@ fn run_file(run_dir: &str, name: &str) -> String {
     fs::read_to_string(Path::new(run_dir).join(name)).unwrap_or_default()
 }
 
-/// A1 row (1): the proof facts and the launcher's record path are on the
-/// stage when the launcher is asked (the launcher fixture snapshots the
-/// record at that moment), the launcher's identity is written after it,
-/// the run directory holds what the executor reads, and a launcher that
-/// refuses leaves the stage `stopped` with its cause, never open. Defect
-/// caught: a run launched before its record, which a reconcile would read
-/// as never started and a crash would leave unknown.
+/// A run launched before its record would read as never started to a
+/// reconcile and be left unknown by a crash. The proof facts and the
+/// launcher's record path are on the stage when the launcher is asked (the
+/// launcher fixture snapshots the record at that moment), the launcher's
+/// identity is written after it, the run directory holds what the executor
+/// reads, and a launcher that refuses leaves the stage `stopped` with its
+/// cause, never open.
 #[test]
 fn a_start_records_the_proof_and_the_job_before_the_launcher_is_asked_and_a_refused_launch_stops() {
     let w = World::new();
@@ -469,15 +463,12 @@ fn a_unit_start_whose_answer_and_read_are_lost_keeps_its_live_run_open_until_the
     assert!(!w.stage(&run_dir)["end"].is_null(), "{}", w.stage(&run_dir));
 }
 
-/// Defect: a launch the launcher answered possibly started, its group not
-/// read empty (`status=unwound-failed`), closed `stopped` by the round's
-/// reconcile while its job runs, or closed `lost` once its leader exited
-/// while a member of its group runs. The launcher reports a live job through
-/// the real library's ended-launch path, its record naming the leader's
-/// start or the group's key alone: the start refuses `launch-unanswered`
-/// with the stage open, a reconcile while the job runs keeps it open, and
-/// the stage closes once the job has ended. With the leader ended and its
-/// member running, the reconcile keeps the stage open until the member ends.
+/// The launcher reports a live job through the real library's ended-launch
+/// path, its record naming the leader's start or the group's key alone: the
+/// start refuses `launch-unanswered` with the stage open, a reconcile while
+/// the job runs keeps it open, and the stage closes once the job has ended.
+/// With the leader ended and its member running, the reconcile keeps the
+/// stage open until the member ends.
 #[test]
 fn a_launch_whose_group_could_not_be_read_empty_keeps_its_stage_open_while_its_job_runs() {
     for mode in ["identity", "key", "leader-exits"] {
@@ -595,9 +586,9 @@ fn a_launcher_that_never_started_stops_its_stage() {
     assert_eq!(w.stage(&run_dir)["outcome"], "stopped");
 }
 
-/// A1 row (1), the live rule: a round with an open started run refuses a
-/// second start as `run-live` and records nothing. Defect caught: two
-/// batteries beside each other, the slower failing on load.
+/// The live rule, since two batteries beside each other fail the slower on
+/// load: a round with an open started run refuses a second start as
+/// `run-live` and records nothing.
 #[test]
 fn a_second_start_beside_an_open_started_run_is_refused_run_live() {
     let w = World::new();
@@ -610,13 +601,11 @@ fn a_second_start_beside_an_open_started_run_is_refused_run_live() {
     assert_eq!(w.state(), before);
 }
 
-/// A1 row (2): `reconcile-round` reads a started run by its recorded job
-/// identity, three-valued: a live job under its recorded start stays open;
-/// the same pid under another start is the job gone, closed `lost`; a unit
-/// the manager has no record of is gone, one it holds active is live; a
-/// job whose launcher never answered is read from the launcher's record.
-/// Defect caught: a reused pid keeping a dead run open, or a live run
-/// closed over a bare pid read.
+/// `reconcile-round` reads a started run by its recorded job identity,
+/// three-valued: a live job under its recorded start stays open; the same
+/// pid under another start is the job gone, closed `lost`; a unit the
+/// manager has no record of is gone, one it holds active is live; a job
+/// whose launcher never answered is read from the launcher's record.
 #[test]
 fn reconcile_round_reads_a_started_run_by_its_job_identity_never_the_bare_pid() {
     let w = World::new();
@@ -731,10 +720,9 @@ fn reconcile_round_reads_a_started_run_by_its_job_identity_never_the_bare_pid() 
     assert!(w.stage(&dir("unit-live-2"))["end"].is_null());
 }
 
-/// A started run whose user manager does not answer is read `unreadable`, and
-/// its stage stays open — a read that failed never closes a run that may
-/// still be live. Defect caught: a manager error read as a gone job, closing
-/// a live run.
+/// A started run whose user manager does not answer is read `unreadable`,
+/// and its stage stays open — a read that failed never closes a run that
+/// may still be live.
 #[test]
 fn a_reconcile_holds_a_run_whose_manager_does_not_answer() {
     let w = World::new();
@@ -776,10 +764,10 @@ fn a_reconcile_holds_a_run_whose_manager_does_not_answer() {
     assert!(w.stage(&dir)["end"].is_null(), "the stage stays open");
 }
 
-/// A runtime-started job gone between its sentinel and its `end` is closed by
-/// the reconcile from the sentinel, with the lane's end notice recorded
-/// `owed` in the same write; the owed walk the reconcile runs then sends it.
-/// Defect caught: a reconcile that closes the run but never tells the lane.
+/// A runtime-started job gone between its sentinel and its `end` is closed
+/// by the reconcile from the sentinel, with the lane's end notice recorded
+/// `owed` in the same write; the owed walk the reconcile runs then sends
+/// it.
 #[test]
 fn a_reconcile_closes_a_gone_runtime_run_and_owes_its_end_notice() {
     let w = World::new();
@@ -830,13 +818,12 @@ fn a_reconcile_closes_a_gone_runtime_run_and_owes_its_end_notice() {
     );
 }
 
-/// A1 row (3): the job closes the stage once with the notice recorded
-/// `owed` in the same write, before the send (the mailbox fixture snapshots
-/// the record at the send), marks it `sent` after, and a second run of the
-/// same job changes nothing and sends nothing; a crash between the close
-/// and the send, planted as a closed stage whose notice is still owed, is
-/// sent once by the round's next reconcile. Defect caught: a lane never
-/// told its run ended, or told twice.
+/// The job closes the stage once with the notice recorded `owed` in the
+/// same write, before the send (the mailbox fixture snapshots the record at
+/// the send), marks it `sent` after, and a second run of the same job
+/// changes nothing and sends nothing; a crash between the close and the
+/// send, planted as a closed stage whose notice is still owed, is sent once
+/// by the round's next reconcile.
 #[test]
 fn the_job_closes_once_records_the_notice_owed_before_the_send_and_a_second_end_changes_nothing() {
     let w = World::new();
@@ -1102,14 +1089,11 @@ fn real_lane_mail() -> PathBuf {
         .unwrap()
 }
 
-/// The end notice goes out through the mailbox's outbound directive route to
-/// the lane, so one line lands in the lane's own inbox (`to-lane.jsonl`) and
-/// none in the overseer's box (`to-overseer.jsonl`), and a replay and a
+/// The end notice goes out through the mailbox's outbound directive route
+/// to the lane, so one line lands in the lane's own inbox (`to-lane.jsonl`)
+/// and none in the overseer's box (`to-overseer.jsonl`), and a replay and a
 /// crash-replay, keyed by the run, each land once. Run against the real
-/// `lane-mail` on the worktree, as `tests/rust/send.rs` does. Defect caught:
-/// the inbound `notice` verb, which lands in the overseer's box as if the
-/// lane wrote it and tells the lane nothing, and a replay that lands a second
-/// envelope.
+/// `lane-mail` on the worktree, as `tests/rust/send.rs` does.
 #[test]
 fn the_end_notice_lands_in_the_lanes_inbox_and_a_replay_lands_once() {
     let w = World::new();
@@ -1203,19 +1187,14 @@ fn run_id(run_dir: &str) -> String {
 }
 
 /// The job's close records the stage's `end` from the sentinel's own `at=`,
-/// bounded to `[start, now]` as the reconcile's close bounds it, and reports
-/// the run's wall time from its `timing` record, where the reconcile reported
-/// them before the job became the closer; and the job's `now` is the clock at
-/// the close, not at its launch. The executor is held three and a half
-/// seconds (wall time, the claim being timer wiring: the stage's clock must
-/// move past the job's launch second for a launch-time stamp to differ from a
-/// close-time one) and writes a sentinel two seconds after the stage's start,
-/// inside the close's bounds and past the launch's. Defect caught: a close
-/// stamped at the job's own clock, so a run that ended seconds before its
-/// close reads as ending at the close; the run's seconds reported nowhere;
-/// and the job's clock read once at its launch, so every sentinel time later
-/// than the launch second fell outside the bounds and the stage ended at the
-/// launch (the one-job killed row's `stop.at <= end` read false).
+/// bounded to `[start, now]` as the reconcile's close bounds it, and
+/// reports the run's wall time from its `timing` record; and the job's
+/// `now` is the clock at the close, not at its launch. The executor is held
+/// three and a half seconds (wall time, the claim being timer wiring: the
+/// stage's clock must move past the job's launch second for a launch-time
+/// stamp to differ from a close-time one) and writes a sentinel two seconds
+/// after the stage's start, inside the close's bounds and past the
+/// launch's.
 #[test]
 fn the_jobs_close_records_the_sentinels_time_and_reports_the_runs_seconds() {
     let w = World::new();
@@ -1344,21 +1323,19 @@ fn await_gone(pid: u32, what: &str) {
 }
 
 /// An intentional stop is a record before the effect, and the stage closes
-/// `stopped` on both routes. The real `dev-validate-run --stop` entry hands a
-/// run the runtime started to `validate stop`, which writes `stop {at}` on
-/// the open stage, ends the job by its recorded identity through the launcher
-/// (the setsid group by the held executor's pid; the unit by its name,
-/// through a user manager faked on `PATH` that ends the unit's job and
-/// executor as a stop does), waits for the job gone and runs the finishing
-/// transition. On the setsid route the job outlives its child's group and
-/// closes the stage itself; on the unit route the manager ended the job with
-/// its child and the reconcile closes it with the notice owed, sent by the
-/// owed walk in the same call. Either way the stage reads `stopped` with the
-/// notice `sent` naming that word, the executor is gone, the script's
-/// `state=stopped` line counts the route's kind, and a second stop of the
-/// closed run refuses `run-closed`. Defect caught: an intentional stop
-/// closing `lost`, the word a run's process going away unasked closes with,
-/// on either route.
+/// `stopped` on both routes. The real `dev-validate-run --stop` entry hands
+/// a run the runtime started to `validate stop`, which writes `stop {at}`
+/// on the open stage, ends the job by its recorded identity through the
+/// launcher (the setsid group by the held executor's pid; the unit by its
+/// name, through a user manager faked on `PATH` that ends the unit's job
+/// and executor as a stop does), waits for the job gone and runs the
+/// finishing transition. On the setsid route the job outlives its child's
+/// group and closes the stage itself; on the unit route the manager ended
+/// the job with its child and the reconcile closes it with the notice owed,
+/// sent by the owed walk in the same call. Either way the stage reads
+/// `stopped` with the notice `sent` naming that word, the executor is gone,
+/// the script's `state=stopped` line counts the route's kind, and a second
+/// stop of the closed run refuses `run-closed`.
 #[test]
 fn a_stop_records_its_intent_before_ending_the_job_and_the_stage_closes_stopped_on_both_routes() {
     for route in ["setsid", "systemd"] {
@@ -1478,10 +1455,9 @@ fn a_stop_records_its_intent_before_ending_the_job_and_the_stage_closes_stopped_
     }
 }
 
-/// A1 row (4) (R8 item 1): a fix round on a project declaring a range
-/// command, started with no mode named, resolves `range` over the round's
-/// base and hands the executor that base. Defect caught: a fix round running
-/// the full battery for want of a flag.
+/// A fix round on a project declaring a range command, started with no mode
+/// named, resolves `range` over the round's base and hands the executor
+/// that base.
 #[test]
 fn a_fix_round_on_a_project_declaring_a_range_command_resolves_range_with_no_mode_named() {
     let w = World::new();
@@ -1554,10 +1530,9 @@ fn a_fix_round_on_a_project_declaring_a_range_command_resolves_range_with_no_mod
     assert_eq!(result["base"], "");
 }
 
-/// A1 row (5): `full` on a fix round of a project declaring a range
-/// command refuses `mode-cause-missing` and records nothing; with a cause,
-/// the mode and the cause are both on the proof. Defect caught: a full
-/// battery run for a fix round with no record of who asked for it.
+/// `full` on a fix round of a project declaring a range command refuses
+/// `mode-cause-missing` and records nothing; with a cause, the mode and the
+/// cause are both on the proof.
 #[test]
 fn full_on_a_project_declaring_a_narrower_mode_needs_a_cause_and_records_both() {
     let w = World::new();
@@ -1618,12 +1593,11 @@ fn full_on_a_project_declaring_a_narrower_mode_needs_a_cause_and_records_both() 
     assert!(line.ends_with("narrower=ci"), "{line}");
 }
 
-/// A4's ci row: a fix round on a project declaring `DEV_VALIDATE_CI_CONTEXT`
-/// resolves `ci` where the open pull request's base requires the context,
-/// runs nothing, and closes the stage at once as a `ci` row with the sentinel
-/// and log `dev-validate-run` writes; where the base does not require it, the
-/// round runs locally with the cause recorded. Defect caught: a round
-/// deferred to CI the base never runs, or a covered round run twice.
+/// A fix round on a project declaring `DEV_VALIDATE_CI_CONTEXT` resolves
+/// `ci` where the open pull request's base requires the context, runs
+/// nothing, and closes the stage at once as a `ci` row with the sentinel
+/// and log `dev-validate-run` writes; where the base does not require it,
+/// the round runs locally with the cause recorded.
 #[test]
 fn a_fix_round_resolves_ci_where_the_context_is_declared_and_required_on_the_base() {
     let w = World::new();
@@ -1740,10 +1714,9 @@ fn a_fix_round_resolves_ci_where_the_context_is_declared_and_required_on_the_bas
 }
 
 /// `dev-validate-run`'s start, `--worktree W --run-id RID`, forwards to
-/// `validate start`, prints the `state=started` line as it always printed it,
-/// and waits on the run the runtime's job runs to its `state=done` line; a
-/// run id no admission named is refused. Defect caught: the dev skill's
-/// current call starting a run the runtime never recorded.
+/// `validate start`, prints the `state=started` line its callers parse, and
+/// waits on the run the runtime's job runs to its `state=done` line; a run
+/// id no admission named is refused.
 #[test]
 fn the_legacy_start_forwards_a_run_id_to_validate_start_and_prints_the_started_line() {
     let w = World::new();
@@ -1851,10 +1824,8 @@ fn the_legacy_start_forwards_a_run_id_to_validate_start_and_prints_the_started_l
 }
 
 /// The reuse judge over the item's proof rows: a pass over the same tree
-/// answers a later start of the same command, class, docs verdict, base
-/// and prefix over covered paths, and a later red row at that tree voids
-/// it. Defect caught: a battery rerun over a tree it already passed, or a
-/// pass reused past a failure at the same tree.
+/// answers a later start of the same command, class, docs verdict, base and
+/// prefix over covered paths, and a later red row at that tree voids it.
 #[test]
 fn a_pass_over_the_same_tree_answers_a_later_start_until_a_later_row_at_that_tree_is_red() {
     let w = World::new();
@@ -1993,10 +1964,9 @@ const CI_DECLARED: [(&str, &str); 2] = [
     ("DEV_VALIDATE_CI_CONTEXT", "CI"),
 ];
 
-/// A2 row (1): a `full` pass reporting `selection=battery` at tree T is
-/// complete for every need at T, under every declaration; so is a full
-/// pass whose class was read over the whole branch. Defect caught: a whole
-/// battery rerun at a tree it passed.
+/// A `full` pass reporting `selection=battery` at tree T is complete for
+/// every need at T, under every declaration; so is a full pass whose class
+/// was read over the whole branch.
 #[test]
 fn a_whole_tree_full_pass_is_complete_for_every_need_at_its_tree() {
     let w = World::new();
@@ -2049,15 +2019,13 @@ fn a_whole_tree_full_pass_is_complete_for_every_need_at_its_tree() {
     assert_eq!(read["lacks"], json!({"tree": "t2", "mode": "full"}));
 }
 
-/// A `range` pass over base B at T is complete for publication only where the
-/// declaration admits range at submission and the rows cover the need: over
-/// the need's own base, or chained through the base's committed tree to an
-/// earlier whole-tree pass. A restack onto a new base B' is complete where a
-/// range row covers B'..T' and missing, naming the tree and the mode, where
-/// none does; on a full-only project the range row is no proof and `full` is
-/// lacked. Defect caught: a full battery rerun at submission after a range
-/// pass on a changed tree, and a range row read as the branch's proof on a
-/// project that declared the full command alone.
+/// A `range` pass over base B at T is complete for publication only where
+/// the declaration admits range at submission and the rows cover the need:
+/// over the need's own base, or chained through the base's committed tree
+/// to an earlier whole-tree pass. A restack onto a new base B' is complete
+/// where a range row covers B'..T' and missing, naming the tree and the
+/// mode, where none does; on a full-only project the range row is no proof
+/// and `full` is lacked.
 #[test]
 fn a_range_pass_is_complete_for_publication_where_range_is_declared_and_its_rows_cover_the_need() {
     let w = World::new();
@@ -2195,11 +2163,9 @@ fn a_range_pass_is_complete_for_publication_where_range_is_declared_and_its_rows
     assert_eq!(read["proof"], "complete");
 }
 
-/// A2 row (3), A4's submission row: a scoped row covers nothing of the
-/// branch and a `ci` row proves nothing locally: it reads `pending`, the
-/// submission proof of a CI-gated project with required CI still to run.
-/// Defect caught: a scoped subset run published as the branch's proof; a
-/// CI-pending row read as a local pass.
+/// A scoped row covers nothing of the branch and a `ci` row proves nothing
+/// locally: it reads `pending`, the submission proof of a CI-gated project
+/// with required CI still to run.
 #[test]
 fn a_scoped_row_is_never_proof_and_a_ci_row_reads_pending() {
     let w = World::new();
@@ -2241,9 +2207,8 @@ fn a_scoped_row_is_never_proof_and_a_ci_row_reads_pending() {
     }
 }
 
-/// A2 row (4): a later row of any local mode at the same tree that did not
-/// pass voids the earlier pass; a pass after a fail stands. Defect caught:
-/// a pass reused past a later red at its tree.
+/// A later row of any local mode at the same tree that did not pass voids
+/// the earlier pass; a pass after a fail stands.
 #[test]
 fn a_later_red_row_at_the_same_tree_voids_the_earlier_pass() {
     let w = World::new();
@@ -2332,10 +2297,8 @@ fn a_later_red_row_at_the_same_tree_voids_the_earlier_pass() {
 }
 
 /// § B's restack case through a recorded skip: the restacked head's skip
-/// names the validated run's head, whose row at its own tree is the branch's
-/// proof; the reader says which skip it read through. Defect caught: a
-/// skipped restack whose validated run was a scoped or range pass on a
-/// full-only project read as proven.
+/// names the validated run's head, whose row at its own tree is the
+/// branch's proof; the reader says which skip it read through.
 #[test]
 fn a_restack_reads_its_recorded_skip_by_the_head_and_takes_the_validated_runs_tree() {
     let w = World::new();
@@ -2408,10 +2371,8 @@ fn a_restack_reads_its_recorded_skip_by_the_head_and_takes_the_validated_runs_tr
 /// evidence outranks the recorded skip's equivalence claim: a row at the
 /// restacked tree that did not pass (red, or still open) refuses the skip's
 /// fallback to the validated run's tree, whether or not an earlier pass at
-/// the restacked tree stands voided beside it; the skip proves as before only
-/// where the restacked tree has no row of its own. Defect caught: an
-/// equivalence-based proof outliving the restacked tree's own red run, a
-/// fail-open merge gate.
+/// the restacked tree stands voided beside it; the skip proves as before
+/// only where the restacked tree has no row of its own.
 #[test]
 fn a_restacked_trees_own_red_row_outranks_its_recorded_skip() {
     let w = World::new();
@@ -2481,11 +2442,9 @@ fn a_restacked_trees_own_red_row_outranks_its_recorded_skip() {
     assert_eq!(read["rows"][0]["tree"], "t-original");
 }
 
-/// A2 row (6): a recovery is the round's second run accepted `pass` after
-/// a first `fail`, both as the runtime ran them: two validate stages, one
-/// pass row, and the recovery need reads the round's own rows. Defect
-/// caught: a round whose failed run blocks its next attempt, or whose
-/// later pass is read as voided by the earlier fail.
+/// A recovery is the round's second run accepted `pass` after a first
+/// `fail`, both as the runtime ran them: two validate stages, one pass row,
+/// and the recovery need reads the round's own rows.
 #[test]
 fn a_recovery_is_the_rounds_later_pass_after_its_first_run_failed() {
     let w = World::new();

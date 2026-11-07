@@ -137,8 +137,8 @@ overseer_command_record() {
   # session's, as a start always replaced the pending line it met, so a
   # succession that died before its launch leaves nothing a later death would
   # replay. A kept record naming an account, no home and no harness takes the
-  # account as its home: `oversee register` and `oversee launch` wrote that
-  # shape before they recorded a launch identity, and the turn-end hook binds
+  # account as its home: a released `oversee register` or `oversee launch`
+  # wrote that shape, with no launch identity, and the turn-end hook binds
   # the overseer's transcript to the home and reads no context without one.
   # The account is a claude session's home (ol_identity), so a record naming
   # claude takes it too; a codex home is its own directory and is never read

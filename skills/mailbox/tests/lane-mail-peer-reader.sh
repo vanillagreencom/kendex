@@ -149,8 +149,8 @@ done <<EOF
 EOF
 
 # No local record means no delivery, including an owner-form send.
-# The record's writers are oversee register and oversee launch; neither
-# records a machine hostname, so the missing-record diagnostic names here.
+# The record's writers record no machine hostname, so the missing-record
+# diagnostic names here.
 while IFS='|' read -r verb args; do
   record none
   if [ "$verb" = owner ]; then

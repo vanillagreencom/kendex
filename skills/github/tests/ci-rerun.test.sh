@@ -209,14 +209,13 @@ run_verb 42
 assert_eq "$RC $OUT" "0 no-rerun cause=no-failed-run" "the current run is green"
 assert_eq "$(rerun_calls)" "0" "nothing is rerun"
 
-# Defect: the required branch dropped. required_contexts answers
-# `state=failed` with the bound run for a required workflow that failed
-# past its registered jobs, so the rollup shows nothing red; a verb that
-# chose from the rollup alone answered `no-failed-run` without reading the
-# failed run's log, the lane went to ci-fix while its one rerun was owed,
-# and the head record written before the ask foreclosed that rerun for the
-# head. The reader's bound run is taken first (the required branch); the
-# rollup is not consulted for it.
+# required_contexts answers `state=failed` with the bound run for a required
+# workflow that failed past its registered jobs, so the rollup shows nothing
+# red; a verb choosing from the rollup alone would answer `no-failed-run`
+# without reading the failed run's log, sending the lane to ci-fix while its
+# one rerun is owed, and the head record written before the ask would
+# foreclose that rerun for the head. The reader's bound run is taken first
+# (the required branch); the rollup is not consulted for it.
 echo "=== a failed required workflow is rerun from its bound run though every visible job is green ==="
 gh_stub_reset
 stage_required_workflow failure

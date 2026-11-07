@@ -765,10 +765,11 @@ impl Gate<'_> {
             return self.confirm_request(head.clone());
         }
         let ineligible = self.ineligible()?;
-        // The released writer's retry is carried into the head's retry, so
-        // a head mid-wait at an upgrade spends no second retry; an error
-        // answer standing on the head makes this request its one retry,
-        // claimed in the same write, so no second POST follows.
+        // A retry an earlier install recorded is carried into the head's
+        // retry, so a head mid-wait across an upgrade spends no second
+        // retry; an error answer standing on the head makes this request
+        // its one retry, claimed in the same write, so no second POST
+        // follows.
         let released = released_retry(self.path, &self.doc, &self.view.head)?;
         let mut retry = released.clone();
         let request = if let Some(cause) = ineligible {
@@ -1046,11 +1047,11 @@ impl Gate<'_> {
     }
 
     /// Copilot's error answer `error_id`: one retry per head, decided with
-    /// the request. A head held as a draft takes no retry: the request that
-    /// releases it claims the retry in its own write, so one POST is both.
-    /// A request the refresh policy held back holds the retry back too, its
-    /// cause the verdict's; Copilot's work already in flight stands for the
-    /// retry; a retry the released writer recorded is the head's; a
+    /// the request. A head held as a draft takes no retry: the call that
+    /// releases it decides the retry with its request, so at most one POST
+    /// goes out. A request the refresh policy held back holds the retry back
+    /// too, its cause the verdict's; Copilot's work already in flight stands
+    /// for the retry; a retry an earlier install recorded is the head's; a
     /// `requested` retry GitHub shows no sign of is sent once more; and a
     /// second error answer after the retry is the verdict. Its claim and its
     /// resend wait on the head's eligibility (`eligible`) as the request's
@@ -1633,7 +1634,7 @@ fn head_record(path: &Path, doc: &Document, head: &str) -> Result<Option<HeadRec
     }
 }
 
-/// The error retry the released writer recorded under
+/// The error retry an earlier install recorded under
 /// `pr_approval.copilot_error_retries[head]`, as `{review_id, outcome}`
 /// with the review id written as text, read as the head's retry.
 fn released_retry(path: &Path, doc: &Document, head: &str) -> Result<Option<RetryRecord>> {

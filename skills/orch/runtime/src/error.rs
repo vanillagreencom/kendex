@@ -30,7 +30,7 @@ impl ShapeReason {
     }
 }
 
-/// The window a walled account was judged on (step6-map A5): the
+/// The window a walled account was judged on: the
 /// projected window where one was projected, else the reading's wall.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WalledWindow {
@@ -40,7 +40,7 @@ pub struct WalledWindow {
     pub projected_headroom: Option<f64>,
 }
 
-/// The end a retired account's refusal names (decision 188 (b)): the
+/// The end a retired account's refusal names: the
 /// day and who stated it, boxed as `WalledWindow` is to keep `Error`
 /// small.
 #[derive(Debug, Clone, PartialEq)]
@@ -86,7 +86,7 @@ pub enum Error {
     /// text: it may hold whitespace.
     #[error("{field} {value:?} is not the form the verification's reads pin")]
     VerifyRequestInvalid { field: &'static str, value: String },
-    /// U6g: a `verify-pr` request names a pull request that is closed or
+    /// A `verify-pr` request names a pull request that is closed or
     /// merged; nothing on it is awaited, so no verdict is read or recorded.
     #[error("pull request #{pr} is {state}, not open")]
     PullRequestNotOpen { pr: u64, state: &'static str },
@@ -99,7 +99,7 @@ pub enum Error {
     #[error("the lane for {item} is done")]
     LaneDone { item: String },
     /// A lane launch names a `kind` or `surface` the one local tmux route
-    /// cannot run; refused before any intent persists (decision 57).
+    /// cannot run; refused before any intent persists.
     #[error("a {kind:?} {surface:?} lane is not a local tmux window")]
     HostUnsupported { kind: String, surface: String },
     /// Another operation's intent on the target has not ended; the request
@@ -145,8 +145,7 @@ pub enum Error {
     IntentComplete { id: String, outcome: Outcome },
     /// A progress write names the obligation set at a revision the record no
     /// longer holds: another handle or process replaced the set since the
-    /// writer read it, so the writer's view is stale and it acts on nothing
-    /// (decision 124f (26)).
+    /// writer read it, so the writer's view is stale and it acts on nothing.
     #[error(
         "intent {id}: the obligation set was replaced (revision {expected} written, {found} recorded)"
     )]
@@ -156,13 +155,12 @@ pub enum Error {
         found: u64,
     },
     /// A launcher-side write found the intent under another owner: the store
-    /// yielded the write to that claimant and the handle acts on nothing
-    /// (decision 124h (32)); its caller hands the claimant's state back
+    /// yielded the write to that claimant and the handle acts on nothing;
+    /// its caller hands the claimant's state back
     /// through its own route.
     #[error("intent {id} yielded to its claimant {}:{}", owner.pid, owner.start)]
     Yielded { id: String, owner: Owner },
-    /// An intent's recorded obligation set carries a row without a role: a
-    /// record an unreleased build of this runtime wrote before roles existed.
+    /// An intent's recorded obligation set carries a row without a role.
     /// The set alone selects the harness, the pane and the wake by role, so
     /// no handle opens on it; the record is closed by hand.
     #[error("intent {id}: an obligation is recorded without a role")]
@@ -172,16 +170,16 @@ pub enum Error {
     #[error("{outcome:?} is not an outcome an effect can report")]
     OutcomeInvalid { outcome: Outcome },
     /// The word is none a verification record carries (`pass`, `fail`,
-    /// `none`). ci-wait's `pending` is a wait that ended without a result,
+    /// `none`). `pending` is a wait that ended without a result,
     /// no verdict about the head, so it is refused rather than recorded.
     #[error("{verdict:?} is not a verification verdict")]
     VerdictInvalid { verdict: String },
     /// The operation persists an intent, and the process asking has no
-    /// readable identity to own it with (decision 90). A contender could not
+    /// readable identity to own it with. A contender could not
     /// tell such an intent's live effect from a dead one, so none is written.
     #[error("{op}: no readable process identity to own the intent")]
     OwnerUnreadable { op: &'static str },
-    // U6d: the session send's refusals (step6-map § A6).
+    // The session send's refusals.
     /// A directive send on a lane whose channel is a mailbox, not a cloud
     /// session: the mailbox send is the mailbox's own.
     #[error("the lane for {item} runs in no cloud session; send through lane-mail")]
@@ -229,11 +227,11 @@ pub enum Error {
     #[error("handoff written_at {written_at} is later than the clock at {now}")]
     HandoffWrittenAtFuture { written_at: String, now: String },
     /// `ORCH_OVERSEER_SUCCESSION=off`: no succession is asked for and no
-    /// intent persists (decision 78).
+    /// intent persists.
     #[error("succession is off, so no transfer is requested")]
     SuccessionOff,
     /// The controller was stopped on purpose (`off` recorded); no recovery
-    /// relaunches it, only an explicit start (decision 78).
+    /// relaunches it, only an explicit start.
     #[error("{path}: the controller at generation {generation} is off")]
     ControllerOff { path: PathBuf, generation: u64 },
     /// A walled succession's successor would run on the account the wall
@@ -257,14 +255,14 @@ pub enum Error {
     /// second one.
     #[error("{path}: the recorded controller (pid {pid}) is live")]
     OverseerLive { path: PathBuf, pid: u64 },
-    /// The recorded controller cannot be resolved (decision 109 (1)): its
+    /// The recorded controller cannot be resolved: its
     /// server start is unrecorded, its record names no server and pane, or
     /// its server is gone or replaced. Nothing proves it terminal, so
     /// nothing replaces it; the remedy is adoption from its pane.
     #[error("{path}: the recorded controller is unproven: {cause}")]
     PredecessorUnproven { path: PathBuf, cause: String },
     /// A model-recovery transfer whose binding no longer holds against the
-    /// record (decision 109 (8)): the legacy `ol_recovery_bound` predicate
+    /// record: the recovery predicate (`ops::controller`'s `recovery_bound`)
     /// read false, and nothing is written.
     #[error("{path}: the recovery request is not bound to the record: {cause}")]
     RecoveryUnbound { path: PathBuf, cause: &'static str },
@@ -313,13 +311,13 @@ pub enum Error {
         path: PathBuf,
         cause: String,
     },
-    /// A wall relaunch names the account the wall spent (step4-map A11).
+    /// A wall relaunch names the account the wall spent.
     #[error("the lane for {item} would run on the spent account {account}")]
     AccountSpent { item: String, account: String },
-    /// The launch's account is walled on its projection (step6-map A5): the
+    /// The launch's account is walled on its projection: the
     /// accounts judge found no room for one more lane on it, the lane this
     /// relaunch replaces left out. The figures are the record's as the
-    /// legacy launcher read them, in its line's words.
+    /// released launcher read them, in its line's words.
     #[error("the lane for {item} would run on {account}, walled at {} on its {} window", window.pct, window.bucket)]
     AccountWalled {
         item: String,
@@ -327,8 +325,8 @@ pub enum Error {
         model: String,
         window: Box<WalledWindow>,
     },
-    /// The launch's account is one the provider reserved (round 8 item
-    /// 7): never picked, whatever its room. The refusal names the word,
+    /// The launch's account is one the provider reserved: never picked,
+    /// whatever its room. The refusal names the word,
     /// never the wall's figures.
     #[error("the lane for {item} would run on {account}, which is reserved")]
     AccountReserved {
@@ -347,7 +345,7 @@ pub enum Error {
         end: Box<RetiredEnd>,
     },
     /// Nothing measured the launch's account: an unread window is not an
-    /// empty one (decision 99).
+    /// empty one.
     #[error("the lane for {item} would run on {account}, whose window nothing measured ({status})")]
     AccountUnmeasured {
         item: String,
@@ -388,7 +386,7 @@ pub enum Error {
     #[error("the reservation on {item} lapses at {until:?}, not a stamp after now")]
     ReservationInvalid { item: String, until: String },
     /// A request bound to an earlier attempt of the lane: its `session_since`
-    /// is not the record's, so it changes nothing (decision 97).
+    /// is not the record's, so it changes nothing.
     #[error("the lane for {item} is attempt {current:?}, not {session_since:?}")]
     AttemptStale {
         item: String,
@@ -400,7 +398,7 @@ pub enum Error {
     #[error("the lane for {item} cannot be parked: {reason}")]
     ParkRefused { item: String, reason: &'static str },
     /// A path the item touches is held by a lane whose harness runs or is
-    /// about to (decision 118 (3)); nothing is launched until the holder
+    /// about to; nothing is launched until the holder
     /// ends, or the brief names the file in scope.
     #[error("the lane for {item} would touch {file}, which {holder} holds")]
     LaunchOverlap {
@@ -410,7 +408,7 @@ pub enum Error {
     },
     /// A holder of a path the item touches could not be judged: its
     /// identity, its touched set or its branch could not be read. An
-    /// unreadable holder is unknown, never free (decisions 99, 105).
+    /// unreadable holder is unknown, never free.
     #[error("the holder {holder} of a path {item} touches: its {read} could not be read: {cause}")]
     HolderUnreadable {
         item: String,
@@ -418,7 +416,7 @@ pub enum Error {
         read: &'static str,
         cause: String,
     },
-    /// The item is a container by its body (decision 118 (6)): children, or
+    /// The item is a container by its body: children, or
     /// the `agent:multi` label, outside an in-PR bundle. Never launched.
     #[error("{item} is not launchable: {cause}")]
     ItemIneligible { item: String, cause: &'static str },
@@ -444,7 +442,7 @@ pub enum Error {
         cause: String,
     },
     /// The open pull requests of the item's repository, holders of the
-    /// paths they change (decision 165), could not be read whole: a
+    /// paths they change, could not be read whole: a
     /// checkout naming no GitHub repository, a failed `gh` call, a pull
     /// request or its files answering nothing, a member outside the
     /// documented shape, or a files list short of the pull request's
@@ -458,9 +456,9 @@ pub enum Error {
         read: &'static str,
         cause: String,
     },
-    // U6a: the validation run's refusals (`validate start|run`).
+    // The validation run's refusals (`validate start|run`).
     /// A wider mode than the declaration's narrowest was asked for with no
-    /// cause (step6-map § A4).
+    /// cause.
     #[error("validate mode {mode} on a project declaring {narrower} needs a cause")]
     ModeCauseMissing {
         mode: &'static str,
@@ -478,7 +476,7 @@ pub enum Error {
     #[error("the base {base} names no commit in the worktree")]
     BaseInvalid { base: String },
     /// A run of the round stands open with its job recorded: one run at a
-    /// time per round, as the legacy `run-live`.
+    /// time per round.
     #[error("round {round_id}: the run {run_dir} is still open")]
     RunLive { round_id: String, run_dir: String },
     /// No item records an admitted run under the directory.
@@ -487,7 +485,7 @@ pub enum Error {
     /// The stage names a run the runtime never started: no job on it.
     #[error("the run {run_dir} was never started by the runtime")]
     RunUnstarted { run_dir: String },
-    // U6l: the stop's refusals (`validate stop`).
+    // The stop's refusals (`validate stop`).
     /// The run's stage is closed: a stop records nothing on it.
     #[error("the run {run_dir} is closed")]
     RunClosed { run_dir: String },
@@ -506,8 +504,7 @@ pub enum Error {
     /// The selector's estimate exceeds the bound; nothing is recorded.
     #[error("the selector expects {expected}s, over the {bound}s bound")]
     OverBound { expected: u64, bound: u64 },
-    // U6c: the acceptance's authorization and its summary record
-    // (step6-map § A3, § A8).
+    // The acceptance's authorization and its summary record.
     /// An acceptance for a directed item names no owner directive, or
     /// another's; the item's key carries the id it needs.
     #[error("the acceptance names no owner directive {directive}")]
@@ -533,7 +530,7 @@ pub enum Error {
 }
 
 /// Why the fleet watch refused: one family, keyed `watch-*`. The claim is
-/// bound to a process identity (decision 99), so a refusal names the pid
+/// bound to a process identity, so a refusal names the pid
 /// and start it read.
 #[derive(Debug, thiserror::Error)]
 pub enum WatchError {
@@ -546,7 +543,7 @@ pub enum WatchError {
         start: String,
     },
     /// Whether the claim's identity still runs could not be read; an
-    /// unreadable owner is never taken over (decision 99).
+    /// unreadable owner is never taken over.
     #[error("{path}: the claim's process (pid {pid}) could not be read: {cause}")]
     ClaimUnreadable {
         path: PathBuf,
@@ -573,8 +570,8 @@ pub enum WatchError {
         pid: u32,
         start: String,
     },
-    /// The runner has no readable identity of its own to claim with
-    /// (decision 90): a claim without one could not be told live from dead.
+    /// The runner has no readable identity of its own to claim with: a
+    /// claim without one could not be told live from dead.
     #[error("no readable process identity to claim the watch with")]
     IdentityUnreadable,
 }
@@ -660,7 +657,6 @@ impl Error {
             Error::OutcomeInvalid { .. } => "outcome-invalid",
             Error::VerdictInvalid { .. } => "verdict-invalid",
             Error::OwnerUnreadable { .. } => "owner-unreadable",
-            // U6d
             Error::LaneChannel { .. } => "lane-channel",
             Error::DirectiveSendOwed { .. } => "directive-send-owed",
             Error::DirectiveSendUnowed { .. } => "directive-send-unowed",
@@ -708,7 +704,6 @@ impl Error {
             Error::LaunchBlockedUnread { .. } => "launch-blocked-unread",
             Error::TouchedUnreadable { .. } => "touched-unreadable",
             Error::HoldersUnreadable { .. } => "holders-unreadable",
-            // U6a
             Error::ModeCauseMissing { .. } => "mode-cause-missing",
             Error::ModeBaseRequired { .. } => "mode-base-required",
             Error::ValidateCmdEmpty { .. } => "empty-validate-cmd",
@@ -716,13 +711,11 @@ impl Error {
             Error::RunLive { .. } => "run-live",
             Error::RunUnadmitted { .. } => "run-unadmitted",
             Error::RunUnstarted { .. } => "run-unstarted",
-            // U6l
             Error::RunClosed { .. } => "run-closed",
             Error::ValidateStopFailed { .. } => "stop-failed",
             Error::ValidateLaunchFailed { .. } => "launch-failed",
             Error::ValidateUnreadable { .. } => "validate-unreadable",
             Error::OverBound { .. } => "over-bound",
-            // U6c
             Error::AuthorizationMissing { .. } => "authorization-missing",
             Error::AuthorizationDiffers { .. } => "authorization-differs",
             Error::SummaryCommentDiffers { .. } => "summary-comment-differs",
@@ -841,7 +834,6 @@ impl Error {
             | Error::EndArtifactUnreadable { path, .. } => {
                 vec![pair("path", path.display().to_string())]
             }
-            // U6d
             Error::LaneChannel { item }
             | Error::DirectiveSendOwed { item }
             | Error::DirectiveSendUnowed { item }
@@ -920,7 +912,7 @@ impl Error {
                 model,
                 window,
             } => {
-                // The figures as `jq` printed them in the legacy judge's line: an
+                // The figures as `jq` prints them in the released judge's line: an
                 // integral value with no fraction, `none` where none was projected.
                 let number = |n: f64| {
                     if n.fract() == 0.0 {
@@ -1051,7 +1043,6 @@ impl Error {
                 pair("repo", repo.clone()),
                 pair("read", (*read).to_owned()),
             ],
-            // U6a
             Error::ModeCauseMissing { mode, narrower } => vec![
                 pair("mode", (*mode).to_owned()),
                 pair("narrower", (*narrower).to_owned()),
@@ -1066,7 +1057,6 @@ impl Error {
             Error::RunUnadmitted { run_dir }
             | Error::RunUnstarted { run_dir }
             | Error::ValidateLaunchFailed { run_dir, .. } => vec![pair("run_dir", run_dir.clone())],
-            // U6l
             Error::RunClosed { run_dir } | Error::ValidateStopFailed { run_dir, .. } => {
                 vec![pair("run_dir", run_dir.clone())]
             }
@@ -1075,7 +1065,6 @@ impl Error {
                 pair("expected_secs", expected.to_string()),
                 pair("bound", bound.to_string()),
             ],
-            // U6c
             Error::AuthorizationMissing { directive } => {
                 vec![pair("directive", directive.clone())]
             }

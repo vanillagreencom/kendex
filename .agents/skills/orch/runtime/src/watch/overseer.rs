@@ -127,8 +127,7 @@ pub struct Judged {
 }
 
 /// The slot the observation duty stores each pass's verdict in, read by
-/// the wall relaunch's gate; the mail duty reads no gate from it (decision
-/// 153 (4)).
+/// the wall relaunch's gate; the mail duty reads no gate from it.
 #[derive(Debug, Clone, Default)]
 pub struct Slot(Arc<Mutex<Option<Judged>>>);
 
@@ -848,8 +847,9 @@ pub struct Judges<'a> {
     /// The wall route's pick for a lane's model, the spent account
     /// excluded.
     pub wall_pick: WallPickRead<'a>,
-    /// The wall relaunch, the record's own `open-terminal --relaunch` line
-    /// started detached through the job-unit launcher at the path given.
+    /// The wall relaunch, the walled lane's close and its `launch-lane`
+    /// (`lanes::Relaunch`), started detached through the job-unit launcher
+    /// at the path given.
     pub relaunch: RelaunchStart<'a>,
     /// The succession command a controller's own owner recorded, run in
     /// place of a transfer; `Err` is its failure.
@@ -1471,7 +1471,7 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
     // again, and nothing but a relaunch ends that: read as dead,
     // `source=context`, on the same count of passes a death takes, so one
     // reading caught between a turn's reading and its failure never
-    // relaunches a session (`overseer_context_wedged`).
+    // relaunches a session.
     if verdict == Verdict::Live
         && let Some(Owned::Own(r)) = &context
         && r.gap.is_none()
@@ -2584,9 +2584,8 @@ fn absorb(into: &mut Produced, from: Produced) {
 mod tests {
     use super::*;
 
-    /// Defect: a context reading judged room past the token cap, at the
-    /// window share instead of strictly past it, under a share the ceiling
-    /// forbids, or with no window read as room.
+    /// Room is never read past the token cap, at the window share itself,
+    /// under a share the ceiling forbids, or for a reading with no window.
     #[test]
     fn the_context_marks_are_the_token_cap_and_strictly_past_the_window_share() {
         assert_eq!(handoff_due(400_000, None, 90), Some(true));

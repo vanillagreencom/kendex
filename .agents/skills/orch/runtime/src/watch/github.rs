@@ -1,4 +1,4 @@
-//! The GitHub read duty (decisions 121 Q17, 162 (2); step5-map § A10), one
+//! The GitHub read duty, one
 //! body on `Duty::GitHub` on the long cadence after the tracker: the
 //! merged index of every lane item, the parked dependency's state, the
 //! refresh workflow's last runs, the main branch's push and nightly runs
@@ -6,12 +6,12 @@
 //! contributions (`outside`) and the security alerts (`security`), each
 //! read once per pass through `gh api` via the one runner, decoded at the
 //! boundary in the verify module's wire forms (`T`, `Optional<T>`,
-//! `Nullable<T>`, decisions 104, 106), and paginated with the page set's
+//! `Nullable<T>`), and paginated with the page set's
 //! total checked against what arrived. A failed call, a malformed member
 //! or a page set that disagrees with its total refuses the inventory with
-//! its cause and never reads as an empty one (decision 87); the refusal is
+//! its cause and never reads as an empty one; the refusal is
 //! this duty's, printed as `watch-step-failed step=github`, so a GitHub
-//! refusal discards no tracker news and no close (decision 162 (2)).
+//! refusal discards no tracker news and no close.
 //!
 //! The tracker's terminal verdicts the parked-merged hand consults come
 //! through the slot the tracker duty writes (`tracker::Shared`), which
@@ -20,9 +20,9 @@
 //!
 //! The reads name an object by its own identity, a repository and a
 //! number, a workflow file, a run or job id, or a head by owner and
-//! branch, as the legacy's did; a search for an item's mention is bounded
-//! by the search endpoint's documented cap, past which it is refused, as
-//! the legacy refused `merged-search-truncated`.
+//! branch; a search for an item's mention is bounded
+//! by the search endpoint's documented cap, past which it is refused
+//! (`github-capped`).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
@@ -58,13 +58,12 @@ pub(super) const PER_PAGE: usize = 100;
 /// not the documented total and is refused.
 pub(super) const MAX_PAGES: usize = 100;
 
-/// The search endpoint's documented cap on results (`MERGED_SEARCH_PAGE`,
-/// `oversee-watch`): a search reaching it is refused, never read as the
-/// whole set.
+/// The search endpoint's documented cap on results: a search reaching it
+/// is refused, never read as the whole set.
 const SEARCH_CAP: u64 = 1000;
 
-/// The default-branch workflows a red main is read from
-/// (`oversee-watch:2197`), beside the declared ones.
+/// The default-branch workflows a red main is read from, beside the
+/// declared ones.
 const MAIN_WORKFLOWS: [&str; 2] = ["skill-tests.yml", "ci.yml"];
 
 /// The refresh workflow the consumer-refresh incident reads.
@@ -82,14 +81,13 @@ pub const MAIN_ABSENT_ROW: &str = "main-workflow-absent";
 /// is kept through the prune.
 pub(super) const REFRESH_ITEM: &str = "kendex/refresh";
 
-/// The workflow whose completed runs carry the budget annotations
-/// (`oversee-watch:2397`).
+/// The workflow whose completed runs carry the budget annotations.
 const BUDGET_WORKFLOW: &str = "skill-tests.yml";
 
 /// Baseline row kind of the budget scan's state.
 pub const MAIN_BUDGET_ROW: &str = "main-push-budget";
 
-/// The prefix of a budget warning's message (`oversee-watch:2475`).
+/// The prefix of a budget warning's message.
 const BUDGET_WARNING: &str = "run-all-budget ";
 
 // --- what a pass hands over -----------------------------------------------------
@@ -109,7 +107,7 @@ pub struct Inventory {
     pub pr_watch: Option<pr_watch::Context>,
     /// Each open Dependabot pull request an alert links, `<repo>#<pr>`, to
     /// its open alerts or `none` (the `bot-fix` rows the heartbeat marks
-    /// its open list with, `security_mark_open`).
+    /// its open list with).
     pub bot_fix: BTreeMap<String, String>,
 }
 
@@ -302,10 +300,8 @@ impl Gh<'_> {
 /// Whether a failed `gh` call's stderr is GitHub's 404, the one failure
 /// that is an answer. gh 2.103.3 carries two renderings of a failed
 /// request: `gh api`'s own `<message> (HTTP <status>)` line (`gh: Not
-/// Found (HTTP 404)`, `skills/github/scripts/lib/github-api.sh:232`) and
-/// the client's `HTTP <status>: <message> (<url>)` (the legacy read it as
-/// `^HTTP 404: workflow … not found on the default branch (`,
-/// `oversee-watch:2191`, and the contribution pass as `(HTTP 404)`);
+/// Found (HTTP 404)`) and the client's `HTTP <status>: <message> (<url>)`
+/// (`HTTP 404: workflow … not found on the default branch (…)`);
 /// either names the status on its own line.
 fn not_found(stderr: &str) -> bool {
     stderr.lines().any(|line| {
@@ -343,7 +339,7 @@ trait Page: DeserializeOwned {
 // --- the wire shapes ------------------------------------------------------------------
 
 /// `GET /repos/{owner}/{repo}/pulls` and `/pulls/{n}` (REST, pulls): the
-/// fields the lane-own rule reads (`LANE_MERGED_JQ`).
+/// fields the lane-own rule reads.
 #[derive(Debug, Clone, serde::Deserialize)]
 pub(super) struct Pull {
     pub(super) number: u64,
@@ -464,11 +460,11 @@ struct Job {
     name: String,
     /// Documented nullable.
     conclusion: Nullable<String>,
-    /// The check run the job's annotations hang off (`oversee-watch:2466`).
+    /// The check run the job's annotations hang off.
     check_run_url: String,
 }
 
-/// A run of the budget history (`oversee-watch:2409`): every status, with
+/// A run of the budget history: every status, with
 /// the head branch GitHub documents nullable.
 #[derive(Debug, Clone, serde::Deserialize)]
 struct BudgetRun {
@@ -499,8 +495,8 @@ struct Annotation {
     annotation_level: String,
 }
 
-/// The budget scan's row, `{watermark,seen,pending}` as raw compact JSON
-/// (`oversee-watch:308`), the field order the legacy wrote.
+/// The budget scan's row, `{watermark,seen,pending}` as raw compact JSON,
+/// in the field order a released watch's row holds.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, serde::Deserialize)]
 struct BudgetState {
     watermark: String,
@@ -529,8 +525,8 @@ struct Issue {
 
 // --- the lane-own rule ------------------------------------------------------------------
 
-/// Whether a pull request is the lane's own (`lane_own`,
-/// `lib/lane-state.sh:1349`): its head owner is the repository's, and its
+/// Whether a pull request is the lane's own: its head owner is the
+/// repository's, and its
 /// number is the recorded one, its head branch the key, the key in the
 /// conventional-commit scope that opens the title, or the first word
 /// after `Closes` on a body line.
@@ -600,7 +596,7 @@ fn closes_names(line: &str, key: &str) -> bool {
 }
 
 /// The merge epoch of a lane's own merged pull request at or after
-/// `since`, as `lane_merged` kept it.
+/// `since`.
 fn merged_at(pull: &Pull, since: Option<u64>) -> Option<u64> {
     let stamp = match &pull.merged_at {
         Nullable::Present(stamp) => stamp,
@@ -693,8 +689,8 @@ fn repositories(inputs: &Inputs) -> Vec<String> {
     out
 }
 
-/// The repositories the audits read, the legacy `REPOS` (`check_repo_set`,
-/// `oversee-watch:730`): the `--repo` names, then the connected ones,
+/// The repositories the audits read: the `--repo` names, then the
+/// connected ones,
 /// lowercased, once each; the first `--repo` is the first repository,
 /// whose issues the outside check reads and whose reducer line the pass
 /// opens with.
@@ -709,7 +705,7 @@ pub(super) fn audit_repositories(repos: &[String], settings: &Settings) -> Vec<S
     out
 }
 
-/// The reducer's repositories, the legacy `PW_REPO_INDICES`: the first
+/// The reducer's repositories: the first
 /// `--repo` and every connected repository, once each.
 pub(super) fn reducer_repositories(repos: &[String], settings: &Settings) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
@@ -748,8 +744,8 @@ pub struct Context {
     pub shared: Shared,
 }
 
-/// The duty's body: the pass count is this run's, as the legacy's
-/// `PW_PASSES` was, so a repository's standing attention on the first
+/// The duty's body: the pass count is this run's, so a repository's
+/// standing attention on the first
 /// pass of a run with no row is its baseline, never an event.
 pub fn body<'a>(ctx: Context) -> Body<'a> {
     let mut passes: u32 = 0;
@@ -759,8 +755,8 @@ pub fn body<'a>(ctx: Context) -> Body<'a> {
     })
 }
 
-/// Register the duty on `runner` for the fleet at `path` (decision 153):
-/// the legacy `--since` is one UTC stamp (`since-invalid`), `repos` the
+/// Register the duty on `runner` for the fleet at `path`:
+/// `--since` is one UTC stamp (`since-invalid`), `repos` the
 /// `--repo` names, `shared` the tracker duty's slot.
 pub fn register(
     runner: &mut crate::watch::Runner<'_>,
@@ -874,8 +870,7 @@ pub fn read(gh: &Gh, inputs: &Inputs, baseline: &Baseline) -> Result<Read> {
 /// per item (`lane-close`'s `github` arm): a closed issue whose reason is
 /// `completed` ended completed, closed otherwise canceled, open is open.
 /// The tracker duty's read: the item's tracker is GitHub. Each item's read
-/// stands or falls alone, as the legacy's did (`check_terminal_lanes`,
-/// `oversee-watch:1527-1532`): a refused read is that item's `Err`, the
+/// stands or falls alone: a refused read is that item's `Err`, the
 /// other items' verdicts are read.
 pub(super) fn terminal_github(gh: &Gh, lanes: &[Lane]) -> BTreeMap<String, Result<TerminalState>> {
     let mut out = BTreeMap::new();
@@ -997,7 +992,7 @@ pub(super) fn merged_keys(
     Ok(keys)
 }
 
-/// The merged index (`check_merged`, `oversee-watch:1851`): for every
+/// The merged index: for every
 /// lane item and repository, the item's own merged pull requests at or
 /// after the floor, by head branch and by mention; a key not in the
 /// item's row is a `merged` line, the row then holds every key; a parked
@@ -1015,7 +1010,7 @@ fn merged(
     let items = merge_items(inputs.lanes);
     let verdict_of = |item: &str| -> Option<TerminalState> { inputs.terminal.get(item).copied() };
     let parked_merged = |item: &str, key: &str, produced: &mut Produced| -> bool {
-        // `parked_merged_line`: deferred with no verdict, nothing on an
+        // The parked line: deferred with no verdict, nothing on an
         // ended item, the line on an open one. Returns whether the row
         // may advance.
         match verdict_of(item) {
@@ -1224,7 +1219,7 @@ fn own_pulls(gh: &Gh, repo: &str, item: &str, since_iso: Option<&str>) -> Result
 }
 
 /// Whether `workflow` is absent from `repo`, proved by a complete,
-/// successful workflow list alone (`workflow_absent`, `oversee-watch:2187`).
+/// successful workflow list alone.
 fn workflow_absent(gh: &Gh, repo: &str, workflow: &str) -> Result<bool> {
     let path = format!("repos/{repo}/actions/workflows");
     let Some(workflows) = gh.collection::<WorkflowsPage>("workflows", &path)? else {
@@ -1237,8 +1232,8 @@ fn workflow_absent(gh: &Gh, repo: &str, workflow: &str) -> Result<bool> {
     Ok(!workflows.iter().any(|w| w.path == wanted))
 }
 
-/// A run's identity in the refresh row, `[created_at, id, attempt]`
-/// (`REFRESH_RUN`), ordered as the legacy ordered it.
+/// A run's identity in the refresh row, `[created_at, id, attempt]`,
+/// in the order a released watch's row holds.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct RunKey {
     created_at: String,
@@ -1295,7 +1290,7 @@ enum Standing {
 }
 
 fn refresh_row(value: &str) -> Result<(Option<RunKey>, Standing)> {
-    // `<run json>|<standing>` or the unrecorded legacy `<passes>|<cause>`.
+    // `<run json>|<standing>`, or a released watch's unrecorded `<passes>|<cause>`.
     if let Some((record, standing)) = value.split_once("]|") {
         let key = RunKey::parse(&format!("{record}]")).ok_or_else(|| {
             refused(
@@ -1332,8 +1327,7 @@ fn parse_failing(text: &str) -> Option<Standing> {
     })
 }
 
-/// The cause line of a failed run's job logs, ranked as the legacy ranked
-/// `--log-failed` (`oversee-watch:2611`): the last line of the highest
+/// The cause line of a failed run's job logs: the last line of the highest
 /// rank among `failed:`, `FAIL check=`, `Error:`, `refresh-error=` and a
 /// `kendex-hook-` mention; `unread` with none.
 fn refresh_cause(logs: &[String]) -> String {
@@ -1406,7 +1400,7 @@ fn failed_job_logs(
     Ok((names.into_iter().collect(), logs))
 }
 
-/// The refresh incident (`check_refresh`, `oversee-watch:2506`): the two
+/// The refresh incident: the two
 /// newest completed runs of the refresh workflow; both failed opens or
 /// repeats an incident whose cause is read from the failed jobs' logs,
 /// repeated every `mark_repeat` passes while it stands; a newest run that
@@ -1591,7 +1585,7 @@ impl Nullable<String> {
     }
 }
 
-/// The failing conclusions per event (`oversee-watch:2298`): a scheduled
+/// The failing conclusions per event: a scheduled
 /// run cut short or never started reports too.
 fn failing_conclusions(event: &str) -> &'static [&'static str] {
     if event == "push" {
@@ -1601,7 +1595,7 @@ fn failing_conclusions(event: &str) -> &'static [&'static str] {
     }
 }
 
-/// The suites a failed log names (`oversee-watch:2355`): the producer
+/// The suites a failed log names: the producer
 /// summary lines, `suite=… fail=N`, `FAILED: …`, `FAIL …` and the
 /// runner's own timeouts; the cause is the first, the failures the suite
 /// names, unique.
@@ -1640,15 +1634,14 @@ fn main_push_failures(logs: &[String]) -> (String, Option<Vec<String>>) {
     )
 }
 
-/// The main-branch incident (`check_main_push`, `oversee-watch:2234`):
+/// The main-branch incident:
 /// per repository, per workflow, per event the last completed run on
 /// main; a failing conclusion reads the run's failed jobs and their logs,
 /// the row holds `[jobs, failures]` and a line prints when the jobs or
 /// the known failures change; an absent workflow, proved by the workflow
 /// list, clears its rows and, where declared, prints
 /// `main-workflow-absent` once per cause. The repositories whose budget
-/// workflow read absent are handed back, so the budget scan skips them
-/// (`budget_absent`, `oversee-watch:2310`).
+/// workflow read absent are handed back, so the budget scan skips them.
 fn main_push(
     gh: &Gh,
     inputs: &Inputs,
@@ -1807,8 +1800,8 @@ fn main_push(
 
 // --- the budget scan ----------------------------------------------------------------------
 
-/// Whether a run is a budget producer (`budget_producer`,
-/// `oversee-watch:2410`): a merge-group run for main, or a push, schedule
+/// Whether a run is a budget producer: a merge-group run for main, or a
+/// push, schedule
 /// or manual run on main.
 fn budget_producer(run: &BudgetRun) -> bool {
     let branch = run.head_branch.present_str().unwrap_or("");
@@ -1823,8 +1816,8 @@ fn budget_producer(run: &BudgetRun) -> bool {
     }
 }
 
-/// A budget read that could not be judged: named on stderr with the
-/// legacy's words, the run left pending for the next pass.
+/// A budget read that could not be judged: named on stderr in the
+/// released watch's words, the run left pending for the next pass.
 fn budget_unread(repo: &str, read: &str, run: Option<u64>, cause: &Error) {
     let run = run.map(|r| format!(" run={r}")).unwrap_or_default();
     let _ = std::io::Write::write_all(
@@ -1836,7 +1829,7 @@ fn budget_unread(repo: &str, read: &str, run: Option<u64>, cause: &Error) {
     );
 }
 
-/// The budget warnings of a completed run (`oversee-watch:2461-2485`):
+/// The budget warnings of a completed run:
 /// every job's check run's annotations, the warnings whose message opens
 /// with the budget prefix, unique and sorted; `None` where a page could
 /// not be read, so the whole run stays pending.
@@ -1910,7 +1903,7 @@ fn budget_warnings(gh: &Gh, repo: &str, run: u64) -> Result<Option<Vec<String>>>
     Ok(Some(warnings.into_iter().collect()))
 }
 
-/// The budget scan (`oversee-watch:2392-2502`): per repository whose
+/// The budget scan: per repository whose
 /// budget workflow stands, the run history read newest first to the
 /// creation watermark (the first page alone on a fresh row), the producer
 /// runs past the watermark and the runs still pending judged by status, a
@@ -2103,7 +2096,6 @@ pub fn pr_watch_context(rc: i32, out: &str, err: &str) -> pr_watch::Context {
     }
 }
 
-/// The rows this duty keeps, for `watch status` and the cutover's reader.
 pub fn row_kinds() -> [&'static str; 11] {
     [
         MERGED_ROW,
@@ -2145,8 +2137,8 @@ mod tests {
         }
     }
 
-    /// The lane-own rule on the legacy fixture's shapes
-    /// (`oversee_watch_merged_index.sh`): the branch, the title scope, the
+    /// The lane-own rule on the merged index's shapes: the branch, the
+    /// title scope, the
     /// `Closes` line and the recorded number each own; a fork's head, a
     /// mention elsewhere in the title and a `Closes` of another key do not.
     #[test]
@@ -2211,8 +2203,8 @@ mod tests {
         );
     }
 
-    /// The refresh row's two legacy layouts round-trip, and an unknown
-    /// layout is refused.
+    /// The refresh row's two layouts, the runtime's and a released watch's,
+    /// round-trip, and an unknown layout is refused.
     #[test]
     fn the_refresh_row_reads_its_legacy_layouts() {
         let key = RunKey {
@@ -2289,9 +2281,7 @@ mod tests {
     }
 
     /// A 404 in either of gh's renderings is the answer `not found`; a 403
-    /// or a 404 named only inside a URL is a failed read. Defect: a missing
-    /// workflow, pull request or collaborator permission refused as a
-    /// failed read, or a refused read taken for an absent object.
+    /// or a 404 named only inside a URL is a failed read.
     #[test]
     fn a_404_is_read_in_both_of_ghs_renderings_and_nothing_else_is() {
         for text in [

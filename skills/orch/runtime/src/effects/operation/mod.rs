@@ -875,7 +875,7 @@ mod tests {
         assert_eq!(opened.harness_identity(), Some(id));
     }
 
-    /// Defect: a moved close holding a pane key
+    /// A moved close holding a pane key
     /// whose server start is not the start of the server now answering at
     /// the key's pid reads that pane gone with its server, `server-unmatched`
     /// on the retry's close of its own panes: the key is
@@ -934,8 +934,7 @@ mod tests {
         let _ = agent_runtime::host::tmux::kill_server(&server);
     }
 
-    /// Defect: a token acting on a key its handle's set never held. A token
-    /// names a key of the set that minted it and acts on no other. The token
+    /// A token names a key of the set that minted it and acts on no other. The token
     /// one intent's handle minted for its process is handed to another intent's
     /// handle, whose set never held that process: the stop is refused
     /// `token-stale`, nothing is written and the sleeper is never signalled.
@@ -986,7 +985,7 @@ mod tests {
         );
     }
 
-    /// Defect: the set is
+    /// The set is
     /// replaced through the real transition while a handle stands open, the
     /// process removed from it. The handle's token is refused at its first
     /// write, `set-replaced`, before anything is signalled: the sleeper
@@ -1042,7 +1041,7 @@ mod tests {
         );
     }
 
-    /// Defect: a handle opened under the intent's recorded owner mints a token
+    /// A handle opened under the intent's recorded owner mints a token
     /// for an owned sleeper; a claimant takes the intent through the real claim
     /// and replaces the set with an empty one through the real progress
     /// transition. The first handle's stop is refused `intent-yielded`, naming

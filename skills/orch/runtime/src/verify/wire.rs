@@ -180,12 +180,12 @@ impl RunConclusion {
     }
 
     /// What a check's conclusion means: the reading through gh's
-    /// bucket (gh v2.103.3 `aggregate.go:72-88`, which the lib read before
-    /// its own table): `neutral` is skipping beside `skipped`, never a failure; `stale`
+    /// bucket (gh v2.103.3 `aggregate.go:72-88`): `neutral` is skipping
+    /// beside `skipped`, never a failure; `stale`
     /// is pending, a superseded suite's evidence that settles nothing;
     /// `startup_failure` is the one correction, a failure (GitHub documents
-    /// it as a completed run's conclusion; gh's pending reading left the
-    /// wait forever on a workflow that could not start).
+    /// it as a completed run's conclusion; gh's pending reading would leave
+    /// the wait forever on a workflow that cannot start).
     pub(super) fn check_bucket(self) -> Bucket {
         match self {
             RunConclusion::Success => Bucket::Pass,
@@ -449,9 +449,8 @@ pub(super) struct CommitStatus {
     /// Required, not nullable (commits/statuses, `state`: string).
     pub(super) state: StatusState,
     /// Required, nullable (commits/statuses, `target_url`: string or
-    /// null). A status's Actions run is read out of its link
-    /// (`ci-run-correlation.sh` `runid`); `evidence` reads it through
-    /// `run_in_url`.
+    /// null). A status's Actions run is read out of its link; `evidence`
+    /// reads it through `run_in_url`.
     pub(super) target_url: Nullable<String>,
 }
 
@@ -490,7 +489,7 @@ impl Page for CombinedStatusPage {
 /// `run_attempt`, `run_started_at` and `updated_at` select the current
 /// execution (`selection::current_execution`), and `path` with
 /// `check_suite_node_id` identify a required workflow's candidate
-/// execution (`ci-run-correlation.sh:372-376`). The run's own `name`
+/// execution. The run's own `name`
 /// (string or null, the run's display title, `run-name` where a workflow
 /// sets one) is read by nothing: gh's rollup `workflow` is the
 /// workflow object's name, not the run's.
@@ -706,7 +705,7 @@ pub(super) struct RequiredStatusChecksParameters {
 /// A required workflow: its path in the source repository, that
 /// repository's id and, where the rule pins one, the source commit it runs
 /// from. The four fields are the definition, sorted and
-/// deduplicated (`ci-run-correlation.sh:346`), so `ref` is read for that
+/// deduplicated, so `ref` is read for that
 /// order alone: binding never resolves it.
 #[derive(Debug, Clone, Deserialize)]
 pub(super) struct RequiredWorkflow {
@@ -734,7 +733,7 @@ pub(super) struct WorkflowsParameters {
 
 /// A repository by name (repos/repos, "Get a repository"): the lookup that
 /// turns a source proof's `repositoryName` into the id a `workflows` rule
-/// names (`ci-run-correlation.sh:405-414`).
+/// names.
 #[derive(Debug, Deserialize)]
 pub(super) struct Repository {
     /// Required (repos/repos, `id`: integer).
@@ -746,7 +745,7 @@ pub(super) struct Repository {
 // --- graphql: the nodes queries ----------------------------------------------------
 
 /// The answer to a `nodes(ids:)` query over nodes of one type `N`: the
-/// check-suite nodes of the source proof (`ci-run-correlation.sh:384`) and
+/// check-suite nodes of the source proof and
 /// the check-run nodes of the suite join (`CheckRunNode`). A GraphQL
 /// response carries `data`, null when the request failed as a whole, and
 /// `errors` when anything failed; any error refuses the reply,
@@ -855,8 +854,7 @@ pub(super) struct WorkflowOfRun {
 // --- graphql: the source proof ---------------------------------------------------
 
 /// A check suite node (graphql/reference, object CheckSuite), read for the
-/// source proof (`ci-run-correlation.sh:384`; objects CheckSuite,
-/// WorkflowRun and WorkflowRunFile).
+/// source proof (objects CheckSuite, WorkflowRun and WorkflowRunFile).
 #[derive(Debug, Deserialize)]
 pub(super) struct CheckSuiteNode {
     /// Required (CheckSuite `id`: `ID!`).
@@ -884,7 +882,7 @@ pub(super) struct WorkflowRunNode {
 
 /// The workflow file a run executed (graphql/reference, object
 /// WorkflowRunFile): the source proof a required
-/// definition against (`ci-run-correlation.sh:446-456`).
+/// definition binds against.
 #[derive(Debug, Deserialize)]
 pub(super) struct WorkflowRunFile {
     /// Required (WorkflowRunFile `path`: `String!`).

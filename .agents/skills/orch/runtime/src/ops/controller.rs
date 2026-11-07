@@ -1059,7 +1059,7 @@ fn record_transfer_outcome(
             // else.
             let generation = overseer(path, doc)?.generation;
             // Read retirement from this outcome's observation, not the
-            // intent's stored one, which a reconcile overwrites (finding 15).
+            // intent's stored one, which a reconcile overwrites.
             if !retired(r.observation.as_ref()) {
                 let record = state::object_mut(path, doc, "overseer")?;
                 match &intent.original_pending {

@@ -123,9 +123,9 @@ fn a_launch_that_never_draws_its_composer_records_unconfirmed() {
     );
     assert_eq!(launch["server"], server.pid);
     assert_eq!(report["intent"]["phase"]["pane"], launch["pane"]);
-    // The pane registered itself before it exec'd the stub (decision 96):
-    // its receipt names this intent, the pane and the pid the stub runs
-    // under, and stands while the intent is open.
+    // The pane registered itself before it exec'd the stub: its receipt names
+    // this intent, the pane and the pid the stub runs under, and stands while
+    // the intent is open.
     let pane = launch["pane"].as_str().unwrap();
     let intent_id = report["intent"]["id"].as_str().unwrap();
     let receipt = read_receipt(&runner, intent_id);
@@ -185,8 +185,8 @@ fn a_pane_whose_foreground_is_a_shell_never_reads_idle_whatever_it_draws() {
     assert_eq!(runner.fleet()["lanes"][0]["status"], "preparing");
 }
 
-/// Decision 60, R-U18 P9: a harness that exits before its first draw never
-/// confirms, whatever the pane's shell drew while typing the launch line.
+/// A harness that exits before its first draw never confirms, whatever the
+/// pane's shell drew while typing the launch line.
 #[test]
 fn a_launch_whose_harness_dies_before_drawing_never_confirms() {
     let dir = tempfile::tempdir().unwrap();
@@ -250,9 +250,9 @@ fn a_stop_whose_recorded_start_no_longer_matches_records_unconfirmed() {
     assert!(live(owned.pid()), "the mismatched process was not killed");
 }
 
-/// Decision 64, R-U18 P2d: a close interrupted before its signal leaves an
-/// open intent over a live, matching identity. The repeated close reconciles
-/// it as a stop still owed and runs that stop.
+/// A close interrupted before its signal leaves an open intent over a live,
+/// matching identity. The repeated close reconciles it as a stop still owed
+/// and runs that stop.
 #[test]
 fn a_repeated_close_runs_the_stop_its_reconcile_reads_pending() {
     let dir = tempfile::tempdir().unwrap();
@@ -285,9 +285,9 @@ fn a_repeated_close_runs_the_stop_its_reconcile_reads_pending() {
     );
 }
 
-/// Decision 62, R-U18 P13: the effect's process ends after retirement with
-/// the runner at its composer and no brief owed; a reconcile completes the
-/// succession from the recorded phase and publishes that runner.
+/// The effect's process ends after retirement with the runner at its
+/// composer and no brief owed; a reconcile completes the succession from
+/// the recorded phase and publishes that runner.
 #[test]
 fn reconcile_publishes_a_runner_recorded_at_the_retired_phase() {
     let dir = tempfile::tempdir().unwrap();
@@ -323,9 +323,9 @@ fn reconcile_publishes_a_runner_recorded_at_the_retired_phase() {
     );
 }
 
-/// Decision 62, R-U18 P14: the effect's process ends during the launch poll;
-/// a reconcile completes the launch from the recorded pane, confirming it
-/// with the identity it reads, or failing it once that pane is gone.
+/// The effect's process ends during the launch poll; a reconcile completes
+/// the launch from the recorded pane, confirming it with the identity it
+/// reads, or failing it once that pane is gone.
 #[test]
 fn reconcile_completes_a_launch_from_its_recorded_pane() {
     let dir = tempfile::tempdir().unwrap();
@@ -366,9 +366,9 @@ fn reconcile_completes_a_launch_from_its_recorded_pane() {
 
 #[test]
 fn reconcile_marks_a_transfer_intent_stale_when_the_generation_moved() {
-    // Decision 44: a transfer intent still open after a legacy succession
-    // moved the overseer's generation reconciles as intent-stale with the
-    // observed generation, never a second controller.
+    // A transfer intent still open after a released succession moved the
+    // overseer's generation reconciles as intent-stale with the observed
+    // generation, never a second controller.
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let runner = Runner::new(&server, "stub-confirm");
@@ -385,8 +385,8 @@ fn reconcile_marks_a_transfer_intent_stale_when_the_generation_moved() {
 
 #[test]
 fn two_launch_processes_mint_distinct_intent_ids() {
-    // R-U10 finding 1 through the binary: each `op` process mints its own
-    // stamp, so a relaunch after a close gets a new id.
+    // Through the binary, each `op` process mints its own stamp, so a relaunch
+    // after a close gets a new id.
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let runner = Runner::new(&server, "stub-confirm");
@@ -448,8 +448,8 @@ fn a_launch_whose_harness_exits_during_the_poll_records_failed() {
 
 #[test]
 fn reconcile_close_on_a_start_mismatch_records_unconfirmed() {
-    // Decision 59: a live pid whose recorded start no longer matches is an
-    // identity change, not gone, so the close stays unconfirmed, not done.
+    // A live pid whose recorded start no longer matches is an identity change,
+    // not gone, so the close stays unconfirmed, not done.
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let runner = Runner::new(&server, "stub-confirm");
@@ -481,8 +481,8 @@ fn reconcile_close_on_a_start_mismatch_records_unconfirmed() {
 
 #[test]
 fn reconcile_close_marks_done_only_when_the_identity_is_confirmed_gone() {
-    // Decision 59: a pid no process holds is confirmed gone, so the close
-    // completes and the lane reads done.
+    // A pid no process holds is confirmed gone, so the close completes and the
+    // lane reads done.
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let runner = Runner::new(&server, "stub-confirm");
@@ -529,10 +529,10 @@ fn a_close_stops_the_detached_wake_turn_before_the_lane_reads_done() {
     assert!(!live(wake.pid()), "the wake turn was stopped");
 }
 
-/// Decision 66, R-U19 probe C: the private server a launch opened on is
-/// killed and another started on the same socket. One socket is held by one
-/// server, so the recorded pane is gone: the launch fails on reconcile and
-/// the close that follows ends the lane.
+/// The private server a launch opened on is killed and another started on
+/// the same socket. One socket is held by one server, so the recorded pane
+/// is gone: the launch fails on reconcile and the close that follows ends
+/// the lane.
 #[test]
 fn a_launch_whose_server_was_replaced_fails_on_reconcile_and_closes() {
     let dir = tempfile::tempdir().unwrap();
@@ -565,10 +565,10 @@ fn a_launch_whose_server_was_replaced_fails_on_reconcile_and_closes() {
     );
 }
 
-/// Decision 67, R-U18 P1n: a launch whose harness never draws is left
-/// unconfirmed, and a close then supersedes it: the launch intent closes
-/// `failed` with `superseded-by-close`, the close stops the pane's foreground
-/// harness by the identity read then, and the lane is done.
+/// A launch whose harness never draws is left unconfirmed, and a close then
+/// supersedes it: the launch intent closes `failed` with
+/// `superseded-by-close`, the close stops the pane's foreground harness by
+/// the identity read then, and the lane is done.
 #[test]
 fn a_close_supersedes_a_launch_that_never_drew() {
     let dir = tempfile::tempdir().unwrap();
@@ -603,12 +603,12 @@ fn a_close_supersedes_a_launch_that_never_drew() {
     assert!(launch["completed_at"].is_string());
 }
 
-/// R-U20 finding 1: a `stopped` lane recorded under one harness word is
-/// relaunched under another and never draws, so the lane keeps its earlier
-/// word. The close that supersedes the launch judges the pane's foreground
-/// by the harness the launch selected and stops it by identity, never by
-/// the lane's earlier word, which would read the harness as foreign and kill
-/// the window alone.
+/// A `stopped` lane recorded under one harness word is relaunched under
+/// another and never draws, so the lane keeps its earlier word. The close
+/// that supersedes the launch judges the pane's foreground by the harness
+/// the launch selected and stops it by identity, never by the lane's
+/// earlier word, which would read the harness as foreign and kill the
+/// window alone.
 #[test]
 fn a_superseding_close_stops_the_relaunched_harness_not_the_lane_s_earlier_word() {
     let dir = tempfile::tempdir().unwrap();
@@ -646,11 +646,11 @@ fn a_superseding_close_stops_the_relaunched_harness_not_the_lane_s_earlier_word(
     assert_eq!(server.panes().len(), 1, "the window is closed");
 }
 
-/// Decision 72, step4-map § B row 1: a contender reconciles an intent whose
-/// owner is a live process still before its first window. The owner is held
-/// at `new-window` by the tmux-hold shim with its intent persisted at the
-/// `opening` phase; the contender's reconcile reads `owner-live` and touches
-/// nothing, and the owner, released, opens its window carrying its intent id and confirms.
+/// A contender reconciles an intent whose owner is a live process still
+/// before its first window. The owner is held at `new-window` by the
+/// tmux-hold shim with its intent persisted at the `opening` phase; the
+/// contender's reconcile reads `owner-live` and touches nothing, and the
+/// owner, released, opens its window carrying its intent id and confirms.
 #[test]
 fn a_contender_reconciling_a_live_owners_intent_reports_owner_live() {
     let dir = tempfile::tempdir().unwrap();
@@ -696,10 +696,10 @@ fn a_contender_reconciling_a_live_owners_intent_reports_owner_live() {
     assert_eq!(runner.fleet()["intents"][0]["outcome"], "confirmed");
 }
 
-/// Decision 96: a reconcile at `opening` with a dead owner never adopts a
-/// window the intent neither recorded nor received a receipt for, however
-/// present a harness in it is. The window is left standing and the launch
-/// fails `nothing-opened`.
+/// A reconcile at `opening` with a dead owner never adopts a window the
+/// intent neither recorded nor received a receipt for, however present a
+/// harness in it is. The window is left standing and the launch fails
+/// `nothing-opened`.
 #[test]
 fn an_unrecorded_unreceipted_window_is_never_adopted_at_the_opening_phase() {
     let dir = tempfile::tempdir().unwrap();
@@ -735,17 +735,16 @@ fn an_unrecorded_unreceipted_window_is_never_adopted_at_the_opening_phase() {
     );
 }
 
-/// Decisions 96 and 111 (5): the runtime dies after its window is created
-/// and before `new-window` answered with the pane id, so the pane was never
-/// recorded and, its line never typed, never registered. The server's
-/// `after-new-window` hook holds the `new-window` client on a `wait-for`
-/// channel, so the window exists while the runtime is still inside that one
-/// command; the test kills the runtime, its own child, there and releases
-/// the hook. The phase records that the launcher was asked, so the window
-/// possibly opened is an obligation nothing read discharges: the reconcile
-/// holds the launch `unconfirmed` with `window-unread` and the window on
-/// its server standing, never adopted, never assumed absent, and the lane
-/// as found.
+/// The runtime dies after its window is created and before `new-window`
+/// answered with the pane id, so the pane was never recorded and, its line
+/// never typed, never registered. The server's `after-new-window` hook
+/// holds the `new-window` client on a `wait-for` channel, so the window
+/// exists while the runtime is still inside that one command; the test
+/// kills the runtime, its own child, there and releases the hook. The phase
+/// records that the launcher was asked, so the window possibly opened is an
+/// obligation nothing read discharges: the reconcile holds the launch
+/// `unconfirmed` with `window-unread` and the window on its server
+/// standing, never adopted, never assumed absent, and the lane as found.
 #[test]
 fn a_crash_inside_new_window_leaves_a_stray_that_is_never_adopted() {
     let dir = tempfile::tempdir().unwrap();
@@ -802,10 +801,10 @@ fn a_crash_inside_new_window_leaves_a_stray_that_is_never_adopted() {
     assert_eq!(server.panes(), panes, "the stray stands untouched");
 }
 
-/// Decision 68, R-U18 P2b: a close whose recorded pid runs under another
-/// start, with no pane recorded. The first reconcile reading is `unconfirmed`
-/// with `identity: stale` (decision 59); a second, independent reading
-/// confirms the close, and the live process is never signalled.
+/// A close whose recorded pid runs under another start, with no pane
+/// recorded. The first reconcile reading is `unconfirmed` with `identity:
+/// stale`; a second, independent reading confirms the close, and the live
+/// process is never signalled.
 #[test]
 fn a_close_over_a_reused_pid_confirms_on_the_second_independent_reading() {
     let dir = tempfile::tempdir().unwrap();
@@ -850,9 +849,9 @@ struct Planted {
     owned: Vec<Owned>,
 }
 
-/// One cell of the reconcile matrix (decision 64): the intent's operation
-/// and recorded phase, whether a recorded identity is present, the observed
-/// state the row plants, and the outcome the reconcile must record.
+/// One cell of the reconcile matrix: the intent's operation and recorded
+/// phase, whether a recorded identity is present, the observed state the
+/// row plants, and the outcome the reconcile must record.
 struct Cell {
     op: &'static str,
     phase: &'static str,
@@ -902,8 +901,7 @@ fn transfer_fleet(
 fn no_check(_: &Runner, _: &Server, _: &Value) {}
 
 /// An unanswering socket whose recorded server process still runs: a
-/// process the test owns stands for the server (decision 66's one
-/// unobservable case).
+/// process the test owns stands for the server, the one unobservable case.
 fn unanswering_server(runner: &Runner, process: &Owned) -> Server {
     Server {
         socket: runner.state_dir().join("dead.sock"),
@@ -915,7 +913,7 @@ fn unanswering_server(runner: &Runner, process: &Owned) -> Server {
 }
 
 /// An unanswering socket whose recorded server process is gone: the server
-/// and every pane it held are gone (decision 66).
+/// and every pane it held are gone.
 fn gone_server(runner: &Runner) -> Server {
     Server {
         socket: runner.state_dir().join("dead.sock"),
@@ -943,12 +941,12 @@ fn delivered(server: &Server, pane: &str, since_ms: u64, file: &Path) -> Value {
     phase
 }
 
-/// Decision 64: the reconcile matrix over (operation, recorded phase,
-/// recorded identity, observed state), one cell per row, each yielding its
-/// outcome and none left without one. `retired` is read from the
-/// predecessor's identity, an unobservable pane is `unconfirmed`, a failed
-/// transfer keeps the original pending, and a confirmed launch binds a
-/// session read since its own window opened.
+/// The reconcile matrix over (operation, recorded phase, recorded identity,
+/// observed state), one cell per row, each yielding its outcome and none
+/// left without one. `retired` is read from the predecessor's identity, an
+/// unobservable pane is `unconfirmed`, a failed transfer keeps the original
+/// pending, and a confirmed launch binds a session read since its own
+/// window opened.
 #[test]
 fn the_reconcile_matrix_is_total() {
     reconcile_cells(vec![
@@ -1672,8 +1670,8 @@ fn the_reconcile_matrix_is_total() {
                     runner.state_dir(),
                 );
                 server.await_composer(&pane);
-                // The id the launch fixed, which names the runner's file
-                // before it carries a turn (decision 65).
+                // The id the launch fixed, which names the runner's file before
+                // it carries a turn.
                 let mut phase = phase("retired", server, &pane, since, Some(&brief));
                 phase["session_id"] = json!(format!("stub-{}", server.pane_pid(&pane)));
                 Planted {
@@ -1736,10 +1734,9 @@ fn the_reconcile_matrix_is_total() {
             identity: "predecessor gone",
             observed: "the paste possibly made, no turn recorded",
             expect: "unconfirmed",
-            // Decision 124e (23): the phase written before the paste. A
-            // reconcile that finds it waits for the turn and never pastes
-            // again: the stub, which records every line it reads, records
-            // none.
+            // The phase written before the paste. A reconcile that finds it
+            // waits for the turn and never pastes again: the stub, which
+            // records every line it reads, records none.
             plant: |runner, server| {
                 let since = now_ms();
                 let pane = server.open_stub(
@@ -2021,8 +2018,8 @@ fn the_reconcile_matrix_is_total() {
             },
         },
         Cell {
-            // Decision 72: a reconcile that finds the intent's owner live
-            // defers to it and touches nothing, whatever the pane reads.
+            // A reconcile that finds the intent's owner live defers to it and
+            // touches nothing, whatever the pane reads.
             op: "launch",
             phase: "window-opened",
             identity: "owner live",
@@ -2055,8 +2052,8 @@ fn the_reconcile_matrix_is_total() {
             },
         },
         Cell {
-            // Decision 96, crash before the open: an intent at `opening` with
-            // a dead owner, no pane recorded and no receipt written.
+            // A crash before the open: an intent at `opening` with a dead
+            // owner, no pane recorded and no receipt written.
             op: "launch",
             phase: "opening",
             identity: "dead owner",
@@ -2078,10 +2075,10 @@ fn the_reconcile_matrix_is_total() {
             },
         },
         Cell {
-            // Decision 96, crash after the pane registered and before the
-            // record named it: the receipt names a live harness in its pane.
-            // The reconcile adopts that exact pane and completes, noting the
-            // receipt it adopted by.
+            // A crash after the pane registered and before the record named it:
+            // the receipt names a live harness in its pane. The reconcile
+            // adopts that exact pane and completes, noting the receipt it
+            // adopted by.
             op: "launch",
             phase: "opening",
             identity: "dead owner",
@@ -2127,9 +2124,8 @@ fn the_reconcile_matrix_is_total() {
                 assert_eq!(fleet["lanes"][0]["launch"]["pane"], panes[1]);
                 let registered = &report["intent"]["observation"]["registered"];
                 assert_eq!(registered["pane"], panes[1]);
-                // Decision 99: the identity the receipt proved is the one
-                // the phase carries and the one the publication records,
-                // pid and start alike.
+                // The identity the receipt proved is the one the phase carries
+                // and the one the publication records, pid and start alike.
                 let pid = registered["pid"].as_u64().expect("the receipt's pid") as u32;
                 assert_eq!(phase["identity"]["pid"], pid);
                 assert_eq!(phase["identity"]["start"], start_of(pid));
@@ -2138,9 +2134,9 @@ fn the_reconcile_matrix_is_total() {
             },
         },
         Cell {
-            // Decision 96: the pane was recorded and its line has not run
-            // within the bound. Held: nothing bound, nothing failed, the
-            // pane kept for the next reconcile.
+            // The pane was recorded and its line has not run within the bound.
+            // Held: nothing bound, nothing failed, the pane kept for the next
+            // reconcile.
             op: "launch",
             phase: "opening",
             identity: "dead owner",
@@ -2169,12 +2165,11 @@ fn the_reconcile_matrix_is_total() {
             },
         },
         Cell {
-            // Decision 96: the recorded pane never registered within the
-            // bound: it is ours and holds no harness, so that exact pane is
-            // closed and the launch fails. An unrelated window on the same
-            // server is not touched, and neither is a sibling pane a hook
-            // split into the recorded pane's own window (decision 99): the
-            // close is by pane id, not by window.
+            // The recorded pane never registered within the bound: it is ours
+            // and holds no harness, so that exact pane is closed and the launch
+            // fails. An unrelated window on the same server is not touched, and
+            // neither is a sibling pane a hook split into the recorded pane's
+            // own window: the close is by pane id, not by window.
             op: "launch",
             phase: "opening",
             identity: "dead owner",
@@ -2237,8 +2232,8 @@ fn the_reconcile_matrix_is_total() {
             },
         },
         Cell {
-            // Decision 96: the recorded pane is already gone and no receipt
-            // stands: nothing can register from it.
+            // The recorded pane is already gone and no receipt stands: nothing
+            // can register from it.
             op: "launch",
             phase: "opening",
             identity: "dead owner",
@@ -2264,9 +2259,8 @@ fn the_reconcile_matrix_is_total() {
             },
         },
         Cell {
-            // Decision 96: a receipt that is not this intent's shape is held,
-            // never read as absence: nothing bound, nothing failed, nothing
-            // closed.
+            // A receipt that is not this intent's shape is held, never read as
+            // absence: nothing bound, nothing failed, nothing closed.
             op: "launch",
             phase: "opening",
             identity: "dead owner",
@@ -2303,10 +2297,10 @@ fn the_reconcile_matrix_is_total() {
             },
         },
         Cell {
-            // Decision 96, the succession arm: the runner's receipt names a
-            // live runner before retirement. Adopted, then abandoned as a
-            // `window-opened` reconcile abandons it: the runner stopped, the
-            // predecessor in control, the original pending put back.
+            // The succession arm: the runner's receipt names a live runner
+            // before retirement. Adopted, then abandoned as a `window-opened`
+            // reconcile abandons it: the runner stopped, the predecessor in
+            // control, the original pending put back.
             op: "transfer",
             phase: "opening",
             identity: "predecessor live",
@@ -2360,10 +2354,9 @@ fn the_reconcile_matrix_is_total() {
             },
         },
         Cell {
-            // Decision 96, the succession arm: a malformed receipt is held.
-            // The intent stays open, the successor pending stands as the
-            // request wrote it, the predecessor keeps control, the pane is
-            // kept.
+            // The succession arm: a malformed receipt is held. The intent stays
+            // open, the successor pending stands as the request wrote it, the
+            // predecessor keeps control, the pane is kept.
             op: "transfer",
             phase: "opening",
             identity: "predecessor live",
@@ -2406,10 +2399,9 @@ fn the_reconcile_matrix_is_total() {
             },
         },
         Cell {
-            // Decision 96, the succession arm: the recorded runner pane never
-            // registered within the bound. That exact pane is closed, the
-            // succession fails before retirement and the original pending is
-            // put back.
+            // The succession arm: the recorded runner pane never registered
+            // within the bound. That exact pane is closed, the succession fails
+            // before retirement and the original pending is put back.
             op: "transfer",
             phase: "opening",
             identity: "predecessor live",
@@ -2441,15 +2433,14 @@ fn the_reconcile_matrix_is_total() {
     ]);
 }
 
-/// Decisions 96 and 99: a receipt whose pid no live process holds is a
-/// harness that exited, read through the one identity reader before any
-/// adoption. Nothing is adopted; the pane the receipt names, ours and
-/// holding no harness, is closed by its exact id before the failure
-/// completes, and a sibling pane split into the same window stands. The
-/// launch fails `harness-exited` with no pane bound, the succession fails
-/// before retirement with its original pending put back. The must-fail
-/// control for the identity confirmation runs these two rows by this test's
-/// name.
+/// A receipt whose pid no live process holds is a harness that exited, read
+/// through the one identity reader before any adoption. Nothing is adopted;
+/// the pane the receipt names, ours and holding no harness, is closed by
+/// its exact id before the failure completes, and a sibling pane split into
+/// the same window stands. The launch fails `harness-exited` with no pane
+/// bound, the succession fails before retirement with its original pending
+/// put back. The must-fail control for the identity confirmation runs these
+/// two rows by this test's name.
 #[test]
 fn a_receipt_naming_a_dead_harness_fails_without_adopting_the_pane() {
     fn closed_exactly(server: &Server, registered: &str, sibling: &str) {
@@ -2501,8 +2492,7 @@ fn a_receipt_naming_a_dead_harness_fails_without_adopting_the_pane() {
                 assert_eq!(report["intent"]["observation"]["cause"], "pane-closed");
                 let fleet = runner.fleet();
                 // The dead-receipt close goes through the signal-writing close,
-                // which records the first signal before the kill (decision 120
-                // (2), R-U4g3 Codex site 4).
+                // which records the first signal before the kill.
                 assert_eq!(
                     fleet["intents"][0]["obligations"]["signalled"], true,
                     "the recovery close records its signal: {}",
@@ -2560,11 +2550,11 @@ fn a_receipt_naming_a_dead_harness_fails_without_adopting_the_pane() {
     ]);
 }
 
-/// Decision 105 (2) at the receipt guard: the receipt names a dead harness
-/// and its pane is closed by exact id before the failure completes; when the
-/// host refuses that close, the launch stays open with the cause, its pane
-/// standing and nothing adopted, and the reconcile completes it once the
-/// host answers, closing exactly that pane.
+/// At the receipt guard: the receipt names a dead harness and its pane is
+/// closed by exact id before the failure completes; when the host refuses
+/// that close, the launch stays open with the cause, its pane standing and
+/// nothing adopted, and the reconcile completes it once the host answers,
+/// closing exactly that pane.
 #[test]
 fn a_dead_receipts_pane_close_the_host_refuses_holds_the_launch_until_it_answers() {
     let dir = tempfile::tempdir().unwrap();
@@ -2624,11 +2614,11 @@ fn a_dead_receipts_pane_close_the_host_refuses_holds_the_launch_until_it_answers
     assert_eq!(runner.fleet()["lanes"][0]["status"], "stopped");
 }
 
-/// Decision 99: a host that stops answering between two reads of one pane
-/// settles nothing. The receipt names a live harness and is adopted under
-/// its identity; the capture that follows fails while the pane stands, so
-/// the launch is `unconfirmed` with the cause, never `pane-gone`, the lane
-/// is left preparing, the pane stands, and the phase carries the receipt's
+/// A host that stops answering between two reads of one pane settles
+/// nothing. The receipt names a live harness and is adopted under its
+/// identity; the capture that follows fails while the pane stands, so the
+/// launch is `unconfirmed` with the cause, never `pane-gone`, the lane is
+/// left preparing, the pane stands, and the phase carries the receipt's
 /// identity for the next reconcile. The failure is planted through a tmux
 /// shim that refuses one verb and execs the real tmux for every other.
 #[test]
@@ -2691,15 +2681,14 @@ fn a_tmux_failure_between_reads_holds_an_adopted_launch_unconfirmed_never_pane_g
     assert_eq!(fleet["lanes"][0]["launch"]["start"], start_of(pid));
 }
 
-/// Decision 111 (A) (2), R-U4a6b C1 (1): a pane's disappearance never
-/// discharges the process that ran in it. The pane's process ignores
-/// `SIGHUP`, as a harness beneath a wrapper may, so an exact `kill-pane`
-/// leaves the pane gone and that same pid and start running. At
-/// `window-opened` with that identity recorded, and at `opening` with the
-/// receipt naming that pid, the reconcile holds the launch `unconfirmed`:
-/// the pane is discharged by its own read, the identity read live stands
-/// as the remaining obligation, the lane is left as found, and nothing is
-/// closed `failed` over a process that runs on.
+/// A pane's disappearance never discharges the process that ran in it. The
+/// pane's process ignores `SIGHUP`, as a harness beneath a wrapper may, so
+/// an exact `kill-pane` leaves the pane gone and that same pid and start
+/// running. At `window-opened` with that identity recorded, and at
+/// `opening` with the receipt naming that pid, the reconcile holds the
+/// launch `unconfirmed`: the pane is discharged by its own read, the
+/// identity read live stands as the remaining obligation, the lane is left
+/// as found, and nothing is closed `failed` over a process that runs on.
 #[test]
 fn a_process_surviving_its_panes_close_keeps_the_launch_open_with_its_identity_standing() {
     struct Cell {
@@ -2857,9 +2846,9 @@ fn reconcile_cells(cells: Vec<Cell>) {
             cell.expect == "unconfirmed",
             "{name}"
         );
-        // A deferral to a live or unreadable owner is a read-only reply
-        // (decision 109 (4)): the observation is on the reply and the file's
-        // intent stands as planted. Every other cell records its observation.
+        // A deferral to a live or unreadable owner is a read-only reply: the
+        // observation is on the reply and the file's intent stands as planted.
+        // Every other cell records its observation.
         let deferred = matches!(
             report["intent"]["observation"]["note"].as_str(),
             Some("owner-live" | "owner-unreadable")
@@ -2959,13 +2948,12 @@ fn a_relaunch_on_another_account_starts_fresh_and_the_same_account_resumes() {
     );
 }
 
-/// Decision 108 (7), the two R-U4b closes: a reconcile never confirms from
-/// the parent identity alone. A close whose last run recorded a validation
-/// stop that failed stays `unconfirmed` on reconcile with the obligation
-/// kept, which the repeated close's stop route runs again; a close whose
-/// lane records a live wake turn stays `unconfirmed` with `wake: live`, and
-/// the repeated close stops the wake before it confirms. A wake record with
-/// no identity is no handle.
+/// A reconcile never confirms from the parent identity alone. A close whose
+/// last run recorded a validation stop that failed stays `unconfirmed` on
+/// reconcile with the obligation kept, which the repeated close's stop
+/// route runs again; a close whose lane records a live wake turn stays
+/// `unconfirmed` with `wake: live`, and the repeated close stops the wake
+/// before it confirms. A wake record with no identity is no handle.
 #[test]
 fn a_reconciled_close_never_confirms_over_an_owed_validation_stop_or_a_live_wake() {
     let dir = tempfile::tempdir().unwrap();
@@ -3054,9 +3042,8 @@ fn a_reconciled_close_never_confirms_over_an_owed_validation_stop_or_a_live_wake
 }
 
 // ---------------------------------------------------------------------------
-// Decision 120: the receipted survivor, the same-key adoption and the
-// replacement acquired before its stop (R-U4g2 P1, P2, P8; R-U4g2-codex C1
-// probes 1, 2, 3 and 5), as fixed rows.
+// The receipted survivor, the same-key adoption and the replacement
+// acquired before its stop.
 // ---------------------------------------------------------------------------
 
 /// A pane whose process ignores the hangup tmux sends on its close: `sleep`
@@ -3102,11 +3089,10 @@ fn discharged_by(intent: &Value, by: &str) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-/// R-U4g2 P1, R-U4g2-codex C1 probe 1: the server, not the pane, goes at
-/// `opening`, and the receipt names a pid that survived it. The receipt is
-/// read before anything is discharged (decision 120 (5)): its pid is read
-/// live and stands, so the launch is held `unconfirmed` with that pid, the
-/// receipt discharged by its read and its file kept.
+/// The server, not the pane, goes at `opening`, and the receipt names a pid
+/// that survived it. The receipt is read before anything is discharged: its
+/// pid is read live and stands, so the launch is held `unconfirmed` with
+/// that pid, the receipt discharged by its read and its file kept.
 #[test]
 fn a_server_gone_at_opening_reads_the_receipt_before_any_discharge() {
     let dir = tempfile::tempdir().unwrap();
@@ -3161,11 +3147,11 @@ fn a_server_gone_at_opening_reads_the_receipt_before_any_discharge() {
     assert_eq!(runner.fleet()["lanes"][0]["status"], "preparing");
 }
 
-/// R-U4g2 P2, R-U4g2-codex C1 probe 2: the `window-opened` record as the
-/// launch writes it after the line is typed, the receipt standing until
-/// read (decision 120 (5)), the pane killed under a process that survived
-/// it. The reconcile reads the receipt, reads its pid live and holds the
-/// launch with that pid; nothing is failed over a live process.
+/// The `window-opened` record as the launch writes it after the line is
+/// typed, the receipt standing until read, the pane killed under a process
+/// that survived it. The reconcile reads the receipt, reads its pid live
+/// and holds the launch with that pid; nothing is failed over a live
+/// process.
 #[test]
 fn a_window_opened_record_before_its_identity_reads_the_written_receipt() {
     let dir = tempfile::tempdir().unwrap();
@@ -3218,16 +3204,16 @@ fn a_window_opened_record_before_its_identity_reads_the_written_receipt() {
     assert_eq!(discharged_by(&intent, "pane-gone").len(), 1, "{intent}");
 }
 
-/// R-U4g2-codex C1 probe 4: the real launch, held at its first read after
-/// the `window-opened` write by a tmux shim that blocks `capture-pane`, is
-/// killed there, as a crash at the first wait. The pane is then killed
-/// under a harness that ignores the hangup. The reconcile reads the receipt
-/// the launch left standing, reads its pid live, and holds the launch with
-/// that pid: the record said nothing the launch had not read. The shim
-/// holds the launch's first pane-field read until the pane's process is
-/// the stub (decision 124i (34)), so the foreground read before the held
-/// capture sees the harness whatever the stub's start took, and the record
-/// at the capture barrier is judged, not the stub's startup.
+/// The real launch, held at its first read after the `window-opened` write
+/// by a tmux shim that blocks `capture-pane`, is killed there, as a crash
+/// at the first wait. The pane is then killed under a harness that ignores
+/// the hangup. The reconcile reads the receipt the launch left standing,
+/// reads its pid live, and holds the launch with that pid: the record said
+/// nothing the launch had not read. The shim holds the launch's first
+/// pane-field read until the pane's process is the stub, so the foreground
+/// read before the held capture sees the harness whatever the stub's start
+/// took, and the record at the capture barrier is judged, not the stub's
+/// startup.
 #[test]
 fn a_crash_at_the_first_wait_after_the_window_opened_write_reads_the_receipt() {
     let dir = tempfile::tempdir().unwrap();
@@ -3265,8 +3251,8 @@ fn a_crash_at_the_first_wait_after_the_window_opened_write_reads_the_receipt() {
         );
         std::thread::sleep(Duration::from_millis(20));
     }
-    // The record at the first wait: the pane standing with the receipt,
-    // nothing discharged that was not read (decision 120 (5)).
+    // The record at the first wait: the pane standing with the receipt, nothing
+    // discharged that was not read.
     let held = runner.fleet()["intents"][0].clone();
     let standing = held["obligations"]["standing"].as_array().unwrap().clone();
     assert!(
@@ -3275,9 +3261,8 @@ fn a_crash_at_the_first_wait_after_the_window_opened_write_reads_the_receipt() {
     );
     assert!(standing.iter().any(|o| o["kind"] == "pane"), "{held}");
     // The foreground identity is acquired through the writing reader and so is
-    // recorded before the capture the shim holds (decision 120 (2), R-U4g3
-    // Codex site 3): a run killed at its capture has already written what it
-    // read.
+    // recorded before the capture the shim holds: a run killed at its capture
+    // has already written what it read.
     assert!(
         standing.iter().any(|o| o["kind"] == "process"),
         "the foreground identity is recorded before the capture barrier: {held}"
@@ -3331,10 +3316,10 @@ fn a_crash_at_the_first_wait_after_the_window_opened_write_reads_the_receipt() {
     assert_eq!(runner.fleet()["lanes"][0]["status"], "preparing");
 }
 
-/// R-U4g2-codex C1 probe 5 (decision 120 (5)): the receipt names the pane the
-/// opening recorded, so the adoption's key equals the recorded one. The
-/// recorded pane keeps standing through the adoption and passes to the lane
-/// record at publication; it is never discharged `adopted`.
+/// The receipt names the pane the opening recorded, so the adoption's key
+/// equals the recorded one. The recorded pane keeps standing through the
+/// adoption and passes to the lane record at publication; it is never
+/// discharged `adopted`.
 #[test]
 fn an_adoption_keeps_the_recorded_pane_standing_under_its_own_key() {
     let dir = tempfile::tempdir().unwrap();
@@ -3387,11 +3372,11 @@ fn an_adoption_keeps_the_recorded_pane_standing_under_its_own_key() {
     assert!(server.panes().contains(&pane), "the pane stands");
 }
 
-/// R-U4g2 P8: the dead-receipt row with the pane the opening recorded, as
+/// The dead-receipt row with the pane the opening recorded, as
 /// `open_window` writes it before the line is typed, and the pane's close
-/// refused by the host. The adoption keeps that pane standing (decision 120
-/// (5)), so a refused close settles nothing: the launch is held, the pane
-/// stands, and the next reconcile closes it.
+/// refused by the host. The adoption keeps that pane standing, so a refused
+/// close settles nothing: the launch is held, the pane stands, and the next
+/// reconcile closes it.
 #[test]
 fn a_dead_receipts_refused_close_holds_when_the_opening_recorded_its_pane() {
     let dir = tempfile::tempdir().unwrap();
@@ -3449,12 +3434,11 @@ fn a_dead_receipts_refused_close_holds_when_the_opening_recorded_its_pane() {
     );
 }
 
-/// R-U4g2-codex C1 probe 3 (decision 120 (2)): the replacement foreground
-/// read in the recorded pane on a close whose recorded identity is gone is
-/// written as an obligation before the stop that follows, on the first run
-/// and on a signalled retry alike. A `kill` that holds the first signal
-/// lets the row read the record at the stop's wait: the replacement stands
-/// and `signalled` is recorded.
+/// The replacement foreground read in the recorded pane on a close whose
+/// recorded identity is gone is written as an obligation before the stop
+/// that follows, on the first run and on a signalled retry alike. A `kill`
+/// that holds the first signal lets the row read the record at the stop's
+/// wait: the replacement stands and `signalled` is recorded.
 #[test]
 fn a_replacement_foreground_is_recorded_before_the_stop_that_follows_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -3544,10 +3528,10 @@ fn a_replacement_foreground_is_recorded_before_the_stop_that_follows_it() {
     assert!(!live(foreground));
 }
 
-/// R-U4g3-codex H1 (decision 120 (3)): a receipted survivor stands on the
-/// reconcile that reads it live, and the next reconcile, reading its own
-/// recorded pid gone, settles the launch. The pid is read by its own key on
-/// every route, not only the phase's identity.
+/// A receipted survivor stands on the reconcile that reads it live, and the
+/// next reconcile, reading its own recorded pid gone, settles the launch.
+/// The pid is read by its own key on every route, not only the phase's
+/// identity.
 #[test]
 fn a_receipted_survivor_read_gone_on_a_later_reconcile_settles_the_launch() {
     let dir = tempfile::tempdir().unwrap();
@@ -3589,9 +3573,9 @@ fn a_receipted_survivor_read_gone_on_a_later_reconcile_settles_the_launch() {
     );
 }
 
-/// R-U4g3-codex site 8 (decision 120 (2), L3): a lane whose recorded server
-/// start differs from the ambient server's is a reused pid, not this lane's
-/// server; the close reads the pane gone with it and kills nothing live.
+/// A lane whose recorded server start differs from the ambient server's is
+/// a reused pid, not this lane's server; the close reads the pane gone with
+/// it and kills nothing live.
 #[test]
 fn a_lane_close_leaves_a_pane_on_a_different_server_identity() {
     let dir = tempfile::tempdir().unwrap();
@@ -3620,9 +3604,9 @@ fn a_lane_close_leaves_a_pane_on_a_different_server_identity() {
     );
 }
 
-/// R-U4g3-codex site 6 (decision 99): an unreadable worktree root is no proof
-/// of absence, so the validation stop stays owed and the close holds, never
-/// confirming over runs it could not read.
+/// An unreadable worktree root is no proof of absence, so the validation
+/// stop stays owed and the close holds, never confirming over runs it could
+/// not read.
 #[test]
 fn a_close_whose_validation_root_is_unreadable_holds_the_validation_owed() {
     use std::os::unix::fs::PermissionsExt;
@@ -3653,11 +3637,10 @@ fn a_close_whose_validation_root_is_unreadable_holds_the_validation_owed() {
     );
 }
 
-/// R-U4g3-codex site 1 (decision 120 (1)): a `send_line` reply reported failed
-/// may have run the line, which writes the receipt and execs the harness. The
-/// pane is closed and the receipt read, not assumed absent, so a live
-/// registered pid stands and the launch holds rather than settling `failed`
-/// over a running harness.
+/// A `send_line` reply reported failed may have run the line, which writes
+/// the receipt and execs the harness. The pane is closed and the receipt
+/// read, not assumed absent, so a live registered pid stands and the launch
+/// holds rather than settling `failed` over a running harness.
 #[test]
 fn a_send_reply_reported_failed_that_ran_the_line_reads_the_receipt() {
     let dir = tempfile::tempdir().unwrap();
@@ -3698,10 +3681,9 @@ fn a_send_reply_reported_failed_that_ran_the_line_reads_the_receipt() {
     );
 }
 
-/// Decision 124a (2): a wake the lane's writer replaced is no longer named by
-/// the lane, but the close intent recorded it. The repeated close stops the
-/// recorded wake as well as the lane's current one, and confirms only once
-/// both are gone.
+/// A wake the lane's writer replaced is no longer named by the lane, but
+/// the close intent recorded it. The repeated close stops the recorded wake
+/// as well as the lane's current one, and confirms only once both are gone.
 #[test]
 fn a_close_stops_a_recorded_wake_the_lane_no_longer_names() {
     let dir = tempfile::tempdir().unwrap();
@@ -3714,7 +3696,7 @@ fn a_close_stops_a_recorded_wake_the_lane_no_longer_names() {
     let mut row = lane("KEN-W", "running", &runner, Value::Null);
     row["wake"] = json!({"pid": old_wake.pid(), "start": old_wake.start()});
     fleet["lanes"] = json!([row]);
-    // The close intent's set already recorded the old wake (its bootstrap at
+    // The close intent's set already recorded the first wake (its bootstrap at
     // a first run), and nothing else; the close itself never ran.
     fleet["intents"] = json!([{
         "id": "close-owned-resources:KEN-W:1-1", "op": "close-owned-resources", "target": "KEN-W", "created_at": "2026-01-29T15:20:00Z", "outcome": "unconfirmed",
@@ -3725,7 +3707,7 @@ fn a_close_stops_a_recorded_wake_the_lane_no_longer_names() {
             {"kind": "validation", "role": "validation"},
         ], "discharged": [], "signalled": true},
     }]);
-    // The legacy writer replaced the wake since.
+    // The lane's writer replaced the wake since.
     fleet["lanes"][0]["wake"] = json!({"pid": new_wake.pid(), "start": new_wake.start()});
     runner.write_fleet(&fleet);
     let report = effect_report(&runner.op_fleet(&terminal_close("KEN-W")));
@@ -3737,9 +3719,9 @@ fn a_close_stops_a_recorded_wake_the_lane_no_longer_names() {
     );
 }
 
-/// Decision 124a (2): a replacement foreground the close acquired whose pane
-/// is since gone is read by its own key on the next reconcile, not through
-/// the lane's launch identity: live it holds the close, gone it settles.
+/// A replacement foreground the close acquired whose pane is since gone is
+/// read by its own key on the next reconcile, not through the lane's launch
+/// identity: live it holds the close, gone it settles.
 #[test]
 fn a_replacement_foreground_whose_pane_is_gone_is_read_by_its_own_key() {
     let dir = tempfile::tempdir().unwrap();
@@ -3778,21 +3760,18 @@ fn a_replacement_foreground_whose_pane_is_gone_is_read_by_its_own_key() {
 }
 
 // ---------------------------------------------------------------------------
-// Decision 124b (2): the moved lane. A close acts only on its own recorded
-// set, never the session a relaunch moved the lane under; each row names the
-// probe it answers.
+// The moved lane. A close acts only on its own recorded set, never the
+// session a relaunch moved the lane under.
 // ---------------------------------------------------------------------------
 
-/// Decisions 124b (2) and 124d (14) (R-U4g5 Codex
-/// `rg5_same_stamp_moved_keys_do_not_close_the_new_lane`): the store judges a
-/// moved lane by the intent's recorded keys, never the stamp alone. The same
-/// moved lane under a later `session_since` and under the close's own (the
-/// legacy launcher writes whole seconds, so a relaunch can carry the intent's
-/// stamp with new launch keys), read by the reconcile alone after the
-/// recorded wake ended: the close's recorded set is all discharged, so the
-/// reconcile settles by that set, closes `intent-stale`, never holds
-/// `stop: pending` on the new session's live harness, and the new lane stays
-/// `running` with its replacement launch.
+/// The store judges a moved lane by the intent's recorded keys, never the
+/// stamp alone. The same moved lane under a later `session_since` and under
+/// the close's own (the released launcher writes whole seconds, so a
+/// relaunch can carry the intent's stamp with new launch keys), read by the
+/// reconcile alone after the recorded wake ended: the close's recorded set
+/// is all discharged, so the reconcile settles by that set, closes
+/// `intent-stale`, never holds `stop: pending` on the new session's live
+/// harness, and the new lane stays `running` with its replacement launch.
 #[test]
 fn a_moved_lane_close_settles_by_its_recorded_set() {
     for (session_since, stamp) in [
@@ -3896,11 +3875,10 @@ fn held_close_with_an_owed_notice(runner: &Runner, harness: &Owned) {
     runner.write_fleet(&fleet);
 }
 
-/// Decision 124l (45), R-U4g8 opus M1's second reconcile: a reconcile with
-/// two open intents, one of a close whose lane row is gone, reconciles the
-/// other and reports the refused one by its cause, `lane-missing`, under
-/// `refused`; the verb succeeds and the refused intent stands as it was
-/// for the next reconcile.
+/// A reconcile with two open intents, one of a close whose lane row is
+/// gone, reconciles the other and reports the refused one by its cause,
+/// `lane-missing`, under `refused`; the verb succeeds and the refused
+/// intent stands as it was for the next reconcile.
 #[test]
 fn a_reconcile_reports_a_refused_intent_and_reconciles_the_rest() {
     let dir = tempfile::tempdir().unwrap();
@@ -3990,11 +3968,10 @@ fn a_moved_lane_close_before_any_signal_refuses_with_no_effect() {
     assert!(server.panes().contains(&new_pane), "the new window stands");
 }
 
-/// Decision 124d (20), R-U4g5 Codex `probe-moved.rs`: a moved lane's
-/// signalled close retries on its own recorded set. The repeated close and
-/// the reconcile leave the new session's harness and window untouched and
-/// stop the old recorded wake by its own token, so the intent settles
-/// instead of standing read-only for good.
+/// A moved lane's signalled close retries on its own recorded set. The
+/// repeated close and the reconcile leave the new session's harness and
+/// window untouched and stop the earlier recorded wake by its own token, so
+/// the intent settles instead of standing read-only for good.
 #[test]
 fn a_moved_lanes_old_live_wake_is_stopped_by_its_own_set_on_the_retry() {
     let dir = tempfile::tempdir().unwrap();
@@ -4057,8 +4034,7 @@ fn a_moved_lanes_old_live_wake_is_stopped_by_its_own_set_on_the_retry() {
     );
 }
 
-/// Decision 124e (24), R-U4g5 opus `ru4g5_probe_a_moved_close_owing_validation_has_no_route`:
-/// a signalled close owing its validation stop under a lane that moved
+/// A signalled close owing its validation stop under a lane that moved
 /// releases that obligation `lane-moved`, since the worktree's runs belong
 /// to the session that now holds the lane; the close settles, the new
 /// session untouched, the lane left as found.
@@ -4103,12 +4079,10 @@ fn a_moved_close_owing_its_validation_releases_it_lane_moved() {
     assert_eq!(runner.fleet()["lanes"][0]["status"], "running");
 }
 
-/// Decision 124d (20), R-U4g5 opus
-/// `ru4g5_probe_a_moved_close_never_resignals_its_own_recorded_harness`: a
-/// signalled close holding its own recorded harness (a stop that read
-/// unreadable after its signal) under a lane that moved signals that harness
-/// again through its own token on the repeat; the new session is never
-/// named.
+/// A signalled close holding its own recorded harness (a stop that read
+/// unreadable after its signal) under a lane that moved signals that
+/// harness again through its own token on the repeat; the new session is
+/// never named.
 #[test]
 fn a_moved_close_stops_its_own_recorded_harness_by_token_on_the_repeat() {
     let dir = tempfile::tempdir().unwrap();
@@ -4157,14 +4131,14 @@ fn a_moved_close_stops_its_own_recorded_harness_by_token_on_the_repeat() {
     assert_eq!(runner.fleet()["lanes"][0]["status"], "running");
 }
 
-/// Decision 124g (29), R-U4g6 opus L2: a held close whose lane the legacy
-/// launcher relaunched with another harness stops its own recorded root by
-/// token and the root's descendants named by the harness kind the set
-/// recorded at its bootstrap, never by the relaunched session's harness.
-/// The old root is a bash holding a child named `claude`; the lane now says
-/// `codex`. Both are stopped, nothing of the new session is. A set that
-/// recorded no kind (the control) stops the root alone and leaves the
-/// descendant, never signalling by the new session's name.
+/// A held close whose lane the released launcher relaunched with another
+/// harness stops its own recorded root by token and the root's descendants
+/// named by the harness kind the set recorded at its bootstrap, never by
+/// the relaunched session's harness. The recorded root is a bash holding a
+/// child named `claude`; the lane now says `codex`. Both are stopped,
+/// nothing of the new session is. A set that recorded no kind (the control)
+/// stops the root alone and leaves the descendant, never signalling by the
+/// new session's name.
 #[test]
 fn a_moved_close_stops_the_old_roots_descendants_by_the_recorded_harness() {
     for (recorded_kind, descendant_after) in [(Some("claude"), "gone"), (None, "alive")] {
@@ -4172,8 +4146,8 @@ fn a_moved_close_stops_the_old_roots_descendants_by_the_recorded_harness() {
         let server = Server::start(dir.path(), "fleet");
         let runner = Runner::new(&server, "stub-confirm");
         runner.init_fleet();
-        // The old root: a bash whose child is a sleep named `claude`, so the
-        // kernel names it as the recorded harness's own process.
+        // The recorded root: a bash whose child is a sleep named `claude`, so
+        // the kernel names it as the recorded harness's own process.
         let claude = dir.path().join("claude");
         std::os::unix::fs::symlink("/bin/sleep", &claude).unwrap();
         let pidfile = dir.path().join("descendant");
@@ -4257,11 +4231,10 @@ fn a_moved_close_stops_the_old_roots_descendants_by_the_recorded_harness() {
     }
 }
 
-/// Decision 124e (22), R-U4g5 opus
-/// `ru4g5_probe_one_repeated_close_counts_two_stale_readings`: one repeated
-/// close request, its reconcile and the stop it reruns, records one stale
-/// reading of a reused pid, never two; the next request's reading is the
-/// second, which settles the identity, the reused pid never signalled.
+/// One repeated close request, its reconcile and the stop it reruns,
+/// records one stale reading of a reused pid, never two; the next request's
+/// reading is the second, which settles the identity, the reused pid never
+/// signalled.
 #[test]
 fn one_repeated_close_request_counts_one_stale_reading() {
     let dir = tempfile::tempdir().unwrap();
@@ -4302,10 +4275,10 @@ fn one_repeated_close_request_counts_one_stale_reading() {
     assert!(live(held.pid()), "the reused pid was never signalled");
 }
 
-/// Decision 124b (2), R-U4g4 Codex M2: a wake the lane's writer replaced with
-/// none still has a stop route. A held, signalled close owing an owned live
-/// wake, the lane naming no wake now, stops the recorded wake on the repeated
-/// close by sweeping the set, not the lane's current wake.
+/// A wake the lane's writer replaced with none still has a stop route. A
+/// held, signalled close owing an owned live wake, the lane naming no wake
+/// now, stops the recorded wake on the repeated close by sweeping the set,
+/// not the lane's current wake.
 #[test]
 fn a_recorded_wake_the_lane_no_longer_names_at_all_is_still_stopped() {
     let dir = tempfile::tempdir().unwrap();
@@ -4333,10 +4306,9 @@ fn a_recorded_wake_the_lane_no_longer_names_at_all_is_still_stopped() {
     );
 }
 
-/// Decision 124c (11), R-U4g4 Codex M2: a recorded secondary identity whose
-/// pid another process now holds is counted stale per recorded key on each
-/// reconcile and settles on the second independent reading, with no signal
-/// to the reused pid.
+/// A recorded secondary identity whose pid another process now holds is
+/// counted stale per recorded key on each reconcile and settles on the
+/// second independent reading, with no signal to the reused pid.
 #[test]
 fn a_stale_secondary_identity_settles_on_the_second_independent_reading() {
     let dir = tempfile::tempdir().unwrap();
@@ -4711,15 +4683,14 @@ fn worktree_rows(intent: &Value) -> Vec<Value> {
         .collect()
 }
 
-/// Decision 128 (9): the lane's worktree is an owned resource of the close,
-/// released through the worktree package's `remove` when clean and merged,
-/// else kept with its reason on the lane record and the close still
-/// settled. Each row varies the fixture worktree and names the defect it
-/// catches: a removal over unmerged commits or a dirty tree (work lost), a
-/// refusal read as released (the record lying about the disk), a released
-/// worktree with no `kept` or a kept one without its reason (prune cannot
-/// judge the state). The locked row is the package's own refusal, issued
-/// before anything is removed.
+/// The lane's worktree is an owned resource of the close, released through
+/// the worktree package's `remove` when clean and merged, else kept with
+/// its reason on the lane record and the close still settled. Each row
+/// varies the fixture worktree: a removal over unmerged commits or a dirty
+/// tree loses work, a refusal read as released has the record lie about the
+/// disk, and a released worktree with no `kept` or a kept one without its
+/// reason leaves prune unable to judge the state. The locked row is the
+/// package's own refusal, issued before anything is removed.
 #[test]
 fn a_close_releases_a_clean_merged_worktree_and_keeps_one_it_would_lose_work_on() {
     type Plant = fn(&Path, &Path);
@@ -4831,11 +4802,11 @@ fn a_close_releases_a_clean_merged_worktree_and_keeps_one_it_would_lose_work_on(
     }
 }
 
-/// Decision 151 (1): the dirty read lists every untracked file whatever the
-/// repository's `status.showUntrackedFiles` setting, so a draft that
-/// setting hides from a plain `git status` still keeps the worktree. The
-/// defect: a listing that obeys the setting reads the tree clean, and the
-/// close deletes the draft with the worktree.
+/// The dirty read lists every untracked file whatever the repository's
+/// `status.showUntrackedFiles` setting, so a draft that setting hides from
+/// a plain `git status` still keeps the worktree: a listing that obeys the
+/// setting would read the tree clean, and the close would delete the draft
+/// with the worktree.
 #[test]
 fn a_close_keeps_a_worktree_whose_untracked_draft_git_status_config_hides() {
     let dir = tempfile::tempdir().unwrap();
@@ -4868,13 +4839,11 @@ fn a_close_keeps_a_worktree_whose_untracked_draft_git_status_config_hides() {
     );
 }
 
-/// R-U5j5 L1 and follow-up 1. Defect: a person's file standing at a
-/// gitlink's path (a vendored submodule turned into one script, not yet
-/// staged) holding the close `worktree-unreadable` forever, where git reads
-/// the gitlink as unpopulated; and, once it continues to the status read,
-/// `submodule.<name>.ignore=all` hiding that ` T` line from a status read
-/// without `--ignore-submodules=none`, so the forced removal deletes the
-/// file. The close reads it dirt and keeps the worktree, the file intact.
+/// A person's file at a gitlink's path (a vendored submodule turned into
+/// one script, not yet staged) reads to git as an unpopulated gitlink, and
+/// `submodule.<name>.ignore=all` hides its ` T` line from a status read
+/// without `--ignore-submodules=none`. The close reads it dirt and keeps
+/// the worktree, the file intact.
 #[test]
 fn a_close_keeps_a_worktree_whose_file_over_an_ignored_gitlink_is_dirt() {
     let dir = tempfile::tempdir().unwrap();
@@ -4909,12 +4878,12 @@ fn a_close_keeps_a_worktree_whose_file_over_an_ignored_gitlink_is_dirt() {
     );
 }
 
-/// Decision 169: the keep reads the worktree's module store and its
-/// populated gitlinks, whatever the nested repositories' settings say. The
-/// defect (R-U5j3, both reviews): a nested submodule's
-/// own `.gitmodules` `ignore=all` empties the superproject's pinned status
-/// listing for a draft in the inner tree, the tree reads clean, and the
-/// package's forced removal deletes the draft with the worktree.
+/// The keep reads the worktree's module store and its populated gitlinks,
+/// whatever the nested repositories' settings say: a nested submodule's own
+/// `.gitmodules` `ignore=all` empties the superproject's pinned status
+/// listing for a draft in the inner tree, so a keep reading that listing
+/// would read the tree clean and the package's forced removal would delete
+/// the draft with the worktree.
 #[test]
 fn a_close_keeps_a_worktree_whose_nested_submodule_setting_hides_a_draft() {
     let dir = tempfile::tempdir().unwrap();
@@ -4944,13 +4913,12 @@ fn a_close_keeps_a_worktree_whose_nested_submodule_setting_hides_a_draft() {
     );
 }
 
-/// Decision 163: a submodule's commits are the worktree's as much as its
-/// files. The defect (R-U5j3): a lane commits inside a submodule and merges
-/// the gitlink bump, so the superproject's `rev-list` pre-check reads the
-/// worktree merged and its status listing clean, while the submodule
-/// commit's only copy is the worktree's submodule store, which the
-/// package's forced removal deletes; `main` then names a commit that
-/// exists nowhere.
+/// A submodule's commits are the worktree's as much as its files. A lane
+/// commits inside a submodule and merges the gitlink bump, so the
+/// superproject's `rev-list` pre-check reads the worktree merged and its
+/// status listing clean, while the submodule commit's only copy is the
+/// worktree's submodule store; a forced removal over it would leave `main`
+/// naming a commit that exists nowhere.
 #[test]
 fn a_close_keeps_a_worktree_whose_submodule_holds_an_unpushed_commit() {
     let dir = tempfile::tempdir().unwrap();
@@ -4987,12 +4955,11 @@ fn a_close_keeps_a_worktree_whose_submodule_holds_an_unpushed_commit() {
     );
 }
 
-/// Decision 169: a gitlink never initialized, with no store and no
-/// populated directory, has nothing to lose, so a clean merged worktree
-/// whose `.gitmodules` names one is released, as git's own unforced removal
-/// removes it. The defect: every gitlink read as a populated submodule
-/// keeps every worktree of a repository with submodules, and no lane there
-/// is ever released.
+/// A gitlink never initialized, with no store and no populated directory,
+/// has nothing to lose, so a clean merged worktree whose `.gitmodules`
+/// names one is released, as git's own unforced removal removes it; every
+/// gitlink read as a populated submodule would keep every worktree of a
+/// repository with submodules, and no lane there would ever be released.
 #[test]
 fn a_close_releases_a_clean_worktree_whose_submodule_was_never_initialized() {
     let dir = tempfile::tempdir().unwrap();
@@ -5015,13 +4982,13 @@ fn a_close_releases_a_clean_worktree_whose_submodule_was_never_initialized() {
     assert_released(&report, &wt);
 }
 
-/// Decision 166: the keep reads the index's gitlink, which no activation
-/// setting changes. The defect (R-U5j4 C1): `submodule.<name>.active=false`,
-/// or a `submodule.active` pattern excluding the submodule with the entry's
-/// own `active` unset (gitsubmodules(7) § Active submodules), makes `git
-/// submodule status` prefix a populated submodule `-`, so U5j4's keep read
-/// it absent, the nested `ignore=all` emptied the pinned status, and the
-/// forced removal deleted the inner draft.
+/// The keep reads the index's gitlink, which no activation setting changes:
+/// `submodule.<name>.active=false`, or a `submodule.active` pattern
+/// excluding the submodule with the entry's own `active` unset
+/// (gitsubmodules(7) § Active submodules), makes `git submodule status`
+/// prefix a populated submodule `-`, so a keep reading that status would
+/// read it absent, with the nested `ignore=all` emptying the pinned status,
+/// and the forced removal would delete the inner draft.
 #[test]
 fn a_close_keeps_a_worktree_whose_submodule_activation_setting_hides_a_nested_draft() {
     // (name, the settings written to the worktree's config after `submodule
@@ -5075,13 +5042,13 @@ fn a_close_keeps_a_worktree_whose_submodule_activation_setting_hides_a_nested_dr
     }
 }
 
-/// Decision 166: the index's gitlink names the submodule's module store
-/// whatever the activation setting says. The defect (R-U5j4 C1): a lane
-/// commits inside its submodule and merges the gitlink bump, and
-/// `submodule.sub.active=false` makes `git submodule status` list the
-/// populated submodule `-`, so U5j4's keep read it absent, the superproject
-/// read merged and clean, and the forced removal deleted the worktree's
-/// module store, the commit's only copy.
+/// The index's gitlink names the submodule's module store whatever the
+/// activation setting says. A lane commits inside its submodule and merges
+/// the gitlink bump, and `submodule.sub.active=false` makes `git submodule
+/// status` list the populated submodule `-`, so a keep reading that status
+/// would read it absent and the superproject merged and clean, and the
+/// forced removal would delete the worktree's module store, the commit's
+/// only copy.
 #[test]
 fn a_close_keeps_a_worktree_whose_inactive_submodule_holds_an_unpushed_commit() {
     let dir = tempfile::tempdir().unwrap();
@@ -5113,14 +5080,13 @@ fn a_close_keeps_a_worktree_whose_inactive_submodule_holds_an_unpushed_commit() 
     );
 }
 
-/// Decision 169: `git submodule deinit` empties the submodule's directory
-/// and leaves its module store under the worktree's git directory, which
-/// the keep reads. The defect (R-U5j4 C1 and P2, both reviews): the
-/// deinitialized entry lists `-`, its `.git` is gone with the tree and the
-/// pinned status lists nothing, so a keep reading `submodule status` or the
-/// populated directory alone released the worktree, and the forced removal
-/// deleted the store, the only copy of a commit made inside the submodule,
-/// and a draft a person wrote into the emptied directory.
+/// `git submodule deinit` empties the submodule's directory and leaves its
+/// module store under the worktree's git directory, which the keep reads.
+/// The deinitialized entry lists `-`, its `.git` is gone with the tree and
+/// the pinned status lists nothing, so a keep reading `submodule status` or
+/// the populated directory alone would release the worktree, and the forced
+/// removal would delete the store, the only copy of a commit made inside
+/// the submodule, and a draft a person wrote into the emptied directory.
 #[test]
 fn a_close_keeps_a_worktree_whose_deinitialized_submodule_left_its_store() {
     let dir = tempfile::tempdir().unwrap();
@@ -5159,13 +5125,13 @@ fn a_close_keeps_a_worktree_whose_deinitialized_submodule_left_its_store() {
     );
 }
 
-/// Decision 169: the keep reads the module store and the populated
-/// gitlinks of the index, so a submodule a person cloned by hand into the
-/// gitlink path, its repository a `.git` directory inside the worktree's
-/// tree and no store under the worktree's git directory, keeps the
-/// worktree as git's own unforced removal refuses it. The defect: a keep
-/// reading the store alone releases it, and the forced removal deletes the
-/// clone with a draft its nested `ignore=all` hides from the pinned status.
+/// The keep reads the module store and the populated gitlinks of the index,
+/// so a submodule a person cloned by hand into the gitlink path, its
+/// repository a `.git` directory inside the worktree's tree and no store
+/// under the worktree's git directory, keeps the worktree as git's own
+/// unforced removal refuses it; a keep reading the store alone would
+/// release it, and the forced removal would delete the clone with a draft
+/// its nested `ignore=all` hides from the pinned status.
 #[test]
 fn a_close_keeps_a_worktree_whose_submodule_is_a_clone_with_no_store() {
     let dir = tempfile::tempdir().unwrap();
@@ -5214,12 +5180,12 @@ fn a_close_keeps_a_worktree_whose_submodule_is_a_clone_with_no_store() {
     );
 }
 
-/// Decision 169: the keep reads no `.gitmodules`, so a gitlink with no
-/// mapping there, an embedded repository `git add` took as one, is judged
-/// like any other and a clean merged worktree is released. The defect
-/// (R-U5j4 M1): a read through `.gitmodules` (`git submodule status`) exits
-/// 128 on the unmapped gitlink, so the close held the worktree
-/// `worktree-unreadable` on every repeat and the lane never ended.
+/// The keep reads no `.gitmodules`, so a gitlink with no mapping there, an
+/// embedded repository `git add` took as one, is judged like any other and
+/// a clean merged worktree is released. A read through `.gitmodules` (`git
+/// submodule status`) exits 128 on the unmapped gitlink, which would hold
+/// the worktree `worktree-unreadable` on every repeat and the lane would
+/// never end.
 #[test]
 fn a_close_releases_a_clean_worktree_whose_gitlink_has_no_gitmodules_mapping() {
     let dir = tempfile::tempdir().unwrap();
@@ -5250,13 +5216,12 @@ fn a_close_releases_a_clean_worktree_whose_gitlink_has_no_gitmodules_mapping() {
     assert_released(&report, &wt);
 }
 
-/// Decision 151 (2): the removal goes through the worktree package, which
-/// moves a lane's mailboxes to the main checkout's `tmp/lane-mail/` before
-/// git deletes the tree, so an unread notice under the worktree's ignored
-/// `tmp/`, invisible to the dirty read, outlives the removal where the
-/// overseer's watch reads a removed lane's mail. The defect: a raw `git
-/// worktree remove` deletes the notice before its reader took it, and the
-/// lane reads `done` with no `kept`.
+/// The removal goes through the worktree package, which moves a lane's
+/// mailboxes to the main checkout's `tmp/lane-mail/` before git deletes the
+/// tree, so an unread notice under the worktree's ignored `tmp/`, invisible
+/// to the dirty read, outlives the removal where the overseer's watch reads
+/// a removed lane's mail; a raw `git worktree remove` would delete the
+/// notice before its reader took it.
 #[test]
 fn a_close_releasing_a_worktree_moves_its_unread_lane_mail_to_the_main_checkout() {
     let dir = tempfile::tempdir().unwrap();
@@ -5292,11 +5257,9 @@ fn a_close_releasing_a_worktree_moves_its_unread_lane_mail_to_the_main_checkout(
     );
 }
 
-/// Decision 151 (2), the package's rc 2: a lane mailbox the package cannot
-/// move to the main checkout's refuses the removal with nothing removed, and
-/// the close keeps the worktree `mail-unmoved`, the notice where the lane
-/// wrote it. The defect: a refusal read as released, or a kept worktree
-/// without the reason the mail stands for.
+/// The package's rc 2: a lane mailbox the package cannot move to the main
+/// checkout's refuses the removal with nothing removed, and the close keeps
+/// the worktree `mail-unmoved`, the notice where the lane wrote it.
 #[test]
 fn a_close_keeps_a_worktree_whose_lane_mail_cannot_be_moved() {
     use std::os::unix::fs::PermissionsExt;
@@ -5334,11 +5297,10 @@ fn a_close_keeps_a_worktree_whose_lane_mail_cannot_be_moved() {
     );
 }
 
-/// Decision 151 (2), the package's rc 3: a mailbox that cannot join the one
-/// already in the main checkout is kept beside it, the worktree removed all
-/// the same, and the close records where the package kept it on the lane
-/// as `kept_mail`, the mail readable there. The defect: a released worktree
-/// whose unread mail was set aside with no record of where.
+/// The package's rc 3: a mailbox that cannot join the one already in the
+/// main checkout is kept beside it, the worktree removed all the same, and
+/// the close records where the package kept it on the lane as `kept_mail`,
+/// the mail readable there.
 #[test]
 fn a_close_releasing_a_worktree_records_the_lane_mail_kept_beside_the_main_checkouts() {
     let dir = tempfile::tempdir().unwrap();
@@ -5374,11 +5336,10 @@ fn a_close_releasing_a_worktree_records_the_lane_mail_kept_beside_the_main_check
     );
 }
 
-/// R-U5j L1: the close is the one writer of the lane's `kept` and
-/// `kept_mail`, and a relaunch keeps every field it does not write, so a
-/// lane closed `kept: dirty`, relaunched and closed again with its worktree
-/// released must read neither. The defect: a stale `kept` outlives a
-/// release, and the retention duty keeps a worktree that is gone.
+/// The close is the one writer of the lane's `kept` and `kept_mail`, and a
+/// relaunch keeps every field it does not write, so a lane closed `kept:
+/// dirty`, relaunched and closed again with its worktree released must read
+/// neither, or the retention duty would keep a worktree that is gone.
 #[test]
 fn a_later_close_that_releases_clears_an_earlier_closes_kept() {
     let dir = tempfile::tempdir().unwrap();
@@ -5408,12 +5369,12 @@ fn a_later_close_that_releases_clears_an_earlier_closes_kept() {
     assert_eq!(report["lane"].get("kept_mail"), None, "{report}");
 }
 
-/// R-U5j M2: a `claude-cloud` lane records `host: claude-cloud` with its
-/// `mail_root` the item's worktree on this machine, the one worktree the
-/// legacy `lane-close` removes for a hosted lane, so its close owes that
-/// worktree and releases it through the package like a local lane's. The
-/// defect: the worktree standing after a done close with no `kept`, which
-/// the retention duty would read as released.
+/// A `claude-cloud` lane records `host: claude-cloud` with its `mail_root`
+/// the item's worktree on this machine, the one worktree the released
+/// `lane-close` removes for a hosted lane, so its close owes that worktree
+/// and releases it through the package like a local lane's; a worktree
+/// standing after a done close with no `kept` would read as released to the
+/// retention duty.
 #[test]
 fn a_claude_cloud_lanes_local_worktree_is_owed_and_released() {
     let dir = tempfile::tempdir().unwrap();
@@ -5443,10 +5404,9 @@ fn a_claude_cloud_lanes_local_worktree_is_owed_and_released() {
     assert_eq!(report["lane"].get("kept"), None, "{report}");
 }
 
-/// R-U5j2 M1, the other side: in a claim worktree only the ` D` lines are
-/// the claim's design; an untracked draft under it is work, and the close
-/// keeps the worktree `dirty` with the draft intact. The defect: a claim
-/// read as clean whatever it holds, the draft deleted with the worktree.
+/// In a claim worktree only the ` D` lines are the claim's design; an
+/// untracked draft under it is work, and the close keeps the worktree
+/// `dirty` with the draft intact.
 #[test]
 fn a_claude_cloud_lanes_claim_worktree_holding_a_draft_is_kept_dirty() {
     let dir = tempfile::tempdir().unwrap();
@@ -5480,15 +5440,14 @@ fn cloud_lane(item: &str, runner: &Runner, wt: &Path) -> Value {
     lane
 }
 
-/// R-U5j2 L1: a worktree package that cannot start (a script that is not
-/// there never starts: the runner's cause, no `worktree-` keyed line)
-/// removed nothing, so the worktree is held `removal-not-started`: the
-/// close `unconfirmed`, the worktree in `remaining`, the lane not `done`,
-/// nothing removed, and the repeat reads it again once the install is
-/// repaired. Defects: a start that failed read as the package's refusal
-/// records a terminal `kept: refused:...` on a lane whose close is never
-/// retried; read as no answer (`removal-unanswered`), a removal that may
-/// have happened.
+/// A worktree package that cannot start (a script that is not there never
+/// starts: the runner's cause, no `worktree-` keyed line) removed nothing,
+/// so the worktree is held `removal-not-started`: the close `unconfirmed`,
+/// the worktree in `remaining`, the lane not `done`, nothing removed, and
+/// the repeat reads it again once the install is repaired. A start that
+/// failed read as the package's refusal would record a terminal `kept:
+/// refused:...` on a lane whose close is never retried; read as no answer
+/// (`removal-unanswered`), it would claim a removal that may have happened.
 #[test]
 fn a_worktree_package_that_cannot_start_holds_the_close_with_nothing_removed() {
     let dir = tempfile::tempdir().unwrap();
@@ -5533,11 +5492,10 @@ fn a_worktree_package_that_cannot_start_holds_the_close_with_nothing_removed() {
     assert!(wt.exists(), "nothing was removed");
 }
 
-/// Decision 128 (9), the hold: a worktree whose path cannot be read is
-/// neither released nor kept; the obligation stands `worktree-unreadable`
-/// and the close does not settle, so a repeated close reads it again. The
-/// defect: an unreadable path discharged as released or kept would record a
-/// state nothing read.
+/// The hold: a worktree whose path cannot be read is neither released nor
+/// kept; the obligation stands `worktree-unreadable` and the close does not
+/// settle, so a repeated close reads it again; an unreadable path
+/// discharged as released or kept would record a state nothing read.
 #[test]
 fn an_unreadable_worktree_holds_the_close_worktree_unreadable() {
     use std::os::unix::fs::PermissionsExt;
@@ -5577,11 +5535,10 @@ fn an_unreadable_worktree_holds_the_close_worktree_unreadable() {
     assert!(wt.exists(), "nothing was removed");
 }
 
-/// Decision 128 (9): a close whose lane record names no local worktree
-/// acquires none, so a lane with no mail root and a hosted lane (whose
-/// worktree is its host's, decision 57) settle with no worktree row. The
-/// defect: a worktree obligation on a path this machine does not hold would
-/// never settle.
+/// A close whose lane record names no local worktree acquires none, so a
+/// lane with no mail root and a hosted lane (whose worktree is its host's)
+/// settle with no worktree row: a worktree obligation on a path this
+/// machine does not hold would never settle.
 #[test]
 fn a_lane_with_no_local_worktree_acquires_no_worktree_obligation() {
     // (name, the lane fields that name no local worktree)
@@ -5618,14 +5575,12 @@ fn a_lane_with_no_local_worktree_acquires_no_worktree_obligation() {
     }
 }
 
-/// Decision 128 (9) with 115 (A): the worktree is acquired, written on the
-/// intent, before the removal runs, so a close that dies at its removal
-/// leaves the record naming the worktree it owes and the repeated close
-/// releases it. The git shim, on the PATH the worktree package inherits,
-/// holds the run at the package's `git worktree remove`; the row reads the
-/// record there, kills the run, and repeats the close. The defect: a
-/// removal before its acquisition is written leaves a dead close with no
-/// record of the worktree it was removing.
+/// The worktree is acquired, written on the intent, before the removal
+/// runs, so a close that dies at its removal leaves the record naming the
+/// worktree it owes and the repeated close releases it. The git shim, on
+/// the PATH the worktree package inherits, holds the run at the package's
+/// `git worktree remove`; the row reads the record there, kills the run,
+/// and repeats the close.
 #[test]
 fn a_close_crashed_at_its_removal_holds_the_worktree_acquired_for_the_repeat() {
     let dir = tempfile::tempdir().unwrap();
@@ -5707,11 +5662,10 @@ fn a_close_crashed_at_its_removal_holds_the_worktree_acquired_for_the_repeat() {
     );
 }
 
-/// Decisions 124e (24) and 128 (9): a signalled close owing its worktree
-/// under a lane that moved releases that obligation `lane-moved`, as it does
-/// the validation stop, since the worktree is the session's that now holds
-/// the lane; the close settles and the worktree stands. The defect: a moved
-/// close removing the new session's worktree.
+/// A signalled close owing its worktree under a lane that moved releases
+/// that obligation `lane-moved`, as it does the validation stop, since the
+/// worktree is the session's that now holds the lane; the close settles and
+/// the worktree stands.
 #[test]
 fn a_moved_close_owing_its_worktree_releases_it_lane_moved() {
     let dir = tempfile::tempdir().unwrap();
@@ -6036,11 +5990,9 @@ fn a_hosted_launch_runs_the_providers_verbs_and_opens_its_window_over_ssh() {
     effect_report(&world.runner.op_fleet(&terminal_close("KEN-H")));
 }
 
-/// Defect: a hosted create whose answer is lost held for a person, or read
-/// as a refused create, where the provider's next create reuses what it
-/// holds. Through the real `lane-host`: a launch whose `op` ends inside
-/// the create is failed by the reconcile from the phase the launch
-/// recorded before it; a provider a signal ends mid-create fails the launch
+/// Through the real `lane-host`: a launch whose `op` ends inside the create
+/// is failed by the reconcile from the phase the launch recorded before it;
+/// a provider a signal ends mid-create fails the launch
 /// `host-create-unknown` with no window, never `host-create-failed`; each
 /// leaves the lane out of `preparing`, and the next launch asks the
 /// provider's create again, reusing the item it holds, and opens. A create
@@ -6571,9 +6523,8 @@ fn a_copilot_lane_launches_only_where_its_lane_mail_hooks_run() {
     }
 }
 
-/// Defect: a Copilot lane's record said nothing of the grant its line
-/// carries, so no reader could tell a lane a policy block can take
-/// allow-all from. Through the real `launch-lane`: a Copilot lane under the
+/// The record tells a reader whether a policy block can take allow-all from
+/// the lane. Through the real `launch-lane`: a Copilot lane under the
 /// bypass posture records `allow_all: true` and its line carries the grant;
 /// one whose request narrows the permission records `false`, its line the
 /// narrower word and no grant; a Claude lane records none.
@@ -6799,14 +6750,13 @@ fn a_hosted_lane_is_gated_before_create_and_a_hosted_pi_lane_on_its_host_s_files
     }
 }
 
-/// Defect: a hosted Pi lane on the Copilot pool started its harness under
-/// the provider's login shell, whose key and proxy variables the parent
-/// read, while a pane agent `tmux split-window` starts took its environment
-/// from the host's tmux server, started outside that shell, and read none.
-/// Through the real hosted `launch-lane`, the fixture provider and a
-/// private server: the typed line runs the session-environment step before
-/// the harness, so the pane agent the harness splits off reads the key its
-/// Pi `models.json` names and the proxy, as the parent does.
+/// A pane agent `tmux split-window` starts takes its environment from the
+/// host's tmux server, started outside the provider's login shell whose key
+/// and proxy variables the parent reads. Through the real hosted
+/// `launch-lane`, the fixture provider and a private server: the typed line
+/// runs the session-environment step before the harness, so the pane agent
+/// the harness splits off reads the key its Pi `models.json` names and the
+/// proxy, as the parent does.
 #[test]
 fn a_hosted_pi_lane_on_the_copilot_pool_hands_its_pane_agents_the_login_environment() {
     let dir = tempfile::tempdir().unwrap();
@@ -7231,13 +7181,11 @@ fn a_reconciled_pi_lane_on_a_seat_binds_its_session_under_pis_root_not_the_seat(
     );
 }
 
-/// Defect: a launch whose harness runs under another home, or another
-/// config mode, than the one its session is proved, read and recorded
-/// under. A stopped lane with no account recorded the home its bound
-/// session stands in, and whether it named it; whatever the fleet server or
-/// the settings now hand the harness, the relaunch resumes the session on
-/// that home in that mode. A record with no home, as every released record
-/// is, resumes under the home a fresh launch picks: the server's, else the
+/// A stopped lane with no account recorded the home its bound session
+/// stands in, and whether it named it; whatever the fleet server or the
+/// settings now hand the harness, the relaunch resumes the session on that
+/// home in that mode. A record with no home, as every released record is,
+/// resumes under the home a fresh launch picks: the server's, else the
 /// loaded `COPILOT_HOME`, else the default, Claude's implicit. A fresh
 /// Claude launch names the server's config dir as found, even
 /// `$HOME/.claude`, and records that it named it; where the server names
@@ -7506,8 +7454,6 @@ fn a_lane_with_no_account_runs_under_the_one_home_its_session_is_proved_and_reco
     }
 }
 
-/// Defect: an accountless launch run on an inherited home that does not
-/// stand, so a harness with no login runs where a named refusal was owed.
 /// With nothing recorded and the server naming nothing, the launch keeps
 /// the inherited home (`~/.codex`; the loaded `COPILOT_HOME`), which must
 /// exist: it refuses `home-missing` before any window opens, nothing
@@ -7574,13 +7520,10 @@ fn an_accountless_launch_whose_inherited_home_does_not_stand_refuses_before_any_
     }
 }
 
-/// Defect: a Pi lane launched on a seat of another harness (a Claude
-/// account billing a `pi-claude/` model) with no Pi root under the home
-/// reached the harness gate, which read the absent root's settings as
-/// compaction on, where the controller's transfer of the same shape
-/// refuses `home-missing`: the root the lane runs on must stand before
-/// anything judges it. Through the real `launch-lane`: the launch fails
-/// `home-missing` naming the root, nothing recorded as opening, no window.
+/// The root a Pi lane runs on must stand before anything judges it: the
+/// harness gate would read an absent root's settings as compaction on.
+/// Through the real `launch-lane`: the launch fails `home-missing` naming
+/// the root, nothing recorded as opening, no window.
 #[test]
 fn a_seated_pi_lane_with_no_pi_root_refuses_home_missing_before_the_gate() {
     let dir = tempfile::tempdir().unwrap();
@@ -7787,17 +7730,15 @@ fn the_model_switch_recovery_stops_through_the_runtime_and_relaunches_over_the_r
     }
 }
 
-/// Defects: the lane record named no tier, so the cycle reader asked for
-/// one on every runtime-launched lane; and a relaunch rewrote a micro
-/// lane's tier from its brief, which opens the workflow with `start`
-/// whatever the item's tier, so the cycle refused the overseer's `--tier
-/// micro`. Through the real `launch-lane`: a brief opening the orch
-/// workflow with `start` records the standard tier and the item-tier
-/// line's inputs; one stating no verb and two item-tier lines that differ
-/// records none; one opening with `micro` records micro and its line's
-/// inputs, and that lane's relaunch on the wall's start brief keeps them;
-/// closed `done`, its next phase opening with `small` records small and
-/// that brief's inputs, as a first launch does.
+/// The cycle reader takes the lane record's tier, and a micro lane's
+/// relaunch brief opens the workflow with `start` whatever the item's tier.
+/// Through the real `launch-lane`: a brief opening the orch workflow with
+/// `start` records the standard tier and the item-tier line's inputs; one
+/// stating no verb and two item-tier lines that differ records none; one
+/// opening with `micro` records micro and its line's inputs, and that
+/// lane's relaunch on the wall's start brief keeps them; closed `done`, its
+/// next phase opening with `small` records small and that brief's inputs,
+/// as a first launch does.
 #[test]
 fn the_launch_records_the_tier_its_brief_states_and_a_relaunch_keeps_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -7890,15 +7831,14 @@ fn the_launch_records_the_tier_its_brief_states_and_a_relaunch_keeps_it() {
     );
 }
 
-/// Defect: a lane the runtime launched bound no obligation, so the cycle
-/// its close recorded read unknown lineage. Through the real `launch-lane`
-/// and the real `oversee-cycle`: a launch naming the item's obligation
-/// records it; the item's next phase naming none keeps it, and one naming
-/// another is refused `obligation-conflict` with nothing written; a record
-/// that binds none takes the obligation a later launch names; a parent
-/// named without its pair is refused `request-invalid` with nothing
-/// written; the cycle recorder copies the recorded obligation into the
-/// cycle.
+/// A lane bound to no obligation leaves its cycle's lineage unknown.
+/// Through the real `launch-lane` and the real `oversee-cycle`: a launch
+/// naming the item's obligation records it; the item's next phase naming
+/// none keeps it, and one naming another is refused `obligation-conflict`
+/// with nothing written; a record that binds none takes the obligation a
+/// later launch names; a parent named without its pair is refused
+/// `request-invalid` with nothing written; the cycle recorder copies the
+/// recorded obligation into the cycle.
 #[test]
 fn the_launch_binds_the_items_obligation_and_its_cycle_records_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -8004,12 +7944,10 @@ fn the_launch_binds_the_items_obligation_and_its_cycle_records_it() {
     );
 }
 
-/// Defect: a lane launched under a narrower permission choice recovered
-/// from a model switch under the bypass default, its record carrying no
-/// choice. Through the real `launch-lane` and the real recovery: a lane
-/// launched with `--permission-mode dontAsk` records the choice as its
-/// line's words, the replacement's line carries `dontAsk` and no bypass
-/// word, and the relaunched record keeps the choice.
+/// Through the real `launch-lane` and the real recovery: a lane launched
+/// with `--permission-mode dontAsk` records the choice as its line's words,
+/// the replacement's line carries `dontAsk` and no bypass word, and the
+/// relaunched record keeps the choice.
 #[test]
 fn a_lanes_recorded_permission_choice_reaches_its_model_switch_replacement() {
     let dir = tempfile::tempdir().unwrap();
@@ -8144,12 +8082,11 @@ fn fleet_origin(checkouts: &[&Path]) {
     }
 }
 
-/// Defect: a first launch carried the overseer's brief as written, so a
-/// lane briefed without the unattended words asked its questions in a
-/// chat nobody reads. Through the real `launch-lane`, for each harness: a
-/// brief with no unattended words reaches the harness's line closed by
-/// them, exactly once, on a line after the brief's own; a Claude brief
-/// that already carries them, at its end or on its first line before an
+/// A lane briefed without the unattended words asks its questions in a chat
+/// nobody reads. Through the real `launch-lane`, for each harness: a brief
+/// with no unattended words reaches the harness's line closed by them,
+/// exactly once, on a line after the brief's own; a Claude brief that
+/// already carries them, at its end or on its first line before an
 /// item-tier line, reaches the line as written; a hosted lane's brief,
 /// through the real `lane-host` dispatcher and a fixture provider, reaches
 /// its harness on the host closed by them the same way.

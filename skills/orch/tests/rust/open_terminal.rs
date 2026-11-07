@@ -4,8 +4,8 @@
 //! gate, a record no longer in flight by its status, and a second wake
 //! while the turn the first started still runs by that turn's recorded
 //! identity, each before the runtime is asked anything; and the lane record
-//! the recovery suites plant is the one this launch wrote. Each row names
-//! the defect it catches at its doc comment and holds the runtime's own
+//! the recovery suites plant is the one this launch wrote. Each row's name
+//! carries the defect it catches, and each row holds the runtime's own
 //! reading beside the wake's answer. The scripts run from a directory of
 //! links to the shipped tree under a private home, and a control copies the
 //! entry with its rule cut.

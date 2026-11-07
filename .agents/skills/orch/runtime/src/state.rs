@@ -1,5 +1,5 @@
 //! Workflow records: the item state `<state-dir>/workflow-state-<ITEM>.json`
-//! and the fleet state `workflow-state-oversee.json`, in the shape the legacy
+//! and the fleet state `workflow-state-oversee.json`, in the shape the
 //! `workflow-state` script writes.
 //!
 //! A record is held as the document the file holds, a `serde_json::Map` in
@@ -31,11 +31,11 @@ use serde_json::{Map, Value};
 use crate::error::{Error, Result, ShapeReason};
 
 /// The observation note a reconcile writes when it found the intent's owner
-/// still live and deferred to it (decision 72). The outcome records only
+/// still live and deferred to it. The outcome records only
 /// this observation; it moves no record.
 pub const OWNER_LIVE: &str = "owner-live";
 /// The observation note a reconcile writes when the intent's owner could
-/// not be read (decision 99): neither live nor dead is established, so the
+/// not be read: neither live nor dead is established, so the
 /// outcome records the observation and its cause and moves no record, as
 /// [`OWNER_LIVE`] does.
 pub const OWNER_UNREAD: &str = "owner-unreadable";
@@ -47,7 +47,8 @@ pub const FLEET_FILE_NAME: &str = "workflow-state-oversee.json";
 pub type Document = Map<String, Value>;
 
 /// The item state file for `item` under `dir`:
-/// `workflow-state-<ITEM>.json`, the legacy `get_state_file`.
+/// `workflow-state-<ITEM>.json`, the name `workflow-state`'s `get_state_file`
+/// builds.
 pub fn item_path(dir: &Path, item: &str) -> PathBuf {
     dir.join(format!("workflow-state-{item}.json"))
 }
@@ -61,8 +62,8 @@ pub fn item_of(path: &Path) -> Option<&str> {
         .and_then(|n| n.strip_suffix(".json"))
 }
 
-/// U6c: the directive id of an owner-directed micro change's item, keyed
-/// `directive-<id>` (decisions 168 (4), 182 Q4): the hook's item alphabet
+/// The directive id of an owner-directed micro change's item, keyed
+/// `directive-<id>`: the hook's item alphabet
 /// (`hooks/lane-mail-check.sh` `item_alphabet`) and the mailbox's
 /// (`lane-mail` `item-invalid`) admit `A-Za-z0-9._-` alone, so the word and
 /// the id join with a hyphen, never a colon. `None` for every other item.
@@ -75,14 +76,14 @@ pub fn fleet_path(dir: &Path) -> PathBuf {
     dir.join(FLEET_FILE_NAME)
 }
 
-/// The receipt the pane an effect opened writes for its intent (decision
-/// 96), beside the records under `dir`: `intents/<intent id>.pane`. An
+/// The receipt the pane an effect opened writes for its intent, beside
+/// the records under `dir`: `intents/<intent id>.pane`. An
 /// intent id is `<op>:<target>:<stamp>` and carries no path separator.
 pub fn receipt_path(dir: &Path, intent_id: &str) -> PathBuf {
     dir.join("intents").join(format!("{intent_id}.pane"))
 }
 
-/// The request a transfer's detached job runs (decision 76), written by the
+/// The request a transfer's detached job runs, written by the
 /// caller beside the receipt before the job starts: `intents/<intent
 /// id>.request`.
 pub fn job_request_path(dir: &Path, intent_id: &str) -> PathBuf {
@@ -125,7 +126,7 @@ impl Kind {
 
 /// How a write takes the file's lock. `wait` bounds the acquisition, the
 /// flock and the mutex together; with `legacy_mutex` the file is also
-/// written under the `mkdir` mutex the legacy shell writers take where the
+/// written under the `mkdir` mutex the shell writers take where the
 /// host has no `flock(1)`, so those writers are excluded.
 #[derive(Debug, Clone, Copy)]
 pub struct Locking {
@@ -134,7 +135,7 @@ pub struct Locking {
 }
 
 impl Locking {
-    /// A host with `flock(1)`: the flock alone, with the legacy wait. The
+    /// A host with `flock(1)`: the flock alone, with the shell writers' wait. The
     /// command resolves a host's policy itself, from its own `PATH`.
     pub const FLOCK: Locking = Locking {
         wait: Wait::LEGACY,
@@ -179,7 +180,7 @@ fn shape(path: &Path, field: &str, reason: ShapeReason, cause: impl Into<String>
 }
 
 /// Read the top-level `key` as `T`. An absent key or a `null` reads as
-/// `None`, the way the legacy `.key // default` reads do; another value that
+/// `None`, the way the shell writers' `.key // default` reads do; another value that
 /// is not a `T` refuses `record-shape` naming the key.
 pub fn field<T: DeserializeOwned>(path: &Path, doc: &Document, key: &str) -> Result<Option<T>> {
     match doc.get(key) {
@@ -201,7 +202,7 @@ pub fn delete(doc: &mut Document, key: &str) -> bool {
 }
 
 /// The array under `key`, created empty when the key is absent or `null`
-/// (the legacy writers' `.key // []`). Another value refuses `record-shape`.
+/// (the shell writers' `.key // []`). Another value refuses `record-shape`.
 pub fn array_mut<'a>(path: &Path, doc: &'a mut Document, key: &str) -> Result<&'a mut Vec<Value>> {
     if matches!(doc.get(key), None | Some(Value::Null)) {
         doc.insert(key.to_owned(), Value::Array(Vec::new()));
@@ -327,8 +328,7 @@ impl StageOutcome {
 /// seconds, `superseded: true` once a later round of the kind opened over
 /// it, `run_dir` on a validation run's entry, `outcome` once `accept-result`
 /// closed it. A validation run `validate start` owns carries its `proof`
-/// and its `job` from before its launch, and its `notice` from its close
-/// (U6a, step6-map § C).
+/// and its `job` from before its launch, and its `notice` from its close.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Stage {
     pub kind: StageKind,
@@ -349,20 +349,20 @@ pub struct Stage {
     pub job: Option<ValidateJob>,
     #[serde(default)]
     pub notice: Option<Notice>,
-    // U6c: who accepted the step, and the item body revision the round
-    // read (step6-map § A3, § A8).
+    // Who accepted the step, and the item body revision the round
+    // read.
     #[serde(default)]
     pub authorization: Option<Authorization>,
     #[serde(default)]
     pub body_revision: Option<String>,
-    // U6l: the intentional stop a `validate stop` recorded on the open
-    // stage before it ended the run's job (decision 188 (c)).
+    // The intentional stop a `validate stop` recorded on the open
+    // stage before it ended the run's job.
     #[serde(default)]
     pub stop: Option<Stop>,
 }
 
-/// U6l: an intentional stop of a validation run, recorded on its open stage
-/// before the job is ended, a record before the effect (decision 120). A
+/// An intentional stop of a validation run, recorded on its open stage
+/// before the job is ended, a record before the effect. A
 /// job then read gone with no sentinel closes `stopped`; one with no such
 /// record closes `lost`, since no one recorded an intent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -370,11 +370,11 @@ pub struct Stop {
     pub at: u64,
 }
 
-/// U6c: who accepted a round's step, recorded on its stage at the close
-/// (decisions 142 (5), 168 (4)): the overseer's acceptance, or the owner's
+/// Who accepted a round's step, recorded on its stage at the close:
+/// the overseer's acceptance, or the owner's
 /// directive a micro change was made under, each by its id. The field is
 /// part of the acceptance's identity: a closed stage keeps the one it was
-/// closed under, and a request naming another refuses (decision 100).
+/// closed under, and a request naming another refuses.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Authorization {
     pub by: AuthorizedBy,
@@ -389,8 +389,8 @@ pub enum AuthorizedBy {
     OwnerDirective,
 }
 
-/// U6c, U7e: the item's Completion Summary comment on the tracker, the
-/// item's `summary_comment` (step6-map § A8, decision 192 Q10): the
+/// The item's Completion Summary comment on the tracker, the
+/// item's `summary_comment`: the
 /// comment's id, the stamp of the acceptance's last post, and the
 /// attachments its body carries. The acceptance updates the comment in
 /// place by its id; on Linear a comment's attachments are links in its
@@ -439,7 +439,7 @@ impl ValidateMode {
 }
 
 /// The proof facts of one validation run, written on its stage before the
-/// launch (step6-map § C): the tree the run validated, the check selection
+/// launch: the tree the run validated, the check selection
 /// it ran, and the mode the declaration resolved with the cause a wider
 /// mode was asked for. A stage closed `pass` with these is a proof row; a
 /// `ci` row records CI pending and proves nothing locally.
@@ -500,10 +500,10 @@ pub enum Reused {
     BoundRun { run_dir: String },
 }
 
-/// The detached job a validation run runs in, as job-unit records it
-/// (decision 115 (B)): the record's path from before the launcher is asked,
+/// The detached job a validation run runs in, as job-unit records it:
+/// the record's path from before the launcher is asked,
 /// then the identity the launcher's record names. `reconcile-round` reads
-/// the identity three-valued, never the child's bare pid (ML:87).
+/// the identity three-valued, never the child's bare pid.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ValidateJob {
     /// The launcher's record, `<run_dir>/runner`.
@@ -569,8 +569,8 @@ impl LaneStatus {
     }
 
     /// A lane a launch is still on: `preparing` or `running`. A `stopped`,
-    /// `parked` or `done` lane admits a relaunch, the parked one being the
-    /// `parked-merged` route the legacy launcher admits in the same cap.
+    /// `parked` or `done` lane admits a relaunch, the parked one through the
+    /// `parked-merged` route, in the same cap.
     pub fn in_flight(self) -> bool {
         match self {
             LaneStatus::Preparing | LaneStatus::Running => true,
@@ -579,8 +579,8 @@ impl LaneStatus {
     }
 }
 
-/// A deliberate, finite hold on a lane's slot in the fleet cap (decision
-/// 97): `reason` names why an op wrote it and `until` the ISO 8601 UTC
+/// A deliberate, finite hold on a lane's slot in the fleet cap:
+/// `reason` names why an op wrote it and `until` the ISO 8601 UTC
 /// stamp it lapses at. The cap charges the lane while the hold stands, and
 /// nothing else about the lane does once its harness is gone; a relaunch,
 /// `release-lane` and a confirmed close drop it. Expiry never slides on a
@@ -592,7 +592,7 @@ pub struct Reservation {
 }
 
 /// A rebase obligation the admission recorded on the launching item's lane
-/// record (decision 118 (3)): a holder of a path the item touches whose
+/// record: a holder of a path the item touches whose
 /// lane read stopped or held yielded the path, and the lane rebases onto
 /// the holder's branch, or after it merges, before it publishes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -609,9 +609,9 @@ pub struct RebaseObligation {
 }
 
 /// A lane's launch identity `{pane, server, server_start, pid, start}`.
-/// `server_start` is the tmux server's start the runtime's launch published
-/// (decision 120, L4), so the pane is keyed on the server's pid and start; a
-/// record the legacy launcher wrote carries none.
+/// `server_start` is the tmux server's start the runtime's launch published,
+/// so the pane is keyed on the server's pid and start; a
+/// record the released launcher wrote carries none.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaunchIdentity {
     #[serde(default)]
@@ -628,8 +628,8 @@ pub struct LaunchIdentity {
 
 /// One `lanes[]` record as read. The named fields are the ones the lane
 /// operations read or write; `extra` carries the rest for a report. Only
-/// `item` and `status` are required, the two every legacy reader selects
-/// on; a record a hand or an older launcher wrote may lack any other.
+/// `item` and `status` are required, the two every shell reader selects
+/// on; a record a hand or the released launcher wrote may lack any other.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Lane {
     pub item: String,
@@ -680,10 +680,10 @@ pub struct Lane {
     pub launch: Option<LaunchIdentity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reservation: Option<Reservation>,
-    /// The touched set the admission judged (decision 118 (4)): the union
+    /// The touched set the admission judged: the union
     /// of the item's Location paths, the brief's paths, the change-scope
     /// paths over the named range and the paths a running lane added,
-    /// sorted and unique. `None` on a record the legacy launcher wrote
+    /// sorted and unique. `None` on a record the released launcher wrote
     /// with no judgement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub touched: Option<Vec<String>>,
@@ -691,14 +691,14 @@ pub struct Lane {
     /// append-only addition, left out of the overlap judgement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub in_scope: Option<Vec<String>>,
-    /// The rebase obligations the admission recorded (decision 118 (3)).
+    /// The rebase obligations the admission recorded.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rebase: Vec<RebaseObligation>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
 
-// U6d: the one reading of a lane's channel the runtime makes.
+// The one reading of a lane's channel the runtime makes.
 impl Lane {
     /// Whether the lane runs in a Claude cloud session, reached through a
     /// directive send and no mailbox: its kind or host is the cloud kind.
@@ -807,9 +807,8 @@ pub const PREDECESSOR_SESSION_KEYS: &[&str] = &[
     "succession",
 ];
 
-/// The keys the legacy succession compare-and-swap requires equal, less
-/// `session_id` and `pending`, which it judges on their own
-/// (`ol_succession_owned`).
+/// The keys the succession compare-and-swap requires equal, less
+/// `session_id` and `pending`, which it judges on their own.
 pub const OVERSEER_COMPARE_KEYS: &[&str] = &[
     "server",
     "server_start",
@@ -832,8 +831,8 @@ pub struct Overseer {
     pub extra: Map<String, Value>,
 }
 
-/// The fleet watch the controller record carries as `overseer.watch`
-/// (step6-map A7): the job identity the launcher recorded for the watch a
+/// The fleet watch the controller record carries as `overseer.watch`:
+/// the job identity the launcher recorded for the watch a
 /// start launched (`runner=systemd` with its unit, or `runner=setsid` with
 /// the leader's pid and start), or `runner=claimed` with the claim's own
 /// identity where a start found the watch already claimed. The claim beside
@@ -860,7 +859,7 @@ pub enum EffectOp {
     /// A controller's first launch, or its launch after an explicit `off`:
     /// a succession with no predecessor to retire.
     StartController,
-    /// The explicit off of decision 78: the controller retired exactly by
+    /// The explicit off: the controller retired exactly by
     /// identity and the record marked so no recovery relaunches it.
     StopController,
 }
@@ -889,8 +888,7 @@ impl EffectOp {
     }
 }
 
-/// Why a succession was asked for (step4-map A4 to A8). The judges that
-/// settle on a cause stay legacy (decision 75); the cause tells the effect
+/// Why a succession was asked for: the cause tells the effect
 /// what proves the predecessor terminal and the transition what it must
 /// refuse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -901,7 +899,7 @@ pub enum TransferCause {
     Live,
     /// The watch read the controller dead: the held line is the successor
     /// and a predecessor with no recorded identity is proven terminal by
-    /// the exit record or the pane (decision 77).
+    /// the exit record or the pane.
     Dead,
     /// The controller's account is walled: the successor must not run on
     /// the spent account.
@@ -925,7 +923,7 @@ impl TransferCause {
 
 /// What the tracker judged the lane's item: shipped, or ended any other
 /// way. The judge stays the tracker package's; the close op takes its
-/// verdict as evidence (decision 83).
+/// verdict as evidence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TerminalVerdict {
@@ -934,8 +932,8 @@ pub enum TerminalVerdict {
 }
 
 /// What authorizes a close to end a lane's harness, recorded on the close
-/// intent so its outcome moves the record the way that ground allows
-/// (decisions 83, 98). `exited` and `terminal` end the lane as done;
+/// intent so its outcome moves the record the way that ground allows.
+/// `exited` and `terminal` end the lane as done;
 /// `no-landing` retires the attempt alone and keeps the item's work and
 /// history, the lane reading `stopped`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -963,9 +961,8 @@ pub enum CloseGround {
 }
 
 /// The harness, account, model and effort a launch was asked for. The
-/// legacy launcher writes them on the lane when it records `running`, not
-/// `preparing` (`open-terminal`'s relaunch patch deletes them unless the
-/// hosted selection step is done), so a launch intent carries them until
+/// lane takes them when it records `running`, not `preparing`, so a
+/// launch intent carries them until
 /// its outcome confirms. `account`, `model` and `effort` left out keep the
 /// record's values.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -984,21 +981,20 @@ pub struct Selection {
 }
 
 /// The process that persisted an intent: its pid and start, read through
-/// agent-runtime's one identity reader when the intent was written
-/// (decision 72). A reconcile that finds this process still live defers to
+/// agent-runtime's one identity reader when the intent was written.
+/// A reconcile that finds this process still live defers to
 /// it and touches nothing; only a dead or absent owner lets a reconcile
-/// complete or fail the intent. Legacy intents carry none.
+/// complete or fail the intent. An intent may carry none.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Owner {
-    /// The runtime writes the number; a string form is read too (decision
-    /// 63), so a record a jq writer produced is not refused.
+    /// The runtime writes the number; a string form is read too, so a
+    /// record a jq writer produced is not refused.
     #[serde(deserialize_with = "de_pid")]
     pub pid: u64,
     pub start: String,
 }
 
-/// Read a pid written as a JSON number or the string a jq `--arg` produced
-/// (decision 63).
+/// Read a pid written as a JSON number or the string a jq `--arg` produced.
 fn de_pid<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<u64, D::Error> {
     match Value::deserialize(d)? {
         Value::Number(n) => n
@@ -1013,7 +1009,7 @@ fn de_pid<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<u64, D:
     }
 }
 
-/// What an effect recorded around opening its window (decisions 73, 96):
+/// What an effect recorded around opening its window:
 /// the server a window is about to open on and the floor its native session
 /// is read above, every field of [`OpenedPane`] but the pane, and then the
 /// pane id the creating `new-window` call printed, written before anything
@@ -1035,11 +1031,11 @@ pub struct Opening {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub baseline: Vec<String>,
     /// The pane the effect's own `new-window` created, recorded before the
-    /// launch line is typed into it (decision 96); `None` until then.
+    /// launch line is typed into it; `None` until then.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pane: Option<String>,
-    /// Whether the launcher has been asked for the window (decision 111
-    /// (5)): written before `new-window` runs, so a phase with no pane and
+    /// Whether the launcher has been asked for the window: written before
+    /// `new-window` runs, so a phase with no pane and
     /// `asked` names a window possibly opened, and one without it nothing.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub asked: bool,
@@ -1055,9 +1051,8 @@ pub struct Opening {
 
 impl Opening {
     /// The [`OpenedPane`] this opening becomes once its window is found: the
-    /// recorded server and floor with the pane (decision 73), and the
-    /// identity the pane's receipt proved where a reconcile adopted it
-    /// (decision 99).
+    /// recorded server and floor with the pane, and the
+    /// identity the pane's receipt proved where a reconcile adopted it.
     pub fn into_opened(&self, pane: String, identity: Option<Identity>) -> OpenedPane {
         OpenedPane {
             pane,
@@ -1082,7 +1077,7 @@ impl Opening {
 /// the recorded server whatever socket its own `$TMUX` names. Another
 /// server answering on that socket, or no server with the recorded server
 /// process gone, proves the pane gone; only an unanswering socket whose
-/// server process still runs is unobservable (decision 66).
+/// server process still runs is unobservable.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OpenedPane {
     pub pane: String,
@@ -1103,8 +1098,7 @@ pub struct OpenedPane {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub brief: Option<String>,
     /// The session id the launch fixed on the command line, for a harness
-    /// that takes one: the runner's own native file is then known by name
-    /// (decision 65).
+    /// that takes one: the runner's own native file is then known by name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     /// The lead sessions for the runner's cwd that stood before the window
@@ -1114,7 +1108,7 @@ pub struct OpenedPane {
     pub baseline: Vec<String>,
     /// The harness identity this attempt runs under, once read: the
     /// receipt's pid confirmed live at adoption, or the identity the judge
-    /// read in the pane (decision 99). It is the one identity every later
+    /// read in the pane. It is the one identity every later
     /// read, publication and retirement of the attempt uses; none selects
     /// another process in its place.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1130,7 +1124,7 @@ pub struct OpenedPane {
 
 /// The runner's own native session file, bound once before the brief is
 /// pasted: the effect and every reconcile count that file alone, never a
-/// neighbour in the same home and directory (decision 65).
+/// neighbour in the same home and directory.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BoundSession {
     pub session_id: String,
@@ -1138,7 +1132,7 @@ pub struct BoundSession {
 }
 
 /// How far an effect got, written into its intent before each wait so a
-/// `reconcile` completes the effect from the recorded step (decision 62).
+/// `reconcile` completes the effect from the recorded step.
 /// A launch reaches `window-opened` and then its outcome; a succession
 /// passes `retired` (the predecessor confirmed terminal), `delivered` (the
 /// brief pasted, with the runner's own session file and its user-turn count
@@ -1148,8 +1142,8 @@ pub struct BoundSession {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "phase", rename_all = "kebab-case")]
 pub enum Phase {
-    /// Written before any window opens (decision 73) and again with the
-    /// pane once one is created (decision 96). A reconcile here adopts the
+    /// Written before any window opens and again with the
+    /// pane once one is created. A reconcile here adopts the
     /// pane the intent's receipt names, fails the recorded pane that never
     /// registered, or fails `nothing-opened` with neither.
     Opening {
@@ -1164,7 +1158,7 @@ pub enum Phase {
         #[serde(flatten)]
         opened: OpenedPane,
     },
-    /// Written before the brief is typed (decision 124e (23)): a reconcile
+    /// Written before the brief is typed: a reconcile
     /// that finds it reads the brief as possibly delivered and waits for the
     /// turn, never pasting again.
     Delivering {
@@ -1238,8 +1232,8 @@ pub struct Intent {
     pub op: EffectOp,
     pub target: String,
     pub created_at: String,
-    /// The process that persisted the intent (decision 72); a reconcile
-    /// that finds it live defers to it. Absent on a legacy intent.
+    /// The process that persisted the intent; a reconcile
+    /// that finds it live defers to it. An intent may carry none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner: Option<Owner>,
     pub outcome: Outcome,
@@ -1253,56 +1247,56 @@ pub struct Intent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection: Option<Selection>,
     /// The `overseer.pending` a transfer request overwrote, put back when
-    /// the transfer fails, as the legacy succession restores it.
+    /// the transfer fails.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_pending: Option<Value>,
     /// Why a transfer was asked for; a reconcile reads it to know what
-    /// proves the predecessor terminal (decision 77). Absent on the other
-    /// operations and on transfers recorded before the cause existed.
+    /// proves the predecessor terminal. Absent on the other
+    /// operations and on a transfer recorded without one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cause: Option<TransferCause>,
     /// The owner that persisted the intent and handed it to the detached
-    /// job that now owns it (decision 76), written by the claim: the job
+    /// job that now owns it, written by the claim: the job
     /// lets that process answer and exit before it retires the pane the
     /// process asked from.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub handed_from: Option<Owner>,
     /// The account a wall relaunch must not run on, canonical, recorded on
-    /// the launch intent that refused it (step4-map A11). Absent elsewhere.
+    /// the launch intent that refused it. Absent elsewhere.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exclude_account: Option<String>,
-    /// The fleet watch's launch line a start carries (step6-map A7): the
-    /// `oversee-watch` entry and its arguments, which the start's effect
+    /// The fleet watch's launch line a start carries: `orch-runtime watch
+    /// run` and its arguments, which the start's effect
     /// launches through the job launcher once the controller's lane is
     /// confirmed, and a reconcile launches again where no watch claims.
     /// Absent on the other operations and on a start whose caller holds
     /// the watch's start.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub watch: Option<Vec<String>>,
-    /// What authorized a close (decisions 83, 98); its confirmed outcome
+    /// What authorized a close; its confirmed outcome
     /// moves the lane as that ground allows. Absent on the other operations
-    /// and on closes recorded before the ground existed, which end the lane
+    /// and on a close recorded without one, which ends the lane
     /// as done.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub close: Option<CloseGround>,
-    /// The failure the detached job's outcome announced (decision 109 (7)):
-    /// the fleet-log row and the owner notice the legacy `die_status`
-    /// emitted, sent once per intent and recorded here so a repeated
+    /// The failure the detached job's outcome announced:
+    /// the fleet-log row and the owner notice,
+    /// sent once per intent and recorded here so a repeated
     /// reconcile of the same outcome emits nothing again. Absent until an
     /// outcome of a transfer or a stop failed or stayed unconfirmed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub notice: Option<Notice>,
-    /// How far the effect got, written before each wait (decision 62); a
+    /// How far the effect got, written before each wait; a
     /// reconciliation completes the effect from it. Absent until the effect
     /// has opened something.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phase: Option<Phase>,
-    /// The obligations the effect stands under (decision 115 (A)): every
+    /// The obligations the effect stands under: every
     /// handle it acquired, written before the wait that follows the
     /// acquisition, with the discharges made so far and whether anything was
     /// signalled. Every later step and every reconcile reads this set and
     /// never rebuilds it from the lane or the phase. Absent on an intent
-    /// recorded before the field existed; its next step writes it.
+    /// recorded without it; its next step writes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub obligations: Option<ObligationRecord>,
     /// What the effect last observed of its target: the pane it opened or
@@ -1321,10 +1315,10 @@ pub struct Intent {
     pub observed_generation: Option<u64>,
 }
 
-/// One recorded handle of an operation's target (decisions 111 (A) (1), 115
-/// (A)), typed by what it is. A pane and a window carry the server's pid and
+/// One recorded handle of an operation's target, typed by what it is. A
+/// pane and a window carry the server's pid and
 /// tmux start, the only form this host addresses a pane in; a lane record
-/// written by the legacy launcher carries the pid alone (decision 35), so
+/// the released launcher wrote carries the pid alone, so
 /// its pane's start is unknown and `None`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
@@ -1341,21 +1335,20 @@ pub enum Obligation {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         server_start: Option<u64>,
     },
-    /// A pane recorded with no server (decision 35 admits the record): this
+    /// A pane recorded with no server, which a record may carry: this
     /// host cannot address it, and the record does not prove it absent.
     PaneUnaddressed { pane: String },
     /// A launcher was asked for a window on this server and no pane id was
-    /// recorded yet (decision 111 (5)): a window possibly opened.
+    /// recorded yet: a window possibly opened.
     Window { server: u64, server_start: u64 },
-    /// The pane's receipt was armed (decision 96): an obligation until read.
+    /// The pane's receipt was armed: an obligation until read.
     Receipt,
-    /// The worktree's validation runs, owed to orch's own runner's stop
-    /// (decision 108 (7)).
+    /// The worktree's validation runs, owed to orch's own runner's stop.
     Validation,
-    /// The job launcher was asked and its record not yet read (decision 115
-    /// (B)): a job possibly started. `record` is the launcher record's path
-    /// the ask named, the one address the record is read at (decision 184
-    /// (6)): the intent's own job record for a transfer or a stop, the
+    /// The job launcher was asked and its record not yet read: a job
+    /// possibly started. `record` is the launcher record's path
+    /// the ask named, the one address the record is read at:
+    /// the intent's own job record for a transfer or a stop, the
     /// watch's runner record beside the fleet state for a start's watch.
     JobSidecar { record: String },
     /// The detached job runs as this transient user unit.
@@ -1368,13 +1361,13 @@ pub enum Obligation {
     /// read in the kernel's table, the child whose pid it is and every member
     /// of its group, until neither stands.
     JobPgid { pgid: u32 },
-    /// The lane's local worktree at `path`, an owned resource of the close
-    /// (decision 128 (9)): released through `git worktree remove`, or kept
+    /// The lane's local worktree at `path`, an owned resource of the close:
+    /// released through `git worktree remove`, or kept
     /// with its reason recorded where removal would lose work.
     Worktree { path: String },
 }
 
-/// The part a recorded handle plays in its intent (decision 124d (15)): the
+/// The part a recorded handle plays in its intent: the
 /// lane's own harness and pane, its detached wake turn, the runner a
 /// succession opens, the predecessor it retires, the worktree's validation
 /// runs, the detached job, or the lane's worktree itself. A selection from
@@ -1393,10 +1386,9 @@ pub enum Role {
 
 /// One standing obligation as the record holds it: the handle, flattened
 /// under its `kind`, its role, and, under the harness role, the harness
-/// kind the lane ran when the handle was acquired (decision 124g (29)): what
+/// kind the lane ran when the handle was acquired: what
 /// names the processes below the recorded root that a stop may signal,
-/// never the harness a relaunched session runs. A record written before the
-/// role existed carries none, and the handle bootstraps it once at open.
+/// never the harness a relaunched session runs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Held {
     #[serde(flatten)]
@@ -1419,12 +1411,12 @@ pub struct Discharged {
     pub harness: Option<Harness>,
 }
 
-/// The durable obligation set of an intent (decision 115 (A)): what stands,
+/// The durable obligation set of an intent: what stands,
 /// what was discharged and by what, and whether the effect has signalled
 /// anything, after which no refusal is expressible on the intent. `revision`
 /// counts the set's replacements: the store advances it on every write that
 /// changes the set, and a handle whose write names an older revision is
-/// refused `set-replaced` (decisions 124d (16), 124g (26)).
+/// refused `set-replaced`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ObligationRecord {
     #[serde(default)]
@@ -1435,7 +1427,7 @@ pub struct ObligationRecord {
     pub signalled: bool,
     /// Independent stale readings per recorded identity (`pid:start`), one
     /// per run that read the pid live under another start; the second
-    /// settles the identity (decision 124c).
+    /// settles the identity.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub stale: std::collections::BTreeMap<String, u64>,
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -1457,7 +1449,7 @@ pub const WORKTREE_KEPT: &str = "kept:";
 /// what the lane record's `kept_mail` field carries.
 pub const WORKTREE_MAIL_KEPT: &str = "released:mail-kept:";
 
-/// The keys a lane intent's terminal carries (decision 124d (14)): the
+/// The keys a lane intent's terminal carries: the
 /// lane's `session_since` when the intent was written and every identity,
 /// pid and pane key the intent's set recorded under the harness role, the
 /// launch record's own and the harness read in its pane. The store applies a
@@ -1522,7 +1514,7 @@ impl ObligationRecord {
     }
 
     /// The harness kind recorded under the harness role, standing or
-    /// discharged (decision 124g (29)).
+    /// discharged.
     pub fn recorded_harness(&self) -> Option<Harness> {
         self.standing
             .iter()
@@ -1575,7 +1567,7 @@ impl ObligationRecord {
     }
 
     /// The lane keys the record holds under the harness role, standing or
-    /// discharged: every process, pid and pane key (decision 124d (14)).
+    /// discharged: every process, pid and pane key.
     pub fn lane_keys(&self, lane_since: Option<String>) -> LaneKeys {
         let harness = self
             .standing_obligations()
@@ -1604,7 +1596,7 @@ impl ObligationRecord {
     }
 
     /// The reason the close kept the lane's worktree, where its worktree
-    /// obligation was discharged `kept:<reason>` (decision 128 (9)); `None`
+    /// obligation was discharged `kept:<reason>`; `None`
     /// where it was released, read gone, or never acquired. The one reader
     /// of that word, which the close's outcome writes onto the lane record
     /// as `kept`.
@@ -1717,8 +1709,8 @@ impl Intent {
 pub const ACKNOWLEDGED_VERDICTS: &[&str] = &["kept", "canceled"];
 
 /// The fleet state: the fields the lane, overseer and intent operations
-/// read. `triaged` rows stay untyped: the triage writer once supplied a
-/// string or an `item` key, and the watch reads such rows without refusing
+/// read. `triaged` rows stay untyped: a row may be a string or carry an
+/// `item` key, and the watch reads such rows without refusing
 /// the file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FleetState {
@@ -1732,8 +1724,7 @@ pub struct FleetState {
 
 impl FleetState {
     /// The issue keys the watch reads as acknowledged: `issue` of every
-    /// object row whose verdict is `kept` or `canceled`
-    /// (`oversee-watch`'s `check_triage` filter). A string row or an
+    /// object row whose verdict is `kept` or `canceled`. A string row or an
     /// `item`-keyed row names no key and is skipped.
     pub fn acknowledged_issues(&self) -> Vec<String> {
         self.triaged
@@ -1783,9 +1774,9 @@ fn snapshot_of(path: &Path, value: Value) -> Result<Snapshot> {
             format!("found {}", json_type(&value)),
         ));
     };
-    // A file stamped with agent-runtime's record meta keys (the retired
-    // `state migrate` wrote one) is no workflow record this runtime reads:
-    // the legacy writers patch the file beside it and keep no revision, so
+    // A file stamped with agent-runtime's record meta keys is no workflow
+    // record this runtime reads:
+    // the shell writers patch the file beside it and keep no revision, so
     // the content comparison is the one write check, and a file carrying
     // either key is refused by name rather than read as if unstamped.
     if let Some(key) = [RECORD_VERSION_KEY, REVISION_KEY]
@@ -1799,13 +1790,13 @@ fn snapshot_of(path: &Path, value: Value) -> Result<Snapshot> {
         .into());
     }
     if kind == Kind::Fleet {
-        // The one field the legacy watch refuses the whole file on.
+        // The one field a fleet read refuses the whole file on.
         field::<Vec<String>>(path, &doc, "launch_queue")?;
     }
     Ok(Snapshot { kind, doc })
 }
 
-/// Read a state file. The reader refuses what the legacy readers refuse on
+/// Read a state file. The reader refuses what the shell readers refuse on
 /// the same file: unparsable bytes (`json-invalid`), a non-object, a
 /// `launch_queue` entry that is not a string (`record-shape`), and a file
 /// stamped with `record_version` or `revision` (`record-stamped`). Every
@@ -1833,14 +1824,14 @@ fn validate(path: &Path, snapshot: &Snapshot) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 /// Run `f` under the lock beside `path` (`<path>.lock`), bounded by
-/// `locking.wait`, and under the legacy `mkdir` mutex where the policy says
-/// the host's legacy writers take one. Both locks are taken under one
-/// deadline, so the whole acquisition waits at most the legacy 10 s. The
-/// lane admission takes the legacy fleet launch lock through the same
-/// helper (`ops`), so one lock discipline serves both legacy locks.
+/// `locking.wait`, and under the shell writers' `mkdir` mutex where the
+/// policy says the host's shell writers take one. Both locks are taken under
+/// one deadline, so the whole acquisition waits at most the shell writers'
+/// 10 s. The lane admission takes the shell's fleet launch lock through the
+/// same helper (`ops`), so one lock discipline serves both locks.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the one acquisition of a record's locks, under the legacy wait's clock"
+    reason = "the one acquisition of a record's locks, bounded by the shell writers' wait on the clock"
 )]
 pub(crate) fn locked<R>(path: &Path, locking: Locking, f: impl FnOnce() -> Result<R>) -> Result<R> {
     let deadline = locking.wait.start();
@@ -1857,11 +1848,11 @@ pub(crate) fn locked<R>(path: &Path, locking: Locking, f: impl FnOnce() -> Resul
 
 /// Write `doc` over the file `snapshot` was read from, refusing
 /// `record-changed` when the file's content moved since the read: the check
-/// the legacy writers' lock cannot give it otherwise. A `doc` whose record
-/// bytes equal the snapshot's passes the same check and then writes nothing
-/// (decision 89), so a repeated request that reconciles its standing intent
+/// the shell writers' lock cannot give it otherwise. A `doc` whose record
+/// bytes equal the snapshot's passes the same check and then writes nothing,
+/// so a repeated request that reconciles its standing intent
 /// leaves the file as it found it. The comparison is of the serialized
-/// bytes with key order kept (decision 95), never of the values: a key that
+/// bytes with key order kept, never of the values: a key that
 /// moved is a changed record.
 #[allow(
     clippy::disallowed_methods,
@@ -1887,8 +1878,8 @@ pub fn store(path: &Path, snapshot: &Snapshot, doc: &Document, locking: Locking)
     })
 }
 
-/// Whether two documents are one record byte for byte, key order included
-/// (decisions 89, 95): what the store's no-change check compares, and what a
+/// Whether two documents are one record byte for byte, key order included:
+/// what the store's no-change check compares, and what a
 /// transition compares before it reports a record changed.
 pub(crate) fn same_document(path: &Path, a: &Document, b: &Document) -> Result<bool> {
     Ok(serialized(path, a)? == serialized(path, b)?)
@@ -1979,7 +1970,7 @@ pub struct Initialized {
 /// Create the state file at `path` with the init object, as `cmd_init`
 /// writes it: the directory made, the file created exclusively and refused
 /// `state-exists` where one already stands, the object pretty-printed with
-/// jq's two-space indent and final newline, in the shape the legacy writers
+/// jq's two-space indent and final newline, in the shape the shell writers
 /// read.
 #[allow(
     clippy::disallowed_methods,
@@ -2037,9 +2028,8 @@ pub struct Inspection {
     pub state: Value,
     /// The fleet's intents whose effect may still be in flight, as this
     /// runtime judges them (`Intent::open`): a reader that must know whether
-    /// an operation stands on a target, the legacy watch's succession guard
-    /// among them, takes the judgement from here rather than from the
-    /// outcome words. Empty on an item file.
+    /// an operation stands on a target takes the judgement from here rather
+    /// than from the outcome words. Empty on an item file.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub open_intents: Vec<Intent>,
 }
@@ -2075,8 +2065,8 @@ pub fn inspect(path: &Path) -> Result<Inspection> {
 
 #[cfg(test)]
 pub(crate) mod fixtures {
-    //! The legacy-shaped samples, checked in beside the integration harness
-    //! and shared with it.
+    //! The samples in the shell writers' shape, checked in beside the
+    //! integration harness and shared with it.
     pub const ITEM: &str = include_str!("../../tests/rust/fixtures/workflow-state-KEN-4687.json");
     pub const FLEET: &str = include_str!("../../tests/rust/fixtures/workflow-state-oversee.json");
     pub const NEWER: &str = include_str!("../../tests/rust/fixtures/workflow-state-newer.json");
@@ -2155,7 +2145,7 @@ mod tests {
         }
     }
 
-    /// Finding 1, probe P1: a file an older init wrote lacks the newest init
+    /// A file an older init wrote lacks the newest init
     /// fields and still reads and stores.
     #[test]
     fn a_file_missing_the_newer_init_fields_reads_and_stores() {
@@ -2179,7 +2169,7 @@ mod tests {
         }
     }
 
-    /// Finding 9, probes P3, P4 and P6, and decision 34: a store on either
+    /// A store on either
     /// kind of file keeps the full top-level key sequence and every nested
     /// key sequence; it adds no key and reorders none.
     #[test]
@@ -2261,7 +2251,7 @@ mod tests {
         }
     }
 
-    /// Finding 9, probes P2 and P7: a hand-written lane without the
+    /// A hand-written lane without the
     /// launcher's optional fields and an overseer without `generation` gain
     /// no key through a store that patches beside them.
     #[test]
@@ -2301,7 +2291,7 @@ mod tests {
         assert_eq!(after["lanes"][1]["status"], Value::from("stopped"));
     }
 
-    /// Finding 3 and decision 35: `triaged` rows with an `item` key or a
+    /// `triaged` rows with an `item` key or a
     /// bare string read as the watch reads them, never refusing the file.
     #[test]
     fn legacy_triaged_rows_are_admitted_and_read_as_the_watch_reads_them() {
@@ -2320,7 +2310,7 @@ mod tests {
         inspect(&path).unwrap();
     }
 
-    /// Finding 2, probe P10b: a legacy-style edit between the read and the
+    /// A shell writer's edit between the read and the
     /// store refuses `record-changed`, and the edit stands.
     #[test]
     fn a_legacy_edit_between_load_and_store_refuses_record_changed() {
@@ -2336,7 +2326,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), moved);
     }
 
-    /// Decisions 89 and 95: a document whose record bytes equal the
+    /// A document whose record bytes equal the
     /// snapshot's writes nothing, so a repeated request that changes no
     /// record leaves the file as it found it. A document equal as a value
     /// but with a key moved is a changed record: it is written, as a changed
@@ -2409,7 +2399,7 @@ mod tests {
         }
     }
 
-    /// Finding 12 and decision 35: unparsable bytes are `json-invalid`; a
+    /// Unparsable bytes are `json-invalid`; a
     /// shape this build cannot read is `record-shape`, naming the field.
     #[test]
     fn malformed_input_refuses_by_cause_without_touching_the_file() {
@@ -2538,7 +2528,7 @@ mod tests {
 
     /// 250 ms in 100 ms polls: two whole polls and one clamped to the rest.
     /// The policy the command resolves for a host whose `PATH` is
-    /// `path_var` (`main.rs`'s `host_locking`): the legacy wait, and the
+    /// `path_var` (`main.rs`'s `host_locking`): the shell writers' wait, and the
     /// mutex wherever `flock(1)` is not on that path.
     fn for_host(path_var: Option<&OsStr>) -> Locking {
         Locking {
@@ -2561,8 +2551,8 @@ mod tests {
         Duration::from_millis(50),
     ];
 
-    /// Finding 11 and decision 39: on a host whose `PATH` lacks `flock(1)`
-    /// the write takes the legacy `mkdir` mutex, so a legacy writer holding
+    /// On a host whose `PATH` lacks `flock(1)`
+    /// the write takes the shell writers' `mkdir` mutex, so a shell writer holding
     /// it excludes the store, and the store removes its own mutex
     /// afterwards. The wait runs on the fake clock and stops at the limit.
     #[test]
@@ -2603,7 +2593,7 @@ mod tests {
         assert!(!for_host(Some(&path_var)).legacy_mutex);
     }
 
-    /// Finding 11: the flock wait is bounded and refuses `lock-timeout` at
+    /// The flock wait is bounded and refuses `lock-timeout` at
     /// the limit, on the fake clock.
     #[test]
     fn a_held_flock_bounds_the_store_wait() {
@@ -2646,7 +2636,7 @@ mod tests {
 
     /// The flock and the mutex share one deadline: a mutex wait that starts
     /// after the flock took part of the limit gets only what is left, so the
-    /// two never add up past the bound R-U10 found doubled. A holder keeps
+    /// two never add up past the bound. A holder keeps
     /// the flock through the waiter's first poll and lets go from inside
     /// that poll's sleep, so the flock is acquired on the second attempt
     /// with one poll of the limit spent; the mutex the test planted then

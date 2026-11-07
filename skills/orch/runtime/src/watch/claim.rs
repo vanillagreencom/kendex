@@ -462,10 +462,9 @@ mod tests {
         assert_eq!((startless.pid, startless.start), (4242, None));
     }
 
-    /// Defect: two readers answering "does this
-    /// record name that identity" differently, one by pid alone and one by
-    /// pid and an equal start, under which a stop reads another runner's
-    /// claim as released. The one reader: the pid and the start, both.
+    /// A reader by pid alone beside one by pid and start lets a stop read
+    /// another runner's claim as released: the one reader takes the pid
+    /// and the start, both.
     #[test]
     fn a_record_names_an_identity_by_its_pid_and_start() {
         let claim = |pid: u32, start: Option<&str>| Claim {

@@ -727,10 +727,9 @@ mod tests {
         );
     }
 
-    /// Defect: a cloud session charged against the lane cap, or a local
-    /// lane against the cloud cap, so a full cloud cap admits a session and a
-    /// full lane cap refuses one. Each count reads its own kind alone, a
-    /// running session charges by its word and a stopped one holds nothing.
+    /// A cloud session charged against the lane cap, or a local lane against
+    /// the cloud cap, would let a full cloud cap admit a session and a full
+    /// lane cap refuse one. A stopped session holds nothing.
     #[test]
     fn each_cap_counts_its_own_kind_and_a_cloud_session_charges_by_its_word() {
         let answers = HashMap::from([live(100, "ticks:1")]);

@@ -1,7 +1,7 @@
 #!/bin/bash
 # The mailbox CLI as the validate rows see it: `send --item ITEM --directive
 # --file F --delivery-id KEY` is the outbound route the validation end notice
-# takes to its lane (decision 184 (1)). The call's argv is logged, and the
+# takes to its lane. The call's argv is logged, and the
 # file's first line as `send-text <line>`. With $LANE_MAIL_SNAPSHOT set the
 # state file $LANE_MAIL_STATE names is copied there the moment the first send
 # is made, never a later one: what the record held when the notice first went

@@ -1,8 +1,8 @@
 # Shared sandbox of stub binaries (tmux, gh, the tracker, `lanes`), the
-# assertion library and one `run_watch` entry point, built for the retired
-# `oversee-watch` loop's suites and kept for the suites that still drive the
-# stubs: lane-state.sh, lane-state-provider-pane.sh and lane_close.sh. The
-# watch itself is the orch runtime's scheduler, held by its Rust rows.
+# assertion library and one `run_watch` entry point, for the suites that
+# drive the stubs: lane-state.sh, lane-state-provider-pane.sh and
+# lane_close.sh. The watch itself is the orch runtime's scheduler, held by its
+# Rust rows.
 #
 # Sourced, never run: the runners glob tests/*.sh, so nothing here executes on
 # its own. Sourcing it sets the shell options, builds $TMP_ROOT and the stub

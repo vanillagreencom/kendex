@@ -1624,7 +1624,8 @@ lm_overseer_state() { # full|data ROOT ARGS...
   fi
 }
 
-# oversee register and oversee launch write the checkout-local fleet record.
+# `oversee register` and the runtime's controller start or transfer
+# (`orch-runtime op --fleet`) write the checkout-local fleet record.
 # A missing record requires registration in the session that reads this
 # checkout's mail. Remote overseers send from their host's checkout because
 # this shell cannot read that host's fleet state.

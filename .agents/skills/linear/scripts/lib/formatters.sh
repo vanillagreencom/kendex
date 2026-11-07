@@ -46,10 +46,10 @@ def issue_in_pr_bundle($description): ($description // "") | test("(^|\\n)[ \\t]
 # One rule decides which project a name means, for every spelling of the
 # lookup: an id match wins outright whatever its state, a canceled match
 # otherwise loses to every live one, and an all-canceled match set is refused
-# naming each UUID and its state so a deliberate read can pass one. Open-coded
-# once per lookup, it was corrected one site at a time and the site nobody
-# reached still shipped the defect. Callers prepend this the way they prepend
-# ISSUE_RELATION_JQ; `git grep -n live_project_pick` enumerates them.
+# naming each UUID and its state so a deliberate read can pass one. One
+# definition serves every lookup, so no lookup site drifts from the rule.
+# Callers prepend this the way they prepend ISSUE_RELATION_JQ;
+# `git grep -n live_project_pick` enumerates them.
 #
 # Input is the array of matches. `live_project_refusal` takes the subject line
 # from its caller; the parenthetical, and which states count as live, live
@@ -115,7 +115,7 @@ format_issues_list() {
 # syncedWith, which only `issues get` without --with-bundle asks for, adds
 # github_sync: the GitHub issues Linear's GitHub sync links the issue to,
 # each as owner/repo#N, lowercased: GitHub reads owner and repository names
-# case-insensitively, and oversee-watch keys each --repo lowercased. A read
+# case-insensitively, and orch's watch keys each --repo lowercased. A read
 # without it has no github_sync rather than an empty one it cannot vouch for.
 format_issue_single() {
     local raw="$1"

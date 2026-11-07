@@ -1,11 +1,10 @@
-//! The mail duty (step5-map § A7, § A8; decision 121 Q1, Q2, Q16): on its
+//! The mail duty: on its
 //! own thread and due time, every lane mailbox read in one batched call,
-//! then the overseer's own box, each envelope rendered to its legacy
+//! then the overseer's own box, each envelope rendered to its
 //! `EVENT` line with its payload under it, and the duty's own memory of
 //! each box moved only after the runner has the lines on disk.
 //!
-//! The overseer's box is announced and never acknowledged here (Q2,
-//! correcting the legacy watch's `inbox --ack` on printing): the duty reads
+//! The overseer's box is announced and never acknowledged here: the duty reads
 //! it by logical line and records the line it announced through; only the
 //! controller session's handler moves `to-lane.cursor`. So a note landing
 //! between a handoff and its successor's start is in the log past the line
@@ -16,9 +15,9 @@
 //! `directive-read` only once the lane's read moved it, `directive-unread`
 //! while it stands past `ORCH_DIRECTIVE_UNREAD_SECS`, repeated every
 //! `ORCH_OVERSEER_MARK_REPEAT` turns. A box whose count and first id are
-//! unchanged emits no line and asks no change (decision 141 (4)).
+//! unchanged emits no line and asks no change.
 //!
-//! The wake's slot (decision 159; [`UNREAD_KIND`]): for each target read,
+//! The wake's slot ([`UNREAD_KIND`]): for each target read,
 //! a row of that kind, identity the target, stands while the target's box
 //! holds lines past the target's own read cursor, its value the newest
 //! unread envelope's id, and is cleared once the box is read. The cursor is
@@ -28,15 +27,14 @@
 //! another box's envelopes (`drain`).
 //!
 //! A target whose read refuses, or an owner ask whose default close fails,
-//! stops that target alone (decisions 133, 142 (1)): every other box's
+//! stops that target alone: every other box's
 //! lines and rows are delivered, the refused target's rows stay where they
 //! were so the next turn reads it again, and the turn is reported failed,
 //! `watch-step-failed step=mail count=N` in the log with each refused
-//! target and its cause on stderr, as the legacy's `lane_failure_report`
-//! and exit 2 did. No box is ever read as empty.
+//! target and its cause on stderr. No box is ever read as empty.
 //!
 //! Between full turns the body asks to run each second and reads the
-//! overseer box alone when its byte size moved, as the legacy wait did, so
+//! overseer box alone when its byte size moved, so
 //! an owner's note waits a second rather than the mail interval.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -53,7 +51,7 @@ use crate::state::{self, FleetState, Lane, LaneStatus, Record};
 use crate::watch::wake::{OVERSEER_TARGET, UNREAD_KIND};
 use crate::watch::{Baseline, Change, Event, Paths, Produced, Runner, Tick};
 
-/// The baseline row kinds, the legacy `.mail` rows' words.
+/// The baseline row kinds, the words a released watch's `.mail` rows carry.
 const LANE_MAIL: &str = "lane-mail";
 const DIRECTIVE: &str = "directive";
 /// The overseer box's identity among the `lane-mail` rows, and its item
@@ -184,7 +182,7 @@ impl Turn {
 }
 
 /// The envelope's payload under its line: the text line by line, then its
-/// options (`oversee-watch:3194-3199`).
+/// options.
 fn payload(envelope: &Envelope, events: &mut Vec<Event>) {
     if let Some(text) = envelope.text.as_deref()
         && !text.is_empty()
@@ -202,7 +200,7 @@ fn payload(envelope: &Envelope, events: &mut Vec<Event>) {
     }
 }
 
-/// The class table of `check_mail` (`oversee-watch:3167-3190`): the line
+/// The class table: the line
 /// one envelope renders to, by the box it came from and, for the overseer's
 /// box, the class the shared mailbox rule gave it; `None` for a stray
 /// answer, which is nobody's.
@@ -254,7 +252,7 @@ pub fn classify(item: &str, envelope: &Envelope) -> Result<Option<Event>> {
     }))
 }
 
-/// The legacy `mail-read-invalid` refusal: a reply the duty cannot read.
+/// The `mail-read-invalid` refusal: a reply the duty cannot read.
 fn invalid(item: &str, value: String) -> Error {
     Error::Runtime(agent_runtime::Error::External {
         program: "lane-mail",
@@ -265,8 +263,7 @@ fn invalid(item: &str, value: String) -> Error {
 
 /// The `directive` row: the cursor `directive-read` was last reported up
 /// to, the last line reported `directive-unread` with the turns since
-/// unread lines were last reported, and the id `to-lane.jsonl` opened with
-/// (`oversee-watch:3099-3107`).
+/// unread lines were last reported, and the id `to-lane.jsonl` opened with.
 struct DirectiveRow {
     read_at: u64,
     unread_at: u64,
@@ -275,8 +272,8 @@ struct DirectiveRow {
 }
 
 impl DirectiveRow {
-    /// `None` for no row or one whose counts do not read, which the legacy
-    /// took as a lane having read up to its cursor.
+    /// `None` for no row or one whose counts do not read, which reads as a
+    /// lane having read up to its cursor.
     fn parse(row: Option<&str>) -> Option<DirectiveRow> {
         let row = row?;
         let mut fields = row.splitn(3, ' ');
@@ -304,8 +301,8 @@ impl DirectiveRow {
 }
 
 /// Whether a box whose row holds `prior` and `seen` reads as a replacement
-/// when it opens with `first` and holds `count` lines
-/// (`oversee-watch:3070-3081`): a mailbox opening with another envelope than
+/// when it opens with `first` and holds `count` lines: a mailbox opening
+/// with another envelope than
 /// the one recorded, or, with no first id recorded, one holding fewer lines
 /// than were drained. A read finding no line is no replacement.
 fn replaced(prior: u64, seen: &str, count: u64, first: &str) -> bool {
@@ -332,7 +329,7 @@ fn unread_value(newest: Option<(u64, &str)>, count: u64) -> String {
 }
 
 /// Which lanes of the fleet have a mailbox the duty reads: a running lane
-/// whose kind's channel is a mailbox (`check_mail`'s `MAILLESS` filter),
+/// whose kind's channel is a mailbox,
 /// with its recorded root and, for a lane on another host, that host, which
 /// its drain runs under.
 fn readable(lane: &Lane) -> Result<Option<(Option<String>, Drain)>> {
@@ -368,8 +365,8 @@ fn fleet(path: &Path) -> Result<FleetState> {
     FleetState::view(path, &snapshot.doc)
 }
 
-/// The overseer box's byte size: `None` for no box yet, as the legacy's
-/// `none`; a box that is there and cannot be read is refused, never read
+/// The overseer box's byte size: `None` for no box yet; a box that is
+/// there and cannot be read is refused, never read
 /// as absent.
 fn box_size(path: &Path) -> Result<Option<u64>> {
     match std::fs::metadata(path) {
@@ -424,7 +421,7 @@ impl MailDuty {
     /// The body: one turn delivered whole, and, where a target was refused,
     /// the refused targets with their causes as the run's partial failure,
     /// which the runner counts and says after the delivered lines under its
-    /// one failure rule (decision 156 (1)); a turn with no refusal ends the
+    /// one failure rule; a turn with no refusal ends the
     /// count.
     pub fn run(&mut self, tick: &Tick) -> Result<Produced> {
         let full = self.full_due(tick);
@@ -493,7 +490,7 @@ impl MailDuty {
     /// The local lanes in as few batched reads as the refusals allow: the
     /// program stops its reply at the first lane it refuses, which is named
     /// here, and the lanes after it are asked again without it, so one
-    /// unreadable mailbox holds no other lane's mail (decision 133). A
+    /// unreadable mailbox holds no other lane's mail. A
     /// program that did not start or answer refuses every lane asked.
     fn drain_local(&self, lanes: &[Drain], turn: &mut Turn) -> Vec<(Drain, Drained)> {
         let mut out = Vec::new();
@@ -617,7 +614,7 @@ impl MailDuty {
         Ok(())
     }
 
-    /// One lane's drain rendered (`oversee-watch:3125-3257`).
+    /// One lane's drain rendered.
     fn lane_turn(
         &self,
         tick: &Tick,
@@ -741,7 +738,7 @@ impl MailDuty {
     }
 
     /// Close the owner asks whose deadline has passed with their
-    /// recommendation (`resolve_due_owner_asks`); another close winning the
+    /// recommendation; another close winning the
     /// lock is no failure, any other refusal names the ask and the box is
     /// still read. The next read reports each close.
     fn resolve_due_asks(&self, turn: &mut Turn) {
@@ -763,7 +760,7 @@ impl MailDuty {
 
     /// The overseer's box past the line announced, a replaced box from its
     /// start, each envelope by the class table; the row moves to the count
-    /// read (Q2: announced, never acknowledged), and the wake's slot
+    /// read (announced, never acknowledged), and the wake's slot
     /// follows the lead's own cursor. One read serves both: it starts at
     /// the lower of the two cursors.
     fn overseer_turn(&self, baseline: &Baseline, turn: &mut Turn) {
@@ -838,10 +835,8 @@ impl MailDuty {
 mod tests {
     use super::*;
 
-    /// The class table on real envelopes (`oversee_watch_mail.sh`'s rows):
-    /// each class and kind to its line, a stray answer to none, a class the
-    /// rule does not define refused. Defect: an envelope rendered under
-    /// another kind's line, or a stray read back as a note.
+    /// The class table on real envelopes: each class and kind to its line,
+    /// a stray answer to none, a class the rule does not define refused.
     #[test]
     fn the_class_table_renders_each_legacy_line() {
         let env = |json: &str| -> Envelope { serde_json::from_str(json).unwrap() };
@@ -925,8 +920,8 @@ mod tests {
         assert!(events.is_empty());
     }
 
-    /// The rows' wire forms: a replacement is judged as the legacy judged
-    /// it, a directive row short of its counts reads as none, and the wake
+    /// The rows' wire forms: a replacement is judged by its first id and
+    /// count, a directive row short of its counts reads as none, and the wake
     /// slot's value is the newest line's id or its number.
     #[test]
     fn a_replacement_and_a_directive_row_read_as_the_legacy_read_them() {

@@ -677,34 +677,33 @@ mod tests {
     const EXIT_0: &str = "exit 0\n";
 
     /// One run is one start under the executable's file name, not its
-    /// path, and a tagged run lands under its tag beside the name. Defects:
-    /// a run that counts nothing or twice, a path-named executable split
-    /// across keys by install location, a tag that lands under the bare
-    /// name. No test here resets the counter: the test binary's other
-    /// tests read it in parallel.
+    /// path, and a tagged run lands under its tag beside the name. No test
+    /// here resets the counter: the test binary's other tests read it in
+    /// parallel.
     #[test]
     fn one_run_counts_one_start_under_the_file_name_and_the_tag() {
         let dir = tempfile::tempdir().unwrap();
-        let exe = stub(dir.path(), "u5b-row-a", EXIT_0);
+        let exe = stub(dir.path(), "counted-run", EXIT_0);
         let before = counts();
-        run("u5b-row-a", &exe, "noop", &[], BOUND).unwrap();
+        run("counted-run", &exe, "noop", &[], BOUND).unwrap();
         let after = counts();
         assert_eq!(
-            after.of("u5b-row-a", None) - before.of("u5b-row-a", None),
+            after.of("counted-run", None) - before.of("counted-run", None),
             1
         );
-        assert_eq!(after.of("u5b-row-a", Some("row-a")), 0);
-        run_tagged("row-a", "u5b-row-a", &exe, "noop", &[], BOUND).unwrap();
+        assert_eq!(after.of("counted-run", Some("row-a")), 0);
+        run_tagged("row-a", "counted-run", &exe, "noop", &[], BOUND).unwrap();
         let tagged = counts();
-        assert_eq!(tagged.of("u5b-row-a", Some("row-a")), 1);
-        assert_eq!(tagged.of("u5b-row-a", None), after.of("u5b-row-a", None));
+        assert_eq!(tagged.of("counted-run", Some("row-a")), 1);
+        assert_eq!(
+            tagged.of("counted-run", None),
+            after.of("counted-run", None)
+        );
     }
 
     /// A detached start counts one start under its tag, holds no pipe of
     /// this process (a child that writes to its streams blocks on nothing
-    /// and ends), and is reaped by its handle. Defects: a detached child
-    /// left uncounted, or one held open by an inherited pipe the caller
-    /// never drains.
+    /// and ends), and is reaped by its handle.
     #[test]
     fn a_detached_start_counts_once_and_is_reaped_by_its_handle() {
         let dir = tempfile::tempdir().unwrap();
@@ -769,9 +768,8 @@ mod tests {
         assert!(!stands(), "the dropped child {pid} stands unreaped");
     }
 
-    /// An executable that never starts is no start. Defect: counting the
-    /// attempt, which would put a missing program's refusals into a
-    /// measurement of process starts.
+    /// An executable that never starts is no start, so a missing program's
+    /// refusals stay out of a measurement of process starts.
     #[test]
     fn a_failed_spawn_counts_nothing_and_keeps_the_error_kind() {
         let dir = tempfile::tempdir().unwrap();
@@ -798,9 +796,8 @@ mod tests {
         assert_eq!(counts().of("u5b-missing", Some("row-a-missing")), 0);
     }
 
-    /// Starts from several threads at once all land. Defect: an
-    /// unsynchronised read-modify-write or a thread-local count losing
-    /// increments under the concurrent duties the orch runtime runs.
+    /// Starts from several threads at once all land, as the orch runtime's
+    /// concurrent duties start them.
     #[test]
     fn concurrent_runs_each_count() {
         use std::sync::{Arc, Barrier};
@@ -834,11 +831,9 @@ mod tests {
 
     /// A placed run starts in its working directory with the added variables
     /// beside the inherited ones, the last value of a repeated name winning,
-    /// and counts under its tag. Defects: the directory not entered (the
-    /// worktree package would read the runtime's own repository); an
-    /// environment replaced instead of added to, which loses `PATH` and the
-    /// harness variables a shell script reads; the first of two values
-    /// kept.
+    /// and counts under its tag. The worktree package reads its repository
+    /// from the directory, and a shell script reads `PATH` and the harness
+    /// variables from the inherited environment.
     #[test]
     fn a_placed_run_enters_its_cwd_and_adds_to_the_inherited_environment() {
         let dir = tempfile::tempdir().unwrap();
@@ -868,9 +863,7 @@ mod tests {
     }
 
     /// A working directory that is not there fails the run before anything
-    /// starts, as its own cause, and counts nothing. Defects: the child
-    /// started anyway or the attempt counted; the missing directory read as
-    /// a missing executable.
+    /// starts, as its own cause, and counts nothing.
     #[test]
     fn a_missing_cwd_fails_before_spawning_and_counts_nothing() {
         let dir = tempfile::tempdir().unwrap();
@@ -896,9 +889,8 @@ mod tests {
     }
 
     /// The bound applies to a placed run: a child that outlives it is ended
-    /// and the run reads as no answer, after one counted start. Defect: the
-    /// new entry passing an unbounded wait, which the worktree package's
-    /// hold relies on never happening.
+    /// and the run reads as no answer, after one counted start. The worktree
+    /// package's hold relies on that bound.
     #[test]
     fn the_bound_applies_to_a_placed_run() {
         let dir = tempfile::tempdir().unwrap();

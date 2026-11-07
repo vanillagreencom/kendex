@@ -151,7 +151,7 @@ pub struct VerifyingItem {
     pub priority: String,
     pub container: bool,
     /// The open items blocking this one, which the judge reads as
-    /// `blocked` and the line carries (`lib/verifying.sh:141`, `:160`).
+    /// `blocked` and the line carries (`lib/verifying.sh`).
     pub blocked_by_open: Vec<String>,
 }
 
@@ -277,7 +277,7 @@ impl Linear<'_> {
     /// `tracker-list-failed`; a quota receipt is the answer.
     #[allow(
         clippy::disallowed_methods,
-        reason = "the tracker duty reads the tracker through the linear CLI for its inventories and repairs an owner ask's description through it (oversee-watch:2787-2803), no effect on a lane or a controller"
+        reason = "the tracker duty reads the tracker through the linear CLI for its inventories and repairs an owner ask's description through it, no effect on a lane or a controller"
     )]
     fn call(&self, read: &'static str, args: &[&str]) -> Result<Answered<Vec<u8>>> {
         let output = host::run_tagged(TAG, "linear", self.cli, read, args, TRACKER_TIMEOUT)
@@ -335,7 +335,8 @@ struct StatusRow {
     kind: String,
 }
 
-/// `issues list --select owed --format=safe` (`commands/issues.sh:576`).
+/// `issues list --select owed --format=safe` (`commands/issues.sh`'s `owed`
+/// selection).
 #[derive(Debug, Clone, Deserialize)]
 struct OpenItem {
     id: String,
@@ -389,7 +390,7 @@ struct ChildNode {
 }
 
 /// `comments bulk-list --format=safe`: `{ID: [comment_safe]}`
-/// (`lib/formatters.sh:456`).
+/// (`lib/formatters.sh`'s `COMMENT_SAFE_JQ`).
 #[derive(Debug, Clone, Deserialize)]
 struct CommentRow {
     id: String,
@@ -399,7 +400,7 @@ struct CommentRow {
 }
 
 /// `issues list --assignee … --label … --format=safe`: the fields the
-/// owner-tracker read uses (`lib/formatters.sh:98`).
+/// owner-tracker read uses (`lib/formatters.sh`'s `format_issues_list`).
 #[derive(Debug, Clone, Deserialize)]
 struct OwnerItem {
     id: String,
@@ -1003,7 +1004,7 @@ enum OwnerRead {
     Unread(&'static str),
 }
 
-/// `owner_action_line` (`mailbox-append.sh:241`): the owner's first name,
+/// `owner_action_line` (`mailbox-append.sh`): the owner's first name,
 /// the stored action and the description with any earlier action line
 /// removed; none where the assignee has no word.
 fn owner_action_line(assignee: &str, action: &str, description: &str) -> Option<String> {
@@ -1528,7 +1529,7 @@ enum Closed {
 /// and recorded, read by the outcome it recorded.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the terminal-lanes step's one store call per ended item: the close request the fleet record's own close effect runs on (decision 128 (9))"
+    reason = "the terminal-lanes step's one store call per ended item: the close request the fleet record's own close effect runs on"
 )]
 fn close_one(
     ctx: &Context,
@@ -1578,8 +1579,6 @@ fn close_one(
     Ok(Closed::Failed(note.to_owned()))
 }
 
-/// The rows this duty keeps and what each holds, for `watch status` and
-/// the cutover's reader.
 pub fn row_kinds() -> [&'static str; 3] {
     [QUOTA_ROW, TRIAGE_ROW, TERMINAL_CLOSE_ROW]
 }
@@ -1588,12 +1587,12 @@ pub fn row_kinds() -> [&'static str; 3] {
 mod tests {
     use super::*;
 
-    /// The receipt's shape (`TRACKER_QUOTA_JQ`): a future or elapsed status
+    /// The receipt's shape: a future or elapsed status
     /// needs its epoch and the matching ISO reset, the others `unavailable`
     /// and no epoch; the last well-formed receipt on stderr is the one;
     /// a future reset holds until its epoch and not from it.
     #[test]
-    fn a_quota_receipt_is_read_in_the_legacy_shape_and_holds_until_its_reset() {
+    fn a_quota_receipt_is_read_in_the_clis_shape_and_holds_until_its_reset() {
         let future = r#"{"code":"RATELIMITED","quota":{"limit":"requests","status":"future","reset":"2026-01-01T00:10:00Z","reset_epoch":1767226200}}"#;
         let quota = Quota::of_stderr(&format!("noise\n{future}\n")).unwrap();
         assert_eq!(quota.limit, QuotaLimit::Requests);
@@ -1616,11 +1615,9 @@ mod tests {
         assert_eq!(row, quota);
     }
 
-    /// `owner_action_line` and `owner_action_body` (`mailbox-append.sh:241`)
-    /// on the mail suite's descriptions (`oversee_watch_mail.sh`, rows
-    /// `restored` and `replacement`): the first name, the action, one blank
-    /// line, the body; an earlier action line is replaced; an assignee with
-    /// no word repairs nothing.
+    /// `owner_action_line` and `owner_action_body` (`mailbox-append.sh`):
+    /// the first name, the action, one blank line, the body; an earlier
+    /// action line is replaced; an assignee with no word repairs nothing.
     #[test]
     fn the_owner_action_line_opens_the_description_and_replaces_an_earlier_one() {
         let body = "Engineering body.\n\nKeep these bytes.\n\n";

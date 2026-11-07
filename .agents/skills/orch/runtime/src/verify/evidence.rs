@@ -40,7 +40,7 @@
 //! here and carried as one
 //! of three states (`Association`): the link, the check run's `details_url`
 //! that `gh pr checks` printed (gh v2.103.3 `aggregate.go:51`), names the
-//! run (`ci-run-correlation.sh:81-84`), and the check's suite, where it
+//! run, and the check's suite, where it
 //! names a run, is the agreeing second source; a link naming a run the
 //! evidence does not hold, a suite and link that disagree, or a suite whose
 //! run GitHub names but does not identify (`SuiteRun::RunUnidentified`) is

@@ -83,9 +83,9 @@ impl Harness {
     /// bills. `pi-claude/` is pi-claude-bridge on a Claude seat, so the seat
     /// is `CLAUDE_CONFIG_DIR`; `github-copilot/` and `anthropic/` are Pi's
     /// own root; any other Pi provider, or a Pi model naming none, takes the
-    /// Claude variable too, as the legacy `lane_env_prefix` routed it. The
-    /// one table of orch's `lib/lane-launch.sh` (`lane_env_prefix`,
-    /// `lane_pick_harness`), held here as data for every launcher.
+    /// Claude variable too. The same table routes orch's `lib/lane-launch.sh`
+    /// (`lane_env_prefix`, `lane_pick_harness`); it is held here as data for
+    /// every launcher.
     pub fn account_var(self, model: Option<&str>) -> &'static str {
         match self {
             Harness::Claude | Harness::Codex | Harness::Copilot => self.home_var(),
@@ -125,7 +125,7 @@ impl Harness {
     /// the session's own native file is known before it is written. Only
     /// Claude Code takes one (`--session-id <uuid>`); Codex, Copilot and Pi
     /// mint their own, and a launch of those binds the file that appears
-    /// instead (decision 65).
+    /// instead.
     pub fn session_id_words(self, id: &str) -> Option<Vec<String>> {
         match self {
             Harness::Claude => Some(vec!["--session-id".to_owned(), id.to_owned()]),
@@ -189,8 +189,8 @@ impl Harness {
     /// (`lib/lane-launch.sh`), its full-bypass subset the seventh. A
     /// `FLAG=VALUE` spelling also matches the two-word `FLAG VALUE` form.
     /// The builder adds its own permission word only where none of these
-    /// stands (the legacy rule, `oversee-succeed`), and a `native` posture
-    /// carrying a full-bypass spelling is a mismatch (decision 124a (4)).
+    /// stands, and a `native` posture carrying a full-bypass spelling is a
+    /// mismatch.
     ///
     /// ```text
     /// harness  accepted (sixth column)                                  full bypass (seventh)
@@ -249,7 +249,7 @@ impl Harness {
     /// The first word of `words` that spells this harness's full bypass, in
     /// either the plain or the two-word `FLAG VALUE` form. Every word is
     /// read, so a narrower permission word before a full-bypass one does not
-    /// hide it (decision 124b).
+    /// hide it.
     pub fn bypass_word_in(self, words: &[String]) -> Option<String> {
         let spellings = self.permission_spellings();
         words.iter().enumerate().find_map(|(i, word)| {
@@ -375,8 +375,8 @@ impl ModelMatch {
 }
 
 /// Claude Code's declared capacity per model, in the order the walk reads
-/// them: the ids with a measured 1,000,000-token window (KEN-4599) before
-/// the family that would read them at 200,000.
+/// them: the ids with a measured 1,000,000-token window before the family
+/// that would read them at 200,000.
 const CLAUDE_CONTEXT_CAPACITY: [(ModelMatch, u64); 6] = [
     (ModelMatch::Id("claude-sonnet-5-5"), 1_000_000),
     (ModelMatch::Id("claude-sonnet-5"), 1_000_000),
@@ -459,16 +459,11 @@ const COMM_LEN: usize = 15;
 mod tests {
     use super::*;
 
-    /// Defect: a model's declared capacity read from another row (the judge
-    /// then reads a 1,000,000-token model as 200,000, or the reverse): an
-    /// exact id read at its family's budget, or an alias of that family
-    /// read at the exact id's; or a harness whose window the adapter
-    /// measures answered a figure here. The rows are the spellings orch
-    /// records: a measured id, a family word inside a full id or a class
-    /// alias, a measured id with the `[1m]` suffix (an alias, which an id
-    /// matched by containment would read at the measured figure), case
-    /// ignored, the default for a model naming no family, and `None` for
-    /// every other harness.
+    /// The rows are the spellings orch records: a measured id, a family word
+    /// inside a full id or a class alias, a measured id with the `[1m]`
+    /// suffix (an alias, which an id matched by containment would read at the
+    /// measured figure), case ignored, the default for a model naming no
+    /// family, and `None` for every other harness.
     #[test]
     fn the_declared_capacity_follows_the_model_id_then_its_family_and_only_claude_declares_one() {
         let rows = [
@@ -497,14 +492,13 @@ mod tests {
         }
     }
 
-    /// Defect: orch's copy of the table, `lib/adapters/claude.sh`'s
-    /// `LANE_ADAPTER_CLAUDE_WINDOWS` and `LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW`,
-    /// which the turn-end hook and the launcher judge on before this
-    /// runtime is built, drifting from this one: a figure moved in either
-    /// file alone, and the overseer judged on two capacities. The shipped
-    /// adapter beside this crate is read and its two assignment lines
-    /// parsed; every row, in order and in the adapter's glob spelling, and
-    /// the default must be this table's.
+    /// The turn-end hook and the launcher judge on orch's copy of the table,
+    /// `lib/adapters/claude.sh`'s `LANE_ADAPTER_CLAUDE_WINDOWS` and
+    /// `LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW`, before this runtime is built, so
+    /// a figure moved in either file alone has the overseer judge on two
+    /// capacities. The shipped adapter beside this crate is read and its two
+    /// assignment lines parsed; every row, in order and in the adapter's glob
+    /// spelling, and the default must be this table's.
     #[test]
     fn the_adapters_capacity_line_spells_this_table_row_for_row() {
         let path = concat!(
@@ -554,9 +548,7 @@ mod tests {
 
     /// A probe of a stand-in harness is one counted start under `probe`
     /// and reads the first non-blank line it prints; a binary that is not
-    /// there is the `harness-missing` refusal and no start. Defects: a
-    /// probe past the runner, uncounted; a missing binary read as an
-    /// external failure or as a start.
+    /// there is the `harness-missing` refusal and no start.
     #[test]
     fn a_probe_counts_one_start_under_probe_and_a_missing_binary_is_refused() {
         let dir = tempfile::tempdir().unwrap();
@@ -661,9 +653,9 @@ mod tests {
         assert!(Harness::Pi.owns_process("pi"));
     }
 
-    /// The full-bypass spelling table (decision 120, M3): every supported
-    /// spelling is recognized, a `FLAG=VALUE` spelling in its two-word form
-    /// too, and a non-bypass permission word is not a bypass.
+    /// The full-bypass spelling table: every supported spelling is
+    /// recognized, a `FLAG=VALUE` spelling in its two-word form too, and a
+    /// non-bypass permission word is not a bypass.
     #[test]
     fn a_full_bypass_spelling_is_recognized_in_any_of_its_forms() {
         let words = |v: &[&str]| v.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
@@ -680,7 +672,7 @@ mod tests {
             Some("--dangerously-skip-permissions".to_owned())
         );
         // A non-bypass permission word is not a full bypass, and one before a
-        // full bypass does not hide it (decision 124b).
+        // full bypass does not hide it.
         assert_eq!(
             Harness::Claude.bypass_word_in(&words(&["--permission-mode=dontAsk"])),
             None

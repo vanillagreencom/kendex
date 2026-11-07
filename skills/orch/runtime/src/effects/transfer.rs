@@ -625,8 +625,8 @@ enum Retirement {
         by: &'static str,
     },
     Standing,
-    /// The recorded pid holds another process: one reading towards decision
-    /// 68, the second settling the identity as gone.
+    /// The recorded pid holds another process: one reading towards the stale
+    /// count, the second settling the identity as gone.
     Stale {
         readings: u64,
     },
@@ -817,8 +817,8 @@ fn succeed(run: &Run, intent_id: &str, mode: Mode, brief: Option<&Path>) -> Resu
     // --- Prepare the waiting runner: open its window and bring it to its
     // composer. It has no controller-mail authority, since the fleet record
     // still publishes the predecessor's generation. ---
-    // The server and floor are recorded before the window opens (decision
-    // 73); a reconcile at `opening` with a dead owner adopts the runner by
+    // The server and floor are recorded before the window opens; a
+    // reconcile at `opening` with a dead owner adopts the runner by
     // its receipt, and before retirement that is still an
     // abandon.
     let opening = match operation.opening(
@@ -1070,7 +1070,7 @@ fn complete_transfer(
         Phase::WindowOpened { .. } | Phase::Retired { .. } => {
             let Some(brief) = &opened.brief else {
                 // No handoff to deliver: the runner idle at its composer
-                // at its composer is the successor once its identity is
+                // is the successor once its identity is
                 // read; a runner held at a dialog is not.
                 return publish(
                     operation,
@@ -1123,8 +1123,8 @@ fn complete_transfer(
                         ));
                     }
                 };
-            // The runner's own session file, bound once before the paste
-            //; a brief is never pasted without it. A store that
+            // The runner's own session file, bound once before the paste;
+            // a brief is never pasted without it. A store that
             // could not be read whole holds the succession at this phase with
             // the cause: the runner is live, so this is no
             // refusal.
@@ -1279,8 +1279,8 @@ fn complete_transfer(
         }
     };
     // The delivery is confirmed by the harness's own record: a user turn
-    // beyond the count before the paste, in the one file bound above
-    //. The runner then works that brief, so it is
+    // beyond the count before the paste, in the one file bound above.
+    // The runner then works that brief, so it is
     // published idle or working, never held at a dialog.
     let file = Path::new(&session.file);
     match operation.await_delivered_turn(successor.harness, pane, file, turns_before)? {
@@ -1334,7 +1334,7 @@ fn complete_transfer(
 /// handle of the record the publication moves: a close the host did not
 /// answer for keeps the succession `unconfirmed` at this phase, the
 /// successor live and the brief delivered, and the reconcile closes it again
-/// before it publishes. A start's fleet watch (`watch`, step6-map A7) is
+/// before it publishes. A start's fleet watch (`watch`) is
 /// launched here, after the runner's identity is read and before the
 /// publication, through the handle's job launch: a launch that refuses or
 /// never claims holds the start `unconfirmed` naming it, the runner live
@@ -1863,8 +1863,8 @@ fn unbound_transfer_unconfirmed(
     operation.hold(unbound_transfer_observation(generation, observation))
 }
 
-/// A controller target whose generation moved past the intent's (decision
-/// 124d (20)): before any signal the intent refuses `target-moved` with no
+/// A controller target whose generation moved past the intent's: before
+/// any signal the intent refuses `target-moved` with no
 /// effect; after one it retries on its own recorded set alone, every standing
 /// process stopped by its own token and every standing pane closed by its
 /// full key, then settles `failed` once nothing stands, else holds. Nothing

@@ -2,8 +2,8 @@
 #
 # The one answer to "how does a resolved lane reach the launched harness, and
 # is the pane really running it". Every launcher that starts a harness on a
-# chosen account builds its command here — open-terminal for a work item,
-# oversee-succeed for a successor overseer — so a second builder cannot drift
+# chosen account builds its command here — open-terminal for a wake of a work
+# item, oversee-succeed for a successor overseer — so a second builder cannot drift
 # from the first and launch onto an account nobody picked.
 #
 # Sourced, never run.
@@ -45,8 +45,7 @@ source "${BASH_SOURCE[0]%/*}/adapters/claude.sh"
 # Codex and Copilot are named. A Pi launch on the Copilot pool
 # (lane_pick_harness below) takes Pi's own variable, PI_CODING_AGENT_DIR, the
 # directory whose Pi login spends that pool, as lane-host-ssh gives a hosted Pi
-# lane. Every other harness takes the Claude variable, which is what a local
-# `--lane` launch on a further harness has always done. A Pi launch on a
+# lane. Every other harness takes the Claude variable. A Pi launch on a
 # `pi-claude/` model is one of them: pi-claude-bridge runs Claude Code on the
 # credential CLAUDE_CONFIG_DIR names, so that variable IS the Claude seat it
 # spends, and a Pi lane named on a Claude config dir is never handed that dir as
@@ -638,8 +637,8 @@ launch_choice_permission_write() { # HARNESS
 # writes it outside WORD..., and otherwise the one WORD... names; a WORD...
 # naming it, in either form launch_choice_value reads, is written as
 # launch_choice_model_id gives it and judged so, and one still naming the
-# alias after that is judged as the alias. open-terminal's fleet gate asks
-# this same judge.
+# alias after that is judged as the alias. open-terminal's wake asks this
+# same judge.
 # LAUNCH_CHOICE_COMPACTION says what became of the compaction words: `on`,
 # `none` for a row that has none. An adapter failure gives `no-window`, or
 # `no-model` when the launch uses the native default. A caller's flags handed
@@ -916,15 +915,15 @@ lane_single_quote() { # VALUE
   printf "'%s'" "${1//\'/$escaped}"
 }
 
-# Both launchers read a caller-written brief once and drop trailing newlines.
+# A launcher reads a caller-written brief once and drops trailing newlines.
 # Each caller owns its diagnostic prefix and any launch-specific restrictions.
 LANE_BRIEF_TEXT="" LANE_BRIEF_REASON="" LANE_BRIEF_NUL=0
 lane_brief_read() { # PATH
   local captured text nul part
   LANE_BRIEF_TEXT="" LANE_BRIEF_REASON="" LANE_BRIEF_NUL=0
-  # Bash drops NUL in command substitutions. Keep its presence separately so
-  # the inline launcher can refuse it while the saved-file launcher keeps its
-  # existing text result. cat's status still identifies an unreadable file.
+  # Bash drops NUL in command substitutions, so its presence is kept apart in
+  # LANE_BRIEF_NUL for the caller to judge. cat's status still identifies an
+  # unreadable file.
   captured="$(cat -- "$1" 2>/dev/null | {
     text="" nul=0 part=""
     while IFS= read -r -d '' part; do
@@ -1000,8 +999,8 @@ lane_codex_trusted() { # CONFIG DIR
 # One reader, because the question has more than one file to ask. A launch on
 # the launch-home route runs with CODEX_HOME at the private home, so that is the
 # config codex writes a folder-trust answer into; a check that read the account
-# alone found nothing there, rebuilt the home from the account and appended
-# trust over the answer somebody had given. A config location added later is one
+# alone would find nothing there, rebuild the home from the account and append
+# trust over the answer somebody gave. A config location added later is one
 # more argument here rather than a second per-file check a new site can miss.
 lane_codex_recorded() { # DIR CONFIG...
   local dir="$1" config rc out=1
@@ -1182,9 +1181,9 @@ lane_codex_trust_prepare() { # LANE_DIR LAUNCH_DIR
   ( umask 077 && mkdir -p -- "$home" ) || { LANE_TRUST_REASON=home-create; return 1; }
   # The transcript store belongs to the ACCOUNT. The harness creates what is
   # missing under the home it is given, so a store absent at this moment is
-  # created inside the private home, where open-terminal's relaunch scan never
-  # looks: that scan reads `<account>/sessions`, and a rollout written anywhere
-  # else is a resume that silently starts a fresh thread. Made in the account
+  # created inside the private home, where a resume that looks under the
+  # account never finds it: a rollout written anywhere but `<account>/sessions`
+  # is a resume that silently starts a fresh thread. Made in the account
   # first so the loop below links it like any other entry. Every other name the
   # harness invents after this point is created privately and stays there; this
   # is the one such name anything here reads.
@@ -1295,7 +1294,7 @@ lane_codex_trust_prepare() { # LANE_DIR LAUNCH_DIR
 # harness is the same mistake pointed elsewhere — a lane and a harness are
 # chosen independently, so a codex lane launched under claude would otherwise
 # render `1codex` running claude's arguments. Both fall through to the prefix
-# form, which selected these lanes correctly all along.
+# form, which selects these lanes correctly.
 #
 # Local claude, codex and copilot launches only, which the caller establishes
 # before it asks: a launch on another machine answers about the wrong PATH,
@@ -1338,7 +1337,7 @@ lane_launch_compaction_env() { # CMD HARNESS [LITERAL_BRIEF]
   local cmd="$1" harness="$2" word assignment overrides="" settings='{}' i text rendered
   if [[ "$harness" == codex ]] && launch_choice_shell_words "$cmd" literal \
       && [[ "${LAUNCH_CHOICE_ARGV[0]:-}" == codex ]]; then
-    # open-terminal quotes a bare {brief} as one literal value. Substitute
+    # LITERAL_BRIEF is the value of a bare {brief} quoted as one word. Substitute
     # after parsing so a large prompt never enters the shell-text scanner.
     if [[ "$#" -ge 3 ]]; then
       for ((i = 1; i < ${#LAUNCH_CHOICE_ARGV[@]}; i++)); do
@@ -1487,9 +1486,8 @@ lane_launch_keep_live_session() {
 # the launch shell, and a bare pair closes early on a dir carrying an
 # apostrophe — which the pane shell then rejects for an unterminated string,
 # starting no harness and leaving the launch to time out naming nothing about
-# quoting. Only open-terminal refuses such a dir before it gets here; a lane
-# reaching this builder from anywhere else has no such gate, so the escaping is
-# this builder's to do.
+# quoting. No caller is relied on to refuse such a dir before it gets here, so
+# the escaping is this builder's to do.
 #
 # The lane is recorded in the launched command itself, so `ps` and the pane's
 # own first line show which account a stalled session belongs to: the
@@ -1515,8 +1513,8 @@ lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM [TEMPLATE] [CHILD_ENV]
   [[ -z "${7:-}" ]] || scrub+=" $7"
   launch_env=$(lane_launch_rm_prompt_env "$cmd" "$harness") || return 1
   if [[ "$harness" == codex && -n "$var" ]]; then
-    # open-terminal carries the shared reader's result through its file-brief
-    # rendering. The execution-only file read is not caller shell evidence.
+    # COMPACTION_ENV is the shared reader's result a caller computed before
+    # rendering a file brief. The execution-only file read is not caller shell evidence.
     if [[ -n "${8:-}" ]]; then launch_env="$8"
     else launch_env=$(lane_launch_compaction_env "$cmd" "$harness") || return 1; fi
   fi
@@ -1556,8 +1554,8 @@ lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM [TEMPLATE] [CHILD_ENV]
 }
 
 # The Copilot launch policy for a command CMD, fresh or resumed, a lane's or
-# an overseer's, one owner for the local launch line above and the hosted
-# command open-terminal hands a provider: the `env` words that go in front of
+# an overseer's, one owner for the local launch line above and a hosted
+# command handed to a provider: the `env` words that go in front of
 # `copilot`, SKILLS the shell word naming the shared skills tree, a quoted path
 # locally and "$HOME/.agents/skills" unexpanded for a host, whose own login
 # shell expands it. Run after that login shell's profile, so a
@@ -1593,8 +1591,7 @@ lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM [TEMPLATE] [CHILD_ENV]
 #                                 COPILOT_ALLOW_ALL the launching shell exports
 #                                 never reaches it: a command without either
 #                                 spelling keeps its permission prompts and its
-#                                 folder-trust dialog, as open-terminal's
-#                                 permission-prompt warning says. An assignment
+#                                 folder-trust dialog. An assignment
 #                                 a --cmd template writes itself follows this
 #                                 one, and wins.
 lane_copilot_env() { # CMD SKILLS
@@ -1740,13 +1737,8 @@ LANE_SETTLE_MS_DEFAULT=1000
 # what answers: once the pane draws the harness's own screen, or once it shows a
 # running turn — pane_harness_up in lib/lane-state.sh is that question.
 #
-# The premise is the CALLER'S, and neither shipped caller treats it as proven.
-# open-terminal waits for it best effort and, where the wait comes back empty,
-# reports the reading that follows as unobserved rather than as a verified
-# account. oversee-succeed's FIRST read is deliberately unpremised — it exists
-# to catch a disagreement that is already true, before the successor has had a
-# turn — and only its second read, taken once the pane shows a running turn,
-# carries the premise and is the one its window closes on.
+# The premise is the CALLER'S: a caller that cannot establish it reports the
+# reading that follows as unobserved rather than as a verified account.
 # shellcheck disable=SC2034  # LANE_ACCOUNT_RESULT and LANE_ACCOUNT_OBSERVED are
 # this function's answer, read by the caller that matches on it.
 lane_account_check() { # PANE LANE_VAR PICKED FORM BOUND
@@ -1768,11 +1760,8 @@ lane_account_check() { # PANE LANE_VAR PICKED FORM BOUND
   # pane at all — an unrelated lane's harness among them, which would refuse a
   # healthy window over a reading that was never about it.
   [[ "$pid" =~ ^[0-9]+$ && "$pid" != 0 ]] || { LANE_ACCOUNT_RESULT=unobserved:pane-pid; return 0; }
-  # Defensive: no shipped caller can drive this arm. open-terminal passes
-  # $ORCH_TMUX_VERIFY_SECS, which its own gate refuses unless it is a positive
-  # integer, and oversee-succeed asks succ_budget_bound, which floors every
-  # bound at this constant. It exists so a caller that computes its own bound is
-  # named for what it did: left to the loop, that bound would answer
+  # A bound below LANE_SETTLE_MIN_SECS is named for what it is: left to the
+  # loop, that bound would answer
   # `unsettled`, `no-lane-variable` or `descendant-probe` by whatever its first
   # read happened to find, each of which tells an operator something about the
   # pane when what happened is that the caller had no budget left to look.

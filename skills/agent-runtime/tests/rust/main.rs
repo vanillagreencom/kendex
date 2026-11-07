@@ -848,15 +848,12 @@ fn deliver_on(
     (reply, out.status.code().unwrap_or(-1))
 }
 
-/// Defect: a delivery read as confirmed from the paste
-/// alone, with no turn the harness itself recorded; a confirmation read
-/// from a file the id does not name; a session with no id typed into. A
-/// `--no-paste` read gives the idle state and the fixed file's turn count;
-/// a paste into a stub that records the line is confirmed by that file; a
-/// paste into one that records nothing is `unconfirmed` once the bound
-/// passes; a session naming no id is a limit, nothing typed; a server the
-/// socket does not answer for under the recorded pid is refused; a server
-/// start left out matches the live server by its pid.
+/// A `--no-paste` read gives the idle state and the fixed file's turn
+/// count; a paste into a stub that records the line is confirmed by that
+/// file; a paste into one that records nothing is `unconfirmed` once the
+/// bound passes; a session naming no id is a limit, nothing typed; a server
+/// the socket does not answer for under the recorded pid is refused; a
+/// server start left out matches the live server by its pid.
 #[test]
 #[cfg(unix)]
 fn deliver_confirms_by_the_fixed_file_s_user_turn_and_never_by_the_paste_alone() {
@@ -1083,13 +1080,11 @@ fn a_launch_whose_line_never_reached_its_window_closes_it_and_one_whose_paste_we
     }
 }
 
-/// Defect: a window left standing, holding only its shell, by a launch whose
-/// record could not be written and whose close went unread, with a refusal
-/// that names no window. Through the real binary on a private server, the
-/// record path already holding a record, so the launch's write is refused
-/// after its window opened: a close tmux answers leaves no window and the
-/// write's own refusal; a `kill-window` tmux refuses leaves the window, and
-/// the refusal names it.
+/// Through the real binary on a private server, the record path already
+/// holding a record, so the launch's write is refused after its window
+/// opened: a close tmux answers leaves no window and the write's own
+/// refusal; a `kill-window` tmux refuses leaves the window, and the refusal
+/// names it.
 #[test]
 #[cfg(unix)]
 fn a_launch_whose_record_cannot_be_written_closes_its_window_or_names_the_one_it_could_not_close() {
@@ -1170,12 +1165,11 @@ fn a_launch_whose_record_cannot_be_written_closes_its_window_or_names_the_one_it
     }
 }
 
-/// Defect: a timed-out `new-window` read as a refusal, and a tmux refusal
-/// read as no answer. Through the real binary on a private server, with a
-/// `tmux` on `PATH` that answers one verb its own way: a `new-window` tmux
-/// refuses is `tmux-refused`, no window opened; one that opens the window
-/// and then gives no answer within the bound is `launch-window-unanswered`,
-/// naming the session and the window, which stands.
+/// Through the real binary on a private server, with a `tmux` on `PATH`
+/// that answers one verb its own way: a `new-window` tmux refuses is
+/// `tmux-refused`, no window opened; one that opens the window and then
+/// gives no answer within the bound is `launch-window-unanswered`, naming
+/// the session and the window, which stands.
 #[test]
 fn a_new_window_tmux_refused_is_refused_and_one_that_gave_no_answer_is_unanswered() {
     let real = std::env::var_os("PATH")
@@ -1248,9 +1242,8 @@ fn a_new_window_tmux_refused_is_refused_and_one_that_gave_no_answer_is_unanswere
     }
 }
 
-/// Defect: a socket under a made-up uid. With no `$TMUX`, no numeric
-/// `$UID` and an `id` that fails, a launch that names no socket refuses
-/// `uid-unread` before any tmux call.
+/// With no `$TMUX`, no numeric `$UID` and an `id` that fails, a launch that
+/// names no socket refuses `uid-unread` before any tmux call.
 #[test]
 fn a_launch_whose_uid_cannot_be_read_refuses_and_names_no_socket() {
     let dir = tempfile::tempdir().unwrap();

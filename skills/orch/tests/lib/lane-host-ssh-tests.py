@@ -1354,7 +1354,7 @@ exec "$REAL_CAT" "$@"
         self.assertEqual(self.create().returncode, 0)
         library = Path(self.row["clone"]) / ".agents/skills/mailbox/scripts/lib/mailbox-append.sh"
         old = library.read_text()
-        # Model the old library: it accepts surplus arguments without judging them.
+        # Model an outdated library: it accepts surplus arguments without judging them.
         for rule, replacement in (("mailbox_duplicate_id()", "legacy_duplicate_id()"),
                                   ('if [ -n "${4:-}" ]; then', 'if false; then')):
             self.assertEqual(old.count(rule), 1)
@@ -1369,7 +1369,7 @@ exec "$REAL_CAT" "$@"
         remote_library = Path(self.row["clone"]) / ".agents/skills/mailbox/scripts/lib/mailbox-append.sh"
         self.assertEqual(result.stderr, f"lane-host-ssh: append-library-outdated path={remote_library} repeat-check=skipped\n".encode())
         self.assertEqual(list(target.parent.glob("*.kendex-append.*")), [])
-        # Restoring the refusal loses delivery to the old host clone.
+        # Restoring the refusal loses delivery to the outdated host clone.
         original = self.script.read_text()
         rule = '"$lib/mailbox-append.sh" >&2\n'
         self.assertEqual(original.count(rule), 1)

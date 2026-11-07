@@ -1081,9 +1081,8 @@ mod tests {
 
     /// The file an id names, per harness, found by the id and never by the
     /// file's age: the newest file in the store is another session's and is
-    /// not named; an absent file is `Gone`, never a neighbour's. Defect: a
-    /// delivery confirmed on whatever file was written last, a subagent's
-    /// or a neighbour's.
+    /// not named; an absent file is `Gone`, never a neighbour's, so no
+    /// delivery is confirmed on a subagent's or a neighbour's file.
     #[test]
     fn a_fixed_id_names_its_own_file_and_never_the_newest_one() {
         let dir = tempfile::tempdir().unwrap();

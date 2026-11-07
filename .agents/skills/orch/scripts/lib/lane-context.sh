@@ -3,10 +3,10 @@
 # never from a pane. A session's turn-end hook reads its own transcript through
 # the adapter for its harness (lib/adapters/), which answers the tokens the last
 # response left in the context and its verified compaction point, and records that
-# reading in the session's mailbox directory. Every other reader, `lanes
-# context`, `oversee-succeed` and the watch through it, reads that record, so a
-# hosted lane reads the same as a local one and a scrolled or quiet pane changes
-# nothing.
+# reading in the session's mailbox directory. Every other reader, the
+# runtime watch (`orch-runtime watch`) and `oversee-succeed`, reads that
+# record, so a hosted lane reads the same as a local one and a scrolled or
+# quiet pane changes nothing.
 #
 # One judge: lane_context_handoff_due enforces the absolute token cap and the
 # remaining-capacity mark. ORCH_HANDOFF_CONTEXT_PCT can request an earlier
@@ -202,7 +202,7 @@ lane_context_caller_home() { # HARNESS
 # launched on MODEL is judged on by its own account mark, which reads the model
 # its recorded reading names. A claude session's account mark is judged on
 # MODEL's own buckets; a codex session's is judged on the account's binding
-# bucket, the reading the fleet has always taken of one, and this answers empty.
+# bucket, the reading the fleet takes of one, and this answers empty.
 # A pi session's is MODEL as pi spells it, `provider/id`, which
 # lib/overseer-launch.sh § ol_account turns into the account and model `lanes`
 # judges.
@@ -897,8 +897,8 @@ copilot_reading_pending() {
 # SESSION TRANSCRIPT BOX PROJECT. A session runs it from its own shell tool,
 # where no payload exists, so a window there could only be a number the caller
 # typed, and the adapter finds a Pi window itself (lane_adapter_pi_reading). A
-# sixth argument, empty or not, is the window the earlier review-pr text
-# passed, which a lane that loaded that text still sends: it reads, unused,
+# sixth argument, empty or not, is the window a released review-pr text
+# passes, which a lane that loaded that text sends: it reads, unused,
 # with one warning naming this form, until the next kendex major release. The
 # caller's launch home stays in the harness environment. Without --checkpoint
 # the reading is judged with the agent reserve, for an impending attached

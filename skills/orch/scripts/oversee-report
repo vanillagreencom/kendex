@@ -4,7 +4,7 @@
 # statuses: --help.
 #
 # Stdout is a protocol for two readers. `due` prints one `report-due` line or
-# nothing, which oversee-watch relays as its event. `render` and `write` print
+# nothing, which the fleet watch relays as its event. `render` and `write` print
 # the report itself, the text the overseer pastes into its chat; `write` puts
 # the same bytes in the report file, so the chat and the file cannot differ.
 # Stderr's report-written line names the file and notice-id, so the overseer
@@ -238,7 +238,7 @@ Rows:
                   have no lanes[] record, whatever its status: a record is
                   written at launch, so a key with one has launched.
                   A key whose spelling names its tracker (not issue-N)
-                  that the open-terminal file-overlap hold would refuse
+                  that the launch's file-overlap hold would refuse
                   reads `ITEM (held by HOLDER: FILE)`, judged by the same
                   lib/launch-overlap.sh as the first --repo's item, in
                   this checkout, against that repository's held lanes and
@@ -294,7 +294,7 @@ Settings, read through the kendex settings ladder:
                              default 20; excludes prose, labels, separators,
                              indented bullets and the Next report line
   ORCH_CONNECTED_REPOS       blank-separated OWNER/REPO list, read through
-                             orch-env in this checkout as oversee-watch reads
+                             orch-env in this checkout as the fleet watch reads
                              it: each entry, lowercased, is read after the
                              --repo values by every list a --repo is, an
                              entry they already name in any casing skipped.
@@ -306,8 +306,7 @@ Settings, read through the kendex settings ladder:
                              paths to lane-mail, lane-host and workflow-state
 The report's directory is ORCH_PROGRESS_REPORT_DIR, workflow-state's setting.
 
-GitHub auth, before the first gh call: the ladder oversee-watch runs
-(references/gates.md § Waiter auth ladder), the env token, then the
+GitHub auth, before the first gh call: the env token, then the
 keyring, then the project's GH_BOT_TOKEN. None working refuses as
 auth-failed.
 
@@ -532,8 +531,8 @@ source "$SCRIPT_DIR/lib/gh-auth.sh" 2>"$WORK_DIR/gh-auth.err" \
 # shellcheck source=lib/escapes.sh
 source "$SCRIPT_DIR/lib/escapes.sh"
 
-# github_auth — the auth ladder oversee-watch runs (references/gates.md §
-# Waiter auth ladder): a stale env token yields to the keyring, and where
+# github_auth — steps 1 to 3 of the GitHub auth ladder (DEVELOPMENT.md §
+# GitHub auth ladder): a stale env token yields to the keyring, and where
 # neither works the project's GH_BOT_TOKEN is the last candidate. Never
 # unauthenticated, since an unauthenticated list would read as nothing landed.
 # Called before the first gh call alone, so a due judged on minutes asks
@@ -711,8 +710,9 @@ fi
 # direct pushes at or after LANDED_SINCE and before NOW, oldest first.
 # Each repository is read once, as one search for pull requests
 # merged since then, and every lanes[] item is matched against that one list by
-# lib/lane-state.sh's LANE_MERGED_JQ, the filter oversee-watch's merged check
-# uses: the calls stay one per repository however many lanes the fleet has run.
+# lib/lane-state.sh's LANE_MERGED_JQ, the lane-own rule the fleet watch's merged
+# check applies: the calls stay one per repository however many lanes the fleet
+# has run.
 LANDED=""
 landed_read() {
   local repo items list rows since found=""
@@ -893,7 +893,7 @@ table() {
 # next_rows ITEMS: NEXT_ROWS gets the table rows of the upcoming queue keys,
 # one per line, labelled from lib/launch-overlap.sh's judgement; the --help
 # Next row states which keys are judged and how. The first --repo is the
-# repository oversee-watch reads the fleet's owed items from.
+# repository the fleet watch reads the fleet's owed items from.
 NEXT_ROWS=""
 next_rows() {
   local item tracker label lanes rc

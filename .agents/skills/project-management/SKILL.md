@@ -40,12 +40,12 @@ audit-issues applies Intake to every kendex create it executes, whatever produce
 
 No producer marks a candidate `skip` under this rule. A create the primary session runs outside audit-issues applies the same check and headers at its own create.
 
-The 2026-10-08 backlog read canceled these four kinds, each filed with neither line:
+These four kinds come filed with neither line, and Intake declines them:
 
-- A post-merge reading's remainder filed as a new item (KEN-3369, KEN-3371, KEN-3375). The reading stays on its originating item, per § Disposition.
-- A plan follow-up that proposes a migration with no failing action (KEN-2360, KEN-2361, KEN-2362).
-- An audit item that reclassifies a correct refusal (KEN-2378, KEN-2397).
-- A scanner or grammar extension with no live failure (KEN-2207, KEN-3285).
+- A post-merge reading's remainder filed as a new item. The reading stays on its originating item, per § Disposition.
+- A plan follow-up that proposes a migration with no failing action.
+- An audit item that reclassifies a correct refusal.
+- A scanner or grammar extension with no live failure.
 
 An organization setup request, one that names a host, account, repository or person of this organization, is not filed as asked. Restate it as a need any catalog consumer has. Otherwise return it to its sender with its destination named: the overseer, or the repository or Linear team that owns this organization's setup.
 
@@ -53,7 +53,7 @@ An organization setup request, one that names a host, account, repository or per
 
 ### Project taxonomy
 
-Require one agent and one surface label. Surface means where a person meets the work. Agent names are declared by LINEAR_AGENT_LABELS in kendex.settings.toml. Labels outside these categories are legacy and are not assigned.
+Require one agent and one surface label. Surface means where a person meets the work. Agent names are declared by LINEAR_AGENT_LABELS in kendex.settings.toml. Labels outside these categories are not assigned.
 
 Scope: `cli`, `harness` and `skills` belong to team `kendex`. All agent labels are excluded from team scope. All other labels in this taxonomy have workspace scope. `1.0` identifies kendex’s release set and requires team scope in a separately approved migration.
 

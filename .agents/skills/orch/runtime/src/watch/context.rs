@@ -94,7 +94,7 @@ impl ContextRecord {
         })
     }
 
-    /// The `TOKENS:WINDOW` word `oversee-succeed --check-marks --context`
+    /// The `TOKENS:WINDOW` word the marks judge (`overseer::judge_marks`)
     /// takes: the tokens with the window where one is named; `None` for a
     /// gap.
     pub fn context_arg(&self) -> Option<String> {
@@ -141,10 +141,10 @@ pub enum Owned {
 }
 
 /// The last row of `file` whose `event` is `event`, over the whole file
-/// as `session_rows_last FILE EVENT` found it: `Gone` where the file is
+/// as `session_rows_last FILE EVENT` finds it: `Gone` where the file is
 /// absent or holds none, `Unreadable` where it could not be read. A line
 /// that is no object is a fragment a killed writer left and is passed
-/// over, as the library passed it.
+/// over, as the library passes it.
 pub fn last_event(file: &Path, event: &str) -> Reading<Value> {
     let text = match std::fs::read_to_string(file) {
         Ok(text) => text,
@@ -165,7 +165,7 @@ fn last_event_in(text: &str, event: &str) -> Option<Value> {
         .find(|row| row.is_object() && row.get("event").and_then(Value::as_str) == Some(event))
 }
 
-/// `overseer_context_own`: the record at `record` where it is the session
+/// The record at `record` where it is the session
 /// in `pane_key`'s own, judged beside its rows file `rows` (the pane's
 /// session rows, where the fleet record names one). `harness` is the
 /// fleet record's for the pane, where recorded.
@@ -219,9 +219,8 @@ pub fn own(record: &Path, rows: Option<&Path>, pane_key: &str, harness: Option<H
     }
 }
 
-/// The two instants the stale and the wedged judgements compare
-/// (`overseer_context_times`): the record's own `at` and the epoch of the
-/// last Stop row, 0 for none.
+/// The two instants the stale and the wedged judgements compare: the
+/// record's own `at` and the epoch of the last Stop row, 0 for none.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Times {
     Read { at: u64, stop: u64 },
@@ -265,8 +264,7 @@ pub fn note(key: &str, fields: &str) {
     let _ = writeln!(std::io::stderr(), "{key} {fields}");
 }
 
-/// The owner's alert for a gap that stood two long passes
-/// (`overseer_gap_alert`).
+/// The owner's alert for a gap that stood two long passes.
 pub fn alert_text(pane: &str, gap: &str) -> String {
     format!(
         "overseer-context-unmeasured: the overseer in pane {pane} has recorded no context reading on two consecutive watch passes, gap={gap}, so nothing judges its context mark and it can run into its context window with no handoff. The remedy for this gap is under overseer-context-unmeasured in the orch skill's references/overseer-session-events.md.\n"

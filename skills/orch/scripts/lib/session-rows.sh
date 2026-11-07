@@ -9,10 +9,10 @@
 # reader of that directory. The file is keyed by the `<tmux server pid> <pane
 # id>` the session runs in, the pair the fleet state keys the overseer on, so a
 # hook can name its own file before any record names the session, and the
-# oversee state's `overseer.session_rows` names it: oversee-watch's liveness
-# judgement reads the path there, and every other reader, the watch's context
-# record check included, and the writer compute it through
-# session_rows_overseer_file. Appends
+# oversee state's `overseer.session_rows` names it: the runtime watch
+# (`orch-runtime watch`) reads the path there for its liveness judgement and
+# its context record check, and every shell reader and the writer compute it
+# through session_rows_overseer_file. Appends
 # take the mailbox's own lock and line rules (lib/mailbox-append.sh), so a
 # killed writer leaves a fragment no reader parses and no row glued to another.
 #
@@ -21,8 +21,8 @@
 # on the harnesses that run each one (those `kendex show hook <name>` lists as
 # neither unsupported nor advisory), and in its own turn-end run for the
 # overseer: a Stop at every overseer turn end, which lifts a standing
-# StopFailure row and dates the turn end oversee-watch holds the overseer's
-# context record against. The readers are oversee-watch's
+# StopFailure row and dates the turn end the runtime watch holds the
+# overseer's context record against. The readers are the runtime watch's
 # overseer judgement, `oversee register` and oversee-succeed's caller identity.
 # The same hook writes the Jarvis runtime record below, never this file.
 #
@@ -37,13 +37,13 @@
 #
 # A Pi LANE's rows are a second file of the same shape, in the lane's own
 # mailbox directory, `tmp/lane-mail/<item>/session-rows.jsonl` under its
-# worktree, the directory lane mail and `lanes context` already read from any
-# host: the same hook writes a Stop row at each turn end and a PreToolUse row
-# at the first tool call of each turn, after a turn end or on an empty file,
-# which is all oversee-watch and `lanes state` need to tell an idle, working or
-# walled Pi lane apart without its pane
+# worktree, the directory lane mail and the runtime watch read from any host:
+# the same hook writes a Stop row at each turn end and a PreToolUse row at the
+# first tool call of each turn, after a turn end or on an empty file, which is
+# all the runtime watch and `orch-runtime lane status` need to tell an idle,
+# working or walled Pi lane apart without its pane
 # (session_rows_lane_write, session_rows_lane_verdict). Claude Code and Codex
-# lanes write none: their pane is still what lib/lane-state.sh reads.
+# lanes write none: their pane is what the watch's classifier reads.
 #
 # A session the Jarvis runtime launched writes no file here of its own: its
 # SessionStart fills the launch's pending row in the runtime record its
@@ -239,8 +239,8 @@ session_rows_last() { # FILE [EVENT]
 # The phrases are the harness's own text, lowercased and matched as a
 # substring, one table read by this judge alone. Claude Code writes
 # `Prompt is too long` as the turn's last assistant message when a request
-# outgrows the window; an overseer run with DISABLE_AUTO_COMPACT=1 met it on
-# every turn once its context filled.
+# outgrows the window; under DISABLE_AUTO_COMPACT=1 an overseer meets it on
+# every turn once its context fills.
 SESSION_ROWS_PROMPT_TOO_LONG='["prompt is too long"]'
 SESSION_ROWS_VERDICT=none
 SESSION_ROWS_WALL_KIND=""

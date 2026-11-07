@@ -77,7 +77,7 @@ pub const PREPARE_ROW: &str = "lane-prepare";
 /// reads `<key>|reported`.
 pub const CLOSE_PENDING_ROW: &str = "close-pending";
 /// The row the GitHub duty writes for an item's merged pull requests, which
-/// admits the finished-hosted close (`finished_hosted_lane_eligible`).
+/// admits the finished-hosted close.
 const MERGED_ROW: &str = super::github::MERGED_ROW;
 
 /// The reads the hosted arms take beyond the scripts directory, injected
@@ -244,7 +244,7 @@ pub fn host_of(lane: &Lane) -> &str {
 }
 
 /// The capability line of every host the lanes given name, read once each
-/// per pass (`host_capabilities`, `lib/watch-host-kinds.sh:278`): the
+/// per pass: the
 /// `local` kind answers in-process; any other host through `lane-host
 /// capabilities` under its name. A line that could not be read or parsed
 /// keeps its cause, and every read of a lane on that host is then
@@ -353,8 +353,8 @@ pub fn capabilities(scripts: &Path, host: &str) -> Result<Capabilities, String> 
     Capabilities::parse(&host::stdout_text(&out)).map_err(unread)
 }
 
-/// `lane_host_fetch` (`lib/lane-gitfile.sh:53`): `lane-host cat --item ITEM
-/// PATH`; a `2` is a missing file only once `touch --item ITEM` answers,
+/// `lane-host cat --item ITEM PATH`; a `2` is a missing file only once
+/// `touch --item ITEM` answers,
 /// since the dispatcher's own refusals exit `2` as well; a `touch` that
 /// fails, the busy refusal (69) and any other status are unreadable with
 /// their cause.
@@ -391,8 +391,8 @@ pub enum HostStatus {
     Exited,
 }
 
-/// `lane-host status --item ITEM --harness H` (`pane_has_remote_harness`,
-/// `lib/lane-state.sh:361`): `running` or `exited` on exit 0; any other
+/// `lane-host status --item ITEM --harness H`: `running` or `exited` on
+/// exit 0; any other
 /// answer is a failed read, never an exit (`schemas/lane-host.md` § `status`).
 pub fn status(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<HostStatus, String> {
     let unread = |cause: String| format!("harness-probe-failed item={item} {cause}");
@@ -413,7 +413,7 @@ pub fn status(scripts: &Path, host: &str, item: &str, harness: &str) -> Result<H
     }
 }
 
-/// `lane-host capture --item ITEM` (`lane_pane_capture`'s verb arm): the
+/// `lane-host capture --item ITEM`: the
 /// provider's own pane for a `pane=verb` kind, the screen on exit 0; any
 /// other answer is a failed read, never a screen.
 pub fn capture(scripts: &Path, host: &str, item: &str) -> Result<String, String> {
@@ -1001,7 +1001,7 @@ fn close_once(pass: &Pass, lane: &Lane, reason: &str, out: &mut Produced) -> Opt
     Some(closed)
 }
 
-/// The lines a close prints (`close_hosted_lane`): `lane-closed` with the
+/// The lines a close prints: `lane-closed` with the
 /// archive line, or `lane-close-refused` with the refused path.
 fn say_closed(item: &str, closed: &Closed, out: &mut Produced) {
     match closed {
@@ -1040,7 +1040,7 @@ pub fn epoch_of(stamp: &str) -> Option<u64> {
     clock::epoch_secs(stamp)
 }
 
-/// A record field as jq's `join` printed it: a string as is, null or
+/// A record field as jq's `join` prints it: a string as is, null or
 /// absent as nothing, any other value as its JSON.
 fn text_of(value: Option<&Value>) -> String {
     match value {
@@ -1137,8 +1137,7 @@ pub fn prepare(pass: &Pass, out: &mut Produced) {
 
 // --- the pull request -------------------------------------------------------
 
-/// The lane's open pull request as `item_open_pr` read it
-/// (`lib/watch-host-kinds.sh:310`): its head, a digest of its body and its
+/// The lane's open pull request: its head, a digest of its body and its
 /// draft flag.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenPull {
@@ -1209,7 +1208,7 @@ fn repos_of<'a>(pass: &'a Pass, lane: &'a Lane) -> Vec<&'a str> {
 }
 
 /// The open pull request on the item's branch in the first repository that
-/// holds one, through `gh` (`item_open_pr`): the branch is the item key in
+/// holds one, through `gh`: the branch is the item key in
 /// lower case, the list filtered to heads the repository's owner holds
 /// (`lane_own`: a fork's pull request on a guessable branch name stands for
 /// nothing), the body digested by the same POSIX `cksum` the record's
@@ -1269,8 +1268,8 @@ pub fn open_pr(pass: &Pass, lane: &Lane) -> PullRead {
     PullRead::None(branches)
 }
 
-/// Whether the roster reads the lane's account out of credit
-/// (`check_lane_stall`'s jq): its `credits` object carries a
+/// Whether the roster reads the lane's account out of credit: its
+/// `credits` object carries a
 /// `locked_reason`, or `remaining_dollars` at or below zero.
 fn credit_locked(roster: &Roster, lane: &Lane) -> bool {
     let Some(account) = lane.account.as_deref() else {
@@ -1292,7 +1291,7 @@ fn credit_locked(roster: &Roster, lane: &Lane) -> bool {
 
 // --- the cloud stall --------------------------------------------------------
 
-/// `check_lane_stall` (`lib/watch-host-kinds.sh:368`) over every running
+/// The cloud stall over every running
 /// lane whose kind declares `status=none`, a cloud session no process read
 /// reaches: a ready pull request is `state=finished` at once and never
 /// closed, a draft on an account the roster reads out of credit
@@ -1407,7 +1406,7 @@ pub fn cloud_stalls(pass: &Pass, hosts: &Hosts, out: &mut Produced) {
     }
 }
 
-/// `cloud_stall_close` (`lib/watch-host-kinds.sh:431`): the lane's
+/// The lane's
 /// `directive_send.at` at or after `since`, the last move the stall saw, and
 /// `ORCH_CLOUD_STALL_MINUTES` old, closes the lane through the one close:
 /// `lane-closed` with its archive line, then `cloud-stall-closed` with the
@@ -1597,8 +1596,8 @@ pub fn status_file(scripts: &Path, lane: &Lane) -> Answer<String> {
     )
 }
 
-/// Whether the lane's worktree stands on its host, read as `lane_hosted_clone`
-/// read it (`lib/lane-gitfile.sh:97`): its `.git` through `cat`; a file the
+/// Whether the lane's worktree stands on its host: its `.git` through
+/// `cat`; a file the
 /// host has not, confirmed by `touch`, is the worktree the lane's own
 /// close-out removed.
 pub fn worktree(pass: &Pass, lane: &Lane) -> Answer<()> {
@@ -1617,8 +1616,8 @@ pub fn worktree(pass: &Pass, lane: &Lane) -> Answer<()> {
     }
 }
 
-/// The `Step` line of a hosted lane's status file (`lane_step`,
-/// `lib/watch-host-kinds.sh:498`): `unread` where the fetch failed, `none`
+/// The `Step` line of a hosted lane's status file: `unread` where the
+/// fetch failed, `none`
 /// where the host has no file or it names no step.
 pub fn step(scripts: &Path, lane: &Lane) -> String {
     match status_file(scripts, lane) {
@@ -1896,9 +1895,8 @@ mod tests {
     /// A provider's long verb read by the runner's three values: a
     /// `lane-host` that never started made nothing (`host-create-failed`);
     /// one whose bound passed, or that a signal ended, may hold the item
-    /// (`host-create-unanswered`). Defect: a create or wait past its bound
-    /// read as failed, the launch settled while the provider holds the
-    /// item.
+    /// (`host-create-unanswered`): a create or wait past its bound read as
+    /// failed would settle the launch while the provider holds the item.
     #[test]
     #[allow(
         clippy::disallowed_methods,

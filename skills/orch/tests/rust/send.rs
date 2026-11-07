@@ -1,8 +1,6 @@
-//! The session send verb (step6-map § A6, § B "a hand-opened session's
-//! send"; decisions 31, 170, 182): `orch-runtime send` against the real
-//! mailbox program on a temporary checkout, the Claude CLI a fixture, the
-//! account listing a stub. Each row names the defect it catches at its doc
-//! comment.
+//! The session send verb: `orch-runtime send` against the real mailbox
+//! program on a temporary checkout, the Claude CLI a fixture, the account
+//! listing a stub. Each row's name carries the defect it catches.
 #![allow(
     clippy::disallowed_methods,
     reason = "the rows plant records, run the built binary and the real mailbox program, and read the files they left"
@@ -306,17 +304,16 @@ fn one_call(account: &Path) -> [String; 3] {
     ]
 }
 
-/// § A6 row (1). Defect: a send queued twice because its record said
-/// nothing was out: a crash or a refused mark after the CLI answered, and
-/// the next send or the reconcile sending again. The record stands `owed`
-/// with the directive's words while the CLI runs (the fixture copies the
-/// fleet file as it answers) and `sent` with the credit after; a second
-/// send whose mark the store refuses (the state directory sealed by the
-/// fixture) leaves the record owed, keeps the receipt beside the state and
-/// says so in its reply; a third send is refused `directive-send-owed` with
-/// no CLI call; the reconcile stamps the kept receipt, with the send's own
-/// epoch, and calls nothing; an owed record naming no kept receipt is
-/// reported and left.
+/// A send whose record said nothing was out would be queued again by the
+/// next send or the reconcile. The record stands `owed` with the
+/// directive's words while the CLI runs (the fixture copies the fleet file
+/// as it answers) and `sent` with the credit after; a second send whose
+/// mark the store refuses (the state directory sealed by the fixture)
+/// leaves the record owed, keeps the receipt beside the state and says so
+/// in its reply; a third send is refused `directive-send-owed` with no CLI
+/// call; the reconcile stamps the kept receipt, with the send's own epoch,
+/// and calls nothing; an owed record naming no kept receipt is reported and
+/// left.
 #[test]
 fn a_send_is_owed_before_the_cli_and_a_refused_mark_is_settled_by_the_reconcile_without_a_second_send()
  {
@@ -442,9 +439,7 @@ fn a_send_is_owed_before_the_cli_and_a_refused_mark_is_settled_by_the_reconcile_
     assert_eq!(w.cli_calls().len(), 6, "the reconcile sent nothing");
 }
 
-/// Decision 184 (5), R-U6-1 M2, the map's A6 row (1) case "the CLI killed
-/// after queuing". Defect: an owed send no receipt settles standing for
-/// ever, every later send refused and no route out. The mailbox program is
+/// An owed send no receipt settles has a route out. The mailbox program is
 /// killed after the CLI took the directive and before any receipt: the verb
 /// refuses `directive-send-unsettled`, the record stands `owed` with the
 /// directive's words and no receipt is kept; the next send is refused
@@ -531,15 +526,15 @@ fn a_program_killed_after_queuing_leaves_the_send_owed_until_the_operator_marks_
     assert_eq!(w.cli_calls().len(), 6, "the directive went out once more");
 }
 
-/// § A6 row (2). Defect: a refusal read as a delivery, or recorded without
-/// the words a close names its cause by. An archived session records
-/// `archived`, a session not found `failed`, each with the CLI's words and
-/// the credit read at the send; a refusal the mailbox program makes before
-/// the CLI (a session whose root is another repository's) records `failed`
-/// with the program's keyed line, the credit unread, no CLI call; a mailbox
-/// program that never started records `failed` the same way, never an owed
-/// send left unknown; a mailbox lane is refused `lane-channel` before any
-/// write, its mailbox untouched.
+/// A refusal is never a delivery, and its record keeps the words a close
+/// names its cause by. An archived session records `archived`, a session
+/// not found `failed`, each with the CLI's words and the credit read at the
+/// send; a refusal the mailbox program makes before the CLI (a session
+/// whose root is another repository's) records `failed` with the program's
+/// keyed line, the credit unread, no CLI call; a mailbox program that never
+/// started records `failed` the same way, never an owed send left unknown;
+/// a mailbox lane is refused `lane-channel` before any write, its mailbox
+/// untouched.
 #[test]
 fn a_refused_send_records_its_result_with_the_words_and_a_mailbox_lane_is_refused() {
     let w = world();
@@ -625,12 +620,11 @@ fn a_refused_send_records_its_result_with_the_words_and_a_mailbox_lane_is_refuse
     assert_eq!(w.cli_calls().len(), 6, "no CLI call");
 }
 
-/// § A6 row (3), the mailbox-only contract (decision 31). Defect: the
-/// mailbox program writing orch state beside the runtime's own writer, so
-/// two writers shape one record. Through the verb, every `workflow-state`
-/// call the program makes is a read (`exists`, `get`); a bare `lane-mail
-/// send` to the same lane prints the `sent` receipt on stdout and the
-/// record line on stderr and leaves the fleet file byte for byte as it was.
+/// The mailbox-only contract: the runtime is the one writer of orch state,
+/// so through the verb every `workflow-state` call the program makes is a
+/// read (`exists`, `get`); a bare `lane-mail send` to the same lane prints
+/// the `sent` receipt on stdout and the record line on stderr and leaves
+/// the fleet file byte for byte as it was.
 #[test]
 fn the_mailbox_program_reads_the_fleet_and_writes_none_of_it() {
     let w = world();
@@ -686,7 +680,7 @@ fn the_mailbox_program_reads_the_fleet_and_writes_none_of_it() {
     );
 }
 
-// --- U6l: the validation end notice over the session route (decision 188 (d)) ---
+// --- the validation end notice over the session route ---
 
 /// The fixture item's open dev round.
 const ROUND: &str = "1769600000123456789-1837";
@@ -832,14 +826,11 @@ impl World {
     }
 }
 
-/// A session the CLI answers
-/// archived for took no notice, and the stage says so. The end notice to a
-/// cloud lane whose session is archived is marked `unsent:session:archived`,
-/// never `sent`, the lane's `directive_send` records `archived` under the
-/// notice's key, and the mark is terminal: the round's next reconcile sends
-/// nothing again. Defect caught: every `Ok` of the session send read as
-/// delivered, so a rejected notice recorded `sent` while the lane heard
-/// nothing (the reviewer's `copilot_rejected_cloud_validation_notice_is_not_recorded_sent`).
+/// A session the CLI answers archived for took no notice, and the stage
+/// says so. The end notice to a cloud lane whose session is archived is
+/// marked `unsent:session:archived`, never `sent`, the lane's
+/// `directive_send` records `archived` under the notice's key, and the mark
+/// is terminal: the round's next reconcile sends nothing again.
 #[test]
 fn a_rejected_session_notice_is_marked_by_its_result_never_sent() {
     let (w, item) = validation_world();
@@ -892,14 +883,12 @@ fn one_call_of(w: &World, prefix: &str) -> Vec<String> {
     calls
 }
 
-/// Decision 188 (d), the replay's reading table, read where the send's
-/// owed write decides (decision 193 (a)): a notice still owed acts on what
-/// the lane's `directive_send` says of this notice's own send. Settled
-/// `archived` under this key takes the terminal mark with no call; owed
-/// under this key waits, the stage left owed with no call; settled under
-/// another key, or no record at all, is the first call's case and sends.
-/// Defect caught: a replay taking another send's result as this notice's,
-/// or waiting on a send that was never its own.
+/// The replay's reading table, read where the send's owed write decides: a
+/// notice still owed acts on what the lane's `directive_send` says of this
+/// notice's own send. Settled `archived` under this key takes the terminal
+/// mark with no call; owed under this key waits, the stage left owed with
+/// no call; settled under another key, or no record at all, is the first
+/// call's case and sends.
 #[test]
 fn a_replay_acts_on_what_the_lanes_send_under_its_key_settled() {
     let (w, item) = validation_world();
@@ -989,27 +978,20 @@ impl World {
     }
 }
 
-/// Decision 193 (a) (R-U6-3 follow-up 2): two walkers of one notice, the
-/// job's own send and the round's reconcile, make one send, because the
-/// read of the lane's send under the notice's key is the owed write's own,
-/// inside the store's lock, and never a walker's reading made before the
-/// other's settle. The reconcile meets the job's send in flight (the lane
-/// owed under this key, the job's program not yet reading its notice
-/// file): it holds, writes nothing (the fleet file byte for byte as it
-/// was), runs no CLI, and removes only its own notice file, so the job's
-/// program still reads the job's (the one CLI call carries the notice's
-/// text); the stage it read is still owed. The job then settles `sent` and
-/// marks, and no notice file is left. The reconcile meets the settled send
-/// with a reading of the stage made before the job's mark (the stage
-/// planted owed again): it takes the settled result as this notice's,
-/// marks `sent`, runs no CLI and leaves the lane's record as it stood. The
-/// call log holds the one `send`. Defect caught: the read made outside
-/// the lock, where a walker that read "no send of mine" before the other's
-/// settle writes a second owed stage over the settled record (the owed
-/// refusal reads only a standing owed send) and sends the notice again:
-/// six CLI lines for three; and one notice file shared by the walkers,
-/// which the second removes under the first's program, so the first's send
-/// fails and the stage is marked `unsent`.
+/// Two walkers of one notice, the job's own send and the round's reconcile,
+/// make one send, because the read of the lane's send under the notice's
+/// key is the owed write's own, inside the store's lock, and never a
+/// walker's reading made before the other's settle. The reconcile meets the
+/// job's send in flight (the lane owed under this key, the job's program
+/// not yet reading its notice file): it holds, writes nothing (the fleet
+/// file byte for byte as it was), runs no CLI, and removes only its own
+/// notice file, so the job's program still reads the job's (the one CLI
+/// call carries the notice's text); the stage it read is still owed. The
+/// job then settles `sent` and marks, and no notice file is left. The
+/// reconcile meets the settled send with a reading of the stage made before
+/// the job's mark (the stage planted owed again): it takes the settled
+/// result as this notice's, marks `sent`, runs no CLI and leaves the lane's
+/// record as it stood. The call log holds the one `send`.
 #[test]
 fn two_walkers_of_one_notice_make_one_send_the_later_reading_the_earliers_inside_the_write() {
     let (w, item) = validation_world();
@@ -1429,13 +1411,12 @@ fn a_cloud_create_whose_asking_process_ends_is_held_and_never_asked_again() {
     assert_eq!(creates, 1, "no second create beside the one that may stand");
 }
 
-/// Defect: a person's close that fails a cloud launch while its `op` is
-/// still inside the create, so the session the create then makes is
-/// recorded nowhere. While the asking `op` runs, the close refuses
-/// `intent-open` and the launch stays open; once that `op` has ended, the
-/// CLI still inside the create, the close supersedes the held launch, naming
-/// its worktree and the time the create's bound ends, so a person reads
-/// claude.ai/code only once no session can still appear.
+/// A cloud launch's `op` may still be inside the create, whose session
+/// would then be recorded nowhere. While the asking `op` runs, the close
+/// refuses `intent-open` and the launch stays open; once that `op` has
+/// ended, the CLI still inside the create, the close supersedes the held
+/// launch, naming its worktree and the time the create's bound ends, so a
+/// person reads claude.ai/code only once no session can still appear.
 #[test]
 fn a_close_beside_a_live_cloud_create_is_refused_and_supersedes_it_once_its_op_is_gone() {
     let dir = tempfile::tempdir().unwrap();
@@ -1527,14 +1508,12 @@ fn a_close_beside_a_live_cloud_create_is_refused_and_supersedes_it_once_its_op_i
     assert_ne!(world.lane("CC-20")["status"], "preparing");
 }
 
-/// Defect: a cloud lane relaunched by hand with no host kept its record's
-/// `claude-cloud` host and kind while the relaunch opened its window on
-/// this machine, so the record charged the cloud cap and the watch's pane
-/// reads passed it over. Through the real `launch-lane`: a cloud launch
-/// records the cloud host and kind; with its session ended by the real
-/// no-landing close (the record stopped), a relaunch naming no host records
-/// no host and the `local`
-/// kind, and its launch is the local one.
+/// A record naming the cloud host for a window on this machine would charge
+/// the cloud cap and be passed over by the watch's pane reads. Through the
+/// real `launch-lane`: a cloud launch records the cloud host and kind; with
+/// its session ended by the real no-landing close (the record stopped), a
+/// relaunch naming no host records no host and the `local` kind, and its
+/// launch is the local one.
 #[test]
 fn a_cloud_lanes_relaunch_naming_no_host_records_the_local_launch_it_makes() {
     let dir = tempfile::tempdir().unwrap();

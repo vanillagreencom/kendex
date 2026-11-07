@@ -28,7 +28,7 @@
 //! foreground. A delivered brief is confirmed from the runner's
 //! own native session file, bound once before the paste.
 //!
-//! The outcomes follow the plan's effect contract. A launch confirms when
+//! A launch confirms when
 //! the harness holds the pane and is drawn at its composer or working within
 //! the bound, fails when its pane is gone (the exec'd harness exited), and is
 //! unconfirmed when the pane stands but neither was read within the bound. A
@@ -55,7 +55,7 @@
 mod launch;
 #[allow(
     clippy::disallowed_methods,
-    reason = "the operation handle is the one owner of every effect primitive and of the clock's waits (decisions 120, 124e)"
+    reason = "the operation handle is the one owner of every effect primitive and of the clock's waits"
 )]
 mod operation;
 mod stop;
@@ -117,7 +117,7 @@ impl Run<'_> {
 /// recorded here, or handed to the detached job that runs a transfer or a
 /// stop, whose outcome a later read or reconcile
 /// sees. Serialized as the record-outcome transition or as the job's start,
-/// untagged, so a recorded effect reads as it always did.
+/// untagged, so a recorded effect reads as the transition itself.
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 pub enum Effected {
@@ -309,7 +309,7 @@ fn live_effect(report: &Report) -> Option<&Effect> {
 fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected> {
     let intent = match effect {
         // A repeated request found an open intent: reconcile it rather than
-        // start a second effect (plan § Records).
+        // start a second effect.
         Effect::Reconciled { intent } => {
             let Reconciled { applied, stale, .. } = reconcile_intent(run, &intent.id)?;
             // A close or a controller stop whose reconcile still reads a

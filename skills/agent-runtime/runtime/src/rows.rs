@@ -270,9 +270,9 @@ mod tests {
 
     /// The overseer verdict table, one row per form the library judges:
     /// each harness's SessionEnd and StopFailure shapes, a Pi row with and
-    /// without a limit message, a Copilot row, and the too-long prompt.
-    /// Defect: a verdict that drifts from the library's, which reads the
-    /// same file for the same decision.
+    /// without a limit message, a Copilot row, and the too-long prompt. The
+    /// library reads the same file for the same decision, so the two
+    /// verdicts agree.
     #[test]
     fn the_session_verdict_follows_the_library_s_table_per_harness_form() {
         let rows: [(&str, SessionVerdict); 11] = [
@@ -332,12 +332,11 @@ mod tests {
         }
     }
 
-    /// The Pi lane verdict table. Defect: a carrier's null count read as
-    /// an idle lane, or a row the table cannot judge read as one; an idle
-    /// verdict that drops the row's `stop_reason`, so a turn the output
-    /// limit cut (`length`) reads as a finished one, or that carries the
-    /// harness's ordinary end (`stop`, `end_turn`), so every finished
-    /// round reads as a cause.
+    /// The Pi lane verdict table. A carrier's null count and a row the table
+    /// cannot judge are no idle lane; an idle verdict carries the row's
+    /// `stop_reason`, so a turn the output limit cut (`length`) reads as cut,
+    /// and never the harness's ordinary end (`stop`, `end_turn`), so a
+    /// finished round carries no cause.
     #[test]
     fn the_lane_verdict_reads_working_idle_and_walled_and_refuses_what_it_cannot_judge() {
         let idle = |cause: Option<&str>| {

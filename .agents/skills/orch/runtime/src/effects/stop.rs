@@ -436,8 +436,7 @@ impl Close<'_> {
     }
 }
 
-/// `observation` with the pane the set records under the harness role, as
-/// the close has always written it.
+/// `observation` with the pane the set records under the harness role.
 fn with_pane(operation: &Operation, mut observation: Value) -> Value {
     observation["pane"] = json!(operation.harness_pane_id());
     observation

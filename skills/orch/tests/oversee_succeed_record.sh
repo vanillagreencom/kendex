@@ -925,8 +925,8 @@ same_harness_words() { # WORD...
 same_harness_words --permission-mode dontAsk
 assert_eq "$RC|$(jq -c '.successor | [.permission, .extra_args]' "$TMP_ROOT/runtime.request")" \
   '0|["native",["--permission-mode","dontAsk"]]' \
-  "a narrower permission word keeps the native posture with the caller's words as given (decision 124a (4))" "$TMP_ROOT/err"
-# Decision 124b (5), M1: a prompt word that merely holds a full-bypass
+  "a narrower permission word keeps the native posture with the caller's words as given" "$TMP_ROOT/err"
+# A prompt word that merely holds a full-bypass
 # spelling as text is not a permission word, so the posture stays native and
 # the word reaches the request whole; the bridge reads the words as the
 # arguments they are, never joined and re-split.

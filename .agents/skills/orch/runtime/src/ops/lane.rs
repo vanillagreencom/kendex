@@ -661,13 +661,12 @@ fn no_live_harness(lane: &Lane, ids: &Identities) -> Result<()> {
 /// record, left out, since the relaunch takes that record's slot (its
 /// reservation goes with the relaunch patch): a replacement adds no lane.
 /// A launch with no record is judged fresh. A host built without the
-/// judge's settings judges no account. The answers are the
-/// launcher's (`open-terminal`, `named_lane_judge`): room, or no row to
+/// judge's settings judges no account. Room, or no row to
 /// judge, proceeds; walled, unmeasured and unjudged refuse with their
 /// cause, an unread window being no empty one; an account
 /// the word refuses, reserved, retired or excluded, refuses by its word
-/// with no window's figure. The walled line's figures are the record's as that
-/// launcher read them: the projected window where one was projected, else
+/// with no window's figure. The walled line's figures are the record's:
+/// the projected window where one was projected, else
 /// the reading's wall and binding bucket.
 fn room(path: &Path, r: &LaunchLane, replaces: Option<&str>, env: &Env, host: &Host) -> Result<()> {
     let (true, Some(settings), Some(account)) = (r.judge_account, host.accounts, &r.account) else {
@@ -692,8 +691,8 @@ fn room(path: &Path, r: &LaunchLane, replaces: Option<&str>, env: &Env, host: &H
         PickAnswer::Walled(judged) => {
             let record = judged.record();
             let projected = record.get("projected_window").filter(|w| !w.is_null());
-            // A walled record with no wall is one that launcher refused
-            // as its judge failing (`invalid-wall`), never a verdict.
+            // A walled record with no wall is the judge failing, never a
+            // verdict.
             let Some(pct) = projected
                 .and_then(|w| w.get("pct"))
                 .or_else(|| record.get("wall"))
@@ -928,9 +927,8 @@ pub(super) fn launch_lane(
         // a relaunch over one would make a second.
         no_live_harness(previous, ids)?;
     }
-    // The account's room, judged before the admission and the cap as the
-    // launcher judged its named lane first; a relaunch is judged
-    // with its own record's charge left out.
+    // The account's room, judged before the admission and the cap; a
+    // relaunch is judged with its own record's charge left out.
     room(path, r, position.map(|_| r.item.as_str()), env, host)?;
     // The admission judgement, under the
     // same launch lock and before the cap, so one transition admits or
@@ -1533,11 +1531,9 @@ pub(super) fn record_launch_outcome(
                 record_tmux_session(path, doc, session)?;
             }
             let lane = lane_doc_mut(path, doc, index)?;
-            // The whole selection, null where the request named none, as
-            // the `running` write records it (`open-terminal`,
-            // `lane_record_write`): the session that runs is this
-            // request's, so no account, model or effort of the earlier
-            // session survives into its record.
+            // The whole selection, null where the request named none: the
+            // session that runs is this request's, so no account, model or
+            // effort of the earlier session survives into its record.
             if let Some(selection) = &intent.selection {
                 state::set(lane, "harness", selection.harness.as_str());
                 for (key, value) in [
@@ -1580,9 +1576,9 @@ pub(super) fn record_launch_outcome(
         Outcome::Unconfirmed => {
             // The window opened but the composer was not read in the bound.
             // Persist the pane the effect holds on the lane's `launch` so a
-            // reconcile can re-observe it; the lane stays `preparing` (task
-            // 3). A relaunch that wrote `launch: null` keeps that until the
-            // effect names a pane.
+            // reconcile can re-observe it; the lane stays `preparing`. A
+            // relaunch that wrote `launch: null` keeps that until the effect
+            // names a pane.
             if r.launch.is_some() {
                 let lane = lane_doc_mut(path, doc, index)?;
                 state::set(lane, "launch", serde_json::to_value(&r.launch)?);
@@ -1727,7 +1723,7 @@ mod tests {
                 relaunch: false,
             })
         );
-        // The appended record has `lane_record_write`'s keys in its order.
+        // The appended record carries the lane record's keys in their order.
         let record = lane_doc(&path, "KEN-4468");
         assert_eq!(
             keys(&record),
@@ -2184,7 +2180,7 @@ mod tests {
         );
     }
 
-    /// The report's five stopped attempts, each with a surviving window and
+    /// Five stopped attempts, each with a surviving window and
     /// no reservation, beside N-1 live lanes at cap N: occupancy is N-1, not
     /// N+4, and the independent candidate is admitted, committed as the Nth
     /// slot, the cap unchanged.
@@ -2544,9 +2540,8 @@ mod tests {
         assert_eq!(keys(&after), expected, "kept keys keep their sequence");
         // The confirmed launch writes the whole selection: the harness it
         // was asked for, and null for the account, model and effort the
-        // request left out, as `lane_record_write` does at `running`
-        // (`open-terminal`, `map_values(if . == "" then null …)`). A claude
-        // session after a codex one carries no codex account.
+        // request left out. A claude session after a codex one carries no
+        // codex account.
         run(&path, &outcome(&id, Outcome::Confirmed)).unwrap();
         let view = lane(&path, "KEN-4437");
         assert_eq!(view.status, LaneStatus::Running);
@@ -3021,7 +3016,7 @@ mod tests {
         assert_eq!(intent.close, Some(CloseGround::Exited));
     }
 
-    /// Finding 8, probe P15: a confirmed close removes `pending_pr`,
+    /// A confirmed close removes `pending_pr`,
     /// `parked` and the reservation, as a `done` status
     /// does; its fleet-log row carries the terminal verdict where one was
     /// the ground.

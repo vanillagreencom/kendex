@@ -11,8 +11,8 @@ ORCH_APPLE_LABELS = "ios macos"
 
 # Publication destination. pr also applies when unset. push-base keeps the
 # tier's local validation and internal review, then fast-forward pushes the
-# resolved base branch without a pull request. The overseer records the
-# pushed commit through the existing direct-push cycle route. An item with an
+# resolved base branch without a pull request. The pushed commit's record:
+# references/oversee-events.md § Direct-push cycle records. An item with an
 # open post-merge box stops for the PR route: workflows/submit-pr.md § 2.1.
 # ORCH_DELIVERY = "push-base"
 
@@ -66,9 +66,9 @@ ORCH_LANE_HOST = "local"
 # Runtime the overseer's own session runs in, which registration and
 # oversee-succeed inspect it through: "tmux", the included provider, or an executable script
 # path speaking schemas/overseer-host.md. It verifies a session's account
-# through its tmux pane, so today it refuses any value but "tmux" as
-# runtime-unsupported. The orch runtime's start-controller request opens the
-# overseer's window on the fleet's tmux server and reads no other host.
+# through its tmux pane, so registration and oversee-succeed refuse any value
+# but "tmux" as runtime-unsupported; schemas/overseer-host.md states what
+# else opens and reads the overseer's session.
 # ORCH_OVERSEER_HOST = "tmux"
 
 # How much a lane prints into its own window. "quiet" prints one line per
@@ -95,39 +95,18 @@ PR_REVIEW_WAIT_SECS = "900"
 PR_REVIEW_ON_TIMEOUT = "proceed"
 
 # Whether orch asks Copilot for a review or re-review. "off" sends no
-# request. Under the approval gate mode, the review call falls back
-# cause=off on a head with no request record or an unspent one (requested,
-# sent or resent, or an existing answer) and, where the item runs in a
-# lane, owes and sends the overseer the copilot-fallback notice that asks
-# for that head's approval, once per head. A head whose request already
-# fell back keeps that fallback and its one notice, and a consumer refresh
-# head keeps its own route. With requests on, a draft the call keeps or a
-# refresh head leaves an unspent request record unspent: nothing is
-# claimed or sent until the head may take a request. The off notice goes
-# out from the call that records the fallback, not once a later read finds
-# the head unapproved, and is not held while Copilot's work runs: the
-# overseer's approval still holds on that work and on open threads. A head
-# fallen back off requests nothing when the setting is turned back on; a
-# new head requests as usual. Under the off gate mode the call
-# requests nothing and records no fallback, and its hold still waits on
-# Copilot work already running on the head. Set it when the Copilot review
-# budget is spent.
+# request; set it when the Copilot review budget is spent. What the review
+# call records and notices under each value:
+# references/gates.md § Copilot requests.
 # values: on | off
 PR_COPILOT_REQUESTS = "on"
 
-# Maximum seconds, from the head's record, the review call holds a verdict
-# that permits a merge, and an unapproved head's review-period answer, as
-# pending copilot-pending while Copilot's work runs
-# on the live head, under either gate mode: a Copilot check with no Copilot
-# review of the head submitted since it started, or a pending request. An
-# expired hold answers the verdict as usual. overseer-approve --hold-copilot
-# holds a fallback app approval on the same bound, counted from its own
-# start; a finished hold there returns to the review reply check. The
-# read-only orch-runtime copilot-wait a triage runs waits on the same work,
-# counted from its own start. Whole seconds above zero, with no sign and no
-# leading zero: any other value refuses the review call and copilot-wait as
-# setting-invalid and overseer-approve as copilot-hold-setting. Requires the
-# overseer token app's repository Checks: read permission.
+# Maximum seconds the review call, orch-runtime copilot-wait and
+# overseer-approve --hold-copilot hold on Copilot's work on a head, in whole
+# seconds above zero. What each holds, the start each counts from and each
+# reader's refusal of another value: references/settings.md, and for the
+# review call references/gates.md § Copilot requests. Requires the overseer
+# token app's repository Checks: read permission.
 ORCH_COPILOT_HOLD_SECS = "600"
 
 # Who reviews this repository's own kendex refresh pull request when no
@@ -255,13 +234,10 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # ORCH_LANE_CLOSE_SECS = "15"
 
 # The tmux session every lane window opens in. Unset, a fleet launch uses the
-# session its oversee state records as tmux.session. The fleet's first tmux
-# launch records the session it opened in, this one when set, once tmux
-# confirms it exists. With neither, a launch refuses as
-# tmux-session-unresolved, inside tmux or out; a session tmux does not hold
-# refuses as tmux-session-missing. With it set, open-terminal --wake and the
-# orch runtime need no $TMUX: run from outside tmux they reach that session on
-# your own tmux server.
+# session its oversee state records as tmux.session; how a launch records and
+# reads it, and its refusals: references/lane-directive.md § Tmux session.
+# With it set, open-terminal --wake and the orch runtime need no $TMUX: run
+# from outside tmux they reach that session on your own tmux server.
 # ORCH_TMUX_SESSION = "kendex"
 
 # Long provider processes lane-host runs at once, per home: every overseer and
@@ -336,9 +312,9 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # ORCH_LANE_CODEX_CREDIT_FLOOR = "5000"
 
 # The allowance left on an account at which a running lane is marked for
-# handover. The overseer asks a marked lane to hand over at its next safe
-# point. The lane's turn-end hook judges the lane's account at this mark
-# (references/settings.md).
+# handover. The lane's turn-end hook judges the lane's account at this mark
+# (references/settings.md); the lane's handoff follows
+# references/skill-rules.md § Round Closure.
 # ORCH_HANDOFF_HEADROOM_PCT = "3"
 
 # Who relaunches a lane its account walled. "auto" has the watch relaunch
@@ -349,12 +325,10 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # Earlier context handoff percentage. Shared rule and boundary behavior:
 # references/oversee-events.md, Judgement rules.
 # ORCH_HANDOFF_CONTEXT_PCT = "90"
-# Attached agent result reserve before the earlier context mark. The native
-# launch refusal holds it while an attached agent this session launched may
-# still be out; the review-pr pre-panel admission (`lane-context.sh
-# --attached-launch`) holds it for the impending launch whatever the roster
-# reads. Nonnegative whole tokens; equality refuses a launch. Missing context
-# refuses the launch.
+# Attached agent result reserve before the earlier context mark, in
+# nonnegative whole tokens. Which launches it holds back:
+# references/oversee-events.md § Judgement rules and
+# workflows/review-pr.md § 2.
 # ORCH_HANDOFF_AGENT_RESERVE_TOKENS = "150000"
 
 # The recording policy: the most bytes one fleet log row's text may carry,
@@ -376,14 +350,13 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # QA_UI_PATHS = "ui/src/*"
 # QA_UI_DESIGN_DOC = "docs/design-system.md"
 
-# How many fleet lanes the overseer holds at once, each counted as
-# references/lane-directive.md § Caps states. Claude cloud sessions use the
-# separate cloud cap below. Their landing lanes count here. A launch past its
-# cap is refused.
+# How many fleet lanes the overseer holds at once; Claude cloud sessions
+# take the separate cloud cap below. What each cap counts and the refusal
+# past it: references/lane-directive.md § Caps.
 ORCH_OVERSEER_LANES = "3"
 
-# How many Claude cloud sessions one overseer holds. The record's declared
-# claude-cloud kind owns this cap, regardless of host name.
+# How many Claude cloud sessions one overseer holds
+# (references/lane-directive.md § Caps).
 ORCH_OVERSEER_CLOUD_LANES = "10"
 
 # External triage. The overseer processes issues and pull requests from
@@ -403,9 +376,9 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # Whether a finished overseer starts its own replacement. "on" starts one.
 # "off" leaves a live overseer to write its handover note and ask you to
 # start the next session, and a dead one to be reported for replacement by
-# hand. A controller whose record names its own succession command runs that
-# command at its mark under either value and writes no handover note; under
-# "off" the watch runs nothing for it when it dies or walls.
+# hand. The handover, a controller whose record names its own succession
+# command included: workflows/oversee.md § Succession. The watch's recovery
+# under each value: references/overseer-session-events.md.
 # ORCH_OVERSEER_SUCCESSION = "on"
 
 # The models a new or replacement overseer tries, in order. Each entry is
@@ -477,18 +450,17 @@ ORCH_OVERSEER_WALL_MINUTES = "20"
 # Zero disables it.
 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 
-# How many checks in a row must find the overseer gone, or out of account
-# allowance, before it is replaced. One check alone can catch a healthy
-# session between programs. A limit the overseer's own session reports, or
-# an account with no allowance left, replaces it on the first check.
+# How many watch passes in a row must read the overseer exited, or a usage
+# banner on its pane that the account judgement confirms, before the watch
+# reports it. One check alone can catch a healthy session between programs.
+# The readings that count on the first pass, and what the watch then does:
+# references/overseer-session-events.md.
 # ORCH_OVERSEER_DEAD_PASSES = "2"
 
 # The allowance left on an account at which the overseer hands over. No
 # replacement is started on an account at or below it. An overseer's seat
-# keeps this room for it: a worker's pick holds a seat to
-# min(ORCH_LANE_MAX_PCT, 100 - ORCH_OVERSEER_HEADROOM_PCT), returns it last,
-# and a lane on a seat hands off at that line. A Codex account's credits are
-# never at it, on a seat as on any account.
+# keeps this room for it; references/settings.md states how a worker's pick
+# and a lane on a seat keep it.
 # ORCH_OVERSEER_HEADROOM_PCT = "5"
 
 # How many checks pass before a warning nobody has acted on is reported

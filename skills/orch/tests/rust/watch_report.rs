@@ -331,16 +331,11 @@ fn runner<'a>(world: &World, clock: &'a FakeClock) -> Runner<'a> {
     )
 }
 
-/// Defect: a `verifying` line or a
-/// `verifying-deadline` event drifting from the recorded bytes the session
-/// keys on; a standing deadline raised on every pass; a waiting box raised;
-/// a container's outcome box missed or its child box read as open. The
-/// recorded answers on the owed suite's own worlds, recorded once: the
-/// deadline world's four events
-/// and four lines, then nothing on the second pass with the lines held for
-/// the heartbeat; the unfired trigger's four waiting lines and no event;
-/// the Triage container's outcome box, then `boxes=0` once its only box is
-/// the child's.
+/// The recorded answers on the owed suite's own worlds, recorded once: the
+/// deadline world's four events and four lines, then nothing on the second
+/// pass with the lines held for the heartbeat; the unfired trigger's four
+/// waiting lines and no event; the Triage container's outcome box, then
+/// `boxes=0` once its only box is the child's.
 #[test]
 fn the_verifying_lines_and_deadline_events_match_the_recorded_bytes() {
     let clock = FakeClock::new();
@@ -477,10 +472,8 @@ fn the_verifying_lines_and_deadline_events_match_the_recorded_bytes() {
     assert_eq!(baseline.get("verifying-deadline", "KEN-P"), None);
 }
 
-/// Defect: a
-/// `verifying-deadline` row advanced before its event line is on disk, so
-/// a crash between the two loses the deadline for good. Through the runner
-/// with the
+/// A deadline row that moved before its event line were durable would lose
+/// the deadline to a crash between the two. Through the runner with the
 /// baseline's write blocked: the eight lines of the deadline world are on
 /// disk and no row moved; the next run reprints them once and lands the
 /// row; the run after prints nothing.
@@ -585,15 +578,11 @@ const REPORT_BODY: [&str; 4] = [
     "  first-commit KEN-1 launched=2026-09-21T00:00:00Z first_commit=none secs=- tier=-",
 ];
 
-/// Defect: a due
-/// report said on every long pass, or
-/// not said again when its reason moves; a refused or unparsable answer
-/// read as "not due" (silence); the span line missing a lane or reading an
-/// unreadable timeline as none. `oversee-report due`'s answer through the
-/// fixture: one `report-due` line with the four span lines, nothing while
-/// it stands, the row cleared when the report is written, the line again
-/// on a new reason; exit 1, two lines and a line of another shape each
-/// refuse `report-unjudged` with the exit and the answer.
+/// `oversee-report due`'s answer through the fixture: one `report-due` line
+/// with the four span lines, nothing while it stands, the row cleared when
+/// the report is written, the line again on a new reason; exit 1, two lines
+/// and a line of another shape each refuse `report-unjudged` with the exit
+/// and the answer.
 #[test]
 fn report_due_prints_once_per_due_with_its_reason_and_a_bad_answer_is_report_unjudged() {
     let world = World::new();
@@ -674,10 +663,10 @@ fn report_due_prints_once_per_due_with_its_reason_and_a_bad_answer_is_report_unj
     );
 }
 
-/// Defect: a controller gate on verification or the report, so neither
-/// runs while the overseer reads dead, walled or off. The same fleet with no controller record, with an
-/// explicit `off`, and with a record naming a pane on a server that is
-/// gone: both duties produce the same lines on each.
+/// Neither verification nor the report waits on a controller. The same
+/// fleet with no controller record, with an explicit `off`, and with a
+/// record naming a pane on a server that is gone: both duties produce the
+/// same lines on each.
 #[test]
 fn verification_and_report_run_with_the_controller_dead_walled_and_off() {
     let clock = FakeClock::new();
@@ -753,24 +742,18 @@ fn owed((id, state, priority, lane, host, harness, model, delivery): OwedRow<'_>
     }
 }
 
-/// Defect: a heartbeat body that moves its own due time or is moved by
-/// mail; a body line drifting from the recorded bytes (the open list, the
-/// roster, the verifying and owed lines with their wall verdicts); the
-/// capacity line missing or naming held items; an owed verdict that
-/// ignores the listing the judge reads. Under one mail event every 7 s for
-/// 7000 s, with the tracker, GitHub and verification slots holding
-/// the recorded owed world and the
-/// listing fixture its roster: one heartbeat at the first tick at or past
-/// 6000 s, its block the recorded bytes, then the quota, reducer
-/// and capacity lines. The owed verdicts are the accounts judge's over the
-/// listing's windows: the
-/// Opus windows of both claude accounts walled until 2026-10-04 and their
-/// shared windows with room, so an Opus launch is `dated` there and a
-/// Sonnet one `queue`; every codex window walled, codex2 resetting first;
-/// the hosted codex record judged on the provider's own listing under its
-/// host (the judge reads the provider's rows and asks the reader for
-/// no pick), where the one codex account has room, and the host's
-/// capability line read for the repository rule.
+/// Under one mail event every 7 s for 7000 s, with the tracker, GitHub and
+/// verification slots holding the recorded owed world and the listing
+/// fixture its roster: one heartbeat at the first tick at or past 6000 s,
+/// its block the recorded bytes, then the quota, reducer and capacity
+/// lines. The owed verdicts are the accounts judge's over the listing's
+/// windows: the Opus windows of both claude accounts walled until
+/// 2026-10-04 and their shared windows with room, so an Opus launch is
+/// `dated` there and a Sonnet one `queue`; every codex window walled,
+/// codex2 resetting first; the hosted codex record judged on the provider's
+/// own listing under its host (the judge reads the provider's rows and asks
+/// the reader for no pick), where the one codex account has room, and the
+/// host's capability line read for the repository rule.
 #[test]
 fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
     let world = World::new();
@@ -1071,11 +1054,10 @@ fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
     );
 }
 
-/// Defect: a heartbeat with nothing read yet saying nothing
-/// where the owed list goes, so a standing tracker failure reads as
-/// nothing owed. The body with every slot empty, the roster refused and
-/// the open list unanswered: each list's `unread` line in its place, the
-/// owed list's among them.
+/// A heartbeat that said nothing where an unread list goes would read a
+/// standing tracker failure as nothing owed. The body with every slot
+/// empty, the roster refused and the open list unanswered: each list's
+/// `unread` line in its place, the owed list's among them.
 #[test]
 fn the_heartbeat_body_says_unread_for_every_list_no_duty_has_read() {
     let world = World::new();
@@ -1177,14 +1159,8 @@ fn claude_key(world: &World) -> String {
 }
 
 /// The recorded accounts world's `renewal`, `crossing`, `reset`, `dropped`,
-/// `reset_unparsed` and `shared_alias` cases. Defect: an account's change said twice while unchanged (the row
-/// not advanced), or not said again on the next change; the `change=` or
-/// `was=` text drifting from the recorded bytes; a reset time that moved
-/// while still ahead read as a reset, or a passed reset the reading still
-/// names; an account the listing dropped for a pass losing its row, so its
-/// return is judged against nothing; two accounts sharing an alias judged
-/// as one. Each sequence is its passes' listings and the account events
-/// each pass says, at the wall it runs at.
+/// `reset_unparsed` and `shared_alias` cases. Each sequence is its passes'
+/// listings and the account events each pass says, at the wall it runs at.
 #[test]
 fn an_account_change_is_said_once_with_what_changed_from_what_and_again_on_the_next() {
     // One hour before and after the reset sequence's first reset.
@@ -1382,16 +1358,10 @@ fn an_account_change_is_said_once_with_what_changed_from_what_and_again_on_the_n
     }
 }
 
-/// The recorded accounts world's sequence table and its four controls.
-/// Defect: an unmeasured reading moving the
-/// row (so a provider holding a credential while a lane runs flaps an
-/// event every other pass, the recorded watch's `flap` control); a measured
-/// change after the gap not said (`measured`); an `expired` or `retired`
-/// reading after a measured one not said, or said only once when it
-/// recurs after a renewal (`expired`, `retired`); an unmeasured first
-/// sighting written as a row. Each row of the table is one pass's
-/// reading, the event tail it says and the `account` row saved under the
-/// recorded watch's key afterwards, `-` for none.
+/// The recorded accounts world's sequence table and its four controls. Each
+/// row of the table is one pass's reading, the event tail it says and the
+/// `account` row saved under the recorded watch's key afterwards, `-` for
+/// none.
 #[test]
 fn an_unmeasured_reading_keeps_the_row_and_a_terminal_status_is_news() {
     const SEQUENCES: &[(&str, &str, &str, &str)] = &[
@@ -1579,12 +1549,11 @@ fn an_unmeasured_reading_keeps_the_row_and_a_terminal_status_is_news() {
     assert_eq!(got, want);
 }
 
-/// Defect: a listing that could not be read, read as a fleet with no
-/// accounts or as no change: the pass not counted a failure, the roster
-/// printed as accounts, the row moved, so the next readable pass says the
-/// change against nothing. A home discovery cannot list is a counted
-/// failure with `account-roster unread` and the row as it stood; the
-/// readable pass after it says the change against the reading before it.
+/// A listing that cannot be read is no fleet without accounts and no
+/// change, or the next readable pass would say a change against nothing. A
+/// home discovery cannot list is a counted failure with `account-roster
+/// unread` and the row as it stood; the readable pass after it says the
+/// change against the reading before it.
 #[test]
 fn an_unreadable_listing_is_a_counted_failure_that_keeps_the_previous_reading() {
     use std::os::unix::fs::PermissionsExt;
@@ -1798,15 +1767,13 @@ fn touch(path: &Path) {
     std::fs::write(path, "x\n").unwrap();
 }
 
-/// Defect: a lane read ended by
-/// `done` alone (an old vintage's `closed` record kept for a month); a record judged by a directory's newest write (an append-only
-/// `handoffs/` keeping a sibling's file alive); a lane with its worktree
-/// standing and no reason recorded pruned; a kept worktree touched; mail
-/// written within the retention or the newest log segment removed; the fleet start's record
-/// dropped; a running lane relaunched after a confirmed close read ended by
-/// that earlier session's close, its state files deleted and its record
-/// dropped. One pass at the fake wall over ten records and
-/// three segments.
+/// Each record is judged by its own recorded end, never by `done` alone (a
+/// released `closed` record) or by a directory's newest write (an
+/// append-only `handoffs/`); a lane whose worktree stands with no reason
+/// recorded, a kept worktree, mail within the retention, the newest log
+/// segment and the fleet start's record stand; a lane relaunched after a
+/// confirmed close is read by its own session. One pass at the fake wall
+/// over ten records and three segments.
 #[test]
 fn retention_prunes_each_record_by_its_own_recorded_end_and_never_recent_mail_or_a_kept_worktree() {
     let world = World::new();
@@ -2036,15 +2003,13 @@ fn retention_prunes_each_record_by_its_own_recorded_end_and_never_recent_mail_or
     assert_eq!(again.paths, Vec::<PathBuf>::new());
 }
 
-/// Defect: a prune that reaches past its two arrays and
-/// drops a standing instruction from the live record, so a successor
-/// re-applies a stop the owner had lifted. A standing
-/// instruction is a row of the fleet record's `standing[]` and has no
-/// retention; the fixture's is older than the cutoff, with a `fleet_log`
-/// row on each side of the cutoff. The duty as the runner runs it, the
-/// record read back from the disk after the store's write: the aged row and
-/// the closed lane's record leave, the array is byte for byte what was
-/// written.
+/// A successor re-applies a standing instruction it reads, so the prune
+/// reaches only its two arrays. A standing instruction is a row of the
+/// fleet record's `standing[]` and has no retention; the fixture's is older
+/// than the cutoff, with a `fleet_log` row on each side of the cutoff. The
+/// duty as the runner runs it, the record read back from the disk after the
+/// store's write: the aged row and the closed lane's record leave, the
+/// array is byte for byte what was written.
 #[test]
 fn retention_leaves_a_standing_instruction_older_than_the_cutoff_byte_for_byte() {
     let world = World::new();
@@ -2141,11 +2106,10 @@ fn the_retention_duty_prints_nothing_and_removes_through_the_runner() {
     assert_eq!(baseline.passes.get(&Duty::Retention), Some(&wall));
 }
 
-/// Defect: a first retention pass rewriting a fresh fleet
-/// record (`state init --fleet` writes no `lanes` and no `fleet_log`; an
-/// array read that inserts the absent key changes the document, and the
-/// store writes it). The duty on the fake clock over the record as `state
-/// init` writes it: the pass is stamped and the file's bytes are as before.
+/// `state init --fleet` writes no `lanes` and no `fleet_log`, and an array
+/// read that inserts the absent key would change the document. The duty on
+/// the fake clock over the record as `state init` writes it: the pass is
+/// stamped and the file's bytes are as before.
 #[test]
 fn a_first_retention_pass_over_a_fresh_fleet_record_writes_nothing() {
     let world = World::new();
@@ -2204,13 +2168,12 @@ fn relative(path: &Path) -> String {
     path.strip_prefix("/").unwrap().display().to_string()
 }
 
-/// Defect: an open intent's receipt or request, a brief, a closed intent's
-/// notice or a file no intent names removed with the closed intents' files,
-/// so the effect, the reconcile or the mailbox that still reads it finds
-/// nothing; and a unit removed with no archive is the only copy's end. One
-/// pass over an open intent and a closed one, each with files older than
-/// the cutoff, unnamed files under `intents/`, the handoff files and the
-/// progress reports: only the closed intent's receipt, request and job
+/// The effect, the reconcile and the mailbox still read an open intent's
+/// receipt and request, a brief, a closed intent's notice and a file no
+/// intent names, and a unit removed with no archive is its only copy's end.
+/// One pass over an open intent and a closed one, each with files older
+/// than the cutoff, unnamed files under `intents/`, the handoff files and
+/// the progress reports: only the closed intent's receipt, request and job
 /// record and the stamped reports leave, and the archive the pass names
 /// holds every path that left.
 #[test]
@@ -2302,11 +2265,10 @@ fn retention_keeps_an_open_intents_files_and_archives_every_unit_that_leaves() {
     );
 }
 
-/// Defect: a receipt a pane writes after its intent was closed by hand,
-/// judged by that close alone and removed on the next pass, so the watch
-/// reads the live pane as a stray. A launch closed ten days ago, its
-/// request as old and its receipt written a minute ago: the request leaves
-/// and the receipt stands.
+/// A pane can write its receipt after its intent was closed by hand, and
+/// the watch would read that live pane as a stray once the receipt left. A
+/// launch closed ten days ago, its request as old and its receipt written a
+/// minute ago: the request leaves and the receipt stands.
 #[test]
 fn retention_keeps_a_receipt_written_after_its_intent_closed() {
     let world = World::new();
@@ -2330,11 +2292,9 @@ fn retention_keeps_a_receipt_written_after_its_intent_closed() {
     assert!(receipt.exists(), "the late receipt stands");
 }
 
-/// Defect: nothing compacts the overseer mailbox, or a refused compaction
-/// stops the prune or passes unsaid. The duty as the runner runs it, the
-/// mailbox program refusing: it was asked to compact the overseer mailbox
-/// at the main checkout, the pass says `watch-step-failed`, and a file
-/// past the retention still leaves.
+/// The duty as the runner runs it, the mailbox program refusing: it was
+/// asked to compact the overseer mailbox at the main checkout, the pass
+/// says `watch-step-failed`, and a file past the retention still leaves.
 #[test]
 fn the_retention_duty_compacts_the_overseer_mailbox_and_says_a_refusal() {
     let world = World::new();
@@ -2383,12 +2343,11 @@ fn real(name: &str) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_owned()
 }
 
-/// Defect: the retention pass removes an item record while a writer holds
-/// its lock mid-update, so the write in flight is lost, or removes a record
-/// written since the pass judged it. A stale record with no lane record and
-/// no worktree, the shell store's `update` held between its locked read and
-/// its move by a `jq` that waits for a release; the pass starts and is
-/// released into after the writer: the update lands and the record stands.
+/// A record a writer holds mid-update, or one written since the pass judged
+/// it, stands. A stale record with no lane record and no worktree, the
+/// shell store's `update` held between its locked read and its move by a
+/// `jq` that waits for a release; the pass starts and is released into
+/// after the writer: the update lands and the record stands.
 #[test]
 fn retention_leaves_an_item_record_a_shell_writer_holds() {
     let world = World::new();
@@ -2462,12 +2421,12 @@ esac
     assert!(!pruned.paths.contains(&record), "{:?}", pruned.paths);
 }
 
-/// Defect: one record whose lock stays held, a stale mutex on a host
-/// without `flock`, fails every retention pass, so nothing else ever ages
-/// out. The duty as the runner runs it under the mutex policy with a short
-/// wait, over an old record whose `.lock.d` stands and another old record:
-/// the pass says `watch-step-failed`, the record and its mutex stand for
-/// the next pass, and the other record leaves.
+/// One record whose lock stays held, a stale mutex on a host without
+/// `flock`, fails no other record's retention. The duty as the runner runs
+/// it under the mutex policy with a short wait, over an old record whose
+/// `.lock.d` stands and another old record: the pass says
+/// `watch-step-failed`, the record and its mutex stand for the next pass,
+/// and the other record leaves.
 #[test]
 fn a_record_whose_lock_stays_held_keeps_its_item_and_the_pass_takes_the_rest() {
     let world = World::new();
@@ -2515,10 +2474,10 @@ fn a_record_whose_lock_stays_held_keeps_its_item_and_the_pass_takes_the_rest() {
     );
 }
 
-/// Defect: a record's lock taken with its record, so a holder of the
-/// unlinked inode and a newcomer on a new one both hold "the" lock once the
-/// key is created again. An old item record with its old lock and mutex:
-/// the record leaves; its lock and mutex stand.
+/// A lock taken with its record would let a holder of the unlinked inode
+/// and a newcomer on a new one both hold the lock once the key is created
+/// again. An old item record with its old lock and mutex: the record
+/// leaves; its lock and mutex stand.
 #[test]
 fn no_lock_file_leaves_and_a_record_leaves_without_its_lock() {
     let world = World::new();
@@ -2538,12 +2497,11 @@ fn no_lock_file_leaves_and_a_record_leaves_without_its_lock() {
     assert_eq!(pruned.paths, vec![record.clone()], "{:?}", pruned.paths);
 }
 
-/// Defect: the retention pass drops a lane row, the item's record and its
-/// mailbox from a judgement the fleet moved under: a relaunch during the
-/// archive turns the ended lane live, and the pass removes it all anyway.
-/// The duty's body, its `tar` updating the lane to `running` under a new
-/// session and appending a mailbox turn before it archives: the live row,
-/// the record and the mailbox all stand.
+/// A relaunch during the archive turns the ended lane live, and the pass
+/// keeps what the fleet moved under its judgement. The duty's body, its
+/// `tar` updating the lane to `running` under a new session and appending a
+/// mailbox turn before it archives: the live row, the record and the
+/// mailbox all stand.
 #[test]
 fn retention_keeps_a_lane_relaunched_during_its_archive() {
     if std::env::var_os("RELAUNCH_CHILD").is_none() {
@@ -2630,10 +2588,9 @@ exec "$REAL_TAR" "${args[@]}"
     assert!(record.exists() && mailbox.exists());
 }
 
-/// Defect: `prune-records` drops an item's rows that a writer moved since
-/// the judgement read them. The judgement's rows of an ended lane, and the
-/// fleet record holding that lane relaunched: nothing leaves and the item
-/// is not confirmed; the unmoved item's rows leave.
+/// The judgement's rows of an ended lane, and the fleet record holding that
+/// lane relaunched: nothing leaves and the item is not confirmed; the
+/// unmoved item's rows leave.
 #[test]
 fn prune_records_drops_no_row_moved_since_the_judgement() {
     let world = World::new();
@@ -2681,11 +2638,11 @@ fn prune_records_drops_no_row_moved_since_the_judgement() {
     assert_eq!(left, vec![("KEN-0", "running"), ("KEN-9", "running")]);
 }
 
-/// Defect: a session rows file the fleet record still names retired
-/// because its pane is gone, so the overseer or the successor bound to it
-/// loses its rows. Four files of panes the private ambient server does not
-/// hold, three named by `overseer.session_rows`, `overseer.pending.
-/// session_rows` and `pending.session_rows`: only the unnamed one leaves.
+/// The overseer or the successor bound to a session rows file still reads
+/// it after its pane is gone. Four files of panes the private ambient
+/// server does not hold, three named by `overseer.session_rows`,
+/// `overseer.pending.session_rows` and `pending.session_rows`: only the
+/// unnamed one leaves.
 #[test]
 fn retention_keeps_a_session_rows_file_the_fleet_names() {
     if std::env::var_os("NAMED_ROWS_CHILD").is_none() {
@@ -2739,10 +2696,9 @@ fn retention_keeps_a_session_rows_file_the_fleet_names() {
     }
 }
 
-/// Defect: an ended lane's row kept for good once its item's files are
-/// gone, since the rows the commit drops came only from items a file
-/// names. An ended lane whose item `state remove` closed out: two duty
-/// passes, and the row has left.
+/// An ended lane's row leaves once its item's files are gone, though no
+/// file names the item any more. An ended lane whose item `state remove`
+/// closed out: two duty passes, and the row has left.
 #[test]
 fn retention_retires_an_ended_row_without_remaining_files() {
     let world = World::new();
@@ -2828,16 +2784,12 @@ fn ended_lane_world(world: &World, wall: u64) -> PathBuf {
     record
 }
 
-/// Defect: an entry of the state directory the pass names no kind for
-/// removed by its age, though a writer the pass does not serialize can
-/// still write or bind it: a lane's own files, a handoff, a brief, the
-/// completion summary and audit of an item whose state expired, a mailbox,
-/// the claim store, a directive send's receipt, an owner alert's notice or
-/// operator scratch; or removed by a later pass once its item's record and
-/// row are gone. An ended lane and an expired item with no lane, each with
-/// its record past the retention, and every such entry ten days old: the
-/// two records and the row leave, and through a second pass everything
-/// else stands.
+/// The pass removes only the kinds it names: a writer it does not serialize
+/// can still write or bind every other entry of the state directory, and a
+/// later pass keeps them once their item's record and row are gone. An
+/// ended lane and an expired item with no lane, each with its record past
+/// the retention, and every such entry ten days old: the two records and
+/// the row leave, and through a second pass everything else stands.
 #[test]
 fn retention_removes_only_the_kinds_it_names_and_every_other_entry_stands() {
     let world = World::new();
@@ -2892,15 +2844,14 @@ fn retention_removes_only_the_kinds_it_names_and_every_other_entry_stands() {
     }
 }
 
-/// Defect: an item with no lane record whose workflow state is older than
-/// the retention is pruned under the lane still working in its worktree
-/// (a state that names a linked worktree or a branch a linked worktree has
-/// checked out), or kept forever when it names nothing that stands. The
-/// twelve shapes a workflow state names a worktree in, on a repository with
-/// linked worktrees, one pass: each state is kept or removed as the table
-/// says. The pass reads the worktrees through `git` by name, in this
-/// process, so the row runs as a child under the isolated environment and
-/// that `git` reads no configuration of the operator's.
+/// An item state that names a linked worktree, or a branch a linked
+/// worktree has checked out, stands while the lane works there, and one
+/// naming nothing that stands ages out. The twelve shapes a workflow state
+/// names a worktree in, on a repository with linked worktrees, one pass:
+/// each state is kept or removed as the table says. The pass reads the
+/// worktrees through `git` by name, in this process, so the row runs as a
+/// child under the isolated environment and that `git` reads no
+/// configuration of the operator's.
 #[test]
 fn retention_keeps_an_item_state_that_names_a_standing_linked_worktree_and_takes_the_rest() {
     if std::env::var_os("ISOLATED_CHILD").is_none() {

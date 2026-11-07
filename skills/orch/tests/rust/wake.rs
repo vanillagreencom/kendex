@@ -3,8 +3,8 @@
 //! its own bound session file; the mark is in the watch's own record on
 //! disk before the paste and a repeat for the same unread state types
 //! nothing, whatever the fleet record's writers do to the lane meanwhile; a
-//! Codex target and an unreadable pane are never typed into. Each row names
-//! the defect it catches at its doc comment. The stub harnesses are
+//! Codex target and an unreadable pane are never typed into. Each row's
+//! name carries the defect it catches. The stub harnesses are
 //! `fixtures/stub-turns/{claude,codex}`. The runner runs on the fake clock;
 //! the paste's confirming-turn wait runs in the `deliver` child on the
 //! production bound, a bounded poll of the stub's own session file, and the
@@ -500,15 +500,12 @@ impl Drop for Follower {
     }
 }
 
-/// Defect: a delivery confirmed on whatever session file in the home was
-/// written last, a subagent's beside the lead's, so a wake to a lead that
-/// lost the line reads delivered while the subagent chats on. Lead and
-/// subagent files sit in one home and cwd, the subagent's gaining user rows
-/// throughout; the lead that records nothing is `unconfirmed` once the
-/// production bound elapses in the `deliver` child, the one wait of these
-/// rows that runs its length, and only a lead that records the line in its
-/// own bound file is `delivered`. A second pass for the same unread state
-/// types nothing again.
+/// Lead and subagent files sit in one home and cwd, the subagent's gaining
+/// user rows throughout; the lead that records nothing is `unconfirmed`
+/// once the production bound elapses in the `deliver` child, the one wait
+/// of these rows that runs its length, and only a lead that records the
+/// line in its own bound file is `delivered`. A second pass for the same
+/// unread state types nothing again.
 #[test]
 fn a_subagent_s_file_never_confirms_the_lead_s_delivery() {
     let fleet = Fleet::new();
@@ -577,13 +574,11 @@ fn a_subagent_s_file_never_confirms_the_lead_s_delivery() {
     assert_eq!(fleet.turns("lead-1"), Vec::<String>::new());
 }
 
-/// Defect: the log append read as the delivery, with no turn the harness
-/// itself recorded; or a Codex controller typed into. A stub
-/// controller idle at its composer after its turn, the scheduler live and
-/// one unread event: a Claude controller gets one delivery confirmed by
-/// its own session file, and a test-owned follower on the log receives
-/// the numbered line while the controller's turn still runs; a Codex
-/// controller gets the named limit and nothing typed.
+/// A stub controller idle at its composer after its turn, the scheduler
+/// live and one unread event: a Claude controller gets one delivery
+/// confirmed by its own session file, and a test-owned follower on the log
+/// receives the numbered line while the controller's turn still runs; a
+/// Codex controller gets the named limit and nothing typed.
 #[test]
 fn an_idle_controller_gets_one_confirmed_delivery_or_a_named_limit_and_a_follower_reads_the_line() {
     // Claude: confirmed, the follower reading the line mid-turn.
@@ -690,12 +685,9 @@ fn an_idle_controller_gets_one_confirmed_delivery_or_a_named_limit_and_a_followe
     }
 }
 
-/// Defect: an installed idle delivery that handles the first message
-/// alone, or a harness the test keeps mid-turn so the second lands in the
-/// same turn. Two unread states twenty seconds apart, signalled
-/// through the mail duty's slot on the live scheduler, are two user rows in
-/// the stub's own session file, the stub idle between them by its state
-/// file.
+/// Two unread states twenty seconds apart, signalled through the mail
+/// duty's slot on the live scheduler, are two user rows in the stub's own
+/// session file, the stub idle between them by its state file.
 #[test]
 fn two_events_apart_give_two_user_rows_with_the_stub_idle_between() {
     let fleet = Fleet::new();
@@ -760,12 +752,12 @@ fn two_events_apart_give_two_user_rows_with_the_stub_idle_between() {
     );
 }
 
-/// Defect: the mark written after the paste, so a crash between the two
-/// leaves no mark and the repeat types the line again.
-/// The paste call dies after the mark is on disk (an agent-runtime that
-/// exits without a reply on the paste alone, the real one for the read):
-/// the pass fails loud, the mark stands for the unread state, and the
-/// repeat for that state types nothing; a later unread state types once.
+/// A crash between the mark and the paste leaves the mark, never a repeat
+/// that types the line again. The paste call dies after the mark is on disk
+/// (an agent-runtime that exits without a reply on the paste alone, the
+/// real one for the read): the pass fails loud, the mark stands for the
+/// unread state, and the repeat for that state types nothing; a later
+/// unread state types once.
 #[test]
 fn a_mark_before_the_paste_pastes_nothing_on_the_repeat_and_a_later_state_pastes_once() {
     let real = agent_runtime();
@@ -859,9 +851,9 @@ fn a_wake_whose_line_never_reached_the_pane_types_it_on_the_next_pass() {
     assert_eq!(fleet.turns("lead-1").len(), 1, "typed once");
 }
 
-/// Defect: a Codex lane typed into through the unproved paste route, a
-/// second execution over its live history. The lane is read idle, reported
-/// `wake-limit`, and nothing reaches its pane.
+/// The paste route is unproved on Codex, where a paste would run again over
+/// the live history. The lane is read idle, reported `wake-limit`, and
+/// nothing reaches its pane.
 #[test]
 fn a_codex_shaped_lane_reads_wake_limit_and_is_not_typed_into() {
     let fleet = Fleet::new();
@@ -889,11 +881,9 @@ fn a_codex_shaped_lane_reads_wake_limit_and_is_not_typed_into() {
     assert_eq!(rendered(&again), Vec::<String>::new(), "reported once");
 }
 
-/// Defect: the mark kept on the lane record, where `open-terminal --wake`
-/// (the overseer's route for a Codex lane the duty reported) rewrites the
-/// lane's `wake` object from its own record and the mark goes with it, so
-/// the same unread state is reported again and, on a pasting harness, typed
-/// again. A Codex lane and a Claude lane are
+/// `open-terminal --wake`, the overseer's route for a Codex lane the duty
+/// reported, rewrites the lane's `wake` object from its own record, so the
+/// mark lives off the lane record. A Codex lane and a Claude lane are
 /// served once; the wake-mode patch lands on both lane rows between the
 /// passes; a fresh body (a restarted runner, holding nothing in memory)
 /// reads the marks standing and reports and types nothing again.
@@ -950,10 +940,9 @@ fn an_open_terminal_wake_on_the_lane_record_moves_no_mark_and_nothing_is_reporte
     );
 }
 
-/// Defect: an unreadable or gone pane read as idle and typed into, or
-/// marked as delivered to. A lane whose recorded pane is
-/// gone and one whose recorded server the socket does not answer for are
-/// never typed into, print nothing and leave no mark.
+/// A lane whose recorded pane is gone and one whose recorded server the
+/// socket does not answer for are never typed into, print nothing and leave
+/// no mark.
 #[test]
 fn a_gone_or_unreadable_pane_is_never_typed_into_and_leaves_no_mark() {
     let fleet = Fleet::new();
@@ -978,17 +967,14 @@ fn a_gone_or_unreadable_pane_is_never_typed_into_and_leaves_no_mark() {
     );
 }
 
-/// Defect: an idle overseer holding the owner's unread note that no wake
-/// reaches (a Codex overseer's limit here; an unconfirmed paste is the same
-/// class) and nobody told, since the idle overseer is the one reader of the
-/// log; or the owner told on every pass, or again after a runner restart. A
-/// Codex overseer with
-/// unread mail: pass one says `idle-unread` and `wake-limit`; pass two
-/// sends the owner one notice through the overseer mailbox naming the
-/// unread envelope and the cause; pass three sends nothing; a restarted
-/// runner (a fresh body, holding nothing in memory) sends nothing for the
-/// same state; a later unread state is said and alerted once more. Nothing
-/// is typed into the pane at any pass.
+/// The idle overseer is the one reader of the log, so mail no wake reaches
+/// it with goes to the owner. A Codex overseer with unread mail: pass one
+/// says `idle-unread` and `wake-limit`; pass two sends the owner one notice
+/// through the overseer mailbox naming the unread envelope and the cause;
+/// pass three sends nothing; a restarted runner (a fresh body, holding
+/// nothing in memory) sends nothing for the same state; a later unread
+/// state is said and alerted once more. Nothing is typed into the pane at
+/// any pass.
 #[test]
 fn an_overseer_the_wake_cannot_wake_is_told_to_the_owner_once_per_unread_state() {
     let fleet = Fleet::new();

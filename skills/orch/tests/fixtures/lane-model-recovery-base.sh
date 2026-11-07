@@ -1,6 +1,6 @@
 # shellcheck shell=bash
-# KEN-4033 must-fail control: lane_model_recovery at b23b769a0d110c854a460f8dadbe2b343fd35247,
-# its launch through the request the runtime takes.
+# The must-fail control's lane_model_recovery with no recovery bound, the base
+# the bound is proved against, its launch through the request the runtime takes.
 lane_model_recovery() { # RECORD STATE_DIR SCRIPTS SESSION
   local record="$1" state_dir="$2" SCRIPT_DIR="$3" session="$4" fields item host harness pane pid start wake_pid wake_start account out claim pane_pid identity
   fields="$(jq -er '[.item, (.host // "local"), .harness, (.launch.pane // ""),

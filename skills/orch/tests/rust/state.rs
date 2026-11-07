@@ -1416,11 +1416,10 @@ fn the_overseers_handoff_is_a_stamped_pointer_write_and_a_lanes_keeps_its_sessio
     assert_eq!(standing["record"]["model"], "claude-sonnet-5-5");
 }
 
-/// Defect: a close-out that removes the item's record, its lock and a
-/// writer's temporary file while a writer holds the record's lock, so the
-/// write in flight is lost and the archive holds the record before it.
-/// The runtime's own lock guard held: `state remove` waits on it and
-/// refuses `lock-timeout`, the record and its lock untouched.
+/// A close-out under a writer's held lock would lose the write in flight
+/// and archive the record before it. The runtime's own lock guard held:
+/// `state remove` waits on it and refuses `lock-timeout`, the record and
+/// its lock untouched.
 #[test]
 fn state_remove_waits_on_the_records_lock_a_writer_holds() {
     let store = Store::new();
@@ -1445,11 +1444,11 @@ fn state_remove_waits_on_the_records_lock_a_writer_holds() {
         .unwrap();
 }
 
-/// Defect: as above, with the shell store's `update` as the writer, held
-/// between its locked read and its move by a `jq` that waits for a release:
-/// `state remove` refuses `lock-timeout` and leaves the writer's temporary
-/// file; released, the writer lands its update, and the close-out then
-/// archives the record holding it and removes the record, its lock staying.
+/// The shell store's `update` as the writer, held between its locked read
+/// and its move by a `jq` that waits for a release: `state remove` refuses
+/// `lock-timeout` and leaves the writer's temporary file; released, the
+/// writer lands its update, and the close-out then archives the record
+/// holding it and removes the record, its lock staying.
 #[test]
 fn state_remove_keeps_a_shell_store_update_in_flight() {
     let store = Store::new();
@@ -1522,15 +1521,12 @@ esac
     );
 }
 
-/// Defect: a shell writer that waits on the record's lock while the
-/// close-out holds it and writes once it gets it: it recreates a record the
-/// close-out removed, or a write that landed before the close-out is
-/// missing from its archive. An update lands first; the close-out is then
-/// held inside its archive by a `tar` that waits for a release, and a
-/// second shell `update` starts against the held lock. It does not finish
-/// while the close-out holds the lock; released, the close-out ends and the
-/// writer refuses on the record it finds gone, no record and no temporary
-/// file stand, and the archive holds the landed update and not the late one.
+/// An update lands first; the close-out is then held inside its archive by
+/// a `tar` that waits for a release, and a second shell `update` starts
+/// against the held lock. It does not finish while the close-out holds the
+/// lock; released, the close-out ends and the writer refuses on the record
+/// it finds gone, no record and no temporary file stand, and the archive
+/// holds the landed update and not the late one.
 #[test]
 fn state_remove_leaves_a_shell_update_waiting_on_its_lock_no_record_to_write() {
     let store = Store::new();
@@ -1630,12 +1626,10 @@ exec "$REAL_TAR" "$@"
     assert_eq!(held.get("late"), None);
 }
 
-/// Defect: the overseer mailbox's session rows files kept for good after
-/// their pane is gone, or one taken whose pane still runs or whose server
-/// does not answer. `state remove` with no fleet state runs the retention
-/// pass, its ambient server a private one: the file of a pane that server
-/// does not hold leaves, archived; the file of its live pane and the file
-/// of a pid that is not the answering server stand.
+/// `state remove` with no fleet state runs the retention pass, its ambient
+/// server a private one: the file of a pane that server does not hold
+/// leaves, archived; the file of its live pane and the file of a pid that
+/// is not the answering server stand.
 #[test]
 fn state_remove_retires_the_session_rows_of_a_pane_the_server_no_longer_holds() {
     let store = Store::new();
@@ -1681,13 +1675,12 @@ fn state_remove_retires_the_session_rows_of_a_pane_the_server_no_longer_holds() 
     assert_eq!(archived_file(archive, &dead), "{}\n");
 }
 
-/// Defect: a close-out that unlinks the record's lock pathname, so a shell
-/// writer waiting on the unlinked inode and a runtime writer on the new one
-/// both hold "the" lock once `state init` creates the key again, and the
-/// first to commit is overwritten. The close-out held at its archive while
-/// a shell `update` waits on the lock; released, the key is created again
-/// before the shell reads it, and a `state set` starts while the shell
-/// holds the lock: it waits, and the record keeps both writes.
+/// An unlinked lock pathname would let a shell writer on the unlinked inode
+/// and a runtime writer on the new one both hold the lock once `state init`
+/// creates the key again. The close-out held at its archive while a shell
+/// `update` waits on the lock; released, the key is created again before
+/// the shell reads it, and a `state set` starts while the shell holds the
+/// lock: it waits, and the record keeps both writes.
 #[test]
 fn a_reinitialized_item_keeps_both_old_and_new_lock_writers() {
     use std::process::Stdio;
@@ -1807,12 +1800,10 @@ esac
     );
 }
 
-/// Defect: the retention pass judges a stale item record and then removes
-/// it after a writer updated it, so a resumed workflow loses its record:
-/// the record's content was read when the pass selected it, not compared at
-/// the removal. `state remove` with no fleet state runs the pass; the
-/// stale record is selected, and the shell store updates it during the
-/// pass's own tmux read after that: the record stands, updated.
+/// The record's content is compared at the removal, not only when the pass
+/// selected it. `state remove` with no fleet state runs the pass; the stale
+/// record is selected, and the shell store updates it during the pass's own
+/// tmux read after that: the record stands, updated.
 #[test]
 fn retention_keeps_a_record_written_after_its_selection() {
     let store = Store::new();
@@ -1870,10 +1861,8 @@ exec "$REAL_TMUX" "$@"
     assert_eq!(store.doc(&record)["review_turn"], "resumed");
 }
 
-/// Defect: a relative `--archive` path read against the runtime's own
-/// working directory, or handed to `tar` from `/`, so the caller's path is
-/// not archived. Run from a directory holding `extra/run.log` with
-/// `--archive extra`: the archive holds that file under its absolute path.
+/// Run from a directory holding `extra/run.log` with `--archive extra`: the
+/// archive holds that file under its absolute path.
 #[test]
 fn state_remove_archives_a_relative_path_from_the_callers_directory() {
     let store = Store::new();
@@ -1904,11 +1893,11 @@ fn state_remove_archives_a_relative_path_from_the_callers_directory() {
     assert_eq!(archived_file(&archive, &log), "kept\n");
 }
 
-/// Defect: a relative `ORCH_ARCHIVE_ROOT` refusing the whole settings load,
-/// so every verb, and every hook read through one, refuses. A relative
-/// root: `state path --fleet` answers, `state init` writes, and `state
-/// remove`, which writes an archive, refuses it by key and value with the
-/// record standing.
+/// A relative `ORCH_ARCHIVE_ROOT` refuses the archive write alone, never
+/// the settings load every verb and hook reads through. A relative root:
+/// `state path --fleet` answers, `state init` writes, and `state remove`,
+/// which writes an archive, refuses it by key and value with the record
+/// standing.
 #[test]
 fn a_relative_archive_root_refuses_the_archive_write_alone() {
     let store = Store::new();

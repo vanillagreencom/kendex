@@ -1,7 +1,7 @@
 //! The scheduler core: the identity-bound claim, the duty threads on one
 //! fake clock, the event line durable before its baseline row, the failure
-//! policy, the per-duty stamps and the `EVENT` grammar. Each row names the
-//! defect it catches at its doc comment.
+//! policy, the per-duty stamps and the `EVENT` grammar. Each row's name
+//! carries the defect it catches.
 #![allow(
     clippy::disallowed_methods,
     reason = "the rows hold owned children, write the records they plant and drive the one fake clock"
@@ -110,11 +110,9 @@ fn plant_claim(paths: &Paths, pid: u32, start: &str) {
     .unwrap();
 }
 
-/// Step6-map A7 row (2)'s contract on the runtime: `watch status` carries
-/// what the overseer's turn-end hook reads (`hooks/lane-mail-check.sh`,
-/// `watch_status`): the claim's standing, its cwd and origin, and the event
-/// log's path. Defect: a status that drops one, so the hook arms a follow
-/// on no log, or reads a live watch's cwd as none and refuses the turn end.
+/// `watch status` carries what the overseer's turn-end hook reads
+/// (`hooks/lane-mail-check.sh`, `watch_status`): the claim's standing, its
+/// cwd and origin, and the event log's path.
 #[test]
 fn watch_status_carries_the_claims_cwd_origin_and_the_log_for_the_hook() {
     let dir = tempfile::tempdir().unwrap();
@@ -135,12 +133,11 @@ fn watch_status_carries_the_claims_cwd_origin_and_the_log_for_the_hook() {
     assert_eq!(status["log"], paths.log.display().to_string(), "{status}");
 }
 
-/// Row (a). Defect: a claim judged by its pid alone, which a reused pid
-/// would read live (refusing forever) or a live runner's pid read gone
-/// (two runners on one fleet). A claim whose identity reads live is
-/// refused `watch-running` and nothing is written; a dead pid and a reused
-/// pid under another start are both taken over, each with the event line
-/// naming the identity read, and the claim then names the taker.
+/// A claim is judged by its identity, never its pid alone: a claim whose
+/// identity reads live is refused `watch-running` and nothing is written; a
+/// dead pid and a reused pid under another start are both taken over, each
+/// with the event line naming the identity read, and the claim then names
+/// the taker.
 #[test]
 fn a_live_claim_is_refused_and_a_gone_one_is_taken_over_with_an_event_line() {
     let dir = tempfile::tempdir().unwrap();
@@ -208,16 +205,12 @@ fn a_live_claim_is_refused_and_a_gone_one_is_taken_over_with_an_event_line() {
     assert!(live(sleeper.pid()), "the sleeper was never touched");
 }
 
-/// Defect: the claim record a released repeat loop writes
-/// (`lib/watch-pid.sh`: `pid`, `state`, `pane`, `origin`, `script`, `cwd`,
-/// no `start=`), left with a dead pid by a loop that ended without its
-/// trap, refused `watch-claim-unreadable` on every start until a person
-/// removes the file, and `watch status` failing as a verb on it, so the
-/// turn-end hook reads `unanswered` and the fleet stands unwatched. A
-/// start-less record is read by its pid alone: while the pid runs, `status`
-/// answers `unreadable` with cause `start-missing` and a start refuses with
-/// nothing written; once no process holds it, the record reads `gone` and
-/// is taken over with `start=none` on the line.
+/// The claim record a released repeat loop writes (`lib/watch-pid.sh`)
+/// carries no `start=`, and a loop that ended without its trap leaves it
+/// naming a dead pid. A start-less record is read by its pid alone: while
+/// the pid runs, `status` answers `unreadable` with cause `start-missing`
+/// and a start refuses with nothing written; once no process holds it, the
+/// record reads `gone` and is taken over with `start=none` on the line.
 #[test]
 fn a_start_less_record_is_unreadable_while_its_pid_runs_and_taken_over_once_it_is_dead() {
     let dir = tempfile::tempdir().unwrap();
@@ -280,9 +273,7 @@ fn a_start_less_record_is_unreadable_while_its_pid_runs_and_taken_over_once_it_i
     );
 }
 
-/// Defect: a check-then-write claim, under which two
-/// starts that both read the path free both write and both run. Two
-/// runners started together on one fleet state: exactly one claims, the
+/// Two runners started together on one fleet state: exactly one claims, the
 /// other refuses `watch-running` naming the winner, and the record names
 /// the winner until it is stopped.
 #[test]
@@ -359,10 +350,9 @@ fn two_starts_together_claim_once() {
     assert!(live(sleeper.pid()));
 }
 
-/// Decision 148 (7). Defect: a runner that never re-reads its claim, which
-/// runs on after another start wrote the record over it (two runners on
-/// one fleet). A claim rewritten under a running runner ends it within a
-/// slice as `watch-claim-moved`, and the record stands as rewritten.
+/// A runner re-reads its claim, so a claim rewritten under it ends it
+/// within a slice as `watch-claim-moved`, and the record stands as
+/// rewritten.
 #[test]
 fn a_claim_rewritten_under_a_runner_ends_it_without_touching_the_record() {
     let dir = tempfile::tempdir().unwrap();
@@ -429,7 +419,7 @@ fn busy_mail_run(dir: &Path, clock: &FakeClock, ticks: usize) -> (Counting, Coun
     (mail, verification)
 }
 
-/// The simulated verification run times under row (b)'s sequence up to
+/// The simulated verification run times under the busy-mail sequence up to
 /// `until` seconds: each run at the first 7 s tick at or past its due time,
 /// counted from its last start.
 fn verification_ticks(until: u64) -> Vec<u64> {
@@ -443,8 +433,6 @@ fn verification_ticks(until: u64) -> Vec<u64> {
     expected
 }
 
-/// Defect: a reset of the heartbeat on any news, or a long duty's due
-/// time moved by a mail run.
 /// Under one mail event every 7 s for 7000 s of fake time, the heartbeat
 /// fires once, at the first tick at or past its due time (6000 s), and the
 /// verification slot runs at every first tick at or past each 240 s due
@@ -488,10 +476,8 @@ fn busy_mail_moves_neither_the_heartbeat_nor_the_verification_due_times() {
     assert_eq!(expected.len(), 29);
 }
 
-/// Defect: one pass stamp shared by
-/// every long duty and moved by the heartbeat too, under which a restart
-/// resumes verification from the heartbeat's start (6246 s in row (b)'s
-/// sequence, not its own 6120 s). Each duty resumes from its own stamp.
+/// Each long duty keeps a pass stamp of its own, which the heartbeat never
+/// moves, so a restart resumes each duty from its own stamp.
 #[test]
 fn a_restart_resumes_each_duty_from_its_own_stamp() {
     let dir = tempfile::tempdir().unwrap();
@@ -547,11 +533,9 @@ fn a_restart_resumes_each_duty_from_its_own_stamp() {
     );
 }
 
-/// Defect: one thread for every duty (one sequential pass), under which
-/// a tracker read held
-/// for 60 s holds every mail turn. The tracker body blocks on a FIFO while
-/// the clock passes 60 s in three mail intervals: three more mail runs
-/// complete while the tracker's has not.
+/// The tracker body blocks on a FIFO while the clock passes 60 s in three
+/// mail intervals: three more mail runs complete while the tracker's has
+/// not.
 #[test]
 fn a_tracker_duty_held_on_a_fifo_delays_no_mail_run() {
     let dir = tempfile::tempdir().unwrap();
@@ -614,9 +598,8 @@ fn a_tracker_duty_held_on_a_fifo_delays_no_mail_run() {
     assert_eq!(tracker.runs(), 1);
 }
 
-/// Defect: a zero cadence spinning its thread (a wait of none between two
-/// runs). Under `ORCH_WATCH_MAIL_INTERVAL=0`, the mail duty runs once per
-/// slice: at start and once more for each second passed.
+/// Under `ORCH_WATCH_MAIL_INTERVAL=0`, the mail duty runs once per slice:
+/// at start and once more for each second passed.
 #[test]
 fn a_zero_mail_interval_runs_the_mail_duty_once_per_slice() {
     let dir = tempfile::tempdir().unwrap();
@@ -638,13 +621,10 @@ fn a_zero_mail_interval_runs_the_mail_duty_once_per_slice() {
     assert_eq!(mail.runs(), 4, "one run at start and one per slice");
 }
 
-/// Defect: a duty body's error ending
-/// the run (both threads, the claim released), under which one transient
-/// read failure stops mail and verification until a restart. A body that
-/// fails twice then succeeds: the first failure's `watch-step-failed` line
-/// (the second is under the repeat rule, the row below), mail running
-/// throughout, and the third run's own line; the run goes on until it is
-/// stopped.
+/// A body that fails twice then succeeds: the first failure's
+/// `watch-step-failed` line (the second is under the repeat rule, the row
+/// below), mail running throughout, and the third run's own line; the run
+/// goes on until it is stopped.
 #[test]
 fn a_failing_body_is_a_counted_line_and_the_run_goes_on() {
     let dir = tempfile::tempdir().unwrap();
@@ -701,16 +681,12 @@ fn a_failing_body_is_a_counted_line_and_the_run_goes_on() {
     );
 }
 
-/// Defect: a standing failure waking
-/// the session the log follows on every pass (a `watch-step-failed` line
-/// each 240 s with no news), and a body's partial failure said by the body
-/// under a count of its own, outside the one rule. Under
-/// `ORCH_OVERSEER_MARK_REPEAT=3`, a body failing on every one of seven runs
-/// is said at the first, third and sixth; a body whose first and third runs
-/// hand back a line and a cause has its line, then the failure line, and
-/// its pass stamped before any clean run; its clean second run ends the
-/// count, so the third is said as a first failure again. The failing duty
-/// keeps its cadence from its anchor.
+/// Under `ORCH_OVERSEER_MARK_REPEAT=3`, a body failing on every one of
+/// seven runs is said at the first, third and sixth; a body whose first and
+/// third runs hand back a line and a cause has its line, then the failure
+/// line, and its pass stamped before any clean run; its clean second run
+/// ends the count, so the third is said as a first failure again. The
+/// failing duty keeps its cadence from its anchor.
 #[test]
 fn a_standing_failure_repeats_its_line_on_the_mark_repeat_rule() {
     let dir = tempfile::tempdir().unwrap();
@@ -805,10 +781,8 @@ fn a_standing_failure_repeats_its_line_on_the_mark_repeat_rule() {
     );
 }
 
-/// Defect: a body unable to ask for a
-/// run earlier than its cadence (the overseer box's 1 s poll), or a wake
-/// moving a due time later. A body asking for a run 1 s later gets it, and
-/// the regular cadence resumes from that run.
+/// A body asking for a run 1 s later gets it, and the regular cadence
+/// resumes from that run.
 #[test]
 fn a_body_asking_for_an_earlier_run_gets_it_and_the_cadence_resumes() {
     let dir = tempfile::tempdir().unwrap();
@@ -841,13 +815,11 @@ fn a_body_asking_for_an_earlier_run_gets_it_and_the_cadence_resumes() {
     );
 }
 
-/// Defect: the baseline row
-/// written before (or without) the event line's durable append, under
-/// which a crash between the two loses the news. The baseline write is
-/// made to fail where a crash would land, after the log's append and sync:
-/// the line is on disk and the row unmoved; the next run finds the same
-/// news and prints the line once more; the run after that, at the duty's
-/// next due time, finds the moved row, runs and prints nothing.
+/// The baseline write is made to fail where a crash would land, after the
+/// log's append and sync: the line is on disk and the row unmoved; the next
+/// run finds the same news and prints the line once more; the run after
+/// that, at the duty's next due time, finds the moved row, runs and prints
+/// nothing.
 #[test]
 fn an_event_line_is_durable_before_its_baseline_row_and_a_crash_between_reprints_it_once() {
     let dir = tempfile::tempdir().unwrap();
@@ -920,10 +892,9 @@ fn an_event_line_is_durable_before_its_baseline_row_and_a_crash_between_reprints
     }
 }
 
-/// Defect: a rendering that drifts from the bytes the session's event
-/// handling keys on. Every variant against the line the controller session
-/// parses (the suites' pinned heartbeat lines among them), and this
-/// runtime's own lines as it defines them.
+/// Every variant against the line the controller session parses (the
+/// suites' pinned heartbeat lines among them), and this runtime's own lines
+/// as it defines them.
 #[test]
 fn every_event_renders_to_its_recorded_bytes() {
     let s = |text: &str| text.to_owned();
@@ -1176,8 +1147,7 @@ fn every_event_renders_to_its_recorded_bytes() {
             },
             "EVENT lane-stalled KEN-1 age=3601",
         ),
-        // The hosted readings' lines.
-        // lib/watch-host-kinds.sh:420, the state word a ready pull request adds
+        // The hosted readings' lines; the state word a ready pull request adds.
         (
             Event::LaneStalled {
                 item: s("CC-1"),
@@ -1186,7 +1156,7 @@ fn every_event_renders_to_its_recorded_bytes() {
             },
             "EVENT lane-stalled CC-1 age=0 state=finished",
         ),
-        // lib/watch-host-kinds.sh:443, the bytes references/oversee-events.md:631 pins
+        // The bytes `references/oversee-events.md` names.
         (
             Event::CloudStallClosed {
                 item: s("CC-1"),
@@ -1422,9 +1392,7 @@ fn every_event_renders_to_its_recorded_bytes() {
             },
             "EVENT tracker-quota status=future reset=2026-01-01T00:10:00Z limit=requests",
         ),
-        // The local-lane readings' lines.
-        // lib/watch-host-kinds.sh:462, the bytes 744fd5727:skills/orch/tests/oversee_watch_start_stall.sh
-        // pins (`separate_counts`, `parked`)
+        // The local-lane readings' lines: separate counts, and a parked lane.
         (
             Event::LaneLong {
                 item: s("issue-1"),
@@ -1452,10 +1420,9 @@ fn every_event_renders_to_its_recorded_bytes() {
             "EVENT lane-long issue-3 age=12600 review_rounds=unread fix_receipts=unread validation_runs=unread restacks=unread repeated_class_rounds=unread stage=parked",
         ),
         // The GitHub duty's readings' lines.
-        // The bytes 744fd5727:skills/orch/tests/oversee_watch.sh § 1 pins
         (Event::PrWatch { rc: 1 }, "EVENT pr-watch rc=1"),
-        // The bytes 744fd5727:skills/orch/tests/oversee_watch_security.sh
-        // pins (LINE_DEPENDABOT with pr=12, LINE_SECRET, a repeat)
+        // The security alerts: a Dependabot alert with its pull request, a
+        // secret, a repeat.
         (
             Event::SecurityAlert {
                 repo: s("owner/repo"),
@@ -1499,7 +1466,7 @@ fn every_event_renders_to_its_recorded_bytes() {
             },
             "EVENT security-alerts-unread reads=owner/repo/dependabot:permission,owner/repo/code-scanning:http-502",
         ),
-        // The bytes 744fd5727:skills/orch/tests/oversee_watch_outside.sh pins
+        // The outside contributions.
         (
             Event::OutsideContribution {
                 key: s("owner/repo#3100"),
@@ -1550,14 +1517,11 @@ fn spawn_hosted_watch_run(dir: &Path, extra: &[(&str, &str)]) -> std::process::C
     command.spawn().expect("spawn watch run")
 }
 
-/// Defect: a close asked again after a crash between the ask and its answer,
-/// so a lane `lane-close` closed is closed again (its archive line lost, a
-/// second `lane-closed` on the log); or a close asked with nothing written
-/// first. Through `watch run` over a cloud lane whose pull request stood
-/// still past the stall bound and whose directive went unanswered past the
-/// cloud stall bound, `lane-close --state-dir [DIR] CC-1` is asked once with
-/// the close marker written before it; the fixture ends the runtime before
-/// it answers, and the next run finds the marker beside the open lane, asks
+/// Through `watch run` over a cloud lane whose pull request stood still
+/// past the stall bound and whose directive went unanswered past the cloud
+/// stall bound, `lane-close --state-dir [DIR] CC-1` is asked once with the
+/// close marker written before it; the fixture ends the runtime before it
+/// answers, and the next run finds the marker beside the open lane, asks
 /// nothing, and says `lane-close-unconfirmed` as the duty's failure.
 #[test]
 fn a_cloud_stall_close_cut_by_a_crash_is_not_asked_again_by_the_next_run() {
@@ -1850,13 +1814,10 @@ fn await_claim(child: &mut std::process::Child, paths: &Paths) {
     }
 }
 
-/// Defect: a watch started with no GitHub credential selected, so on a host
-/// whose env token is stale and whose keyring fails, every GitHub read of
-/// every pass refuses where the project's bot token would have served; or
-/// one that claims the fleet before the ladder answers. With `gh auth
-/// status` failing and no bot token to load, `watch run` refuses
-/// `auth-failed` with no claim record and no event log, after the ladder's
-/// one probe of each candidate.
+/// Every GitHub read of a pass needs the credential the ladder selects, so
+/// the ladder answers before any claim. With `gh auth status` failing and
+/// no bot token to load, `watch run` refuses `auth-failed` with no claim
+/// record and no event log, after the ladder's one probe of each candidate.
 #[test]
 fn a_watch_run_that_cannot_authenticate_refuses_before_any_claim() {
     let dir = tempfile::tempdir().unwrap();
@@ -1889,11 +1850,9 @@ fn a_watch_run_that_cannot_authenticate_refuses_before_any_claim() {
     );
 }
 
-/// Defect: the reconcile duty discarding
-/// its report, so an open intent it could not complete or mark (a close
-/// whose lane record is gone, `tests/rust/effects.rs`'s `lane-missing`
-/// fixture) is never surfaced. Through `watch run`, the fixture emits one
-/// `reconcile-refused` line and the intent stands unchanged.
+/// An open intent the reconcile cannot complete or mark (a close whose lane
+/// record is gone) reaches the log. Through `watch run`, the fixture emits
+/// one `reconcile-refused` line and the intent stands unchanged.
 #[test]
 fn a_refused_intent_reaches_the_log_once_through_watch_run() {
     let dir = tempfile::tempdir().unwrap();
@@ -1945,14 +1904,11 @@ fn a_refused_intent_reaches_the_log_once_through_watch_run() {
     );
 }
 
-/// Defect: an owed session send no receipt
-/// settles reported in the reconcile's reply alone, so the log carries
-/// nothing and the operator learns of it from the next send's refusal; or
-/// reported on every pass. Through `watch run` on a one-second long
-/// cadence over a lane whose `directive_send` stands owed with no kept
-/// receipt, the reconcile duty prints one `directive-send-unsettled` line
-/// across two passes, keys it in the baseline by item and cause as
-/// `reconcile-refused` is keyed, and leaves the record as it stood.
+/// Through `watch run` on a one-second long cadence over a lane whose
+/// `directive_send` stands owed with no kept receipt, the reconcile duty
+/// prints one `directive-send-unsettled` line across two passes, keys it in
+/// the baseline by item and cause as `reconcile-refused` is keyed, and
+/// leaves the record as it stood.
 #[test]
 fn an_owed_send_no_receipt_settles_reaches_the_log_once_per_cause_through_watch_run() {
     let dir = tempfile::tempdir().unwrap();
@@ -2018,14 +1974,13 @@ fn an_owed_send_no_receipt_settles_reaches_the_log_once_per_cause_through_watch_
     );
 }
 
-/// Decisions 121 Q3/Q15, 176 (2). Defect: a succession that stops, replaces
-/// or restarts the fleet watch, so the successor reads a log a restart
-/// truncated or a claim another runner holds. A real transfer through the
-/// runtime, beside the entry's live runner whose log holds one line (the
-/// takeover of a gone record, planted): the claim names the same runner
-/// before and after, that line stands, and the successor's `watch log
-/// --since` from the handoff's last line returns it at its number with what
-/// followed.
+/// A succession neither stops, replaces nor restarts the fleet watch, so
+/// the successor reads the log no restart truncated and the claim the same
+/// runner holds. A real transfer through the runtime, beside the entry's
+/// live runner whose log holds one line (the takeover of a gone record,
+/// planted): the claim names the same runner before and after, that line
+/// stands, and the successor's `watch log --since` from the handoff's last
+/// line returns it at its number with what followed.
 #[test]
 fn a_succession_under_a_live_scheduler_leaves_its_claim_and_log_and_the_successor_reads_on() {
     let dir = tempfile::tempdir().unwrap();

@@ -412,8 +412,8 @@ EOF
 } >"$CATALOG/hooks/smoke-tool.sh"
 # The mixed-hook rows' excluded hook: its harnesses line names Claude Code
 # alone, and it declares an empty matcher, as the lane-mail hooks do, which
-# kendex registers with no matcher key, so the startup check covers the
-# spelling Copilot once refused.
+# kendex registers with no matcher key, so the startup check covers that
+# spelling on Copilot.
 {
   cat <<'EOF'
 #!/usr/bin/env bash

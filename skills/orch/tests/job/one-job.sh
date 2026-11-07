@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # One complete repository job in a disposable consumer, on real production
-# operations with fake external services and no CI (plan step 3, decisions
-# 46 to 54, 79 to 83, 93, 100 to 103): admission, launch, dev result, the
-# configured review route, publication preparation, verification and report,
-# then close; and the two interruptions the design survives, a context
-# handoff resumed by a relaunch and a lane killed with a validation run
-# admitted and going.
+# operations with fake external services and no CI: admission, launch, dev
+# result, the configured review route, publication preparation, verification
+# and report, then close; and the two interruptions the design survives, a
+# context handoff resumed by a relaunch and a lane killed with a validation
+# run admitted and going.
 #
 # Inputs: orch's scripts and runtime (scripts/orch-runtime through
 # scripts/setup), agent-runtime's launch and stop, the worktree, dev,
@@ -264,7 +263,7 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
       assert_eq "$(await_gone "$PID" 100 && echo gone || echo alive)" gone "$name: the session's harness has exited"
       # The run ends while the lane is away: the barrier released once the
       # session is gone, the detached job reads the verdict and closes its
-      # own stage with nobody's session over it (decision 133).
+      # own stage with nobody's session over it.
       : > "$wt/tmp/one-job-barrier"
       tries=0
       until jq -e --arg r "$dev_rid" '[.stages[]? | select(.kind == "validate" and .round_id == $r and .end != null)] | length > 0' "$state" >/dev/null 2>&1; do
@@ -315,7 +314,7 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
       # and waits for the run's job: the job (validate run) outlives its
       # child's group, reads the child gone with no sentinel under the
       # recorded stop and closes its own stage `stopped` with the end notice
-      # owed (decision 188 (c)); nothing is left for the next reconcile.
+      # owed; nothing is left for the next reconcile.
       assert_eq "$(validate_stages "$state" "$dev_rid")" "$(jq -cn --arg run "$first_run" '[{run_dir: $run, closed: true, outcome: "stopped"}]')" \
         "$name: the job closed the run's stage stopped, under the stop the close recorded, when the close ended its child"
       assert_eq "$(jq -r --arg run "$first_run" '[.stages[] | select(.kind == "validate" and .run_dir == $run)] | .[0] | (.stop.at | type) + " " + ((.stop.at <= .end) | tostring)' "$state")" \
@@ -357,7 +356,7 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
     assert_eq "$([[ -n "$dev_rid" && -n "$review_rid" && "$dev_rid" != "$review_rid" ]] && echo two || echo "$dev_rid/$review_rid")" two \
       "$name: a dev round and a review round were minted"
     assert_eq "$(state_get "$state" '.pr_order')" review-first "$name: the publication order is recorded"
-    # --- admission before the run (decisions 51, 79, 100) ---------------------
+    # --- admission before the run --------------------------------------------
     run_dir="$(jq -r '.run_dir' "$wt/tmp/admission-report.json")"
     assert_eq "$(jq -c '[.minted, .admitted_now]' "$wt/tmp/admission-report.json")" '[true,true]' \
       "$name: the round's first admission mints the run"
@@ -389,7 +388,7 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
       "$name: review-depth measures the dev result small and selects package review"
     assert_eq "$(state_get "$state" '.first_panel.agents | join(",")')" reviewer-correctness "$name: the panel is recorded"
     assert_eq "$(state_get "$state" '.json_paths | length')" 1 "$name: one review artifact path is recorded"
-    # --- the review stage end: the runtime's one write, timed by the artifact (decisions 81, 103) ---
+    # --- the review stage end: the runtime's one write, timed by the artifact ---
     artifact="$(state_get "$state" '.json_paths[0]')"
     assert_eq "$(jq -c '[.kind, .outcome, .closed_now]' "$wt/tmp/accept-review.json")" '["review","pass",true]' \
       "$name: the review accept carries the computed outcome and is the stage's one closer"
@@ -417,7 +416,7 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
   assert_eq "$([[ -e "$(git -C "$wt" rev-parse --git-path kendex-rebase-map)" ]] && echo present || echo absent)" absent \
     "$name: the rebase map is consumed"
   assert_eq "$(cd "$wt" && bash tests/greet.test.sh && bash tests/*.test.sh && echo green)" green "$name: the consumer's tests pass on the published tree"
-  # --- verification (decisions 46, 52, 93) -----------------------------------
+  # --- verification -------------------------------------------------------
   assert_eq "$(jq -c --arg head "$pushed" '[.ok, .result.status, .result.verdict, .result.repo, (.result.head == $head), (.result.checks | length)]' "$wt/tmp/verify-report.json")" \
     '[true,"complete","none","owner/repo",true,0]' "$name: verify-head reads the published head complete with the none verdict and no check"
   assert_eq "$(jq -c --arg head "$pushed" '.result.recorded.report | [.op, (.head == $head), .verdict, .replaced]' "$wt/tmp/verify-report.json")" \
@@ -463,7 +462,7 @@ run_job() { # NAME KEY_KIND TIER SCENARIO
   assert_eq "$(awk -v sha="$pushed" '$1 == "api" && /\/commits\/|head_sha=/ { if (index($0, sha)) own++; else print "other-head: " $0 } END { print "published-head-read=" (own > 0) }' <<<"$calls")" \
     "published-head-read=1" "$name: verify-head reads the published commit and no other head"
   # --- close (the overseer, after the report) ------------------------------
-  # Decision 83's guard: a GitHub lane idles at its composer after the job
+  # A GitHub lane idles at its composer after the job
   # and is ended on the tracker's own answer to the close the job made; a
   # local lane has exited and is closed on that reading alone.
   if [[ "$tracker" == github ]]; then

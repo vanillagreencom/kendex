@@ -1,6 +1,6 @@
 //! The runtime's one settings reader: the project's `[env]` tables, its
 //! private env file and the caller's environment, layered the way the
-//! shell store loaded them, read as data and never run.
+//! shell store loads them, read as data and never run.
 //!
 //! Precedence, highest first: a flag on the command line, the caller's own
 //! environment, the private env file (`.env.local`, or the file
@@ -181,7 +181,7 @@ pub const SECURITY_ALERT_TOKEN_FILE_KEY: &str = "ORCH_SECURITY_ALERT_TOKEN_FILE"
 pub const EXTERNAL_TRIAGE_KEY: &str = "ORCH_EXTERNAL_TRIAGE";
 /// Further `owner/repo` names the GitHub duty reads beside the fleet's,
 /// separated by whitespace, lowercased and deduplicated as the shell
-/// `orch_connected_repos` read them.
+/// `orch_connected_repos` reads them.
 pub const CONNECTED_REPOS_KEY: &str = "ORCH_CONNECTED_REPOS";
 /// The owner's tracker account, whose comments answer a tracker-posted ask
 /// (`mailbox-append.sh` `owner_tracker_settings`); `KENDEX_USER_EMAIL`
@@ -1165,8 +1165,8 @@ pub fn load(
     let agent_runtime = program(AGENT_RUNTIME_KEY, AGENT_RUNTIME_DEFAULT);
     let dev_validate_cli = program(DEV_VALIDATE_CLI_KEY, DEV_VALIDATE_CLI_DEFAULT);
     // A command whose value is blank is no declaration, as the shell
-    // `${cmd//[[:space:]]/}` read it; a prefix with a newline inside can
-    // prefix no line, which the shell left unrecorded, and is refused.
+    // `${cmd//[[:space:]]/}` reads it; a prefix with a newline inside can
+    // prefix no line, which the shell leaves unrecorded, and is refused.
     let command = |key: &str| get(key).filter(|v| !v.trim().is_empty()).map(str::to_owned);
     let finding_prefix = match get(DEV_VALIDATE_FINDING_PREFIX_KEY) {
         Some(text) if text.contains('\n') => {
@@ -2369,11 +2369,10 @@ mod tests {
         }
     }
 
-    /// Defect: the three watch keys read through the stricter
-    /// parsers of the launcher's keys, refusing values the watch
-    /// admits and so refusing every
-    /// runtime verb on a fleet that sets them. Each key's admitted edge
-    /// reads as the watch read it.
+    /// The three watch keys read through their own grammars, never the
+    /// launcher keys' stricter parsers, which would refuse values the watch
+    /// admits and so every runtime verb on a fleet that sets them. Each
+    /// key's admitted edge reads as the watch reads it.
     #[test]
     fn the_watch_keys_admit_their_grammars_edges() {
         let dir = tempfile::tempdir().unwrap();
@@ -2393,9 +2392,9 @@ mod tests {
         assert_eq!(settings.watch.dead_passes, 2);
     }
 
-    /// Defect: a mistyped retention read as the default, or a count of
-    /// none, which keeps nothing a day; and a report or account program
-    /// read from anywhere but its own key. A set value is taken as given,
+    /// A mistyped retention never reads as the default, nor a count of
+    /// none, which keeps nothing a day; a report or account program is read
+    /// from its own key alone. A set value is taken as given,
     /// and a value outside `[1-9][0-9]*` is refused by key and value.
     #[test]
     fn the_retention_report_and_lanes_keys_take_their_defaults_and_refuse_by_key_and_value() {
@@ -2433,10 +2432,10 @@ mod tests {
         }
     }
 
-    /// Defect: an archive root read as a bare relative path lands the
+    /// An archive root read as a bare relative path would land the
     /// archive under whatever directory the duty runs in, and a `~` taken
-    /// literally makes a directory named `~`; a default that ignores the
-    /// fleet directory archives beside the wrong fleet. A set value is an
+    /// literally would make a directory named `~`; a default that ignored
+    /// the fleet directory would archive beside the wrong fleet. A set value is an
     /// absolute path or held as given for the archive's write to refuse;
     /// the default follows `FLEET_DIR`, else the home.
     #[test]

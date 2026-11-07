@@ -3,8 +3,8 @@
 # The ONE answer to "what is this lane doing right now", shared by every
 # script that has to tell a working lane from a parked, walled, asking, dead
 # or absent one. A caller left to invent its own answer invents a different
-# one: the watch read the pane screen, `open-terminal --wake` read /proc, and
-# the two disagreed about the same lane inside one minute.
+# one: a read of the pane screen and a read of /proc disagree about the same
+# lane.
 #
 # `lane_state` is the whole judge. Nothing else may classify a lane.
 #
@@ -183,9 +183,9 @@ CLAUDE_FOOTER_RE='\? for shortcuts'
 # read that way at a launch — a pane opened seconds ago has no earlier turn to
 # slice from.
 #
-# Both harnesses, deliberately: keyed on the Claude markers alone this answered
-# no for every idle Codex pane, and a caller that treats no as "wait longer"
-# then spent its whole bound on a pane that was up all along. Measured on the
+# Both harnesses, deliberately: keyed on the Claude markers alone this would
+# answer no for every idle Codex pane, and a caller that treats no as "wait
+# longer" would spend its whole bound on a pane that is up. Measured on the
 # fixtures under https://github.com/vanillagreencom/kendex/tree/main/skills/orch/tests/fixtures/oversee-watch,
 # where all 7 Codex captures
 # answer yes and only codex-working.txt is a turn in flight.
@@ -282,8 +282,7 @@ pane_turn_identity() { pane_turn_slice "$1" before | cksum; }
 # flight: limit-shaped text a lane prints mid-turn is its own output, not its
 # account's. ONE answer for every consumer of the banner — the row that records
 # a sighting, the event that reports one, and the `walled` rung of lane_state —
-# because a guard included at one of them and missed at the other is how this
-# reopened twice.
+# so no guard can hold at one of them and miss at another.
 #
 # Exit 2 is the scan itself failing, which is no answer: the caller decides
 # whether that ends its run. A grep miss is exit 1 and an empty banner.
@@ -323,8 +322,8 @@ is_bare_shell() {
 # documents 2 for a syntax error and 3 for a fatal one, and a pgrep missing
 # from PATH leaves 127. The raw status is kept in LANE_PROBE_RC so a caller's
 # note can name what happened. `ps --ppid` is procps-only and BSD ps rejects it
-# with status 1, the same status it uses for no match, which read every pane as
-# childless. `pgrep -l` prints `PID NAME` on procps and BSD alike. One probe
+# with status 1, the same status it uses for no match, which would read every
+# pane as childless. `pgrep -l` prints `PID NAME` on procps and BSD alike. One probe
 # per shell in the pane's tree, and so one per lane whose harness is the pane
 # shell's child.
 LANE_PROBE_RC=0
@@ -1063,7 +1062,7 @@ lane_state_is() { # STATE live|dialog
 #            falling back to the local ssh child or the screen.
 #   The optional eleventh argument is `provider` for a screen the caller
 #            already captured through the provider, or `unreadable` for a
-#            failed capture. The watch passes it to avoid a second remote read.
+#            failed capture. lane-close passes it to avoid a second remote read.
 #   LANE_WALL_KIND is `auth` for a failed login, `usage` for a usage wall,
 #            and empty for every other verdict.
 #   LANE_EXIT_SOURCE is `provider` for a confirmed remote exit, `pane` for
@@ -1084,7 +1083,7 @@ lane_state_is() { # STATE live|dialog
 # supplied process read decides; the session rule below carries that half.
 # HOSTED_ITEM reads the remote harness first; SSH liveness cannot settle it.
 #
-# Rung order is load-bearing and is the order the watch has always used:
+# Rung order is load-bearing:
 # `walled` outranks `asking` because a limit banner can sit above a stale
 # prompt and the spent account is the news. A banner stays on the screen after
 # its window resets, since a lane parked by it takes no turn to scroll it
@@ -1175,8 +1174,7 @@ lane_state() {
   _ls_rc=0
   _ls_banner="$(lane_limit_banner "$_ls_slice")" || _ls_rc=$?
   if [[ "$_ls_rc" -eq 2 ]]; then printf -v "$_ls_out" unjudged; return 2; fi
-  # Account room cannot renew the login held by a running terminal. The
-  # watch also keeps this result ahead of its earlier successful session row.
+  # Account room cannot renew the login held by a running terminal.
   if [[ -n "$_ls_banner" ]] && lane_auth_failure "$_ls_banner"; then
     LANE_WALL_KIND=auth; printf -v "$_ls_out" walled; return 0
   fi
@@ -1250,9 +1248,9 @@ lane_input_ready() {
 
 # ---------------------------------------------------------------------------
 # A lane's work item: which tracker its key names, and which merged pull
-# requests are its own. The watch, lane-close and oversee-report each ask one
-# of these here, so each gets the same answer for the same key and pull
-# request.
+# requests are its own. lane-close, oversee-report and lib/launch-overlap.sh
+# each ask one of these here, so each gets the same answer for the same key
+# and pull request.
 # ---------------------------------------------------------------------------
 
 # lane_key_tracker ITEM — prints the tracker the item key alone names: `linear`

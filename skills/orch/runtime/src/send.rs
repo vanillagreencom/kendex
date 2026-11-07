@@ -1,4 +1,4 @@
-//! The session send (step6-map § A6; decisions 31, 170, 182): one directive
+//! The session send: one directive
 //! to a cloud session lane, made once through the mailbox program. A
 //! session send is irreversible and leaves no queue a repeat could be
 //! judged against, so the lane record says a send is out before the program
@@ -7,8 +7,8 @@
 //! leaves the record owed with the receipt kept beside the state, where the
 //! reconcile stamps it without a second send. An owed record no receipt
 //! settles is the watch's `directive-send-unsettled` line, once per item
-//! and cause, and the operator's mark through the `op` entry settles it
-//! (decision 184 (5)). The mailbox writes no orch state (decision 31); this
+//! and cause, and the operator's mark through the `op` entry settles it.
+//! The mailbox writes no orch state; this
 //! module and that mark are the record's writers.
 
 use std::path::{Path, PathBuf};
@@ -103,7 +103,7 @@ pub fn run(
 
 /// What a send made under a key answered: the send made, or what the owed
 /// write found standing under the key on the lane and left as it was, with
-/// no program run (decision 193 (a)).
+/// no program run.
 #[derive(Debug)]
 pub enum Keyed {
     Sent(DirectiveSent),
@@ -111,10 +111,10 @@ pub enum Keyed {
 }
 
 /// [`run`] under `key`, the caller's name for this send (the validation end
-/// notice's `validate-<run_id>`, decision 188 (d)): the owed write carries
+/// notice's `validate-<run_id>`): the owed write carries
 /// it, every settle keeps it on the record, and the write reads the lane's
-/// send under it before it writes, inside the store's lock (decision 193
-/// (a)), so a replay of the notice, whichever walker makes it, learns from
+/// send under it before it writes, inside the store's lock,
+/// so a replay of the notice, whichever walker makes it, learns from
 /// the one record whether its own send is out or settled and makes no
 /// second one; nothing is run on a found send.
 pub fn run_keyed(

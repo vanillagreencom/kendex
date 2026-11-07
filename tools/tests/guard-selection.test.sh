@@ -288,7 +288,7 @@ reader_failure() { # INPUT SCOPED FAILURE GUARD
 }
 
 # Two inputs in tools/ share the completed reader scan. The grep wrapper
-# counts only the old per-reader comparisons, not extraction or other gates.
+# counts only the per-reader `grep -q -e` comparisons, not extraction or other gates.
 reader_grep_row() { # GUARD
   git -C "$R" reset -q --hard "$BASE"
   for input in tools/README.md .github/workflows/skill-tests.yml; do

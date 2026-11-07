@@ -514,7 +514,7 @@ fi
 
 if model_case reset-replaced; then
 echo '=== a replacement committed between the reset read and its write keeps its own check ==='
-# Defect: the reset reads the lane, then writes. A relaunch that lands in
+# The reset reads the lane, then writes. A relaunch that lands in
 # between would take the predecessor's passed check and count a reset for a
 # launch whose first turn never ran, so the write must compare the lane it
 # read inside the store's lock and leave a changed lane as it stands.
@@ -553,8 +553,8 @@ fi
 
 if model_case lock-cause; then
 echo '=== a model switch meeting a held item lock names the lock ==='
-# Defect: the item state's init waits on the store's lock for its bound and
-# then gives up. With no cause line, the handoff-unwritten notice carries
+# The item state's init waits on the store's lock for its bound and then
+# gives up. With no cause line, the handoff-unwritten notice would carry
 # nothing under its key where the store's own writer names the lock.
 model_world lock-cause claude-fable-5-1
 lock="$LANE/tmp/workflow-state-KEN-3916.json.lock"

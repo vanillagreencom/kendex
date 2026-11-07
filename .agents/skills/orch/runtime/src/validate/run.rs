@@ -1,5 +1,5 @@
 //! The validation job: the detached process the launcher started for one run.
-//! It runs the kept executor, `dev-validate-run --child --run-dir D`, as its
+//! It runs the executor, `dev-validate-run --child --run-dir D`, as its
 //! bounded child through the one runner, reads the sentinel the child wrote,
 //! closes the stage once with the lane's end notice recorded `owed` in the
 //! same write, sends the notice through the mailbox program and marks it
@@ -67,9 +67,9 @@ pub struct RunReply {
 /// after a wait that outlasted the one it started with (the child run for
 /// the run's whole bound; the stop's wait for the job), so the close, its
 /// notice's send and the stop's finishing transition carry the clock of the
-/// close, never the launch's. The nonce and the owner identity stay the
-/// command's. Defect this holds against: a stage `end` stamped at the job's
-/// launch second, and a sentinel time later than it read as out of bounds.
+/// close, never the launch's: a stage `end` stamped at the job's launch
+/// second would read a sentinel time later than it as out of bounds. The
+/// nonce and the owner identity stay the command's.
 #[allow(
     clippy::disallowed_methods,
     reason = "the job's and the stop's own stamp at their close, the command's clock read again after a wait the command's first stamp predates"

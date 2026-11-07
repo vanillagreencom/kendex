@@ -171,8 +171,7 @@ A record keeps its cycle across a relaunch, and a lane relaunched for more
 work on the item, or
 one still inside its merge close-out, has its worktree standing, so that lane
 refuses as lane-live state=idle. A local lane's worktree is read on this disk;
-a hosted lane's .git through lane-host cat, as oversee-watch reads it before
-its own close of a merged hosted lane, and a read that fails refuses as
+a hosted lane's .git through lane-host cat, and a read that fails refuses as
 worktree-read-failed.
 A lane read unjudged also closes when its record carries the merge cycle
 and its worktree is gone, on a host whose capture verb reads its pane too
@@ -191,7 +190,7 @@ It shares the pane-exit grace below; failed input or a timeout takes SIGTERM.
 Other harnesses start with SIGTERM:
 through lane-host stop for a record carrying host, and for a local lane by the
 same stop against the launch identity the record's launch names, the harness
-pid and its start time open-terminal read once the launch was confirmed. A
+pid and its start time the launch recorded once it was confirmed. A
 record naming none, or naming a harness that has exited or whose pid a later
 process holds, as for a harness restarted by hand in its pane, takes that
 identity off the pane now, the harness process under the pane's own; with no
@@ -305,7 +304,7 @@ required approval given on its head, and its arm has converted to the queue
 entry by then, so autoMergeRequest is null for the whole wait; the merge state is read for the armed, unqueued case
 alone. A lane still inside a CI or gate wait after a push is neither queued
 nor CLEAN, or gets an attention line, and is never parked. The reducer is the
-one OVERSEE_WATCH_PR_WATCH names, as it is for oversee-watch, and the
+one OVERSEE_WATCH_PR_WATCH names, as it is for the fleet watch, and the
 github skill's watcher beside this one otherwise. Admitted, the park ends the
 harness by signal as a close does,
 whatever the lane is doing, waits for its pane to read exited, closes the
@@ -313,7 +312,7 @@ window, then stops the sandbox through lane-host stop-sandbox and requires its
 sandbox-stopped item=ID line. The record then reads parked and carries
 {pr, head, repo, at}, the pull request and head it was judged on. An open or
 queued recorded pull request stays parked, whatever the tracker state. After
-merge, oversee-watch records its cycle before closing a Canceled item or a
+merge, the fleet watch records its cycle before closing a Canceled item or a
 Done item whose Done-when boxes are all checked. An open item or a Done item
 with an unchecked box gets parked-merged, and the overseer's relaunch
 resumes the lane to finish its post-merge work. A stop the
@@ -346,8 +345,7 @@ refuses as stop-failed, as it does under --keep-sandbox.
 A parked record's full close runs the provider's close alone: the sandbox is
 stopped, so its mailbox cannot be read, and no session has run in it since the
 park read that mailbox, so no ask can have been added. --keep-sandbox on a
-parked record changes nothing. open-terminal --relaunch on a parked record
-starts the sandbox through lane-host start before its create --relaunch.
+parked record changes nothing.
 
 A lane holding an ask nobody has answered refuses as ask-unanswered, under
 --keep-sandbox and on a stopped record alike: the answer would reach a session
@@ -642,9 +640,8 @@ record_merged() {
 # says a recorded merge was the lane's last work: the record keeps its cycle
 # across a relaunch, and only the lane's own merge close-out
 # (../workflows/merge-pr.md § 5) removes the worktree a relaunch recreates. A
-# hosted one is read through the probe oversee-watch reads it by before its
-# own close of a merged hosted lane (lib/lane-gitfile.sh lane_hosted_clone),
-# whose 3, a .git naming no linked worktree, is still a worktree standing.
+# hosted one is read through lib/lane-gitfile.sh lane_hosted_clone, whose 3,
+# a .git naming no linked worktree, is still a worktree standing.
 worktree_gone() {
   local scratch rc=0
   if [[ -z "$host" ]]; then
@@ -1023,7 +1020,7 @@ park_sandbox() {
 
 # A validation the lane started goes on after its session ends, and nothing
 # would ever read its verdict. A local lane's mail_root is its worktree, as
-# open-terminal records it; one that is no directory on this disk holds no run
+# the launch records it; one that is no directory on this disk holds no run
 # this could stop.
 stop_validations() {
   local rc=0
@@ -1322,12 +1319,12 @@ read_wall() {
   [[ -n "$account" ]] || return 0
   [[ -x "$LANES" ]] || { message helper-missing "item=$ITEM" "path=$LANES" >&2; exit 1; }
   # The model the launch gate judged this account on, so close reads the wall
-  # launch read. A record naming none, open-terminal's launch whose --cmd names
-  # no model, is read over the whole account: that binding bucket is the widest
+  # launch read. A record naming none, a launch whose --cmd names no model, is
+  # read over the whole account: that binding bucket is the widest
   # reading, so it lifts no wall the model's own would keep.
   [[ -z "$model" ]] || model_args=(--native-model "$model")
   # Under the record's own host, empty for a local lane, so a hosted lane's
-  # account is read through the copy it runs on, as open-terminal judged it.
+  # account is read through the copy it runs on, as the launch judged it.
   ORCH_LANE_HOST="$host" "$LANES" pick --lane "$account" --harness "$harness" ${model_args[@]+"${model_args[@]}"} >/dev/null || rc=$?
   case "$rc" in
     0) WALL_ACCOUNT=room ;;

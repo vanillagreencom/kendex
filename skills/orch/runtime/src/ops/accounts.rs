@@ -951,7 +951,7 @@ fn window_hours(bucket: &str) -> f64 {
 /// § pick) is no charge: it is the projected room weighted by the reset
 /// bonus `1 + 1 / (1 + hours to the binding reset)`, bounded to twice the
 /// room, so among accounts with room the sooner reset is tried first and
-/// no reset time buys a launch past the bound (step8-map § E Q10).
+/// no reset time buys a launch past the bound.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Projection {
     pub headroom: f64,
@@ -1173,7 +1173,7 @@ pub struct Judged {
 /// fraction as it is. The shell callers read the record's `wall`,
 /// `effective_headroom_pct` and `need` by the pattern `^[0-9]{1,3}$`
 /// (`oversee-succeed`'s mark judge, the hook's seat line), the spelling
-/// `lanes pick --json` gave an integer percentage; `60.0` is unreadable
+/// `lanes pick --json` gives an integer percentage; `60.0` is unreadable
 /// to them.
 fn figure(n: f64) -> Value {
     if n.fract() == 0.0 && n.abs() < 9.0e15 {
@@ -1185,7 +1185,7 @@ fn figure(n: f64) -> Value {
 
 impl Judged {
     /// The record a caller reads: the reader's row with the judgement's
-    /// fields over it, as `lanes pick --json` printed them, every integral
+    /// fields over it, as `lanes pick --json` prints them, every integral
     /// figure spelled as an integer ([`figure`]); the rate fields of the
     /// window `wall` names, which are the reader's where that window is
     /// its binding and `one-sample` otherwise (the reader rated no other
@@ -1390,7 +1390,7 @@ impl PickAnswer {
     }
 
     /// The reply a caller reads: the answer's word, the exit it maps to,
-    /// and the record or the counts `lanes pick --json` printed.
+    /// and the record or the counts `lanes pick --json` prints.
     pub fn reply(&self) -> Value {
         let (answer, record) = match self {
             PickAnswer::Lane(j) => ("lane", j.record()),

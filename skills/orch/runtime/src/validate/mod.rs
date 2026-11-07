@@ -5,8 +5,8 @@
 //! record path on the admitted stage, writes the run directory the kept
 //! executor reads, and launches `orch-runtime validate run` detached through
 //! the job launcher, writing the launcher's answer on the stage after it. The
-//! reads come first and the records follow (read-then-record); the executor,
-//! `dev-validate-run --child`, stays byte for byte. `run` holds the job.
+//! reads come first and the records follow (read-then-record); the executor
+//! is `dev-validate-run --child`. `run` holds the job.
 //!
 //! The mode resolver: a fix round, one that names a base, takes the narrowest
 //! mode the declaration admits for its kind: `ci` where the CI context is
@@ -249,7 +249,7 @@ struct Scratch(PathBuf);
 impl Scratch {
     #[allow(
         clippy::disallowed_methods,
-        reason = "the classification's scratch store, a private object directory beside a copied index as the legacy `classify` makes it; removed when the start ends"
+        reason = "the classification's scratch store, a private object directory beside a copied index as `dev-validate-run`'s `classify` makes it; removed when the start ends"
     )]
     fn new(env: &Env) -> Result<Scratch> {
         let dir = std::env::temp_dir().join(format!(
@@ -323,7 +323,7 @@ fn base_branch(settings: &Settings, worktree: &Path, log: &mut String) -> Result
 /// class on no evidence would skip lanes the diff needs.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the classification copies the worktree's index into the scratch store, as the legacy `classify` does, so the snapshot leaves HEAD, the index and the tree as they were"
+    reason = "the classification copies the worktree's index into the scratch store, as `dev-validate-run`'s `classify` does, so the snapshot leaves HEAD, the index and the tree as they were"
 )]
 fn classify(
     settings: &Settings,
@@ -1112,11 +1112,11 @@ fn resolve(
         let subset = preview.selection.as_deref() == Some("selection=subset");
         if all || (requested == ValidateMode::Range && subset) {
             if !ci_attempted {
-                // The one CI admission read (Copilot 5): its result decides
-                // the mode and the fallback cause, matched once. A Fallback's
-                // own cause (`class-uncovered` among them) is the fallback;
-                // Admitted clears it. The earlier double read could disagree
-                // between its two calls and leave a stale placeholder.
+                // The one CI admission read: its result decides the mode and
+                // the fallback cause, matched once, since two reads could
+                // disagree and leave a stale placeholder. A Fallback's own
+                // cause (`class-uncovered` among them) is the fallback;
+                // Admitted clears it.
                 let branch = read("", &mut log)?;
                 match ci_admission(settings, worktree, &branch, &order, &mut log)? {
                     CiAdmission::Admitted { event } => {
@@ -1341,7 +1341,7 @@ fn start_record(worktree: &Path, proof: &Proof, start: u64) -> String {
 /// already, since a poll would read its records as this run's.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the run directory's files are the executor's inputs, written whole as the legacy start writes them; the inventory is replaced by rename"
+    reason = "the run directory's files are the executor's inputs, each written whole; the inventory is replaced by rename"
 )]
 fn write_run_dir(
     worktree: &Path,

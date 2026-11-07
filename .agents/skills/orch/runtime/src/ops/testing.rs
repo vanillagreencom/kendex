@@ -315,7 +315,8 @@ pub(super) fn alt(record: &Document, key: &str) -> Value {
 
 /// `ol_owns($server; $start; $session)` as `OL_JQ_DEFS` defines it
 /// (`overseer-launch.sh`) and the watch start applies it to the record
-/// it meets (`watch-overseer-record.sh:150`), member for member, with
+/// it meets (`watch-overseer-record.sh`'s `overseer_command_record`),
+/// member for member, with
 /// jq's typed equality: `ol_names`, the record naming `$server` as the
 /// string `--arg` hands jq, `$session` as its `pane` (or `session`), and
 /// `$start` as its `server_start`'s `tostring`; or `ol_unstarted`, the
@@ -357,7 +358,7 @@ pub(super) fn successor() -> Pending {
 
 /// The fixture overseer as the requester saw it. `server` is the string
 /// the shell writers hand jq through `--arg`; a lane's `launch.server`
-/// is the number `open-terminal` converts.
+/// is a number.
 pub(super) fn expected() -> OverseerExpected {
     OverseerExpected {
         server: json!("41020"),

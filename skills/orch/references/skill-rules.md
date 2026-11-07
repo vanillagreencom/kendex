@@ -86,7 +86,7 @@ For dev rounds that write a dev-return artifact, Codex holds this watchdog throu
 
 The acceptance table lives in the delegating workflow (`dev-start.md` § 3, `dev-fix.md` § 2, `review-pr-comments.md` § 6.1); the return message is display-only, except that `round-recover` parses a stalled round's return block from the agent's transcript; tracker corroboration (**B**) applies only where that table names it. `ci-fix.md` writes no dev-return artifact. Its CI-fix and integration-analysis delegations mint `ci_round_id`, which starts no dev stage. They keep `dev_delegated_at` and arm item 2's watchdog with that CI token; its missing-artifact `wait` is expected. They accept by return message plus pushed commit and use the escalation ladder when no return arrives.
 
-A lane at its context mark writes its handoff record at once, whatever step of the round is open: the record carries the open step, a committed fix, the review it awaits and the record's paths among them, and the successor resumes the round's order from it. A review step is never a precondition of the record; the turn-end hook refuses the turn at the mark until the record stands ([oversee-events.md § Judgement rules](oversee-events.md#judgement-rules), Hand off a lane).
+A lane at its context or account mark writes its handoff record at once, whatever step of the round is open: the record carries the open step, a committed fix, the review it awaits and the record's paths among them, and the successor resumes the round's order from it. A review step is never a precondition of the record; the turn-end hook refuses the turn at the mark until the record stands ([oversee-events.md § Judgement rules](oversee-events.md#judgement-rules), Hand off a lane).
 
 ### Escalation
 

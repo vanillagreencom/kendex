@@ -1061,15 +1061,14 @@ struct Witness {
 }
 
 /// The recorded verdict is the correctness floor. Each row is a recorded
-/// witness: a fixture or incident head (superseded runs,
-/// stale pre-approval failures, request-only rollups, rerun attempts and
-/// newer siblings, required sets and bound workflows) or a reviewer's
-/// counterexample (the suite join's omissions, the `latest` listing, gh's
-/// slash-joined key, the order among equal or absent starts, the run-less
-/// pick, the graph's null nodes and the startup-failure correction), with
-/// the status, verdict, cause key and reported members recorded over the
-/// same answers under the recorded corrections. A verdict that changes
-/// here is one named correction.
+/// witness, one head's answers (superseded runs, stale pre-approval
+/// failures, request-only rollups, rerun attempts and newer siblings,
+/// required sets and bound workflows, the suite join's omissions, the
+/// `latest` listing, gh's slash-joined key, the order among equal or absent
+/// starts, the run-less pick, the graph's null nodes and the startup-failure
+/// correction), with the status, verdict, cause key and reported members
+/// recorded over the same answers under the recorded corrections. A verdict
+/// that changes here is one named correction.
 #[test]
 fn the_recorded_witnesses_keep_their_verdicts() {
     let rows = [
@@ -1945,7 +1944,6 @@ struct Malformed {
     detail: Option<&'static str>,
 }
 
-/// The malformed replies, in the order the reports found them.
 fn malformed_rows() -> Vec<Malformed> {
     vec![
         Malformed {
@@ -3668,9 +3666,7 @@ fn green_evidence(gh: &mut Github, head: &str) {
 
 /// The head is read from the pull request on every call, so a head that moved
 /// between two calls is judged on the newer one and the older verdict is
-/// replaced (`item.rs` `record_verification`'s `replaced`). The defect: a
-/// verification that keeps judging the head its first call read, or a record
-/// that keeps the older head's verdict beside a newer head.
+/// replaced (`item.rs` `record_verification`'s `replaced`).
 #[test]
 fn a_pull_requests_moved_head_is_judged_on_the_newer_head_and_the_older_verdict_replaced() {
     let mut gh = Github::green();
@@ -3713,9 +3709,8 @@ fn a_pull_requests_moved_head_is_judged_on_the_newer_head_and_the_older_verdict_
 }
 
 /// A closed or merged pull request refuses `pr-not-open` after the one `pr
-/// view` and before any verdict read, and records nothing. The defect: a
-/// merged pull request's old head verified and recorded as if the wait were
-/// still open.
+/// view` and before any verdict read, and records nothing, so a merged pull
+/// request's head is never verified as if the wait were still open.
 #[test]
 fn a_closed_or_merged_pull_request_refuses_before_any_verdict_read() {
     for state in ["CLOSED", "MERGED"] {
@@ -4184,8 +4179,7 @@ fn a_second_run_requests_no_second_review() {
 /// An approval standing from the commit before a push, with Copilot's
 /// review of that commit and no thread open, is no review of the head the
 /// push landed: the call requests Copilot on it, and the approval waits on
-/// that review, the request standing and then Copilot's check running, as
-/// the released merge flow waited on the head's Copilot work before merging,
+/// that review, the request standing and then Copilot's check running,
 /// until Copilot's review of the head lands, its check still running; one
 /// request goes out throughout.
 #[test]
@@ -4617,10 +4611,7 @@ fn the_timeout_is_judged_on_the_recorded_stamp() {
 /// the approval then completes the call. A run that stood for the request
 /// and ended so is claimed and sent the same way. The early request is
 /// planted as GitHub recorded it, earlier than the call that reads it, as a
-/// push-first head's request is. Defects held by the last cases: a claim or
-/// a resend sent on a draft kept as one or a newly matched refresh head, or
-/// spent there; a standing record under `PR_COPILOT_REQUESTS=off` that owes
-/// no `cause=off` notice.
+/// push-first head's request is.
 #[test]
 fn a_request_whose_work_ended_with_no_review_is_sent_once_more_then_falls_back() {
     let mut gh = Github::review_world();
@@ -4924,15 +4915,45 @@ fn a_request_whose_work_ended_with_no_review_is_sent_once_more_then_falls_back()
     assert_eq!(lane.calls(), 1, "the one notice went once");
     assert_eq!(lane.box_notices(&lane.root).len(), 1);
     assert_eq!(gh.requests(), 2, "{:?}", gh.log());
+
+    // Under `off` the head's eligibility is judged in its order: refresh
+    // first, so a refresh head keeps its refresh route and owes no notice;
+    // then `off`, before a draft the call keeps, so a draft head falls back
+    // `off` and owes its notice.
+    let off_notice = json!([{"notice": fallback_line("off"), "owner": "sent", "sent_now": true}]);
+    for (case, cause, notices) in [
+        ("draft", "off", off_notice),
+        ("refresh", "refresh", Value::Null),
+    ] {
+        let mut gh = Github::review_world();
+        match case {
+            "draft" => {
+                gh.answer(&format!("pr view {PR}"), review_view("", &[], true))
+                    .answer(
+                        &pull_path(),
+                        rest_pull(true, "feat", "lane-app[bot]", "Bot"),
+                    );
+            }
+            _ => gh.policy(refresh),
+        }
+        let lane = LaneWorld::new(&gh, true);
+        let off = lane.review(&gh, &lane.root, REQUESTS_OFF);
+        assert_eq!(off["request"]["outcome"], "fallback", "{case}: {off}");
+        assert_eq!(off["request"]["cause"], cause, "{case}: {off}");
+        assert_eq!(off["request"]["recorded_now"], true, "{case}: {off}");
+        assert_eq!(off["notices"], notices, "{case}: {off}");
+        let sent = usize::from(case == "draft");
+        assert_eq!(lane.calls(), sent, "{case}");
+        assert_eq!(lane.box_notices(&lane.root).len(), sent, "{case}");
+        assert_eq!(gh.requests(), 0, "{case}: {:?}", gh.log());
+    }
 }
 
-/// Defect: an unapproved head's review period answers `review-pending`, or
-/// `timeout` once the period is spent, while Copilot's work in flight on
-/// the head runs, and a micro-entry or forced merge arms on that reply with
-/// Copilot's review still to land. The gate holds the period's answers on
-/// that work within the hold, `pending copilot-pending`; past the hold the
-/// period answers as before, `review-pending` with `copilot=expired`; past
-/// the period, `timeout`. The clock is stepped by the head record's stamps.
+/// A micro-entry or forced merge arms on an unapproved head's period
+/// answer, so the gate holds that answer on Copilot's work in flight within
+/// the hold, `pending copilot-pending`; past the hold the period answers
+/// `review-pending` with `copilot=expired`; past the period, `timeout`. The
+/// clock is stepped by the head record's stamps.
 #[test]
 fn copilot_work_in_flight_holds_an_unapproved_heads_period_answers_within_the_hold() {
     let mut gh = Github::review_world();
@@ -5115,15 +5136,14 @@ fn fallback_line(cause: &str) -> String {
 
 const REQUESTS_OFF: &[(&str, &str)] = &[("PR_COPILOT_REQUESTS", "off")];
 
-/// Defect: a fallback recorded in the same reply as an approval is never
-/// noticed, since a caller that routes the verdict alone drops the one
-/// reply that cued the lane's notice, and the head can merge with no
-/// Copilot review while the overseer never learns it. The approved head's
-/// request and its resend both end with no review: the call that records
-/// `fallback cause=unconfirmed` answers `complete approved` and sends the
-/// two-line notice into the lane's own box through the real mailbox
-/// program, the notice already recorded `owed` when the program runs and
-/// `sent` after; a repeat call sends nothing.
+/// A caller that routes the verdict alone reads nothing else of the reply,
+/// and the head can merge with no Copilot review, so the call that records
+/// a fallback beside an approval sends its notice itself. The approved
+/// head's request and its resend both end with no review: the call that
+/// records `fallback cause=unconfirmed` answers `complete approved` and
+/// sends the two-line notice into the lane's own box through the real
+/// mailbox program, the notice already recorded `owed` when the program
+/// runs and `sent` after; a repeat call sends nothing.
 #[test]
 fn a_fallback_recorded_beside_an_approval_sends_its_notice_into_the_lanes_box_once() {
     let mut gh = Github::review_world();
@@ -5200,16 +5220,14 @@ fn a_fallback_recorded_beside_an_approval_sends_its_notice_into_the_lanes_box_on
     assert_eq!(lane.box_notices(&lane.root).len(), 1);
 }
 
-/// Defect: a notice owed by a call that ended before its send, or whose
-/// send got no answer, is lost, or sent on every later call. A call killed
-/// after the write that owed the notice and before the program ran leaves
-/// it `owed` and the box empty; the next call sends it once and marks it
-/// `sent`. A send whose program ended by a signal after it answered is
-/// `unanswered`, the notice perhaps landed; the next call sends it once
-/// more, and the program reads that repeat inside its minute window as the
-/// notice that landed, so the box holds it once. A repeat past that window
-/// would be a second notice: no row claims the notice lands exactly once.
-/// After either, a third call sends nothing.
+/// A call killed after the write that owed the notice and before the
+/// program ran leaves it `owed` and the box empty; the next call sends it
+/// once and marks it `sent`. A send whose program ended by a signal after
+/// it answered is `unanswered`, the notice perhaps landed; the next call
+/// sends it once more, and the program reads that repeat inside its minute
+/// window as the notice that landed, so the box holds it once. A repeat
+/// past that window would be a second notice: no row claims the notice
+/// lands exactly once. After either, a third call sends nothing.
 #[test]
 fn an_owed_or_unanswered_notice_is_sent_once_more_by_the_next_call() {
     for (case, mark, first_owner) in [
@@ -5258,8 +5276,6 @@ fn an_owed_or_unanswered_notice_is_sent_once_more_by_the_next_call() {
     }
 }
 
-/// Defect: a notice the mailbox program refused marked `sent` and lost, or
-/// sent again on every call; or a send with no answer resent on every call.
 /// Through the real `lane-mail`: a lane mailbox that is a link the program
 /// refuses by its key (`mailbox-unsafe`) before any append marks the notice
 /// `unsent:` with that refusal, final, the reply naming it, and no later
@@ -5315,13 +5331,13 @@ fn a_notice_refused_or_twice_unanswered_is_marked_final_and_sent_no_more() {
     assert_eq!(lane.calls(), 2, "a second send with no answer is the last");
 }
 
-/// Defect: a call outside any lane writes a notice into a mailbox no
-/// overseer reads, making a lane mailbox directory the turn-end hook then
-/// reads as a lane. Where the item has no launch marker, from a checkout
-/// with none and from the review world's directory outside any repository,
-/// the fallback the call records owes no notice: the record holds none,
-/// the reply names none, the mailbox program never runs and no mailbox is
-/// made; the reply's `request` stays the caller's to report.
+/// No overseer reads a mailbox outside any lane, and the turn-end hook
+/// reads a lane mailbox directory as a lane. Where the item has no launch
+/// marker, from a checkout with none and from the review world's directory
+/// outside any repository, the fallback the call records owes no notice:
+/// the record holds none, the reply names none, the mailbox program never
+/// runs and no mailbox is made; the reply's `request` stays the caller's to
+/// report.
 #[test]
 fn an_item_with_no_launch_marker_owes_no_notice_and_sends_nothing() {
     for case in ["a checkout with no marker", "no repository"] {
@@ -5346,9 +5362,9 @@ fn an_item_with_no_launch_marker_owes_no_notice_and_sends_nothing() {
     }
 }
 
-/// Defect: the merge route's calls run from the main checkout, where a
-/// lane verb would root its notice in a box the watch never drains while
-/// the lane runs. A call from the main checkout that finds the item's
+/// The merge route's calls run from the main checkout, where a lane verb
+/// would root its notice in a box the watch never drains while the lane
+/// runs. A call from the main checkout that finds the item's
 /// launch marker sends the notice into the lane's own box at the root the
 /// marker names, as a call from the lane's worktree does; the lane's
 /// `lane-mail-check` hook counts that outbound notice as the lane's report.
@@ -5382,12 +5398,13 @@ fn a_call_from_the_main_checkout_sends_the_notice_into_the_lanes_box() {
     }
 }
 
-/// Defect: Copilot's error answer to its retry is a verdict one reply
-/// carries, and a caller that reads only the mode or the request drops it,
-/// so the overseer's fallback approval never starts. The retry claimed with
-/// the request, then a second error answer: that call's `copilot-error
-/// cause=error` sends the notice once, its first line ending in the cause;
-/// the next call answers the period and sends nothing.
+/// Copilot's error answer to its retry is a verdict one reply carries,
+/// which a caller that reads only the mode or the request drops, so the
+/// call itself sends the notice that starts the overseer's fallback
+/// approval. The retry claimed with the request, then a second error
+/// answer: that call's `copilot-error cause=error` sends the notice once,
+/// its first line ending in the cause; the next call answers the period and
+/// sends nothing.
 #[test]
 fn a_copilot_error_verdict_sends_its_notice_once() {
     let mut gh = Github::review_world();
@@ -5431,10 +5448,10 @@ fn a_copilot_error_verdict_sends_its_notice_once() {
     assert_eq!(lane.calls(), 1, "the verdict's notice goes out once");
 }
 
-/// Defect: a head held as a draft, or a refresh head the overseer's own
-/// route approves, notified as a Copilot fallback the overseer would answer
-/// with an approval. Each records its fallback with no notice owed and the
-/// mailbox program never runs.
+/// The overseer answers a Copilot fallback notice with an approval, which
+/// neither a head held as a draft nor a refresh head the overseer's own
+/// route approves may draw. Each records its fallback with no notice owed
+/// and the mailbox program never runs.
 #[test]
 fn a_draft_or_refresh_fallback_owes_no_notice() {
     for case in ["draft", "refresh"] {
@@ -6362,8 +6379,8 @@ fn an_invalid_review_request_refuses_before_any_read() {
 /// `verify-review` by key and value, before any read. The hold,
 /// `ORCH_COPILOT_HOLD_SECS`, is whole seconds above zero with no sign and
 /// no leading zero; the current-head wait refuses it outside that form
-/// too. Defect: a zero hold read as no hold by
-/// the gate, or as a wait that expires at once.
+/// too, so a zero hold is never read as no hold by the gate or as a wait
+/// that expires at once.
 #[test]
 fn a_review_setting_outside_its_form_refuses_the_verbs_that_read_it() {
     for (key, value) in [
@@ -6613,13 +6630,13 @@ fn a_draft_fallback_released_past_the_budget_starts_its_period_with_the_request(
     }
 }
 
-/// Defect: a head held as a `draft` fallback past the review budget gets a
-/// spent period's verdict (`proceeded` with no request ever made, or a
-/// counted `timeout`) on a call that cannot release it: the head still
-/// draft, or the view reading it ready while `pulls/N` still reads draft.
-/// Under either timeout answer each such call is `pending` with the draft
-/// cause and records no verdict; the call where both reads agree releases
-/// it, and its request starts the period.
+/// A head held as a `draft` fallback past the review budget takes no spent
+/// period's verdict (`proceeded` with no request ever made, or a counted
+/// `timeout`) on a call that cannot release it: the head still draft, or
+/// the view reading it ready while `pulls/N` still reads draft. Under
+/// either timeout answer each such call is `pending` with the draft cause
+/// and records no verdict; the call where both reads agree releases it, and
+/// its request starts the period.
 #[test]
 fn a_draft_fallback_past_the_budget_takes_no_period_verdict_until_both_reads_release_it() {
     for on_timeout in ["proceed", "block"] {
@@ -6661,17 +6678,13 @@ fn a_draft_fallback_past_the_budget_takes_no_period_verdict_until_both_reads_rel
     }
 }
 
-/// Defect: Copilot's error answer on a head held as a draft read as the
-/// error retry's verdict, `copilot-error cause=draft`, which routes to a
-/// fallback notice for a draft that took no request; or the retry claimed
-/// apart from the request that releases the head, a second POST. Within
-/// the budget and past it, each call on the draft is `pending` with the
-/// draft cause, claims no retry and sends nothing; the call where both
-/// reads say ready sends one POST, recorded as the request and as the
-/// error answer's retry, and a later call sends nothing more. Defects held
-/// by the last cases: the retry's claim or resend sent, or spent, on a
-/// draft kept as one or a newly matched refresh head; and the call that
-/// sends the retry answering past its own request, `review-pending`.
+/// A `copilot-error cause=draft` verdict would route to a fallback notice
+/// for a draft that took no request, and a retry claimed apart from the
+/// request that releases the head would be a second POST. Within the
+/// budget and past it, each call on the draft is `pending` with the draft
+/// cause, claims no retry and sends nothing; the call where both reads say
+/// ready sends one POST, recorded as the request and as the error answer's
+/// retry, and a later call sends nothing more.
 #[test]
 fn copilot_error_on_a_draft_held_head_waits_for_the_release_whose_one_request_is_its_retry() {
     for aged in [false, true] {
@@ -6950,9 +6963,10 @@ fn a_request_whose_answer_was_lost_is_sent_once_more_then_falls_back_unconfirmed
 /// An error answer's retry is decided with the request: a request the
 /// policy held back holds the retry back, answering `copilot-error` with
 /// its cause once; Copilot's work already in flight stands for the retry;
-/// and a retry the released writer recorded under
-/// `pr_approval.copilot_error_retries` is the head's retry, carried into
-/// its record. None of them is requested again.
+/// and a retry an earlier install recorded under
+/// `pr_approval.copilot_error_retries`, planted as that install wrote it,
+/// is the head's retry, carried into its record. None of them is requested
+/// again.
 #[test]
 fn an_error_retry_in_flight_or_released_is_not_requested_again() {
     let error_world = || {
@@ -6995,8 +7009,8 @@ fn an_error_retry_in_flight_or_released_is_not_requested_again() {
     assert_eq!(again["status"], "pending", "{again}");
     assert_eq!(gh.requests(), 0, "{:?}", gh.log());
 
-    // The released writer's retry: a `requested` one GitHub recorded after
-    // the error, and a `fallback` one.
+    // A retry an earlier install recorded: a `requested` one GitHub
+    // recorded after the error, and a `fallback` one.
     for (outcome, request, timeline) in [
         (
             "requested",

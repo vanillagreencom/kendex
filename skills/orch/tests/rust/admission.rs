@@ -1,12 +1,11 @@
 //! Process tests of the lane admission through the `orch-runtime`
-//! executable (decisions 118 (3), (4), (6), 142 (4), 108 (5)): the holders'
-//! identities are processes this test holds, so the kernel table answers
-//! for them as it would for a harness, the item bodies come from a fake
-//! tracker keyed by item, and the range's paths from the change-scope
-//! package's own path reader over a repository this test makes. The
-//! launches run with no tmux server at all: an admitted launch fails
-//! before any window, the admission being the transition under test and
-//! the committed record what the next admission reads.
+//! executable: the holders' identities are processes this test holds, so
+//! the kernel table answers for them as it would for a harness, the item
+//! bodies come from a fake tracker keyed by item, and the range's paths
+//! from the change-scope package's own path reader over a repository this
+//! test makes. The launches run with no tmux server at all: an admitted
+//! launch fails before any window, the admission being the transition under
+//! test and the committed record what the next admission reads.
 //!
 //! The suite reads the kernel's `/proc` table for the identities it holds,
 //! so it runs on Linux alone.
@@ -71,11 +70,11 @@ fn harness_only() -> PathBuf {
 /// The binary against a fleet state in its own directory, with no tmux
 /// server to reach, a cap of four, the tracker stand-in running the linear
 /// package's real bundle formatter over the GraphQL answers this test
-/// writes, the real path reader, and one fake `gh` on `PATH`: `gh-issue` for the item read, or `gh` answering `gh api` and
-/// `gh repo view` from the map a row plants ([`Fleet::gh_api`]). Every
-/// child runs with
-/// `--no-private-env` and `GIT_CEILING_DIRECTORIES` at the temp root, so
-/// no checkout above the test directory is its project (decision 164).
+/// writes, the real path reader, and one fake `gh` on `PATH`: `gh-issue`
+/// for the item read, or `gh` answering `gh api` and `gh repo view` from
+/// the map a row plants ([`Fleet::gh_api`]). Every child runs with
+/// `--no-private-env` and `GIT_CEILING_DIRECTORIES` at the temp root, so no
+/// checkout above the test directory is its project.
 struct Fleet {
     dir: TempDir,
     gh_fixture: &'static str,
@@ -460,12 +459,12 @@ fn pairs(rows: &[(&str, &str)]) -> Vec<(String, String)> {
         .collect()
 }
 
-/// Decisions 118 (3) and 97 at the holder: a holder whose recorded harness
-/// is a live process blocks the launch with its id and nothing is written;
-/// the same holder ended, its record still reading `running`, yields: the
-/// launch is admitted, its record carries the touched set and a rebase
-/// obligation naming the holder and the branch its item state records,
-/// and the holder's record keeps every field.
+/// At the holder: a holder whose recorded harness is a live process blocks
+/// the launch with its id and nothing is written; the same holder ended,
+/// its record still reading `running`, yields: the launch is admitted, its
+/// record carries the touched set and a rebase obligation naming the holder
+/// and the branch its item state records, and the holder's record keeps
+/// every field.
 #[test]
 fn a_live_holder_blocks_the_launch_and_a_gone_one_yields_with_a_rebase_obligation() {
     let fleet = Fleet::new();
@@ -587,18 +586,17 @@ fn a_launch_over_a_done_record_is_judged_as_a_first_launch() {
 /// such a package may be installed beside this runtime.
 const RELEASED_BUNDLE_REPLY: &str = r#"{"id":"CC-8","identifier":"CC-8","uuid":"uuid-CC-8","title":"CC-8","description":"Some text.\n","in_pr_bundle":false,"state":"Todo","state_type":"unstarted","agent":"","platform":"","labels":[],"priority":0,"estimate":0,"sort_order":0,"project":"","project_id":"","assignee":"","parent_id":"","milestone":"","cycle":"","created_at":"","updated_at":"","blocks":[],"blocked_by":["CC-9"],"blocked_by_open":["CC-9"],"related":[],"url":"","children":[],"pending_count":0}"#;
 
-/// Defect: a fresh lane launched under a container ancestor holding an
-/// open launch blocker, which the tracker's safe bundle read names on the
-/// ancestor and the launch never read; and a bundle reply carrying no
-/// launch-blocker field read as no blocker. Through the real `launch-lane`
-/// and the linear package's real bundle formatter over planted GraphQL
-/// answers: an item whose grandparent holds a blocker is refused
-/// `launch-blocked` naming it after reading the three, nothing written; the
-/// item's own blocker refuses after one read; an ancestor the tracker
-/// cannot answer for refuses `launch-blocked-unread` naming it; a reply
-/// with no launch-blocker field refuses `launch-blocked-unread` naming its
-/// node, for the item itself and for an ancestor; a chain with no blocker
-/// admits; and a relaunch over a recorded lane reads no item at all.
+/// The tracker's bundle read names a launch blocker on the container
+/// ancestor that holds it, so the launch reads each ancestor's. Through the
+/// real `launch-lane` and the linear package's real bundle formatter over
+/// planted GraphQL answers: an item whose grandparent holds a blocker is
+/// refused `launch-blocked` naming it after reading the three, nothing
+/// written; the item's own blocker refuses after one read; an ancestor the
+/// tracker cannot answer for refuses `launch-blocked-unread` naming it; a
+/// reply with no launch-blocker field refuses `launch-blocked-unread`
+/// naming its node, for the item itself and for an ancestor; a chain with
+/// no blocker admits; and a relaunch over a recorded lane reads no item at
+/// all.
 #[test]
 fn a_launch_under_a_container_ancestor_holding_a_blocker_is_refused_before_any_record() {
     let fleet = Fleet::new();
@@ -668,9 +666,9 @@ fn a_launch_under_a_container_ancestor_holding_a_blocker_is_refused_before_any_r
     );
 }
 
-/// Decisions 99 and 105 at the holder: a holder whose touched set cannot be
-/// read, its record carrying none and its item unreadable, blocks as
-/// unknown; nothing is written.
+/// At the holder: a holder whose touched set cannot be read, its record
+/// carrying none and its item unreadable, blocks as unknown; nothing is
+/// written.
 #[test]
 fn an_unreadable_holder_blocks_the_launch_and_never_admits() {
     let fleet = Fleet::new();
@@ -688,10 +686,9 @@ fn an_unreadable_holder_blocks_the_launch_and_never_admits() {
     assert_eq!(fleet.fleet(), before);
 }
 
-/// Decision 118 (4): the touched set is the union of the Location paths,
-/// the brief's paths and the change-scope paths over the named range. Each
-/// source alone names a path the live holder holds, and each alone blocks
-/// with that file.
+/// The touched set is the union of the Location paths, the brief's paths
+/// and the change-scope paths over the named range. Each source alone names
+/// a path the live holder holds, and each alone blocks with that file.
 #[test]
 fn a_path_only_one_source_names_overlaps_the_holder() {
     let mut fleet = Fleet::new();
@@ -779,9 +776,9 @@ fn a_path_only_one_source_names_overlaps_the_holder() {
     );
 }
 
-/// Decision 118 (6): a container, by children or by the `agent:multi`
-/// label, is refused from its body before any record or intent; a GitHub
-/// item is read through gh, launched from a checkout of its repository.
+/// A container, by children or by the `agent:multi` label, is refused from
+/// its body before any record or intent; a GitHub item is read through gh,
+/// launched from a checkout of its repository.
 #[test]
 fn an_ineligible_item_is_refused_from_its_body_before_any_record() {
     let fleet = Fleet::new();
@@ -838,10 +835,10 @@ fn an_ineligible_item_is_refused_from_its_body_before_any_record() {
     );
 }
 
-/// Decision 142 (4): a running lane's added path is judged against the
-/// holders through `admit` and widens its record with the touched set and
-/// the obligation a stopped holder yields; a live holder refuses it with
-/// its id and the record stays as it was.
+/// A running lane's added path is judged against the holders through
+/// `admit` and widens its record with the touched set and the obligation a
+/// stopped holder yields; a live holder refuses it with its id and the
+/// record stays as it was.
 #[test]
 fn a_running_lanes_added_path_widens_its_record_or_is_refused_by_a_live_holder() {
     let fleet = Fleet::new();
@@ -895,8 +892,8 @@ fn a_running_lanes_added_path_widens_its_record_or_is_refused_by_a_live_holder()
     );
     assert_eq!(fleet.fleet(), before, "a refusal writes nothing");
 
-    // A launcher's judgement before its record stands (decision 94 (b)):
-    // answered, nothing written.
+    // A launcher's judgement before its record stands: answered, nothing
+    // written.
     fleet.item("KEN-N", "`src/s.sh`", 0, &[]);
     let out = fleet.admit(&json!({"item": "KEN-N", "tracker": "linear"}));
     let answer = reply(&out);
@@ -913,13 +910,13 @@ fn a_running_lanes_added_path_widens_its_record_or_is_refused_by_a_live_holder()
     assert_eq!(fleet.fleet(), before);
 }
 
-/// Decision 165: an open same-repository pull request touching a candidate
-/// path is a holder with no lane: the launch yields, its record carrying a
-/// rebase obligation naming `#N` and the head branch, a rename's old path
-/// among the shared paths; one touching no candidate path, a fork's and a
-/// merged one (listed open, read closed by number) hold nothing. The open
-/// list is read once, each pull request by number, and the files of the
-/// open same-repository ones alone.
+/// An open same-repository pull request touching a candidate path is a
+/// holder with no lane: the launch yields, its record carrying a rebase
+/// obligation naming `#N` and the head branch, a rename's old path among
+/// the shared paths; one touching no candidate path, a fork's and a merged
+/// one (listed open, read closed by number) hold nothing. The open list is
+/// read once, each pull request by number, and the files of the open
+/// same-repository ones alone.
 #[test]
 fn an_open_pull_request_on_a_candidate_path_yields_with_a_rebase_obligation_naming_its_branch_and_number()
  {
@@ -972,12 +969,12 @@ fn an_open_pull_request_on_a_candidate_path_yields_with_a_rebase_obligation_nami
     );
 }
 
-/// Decision 165 with the lanes of this fleet: a pull request a lane record
-/// names, by its `pending_pr` number or by its head branch (the lane's item
-/// key), is judged as that lane, once; a `done` record names none, so the
-/// open pull request it left is a holder as a pull request; and the item's
-/// own pull request, on its branch, is no holder against a path the
-/// running lane adds.
+/// With the lanes of this fleet, a pull request a lane record names, by its
+/// `pending_pr` number or by its head branch (the lane's item key), is
+/// judged as that lane, once; a `done` record names none, so the open pull
+/// request it left is a holder as a pull request; and the item's own pull
+/// request, on its branch, is no holder against a path the running lane
+/// adds.
 #[test]
 fn a_pull_request_a_lane_record_of_this_fleet_names_is_judged_once_as_that_lane() {
     let mut fleet = Fleet::new();
@@ -1046,13 +1043,13 @@ fn a_pull_request_a_lane_record_of_this_fleet_names_is_judged_once_as_that_lane(
     );
 }
 
-/// Decision 165 for the fleet's own repository, which a request names by
-/// its checkout alone (`repo_dir`; its lane records name none): the
-/// repository is what `gh repo view` answers in the checkout, else what
-/// its `origin` remote names on github.com, as the legacy `resolve_repo`
-/// read it, and that repository's open pull requests hold their files; a
-/// checkout naming no GitHub repository refuses `holders-unreadable
-/// read=repo` with nothing written, never admitted past unread holders.
+/// The fleet's own repository, which a request names by its checkout alone
+/// (`repo_dir`; its lane records name none): the repository is what `gh
+/// repo view` answers in the checkout, else what its `origin` remote names
+/// on github.com, and that repository's open pull requests hold their
+/// files; a checkout naming no GitHub repository refuses
+/// `holders-unreadable read=repo` with nothing written, never admitted past
+/// unread holders.
 #[test]
 fn the_fleets_own_repository_is_read_from_its_checkout_by_gh_then_by_its_origin() {
     let mut fleet = Fleet::new();
@@ -1131,12 +1128,12 @@ fn the_fleets_own_repository_is_read_from_its_checkout_by_gh_then_by_its_origin(
     );
 }
 
-/// Decisions 87, 99 and 105 at the pull requests: a failed list, a member
-/// the documented shape does not decode, a pull request answering nothing,
-/// a state outside the documented pair, a files list short of the pull
-/// request's count and a file with no name each refuse `holders-unreadable`
-/// naming the read, with nothing written, although a lane holder stood
-/// ready to yield; an item touching nothing reads no pull request.
+/// At the pull requests: a failed list, a member the documented shape does
+/// not decode, a pull request answering nothing, a state outside the
+/// documented pair, a files list short of the pull request's count and a
+/// file with no name each refuse `holders-unreadable` naming the read, with
+/// nothing written, although a lane holder stood ready to yield; an item
+/// touching nothing reads no pull request.
 #[test]
 fn a_gh_failure_a_short_files_list_and_a_malformed_member_each_refuse_holders_unreadable_with_nothing_written()
  {
@@ -1216,11 +1213,11 @@ fn a_gh_failure_a_short_files_list_and_a_malformed_member_each_refuse_holders_un
     );
 }
 
-/// Decision 108 (5): the judgement runs inside the fleet launch lock, so
-/// two contenders on one path are judged one after the other: the second
-/// reads the first's committed record, as a live holder (its preparing
-/// row under its open launch intent) or, once the first's launch ended, as
-/// a yielding one; never does each admit the other's path unseen.
+/// The judgement runs inside the fleet launch lock, so two contenders on
+/// one path are judged one after the other: the second reads the first's
+/// committed record, as a live holder (its preparing row under its open
+/// launch intent) or, once the first's launch ended, as a yielding one;
+/// never does each admit the other's path unseen.
 #[test]
 fn two_contenders_on_one_path_are_judged_one_after_the_other() {
     let fleet = Fleet::new();
@@ -1288,17 +1285,15 @@ fn two_contenders_on_one_path_are_judged_one_after_the_other() {
     }
 }
 
-/// Defect: a launch from a checkout of a repository the fleet neither is
-/// nor connects opened a lane there. With the fleet's state in its own
-/// repository (`o/fleet`): a checkout sharing its git directory, and a
-/// second clone whose origin names the same repository in another case,
-/// are its own and admitted; a checkout of `o/other` is refused
-/// `overseer-foreign` naming both before anything is read or written, and
-/// admitted once `ORCH_CONNECTED_REPOS` lists it; a directory in no
-/// checkout, and a checkout with no origin while the fleet connects
-/// repositories, are refused `overseer-unjudged` with the cause. A fleet
-/// in no checkout binds a launch under a translated git; a relaunch over a
-/// stopped record is bound on its request's checkout.
+/// With the fleet's state in its own repository (`o/fleet`): a checkout
+/// sharing its git directory, and a second clone whose origin names the
+/// same repository in another case, are its own and admitted; a checkout of
+/// `o/other` is refused `overseer-foreign` naming both before anything is
+/// read or written, and admitted once `ORCH_CONNECTED_REPOS` lists it; a
+/// directory in no checkout, and a checkout with no origin while the fleet
+/// connects repositories, are refused `overseer-unjudged` with the cause. A
+/// fleet in no checkout binds a launch under a translated git; a relaunch
+/// over a stopped record is bound on its request's checkout.
 #[test]
 fn a_launch_from_a_checkout_the_fleet_neither_owns_nor_connects_is_refused() {
     let fleet = Fleet::new();
@@ -1394,12 +1389,11 @@ fn a_launch_from_a_checkout_the_fleet_neither_owns_nor_connects_is_refused() {
     );
 }
 
-/// Defect: an item of another repository or team than the checkout's was
-/// launched into it. A `github` item whose repository is not the one its
-/// checkout's origin names, and a `linear` item of another team than the
-/// fleet's `LINEAR_TEAM` (read through the linear package's real team
-/// formatter over a planted answer), are refused `item-foreign` before
-/// the item is read; a team the tracker cannot answer for is refused
+/// A `github` item whose repository is not the one its checkout's origin
+/// names, and a `linear` item of another team than the fleet's
+/// `LINEAR_TEAM` (read through the linear package's real team formatter
+/// over a planted answer), are refused `item-foreign` before the item is
+/// read; a team the tracker cannot answer for is refused
 /// `item-repo-unresolved`; the item of the fleet's own team is read and
 /// admitted; a relaunch over a stopped GitHub record naming another
 /// repository refuses `item-foreign`, nothing written; a connected

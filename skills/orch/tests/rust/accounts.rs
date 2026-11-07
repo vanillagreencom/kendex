@@ -487,12 +487,9 @@ fn named(dir: &str, req: PickRequest) -> PickRequest {
     }
 }
 
-/// Defect: a `reserve` account picked for a
-/// lane because it has the most room, or dropped from the roster for its
-/// word. The provider's `reserved=1` row with the most room is never the
-/// lane, is named `reserved` among the exclusions when nothing else has
-/// room, and keeps its figures in the roster line with its word after
-/// them.
+/// The provider's `reserved=1` row with the most room is never the lane, is
+/// named `reserved` among the exclusions when nothing else has room, and
+/// keeps its figures in the roster line with its word after them.
 #[test]
 fn a_reserve_account_is_never_picked_and_keeps_its_figures_in_the_roster() {
     let world = World::new(&[]);
@@ -535,15 +532,12 @@ fn a_reserve_account_is_never_picked_and_keeps_its_figures_in_the_roster() {
     );
 }
 
-/// An account renewed, retired, reserved. Defect: a retirement date
-/// stopping every read of
-/// the account, so a renewed, live account reads `retired` with no
-/// figures and nothing shows the contradiction. A `retired <date>` account
-/// is picked until the date; from the date on it is not picked, its row
-/// keeps the figures the listing measured, and its credential still
-/// answering is one `account-end-contradicted` line under the roster. The
-/// listing measures the retired account like any other: the setting is
-/// the judge's to apply.
+/// An account renewed, retired, reserved. A `retired <date>` account is
+/// picked until the date; from the date on it is not picked, its row keeps
+/// the figures the listing measured, and its credential still answering is
+/// one `account-end-contradicted` line under the roster. The listing
+/// measures the retired account like any other: the setting is the judge's
+/// to apply.
 #[test]
 fn a_retired_account_is_picked_until_its_date_and_measured_after_it_with_the_contradiction_said() {
     let today = accounts::today(now());
@@ -623,10 +617,9 @@ fn a_retired_account_is_picked_until_its_date_and_measured_after_it_with_the_con
     );
 }
 
-/// Defect: a listing that could not be read taken as an empty fleet, so
-/// a pick answers `none` as if every account were walled, or the roster
-/// reads as no accounts. A home discovery cannot list is unjudged for the
-/// pick and unread for the roster, each with the cause.
+/// A listing that cannot be read is no empty fleet: a home discovery cannot
+/// list is unjudged for the pick and unread for the roster, each with the
+/// cause.
 #[test]
 fn an_unreadable_listing_admits_nothing() {
     use std::os::unix::fs::PermissionsExt;
@@ -656,12 +649,10 @@ fn an_unreadable_listing_admits_nothing() {
     );
 }
 
-/// Defect: a lane on model M judged on the fullest window on the
-/// account, so an account whose Opus window is spent is refused for a
-/// Sonnet lane, or picked for an Opus lane on its Sonnet room. The lane
-/// is judged on M's own window: the account with a spent Opus window and
-/// a free Sonnet one is the lane for Sonnet and refused for Opus, and
-/// without a model the fullest window decides as the reader's binding.
+/// A lane on model M is judged on M's own window, never the fullest on the
+/// account: the account with a spent Opus window and a free Sonnet one is
+/// the lane for Sonnet and refused for Opus, and without a model the
+/// fullest window decides as the reader's binding.
 #[test]
 fn a_lane_on_a_model_is_judged_on_that_models_window_not_the_fullest() {
     let world = World::new(&[]);
@@ -720,15 +711,14 @@ fn a_lane_on_a_model_is_judged_on_that_models_window_not_the_fullest() {
     );
 }
 
-/// Defect: a relaunch replacing lane L on account A refused on L's own
-/// charge, or the projection charging a claim count instead of the lanes the
-/// runtime proves live. The fleet's one running lane on A holds a live
-/// launch identity (the row's own child); A's session window charged the
-/// live lane's observed rate for it and for the candidate projects past
-/// the bound, so a fresh launch is refused with A walled; the same pick
-/// naming L as the lane it replaces leaves L's charge out, the candidate
-/// alone at the setting's burn, and A is the lane. A lane whose identity
-/// is gone charges nothing.
+/// A relaunch replacing lane L on account A is never refused on L's own
+/// charge, and the projection charges the lanes the runtime proves live.
+/// The fleet's one running lane on A holds a live launch identity (the
+/// row's own child); A's session window charged the live lane's observed
+/// rate for it and for the candidate projects past the bound, so a fresh
+/// launch is refused with A walled; the same pick naming L as the lane it
+/// replaces leaves L's charge out, the candidate alone at the setting's
+/// burn, and A is the lane. A lane whose identity is gone charges nothing.
 #[test]
 fn a_relaunch_replacing_a_lane_adds_no_lane_to_the_projection() {
     let mut world = World::new(&[]);
@@ -771,16 +761,12 @@ fn a_relaunch_replacing_a_lane_adds_no_lane_to_the_projection() {
     drop(child);
 }
 
-/// Seat sessions charged to their reset: `S × burn_w ×
-/// hours_to_reset_w` on each projected window. Defect: the binding window
-/// charged one hour of burn per lane while its reset is days away, so an
-/// account whose live lane will spend its week before the reset is read as
-/// room and the launch walls both lanes. The weekly window at 90 percent
-/// with 144 hours to its reset and one live lane: the live lane and the
-/// candidate each charged the setting's weekly burn for 144 hours leave no
-/// room under the bound, so the launch is refused with the weekly window
-/// as the projected one; the same account with its reset one hour away
-/// is the lane.
+/// Seat sessions charged to their reset: `S × burn_w × hours_to_reset_w` on
+/// each projected window. The weekly window at 90 percent with 144 hours to
+/// its reset and one live lane: the live lane and the candidate each
+/// charged the setting's weekly burn for 144 hours leave no room under the
+/// bound, so the launch is refused with the weekly window as the projected
+/// one; the same account with its reset one hour away is the lane.
 #[test]
 fn the_binding_window_is_charged_to_its_reset_not_for_one_hour() {
     let mut world = World::new(&[]);
@@ -834,17 +820,13 @@ fn the_binding_window_is_charged_to_its_reset_not_for_one_hour() {
     drop(child);
 }
 
-/// The seat's limit, `min(ORCH_LANE_MAX_PCT, 100 - ORCH_OVERSEER_HEADROOM_PCT)`,
-/// and `pick-seat-omitted` naming `need=`; `lanes --help` § pick's seat
-/// rule. Defect: the `min` dropped, so a worker spends the overseer's
-/// seat down to the lane limit and past the headroom the overseer hands
-/// off at; or an overseer's own pick refusing its seat; or the omitted
-/// seat named with no figure for the room it keeps, or with one the hook's
-/// seat line cannot read (`need=50.0`). The fleet record's
-/// `overseer.account` is a seat: returned last, held to the headroom
-/// setting beside the lane limit (`seat-reserve` under it, the record and
-/// the `none` answer's `seats` carrying `need` as the integer `50`, the
-/// room the seat keeps), and judged as any account when the overseer asks.
+/// The seat's limit, `min(ORCH_LANE_MAX_PCT, 100 -
+/// ORCH_OVERSEER_HEADROOM_PCT)`, and `pick-seat-omitted` naming `need=`;
+/// `lanes --help` § pick's seat rule. The fleet record's `overseer.account`
+/// is a seat: returned last, held to the headroom setting beside the lane
+/// limit (`seat-reserve` under it, the record and the `none` answer's
+/// `seats` carrying `need` as the integer `50`, the room the seat keeps),
+/// and judged as any account when the overseer asks.
 #[test]
 fn a_seat_is_held_to_the_overseers_headroom_beside_the_lane_limit_and_returned_last() {
     let mut world = World::new(&[("ORCH_OVERSEER_HEADROOM_PCT", "50")]);
@@ -894,17 +876,14 @@ fn a_seat_is_held_to_the_overseers_headroom_beside_the_lane_limit_and_returned_l
     );
 }
 
-/// The provider's rows under a host are the judge's
-/// own, read from the roster with the host. Defect: a hosted pick judged
-/// on this machine's rows, or handed to the reader as a `pick` the judge no
-/// longer asks; a provider's `seat=1` row spent past the overseer's
-/// headroom by a worker; a provider's `reserved=1` row picked for its
-/// room. Under `ORCH_LANE_HOST=fleet-vm` the listing carries the
-/// provider's rows: the seat with the most room is held to the headroom
-/// and comes last, the reserved row is never the lane, the ordinary row
-/// is; with the ordinary row excluded the seat is the lane while over its
-/// limit and `seat-reserve` under it; the provider is asked for its
-/// capability line and its accounts under the host, and nothing else.
+/// The provider's rows under a host are the judge's own, read from the
+/// roster with the host. Under `ORCH_LANE_HOST=fleet-vm` the listing
+/// carries the provider's rows: the seat with the most room is held to the
+/// headroom and comes last, the reserved row is never the lane, the
+/// ordinary row is; with the ordinary row excluded the seat is the lane
+/// while over its limit and `seat-reserve` under it; the provider is asked
+/// for its capability line and its accounts under the host, and nothing
+/// else.
 #[test]
 fn a_hosted_pick_reads_the_providers_rows_seats_and_words_from_the_roster_under_its_host() {
     let mut world = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
@@ -983,15 +962,9 @@ fn a_hosted_pick_reads_the_providers_rows_seats_and_words_from_the_roster_under_
     );
 }
 
-/// `lanes`' `host_row_or_local`: the listing carries
-/// this machine's reading of a billed account and the provider's beside
-/// it, local first, and a pick judges one of them. Defect: both readings
-/// judged as two accounts, so a provider's refusal or reservation never
-/// stops the local copy and a launch lands on a credential whose own
-/// reading refuses it, or a usable provider copy is refused on its dead
-/// local copy; or the provider's reading, measured with no window scoped
-/// to the launch's model, judged on its shared windows where this machine
-/// read the model's own. The same account at local wall 0 and provider
+/// `lanes`' `host_row_or_local`: the listing carries this machine's reading
+/// of a billed account and the provider's beside it, local first, and a
+/// pick judges one of them. The same account at local wall 0 and provider
 /// wall 99 on a seat: the chooser refuses and the named reading names the
 /// provider's `seat-reserve`. A Claude account the provider measured
 /// without the model's window: the local reading's model window decides,
@@ -1120,16 +1093,13 @@ fn one_reading_per_billed_account_the_providers_eligible_reading_over_this_machi
     );
 }
 
-/// `lanes --help` § pick's tier 0: a grant, the
-/// allowance that expires and does not refill, is spent before any plan
-/// window, the one that expires first first. Defect: a plan window spent
-/// while a cloud grant with room expires unspent; two grants spent in the
-/// wrong order; a Pi API grant pick judged on plan rows; a grant pool
-/// nobody measured answered as a wall to wait out. Two cloud grants and a
-/// plan account with more room: the grant ending sooner is the lane; that
-/// grant under the floor is `walled` and the later one is the lane; a Pi
-/// `anthropic/` pick reads the `api-credit` rows alone, and with none
-/// measured is `pick-provider-unmeasured`, exit 5.
+/// `lanes --help` § pick's tier 0: a grant, the allowance that expires and
+/// does not refill, is spent before any plan window, the one that expires
+/// first first. Two cloud grants and a plan account with more room: the
+/// grant ending sooner is the lane; that grant under the floor is `walled`
+/// and the later one is the lane; a Pi `anthropic/` pick reads the
+/// `api-credit` rows alone, and with none measured is
+/// `pick-provider-unmeasured`, exit 5.
 #[test]
 fn a_grant_is_spent_before_a_plan_window_the_one_expiring_first_first() {
     let world = World::new(&[]);
@@ -1255,18 +1225,14 @@ fn a_grant_is_spent_before_a_plan_window_the_one_expiring_first_first() {
     );
 }
 
-/// The succession walk's and the turn-end hook's trigger (`lib/overseer-
-/// launch.sh` `ol_pick_record`, `hooks/lane-mail-check.sh`'s account mark;
-/// step8-map § 0.4): `--min-headroom-pct T` is the bound `100 - T` in the
-/// record's own unit, and `--binding-floor` holds the account's own
-/// binding bucket to the bound beside the model's window. Defect: a
-/// trigger admitting an account under the threshold because the setting's
-/// bound is looser; a successor opened on an account whose own binding
-/// bucket, a window of a model it never launches, is at the mark it would
-/// hand off on at once. An account at 85 used is room under the setting
-/// and walled under a trigger of 20, named or chosen; the account whose
-/// Opus window is spent is the Sonnet lane without the floor and not with
-/// it.
+/// The succession walk's and the turn-end hook's trigger
+/// (`lib/overseer-launch.sh` `ol_pick_record`, `hooks/lane-mail-check.sh`'s
+/// account mark): `--min-headroom-pct T` is the bound `100 - T` in the
+/// record's own unit, and `--binding-floor` holds the account's own binding
+/// bucket to the bound beside the model's window. An account at 85 used is
+/// room under the setting and walled under a trigger of 20, named or
+/// chosen; the account whose Opus window is spent is the Sonnet lane
+/// without the floor and not with it.
 #[test]
 fn the_trigger_is_the_bound_in_the_records_unit_and_the_floor_holds_the_accounts_own_bucket() {
     let world = World::new(&[]);
@@ -1336,16 +1302,13 @@ fn the_trigger_is_the_bound_in_the_records_unit_and_the_floor_holds_the_accounts
     );
 }
 
-/// The candidate lane charged: the candidate
-/// is a lane in the projection's charge, and the reset bonus
-/// `1 + 1 / (1 + hours to the binding reset)` is the selection score's
-/// weight, never a charge. Defect: the bonus read as the candidate's
-/// charge, so a sooner reset buys a launch past the bound or the
-/// candidate spends nothing; the order among rooms ignoring the reset.
-/// Two accounts at one wall with resets one hour and a hundred hours
-/// away: the sooner reset is the lane, and its projected room is the room
-/// less the candidate's own charge to that reset; the account at the
-/// bound with a reset a minute away is never the lane over one with room.
+/// The candidate lane charged: the candidate is a lane in the projection's
+/// charge, and the reset bonus `1 + 1 / (1 + hours to the binding reset)`
+/// is the selection score's weight, never a charge. Two accounts at one
+/// wall with resets one hour and a hundred hours away: the sooner reset is
+/// the lane, and its projected room is the room less the candidate's own
+/// charge to that reset; the account at the bound with a reset a minute
+/// away is never the lane over one with room.
 #[test]
 fn the_candidate_lane_is_charged_and_the_reset_bonus_orders_rooms_without_buying_a_launch() {
     let world = World::new(&[]);
@@ -1417,17 +1380,14 @@ fn the_candidate_lane_is_charged_and_the_reset_bonus_orders_rooms_without_buying
     );
 }
 
-/// `lane-model.sh`'s fixed sample divisor: the session
-/// window's observed usage is shared among the lanes live at the sample,
-/// never among the lanes live now. Defect: a cached sample divided by the
-/// current live-lane count, so every lane launched since the sample
-/// dilutes the per-lane burn it measured and a fifth lane is admitted onto
-/// an account the five will exhaust before the reset. One sample held
-/// constant, 60 percent of the session four hours in and taken 240 seconds
-/// ago with one lane live, while three more lanes join after it: the fifth
-/// candidate is charged the sample's per-lane rate, 15 points an hour for
-/// five lanes to the reset, and the room is -35, the shell's answer on the
-/// same sample; the same sample taken now counts every lane live now.
+/// `lane-model.sh`'s fixed sample divisor: the session window's observed
+/// usage is shared among the lanes live at the sample, never among the
+/// lanes live now. One sample held constant, 60 percent of the session four
+/// hours in and taken 240 seconds ago with one lane live, while three more
+/// lanes join after it: the fifth candidate is charged the sample's
+/// per-lane rate, 15 points an hour for five lanes to the reset, and the
+/// room is -35, the shell's answer on the same sample; the same sample
+/// taken now counts every lane live now.
 #[test]
 fn a_cached_sample_keeps_the_occupancy_held_with_it_as_lanes_join() {
     let mut world = World::new(&[]);
@@ -1485,17 +1445,12 @@ fn a_cached_sample_keeps_the_occupancy_held_with_it_as_lanes_join() {
     drop(children);
 }
 
-/// The instant a lane began spending on its account: `session_since`,
-/// which every launch and relaunch rewrites
-/// and a wake keeps, else `running_at`, else `launched_at`. Defect: the
-/// sample's occupancy counted from `launched_at`, which a relaunch keeps
-/// from the lane's first launch, so a lane relaunched onto this account
-/// after the sample (a wall moving several lanes onto one account within
-/// the cache's serve age) counts as live at it and dilutes the per-lane
-/// burn. The sample of the row above, with one lane on the account since
-/// before it and three lanes first launched two hours ago elsewhere and
-/// relaunched onto the account after it: the three are not counted, the
-/// fifth candidate's room is -35, `walled`.
+/// The instant a lane began spending on its account: `session_since`, which
+/// every launch and relaunch rewrites and a wake keeps, else `running_at`,
+/// else `launched_at`. The sample of the row above, with one lane on the
+/// account since before it and three lanes first launched two hours ago
+/// elsewhere and relaunched onto the account after it: the three are not
+/// counted, the fifth candidate's room is -35, `walled`.
 #[test]
 fn a_lane_relaunched_onto_the_account_after_the_sample_spent_none_of_it() {
     let mut world = World::new(&[]);
@@ -1540,22 +1495,19 @@ fn a_lane_relaunched_onto_the_account_after_the_sample_spent_none_of_it() {
     drop(children);
 }
 
-/// `lane-model.sh`'s measured rate: the rate the reader measured on
-/// the binding window is the whole account's delta, shared among the lanes
-/// live at the sample, except on a model window, which no lane on another
-/// model spends. Defect: the measured rate charged whole per lane, now for
-/// the hours to the reset, so an account with two live lanes and 14 points
-/// of room is walled. The weekly window at 50 with 80 hours to its reset,
-/// 0.3 points an hour measured across two live lanes: the candidate's room
-/// is 14, the per-lane share's, and the record carries the reader's rate
-/// fields, since the judged window is the reader's; a model window at 50
-/// with the same rate is charged the rate whole and walled; a window the
-/// reader did not rate carries `one-sample`. The window's identity carries
-/// its label (`lane-model.sh`'s `same_window`): two
-/// model windows at one reset are two windows, so a Fable read of an
-/// account whose reader rated its Opus window carries `one-sample` and no
-/// rate, never Opus's measured rate, which the mark judge would ask
-/// succession on.
+/// `lane-model.sh`'s measured rate: the rate the reader measured on the
+/// binding window is the whole account's delta, shared among the lanes live
+/// at the sample, except on a model window, which no lane on another model
+/// spends. The weekly window at 50 with 80 hours to its reset, 0.3 points
+/// an hour measured across two live lanes: the candidate's room is 14, the
+/// per-lane share's, and the record carries the reader's rate fields, since
+/// the judged window is the reader's; a model window at 50 with the same
+/// rate is charged the rate whole and walled; a window the reader did not
+/// rate carries `one-sample`. The window's identity carries its label
+/// (`lane-model.sh`'s `same_window`): two model windows at one reset are
+/// two windows, so a Fable read of an account whose reader rated its Opus
+/// window carries `one-sample` and no rate, never Opus's measured rate,
+/// which the mark judge would ask succession on.
 #[test]
 fn a_measured_binding_rate_is_the_per_lane_share_of_the_lanes_live_at_the_sample() {
     let mut world = World::new(&[]);
@@ -1664,21 +1616,16 @@ fn a_measured_binding_rate_is_the_per_lane_share_of_the_lanes_live_at_the_sample
     drop(children);
 }
 
-/// The Pi Copilot pool (`lanes --help` § pick, the Pi
-/// `github-copilot/` arm): the pool a Pi launch spends is never listed, so
-/// the judge reads it beside the listing. Defect: a `github-copilot/` Pi
-/// model with no candidate, so the repository's own second-opinion room
-/// check skips with room and the succession walk and the turn-end mark
-/// lose the account kind; the owner's stated pool never read; a provider's
-/// reading of the pool not replacing the statement; a statement for a
-/// Copilot CLI home or an excluded lane judged as a Pi root. The stated
-/// override makes the chooser answer that root with its monthly use and
-/// headroom through `stated`, and the named form judges it; a named
-/// excluded root is refused by its word, `excluded`, exit 3; the provider's
-/// `harness=pi` row with a reading replaces the statement, one without a
-/// reading leaves it standing; a failed provider read with nothing stated
-/// is `copilot-pool-unread`, and nothing stated and nothing read is
-/// `unmeasured`, exit 5, a read to repair.
+/// The Pi Copilot pool (`lanes --help` § pick, the Pi `github-copilot/`
+/// arm): the pool a Pi launch spends is never listed, so the judge reads it
+/// beside the listing. The stated override makes the chooser answer that
+/// root with its monthly use and headroom through `stated`, and the named
+/// form judges it; a named excluded root is refused by its word,
+/// `excluded`, exit 3; the provider's `harness=pi` row with a reading
+/// replaces the statement, one without a reading leaves it standing; a
+/// failed provider read with nothing stated is `copilot-pool-unread`, and
+/// nothing stated and nothing read is `unmeasured`, exit 5, a read to
+/// repair.
 #[test]
 fn a_pi_copilot_pool_is_judged_from_the_providers_row_or_the_owners_statement() {
     let root = "/home/me/.pi1".to_owned();
@@ -1805,21 +1752,17 @@ fn a_pi_copilot_pool_is_judged_from_the_providers_row_or_the_owners_statement() 
 }
 
 /// `lanes --help` § pick's cloud-session rule, and the boundary's
-/// isolation: a `cloud-session` host's
-/// account is admitted only where `ORCH_LANE_CLOUD_REPOS` gives it this
-/// checkout's repository, read by a `git` child of the judge. Defect: a
-/// cloud session opened on an account with no access to the repository,
-/// which fails after the launch; an origin nobody can read admitting
-/// every account; the judge's `git` child reading the operator's own
-/// `~/.gitconfig` in place of the boundary's home. Under a host whose
-/// capability line says `launch=cloud-session`, with the checkout's origin
-/// on github.com, the account the setting names for that repository
-/// (compared as GitHub reads names, without case) is the lane, the other
-/// is `cloud-repo-unset` among the exclusions and refused by name at exit
-/// 7; with no origin none is admitted; under an SSH host the rule does not
-/// apply. Under a home of the row's own whose `.gitconfig` rewrites the
-/// origin's owner to `canary`, the account given `canary/repo` is the
-/// lane: the production `git` child read the home it was handed.
+/// isolation: a `cloud-session` host's account is admitted only where
+/// `ORCH_LANE_CLOUD_REPOS` gives it this checkout's repository, read by a
+/// `git` child of the judge. Under a host whose capability line says
+/// `launch=cloud-session`, with the checkout's origin on github.com, the
+/// account the setting names for that repository (compared as GitHub reads
+/// names, without case) is the lane, the other is `cloud-repo-unset` among
+/// the exclusions and refused by name at exit 7; with no origin none is
+/// admitted; under an SSH host the rule does not apply. Under a home of the
+/// row's own whose `.gitconfig` rewrites the origin's owner to `canary`,
+/// the account given `canary/repo` is the lane: the production `git` child
+/// read the home it was handed.
 #[test]
 fn a_cloud_session_host_admits_only_an_account_with_access_to_this_repository() {
     let mut world = World::new(&[
@@ -1910,21 +1853,13 @@ fn a_cloud_session_host_admits_only_an_account_with_access_to_this_repository() 
 }
 
 /// The `accounts pick` verb: the reply a shell caller reads carries the
-/// answer's word,
-/// `lanes pick`'s exit by number and the record, so the launcher, the
-/// walk, the hook and the mark judge read the verdict they read before;
-/// an integral figure is spelled as an integer, the form the mark judge's
-/// `^[0-9]{1,3}$` reads, a fraction as a fraction; `--min-headroom-pct` is
-/// the callers' trigger; `--env` is the room check a consumer's
-/// `SECOND_OPINION_<NAME>_ROOM_CMD` runs, the launch prefix on stdout at
-/// exit 0 and the keyed line at the answer's exit otherwise. Defect: a
-/// refusal exit where a judgement is an answer; the record missing the
-/// fields the callers read (`config_dir`, `projected_window`, `wall`,
-/// `binding_bucket`, `projected_headroom_pct`, `effective_headroom_pct`,
-/// `qualifying_count`), or spelling `wall` as `20.0`, which the mark judge
-/// reads as unreadable so the overseer's headroom mark never fires; the
-/// trigger not on the verb; a room check reading a JSON reply as an
-/// assignment.
+/// answer's word, `lanes pick`'s exit by number and the record, so the
+/// launcher, the walk, the hook and the mark judge read the verdict in the
+/// form they parse; an integral figure is spelled as an integer, the form
+/// the mark judge's `^[0-9]{1,3}$` reads, a fraction as a fraction;
+/// `--min-headroom-pct` is the callers' trigger; `--env` is the room check
+/// a consumer's `SECOND_OPINION_<NAME>_ROOM_CMD` runs, the launch prefix on
+/// stdout at exit 0 and the keyed line at the answer's exit otherwise.
 #[test]
 fn the_pick_verb_answers_the_judgement_with_the_legacy_exit_by_number() {
     let mut world = World::new(&[]);
@@ -2050,13 +1985,11 @@ fn the_pick_verb_answers_the_judgement_with_the_legacy_exit_by_number() {
     );
 }
 
-/// Defect: a named account the word refuses,
-/// reserved or retired from its day, answered as `walled` with the wall's
-/// figures, so the launcher refuses `lane-model-walled pct= bucket=` for
-/// an account that has room, sending the operator to a usage wall that is
-/// not there. The answer is the word's, at `lanes pick`'s exit 3 by
-/// number (no caller learns a new number), its reply naming the word and
-/// the record carrying `retired:<date>`.
+/// A named account its word refuses, reserved or retired from its day, may
+/// have room, so the answer is the word's, never `walled` with the wall's
+/// figures: at `lanes pick`'s exit 3 by number (no caller learns a new
+/// number), its reply naming the word and the record carrying
+/// `retired:<date>`.
 #[test]
 fn a_named_reserved_or_retired_account_is_refused_by_its_word_not_the_walls_figures() {
     let today = accounts::today(now());
@@ -2082,14 +2015,12 @@ fn a_named_reserved_or_retired_account_is_refused_by_its_word_not_the_walls_figu
     assert_eq!(retired["record"]["retire_date"], json!(today));
 }
 
-/// Defect: the
-/// provider's `plan_ends` compared as text and never validated, so a
-/// timestamp or a malformed value ends a day late or never, where the
-/// machine's own `ORCH_LANE_RETIRE` is held to a calendar day. A value
-/// that names no calendar day reads as invalid, not absent: the row keeps
-/// its figures, is never picked (named among the exclusions, and a named
-/// pick of it unjudged with the cause: an end nobody can read admits
-/// nothing), and is one `account-plan-end-invalid` line under the roster.
+/// The provider's `plan_ends` is held to a calendar day, as the machine's
+/// own `ORCH_LANE_RETIRE` is: a value that names no calendar day reads as
+/// invalid, not absent: the row keeps its figures, is never picked (named
+/// among the exclusions, and a named pick of it unjudged with the cause: an
+/// end nobody can read admits nothing), and is one
+/// `account-plan-end-invalid` line under the roster.
 #[test]
 fn a_plan_end_that_names_no_calendar_day_leaves_the_row_unpicked_with_its_figures_said() {
     let world = World::new(&[]);
@@ -2160,11 +2091,11 @@ fn a_plan_end_that_names_no_calendar_day_leaves_the_row_unpicked_with_its_figure
     );
 }
 
-/// The settings' refusals, as `lanes` refused them: a retirement naming
-/// no lane or no calendar day, a percentage past 100, a floor that is no
-/// whole number, a cloud repository entry naming no `owner/repo`, a stated
-/// Copilot pool naming no absolute root, no grant, a grant of nothing or
-/// one root twice, an exclusion naming a path, and the retired key
+/// The settings' refusals: a retirement naming no lane or no calendar day,
+/// a percentage past 100, a floor that is no whole number, a cloud
+/// repository entry naming no `owner/repo`, a stated Copilot pool naming no
+/// absolute root, no grant, a grant of nothing or one root twice, an
+/// exclusion naming a path, and the retired key
 /// `ORCH_OVERSEER_SEAT_RESERVE_PCT` read by nothing.
 #[test]
 fn a_statement_nobody_can_read_is_refused_by_key_and_value() {
@@ -2557,50 +2488,43 @@ struct Arm<'a> {
 
 /// The shipped producers' worlds: the shipped `lanes` listing, its provider
 /// fixture and its stated pool, read by the runtime through the boundary,
-/// one arm per input the shell `lanes pick` verb this judge replaces read
-/// and the judge must keep. Defect: a port that replaces a delegation drops
-/// an input the delegate read (the provider's reading over this machine's
-/// copy, the pool beside the listing, the alias overlay before an exclusion
-/// and a retirement, the label in a model window's identity, the instant a
-/// lane began on its account, the Pi root every directory is to the named
-/// form, the refusal of a model nothing bills before either form, the
-/// provider's Pi row of an excluded root the listing drops before the judge
-/// sees it), and no row shows it because every row plants the listing
-/// itself. The questions are one named and one chooser question per
-/// reachable exit site of the shell verb's call graph (its `pick)`
-/// dispatcher, `cmd_pick_lane`, `cmd_pick`, `named_account_judgment`,
-/// `measure_lane`, `measure_copilot_pool`, `pick_host_rows`,
-/// `host_row_or_local`, `emit_lane`, `validate_lane_settings`,
-/// `lane_pick_harness`, `lane_tier_inputs`, `lane_host_pool` and
-/// `lib/lane-model.sh`'s judge: `lane_judge`'s six verdict words, `credits`
-/// among them, and `host_row_or_local`'s three triggers) for each pool kind
-/// the site applies to (a local kind, the Codex credit balance, the Copilot
-/// pool, the `anthropic/` API grant, a seat, the cloud credit), and one per
-/// input that steers a pick to a site of its own (the exclusion, the
-/// retirement, the aliases, the stated pool, the cloud repositories, the
-/// headroom, the credit floor, the model, `--exclude-lane`,
-/// `--for-overseer`, `--binding-floor` and `--projected`) for each pool kind
-/// and each host form the verb dispatches on, this machine's read and a
-/// provider host. A ruling pins instead: the claim store and the seats, which the fleet
-/// state replaces; the settings refusal, which the loader owns; the
-/// dispatcher's class form, unnamed harness, `--exclude-lane` beside
-/// `--lane` and `--projected` without `--lane`, which no shipped caller
-/// passes; the reader's sites inside `measure_lane`, whose statuses the
-/// shipped `lanes list` still measures and whose one judge outcome,
-/// unmeasured, the local kind's questions ask; the reader's own failures,
-/// which an unread listing holds, and its caches; and a cell whose input
-/// reaches the site another cell's question asks (the reader's exclusion of
-/// a local kind on this machine's read and on the cloud credit, the fleet's
-/// overseer seat beside the provider's, `--exclude-lane` on each pool, the
-/// alias overlay on this machine's grant). A site the runtime answers
-/// differently is a literal with its reason named in its arm (a retired or
-/// excluded root or grant refused by its word at exit 3 where the shell
-/// verb found no reading or an unstated pool at exit 5, judged the pool at
-/// exit 0, admitted the grant at exit 0 or answered the unset repository at
-/// exit 7; a provider row with `status=no_usage_data` and no figure leaving
-/// this machine's reading in both forms). Each question's answers are
-/// literals, the runtime's own and the shell verb's exit as recorded, never
-/// an oracle run here.
+/// one arm per input the shell `lanes pick` verb reads and the judge must
+/// keep. Every other row plants the listing itself, so an input the shell
+/// verb reads and the judge drops shows only here. The questions are one
+/// named and one chooser question per reachable exit site of the shell
+/// verb's call graph (its `pick)` dispatcher, `cmd_pick_lane`, `cmd_pick`,
+/// `named_account_judgment`, `measure_lane`, `measure_copilot_pool`,
+/// `pick_host_rows`, `host_row_or_local`, `emit_lane`,
+/// `validate_lane_settings`, `lane_pick_harness`, `lane_tier_inputs`,
+/// `lane_host_pool` and `lib/lane-model.sh`'s judge: `lane_judge`'s six
+/// verdict words, `credits` among them, and `host_row_or_local`'s three
+/// triggers) for each pool kind the site applies to (a local kind, the
+/// Codex credit balance, the Copilot pool, the `anthropic/` API grant, a
+/// seat, the cloud credit), and one per input that steers a pick to a site
+/// of its own (the exclusion, the retirement, the aliases, the stated pool,
+/// the cloud repositories, the headroom, the credit floor, the model,
+/// `--exclude-lane`, `--for-overseer`, `--binding-floor` and `--projected`)
+/// for each pool kind and each host form the verb dispatches on, this
+/// machine's read and a provider host. A ruling pins instead: the claim
+/// store and the seats, which the fleet state replaces; the settings
+/// refusal, which the loader owns; the dispatcher's class form, unnamed
+/// harness, `--exclude-lane` beside `--lane` and `--projected` without
+/// `--lane`, which no shipped caller passes; the reader's sites inside
+/// `measure_lane`, whose statuses the shipped `lanes list` still measures
+/// and whose one judge outcome, unmeasured, the local kind's questions ask;
+/// the reader's own failures, which an unread listing holds, and its
+/// caches; and a cell whose input reaches the site another cell's question
+/// asks (the reader's exclusion of a local kind on this machine's read and
+/// on the cloud credit, the fleet's overseer seat beside the provider's,
+/// `--exclude-lane` on each pool, the alias overlay on this machine's
+/// grant). A site the runtime answers differently is a literal with its
+/// reason named in its arm (a retired or excluded root or grant refused by
+/// its word at exit 3 where the shell verb found no reading or an unstated
+/// pool at exit 5, judged the pool at exit 0, admitted the grant at exit 0
+/// or answered the unset repository at exit 7; a provider row with
+/// `status=no_usage_data` and no figure leaving this machine's reading in
+/// both forms). Each question's answers are literals, the runtime's own and
+/// the shell verb's exit as recorded, never an oracle run here.
 #[test]
 fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
     let producer = Producer::new();

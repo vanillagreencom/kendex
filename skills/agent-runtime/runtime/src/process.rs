@@ -1172,9 +1172,8 @@ mod tests {
     }
 
     /// A signal to a child this test owns is one counted `kill` start under
-    /// `signal`, delivered, and the child reads ended by that signal.
-    /// Defect: a signal sent past the runner, which the start count never
-    /// sees, so a measurement of starts per duty misses every stop.
+    /// `signal`, delivered, and the child reads ended by that signal, so a
+    /// measurement of starts per duty sees every stop.
     #[test]
     fn a_signal_to_a_held_child_counts_one_kill_start_and_ends_it() {
         let _signalling = SIGNALLING.lock().unwrap_or_else(PoisonError::into_inner);
@@ -1189,8 +1188,7 @@ mod tests {
     /// A signal to a pid no process holds reads refused, as `kill`'s ESRCH
     /// exit, and still counts the one start. The pid is above the kernel's
     /// `pid_max`, which proc(5) says is never allocated, so nothing is
-    /// signalled by accident. Defect: a gone pid read as an error or as
-    /// delivered, or its start uncounted.
+    /// signalled by accident.
     #[cfg(target_os = "linux")]
     #[test]
     fn a_signal_to_a_pid_nobody_holds_reads_refused_and_counts_one_start() {

@@ -147,16 +147,15 @@ fn refusal_key(out: &std::process::Output) -> String {
         .to_owned()
 }
 
-/// Defect: a succession asked from the controller's own pane ends with the
-/// process that asked. The predecessor here is a stub harness in a pane
-/// that runs the `op` as a foreground child, as the overseer's shell tool
-/// does. The op hands the effect to a detached job and answers
-/// `transfer-started`; the job retires the predecessor, whose exit closes
-/// the pane the op asked from, and completes the succession. The tmux shim
-/// holds the job at each `send-keys`: the launch line typed into the
-/// runner's window, released at once, and the brief typed after the
-/// retirement, where the row reads the job alive with the predecessor dead
-/// and its window gone, before the retirement is recorded.
+/// The predecessor here is a stub harness in a pane that runs the `op` as a
+/// foreground child, as the overseer's shell tool does. The op hands the
+/// effect to a detached job and answers `transfer-started`; the job retires
+/// the predecessor, whose exit closes the pane the op asked from, and
+/// completes the succession. The tmux shim holds the job at each
+/// `send-keys`: the launch line typed into the runner's window, released at
+/// once, and the brief typed after the retirement, where the row reads the
+/// job alive with the predecessor dead and its window gone, before the
+/// retirement is recorded.
 #[test]
 fn a_self_succession_from_the_predecessors_own_pane_completes() {
     let dir = tempfile::tempdir().unwrap();
@@ -293,11 +292,9 @@ fn a_self_succession_from_the_predecessors_own_pane_completes() {
     );
 }
 
-/// Defects: a repeated request while the job runs acting over the live
-/// owner, and a runner that lost the pasted brief published as the
-/// controller. The repeat reconciles against the live owner and touches
-/// nothing; the runner that records no turn is never published and is kept
-/// for a reconcile, which reads the same.
+/// The repeat reconciles against the live owner and touches nothing; the
+/// runner that records no turn is never published and is kept for a
+/// reconcile, which reads the same.
 #[test]
 fn a_repeated_request_reads_the_job_as_owner_live_and_a_lost_brief_keeps_the_runner() {
     let dir = tempfile::tempdir().unwrap();
@@ -393,10 +390,9 @@ fn a_succession_retires_the_predecessor_then_publishes_the_successor() {
     assert_eq!(intent["cause"], "live");
 }
 
-/// Defect: a brief typed before the predecessor is retired, or a successor
-/// published before its own session file records the turn. The brief is
-/// delivered only after retirement and the runner's composer, and the
-/// successor is published only once the runner's own file records it.
+/// The brief is delivered only after retirement and the runner's composer,
+/// and the successor is published only once the runner's own file records
+/// it.
 #[test]
 fn a_succession_delivers_the_brief_after_retirement_and_publishes_on_the_runner_s_turn() {
     let dir = tempfile::tempdir().unwrap();
@@ -424,11 +420,10 @@ fn a_succession_delivers_the_brief_after_retirement_and_publishes_on_the_runner_
     assert_eq!(intent["phase"]["phase"], "identity-read");
 }
 
-/// Defect: a predecessor retired for a successor that cannot run. A
-/// precondition read before retirement refuses `failed` with the predecessor
-/// in control and no runner left. The job reads them, so its environment
-/// carries each row's setting; the bound is short, since the fourth row
-/// needs it to elapse over a stub that never draws.
+/// A precondition read before retirement refuses `failed` with the
+/// predecessor in control and no runner left. The job reads them, so its
+/// environment carries each row's setting; the bound is short, since the
+/// fourth row needs it to elapse over a stub that never draws.
 #[test]
 fn a_succession_whose_preconditions_fail_never_retires() {
     struct Row {
@@ -516,16 +511,14 @@ fn a_succession_whose_preconditions_fail_never_retires() {
     }
 }
 
-/// Defect: a retirement that does not end the predecessor failing the
-/// succession out from under its handles, or a live process under a reused
-/// pid signalled. The predecessor's handles join the intent's set at the
-/// start of its retirement, before the first signal. A recorded start that
-/// is not the live process's reads stale: nothing is signalled, the waiting
-/// runner is stopped, and the intent holds `predecessor-not-retired` with
-/// the recorded identity standing on one stale reading. The reconcile's
-/// second independent reading settles that identity, and the succession,
-/// its runner gone, fails after retirement; the live process under the
-/// reused pid is never signalled.
+/// The predecessor's handles join the intent's set at the start of its
+/// retirement, before the first signal. A recorded start that is not the
+/// live process's reads stale: nothing is signalled, the waiting runner is
+/// stopped, and the intent holds `predecessor-not-retired` with the
+/// recorded identity standing on one stale reading. The reconcile's second
+/// independent reading settles that identity, and the succession, its
+/// runner gone, fails after retirement; the live process under the reused
+/// pid is never signalled.
 #[test]
 fn a_succession_that_cannot_retire_the_predecessor_holds_it_and_signals_nothing() {
     let dir = tempfile::tempdir().unwrap();
@@ -565,11 +558,10 @@ fn a_succession_that_cannot_retire_the_predecessor_holds_it_and_signals_nothing(
     assert!(live(predecessor.pid()), "still never signalled");
 }
 
-/// Defect: a delivery confirmed by a neighbouring lead session's turns. One
-/// in the same home and directory takes turns throughout; they never
-/// confirm the runner's delivery, which is read in the runner's own file
-/// alone. The runner is read ready through the gate, so the short bound
-/// measures the turn that never comes.
+/// A neighbouring lead session in the same home and directory takes turns
+/// throughout; they never confirm the runner's delivery, which is read in
+/// the runner's own file alone. The runner is read ready through the gate,
+/// so the short bound measures the turn that never comes.
 #[test]
 fn a_neighbour_session_s_turns_never_confirm_the_runner_s_delivery() {
     let dir = tempfile::tempdir().unwrap();
@@ -617,10 +609,9 @@ fn a_neighbour_session_s_turns_never_confirm_the_runner_s_delivery() {
     assert_eq!(runner.fleet()["overseer"]["generation"], 3);
 }
 
-/// Defect: the runner's turn looked for in the newest session file. A
-/// neighbouring lead session holding more turns than the runner is kept the
-/// newest file by replies; the runner's recorded turn in its own file still
-/// publishes the succession.
+/// A neighbouring lead session holding more turns than the runner is kept
+/// the newest file by replies; the runner's recorded turn in its own file
+/// still publishes the succession.
 #[test]
 fn a_neighbour_holding_more_turns_never_hides_the_runner_s_recorded_turn() {
     let dir = tempfile::tempdir().unwrap();
@@ -653,11 +644,10 @@ fn a_neighbour_holding_more_turns_never_hides_the_runner_s_recorded_turn() {
     assert_eq!(runner.fleet()["overseer"]["generation"], 4);
 }
 
-/// Defect: a predecessor with no recorded identity replaced on a pane
-/// reading alone. In a dead-cause recovery the generation-bound exit record
-/// proves it terminal whatever the pane shows; so does the recorded pane
-/// gone on the proven server. A pane standing on that server is an unknown
-/// stop, refused before anything opens; absence on a server that is not the
+/// In a dead-cause recovery the generation-bound exit record proves it
+/// terminal whatever the pane shows; so does the recorded pane gone on the
+/// proven server. A pane standing on that server is an unknown stop,
+/// refused before anything opens; absence on a server that is not the
 /// recorded one proves nothing. The successor's readiness is read through
 /// the gate: the retirement judgement is what each row proves.
 #[test]
@@ -778,9 +768,8 @@ fn a_dead_predecessor_with_no_identity_is_proven_terminal_by_the_exit_record_or_
     }
 }
 
-/// Defect: a walled succession relaunched on the account the wall spent. The
-/// request names the spent account, and a successor resolving to it refuses
-/// before any intent persists; one on another account runs.
+/// The request names the spent account, and a successor resolving to it
+/// refuses before any intent persists; one on another account runs.
 #[test]
 fn a_walled_succession_refuses_a_successor_on_the_spent_account() {
     let dir = tempfile::tempdir().unwrap();
@@ -814,7 +803,6 @@ fn a_walled_succession_refuses_a_successor_on_the_spent_account() {
     assert_eq!(runner.fleet()["overseer"]["generation"], 4);
 }
 
-/// Defect: a succession run, or a record written, with succession off.
 /// `ORCH_OVERSEER_SUCCESSION=off` refuses a transfer before any transition,
 /// so the record and the intents directory are as they were; a stop under
 /// the same setting is admitted.
@@ -894,10 +882,9 @@ fn end_sleeper(pid: u32) {
     wait_until("the sleeper ended", secs(10), || !live(pid));
 }
 
-/// Defect: a second job started over one that has not claimed yet. One
-/// outstanding-job predicate serves both routes, so a repeated stop whose
-/// job never claimed reconciles that job rather than starting a second; the
-/// launcher spawns once.
+/// One outstanding-job predicate serves both routes, so a repeated stop
+/// whose job never claimed reconciles that job rather than starting a
+/// second; the launcher spawns once.
 #[test]
 fn a_repeated_stop_with_an_unclaimed_job_does_not_start_a_second_job() {
     let dir = tempfile::tempdir().unwrap();
@@ -937,11 +924,9 @@ fn a_repeated_stop_with_an_unclaimed_job_does_not_start_a_second_job() {
     end_sleeper(job);
 }
 
-/// Defect: a stopped controller relaunched by death recovery, or a stop
-/// that signals more than the recorded identity. The explicit stop retires
-/// the controller exactly by its identity and records `off`; a death
-/// recovery then refuses `controller-off`; the one way back is
-/// `start-controller`, whose confirmation clears the mark.
+/// The explicit stop retires the controller exactly by its identity and
+/// records `off`; a death recovery then refuses `controller-off`; the one
+/// way back is `start-controller`, whose confirmation clears the mark.
 #[test]
 fn stop_controller_retires_exactly_and_records_off_which_death_recovery_honours() {
     let dir = tempfile::tempdir().unwrap();
@@ -989,12 +974,10 @@ fn stop_controller_retires_exactly_and_records_off_which_death_recovery_honours(
     assert_eq!(overseer["harness_pid"], server.pane_pid(&pane));
 }
 
-/// Defect: a stop with no identity recorded acting on a pane nothing names,
-/// or recording `off` over a controller that may run. The terminal proof
-/// confirms the stop (the pane gone on the proven server) and `off` is
-/// recorded; a pane standing with nothing naming what runs in it fails the
-/// stop, since an exact retirement has nothing to act on, and records
-/// nothing.
+/// The terminal proof confirms the stop (the pane gone on the proven
+/// server) and `off` is recorded; a pane standing with nothing naming what
+/// runs in it fails the stop, since an exact retirement has nothing to act
+/// on, and records nothing.
 #[test]
 fn stop_controller_without_an_identity_takes_the_proof_or_fails() {
     let dir = tempfile::tempdir().unwrap();
@@ -1027,8 +1010,7 @@ fn stop_controller_without_an_identity_takes_the_proof_or_fails() {
     );
 }
 
-/// Defect: a start opening a second controller over a live one. The first
-/// launch of a controller on a fleet that recorded none publishes
+/// The first launch of a controller on a fleet that recorded none publishes
 /// generation 1 with the runner's identity; a start over a controller whose
 /// identity reads live fails `overseer-live` before anything opens.
 #[test]
@@ -1094,11 +1076,10 @@ fn start_controller_opens_the_first_controller_and_refuses_over_a_live_one() {
     assert!(live(live_controller.pid()));
 }
 
-/// Defect: an adoption recording the caller's word for what runs in the
-/// pane. It records the harness identity read in the pane's foreground; a
-/// record of another, live controller refuses `overseer-live`; a pane
-/// holding no harness refuses `pane-not-harness`; the same pane adopted
-/// again is healed in place.
+/// An adoption records the harness identity read in the pane's foreground,
+/// never the caller's word for it; a record of another, live controller
+/// refuses `overseer-live`; a pane holding no harness refuses
+/// `pane-not-harness`; the same pane adopted again is healed in place.
 #[test]
 fn adopt_controller_binds_the_harness_read_in_the_pane_and_refuses_a_live_record_or_a_shell() {
     let dir = tempfile::tempdir().unwrap();
@@ -1163,14 +1144,12 @@ fn adopt_controller_binds_the_harness_read_in_the_pane_and_refuses_a_live_record
     assert_eq!(runner.fleet()["overseer"]["pane"], pane);
 }
 
-/// Defect: an abandonment closed `failed` with the runner claimed gone over
-/// a pane the host did not answer for. Abandoning a waiting runner before
-/// retirement completes `failed` only once its stop and its window's close
-/// both answered. A pane the host does not answer for is left as it stands
-/// and the intent stays open; a window close the host refuses after the
-/// runner's stop holds the intent open with the cause. The runner stands at
-/// its composer before the reconcile, so the bound is short: it is what an
-/// unanswering host is retried for.
+/// Abandoning a waiting runner before retirement completes `failed` only
+/// once its stop and its window's close both answered. A pane the host does
+/// not answer for is left as it stands and the intent stays open; a window
+/// close the host refuses after the runner's stop holds the intent open
+/// with the cause. The runner stands at its composer before the reconcile,
+/// so the bound is short: it is what an unanswering host is retried for.
 #[test]
 fn an_abandonment_whose_runner_cannot_be_read_or_closed_holds_the_intent_open() {
     struct Row {
@@ -1364,10 +1343,8 @@ fn an_abandonment_whose_runner_cannot_be_read_or_closed_holds_the_intent_open() 
     }
 }
 
-/// Defect: a closed intent listed open, or an item file's intents listed,
-/// by `state inspect`, which a succession guard reads before it acts: an
-/// open transfer is listed, a closed one is not, and an item file lists
-/// none.
+/// A succession guard reads `state inspect` before it acts: an open
+/// transfer is listed, a closed one is not, and an item file lists none.
 #[test]
 fn inspect_lists_the_open_intents_the_runtime_judges_open() {
     let dir = tempfile::tempdir().unwrap();
@@ -1398,13 +1375,12 @@ fn inspect_lists_the_open_intents_the_runtime_judges_open() {
     );
 }
 
-/// Defect: a stop asked from the controller's own pane ending with the
-/// process that asked. The explicit stop runs as the detached job the
-/// succession runs as. The predecessor here is a stub harness in a pane that
-/// runs the `op` as a foreground child, as the overseer's shell tool runs an
-/// explicit off from its own pane. The op hands the stop to the job and
-/// answers `stop-started`; the job lets the op exit, retires the predecessor
-/// by its identity, whose exit closes the pane the op asked from, closes the
+/// The explicit stop runs as the detached job the succession runs as. The
+/// predecessor here is a stub harness in a pane that runs the `op` as a
+/// foreground child, as the overseer's shell tool runs an explicit off from
+/// its own pane. The op hands the stop to the job and answers
+/// `stop-started`; the job lets the op exit, retires the predecessor by its
+/// identity, whose exit closes the pane the op asked from, closes the
 /// window and records `off`.
 #[test]
 fn a_self_stop_from_the_predecessors_own_pane_records_off_and_closes_the_pane() {
@@ -1497,9 +1473,8 @@ fn a_self_stop_from_the_predecessors_own_pane_records_off_and_closes_the_pane() 
     wait_until("the job exited", secs(10), || !live(owner_pid));
 }
 
-/// Defect: an unresolved controller read as an absent one. A live stub in a
-/// pane the record names on this server with no server start and no
-/// identity is unresolved, not absent. A start refuses
+/// A live stub in a pane the record names on this server with no server
+/// start and no identity is unresolved, not absent. A start refuses
 /// `predecessor-unproven` and opens nothing; an adoption from another pane
 /// refuses the same; a stop names nothing to retire and touches the pane;
 /// the stub runs on throughout. The remedy, adoption from the record's own
@@ -1584,12 +1559,10 @@ fn an_unproven_predecessor_is_never_replaced_and_its_pane_never_closed() {
     assert_eq!(healed["harness_pid"], pid);
 }
 
-/// Defect: a successor published over the predecessor's unread window. The
-/// window is a handle the publication settles. With its close refused by
-/// the host, the succession stays
-/// `unconfirmed` at `identity-read` with the successor live and the brief
-/// delivered, nothing published; the host answering again, the reconcile
-/// closes the window and publishes.
+/// The window is a handle the publication settles. With its close refused
+/// by the host, the succession stays `unconfirmed` at `identity-read` with
+/// the successor live and the brief delivered, nothing published; the host
+/// answering again, the reconcile closes the window and publishes.
 #[test]
 fn a_publication_waits_for_the_predecessors_window_to_read() {
     let dir = tempfile::tempdir().unwrap();
@@ -1678,11 +1651,10 @@ fn a_publication_waits_for_the_predecessors_window_to_read() {
     assert_eq!(overseer["harness_pid"], server.pane_pid(&successor));
 }
 
-/// Defect: a notice lost to a crash between a job intent's failed outcome
-/// write and its send, or sent twice. The state that crash leaves is a
-/// closed intent whose notice is recorded `owed`. The next
-/// reconcile, with no open intent to reconcile, sends that notice once and
-/// marks it `sent`; the reconcile after it sends nothing again.
+/// The state that crash leaves is a closed intent whose notice is recorded
+/// `owed`. The next reconcile, with no open intent to reconcile, sends that
+/// notice once and marks it `sent`; the reconcile after it sends nothing
+/// again.
 #[test]
 fn a_reconcile_sends_the_notice_a_closed_intent_still_owes_once() {
     let dir = tempfile::tempdir().unwrap();
@@ -1760,11 +1732,10 @@ fn owner_notices(mail_log: &Path) -> usize {
         .count()
 }
 
-/// Defect: a live request failed, or its owed notice dropped, by the notice
-/// walk that precedes it. A live `request-transfer` on a fleet whose closed
-/// intent of an earlier generation still owes its notice sends the notice
-/// once, marks it `sent`, and proceeds to its own effect,
-/// `transfer-started`; the walk never fails the request it precedes.
+/// A live `request-transfer` on a fleet whose closed intent of an earlier
+/// generation still owes its notice sends the notice once, marks it `sent`,
+/// and proceeds to its own effect, `transfer-started`; the walk never fails
+/// the request it precedes.
 #[test]
 fn a_live_request_with_an_owed_notice_proceeds() {
     let dir = tempfile::tempdir().unwrap();
@@ -1887,16 +1858,14 @@ fn a_job_failure_reaches_the_fleet_log_and_the_owner_once() {
     );
 }
 
-/// Defect: a successor launched from the recorded shell line rather than its
-/// typed fields. The runtime builds the successor's command from the typed
-/// launch fields through the one launch builder, which routes the account
-/// by the harness's table. A Pi successor
-/// on a `pi-claude/` model is launched with Pi's own root in
-/// `PI_CODING_AGENT_DIR` and the chosen Claude seat in `CLAUDE_CONFIG_DIR`,
-/// its model word carrying the provider and the effort, the caller's own
-/// words appended; the recorded `launch_line` is never what runs. A Claude
-/// successor under `native` keeps the caller's permission words and gains
-/// no bypass word.
+/// The runtime builds the successor's command from the typed launch fields
+/// through the one launch builder, which routes the account by the
+/// harness's table. A Pi successor on a `pi-claude/` model is launched with
+/// Pi's own root in `PI_CODING_AGENT_DIR` and the chosen Claude seat in
+/// `CLAUDE_CONFIG_DIR`, its model word carrying the provider and the
+/// effort, the caller's own words appended; the recorded `launch_line` is
+/// never what runs. A Claude successor under `native` keeps the caller's
+/// permission words and gains no bypass word.
 #[test]
 fn the_successor_is_launched_from_its_typed_fields_with_the_account_routed() {
     // Pi: the stub records what it was launched as and draws no composer,
@@ -2119,12 +2088,10 @@ fn launched_var<'a>(launched: &'a Value, name: &str) -> &'a Value {
     &launched["env"][name]
 }
 
-/// Defect: a reconcile after a crash between the predecessor's stop and the
-/// `retired` write publishing over its unread window. The recorded set is
-/// the window-opened one; the
-/// predecessor is gone and its window's close is refused by the host. The
-/// reconcile acquires the predecessor's handles before it acts and publishes
-/// nothing over its unread window: `unconfirmed`, the window standing.
+/// The recorded set is the window-opened one; the predecessor is gone and
+/// its window's close is refused by the host. The reconcile acquires the
+/// predecessor's handles before it acts and publishes nothing over its
+/// unread window: `unconfirmed`, the window standing.
 #[test]
 fn a_crash_before_the_retired_write_never_publishes_over_an_unread_window() {
     let dir = tempfile::tempdir().unwrap();
@@ -2201,8 +2168,7 @@ fn a_crash_before_the_retired_write_never_publishes_over_an_unread_window() {
     assert_eq!(runner.fleet()["overseer"]["generation"], 4);
 }
 
-/// Defect: the predecessor's window close discharging the runner's pane. The
-/// close lands on the predecessor's own pane key. With the runner's own
+/// The close lands on the predecessor's own pane key. With the runner's own
 /// window close refused and the runner's identity gone, the predecessor's
 /// window is closed and discharged by that close while the runner's pane
 /// stands held; two reconciles later the intent is still open, never
@@ -2293,19 +2259,17 @@ fn the_predecessors_close_never_discharges_the_runners_pane() {
     assert!(!server.panes().contains(&pane));
 }
 
-/// Defect: a stop refused after it signalled, or a signalled predecessor
-/// left live once the record moved under its intent. The controller stop
-/// records `signalled` before its first signal. Its `kill` stands in for a
-/// process that ignores the signal, so the stop times out and holds; with
-/// the record then moved under the open intent by another writer, the
-/// reconcile holds `target-moved` with `stop` not `none`: a refusal is
-/// impossible after a signal on the intent. That moved reconcile retries on
-/// the intent's own set, so the signalled predecessor is stopped by its own
-/// token there, never left live for the operator. The predecessor's pane is
-/// planted on a server process that is live (this test's own) but answers
-/// at no socket, the unobservable reading that holds the set open; a pane
-/// on a server replaced at the recorded pid reads gone instead and settles
-/// it.
+/// The controller stop records `signalled` before its first signal. Its
+/// `kill` stands in for a process that ignores the signal, so the stop
+/// times out and holds; with the record then moved under the open intent by
+/// another writer, the reconcile holds `target-moved` with `stop` not
+/// `none`: a refusal is impossible after a signal on the intent. That moved
+/// reconcile retries on the intent's own set, so the signalled predecessor
+/// is stopped by its own token there, never left live for the operator. The
+/// predecessor's pane is planted on a server process that is live (this
+/// test's own) but answers at no socket, the unobservable reading that
+/// holds the set open; a pane on a server replaced at the recorded pid
+/// reads gone instead and settles it.
 #[test]
 fn a_signalled_controller_stop_never_refuses() {
     let dir = tempfile::tempdir().unwrap();
@@ -2372,12 +2336,11 @@ fn a_signalled_controller_stop_never_refuses() {
     );
 }
 
-/// Defect: a failure after retirement dropping part of the recorded set.
 /// With the pending gone, the runner's pane standing and its recorded
 /// identity gone, the recorded set holds the predecessor's pane and
-/// identity. The failure consumes the whole
-/// recorded set: the runner stopped and its window closed, the predecessor's
-/// identity read and its window closed, nothing dropped.
+/// identity. The failure consumes the whole recorded set: the runner
+/// stopped and its window closed, the predecessor's identity read and its
+/// window closed, nothing dropped.
 #[test]
 fn pending_missing_after_retirement_consumes_the_predecessor() {
     let dir = tempfile::tempdir().unwrap();
@@ -2436,11 +2399,9 @@ fn pending_missing_after_retirement_consumes_the_predecessor() {
     );
 }
 
-/// Defect: the outstanding-job predicate reading the claim's `handed_from`
-/// rather than the recorded job obligations. An earlier job of the intent
-/// claimed it; the repeat's own job was launched and never claimed, and its
-/// group identity reads live: a further repeat starts no other job while
-/// that one stands.
+/// An earlier job of the intent claimed it; the repeat's own job was
+/// launched and never claimed, and its group identity reads live: a further
+/// repeat starts no other job while that one stands.
 #[test]
 fn a_repeat_after_a_claimed_job_starts_no_job_while_one_stands() {
     let dir = tempfile::tempdir().unwrap();
@@ -2481,15 +2442,14 @@ fn a_repeat_after_a_claimed_job_starts_no_job_while_one_stands() {
     end_sleeper(job);
 }
 
-/// Defect: a job identity manufactured by the launcher, or an exited job
-/// standing forever. Where no user manager lingers the launcher forks the
-/// job under `setsid` and reads its identity from the kernel's table before
-/// it returns, records it before the claim wait, and a child that exits
-/// before it claims stands as its recorded group until the reconcile reads
-/// it gone by that identity and discharges `job-exited`: `failed`, the
-/// request removed, the predecessor it never retired standing. The child
-/// is a sleep that never claims, so the claim bound is one second and the
-/// row ends the child itself once the identity is recorded.
+/// Where no user manager lingers the launcher forks the job under `setsid`
+/// and reads its identity from the kernel's table before it returns,
+/// records it before the claim wait, and a child that exits before it
+/// claims stands as its recorded group until the reconcile reads it gone by
+/// that identity and discharges `job-exited`: `failed`, the request
+/// removed, the predecessor it never retired standing. The child is a sleep
+/// that never claims, so the claim bound is one second and the row ends the
+/// child itself once the identity is recorded.
 #[test]
 fn a_job_is_a_setsid_group_where_no_manager_lingers_and_a_job_that_exits_before_claiming_is_read_gone_by_its_recorded_identity()
  {
@@ -3290,16 +3250,14 @@ fn a_transfer_the_watch_asked_whose_job_never_claimed_is_settled_by_the_watch_it
     assert!(closed, "{}", json!(transfers(&runner)));
 }
 
-/// Defect: the caller's words reshaped on the way to the launch, or a bypass
-/// word slipped under a `native` posture. The caller's argv reaches the
-/// launched command exactly as given, the judged posture travels as its own
-/// field, and the builder
-/// derives the environment from the posture: a `native` posture whose words
-/// carry the harness's bypass word refuses `permission-mismatch` before any
-/// window; a `bypass` posture whose words already carry it adds no second
-/// word and sets the prompt-suppression values; the dead-pane Copilot bypass
-/// replay's half, a Copilot `bypass` with `--allow-all` among its words, sets
-/// `COPILOT_ALLOW_ALL=true` with the word once.
+/// The caller's argv reaches the launched command exactly as given, the
+/// judged posture travels as its own field, and the builder derives the
+/// environment from the posture: a `native` posture whose words carry the
+/// harness's bypass word refuses `permission-mismatch` before any window; a
+/// `bypass` posture whose words already carry it adds no second word and
+/// sets the prompt-suppression values; the dead-pane Copilot bypass
+/// replay's half, a Copilot `bypass` with `--allow-all` among its words,
+/// sets `COPILOT_ALLOW_ALL=true` with the word once.
 #[test]
 fn the_callers_argv_reaches_the_launch_as_given_under_the_posture_it_spells() {
     // A two-word value stays one argv element.
@@ -3450,14 +3408,13 @@ fn the_callers_argv_reaches_the_launch_as_given_under_the_posture_it_spells() {
     );
 }
 
-/// Defect: a predecessor whose stop could not read it held as retiring, or
-/// its succession left open. A stop that reads `Unreadable` before it sends
-/// any signal (a `ps` that fails for the predecessor's pid, whose recorded
-/// start is the `lstart` form read through `ps`) leaves the predecessor as
-/// it was. Its handles return to its record, discharged
-/// `not-signalled` by that answer, and the succession fails before
-/// retirement with the pending restored: the healthy predecessor runs on and
-/// a new controller operation is not refused `intent-open`.
+/// A stop that reads `Unreadable` before it sends any signal (a `ps` that
+/// fails for the predecessor's pid, whose recorded start is the `lstart`
+/// form read through `ps`) leaves the predecessor as it was. Its handles
+/// return to its record, discharged `not-signalled` by that answer, and the
+/// succession fails before retirement with the pending restored: the
+/// healthy predecessor runs on and a new controller operation is not
+/// refused `intent-open`.
 #[test]
 fn a_stop_unread_before_any_signal_fails_before_retirement_and_restores_the_pending() {
     let dir = tempfile::tempdir().unwrap();
@@ -3522,11 +3479,10 @@ fn a_stop_unread_before_any_signal_fails_before_retirement_and_restores_the_pend
     );
 }
 
-/// Defect: a live predecessor held as retiring by every reconcile after a
-/// stop that timed out. A stop that signalled and timed out (a `kill` that
-/// signals nothing) holds the succession with the predecessor live; the
-/// reconcile, reading it live, runs the stop again through the signalling
-/// method, and with the host's own `kill` the predecessor ends.
+/// A stop that signalled and timed out (a `kill` that signals nothing)
+/// holds the succession with the predecessor live; the reconcile, reading
+/// it live, runs the stop again through the signalling method, and with the
+/// host's own `kill` the predecessor ends.
 #[test]
 fn a_live_predecessor_after_a_timed_out_stop_is_re_signalled_by_the_reconcile() {
     let dir = tempfile::tempdir().unwrap();
@@ -3558,11 +3514,10 @@ fn a_live_predecessor_after_a_timed_out_stop_is_re_signalled_by_the_reconcile() 
     assert_eq!(report["intent"]["observation"]["retired"], true, "{report}");
 }
 
-/// Defect: a narrower permission word read as a bypass, or a bypass alias
-/// let through under `native`. A `native` posture with a narrower
-/// permission word launches with exactly that word and no bypass word or
-/// environment, for each harness's narrower spelling; a `native` posture
-/// carrying a full-bypass alias refuses `permission-mismatch`.
+/// A `native` posture with a narrower permission word launches with exactly
+/// that word and no bypass word or environment, for each harness's narrower
+/// spelling; a `native` posture carrying a full-bypass alias refuses
+/// `permission-mismatch`.
 #[test]
 fn a_native_posture_keeps_a_narrower_permission_word_and_refuses_a_bypass_alias() {
     // `started`: the words admit the posture, so the successor's stub runs
@@ -3690,16 +3645,14 @@ fn original_pending_of(runner: &Runner) -> Value {
     pending(runner.state_dir())
 }
 
-/// Defect: a job held `possibly-started` for good over a record that says
-/// nothing started, or a job assumed absent over a record the reconcile
-/// cannot read. The reconcile reads the launcher's record at the sidecar's
-/// recorded address three-valued: a `status=` word, the rewrite a launch
-/// that ended after its fork leaves, settles the job as nothing started; a
-/// record naming no identity, what a launcher crash between its pre-write
-/// and its identity read leaves, holds the job `possibly-started`; a record
-/// naming a gone identity discharges the job `job-exited` and the transfer
-/// fails; a record that cannot be read holds the job. The predecessor the
-/// job never retired stands in every case.
+/// The reconcile reads the launcher's record at the sidecar's recorded
+/// address three-valued: a `status=` word, the rewrite a launch that ended
+/// after its fork leaves, settles the job as nothing started; a record
+/// naming no identity, what a launcher crash between its pre-write and its
+/// identity read leaves, holds the job `possibly-started`; a record naming
+/// a gone identity discharges the job `job-exited` and the transfer fails;
+/// a record that cannot be read holds the job. The predecessor the job
+/// never retired stands in every case.
 #[test]
 fn the_reconcile_reads_a_launcher_record_three_valued() {
     // record text (a directory where `None`), outcome, observation job word, a job remains
@@ -3850,16 +3803,14 @@ fn watch_words(state: &Path) -> Value {
     ])
 }
 
-/// Defect: a start that publishes a controller with no watch, or one that
-/// reads a refused launch as a watch started. The request carries the
-/// watch words; the effect launches them through its own launcher as a
-/// unit of the cutover fakes' user manager once the runner is read at its
-/// composer, and the row reads the claim the runtime wrote, the record's
-/// `overseer.watch` naming the unit the manager started, and the job
-/// discharged by that claim. A launch that cannot open the watch's stderr
-/// file (a directory stands at its path) leaves the start `unconfirmed`
-/// naming the launch, the record naming no controller and the runner
-/// standing for the reconcile.
+/// The request carries the watch words; the effect launches them through
+/// its own launcher as a unit of the cutover fakes' user manager once the
+/// runner is read at its composer, and the row reads the claim the runtime
+/// wrote, the record's `overseer.watch` naming the unit the manager
+/// started, and the job discharged by that claim. A launch that cannot open
+/// the watch's stderr file (a directory stands at its path) leaves the
+/// start `unconfirmed` naming the launch, the record naming no controller
+/// and the runner standing for the reconcile.
 #[test]
 fn start_controller_launches_the_fleet_watch_and_a_refused_launch_is_unconfirmed() {
     let dir = tempfile::tempdir().unwrap();
@@ -4018,17 +3969,15 @@ fn snapshot_mailbox(runner: &Runner, snapshot: &Path, log: &Path) -> std::path::
     path
 }
 
-/// Defect: a second watch launched over the first by a reconcile that reads
-/// the job the crashed start recorded as nobody's. The start's process dies
-/// the moment it has recorded the launched job's identity in the intent's
-/// set, before the claim wait: the `setsid` fixture that execs the job
-/// watches the fleet record for the group naming its own pid, then kills
-/// its launcher and sleeps on as the job the row owns. The reconcile then
-/// reads the job by that identity: live, it holds the start with the job
-/// standing and launches nothing, owing the owner one notice; gone, it
-/// discharges `job-exited` and launches once more, the fixture this time
-/// execing the real `setsid` on the words as given, so the watch claims and
-/// the reconcile confirms the start.
+/// The start's process dies the moment it has recorded the launched job's
+/// identity in the intent's set, before the claim wait: the `setsid`
+/// fixture that execs the job watches the fleet record for the group naming
+/// its own pid, then kills its launcher and sleeps on as the job the row
+/// owns. The reconcile then reads the job by that identity: live, it holds
+/// the start with the job standing and launches nothing, owing the owner
+/// one notice; gone, it discharges `job-exited` and launches once more, the
+/// fixture this time execing the real `setsid` on the words as given, so
+/// the watch claims and the reconcile confirms the start.
 #[test]
 fn a_crash_between_the_watch_launch_and_its_record_read_launches_no_second_watch() {
     use std::os::unix::process::ExitStatusExt;
@@ -4572,15 +4521,16 @@ fn codex_turns(home: &Path) -> Vec<String> {
     turns
 }
 
-/// Defect: a unit start whose answer was lost, or that failed after the
-/// manager acted, launched again under setsid. The fake user manager starts
-/// the watch's unit and then its `systemd-run` ends by a signal, or exits 1
-/// with the real client's line for a reply the bus dropped
-/// (`Connection reset by peer`) or for its own method timeout
-/// (`Connection timed out`), and the manager reads the unit `not-found`,
-/// as `--collect` leaves a unit that ran and ended. The launch holds the job
-/// by its unit, never a second watch beside it: the record names the unit
-/// the manager started, one unit stands, and no `setsid` route ran.
+/// The fake user manager starts the watch's unit and then its `systemd-run`
+/// ends by a signal, or exits 1 with the real client's line for a reply the
+/// bus dropped (`Connection reset by peer`) or for its own method timeout
+/// (`Connection timed out`), or with that line carrying a manager answer
+/// that holds the words of a refusal the client makes before it asks (the
+/// client prints the manager's text verbatim after its own words), and the
+/// manager reads the unit `not-found`, as `--collect` leaves a unit that
+/// ran and ended. The launch holds the job by its unit, never a second
+/// watch beside it: the record names the unit the manager started, one unit
+/// stands, and no `setsid` route ran.
 #[test]
 fn a_unit_start_whose_answer_was_lost_or_failed_after_the_manager_acted_is_held_by_its_unit_and_never_launched_again()
  {
@@ -4594,6 +4544,14 @@ fn a_unit_start_whose_answer_was_lost_or_failed_after_the_manager_acted_is_held_
         (
             "client-timeout",
             "echo 'Failed to start transient service unit: Connection timed out' >&2\nexit 1\n",
+        ),
+        (
+            "answer-with-connect-words",
+            "echo 'Failed to start transient service unit: Failed to connect to the moon: No such file or directory' >&2\nexit 1\n",
+        ),
+        (
+            "answer-with-assign-words",
+            "echo 'Failed to start transient service unit: Cannot assign environment variable X: Invalid argument' >&2\nexit 1\n",
         ),
     ] {
         let dir = tempfile::tempdir().unwrap();
@@ -4638,27 +4596,21 @@ fn a_unit_start_whose_answer_was_lost_or_failed_after_the_manager_acted_is_held_
     }
 }
 
-/// Defect: a start the client refused before it asked the manager anything
-/// held as a unit that never existed, so no watch, transfer or stop job
-/// ran, on every attempt; a variable the client refuses handed to it; the
-/// refusal read through logging settings the client inherited; and the
-/// refusal missed behind a line the client puts before it: a warning about
-/// a setting of its own, the loader's line for an object it cannot preload,
-/// or another program's parser the job's environment picked. The fake user
-/// manager answers as the real client does under a private runtime
-/// directory and a private bus: a `--setenv` name outside shell syntax or a
-/// value holding a noncharacter is its parser's refusal, a bus it cannot
-/// reach is its connect's, the line shaped by its own logging settings and
-/// put after a planted warning, and `SYSTEMD_INVOKED_AS=run0` in its own
-/// environment is run0's parser refusing `--collect` before any connect. An
-/// exported bash function, or a variable holding a noncharacter: the launch
-/// hands neither over and the watch runs as its unit. The bus unreachable
-/// after the probe, on a plain host, one whose environment asks systemd for
-/// debug logging, one whose empty ratelimit setting draws the warning, or
-/// one whose `LD_PRELOAD` names a missing object: the launch falls to
-/// `setsid` and the watch runs there, the job's value of the client's own
-/// name handed to the unit explicitly. The environment naming run0: the
-/// client runs as itself and the watch runs as its unit.
+/// The fake user manager answers as the real client does under a private
+/// runtime directory and a private bus: a `--setenv` name outside shell
+/// syntax or a value holding a noncharacter is its parser's refusal, a bus
+/// it cannot reach is its connect's, the line shaped by its own logging
+/// settings and put after a planted warning, and `SYSTEMD_INVOKED_AS=run0`
+/// in its own environment is run0's parser refusing `--collect` before any
+/// connect. An exported bash function, or a variable holding a
+/// noncharacter: the launch hands neither over and the watch runs as its
+/// unit. The bus unreachable after the probe, on a plain host, one whose
+/// environment asks systemd for debug logging, one whose empty ratelimit
+/// setting draws the warning, or one whose `LD_PRELOAD` names a missing
+/// object: the launch falls to `setsid` and the watch runs there, the job's
+/// value of the client's own name handed to the unit explicitly. The
+/// environment naming run0: the client runs as itself and the watch runs as
+/// its unit.
 #[test]
 fn a_unit_start_the_client_refused_before_asking_the_manager_runs_the_job_and_no_variable_it_refuses_is_handed_to_it()
  {
@@ -4777,12 +4729,11 @@ fn a_unit_start_the_client_refused_before_asking_the_manager_runs_the_job_and_no
     }
 }
 
-/// Defect: the job's variables handed to the client as `--setenv=NAME=VALUE`,
-/// so every exported value of the launching process, a lane's token among
-/// them, sat on the client's command line, which every local user reads
-/// through `/proc/<pid>/cmdline` while the client runs. The op's environment
-/// carries a token-shaped value and asks systemd for debug logging; the fake
-/// user manager starts the watch's unit with the variables its `--setenv`
+/// Every local user reads the client's command line through
+/// `/proc/<pid>/cmdline` while it runs, so no exported value, a lane's
+/// token among them, may stand there. The op's environment carries a
+/// token-shaped value and asks systemd for debug logging; the fake user
+/// manager starts the watch's unit with the variables its `--setenv`
 /// arguments resolve to, as a unit gets them. The client's recorded
 /// invocation holds the variable's name and never its value, and the unit's
 /// environment holds the variable with its value and the job's logging
@@ -4860,22 +4811,17 @@ fn stop_live_watch(runner: &Runner, state: &Path) {
     wait_until("the stopped watch ended", secs(20), || !live(claim.pid));
 }
 
-/// Defect: the launch's brief removed with the launching process, so a
-/// start held `session-unbound` (a Codex account whose rollout appears
-/// after its composer is drawn) is held `brief-unreadable` by every
-/// reconcile, and a repeated launch meets the same intent and holds the
-/// same way; only a hand-closed window lets it fail. The first launch's
-/// brief outlives the process that wrote it, because the runtime delivers
-/// it, and a start held before delivery is delivered by a reconcile that
-/// runs after the launch ended. The row drives the workflow's launch into
-/// the real runtime's `start-controller`, the join of the request and the
-/// runtime's effect that a row pinned against a fixture of either half
-/// misses: the gated Codex stub holds the start before delivery and the
-/// start answers `unconfirmed`; the brief file the intent names stands
-/// under the state directory; a repeated launch before the release meets
-/// the same intent and holds, opening no second runner and no watch; the
-/// gate released, the next reconcile binds the session, types that file's
-/// text and publishes the controller, one intent.
+/// The first launch's brief outlives the process that wrote it, because the
+/// runtime delivers it, and a start held before delivery is delivered by a
+/// reconcile that runs after the launch ended. The row drives the
+/// workflow's launch into the real runtime's `start-controller`, the join
+/// of the request and the runtime's effect that a row pinned against a
+/// fixture of either half misses: the gated Codex stub holds the start
+/// before delivery and the start answers `unconfirmed`; the brief file the
+/// intent names stands under the state directory; a repeated launch before
+/// the release meets the same intent and holds, opening no second runner
+/// and no watch; the gate released, the next reconcile binds the session,
+/// types that file's text and publishes the controller, one intent.
 #[test]
 fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() {
     let dir = tempfile::tempdir().unwrap();
@@ -5019,14 +4965,12 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
     stop_live_watch(&runner, &state);
 }
 
-/// Defect: a request and a runtime each pinned against a fixture of the
-/// other and joined wrong. The workflow's request against the real effect
-/// in one call, the healthy path: the launch's steps with the Claude stub
-/// confirm in their own call, and the record carries the launch's
-/// directory, model, account and pane; the brief typed into the stub is
-/// the file the request named, which the launch left standing; the display
-/// line recorded reads, as the hook reads it, to the launch's model,
-/// account, permission word and handoff.
+/// The workflow's request against the real effect in one call, the healthy
+/// path: the launch's steps with the Claude stub confirm in their own call,
+/// and the record carries the launch's directory, model, account and pane;
+/// the brief typed into the stub is the file the request named, which the
+/// launch left standing; the display line recorded reads, as the hook reads
+/// it, to the launch's model, account, permission word and handoff.
 #[test]
 fn a_first_launch_confirmed_in_its_call_records_the_launchers_identity() {
     let dir = tempfile::tempdir().unwrap();
@@ -5183,11 +5127,9 @@ fn model_switch(
 
 const MODEL_SWITCHED: &str = "lane-mail-check: model-switched=fable observed=claude-sonnet-5-5";
 
-/// Defect: a first launch whose record the installed hook's model-switch
-/// recovery cannot read, the request carrying no line and the runtime
-/// publishing none. The real `start-controller` publishes the line the
-/// runtime composes for the controller it launched, and the real hook's
-/// `PostModelSwitch` reads the model and the handoff off it.
+/// The real `start-controller` publishes the line the runtime composes for
+/// the controller it launched, and the real hook's `PostModelSwitch` reads
+/// the model and the handoff off it.
 #[test]
 fn a_model_switch_after_a_first_launch_through_the_fence_is_read_off_the_records_line() {
     let dir = tempfile::tempdir().unwrap();
@@ -5274,13 +5216,12 @@ fn resume_request(cwd: &Path, harness: &str, home: &Path, id: &str) -> Value {
     json!({"op": "start-controller", "controller": controller})
 }
 
-/// Defect: a controller's resume opening a fresh session in place of the
-/// recorded one, or a session the home never held. The start continues the
-/// recorded native session in each harness's own resume form: the Claude
-/// stub refuses a resume of a file the home lacks, so a confirmed start, the
-/// bound id and the brief typed into that id's own file prove the line;
-/// Codex and Copilot draw no composer, so their words are read off the
-/// launch record; an id the home never held fails before anything opens.
+/// The start continues the recorded native session in each harness's own
+/// resume form: the Claude stub refuses a resume of a file the home lacks,
+/// so a confirmed start, the bound id and the brief typed into that id's
+/// own file prove the line; Codex and Copilot draw no composer, so their
+/// words are read off the launch record; an id the home never held fails
+/// before anything opens.
 #[test]
 fn a_controller_resume_continues_the_recorded_session_in_each_harness_s_own_form() {
     let dir = tempfile::tempdir().unwrap();
@@ -5378,9 +5319,7 @@ fn a_controller_resume_continues_the_recorded_session_in_each_harness_s_own_form
     }
 }
 
-/// Defect: a successor whose harness runs under another home, or another
-/// config mode, than the one its session is proved and recorded under. An
-/// accountless start resuming the session its pending names under a home
+/// An accountless start resuming the session its pending names under a home
 /// resumes it there, the home named as the pending names it (the resume
 /// stub refuses a file its config dir lacks, so a confirmed start is the
 /// proof); a fresh accountless Claude or Codex start runs on, and records,
@@ -5555,10 +5494,9 @@ fn a_controller_with_no_account_runs_under_the_one_home_its_session_is_proved_an
     }
 }
 
-/// Defect: a Pi successor's fallback root decided outside the lane
-/// launch's one rule, so a root that does not stand reaches the harness
-/// gate, which refuses it as a settings choice under that root, where the
-/// lane launch on the same host refuses `home-missing`.
+/// A Pi successor's fallback root is the lane launch's one rule, so a root
+/// that does not stand refuses `home-missing` as a lane launch on the same
+/// host does, never at the harness gate as a settings choice under it.
 #[test]
 fn an_accountless_pi_successor_with_no_root_kept_refuses_home_missing_before_any_window() {
     let dir = tempfile::tempdir().unwrap();
@@ -5597,9 +5535,8 @@ fn an_accountless_pi_successor_with_no_root_kept_refuses_home_missing_before_any
     );
 }
 
-/// Defect: a Pi controller's resume reaching a window. Pi continues a
-/// session by its file, which no record carries, so the start refuses
-/// `resume-unsupported` by name before anything opens.
+/// Pi continues a session by its file, which no record carries, so the
+/// start refuses `resume-unsupported` by name before anything opens.
 #[test]
 fn a_pi_controller_resume_is_refused_unsupported_before_anything_opens() {
     let dir = tempfile::tempdir().unwrap();
@@ -5640,12 +5577,11 @@ fn expected_of(record: &Value) -> Value {
     })
 }
 
-/// Defect: orch opening a successor for a controller whose record another
-/// lifecycle keeps. An adoption carrying the controller's own succession
-/// command writes it on the record; `request-transfer` under any cause
-/// refuses `succession-owned` naming the command and writes nothing; the
-/// same pane adopted again keeps it; once that controller is gone, another
-/// session's adoption replaces the record, the command with it.
+/// An adoption carrying the controller's own succession command writes it
+/// on the record; `request-transfer` under any cause refuses
+/// `succession-owned` naming the command and writes nothing; the same pane
+/// adopted again keeps it; once that controller is gone, another session's
+/// adoption replaces the record, the command with it.
 #[test]
 fn an_adopted_controller_with_its_own_succession_command_refuses_request_transfer() {
     let dir = tempfile::tempdir().unwrap();
@@ -5952,12 +5888,11 @@ fn measured_account(alias: &str, used: u64) -> Value {
     })
 }
 
-/// Defect: the context mark judged after the account, or a reading under
-/// both marks refusing the turn. A reading past the token cap is
-/// `mark-reached kind=context` before any account is read, with the
-/// decision the handoff record carries; a reading below both marks with
-/// the account above the trigger is `below-mark` carrying the headroom
-/// read; a reading with no window is `mark-unmeasured kind=context`.
+/// A reading past the token cap is `mark-reached kind=context` before any
+/// account is read, with the decision the handoff record carries; a reading
+/// below both marks with the account above the trigger is `below-mark`
+/// carrying the headroom read; a reading with no window is `mark-unmeasured
+/// kind=context`.
 #[test]
 fn the_marks_judge_reads_the_context_mark_before_the_account_and_the_rest_below_both() {
     let mut world = MarksWorld::new();
@@ -6067,10 +6002,8 @@ fn a_succession_key_naming_no_command_leaves_the_transfer_unowned_as_the_watch_r
     }
 }
 
-/// Defect: a caller measured through the provider's row read as unmeasured,
-/// or an ended plan read as room. The provider's row with room supplies the
-/// caller's headroom; a `plan_ended` row reaches the headroom mark at zero
-/// carrying its status.
+/// The provider's row with room supplies the caller's headroom; a
+/// `plan_ended` row reaches the headroom mark at zero carrying its status.
 #[test]
 fn a_hosted_caller_reads_its_headroom_off_the_providers_row_and_an_ended_plan_the_mark() {
     let mut world = MarksWorld::new();
@@ -6099,10 +6032,8 @@ fn a_hosted_caller_reads_its_headroom_off_the_providers_row_and_an_ended_plan_th
     assert_eq!(reached["context_decision"]["tokens"], json!(100000));
 }
 
-/// Defect: a burn that reaches the wall inside the setting read as room, or
-/// the minutes counted from the judgement instead of the sample. Sixty
-/// points of headroom burning two points a minute reach the wall in thirty
-/// minutes: the rate mark fires at thirty and not at twenty-nine.
+/// Sixty points of headroom burning two points a minute reach the wall in
+/// thirty minutes: the rate mark fires at thirty and not at twenty-nine.
 #[test]
 fn a_fast_burn_reaches_the_rate_mark_at_the_minutes_the_sample_projects() {
     let mut world = MarksWorld::new();
@@ -6142,13 +6073,11 @@ fn an_unmeasured_caller_answers_mark_unmeasured_headroom() {
     assert_eq!(answer["reason"], json!("headroom-none"));
 }
 
-/// Defect: a memory cap on the process's cgroup path read as absent, an
-/// unreadable charge read as zero, or a mark firing with no setting. On
-/// fixture cgroup files: a cap on a parent of the group is the nearest cap
-/// and the charge against it reaches the mark; a path with no cap is inert;
-/// a group whose charge cannot be read is `mark-unmeasured kind=memory`; a
-/// pid the proc tree lacks is gone; with no setting the mark is never
-/// judged.
+/// On fixture cgroup files: a cap on a parent of the group is the nearest
+/// cap and the charge against it reaches the mark; a path with no cap is
+/// inert; a group whose charge cannot be read is `mark-unmeasured
+/// kind=memory`; a pid the proc tree lacks is gone; with no setting the
+/// mark is never judged.
 #[test]
 fn the_memory_mark_reads_the_cgroup_three_valued_and_fires_at_the_setting() {
     use agent_runtime::process::{Identity, Memory, memory_of};
@@ -6266,10 +6195,9 @@ fn the_memory_mark_reads_the_cgroup_three_valued_and_fires_at_the_setting() {
 // The watch a start launches over a released loop's record.
 // ---------------------------------------------------------------------------
 
-/// Defect: a start refusing its watch for good over the claim a released
-/// repeat loop left when it died without its trap: a record naming a dead
-/// pid and no `start=`. The start's watch step reads that record gone,
-/// launches `watch run`, which takes the record over with one
+/// A released repeat loop that died without its trap leaves a claim record
+/// naming a dead pid and no `start=`. The start's watch step reads that
+/// record gone, launches `watch run`, which takes the record over with one
 /// `watch-taken-over` line naming `start=none`, claims under its own
 /// identity, and the start confirms with the job discharged by that claim.
 #[test]
@@ -6438,14 +6366,13 @@ fn intents(runner: &Runner) -> usize {
     runner.fleet()["intents"].as_array().map_or(0, Vec::len)
 }
 
-/// Defect: a first launch opening on an account the walk did not choose, or
-/// a walk that chose none opening anything. The workflow asks the runtime's
-/// walk and hands its answer to the real `start-controller`: with the first
-/// entry's only account walled, that entry is passed over by name and the
-/// overseer opens on the second entry's account with the walk's model and
-/// the settings' posture recorded; with that walled entry alone, the walk
-/// answers `none` with its counts and no successor, so no request is
-/// composed and no window, intent or record is made.
+/// The workflow asks the runtime's walk and hands its answer to the real
+/// `start-controller`: with the first entry's only account walled, that
+/// entry is passed over by name and the overseer opens on the second
+/// entry's account with the walk's model and the settings' posture
+/// recorded; with that walled entry alone, the walk answers `none` with its
+/// counts and no successor, so no request is composed and no window, intent
+/// or record is made.
 #[test]
 fn a_first_launch_opens_on_the_walks_choice_past_a_walled_entry_and_a_walk_choosing_none_opens_nothing()
  {
@@ -6517,9 +6444,6 @@ fn a_first_launch_opens_on_the_walks_choice_past_a_walled_entry_and_a_walk_choos
     );
 }
 
-/// Defect: a succession that stops its predecessor before the successor
-/// stands recorded, that opens on the predecessor's own account where the
-/// walk chose another, or that drops the posture the predecessor ran under.
 /// The workflow, named the live recorded controller, asks the runtime for
 /// the successor and hands it to the real `request-transfer`: when the
 /// predecessor is signalled the intent already records the successor's
@@ -6622,14 +6546,13 @@ fn a_named_predecessor_is_succeeded_on_the_walks_choice_with_its_posture_once_th
     );
 }
 
-/// Defect: a succession publishing a line that names the predecessor, the
-/// account it spent and the model it ran, where the walk chose another
-/// account and model, so the hook's model-switch recovery relaunches the
-/// predecessor's model on the spent account. The predecessor holds its own
-/// pane on the fleet server, its record carrying the line a released launch
-/// wrote for it, planted as `main` wrote it; the successor's record carries
-/// the line the runtime composed from the fields it launched with, which
-/// the real hook reads.
+/// The hook's model-switch recovery relaunches the model and account the
+/// published line names, so a line naming the predecessor's would relaunch
+/// its model on the account it spent. The predecessor holds its own pane on
+/// the fleet server, its record carrying the line a released launch wrote
+/// for it, planted as `main` wrote it; the successor's record carries the
+/// line the runtime composed from the fields it launched with, which the
+/// real hook reads.
 #[test]
 fn a_succession_publishes_the_line_of_the_successor_it_launched_never_the_predecessors() {
     let dir = tempfile::tempdir().unwrap();
@@ -6727,13 +6650,11 @@ fn a_succession_publishes_the_line_of_the_successor_it_launched_never_the_predec
     );
 }
 
-/// Defect: a succession that opens a successor for a pane the record does
-/// not name, or for a recorded controller that no longer runs, which is the
-/// dead recovery's. Named another pane than the recorded one, the transfer
-/// is refused before anything is written, its key read on the first
-/// `orch-runtime: ` line after the settings notice that stands ahead of it;
-/// named the recorded pane whose process has ended, the transfer fails
-/// `predecessor-not-live` before any window opens, the pending put back.
+/// Named another pane than the recorded one, the transfer is refused before
+/// anything is written, its key read on the first `orch-runtime: ` line
+/// after the settings notice that stands ahead of it; named the recorded
+/// pane whose process has ended, the transfer fails `predecessor-not-live`
+/// before any window opens, the pending put back.
 #[test]
 fn a_predecessor_that_is_not_the_live_recorded_controller_is_refused_with_nothing_opened() {
     let dir = tempfile::tempdir().unwrap();
@@ -6827,11 +6748,9 @@ fn a_predecessor_that_is_not_the_live_recorded_controller_is_refused_with_nothin
     );
 }
 
-/// Defect: a predecessor stopped, or a record changed, for a successor that
-/// never came up. The successor's harness never draws its composer within
-/// the launch's bound: the transfer fails before retirement, the runner's
-/// window is closed, the predecessor keeps running and the record is as it
-/// stood.
+/// The successor's harness never draws its composer within the launch's
+/// bound: the transfer fails before retirement, the runner's window is
+/// closed, the predecessor keeps running and the record is as it stood.
 #[test]
 fn a_successor_that_never_comes_up_leaves_the_predecessor_running_and_its_record_put_back() {
     let dir = tempfile::tempdir().unwrap();
@@ -6885,8 +6804,7 @@ fn a_successor_that_never_comes_up_leaves_the_predecessor_running_and_its_record
     assert_eq!(runner.fleet()["overseer"], before, "the record as it stood");
 }
 
-/// Defect: a start opening anything where the tmux session it is named into
-/// is absent. The fleet's session the server does not hold fails the start
+/// The fleet's session the server does not hold fails the start
 /// `tmux-session-missing`, naming it, before any window opens, and nothing
 /// is published.
 #[test]
@@ -7745,12 +7663,10 @@ fn a_marks_succession_leaves_the_account_a_rate_mark_spends_and_keeps_one_a_cont
     }
 }
 
-/// Defect: a first launch under the settings' native posture carrying a
-/// bypass word, or publishing a line naming a posture the launch does not
-/// run under. The launch starts with no fleet state, which its first step
-/// makes, and names the caller's permission words as the controller's
-/// `extra_args`: they reach the harness's argv and the record's line alike,
-/// and neither carries a bypass word.
+/// The launch starts with no fleet state, which its first step makes, and
+/// names the caller's permission words as the controller's `extra_args`:
+/// they reach the harness's argv and the record's line alike, and neither
+/// carries a bypass word.
 #[test]
 fn a_first_launch_under_the_native_posture_opens_with_no_bypass_word_in_its_argv() {
     let dir = tempfile::tempdir().unwrap();

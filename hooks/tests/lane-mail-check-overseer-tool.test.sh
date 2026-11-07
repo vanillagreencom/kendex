@@ -42,7 +42,7 @@ tool_record() { jq -r '"\(.tokens) \(.gap)"' "$LANE/tmp/lane-mail/overseer/conte
 process_count_setup "$TMP_ROOT" "$TMUX_BIN:$PATH"
 tool_overseer overseer_tool_cost
 write_transcript "$TRANSCRIPT" 100000
-# Warm the fixture's legacy record before counting this read-only call.
+# Warm the fixture's record before counting this read-only call.
 overseer_tool "$TRANSCRIPT"
 start_wake_watch repeat
 peer_send 'The watch owns this note.'

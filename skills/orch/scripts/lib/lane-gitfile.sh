@@ -35,12 +35,12 @@ lane_gitfile_common_dir() { # GITFILE_CONTENT
 }
 
 # ---------------------------------------------------------------------------
-# A hosted lane's files, read through lane-host: the probe oversee-watch and
-# oversee-report read a hosted worktree's `.git` and its item's workflow state
-# through, so both answer a gone worktree the same way. Each takes the
-# lane-host CLI path. ORCH_LANE_HOST is the caller's to set: oversee-report
-# puts the lane record's host in front of each call, and oversee-watch runs
-# under the ambient setting.
+# A hosted lane's files, read through lane-host: the probe oversee-report,
+# oversee-cycle and lane-close read a hosted worktree's `.git` and its item's
+# workflow state through, so each answers a gone worktree the same way. Each
+# takes the lane-host CLI path. ORCH_LANE_HOST is the caller's to set:
+# oversee-report and lane-close put the lane record's host in front of each
+# call.
 # ---------------------------------------------------------------------------
 
 # lane_host_fetch LANE_HOST_CLI ITEM PATH DEST ERRF: read PATH into DEST from
@@ -324,7 +324,7 @@ lane_state_rounds() { # STATE_JSON [ERRF] [VALIDATION_RUNS]
 # the provider call at its per-home cap (lane-host-busy), SCRATCH/state.err
 # carrying its line. STRICT=true binds the read to ROOT, with no caller-checkout
 # fallback. LANE_ITEM_STATE_REASON then identifies absent or unbound local roots
-# and hosts with files=none for the public lanes facts result. Absent state
+# and hosts with files=none for oversee-cycle to act on. Absent state
 # leaves keyed diagnostics and all paths tried in SCRATCH/state.err, while
 # remaining an empty read for advisory callers. Cycle callers may try their PR
 # key after a state-absent refusal.

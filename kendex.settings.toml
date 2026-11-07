@@ -43,18 +43,16 @@ LINEAR_REQUIRE_REACH = "1"
 PR_REVIEW_WAIT_SECS = "900"
 
 # When the review signal never arrives: "block" reports a timeout;
-# "proceed" records a reviewer-down override and moves on, but only where no
-# reviewer engaged and no thread is open — a real comment is never bypassed.
-# Comment-only bots can go silent on a trivial head, so a silent round
-# proceeds rather than stalling the session.
+# "proceed" moves on only where no reviewer engaged and no thread is open
+# (skills/orch/references/settings.md). Comment-only bots can go silent on a
+# trivial head, so a silent round proceeds rather than stalling the session.
 PR_REVIEW_ON_TIMEOUT = "proceed"
 
 # Max automated ci-fix rounds per PR before a human takes over.
 CI_FIX_MAX_CYCLES = "6"
 
-# Max internal re-review cycles per issue before the verdict pass; the
-# re-review re-entry raises rereview_cycles and refuses at this, so the number
-# set is the number of re-entries allowed: one fix round, one re-review of it.
+# Max internal re-review cycles per issue before the verdict pass: "1" is one
+# fix round and one re-review of it (skills/orch/references/settings.md).
 REVIEW_MAX_CYCLES = "1"
 
 # Max external review rounds on an open PR. At or past it a finding gets a
@@ -119,7 +117,7 @@ ORCH_LANE_CLOUD_REPOS = "2claude=vanillagreencom/kendex,3claude=vanillagreencom/
 # slot before it refuses as lane-host-busy with exit 69.
 ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 
-# Owner ruling 1791748311 caps lanes while unblocked work exists.
+# The owner caps this fleet's lanes at this count while unblocked work exists.
 ORCH_OVERSEER_LANES = "18"
 
 # Repositories this overseer may launch lanes in beside kendex, blank-separated
@@ -144,30 +142,25 @@ ORCH_LANE_CODEX_CREDIT_FLOOR = "0"
 # qualifying-account trigger, by the rule oversee-succeed --help states, is
 # read by oversee-succeed alone, never by the runtime's mark judge. A
 # seat account (one an overseer or Jarvis session runs on) keeps this headroom
-# for its session: a worker's pick holds it to min(ORCH_LANE_MAX_PCT, 100 - 5)
-# and lanes on it hand off at that line.
+# for its session; skills/orch/references/settings.md states how a worker's
+# pick and the lanes on it keep it.
 ORCH_OVERSEER_HEADROOM_PCT = "5"
 ORCH_OVERSEER_WALL_MINUTES = "20"
 ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 
-# A lane whose account reaches 97 percent used is marked, and the overseer asks
-# it for a handoff at the next safe point.
+# A lane whose account reaches 97 percent used is marked for handoff, which
+# follows skills/orch/references/skill-rules.md § Round Closure.
 ORCH_HANDOFF_HEADROOM_PCT = "3"
 
 # A walled lane is relaunched by the watch on an account with headroom for
 # its model. The notice needs no operator launch action.
 ORCH_WALL_RELAUNCH = "auto"
 
-# Lane pane output. No person reads a lane's pane: the overseer learns a lane's
-# state from lane-mail, the lane status file and what the watch reads off the
-# pane, so narration, recaps and closing summaries are output tokens nobody
-# spends.
-# "quiet" prints one line per completed step and writes each <output_format>
-# block the lane fills itself to a file instead: the artifact that step owns,
-# or one of its own under the worktree tmp/. "normal" prints every block as
-# written and any other value is quiet. Harness output is never suppressed, so
-# the watch's marker reads are unchanged. The destinations in full, and what
-# the mode never touches: skills/orch/references/skill-rules.md, Lane Output.
+# Lane pane output. "quiet" prints one line per completed step and writes
+# each <output_format> block the lane fills itself to a file instead;
+# "normal" prints every block as written, and any other value is quiet. Why
+# no lane narrates, each destination and what the mode never touches:
+# skills/orch/references/skill-rules.md, Lane Output.
 ORCH_LANE_OUTPUT = "quiet"
 
 # Disk use, in percent of the volume holding a lane worktree's target/, at or
@@ -262,13 +255,12 @@ DEV_VALIDATE_CMD = "base=$(.agents/skills/orch/scripts/resolve-base-branch .) &&
 # A full run with CARGO_INCREMENTAL=0 writes one artifact set. Measured from a
 # clean target/ at rustc 1.96.1, its test, clippy and doc invocations wrote
 # 2.7 GiB and the two cross-target checks 0.3 GiB; the floor is twice that.
-# The recorded 20 GB target/ was incremental caches and superseded artifacts,
-# which the round-start prune at ORCH_ROUND_PRUNE_DISK_PCT bounds.
+# A target/ past one artifact set holds incremental caches and superseded
+# artifacts, which the round-start prune at ORCH_ROUND_PRUNE_DISK_PCT bounds.
 GUARD_MIN_FREE_GB = "6"
 
 # The free space a full run needs at its start and has left at its end, for the
-# validation log, sentinel, and shell operations. This floor stays far above
-# the recorded 708 KiB case.
+# validation log, sentinel, and shell operations.
 GUARD_EXHAUSTED_FREE_MB = "512"
 
 # A review-fix round validates its own changes: the default rules, cargo

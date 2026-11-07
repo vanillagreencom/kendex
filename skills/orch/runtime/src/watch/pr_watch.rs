@@ -1,17 +1,16 @@
-//! The reducer pass of the GitHub duty (decision 121 Q17; `lib/pr-watch-
-//! pass.sh`): the github skill's `pr-watch.sh` run once per repository
+//! The reducer pass of the GitHub duty: the github skill's `pr-watch.sh`
+//! run once per repository
 //! through the one runner with `GH_REPO` in its environment, each
 //! repository's rising edge judged against its own row, the pass's one
 //! `pr-watch rc=N` line followed by the new reducer lines and the pass's
 //! stderr, and a rolling refresh's identity kept until its pull request
 //! closes (`EVENT merged <pr> kendex/refresh <repo>`). The reducer stays
-//! the legacy's (decision 94: called, not reimplemented); the reduction
-//! over its lines, a few lines of awk in the legacy, is this module's.
+//! the github skill's, called, not reimplemented; the reduction
+//! over its lines is this module's.
 //!
 //! The row `pr-watch <repo>` holds the `<pr>\t<kind>` keys the last
 //! complete pass saw, `refresh-ready` and `ci-failed` with their head
-//! prefix, one per line, the bytes the legacy's per-repository state file
-//! held for those rows. A reducer that exits nonzero with no line is its
+//! prefix, one per line. A reducer that exits nonzero with no line is its
 //! global failure: the pass is refused as `reducer-failed`, never read as
 //! no attention.
 
@@ -47,7 +46,7 @@ pub struct Context {
     pub err: String,
 }
 
-/// A reducer line's repository prefix (`pw_prefix`): `<repo>\t<line>`.
+/// A reducer line's repository prefix: `<repo>\t<line>`.
 fn prefixed(repo: &str, text: &str) -> String {
     text.lines()
         .map(|line| format!("{repo}\t{line}\n"))
@@ -260,7 +259,7 @@ pub(super) fn pass(
 /// its exit, stdout and stderr. A reducer that could not run is refused.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the GitHub duty runs the github skill's reducer per repository (decision 121 Q17), the repository named in its environment as the legacy named it, no effect on a lane or a controller"
+    reason = "the GitHub duty runs the github skill's reducer per repository, the repository named in its environment (`GH_REPO`), no effect on a lane or a controller"
 )]
 fn reduce(reducer: &Path, repo: &str) -> crate::error::Result<(i32, String, String)> {
     let env = [("GH_REPO", OsStr::new(repo))];

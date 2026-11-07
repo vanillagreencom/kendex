@@ -7,9 +7,8 @@
 # systemd-run launch, the setsid fallback, the attached run, the unit stop and
 # the process-group kill for the jobs that use it: dev-validate-run, the jobs
 # ../../references/waiter-launch.md starts, the fleet watch
-# ../../workflows/oversee.md § 4 starts and the oversee-watch entry's
-# relaunch of itself out of a retired
-# repeat loop's pass.
+# ../../workflows/oversee.md § 4 starts and the runtime watch the
+# oversee-watch entry starts from a released repeat loop's pass.
 # A job is a unit only where the user manager lingers, since one that does
 # not is stopped, with its units,
 # when the user's last login session ends.

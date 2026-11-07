@@ -452,12 +452,11 @@ fn a_recorded_pane_the_server_has_not_is_window_gone_on_every_pass() {
     );
 }
 
-/// Defect: a lane's finished shell reported on the first pass a live
-/// harness could hold it in the foreground for, or reported again on every
-/// pass after. A pane holding nothing but shells is `lane-exited` on the
-/// second consecutive pass alone, with its closing lines under it, and a
-/// third pass says nothing. Decision 99: a pane this reader cannot read is
-/// never that, whatever passes go by: its own line once, with the cause.
+/// A live harness can hold a shell in the pane's foreground for a pass, so
+/// a pane holding nothing but shells is `lane-exited` on the second
+/// consecutive pass alone, with its closing lines under it, and a third
+/// pass says nothing. A pane this reader cannot read is never that,
+/// whatever passes go by: its own line once, with the cause.
 #[test]
 fn a_lane_exits_on_the_second_pass_and_an_unreadable_one_never_does() {
     let dir = tempfile::tempdir().unwrap();
@@ -536,13 +535,11 @@ fn walled_claude(server: &Server, dir: &Path, name: &str, banner: &str) -> (Stri
     (pane, identity)
 }
 
-/// Decisions 125 (1), 130. Defect: a wall screen reported on every pass, or
-/// a banner an earlier process drew in the pane promoted to the live
-/// process's wall. The banner below the live composer, with the recorded
-/// identity holding the pane, is `usage-limit` once with the account and
-/// the banner window under it, its row keyed to the identity; a row whose
-/// first sighting predates the live process's start reports nothing, on
-/// every pass, while the screen stands.
+/// The banner below the live composer, with the recorded identity holding
+/// the pane, is `usage-limit` once with the account and the banner window
+/// under it, its row keyed to the identity; a row whose first sighting
+/// predates the live process's start reports nothing, on every pass, while
+/// the screen stands.
 #[test]
 fn a_usage_limit_screen_is_reported_once_and_an_older_screen_is_not_a_wall() {
     let dir = tempfile::tempdir().unwrap();
@@ -615,14 +612,11 @@ fn wall_record(settings: &Settings) -> Option<AccountWall> {
 /// The clock the rows start at, as the fleet record writes a time.
 const NOW_ISO: &str = "2027-01-15T08:00:00Z";
 
-/// Decisions 125 (1), 130; `oversee-watch:3393` (`wall_pause`). Defect: the
-/// account wall recorded, or the lane record's wall opened, for a banner an
-/// earlier process drew: a record keyed by the pane alone. The wall judged
-/// current for the live identity writes the account record with the reset
-/// the banner names and opens `walled.at` on the lane record at the first
-/// sighting; the same banner re-stamped before the live process's start,
-/// under another identity, writes no record on two passes and closes the
-/// standing wall into `pauses`.
+/// The wall judged current for the live identity writes the account record
+/// with the reset the banner names and opens `walled.at` on the lane record
+/// at the first sighting; the same banner re-stamped before the live
+/// process's start, under another identity, writes no record on two passes
+/// and closes the standing wall into `pauses`.
 #[test]
 fn the_account_wall_and_the_lane_wall_are_recorded_for_the_live_identity_alone() {
     let dir = tempfile::tempdir().unwrap();
@@ -699,12 +693,9 @@ fn the_account_wall_and_the_lane_wall_are_recorded_for_the_live_identity_alone()
     );
 }
 
-/// `oversee-watch:4885-4906`; `744fd5727:skills/orch/tests/oversee_watch_usage_limit.sh` § SURFACE 2.
-/// Defect: a wall whose reset has gone by still reported as standing, or
-/// `usage-limit-passed` reported on every pass after it. The reset is pinned
-/// to the first sighting; once the clock passes it the lane is
-/// `usage-limit-passed` once more, with the banner window under it, and no
-/// account record is renewed for a reset behind the clock.
+/// The reset is pinned to the first sighting; once the clock passes it the
+/// lane is `usage-limit-passed` once more, with the banner window under it,
+/// and no account record is renewed for a reset behind the clock.
 #[test]
 fn a_reset_behind_the_clock_is_usage_limit_passed_once() {
     let dir = tempfile::tempdir().unwrap();
@@ -772,16 +763,12 @@ fn relaunchable(mut record: Value, cwd: &Path) -> Value {
     record
 }
 
-/// Decision 121 Q10; `oversee-watch:4694` (`wall_route`), the rows
-/// `744fd5727:skills/orch/tests/oversee_watch_wall_relaunch.sh` pins. Defect: the relaunch
-/// started on every pass the wall stands, started under `ask`, or started
-/// with no pick. Under `auto` (the default, `oversee-watch:659`) a walled
-/// lane whose record names its model is relaunched once onto the picked
-/// account through the route: the marker for the legacy outcome reader
-/// first, the record's own launcher line with `--lane` the picked account,
-/// `lane-relaunched` with its log, and nothing on the next pass; under
-/// `ask` the wall is `usage-limit` with the pick's answer under it and
-/// nothing starts.
+/// Under `auto` (the default) a walled lane whose record names its model is
+/// relaunched once onto the picked account through the route: the marker
+/// for the outcome reader first, the record's own launcher line with
+/// `--lane` the picked account, `lane-relaunched` with its log, and nothing
+/// on the next pass; under `ask` the wall is `usage-limit` with the pick's
+/// answer under it and nothing starts.
 #[test]
 fn a_walled_lane_is_relaunched_once_under_auto_and_only_reported_under_ask() {
     let dir = tempfile::tempdir().unwrap();
@@ -1009,19 +996,15 @@ fn fleet_origin(fleet: &Fleet, checkout: &Path) {
     }
 }
 
-/// Defect: a lane launched under a narrower permission choice was relaunched
-/// at a wall under the bypass default, since the wall route's request
-/// carried no permission. Through the real `launch-lane` and the real duty:
-/// the record of a lane launched with `--permission-mode dontAsk` carries the
-/// choice, the wall relaunch's request carries it, and the replacement the
-/// request starts through the real entry runs with the word and no bypass
-/// word; a released record, planted as `main` wrote it, carries the choice in
-/// `recovery.flags`, and its request carries the same word. Defect: a
-/// released lane whose flags carry a prompting choice no launch line carries
-/// (`--permission-mode plan`, which `main`'s launcher warned of and launched)
-/// retired and relaunched under the bypass default. Two such records, planted
-/// as `main` wrote them in the two-word and the `FLAG=VALUE` spelling, are
-/// refused before anything is stopped: no request, no relaunch.
+/// Through the real `launch-lane` and the real duty: the record of a lane
+/// launched with `--permission-mode dontAsk` carries the choice, the wall
+/// relaunch's request carries it, and the replacement the request starts
+/// through the real entry runs with the word and no bypass word; a released
+/// record, planted as `main` wrote it, carries the choice in
+/// `recovery.flags`, and its request carries the same word. Two such
+/// records, planted as `main` wrote them in the two-word and the
+/// `FLAG=VALUE` spelling, are refused before anything is stopped: no
+/// request, no relaunch.
 #[test]
 fn a_walled_lanes_relaunch_keeps_its_permission_choice() {
     let dir = tempfile::tempdir().unwrap();
@@ -1206,18 +1189,13 @@ fn a_walled_lanes_relaunch_keeps_its_permission_choice() {
     );
 }
 
-/// The item state `744fd5727:skills/orch/tests/oversee_watch_start_stall.sh` plants for its
-/// `separate_counts` row.
+/// The item state of a running lane whose counts the rows read.
 const COUNTS_STATE: &str = r#"{"first_panel":{},"rereview_cycles":1,"cycles":7,"pr_comment_review":{"iterations":3,"patched_causes":[{"cause":"a","commit":"aaa111"},{"cause":"a","commit":"bbb222"}]},"stages":[{"kind":"implement"},{"kind":"fix"},{"kind":"fix"},{"kind":"fix"},{"kind":"review"}],"validate_rounds":[{"kind":"implement"},{"kind":"fix"},{"kind":"restack"},{"kind":"restack"}],"restack_skips":[{},{}],"restacks":4}"#;
 
-/// `lib/watch-host-kinds.sh:446` (`check_lane_long`), the rows
-/// `744fd5727:skills/orch/tests/oversee_watch_start_stall.sh` pins (`separate_counts`, `parked`,
-/// the age intervals). Defect: a long lane reported on every pass, or its
-/// counts read from anywhere but the lane's own records. A running lane
-/// `ORCH_WATCH_LANE_AGE_SECS` past its launch is `lane-long` once per age
-/// interval with the counts of its worktree's workflow state and run index
-/// and the `Step` line of its status file; a parked lane reads every count
-/// `unread` and `stage=parked`.
+/// A running lane `ORCH_WATCH_LANE_AGE_SECS` past its launch is `lane-long`
+/// once per age interval with the counts of its worktree's workflow state
+/// and run index and the `Step` line of its status file; a parked lane
+/// reads every count `unread` and `stage=parked`.
 #[test]
 fn a_long_lane_is_reported_once_per_age_interval_with_its_records_counts() {
     let dir = tempfile::tempdir().unwrap();
@@ -1288,9 +1266,8 @@ fn a_long_lane_is_reported_once_per_age_interval_with_its_records_counts() {
     );
 }
 
-/// Decision 121 Q6. Defect: Codex's capacity refusal reported as a finished
-/// turn, or on every pass. The refusal above the live composer is
-/// `model-capacity` once, with no tail, and the next pass says nothing.
+/// Codex's capacity refusal above the live composer is no finished turn: it
+/// is `model-capacity` once, with no tail, and the next pass says nothing.
 #[test]
 fn a_codex_capacity_refusal_is_model_capacity_once() {
     let dir = tempfile::tempdir().unwrap();
@@ -1324,14 +1301,13 @@ fn a_codex_capacity_refusal_is_model_capacity_once() {
     assert!(lines(&second).is_empty(), "{:?}", lines(&second));
 }
 
-/// Defect: a Pi lane judged off its pane, which its carrier's drawing
-/// cannot settle, or its rows read in a way the legacy did not, or the
-/// harness's ordinary end (`stop_reason=stop`, what the writer copies
-/// from every finished Pi turn) rendered as a `cause=` on the line. The
-/// rows judge: a Stop row is idle on the second pass with the pane's tail
-/// under it, the line as today; a later Stop row is news again; an error
-/// Stop whose message is the account's limit is `usage-limit` with the
-/// harness's own message under it; no rows at all settles nothing.
+/// A Pi lane is judged from its rows, since its carrier's drawing cannot
+/// settle it: a Stop row is idle on the second pass with the pane's tail
+/// under it and no `cause=` for the ordinary end (`stop_reason=stop`, which
+/// the writer copies from every finished Pi turn); a later Stop row is news
+/// again; an error Stop whose message is the account's limit is
+/// `usage-limit` with the harness's own message under it; no rows at all
+/// settles nothing.
 #[test]
 fn a_pi_lane_is_judged_from_its_rows_as_the_legacy_judged_it() {
     let dir = tempfile::tempdir().unwrap();
@@ -1403,14 +1379,12 @@ fn a_pi_lane_is_judged_from_its_rows_as_the_legacy_judged_it() {
     assert!(lines(&quiet).is_empty(), "{:?}", lines(&quiet));
 }
 
-/// Decisions 174 (round 9, item 6), 184 (7). Defect: the idle line
-/// dropping the stop reason the lane's own Stop row carries, so a turn the
-/// output limit cut (`stop_reason=length`) reads as a finished round and
-/// the lane as free. A Stop row with a `stop_reason` that is not the
-/// harness's ordinary end and no limit banner is
-/// `idle-after-return <lane> cause=<word>` once, with the pane's tail under
-/// it; an error that is no limit carries `cause=error`. The row with the
-/// ordinary end `stop`, the line as today, is
+/// A turn the output limit cut (`stop_reason=length`) is no finished round,
+/// so the idle line carries the stop reason: a Stop row with a
+/// `stop_reason` that is not the harness's ordinary end and no limit banner
+/// is `idle-after-return <lane> cause=<word>` once, with the pane's tail
+/// under it; an error that is no limit carries `cause=error`. The ordinary
+/// end `stop` is
 /// `a_pi_lane_is_judged_from_its_rows_as_the_legacy_judged_it`.
 #[test]
 fn a_pi_lane_s_stop_reason_is_the_idle_line_s_cause() {
@@ -1465,10 +1439,9 @@ fn a_pi_lane_s_stop_reason_is_the_idle_line_s_cause() {
     );
 }
 
-/// Decisions 96, 121 Q11. Defect: a window nothing records adopted, closed,
-/// or reported on every pass. A window of the fleet session that no lane,
-/// controller record, open intent or receipt names is `stray-window` once;
-/// it stands after, and a recorded window is never one.
+/// A window of the fleet session that no lane, controller record, open
+/// intent or receipt names is `stray-window` once; it stands after, and a
+/// recorded window is never one.
 #[test]
 fn a_window_nothing_records_is_a_stray_reported_once_and_never_closed() {
     let dir = tempfile::tempdir().unwrap();
@@ -1520,7 +1493,7 @@ fn a_window_nothing_records_is_a_stray_reported_once_and_never_closed() {
     assert!(server.panes().contains(&receipted));
 }
 
-/// The overseer duty's driver: the pass over the fleet with planted legacy
+/// The overseer duty's driver: the pass over the fleet with planted judge
 /// answers and a recording transfer.
 struct OverseerDriver<'a> {
     readers: Readers<'a>,
@@ -1733,15 +1706,12 @@ fn window_of(server: &Server, pane: &str) -> String {
     fields.pane.window
 }
 
-/// Decisions 77, 99, 121 Q10; step5-map § A3. Defect: a death relaunched on
-/// one reading, counted on an unreadable read, or judged twice from two
-/// readings by the mail gate and the long check. A pane holding nothing but
-/// shells is dead on the second consecutive pass: the line goes out with
-/// `source=process`, the record's transfer is asked for once on the next
-/// run with `cause: dead` and the held line as the successor, and nothing
-/// more is asked after. The one verdict of each pass is what the slot holds,
-/// so the mail gate reads the same source and closes while it is down. An
-/// unreadable pane counts nothing on any pass.
+/// A pane holding nothing but shells is dead on the second consecutive
+/// pass: the line goes out with `source=process`, the record's transfer is
+/// asked for once on the next run with `cause: dead` and the held line as
+/// the successor, and nothing more is asked after. The one verdict of each
+/// pass is what the slot holds, so the mail gate reads the same source and
+/// closes while it is down. An unreadable pane counts nothing on any pass.
 #[test]
 fn a_dead_overseer_is_counted_on_two_passes_and_transferred_once_with_cause_dead() {
     let dir = tempfile::tempdir().unwrap();
@@ -1825,12 +1795,11 @@ fn a_dead_overseer_is_counted_on_two_passes_and_transferred_once_with_cause_dead
     assert!(transfers2.borrow().is_empty());
 }
 
-/// Decision 121 Q10. Defect: a wall the harness's own row states waited
-/// out for a second pass, or succeeded onto the spent account. A rows wall
-/// under a live harness is `overseer-walled` on its first pass with the
-/// row's message under it, and the transfer asked for carries `cause:
-/// walled`, the spent account to exclude and the successor on the account
-/// the walk picked; the account judgement reading room lifts it instead.
+/// The harness's own row states its wall, so a rows wall under a live
+/// harness is `overseer-walled` on its first pass with the row's message
+/// under it, and the transfer asked for carries `cause: walled`, the spent
+/// account to exclude and the successor on the account the walk picked; the
+/// account judgement reading room lifts it instead.
 #[test]
 fn a_walled_overseer_is_transferred_with_cause_walled_and_the_spent_account_excluded() {
     let dir = tempfile::tempdir().unwrap();
@@ -1902,11 +1871,8 @@ fn a_walled_overseer_is_transferred_with_cause_walled_and_the_spent_account_excl
     assert!(transfers2.borrow().is_empty());
 }
 
-/// `oversee-watch:4062-4067` (`overseer_mark_check`), the bytes
-/// `744fd5727:skills/orch/tests/oversee_watch_overseer_marks.sh` pins. Defect: the mark line out
-/// with no handling under it, or a handling naming a preference the walk
-/// does not read. The first crossing of a headroom mark on a live overseer
-/// carries the succession's sentence under the line: the judge's path and
+/// The first crossing of a headroom mark on a live overseer carries the
+/// succession's sentence under the line: the judge's path and
 /// `ORCH_OVERSEER_PREFERENCE` as set, the default where unset; with
 /// succession off, the handoff sentence; the next pass repeats neither.
 #[test]
@@ -2012,13 +1978,11 @@ fn reached_context_off(_: &Caller, _: Option<&str>) -> Result<Marks, String> {
     ))
 }
 
-/// Defect: a controller another lifecycle replaces told at its context mark
-/// to choose a successor and ask for the transfer its record refuses
-/// `succession-owned`. A live controller whose record names its succession
-/// command is handed that command under the mark line under either
-/// `ORCH_OVERSEER_SUCCESSION` value, with no successor walk, no transfer and
-/// no run of the command by the watch; the same record without the field
-/// keeps the setting's own line.
+/// A live controller whose record names its succession command is handed
+/// that command under the mark line under either `ORCH_OVERSEER_SUCCESSION`
+/// value, with no successor walk, no transfer and no run of the command by
+/// the watch; the same record without the field keeps the setting's own
+/// line.
 #[test]
 fn a_controller_whose_record_names_a_succession_owner_is_handed_that_command_at_its_mark() {
     let dir = tempfile::tempdir().unwrap();
@@ -2076,9 +2040,7 @@ fn a_controller_whose_record_names_a_succession_owner_is_handed_that_command_at_
     }
 }
 
-// U6h (step6-map § A10 row (6), § B "an overseer at its context limit";
-// decisions 126 (2), 176 (1) (d)): the overseer's context record, judged
-// beside a live session.
+// The overseer's context record, judged beside a live session.
 
 /// A live overseer in a pane holding a process named `claude`, its record
 /// naming the rows file under `dir`: the pane, its window, the record's
@@ -2142,13 +2104,12 @@ fn stopped(at: u64) -> Value {
     json!({"event": "Stop", "harness": "claude", "at": at})
 }
 
-/// Decisions 176 (1) (d), 179 (5); `oversee-succeed --check-marks
-/// --context` (A10 row (6)). Defect: the watch judging the context mark
-/// with no reading while the hook judges it with one, so an overseer past
-/// its context mark between turn ends is never said; or the mark said on
-/// every pass. The session's own record is handed to the judge as
-/// `--context TOKENS:WINDOW`; its `mark-reached kind=context` is
-/// `overseer-mark ... kind=context` once with the handling under it, then
+/// The watch judges the context mark with the reading the hook judges it
+/// with, so an overseer past its mark between turn ends is said: the
+/// session's own record is handed to the judge (`oversee-succeed
+/// --check-marks`) as `--context TOKENS:WINDOW`; its `mark-reached
+/// kind=context` is `overseer-mark ... kind=context` once with the
+/// handling under it, then
 /// once every `ORCH_OVERSEER_MARK_REPEAT` passes; a record another pane
 /// wrote hands the judge nothing.
 #[test]
@@ -2230,15 +2191,11 @@ fn the_context_reading_is_handed_to_the_judge_and_a_context_mark_is_said_once_pe
     assert_eq!(handed.borrow().last().cloned(), Some(None));
 }
 
-/// `744fd5727:oversee-watch:4215-4228` (`overseer_context_wedged`), § B
-/// "the same record with no Stop row after a full window" (A10 row (6)).
-/// Defect: an overseer whose context fills its window read as live
-/// because its process runs and its rows say nothing, so the fleet runs
-/// unattended until someone finds the pane; or relaunched on one reading.
-/// A reading that fills the window with no Stop row after it is the
-/// session gone with `source=context`, counted on the death's passes; the
-/// same reading with a later Stop row is a session that took a turn since,
-/// and live.
+/// An overseer whose context fills its window runs on with rows that say
+/// nothing, its process alive, so a reading that fills the window with no
+/// Stop row after it is the session gone with `source=context`, counted on
+/// the death's passes; the same reading with a later Stop row is a session
+/// that took a turn since, and live.
 #[test]
 fn a_full_window_with_no_later_stop_row_is_the_session_gone_by_context() {
     let dir = tempfile::tempdir().unwrap();
@@ -2292,12 +2249,11 @@ fn a_full_window_with_no_later_stop_row_is_the_session_gone_by_context() {
     assert!(transfers2.borrow().is_empty());
 }
 
-/// `744fd5727:oversee-watch:4146-4160` (`overseer_context_check`, the
-/// stale arm; A10 row (6)). Defect: a record that stopped advancing
-/// passing for a context mark that is watching. A record more than
-/// `OVERSEER_CONTEXT_STALE_SECS` old with a Stop row after it is
-/// `overseer-context-stale` with its age on every pass it stands; a fresh
-/// record, and an old one with no Stop row after it, say nothing.
+/// A context record that stopped advancing while the session takes turns
+/// watches nothing: a record more than `OVERSEER_CONTEXT_STALE_SECS` old
+/// with a Stop row after it is `overseer-context-stale` with its age on
+/// every pass it stands; a fresh record, and an old one with no Stop row
+/// after it, say nothing.
 #[test]
 fn a_stale_context_record_with_a_later_stop_row_is_said_on_every_pass() {
     let dir = tempfile::tempdir().unwrap();
@@ -2340,14 +2296,11 @@ fn a_stale_context_record_with_a_later_stop_row_is_said_on_every_pass() {
     assert!(transfers.borrow().is_empty());
 }
 
-/// `744fd5727:oversee-watch:4161-4200` (`overseer_context_gap`,
-/// `overseer_gap_alert`; A10 row (6)). Defect: a gap repeated to an
-/// overseer that is not acting on it, which left a fleet unwatched; the
-/// owner's alert marked sent when the mailbox refused it; or a gap said
-/// forever. A gap is `overseer-context-unmeasured` once; on the next pass
-/// the owner's alert goes out and is marked only once sent, so a refused
-/// send is tried again on the pass after; then nothing while that gap
-/// stands; a different gap starts the turn again, and a reading clears
+/// A gap the overseer does not act on leaves the fleet unwatched, so it
+/// goes to the owner: a gap is `overseer-context-unmeasured` once; on the
+/// next pass the owner's alert goes out and is marked only once sent, so a
+/// refused send is tried again on the pass after; then nothing while that
+/// gap stands; a different gap starts the turn again, and a reading clears
 /// the row.
 #[test]
 fn a_gap_is_said_once_then_alerted_to_the_owner_once_sent_and_quiet_after() {
@@ -2421,11 +2374,9 @@ fn a_gap_is_said_once_then_alerted_to_the_owner_once_sent_and_quiet_after() {
     assert!(transfers.borrow().is_empty());
 }
 
-// U5d3 (decision 176 (1) (a), (c)): the standing handoff and the wall
-// relaunch's outcomes.
+// The standing handoff and the wall relaunch's outcomes.
 
-/// The handoff record `744fd5727:skills/orch/tests/oversee_watch.sh` § 2b plants
-/// (`handoff_record`), as jq's `tojson` printed it under the event.
+/// A handoff record as jq's `tojson` prints it under the event.
 const HANDOFF_RECORD: &str = r##"{"written_at":"2026-09-06T05:00:00Z","merged":["#2210"],"remaining":["merge-pr § 5"],"branch":"ken-1","worktree":"/w","open_pr":2218,"traps":[]}"##;
 
 /// The item's workflow state carrying `record` as its handoff.
@@ -2439,15 +2390,10 @@ fn paneless(mut record: Value) -> Value {
     record
 }
 
-/// `oversee-watch:2097` (`check_handoff`); `744fd5727:skills/orch/tests/oversee_watch.sh` § 2b
-/// (`handoff_once`, `handoff_root_record`, `handoff_resumed`). Defect: a
-/// standing handoff said on every pass, or again on a re-run before the
-/// relaunch stamps the record; a record only in the lane root's own `tmp`
-/// missed; a record the relaunched lane stamped `resumed_at` on still
-/// said. A record with no `resumed_at` is `handoff` once with the record
-/// under it, read under the fleet's state directory and under the lane
-/// root's `tmp`; the same record is quiet after; a resumed one clears the
-/// row; a later record of the same item is news again.
+/// A record with no `resumed_at` is `handoff` once with the record under
+/// it, read under the fleet's state directory and under the lane root's
+/// `tmp`; the same record is quiet after; a resumed one clears the row; a
+/// later record of the same item is news again.
 #[test]
 fn a_standing_handoff_is_said_once_per_record_and_a_resumed_one_clears() {
     let dir = tempfile::tempdir().unwrap();
@@ -2530,14 +2476,11 @@ fn a_standing_handoff_is_said_once_per_record_and_a_resumed_one_clears() {
     );
 }
 
-/// `744fd5727:skills/orch/tests/oversee_watch.sh` § 2b (`handoff_root_torn`, `handoff_unread_*`).
-/// Defect: a state this pass could not read passed off as "no handoff",
-/// clearing the row and dropping the event for a lane that has already
-/// handed off and exited, or one lane's refused read silencing the other
-/// lanes' news. A torn file in the lane root's `tmp` is the pass's partial
-/// failure naming the item and that file; the other lane's handoff is out;
-/// the standing row survives, so the next readable pass still owes the
-/// event.
+/// A state the pass cannot read is never "no handoff", which would drop the
+/// event of a lane that handed off and exited: a torn file in the lane
+/// root's `tmp` is the pass's partial failure naming the item and that
+/// file; the other lane's handoff is out; the standing row survives, so the
+/// next readable pass still owes the event.
 #[test]
 fn a_refused_handoff_read_is_the_pass_s_failure_and_the_other_lanes_news_stands() {
     let dir = tempfile::tempdir().unwrap();
@@ -2606,13 +2549,10 @@ fn plant_marker(dir: &Path, lane: &str, item: &str, since: u64) -> (PathBuf, Pat
     (marker, log)
 }
 
-/// `oversee-watch:4667` (`wall_relaunch_outcomes`), the bytes
-/// `744fd5727:skills/orch/tests/oversee_watch_wall_relaunch.sh` `failure_passes` pins. Defect: a
-/// relaunch that exited non-zero never said, said on every pass, or judged
-/// off its window instead of its completed status; a status of 0 said as a
-/// failure. The completed status beside the marker is `lane-prepare-failed`
-/// with the exit and the log once; the marker and its status leave with
-/// the row, for a status of 0 as well; the next pass says nothing.
+/// A relaunch is judged by its completed status, never by its window: a
+/// failed status beside the marker is `lane-prepare-failed` with the exit
+/// and the log once; the marker and its status leave with the row, for a
+/// status of 0 as well; the next pass says nothing.
 #[test]
 fn a_failed_relaunch_is_said_once_with_its_exit_and_log_and_its_marker_leaves() {
     let dir = tempfile::tempdir().unwrap();
@@ -2648,14 +2588,11 @@ fn a_failed_relaunch_is_said_once_with_its_exit_and_log_and_its_marker_leaves() 
     assert!(lines(&second).is_empty(), "{:?}", lines(&second));
 }
 
-/// `744fd5727:skills/orch/tests/oversee_watch_wall_relaunch.sh` `stuck_passes`. Defect: an
-/// overdue detached recovery never said while its old window survives,
-/// said on every pass, or a fresh relaunch's wait silenced by an earlier
-/// one's row. A marker with no status `ORCH_WATCH_PREPARE_SECS` past its
-/// start is `lane-prepare-stuck` with its age, log and
-/// `reason=relaunch-pending` once, keyed by that start, the marker kept; a
-/// marker inside the bound is quiet; a relaunch started afresh is said
-/// afresh, at the bound exactly.
+/// A detached recovery can overrun while its old window survives: a marker
+/// with no status `ORCH_WATCH_PREPARE_SECS` past its start is
+/// `lane-prepare-stuck` with its age, log and `reason=relaunch-pending`
+/// once, keyed by that start, the marker kept; a marker inside the bound is
+/// quiet; a relaunch started afresh is said afresh, at the bound exactly.
 #[test]
 fn a_relaunch_pending_past_the_prepare_bound_is_said_once_per_start() {
     let dir = tempfile::tempdir().unwrap();
@@ -2691,11 +2628,10 @@ fn a_relaunch_pending_past_the_prepare_bound_is_said_once_per_start() {
     );
 }
 
-/// Decisions 99, 105. Defect: an exit status this reader cannot read taken
-/// as absent, so an ended relaunch is said stuck or its outcome lost. A
-/// status that cannot be read, or one that is no exit code, is the pass's
-/// partial failure naming the file: no line, the marker and the status
-/// kept for the next pass, no row.
+/// A status that cannot be read, or one that is no exit code, is never
+/// absent, which would say an ended relaunch stuck or lose its outcome: it
+/// is the pass's partial failure naming the file: no line, the marker and
+/// the status kept for the next pass, no row.
 #[test]
 fn an_unreadable_exit_status_is_the_pass_s_failure_not_a_stuck_line() {
     let dir = tempfile::tempdir().unwrap();
@@ -2744,16 +2680,10 @@ fn gone_lane(server: &Server, item: &str, window: &str, pane: &str, dir: &Path) 
 /// a gone window clears, planted to prove whether it moves.
 const RELAUNCHED_ROW: &str = "1800000000|%7|usage-limit|lane-relaunched";
 
-/// `oversee-watch:4656` (`wall_relaunch_pending`) at its one caller
-/// (`:4812`), the row `744fd5727:skills/orch/tests/oversee_watch_wall_relaunch.sh` `gone_passes`
-/// pins (`"0 1"`). Defect: the window a relaunch is replacing said gone
-/// while that launch is still opening it, its wall row cleared under the
-/// relaunch so the wall is relaunched again; or the suppression outliving
-/// the launch, so a window gone for good is never said. A gone window
-/// whose relaunch marker stands with no status inside the prepare bound
-/// says nothing and moves no row; once the status lands it is
-/// `window-gone` as any other, its rows cleared; a marker at the bound
-/// suppresses nothing.
+/// A relaunch replaces its lane's window, so a gone window whose relaunch
+/// marker stands with no status inside the prepare bound says nothing and
+/// moves no row; once the status lands it is `window-gone` as any other,
+/// its rows cleared; a marker at the bound suppresses nothing.
 #[test]
 fn a_gone_window_under_a_pending_relaunch_is_said_once_the_launch_ended() {
     let dir = tempfile::tempdir().unwrap();
@@ -2800,12 +2730,8 @@ fn a_gone_window_under_a_pending_relaunch_is_said_once_the_launch_ended() {
     );
 }
 
-/// Decisions 99, 105, 156 (1). Defect: a relaunch marker this reader
-/// cannot read taken as no pending relaunch (the legacy's `jq -er`
-/// failure, `oversee-watch:4660`), so the window the relaunch is replacing
-/// is said gone and its rows cleared under it. A torn marker is the pass's
-/// partial failure naming it: no line, no row moved, and the next pass
-/// asks again.
+/// A torn marker is the pass's partial failure naming it, never a pending
+/// relaunch absent: no line, no row moved, and the next pass asks again.
 #[test]
 fn an_unreadable_relaunch_marker_is_the_pass_s_failure_not_a_gone_window() {
     let dir = tempfile::tempdir().unwrap();
@@ -2853,7 +2779,7 @@ fn an_unreadable_relaunch_marker_is_the_pass_s_failure_not_a_gone_window() {
     }
 }
 
-// --- U7a: the hosted readings (step7-map § A1; decisions 57, 176 (1) (e)-(i), 192 Q1, Q2) ---
+// --- the hosted readings ---
 
 /// The `local` and `claude-cloud` lines the dispatcher answers, and a static
 /// ssh provider's (`schemas/lane-host.md` § Host kinds).
@@ -2995,12 +2921,8 @@ fn stalled_lines(produced: &Produced) -> Vec<String> {
         .collect()
 }
 
-/// `lib/watch-host-kinds.sh:368` (`check_lane_stall`), the cases
-/// `744fd5727:skills/orch/tests/oversee_watch_cloud.sh` pinned on the cloud
-/// lane's pull request (`stalled`, `finished`, `credit`). Defect: a cloud
-/// session no pane shows never said stalled, said on every pass, said while
-/// its pull request still moves, or a ready pull request closed as a stall.
-/// A cloud lane's open pull request standing still for
+/// No pane shows a cloud session, so its pull request is what the watch
+/// reads: a cloud lane's open pull request standing still for
 /// `ORCH_WATCH_LANE_STALL_SECS` is `lane-stalled` with the age once, then
 /// every `mark_repeat` passes; a head that moved starts the bound over; a
 /// ready one is `state=finished` at once, a draft on an account the roster
@@ -3097,16 +3019,10 @@ fn a_cloud_lane_whose_pull_request_stands_still_is_lane_stalled_and_a_ready_or_u
     );
 }
 
-/// Decisions 120, 192 Q2; `lib/watch-host-kinds.sh:431` (`cloud_stall_close`),
-/// `oversee-watch:1420` (`close_hosted_lane`), the case
-/// `744fd5727:skills/orch/tests/oversee_watch_cloud.sh` pinned as `closed`.
-/// Defect: a stalled cloud lane whose directive went unanswered closed on
-/// every pass, closed without a record that it was asked, a refusal read as
-/// a close, a tracker quota hold read as a failure, or a close asked beside
-/// a marker an earlier runtime left. The directive at or after the stall's
-/// `since` and `ORCH_CLOUD_STALL_MINUTES` old closes the lane once through
-/// `lane-close --state-dir [DIR] [ITEM]`, the marker created before the ask
-/// and gone after its answer: `lane-closed` with the archive line, then
+/// A stalled cloud lane's directive at or after the stall's `since` and
+/// `ORCH_CLOUD_STALL_MINUTES` old closes the lane once through `lane-close
+/// --state-dir [DIR] [ITEM]`, the marker created before the ask and gone
+/// after its answer: `lane-closed` with the archive line, then
 /// `cloud-stall-closed` with the directive's age. Exit 3 is
 /// `lane-close-refused` with the path, the lane kept and the stall said; a
 /// quota receipt defers it with no line; a standing hold asks nothing; a
@@ -3155,8 +3071,8 @@ fn a_stalled_cloud_lane_whose_directive_went_unanswered_is_closed_once_with_the_
         std::fs::metadata(&marker).is_ok(),
         "the marker stands until the record confirms the close"
     );
-    // The record still reads the lane open (decision 194): the operator's
-    // lane, named each pass, never a second close.
+    // The record still reads the lane open: the operator's lane, named each
+    // pass, never a second close.
     let open_still = driver.pass(&state);
     assert!(
         open_still
@@ -3341,18 +3257,14 @@ fn a_stalled_cloud_lane_whose_directive_went_unanswered_is_closed_once_with_the_
     assert_eq!(world.close_log().len(), 6);
 }
 
-/// `oversee-watch:2662` (`check_start_stall`, the `HOSTED_ROOT` arm), the
-/// case `744fd5727:skills/orch/tests/oversee_watch_start_stall.sh` pinned as
-/// `hosted_fetch`. Defect: a hosted lane's status file read on this disk,
-/// where it is not, so every hosted lane is `start-stalled`; or a fetch that
-/// failed read as "no file". The file is read through `lane-host cat` under
-/// the record's host, a `2` confirmed by `touch`: a missing file past the
-/// bound is `start-stalled`, a file that stands ends the watch, and a fetch
-/// that failed (the provider's own failure, the dispatcher's busy refusal)
-/// is `start-stall-unread`, the pass's failure and no line (decision 99); a
-/// lane whose worktree the host no longer has (its `.git` gone, the merged
-/// check's lane, c11:2678's `HOSTED_GONE_ITEMS` skip) writes no status file
-/// and is no stall.
+/// A hosted lane's status file is on its host, not this disk: it is read
+/// through `lane-host cat` under the record's host, a `2` confirmed by
+/// `touch`: a missing file past the bound is `start-stalled`, a file that
+/// stands ends the watch, and a fetch that failed (the provider's own
+/// failure, the dispatcher's busy refusal) is `start-stall-unread`, the
+/// pass's failure and no line; a lane whose worktree the host no longer has
+/// (its `.git` gone, the merged check's lane) writes no status file and is
+/// no stall.
 #[test]
 fn a_hosted_lane_s_status_file_is_read_through_the_provider_and_a_failed_fetch_is_no_stall() {
     let dir = tempfile::tempdir().unwrap();
@@ -3454,14 +3366,8 @@ fn a_hosted_lane_s_status_file_is_read_through_the_provider_and_a_failed_fetch_i
     );
 }
 
-/// R-U7-1 L1 and R-U7-2 L1 (`fleet_merge`, `oversee-watch:959-969`: the
-/// running rows' hosts alone; a parked row went to `PARKED_ITEMS` with no
-/// host read). Defect: a done, stopped or parked record's host asked for
-/// its capability line every pass, so a provider that is gone is `host-
-/// capabilities-unread` ahead of every live lane's line, hiding a live
-/// lane's `start-stall-unread` and the standing marker's
-/// `lane-close-unconfirmed`, the operator's one signal (decision 194); the
-/// parked lane's one reader, `lane_long`, reads no line for it. A done
+/// Only a running lane's host is asked anything, since a gone provider's
+/// failure would stand ahead of every live lane's line and hide it. A done
 /// lane, a stopped lane and a parked lane (the `lanes park` record) on a
 /// gone provider beside a running lane whose fetch fails: the pass's
 /// failure is the live lane's, and no call runs under the gone host.
@@ -3512,15 +3418,12 @@ fn a_lane_out_of_flight_s_gone_provider_is_not_asked_and_hides_no_live_lane_s_li
     );
 }
 
-/// `oversee-watch:2662` (`check_start_stall`, the `FILELESS` arm), the cases
-/// `744fd5727:skills/orch/tests/oversee_watch_cloud.sh` pinned as `pushed`
-/// and `never_pushed`. Defect: a cloud session that pushed said
-/// `start-stalled` for want of a status file it never writes, or a session
-/// that never pushed left unsaid. A branch head committed at or after the
-/// record's `session_since` reads the session started: `start-stalled`
-/// never goes out, and a started session whose head stands still for
-/// `ORCH_WATCH_LANE_STALL_SECS` is `lane-stalled`; a session with no branch
-/// is `start-stalled` past the start bound, counted as the local arm counts.
+/// A cloud session writes no status file, so its branch is its start: a
+/// branch head committed at or after the record's `session_since` reads the
+/// session started: `start-stalled` never goes out, and a started session
+/// whose head stands still for `ORCH_WATCH_LANE_STALL_SECS` is
+/// `lane-stalled`; a session with no branch is `start-stalled` past the
+/// start bound, counted as the local arm counts.
 #[test]
 fn a_cloud_session_with_no_pull_request_is_quiet_once_pushed_and_lane_stalled_when_nothing_moves() {
     let dir = tempfile::tempdir().unwrap();
@@ -3572,15 +3475,11 @@ fn a_cloud_session_with_no_pull_request_is_quiet_once_pushed_and_lane_stalled_wh
     );
 }
 
-/// `lib/watch-host-kinds.sh:446` (`check_lane_long`, the hosted arms of
-/// `lane_step` and `lane_long_rounds`), the cases
-/// `744fd5727:skills/orch/tests/oversee_watch_start_stall.sh` pinned as
-/// `hosted_stage`. Defect: a hosted lane's stage and counts read off this
-/// disk, so every hosted lane reads `none` and zero; a fetch that failed
-/// read as no file. A hosted lane's `Step` line, workflow state and run
-/// index come through the provider; a fetch that failed is `stage=unread`
-/// and `unread` counts with the pass's failure; a parked hosted lane reads
-/// `parked`; a `files=none` kind `none` with `unread` counts.
+/// A hosted lane's `Step` line, workflow state and run index are on its
+/// host and come through the provider; a fetch that failed is
+/// `stage=unread` and `unread` counts with the pass's failure; a parked
+/// hosted lane reads `parked`; a `files=none` kind `none` with `unread`
+/// counts.
 #[test]
 fn a_long_hosted_lane_s_stage_and_counters_are_read_through_the_provider() {
     let dir = tempfile::tempdir().unwrap();
@@ -3688,17 +3587,13 @@ fn no_handoff(item: &str) -> Vec<(String, Value)> {
     answers
 }
 
-/// `oversee-watch:1477-1510` (`finished_hosted_lane_eligible`,
-/// `close_finished_hosted_lane` at `:4857`), `:4796` (the status verb), the
-/// case `744fd5727:skills/orch/tests/oversee_watch_hosted.sh` pinned as
-/// `merged_gone_closes`. Defect: a merged hosted lane whose worktree its own
-/// close-out removed left open on the host for a person to close, or a lane
-/// still inside its merge close-out (its worktree standing) closed under
-/// it. A hosted lane the provider's status verb reads exited is
-/// `lane-exited` on the second pass; one whose item the GitHub duty read
-/// merged and whose `.git` the host has not is closed through `lane-close`
-/// then, `lane-closed` with its archive line under it; one whose worktree
-/// stands, and one with no merged row, are not; the next pass says nothing.
+/// A merged lane's own close-out removes its worktree, so a worktree that
+/// stands is a close-out still running. A hosted lane the provider's status
+/// verb reads exited is `lane-exited` on the second pass; one whose item
+/// the GitHub duty read merged and whose `.git` the host has not is closed
+/// through `lane-close` then, `lane-closed` with its archive line under it;
+/// one whose worktree stands, and one with no merged row, are not; the next
+/// pass says nothing.
 #[test]
 fn a_merged_hosted_lane_whose_worktree_the_host_has_not_is_closed_at_lane_exited_and_a_standing_one_is_not()
  {
@@ -3778,13 +3673,10 @@ fn a_merged_hosted_lane_whose_worktree_the_host_has_not_is_closed_at_lane_exited
     assert!(std::fs::metadata(&marker).is_err());
 }
 
-/// `oversee-watch:1490-1510`, `:5100` (the `close-pending` retry), the case
-/// `744fd5727:skills/orch/tests/oversee_watch_hosted.sh` pinned as
-/// `quota_defers_close`. Defect: a close the tracker's quota refusal
-/// deferred never asked again, since its `lane-exited` line was already
-/// reported, or asked again after the pane changed under it. The deferred
-/// close keeps `close-pending` as `lane-exited|<pane key>`; the next pass,
-/// its line still reported under that key, asks again and closes.
+/// A close the tracker's quota refusal deferred has its `lane-exited` line
+/// already reported, so the deferred close keeps `close-pending` as
+/// `lane-exited|<pane key>`; the next pass, its line still reported under
+/// that key, asks again and closes.
 #[test]
 fn a_finished_hosted_close_the_tracker_hold_deferred_is_retried_while_its_line_stands() {
     let dir = tempfile::tempdir().unwrap();
@@ -3841,19 +3733,15 @@ fn a_finished_hosted_close_the_tracker_hold_deferred_is_retried_while_its_line_s
     assert_eq!(world.close_log().len(), 2);
 }
 
-/// `oversee-watch:4727-4735` (`wall_route`, the hosted stop), the cases
-/// `744fd5727:skills/orch/tests/oversee_watch_wall_relaunch.sh` pinned as
-/// `hosted_stop` and `hosted_stop_failed`. Defect: a walled hosted lane's
-/// harness left running on its host under the successor the relaunch opens,
-/// or a stop the provider did not confirm followed by a relaunch anyway. A
-/// walled lane whose kind declares a local pane has its harness stopped
-/// through `lane-host stop --item --harness` under the record's host before
-/// the relaunch starts; a stop the provider refuses, or answers with exit 0
-/// and a line that is not `stopped item=ITEM processes=N`
-/// (`lane_recovery_stop_confirmed`'s second arm), leaves the wall to the
-/// overseer with `wall-relaunch-refused reason=stop-failed` and the status
-/// under the line, and nothing starts. So does a stop that gave no answer,
-/// a status of 128 and above (a signal, the ssh provider's 255), said
+/// A walled hosted lane's harness must not run on beside the successor the
+/// relaunch opens: a walled lane whose kind declares a local pane has its
+/// harness stopped through `lane-host stop --item --harness` under the
+/// record's host before the relaunch starts; a stop the provider refuses,
+/// or answers with exit 0 and a line that is not `stopped item=ITEM
+/// processes=N`, leaves the wall to the overseer with
+/// `wall-relaunch-refused reason=stop-failed` and the status under the
+/// line, and nothing starts. So does a stop that gave no answer, a status
+/// of 128 and above (a signal, the ssh provider's 255), said
 /// `reason=stop-unanswered`, since the harness may still run.
 #[test]
 fn a_walled_hosted_pane_local_lane_is_stopped_through_the_provider_before_its_relaunch() {
@@ -4451,10 +4339,9 @@ fn a_relaunch_the_launcher_answers_possibly_started_is_read_as_started_and_one_n
 // transfer.
 // ---------------------------------------------------------------------------
 
-/// Defect: a dead controller whose record carries no launch line left
-/// unreplaced, as a record the runtime's own start wrote carries none. The
-/// held successor is the record's own typed fields: the transfer asked
-/// for carries them, a fresh session with no resume and no line.
+/// A record the runtime's own start writes carries no launch line, so the
+/// held successor is the record's own typed fields: the transfer asked for
+/// carries them, a fresh session with no resume and no line.
 #[test]
 fn a_dead_controller_is_replayed_from_its_records_own_fields_with_no_launch_line() {
     let dir = tempfile::tempdir().unwrap();
@@ -4500,11 +4387,9 @@ fn a_dead_controller_is_replayed_from_its_records_own_fields_with_no_launch_line
     assert_eq!(successor.extra_args, vec!["--verbose".to_owned()]);
 }
 
-/// Defect: a walled controller transferred onto no account, or asked for
-/// again every pass once the walk found none. The walk answering `none`
-/// marks the row reported with no request made; the walk choosing an
-/// entry of another harness opens that harness under the full bypass with
-/// none of the caller's words.
+/// The walk answering `none` marks the row reported with no request made;
+/// the walk choosing an entry of another harness opens that harness under
+/// the full bypass with none of the caller's words.
 #[test]
 fn a_walled_controller_is_held_where_the_walk_chooses_none_and_crosses_harness_on_its_choice() {
     let dir = tempfile::tempdir().unwrap();
@@ -4626,10 +4511,9 @@ fn a_walled_controller_is_held_where_the_walk_chooses_none_and_crosses_harness_o
     assert!(successor.extra_args.is_empty());
 }
 
-/// Defect: orch opening a successor for a controller another lifecycle
-/// records. A dead controller whose record names its succession command
-/// has that command run once through the runner, the line naming it under
-/// the death's line, and no transfer asked for; a command that fails is
+/// A dead controller whose record names its succession command has that
+/// command run once through the runner, the line naming it under the
+/// death's line, and no transfer asked for; a command that fails is
 /// reported, not run again every pass.
 #[test]
 fn a_dead_controller_whose_record_names_a_succession_owner_has_that_command_run_and_no_transfer() {
@@ -4693,13 +4577,12 @@ fn a_dead_controller_whose_record_names_a_succession_owner_has_that_command_run_
     assert!(transfers2.borrow().is_empty());
 }
 
-/// Defect: a succession command that gave no answer said as the owner's
-/// failure. A dead controller's succession command that started and gave
-/// no answer is `requested`, nothing said, and the record settles it: while
-/// the record still names the dead session within the settle bound the row
+/// A dead controller's succession command that started and gave no answer
+/// is `requested`, nothing said, and the record settles it: while the
+/// record still names the dead session within the settle bound the row
 /// holds, and past it the owner's failure is said once and the row is
-/// `reported`. A record the command moved names another session, whose
-/// key this row never reads.
+/// `reported`. A record the command moved names another session, whose key
+/// this row never reads.
 #[test]
 fn a_succession_command_that_gave_no_answer_is_settled_by_the_record() {
     let dir = tempfile::tempdir().unwrap();
@@ -4829,13 +4712,12 @@ fn orch_scripts() -> PathBuf {
         .join("scripts")
 }
 
-/// Defect (the duty's side of the provider's running answer): a hosted lane
-/// of a `pane=local` kind whose provider answers `running` read
-/// `lane-exited` off its local transport pane, a shell. The provider's
-/// answer is the process proof and the local pane's screen is judged with
-/// it: a shell drawing Codex's idle screen is `idle-after-return`, never
-/// exited, and no capture is asked; a provider line naming no `pane` is the
-/// same kind.
+/// The duty's side of the provider's running answer: a hosted lane of a
+/// `pane=local` kind has a shell for its local transport pane, so the
+/// provider's answer is the process proof and the local pane's screen is
+/// judged with it: a shell drawing Codex's idle screen is
+/// `idle-after-return`, never exited, and no capture is asked; a provider
+/// line naming no `pane` is the same kind.
 #[test]
 fn a_hosted_lane_the_provider_reads_running_is_never_exited_off_its_transport_shell() {
     let dir = tempfile::tempdir().unwrap();
@@ -4930,14 +4812,11 @@ fn on_disk(disk: &Path, path: &str, text: &str) {
     std::fs::write(file, text).unwrap();
 }
 
-/// Defect: a hosted Pi lane's session rows read on the watch's own disk at
-/// its root, a path on its host, so a lane walled on its host read no row,
-/// stayed unjudged and said nothing. Through the real `lane-host` to a
-/// provider serving the host's disk: the host's last row, a turn ended on
-/// the account's limit, is `usage-limit`; a file at the same path on this
-/// disk is never read. The fleet record is a hosted record planted as `main`
-/// wrote it (`host` the provider, `kind` `ssh`, `mail_root` the root on the
-/// host).
+/// Through the real `lane-host` to a provider serving the host's disk: the
+/// host's last row, a turn ended on the account's limit, is `usage-limit`;
+/// a file at the same path on this disk is never read. The fleet record is
+/// a hosted record planted as `main` wrote it (`host` the provider, `kind`
+/// `ssh`, `mail_root` the root on the host).
 #[test]
 fn a_hosted_pi_lanes_rows_are_read_through_its_provider() {
     let dir = tempfile::tempdir().unwrap();
@@ -4996,17 +4875,15 @@ fn a_hosted_pi_lanes_rows_are_read_through_its_provider() {
     );
 }
 
-/// Defect: a hosted lane's handoff record, written by its workflow in its
-/// checkout's state on its host, never read, so a lane that handed off was
-/// never `handoff`. Through the real `lane-host` to a provider serving the
-/// host's disk, the record is read in both places the local read names: the
-/// clone its `.git` names under the state directory its settings name (none:
-/// `tmp`), and the lane root's `tmp`, where a lane whose launch forbids
-/// writing the main checkout keeps it. Either is `handoff` with the record
-/// under it once; a state the host serves that is no JSON object is the
-/// pass's `handoff-read-failed`, never no handoff. The fleet record is a
-/// hosted record planted as `main` wrote it (`host` the provider, `kind`
-/// `ssh`, `mail_root` the root on the host).
+/// Through the real `lane-host` to a provider serving the host's disk, the
+/// record is read in both places the local read names: the clone its `.git`
+/// names under the state directory its settings name (none: `tmp`), and the
+/// lane root's `tmp`, where a lane whose launch forbids writing the main
+/// checkout keeps it. Either is `handoff` with the record under it once; a
+/// state the host serves that is no JSON object is the pass's
+/// `handoff-read-failed`, never no handoff. The fleet record is a hosted
+/// record planted as `main` wrote it (`host` the provider, `kind` `ssh`,
+/// `mail_root` the root on the host).
 #[test]
 fn a_hosted_lanes_handoff_is_read_through_its_provider() {
     let handoff = r#"{"merged":[],"remaining":["review"],"branch":"b","worktree":"/remote/KEN-4","open_pr":null,"traps":[]}"#;
@@ -5085,11 +4962,10 @@ fn a_hosted_lanes_handoff_is_read_through_its_provider() {
     }
 }
 
-/// Defect: a hosted lane with no recorded pane keys its exit row on the
-/// empty pane key, which an absent row read as too, so the two-pass rule
-/// reported it on the first pass. The row standing is the first pass's
-/// record: the lane the provider reads exited is `lane-exited` on the
-/// second pass alone, and a third says nothing.
+/// A hosted lane with no recorded pane keys its exit row on the empty pane
+/// key, which an absent row must not read as, so the row standing is the
+/// first pass's record: the lane the provider reads exited is `lane-exited`
+/// on the second pass alone, and a third says nothing.
 #[test]
 fn a_paneless_hosted_lane_the_provider_reads_exited_is_reported_on_the_second_pass() {
     let dir = tempfile::tempdir().unwrap();
@@ -5153,12 +5029,10 @@ fn plant_copilot_hooks(dir: &Path, tools: &Path) {
     .unwrap();
 }
 
-/// Defect: a Copilot lane launched with allow-all whose managed policy
-/// withdrew the grant waited at a permission prompt, and the duty said
-/// `lane-asking` with no cause, so its overseer answered the prompt on every
-/// tool call where the line's cause has it stop the lane instead; a lane
-/// whose turn ended under the withdrawn grant read as a finished turn. The
-/// duty reads the session's status-line record, the real
+/// A Copilot lane launched with allow-all whose managed policy withdrew the
+/// grant waits at a permission prompt, and the line's cause has its
+/// overseer stop the lane rather than answer the prompt on every tool call.
+/// The duty reads the session's status-line record, the real
 /// `copilot-statusline` writer's, under the record's account: a running
 /// record with `allow_all` true whose session reports the grant off carries
 /// `stop-cause=allow-all-blocked-by-policy` on `lane-asking` and on

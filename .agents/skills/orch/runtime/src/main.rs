@@ -805,7 +805,7 @@ enum FindingsOp {
 /// refuses to persist an intent without one.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the command reads the wall clock and its own identity for the stamp and the owner it writes with (decision 72); no effect runs here"
+    reason = "the command reads the wall clock and its own identity for the stamp and the owner it writes with; no effect runs here"
 )]
 fn system_env() -> Result<Env> {
     let since_epoch = SystemTime::now()

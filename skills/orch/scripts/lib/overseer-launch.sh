@@ -2,7 +2,7 @@
 #
 # The overseer steps the shell callers share: `oversee-succeed` (the
 # successions the turn-end hook asks for), `oversee register`, the turn-end
-# hook, `open-terminal`'s preference walk and the Jarvis session's selector.
+# hook and the Jarvis session's selector.
 # One account walk, so no two of them choose an account differently. What
 # differs between them is policy and stays with the caller: which marks fire
 # and which entries the account walk tries; the walk and the flag assembly
@@ -119,7 +119,7 @@ ol_preference() { # [MARK_KIND]
 
 # ol_preference_entries VALUE — VALUE, ORCH_OVERSEER_PREFERENCE's or ORCH_LANE_PREFERENCE's
 # comma-separated `harness:model:effort` entries, into OL_ENTRIES, with
-# an optional @host after the harness only in lane mode, for open-terminal.
+# an optional @host after the harness only in lane mode.
 # OL_NAMED the count. `harness` is claude, codex, copilot or pi; `model` is
 # a model class or the model the harness's `--model` word takes, which
 # ol_entry_model reads (ol_model_class), empty for its native default, on pi
@@ -133,9 +133,9 @@ ol_preference() { # [MARK_KIND]
 # which this parse does not run. ol_deprecated warns once per launch.
 # OL_REFUSED_ENTRIES holds every refused entry; a refusal returns 1 and keeps
 # the first in OL_BAD_ENTRY for launchers. Empty VALUE is no entries.
-# In lane mode the final entry alone may end in `:last`, the last-choice mark
-# open-terminal's preference_select reads from OL_LAST_CHOICE (1 marked, else
-# 0); the mark is stripped, so OL_ENTRIES holds the entry without it. The mark
+# In lane mode the final entry alone may end in `:last`, the last-choice mark,
+# into OL_LAST_CHOICE (1 marked, else 0); the mark is stripped, so OL_ENTRIES
+# holds the entry without it. The mark
 # on another entry, or in an overseer preference, is refused.
 OL_ENTRIES=()
 OL_NAMED=0
@@ -150,7 +150,7 @@ OL_DEPRECATED_ENTRIES=()
 # prints neither line: a child `lanes` read's stderr is the caller's DEP_ERR
 # or a relayed refusal's cause, never a second copy. A script that starts
 # `lanes` before or without sourcing this file exports the hold itself
-# (lane-close, open-terminal, the lane-mail-check hook). Two kinds of child
+# (lane-close, the lane-mail-check hook). Two kinds of child
 # drop it: a session launch (lib/lane-launch.sh LANE_LAUNCH_SCRUB,
 # overseer-run), whose own launches print theirs. A `lanes pick` a person
 # runs holds no latch and warns.
@@ -277,7 +277,7 @@ ol_model_class() { # HARNESS MODEL [classify]
 # ol_model_line WARNING — WARNING, kendex's model-resolution line for the
 # model a launch runs, printed once per launch (OL_LINES_HELD). A preference
 # walk classifies each entry it reaches and prints only the line of the entry
-# it picks, after the pick (ol_walk, open-terminal preference_select), since
+# it picks, after the pick (ol_walk), since
 # an entry it passes over names a model the launch does not run. `lanes pick
 # --model` prints its one word's.
 OL_CLASS_WARNED=$OL_LINES_HELD
@@ -819,7 +819,8 @@ ol_launch_flags() { # [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE [F
   shift 5
   OL_FLAGS=() OL_FIELDS=()
   OL_REASON=launch-choice-failed
-  # open-terminal owns lane preference admission; this requirement is for overseers.
+  # A lane preference walk (PREFERENCE_ACTIVE) admits its own posture; this
+  # requirement is for overseers.
   if [[ "${PREFERENCE_ACTIVE:-false}" != true && "$harness" == "$source" ]] \
     && ! launch_choice_permission_present "$source" "$*"; then
     permission="$(launch_choice_permission_write "$harness")" && [[ -z "$permission" ]] \
@@ -872,8 +873,8 @@ ol_launch_flags() { # [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE [F
 # lane_single_quote preserves the brief through the pane's shell. HANDOFF is
 # held to a shell-inert alphabet by every caller. One plain sentence on
 # claude and codex, the contract each of them
-# already reads as its opening prompt; pi opens on its skill command, as
-# open-terminal's pi lane brief does. The account variable is
+# already reads as its opening prompt; pi opens on its skill command. The
+# account variable is
 # lib/lane-launch.sh § lane_env_prefix's for the harness and the model FLAG...
 # names: pi's is claude's, which the pi-claude bridge reads, and
 # PI_CODING_AGENT_DIR on the Copilot pool. An empty LANE_DIR, which ol_walk
@@ -882,7 +883,7 @@ ol_launch_flags() { # [--question-off] HARNESS MODEL EFFORT PICK_MODEL SOURCE [F
 #
 # A codex session reads folder trust for LAUNCH_DIR before it reads its own
 # arguments, and the pane it opens in has nobody at it, so the entry is made
-# through the builder `open-terminal` uses; a launch whose entry could not be
+# through lib/lane-launch.sh § lane_trust_prepare; a launch whose entry could not be
 # made returns 1 with OL_REASON=launch-trust-missing, the builder's reason
 # in OL_TRUST_REASON and its dependency's own words, where the refusal has
 # any, in DEP_ERR for the caller's refusal to print, rather than opening on
@@ -1430,9 +1431,9 @@ ol_succession_update() { # pending|current|restore PAYLOAD
 # is given. The record carries no `at`: `workflow-state append-file` stamps
 # the fleet log's time from its own clock, so the record written here and the
 # one an overseer writes by hand are dated by one reader. Every overseer notice
-# the fleet log carries goes through here: the watch's, at its start and from
-# its passes, oversee-succeed's refusal of a live self-succession, and either
-# launcher's `checkout-unsynced`.
+# a shell script writes to the fleet log goes through here: oversee-succeed's
+# refusal of a live self-succession, its `checkout-unsynced` and its other
+# keyed lines (ol_fleet_log_notice).
 ol_fleet_log() { # NOTICE_FILE RECORD_FILE ERR_FILE [STATE_CMD...]
   local notice="$1" record="$2" errf="$3"
   shift 3
@@ -1662,8 +1663,8 @@ ol_record_exit() { # RUN_JSON STATUS
 # OL_KNOWN_HARNESS, OL_KNOWN_ACCOUNT, OL_KNOWN_MODEL and OL_KNOWN_CWD, each
 # empty where neither names it, for the caller's own fallbacks, the pane and
 # the environment, to answer; OL_CUR_* are left as ol_record_current set them.
-# Every reader of a caller's identity asks here, so the watch's succession and
-# `lanes context` cannot name one session two ways. Returns
+# The one shell reading of a caller's identity, so no two readers name one
+# session two ways. Returns
 # ol_record_current's status: 2 is a state that could not be read, the
 # reader's words in DEP_ERR, and the row still answers.
 OL_KNOWN_HARNESS="" OL_KNOWN_ACCOUNT="" OL_KNOWN_MODEL="" OL_KNOWN_CWD=""
