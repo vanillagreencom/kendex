@@ -1739,7 +1739,10 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                 # That home's read takes its to-lane alone.
                 ("test_owner_unanswered_reminder", 'boxes = ("to-lane",) if', 'boxes = ("to-lane", "to-overseer") if'),
                 # A satellite reads no other root.
-                ("test_satellite_is_no_fleet_contact", satellite, "roots = project_roots()")):
+                ("test_satellite_is_no_fleet_contact", satellite, "roots = project_roots()"),
+                # The control host's presence pass runs as JARVIS_CONTROL_USER.
+                ("test_control_user_passes", 'subprocess.Popen(host_args(destination, "bash -s"),',
+                 'subprocess.Popen(["ssh", destination.host, "bash -s"],')):
             with self.subTest(row=name, planted=new):
                 case = Producer(methodName=name)
                 case.setUp()
