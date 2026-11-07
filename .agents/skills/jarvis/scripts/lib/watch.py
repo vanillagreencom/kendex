@@ -382,6 +382,38 @@ def owner_unread(bash, root, cursor, count, now, reported, events):
     return [row["id"] for row in owned]
 
 
+def mailbox_root(bash, root):
+    """The checkout whose overseer mailbox lane-mail reads at root."""
+    if not root.is_dir():
+        raise Failure("root-read", "missing", "root", "root-missing")
+    if not lane_mail().is_file():
+        raise Failure("root-read", "missing", "mailbox", "dependency=mailbox-missing")
+    return Path(checked([bash, LIB / "jarvis-env.sh", "common-root", root], operation="common-root").strip())
+
+
+def mailbox_readers(bash, roots, home):
+    """Each root with its mailbox checkout or read failure, one root per mailbox.
+
+    A project registered inside another's git tree resolves to the outer
+    mailbox. Home reads a shared mailbox first, then the mailbox's own
+    checkout, then the first listed; a failed root is kept to report it.
+    """
+    resolved = []
+    for root in roots:
+        try:
+            resolved.append((root, mailbox_root(bash, root)))
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            resolved.append((root, failure("root-read", error)))
+    reader = {}
+    for index, (root, common) in enumerate(resolved):
+        if isinstance(common, Path):
+            rank = (root != home, root != common, index)
+            if common not in reader or rank < reader[common]:
+                reader[common] = rank
+    return [(root, common) for index, (root, common) in enumerate(resolved)
+            if not isinstance(common, Path) or reader[common][2] == index]
+
+
 def mail_pass(bash, home, side, cursor, delivered=None, satellite=False):
     """One pass over every root. A local home read adds each owner row it reads to delivered.
 
@@ -396,7 +428,12 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False):
     # worktree row) still receives owner mail. Its to-lane alone is read for
     # those rows: no mail event, no to-overseer mark-read, no receipts.
     alone = side == "local" and home not in roots
-    for root in (roots + [home]) if alone else roots:
+    readers = mailbox_readers(bash, roots, home)
+    if alone:
+        # Its to-lane read takes owner rows alone, so it never replaces a
+        # listed root's full read of a shared mailbox.
+        readers += mailbox_readers(bash, [home], home)
+    for root, common in readers:
         boxes = ("to-lane",) if alone and root == home else ("to-lane", "to-overseer")
         key = str(root)
         prior = state.get(key, {})
@@ -404,11 +441,8 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False):
         cause = None
         root_events, root_delivered = [], []
         try:
-            if not root.is_dir():
-                raise Failure("root-read", "missing", "root", "root-missing")
-            if not lane_mail().is_file():
-                raise Failure("root-read", "missing", "mailbox", "dependency=mailbox-missing")
-            common = Path(checked([bash, LIB / "jarvis-env.sh", "common-root", root], operation="common-root").strip())
+            if not isinstance(common, Path):
+                raise common
             for box in boxes:
                 before = prior.get(box, {})
                 filename = common / "tmp/lane-mail/overseer" / (box + ".jsonl")

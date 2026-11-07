@@ -757,6 +757,16 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
             bodies = [row["text"] for row in self.inbox() if row["kind"] == "directive"]
             self.assertEqual(sum(body.count("answer from equal host path") for body in bodies), 1)
 
+    def test_nested_project_reads_its_outer_mailbox_once(self):
+        # A folder inside peer's git tree, listed first, resolves to peer's mailbox.
+        nested = self.peer / "packaging/jarvis-home"
+        nested.mkdir(parents=True)
+        self.registry.write_text("\n".join(map(str, (self.home, nested, self.peer))) + "\n")
+        self.mail(self.peer, "notice", "one outer row", "--to", "owner")
+        output, _ = self.read_pass()
+        self.assertEqual(output.count("one outer row"), 1)
+        self.assertIn("EVENT mail repo=peer file=to-overseer destination=local root=" + str(self.peer) + "\n", output)
+
     def test_quoted_boundaries_and_text_limit(self):
         ordinary = 'print("hello") C:\\work\\file /a\\w+/ café'
         # One serializer table spans message data, tokens and complete units.
@@ -1587,7 +1597,13 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         window = '"--since", min(row["at"] for row in waiting)'
         unlisted = 'alone = side == "local" and home not in roots'
         satellite = "roots = [home] if satellite else project_roots()"
+        shared = "if not isinstance(common, Path) or reader[common][2] == index]"
         for name, old, new in (
+                # Each root sharing a mailbox reads it separately.
+                ("test_nested_project_reads_its_outer_mailbox_once", shared, "]"),
+                # The first listed root reads a shared mailbox, not its own checkout.
+                ("test_nested_project_reads_its_outer_mailbox_once", "rank = (root != home, root != common, index)",
+                 "rank = (root != home, False, index)"),
                 ("test_relay_transitions_and_restart", 'if current != "ok" and (previous is None or previous == "ok"):',
                  'if current != "ok":'),
                 ("test_legacy_host_migration", 'spans=[self.canonical_span(span) for span in pending["retained"]]',
