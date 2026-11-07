@@ -374,10 +374,21 @@ kendex_github_git_url_is_github_ssh() {
   return 1
 }
 
-kendex_github_git_args_have_github_ssh_url() {
-  local arg
+# The URL form gh and actions/checkout write for an HTTPS clone.
+kendex_github_git_url_is_github_https() {
+  case "${1:-}" in
+    https://github.com/*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+kendex_github_git_args_have_url_matching() { # PREDICATE ARGS...
+  local predicate="$1" arg
+  shift
   for arg in "$@"; do
-    if kendex_github_git_url_is_github_ssh "$arg"; then
+    if "$predicate" "$arg"; then
       return 0
     fi
   done
@@ -431,8 +442,8 @@ kendex_github_git_work_dir_from_args() {
   printf '%s\n' "$cwd"
 }
 
-kendex_github_git_repo_has_github_ssh_remote() {
-  local repo="${1:-.}"
+kendex_github_git_repo_has_remote_matching() { # REPO PREDICATE
+  local repo="${1:-.}" predicate="$2"
   local remotes remote url
 
   git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || return 1
@@ -444,14 +455,14 @@ kendex_github_git_repo_has_github_ssh_remote() {
 
     while IFS= read -r url; do
       [[ -n "$url" ]] || continue
-      if kendex_github_git_url_is_github_ssh "$url"; then
+      if "$predicate" "$url"; then
         return 0
       fi
     done < <(git -C "$repo" remote get-url --all "$remote" 2>/dev/null || true)
 
     while IFS= read -r url; do
       [[ -n "$url" ]] || continue
-      if kendex_github_git_url_is_github_ssh "$url"; then
+      if "$predicate" "$url"; then
         return 0
       fi
     done < <(git -C "$repo" remote get-url --push --all "$remote" 2>/dev/null || true)
@@ -478,12 +489,27 @@ kendex_github_git_should_use_https_fallback() {
       ;;
   esac
 
-  if kendex_github_git_args_have_github_ssh_url "$@"; then
+  if kendex_github_git_args_have_url_matching kendex_github_git_url_is_github_ssh "$@"; then
     return 0
   fi
 
   work_dir="$(kendex_github_git_work_dir_from_args "$@")"
-  kendex_github_git_repo_has_github_ssh_remote "$work_dir"
+  kendex_github_git_repo_has_remote_matching "$work_dir" kendex_github_git_url_is_github_ssh
+}
+
+# A session that names its GitHub read token file (fleet's gh-read contract)
+# reaches HTTPS github.com through gh's credential helper alone: an inherited
+# extraheader, such as an admin's copied Authorization header, would be sent
+# ahead of the helper and act as that admin. Independent of the SSH fallback
+# mode, which governs SSH rewriting only.
+kendex_github_git_should_use_read_token() {
+  local work_dir
+  [[ -n "${ORCH_GH_READ_TOKEN_FILE:-}" ]] || return 1
+  if kendex_github_git_args_have_url_matching kendex_github_git_url_is_github_https "$@"; then
+    return 0
+  fi
+  work_dir="$(kendex_github_git_work_dir_from_args "$@")"
+  kendex_github_git_repo_has_remote_matching "$work_dir" kendex_github_git_url_is_github_https
 }
 
 kendex_github_git_https_auth_available() {
@@ -538,19 +564,28 @@ kendex_github_git_collect_https_rewrites() {
 }
 
 kendex_github_git() {
+  local work_dir rewrite read_token=0
+  local -a git_args=()
+  if kendex_github_git_should_use_read_token "$@"; then
+    read_token=1
+  fi
   if kendex_github_git_should_use_https_fallback "$@" && kendex_github_git_https_auth_available; then
-    local work_dir rewrite
-    local -a git_args
     work_dir="$(kendex_github_git_work_dir_from_args "$@")"
     git_args=(-c credential.helper= -c credential.helper='!gh auth git-credential')
     while IFS= read -r rewrite; do
       [[ -n "$rewrite" ]] || continue
       git_args+=(-c "url.https://github.com/.insteadOf=$rewrite")
     done < <(kendex_github_git_collect_https_rewrites "$work_dir" "$@" | awk 'NF && !seen[$0]++')
-
-    git "${git_args[@]}" "$@"
-    return $?
+  elif [[ "$read_token" -eq 1 ]]; then
+    # No gh auth probe here: with no readable token file gh refuses, and the
+    # call fails rather than fall back to another credential.
+    git_args=(-c credential.helper= -c credential.helper='!gh auth git-credential')
+  fi
+  if [[ "$read_token" -eq 1 ]]; then
+    # An empty http.extraHeader resets git's header list (git-config); at
+    # this URL scope it also outranks an inherited header scoped as widely.
+    git_args+=(-c http.https://github.com/.extraheader=)
   fi
 
-  git "$@"
+  git ${git_args[@]+"${git_args[@]}"} "$@"
 }
