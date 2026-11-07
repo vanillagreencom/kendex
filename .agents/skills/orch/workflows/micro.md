@@ -199,7 +199,7 @@ Check the pushed paths through `item-tier`:
 
 The accepted answer is `tier=micro`. Over a range the script reads the path rules alone, the class of § Escape condition 3, and never a line count: the tier the admission read stands, and this check proves the pushed paths stayed inside it. A path rule that selects `small` or `standard`, or a command failure, escapes (§ Escape condition 6).
 
-Bind `[REVIEW_BASE_CHECKOUT]` to the consumer base, per [Gate-mode routing](../references/gates.md#gate-mode-routing), and read its mode through [the review call](../references/gates.md#the-review-call), run once from `[MAIN_REPO_ROOT]` with `[MARK_READY]` `false`. The call has no pure read: on `approval` it also settles the pushed head's Copilot request and records it, as [Copilot requests](../references/gates.md#copilot-requests) says.
+Bind `[REVIEW_BASE_CHECKOUT]` to the consumer base, per [Gate-mode routing](../references/gates.md#gate-mode-routing), and read its mode through [the review call](../references/gates.md#the-review-call), run once from `[MAIN_REPO_ROOT]` with `[MARK_READY]` `false`. The call has no pure read: on `approval` it also settles the pushed head's Copilot request ([Copilot requests](../references/gates.md#copilot-requests)).
 
 Continue only on `approval`. This tier runs no internal review, so the repository's required review is the one review the pull request gets: § 5 step 1's arm leaves it to GitHub, which holds the merge until the approval lands. `off`, a refusal or an `unreadable` reply escapes (§ Escape condition 6). An `off` mode ends the micro route without removing GitHub's approval requirement.
 
@@ -250,7 +250,7 @@ The tier holds only while the item and its change stay inside it. Each condition
 6. § 4 cannot prove all three parts of its precheck. Either the `item-tier` answer is not `tier=micro`, or the review call's `mode` is not `approval`, or `pr-merge --check` returns no valid readiness object for an open pull request.
 7. merge-pr.md § 5 step 1 returns to its § 3.2: the refusal's cause carries no `retry: same-head` line, a set that holds `ci_pending` and `fetch_error` beside the causes that need a change or a reader. A refusal retried on the same head is not this condition.
 8. merge-pr.md § 5 step 1 refuses: the `item-tier` answer it reads over the prepared endpoints is not `tier=micro`, or the gate mode its review call reads is not `approval`, or `[PREPARED_HEAD]` is not `[MICRO_HEAD]`. The endpoints moved between § 4's checks and that step: by a push this run did not make, or by a retarget that changes the class without moving the head. A fix this run pushed re-enters § 4 first (its last paragraph), so it is not this condition.
-9. The [review call](../references/gates.md#the-review-call)'s `request` ([Copilot requests](../references/gates.md#copilot-requests)) falls back `cause=no-files` for the pushed head. Copilot read no files, so the head needs an internal review before fallback approval.
+9. The [review call](../references/gates.md#the-review-call)'s `request` ([Copilot requests](../references/gates.md#copilot-requests)) falls back `cause=no-files` for the pushed head, which then needs an internal review before fallback approval.
 
 The § 1 control-host refusal also ends the run, before any condition above can apply. It is not an escape: the item stays at the `micro` tier and launches as a hosted lane.
 

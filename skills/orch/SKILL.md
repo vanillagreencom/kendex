@@ -165,7 +165,7 @@ Durable data lives in workflow state, `<state-dir>/workflow-state-[ID].json` ([s
 
 Other temporary session state, including handoffs, lane status, and reviews, defaults to the repository's `tmp/`, which kendex's managed ignore block covers in every consumer, while `docs/` holds tracked repository content and never receives a kendex ignore rule. A plan or research report is not session state: its durable home is its tracker issue, `agents/planner.md` § Plan Artifacts places its working copy, and it is never committed.
 
-After compaction, resume from the step after the last completed one: read the item's workflow state, or for an overseer use [takeover](workflows/oversee-takeover.md#1-read-the-mailbox-and-handoff)'s bounded resume reads. Apply [Delegation](references/skill-rules.md#delegation) before re-sending by stored ID. Stall recovery follows [Round Closure](references/skill-rules.md#round-closure). Never repeat completed actions.
+After compaction, resume from the step after the last completed one: read the item's workflow state, or for an overseer use [takeover](workflows/oversee-takeover.md#1-read-the-mailbox-and-handoff)'s bounded resume reads. Apply [Delegation](references/skill-rules.md#delegation) before re-sending by stored ID. Stall recovery follows [Stalled round](references/skill-rules.md#stalled-round). Never repeat completed actions.
 
 ### Review Pipeline
 

@@ -174,8 +174,9 @@ fn git_start() -> GitStart {
 
 /// A shell body that runs `git` with its arguments once every
 /// repository-local variable git names (`git rev-parse --local-env-vars`)
-/// is unset: a git hook's environment carries `GIT_DIR` and
-/// `GIT_INDEX_FILE`, and git honours `GIT_DIR` over `-C`.
+/// is unset: a git hook's environment carries `GIT_DIR`, `GIT_INDEX_FILE`
+/// and `GIT_WORK_TREE`, and git honours `GIT_DIR` and `GIT_WORK_TREE` over
+/// the checkout `-C` names.
 #[cfg(test)]
 const CLEARED_GIT: &str = "unset $(git rev-parse --local-env-vars); exec git \"$@\"";
 

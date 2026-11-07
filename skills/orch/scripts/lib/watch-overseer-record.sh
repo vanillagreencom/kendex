@@ -131,11 +131,10 @@ overseer_command_record() {
   # session's, and so is one an earlier server handed the same pid wrote,
   # whose start is not this server's. A start there has no launch identity to
   # record, which leaves its readers on the pane and the environment until a
-  # launcher or `oversee register` writes one. A
-  # `pending`
-  # successor goes either way: the line this start records is the current
-  # session's, as a start always replaced the pending line it met, so a
-  # succession that died before its launch leaves nothing a later death would
+  # launcher or `oversee register` writes one. A `pending` successor goes
+  # either way: the line this start records is the current session's, and the
+  # start removes `pending` (the `del(.pending, .exit)` below), so a succession
+  # that died before its launch leaves no pending line a later death would
   # replay. A kept record naming an account, no home and no harness takes the
   # account as its home: a released `oversee register` or `oversee launch`
   # wrote that shape, with no launch identity, and the turn-end hook binds

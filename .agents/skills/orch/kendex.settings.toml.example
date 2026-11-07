@@ -1,5 +1,6 @@
 [env]
-# The Apple proof workflow must exist on the base branch to activate the gate.
+# The Apple proof workflow must exist on the base branch to activate the gate
+# (schemas/dev-return.md § validate and its note).
 ORCH_APPLE_WORKFLOW = ".github/workflows/mac-run.yml"
 
 # Space-separated issue labels that require Apple proof when the gate is active.
@@ -12,8 +13,8 @@ ORCH_APPLE_LABELS = "ios macos"
 # Publication destination. pr also applies when unset. push-base keeps the
 # tier's local validation and internal review, then fast-forward pushes the
 # resolved base branch without a pull request. The pushed commit's record:
-# references/oversee-events.md § Direct-push cycle records. An item with an
-# open post-merge box stops for the PR route: workflows/submit-pr.md § 2.1.
+# references/oversee-events.md § Direct-push cycle records. When an item
+# takes the PR route instead: workflows/submit-pr.md § 2.1.
 # ORCH_DELIVERY = "push-base"
 
 # How a pull request is reviewed, merged and handed on, and how much of
@@ -74,14 +75,15 @@ ORCH_LANE_HOST = "local"
 # How much a lane prints into its own window. "quiet" prints one line per
 # finished step and writes each filled-in report to a file. "normal" prints
 # every report as it is written. Anything else is taken as "quiet" rather
-# than refused.
+# than refused. What each mode prints and what it never touches:
+# references/skill-rules.md § Lane Output.
 # values: quiet | normal
 ORCH_LANE_OUTPUT = "quiet"
 
 # Disk use, in percent of the volume holding a lane worktree's target/, at or
 # past which round-prune removes that worktree's Cargo output before a dev
-# round. Below it nothing is pruned and the round's validation starts warm, so
-# set it where the free space left below it still holds one full validation.
+# round (references/skill-rules.md § Round Closure). Set it where the free
+# space left below it still holds one full validation.
 ORCH_ROUND_PRUNE_DISK_PCT = "75"
 
 # Seconds of one review period before the timeout policy below applies. A
@@ -135,19 +137,18 @@ CI_FIX_MAX_CYCLES = "6"
 
 # How many times one piece of work may go back for internal re-review
 # before the final verdict is taken. One means one fix round and one
-# re-review of that fix, then the pull request opens.
+# re-review of that fix; what 0 allows: references/settings.md.
 REVIEW_MAX_CYCLES = "1"
 
-# How many rounds of outside review an open pull request takes. Past the
-# limit a finding gets a written answer instead of a fix, unless the change
-# itself introduced the defect.
-# A change sized small is held to two.
+# How many rounds of outside review an open pull request takes. What the
+# limit stops and what it still fixes: workflows/review-pr-comments.md § 6.1;
+# a small item's lower ceiling: workflows/small.md § 4.
 REVIEW_MAX_EXTERNAL_ROUNDS = "4"
 
 # How many agent sessions may run at once, counting the one in charge. "0"
-# is unlimited. Where more reviewers are wanted than there are free places,
-# the reviews run in waves. On the Codex runtime set the cap the spawn
-# adapter reports.
+# is unlimited. How reviews fit the budget:
+# references/skill-rules.md § Reviewer persistence is budget-conditional.
+# On the Codex runtime set the cap the spawn adapter reports.
 REVIEWER_SLOT_BUDGET = "0"
 
 # --- Talking to you -----------------------------------------------------------
@@ -155,8 +156,8 @@ REVIEWER_SLOT_BUDGET = "0"
 
 # Whether a launched overseer may open a question dialog in its terminal.
 # "off": on a harness that can turn the dialog off, the overseer starts
-# without it, as every lane does, and each question for you goes out as mail
-# to Slack, the report and the chat. "overseer": the overseer keeps it.
+# without it. "overseer": the overseer keeps it. Where each question for you
+# goes instead: references/skill-rules.md § Question tools.
 # values: off | overseer
 ORCH_QUESTION_TOOL = "off"
 
@@ -164,16 +165,17 @@ ORCH_QUESTION_TOOL = "off"
 # `lane-mail --help` states what the deadline does for each form of
 # question. An ask's own --wait overrides it.
 ORCH_ASK_WAIT_MINUTES = "120"
-# An item ask assigns the person, adds this label and posts the question.
-# This label and the owner email enable the tracker route; the item supplies its team.
-# With no ORCH_OWNER_EMAIL, the route uses KENDEX_USER_EMAIL.
+# The label and the owner email that enable an item ask's tracker route;
+# with no ORCH_OWNER_EMAIL, the route uses KENDEX_USER_EMAIL. What the
+# route does: references/communication-modes.md § Owner asks.
 # ORCH_OWNER_EMAIL = "owner@example.com"
 # ORCH_OWNER_ASK_LABEL = "owner-gated"
 
 # Who the session is talking to. "ceo" asks only about outcomes, in plain
 # language, and settles the two questions below and issue creation on its
 # own unless a setting answers them. "engineer" leaves each of those at its
-# own default.
+# own default. The ask set and the composition:
+# references/communication-modes.md.
 # values: ceo | engineer
 ORCH_USER_MODE = "ceo"
 
@@ -191,7 +193,7 @@ ORCH_MERGE_AUTONOMY = "auto"
 # The overseer's status report on what landed, is running, comes next and
 # waits on you, pasted into its chat and saved. "on" writes one on the
 # schedule below; "off" writes none on a schedule. Whether a handover
-# writes one is workflows/oversee.md § Succession's.
+# writes one: workflows/oversee.md § Succession.
 # values: on | off
 ORCH_REPORT = "on"
 
@@ -199,9 +201,8 @@ ORCH_REPORT = "on"
 ORCH_REPORT_EVERY_MINUTES = "120"
 
 # Finished items that bring the next status report forward, whatever the
-# minutes above say. 0 leaves the report on its minutes alone. Where the last
-# report is more than 7 days old, one item finished in the last 7 days is
-# enough.
+# minutes above say. 0 leaves the report on its minutes alone. When a report
+# falls due: oversee-report --help, due.
 ORCH_REPORT_EVERY_ISSUES = "0"
 
 # How many queued items the report's Next list shows.
@@ -213,8 +214,8 @@ ORCH_REPORT_COLUMNS = "issue,what it is,why it matters"
 
 # Where and how often an existing scheduler runs /orch verify on the base
 # checkout: a Claude Code routine, a cron line that starts a harness, or the
-# overseer's watch while it runs. A Stop handoff requires a reader that survives
-# Stop. Free text only; this setting starts no scheduler.
+# overseer's watch while it runs. Free text only; this setting starts no
+# scheduler. What a Stop with open boxes needs of it: workflows/oversee.md § 5.
 ORCH_VERIFY_SCHEDULE = ""
 
 # --- Fleet ---------------------------------------------------------------------
@@ -275,9 +276,8 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 
 # The override for each Copilot pool a Pi lane on a github-copilot/ model
 # spends, as account-dir=credits-used/credits-granted pairs, the account dir
-# an absolute path. The pool is read live from the lane host's accounts row
-# for the Pi root, which replaces this reading where it has one. With neither,
-# such a launch is refused rather than judged on a Claude window.
+# an absolute path. Where a lane host's reading replaces it, and the launch's
+# refusal with neither: schemas/lane-host.md § Provider protocol.
 # ORCH_LANE_COPILOT_POOL = "/home/me/.1pi=250000/1000000"
 
 # Seconds a lane's usage figure is reused before it is fetched again. 0
@@ -303,23 +303,22 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # ORCH_LANE_BURN_PCT_PER_HOUR = "5"
 
 # The credits a Codex account past ORCH_LANE_MAX_PCT must hold more than to
-# stay offered on its credit balance. Such an account is offered only after
-# every account with plan allowance left, because the allowance resets and
-# credits do not. 5000 is provisional, about a twelfth of the lowest balance
-# seen, 59.3k: one measured lane-day of spend replaces it, the balance
-# difference between two reads on an account running one lane, times 24 over
-# the hours between the reads.
+# stay offered on its credit balance; where such an account ranks:
+# references/lane-directive.md § Lane preference. 5000 is provisional, about
+# a twelfth of the lowest balance seen, 59.3k: one measured lane-day of spend
+# replaces it, the balance difference between two reads on an account running
+# one lane, times 24 over the hours between the reads.
 # ORCH_LANE_CODEX_CREDIT_FLOOR = "5000"
 
 # The allowance left on an account at which a running lane is marked for
-# handover. The lane's turn-end hook judges the lane's account at this mark
-# (references/settings.md); the lane's handoff follows
+# handover. Who judges the mark on each kind of lane, and the lane's handoff:
 # references/skill-rules.md § Round Closure.
 # ORCH_HANDOFF_HEADROOM_PCT = "3"
 
-# Who relaunches a lane its account walled. "auto" has the watch relaunch
-# it at once on an account with room for its model; "ask" reports the wall to
-# the overseer with that pick's answer.
+# Who relaunches a lane its account walled: "auto" the watch, "ask" the
+# overseer, to whom the watch reports the wall. What the watch does and
+# reports under each value: references/oversee-events.md § Event kinds,
+# lane-relaunched and usage-limit.
 # ORCH_WALL_RELAUNCH = "auto"
 
 # Earlier context handoff percentage. Shared rule and boundary behavior:
@@ -359,26 +358,25 @@ ORCH_OVERSEER_LANES = "3"
 # (references/lane-directive.md § Caps).
 ORCH_OVERSEER_CLOUD_LANES = "10"
 
-# External triage. The overseer processes issues and pull requests from
-# outside contributors: it investigates each one, may review and comment,
-# asks the owner one question with its recommendation, and drives it to a
-# close or a merge. "off" leaves them unlisted.
+# External triage: whether the watch lists issues and pull requests from
+# outside contributors for the overseer. "off" leaves them unlisted. How the
+# overseer handles each: workflows/oversee.md § Outside contributions.
 # values: on | off
 ORCH_EXTERNAL_TRIAGE = "on"
 
-# Security alerts. The overseer reads each open Dependabot, code scanning
-# and secret scanning alert of the watched repositories once, dismisses it
-# in GitHub with its reason or files a fix item, and records the verdict.
-# "off" leaves them unlisted.
+# Security alerts: whether the watch reads the open Dependabot, code
+# scanning and secret scanning alerts of the watched repositories for the
+# overseer. "off" leaves them unlisted. How the overseer handles each:
+# references/oversee-events.md § Event kinds, security-alert.
 # values: on | off
 # ORCH_SECURITY_ALERTS = "on"
 
-# Whether a finished overseer starts its own replacement. "on" starts one.
-# "off" leaves a live overseer to write its handover note and ask you to
-# start the next session, and a dead one to be reported for replacement by
-# hand. The handover, a controller whose record names its own succession
-# command included: workflows/oversee.md § Succession. The watch's recovery
-# under each value: references/overseer-session-events.md.
+# Whether orch replaces an overseer with a successor itself. "on" permits
+# orch's transfer and the watch's automatic recovery; "off" refuses the
+# transfer, and the watch requests no recovery. What a mark asks of the
+# overseer under each value, a controller whose record names its own
+# succession command included: workflows/oversee.md § Succession. The
+# watch's recovery: references/overseer-session-events.md.
 # ORCH_OVERSEER_SUCCESSION = "on"
 
 # The models a new or replacement overseer tries, in order. Each entry is
@@ -428,14 +426,14 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # Lane defaults use harness[@host]:model:effort. @host names a host kind or
 # provider executable path for that entry; without it, the caller's host or
 # the resolved ORCH_LANE_HOST applies. Overseer preferences keep the grammar
-# above. The overseer walks these entries only where the brief names no model
-# (workflows/oversee.md § 3 Lane directive, step 3).
+# above. When the overseer walks these entries:
+# workflows/oversee.md § 3 Lane directive, step 3.
 # The first eligible entry with room supplies the harness, host, model and effort.
 # Eligibility follows references/lane-directive.md § Lane preference. Explicit
 # models keep the caller's route. Unset or empty leaves that route unchanged.
 # A lane launch names its model, so a lane entry names an exact id or a claude
-# class: a codex or copilot class runs no model and refuses as
-# launch-model-missing until codex list evidence reaches the launch.
+# class: a codex or copilot class runs no model, which the launch refuses
+# (references/lane-directive.md § Lane preference).
 # The final entry alone may end in :last, a last choice the walk holds back
 # under the rule in references/lane-directive.md § Lane preference.
 # Example: claude:standard:high,pi:github-copilot/gpt-6.1-sol:high:last
@@ -481,9 +479,10 @@ ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 # ORCH_WATCH_START_STALL_SECS = "600"
 
 # Minutes a stalled Claude cloud lane may leave its one directive unanswered,
-# nothing pushed, before the watch closes it as cloud-stall-closed for a
-# hosted relaunch on its branch. A fleet that sees repeated cloud stalls drops
-# cloud from ORCH_LANE_PREFERENCE instead of raising this.
+# nothing pushed, before the watch closes it as cloud-stall-closed; what
+# follows: references/oversee-events.md § Event kinds, cloud-stall-closed.
+# A fleet that sees repeated cloud stalls drops cloud from
+# ORCH_LANE_PREFERENCE instead of raising this.
 # ORCH_CLOUD_STALL_MINUTES = "30"
 
 # Age threshold in seconds for lane-long on a running or parked lane.
@@ -510,6 +509,6 @@ ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 # ORCH_SIZE_TEST_PATHS = "scripts/check-*.py"
 
 # Hours an issue may go untouched in progress or in review before a sweep
-# reports it as stalled. An issue whose branch still has an open pull
-# request is never reported, however long it sits.
+# reports it as started-stale; which such issues it reports:
+# scripts/reconcile-work-items.
 # RECONCILE_STALE_HOURS = "24"

@@ -5449,9 +5449,8 @@ fn a_copilot_error_verdict_sends_its_notice_once() {
 }
 
 /// The overseer answers a Copilot fallback notice with an approval, which
-/// neither a head held as a draft nor a refresh head the overseer's own
-/// route approves may draw. Each records its fallback with no notice owed
-/// and the mailbox program never runs.
+/// a head's own `draft` or `refresh` fallback does not draw. Each records
+/// its fallback with no notice owed and the mailbox program never runs.
 #[test]
 fn a_draft_or_refresh_fallback_owes_no_notice() {
     for case in ["draft", "refresh"] {
