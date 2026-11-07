@@ -1690,7 +1690,7 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                 # A root another root reads for keeps its own outcome.
                 (nested, "state[str(root)] = record", "pass"),
                 # It clears its failure but does not take the reader's.
-                (nested, 'if "cause" in read:', "if False:"),
+                (nested, 'if "cause" in read else {}', "if False else {}"),
                 ("test_relay_transitions_and_restart", 'if current != "ok" and (previous is None or previous == "ok"):',
                  'if current != "ok":'),
                 ("test_legacy_host_migration", 'spans=[self.canonical_span(span) for span in pending["retained"]]',

@@ -416,10 +416,6 @@ def mailbox_readers(bash, roots):
     return [(root, common, reader[common][1] if isinstance(common, Path) else root) for root, common in resolved]
 
 
-# The record fields that follow a mailbox from reader to reader; to-lane first.
-MAILBOX_FIELDS = ("to-lane", "to-overseer", "unread")
-
-
 def mailbox_cursor(state, key, mailbox, own_lane):
     """The record of root key as the reader of mailbox, its cursors handed over from the last reader.
 
@@ -434,7 +430,7 @@ def mailbox_cursor(state, key, mailbox, own_lane):
     record = dict(state.get(key, {}))
     last = next((other for other, value in state.items() if other != key and value.get("mailbox") == mailbox), None)
     if last is not None:
-        for field in MAILBOX_FIELDS[1:] if own_lane else MAILBOX_FIELDS:
+        for field in ("to-overseer", "unread") if own_lane else ("to-lane", "to-overseer", "unread"):
             if field in state[last]:
                 record[field] = state[last][field]
             else:
@@ -548,14 +544,11 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False):
         state[key] = next_root
     # A root whose mailbox another root reads has no read outcome of its
     # own: its record takes the reader's outcome from this pass, so no field
-    # goes stale while the other root reads. It keeps its box cursors, which
-    # mailbox_cursor hands over.
+    # goes stale while the other root reads.
     for root, _, reader in readers:
         if reader != root:
-            own, read = state.get(str(root), {}), state[str(reader)]
-            record = {field: own[field] for field in MAILBOX_FIELDS if field in own}
-            if "cause" in read:
-                record["cause"] = read["cause"]
+            read = state[str(reader)]
+            record = {"cause": read["cause"]} if "cause" in read else {}
             if record or str(root) in state:
                 state[str(root)] = record
     return pass_output(side, state, events)
