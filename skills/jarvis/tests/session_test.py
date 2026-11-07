@@ -256,7 +256,10 @@ class SessionContract(unittest.TestCase):
         self.manager.write_text("{}")
         login = self.root / "login"
         login.mkdir()
+        # The servers Start opens read the login's tmux config, which a row
+        # writes, and never the developer's.
         self.env["HOME"] = str(login)
+        self.env["XDG_CONFIG_HOME"] = str(login / ".config")
         for tool in ("systemctl", "launchctl"):
             target = bin_dir / tool
             target.write_text("#!/usr/bin/env python3\nimport json, subprocess, sys\nfrom pathlib import Path\n"
@@ -673,9 +676,9 @@ class SessionContract(unittest.TestCase):
                 with patch.object(subprocess, "run", side_effect=timeout), redirect_stderr(errors):
                     try:
                         with session.pane_command([sys.executable, "-c", "pass"]) as command:
-                            channel = Path(shlex.split(command)[-1])
+                            channel = Path(command[-1])
                             self.assertEqual(channel.parent.stat().st_mode & 0o777, 0o700)
-                            session.tmux(verb, command)
+                            session.tmux(verb, *command)
                     except subprocess.TimeoutExpired as failure:
                         session.failure_log("worker-failed", failure)
                         propagated = "".join(traceback.format_exception(type(failure), failure, failure.__traceback__))
@@ -687,7 +690,7 @@ class SessionContract(unittest.TestCase):
         # A pane process killed before receipt can close a queued connection.
         with self.assertRaises((OSError, runtime["Refusal"])):
             with session.pane_command([sys.executable, "-c", "pass"]) as command:
-                channel = Path(shlex.split(command)[-1])
+                channel = Path(command[-1])
                 with socket.socket(socket.AF_UNIX) as peer:
                     peer.connect(str(channel))
         self.assertFalse(channel.parent.exists(), "closed receiver retained its channel")

@@ -136,7 +136,7 @@ class Session:
         self.emitted = False
 
     def run(self, argv, *, input=None, check=True, env=None):
-        self.operation = argv[5] if argv[0] == "tmux" else argv[2] if argv[0] == BASH else Path(argv[0]).name
+        self.operation = argv[3] if argv[0] == "tmux" else argv[2] if argv[0] == BASH else Path(argv[0]).name
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             raise subprocess.TimeoutExpired(argv, CALL_SECONDS)
@@ -159,8 +159,13 @@ class Session:
         return self.run([BASH, str(BACKEND), verb, *map(str, args)], check=check, env=env)
 
     def tmux(self, *args, check=True, socket=None):
+        # The server this starts reads the user's own tmux config, found by
+        # tmux's own search, or runs on tmux's defaults where there is none:
+        # the attached session looks and behaves as the user's others do. The
+        # runtime names windows and panes by id and launches panes by argv, so
+        # no user option changes what it owns.
         target = ["-S", socket] if socket else ["-L", self.label]
-        return self.run(["tmux", *target, "-f", os.devnull, *map(str, args)], check=check)
+        return self.run(["tmux", *target, *map(str, args)], check=check)
 
     @contextmanager
     def pane_command(self, argv):
@@ -182,7 +187,9 @@ os.execvpe(argv[0],argv,env)
             address = str(Path(directory) / "channel")
             listener.bind(address)
             listener.listen(1)
-            yield shlex.join([sys.executable, "-B", "-X", "utf8", "-c", receiver, address])
+            # tmux(1) runs a command given as several arguments directly; a
+            # single one would run under the user's default-shell.
+            yield [sys.executable, "-B", "-X", "utf8", "-c", receiver, address]
             listener.settimeout(max(0.001, self.deadline - time.monotonic()))
             with listener.accept()[0] as channel:
                 channel.settimeout(max(0.001, self.deadline - time.monotonic()))
@@ -876,7 +883,7 @@ os.execvpe(argv[0],argv,env)
                     BASH, "--noprofile", "--norc", "-c", "tmux wait-for " + channel + " && { " + prepared["line"] + '; }; result=$?; exit "$result"']
                 with self.pane_command(runner) as command:
                     created = self.tmux(*creation, "-c", self.home,
-                                        "-P", "-F", "#{socket_path}\t#{pid}\t#{start_time}\t#{window_id}\t#{pane_id}", command)
+                                        "-P", "-F", "#{socket_path}\t#{pid}\t#{start_time}\t#{window_id}\t#{pane_id}", *command)
                     socket, server, started, window, pane = created.stdout.strip().split("\t")
                     record.update(terminal={"server": socket, "session": "jarvis", "window": window, "pane": pane},
                                   server_pid=int(server), server_started_at=int(started), effective_home=prepared["effective_home"], account_var=prepared["var"],
@@ -885,6 +892,10 @@ os.execvpe(argv[0],argv,env)
                     # Own the pane before delivery can fail. The first record
                     # write and later setup remain locally owned until saved.
                     acquired = record
+                    # A controller's pane closes when its harness exits, which
+                    # status reads as ended, whatever the user's config keeps.
+                    # The pane waits on its launch until the record owns it.
+                    self.tmux("set-option", "-p", "-t", pane, "remain-on-exit", "off")
                 if succeeding:
                     process = self.tmux("display-message", "-p", "-t", pane, "#{pane_pid}").stdout.strip()
                     record["process"] = json.loads(self.backend("process", process).stdout)
