@@ -94,11 +94,22 @@ def native_launcher():
         raise RuntimeError("native-fixture: dependency=rustc")
     with tempfile.TemporaryDirectory() as allocation:
         path = Path(allocation).resolve() / "harness-launcher"
-        result = subprocess.run([compiler, "--edition=2021", "-D", "warnings",
-                                 str(Path(__file__).resolve().with_name("harness_launcher.rs")), "-o", str(path)],
-                                # This fixture uses the installed compiler;
-                                # repository toolchain installation belongs to CI setup.
-                                cwd=path.parent, capture_output=True, text=True, timeout=60)
+        try:
+            result = subprocess.run([compiler, "--edition=2021", "-D", "warnings",
+                                     str(Path(__file__).resolve().with_name("harness_launcher.rs")), "-o", str(path)],
+                                    # This fixture uses the installed compiler;
+                                    # repository toolchain installation belongs to CI setup.
+                                    cwd=path.parent, capture_output=True, text=True, timeout=60)
+        except subprocess.TimeoutExpired as failure:
+            # Timeout output is bytes even in text mode, and killing a compiler
+            # can cut a UTF-8 sequence short. Keep those bytes readable too.
+            raise RuntimeError("native-fixture: compile-timeout " + json.dumps({
+                "timeout": failure.timeout,
+                "stdout": failure.stdout.decode("utf-8", "backslashreplace")
+                          if isinstance(failure.stdout, bytes) else failure.stdout,
+                "stderr": failure.stderr.decode("utf-8", "backslashreplace")
+                          if isinstance(failure.stderr, bytes) else failure.stderr,
+            })) from failure
         if result.returncode:
             # The CI failure record must retain rustup wrapper errors, which
             # can arrive on stdout with an empty stderr.
