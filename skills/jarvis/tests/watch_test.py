@@ -803,6 +803,10 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                 self.assertNotIn(name + " first-", output)
                 self.assertEqual(output.count(name + " second-notice"), 1)
                 self.assertIn(header(nested), output)
+                # A repeat pass under the new reader delivers no row again.
+                output, cursor, delivered = watch_pass(home, later, cursor, unresolved)
+                self.assertNotIn(name + " ", output)
+                self.assertEqual(delivered, [])
 
                 if unresolved:
                     # The recovered home takes the read back. Its to-lane
@@ -1654,6 +1658,8 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
                 (nested, "if last is not None:", "if False:"),
                 # A recovered home takes the to-lane cursor of the root that stood in.
                 (nested, 'side == "local" and root == home)', "False)"),
+                # The last reader keeps no claim on the mailbox.
+                (nested, 'if field != "mailbox"}', 'if True}'),
                 ("test_relay_transitions_and_restart", 'if current != "ok" and (previous is None or previous == "ok"):',
                  'if current != "ok":'),
                 ("test_legacy_host_migration", 'spans=[self.canonical_span(span) for span in pending["retained"]]',

@@ -422,8 +422,10 @@ def mailbox_cursor(state, key, mailbox, own_lane):
     The last reader's record carries `mailbox`. Its box cursors and unread
     marker follow the mailbox, so a new reader delivers no row twice. A
     record no reader carries keeps its own. With own_lane the to-lane
-    cursor stays the root's own: a local home reads that box every pass,
-    listed or not, and its read emits no event.
+    cursor stays the root's own: a local home's to-lane read emits no
+    event, so rereading from its own cursor repeats none, and it delivers
+    the owner rows a stand-in's to-lane read, which emits answers alone,
+    skipped.
     """
     record = dict(state.get(key, {}))
     last = next((other for other, value in state.items() if other != key and value.get("mailbox") == mailbox), None)
