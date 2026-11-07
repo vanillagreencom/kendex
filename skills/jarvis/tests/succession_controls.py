@@ -94,15 +94,15 @@ def main():
                     (("            signal.signal(signal.SIGTERM, self._terminate)\n", "            pass\n"),),
                     "test_reaped_predecessor_scope"),
                    ("transfer taken before native start", session,
-                    (('worker_live({"worker": predecessor["process"]})):\n                        owner = self._take_transfer(record, identity)\n',
-                      'worker_live({"worker": predecessor["process"]})):\n                        return\n'),),
+                    (('worker_live({"worker": process})):\n                        owner = self._take_transfer(record, identity)\n',
+                      'worker_live({"worker": process})):\n                        return\n'),),
                     "test_reaped_predecessor_scope"),
                    ("transfer taken during Start", session,
-                    (("                                owner = self._take_transfer(record, identity)\n                                continue\n",
-                      "                                pass\n"),),
+                    (("                            owner = self._take_transfer(record, identity)\n                            continue\n",
+                      "                            pass\n"),),
                     "test_reaped_predecessor_scope"),
                    ("tasks end with a failed taken transfer", session,
-                    (('                    self.end_task_session(window)\n', ""),),
+                    (('        self.end_task_session(window)\n', '        self.end_task_session()\n'),),
                     "test_reaped_predecessor_scope"))
         # The rows the latest change added, which its pre-change revision fails.
         cases = ("test_reaped_predecessor_scope",)

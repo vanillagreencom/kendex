@@ -434,9 +434,12 @@ os.execvpe(argv[0],argv,env)
         return result.returncode == 0
 
     def successor_adopts(self, record):
-        # A worker that ended after the predecessor, without its failure
-        # path, leaves the transfer to the successor's runner, which takes it
-        # within one poll (successor).
+        # The one rule that a transfer is the successor runner's to finish,
+        # read by status, a succeed retry, the runner and an ending worker: a
+        # worker that ended without the failure path that drops its identity,
+        # a live successor pane and an ended predecessor terminal. The runner
+        # starts the transfer once the predecessor's process, already stopped
+        # with its terminal, has exited (successor).
         return "worker" in record and bool(self.terminal(record)) and not self.terminal(record.get("predecessor"))
 
     def confirmed_history(self, record):
@@ -729,14 +732,13 @@ os.execvpe(argv[0],argv,env)
                     return
                 phase = record["transfer"]["phase"]
                 if not self.worker_live(record):
-                    # A worker whose own failure path ran has dropped its
-                    # identity; one that ran no such path before the record
-                    # owned this pane, or while the predecessor still holds
-                    # its terminal, leaves the predecessor in control.
-                    predecessor = record.get("predecessor") or {}
-                    if "worker" not in record or phase == "saved" or self.terminal(predecessor):
+                    # Any other end of the worker leaves the predecessor in
+                    # control, or a failure the worker already wrote.
+                    if not self.successor_adopts(record):
                         return
-                    if not (predecessor.get("process") and self.worker_live({"worker": predecessor["process"]})):
+                    # No native session starts beside the predecessor's.
+                    process = record["predecessor"].get("process")
+                    if not (process and self.worker_live({"worker": process})):
                         owner = self._take_transfer(record, identity)
                 if owner or phase not in ("saved", "waiting"):
                     command = record["launch"]["command"]
@@ -749,49 +751,23 @@ os.execvpe(argv[0],argv,env)
         native = subprocess.Popen([BASH, "--noprofile", "--norc", "-c", command + '; result=$?; exit "$result"'],
                                   cwd=self.home, env=native_env)
         try:
-            while native.poll() is None:
-                if owner:
-                    if self._start_pass("succeed", generation, *owner):
-                        return native.wait()
-                else:
-                    record = self.read()
-                    if record["generation"] != generation or record.get("intent") != "succeed" or record["transfer"]["phase"] == "complete":
-                        return native.wait()
-                    if not self.worker_live(record):
-                        with self.locked():
-                            if self.read() != record:
-                                continue
-                            if "worker" in record:
-                                owner = self._take_transfer(record, identity)
-                                continue
-                        # The worker's failure path ended this transfer.
-                        self.backend("stop-process", identity["pid"], identity["started_at"], record["harness"])
-                        return
+            while not owner and native.poll() is None:
+                record = self.read()
+                if record["generation"] != generation or record.get("intent") != "succeed" or record["transfer"]["phase"] == "complete":
+                    return native.wait()
+                if not self.worker_live(record):
+                    with self.locked():
+                        if self.read() != record:
+                            continue
+                        if self.successor_adopts(record):
+                            owner = self._take_transfer(record, identity)
+                            continue
+                    # The worker's failure path ended this transfer.
+                    self.backend("stop-process", identity["pid"], identity["started_at"], record["harness"])
+                    return
                 time.sleep(0.2)
             if owner:
-                # The native session ended before it took the brief: the
-                # end a worker reads once this pane closes.
-                raise Refusal("launch-failed", "The Jarvis session ended before it accepted its Start procedure.", "failed")
-        except (Refusal, OSError, ValueError, subprocess.TimeoutExpired) as failure:
-            if not owner:
-                raise
-            # As the worker's own failure after the predecessor's end: the
-            # transfer fails, and this pane closes once the runner returns.
-            self.failure_log("transfer-failed", failure)
-            self.deadline = time.monotonic() + CALL_SECONDS
-            with self.locked():
-                record = self.read()
-                if self._current_request(record, generation, "succeed"):
-                    # This runner's window closes as it returns, so the record
-                    # releases it as the worker's own failure does.
-                    window = record["terminal"]["window"]
-                    record.update(state="failed", reason="handover-failed", history=None, terminal=None,
-                                  detail="Retry jarvis-session succeed for this home. Check the session log if it fails again.")
-                    record.pop("worker", None)
-                    self.write(record)
-                    # The unfinished tasks end with this runner's window.
-                    self.end_task_session(window)
-            return 1
+                return self._finish_transfer(native, generation, owner)
         finally:
             if native.poll() is None:
                 native.terminate()
@@ -813,7 +789,7 @@ os.execvpe(argv[0],argv,env)
         # unrecorded, and this runner pastes it again: a repeated brief costs
         # the session one turn, a brief taken as delivered but never pasted
         # fails the transfer at its bound.
-        ended =record.get("worker_ended") or {"pid": record["worker"]["pid"], "cause": "unknown"}
+        ended = record.get("worker_ended") or {"pid": record["worker"]["pid"], "cause": "unknown"}
         if record["transfer"]["phase"] == "waiting":
             record["transfer"]["phase"] = "predecessor-ended"
             record.update(state="starting", reason="launching")
@@ -824,6 +800,37 @@ os.execvpe(argv[0],argv,env)
         print("jarvis-session: transfer=adopted generation=" + str(record["generation"])
               + " worker=" + str(ended["pid"]) + " cause=" + ended["cause"], flush=True)
         return record["account_var"], record["launch"]["kickoff"]
+
+    def _finish_transfer(self, native, generation, owner):
+        # The runner confirms the Start it took as the worker would. Its
+        # failure ends the transfer as the worker's own failure after the
+        # predecessor's end does, and this pane closes once the runner returns.
+        try:
+            while native.poll() is None:
+                if self._start_pass("succeed", generation, *owner):
+                    return native.wait()
+                time.sleep(0.2)
+            raise Refusal("launch-failed", "The Jarvis session ended before it accepted its Start procedure.", "failed")
+        except (Refusal, OSError, ValueError, subprocess.TimeoutExpired) as failure:
+            self.failure_log("transfer-failed", failure)
+            self.deadline = time.monotonic() + CALL_SECONDS
+            with self.locked():
+                record = self.read()
+                if self._current_request(record, generation, "succeed"):
+                    self._fail_transfer(record)
+            return 1
+
+    def _fail_transfer(self, record):
+        # A succession that fails after its predecessor ended leaves no
+        # controller. The caller holds the lock and has closed every
+        # successor window but the one it runs in, a runner's, which the
+        # record releases first and which then ends with the task windows.
+        window = (record.get("terminal") or {}).get("window")
+        record.update(state="failed", reason="handover-failed", history=None, terminal=None,
+                      detail="Retry jarvis-session succeed for this home. Check the session log if it fails again.")
+        record.pop("worker", None)
+        self.write(record)
+        self.end_task_session(window)
 
     def stop(self, origin):
         with self.locked():
@@ -1116,9 +1123,9 @@ os.execvpe(argv[0],argv,env)
                 if not self._current_request(record, generation, verb):
                     raise
                 ended = {"pid": os.getpid(), "cause": self.terminated} if self.terminated else None
-                if ended and transferred and verb == "succeed" and self.terminal(record) and not self.terminal(record.get("predecessor")):
-                    # The predecessor has ended: its successor's runner
-                    # takes the transfer once this worker exits.
+                if ended and self.successor_adopts(record):
+                    # The successor's runner takes the transfer once this
+                    # worker exits.
                     record["worker_ended"] = ended
                     self.write(record)
                     raise
@@ -1138,7 +1145,7 @@ os.execvpe(argv[0],argv,env)
                 live = record if self.terminal(record) else predecessor if self.terminal(predecessor) else None
                 if live and self.ownership(live).kind != "adopted":
                     record = self.retain_live(record, live)
-                elif not live:
+                elif not live and verb != "succeed":
                     self.end_task_session()
                     if verb == "stop":
                         record.update(state="off" if record["app_off"] else "stopped",
@@ -1148,13 +1155,13 @@ os.execvpe(argv[0],argv,env)
                                       reason=failure.reason if isinstance(failure, Refusal) else "launch-failed",
                                       detail=failure.detail if isinstance(failure, Refusal) else "Jarvis could not start. Check the session log.",
                                       terminal=None)
-                    if verb == "succeed":
-                        record.update(state="failed", reason="handover-failed", history=None,
-                                      detail="Retry jarvis-session succeed for this home. Check the session log if it fails again.")
                 if ended:
                     record["worker_ended"] = ended
-                record.pop("worker", None)
-                self.write(record)
+                if not live and verb == "succeed":
+                    self._fail_transfer(record)
+                else:
+                    record.pop("worker", None)
+                    self.write(record)
             raise
 
 
