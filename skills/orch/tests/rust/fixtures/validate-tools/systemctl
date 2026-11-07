@@ -1,16 +1,35 @@
 #!/bin/bash
 set -euo pipefail
-case "${1:-}:${2:-}" in --user:show) ;; --user:stop) exit 0 ;; *) exit 1 ;; esac
+case "${1:-}:${2:-}" in --user:show | --user:stop) ;; *) exit 1 ;; esac
 service=""
 for word in "$@"; do service="$word"; done
 unit="${service%.service}"
 state="${VALIDATE_MANAGER_DIR:?}/$unit.state"
+pid_file="$VALIDATE_MANAGER_DIR/$unit.pid"
+# A stop ends the named unit's processes, as the manager stops its cgroup,
+# and answers as systemctl does: a unit it never started is not loaded, and
+# VALIDATE_STOP_ANSWER=refused stands for a manager that refuses the stop.
+if [ "$2" = stop ]; then
+  if [ "${VALIDATE_STOP_ANSWER:-}" = refused ]; then
+    echo "Failed to stop $service: Access denied" >&2
+    exit 1
+  fi
+  if [ ! -f "$pid_file" ] && [ ! -f "$state" ]; then
+    echo "Failed to stop $service: Unit $service not loaded." >&2
+    exit 5
+  fi
+  printf '%s\n' "$unit" >> "$VALIDATE_MANAGER_DIR/stops"
+  if [ -f "$pid_file" ]; then
+    kill -TERM -- "-$(cat "$pid_file")" 2>/dev/null || :
+  fi
+  rm -f -- "$state"
+  exit 0
+fi
 if [ -f "$state" ]; then
   [ "$(cat "$state")" != unread ] || exit 1
   cat "$state"
   exit 0
 fi
-pid_file="$VALIDATE_MANAGER_DIR/$unit.pid"
 if [ -f "$pid_file" ]; then
   pid="$(cat "$pid_file")"
   status="$(ps -p "$pid" -o stat= 2>/dev/null)" || status=""

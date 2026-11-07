@@ -246,13 +246,18 @@ pub fn run(
             report.note("done-unchecked", item, json!({"title":item.title}));
         }
         let verifying = container || item.state == "Verifying";
-        let age = stamp_epoch(&item.updated_at).map(|at| (i128::from(now) - i128::from(at)) / 3600);
-        let should_probe = verifying
-            || (item.state_type == "started"
-                && (item.state == "In Review"
-                    || age.is_some_and(|h| h >= i128::from(stale_hours))));
-        let prs = should_probe.then(|| pulls(gh, &settings.roots.project, &item.id, &mut read));
-        if !verifying && should_probe {
+        // Whole hours rounded down, so an update stamped ahead of this
+        // host's clock is a negative age and never stale.
+        let age = stamp_epoch(&item.updated_at)
+            .map(|at| (i128::from(now) - i128::from(at)).div_euclid(3600));
+        // A started container is still a started item: its lifecycle
+        // findings stand beside `container-parked`.
+        let started = item.state_type == "started"
+            && item.state != "Verifying"
+            && (item.state == "In Review" || age.is_some_and(|h| h >= i128::from(stale_hours)));
+        let prs =
+            (verifying || started).then(|| pulls(gh, &settings.roots.project, &item.id, &mut read));
+        if started {
             let evidence = match prs.as_ref().expect("a probed item") {
                 Ok(prs) => Some(prs),
                 Err(cause) => {
@@ -294,6 +299,12 @@ pub fn run(
             };
             match verifying::judge_item(&ctx, &verifying_item, keys, now, &mut read)? {
                 Item::Invalid => report.note("verifying-invalid", item, json!({})),
+                Item::Unparsed { cause } => {
+                    return Err(refused(
+                        "verifying-checklist-unread",
+                        &[("issue", &item.id), ("cause", &cause)],
+                    ));
+                }
                 Item::Unread { key, cause } => {
                     if key == "verifying-release-unread" || prs.as_ref().is_some_and(|p| p.is_err())
                     {

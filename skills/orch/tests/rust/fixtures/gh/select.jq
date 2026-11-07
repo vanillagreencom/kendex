@@ -72,7 +72,8 @@ def PAGE: {"first": "Int", "after": "String", "last": "Int", "before": "String"}
 def SCHEMA: {
   "Query": {
     "nodes": ["Node", true, {"ids": "[ID!]!"}],
-    "repository": ["Repository", false, {"owner": "String!", "name": "String!"}]
+    "repository": ["Repository", false, {"owner": "String!", "name": "String!"}],
+    "viewer": ["User", false]
   },
   "Mutation": {
     "dequeuePullRequest": ["DequeuePullRequestPayload", false, {"input": "DequeuePullRequestInput!"}],
@@ -84,6 +85,8 @@ def SCHEMA: {
   "DisablePullRequestAutoMergePayload": {"clientMutationId": ["S", false]},
   "Node": {"id": ["S", false]},
   "Actor": {"login": ["S", false]},
+  "User": {"login": ["S", false], "databaseId": ["S", false]},
+  "Bot": {"login": ["S", false], "databaseId": ["S", false]},
   "PullRequestTimelineItems": {},
   "CheckRun": {
     "id": ["S", false], "checkSuite": ["CheckSuite", false], "name": ["S", false],
@@ -141,7 +144,9 @@ def SCHEMA: {
   "PullRequestReviewThreadConnection": {
     "pageInfo": ["PageInfo", false], "nodes": ["PullRequestReviewThread", true]
   },
-  "PullRequestReviewThread": {"isResolved": ["S", false]},
+  "PullRequestReviewThread": {
+    "isResolved": ["S", false], "comments": ["PullRequestReviewCommentConnection", false, PAGE]
+  },
   "Commit": {
     "oid": ["S", false], "authoredDate": ["S", false], "committedDate": ["S", false],
     "status": ["Status", false], "checkSuites": ["CheckSuiteConnection", false, PAGE]
@@ -166,7 +171,8 @@ def SCHEMA: {
     "totalCount": ["S", false], "nodes": ["PullRequestReviewComment", true]
   },
   "PullRequestReviewComment": {
-    "id": ["S", false], "replyTo": ["PullRequestReviewComment", false]
+    "id": ["S", false], "replyTo": ["PullRequestReviewComment", false],
+    "author": ["Actor", false], "authorAssociation": ["S", false], "body": ["S", false]
   },
   "PullRequestTimelineItemsConnection": {
     "pageInfo": ["PageInfo", false], "nodes": ["PullRequestTimelineItems", true]

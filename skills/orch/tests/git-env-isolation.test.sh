@@ -17,7 +17,7 @@ REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 # Small, git-heavy, and reaches nothing outside skills/orch/scripts, so the
 # mutant tree below is skills/orch/{scripts,tests} rather than a whole
 # checkout.
-SUBJECT=dev_round_gate.sh
+SUBJECT=resolve-base-branch.sh
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

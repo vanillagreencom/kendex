@@ -312,8 +312,9 @@ fn array<'a>(doc: &'a Document, key: &str) -> &'a [Value] {
 }
 
 /// Whether `name` is an owner progress report: `MM-DD-HH-MM.md`, with
-/// `-succession` before the extension for the one a succession writes.
-fn is_progress_report(name: &str) -> bool {
+/// `-succession` before the extension for the one a succession writes; the
+/// report's window reads the same files this duty prunes.
+pub(super) fn is_progress_report(name: &str) -> bool {
     let Some(stem) = name
         .strip_suffix(".md")
         .map(|s| s.strip_suffix("-succession").unwrap_or(s))

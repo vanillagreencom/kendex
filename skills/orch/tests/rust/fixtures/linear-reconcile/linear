@@ -4,6 +4,8 @@ here="$(dirname "${BASH_SOURCE[0]}")"
 real="$(python3 -B -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve().parents[5] / "linear/scripts")' "${BASH_SOURCE[0]}")"
 printf '%s\n' "$*" >>"$here/linear.log"
 if [[ "${1:-}" == done-when ]]; then
+  # A row plants a failing dependency of the real parser under parser-path/.
+  [[ ! -d "$here/parser-path" ]] || PATH="$here/parser-path:$PATH"
   exec "$real/linear.sh" "$@"
 fi
 source "$real/lib/formatters.sh"

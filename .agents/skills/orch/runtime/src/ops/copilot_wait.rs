@@ -79,8 +79,8 @@ pub fn run(r: &CopilotWait, gh_program: &Path, clock: &dyn Clock) -> Result<Copi
     run_with(r, &Gh::new(gh_program), clock)
 }
 
-/// [`run`] over a `gh` handle the caller built, with the credential it
-/// carries.
+/// The head approval's hold waits under the app's own credential, never the
+/// caller's, so the handle is the caller's to build.
 #[allow(
     clippy::disallowed_methods,
     reason = "the current-head wait reads its own bound and sleeps between its reads on the clock it is given; it reads GitHub through gh and writes nothing"

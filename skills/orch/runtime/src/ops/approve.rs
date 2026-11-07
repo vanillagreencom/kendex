@@ -61,8 +61,10 @@ struct Entry {
 enum Attempt {
     Attempted,
     Confirmed { review: Value },
-    Refused { reason: String },
 }
+
+/// The refusal of an attempt a complete read-back found had not landed.
+const NOT_LANDED: &str = "not-landed";
 
 fn refuse(key: &'static str) -> Error {
     agent_runtime::Error::refused(key, &[]).into()
@@ -128,8 +130,8 @@ fn update<T>(
     })
 }
 
-/// What every gh call the approval makes adds to its environment: the
-/// configured host and the fleet's file credential, so GitHub sees the app.
+/// The app's file credential outranks any reader credential the caller's
+/// environment holds, so GitHub sees the app on every approval call.
 fn credential(settings: &Settings, token: &str) -> Vec<(String, OsString)> {
     settings
         .review
@@ -232,12 +234,15 @@ fn replies(settings: &Settings, r: &ApproveHead, head: &str, token: &str) -> Res
         .join(".agents/skills/github/scripts/github.sh");
     let pr = r.pr.to_string();
     // The router owns reader credential selection. Supply the fleet token only
-    // when neither an environment credential nor keyring can identify a reader.
+    // when neither an environment credential nor keyring can identify a reader;
+    // a credential line only a shell reads is the router's, which sources the
+    // private file itself.
     let has_env = settings
         .review
         .approval_reader_env
         .iter()
-        .any(|(key, value)| key != "GH_HOST" && !value.is_empty());
+        .any(|(key, value)| key != "GH_HOST" && !value.is_empty())
+        || !settings.review.approval_unread.is_empty();
     let mut env: Vec<_> = settings
         .review
         .approval_reader_env
@@ -364,6 +369,16 @@ pub fn run(
         return Err(refuse("approval-request"));
     }
     let body = std::fs::read_to_string(&r.body_file).map_err(|_| refuse("body-file"))?;
+    // The credential, the app's login and the host must be read values; a
+    // reader credential only a shell reads stays the router's.
+    if settings
+        .review
+        .approval_unread
+        .iter()
+        .any(|key| !matches!(key.as_str(), "GH_TOKEN" | "GITHUB_TOKEN" | "GH_BOT_TOKEN"))
+    {
+        return Err(refuse("approval-setting-unread"));
+    }
     let token = crate::watch::security::read_token(settings.review.approval_token_file.as_deref())
         .map_err(|_| refuse("credential"))?;
     let login = settings
@@ -414,7 +429,7 @@ pub fn run(
         Ok(true)
     })?;
     if !claimed {
-        return settle(path, r, &head, login, &token, settings, locking);
+        return settle(path, r, &head, login, &token, settings, locking, NOT_LANDED);
     }
     let payload = serde_json::to_vec(&json!({"commit_id":head,"event":"APPROVE","body":body}))?;
     let url = format!("repos/{}/pulls/{}/reviews", r.repo, r.pr);
@@ -432,20 +447,12 @@ pub fn run(
             {
                 confirm(path, r, &head, login, locking, value)
             } else {
-                let settled = settle(path, r, &head, login, &token, settings, locking)?;
-                if settled.status == Status::Unknown && http_refusal(&output) {
-                    update(path, r, &head, login, locking, |entry| {
-                        if entry.attempt == Some(Attempt::Attempted) {
-                            entry.attempt = Some(Attempt::Refused {
-                                reason: "post-failed".into(),
-                            });
-                        }
-                        Ok(())
-                    })?;
-                    Ok(reply(Status::Refused, &head, "post-failed", None))
+                let refusal = if http_refusal(&output) {
+                    "post-failed"
                 } else {
-                    Ok(settled)
-                }
+                    NOT_LANDED
+                };
+                settle(path, r, &head, login, &token, settings, locking, refusal)
             }
         }
         Err(agent_runtime::Error::NotStarted { .. }) => {
@@ -455,13 +462,10 @@ pub fn run(
             })?;
             Ok(reply(Status::Refused, &head, "not-started", None))
         }
-        Err(_) => settle(path, r, &head, login, &token, settings, locking),
+        Err(_) => settle(path, r, &head, login, &token, settings, locking, NOT_LANDED),
     }
 }
 
-/// The answer an attempt already recorded at `head` gives: its confirmed
-/// review, its refusal, or, for one whose answer is unknown, a read-back
-/// that never posts again.
 #[allow(clippy::too_many_arguments)]
 fn standing_answer(
     path: &Path,
@@ -480,11 +484,15 @@ fn standing_answer(
             "approved",
             Some(review.clone()),
         )),
-        Attempt::Refused { reason } => Ok(reply(Status::Refused, head, reason, None)),
-        Attempt::Attempted => settle(path, r, head, login, token, settings, locking),
+        Attempt::Attempted => settle(path, r, head, login, token, settings, locking, NOT_LANDED),
     }
 }
 
+/// An attempt whose POST did not confirm itself is settled by the reviews
+/// alone. Only a complete read showing no approval from the app at the
+/// head proves the POST did not land: the claim then clears, so the next
+/// request posts again, and `refusal` names why. An unread or partial
+/// read proves nothing and keeps the claim, so no route posts twice on it.
 #[allow(clippy::too_many_arguments)]
 fn settle(
     path: &Path,
@@ -494,10 +502,20 @@ fn settle(
     token: &str,
     settings: &Settings,
     locking: Locking,
+    refusal: &str,
 ) -> Result<ApprovedHead> {
     match read_back(settings, r, head, login, token) {
         Ok(Some(value)) => confirm(path, r, head, login, locking, value),
-        Ok(None) | Err(_) => Ok(reply(Status::Unknown, head, "approval-unconfirmed", None)),
+        Ok(None) => {
+            update(path, r, head, login, locking, |entry| {
+                if entry.attempt == Some(Attempt::Attempted) {
+                    entry.attempt = None;
+                }
+                Ok(())
+            })?;
+            Ok(reply(Status::Refused, head, refusal, None))
+        }
+        Err(_) => Ok(reply(Status::Unknown, head, "approval-unconfirmed", None)),
     }
 }
 

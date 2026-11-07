@@ -1,5 +1,7 @@
 #!/bin/bash
 set -euo pipefail
+# The client's whole argv, one word per line, is kept as $unit.argv.
+words=("$@")
 unit=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -11,6 +13,7 @@ done
 [ -n "$unit" ] || exit 0
 mkdir -p "${VALIDATE_MANAGER_DIR:?}"
 printf '%s\n' "$unit" >> "$VALIDATE_MANAGER_DIR/launches"
+printf '%s\n' "${words[@]}" > "$VALIDATE_MANAGER_DIR/$unit.argv"
 [ -z "${VALIDATE_AT_LAUNCH:-}" ] || cp -- "${ORCH_STATE_DIR:?}/workflow-state-KEN-4687.json" "$VALIDATE_AT_LAUNCH"
 case "${VALIDATE_START_ANSWER:-success}" in
   refused) printf 'loaded\nfailed\n' > "$VALIDATE_MANAGER_DIR/$unit.state"; exit 1 ;;

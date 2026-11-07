@@ -596,6 +596,10 @@ pub(super) enum Item {
     Unread { key: &'static str, cause: String },
     /// Invalid: no row, the pass goes on.
     Invalid,
+    /// The parser gave no checklist (it failed, or its reply did not
+    /// decode): an invalid item to the watch, whose pass goes on; a
+    /// refusal to the reconciliation verb, whose required input is unread.
+    Unparsed { cause: String },
 }
 
 pub(super) fn judge_item(
@@ -607,10 +611,7 @@ pub(super) fn judge_item(
 ) -> Result<Item> {
     let parsed = match parse(&ctx.settings, &item.description)? {
         Ok(parsed) => parsed,
-        Err(cause) => {
-            note("verifying-invalid", &item.id, &cause);
-            return Ok(Item::Invalid);
-        }
+        Err(cause) => return Ok(Item::Unparsed { cause }),
     };
     let Some(mut boxes) = judged_boxes(&parsed, item.container) else {
         note(
@@ -710,6 +711,7 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
         let prior = tick.baseline.get(DEADLINE_ROW, &item.id);
         match judged {
             Item::Invalid => {}
+            Item::Unparsed { cause } => note("verifying-invalid", &item.id, &cause),
             Item::Unread { .. } => {
                 // An unread item cannot clear a previously reported deadline.
                 if prior.is_some() {

@@ -384,7 +384,7 @@ fn entry(args: &Args, flags: &settings::Flags, env: &Env, locking: Locking) -> R
         Some(mode)
     };
     req.poll = args.poll.unwrap_or(30);
-    req.fresh = args.fresh || args.reproduce;
+    req.fresh = args.fresh;
     req.foreground = args.foreground;
     req.reproduce = args.reproduce;
     req.restack = args.restack;

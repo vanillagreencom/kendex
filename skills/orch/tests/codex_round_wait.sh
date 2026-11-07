@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Execute the documented Codex round launch and completion poll against the
-# production dev and reviewer artifact checkers. The injected clock reaches a five-minute
-# receipt after the caller entered its wait. This proves the shell route and
-# caller continuation; it does not prove that a Codex model follows the rule.
+# production dev and reviewer artifact checkers. A barrier holds the dev
+# consumer until the caller polls its job. The reviewer uses an injected
+# clock. These rows prove shell transport and continuation.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -191,6 +191,7 @@ command="${command//\[DEV_ROUND_ID\]/round-1}"
 command="${command//\[AGENT\]/reviewer-correctness}"
 command="${command//\[REVIEW_DELEGATED_AT\]/0}"
 command="${command//\[SECS\]/600}"
+if [[ "$ROUND_COMMAND" == command ]]; then command="${command/--wait 600/--wait 1}"; fi
 "$BASH" -c "$command"
 poll="$(cat "$ROUND_SOURCE/$ROUND_POLL_SOURCE")"
 poll="${poll//\[RUN_DIR\]/$ROUND_CASE}"
@@ -222,13 +223,32 @@ if [[ "${CODEX_ROUND_WAIT_ONLY:-}" != process ]]; then
 while IFS='|' read -r name kind caller dependency poll_source lands elapsed verdict continuation expected_rc; do
   case_dir="$TMP_ROOT/$name"
   mkdir -p "$case_dir/tmp" "$case_dir/.agents/skills"
-  ln -s "$SKILL_DIR" "$case_dir/.agents/skills/orch"
+  if [[ "$kind" == dev ]]; then
+    mkdir -p "$case_dir/.agents/skills/orch/scripts"
+    ln -s "$SKILL_DIR/scripts/lib" "$case_dir/.agents/skills/orch/scripts/lib"
+    cat > "$case_dir/.agents/skills/orch/scripts/dev-artifact-check" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+: > "$ROUND_CASE/check-waiting"
+while [[ ! -f "$ROUND_CASE/release" ]]; do "$REAL_SLEEP" 0.01; done
+if [[ "$ROUND_LANDS" == yes ]]; then cp "$ROUND_CASE/receipt" "$ROUND_CASE/tmp/$ROUND_ARTIFACT"; fi
+exec "$ROUND_DEV_CHECK" "$@"
+SH
+    chmod +x "$case_dir/.agents/skills/orch/scripts/dev-artifact-check"
+  else
+    ln -s "$SKILL_DIR" "$case_dir/.agents/skills/orch"
+  fi
   cp "$TMP_ROOT/launch.sh" "$case_dir/launch.sh"
   printf '0\n' > "$case_dir/clock"
   case "$kind" in
     dev)
       command_source=command artifact=dev-return-issue-3409-round-1.json result_filter=.verdict
-      printf '%s\n' '{"schema_version":1,"round_id":"round-1","kind":"implement","issue":"issue-3409","branch":"fixture","commit":"abc123f","baseline_lines":1,"validate":"pass","validate_mode":"full","validate_time":{"started_at":"2026-01-01T00:00:00Z","ended_at":"2026-01-01T00:05:00Z","seconds":300},"qa_labels":[],"summary_posted":true,"summary":null,"bundled":false,"items":[]}' > "$case_dir/receipt" ;;
+      git -C "$case_dir" init -q
+      git -C "$case_dir" config gc.auto 0
+      git -C "$case_dir" config maintenance.auto false
+      git -C "$case_dir" -c user.name=Test -c user.email=test@example.com -c core.hooksPath=/dev/null commit -q --allow-empty -m fixture
+      head="$(git -C "$case_dir" rev-parse HEAD)"
+      jq -n --arg head "$head" '{schema_version:1,round_id:"round-1",kind:"implement",issue:"issue-3409",branch:"fixture",commit:$head,baseline_lines:1,validate:"pass",validate_mode:"full",validate_time:{started_at:"2026-01-01T00:00:00Z",ended_at:"2026-01-01T00:05:00Z",seconds:300},qa_labels:[],summary_posted:true,summary:null,bundled:false,items:[]}' > "$case_dir/receipt" ;;
     reviewer)
       command_source=reviewer-command artifact=review-reviewer-correctness-delayed.json result_filter=.reason
       git -C "$case_dir" init -q
@@ -241,6 +261,7 @@ while IFS='|' read -r name kind caller dependency poll_source lands elapsed verd
     *) echo "codex_round_wait: kind=$kind" >&2; exit 1 ;;
   esac
   env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$TMP_ROOT/bin:$PATH" HOME="$HOME" ROUND_CASE="$case_dir" ROUND_LANDS="$lands" \
+    AGENT_RUNTIME_CACHE="${AGENT_RUNTIME_CACHE:-$HOME/.cache/kendex/agent-runtime}" ROUND_DEV_CHECK="$SKILL_DIR/scripts/dev-artifact-check" \
     ORCH_STATE_DIR="$case_dir/tmp" ROUND_COMMAND="$command_source" ROUND_ARTIFACT="$artifact" ROUND_RESULT="$result_filter" \
     ROUND_SOURCE="$TMP_ROOT" REAL_SLEEP="$REAL_SLEEP" REAL_DATE="$REAL_DATE" \
     ROUND_POLL_PATH="$TMP_ROOT/$dependency-bin" ROUND_POLL_SOURCE="$poll_source" \
@@ -269,11 +290,11 @@ while IFS='|' read -r name kind caller dependency poll_source lands elapsed verd
   assert_eq "$(cat "$case_dir/clock")|$got_verdict|$got_continuation" \
     "$elapsed|$verdict|$continuation" "$name" "$case_dir/caller.log"
 done <<'ROWS'
-delayed-round-same-turn|dev|caller|timeout|poll|yes|300|accept|accept|0
-delayed-round-gtimeout-only|dev|caller|gtimeout|poll|yes|300|accept|accept|0
-deadline-same-turn|dev|caller|timeout|poll|no|600|wait|wait|0
-control-old-turn-end-stalls|dev|old-turn-end|timeout|poll|yes|300|accept|absent|0
-control-timeout-only-refuses|dev|caller|gtimeout|timeout-only-poll|yes|300|accept|absent|127
+delayed-round-same-turn|dev|caller|timeout|poll|yes|0|accept|accept|0
+delayed-round-gtimeout-only|dev|caller|gtimeout|poll|yes|0|accept|accept|0
+deadline-same-turn|dev|caller|timeout|poll|no|0|wait|wait|0
+control-old-turn-end-stalls|dev|old-turn-end|timeout|poll|yes|0|accept|absent|0
+control-timeout-only-refuses|dev|caller|gtimeout|timeout-only-poll|yes|0|accept|absent|127
 delayed-reviewer-same-turn|reviewer|caller|timeout|poll|yes|300|valid|valid|0
 delayed-reviewer-gtimeout-only|reviewer|caller|gtimeout|poll|yes|300|valid|valid|0
 reviewer-table-row-same-turn|reviewer|caller|timeout|poll|no|600|missing|missing|0

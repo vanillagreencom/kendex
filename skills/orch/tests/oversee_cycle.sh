@@ -9,6 +9,8 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export ORCH_RUNTIME_CLI="$TEST_DIR/../scripts/orch-runtime"
+export DEV_VALIDATE_CLI="$TEST_DIR/../scripts/dev-validate-run"
 TMP_ROOT="$(mktemp -d)" || { echo "oversee_cycle: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "oversee_cycle: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
 TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "oversee_cycle: scratch=resolve-failed" >&2; exit 1; }

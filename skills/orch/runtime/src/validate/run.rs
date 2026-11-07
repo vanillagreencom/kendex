@@ -846,8 +846,8 @@ pub(crate) fn stop_files(run_dir: &Path) -> Result<Option<&'static str>> {
                 .ok()
                 .and_then(|r| r.get("runner").cloned());
             let bare = super::files::bare_pid(&run)?;
-            // A shell start whose child never ran and whose launcher wrote no
-            // runner record names nothing the shell producer's stop would read.
+            // A start whose child never ran and whose launcher wrote no runner
+            // record names no process and no unit: there is nothing to stop.
             if matches!(bare, super::files::BarePid::Unstarted)
                 && fs::symlink_metadata(run_dir.join("runner"))
                     .is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
@@ -971,12 +971,13 @@ fn reconcile(path: &Path, round_id: &str, env: &Env, locking: Locking) -> Result
 /// before the effect; refused `run-closed` on a closed stage, `run-unstarted`
 /// on one with no runtime job), the job ended by its recorded identity
 /// through the launcher, a bounded wait for the job to read gone, then the
-/// finishing transition and the owed walk: on the unit route the manager
-/// ended the job with its child, so the reconcile closes the stage `stopped`
-/// with the notice owed and the walk sends it; on the setsid route the job
-/// outlives its child's group and makes the same close itself, the first
-/// closer winning. `item` names the record; with none, the run directory
-/// finds it.
+/// finishing transition and the owed walk: the stop ends the command's group
+/// and then the job by its launcher record (the unit by its name, the setsid
+/// job by its group), so the reconcile closes the stage `stopped` with the
+/// notice owed and the walk sends it, whatever sentinel the executor wrote
+/// first; a job that closed the stage itself before it was ended read the
+/// same word, the first closer winning. `item` names the record; with none,
+/// the run directory finds it.
 pub fn stop(
     settings: &Settings,
     item: Option<&str>,

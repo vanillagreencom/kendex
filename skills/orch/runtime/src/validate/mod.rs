@@ -114,14 +114,32 @@ pub(crate) fn load(path: &Path) -> Result<Option<state::Snapshot>> {
     state::load(path)
 }
 
+/// `DEV_VALIDATE_TEXT_CMD` as the docs mode reads it: a blank value
+/// declares no command.
+pub(crate) fn text_cmd(settings: &crate::settings::ValidateSettings) -> Option<String> {
+    settings.text_cmd.clone().filter(|c| !c.trim().is_empty())
+}
+
 /// The item whose admitted run stands under `run_dir`: the state files of
 /// the directory are read for a validate stage naming it. The forwards,
 /// the start's and the stop's, name the directory alone.
 pub(crate) fn item_of_run_dir(state_dir: &Path, run_dir: &str) -> Result<(String, String)> {
-    let entries = fs::read_dir(state_dir).map_err(|e| Error::ValidateUnreadable {
-        read: "state-dir",
-        cause: e.to_string(),
-    })?;
+    // A state directory that does not stand holds no item, so nothing
+    // admitted the run; any other failed read is no answer.
+    let entries = match fs::read_dir(state_dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == ErrorKind::NotFound => {
+            return Err(Error::RunUnadmitted {
+                run_dir: run_dir.to_owned(),
+            });
+        }
+        Err(e) => {
+            return Err(Error::ValidateUnreadable {
+                read: "state-dir",
+                cause: e.to_string(),
+            });
+        }
+    };
     for entry in entries {
         let entry = entry.map_err(|e| Error::ValidateUnreadable {
             read: "state-dir",
@@ -227,7 +245,9 @@ struct Classified {
     fallback: Option<String>,
     tree: String,
     measured: bool,
-    /// The classifier's `queue-only:` line, where it printed one.
+    /// The word of the classifier's last `queue-only:` line: `None` where
+    /// it printed none or another word. Only `false` proves pull-request CI
+    /// covers the work.
     queue_only: Option<bool>,
 }
 
@@ -552,9 +572,13 @@ fn classify(
         == Some("true");
     out.queue_only = class_log
         .lines()
-        .filter_map(|l| l.strip_prefix("queue-only: queue_only="))
-        .map(|w| w.split(' ').next().unwrap_or_default() == "true")
-        .next_back();
+        .rfind(|l| l.starts_with("queue-only:"))
+        .and_then(|l| l.strip_prefix("queue-only: queue_only="))
+        .and_then(|w| match w.split(' ').next() {
+            Some("true") => Some(true),
+            Some("false") => Some(false),
+            _ => None,
+        });
     Ok(out)
 }
 
@@ -837,7 +861,7 @@ fn required_contexts(
 /// measured micro or small, never docs-only or a fallback, and queue-only
 /// work only where the merge queue is required (`ci_class_covered`).
 fn class_covered(class: &Classified, queue: bool) -> bool {
-    if class.queue_only == Some(true) && !queue {
+    if class.queue_only != Some(false) && !queue {
         return false;
     }
     if class.fallback.is_some() || class.docs_only {
@@ -897,7 +921,7 @@ fn ci_admission(
     };
     if !contexts.iter().any(|c| c == context) {
         return Ok(CiAdmission::Fallback(
-            if branch_class.queue_only == Some(true) {
+            if branch_class.queue_only != Some(false) {
                 "class-uncovered"
             } else {
                 "context-unrequired"
@@ -909,7 +933,7 @@ fn ci_admission(
         return Ok(CiAdmission::Fallback("class-uncovered".to_owned()));
     }
     Ok(CiAdmission::Admitted {
-        event: if branch_class.queue_only == Some(true) {
+        event: if branch_class.queue_only != Some(false) {
             "merge_group"
         } else {
             "pull_request"
@@ -1076,7 +1100,7 @@ fn resolve(
     let docs_mode = !req.reproduce
         && branch_docs.docs_only
         && branch_docs.fallback.is_none()
-        && (settings.validate.selection_cmd.is_some() || settings.validate.text_cmd.is_some());
+        && (settings.validate.selection_cmd.is_some() || text_cmd(&settings.validate).is_some());
     if docs_mode {
         class = read("", &mut log)?;
         class_base.clear();
@@ -1189,7 +1213,7 @@ fn resolve(
             })?,
         ValidateMode::Range => settings.validate.range_cmd.clone().unwrap_or_default(),
         ValidateMode::Ci => String::new(),
-        ValidateMode::Docs => settings.validate.text_cmd.clone().unwrap_or_default(),
+        ValidateMode::Docs => text_cmd(&settings.validate).unwrap_or_default(),
     };
     let mut scoped = false;
     // The selector's own preview for a local run, and the scoped start
@@ -1278,7 +1302,7 @@ fn resolve(
             .validate
             .selection_cmd
             .clone()
-            .or_else(|| settings.validate.text_cmd.clone())
+            .or_else(|| text_cmd(&settings.validate))
             .unwrap_or_default();
         preview = if scoped {
             preview_selection(
@@ -1508,8 +1532,8 @@ fn write_run_dir(
     let write = |name: &str, text: &str| {
         fs::write(run_dir.join(name), text).map_err(|e| format!("{name}: {e}"))
     };
-    // The job's error log stands before any record: it is the mark that tells
-    // the runtime's start from the shell producer's, which writes none.
+    // The job's error log stands before any record: a released run directory
+    // holds none, so it marks the directories this start wrote.
     write("job.err", "")?;
     write("class.log", &resolved.class_log)?;
     let mut paths = resolved.paths.join("\n");

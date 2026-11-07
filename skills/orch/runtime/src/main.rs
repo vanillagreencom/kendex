@@ -46,6 +46,18 @@ struct Cli {
 enum Verb {
     /// Print the protocol and crate version.
     Version,
+    DevReturn {
+        #[arg(long)]
+        text: bool,
+        #[command(subcommand)]
+        op: ops::artifact::DevReturn,
+    },
+    Round {
+        #[arg(long)]
+        text: bool,
+        #[command(subcommand)]
+        op: ops::artifact::Round,
+    },
     /// Read or initialize one state file.
     State {
         #[command(subcommand)]
@@ -72,8 +84,6 @@ enum Verb {
     ReconcileItems {
         #[arg(long)]
         stale_hours: Option<u64>,
-        #[arg(long)]
-        gh_cli: Option<PathBuf>,
     },
     /// Re-observe every open intent by its recorded identity and complete or
     /// mark each, starting no new effect.
@@ -886,6 +896,55 @@ fn resolve_settings(flags: &Flags) -> Result<Settings> {
     settings::load(&roots, &environment, flags)
 }
 
+#[allow(
+    clippy::disallowed_methods,
+    reason = "a worktree that is no directory is the owner's own `not-directory` refusal, never the settings root resolver's; the read only picks the settings root"
+)]
+fn artifact_settings(flags: &Flags, worktree: Option<&Path>) -> Result<Settings> {
+    match worktree.filter(|w| w.is_dir()) {
+        Some(worktree) => {
+            let environment: Vec<(OsString, OsString)> = std::env::vars_os().collect();
+            settings::load(&settings::roots(worktree)?, &environment, flags)
+        }
+        None => resolve_settings(flags),
+    }
+}
+
+fn artifact_reply(result: Result<ops::artifact::Answer>, text: bool, entry: &str) -> ! {
+    let (value, status) = match result {
+        Ok(answer) => {
+            let value = if text {
+                answer.text
+            } else {
+                serde_json::to_string(&Reply::ok(answer.value))
+                    .expect("serializable artifact answer")
+            };
+            (value, answer.status)
+        }
+        Err(error) => {
+            let prefix = if text { entry } else { "orch-runtime" };
+            let cause = match &error {
+                Error::Artifact { cause, .. } => cause.clone(),
+                _ => error.to_string(),
+            };
+            let _ = writeln!(
+                std::io::stderr().lock(),
+                "{prefix}: {} {cause}",
+                error.key()
+            );
+            if text {
+                std::process::exit(2);
+            }
+            (
+                serde_json::to_string(&Reply::<()>::refused(&error)).expect("serializable refusal"),
+                1,
+            )
+        }
+    };
+    let _ = writeln!(std::io::stdout().lock(), "{value}");
+    std::process::exit(status)
+}
+
 /// The file a target names: the path, or the item or fleet file under the
 /// resolved state directory.
 fn target_path(target: &Target, settings: &Settings) -> PathBuf {
@@ -957,41 +1016,51 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     agent_runtime::Error::refused("report-args", &[("action", &action)]).into(),
                 );
             }
-            let settings = resolve_settings(&flags)?;
-            // A due judged on minutes alone, or a session's due with no fleet
-            // state named, reads no GitHub, so asks no credential of it either.
-            let reads_github = action != "due"
-                || (settings.report.enabled
-                    && settings.report.issues > 0
-                    && (state.is_some() || session_start.is_none()));
-            if reads_github && !credential_selected {
-                return Err(reexec_with_github_auth(&settings));
+            if action != "due" && repo.is_empty() {
+                return Err(agent_runtime::Error::refused(
+                    "report-args",
+                    &[("action", &action), ("cause", "missing-repo")],
+                )
+                .into());
             }
+            let settings = resolve_settings(&flags)?;
             let now = system_env()?.now_secs;
             let session = session_start.map(|start| watch::report::Session {
                 start,
                 fleet: state.clone(),
             });
-            let ctx = watch::report::Context {
-                fleet: state.unwrap_or_else(|| state::fleet_path(&settings.state_dir)),
-                github: settings
-                    .roots
-                    .project
-                    .join(".agents/skills/github/scripts/github.sh"),
-                settings,
-                gh: PathBuf::from("gh"),
-                repos: repo,
-                shared: Default::default(),
+            let fleet = state.unwrap_or_else(|| state::fleet_path(&settings.state_dir));
+            let ctx = watch::report::Context::new(fleet, &settings, repo, Default::default());
+            // The credential is selected where GitHub is first read: before a
+            // render, and before a due's landed-item count, never before the
+            // due answers that read nothing.
+            let selected = |ctx: &watch::report::Context| -> Result<()> {
+                if credential_selected {
+                    Ok(())
+                } else {
+                    Err(reexec_with_github_auth(&ctx.settings))
+                }
             };
             match action.as_str() {
                 "due" => {
-                    serde_json::json!({"line": watch::report::due(&ctx, now, session.as_ref())?})
+                    let line = match watch::report::cadence(&ctx, now, session.as_ref())? {
+                        watch::report::Cadence::Answered(line) => line,
+                        watch::report::Cadence::Count(owed) => {
+                            selected(&ctx)?;
+                            watch::report::landed(&ctx, now, owed)?
+                        }
+                    };
+                    serde_json::json!({ "line": line })
                 }
-                "render" => serde_json::json!({"body": watch::report::render(&ctx, now)?}),
+                "render" => {
+                    selected(&ctx)?;
+                    serde_json::json!({"body": watch::report::render(&ctx, now)?})
+                }
                 "write" => {
                     let summary = summary_file.ok_or_else(|| {
                         agent_runtime::Error::refused("report-summary", &[("cause", "missing")])
                     })?;
+                    selected(&ctx)?;
                     watch::report::write(&ctx, now, &summary, succession)?
                 }
                 _ => unreachable!("clap checks the report action"),
@@ -1187,20 +1256,53 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &schedule::SystemClock,
             )?)?
         }
-        Verb::ReconcileItems {
-            stale_hours,
-            gh_cli,
-        } => {
+        Verb::ReconcileItems { stale_hours } => {
             let settings = resolve_settings(&flags)?;
             serde_json::to_value(watch::tracker::reconcile_items::run(
                 &settings,
                 stale_hours,
-                gh_cli.as_deref(),
+                None,
                 system_env()?.now_secs,
             )?)?
         }
         Verb::Accounts { op } => accounts_verb(op, &flags)?,
         Verb::Watch { op } => watch_verb(op, &flags, locking)?,
+        Verb::DevReturn { op, text } => {
+            let worktree = match &op {
+                ops::artifact::DevReturn::Write(r) => Some(r.id.worktree.as_path()),
+                ops::artifact::DevReturn::Check(r) => r.worktree.as_deref(),
+            };
+            let entry = match &op {
+                ops::artifact::DevReturn::Write(_) => "dev-return-write",
+                ops::artifact::DevReturn::Check(_) => "dev-artifact-check",
+            };
+            let result = artifact_settings(&flags, worktree).and_then(|settings| match op {
+                ops::artifact::DevReturn::Write(r) => ops::artifact::write(&settings, &r),
+                ops::artifact::DevReturn::Check(r) => {
+                    ops::artifact::check(&settings, &r, &schedule::SystemClock)
+                }
+            });
+            artifact_reply(result, text, entry)
+        }
+        Verb::Round { op, text } => {
+            let worktree = match &op {
+                ops::artifact::Round::Stamp(r) | ops::artifact::Round::Cut(r) => &r.id.worktree,
+                ops::artifact::Round::Recover(r) => &r.id.worktree,
+            };
+            let entry = match &op {
+                ops::artifact::Round::Recover(_) => "round-recover",
+                ops::artifact::Round::Stamp(_) | ops::artifact::Round::Cut(_) => "dev-round-write",
+            };
+            let result = artifact_settings(&flags, Some(worktree)).and_then(|settings| {
+                let env = system_env()?;
+                match op {
+                    ops::artifact::Round::Stamp(r) => ops::artifact::stamp(&r, false, &env),
+                    ops::artifact::Round::Cut(r) => ops::artifact::stamp(&r, true, &env),
+                    ops::artifact::Round::Recover(r) => ops::artifact::recover(&settings, &r, &env),
+                }
+            });
+            artifact_reply(result, text, entry)
+        }
         Verb::Lane {
             op: LaneOp::Status { item },
         } => {

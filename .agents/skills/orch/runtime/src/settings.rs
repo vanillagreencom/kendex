@@ -397,6 +397,8 @@ const READ_KEYS: &[&str] = &[
     CLAIM_STATE_DIR_KEY,
     LANE_MAIL_CLI_KEY,
     DEV_VALIDATE_CLI_KEY,
+    "ORCH_APPLE_WORKFLOW",
+    "ORCH_APPLE_LABELS",
     DEV_VALIDATE_CMD_KEY,
     DEV_VALIDATE_RANGE_CMD_KEY,
     DEV_VALIDATE_CI_CONTEXT_KEY,
@@ -429,12 +431,12 @@ const READ_KEYS: &[&str] = &[
     QUEUE_WAIT_ARM_GRACE_KEY,
     QUEUE_WAIT_CONFIRM_POLLS_KEY,
     QUEUE_WAIT_PROBE_INTERVAL_KEY,
-    "ORCH_REPORT",
-    "ORCH_REPORT_EVERY_MINUTES",
-    "ORCH_REPORT_EVERY_ISSUES",
-    "ORCH_REPORT_UPCOMING",
-    "ORCH_REPORT_QUIET_HOURS",
-    "ORCH_OWNER_TIME_ZONE",
+    crate::watch::report::ENABLED_KEY,
+    crate::watch::report::MINUTES_KEY,
+    crate::watch::report::ISSUES_KEY,
+    crate::watch::report::UPCOMING_KEY,
+    crate::watch::report::QUIET_HOURS_KEY,
+    crate::watch::report::ZONE_KEY,
     LANES_CLI_KEY,
     COPILOT_HOLD_SECS_KEY,
     "ORCH_OVERSEER_REVIEW_TOKEN_FILE",
@@ -448,11 +450,28 @@ const READ_KEYS: &[&str] = &[
     COPILOT_REQUESTS_KEY,
 ];
 
+/// The keys every verb needs, so the load itself judges them and a private
+/// env file line of one in a form only a shell reads refuses the load: the
+/// state directory every record lives under.
+const LOAD_KEYS: &[&str] = &[STATE_DIR_KEY];
+
+/// The keys the overseer's head approval reads, its credential and its
+/// reply check's reader credentials among them.
+const APPROVAL_KEYS: &[&str] = &[
+    "ORCH_OVERSEER_REVIEW_TOKEN_FILE",
+    "ORCH_OVERSEER_REVIEW_LOGIN",
+    "GH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_BOT_TOKEN",
+    "GH_HOST",
+];
+
 /// The account readers' keys (the listing, the renewal and the judge), read
 /// from the private env file beside [`READ_KEYS`]. A spelling of one that
 /// only a shell reads is passed over with a notice, never refused: an
 /// operator wrote these for a loader that sourced the file, so such a line
-/// stays the shell's, as a key this runtime does not read does.
+/// stays the shell's, as a key this runtime does not read does. Every key of
+/// [`READ_KEYS`] but [`LOAD_KEYS`] is read the same way.
 const ACCOUNT_KEYS: &[&str] = &[
     LANE_RETIRE_KEY,
     LANE_CLOUD_REPOS_KEY,
@@ -614,6 +633,8 @@ pub struct ValidateSettings {
     pub range_cmd: Option<String>,
     pub ci_context: Option<String>,
     pub selection_cmd: Option<String>,
+    /// `DEV_VALIDATE_TEXT_CMD` as written, an empty value kept: the docs
+    /// mode, its one reader, judges it.
     pub text_cmd: Option<String>,
     pub finding_prefix: Option<String>,
     pub timeout: Duration,
@@ -730,6 +751,8 @@ pub struct Settings {
     pub claim_store: PathBuf,
     pub lane_mail_cli: PathBuf,
     pub dev_validate_cli: PathBuf,
+    pub apple_workflow: String,
+    pub apple_labels: Vec<String>,
     pub validate: ValidateSettings,
     pub scope_paths_cli: PathBuf,
     /// The succession's preference entries, which the overseer mark
@@ -747,7 +770,10 @@ pub struct Settings {
     pub retention_days: u32,
     pub queue_watch: QueueWatchSettings,
     pub archive_root: ArchiveRoot,
-    pub report: crate::watch::report::Policy,
+    /// The report's keys as their text, an empty value kept, since an
+    /// empty value turns the timed report or quiet hours off and the report
+    /// alone judges them (`report::Policy::of`).
+    pub report: Vec<(String, String)>,
     pub lanes_cli: PathBuf,
     pub accounts: AccountSettings,
     pub store: StoreSettings,
@@ -788,6 +814,10 @@ pub struct ReviewSettings {
     pub approval_token_file: Option<PathBuf>,
     pub approval_login: Option<String>,
     pub approval_reader_env: Vec<(String, String)>,
+    /// The approval keys the private env file sets in a form only a shell
+    /// reads, with no caller value over them: the approval cannot know
+    /// them, and the github router, which sources the file, reads them.
+    pub approval_unread: Vec<String>,
     pub copilot_hold: String,
     pub wait: String,
     pub on_timeout: String,
@@ -988,6 +1018,7 @@ pub fn load(
         }),
     )?;
     let mut values: BTreeMap<String, String> = BTreeMap::new();
+    let mut passed_over = Vec::new();
     if let Some((path, private)) = rung.private {
         // The default ladder, lowest rung first: the settings files, the
         // private env file, then the caller's environment over all.
@@ -1000,6 +1031,7 @@ pub fn load(
                 path.display()
             );
         }
+        passed_over = private.passed_over;
         values.extend(private.values);
         for (key, value) in caller {
             values.insert(key, value);
@@ -1209,7 +1241,7 @@ pub fn load(
         range_cmd: command(DEV_VALIDATE_RANGE_CMD_KEY),
         ci_context: command(DEV_VALIDATE_CI_CONTEXT_KEY),
         selection_cmd: command(DEV_VALIDATE_SELECTION_CMD_KEY),
-        text_cmd: command("DEV_VALIDATE_TEXT_CMD"),
+        text_cmd: get("DEV_VALIDATE_TEXT_CMD").map(str::to_owned),
         finding_prefix,
         timeout: validate_timeout,
         delivery,
@@ -1254,7 +1286,10 @@ pub fn load(
             ArchiveRoot::Default(fleet.join("archive"))
         }
     };
-    let report = crate::watch::report::Policy::read(|key| get(key).map(str::to_owned))?;
+    let report = crate::watch::report::KEYS
+        .into_iter()
+        .filter_map(|key| values.get(key).map(|v| (key.to_owned(), v.clone())))
+        .collect();
     let lanes_cli = program(LANES_CLI_KEY, LANES_CLI_DEFAULT);
     // The accounts judge's keys, held to `lanes`' own grammar
     // (`validate_lane_settings`, `pct_valid`): a retirement names a lane
@@ -1503,6 +1538,11 @@ pub fn load(
             .into_iter()
             .filter_map(|key| values.get(key).map(|v| (key.to_owned(), v.clone())))
             .collect(),
+        approval_unread: passed_over
+            .iter()
+            .filter(|key| APPROVAL_KEYS.contains(&key.as_str()) && !values.contains_key(*key))
+            .cloned()
+            .collect(),
         copilot_hold: text(COPILOT_HOLD_SECS_KEY, DEFAULT_COPILOT_HOLD_SECS),
         wait: text(REVIEW_WAIT_SECS_KEY, DEFAULT_REVIEW_WAIT_SECS),
         on_timeout: text(REVIEW_ON_TIMEOUT_KEY, "proceed"),
@@ -1541,6 +1581,18 @@ pub fn load(
         claim_store,
         lane_mail_cli,
         dev_validate_cli,
+        apple_workflow: values
+            .get("ORCH_APPLE_WORKFLOW")
+            .map(String::as_str)
+            .unwrap_or(".github/workflows/mac-run.yml")
+            .to_owned(),
+        apple_labels: values
+            .get("ORCH_APPLE_LABELS")
+            .map(String::as_str)
+            .unwrap_or("ios macos")
+            .split_whitespace()
+            .map(str::to_owned)
+            .collect(),
         validate,
         scope_paths_cli,
         overseer_preference,
@@ -1798,18 +1850,19 @@ fn expand_home(text: &str, home: Option<&str>, tilde: bool) -> Option<String> {
 }
 
 /// The private env file's assignments this runtime reads, in file order,
-/// and the account keys whose line it passed over.
+/// and the keys whose line it passed over.
 pub(crate) struct PrivateEnv {
     pub(crate) values: Vec<(String, String)>,
     pub(crate) passed_over: Vec<String>,
 }
 
 /// The assignments of the private env file this runtime reads, in file
-/// order. An account key's value is read as the sourcing shell assigns
-/// it, `home` the shell's `HOME` until the file assigns one, and a form
-/// only a shell reads is passed over; every other key's value is read as
-/// data and refuses the load in a shape only a shell reads. A line that
-/// assigns nothing this runtime reads is the shell's alone.
+/// order. A key's value is read as the sourcing shell assigns it, `home`
+/// the shell's `HOME` until the file assigns one, and a form only a shell
+/// reads is passed over, so a value only some verbs read never refuses
+/// every verb; a key of [`LOAD_KEYS`] is read as data and refuses the load
+/// in a shape only a shell reads. A line that assigns nothing this runtime
+/// reads is the shell's alone.
 pub(crate) fn private_env_file(path: &Path, home: Option<&str>) -> Result<PrivateEnv> {
     match read_text(path)? {
         Some(text) => private_env_text(path, home, &text),
@@ -1836,14 +1889,14 @@ pub(crate) fn private_env_text(path: &Path, home: Option<&str>, text: &str) -> R
         let Some((key, value)) = line.split_once('=') else {
             continue;
         };
-        let account = ACCOUNT_KEYS.contains(&key);
-        if !account && !READ_KEYS.contains(&key) {
+        if !ACCOUNT_KEYS.contains(&key) && !READ_KEYS.contains(&key) {
             continue;
         }
-        let decoded = if account {
-            decode_account_value(value, home.as_deref())
-        } else {
+        let load_key = LOAD_KEYS.contains(&key);
+        let decoded = if load_key {
             decode_shell_value(value)
+        } else {
+            decode_account_value(value, home.as_deref())
         };
         match decoded {
             Some(value) => {
@@ -1852,8 +1905,8 @@ pub(crate) fn private_env_text(path: &Path, home: Option<&str>, text: &str) -> R
                 }
                 env.values.push((key.to_owned(), value));
             }
-            None if account => env.passed_over.push(key.to_owned()),
-            None => return Err(file_refusal(path, key, "value-syntax")),
+            None if load_key => return Err(file_refusal(path, key, "value-syntax")),
+            None => env.passed_over.push(key.to_owned()),
         }
     }
     Ok(env)
@@ -2068,12 +2121,11 @@ mod tests {
         assert_eq!(settings.close_grace, Duration::from_secs(15));
     }
 
-    /// A key outside the account keys reads its value as data, a shell
-    /// form inside quotes as the text it is, and refuses the load in a
-    /// shape only a shell reads; an account key's form only a shell reads
-    /// is passed over, the load and every other key read as before, and an
-    /// empty account value blanks the key over a settings file's value, as
-    /// the sourced file did.
+    /// A key's value reads as the sourcing shell assigns it, `$HOME` as the
+    /// home; a form only a shell reads is passed over, the load and every
+    /// other key read as before; the state directory's refuses the load; an
+    /// empty value blanks the key over a settings file's value, as the
+    /// sourced file did.
     #[test]
     fn a_private_file_line_this_runtime_reads_must_decode_as_data() {
         let dir = tempfile::tempdir().unwrap();
@@ -2081,11 +2133,15 @@ mod tests {
         write(
             &roots.project,
             ".env.local",
-            "ORCH_TMUX_SESSION=a $b\nSOMETHING_ELSE=$(date)\nfunction f() { :; }\n",
+            "ORCH_TMUX_SESSION=a $b\nSOMETHING_ELSE=$(date)\nfunction f() { :; }\nORCH_TMUX_VERIFY_SECS=7\n",
         );
+        let settings = load(&roots, &env(&[]), &FLAGS).unwrap();
+        assert_eq!(settings.tmux_session, None);
+        assert_eq!(settings.verify, Duration::from_secs(7));
+        write(&roots.project, ".env.local", "ORCH_STATE_DIR=a $b\n");
         let err = load(&roots, &env(&[]), &FLAGS).unwrap_err();
         assert_eq!(err.key(), "settings-invalid");
-        assert_eq!(err.fields()[1], ("key".into(), TMUX_SESSION_KEY.into()));
+        assert_eq!(err.fields()[1], ("key".into(), STATE_DIR_KEY.into()));
         write(
             &roots.project,
             ".env.local",
@@ -2100,14 +2156,12 @@ mod tests {
             ".env.local",
             "ORCH_TMUX_SESSION=\"$HOME/s\"\nORCH_LANE_DIRS=$(pwd)\nCODEX_HOME=~/c\n",
         );
-        for (home, codex_home) in [(Some("/h"), Some("/h/c")), (None, None)] {
+        for (home, session, codex_home) in
+            [(Some("/h"), Some("/h/s"), Some("/h/c")), (None, None, None)]
+        {
             let caller: Vec<(&str, &str)> = home.map(|h| ("HOME", h)).into_iter().collect();
             let settings = load(&roots, &env(&caller), &FLAGS).unwrap();
-            assert_eq!(
-                settings.tmux_session.as_deref(),
-                Some("$HOME/s"),
-                "{home:?}"
-            );
+            assert_eq!(settings.tmux_session.as_deref(), session, "{home:?}");
             assert!(settings.accounts.lane_dirs.is_empty(), "{home:?}");
             assert_eq!(
                 settings.accounts.codex_home.as_deref(),
@@ -2504,5 +2558,106 @@ mod tests {
                 "{value:?}"
             );
         }
+    }
+
+    /// The keys whose value the load still judges for every verb, until
+    /// each one's judgement moves to the verbs that read it.
+    const JUDGED_IN_LOAD: &[&str] = &[
+        SECURITY_ALERTS_KEY,
+        EXTERNAL_TRIAGE_KEY,
+        VERIFY_SECS_KEY,
+        CLOSE_SECS_KEY,
+        QUESTION_TOOL_KEY,
+        LAUNCH_PERMISSION_KEY,
+        HARNESS_BINARIES_KEY,
+        SUCCESSION_KEY,
+        LANE_CAP_KEY,
+        CLOUD_LANE_CAP_KEY,
+        DEV_VALIDATE_FINDING_PREFIX_KEY,
+        DEV_VALIDATE_TIMEOUT_SECS_KEY,
+        DELIVERY_KEY,
+        JOB_CLAIM_SECS_KEY,
+        WATCH_MAIL_INTERVAL_KEY,
+        OVERSEER_MARK_REPEAT_KEY,
+        OVERSEER_DEAD_PASSES_KEY,
+        OVERSEER_WALL_MINUTES_KEY,
+        OVERSEER_MEMORY_PCT_KEY,
+        HANDOFF_CONTEXT_PCT_KEY,
+        WATCH_TAIL_LINES_KEY,
+        WATCH_PREPARE_SECS_KEY,
+        DIRECTIVE_UNREAD_SECS_KEY,
+        WATCH_START_STALL_SECS_KEY,
+        WATCH_LANE_STALL_SECS_KEY,
+        CLOUD_STALL_MINUTES_KEY,
+        WATCH_LANE_AGE_SECS_KEY,
+        WALL_RELAUNCH_KEY,
+        MAIN_WORKFLOWS_KEY,
+        RECORD_RETENTION_DAYS_KEY,
+        QUEUE_WAIT_ARM_GRACE_KEY,
+        QUEUE_WAIT_CONFIRM_POLLS_KEY,
+        QUEUE_WAIT_PROBE_INTERVAL_KEY,
+    ];
+
+    /// A key only some verbs read never refuses the load, so one verb's bad
+    /// value cannot refuse every verb and the watch: neither its private
+    /// env file line in a form only a shell reads nor, outside the keys
+    /// still judged in the load, a value outside its form in the caller's
+    /// environment. [`LOAD_KEYS`] are the load's own.
+    #[test]
+    fn a_key_only_some_verbs_read_never_refuses_the_settings_load() {
+        let mut refused = Vec::new();
+        for &key in READ_KEYS.iter().filter(|key| !LOAD_KEYS.contains(key)) {
+            let dir = tempfile::tempdir().unwrap();
+            let roots = roots_in(dir.path());
+            write(&roots.project, ".env.local", &format!("{key}=$(command)\n"));
+            if let Err(e) = load(&roots, &env(&[]), &FLAGS) {
+                refused.push(format!("{key} private file: {}", e.key()));
+            }
+            if JUDGED_IN_LOAD.contains(&key) {
+                continue;
+            }
+            let dir = tempfile::tempdir().unwrap();
+            let roots = roots_in(dir.path());
+            if let Err(e) = load(&roots, &env(&[(key, "not a value\n")]), &FLAGS) {
+                refused.push(format!("{key} environment: {}", e.key()));
+            }
+        }
+        assert!(refused.is_empty(), "{refused:#?}");
+    }
+
+    /// A shell-form line of a key the load does not judge is passed over and
+    /// named, never read as a value; the state directory's still refuses.
+    #[test]
+    fn a_shell_form_private_line_is_passed_over_unless_the_load_judges_its_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = roots_in(dir.path());
+        write(
+            &roots.project,
+            ".env.local",
+            "GH_TOKEN=$(gh auth token)\nGH_HOST=github.example # enterprise\nGH_BOT_TOKEN=\n",
+        );
+        let settings = load(&roots, &env(&[]), &FLAGS).unwrap();
+        assert_eq!(settings.review.approval_unread, ["GH_TOKEN"]);
+        assert_eq!(
+            settings.review.approval_reader_env,
+            [
+                ("GH_BOT_TOKEN".to_owned(), String::new()),
+                ("GH_HOST".to_owned(), "github.example".to_owned())
+            ]
+        );
+        let settings = load(&roots, &env(&[("GH_TOKEN", "ghs_caller")]), &FLAGS).unwrap();
+        assert!(
+            settings.review.approval_unread.is_empty(),
+            "the caller's value stands"
+        );
+        write(
+            &roots.project,
+            ".env.local",
+            "ORCH_STATE_DIR=$(pwd)/state\n",
+        );
+        assert_eq!(
+            load(&roots, &env(&[]), &FLAGS).unwrap_err().key(),
+            "settings-invalid"
+        );
     }
 }

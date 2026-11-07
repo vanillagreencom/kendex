@@ -22,6 +22,23 @@ const TAG: &str = "report";
 const GITHUB_CLI_DEFAULT: &str = ".agents/skills/github/scripts/github.sh";
 const LOOKBACK: u64 = 604800;
 
+pub const ENABLED_KEY: &str = "ORCH_REPORT";
+pub const MINUTES_KEY: &str = "ORCH_REPORT_EVERY_MINUTES";
+pub const ISSUES_KEY: &str = "ORCH_REPORT_EVERY_ISSUES";
+pub const UPCOMING_KEY: &str = "ORCH_REPORT_UPCOMING";
+pub const QUIET_HOURS_KEY: &str = "ORCH_REPORT_QUIET_HOURS";
+pub const ZONE_KEY: &str = "ORCH_OWNER_TIME_ZONE";
+/// The report's settings, which the settings load carries as their text, an
+/// empty value kept, for the report alone to judge.
+pub const KEYS: [&str; 6] = [
+    ENABLED_KEY,
+    MINUTES_KEY,
+    ISSUES_KEY,
+    UPCOMING_KEY,
+    QUIET_HOURS_KEY,
+    ZONE_KEY,
+];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Policy {
     pub enabled: bool,
@@ -51,12 +68,12 @@ impl Policy {
             }
             value.parse().map_err(|_| invalid(key, &value))
         };
-        let enabled = match get("ORCH_REPORT").as_deref().unwrap_or("on") {
+        let enabled = match get(ENABLED_KEY).as_deref().unwrap_or("on") {
             "on" => true,
             "off" => false,
-            value => return Err(invalid("ORCH_REPORT", value)),
+            value => return Err(invalid(ENABLED_KEY, value)),
         };
-        let hours = get("ORCH_REPORT_QUIET_HOURS").unwrap_or_else(|| "0-7".to_owned());
+        let hours = get(QUIET_HOURS_KEY).unwrap_or_else(|| "0-7".to_owned());
         let quiet = if hours.is_empty() {
             None
         } else {
@@ -75,17 +92,29 @@ impl Policy {
                 let (a, b): (i8, i8) = (a.parse().ok()?, b.parse().ok()?);
                 (a != b && (0..24).contains(&a) && (0..24).contains(&b)).then_some((a, b))
             };
-            Some(parse().ok_or_else(|| invalid("ORCH_REPORT_QUIET_HOURS", &hours))?)
+            Some(parse().ok_or_else(|| invalid(QUIET_HOURS_KEY, &hours))?)
         };
-        let zone = get("ORCH_OWNER_TIME_ZONE").unwrap_or_else(|| "America/Los_Angeles".to_owned());
-        jiff::tz::TimeZone::get(&zone).map_err(|_| invalid("ORCH_OWNER_TIME_ZONE", &zone))?;
+        let zone = get(ZONE_KEY).unwrap_or_else(|| "America/Los_Angeles".to_owned());
+        jiff::tz::TimeZone::get(&zone).map_err(|_| invalid(ZONE_KEY, &zone))?;
         Ok(Self {
             enabled,
-            minutes: whole("ORCH_REPORT_EVERY_MINUTES", "120", true)?,
-            issues: whole("ORCH_REPORT_EVERY_ISSUES", "0", false)?,
-            upcoming: whole("ORCH_REPORT_UPCOMING", "5", false)?,
+            minutes: whole(MINUTES_KEY, "120", true)?,
+            issues: whole(ISSUES_KEY, "0", false)?,
+            upcoming: whole(UPCOMING_KEY, "5", false)?,
             quiet,
             zone,
+        })
+    }
+
+    /// The policy from the settings' text. A value outside its form refuses
+    /// the report's verb and its duty's pass, and no other verb.
+    pub fn of(settings: &Settings) -> Result<Self> {
+        Self::read(|key| {
+            settings
+                .report
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.clone())
         })
     }
 
@@ -120,6 +149,26 @@ pub fn body<'a>(ctx: Context) -> Body<'a> {
     Box::new(move |tick: &Tick| run(&ctx, tick))
 }
 
+impl Context {
+    /// The report over the fleet record at `fleet`, reading GitHub through
+    /// `gh` on `PATH` and the timeline through the project's github skill.
+    pub fn new(
+        fleet: PathBuf,
+        settings: &Settings,
+        repos: Vec<String>,
+        shared: super::tracker::Shared,
+    ) -> Context {
+        Context {
+            fleet,
+            github: settings.roots.project.join(GITHUB_CLI_DEFAULT),
+            settings: settings.clone(),
+            repos,
+            gh: PathBuf::from("gh"),
+            shared,
+        }
+    }
+}
+
 pub fn register(
     runner: &mut Runner<'_>,
     path: &Path,
@@ -129,14 +178,7 @@ pub fn register(
 ) {
     runner.register(
         crate::schedule::Duty::Report,
-        body(Context {
-            fleet: path.to_path_buf(),
-            github: settings.roots.project.join(GITHUB_CLI_DEFAULT),
-            settings: settings.clone(),
-            repos,
-            gh: PathBuf::from("gh"),
-            shared,
-        }),
+        body(Context::new(path.to_path_buf(), settings, repos, shared)),
     );
 }
 
@@ -164,18 +206,6 @@ fn lanes(doc: &Document) -> Result<Vec<Lane>> {
 struct Window {
     latest: Option<u64>,
     owner: Option<u64>,
-}
-
-fn report_name(name: &str) -> bool {
-    let Some(stem) = name.strip_suffix(".md") else {
-        return false;
-    };
-    let stem = stem.strip_suffix("-succession").unwrap_or(stem);
-    let parts: Vec<_> = stem.split('-').collect();
-    parts.len() == 4
-        && parts
-            .iter()
-            .all(|s| s.len() == 2 && s.bytes().all(|c| c.is_ascii_digit()))
 }
 
 #[allow(
@@ -206,7 +236,7 @@ fn window(ctx: &Context, doc: &Document, session_start: Option<u64>) -> Result<W
     };
     for entry in entries.into_iter().flatten() {
         let entry = entry.map_err(|e| unjudged(&[("cause", &e.to_string())]))?;
-        if !report_name(&entry.file_name().to_string_lossy()) {
+        if !super::retention::is_progress_report(&entry.file_name().to_string_lossy()) {
             continue;
         }
         let meta = entry
@@ -299,10 +329,35 @@ pub struct Session {
     pub fleet: Option<PathBuf>,
 }
 
+/// Where the cadence stands before any GitHub read: answered, or owed the
+/// landed-item count, the one step that reads GitHub.
+pub enum Cadence {
+    Answered(Option<String>),
+    Count(Count),
+}
+
+/// The landed-item count a cadence owes: the fleet it reads and its window.
+pub struct Count {
+    policy: Policy,
+    doc: Document,
+    marker: u64,
+    floor: u64,
+}
+
 pub fn due(ctx: &Context, now: u64, session: Option<&Session>) -> Result<Option<String>> {
-    let policy = &ctx.settings.report;
+    match cadence(ctx, now, session)? {
+        Cadence::Answered(line) => Ok(line),
+        Cadence::Count(owed) => landed(ctx, now, owed),
+    }
+}
+
+/// Every due answer that reads no GitHub: off, no marker, the session's
+/// quiet hours, the morning catch-up, minutes, no issue trigger.
+pub fn cadence(ctx: &Context, now: u64, session: Option<&Session>) -> Result<Cadence> {
+    let answered = |line: Option<String>| Ok(Cadence::Answered(line));
+    let policy = Policy::of(&ctx.settings)?;
     if !policy.enabled {
-        return Ok(None);
+        return answered(None);
     }
     let session_start = session.map(|s| s.start);
     let doc = match session {
@@ -322,11 +377,11 @@ pub fn due(ctx: &Context, now: u64, session: Option<&Session>) -> Result<Option<
     } else {
         window.latest
     }) else {
-        return Ok(None);
+        return answered(None);
     };
     let quiet = policy.quiet_at(now)?;
     if session_start.is_some() && quiet {
-        return Ok(None);
+        return answered(None);
     }
     let active = policy.minutes > 0 || policy.issues > 0;
     if session_start.is_none()
@@ -336,23 +391,47 @@ pub fn due(ctx: &Context, now: u64, session: Option<&Session>) -> Result<Option<
         && latest > owner
         && policy.quiet_at(latest)?
     {
-        return Ok(Some(format!(
+        return answered(Some(format!(
             "report-due reason=minutes since={}",
             clock::iso_utc(owner)
         )));
     }
-    let since = clock::iso_utc(marker);
     if policy.minutes > 0 && now.saturating_sub(marker) >= policy.minutes.saturating_mul(60) {
-        return Ok(Some(format!("report-due reason=minutes since={since}")));
+        return answered(Some(format!(
+            "report-due reason=minutes since={}",
+            clock::iso_utc(marker)
+        )));
     }
     if policy.issues == 0 || (session_start.is_some() && doc.is_empty()) {
-        return Ok(None);
+        return answered(None);
     }
-    let floor = marker.max(now.saturating_sub(LOOKBACK));
+    Ok(Cadence::Count(Count {
+        floor: marker.max(now.saturating_sub(LOOKBACK)),
+        policy,
+        doc,
+        marker,
+    }))
+}
+
+/// The landed-item count: distinct items landed in the window, one recent
+/// item enough where the lookback cut an older window.
+pub fn landed(ctx: &Context, now: u64, owed: Count) -> Result<Option<String>> {
+    let Count {
+        policy,
+        doc,
+        marker,
+        floor,
+    } = owed;
     let rows = completions(ctx, &doc, floor, now)?;
     let count = rows.iter().map(|r| &r.item).collect::<BTreeSet<_>>().len() as u64;
-    Ok((count >= policy.issues || (floor > marker && count > 0))
-        .then(|| format!("report-due reason=issues since={since} landed={count}")))
+    Ok(
+        (count >= policy.issues || (floor > marker && count > 0)).then(|| {
+            format!(
+                "report-due reason=issues since={} landed={count}",
+                clock::iso_utc(marker)
+            )
+        }),
+    )
 }
 
 fn field<'a>(record: &'a Value, key: &str) -> Option<&'a str> {
@@ -456,6 +535,7 @@ fn cell(text: &str) -> String {
 }
 
 pub fn render(ctx: &Context, now: u64) -> Result<String> {
+    let policy = Policy::of(&ctx.settings)?;
     let doc = load_fleet(&ctx.fleet)?;
     let lanes = lanes(&doc)?;
     let window = window(ctx, &doc, None)?;
@@ -522,13 +602,17 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
             ));
             for item in inventory.verifying.iter().filter(|i| !i.container) {
                 out.push_str(&format!(
-                    "- {}: post-merge checks; issue stage age=unread; issue created {}.\n",
+                    "- {}: post-merge checks; issue stage age=unread (no stage-entry reader, as of {}); issue created {}.\n",
                     cell(&item.id),
+                    clock::iso_utc(now),
                     cell(&item.created_at)
                 ));
             }
         }
-        None => out.push_str("\nPost-merge checks waiting: unread; source: tracker duty.\n"),
+        None => out.push_str(&format!(
+            "\nPost-merge checks waiting: unread; source: the tracker duty's verifying read, which this process has not made; as of {}.\n",
+            clock::iso_utc(now)
+        )),
     }
     out.push_str("\nActive workers:\n");
     let scripts = ctx
@@ -555,10 +639,11 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
             lane.session_id.as_deref().unwrap_or("unread")
         );
         let row = format!(
-            "- {}: {:?}; {identity}; job duration={} seconds; issue stage age=unread.\n",
+            "- {}: {:?}; {identity}; job duration={} seconds; issue stage age=unread (no stage-entry reader, as of {}).\n",
             lane.item,
             lane.status,
-            duration.map_or("unread".to_owned(), |n| n.to_string())
+            duration.map_or("unread".to_owned(), |n| n.to_string()),
+            clock::iso_utc(now)
         );
         out.push_str(&row);
         if ctx.fleet == state::fleet_path(&ctx.settings.state_dir) {
@@ -685,7 +770,7 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
         .flatten()
         .filter_map(Value::as_str)
         .filter(|key| !launched.contains(key))
-        .take(usize::try_from(ctx.settings.report.upcoming).unwrap_or(usize::MAX));
+        .take(usize::try_from(policy.upcoming).unwrap_or(usize::MAX));
     for item in queue {
         out.push_str(&format!(
             "- Queued {}: launch admission pending.\n",
@@ -708,9 +793,14 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
         }
     }
     if !blocked {
-        out.push_str("- Unread; lane gate facts need the observation duty's reader.\n");
+        out.push_str(&format!(
+            "- Unread; source: lane gate facts, which no reader exposes; as of {}.\n",
+            clock::iso_utc(now)
+        ));
     }
-    out.push_str("\n```\nIssues created\n```\n\n- Unread; source: Linear, all teams.\n\n```\nWaiting on you\n```\n\n");
+    out.push_str(&format!(
+        "\n```\nLinked issues created\n```\n\n- Unread; source: Linear, all teams; window: {window_text}.\n\n```\nWaiting on you\n```\n\n"
+    ));
     let mail = Mailbox::new(ctx.settings.lane_mail_cli.clone());
     let asks = mail.pending_owner_asks(&ctx.settings.roots.common)?;
     let events = mail.events(&ctx.settings.roots.common)?;
@@ -765,7 +855,6 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
         Err(cause) => out.push_str(&format!("- Unread: {}.\n", cell(&cause))),
     }
     out.push_str("\n```\nOverseer self-analysis\n```\n\n- Bad: unread report figures remain open; read the named sources before the next report.\n\n");
-    let policy = &ctx.settings.report;
     let next = if !policy.enabled || (policy.minutes == 0 && policy.issues == 0) {
         "cadence disabled".to_owned()
     } else {
@@ -812,18 +901,33 @@ pub fn write(ctx: &Context, now: u64, summary: &Path, succession: bool) -> Resul
         .map_err(|e| unjudged(&[("cause", &e.to_string())]))?
         .join(target.file_name().expect("a report path has a name"));
     let attempt = target.with_extension("notice.json");
-    let quiet = ctx.settings.report.quiet_at(now)?;
-    let (body, cutoff) = match std::fs::read_to_string(&attempt) {
+    let quiet = Policy::of(&ctx.settings)?.quiet_at(now)?;
+    let stored = match std::fs::read_to_string(&attempt) {
         Ok(text) => {
             let record: Value =
                 serde_json::from_str(&text).map_err(|e| unjudged(&[("cause", &e.to_string())]))?;
-            if record.get("summary").and_then(Value::as_str) != Some(&summary_text) {
-                return Err(unjudged(&[("cause", "report-exists")]));
-            }
-            let cutoff = record
+            let at = record
                 .get("at")
                 .and_then(Value::as_u64)
                 .ok_or_else(|| unjudged(&[("cause", "attempt-time-unread")]))?;
+            // The name keys on month to minute: an attempt stamped outside
+            // this minute is another year's report, never this one's retry.
+            if at <= now && now - at < 60 {
+                Some((record, at))
+            } else {
+                std::fs::remove_file(&attempt)
+                    .map_err(|e| unjudged(&[("cause", &e.to_string())]))?;
+                None
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(unjudged(&[("cause", &e.to_string())])),
+    };
+    let (body, cutoff) = match stored {
+        Some((record, cutoff)) => {
+            if record.get("summary").and_then(Value::as_str) != Some(&summary_text) {
+                return Err(unjudged(&[("cause", "report-exists")]));
+            }
             (
                 record
                     .get("body")
@@ -833,7 +937,7 @@ pub fn write(ctx: &Context, now: u64, summary: &Path, succession: bool) -> Resul
                 cutoff,
             )
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+        None => {
             if target
                 .try_exists()
                 .map_err(|e| unjudged(&[("cause", &e.to_string())]))?
@@ -853,7 +957,6 @@ pub fn write(ctx: &Context, now: u64, summary: &Path, succession: bool) -> Resul
                 .map_err(|e| unjudged(&[("cause", &e.to_string())]))?;
             (body, now)
         }
-        Err(e) => return Err(unjudged(&[("cause", &e.to_string())])),
     };
     match std::fs::read_to_string(&target) {
         Ok(existing) if existing == body => {}
@@ -889,6 +992,10 @@ pub fn write(ctx: &Context, now: u64, summary: &Path, succession: bool) -> Resul
             )?,
         )
     };
+    // Delivered, or quiet with nothing owed: the attempt has served. One left
+    // behind is harmless: a retry in this minute reconciles by the box, and a
+    // later year's write at this minute replaces it.
+    let _ = std::fs::remove_file(&attempt);
     Ok(json!({"event":"report-written","path":target,"notice_id":notice,"body":body}))
 }
 

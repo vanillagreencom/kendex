@@ -610,6 +610,12 @@ fn a_deadline_row_moves_only_after_its_event_line_is_durable() {
 /// A fleet whose lanes the report's body lists: one with a recorded cycle,
 /// one parked on a pull request, one with a retained pull request the
 /// timeline cannot read, one with nothing.
+/// A report setting as the settings load carries it: its text.
+fn set_report(ctx: &mut report::Context, key: &str, value: &str) {
+    ctx.settings.report.retain(|(k, _)| k != key);
+    ctx.settings.report.push((key.to_owned(), value.to_owned()));
+}
+
 fn report_fleet(overseer: Option<Value>) -> Value {
     let mut fleet = json!({
         "issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
@@ -3047,8 +3053,16 @@ fn report_owner_notice_waits_for_quiet_end_and_keeps_the_last_sent_window() {
         std::fs::read_to_string(sent["path"].as_str().unwrap()).unwrap(),
         body
     );
-    let retry = report::write(&ctx, morning, &summary, false).unwrap();
-    assert_eq!(retry["notice_id"], sent["notice_id"]);
+    let attempt = Path::new(sent["path"].as_str().unwrap()).with_extension("notice.json");
+    assert!(
+        !attempt.exists(),
+        "a delivered report keeps no attempt record"
+    );
+    let retry = report::write(&ctx, morning, &summary, false).unwrap_err();
+    assert_eq!(
+        retry.fields(),
+        vec![("cause".to_owned(), "report-exists".to_owned())]
+    );
     assert_eq!(
         mail.events(world.path())
             .unwrap()
@@ -3275,9 +3289,7 @@ esac
     let reply: Value = serde_json::from_slice(&output.stdout).unwrap();
     let body = reply["result"]["body"].as_str().unwrap();
     assert!(
-        body.contains(
-            "Escapes: this week 0, last week 0, the week the review cap fell to 1 (2026-09-28) 1"
-        ),
+        body.contains("Escapes: this week 0, last week 0, week of 2026-09-28 1"),
         "{body}"
     );
     assert!(
@@ -3291,6 +3303,13 @@ esac
         ),
         "{body}"
     );
+    for unread in [
+        "Post-merge checks waiting: unread; source: the tracker duty's verifying read, which this process has not made; as of ",
+        "- Unread; source: lane gate facts, which no reader exposes; as of ",
+        "Linked issues created\n```\n\n- Unread; source: Linear, all teams; window: 2026-09-29T06:00:00Z to ",
+    ] {
+        assert!(body.contains(unread), "{unread}\n{body}");
+    }
     assert!(
         std::fs::read_to_string(world.path().join("report-linear.args"))
             .unwrap()
@@ -3340,13 +3359,14 @@ fn report_notice_reads_its_attachment_after_a_lost_reply_and_retries_a_refused_s
         std::fs::write(&summary, "The report is ready.").unwrap();
         let now = epoch("2026-10-01T14:00:00Z");
         let first = report::write(&ctx, now, &summary, false);
-        if mode == "refused" {
+        let confirmed = if mode == "refused" {
             assert!(first.is_err(), "{first:?}");
+            ctx.settings.lane_mail_cli = real;
+            report::write(&ctx, now + 1, &summary, false).unwrap()
         } else {
-            assert!(first.is_ok(), "{first:?}");
-        }
-        ctx.settings.lane_mail_cli = real;
-        let confirmed = report::write(&ctx, now + 1, &summary, false).unwrap();
+            ctx.settings.lane_mail_cli = real;
+            first.unwrap()
+        };
         assert!(confirmed["notice_id"].as_str().is_some(), "{confirmed}");
         let events = orch_runtime::mailbox::Mailbox::new(ctx.settings.lane_mail_cli.clone())
             .events(world.path())
@@ -3374,8 +3394,8 @@ fn report_due_counts_distinct_direct_push_items_and_preserves_a_capped_old_windo
     let world = World::new();
     let mut ctx = world.report_context();
     ctx.repos.clear();
-    ctx.settings.report.minutes = 0;
-    ctx.settings.report.issues = 2;
+    set_report(&mut ctx, report::MINUTES_KEY, "0");
+    set_report(&mut ctx, report::ISSUES_KEY, "2");
     let now = epoch("2026-10-02T14:00:00Z");
     let fleet = |start: &str, rows: Vec<Value>| json!({"issue_id":"oversee","lanes":[{"item":"KEN-1","status":"done","launched_at":start}],"fleet_log":rows});
     let cycle = |item: &str, at: u64| json!({"item":item,"at":clock::iso_utc(at),"kind":"cycle","text":format!("cycle item={item} commit=abcdef1")});
@@ -3403,15 +3423,15 @@ fn report_due_counts_distinct_direct_push_items_and_preserves_a_capped_old_windo
             .unwrap()
             .contains("`Next report: after 2 distinct landed items`")
     );
-    ctx.settings.report.enabled = false;
+    set_report(&mut ctx, report::ENABLED_KEY, "off");
     assert_eq!(report::due(&ctx, now, None).unwrap(), None);
     assert!(
         report::render(&ctx, now)
             .unwrap()
             .contains("`Next report: cadence disabled`")
     );
-    ctx.settings.report.enabled = true;
-    ctx.settings.report.issues = 0;
+    set_report(&mut ctx, report::ENABLED_KEY, "on");
+    set_report(&mut ctx, report::ISSUES_KEY, "0");
     assert_eq!(report::due(&ctx, now, None).unwrap(), None);
     assert!(
         report::render(&ctx, now)
@@ -3487,6 +3507,8 @@ fn report_write_binds_a_relative_summary_before_the_mailbox_changes_directory() 
         .args([
             "report",
             "write",
+            "--repo",
+            "owner/repo",
             "--summary-file",
             "summary.txt",
             "--credential-selected",
@@ -3494,6 +3516,7 @@ fn report_write_binds_a_relative_summary_before_the_mailbox_changes_directory() 
         .env("HOME", world.path().join("home"))
         .env("LANE_MAIL_CLI", world.real_report_mail())
         .env("ORCH_REPORT_QUIET_HOURS", "")
+        .env("ORCH_OWNER_TIME_ZONE", "UTC")
         .output()
         .unwrap();
     assert!(
@@ -3516,15 +3539,11 @@ fn report_write_binds_a_relative_summary_before_the_mailbox_changes_directory() 
     );
 }
 
-/// The standalone render reads GitHub under the github skill's credential
-/// ladder, never under a stale inherited token alone: with `GH_TOKEN`
-/// revoked and no keyring, the project's `GH_BOT_TOKEN` reads Completed;
-/// with no credential working, the render refuses `auth-failed`. `gh`
-/// answers by the token it is given, as GitHub answers a revoked one.
-#[test]
-fn report_render_reads_github_under_the_credential_ladder() {
-    let world = World::new();
-    let _ = world.report_context();
+/// The real github skill's scripts under the world's project, so the CLI's
+/// credential ladder runs, and a `gh` first on the returned directory that
+/// logs each call to `token-gh.calls` and answers by the token it is given:
+/// `good` reads, any other token is refused as GitHub refuses a revoked one.
+fn ladder_world(world: &World) -> PathBuf {
     let actual = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let skill = world.path().join(".agents/skills/github");
     std::fs::create_dir_all(&skill).unwrap();
@@ -3538,10 +3557,24 @@ fn report_render_reads_github_under_the_credential_ladder() {
     write_executable(
         &bin.join("gh"),
         format!(
-            "#!/bin/sh\nif [ \"${{GH_TOKEN:-}}\" != good ]; then\n  echo 'gh: Bad credentials (HTTP 401)' >&2\n  exit 1\nfi\nif [ \"$1 $2\" = 'api user' ]; then\n  echo bot\n  exit 0\nfi\nexec '{}' \"$@\"\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"${{GH_TOKEN:-}}\" != good ]; then\n  echo 'gh: Bad credentials (HTTP 401)' >&2\n  exit 1\nfi\nif [ \"$1 $2\" = 'api user' ]; then\n  echo bot\n  exit 0\nfi\nexec '{}' \"$@\"\n",
+            world.path().join("token-gh.calls").display(),
             world.path().join("gh").display()
         ),
     );
+    bin
+}
+
+/// The standalone render reads GitHub under the github skill's credential
+/// ladder, never under a stale inherited token alone: with `GH_TOKEN`
+/// revoked and no keyring, the project's `GH_BOT_TOKEN` reads Completed;
+/// with no credential working, the render refuses `auth-failed`. `gh`
+/// answers by the token it is given, as GitHub answers a revoked one.
+#[test]
+fn report_render_reads_github_under_the_credential_ladder() {
+    let world = World::new();
+    let _ = world.report_context();
+    let bin = ladder_world(&world);
     let now = std::time::SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -3617,6 +3650,7 @@ fn report_session_due_counts_only_the_fleet_it_names() {
             .env("HOME", world.path().join("home"))
             .env("LANE_MAIL_CLI", world.real_report_mail())
             .env("ORCH_REPORT_QUIET_HOURS", "")
+            .env("ORCH_OWNER_TIME_ZONE", "UTC")
             .env("ORCH_REPORT_EVERY_MINUTES", "0")
             .env("ORCH_REPORT_EVERY_ISSUES", "1");
         if let Some(path) = state {
@@ -3638,5 +3672,206 @@ fn report_session_due_counts_only_the_fleet_it_names() {
             "report-due reason=issues since={} landed=1",
             clock::iso_utc(start)
         ))
+    );
+}
+
+/// A due that reads no GitHub answers without a credential: with the
+/// landed-item trigger on, a revoked inherited token and no fallback, a due
+/// the minutes decide answers `reason=minutes` and a fleet with no lane
+/// answers nothing, each with no `gh` call; the landed-item count alone
+/// runs the ladder, which refuses `auth-failed`.
+#[test]
+fn report_due_answers_without_a_credential_until_its_count() {
+    let world = World::new();
+    let _ = world.report_context();
+    let bin = ladder_world(&world);
+    let now = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let launched = clock::iso_utc(now - 7200);
+    let due = |minutes: &str| {
+        let out = isolated()
+            .current_dir(world.path())
+            .arg("--state-dir")
+            .arg(world.path())
+            .args(["report", "due", "--repo", "owner/repo"])
+            .env("PATH", tool_path(&[bin.as_path()]))
+            .env("HOME", world.path().join("home"))
+            .env("GH_TOKEN", "revoked")
+            .env("LANE_MAIL_CLI", world.real_report_mail())
+            .env("ORCH_REPORT_EVERY_MINUTES", minutes)
+            .env("ORCH_REPORT_EVERY_ISSUES", "1")
+            .env("ORCH_REPORT_QUIET_HOURS", "")
+            .env("ORCH_OWNER_TIME_ZONE", "UTC")
+            .output()
+            .unwrap();
+        let reply: Value = serde_json::from_slice(&out.stdout)
+            .unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&out.stderr)));
+        reply
+    };
+    let calls = || std::fs::read_to_string(world.path().join("token-gh.calls")).unwrap_or_default();
+    world.write_fleet(&json!({"issue_id":"oversee","lanes":[{"item":"KEN-1","status":"done","launched_at":launched}]}));
+    assert_eq!(
+        due("60")["result"]["line"],
+        json!(format!("report-due reason=minutes since={launched}"))
+    );
+    world.write_fleet(&json!({"issue_id":"oversee","lanes":[]}));
+    assert_eq!(due("60")["result"]["line"], Value::Null);
+    assert_eq!(calls(), "", "no gh call before the count");
+    world.write_fleet(&json!({"issue_id":"oversee","lanes":[{"item":"KEN-1","status":"done","launched_at":launched}]}));
+    let reply = due("0");
+    assert_eq!(reply["refusal"]["key"], "auth-failed", "{reply}");
+    assert!(!calls().is_empty());
+}
+
+/// The report's settings are its own: through the real settings load an
+/// empty `ORCH_REPORT_EVERY_MINUTES` turns the timed report off and an
+/// empty `ORCH_REPORT_QUIET_HOURS` turns quiet hours off, as the released
+/// report read them; a value outside its form refuses the report's verb
+/// and its duty's pass and leaves every other verb answering.
+#[test]
+fn report_settings_are_judged_by_the_report_alone() {
+    let world = World::new();
+    world.write_fleet(&json!({"issue_id":"oversee","lanes":[]}));
+    let empty = world.settings_with(&[
+        (report::MINUTES_KEY.to_owned(), String::new()),
+        (report::QUIET_HOURS_KEY.to_owned(), String::new()),
+    ]);
+    let policy = report::Policy::of(&empty).unwrap();
+    assert_eq!((policy.minutes, policy.quiet), (0, None));
+    let invalid = world.settings_with(&[(report::QUIET_HOURS_KEY.to_owned(), "25-7".to_owned())]);
+    let mut ctx = world.report_context();
+    ctx.settings = invalid;
+    let clock = FakeClock::new();
+    let mut baseline = Baseline::default();
+    let mut body = report::body(ctx);
+    let err = pass(
+        Duty::Report,
+        &mut body,
+        &mut baseline,
+        &clock,
+        epoch("2026-10-01T14:00:00Z"),
+    )
+    .unwrap_err();
+    assert_eq!(err.key(), "settings-invalid", "{err:?}");
+    let run = |args: &[&str]| {
+        let out = isolated()
+            .arg("--state-dir")
+            .arg(world.path())
+            .args(args)
+            .env("HOME", world.path().join("home"))
+            .env(report::QUIET_HOURS_KEY, "25-7")
+            .output()
+            .unwrap();
+        serde_json::from_slice::<Value>(&out.stdout).unwrap()
+    };
+    let refused = run(&["report", "due", "--session-start", "1790000000"]);
+    assert_eq!(refused["refusal"]["key"], "settings-invalid", "{refused}");
+    let answered = run(&["state", "get", "--fleet", "/issue_id"]);
+    assert_eq!(answered["result"]["value"], "oversee", "{answered}");
+}
+
+/// `render` and `write` name a repository, as the released report refused
+/// a fleet verb without one, so Completed never reads empty for want of one.
+#[test]
+fn report_render_and_write_refuse_without_a_repository() {
+    let world = World::new();
+    for action in ["render", "write"] {
+        let mut cmd = isolated();
+        cmd.arg("--state-dir")
+            .arg(world.path())
+            .args(["report", action, "--credential-selected"])
+            .env("HOME", world.path().join("home"));
+        if action == "write" {
+            cmd.args(["--summary-file", "/nonexistent"]);
+        }
+        let out = cmd.output().unwrap();
+        let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(reply["refusal"]["key"], "report-args", "{reply}");
+        assert_eq!(
+            reply["refusal"]["fields"],
+            json!([["action", action], ["cause", "missing-repo"]]),
+            "{reply}"
+        );
+    }
+}
+
+/// A write whose owner box could not be read back after its send keeps its
+/// attempt, and its retry reads the box first: the notice that landed is
+/// the receipt and no second notice is started.
+#[test]
+fn report_retry_reads_the_box_before_it_sends_again() {
+    let world = World::new();
+    world.write_fleet(&json!({"issue_id":"oversee","lanes":[{"item":"KEN-1","status":"done","launched_at":"2026-10-01T06:00:00Z"}]}));
+    let mut ctx = world.report_context();
+    let real = ctx.settings.lane_mail_cli.clone();
+    let wrapper = world.path().join("report-mail-unread-once");
+    let flag = world.path().join("noticed");
+    let log = world.path().join("notice.calls");
+    write_executable(
+        &wrapper,
+        format!(
+            "#!/bin/sh\ncase \"$1\" in\n  notice)\n    echo notice >> '{log}'\n    '{real}' \"$@\"\n    rc=$?\n    : > '{flag}'\n    exit $rc ;;\n  events)\n    if [ -f '{flag}' ] && [ ! -f '{flag}.read' ]; then\n      : > '{flag}.read'\n      echo 'lane-mail: mail-read-failed=overseer' >&2\n      exit 2\n    fi\n    exec '{real}' \"$@\" ;;\n  *) exec '{real}' \"$@\" ;;\nesac\n",
+            log = log.display(),
+            real = real.display(),
+            flag = flag.display()
+        ),
+    );
+    ctx.settings.lane_mail_cli = wrapper;
+    let summary = world.path().join("summary.txt");
+    std::fs::write(&summary, "The report is ready.").unwrap();
+    let now = epoch("2026-10-01T14:00:00Z");
+    assert!(report::write(&ctx, now, &summary, false).is_err());
+    let retried = report::write(&ctx, now + 1, &summary, false).unwrap();
+    assert!(retried["notice_id"].as_str().is_some(), "{retried}");
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), "notice\n");
+}
+
+/// The attempt record serves its own report alone: a delivered write keeps
+/// none, and a failed write's record left at a minute is no attempt of the
+/// write a year later at that minute, which writes and sends its own body.
+#[test]
+fn report_attempt_records_end_with_their_report() {
+    let world = World::new();
+    world.write_fleet(&json!({"issue_id":"oversee","lanes":[{"item":"KEN-1","status":"done","launched_at":"2026-10-01T06:00:00Z"}]}));
+    let mut ctx = world.report_context();
+    let real = ctx.settings.lane_mail_cli.clone();
+    let refusing = world.path().join("report-mail-refusing");
+    write_executable(
+        &refusing,
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = notice ]; then\n  echo 'lane-mail: write-failed=overseer' >&2\n  exit 2\nfi\nexec '{}' \"$@\"\n",
+            real.display()
+        ),
+    );
+    ctx.settings.lane_mail_cli = refusing;
+    let summary = world.path().join("summary.txt");
+    std::fs::write(&summary, "Last year's report.").unwrap();
+    let then = epoch("2026-10-01T14:00:00Z");
+    assert!(report::write(&ctx, then, &summary, false).is_err());
+    let dir = ctx.settings.store.progress_report_dir.clone();
+    let file = dir.join("10-01-14-00.md");
+    let attempt = dir.join("10-01-14-00.notice.json");
+    assert!(attempt.exists());
+    std::fs::remove_file(&file).unwrap();
+    ctx.settings.lane_mail_cli = real;
+    std::fs::write(&summary, "This year's report.").unwrap();
+    let year = epoch("2027-10-01T14:00:00Z");
+    let written = report::write(&ctx, year, &summary, false).unwrap();
+    assert!(written["notice_id"].as_str().is_some(), "{written}");
+    assert_eq!(
+        std::fs::metadata(&file)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+        year
+    );
+    assert!(
+        !attempt.exists(),
+        "the delivered write keeps no attempt record"
     );
 }

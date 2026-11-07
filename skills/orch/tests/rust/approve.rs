@@ -32,6 +32,12 @@ fn world() -> tempfile::TempDir {
     symlink(catalog.join("github"), root.join(".agents/skills/github")).unwrap();
     fs::create_dir(root.join("bin")).unwrap();
     support::write_executable(&root.join("bin/gh"), include_str!("fixtures/approve-gh"));
+    // The planted gh answers GraphQL through the shared closed projector.
+    fs::write(
+        root.join("select.jq"),
+        include_str!("fixtures/gh/select.jq"),
+    )
+    .unwrap();
     fs::write(root.join("token"), format!("{TOKEN}\n")).unwrap();
     fs::set_permissions(root.join("token"), fs::Permissions::from_mode(0o600)).unwrap();
     fs::write(root.join("body"), "Each decline holds.\n\"Quoted\" line\n").unwrap();
@@ -261,18 +267,29 @@ fn a_moved_or_unread_head_never_posts() {
 }
 
 #[test]
-fn lost_answers_stay_unknown_and_repeat_only_reads_back() {
+fn a_lost_answer_is_read_back_and_posts_again_only_where_nothing_landed() {
     if let Ok(mode) = std::env::var("APPROVE_CHILD") {
         let root = root();
         let r = request(&root);
-        let expected = if mode.ends_with("landed") {
-            Status::Confirmed
-        } else {
-            Status::Unknown
-        };
-        assert_eq!(run(&root, &r).unwrap().status, expected);
-        assert_eq!(run(&root, &r).unwrap().status, expected);
+        if mode.ends_with("landed") {
+            for _ in 0..2 {
+                assert_eq!(run(&root, &r).unwrap().status, Status::Confirmed);
+            }
+            assert_eq!(posts(&root), 1);
+            return;
+        }
+        let first = run(&root, &r).unwrap();
+        assert_eq!(
+            (first.status, first.reason.as_str()),
+            (Status::Refused, "not-landed")
+        );
+        let doc: Value =
+            serde_json::from_slice(&fs::read(root.join("item.json")).unwrap()).unwrap();
+        assert!(doc["head_approvals"]["o/r#42"][HEAD]["attempt"].is_null());
         assert_eq!(posts(&root), 1);
+        answer(&root, json!({}));
+        assert_eq!(run(&root, &r).unwrap().status, Status::Confirmed);
+        assert_eq!(posts(&root), 2);
         return;
     }
     for mode in [
@@ -289,7 +306,7 @@ fn lost_answers_stay_unknown_and_repeat_only_reads_back() {
         let output = support::program(std::env::current_exe().unwrap())
             .args([
                 "--exact",
-                "lost_answers_stay_unknown_and_repeat_only_reads_back",
+                "a_lost_answer_is_read_back_and_posts_again_only_where_nothing_landed",
                 "--nocapture",
             ])
             .env("APPROVE_CHILD", mode)
@@ -311,23 +328,31 @@ fn lost_answers_stay_unknown_and_repeat_only_reads_back() {
 }
 
 #[test]
-fn a_refused_post_is_not_an_unknown_or_a_second_attempt() {
-    if child("a_refused_post_is_not_an_unknown_or_a_second_attempt").is_some() {
+fn a_refused_post_clears_its_claim_so_the_next_request_posts_again() {
+    if child("a_refused_post_clears_its_claim_so_the_next_request_posts_again").is_some() {
         return;
     }
     let root = root();
     let r = request(&root);
-    for mode in ["refused", "auth", "scopes"] {
+    for (n, mode) in ["refused", "auth", "scopes"].into_iter().enumerate() {
         answer(&root, json!({"post":mode}));
-        for _ in 0..2 {
-            assert_eq!(run(&root, &r).unwrap().status, Status::Refused, "{mode}");
-        }
+        let refused = run(&root, &r).unwrap();
+        assert_eq!(
+            (refused.status, refused.reason.as_str()),
+            (Status::Refused, "post-failed"),
+            "{mode}"
+        );
+        assert_eq!(posts(&root), 2 * n + 1, "{mode}");
+        // GitHub now takes the approval: the repeat posts and confirms.
+        answer(&root, json!({}));
+        assert_eq!(run(&root, &r).unwrap().status, Status::Confirmed, "{mode}");
+        assert_eq!(posts(&root), 2 * n + 2, "{mode}");
+        fs::remove_file(root.join("landed.json")).unwrap();
         let mut record: Value =
             serde_json::from_slice(&fs::read(root.join("item.json")).unwrap()).unwrap();
         record.as_object_mut().unwrap().remove("head_approvals");
         fs::write(root.join("item.json"), record.to_string()).unwrap();
     }
-    assert_eq!(posts(&root), 3);
 }
 
 #[test]
@@ -454,8 +479,6 @@ fn only_the_exact_apps_approval_confirms_a_lost_post() {
     }
     let root = root();
     let r = request(&root);
-    answer(&root, json!({"post":"lost"}));
-    assert_eq!(run(&root, &r).unwrap().status, Status::Unknown);
     for (state, login, head) in [
         ("COMMENTED", "review-app[bot]", HEAD),
         ("APPROVED", "other[bot]", HEAD),
@@ -463,16 +486,21 @@ fn only_the_exact_apps_approval_confirms_a_lost_post() {
     ] {
         answer(
             &root,
-            json!({"reviews":[{"state":state,"user":{"login":login},"commit_id":head}]}),
+            json!({"post":"lost", "reviews":[{"state":state,"user":{"login":login},"commit_id":head}]}),
         );
-        assert_eq!(run(&root, &r).unwrap().status, Status::Unknown);
+        let missed = run(&root, &r).unwrap();
+        assert_eq!(
+            (missed.status, missed.reason.as_str()),
+            (Status::Refused, "not-landed"),
+            "{state} {login} {head}"
+        );
     }
     answer(
         &root,
-        json!({"reviews":[{"state":"APPROVED","user":{"login":"review-app[bot]"},"commit_id":HEAD}]}),
+        json!({"post":"lost", "reviews":[{"state":"APPROVED","user":{"login":"review-app[bot]"},"commit_id":HEAD}]}),
     );
     assert_eq!(run(&root, &r).unwrap().status, Status::Confirmed);
-    assert_eq!(posts(&root), 1);
+    assert_eq!(posts(&root), 4);
 }
 
 #[test]
@@ -510,7 +538,7 @@ fn a_lost_post_is_read_back_after_the_live_head_moves() {
     }
     let root = root();
     let r = request(&root);
-    answer(&root, json!({"post":"lost"}));
+    answer(&root, json!({"post":"lost", "read_back":"fail"}));
     assert_eq!(run(&root, &r).unwrap().status, Status::Unknown);
     answer(
         &root,
@@ -605,8 +633,8 @@ fn reader_absence_uses_the_file_and_keyring_preserves_the_viewer() {
 }
 
 #[test]
-fn a_lost_post_with_unread_reviews_stays_unknown() {
-    if child("a_lost_post_with_unread_reviews_stays_unknown").is_some() {
+fn a_lost_post_stays_unknown_until_a_complete_read_back_settles_it() {
+    if child("a_lost_post_stays_unknown_until_a_complete_read_back_settles_it").is_some() {
         return;
     }
     let root = root();
@@ -618,6 +646,18 @@ fn a_lost_post_with_unread_reviews_stays_unknown() {
         }
     }
     assert_eq!(posts(&root), 1);
+    // The reviews read whole and hold no approval: the POST did not land, the
+    // claim clears, and the next request posts once more.
+    answer(&root, json!({"post":"lost"}));
+    let settled = run(&root, &r).unwrap();
+    assert_eq!(
+        (settled.status, settled.reason.as_str()),
+        (Status::Refused, "not-landed")
+    );
+    assert_eq!(posts(&root), 1);
+    answer(&root, json!({}));
+    assert_eq!(run(&root, &r).unwrap().status, Status::Confirmed);
+    assert_eq!(posts(&root), 2);
 }
 
 #[test]
@@ -730,4 +770,77 @@ fn a_private_reader_identity_survives_the_approval_file_credential() {
         assert_eq!(result["result"]["status"], "confirmed", "{key}: {result}");
         assert_eq!(posts(root), 1);
     }
+}
+
+#[test]
+fn a_reader_credential_only_a_shell_reads_refuses_no_verb_and_keeps_its_reader() {
+    let dir = world();
+    let root = dir.path();
+    let op = |root: &Path| {
+        support::program(support::binary())
+            .current_dir(root)
+            .env("PATH", support::tool_path(&[&root.join("bin")]))
+            .env("ORCH_OVERSEER_REVIEW_TOKEN_FILE", root.join("token"))
+            .env("ORCH_OVERSEER_REVIEW_LOGIN", "review-app[bot]")
+            .args(["op", "--file"])
+            .arg(root.join("item.json"))
+            .arg("--request")
+            .arg(root.join("request.json"))
+            .output()
+            .unwrap()
+    };
+    // The router sources the project's private file only inside a checkout.
+    let init = support::program("git")
+        .args(["init", "-q"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(init.status.success());
+    fs::write(root.join(".env.local"), "GH_TOKEN=$(gh auth token)\n").unwrap();
+    answer(root, json!({"reply":"lane-disposition"}));
+    fs::write(root.join("request.json"),serde_json::to_vec(&json!({"op":"approve-head","repo":"o/r","pr":42,"head":HEAD,"body_file":root.join("body")})).unwrap()).unwrap();
+    let inspect = support::program(support::binary())
+        .current_dir(root)
+        .env("PATH", support::tool_path(&[&root.join("bin")]))
+        .args(["state", "inspect", "--file"])
+        .arg(root.join("item.json"))
+        .output()
+        .unwrap();
+    assert!(
+        inspect.status.success(),
+        "{}",
+        String::from_utf8_lossy(&inspect.stderr)
+    );
+    assert!(String::from_utf8_lossy(&inspect.stderr).contains("key=GH_TOKEN reason=shell-form"));
+    let out = op(root);
+    assert!(
+        out.status.success(),
+        "{} {:?}",
+        String::from_utf8_lossy(&out.stderr),
+        calls(root)
+    );
+    let result: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(result["result"]["status"], "confirmed", "{result}");
+    // The router sourced the line itself: its reads ran as the lane.
+    let viewer: Vec<_> = calls(root)
+        .into_iter()
+        .filter(|(_, args)| args.iter().any(|a| a.contains("viewer {")))
+        .collect();
+    assert!(
+        !viewer.is_empty() && viewer.iter().all(|(token, _)| token == LANE_TOKEN),
+        "{viewer:?}"
+    );
+    // A host the approval cannot read refuses the approval, before any call.
+    let dir = world();
+    let root = dir.path();
+    fs::write(root.join(".env.local"), "GH_HOST=$(cat host)\n").unwrap();
+    fs::write(root.join("request.json"),serde_json::to_vec(&json!({"op":"approve-head","repo":"o/r","pr":42,"head":HEAD,"body_file":root.join("body")})).unwrap()).unwrap();
+    let out = op(root);
+    assert!(!out.status.success());
+    let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        reply["refusal"]["key"], "approval-setting-unread",
+        "{reply}"
+    );
+    assert!(!root.join("gh.log").exists());
 }

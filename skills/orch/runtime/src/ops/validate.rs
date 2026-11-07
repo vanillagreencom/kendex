@@ -501,9 +501,9 @@ fn stop(path: &Path, doc: &mut Document, r: &RecordStop, env: &Env) -> Result<St
     })
 }
 
-/// The word a sentinel line names, the rule `lib/validation-verdict.sh`
-/// holds: `verdict=no-verdict` is no verdict, `guard-exit=0` a pass, any
-/// other exit a failure. `None` for a line that is no sentinel.
+/// The word a sentinel line names: `verdict=no-verdict` is no verdict,
+/// `guard-exit=0` a pass, any other exit a failure. `None` for a line that
+/// is no sentinel.
 pub fn sentinel_outcome(line: &str) -> Option<StageOutcome> {
     let exit = line.strip_prefix("guard-exit=")?;
     let exit = exit.split(' ').next()?;

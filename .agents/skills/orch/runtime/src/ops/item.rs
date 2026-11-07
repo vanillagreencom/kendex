@@ -1230,6 +1230,14 @@ pub(super) fn reconcile_round(
                 let end = at
                     .filter(|t| (stage.start..=env.now_secs).contains(t))
                     .unwrap_or(env.now_secs);
+                // A recorded stop decides the word, as the job's own close
+                // reads it: the stop's signal ends the command, whose
+                // executor still writes the sentinel of that ending.
+                let outcome = if stage.stop.is_some() {
+                    StageOutcome::Stopped
+                } else {
+                    outcome
+                };
                 (outcome, end, RunCause::Sentinel, seconds)
             }
             // A job gone with no sentinel closes `lost`, unless the stage

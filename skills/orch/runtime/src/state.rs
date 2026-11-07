@@ -363,8 +363,9 @@ pub struct Stage {
 
 /// An intentional stop of a validation run, recorded on its open stage
 /// before the job is ended, a record before the effect. A
-/// job then read gone with no sentinel closes `stopped`; one with no such
-/// record closes `lost`, since no one recorded an intent.
+/// job then read gone closes `stopped`, whatever sentinel its executor wrote
+/// for the ending the stop caused; one with no such record closes by its
+/// sentinel, or `lost` with none, since no one recorded an intent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Stop {
     pub at: u64,

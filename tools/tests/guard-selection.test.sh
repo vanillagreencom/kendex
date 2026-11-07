@@ -10,6 +10,15 @@ TIMING_PATH="$PATH"
 source "$REPO/skills/agent-runtime/scripts/lib/key.sh"
 TIMING_RUNTIME_CACHE="$(agent_runtime_cache)"
 
+current_files() {
+  git -C "$REPO" ls-files -z --cached --others --exclude-standard |
+    while IFS= read -r -d '' file; do
+      if [ -e "$REPO/$file" ] || [ -L "$REPO/$file" ]; then
+        printf '%s\0' "$file"
+      fi
+    done
+}
+
 if [ "${1:-all}" != timing ]; then
 SUITE_LOG="$TMP/suites"
 mkdir -p "$R/tools/tests"
@@ -353,7 +362,7 @@ fi
 # fixture cannot select itself while proving a workflow defect.
 actual="$TMP/aggregate-checkout"
 mkdir -p "$actual"
-git -C "$REPO" ls-files -z > "$TMP/aggregate-files"
+current_files > "$TMP/aggregate-files"
 tar -C "$REPO" --null -T "$TMP/aggregate-files" -cf "$TMP/aggregate-tree.tar"
 tar -xf "$TMP/aggregate-tree.tar" -C "$actual"
 # Metadata supplies the real build graph for this selection fixture. Every
@@ -389,7 +398,9 @@ stub_replay_suite() { # REPOSITORY-RELATIVE-SUITE
   ' "$actual/$suite" > "$TMP/replay-suite"
   mv "$TMP/replay-suite" "$actual/$suite"
 }
-git -C "$REPO" ls-files '*/tests/*.sh' '*/tests/*.mjs' > "$TMP/replay-suites"
+current_files | while IFS= read -r -d '' file; do
+  case "$file" in */tests/*.sh | */tests/*.mjs) printf '%s\n' "$file" ;; esac
+done > "$TMP/replay-suites"
 while IFS= read -r suite; do
   case "$suite" in
     tools/* | */tests/run-all.sh | */tests/*/*) continue ;;
@@ -581,7 +592,7 @@ fi
 # estimate consumption and admission, not the sampled suites' runtime.
 timing="$TMP/timing-checkout"
 mkdir -p "$timing"
-git -C "$REPO" ls-files -z > "$TMP/timing-files"
+current_files > "$TMP/timing-files"
 tar -C "$REPO" --null -T "$TMP/timing-files" -cf "$TMP/timing-tree.tar"
 tar -xf "$TMP/timing-tree.tar" -C "$timing"
 git -C "$timing" init -q -b main

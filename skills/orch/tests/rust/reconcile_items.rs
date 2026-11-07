@@ -573,7 +573,7 @@ fn a_missing_merge_stays_a_finding_but_a_failed_verification_read_refuses() {
 #[test]
 fn future_tracker_updates_never_become_stale_at_a_zero_hour_threshold() {
     let mut future = issue("T-FUTURE", "In Progress", "started", "", None);
-    future["updatedAt"] = json!(agent_runtime::clock::iso_utc(NOW + 7200));
+    future["updatedAt"] = json!(agent_runtime::clock::iso_utc(NOW + 1800));
     let world = World::new(vec![future]);
     let report = reconcile::run(
         &world.settings(&[]),
@@ -583,4 +583,57 @@ fn future_tracker_updates_never_become_stale_at_a_zero_hour_threshold() {
     )
     .unwrap();
     assert!(report.findings.is_empty(), "{report:?}");
+}
+
+#[test]
+fn a_stale_started_container_keeps_its_started_findings_beside_container_parked() {
+    let world = World::new(vec![
+        issue("T-1", "In Progress", "started", "", None),
+        issue("T-2", "Done", "completed", "", Some("T-1")),
+    ]);
+    let gh = world.dir.path().join("gh");
+    support::write_executable(&gh, "#!/bin/sh\nprintf '[]\\n'\n");
+    let report = reconcile::run(&world.settings(&[]), None, Some(&gh), NOW).unwrap();
+    assert_eq!(
+        kinds(&report),
+        [
+            ("container-parked", "T-1"),
+            ("started-stale", "T-1"),
+            ("verifying-empty", "T-1")
+        ],
+        "{report:?}"
+    );
+    let stale = &report.findings[1].detail;
+    assert_eq!(stale["age_hours"], 72);
+    assert_eq!(stale["pr"], "absent");
+}
+
+#[test]
+fn a_checklist_the_parser_could_not_read_refuses_the_verb() {
+    let world = World::new(vec![issue(
+        "T-1",
+        "Verifying",
+        "started",
+        "## Done when\n- [x] proof\n  Evidence: tests",
+        None,
+    )]);
+    let out = world.cli(&["reconcile-items"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // The real parser over a failing dependency: no checklist was read.
+    let failing = world.dir.path().join("parser-path");
+    fs::create_dir(&failing).unwrap();
+    support::write_executable(&failing.join("jq"), "#!/bin/sh\nexit 127\n");
+    let out = world.cli(&["reconcile-items"]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(reply["refusal"]["key"], "verifying-checklist-unread");
 }

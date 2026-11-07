@@ -51,6 +51,8 @@ pub struct RetiredEnd {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("{key}: {cause}")]
+    Artifact { key: &'static str, cause: String },
     /// A record, lock, process or protocol failure agent-runtime reported.
     #[error(transparent)]
     Runtime(#[from] agent_runtime::Error),
@@ -628,6 +630,7 @@ impl Error {
     /// The stable key a diagnostic line opens with.
     pub fn key(&self) -> &'static str {
         match self {
+            Error::Artifact { key, .. } => key,
             Error::Runtime(e) => e.key(),
             Error::RecordMissing { .. } => "record-missing",
             Error::Shape { .. } => "record-shape",
@@ -728,6 +731,7 @@ impl Error {
     pub fn fields(&self) -> Vec<(String, String)> {
         let pair = |k: &str, v: String| (k.to_owned(), v);
         match self {
+            Error::Artifact { cause, .. } => vec![pair("cause", cause.clone())],
             Error::Runtime(e) => agent_runtime::protocol::Refusal::from(e).fields,
             Error::RecordMissing { path }
             | Error::Request { path, .. }

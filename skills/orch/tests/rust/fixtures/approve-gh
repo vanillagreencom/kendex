@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import subprocess
 import sys
 
 root = Path.cwd()
@@ -19,6 +20,9 @@ def out(value):
     sys.exit(0)
 def refused():
     print('gh: Forbidden (HTTP 403)', file=sys.stderr)
+    sys.exit(1)
+def unplanted():
+    print('unplanted gh call: ' + repr(a), file=sys.stderr)
     sys.exit(1)
 # The typed Copilot reads, in the exact forms the runtime sends.
 view = ['pr', 'view', '42', '--repo', 'o/r', '--json',
@@ -48,6 +52,9 @@ if a == ['api', 'repos/o/r/pulls/42/reviews?per_page=100&page=1']:
 # The approval's own calls.
 if a == ['auth', 'status']:
     sys.exit(0 if cfg.get('keyring') else 1)
+if a == ['auth', 'token']:
+    print('ghs_fixtureLaneToken')
+    sys.exit(0)
 if a == ['api', 'repos/o/r/pulls/42', '--jq', '.head.sha']:
     counter = root / 'head_reads'
     count = int(counter.read_text()) + 1 if counter.exists() else 1
@@ -94,26 +101,13 @@ if a == ['api', 'repos/o/r/pulls/42/reviews', '--paginate', '--slurp']:
     landed = root / 'landed.json'
     rows = [json.loads(landed.read_text())] if landed.exists() else cfg.get('reviews', [])
     out([rows])
-# The github reply checker's reads, as its router sends them.
-if a == ['api', 'user'] or a == ['api', 'user', '--jq', '.login']:
-    if '--jq' in a:
-        print('lane-app[bot]')
-        sys.exit(0)
-    out({'login': 'lane-app[bot]', 'id': 2002})
-if a[:2] == ['api', 'graphql']:
-    if any('viewer {' in x for x in a):
-        viewer = {'login':'review-app[bot]', 'databaseId':4004} if os.environ.get('GH_TOKEN') == 'ghs_fixtureApprovalFileToken' else {'login':'lane-app[bot]', 'databaseId':2002}
-        out({'data': {'viewer': viewer}})
-    threads = []
-    if cfg.get('reply') == 'bad':
-        threads = [{'comments': {'totalCount': 2, 'nodes': [
-            {'author': {'login': 'copilot-pull-request-reviewer', '__typename': 'Bot', 'databaseId': 3003}, 'authorAssociation': 'NONE', 'body': 'The value can be empty.'},
-            {'author': {'login': 'lane-app', '__typename': 'Bot', 'databaseId': 2002}, 'authorAssociation': 'CONTRIBUTOR', 'body': 'Tracked separately.'}]}}]
-    out({'data': {'repository': {'pullRequest': {'reviewThreads': {'pageInfo': {'hasNextPage': False, 'endCursor': None}, 'nodes': threads}}}}})
-url = a[1].lower() if len(a) > 1 else ''
-if url == 'repos/o/r/pulls/42':
+# The github reply checker's reads, in the exact forms its router sends.
+if a == ['api', 'user', '--jq', '.login']:
+    print('lane-app[bot]')
+    sys.exit(0)
+if a == ['api', 'repos/o/r/pulls/42']:
     out({'head': {'sha': cfg.get('reply_head', head)}, 'user': {'login': 'author', 'type': 'User', 'id': 1001}})
-if url == 'repos/o/r/pulls/42/reviews?per_page=100' and a[2:] == ['--paginate']:
+if a == ['api', 'repos/o/r/pulls/42/reviews?per_page=100', '--paginate']:
     if cfg.get('remove_gh_after_replies'):
         (root / 'bin/gh').unlink()
     if cfg.get('reply') == 'unavailable':
@@ -125,9 +119,32 @@ if url == 'repos/o/r/pulls/42/reviews?per_page=100' and a[2:] == ['--paginate']:
               'user': {'login':'copilot-pull-request-reviewer[bot]', 'type':'Bot', 'id':3003},
               'author_association':'NONE', 'body':'<!-- ccr-overview-v2 -->\n\n### Changes recommended\n\n**0 open findings**'}])
     out([])
-if '/comments' in url:
+if a == ['api', 'repos/o/r/issues/42/comments?per_page=100', '--paginate']:
     if cfg.get('reply') == 'lane-disposition':
         out([{'user': {'login':'lane-app[bot]', 'type':'Bot', 'id':2002}, 'author_association':'CONTRIBUTOR', 'body':'Dispositions at ' + head + '\nreview:5539256602 - Declined: the caller rejects empty values before the read.'}])
     out([])
-print('unplanted gh call: ' + repr(a), file=sys.stderr)
-sys.exit(1)
+# Its GraphQL reads: the viewer, and the thread walk with its variables. The
+# planted data is projected onto the query's selection by the shared closed
+# projector, which refuses any query GitHub would not answer.
+thread_vars = ['-F', 'owner=o', '-F', 'repo=r', '-F', 'pr=42']
+if a[:3] == ['api', 'graphql', '-f'] and len(a) >= 4 and a[3].startswith('query=') and a[4:] in ([], thread_vars):
+    if os.environ.get('GH_TOKEN') == 'ghs_fixtureApprovalFileToken':
+        viewer = {'login': 'review-app[bot]', 'databaseId': 4004}
+    else:
+        viewer = {'login': 'lane-app[bot]', 'databaseId': 2002}
+    comments = []
+    if cfg.get('reply') == 'bad':
+        comments = [{'comments': {'totalCount': 2, 'nodes': [
+            {'author': {'login': 'copilot-pull-request-reviewer', '__typename': 'Bot', 'databaseId': 3003}, 'authorAssociation': 'NONE', 'body': 'The value can be empty.'},
+            {'author': {'login': 'lane-app', '__typename': 'Bot', 'databaseId': 2002}, 'authorAssociation': 'CONTRIBUTOR', 'body': 'Tracked separately.'}]}}]
+    planted = {'body': {'data': {
+        'viewer': viewer,
+        'repository': {'pullRequest': {'reviewThreads': {
+            'pageInfo': {'hasNextPage': False, 'endCursor': None}, 'nodes': comments}}}}}}
+    projected = subprocess.run(['jq', '-c', '--arg', 'q', a[3][len('query='):], '-f', str(root / 'select.jq')],
+                               input=json.dumps(planted), capture_output=True, text=True)
+    if projected.returncode != 0:
+        print(projected.stderr.strip(), file=sys.stderr)
+        sys.exit(64)
+    out(json.loads(projected.stdout)['body'])
+unplanted()

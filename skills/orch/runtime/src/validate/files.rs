@@ -350,24 +350,25 @@ pub fn last_pass(worktree: &Path) -> Result<LastPass> {
 }
 
 /// The child a run directory's bare `pid` names, where the runtime's executor
-/// never claimed the directory (no `execution`, no `command`): the shell
-/// producer's child records that pid and nothing else in the directory names
-/// a process, so its argv ending in the run directory is the child's
-/// identity, and its runner record never answers for it. The runtime's start
-/// creates the job's error log, `job.err`, with the run directory and before
-/// any runner record, and the shell producer writes none, so a directory
-/// without one and without a pid is a shell start whose child never ran.
+/// never claimed the directory (no `execution`, no `command`): a released
+/// run directory's child records that pid and nothing else in the directory
+/// names a process, so its argv, `--child --run-dir` ending in the run
+/// directory, is the child's identity, and its runner record, which names no
+/// identity, never answers for it. The runtime's start creates the job's error
+/// log, `job.err`, with the run directory and before any runner record, so a
+/// directory with neither `job.err` nor a pid is a start whose child never
+/// ran.
 pub(crate) enum BarePid {
     /// The executor claimed the directory, or the runtime started it and no
     /// pid is recorded yet: the executor's and the launcher's records answer.
     Absent,
-    /// A shell start whose child never recorded its pid: never live, nothing
-    /// to stop, and lost once the launch grace has passed.
+    /// A start whose child never recorded its pid: never live, nothing to
+    /// stop, and lost once the launch grace has passed.
     Unstarted,
     Gone,
     /// Running under another argv, or a pid that is no number: never
     /// stopped or counted as the run, while a wait on the run reads it as
-    /// running, as the shell producer's wait did.
+    /// running until its cap.
     Other,
     /// Running with the run's argv, or running with an argv that cannot be
     /// read: a start is refused rather than run beside it.
@@ -408,7 +409,7 @@ pub(crate) fn bare_pid(run: &RunFile) -> Result<BarePid> {
             "ps",
             Path::new("ps"),
             "executor-args",
-            &["-p", &pid.to_string(), "-o", "args="],
+            &["-ww", "-p", &pid.to_string(), "-o", "args="],
             Duration::from_secs(15),
         ) {
             Ok(out) if out.status.success() => {

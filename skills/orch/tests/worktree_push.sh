@@ -17,6 +17,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 PUSH="$REPO_ROOT/skills/orch/scripts/worktree-push"
 STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
+export ORCH_RUNTIME_CLI="$REPO_ROOT/skills/orch/scripts/orch-runtime"
 ROUND_WRITE_BIN="$REPO_ROOT/skills/orch/scripts/dev-round-write"
 ROUND_WRITE=round_write
 RETURN_WRITE="$REPO_ROOT/skills/orch/scripts/dev-return-write"
@@ -454,7 +455,7 @@ assert_eq "$(cat "$live_state/tmp/workflow-state-KEN-LIVE.json" | jq -r '.rebase
 
 # The round closes when its dev-return receipt lands: the push then proceeds.
 "$RETURN_WRITE" --worktree "$live_wt" --kind fix --issue KEN-LIVE --round-id 1-1 \
-  --branch main --commit "$live_head" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-livewt-1-1-1" "$live_wt" KEN-LIVE 1-1)" --item 1 Applied done >/dev/null
+  --branch main --commit "$live_head" --validate "FAILING: lint" --item 1 Applied done >/dev/null
 assert_eq "$("$ARTIFACT_CHECK" --worktree "$live_wt" --issue KEN-LIVE --round-id 1-1 \
   --expect-items-from-round | jq -r '.reason')" "valid" "the returned round accepts"
 : > "$live_args"
@@ -510,7 +511,7 @@ check_args="$TMP_ROOT/check-args.log"
 # The must-fail control above left -1 live; land its receipt again so
 # this block starts from a branch that may be rebased.
 "$RETURN_WRITE" --worktree "$live_wt" --kind fix --issue KEN-LIVE --round-id 1-1 \
-  --branch main --commit "$live_head" --validate pass --validate-run-dir "$(round_run_dir "$TMP_ROOT/run-livewt-1-1-2" "$live_wt" KEN-LIVE 1-1)" --item 1 Applied done >/dev/null
+  --branch main --commit "$live_head" --validate "FAILING: lint" --item 1 Applied done >/dev/null
 STUB_ARGS_LOG="$check_args" run_push "$live_state" --check-live-round \
   --worktree "$live_wt" --issue KEN-LIVE
 assert_eq "$RUN_RC" "0" "with no live round the check permits the rebase"

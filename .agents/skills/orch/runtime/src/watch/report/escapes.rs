@@ -256,7 +256,7 @@ pub(super) fn line(ctx: &Context, now: u64) -> String {
         Ok(weeks) => {
             let week = monday(now);
             format!(
-                "Escapes: this week {}, last week {}, the week the review cap fell to 1 (2026-09-28) {}",
+                "Escapes: this week {}, last week {}, week of 2026-09-28 {}",
                 weeks.get(&week).unwrap_or(&0),
                 weeks.get(&week.saturating_sub(WEEK)).unwrap_or(&0),
                 weeks.get(&CAP).unwrap_or(&0)

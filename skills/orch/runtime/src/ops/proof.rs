@@ -49,7 +49,7 @@ impl Declaration {
             docs_cmd: settings
                 .selection_cmd
                 .clone()
-                .or_else(|| settings.text_cmd.clone()),
+                .or_else(|| crate::validate::text_cmd(settings)),
             ci_declared: settings.ci_context.is_some(),
             finding_prefix: settings.finding_prefix.clone().unwrap_or_default(),
         }

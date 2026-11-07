@@ -63,7 +63,7 @@ RUN_DIR="$TMP_ROOT/cwd"
 mkdir -p "$RUN_DIR" "$TMP_ROOT/home"
 
 # --- The worktrees ----------------------------------------------------------
-# A run directory as orch's shell producer leaves it while its child runs:
+# A released run directory as it stands while its child runs:
 # the start record and the launcher's runner record written before the
 # launch; each row adds the child's bare pid and, once it ends, its verdict.
 plant_run() { # WORKTREE -> the run directory

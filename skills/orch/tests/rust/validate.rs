@@ -805,7 +805,9 @@ fn command_exits_and_signals_keep_their_native_verdict_and_atomic_timing() {
 fn the_executor_uses_bash_and_replaces_inherited_validation_context() {
     let w = World::new();
     w.commit("src.rs");
-    let command = "[[ -n $BASH_VERSION ]] && printf '%s|%s|%s|%s|%s\n' \"$DEV_VALIDATE_CLASS\" \"$DEV_VALIDATE_DOCS_ONLY\" \"$DEV_VALIDATE_SCOPED\" \"$DEV_VALIDATE_BASE\" \"$(cat \"$DEV_VALIDATE_PATHS\")\"";
+    // Bash started as `sh` reads POSIX mode, the shell the setting was not
+    // written for.
+    let command = "[[ -n $BASH_VERSION ]] && ! shopt -oq posix && printf '%s|%s|%s|%s|%s\n' \"$DEV_VALIDATE_CLASS\" \"$DEV_VALIDATE_DOCS_ONLY\" \"$DEV_VALIDATE_SCOPED\" \"$DEV_VALIDATE_BASE\" \"$(cat \"$DEV_VALIDATE_PATHS\")\"";
     let out = w.local(
         &[],
         &[
@@ -823,7 +825,13 @@ fn the_executor_uses_bash_and_replaces_inherited_validation_context() {
     assert!(log.starts_with("runner=attached\n"), "{log}");
     assert!(!log.contains("wrong"), "{log}");
     assert!(log.contains("|false|false||src.rs"), "{log}");
-    assert_eq!(field(&read_record(&w, &dir), "head"), w.head());
+    let record = read_record(&w, &dir);
+    assert_eq!(field(&record, "head"), w.head());
+    // The record carries the snapshot its start stored, which the return
+    // writer binds.
+    let tree = field(&run_file(&dir, "start"), "tree");
+    assert_eq!(tree.len(), 40, "{record}");
+    assert_eq!(field(&record, "tree"), tree, "{record}");
 }
 
 #[test]
@@ -838,6 +846,11 @@ fn the_started_and_done_lines_and_run_inventory_keep_the_reader_contract() {
     let dir = directory(&out);
     let first = text(&out).lines().next().unwrap().to_owned();
     assert!(first.starts_with(&format!("state=started run-dir={dir} log={dir}/log sentinel={dir}/exit timeout-secs=20 poll-secs=1 cap-secs=31 class=")),"{first}");
+    // The cap a waiter reads is the start record's: the bound, the kill grace
+    // and one poll.
+    let start = run_file(&dir, "start");
+    assert_eq!(field(&start, "timeout-secs"), "20", "{start}");
+    assert_eq!(field(&start, "cap-secs"), "31", "{start}");
     assert!(
         text(&out)
             .lines()
@@ -940,7 +953,9 @@ fn a_docs_only_tree_runs_the_real_selectors_text_checks_and_its_pass_is_submit_p
 
 #[test]
 fn docs_mode_uses_the_declared_text_command_and_keeps_the_range_fallback_explicit() {
-    for text_command in [Some("echo text-command"), None] {
+    // A blank text command declares nothing, as an unset one.
+    for text_command in [Some("echo text-command"), None, Some(" ")] {
+        let declared = text_command.is_some_and(|c| !c.trim().is_empty());
         let w = World::new();
         let base = w.head();
         w.commit("docs/screen.txt");
@@ -949,17 +964,10 @@ fn docs_mode_uses_the_declared_text_command_and_keeps_the_range_fallback_explici
             extra.push(("DEV_VALIDATE_TEXT_CMD", cmd));
         }
         let result = ok(&w.start(&["--base", &base, "--foreground"], &extra));
-        assert_eq!(
-            result["mode"],
-            if text_command.is_some() {
-                "docs"
-            } else {
-                "range"
-            }
-        );
+        assert_eq!(result["mode"], if declared { "docs" } else { "range" });
         let log = run_file(result["run_dir"].as_str().unwrap(), "log");
         assert!(
-            log.contains(if text_command.is_some() {
+            log.contains(if declared {
                 "text-command"
             } else {
                 "range-command"
@@ -1039,6 +1047,14 @@ fn range_resolution_uses_the_declared_command_and_records_the_resolved_base() {
 fn a_reproduction_runs_its_command_even_when_a_pass_or_selector_would_answer_it() {
     let w = World::new();
     w.commit("source.rs");
+    // A pass at this tree a plain start would reuse.
+    let pass = w.local(&[], &[]);
+    assert!(pass.status.success(), "{}", stderr(&pass));
+    let again = w.local(&["--reproduce"], &[]);
+    assert!(again.status.success(), "{}", stderr(&again));
+    assert_ne!(directory(&again), directory(&pass));
+    assert!(!run_file(&directory(&again), "start").contains("pass-run="));
+    assert!(run_file(&directory(&again), "log").contains("full"));
     let selector = "echo selection=all; echo expected-secs=99999";
     let out = w.local(
         &["--reproduce"],
@@ -1119,6 +1135,13 @@ fn full_start_ignores_a_carried_base_and_refuses_unused_or_repeated_options() {
     ] {
         assert_eq!(w.entry(&args, &[]).status.code(), Some(2), "{args:?}");
     }
+    let wt = w.worktree.display().to_string();
+    let bad = w.entry(
+        &["--worktree", &wt, "--poll", "1", "--run-id", "not-a-run-id"],
+        &[],
+    );
+    assert_eq!(bad.status.code(), Some(2));
+    assert!(stderr(&bad).contains("invalid-run-id"), "{}", stderr(&bad));
 }
 
 fn until(mut predicate: impl FnMut() -> bool) {
@@ -1206,6 +1229,99 @@ fn a_hung_command_ends_at_the_injected_deadline_without_a_passing_verdict() {
 }
 
 #[test]
+fn a_command_that_ignores_term_is_killed_at_the_grace_after_its_deadline() {
+    use orch_runtime::validate::KILL_GRACE;
+    use std::sync::{Arc, mpsc};
+    let w = World::new();
+    let ready = w.root.join("ready");
+    let pgid = w.root.join("pgid");
+    let _group = Group(pgid.clone());
+    // The command outlives the row's own bound unless the grace's KILL ends it.
+    let command = format!(
+        "trap '' TERM; ps -o pgid= -p $$ > '{}'; echo ready > '{}'; sleep 40; exit 77",
+        pgid.display(),
+        ready.display()
+    );
+    let dir = executor_dir(&w, &command, 2);
+    let clock = Arc::new(support::FakeClock::new());
+    let c = clock.clone();
+    let d = dir.clone();
+    let (sent, received) = mpsc::channel();
+    let task = std::thread::spawn(move || {
+        let answer = orch_runtime::validate::run::execute(
+            &d,
+            c.as_ref(),
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../../github/scripts/lib/group-leader.sh"),
+        );
+        sent.send(answer).unwrap();
+    });
+    until(|| ready.exists());
+    clock.await_sleepers(1);
+    clock.release(Duration::from_secs(2));
+    let deadline = Instant::now() + Duration::from_secs(KILL_GRACE + 15);
+    let answer = loop {
+        match received.try_recv() {
+            Ok(answer) => break answer,
+            Err(mpsc::TryRecvError::Disconnected) => panic!("executor ended without answer"),
+            Err(mpsc::TryRecvError::Empty) => {
+                assert!(
+                    Instant::now() < deadline,
+                    "the command outlived the kill grace"
+                );
+                clock.release(Duration::from_millis(100));
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+    };
+    answer.unwrap();
+    task.join().unwrap();
+    let sentinel = fs::read_to_string(dir.join("exit")).unwrap();
+    assert_eq!(field(&sentinel, "guard-exit"), "124", "{sentinel}");
+    let id: agent_runtime::process::Identity =
+        serde_json::from_slice(&fs::read(dir.join("command")).unwrap()).unwrap();
+    assert!(matches!(
+        agent_runtime::process::still_runs(&id),
+        agent_runtime::reading::Reading::Gone
+    ));
+}
+
+#[test]
+fn a_sentinel_the_device_refuses_fails_the_executor_and_the_run_reads_failing() {
+    if !Path::new("/dev/full").exists() {
+        return;
+    }
+    let w = World::new();
+    let dir = executor_dir(&w, "exit 0", 20);
+    std::os::unix::fs::symlink("/dev/full", dir.join("exit.part")).unwrap();
+    let answer = orch_runtime::validate::run::execute(
+        &dir,
+        &orch_runtime::schedule::SystemClock,
+        &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../github/scripts/lib/group-leader.sh"),
+    );
+    assert!(answer.is_err(), "{answer:?}");
+    assert!(!dir.join("exit").exists());
+    // A record with no sentinel is no verdict a return could cite as a pass.
+    assert_eq!(
+        field(&read_record(&w, dir.to_str().unwrap()), "verdict"),
+        "unfinished"
+    );
+    let out = w.entry(
+        &[
+            "--wait",
+            "--run-dir",
+            dir.to_str().unwrap(),
+            "--budget",
+            "5",
+        ],
+        &[],
+    );
+    // No sentinel, so the run past its cap reads failing, never done.
+    assert_eq!(field(&text(&out), "validate"), "FAILING", "{}", text(&out));
+    assert_ne!(field(&text(&out), "state"), "done");
+}
+
+#[test]
 fn an_exited_command_does_not_leave_its_background_group_running() {
     let w = World::new();
     let fifo = w.root.join("held");
@@ -1290,6 +1406,45 @@ fn manager(w: &World) -> (String, String) {
         support::tool_path(&[&support::fixtures().join("validate-tools")]),
         w.root.join("manager").display().to_string(),
     )
+}
+
+#[test]
+fn a_unit_launch_hands_the_manager_the_callers_variables_and_open_file_limit() {
+    let w = World::new();
+    let (path, manager) = manager(&w);
+    let started = ok(&w.start(
+        &[],
+        &[
+            ("PATH", &path),
+            ("VALIDATE_MANAGER_DIR", &manager),
+            ("VALIDATE_ENV_MARK", "x"),
+        ],
+    ));
+    let dir = started["run_dir"].as_str().unwrap();
+    assert_eq!(w.wait_closed(dir)["outcome"], "pass");
+    let launches = fs::read_to_string(Path::new(&manager).join("launches")).unwrap();
+    let unit = launches.lines().next().unwrap();
+    // The unit is named for the worktree it validates.
+    assert!(unit.starts_with("orch-validate-wt-"), "{unit}");
+    let argv = fs::read_to_string(Path::new(&manager).join(format!("{unit}.argv"))).unwrap();
+    let words: Vec<&str> = argv.lines().collect();
+    // A unit inherits the manager's environment and limits, not the
+    // caller's: the client is handed both.
+    assert!(words.contains(&"--setenv=VALIDATE_ENV_MARK"), "{argv}");
+    let limits = fs::read_to_string("/proc/self/limits").unwrap();
+    let line = limits
+        .lines()
+        .find(|l| l.starts_with("Max open files"))
+        .unwrap();
+    let mut limit = line["Max open files".len()..]
+        .split_whitespace()
+        .map(|w| if w == "unlimited" { "infinity" } else { w });
+    let property = format!(
+        "LimitNOFILE={}:{}",
+        limit.next().unwrap(),
+        limit.next().unwrap()
+    );
+    assert!(words.contains(&property.as_str()), "{argv}");
 }
 
 #[test]
@@ -1894,6 +2049,17 @@ fn ci_world(w: &World, case: &str) -> (String, String, String) {
     if case == "context-unrequired" {
         rules = json!([]);
     }
+    // Classic branch protection alone names the context: by its contexts
+    // list, or by its checks.
+    if case == "classic-contexts" {
+        rules = json!([{ "type":"merge_queue" }]);
+        protection =
+            json!({"protection":{"required_status_checks":{"contexts":["CI"],"checks":[]}}});
+    }
+    if case == "classic-checks" {
+        rules = json!([{ "type":"merge_queue" }]);
+        protection = json!({"protection":{"required_status_checks":{"contexts":[],"checks":[{"context":"CI","app_id":null}]}}});
+    }
     if case == "protection-unread" {
         protection = json!({});
     }
@@ -1903,9 +2069,34 @@ fn ci_world(w: &World, case: &str) -> (String, String, String) {
     if case == "base-unresolved" {
         view = json!({"state":"UNKNOWN"});
     }
+    if case == "queue-unrequired" {
+        rules = json!([]);
+    }
+    if matches!(
+        case,
+        "queue-no-merge-queue" | "queue-absent" | "queue-malformed"
+    ) {
+        rules = json!([{ "type":"required_status_checks", "parameters":{"required_status_checks":[{"context":"CI"}]} }]);
+    }
+    // A stacked pull request's own base requires nothing; the default
+    // branch still requires the context.
+    if case == "stacked" {
+        view["baseRefName"] = json!("feature/parent");
+    }
     let mut replies = json!({"pr view --json":{"body":view},"repos/{owner}/{repo}/rules/branches/main":{"body":rules},"repos/{owner}/{repo}/branches/main":{"body":protection}});
     if case == "rules-unread" {
         replies["repos/{owner}/{repo}/rules/branches/main"]["exit"] = json!(1);
+    }
+    if case == "stacked" {
+        replies["repos/{owner}/{repo}/rules/branches/feature%2Fparent"] = json!({"body":[]});
+        replies["repos/{owner}/{repo}/branches/feature%2Fparent"] =
+            json!({"body":{"protection":{"required_status_checks":{"contexts":[],"checks":[]}}}});
+    }
+    // gh's answer for a branch with no pull request, which push-first
+    // reads as its resolved base.
+    if case == "push-first-no-pr" {
+        replies["pr view --json"] =
+            json!({"exit":1,"stderr":"no pull requests found for branch \"feature\""});
     }
     let file = w.root.join("gh.json");
     fs::write(&file, replies.to_string()).unwrap();
@@ -1920,6 +2111,8 @@ fn ci_world(w: &World, case: &str) -> (String, String, String) {
 fn ci_admission_reads_the_real_pr_reader_and_both_rule_sources_before_skipping_local_work() {
     for (case, want_mode, cause) in [
         ("required", "ci", ""),
+        ("classic-contexts", "ci", ""),
+        ("classic-checks", "ci", ""),
         ("rules-unread", "range", "rules-unread"),
         ("protection-unread", "range", "rules-unread"),
         ("context-unrequired", "range", "context-unrequired"),
@@ -1927,12 +2120,30 @@ fn ci_admission_reads_the_real_pr_reader_and_both_rule_sources_before_skipping_l
         ("base-unresolved", "range", "base-unresolved"),
         ("push-base", "range", "push-base"),
         ("setting-empty", "range", "setting-empty"),
+        ("stacked", "range", "context-unrequired"),
+        ("push-first-no-pr", "ci", ""),
+        ("class-render", "range", "class-uncovered"),
+        ("class-standard-unmeasured", "ci", ""),
+        ("class-micro-unmeasured", "range", "class-uncovered"),
+        ("class-docs", "range", "class-uncovered"),
+        ("class-docs-unread", "range", "class-uncovered"),
+        ("queue-required", "ci", ""),
+        ("queue-unrequired", "range", "class-uncovered"),
+        ("queue-no-merge-queue", "range", "class-uncovered"),
+        // Only a record reading false proves pull-request CI covers the work.
+        ("queue-absent", "range", "class-uncovered"),
+        ("queue-malformed", "range", "class-uncovered"),
+        ("queue-absent-merge-queue", "ci", ""),
     ] {
         let w = World::new();
         let base = w.head();
         w.commit("source.rs");
         let (path, replies, log) = ci_world(&w, case);
-        let extra = [
+        let scope = support::fixtures()
+            .join("change-scope-fixture/harness-only")
+            .display()
+            .to_string();
+        let mut extra = vec![
             ("PATH", path.as_str()),
             ("GH_FAKE_REPLIES", replies.as_str()),
             ("GH_FAKE_LOG", log.as_str()),
@@ -1951,6 +2162,36 @@ fn ci_admission_reads_the_real_pr_reader_and_both_rule_sources_before_skipping_l
             ),
             ("DEV_VALIDATE_RANGE_CMD", "echo local-range"),
         ];
+        if case == "push-first-no-pr" {
+            extra.push(("ORCH_PR_ORDER", "push-first"));
+        }
+        // The classifier's answer, through the fixture that prints its
+        // contract: the class word, its measured marker, the docs verdict
+        // and the queue-only record.
+        let classified = match case {
+            "class-render" => Some(("render", "true", "false", "false")),
+            "class-standard-unmeasured" => Some(("standard", "false", "false", "false")),
+            "class-micro-unmeasured" => Some(("micro", "false", "false", "false")),
+            "class-docs" => Some(("standard", "true", "true", "false")),
+            "class-docs-unread" => Some(("micro", "true", "unread", "false")),
+            "queue-required" | "queue-unrequired" | "queue-no-merge-queue" => {
+                Some(("standard", "true", "false", "true"))
+            }
+            "queue-absent" | "queue-absent-merge-queue" => {
+                Some(("standard", "true", "false", "absent"))
+            }
+            "queue-malformed" => Some(("standard", "true", "false", "unknown")),
+            _ => None,
+        };
+        if let Some((class, measured, docs, queue)) = classified {
+            extra.extend([
+                ("CHANGE_SCOPE_PATHS_CLI", scope.as_str()),
+                ("CHANGE_SCOPE_CLASS", class),
+                ("CHANGE_SCOPE_MEASURED", measured),
+                ("CHANGE_SCOPE_DOCS", docs),
+                ("CHANGE_SCOPE_QUEUE_ONLY", queue),
+            ]);
+        }
         let out = w.local(&["--validate-mode", "ci", "--base", &base], &extra);
         assert!(
             out.status.success(),
@@ -1969,6 +2210,24 @@ fn ci_admission_reads_the_real_pr_reader_and_both_rule_sources_before_skipping_l
         assert_eq!(
             field(&record, "verdict"),
             if want_mode == "ci" { "pending" } else { "pass" }
+        );
+        // A run left to required CI is pending, and no pass a later start
+        // could reuse.
+        if want_mode == "ci" {
+            let wt = w.worktree.display().to_string();
+            let last = w.entry(&["--last-pass", "--worktree", &wt], &[]);
+            assert_eq!(last.status.code(), Some(1), "{case}");
+            assert_eq!(text(&last).trim(), "last-pass=none", "{case}");
+        }
+        // Queue-only work is proved by the merge group's run.
+        assert_eq!(
+            field(&record, "ci-event"),
+            if matches!(case, "queue-required" | "queue-absent-merge-queue") {
+                "merge_group"
+            } else {
+                ""
+            },
+            "{case}: {record}"
         );
         assert_eq!(
             Path::new(&dir).join("execution").exists(),
@@ -2010,7 +2269,13 @@ fn an_admitted_ci_round_executes_scoped_suites_but_a_restack_skips_the_selector(
         let base = w.head();
         w.commit("source.rs");
         let (path, replies, log) = ci_world(&w, "required");
-        let selector = "if [ \"$DEV_VALIDATE_SCOPED\" = true ]; then echo scoped-ran; echo 'validate: lanes=unit selection=subset'; else echo selection=subset; fi";
+        // A restack never asks the selector, so one that fails its preview
+        // leaves the round to required CI.
+        let selector = if restack {
+            "exit 1"
+        } else {
+            "if [ \"$DEV_VALIDATE_SCOPED\" = true ]; then echo scoped-ran; echo 'validate: lanes=unit selection=subset'; else echo selection=subset; fi"
+        };
         let extra = [
             ("PATH", path.as_str()),
             ("GH_FAKE_REPLIES", replies.as_str()),
@@ -2033,6 +2298,162 @@ fn an_admitted_ci_round_executes_scoped_suites_but_a_restack_skips_the_selector(
         assert_eq!(field(&record, "verdict"), "pending");
         assert_eq!(run_file(&dir, "log").contains("scoped-ran"), !restack);
         assert_eq!(field(&record, "scoped"), if restack { "" } else { "true" });
+    }
+}
+
+#[test]
+fn a_local_start_asks_ci_for_an_all_or_range_subset_selection_and_scopes_a_pre_open_all() {
+    // The selector previews with $SEL, recording the mode it was asked
+    // for; its scoped run passes unless $SEL ends `-red`.
+    let selector = "if [ \"$DEV_VALIDATE_SCOPED\" = true ]; then echo 'validate: lanes=scoped selection=subset'; [ \"$SEL\" != all-red ]; else printf '%s\\n' \"$DEV_VALIDATE_MODE\" > \"$MODE_FILE\"; if [ \"$SEL\" = failed ]; then echo 'selector: unavailable' >&2; exit 1; fi; echo \"selection=${SEL%-red}\"; fi";
+    // (requested, selection, world, render class, order) and the record's
+    // (mode, scoped, ci-fallback, verdict).
+    for (requested, sel, world, render, order, want) in [
+        (
+            "full",
+            "all",
+            "required",
+            false,
+            "review-first",
+            ("ci", "true", "", "pending"),
+        ),
+        (
+            "full",
+            "subset",
+            "required",
+            false,
+            "review-first",
+            ("full", "", "", "pass"),
+        ),
+        (
+            "range",
+            "subset",
+            "required",
+            false,
+            "review-first",
+            ("ci", "true", "", "pending"),
+        ),
+        (
+            "full",
+            "all",
+            "pr-not-open",
+            false,
+            "review-first",
+            ("full", "true", "pr-not-open", "pass"),
+        ),
+        (
+            "full",
+            "all-red",
+            "pr-not-open",
+            false,
+            "review-first",
+            ("full", "true", "pr-not-open", "FAILING"),
+        ),
+        (
+            "full",
+            "all",
+            "push-first-no-pr",
+            true,
+            "push-first",
+            ("full", "true", "class-uncovered", "pass"),
+        ),
+        (
+            "full",
+            "all",
+            "required",
+            true,
+            "review-first",
+            ("full", "", "class-uncovered", "pass"),
+        ),
+        (
+            "full",
+            "failed",
+            "required",
+            false,
+            "review-first",
+            ("full", "", "", "pass"),
+        ),
+    ] {
+        let case = format!("{requested} {sel} {world} {order}");
+        let w = World::new();
+        let base = w.head();
+        w.commit("source.rs");
+        let (path, replies, log) = ci_world(&w, world);
+        let mode_file = w.root.join("preview-mode").display().to_string();
+        let scope = support::fixtures()
+            .join("change-scope-fixture/harness-only")
+            .display()
+            .to_string();
+        let mut extra = vec![
+            ("PATH", path.as_str()),
+            ("GH_FAKE_REPLIES", replies.as_str()),
+            ("GH_FAKE_LOG", log.as_str()),
+            ("GH_REPO", "o/r"),
+            ("ORCH_DELIVERY", "pr"),
+            ("ORCH_PR_ORDER", order),
+            ("DEV_VALIDATE_CI_CONTEXT", "CI"),
+            ("DEV_VALIDATE_RANGE_CMD", "echo range"),
+            ("DEV_VALIDATE_SELECTION_CMD", selector),
+            ("SEL", sel),
+            ("MODE_FILE", mode_file.as_str()),
+        ];
+        if render {
+            extra.extend([
+                ("CHANGE_SCOPE_PATHS_CLI", scope.as_str()),
+                ("CHANGE_SCOPE_CLASS", "render"),
+            ]);
+        }
+        let mut args = vec![];
+        if requested == "range" {
+            args.extend(["--validate-mode", "range", "--base", base.as_str()]);
+        }
+        let out = w.local(&args, &extra);
+        let dir = directory(&out);
+        let record = read_record(&w, &dir);
+        let got = (
+            field(&record, "validate-mode"),
+            field(&record, "scoped"),
+            field(&record, "ci-fallback"),
+            field(&record, "verdict"),
+        );
+        assert_eq!(
+            (
+                got.0.as_str(),
+                got.1.as_str(),
+                got.2.as_str(),
+                got.3.as_str()
+            ),
+            want,
+            "{case}: {record} {}",
+            stderr(&out)
+        );
+        // The preview is asked for the requested mode.
+        assert_eq!(
+            fs::read_to_string(&mode_file).unwrap().trim(),
+            requested,
+            "{case}"
+        );
+        if sel == "failed" {
+            assert!(
+                run_file(&dir, "class.log").contains("selector: unavailable"),
+                "{case}: {}",
+                run_file(&dir, "class.log")
+            );
+        }
+        // A read-only resolution answers the mode the start ran.
+        if requested == "range" {
+            let wt = w.worktree.display().to_string();
+            let resolved = w.entry(
+                &["--resolve-mode", "--worktree", &wt, "--base", &base],
+                &extra,
+            );
+            assert_eq!(
+                text(&resolved).trim(),
+                format!("validate-mode={}", want.0),
+                "{case}: {}",
+                stderr(&resolved)
+            );
+        }
     }
 }
 
@@ -2820,7 +3241,7 @@ fn a_bare_pid_run_is_live_by_its_childs_argv_its_stop_ends_that_group_and_its_go
     let dir = w.worktree.join("tmp/dev-validate-released");
     fs::create_dir_all(&dir).unwrap();
     let run_dir = dir.display().to_string();
-    // The shell producer's records: the start and the runner record before
+    // A released run directory's records: the start and the runner record before
     // its launch, then the child's own bare pid, written by the child.
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2899,7 +3320,7 @@ fn a_bare_pid_run_is_live_by_its_childs_argv_its_stop_ends_that_group_and_its_go
     assert!(signal.success(), "the other process runs on");
     let out = w.entry(&["--wait", "--run-dir", &run_dir, "--budget", "2"], &[]);
     assert_eq!(out.status.code(), Some(3), "{}", text(&out));
-    // A runner record the shell producer's stop could not read refuses.
+    // A runner record that names no runner a stop reads refuses.
     fs::write(dir.join("runner"), "runner=unknown\n").unwrap();
     let out = w.entry(&["--stop", "--worktree", &wt], &[]);
     assert_eq!(out.status.code(), Some(1));
@@ -2913,7 +3334,7 @@ fn a_shell_start_whose_child_never_ran_is_no_run_but_the_runtimes_unread_launch_
     let dir = w.worktree.join("tmp/dev-validate-unstarted");
     fs::create_dir_all(&dir).unwrap();
     let run_dir = dir.display().to_string();
-    // The shell producer's start and runner records, its child never run:
+    // A released run directory's start and runner records, its child never run:
     // started twenty seconds ago, past the ten-second launch grace.
     let started = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -2962,4 +3383,286 @@ fn a_shell_start_whose_child_never_ran_is_no_run_but_the_runtimes_unread_launch_
     assert_eq!(refusal(&w.start(&[], &extra)), "launch-unanswered");
     let live = w.entry(&["--live", "--worktree", &wt], &extra);
     assert_eq!(live.status.code(), Some(0), "{}", text(&live));
+}
+
+fn epoch_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+fn kill_group(pid_file: &Path) {
+    if let Ok(pid) = fs::read_to_string(pid_file) {
+        let _ = program("kill")
+            .args(["-KILL", "--", &format!("-{}", pid.trim())])
+            .status();
+    }
+}
+
+#[test]
+fn a_stop_recorded_before_the_executors_sentinel_closes_the_stage_stopped() {
+    let w = World::new();
+    let started = ok(&w.start(&[], &[("DEV_VALIDATE_CMD", "sleep 60")]));
+    let dir = started["run_dir"].as_str().unwrap().to_owned();
+    let pid_file = Path::new(&dir).join("pid");
+    until(|| {
+        fs::read_to_string(Path::new(&dir).join("command"))
+            .unwrap_or_default()
+            .contains("\"start\":\"")
+    });
+    // The job dies before its own close, the command still running.
+    let job = w.stage(&dir)["job"]["pid"].as_u64().unwrap().to_string();
+    assert!(
+        program("kill")
+            .args(["-KILL", &job])
+            .status()
+            .unwrap()
+            .success()
+    );
+    until(|| {
+        !program("kill")
+            .args(["-0", &job])
+            .stderr(std::process::Stdio::null())
+            .status()
+            .unwrap()
+            .success()
+    });
+    // The stop's record first, as `validate stop` writes it before any
+    // signal; then the sentinel the executor writes for the TERM-ended
+    // command; then the round's reconcile.
+    let mut state = w.state();
+    for stage in state["stages"].as_array_mut().unwrap() {
+        if stage["run_dir"] == dir.as_str() {
+            stage["stop"] = json!({"at": epoch_now()});
+        }
+    }
+    w.write_state(&state);
+    kill_group(&pid_file);
+    fs::write(
+        Path::new(&dir).join("exit"),
+        format!(
+            "guard-exit=143 at={}\n",
+            agent_runtime::clock::iso_utc(epoch_now())
+        ),
+    )
+    .unwrap();
+    ok(&w.op(&json!({"op": "reconcile-round", "round_id": ROUND}), &[]));
+    let stage = w.stage(&dir);
+    assert_eq!(stage["outcome"], "stopped", "{stage}");
+}
+
+#[test]
+fn a_stop_of_an_ad_hoc_run_with_no_state_directory_ends_its_command() {
+    let w = World::new();
+    let wt = w.worktree.display().to_string();
+    let absent = w.root.join("no-state").display().to_string();
+    let fifo = w.root.join("hold");
+    assert!(program("mkfifo").arg(&fifo).status().unwrap().success());
+    let ready = w.root.join("ready");
+    let command = format!(
+        "exec 9<> '{}'; echo ready > '{}'; read -r -t 20 -u 9 answer",
+        fifo.display(),
+        ready.display()
+    );
+    let mut child = support::isolated();
+    child.args([
+        "--state-dir",
+        &absent,
+        "validate",
+        "entry",
+        "--worktree",
+        &wt,
+        "--foreground",
+        "--poll",
+        "1",
+    ]);
+    for (k, v) in w.env() {
+        child.env(k, v);
+    }
+    child
+        .env("ORCH_STATE_DIR", &absent)
+        .env("DEV_VALIDATE_CMD", command)
+        .current_dir(&w.worktree)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let mut child = Owned(child.spawn().unwrap());
+    until(|| ready.exists());
+    let mut stop = support::isolated();
+    stop.args([
+        "--state-dir",
+        &absent,
+        "validate",
+        "entry",
+        "--stop",
+        "--worktree",
+        &wt,
+    ]);
+    for (k, v) in w.env() {
+        stop.env(k, v);
+    }
+    let out = stop
+        .env("ORCH_STATE_DIR", &absent)
+        .current_dir(&w.worktree)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(text(&out), "state=stopped units=0 groups=1");
+    child.0.wait().unwrap();
+    assert!(!Path::new(&absent).exists());
+}
+
+/// A child of this test under an argv of the row's choosing, its pid written
+/// by itself, ended with its group when the row ends.
+fn bare_child(dir: &Path, argv_tail: &[&str]) -> (Group, String) {
+    let pid_file = dir.join("pid");
+    let _ = fs::remove_file(&pid_file);
+    let group = Group(pid_file.clone());
+    let mut args = vec![
+        "-f".to_owned(),
+        "sh".to_owned(),
+        "-c".to_owned(),
+        "echo $$ > \"$1\"; shift; exec perl -e 'sleep 60' -- \"$@\"".to_owned(),
+        "child".to_owned(),
+        pid_file.display().to_string(),
+    ];
+    args.extend(argv_tail.iter().map(|a| (*a).to_owned()));
+    assert!(program("setsid").args(&args).status().unwrap().success());
+    until(|| fs::read_to_string(&pid_file).is_ok_and(|p| !p.trim().is_empty()));
+    let pid = fs::read_to_string(&pid_file).unwrap().trim().to_owned();
+    (group, pid)
+}
+
+#[test]
+fn a_bare_pid_is_the_run_only_under_its_own_childs_whole_argv() {
+    let w = World::new();
+    let wt = w.worktree.display().to_string();
+    let dir = w.worktree.join("tmp/dev-validate-released");
+    fs::create_dir_all(&dir).unwrap();
+    let run_dir = dir.display().to_string();
+    fs::write(
+        dir.join("start"),
+        format!(
+            "worktree={wt}\ntimeout-bin=timeout\nstart={}\ntimeout-secs=3600\npoll-secs=30\ncap-secs=3640\nclass=standard\ndocs-only=false\nvalidate-mode=full\nvalidate-base=\nhead={}\n",
+            epoch_now(),
+            w.head()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        dir.join("runner"),
+        "runner=setsid\nline=runner=setsid reason=no-linger\n",
+    )
+    .unwrap();
+    let live = |extra: &[(&str, &str)]| w.entry(&["--live", "--worktree", &wt], extra);
+    let other_run = w
+        .worktree
+        .join("tmp/dev-validate-other")
+        .display()
+        .to_string();
+    for tail in [
+        // Another run's child: the run directory is not this one.
+        vec!["planted", "--child", "--run-dir", other_run.as_str()],
+        // This run directory, but no child's words before it.
+        vec!["planted", run_dir.as_str()],
+    ] {
+        let (_group, pid) = bare_child(&dir, &tail);
+        assert_eq!(
+            live(&[]).status.code(),
+            Some(1),
+            "{tail:?}: {}",
+            text(&live(&[]))
+        );
+        let out = w.entry(&["--stop", "--worktree", &wt], &[]);
+        assert_eq!(text(&out), "state=stopped units=0 groups=0", "{tail:?}");
+        assert!(
+            program("kill")
+                .args(["-0", &pid])
+                .status()
+                .unwrap()
+                .success(),
+            "{tail:?}: the process runs on"
+        );
+        fs::remove_file(dir.join("stop")).unwrap();
+        kill_group(&dir.join("pid"));
+    }
+    // The run's own child under a long argv, read whole under an exported
+    // terminal width.
+    let (_group, pid) = bare_child(&dir, &["planted", "--child", "--run-dir", &run_dir]);
+    assert!(run_dir.len() > 80);
+    let out = live(&[("COLUMNS", "80")]);
+    assert_eq!(text(&out), format!("run-dir={run_dir} pid={pid}"));
+}
+
+#[test]
+fn a_unit_run_is_stopped_by_its_recorded_unit_name_and_a_refused_stop_fails() {
+    let (one, two) = (World::new(), World::new());
+    let (path, _) = manager(&one);
+    let manager_dir = one.root.join("manager").display().to_string();
+    let extra = [
+        ("PATH", path.as_str()),
+        ("VALIDATE_MANAGER_DIR", manager_dir.as_str()),
+    ];
+    // Two runs, one per worktree, under one manager, each command held on
+    // its own fifo.
+    let mut dirs = Vec::new();
+    for w in [&one, &two] {
+        let fifo = w.root.join("hold");
+        assert!(program("mkfifo").arg(&fifo).status().unwrap().success());
+        let command = format!("exec 9<> '{}'; read -r -t 30 -u 9 answer", fifo.display());
+        let mut env = extra.to_vec();
+        env.push(("DEV_VALIDATE_CMD", command.as_str()));
+        dirs.push(
+            ok(&w.start(&[], &env))["run_dir"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+        );
+    }
+    for dir in &dirs {
+        until(|| Path::new(dir).join("command").exists());
+    }
+    let unit = |dir: &str| -> String {
+        fs::read_to_string(Path::new(dir).join("runner"))
+            .unwrap()
+            .lines()
+            .find_map(|l| l.strip_prefix("unit=").map(str::to_owned))
+            .unwrap()
+    };
+    let unit_live = |dir: &str| {
+        program("systemctl")
+            .args([
+                "--user",
+                "show",
+                "-p",
+                "LoadState,ActiveState",
+                "--value",
+                "--",
+            ])
+            .arg(format!("{}.service", unit(dir)))
+            .env("PATH", &path)
+            .env("VALIDATE_MANAGER_DIR", &manager_dir)
+            .output()
+            .unwrap()
+            .stdout
+            == b"loaded\nactive\n"
+    };
+    // The stop ends this worktree's unit by its recorded name, and only it.
+    let wt = one.worktree.display().to_string();
+    let out = one.entry(&["--stop", "--worktree", &wt], &extra);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(text(&out), "state=stopped units=1 groups=0");
+    let stops = fs::read_to_string(Path::new(&manager_dir).join("stops")).unwrap();
+    assert_eq!(stops.lines().collect::<Vec<_>>(), [unit(&dirs[0])]);
+    until(|| !unit_live(&dirs[0]));
+    assert!(unit_live(&dirs[1]));
+    assert_eq!(one.wait_closed(&dirs[0])["outcome"], "stopped");
+    // A manager that refuses the stop fails it.
+    let wt = two.worktree.display().to_string();
+    let mut refusing = extra.to_vec();
+    refusing.push(("VALIDATE_STOP_ANSWER", "refused"));
+    let out = two.entry(&["--stop", "--worktree", &wt], &refusing);
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out));
+    assert!(stderr(&out).contains("stop-failed"), "{}", stderr(&out));
+    assert_eq!(two.wait_closed(&dirs[1])["outcome"], "stopped");
 }

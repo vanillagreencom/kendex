@@ -268,36 +268,41 @@ enum ReadEnd<T> {
     Invalid,
 }
 
-// Credential ownership follows the effective uid on Unix hosts with no proc filesystem.
+/// Whether this process's effective uid owns `path`, judged by bash's `-O`
+/// test, which holds on every Unix host the package runs on with no proc
+/// filesystem or `id` location assumed. `None` where the test gave no
+/// answer.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the credential reader asks the system id utility for the effective uid on each supported Unix host; this is a bounded read, not an act"
+    reason = "the credential reader asks bash's owner test, a bounded read and no act"
 )]
-fn effective_uid() -> Option<u32> {
+fn owned(path: &Path) -> Option<bool> {
     let output = agent_runtime::host::run_tagged(
         "credentials",
-        "id",
-        Path::new("/usr/bin/id"),
-        "effective-uid",
-        &["-u"],
+        "bash",
+        Path::new("bash"),
+        "owner-test",
+        &[
+            "-c",
+            "[[ -O \"$1\" ]]",
+            "owner-test",
+            &path.to_string_lossy(),
+        ],
         std::time::Duration::from_secs(2),
     )
     .ok()?;
-    if !output.status.success() {
-        return None;
+    match output.status.code() {
+        Some(0) => Some(true),
+        Some(1) => Some(false),
+        _ => None,
     }
-    std::str::from_utf8(&output.stdout)
-        .ok()?
-        .trim()
-        .parse()
-        .ok()
 }
 
-/// The installation token
-/// the fleet renews in `file`, refused with its cause unless the file is a
-/// regular file owned by this process with no group or other bits, under a
-/// parent owned by this process with no group or other write bit, holding
-/// one word under the cap. The refusal names the path judged.
+/// The installation token the fleet renews in `file`, refused with its
+/// cause unless the file is a regular file owned by this process with no
+/// group or other bits, under a parent owned by this process with no group
+/// or other write bit, holding one word under the cap. The refusal names
+/// the path judged.
 pub(crate) fn read_token(file: Option<&Path>) -> std::result::Result<String, (String, String)> {
     let Some(file) = file.filter(|f| !f.as_os_str().is_empty()) else {
         return Err((String::new(), "unset".to_owned()));
@@ -309,13 +314,14 @@ pub(crate) fn read_token(file: Option<&Path>) -> std::result::Result<String, (St
     };
     let parent = file.parent().filter(|p| !p.as_os_str().is_empty());
     let parent = parent.unwrap_or(Path::new("."));
-    let uid = effective_uid().ok_or_else(|| (shown.clone(), "uid-unreadable".to_owned()))?;
     let parent_meta = std::fs::metadata(parent)
         .map_err(|_| (parent.display().to_string(), "malformed".to_owned()))?;
     for (path, meta, bits) in [(file, &meta, 0o077), (parent, &parent_meta, 0o022)] {
         let shown = path.display().to_string();
-        if meta.uid() != uid {
-            return Err((shown, "not-owned".to_owned()));
+        match owned(path) {
+            Some(true) => {}
+            Some(false) => return Err((shown, "not-owned".to_owned())),
+            None => return Err((shown, "ownership-unread".to_owned())),
         }
         let mode = meta.mode() & 0o7777;
         if mode & bits != 0 {
@@ -411,8 +417,8 @@ fn standing_bot_fix(baseline: &Baseline) -> BTreeMap<String, String> {
 /// no alert kind or no whole number is the record's `invalid`.
 fn recorded(verdicts: &[Value]) -> Option<BTreeSet<String>> {
     let mut out = BTreeSet::new();
-    // A field is a string's text, `null` when absent, or its JSON.
-    // so a row missing a field is `invalid`, not skipped.
+    // A field is a string's text, `null` when absent, or its JSON, so a
+    // row missing a field is `invalid`, not skipped.
     let text = |value: Option<&Value>| match value {
         None | Some(Value::Null) => "null".to_owned(),
         Some(Value::String(s)) => s.clone(),

@@ -1231,7 +1231,11 @@ fn occurrence_bound(record: &Value) -> bool {
 /// nothing, and one whose identity stands under another class is a conflict
 /// that lands none of the batch and leaves coverage unknown; an unbound
 /// record or a batch marked unknown leaves coverage unknown too.
-fn findings_record_batch(doc: &mut Document, batch: Value, file: &Path) -> Result<Value> {
+pub(super) fn findings_record_batch(
+    doc: &mut Document,
+    batch: Value,
+    file: &Path,
+) -> Result<Value> {
     let Some(records) = batch.get("records").and_then(Value::as_array).cloned() else {
         return Err(refused("finding-batch", &[("file", &text_of(file))]));
     };
