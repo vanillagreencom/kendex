@@ -1033,6 +1033,11 @@ class RootRelay:
         # but the owner is no longer the one it waits on.
         answered = {e.get("re") for e in events
                     if e.get("box") == "to-lane" and e.get("mail_class") == "resolution"}
+        # handle writes channel:ts on the owner's Slack answers. A closer's
+        # resolve --text must not echo its note into an already answered thread.
+        slack_answered = {e.get("re") for e in events
+                          if e.get("box") == "to-lane" and e.get("kind") == "answer"
+                          and str(e.get("delivery_id", "")).startswith(self.channel + ":")}
         by_id = {str(e["id"]): e for e in events}
         horizon = self.settings.horizon(self.clock())
         state = self.state
@@ -1093,7 +1098,7 @@ class RootRelay:
                 owner_ask = reference.get("kind") == "ask" and reference.get("to") == "owner"
                 route = "notice" if not ref or owner_ask else "skip"
             elif box == "to-lane" and kind == "answer":
-                route = "answer"
+                route = "skip" if envelope.get("re") in slack_answered else "answer"
             else:
                 route = "skip"
             if route == "answer":

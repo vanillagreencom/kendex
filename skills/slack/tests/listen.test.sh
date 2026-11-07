@@ -132,6 +132,44 @@ sk_lm "$ROOT" resolve --item overseer --id "$ASK2" --text "$(sk_text a2 'yes, af
 sk_poll "$ROOT"
 assert_has "$(posts C001)" "$ASK2_TS | Answered in the chat: yes, after lunch" "an answer typed in the chat is shown in the ask's thread"
 
+# Closure stays silent after a Slack answer, even if the closer supplies text.
+# Outside-chat answers still reach the owner's question thread.
+answer_origins() { # ASSERTION ROOT CHANNEL PREFIX [ROW]
+  local assertion="$1" root="$2" channel="$3" prefix="$4" only="${5:-}"
+  local name origin close expected ask ts note
+  while IFS='|' read -r name origin close expected; do
+    [ -z "$only" ] || [ "$name" = "$only" ] || continue
+    sk_lm "$root" ask --item overseer --to owner --reserved --file "$(sk_text "$prefix-$name" "Answer origin $prefix-$name?")" --options approve,cancel >"$SK_TMP/$prefix-$name.out" || return 1
+    ask="$(sed 's/^id=//' "$SK_TMP/$prefix-$name.out")"
+    sk_poll "$root"
+    ts="$(sk_state ".messages.${channel}[] | select(.text | contains(\"Answer origin $prefix-$name?\")) | .ts")"
+    [ -n "$ts" ] || { bad "[$prefix-$name] posts the question before answering"; return 1; }
+    note=approve
+    if [ "$origin" = slack ]; then
+      sk_inject "$channel" U001 'approve' "$ts" >/dev/null
+      sk_poll "$root"
+      note="Owner already answered in Slack; closer record for ask $ask."
+    fi
+    if [ "$close" = explicit ]; then
+      sk_lm "$root" resolve --item overseer --id "$ask" >/dev/null || return 1
+    else
+      sk_lm "$root" resolve --item overseer --id "$ask" --text "$(sk_text "$prefix-close-$name" "$note")" >/dev/null || return 1
+    fi
+    sk_poll "$root"
+    assert_eq "$RC=$(jq -c '.open_asks' "$root/tmp/slack/status.json")" "0=[]" "[$prefix-$name] closes the question in relay status"
+    "$assertion" "$(sk_state ".messages.${channel}[] | select(.user == \"UBOT\" and .thread_ts == \"$ts\") | .text")" \
+      "$expected" "[$prefix-$name] posts only an answer the owner gave outside Slack"
+    sk_poll "$root"
+    "$assertion" "$(sk_state ".messages.${channel}[] | select(.user == \"UBOT\" and .thread_ts == \"$ts\") | .text")" \
+      "$expected" "[$prefix-$name] preserves the thread text across restart"
+  done <<'ANSWER_ORIGINS'
+slack-explicit|slack|explicit|
+slack-note|slack|text|
+chat-note|chat|text|Answered in the chat: approve
+ANSWER_ORIGINS
+}
+answer_origins assert_eq "$ROOT" C001 origin || exit 1
+
 # A voice host or bridge supplies a delivery id; only a complete option line
 # from the ask may reach Slack, never that writer's header or instructions.
 program_answers() { # ASSERTION ROOT CHANNEL PREFIX
@@ -775,6 +813,12 @@ while IFS=$'\t' read -r sent want; do
 done <<<"$(markup_rows)"
 
 # --- controls, one mutant per rule ------------------------------------------------------------
+sk_mutant answer-origin relay.py 'envelope\.get\("re"\) in slack_answered' 'envelope.get("re") in slack_answered and False'
+ORIGIN_CONTROL="$(sk_new_root origin-control)"
+sk_bind "$ORIGIN_CONTROL"
+answer_origins sk_assert_red "$ORIGIN_CONTROL" "$(sk_channel "$ORIGIN_CONTROL")" control-origin slack-note || exit 1
+sk_bin_reset
+
 sk_mutant program-answer relay.py '        elif envelope.get\("delivery_id"\):\n[\s\S]*?\n        else:' '        else:'
 PROGRAM_CONTROL="$(sk_new_root program-control)"
 sk_bind "$PROGRAM_CONTROL"
