@@ -45,7 +45,7 @@ Read when a workflow, a reference or a `--help` names a setting and the task nee
 | `ORCH_OVERSEER_SYNC_TIMEOUT_S` | Seconds bounding only `oversee-succeed`'s checkout sync. The workflow's direct `sync-base` call does not read it | `60` |
 | `ORCH_OVERSEER_MARK_REPEAT` | Watch passes a standing `overseer-mark` waits before it repeats | `5` |
 | Recording settings | `ORCH_FLEET_LOG_ROW_BYTES`, `ORCH_TAKEOVER_ROWS`, `ORCH_RECORD_RETENTION_DAYS`, `ORCH_PROGRESS_REPORT_DIR`: [recording policy](../schemas/workflow-state.md#recording-policy) | |
-| `ORCH_REPORT_QUIET_HOURS` | Owner-local window: reports write and print, with no owner notice. Empty disables it. The first due morning brief covers work since the last sent report. Asks and critical notices stay immediate. | `0-7` |
+| `ORCH_REPORT_QUIET_HOURS` | Owner-local window in which a report writes and prints with no owner notice; empty disables it. The morning brief and the notices that stay immediate: [oversee-events.md, `report-due`](oversee-events.md#report-due) | `0-7` |
 | `ORCH_OWNER_TIME_ZONE` | Report time zone | `America/Los_Angeles` |
 | Watch settings | `ORCH_WATCH_*`, `ORCH_EXTERNAL_TRIAGE`, `ORCH_SECURITY_ALERTS`: [guide](../kendex.settings.toml.example) | |
 | `ORCH_OVERSEER_REVIEW_TOKEN_FILE` | `overseer-approve`'s app token: an absolute path, one line, mode 600, outside lane roots, swapped atomically before expiry by the control VM (hosted) or fleet worker (local) | |

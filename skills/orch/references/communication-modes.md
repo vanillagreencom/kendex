@@ -65,7 +65,7 @@ The owner can answer more than once. Each answer lands through `send --item over
 - The overseer closes the ask when it has its ruling: `resolve --item overseer --id [ASK_ID]`. The close is a separate record, reported as `owner-ask-closed`.
 - **The chat-answer rule.** Record each chat answer with `send --re` before acting. `resolve --text` records a chat answer and closes together only when the overseer already has its ruling.
 - At the deadline the watch runs `resolve --default` on each ask `pending --due` lists, with the outcome the [lane-mail owner-channel contract](../../mailbox/scripts/lane-mail) states.
-- After closing, later text arrives as a directive. A repeated delivery still names its original answer.
+- After closing, a later Slack reply arrives as a directive. The watch reads tracker comments only on an issue with an open ask, so it delivers no comment on a closed ask's issue. A repeated delivery still names its original answer.
 
 A decision the owner's authority rule reserves to the owner is a reserved ask: a deletion or other irreversible step, spending beyond an approved figure, an external commitment, anything sent as the owner, and an x.0 release of kendex or an app. A send as the owner on Slack or by email is a draft ask, below; every other send as the owner, such as a GitHub or Linear comment, is a reserved ask. It takes `--reserved` in place of `--recommend`. The overseer closes it once it holds the owner's answer. Past its deadline and unanswered, "Waiting on you" marks it overdue and the Slack relay posts it once more in its thread; an answered one reads as awaiting close.
 
@@ -132,7 +132,7 @@ Progress reports and scheduled messages go to every open text medium (Slack and 
 |---|---|---|---|
 | Decision needed | Slack and chat | At the moment the question exists, through § Owner asks. A question only in the chat has not been asked. | Yes |
 | Critical notice | Slack and chat | A failure that stops work, loses data or money, or needs the owner within the hour. | Yes |
-| Progress report | Slack and chat | The Jarvis session every hour, an overseer by `ORCH_REPORT_EVERY_MINUTES` ([guide](../kendex.settings.toml.example)), while the session runs, and before a succession. `oversee-report` still writes and prints during `ORCH_REPORT_QUIET_HOURS` (default midnight to 7 am in `ORCH_OWNER_TIME_ZONE`, default `America/Los_Angeles`), but sends no owner notice. Empty quiet hours turns suppression off. The first due report after the window sends the morning brief under communication's [summary shape](../../communication/references/reports.md#summary-shape), covering the work since the last report sent to the owner, including overnight merges. Decisions needed and critical notices remain immediate. | No |
+| Progress report | Slack and chat | The Jarvis session every hour, an overseer by `ORCH_REPORT_EVERY_MINUTES` ([guide](../kendex.settings.toml.example)), while the session runs; whether a succession writes one: [oversee.md § Succession](../workflows/oversee.md#succession). The quiet hours and the morning brief after them: [oversee-events.md, `report-due`](oversee-events.md#report-due); the brief takes communication's [summary shape](../../communication/references/reports.md#summary-shape). | No |
 | Reply | As communication's medium rule requires | A reply on Slack shows in the chat as at most one line naming the post. | No |
 
 - Only these message classes go to Slack. The same routing holds for every overseer.

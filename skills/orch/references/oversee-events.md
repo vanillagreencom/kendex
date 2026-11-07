@@ -449,7 +449,7 @@ the lane's mailbox cursor passed the directive: the lane has it. Nothing is owed
 
 ### `directive-unread [ITEM] [ID] age=[SECONDS]`
 
-the directive has waited `ORCH_DIRECTIVE_UNREAD_SECS` or longer with the lane's cursor short of it: the watch reports it on the first mail turn at that age, and again every `ORCH_OVERSEER_MARK_REPEAT` mail turns while it stays unread. Reach the lane by its state: wake an idle one per `oversee-lanes.md` § Talking to a lane, and any other by its row in [lane-reach.md § Wake refusals](lane-reach.md#wake-refusals). `directive-read` follows once it reads it.
+the directive has waited `ORCH_DIRECTIVE_UNREAD_SECS` or longer with the lane's cursor short of it: the watch reports it on the first mail turn at that age. Its repeats run on one counter per mailbox, which every report of an unread directive starts over: the directives still unread are reported again once `ORCH_OVERSEER_MARK_REPEAT` mail turns pass with no such report. Reach the lane by its state: wake an idle one per `oversee-lanes.md` § Talking to a lane, and any other by its row in [lane-reach.md § Wake refusals](lane-reach.md#wake-refusals). `directive-read` follows once it reads it.
 
 ### `owner-note`
 
@@ -465,7 +465,7 @@ The watch reports each `lane-question`, `lane-notice`, `directive-unread`, `owne
 
 ### `owner-ask-resolved [ASK_ID] by=[text|default] id=[ANSWER_ID]`
 
-an answer to an owner ask; its text follows. The owner can answer more than once, each with its own answer id. Record the ruling per [communication-modes.md § Recording](communication-modes.md#recording). When the overseer has its ruling, close with `lane-mail resolve --item overseer --id [ASK_ID]` and send a notice with `--ref [ASK_ID]` naming what stood. `by=default` supplies the recommendation only for an unanswered deadline. Later replies after closure arrive as `owner-note` directives.
+an answer to an owner ask; its text follows. The owner can answer more than once, each with its own answer id. Record the ruling per [communication-modes.md § Recording](communication-modes.md#recording). When the overseer has its ruling, close with `lane-mail resolve --item overseer --id [ASK_ID]` and send a notice with `--ref [ASK_ID]` naming what stood. `by=default` supplies the recommendation only for an unanswered deadline. What a reply after the close reaches, on each channel: [communication-modes.md § Owner asks](communication-modes.md#owner-asks).
 
 ### `owner-ask-closed [ASK_ID] by=[explicit|text|default]`
 

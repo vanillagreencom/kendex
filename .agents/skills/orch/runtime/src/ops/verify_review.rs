@@ -593,8 +593,8 @@ impl Gate<'_> {
         let mode = self.mode()?;
         self.reply.mode = Some(mode.word().to_owned());
         let mut record = head_record(self.path, &self.doc, &self.view.head)?;
-        // Before the gate mode is read: a push-first PR is marked ready so
-        // Copilot can review it during internal review, under every mode.
+        // Push-first needs a ready PR so Copilot can review it during internal
+        // review, independently of the gate mode.
         let marked = self.mark_ready(&mut record)?;
         if mode == GateMode::Off {
             return self.permit(Verdict::new(OFF, "gate off".into()), record.as_ref());
@@ -603,8 +603,8 @@ impl Gate<'_> {
         // An approval carried from an earlier commit is no review of this
         // head, so the head's request is settled before its verdict. Copilot's
         // work holds the approval only within `ORCH_COPILOT_HOLD_SECS` of the
-        // head record (`hold`), so a stalled or reviewless run never holds the
-        // lane.
+        // head record (`hold`), so a stalled or reviewless run cannot hold the
+        // lane indefinitely.
         let unresolved = review::unresolved_threads(&self.gh, &self.r.repo, self.r.pr)?;
         let copilot = if review::copilot_reviewed(&self.view) {
             Some(self.reviews()?.clone())
