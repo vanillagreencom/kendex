@@ -372,7 +372,7 @@ Reapply the [takeover path check](oversee-takeover.md#1-read-the-mailbox-and-han
 
 Write each status report given in chat, this one included, to the `result.path` of `orch-runtime state progress-report-path` as well.
 
-The watch's retention duty runs the retention [schemas/workflow-state.md § Recording policy](../schemas/workflow-state.md#recording-policy) states, the overseer mailbox's compaction included; no step here prunes or compacts by hand. A succession writes its report through § Succession below before these preparation steps.
+The watch's retention duty runs the retention [schemas/workflow-state.md § Recording policy](../schemas/workflow-state.md#recording-policy) states, the overseer mailbox's compaction included; no step here prunes or compacts by hand. Whether and when a succession writes its report is [§ Succession](#succession)'s.
 
 After these reads and reports, prepare the complete headerless body in a separate ignored scratch file under [communication-modes.md § Handoff](../references/communication-modes.md#handoff). At Stop and succession, write the snapshot without a pane or launch choice:
 

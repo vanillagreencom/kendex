@@ -80,18 +80,26 @@ pub struct Checkout {
 
 /// Where the record of a launch into `worktree` belongs, read from git;
 /// a checkout git cannot answer for is refused by its cause.
+pub fn checkout(worktree: &Path) -> Result<Checkout> {
+    located(worktree)?.map_err(|line| refused("marker-git-failed", &[("cause", &line)]))
+}
+
+/// The checkout `worktree` is in as git answers for it: its directories,
+/// or the first line of git's own refusal, read in the C locale so a
+/// reader can tell a directory outside any repository by its words.
 #[allow(
     clippy::disallowed_methods,
     reason = "the marker's one read of the lane's checkout roots, `git rev-parse` through the one runner; it acts on nothing"
 )]
-pub fn checkout(worktree: &Path) -> Result<Checkout> {
+fn located(worktree: &Path) -> Result<std::result::Result<Checkout, String>> {
     let dir = worktree.display().to_string();
     let (program, prefix, isolation) = git_start();
     let mut args: Vec<&str> = prefix;
-    let env: Vec<(&str, &std::ffi::OsStr)> = isolation
+    let mut env: Vec<(&str, &std::ffi::OsStr)> = isolation
         .iter()
         .map(|(name, value)| (*name, value.as_os_str()))
         .collect();
+    env.push(("LC_ALL", std::ffi::OsStr::new("C")));
     args.extend([
         "-C",
         &dir,
@@ -116,19 +124,16 @@ pub fn checkout(worktree: &Path) -> Result<Checkout> {
     .map_err(|e| refused("marker-git-failed", &[("cause", &e.to_string())]))?;
     if !out.status.success() {
         let cause = host::stderr_text(&out);
-        return Err(refused(
-            "marker-git-failed",
-            &[("cause", cause.lines().next().unwrap_or(""))],
-        ));
+        return Ok(Err(cause.lines().next().unwrap_or("").to_owned()));
     }
     let text = host::stdout_text(&out);
     let mut lines = text.lines();
     match (lines.next(), lines.next(), lines.next()) {
-        (Some(root), Some(git_dir), Some(common)) => Ok(Checkout {
+        (Some(root), Some(git_dir), Some(common)) => Ok(Ok(Checkout {
             root: PathBuf::from(root),
             git_dir: PathBuf::from(git_dir),
             common: PathBuf::from(common),
-        }),
+        })),
         _ => Err(refused(
             "marker-git-failed",
             &[("cause", "rev-parse-short")],
@@ -377,6 +382,27 @@ pub fn read(worktree: &Path, item: &str) -> Reading<String> {
         };
     };
     read_in(&checkout.common, item)
+}
+
+/// The root the marker for `item` holds, read from the checkout the
+/// directory `cwd` is in, under the common git directory git names for it,
+/// where the launch writes it whatever the checkout's layout (a linked
+/// worktree, a separate git directory, a bare repository's worktree):
+/// `Gone` where git reports no repository at `cwd`, which holds no marker,
+/// else as [`read`] answers.
+pub fn read_from(cwd: &Path, item: &str) -> Reading<String> {
+    if item_name(item).is_err() {
+        return Reading::Unreadable {
+            cause: "marker-item-invalid",
+        };
+    }
+    match located(cwd) {
+        Ok(Ok(checkout)) => read_in(&checkout.common, item),
+        Ok(Err(line)) if line.starts_with("fatal: not a git repository") => Reading::Gone,
+        Ok(Err(_)) | Err(_) => Reading::Unreadable {
+            cause: "marker-git-failed",
+        },
+    }
 }
 
 /// The root the marker for `item` holds under the common git directory

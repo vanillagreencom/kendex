@@ -95,10 +95,20 @@ PR_REVIEW_WAIT_SECS = "900"
 PR_REVIEW_ON_TIMEOUT = "proceed"
 
 # Whether orch asks Copilot for a review or re-review. "off" sends no
-# request: under the approval gate mode the review call records the head's
-# request as fallback cause=off and, where the item runs in a lane, sends
-# the overseer the copilot-fallback notice that asks for that head's
-# approval instead, once per head; under the off gate mode the call
+# request. Under the approval gate mode, the review call falls back
+# cause=off on a head with no request record or an unspent one (requested,
+# sent or resent, or an existing answer) and, where the item runs in a
+# lane, owes and sends the overseer the copilot-fallback notice that asks
+# for that head's approval, once per head. A head whose request already
+# fell back keeps that fallback and its one notice, and a consumer refresh
+# head keeps its own route. With requests on, a draft the call keeps or a
+# refresh head leaves an unspent request record unspent: nothing is
+# claimed or sent until the head may take a request. The off notice goes
+# out from the call that records the fallback, not once a later read finds
+# the head unapproved, and is not held while Copilot's work runs: the
+# overseer's approval still holds on that work and on open threads. A head
+# fallen back off requests nothing when the setting is turned back on; a
+# new head requests as usual. Under the off gate mode the call
 # requests nothing and records no fallback, and its hold still waits on
 # Copilot work already running on the head. Set it when the Copilot review
 # budget is spent.
@@ -201,9 +211,8 @@ ORCH_MERGE_AUTONOMY = "auto"
 
 # The overseer's status report on what landed, is running, comes next and
 # waits on you, pasted into its chat and saved. "on" writes one on the
-# schedule below; "off" writes none on a schedule. A live overseer's
-# handover writes one either way, unless its record names its own succession
-# command; a dead or walled overseer's writes none.
+# schedule below; "off" writes none on a schedule. Whether a handover
+# writes one is workflows/oversee.md § Succession's.
 # values: on | off
 ORCH_REPORT = "on"
 

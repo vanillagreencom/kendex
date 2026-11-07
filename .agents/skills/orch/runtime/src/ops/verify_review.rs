@@ -295,6 +295,15 @@ impl HeadRecord {
         }
     }
 
+    /// Whether the head's request already fell back, whatever its cause:
+    /// a settled record, which `PR_COPILOT_REQUESTS=off` leaves as it
+    /// stands.
+    fn fell_back(&self) -> bool {
+        self.request
+            .as_ref()
+            .is_some_and(|request| request.outcome == FALLBACK)
+    }
+
     /// Whether the head's request stands as the `draft` fallback: no
     /// request went out, and none will while the head reads draft.
     fn held_as_draft(&self) -> bool {
@@ -509,11 +518,14 @@ pub fn run(
         asked: false,
         note: None,
         item: state::item_of(path).map(str::to_owned),
-        git_common: settings.roots.common.join(".git"),
+        checkout: settings.roots.project.clone(),
         lane: None,
         mail: Mailbox::new(settings.lane_mail_cli.clone()),
         notice_dir: settings.state_dir.join("review"),
         nonce: env.round_id(),
+        draft: false,
+        pull: None,
+        eligibility: None,
     };
     let judged = gate.judge();
     if !matches!(judged, Err(Stop::Refused(_))) {
@@ -549,9 +561,9 @@ struct Gate<'a> {
     note: Option<String>,
     /// The item the record keys, the lane's mailbox where it runs in one.
     item: Option<String>,
-    /// The common git directory of the checkout the call runs in, where a
-    /// launch writes the lane's marker.
-    git_common: PathBuf,
+    /// The checkout the call runs in, whose common git directory holds the
+    /// lane's launch marker.
+    checkout: PathBuf,
     /// The lane's root its marker names, read once and only where a notice
     /// is at stake.
     lane: Option<Reading<PathBuf>>,
@@ -559,7 +571,18 @@ struct Gate<'a> {
     /// Where a notice's text is written for the mailbox program to read.
     notice_dir: PathBuf,
     nonce: String,
+    /// Whether the head reads draft and this call did not mark it ready.
+    draft: bool,
+    /// The `pulls/N` read the call made, for the eligibility to reuse.
+    pull: Option<Pull>,
+    /// The head's eligibility, judged once per call (`ineligible`).
+    eligibility: Option<Option<&'static str>>,
 }
+
+/// The head's admission to a Copilot request on this call: only
+/// `Gate::eligible` makes one and `Gate::post` takes one, so every POST,
+/// the request's and the error retry's, passes the head's eligibility.
+struct Eligible(());
 
 #[allow(
     clippy::disallowed_methods,
@@ -593,8 +616,8 @@ impl Gate<'_> {
         self.reply.approvals = Some(judged.approvals);
         self.reply.changes_requested = Some(judged.changes_requested);
         self.reply.unresolved_count = Some(unresolved);
-        let draft = self.view.draft && !marked;
-        let record = self.request(record, draft, marked)?;
+        self.draft = self.view.draft && !marked;
+        let record = self.request(record, marked)?;
         if judged.approved && unresolved == 0 {
             let reason = format!(
                 "decision={} approvals={} unresolved={unresolved}",
@@ -723,25 +746,25 @@ impl Gate<'_> {
     /// made the draft ready, or once the view and `pulls/N` both read it
     /// ready, so a call where the two reads disagree records and notifies
     /// nothing again.
-    fn request(
-        &mut self,
-        record: Option<HeadRecord>,
-        draft: bool,
-        marked: bool,
-    ) -> Step<HeadRecord> {
-        let mut pull = None;
+    fn request(&mut self, record: Option<HeadRecord>, marked: bool) -> Step<HeadRecord> {
         let mut ready = marked;
         if !ready && !self.view.draft && record.as_ref().is_some_and(HeadRecord::held_as_draft) {
             let read = review::pull(&self.gh, &self.r.repo, self.r.pr)?;
             ready = !read.draft;
-            pull = Some(read);
+            self.pull = Some(read);
         }
         let stands = |head: &HeadRecord| head.request.is_some() && !(ready && head.held_as_draft());
         if let Some(head) = record.as_ref().filter(|head| stands(head)) {
+            if !self.review.copilot_requests
+                && !head.fell_back()
+                && self.ineligible()? == Some("off")
+            {
+                return self.fall_back_off();
+            }
             self.reply.request = head.request.as_ref().map(|q| q.report(false));
-            return self.confirm_request(head.clone(), draft, pull);
+            return self.confirm_request(head.clone());
         }
-        let ineligible = self.ineligible(draft, pull)?;
+        let ineligible = self.ineligible()?;
         // The released writer's retry is carried into the head's retry, so
         // a head mid-wait at an upgrade spends no second retry; an error
         // answer standing on the head makes this request its one retry,
@@ -807,10 +830,35 @@ impl Gate<'_> {
             }
         })?;
         self.reply.request = claimed.request.as_ref().map(|q| q.report(claimed_now));
-        if claimed_now && post {
-            return self.post_request(claimed);
+        if claimed_now
+            && post
+            && let Ok(eligible) = self.eligible()?
+        {
+            return self.post_request(claimed, eligible);
         }
         Ok(claimed)
+    }
+
+    /// `PR_COPILOT_REQUESTS=off` is the consumer's choice for the pull
+    /// request, not a passing state: a head whose request record stands
+    /// unspent (`requested`, its resend, an `existing` answer) falls back
+    /// `cause=off` on the call that reads it, its notice owed in the same
+    /// write, as a fresh head under `off` does. A head that already fell
+    /// back keeps that fallback and owes no second notice.
+    fn fall_back_off(&mut self) -> Step<HeadRecord> {
+        let owed = self.notice_for("off", None);
+        let path = self.path;
+        let (head, now) = self.update_head(|standing| {
+            let mut head = standing.ok_or_else(|| shape(path, "heads"))?;
+            if head.fell_back() {
+                return Ok((head.clone(), (head, false)));
+            }
+            head.request = Some(RequestRecord::fallback("off", None));
+            head.owe(owed.as_ref());
+            Ok((head.clone(), (head, true)))
+        })?;
+        self.reply.request = head.request.as_ref().map(|q| q.report(now));
+        Ok(head)
     }
 
     /// A standing `requested`, or an `existing-run` that stood for one, read
@@ -823,15 +871,10 @@ impl Gate<'_> {
     /// back `unconfirmed` so the fallback notice goes out. The request is
     /// sent at most twice per head; Copilot's error answer takes its own
     /// retry, sent at most twice (`retry`). A claim and a resend are
-    /// requests, so each waits on the head's eligibility (`ineligible`): a
+    /// requests, so each waits on the head's eligibility (`eligible`): a
     /// call that may not ask sends nothing and leaves the record as it
     /// stands, spending neither.
-    fn confirm_request(
-        &mut self,
-        head: HeadRecord,
-        draft: bool,
-        pull: Option<Pull>,
-    ) -> Step<HeadRecord> {
+    fn confirm_request(&mut self, head: HeadRecord) -> Step<HeadRecord> {
         let Some(request) = head.request.clone() else {
             return Ok(head);
         };
@@ -843,9 +886,14 @@ impl Gate<'_> {
         if landed {
             return Ok(head);
         }
-        if !request.resent && self.ineligible(draft, pull)?.is_some() {
-            return Ok(head);
-        }
+        let eligible = if request.resent {
+            None
+        } else {
+            match self.eligible()? {
+                Ok(eligible) => Some(eligible),
+                Err(_) => return Ok(head),
+            }
+        };
         let owed = self.notice_for("unconfirmed", None);
         let path = self.path;
         let (head, read) = self.update_head(|standing| {
@@ -873,9 +921,15 @@ impl Gate<'_> {
         match read {
             Unconfirmed::Claim => {
                 self.reply.request = head.request.as_ref().map(|q| q.report(true));
-                self.post_request(head)
+                match eligible {
+                    Some(eligible) => self.post_request(head, eligible),
+                    None => Ok(head),
+                }
             }
-            Unconfirmed::Resend => self.post_request(head),
+            Unconfirmed::Resend => match eligible {
+                Some(eligible) => self.post_request(head, eligible),
+                None => Ok(head),
+            },
             Unconfirmed::FellBack => {
                 self.reply.request = head.request.as_ref().map(|q| q.report(true));
                 Ok(head)
@@ -891,13 +945,16 @@ impl Gate<'_> {
     /// claim, resend or POST, a fresh head's and a standing one's alike:
     /// `refresh` where the consumer's refresh policy names the pull request
     /// its refresh head, `off` where `PR_COPILOT_REQUESTS` is `off`, `draft`
-    /// where `draft` (the view's draft this call did not mark ready) or
-    /// `pulls/N` reads it draft; `None` where it may. `pull` is the
-    /// `pulls/N` read the call already made, else it is read here; a head
+    /// where the view's draft this call did not mark ready, or `pulls/N`,
+    /// reads it draft; `None` where it may. Judged once per call, over the
+    /// `pulls/N` read the call already made, else one read here; a head
     /// that moved between the two reads is `pending head-moved`.
-    fn ineligible(&mut self, draft: bool, pull: Option<Pull>) -> Step<Option<&'static str>> {
+    fn ineligible(&mut self) -> Step<Option<&'static str>> {
+        if let Some(judged) = self.eligibility {
+            return Ok(judged);
+        }
         let policy = policy(&self.r.base_checkout)?;
-        let pull = match pull {
+        let pull = match self.pull.take() {
             Some(pull) => pull,
             None => review::pull(&self.gh, &self.r.repo, self.r.pr)?,
         };
@@ -925,28 +982,47 @@ impl Gate<'_> {
             }
             Some(other) => return Err(settings::value_refusal(REFRESH_REVIEW_KEY, other).into()),
         };
-        Ok(if refresh {
+        let judged = if refresh {
             Some("refresh")
         } else if !self.review.copilot_requests {
             Some("off")
-        } else if draft || pull.draft {
+        } else if self.draft || pull.draft {
             Some("draft")
         } else {
             None
+        };
+        self.eligibility = Some(judged);
+        Ok(judged)
+    }
+
+    /// The head's admission to a request on this call, or why it may take
+    /// none (`ineligible`): every route asks it before its claim, so a
+    /// request the head may not take spends nothing.
+    fn eligible(&mut self) -> Step<std::result::Result<Eligible, &'static str>> {
+        Ok(match self.ineligible()? {
+            None => Ok(Eligible(())),
+            Some(cause) => Err(cause),
         })
+    }
+
+    /// The gate's one Copilot request POST, the request's and the error
+    /// retry's, a claim's and a resend's, on the head's admission. A POST
+    /// made drops the call's work read, which knows nothing of it, so the
+    /// call's own hold reads the request it made.
+    fn post(&mut self, _admitted: Eligible) -> Step<Acted> {
+        self.asked = true;
+        let acted = review::request_review(&self.gh, &self.r.repo, self.r.pr)?;
+        if matches!(acted, Acted::Made) {
+            self.work = None;
+        }
+        Ok(acted)
     }
 
     /// The request's POST, its claim standing; a refusal rewrites the
     /// request, and the retry claimed in the same write, as refused.
-    fn post_request(&mut self, claimed: HeadRecord) -> Step<HeadRecord> {
-        self.asked = true;
-        let exit = match review::request_review(&self.gh, &self.r.repo, self.r.pr)? {
-            Acted::Made => {
-                // The work read before the POST knows nothing of it: read
-                // again, so this call's hold sees the request it made.
-                self.work = None;
-                return Ok(claimed);
-            }
+    fn post_request(&mut self, claimed: HeadRecord, admitted: Eligible) -> Step<HeadRecord> {
+        let exit = match self.post(admitted)? {
+            Acted::Made => return Ok(claimed),
             Acted::Refused { exit, .. } => exit,
         };
         let owed = self.notice_for("refused", Some(exit));
@@ -976,7 +1052,9 @@ impl Gate<'_> {
     /// cause the verdict's; Copilot's work already in flight stands for the
     /// retry; a retry the released writer recorded is the head's; a
     /// `requested` retry GitHub shows no sign of is sent once more; and a
-    /// second error answer after the retry is the verdict.
+    /// second error answer after the retry is the verdict. Its claim and its
+    /// resend wait on the head's eligibility (`eligible`) as the request's
+    /// do: on a head that may take no request now nothing is claimed or sent.
     fn retry(
         &mut self,
         record: &HeadRecord,
@@ -1011,15 +1089,20 @@ impl Gate<'_> {
                 }
                 return Ok(None);
             }
-            let fresh = if self.work()?.is_some() {
-                RetryRecord::new(error_id, EXISTING)
-            } else {
-                RetryRecord::new(error_id, REQUESTED)
+            if self.work()?.is_some() {
+                let existing = RetryRecord::new(error_id, EXISTING);
+                self.set_retry(
+                    |standing| standing.is_none().then(|| existing.clone()),
+                    None,
+                )?;
+                return Ok(None);
+            }
+            let Ok(admitted) = self.eligible()? else {
+                return Ok(None);
             };
-            let claimed =
-                self.set_retry(|standing| standing.is_none().then(|| fresh.clone()), None)?;
-            if claimed && fresh.outcome == REQUESTED {
-                return self.post_retry(fresh);
+            let fresh = RetryRecord::new(error_id, REQUESTED);
+            if self.set_retry(|standing| standing.is_none().then(|| fresh.clone()), None)? {
+                return self.post_retry(fresh, admitted);
             }
             return Ok(None);
         };
@@ -1059,6 +1142,9 @@ impl Gate<'_> {
                 format!("copilot-error cause={cause}"),
             )));
         }
+        let Ok(admitted) = self.eligible()? else {
+            return Ok(None);
+        };
         let resent = RetryRecord {
             resent: true,
             ..retry.clone()
@@ -1068,15 +1154,14 @@ impl Gate<'_> {
             None,
         )?;
         if claimed {
-            return self.post_retry(resent);
+            return self.post_retry(resent, admitted);
         }
         Ok(None)
     }
 
     /// The retry's POST, its claim standing; a refusal is the verdict.
-    fn post_retry(&mut self, retry: RetryRecord) -> Step<Option<Verdict>> {
-        self.asked = true;
-        let exit = match review::request_review(&self.gh, &self.r.repo, self.r.pr)? {
+    fn post_retry(&mut self, retry: RetryRecord, admitted: Eligible) -> Step<Option<Verdict>> {
+        let exit = match self.post(admitted)? {
             Acted::Made => return Ok(None),
             Acted::Refused { exit, .. } => exit,
         };
@@ -1298,17 +1383,18 @@ impl Gate<'_> {
         })
     }
 
-    /// The lane's root, as the launch marker for the item under the call's
-    /// common git directory names it: the turn-end hook's own reading of
-    /// whether the item runs in a lane, from the lane's worktree and the
-    /// main checkout alike.
+    /// The lane's root, as the launch marker for the item names it under the
+    /// common git directory of the checkout the call runs in, where the
+    /// launch writes it (`marker::read_from`): the turn-end hook's own
+    /// reading of whether the item runs in a lane, from the lane's worktree
+    /// and the main checkout alike.
     fn lane_root(&mut self) -> Reading<PathBuf> {
         if let Some(read) = &self.lane {
             return read.clone();
         }
         let read = match self.item.as_deref() {
             Some(item) if marker::item_name(item).is_ok() => {
-                marker::read_in(&self.git_common, item).map(PathBuf::from)
+                marker::read_from(&self.checkout, item).map(PathBuf::from)
             }
             Some(_) | None => Reading::Gone,
         };

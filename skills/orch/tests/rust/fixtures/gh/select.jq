@@ -37,10 +37,11 @@
 # variable whose definition its position does not admit), a variable used
 # and never defined or defined and never used, and a variable defined with
 # a type that is no input type are refused. `__typename` is a field of
-# every type. GitHub's own rules on a connection are applied too: a
-# connection field takes `first` or `last`, and a literal one between 1 and
-# 100 (docs.github.com/en/graphql/overview/rate-limits-and-query-limits-
-# for-the-graphql-api, Node limit).
+# every type, and an `Int` literal is a signed 32-bit integer (§ 3.5.1).
+# GitHub's own rules on a connection are applied too: a connection field
+# takes `first` or `last`, never both and neither null, and a literal one
+# between 1 and 100 (docs.github.com/en/graphql/overview/rate-limits-and-
+# query-limits-for-the-graphql-api, Node limit).
 #
 # The plants: a field is planted under its schema name, never under a
 # response alias, and the answer carries the planted value under the
@@ -308,7 +309,7 @@ def takes($at; $variables):
   else
     ($at | nullable) as $kind
     | . as $value
-    | if $kind == "Int" then .k == "int"
+    | if $kind == "Int" then .k == "int" and .n >= -2147483648 and .n <= 2147483647
       elif $kind == "String" then .k == "string"
       elif $kind == "Boolean" then .k == "boolean"
       elif $kind == "ID" then .k == "string" or .k == "int"
@@ -411,11 +412,15 @@ def validate($kind; $path; $variables):
               then refuse("variable $\(($value | uses) - ($variables | keys) | .[0]) undefined at \($at)")
               elif $value | takes($takes[$argument]; $variables) | not
               then refuse("argument \($argument) at \($at) takes \($takes[$argument])")
+              elif ($argument == "first" or $argument == "last") and $value.k == "null"
+              then refuse("argument \($argument) at \($at) is null")
               elif ($argument == "first" or $argument == "last") and $value.k == "int" and ($value.n < 1 or $value.n > 100)
               then refuse("argument \($argument) at \($at) outside 1..100")
               else . end)
         | if ($position[0] | endswith("Connection")) and ($given | has("first") or has("last") | not)
           then refuse("a connection with no first or last at \($at)") else . end
+        | if $given | has("first") and has("last")
+          then refuse("first and last together at \($at)") else . end
         | if $position[0] == "S" and $field.s != true then refuse("selection on a scalar at \($at)")
           elif $position[0] != "S" and $field.s == true then refuse("no selection on \($position[0]) at \($at)")
           elif $field.s == true then . + {($key): ($field + {t: "S", l: $position[1]})}
