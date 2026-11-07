@@ -30,7 +30,7 @@ Package updates preserve your standing instructions, own skills, memory and hand
 
 ## Your choices
 
-You choose the Jarvis home, personal rules, own skills and supported connections. Machine-specific settings belong to that machine. If you use a [Jarvis satellite](HIW-messages.md#a-second-machine), Jarvis on Jarvis main remains responsible for shared home work.
+You choose the Jarvis home, personal rules, own skills and supported connections. Machine-specific settings belong to that machine. If you use [satellites](HIW-messages.md#a-second-machine), the main remains responsible for shared home work.
 
 ## Related pages
 

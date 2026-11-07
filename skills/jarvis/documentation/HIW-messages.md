@@ -1,10 +1,10 @@
 # How do requests and decisions reach Jarvis?
 
-You can speak to Jarvis in a terminal, through Jarvis Voice or through a configured Slack connection. Repository agents send reports and questions through their own channels. A delivery receipt establishes delivery; Jarvis still has to read the message and act on it.
+You can speak to Jarvis in a terminal or through a configured voice or Slack connection. Repository agents send reports and questions through their own channels. A delivery receipt establishes delivery; Jarvis still has to read the message and act on it.
 
 ```mermaid
 flowchart LR
-    You[You] -->|terminal, Jarvis Voice or Slack| Jarvis[Jarvis]
+    You[You] -->|terminal, voice or Slack| Jarvis[Jarvis]
     Agents[Repository agents] -->|reports and questions| Jarvis
     Jarvis -->|asks for a decision| You
     You -->|answers| Jarvis
@@ -12,7 +12,7 @@ flowchart LR
 
 ## The channel
 
-A direct conversation carries your request and Jarvis's reply. Slack needs its configured app and relay. Jarvis Voice needs the consumer's voice connection. The Jarvis package does not turn every possible entry point on merely by being installed.
+A direct conversation carries your request and Jarvis's reply. Slack needs its configured app and relay. Voice needs the consumer's voice connection. The Jarvis package does not turn every possible entry point on merely by being installed.
 
 The configured event source collects messages from the Jarvis home and declared machines and brings settled bursts to the session. Each source retains its delivery progress for restart. An unavailable source is reported as unavailable; silence alone establishes no agent's state.
 
@@ -24,13 +24,13 @@ A receipt or a delivery reaction cannot prove that Jarvis read or applied the an
 
 ## A second machine
 
-Jarvis main is the one computer that runs Jarvis. A Jarvis satellite is another computer that runs Jarvis Voice, not Jarvis. It handles local screen, files, apps and sign-in. It asks before forwarding a request that belongs on Jarvis main and tells you whether delivery succeeded or remains queued. The request and answer appear in the owner's Slack channel.
+One machine acts as the main Jarvis. A satellite handles local screen, files, apps and sign-in. It asks before forwarding a request that belongs on the main and tells you whether delivery succeeded or remains queued. The request and answer appear in the owner's Slack channel.
 
-Forwarding consent covers forwarding. It does not establish the caller's identity or approve a reserved action on Jarvis main. Jarvis applies the action's own decision boundary there.
+Forwarding consent covers forwarding. It does not establish the caller's identity or approve a reserved action on the main. The main applies the action's own decision boundary.
 
 ## Your choices
 
-You choose the channels, declared machines, which computer is Jarvis main and the report schedule. A connection or reach setting changes where messages can travel; your responsibility map still controls the actions they request.
+You choose the channels, declared machines, main Jarvis and report schedule. A connection or reach setting changes where messages can travel; your responsibility map still controls the actions they request.
 
 ## Related pages
 
