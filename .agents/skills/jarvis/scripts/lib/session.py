@@ -28,9 +28,6 @@ BASH = os.environ["JARVIS_BASH"]
 # VGS bounds each call at 60 seconds. Leave time to print its answer.
 CALL_SECONDS = 55
 START_BRIEF = "Read .agents/skills/jarvis/SKILL.md and follow the Start procedure in .agents/skills/jarvis/workflows/session.md."
-# Each harness's own default account directory, which Start takes when the
-# caller names none.
-ACCOUNTS = {"claude": ".claude", "codex": ".codex", "copilot": ".copilot", "pi": ".pi/agent"}
 STATE_REASONS = {
     "running": {"resumed", "new-no-record", "new-history-gone", "new-selection-changed", "new-requested", "existing"},
     "starting": {"launching"}, "handing-over": {"succession"}, "stopping": {"stop-requested"},
@@ -532,6 +529,12 @@ os.execvpe(argv[0],argv,env)
             if not shutil.which(args.harness):
                 raise Refusal("app-missing")
             self.env = environment(args.harness, policy=True)
+            if args.account is None:
+                # orch's resolver reads the harness's own account variable,
+                # such as CODEX_HOME, from the caller's environment.
+                args.account = self.backend("account", args.harness, env=dict(os.environ)).stdout.strip()
+                if not clean(args.account) or not Path(args.account).is_absolute():
+                    raise Refusal("record-unreadable")
             account = str(Path(args.account).resolve(strict=True))
             requested = stated = None
             if args.model is not None:
@@ -630,8 +633,7 @@ os.execvpe(argv[0],argv,env)
             raise Refusal("home-not-dedicated", home.SEPARATE_FOLDER)
         except home.Failed as failure:
             print(failure.line(), file=sys.stderr)
-            raise Refusal("launch-failed", "Jarvis could not write its starting files. Check the init line in the output.", "failed")
-        print("jarvis-session: init=" + json.dumps(report, separators=(",", ":")), file=sys.stderr)
+            raise Refusal("launch-failed", "Jarvis could not set up its starting files. Check the init line in the output.", "failed")
         for line in home.settings_lines(report):
             print(line, file=sys.stderr)
 
@@ -1155,9 +1157,7 @@ def main():
         elif verb == "succeed":
             command.add_argument("--account-walled", action="store_true")
     args = parser.parse_args()
-    if args.verb == "start" and args.account is None:
-        args.account = str(Path.home() / ACCOUNTS[args.harness])
-    if not clean(args.home) or (args.verb == "start" and not clean(args.account)):
+    if not clean(args.home) or (args.verb == "start" and args.account is not None and not clean(args.account)):
         parser.error("path")
     if args.verb == "start" and ((args.model is None) != (args.effort is None) or not all(
             value is None or clean(value) and value and ":" not in value for value in (args.model, args.effort))):

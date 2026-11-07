@@ -12,20 +12,27 @@ import tempfile
 # The top-level names ../../references/home-layout.md § Initialize accepts:
 # the home layout's paths, Git's, and the files kendex writes in a project.
 # Any other entry means the folder is something else, such as an ordinary
-# project.
+# project. The kendex names copy KENDEX_FILES and kendex_dirs in
+# crates/core/src/settings_secret/destination.rs, which a catalog script
+# cannot import.
 NAMES = frozenset({
     "AGENTS.md", "skills", "memory", "state", "tmp", ".env.local",
     ".git", ".gitignore",
     "kendex.toml", "kendex.settings.toml", ".kendex-lock.json", ".kendex-generated.json", ".cache",
+    ".kendex", ".kendex-local",
     ".agents", ".claude", ".codex", ".github", ".pi", ".opencode", ".cursor", ".gemini",
     ".mcp.json", "opencode.json", "opencode.jsonc",
 })
-STARTING = ("AGENTS.md", "memory/MEMORY.md", "state")
 # The route keeps one copy of the persona: the installed file. An app that
 # supplies the persona itself has its text loaded already.
 ROUTE = ("Read `.agents/skills/jarvis/persona.md` and follow it."
          " Read it once per session; when its text is already loaded, use that text.\n")
 INDEX = "# Memory index\n"
+# The starting files Git carries: a folder holding both is an initialized
+# home on every clone. STATE is the starting folder, which Git does not
+# carry while it is empty.
+FILES = (("memory/MEMORY.md", INDEX), ("AGENTS.md", ROUTE))
+STATE = "state"
 # The separate-folder action every refusal names, within the 200 printable
 # characters a session answer's detail holds.
 SEPARATE_FOLDER = ("Jarvis needs a folder of its own. Make a new folder outside any project,"
@@ -38,6 +45,7 @@ CLAUDE_SETTINGS = ".claude/settings.json"
 CODEX_CONFIG = ".codex/config.toml"
 # Variables that point git at another repository than the folder asked about.
 GIT_REDIRECTS = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"}
+NOT_A_REPOSITORY = re.compile(r"^fatal: not a git repository", re.MULTILINE)
 FEATURES_HEADER = re.compile(r"^[ \t]*\[[ \t]*features[ \t]*\][ \t]*(#.*)?$", re.MULTILINE)
 
 
@@ -46,60 +54,73 @@ class Unmergeable(ValueError):
 
 
 class Refused(Exception):
-    """The folder is not a dedicated home; nothing was written."""
+    """The folder is not a dedicated home; nothing was written. NAME and VALUE name what refused it."""
 
-    def __init__(self, cause, entry=None):
+    def __init__(self, cause, name=None, value=None):
         super().__init__(cause)
-        self.cause, self.entry = cause, entry
+        self.cause, self.name, self.value = cause, name, value
 
     def line(self):
         return ("jarvis-session: init=refused cause=" + self.cause
-                + (" entry=" + json.dumps(self.entry) if self.entry is not None else ""))
+                + (" " + self.name + "=" + json.dumps(self.value) if self.name else ""))
 
 
 class Failed(Exception):
     """A step could not complete; `created` names what this call wrote before it."""
 
-    def __init__(self, cause, path, created):
+    def __init__(self, cause, path, created, detail=None):
         super().__init__(cause)
-        self.cause, self.path, self.created = cause, path, created
+        self.cause, self.path, self.created, self.detail = cause, path, created, detail
 
     def line(self):
         return ("jarvis-session: init=failed path=" + self.path + " cause=" + self.cause
-                + " created=" + ",".join(self.created))
+                + " created=" + ",".join(self.created)
+                + (" detail=" + json.dumps(self.detail) if self.detail else ""))
+
+
+def initialized(home):
+    return all((Path(home) / relative).exists() for relative, _ in FILES)
 
 
 def complete(home):
-    home = Path(home)
-    return (home / "AGENTS.md").exists() and (home / "memory/MEMORY.md").exists() and (home / "state").is_dir()
+    return initialized(home) and (Path(home) / STATE).is_dir()
 
 
-def toplevel(directory):
-    """The work tree root git finds from DIRECTORY, or None outside every work tree."""
+def toplevel(directory, path):
+    """The work tree root git finds from DIRECTORY, or None outside every work tree; PATH names DIRECTORY in a failure."""
     env = {key: value for key, value in os.environ.items() if key not in GIT_REDIRECTS}
+    # C keeps git's message in the words matched below.
+    env["LC_ALL"] = "C"
     try:
         # rev-parse reads config and runs nothing; safe.directory keeps a
         # repository owned by someone else from reading as no repository.
         result = subprocess.run(["git", "-c", "safe.directory=*", "-C", str(directory), "rev-parse", "--show-toplevel"],
                                 env=env, capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.SubprocessError) as failure:
-        raise Failed("git-" + type(failure).__name__, ".git", [])
-    if result.returncode == 128:
+        raise Failed("git-" + type(failure).__name__, path, [])
+    # git exits 128 on every fatal error. Only its not-a-repository outcome
+    # means no work tree; a repository git cannot read may still enclose
+    # DIRECTORY.
+    if result.returncode == 128 and NOT_A_REPOSITORY.search(result.stderr):
         return None
     if result.returncode:
-        raise Failed("git-exit-" + str(result.returncode), ".git", [])
+        raise Failed("git-exit-" + str(result.returncode), path, [], (result.stderr.splitlines() or [""])[0])
     return Path(result.stdout.strip()).resolve()
 
 
 def qualify(home):
-    root = toplevel(home)
+    root = toplevel(home, ".")
     if root is None:
         raise Refused("no-git")
-    if root != home or (home.parent != home and toplevel(home.parent) is not None):
-        raise Refused("inside-work-tree")
+    # The enclosing work tree: the one git finds from HOME when HOME is not
+    # its root, else the one around HOME's own repository.
+    if root == home:
+        root = toplevel(home.parent, "..") if home.parent != home else None
+    if root is not None:
+        raise Refused("inside-work-tree", "work-tree", str(root))
     extra = sorted(set(os.listdir(home)) - NAMES)
     if extra:
-        raise Refused("other-entry", extra[0])
+        raise Refused("other-entry", "entry", extra[0])
 
 
 def replace(path, text):
@@ -190,18 +211,21 @@ def toml_loads(text):
 def init(home):
     """Write the missing starting files of a dedicated HOME and report each one."""
     home = Path(home).resolve(strict=True)
-    qualify(home)
+    # A clone of an initialized home can lack only STATE; its own files and
+    # entries were already judged when it was set up.
+    if not initialized(home):
+        qualify(home)
     created, kept = [], []
     try:
-        (home / "state").mkdir()
-        created.append("state")
+        (home / STATE).mkdir()
+        created.append(STATE)
     except FileExistsError:
-        if not (home / "state").is_dir():
-            raise Failed("not-a-directory", "state", created)
-        kept.append("state")
+        if not (home / STATE).is_dir():
+            raise Failed("not-a-directory", STATE, created)
+        kept.append(STATE)
     except OSError as failure:
-        raise Failed(type(failure).__name__, "state", created)
-    for relative, text in (("memory/MEMORY.md", INDEX), ("AGENTS.md", ROUTE)):
+        raise Failed(type(failure).__name__, STATE, created)
+    for relative, text in FILES:
         path = home / relative
         try:
             path.parent.mkdir(exist_ok=True)

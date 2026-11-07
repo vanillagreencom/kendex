@@ -224,11 +224,29 @@ class MainHostContract(unittest.TestCase):
         self.assertNotIn("private-secret", result.stderr + result.stdout)
 
 
+def scratch_base():
+    """A scratch base outside every Git work tree: a home fixture there qualifies.
+
+    A lane's TMPDIR can lie under its worktree's tmp/, as the comment above
+    TEMP_BASE in skills/reviewer/scripts/mutation-stability records.
+    """
+    base = tempfile.gettempdir()
+    env = {key: value for key, value in os.environ.items()
+           if key not in {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"}}
+    found = subprocess.run(["git", "-c", "safe.directory=*", "-C", base, "rev-parse", "--show-toplevel"],
+                           env=env, capture_output=True, text=True, timeout=30)
+    return base if found.returncode == 128 else "/tmp"
+
+
+# The fixture's Codex file, comment included: a merge keeps every other byte.
+CODEX_FIXTURE = "# features this home turns on\n[features]\nhooks = true\n"
+
+
 class HomeInitContract(unittest.TestCase):
     """jarvis-session init and the first manual Start write one set of starting files."""
 
     def setUp(self):
-        self.scratch = tempfile.TemporaryDirectory()
+        self.scratch = tempfile.TemporaryDirectory(dir=scratch_base())
         self.addCleanup(self.scratch.cleanup)
         self.root = Path(self.scratch.name).resolve()
         # No tmux on this PATH: every Start refuses after its initialization
@@ -259,7 +277,7 @@ class HomeInitContract(unittest.TestCase):
         (home / ".claude").mkdir()
         (home / ".claude/settings.json").write_text('{\n  "hooks": {\n    "Stop": []\n  }\n}\n')
         (home / ".codex").mkdir()
-        (home / ".codex/config.toml").write_text("[features]\nhooks = true\n")
+        (home / ".codex/config.toml").write_text(CODEX_FIXTURE)
         (home / "kendex.toml").write_text("")
         (home / ".gitignore").write_text("/tmp/\n")
         if git:
@@ -288,38 +306,73 @@ class HomeInitContract(unittest.TestCase):
 
     @staticmethod
     def keyed(line):
-        # The refusal line is a program's read: a leading key, then key=value.
-        return dict(word.split("=", 1) for word in line.split()[1:])
+        # The init line is a program's read: a leading key, then key=value,
+        # where a value with spaces is a JSON string.
+        return dict(re.findall(r'(\S+?)=("(?:[^"\\]|\\.)*"|\S*)', line.split(" ", 1)[1]))
+
+    def unreadable(self, repository):
+        # A config line git cannot parse: every git version refuses to read
+        # this repository with exit 128.
+        with (repository / ".git/config").open("a") as config:
+            config.write("[core\n")
 
     def record(self, home):
         key = hashlib.sha256(os.fsencode(str(home))).hexdigest()
         return self.root / "state/kendex/jarvis" / key / "jarvis-session.json"
 
-    def test_refused_folders_stay_unchanged(self):
+    def test_unqualified_folders_stay_unchanged(self):
         project = self.root / "project"
         project.mkdir()
         self.git_init(project)
+        broken = self.root / "broken"
+        broken.mkdir()
+        self.git_init(broken)
+
+        def planted(home):
+            (home / "README.md").write_text("an ordinary project\n")
+            return home
+
+        def enclosed_by_unreadable():
+            home = self.home("broken/jarvis")
+            self.unreadable(broken)
+            return home
+
+        def own_unreadable():
+            home = self.home("unreadable")
+            self.unreadable(home)
+            return home
+
+        blocked, failed = ("blocked", "home-not-dedicated"), ("failed", "launch-failed")
+        enclosing = {"init": "refused", "cause": "inside-work-tree", "work-tree": json.dumps(str(project))}
         rows = (
-            ("no-git", lambda: self.home("plain", git=False), "no-git", None),
-            ("inside-project", lambda: self.home("project/jarvis", git=False), "inside-work-tree", None),
-            ("nested-repository", lambda: self.home("project/nested"), "inside-work-tree", None),
-            ("other-entry", lambda: self.home("busy"), "other-entry", '"README.md"'),
+            # name, folder, the init line's keys but git's detail, Start's answer
+            ("no-git", lambda: self.home("plain", git=False), {"init": "refused", "cause": "no-git"}, blocked),
+            ("inside-project", lambda: self.home("project/jarvis", git=False), enclosing, blocked),
+            ("nested-repository", lambda: self.home("project/nested"), enclosing, blocked),
+            ("other-entry", lambda: planted(self.home("busy")),
+             {"init": "refused", "cause": "other-entry", "entry": '"README.md"'}, blocked),
+            # git exits 128 for a repository it cannot read, as for none: an
+            # enclosing one must still keep the home from qualifying.
+            ("enclosing-unreadable", enclosed_by_unreadable,
+             {"init": "failed", "path": "..", "cause": "git-exit-128", "created": ""}, failed),
+            ("own-unreadable", own_unreadable, {"init": "failed", "path": ".", "cause": "git-exit-128", "created": ""}, failed),
         )
-        for name, make, cause, entry in rows:
+        for name, make, line, (state, reason) in rows:
             with self.subTest(name=name):
                 home = make()
-                if entry:
-                    (home / "README.md").write_text("an ordinary project\n")
                 before = self.snapshot(home)
                 result = self.run_init(home)
                 self.assertEqual(result.returncode, 1, result.stderr)
                 self.assertEqual(result.stdout, "")
                 refusal = self.keyed(result.stderr.splitlines()[0])
-                self.assertEqual((refusal["init"], refusal["cause"], refusal.get("entry")), ("refused", cause, entry))
+                refusal.pop("detail", None)
+                self.assertEqual(refusal, line)
                 self.assertEqual(self.snapshot(home), before)
                 answer, started = self.start(home)
-                self.assertEqual((answer["state"], answer["reason"], started.returncode), ("blocked", "home-not-dedicated", 1))
-                self.assertEqual(self.keyed(started.stderr.splitlines()[0])["cause"], cause)
+                self.assertEqual((answer["state"], answer["reason"], started.returncode), (state, reason, 1))
+                refusal = self.keyed(started.stderr.splitlines()[0])
+                refusal.pop("detail", None)
+                self.assertEqual(refusal, line)
                 self.assertEqual(self.snapshot(home), before)
                 self.assertFalse(self.record(home).exists())
 
@@ -332,7 +385,6 @@ class HomeInitContract(unittest.TestCase):
         for caller in ("init", "start"):
             with self.subTest(caller=caller):
                 home = self.home(caller)
-                settings = json.loads((home / ".claude/settings.json").read_text())
                 if caller == "init":
                     result = self.run_init(home)
                     self.assertEqual(result.returncode, 0, result.stderr)
@@ -350,11 +402,11 @@ class HomeInitContract(unittest.TestCase):
                     answer = validate(started.stdout, started.returncode, "start")
                     self.assertEqual((answer["state"], answer["reason"]), ("blocked", "tmux-missing"))
                 self.assertIn(".agents/skills/jarvis/persona.md", (home / "AGENTS.md").read_text())
-                self.assertEqual(json.loads((home / ".claude/settings.json").read_text()),
-                                 dict(settings, autoMemoryEnabled=False))
-                if tomllib:
-                    self.assertEqual(tomllib.loads((home / ".codex/config.toml").read_text()),
-                                     {"features": {"hooks": True, "memories": False}})
+                self.assertEqual((home / ".claude/settings.json").read_text(),
+                                 '{\n  "autoMemoryEnabled": false,\n  "hooks": {\n    "Stop": []\n  }\n}\n')
+                self.assertEqual((home / ".codex/config.toml").read_text(),
+                                 "# features this home turns on\n[features]\nmemories = false\nhooks = true\n"
+                                 if tomllib else CODEX_FIXTURE)
                 homes[caller] = self.snapshot(home)
                 # Repeating either caller keeps every file it finds.
                 repeat = self.run_init(home)
@@ -364,6 +416,20 @@ class HomeInitContract(unittest.TestCase):
                 self.assertTrue(all(row["outcome"] in ("kept", "refused") for row in report["settings"]))
                 self.assertEqual(self.snapshot(home), homes[caller])
         self.assertEqual(homes["init"], homes["start"])
+
+    def test_initialized_home_clone_starts(self):
+        # A clone carries AGENTS.md and memory/MEMORY.md but not an empty
+        # state/. Its first manual Start on another machine adds state/ alone,
+        # whatever else the person keeps in the home.
+        home = self.home("clone")
+        initialized = self.run_init(home)
+        self.assertEqual(initialized.returncode, 0, initialized.stderr)
+        (home / "state").rmdir()
+        (home / "README.md").write_text("my notes\n")
+        before = self.snapshot(home)
+        answer, started = self.start(home)
+        self.assertEqual((answer["state"], answer["reason"]), ("blocked", "tmux-missing"), started.stderr)
+        self.assertEqual(self.snapshot(home), dict(before, state=("dir",)))
 
     def test_boot_and_app_starts_never_initialize(self):
         origins = ("app-on", "boot") if BootReceiptScenario.applicable else ("app-on",)
@@ -429,25 +495,33 @@ class HomeInitContract(unittest.TestCase):
                 self.assertEqual(outside.read_text(), "{}\n")
 
     def test_qualification_control(self):
-        # A copy without the enclosing work tree check must fail the nested
-        # repository row: the suite detects a home nested in a project.
-        skills = self.root / "control/skills"
-        scripts = skills / "jarvis/scripts"
-        shutil.copytree(SKILLS / "jarvis/scripts", scripts)
-        for dependency in ("mailbox", "orch"):
-            (skills / dependency).symlink_to(SKILLS / dependency, target_is_directory=True)
-        source = scripts / "lib/home.py"
-        before = source.read_text()
-        match = "if root != home or (home.parent != home and toplevel(home.parent) is not None):"
-        self.assertEqual(before.count(match), 1)
-        source.write_text(before.replace(match, "if root != home:"))
-        result = subprocess.run([str(ROOT / "skills/jarvis/tests/session.test.sh"),
-                                 "HomeInitContract.test_refused_folders_stay_unchanged", "-v"],
-                                env=os.environ | {"JARVIS_TEST_SCRIPT": str(scripts / "jarvis-session")},
-                                capture_output=True, text=True, timeout=120)
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("name='nested-repository'", result.stderr)
-        self.assertNotIn("name='no-git'", result.stderr)
+        # Each copy drops one check the suite must detect: the enclosing work
+        # tree search, and reading only git's not-a-repository exit as no
+        # work tree.
+        rows = (
+            ("enclosing-search", 'root = toplevel(home.parent, "..") if home.parent != home else None', "root = None",
+             "nested-repository"),
+            ("unreadable-as-none", "if result.returncode == 128 and NOT_A_REPOSITORY.search(result.stderr):",
+             "if result.returncode == 128:", "enclosing-unreadable"),
+        )
+        for name, match, mutant, row in rows:
+            with self.subTest(name=name):
+                skills = self.root / "control" / name / "skills"
+                scripts = skills / "jarvis/scripts"
+                shutil.copytree(SKILLS / "jarvis/scripts", scripts)
+                for dependency in ("mailbox", "orch"):
+                    (skills / dependency).symlink_to(SKILLS / dependency, target_is_directory=True)
+                source = scripts / "lib/home.py"
+                before = source.read_text()
+                self.assertEqual(before.count(match), 1)
+                source.write_text(before.replace(match, mutant))
+                result = subprocess.run([str(ROOT / "skills/jarvis/tests/session.test.sh"),
+                                         "HomeInitContract.test_unqualified_folders_stay_unchanged", "-v"],
+                                        env=os.environ | {"JARVIS_TEST_SCRIPT": str(scripts / "jarvis-session")},
+                                        capture_output=True, text=True, timeout=120)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn(f"name='{row}'", result.stderr)
+                self.assertNotIn("name='no-git'", result.stderr)
 
 
 class SessionContract(unittest.TestCase):
@@ -457,8 +531,8 @@ class SessionContract(unittest.TestCase):
         self.root = Path(self.scratch.name).resolve()
         self.home = self.root / "home"
         self.home.mkdir()
-        # A home with its starting files: the fixture's own files beside them
-        # would refuse the first manual Start's initialization.
+        # The fixture home has no Git repository and holds fixture files, so
+        # initialization would refuse it; its starting files skip that step.
         (self.home / "AGENTS.md").write_text("fixture standing instructions\n")
         (self.home / "memory").mkdir()
         (self.home / "memory/MEMORY.md").write_text("# Memory index\n")
@@ -971,14 +1045,22 @@ class SessionContract(unittest.TestCase):
                 self.wait("stopped", persisted_stop=True)
 
     def test_person_start_defaults(self):
-        # A person's Start names the harness alone: the harness's standard
-        # account directory, a new context and the manual origin.
-        account = Path(self.env["HOME"]) / ".claude"
-        account.mkdir()
+        # A person's Start names the harness alone: the account directory the
+        # harness itself uses, a new context and the manual origin.
+        standard = Path(self.env["HOME"]) / ".claude"
+        configured = self.root / "configured"
+        for account in (standard, configured):
+            account.mkdir()
         argv = [str(SCRIPT), "start", "--home", str(self.home), "--harness", "claude"]
-        for expected in ("new-no-record", "new-requested"):
+        rows = (
+            ("new-no-record", {}, standard),
+            # A repeat on the same account starts new: the mode default.
+            ("new-requested", {}, standard),
+            ("new-selection-changed", {"CLAUDE_CONFIG_DIR": str(configured)}, configured),
+        )
+        for expected, env, account in rows:
             with self.subTest(reason=expected):
-                result = subprocess.run(argv, env=self.env, capture_output=True, text=True, timeout=60)
+                result = subprocess.run(argv, env=self.env | env, capture_output=True, text=True, timeout=60)
                 validate(result.stdout, result.returncode, "start")
                 answer = self.wait(reason=expected)
                 self.assertEqual((answer["account"], answer["origin"]), (str(account), "manual"))
