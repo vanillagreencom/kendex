@@ -45,14 +45,14 @@ Jarvis reads the guidance your request needs, works within the authority you giv
 
 | Your question | Read |
 |---|---|
-| How does a request get finished? | [Tasks](references/HIW-tasks.md) |
-| How does Jarvis work with other agents? | [Delegation](references/HIW-delegation.md) |
-| How does work continue after a restart or handover? | [Sessions](references/HIW-sessions.md) |
-| What does Jarvis remember? | [Memory](references/HIW-memory.md) |
-| How do requests and decisions reach Jarvis? | [Messages](references/HIW-messages.md) |
-| What happens when a result needs another check? | [Checks](references/HIW-checks.md) |
-| How does Jarvis use my computer and accounts? | [Tools](references/HIW-tools.md) |
-| What belongs in my Jarvis home? | [Home](references/HIW-home.md) |
+| How does a request get finished? | [Tasks](documentation/HIW-tasks.md) |
+| How does Jarvis work with other agents? | [Delegation](documentation/HIW-delegation.md) |
+| How does work continue after a restart or handover? | [Sessions](documentation/HIW-sessions.md) |
+| What does Jarvis remember? | [Memory](documentation/HIW-memory.md) |
+| How do requests and decisions reach Jarvis? | [Messages](documentation/HIW-messages.md) |
+| What happens when a result needs another check? | [Checks](documentation/HIW-checks.md) |
+| How does Jarvis use my computer and accounts? | [Tools](documentation/HIW-tools.md) |
+| What belongs in my Jarvis home? | [Home](documentation/HIW-home.md) |
 
 ## Customise
 

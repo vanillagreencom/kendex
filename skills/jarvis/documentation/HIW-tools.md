@@ -31,7 +31,7 @@ Official originals remain unchanged in your private record store, apart from wor
 
 An uncertain send remains uncertain until its result is checked. Recovery starts by reading the failure. Replacing important data follows checked preservation and the relevant approval boundary.
 
-Your home selects the assistant's profiles, account references, permissions and retention policy. A connected account supplies access; it does not enlarge the task's authority.
+Your Jarvis home selects Jarvis's profiles, account references, permissions and retention policy. A connected account supplies access; it does not enlarge the task's authority.
 
 ## Related pages
 

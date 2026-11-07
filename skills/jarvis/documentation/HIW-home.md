@@ -4,7 +4,7 @@ Your Jarvis home keeps your instructions, own skills, memory and recovery notes 
 
 ```mermaid
 flowchart TD
-    Home[Your assistant home] --> Package[Installed Jarvis guidance]
+    Home[Your Jarvis home] --> Package[Installed Jarvis guidance]
     Home --> Yours[Your instructions, skills and memory]
     Home --> Recovery[Session recovery notes]
     Home --> Local[Local scratch and protected settings]
@@ -12,9 +12,9 @@ flowchart TD
 
 ## Setting up the home
 
-A home can be a plain folder used with a coding assistant or a home opened by an assistant app. A private Git repository lets committed instructions, skills, memory and recovery notes travel with its commits. Scratch and secrets stay local.
+A Jarvis home can be a plain folder used with a coding assistant or a folder opened by an assistant app. A private Git repository lets committed instructions, skills, memory and recovery notes travel with its commits. Scratch and secrets stay local.
 
-The [setup instructions](../README.md#customise) explain personal skills and settings. The [home layout reference](home-layout.md) gives the file locations and initial assistant setup.
+The [setup instructions](../README.md#customise) explain personal skills and settings. The [home layout reference](../references/home-layout.md) gives the file locations and initial assistant setup.
 
 ## Shared and personal content
 
@@ -24,13 +24,13 @@ The tracker keeps work. The [handoff](HIW-sessions.md) keeps recovery context. P
 
 ## Updates
 
-When kendex records the Jarvis installation, kendex controls package updates. An assistant app supplies updates in a home it manages without that kendex installation. The [update instructions](../README.md#update) explain the applicable route.
+When kendex records the Jarvis installation, kendex controls package updates. An assistant app supplies updates in a Jarvis home it manages without that kendex installation. The [update instructions](../README.md#update) explain the applicable route.
 
 Package updates preserve your standing instructions, own skills, memory and handoffs. An edited kendex-managed package file stays in place as a reported conflict. Keeping personal changes in their own files lets the package receive updates without turning those files into package edits.
 
 ## Your choices
 
-You choose the home, personal rules, own skills and supported connections. Machine-specific settings belong to that machine. If you use [satellites](HIW-messages.md#a-second-machine), the main remains responsible for shared home work.
+You choose the Jarvis home, personal rules, own skills and supported connections. Machine-specific settings belong to that machine. If you use [satellites](HIW-messages.md#a-second-machine), the main remains responsible for shared home work.
 
 ## Related pages
 

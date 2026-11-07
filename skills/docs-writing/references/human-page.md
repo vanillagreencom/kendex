@@ -2,7 +2,7 @@
 
 Read when writing, editing or reviewing a human architecture page.
 
-Read by a person asking how the system works, on a help site, in another product content directory the repository ships, or in a package's `references/HIW-<topic>.md`. The topic is lowercase and hyphenated. The title is the reader's question. The first paragraph answers it briefly in plain words, followed by one diagram showing the answer.
+Read by a person asking how the system works, on a help site, in another product content directory the repository ships, or in a package's `documentation/` folder, named `HIW-<topic>.md` for a how-it-works page. The topic is lowercase and hyphenated. A package's `references/` holds the contracts an agent looks up, never a human page. The title is the reader's question. The first paragraph answers it briefly in plain words, followed by one diagram showing the answer.
 
 ## When to split
 
@@ -27,6 +27,6 @@ A section can combine related subjects when that makes the explanation clearer. 
 
 For package how-it-works pages, use a fenced `mermaid` diagram that GitHub renders natively. Use a few high-level boxes with familiar actors and outcomes, and short verb labels for their relationships. Keep script names, variable names, source tags and implementation detail out of the diagram. No generated picture or renderer is needed. Other human product pages can use their site's supported diagram format.
 
-These are human pages. For site content, `AGENTS.md` names the product content directory. For package HIW pages, the file-type route and README provide classification and navigation. No "Read when" line routes an agent through either kind of page. The rules an agent follows keep their existing skill, workflow, reference or `docs/architecture/` owner.
+These are human pages. For site content, `AGENTS.md` names the product content directory. For package pages, the `documentation/` file-type route and README provide classification and navigation. No "Read when" line routes an agent through either kind of page. The rules an agent follows keep their existing skill, workflow, reference or `docs/architecture/` owner.
 
 Never: do and never lines, decision IDs, code paths, or a sentence written for an agent. Read [the human-page example](../examples/human-page.md) for site content or [the HIW example](../examples/HIW-tasks.md) for a package page.

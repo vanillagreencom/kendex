@@ -30,7 +30,7 @@ Official originals stay unchanged in your private record store. Memory keeps onl
 
 ## Your choices
 
-Your home supplies the notes and the subjects you want available. You can change a preference or ruling and identify the earlier one it replaces. Your retention policy determines how long original evidence remains needed.
+Your Jarvis home supplies the notes and the subjects you want available. You can change a preference or ruling and identify the earlier one it replaces. Your retention policy determines how long original evidence remains needed.
 
 ## Related pages
 

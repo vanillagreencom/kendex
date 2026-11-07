@@ -14,7 +14,7 @@ flowchart LR
 
 A direct conversation carries your request and Jarvis's reply. Slack needs its configured app and relay. Voice needs the consumer's voice connection. The Jarvis package does not turn every possible entry point on merely by being installed.
 
-The configured event source collects messages from the home and declared machines and brings settled bursts to the session. Each source retains its delivery progress for restart. An unavailable source is reported as unavailable; silence alone establishes no agent's state.
+The configured event source collects messages from the Jarvis home and declared machines and brings settled bursts to the session. Each source retains its delivery progress for restart. An unavailable source is reported as unavailable; silence alone establishes no agent's state.
 
 ## Questions and answers
 
