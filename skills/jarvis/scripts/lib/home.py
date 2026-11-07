@@ -46,7 +46,7 @@ CODEX_CONFIG = ".codex/config.toml"
 # Variables that point git at another repository than the folder asked about.
 GIT_REDIRECTS = {"GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"}
 NOT_A_REPOSITORY = re.compile(r"^fatal: not a git repository", re.MULTILINE)
-FEATURES_HEADER = re.compile(r"^[ \t]*\[[ \t]*features[ \t]*\][ \t]*(#.*)?$", re.MULTILINE)
+FEATURES_HEADER = re.compile(r"^[ \t]*\[[ \t]*features[ \t]*\][ \t]*(#[^\r\n]*)?(?=\r?\n|\Z)", re.MULTILINE)
 
 
 class Unmergeable(ValueError):
@@ -128,7 +128,7 @@ def replace(path, text):
     mode = path.stat().st_mode & 0o7777 if path.exists() else None
     fd, name = tempfile.mkstemp(dir=path.parent, prefix="." + path.name + "-")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
             stream.write(text)
         if mode is not None:
             os.chmod(name, mode)
@@ -136,6 +136,11 @@ def replace(path, text):
     finally:
         if os.path.exists(name):
             os.unlink(name)
+
+
+def line_ending(text):
+    ending = re.search(r"\r?\n", text)
+    return ending.group() if ending else "\n"
 
 
 def claude_settings(text):
@@ -148,8 +153,9 @@ def claude_settings(text):
         return '{\n  "autoMemoryEnabled": false\n}\n', dict(data, autoMemoryEnabled=False)
     # Insert after the opening brace so every other byte stays.
     start = text.index("{") + 1
-    tail = "\n" if not data else ","
-    return text[:start] + '\n  "autoMemoryEnabled": false' + tail + text[start:], dict(data, autoMemoryEnabled=False)
+    newline = line_ending(text)
+    tail = newline if not data else ","
+    return text[:start] + newline + '  "autoMemoryEnabled": false' + tail + text[start:], dict(data, autoMemoryEnabled=False)
 
 
 def codex_config(text):
@@ -161,14 +167,15 @@ def codex_config(text):
         return None
     expected = copy.deepcopy(data)
     expected.setdefault("features", {})["memories"] = False
+    newline = line_ending(text)
     if features is None:
-        separator = "" if not text else ("\n" if text.endswith("\n") else "\n\n")
-        return text + separator + "[features]\nmemories = false\n", expected
+        separator = "" if not text else (newline if text.endswith("\n") else newline * 2)
+        return text + separator + "[features]" + newline + "memories = false" + newline, expected
     header = FEATURES_HEADER.search(text)
     if not header:
         raise Unmergeable("features")
     end = header.end()
-    return text[:end] + "\nmemories = false" + text[end:], expected
+    return text[:end] + newline + "memories = false" + text[end:], expected
 
 
 def merge(home, relative, key, edit, parse):
@@ -178,7 +185,12 @@ def merge(home, relative, key, edit, parse):
     if path.is_symlink():
         return dict(row, outcome="refused", cause="linked")
     try:
-        text = path.read_text(encoding="utf-8") if path.exists() else None
+        text = None
+        if path.exists():
+            # newline="" keeps user line endings untranslated on reads and
+            # writes (docs.python.org/3/library/functions.html#open).
+            with path.open(encoding="utf-8", newline="") as stream:
+                text = stream.read()
         change = edit(text)
     except ImportError:
         # tomllib arrived in Python 3.11; without a reader the file stays as it is.

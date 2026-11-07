@@ -463,48 +463,87 @@ class HomeInitContract(unittest.TestCase):
             return False
         return True
 
-    def test_unmergeable_settings_stay_unchanged(self):
+    def test_native_settings_preserve_content(self):
+        # Native settings belong to the person. Compare bytes, including the
+        # line endings their editor wrote, not universal-newline readback.
         outside = self.root / "outside.json"
-        outside.write_text("{}\n")
+        outside.write_bytes(b"{}\r\n")
         rows = (
-            ("claude-unreadable", ".claude/settings.json", "{", "unreadable"),
-            ("claude-not-object", ".claude/settings.json", "[]\n", "shape"),
-            ("claude-linked", ".claude/settings.json", None, "linked"),
-            ("codex-unreadable", ".codex/config.toml", "[features\n", "unreadable"),
-            ("codex-inline-table", ".codex/config.toml", "features = { hooks = true }\n", "shape"),
+            # name, harness, input (None is absent), expected text, outcome, cause
+            ("claude-absent", "claude", None, '{\n  "autoMemoryEnabled": false\n}\n', "merged", None),
+            ("claude-empty-object", "claude", "{ \n}\n", '{\n  "autoMemoryEnabled": false\n \n}\n', "merged", None),
+            ("claude-compact", "claude", "{}", '{\n  "autoMemoryEnabled": false\n}', "merged", None),
+            ("claude-missing", "claude", ' \n{\n\t"theme": "café"\n}\n ',
+             ' \n{\n  "autoMemoryEnabled": false,\n\t"theme": "café"\n}\n ', "merged", None),
+            ("claude-true", "claude", '{\n"autoMemoryEnabled": true\n}\n', None, "kept", None),
+            ("claude-false", "claude", '{"autoMemoryEnabled": false}', None, "kept", None),
+            ("claude-unreadable", "claude", "{", None, "refused", "unreadable"),
+            ("claude-not-object", "claude", "[]\n", None, "refused", "shape"),
+            ("claude-linked", "claude", "linked", None, "refused", "linked"),
+            ("codex-absent", "codex", None, "[features]\nmemories = false\n", "merged", None),
+            ("codex-empty", "codex", "", "[features]\nmemories = false\n", "merged", None),
+            ("codex-no-table", "codex", 'model = "café"\n',
+             'model = "café"\n\n[features]\nmemories = false\n', "merged", None),
+            ("codex-no-final-newline", "codex", 'model = "café"',
+             'model = "café"\n\n[features]\nmemories = false\n', "merged", None),
+            ("codex-header", "codex", CODEX_FIXTURE,
+             "# features this home turns on\n[features]\nmemories = false\nhooks = true\n", "merged", None),
+            ("codex-commented-header", "codex", "# café\n\t[ features ] \t# native choices\nhooks = true\n",
+             "# café\n\t[ features ] \t# native choices\nmemories = false\nhooks = true\n", "merged", None),
+            ("codex-header-at-eof", "codex", "# café\n[features]",
+             "# café\n[features]\nmemories = false", "merged", None),
+            ("codex-true", "codex", "[features]\nmemories = true\n", None, "kept", None),
+            ("codex-false", "codex", "[features]\nmemories = false\n", None, "kept", None),
+            ("codex-unreadable", "codex", "[features\n", None, "refused", "unreadable"),
+            ("codex-inline-table", "codex", "features = { hooks = true }\n", None, "refused", "shape"),
         )
-        for name, relative, text, cause in rows:
-            with self.subTest(name=name):
-                home = self.home(name)
-                path = home / relative
-                if text is None:
-                    path.unlink()
-                    path.symlink_to(outside)
-                else:
-                    path.write_text(text)
-                before = self.snapshot(home)
-                result = self.run_init(home)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                row = next(row for row in json.loads(result.stdout)["settings"] if row["path"] == relative)
-                expected = cause if relative.endswith(".json") or self.has_tomllib() else "toml-reader-missing"
-                self.assertEqual((row["outcome"], row["cause"]), ("refused", expected))
-                refusals = [self.keyed(line) for line in result.stderr.splitlines() if line.startswith("jarvis-session: init-settings=")]
-                self.assertIn({"init-settings": "refused", "path": relative, "cause": expected}, refusals)
-                after = self.snapshot(home)
-                self.assertEqual(after[relative], before[relative])
-                self.assertEqual(outside.read_text(), "{}\n")
+        for newline_name, newline in (("lf", "\n"), ("crlf", "\r\n")):
+            for name, harness, text, updated, outcome, cause in rows:
+                # Files with no newline have no convention; new lines use LF.
+                ending = newline if text and "\n" in text else "\n"
+                expected = (updated.replace("\n", ending).encode("utf-8") if updated is not None else
+                            text.replace("\n", newline).encode("utf-8"))
+                with self.subTest(newline=newline_name, name=name):
+                    home = self.home(newline_name + "-" + name)
+                    relative = ".claude/settings.json" if harness == "claude" else ".codex/config.toml"
+                    path = home / relative
+                    if text is None or cause == "linked":
+                        path.unlink()
+                        if cause == "linked":
+                            path.symlink_to(outside)
+                    else:
+                        path.write_bytes(text.replace("\n", newline).encode("utf-8"))
+                    before = self.snapshot(home).get(relative)
+                    if harness == "codex" and not self.has_tomllib():
+                        outcome, cause = "refused", "toml-reader-missing"
+                    result = self.run_init(home)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    row = next(row for row in json.loads(result.stdout)["settings"] if row["path"] == relative)
+                    self.assertEqual((row["outcome"], row.get("cause")), (outcome, cause))
+                    if outcome == "refused":
+                        refusals = [self.keyed(line) for line in result.stderr.splitlines()
+                                    if line.startswith("jarvis-session: init-settings=")]
+                        self.assertIn({"init-settings": "refused", "path": relative, "cause": cause}, refusals)
+                        self.assertEqual(self.snapshot(home).get(relative), before)
+                    else:
+                        self.assertEqual(path.read_bytes(), expected)
+                    after = self.snapshot(home)
+                    repeated = self.run_init(home)
+                    self.assertEqual(repeated.returncode, 0, repeated.stderr)
+                    self.assertEqual(self.snapshot(home), after)
+                    self.assertEqual(outside.read_bytes(), b"{}\r\n")
 
-    def test_qualification_control(self):
-        # Each copy drops one check the suite must detect: the enclosing work
-        # tree search, and reading only git's not-a-repository exit as no
-        # work tree.
+    def test_home_init_controls(self):
+        # A source copy drops each guarantee while leaving its input reachable.
         rows = (
             ("enclosing-search", 'root = toplevel(home.parent, "..") if home.parent != home else None', "root = None",
-             "nested-repository"),
+             "test_unqualified_folders_stay_unchanged", "(name='nested-repository')"),
             ("unreadable-as-none", "if result.returncode == 128 and NOT_A_REPOSITORY.search(result.stderr):",
-             "if result.returncode == 128:", "enclosing-unreadable"),
+             "if result.returncode == 128:", "test_unqualified_folders_stay_unchanged", "(name='enclosing-unreadable')"),
+            ("newline-translation", 'path.open(encoding="utf-8", newline="")', 'path.open(encoding="utf-8")',
+             "test_native_settings_preserve_content", "(newline='crlf', name='claude-missing')"),
         )
-        for name, match, mutant, row in rows:
+        for name, match, mutant, contract, row in rows:
             with self.subTest(name=name):
                 skills = self.root / "control" / name / "skills"
                 scripts = skills / "jarvis/scripts"
@@ -514,13 +553,15 @@ class HomeInitContract(unittest.TestCase):
                 source = scripts / "lib/home.py"
                 before = source.read_text()
                 self.assertEqual(before.count(match), 1)
-                source.write_text(before.replace(match, mutant))
+                changed = before.replace(match, mutant)
+                self.assertNotEqual(changed, before)
+                source.write_text(changed)
                 result = subprocess.run([str(ROOT / "skills/jarvis/tests/session.test.sh"),
-                                         "HomeInitContract.test_unqualified_folders_stay_unchanged", "-v"],
+                                         "HomeInitContract." + contract, "-v"],
                                         env=os.environ | {"JARVIS_TEST_SCRIPT": str(scripts / "jarvis-session")},
                                         capture_output=True, text=True, timeout=120)
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-                self.assertIn(f"name='{row}'", result.stderr)
+                self.assertIn(row, result.stderr)
                 self.assertNotIn("name='no-git'", result.stderr)
 
 
