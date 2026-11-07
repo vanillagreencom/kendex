@@ -757,6 +757,93 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
             bodies = [row["text"] for row in self.inbox() if row["kind"] == "directive"]
             self.assertEqual(sum(body.count("answer from equal host path") for body in bodies), 1)
 
+    def test_nested_project_reads_its_outer_mailbox_once(self):
+        # A folder listed inside another project's git tree resolves to that
+        # project's mailbox. Each row then moves the read to the folder.
+        env_script = self.scripts / "lib/jarvis-env.sh"
+        text, case = env_script.read_text(), "  common-root)\n"
+        self.assertEqual(text.count(case), 1)
+        env_script.write_text(text.replace(case, case + '    [[ "$2" != "${UNRESOLVED:-}" ]] || exit 1\n'))
+
+        def watch_pass(home, roots, cursor, unresolved="", broken=""):
+            self.registry.write_text("".join(str(root) + "\n" for root in roots))
+            delivered = []
+            with patch.dict(os.environ, dict(self.env, UNRESOLVED=str(unresolved), BROKEN=str(broken)), clear=True):
+                output = self.module.mail_pass(BASH, home, "local", cursor, delivered)
+            return output, json.loads(output.splitlines()[-1][8:])["roots"], delivered
+
+        def header(root):
+            return "EVENT mail repo=%s file=to-overseer destination=local root=%s\n" % (root.name, root)
+
+        for name, home, mailbox, change in (
+                # The outer project is unregistered.
+                ("outer-unlisted", self.project("outer-unlisted/home"), None, "unlist"),
+                # The home drops off the project list and reads its to-lane alone.
+                ("home-unlisted", self.project("home-unlisted/home"), "home", "unlist"),
+                # The home's mailbox checkout does not resolve for two passes.
+                ("home-unresolved", self.home, "home", "unresolved")):
+            with self.subTest(row=name):
+                mailbox = home if mailbox == "home" else self.project(name + "/outer")
+                nested = mailbox / "packaging/jarvis-home"
+                nested.mkdir(parents=True)
+                roots = [home, nested] + ([] if mailbox == home else [mailbox])
+                ask = self.mail(mailbox, "ask", name + " first-ask", "--to", "owner", "--recommend", "yes", "--options", "yes,no")
+                self.mail(mailbox, "send", name + " first-answer", "--re", ask.stdout.split("id=", 1)[1].split()[0])
+                output, cursor, _ = watch_pass(home, roots, {})
+                self.assertEqual(output.count(name + " first-ask"), 1)
+                self.assertIn(header(mailbox), output)
+
+                later = [root for root in roots if root != mailbox] if change == "unlist" else roots
+                unresolved = home if change == "unresolved" else ""
+                output, cursor, _ = watch_pass(home, later, cursor, unresolved)
+                self.assertNotIn(name + " first-", output)
+                self.mail(mailbox, "notice", name + " second-notice", "--to", "owner")
+                directive = self.owner_note(name + " second-directive") if mailbox == self.home else None
+                output, cursor, _ = watch_pass(home, later, cursor, unresolved)
+                self.assertNotIn(name + " first-", output)
+                self.assertEqual(output.count(name + " second-notice"), 1)
+                self.assertIn(header(nested), output)
+                # A repeat pass under the new reader delivers no row again.
+                output, cursor, delivered = watch_pass(home, later, cursor, unresolved)
+                self.assertNotIn(name + " ", output)
+                self.assertEqual(delivered, [])
+
+                if unresolved:
+                    # The recovered home takes the read back. Its to-lane
+                    # cursor is its own, so the row the folder skipped is
+                    # delivered to it and no mail event repeats.
+                    output, cursor, delivered = watch_pass(home, roots, cursor)
+                    self.assertNotIn(name + " first-", output)
+                    self.assertNotIn(name + " second-", output)
+                    self.assertEqual([row["id"] for row in delivered], [directive])
+
+        # A root whose mailbox another root reads takes the reader's outcome:
+        # one alert per failure, and a pass with no failure leaves no cause.
+        self.intercept_mail('[ "$(pwd -P)" != "${BROKEN:-}" ] || exit 3')
+        for name, passes in (
+                # The folder's own lookup fails, recovers and fails again.
+                ("nested-lookup", (("all", "nested", "", ["jarvis-home"]), ("all", "", "", []),
+                                   ("all", "nested", "", ["jarvis-home"]))),
+                # The folder fails a read, then the outer project takes the read back.
+                ("former-reader", (("nested", "", "nested", ["jarvis-home"]), ("all", "", "", []))),
+                # The folder holds the outer project's failure and reports it no
+                # second time when it takes the read over.
+                ("reader-read", (("all", "", "outer", ["outer"]), ("nested", "", "nested", []),
+                                 ("all", "", "", [])))):
+            with self.subTest(row=name):
+                outer = self.project(name + "/outer")
+                nested = outer / "packaging/jarvis-home"
+                nested.mkdir(parents=True)
+                root = dict(outer=outer, nested=nested)
+                listed = dict(all=[self.home, outer, nested], nested=[self.home, nested])
+                _, cursor, _ = watch_pass(self.home, listed[passes[0][0]], {})
+                for roots, unresolved, broken, alerts in passes:
+                    output, cursor, _ = watch_pass(self.home, listed[roots], cursor,
+                                                   root.get(unresolved, ""), root.get(broken, ""))
+                    self.assertEqual(re.findall(r"^EVENT root-unreachable repo=(\S+)", output, re.M), alerts)
+                    if not unresolved and not broken:
+                        self.assertEqual([key for key, record in cursor.items() if "cause" in record], [])
+
     def test_quoted_boundaries_and_text_limit(self):
         ordinary = 'print("hello") C:\\work\\file /a\\w+/ café'
         # One serializer table spans message data, tokens and complete units.
@@ -1587,7 +1674,23 @@ with patch.object(module,"ThreadPoolExecutor",side_effect=AssertionError("execut
         window = '"--since", min(row["at"] for row in waiting)'
         unlisted = 'alone = side == "local" and home not in roots'
         satellite = "roots = [home] if satellite else project_roots()"
+        shared = "reader[common][1] if isinstance(common, Path) else root) for"
+        nested = "test_nested_project_reads_its_outer_mailbox_once"
         for name, old, new in (
+                # Each root sharing a mailbox reads it separately.
+                (nested, shared, "root) for"),
+                # The first listed root reads a shared mailbox, not its own checkout.
+                (nested, "rank = (root != common, index)", "rank = (False, index)"),
+                # A new reader of a mailbox starts from its own cursor.
+                (nested, "if last is not None:", "if False:"),
+                # A recovered home takes the to-lane cursor of the root that stood in.
+                (nested, 'side == "local" and root == home)', "False)"),
+                # The last reader keeps no claim on the mailbox.
+                (nested, 'if field != "mailbox"}', 'if True}'),
+                # A root another root reads for keeps its own outcome.
+                (nested, "state[str(root)] = record", "pass"),
+                # It clears its failure but does not take the reader's.
+                (nested, 'if "cause" in read else {}', "if False else {}"),
                 ("test_relay_transitions_and_restart", 'if current != "ok" and (previous is None or previous == "ok"):',
                  'if current != "ok":'),
                 ("test_legacy_host_migration", 'spans=[self.canonical_span(span) for span in pending["retained"]]',

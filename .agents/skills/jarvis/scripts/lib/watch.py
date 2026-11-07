@@ -382,6 +382,64 @@ def owner_unread(bash, root, cursor, count, now, reported, events):
     return [row["id"] for row in owned]
 
 
+def mailbox_root(bash, root):
+    """The checkout whose overseer mailbox lane-mail reads at root."""
+    if not root.is_dir():
+        raise Failure("root-read", "missing", "root", "root-missing")
+    if not lane_mail().is_file():
+        raise Failure("root-read", "missing", "mailbox", "dependency=mailbox-missing")
+    return Path(checked([bash, LIB / "jarvis-env.sh", "common-root", root], operation="common-root").strip())
+
+
+def mailbox_readers(bash, roots):
+    """Each root as (root, mailbox checkout or read failure, the root that reads that mailbox).
+
+    A project registered inside another's git tree resolves to the outer
+    mailbox. The mailbox's own checkout reads it, else the first listed
+    root; a failed root reads for itself, to report the failure. A listed
+    home is always its mailbox's own checkout: home_root takes its git top
+    level, and `kendex project list` notes a linked worktree, which
+    listed_roots skips.
+    """
+    resolved = []
+    for root in roots:
+        try:
+            resolved.append((root, mailbox_root(bash, root)))
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            resolved.append((root, failure("root-read", error)))
+    reader = {}
+    for index, (root, common) in enumerate(resolved):
+        if isinstance(common, Path):
+            rank = (root != common, index)
+            if common not in reader or rank < reader[common][0]:
+                reader[common] = (rank, root)
+    return [(root, common, reader[common][1] if isinstance(common, Path) else root) for root, common in resolved]
+
+
+def mailbox_cursor(state, key, mailbox, own_lane):
+    """The record of root key as the reader of mailbox, its cursors handed over from the last reader.
+
+    The last reader's record carries `mailbox`. Its box cursors and unread
+    marker follow the mailbox, so a new reader delivers no row twice. A
+    record no reader carries keeps its own. With own_lane the to-lane
+    cursor stays the root's own: a local home's to-lane read emits no
+    event, so rereading from its own cursor repeats none, and it delivers
+    the owner rows a stand-in's to-lane read, which emits answers alone,
+    skipped.
+    """
+    record = dict(state.get(key, {}))
+    last = next((other for other, value in state.items() if other != key and value.get("mailbox") == mailbox), None)
+    if last is not None:
+        for field in ("to-overseer", "unread") if own_lane else ("to-lane", "to-overseer", "unread"):
+            if field in state[last]:
+                record[field] = state[last][field]
+            else:
+                record.pop(field, None)
+        state[last] = {field: value for field, value in state[last].items() if field != "mailbox"}
+    record["mailbox"] = mailbox
+    return record
+
+
 def mail_pass(bash, home, side, cursor, delivered=None, satellite=False):
     """One pass over every root. A local home read adds each owner row it reads to delivered.
 
@@ -396,19 +454,25 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False):
     # worktree row) still receives owner mail. Its to-lane alone is read for
     # those rows: no mail event, no to-overseer mark-read, no receipts.
     alone = side == "local" and home not in roots
-    for root in (roots + [home]) if alone else roots:
+    readers = mailbox_readers(bash, roots)
+    if alone:
+        # Its to-lane read takes owner rows alone, so it never replaces a
+        # listed root's full read of a shared mailbox, nor takes its cursors.
+        readers += mailbox_readers(bash, [home])
+    for root, common, reader in readers:
+        if reader != root:
+            continue
         boxes = ("to-lane",) if alone and root == home else ("to-lane", "to-overseer")
         key = str(root)
         prior = state.get(key, {})
+        if isinstance(common, Path) and len(boxes) > 1:
+            prior = mailbox_cursor(state, key, str(common), side == "local" and root == home)
         next_root = json.loads(json.dumps(prior))
         cause = None
         root_events, root_delivered = [], []
         try:
-            if not root.is_dir():
-                raise Failure("root-read", "missing", "root", "root-missing")
-            if not lane_mail().is_file():
-                raise Failure("root-read", "missing", "mailbox", "dependency=mailbox-missing")
-            common = Path(checked([bash, LIB / "jarvis-env.sh", "common-root", root], operation="common-root").strip())
+            if not isinstance(common, Path):
+                raise common
             for box in boxes:
                 before = prior.get(box, {})
                 filename = common / "tmp/lane-mail/overseer" / (box + ".jsonl")
@@ -478,6 +542,15 @@ def mail_pass(bash, home, side, cursor, delivered=None, satellite=False):
             if delivered is not None:
                 delivered.extend(root_delivered)
         state[key] = next_root
+    # A root whose mailbox another root reads has no read outcome of its
+    # own: its record takes the reader's outcome from this pass, so no field
+    # goes stale while the other root reads.
+    for root, _, reader in readers:
+        if reader != root:
+            read = state[str(reader)]
+            record = {"cause": read["cause"]} if "cause" in read else {}
+            if record or str(root) in state:
+                state[str(root)] = record
     return pass_output(side, state, events)
 
 
