@@ -7,24 +7,31 @@
 //! or confirmed by GitHub's own record, so an act whose answer was lost is
 //! made once more. Copilot's work in flight is bounded by
 //! `ORCH_COPILOT_HOLD_SECS` from that key's stamp and holds every verdict
-//! that permits a merge; the reviewer's silence is bounded by
-//! `PR_REVIEW_WAIT_SECS` per period, each `timeout` ending one period and
-//! counted. The workflow repeats the call under its own budget: `pending`
-//! and `unreadable` are results, never verdicts, as `verify-pr` answers
-//! them.
+//! that permits a merge and the review period's own answers; the
+//! reviewer's silence is bounded by `PR_REVIEW_WAIT_SECS` per period, each
+//! `timeout` ending one period and counted. A fallback, or an error retry
+//! that cannot stand, owes the lane's overseer the `copilot-fallback`
+//! notice where the item runs in a lane: written `owed` in the write that
+//! records the outcome, sent into the lane's mailbox after it and marked,
+//! so a call that finds it owed sends it. The workflow repeats the call
+//! under its own budget: `pending` and `unreadable` are results, never
+//! verdicts, as `verify-pr` answers them.
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use agent_runtime::clock;
+use agent_runtime::reading::Reading;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use super::{Env, loaded, reread};
 use crate::error::{Error, Result, ShapeReason};
+use crate::mailbox::{Mailbox, Noticed, Refusal};
+use crate::marker;
 use crate::settings::{self, ReviewSettings, Settings};
-use crate::state::{self, Document, Locking};
+use crate::state::{self, Document, Locking, Notice};
 use crate::verify::review::{self, Acted, CopilotReviews, GateMode, View, Work};
-use crate::verify::wire::{Nullable, PullRequestState};
+use crate::verify::wire::{Nullable, Pull, PullRequestState};
 use crate::verify::{self, Gh, Status, Unreadable};
 
 const REVIEW_KEY: &str = "pr_review";
@@ -39,6 +46,9 @@ const REQUESTED: &str = "requested";
 const EXISTING: &str = "existing";
 const FALLBACK: &str = "fallback";
 const OFF: &str = "off";
+/// The kind every Copilot fallback notice opens with, as the overseer's
+/// head rules read it.
+const NOTICE_KEY: &str = "copilot-fallback";
 
 /// Verify the review gate on a pull request's current head and record the
 /// verdict. `repo` is `owner/name`, `pr` the number, `base_checkout` the
@@ -66,9 +76,24 @@ pub struct RequestReport {
     pub cause: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub exit: Option<i32>,
-    /// Whether this call wrote the outcome: the once-per-head cue the
-    /// fallback notice is sent on.
+    /// Whether this call wrote the outcome.
     pub recorded_now: bool,
+}
+
+/// A `copilot-fallback` notice the head owes its lane's overseer, as this
+/// call leaves it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NoticeReport {
+    /// The notice's first line: `copilot-fallback PR #N head SHA cause=C`.
+    pub notice: String,
+    /// `owed`, `sent`, `unsent:<cause>` or `unanswered:<cause>`.
+    pub owner: String,
+    /// Whether this call ran the send.
+    pub sent_now: bool,
+    /// The key of the store's refusal of this call's mark: the notice
+    /// stands as `owner` says, and the next call sends it again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unmarked: Option<String>,
 }
 
 /// Copilot's work in flight on the head and where it stands against the
@@ -126,6 +151,9 @@ pub struct ReviewVerified {
     pub verdict: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recorded: Option<ReviewRecorded>,
+    /// The head's `copilot-fallback` notices, in the order they were owed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notices: Vec<NoticeReport>,
 }
 
 impl ReviewVerified {
@@ -147,6 +175,7 @@ impl ReviewVerified {
             unresolved_count: None,
             verdict: None,
             recorded: None,
+            notices: Vec::new(),
         }
     }
 
@@ -173,8 +202,8 @@ enum OnTimeout {
 }
 
 /// The review settings as the gate reads them: the loader carries their
-/// text as read, so a value outside its form refuses here, in the one
-/// verb that reads it, and in no other.
+/// text as read, so a value outside its form refuses in the verbs that
+/// read it.
 struct Review {
     copilot_hold: u64,
     wait: u64,
@@ -188,7 +217,7 @@ fn review_settings(settings: &ReviewSettings) -> Result<Review> {
             .map_err(|_| settings::value_refusal(key, text))
     };
     Ok(Review {
-        copilot_hold: secs(settings::COPILOT_HOLD_SECS_KEY, &settings.copilot_hold)?,
+        copilot_hold: super::copilot_wait::bound(settings)?.as_secs(),
         wait: secs(settings::REVIEW_WAIT_SECS_KEY, &settings.wait)?,
         on_timeout: match settings.on_timeout.as_str() {
             "proceed" => OnTimeout::Proceed,
@@ -236,6 +265,11 @@ struct HeadRecord {
     request: Option<RequestRecord>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     retry: Option<RetryRecord>,
+    /// The `copilot-fallback` notices the head owes its lane's overseer:
+    /// each written `owed` in the write that records its outcome, then
+    /// marked with how its send went.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    notices: Vec<Notice>,
 }
 
 impl HeadRecord {
@@ -247,6 +281,17 @@ impl HeadRecord {
             ready: None,
             request: None,
             retry: None,
+            notices: Vec::new(),
+        }
+    }
+
+    /// Record `notice` owed, once: an outcome written again owes no second
+    /// notice with the same words.
+    fn owe(&mut self, notice: Option<&Notice>) {
+        if let Some(notice) = notice
+            && !self.notices.iter().any(|n| n.text == notice.text)
+        {
+            self.notices.push(notice.clone());
         }
     }
 
@@ -463,8 +508,18 @@ pub fn run(
         work: None,
         asked: false,
         note: None,
+        item: state::item_of(path).map(str::to_owned),
+        git_common: settings.roots.common.join(".git"),
+        lane: None,
+        mail: Mailbox::new(settings.lane_mail_cli.clone()),
+        notice_dir: settings.state_dir.join("review"),
+        nonce: env.round_id(),
     };
-    match gate.judge() {
+    let judged = gate.judge();
+    if !matches!(judged, Err(Stop::Refused(_))) {
+        gate.deliver_notices()?;
+    }
+    match judged {
         Ok(verdict) => gate.record_verdict(verdict),
         Err(Stop::Pending(reason)) => Ok(gate.reply.pending(reason)),
         Err(Stop::Unreadable(cause)) => Ok(gate.reply.unreadable(cause)),
@@ -492,6 +547,18 @@ struct Gate<'a> {
     asked: bool,
     /// The pending reason a refused request leaves while the period runs.
     note: Option<String>,
+    /// The item the record keys, the lane's mailbox where it runs in one.
+    item: Option<String>,
+    /// The common git directory of the checkout the call runs in, where a
+    /// launch writes the lane's marker.
+    git_common: PathBuf,
+    /// The lane's root its marker names, read once and only where a notice
+    /// is at stake.
+    lane: Option<Reading<PathBuf>>,
+    mail: Mailbox,
+    /// Where a notice's text is written for the mailbox program to read.
+    notice_dir: PathBuf,
+    nonce: String,
 }
 
 #[allow(
@@ -672,8 +739,163 @@ impl Gate<'_> {
         let stands = |head: &HeadRecord| head.request.is_some() && !(ready && head.held_as_draft());
         if let Some(head) = record.as_ref().filter(|head| stands(head)) {
             self.reply.request = head.request.as_ref().map(|q| q.report(false));
-            return self.confirm_request(head.clone());
+            return self.confirm_request(head.clone(), draft, pull);
         }
+        let ineligible = self.ineligible(draft, pull)?;
+        // The released writer's retry is carried into the head's retry, so
+        // a head mid-wait at an upgrade spends no second retry; an error
+        // answer standing on the head makes this request its one retry,
+        // claimed in the same write, so no second POST follows.
+        let released = released_retry(self.path, &self.doc, &self.view.head)?;
+        let mut retry = released.clone();
+        let request = if let Some(cause) = ineligible {
+            RequestRecord::fallback(cause, None)
+        } else {
+            let reviews = self.reviews()?.clone();
+            let work = self.work()?.is_some();
+            let released = released.as_ref().map(|retry| retry.outcome.as_str());
+            if reviews
+                .latest
+                .as_ref()
+                .is_some_and(|latest| latest.no_files)
+            {
+                RequestRecord::fallback("no-files", None)
+            } else if released == Some(REQUESTED) {
+                RequestRecord::existing("existing-error-retry")
+            } else if released == Some(FALLBACK) {
+                RequestRecord::fallback("error", None)
+            } else if work {
+                RequestRecord::existing("existing-run")
+            } else if reviews.any_non_error {
+                RequestRecord::existing("existing-review")
+            } else {
+                retry = reviews
+                    .latest
+                    .as_ref()
+                    .filter(|latest| latest.error)
+                    .map(|latest| RetryRecord::new(latest.id, REQUESTED));
+                RequestRecord::new(REQUESTED, None, None, None)
+            }
+        };
+        let post = request.outcome == REQUESTED;
+        let owed = match (request.outcome.as_str(), request.cause.as_deref()) {
+            (FALLBACK, Some(cause)) => self.notice_for(cause, request.exit),
+            _ => None,
+        };
+        let stamp = &self.stamp;
+        let (claimed, claimed_now) = self.update_head(|standing| match standing {
+            Some(standing) if stands(&standing) => Ok((standing.clone(), (standing, false))),
+            standing => {
+                let base = standing.unwrap_or_else(|| HeadRecord::fresh(stamp));
+                // A lapsing draft fallback starts the period and the hold
+                // with the request it releases: no review was asked for
+                // while the head stood as a draft.
+                let (at, period_started) = if base.held_as_draft() {
+                    (stamp.clone(), stamp.clone())
+                } else {
+                    (base.at.clone(), base.period_started.clone())
+                };
+                let mut merged = HeadRecord {
+                    at,
+                    period_started,
+                    request: Some(request.clone()),
+                    retry: retry.clone().or(base.retry.clone()),
+                    ..base
+                };
+                merged.owe(owed.as_ref());
+                Ok((merged.clone(), (merged, true)))
+            }
+        })?;
+        self.reply.request = claimed.request.as_ref().map(|q| q.report(claimed_now));
+        if claimed_now && post {
+            return self.post_request(claimed);
+        }
+        Ok(claimed)
+    }
+
+    /// A standing `requested`, or an `existing-run` that stood for one, read
+    /// against GitHub's record of it: Copilot's work in flight, the pending
+    /// request among it, or a Copilot review on the head confirms it. Work
+    /// that ended with no review of the head, its check completed or
+    /// cancelled or the request removed, confirms nothing: an
+    /// `existing-run` is claimed as `requested` and sent, a `requested` is
+    /// sent once more under its `resent` mark, and a miss after that falls
+    /// back `unconfirmed` so the fallback notice goes out. The request is
+    /// sent at most twice per head; Copilot's error answer takes its own
+    /// retry, sent at most twice (`retry`). A claim and a resend are
+    /// requests, so each waits on the head's eligibility (`ineligible`): a
+    /// call that may not ask sends nothing and leaves the record as it
+    /// stands, spending neither.
+    fn confirm_request(
+        &mut self,
+        head: HeadRecord,
+        draft: bool,
+        pull: Option<Pull>,
+    ) -> Step<HeadRecord> {
+        let Some(request) = head.request.clone() else {
+            return Ok(head);
+        };
+        if request.outcome != REQUESTED && !request.stood_for_run() {
+            return Ok(head);
+        }
+        let reviews = self.reviews()?.clone();
+        let landed = self.work()?.is_some() || reviews.latest.is_some() || reviews.any_non_error;
+        if landed {
+            return Ok(head);
+        }
+        if !request.resent && self.ineligible(draft, pull)?.is_some() {
+            return Ok(head);
+        }
+        let owed = self.notice_for("unconfirmed", None);
+        let path = self.path;
+        let (head, read) = self.update_head(|standing| {
+            let mut head = standing.ok_or_else(|| shape(path, "heads"))?;
+            let read = match &mut head.request {
+                Some(request) if request.stood_for_run() => {
+                    *request = RequestRecord::new(REQUESTED, None, None, None);
+                    Unconfirmed::Claim
+                }
+                Some(request) if request.outcome == REQUESTED && !request.resent => {
+                    request.resent = true;
+                    Unconfirmed::Resend
+                }
+                Some(request) if request.outcome == REQUESTED => {
+                    *request = RequestRecord::fallback("unconfirmed", None);
+                    Unconfirmed::FellBack
+                }
+                Some(_) | None => Unconfirmed::Moved,
+            };
+            if matches!(read, Unconfirmed::FellBack) {
+                head.owe(owed.as_ref());
+            }
+            Ok((head.clone(), (head, read)))
+        })?;
+        match read {
+            Unconfirmed::Claim => {
+                self.reply.request = head.request.as_ref().map(|q| q.report(true));
+                self.post_request(head)
+            }
+            Unconfirmed::Resend => self.post_request(head),
+            Unconfirmed::FellBack => {
+                self.reply.request = head.request.as_ref().map(|q| q.report(true));
+                Ok(head)
+            }
+            Unconfirmed::Moved => {
+                self.reply.request = head.request.as_ref().map(|q| q.report(false));
+                Ok(head)
+            }
+        }
+    }
+
+    /// Why the head may take no Copilot request now, judged before any
+    /// claim, resend or POST, a fresh head's and a standing one's alike:
+    /// `refresh` where the consumer's refresh policy names the pull request
+    /// its refresh head, `off` where `PR_COPILOT_REQUESTS` is `off`, `draft`
+    /// where `draft` (the view's draft this call did not mark ready) or
+    /// `pulls/N` reads it draft; `None` where it may. `pull` is the
+    /// `pulls/N` read the call already made, else it is read here; a head
+    /// that moved between the two reads is `pending head-moved`.
+    fn ineligible(&mut self, draft: bool, pull: Option<Pull>) -> Step<Option<&'static str>> {
         let policy = policy(&self.r.base_checkout)?;
         let pull = match pull {
             Some(pull) => pull,
@@ -703,132 +925,15 @@ impl Gate<'_> {
             }
             Some(other) => return Err(settings::value_refusal(REFRESH_REVIEW_KEY, other).into()),
         };
-        // The released writer's retry is carried into the head's retry, so
-        // a head mid-wait at an upgrade spends no second retry; an error
-        // answer standing on the head makes this request its one retry,
-        // claimed in the same write, so no second POST follows.
-        let released = released_retry(self.path, &self.doc, &self.view.head)?;
-        let mut retry = released.clone();
-        let request = if refresh {
-            RequestRecord::fallback("refresh", None)
+        Ok(if refresh {
+            Some("refresh")
         } else if !self.review.copilot_requests {
-            RequestRecord::fallback("off", None)
+            Some("off")
         } else if draft || pull.draft {
-            RequestRecord::fallback("draft", None)
+            Some("draft")
         } else {
-            let reviews = self.reviews()?.clone();
-            let work = self.work()?.is_some();
-            let released = released.as_ref().map(|retry| retry.outcome.as_str());
-            if reviews
-                .latest
-                .as_ref()
-                .is_some_and(|latest| latest.no_files)
-            {
-                RequestRecord::fallback("no-files", None)
-            } else if released == Some(REQUESTED) {
-                RequestRecord::existing("existing-error-retry")
-            } else if released == Some(FALLBACK) {
-                RequestRecord::fallback("error", None)
-            } else if work {
-                RequestRecord::existing("existing-run")
-            } else if reviews.any_non_error {
-                RequestRecord::existing("existing-review")
-            } else {
-                retry = reviews
-                    .latest
-                    .as_ref()
-                    .filter(|latest| latest.error)
-                    .map(|latest| RetryRecord::new(latest.id, REQUESTED));
-                RequestRecord::new(REQUESTED, None, None, None)
-            }
-        };
-        let post = request.outcome == REQUESTED;
-        let stamp = &self.stamp;
-        let (claimed, claimed_now) = self.update_head(|standing| match standing {
-            Some(standing) if stands(&standing) => Ok((standing.clone(), (standing, false))),
-            standing => {
-                let base = standing.unwrap_or_else(|| HeadRecord::fresh(stamp));
-                // A lapsing draft fallback starts the period and the hold
-                // with the request it releases: no review was asked for
-                // while the head stood as a draft.
-                let (at, period_started) = if base.held_as_draft() {
-                    (stamp.clone(), stamp.clone())
-                } else {
-                    (base.at.clone(), base.period_started.clone())
-                };
-                let merged = HeadRecord {
-                    at,
-                    period_started,
-                    request: Some(request.clone()),
-                    retry: retry.clone().or(base.retry.clone()),
-                    ..base
-                };
-                Ok((merged.clone(), (merged, true)))
-            }
-        })?;
-        self.reply.request = claimed.request.as_ref().map(|q| q.report(claimed_now));
-        if claimed_now && post {
-            return self.post_request(claimed);
-        }
-        Ok(claimed)
-    }
-
-    /// A standing `requested`, or an `existing-run` that stood for one, read
-    /// against GitHub's record of it: Copilot's work in flight, the pending
-    /// request among it, or a Copilot review on the head confirms it. Work
-    /// that ended with no review of the head, its check completed or
-    /// cancelled or the request removed, confirms nothing: an
-    /// `existing-run` is claimed as `requested` and sent, a `requested` is
-    /// sent once more under its `resent` mark, and a miss after that falls
-    /// back `unconfirmed` so the fallback notice goes out. A head is asked
-    /// at most twice.
-    fn confirm_request(&mut self, head: HeadRecord) -> Step<HeadRecord> {
-        let Some(request) = head.request.clone() else {
-            return Ok(head);
-        };
-        if request.outcome != REQUESTED && !request.stood_for_run() {
-            return Ok(head);
-        }
-        let reviews = self.reviews()?.clone();
-        let landed = self.work()?.is_some() || reviews.latest.is_some() || reviews.any_non_error;
-        if landed {
-            return Ok(head);
-        }
-        let path = self.path;
-        let (head, read) = self.update_head(|standing| {
-            let mut head = standing.ok_or_else(|| shape(path, "heads"))?;
-            let read = match &mut head.request {
-                Some(request) if request.stood_for_run() => {
-                    *request = RequestRecord::new(REQUESTED, None, None, None);
-                    Unconfirmed::Claim
-                }
-                Some(request) if request.outcome == REQUESTED && !request.resent => {
-                    request.resent = true;
-                    Unconfirmed::Resend
-                }
-                Some(request) if request.outcome == REQUESTED => {
-                    *request = RequestRecord::fallback("unconfirmed", None);
-                    Unconfirmed::FellBack
-                }
-                Some(_) | None => Unconfirmed::Moved,
-            };
-            Ok((head.clone(), (head, read)))
-        })?;
-        match read {
-            Unconfirmed::Claim => {
-                self.reply.request = head.request.as_ref().map(|q| q.report(true));
-                self.post_request(head)
-            }
-            Unconfirmed::Resend => self.post_request(head),
-            Unconfirmed::FellBack => {
-                self.reply.request = head.request.as_ref().map(|q| q.report(true));
-                Ok(head)
-            }
-            Unconfirmed::Moved => {
-                self.reply.request = head.request.as_ref().map(|q| q.report(false));
-                Ok(head)
-            }
-        }
+            None
+        })
     }
 
     /// The request's POST, its claim standing; a refusal rewrites the
@@ -844,10 +949,12 @@ impl Gate<'_> {
             }
             Acted::Refused { exit, .. } => exit,
         };
+        let owed = self.notice_for("refused", Some(exit));
         let path = self.path;
         let head = self.update_head(|standing| {
             let mut head = standing.ok_or_else(|| shape(path, "heads"))?;
             head.request = Some(RequestRecord::fallback("refused", Some(exit)));
+            head.owe(owed.as_ref());
             if let Some(retry) = head.retry.take() {
                 head.retry = Some(if retry.outcome == REQUESTED {
                     retry.fallback("refused", Some(exit))
@@ -893,7 +1000,10 @@ impl Gate<'_> {
                     cause: Some(cause.to_owned()),
                     ..RetryRecord::new(error_id, FALLBACK)
                 };
-                if self.set_retry(|standing| standing.is_none().then(|| fallback.clone()))? {
+                if self.set_retry(
+                    |standing| standing.is_none().then(|| fallback.clone()),
+                    None,
+                )? {
                     return Ok(Some(Verdict::new(
                         "copilot-error",
                         format!("copilot-error cause={cause}"),
@@ -906,14 +1016,19 @@ impl Gate<'_> {
             } else {
                 RetryRecord::new(error_id, REQUESTED)
             };
-            let claimed = self.set_retry(|standing| standing.is_none().then(|| fresh.clone()))?;
+            let claimed =
+                self.set_retry(|standing| standing.is_none().then(|| fresh.clone()), None)?;
             if claimed && fresh.outcome == REQUESTED {
                 return self.post_retry(fresh);
             }
             return Ok(None);
         };
         if retry.outcome != FALLBACK && retry.review_id != error_id {
-            self.set_retry(|_| Some(retry.clone().fallback("error", None)))?;
+            let owed = self.notice_for("error", None);
+            self.set_retry(
+                |_| Some(retry.clone().fallback("error", None)),
+                owed.as_ref(),
+            )?;
             return Ok(Some(Verdict::new(
                 "copilot-error",
                 "copilot-error cause=error".into(),
@@ -934,7 +1049,11 @@ impl Gate<'_> {
         let carried = |standing: Option<RetryRecord>| standing.or(released.clone());
         if retry.resent {
             let cause = "unconfirmed";
-            self.set_retry(|standing| carried(standing).map(|r| r.fallback(cause, None)))?;
+            let owed = self.notice_for(cause, None);
+            self.set_retry(
+                |standing| carried(standing).map(|r| r.fallback(cause, None)),
+                owed.as_ref(),
+            )?;
             return Ok(Some(Verdict::new(
                 "copilot-error",
                 format!("copilot-error cause={cause}"),
@@ -944,9 +1063,10 @@ impl Gate<'_> {
             resent: true,
             ..retry.clone()
         };
-        let claimed = self.set_retry(|standing| {
-            (carried(standing).as_ref() == Some(&retry)).then(|| resent.clone())
-        })?;
+        let claimed = self.set_retry(
+            |standing| (carried(standing).as_ref() == Some(&retry)).then(|| resent.clone()),
+            None,
+        )?;
         if claimed {
             return self.post_retry(resent);
         }
@@ -961,7 +1081,11 @@ impl Gate<'_> {
             Acted::Refused { exit, .. } => exit,
         };
         let cause = format!("refused exit={exit}");
-        self.set_retry(|_| Some(retry.clone().fallback(&cause, Some(exit))))?;
+        let owed = self.notice_for("refused", Some(exit));
+        self.set_retry(
+            |_| Some(retry.clone().fallback(&cause, Some(exit))),
+            owed.as_ref(),
+        )?;
         Ok(Some(Verdict::new(
             "copilot-error",
             format!("copilot-error cause={cause}"),
@@ -973,11 +1097,19 @@ impl Gate<'_> {
     /// verdict, `proceeded` on a silent reviewer under `proceed`, `timeout`
     /// otherwise, which ends the period and counts it. A head held as a
     /// draft has no period: no review was asked for, so it stays `pending`
-    /// until the request that releases it starts one.
+    /// until the request that releases it starts one. Copilot's work in
+    /// flight within its hold keeps the period's answers `pending` as it
+    /// keeps a verdict that permits a merge, since a caller may arm the
+    /// merge on either; a refused request's note stands before it.
     fn period(&mut self, record: &HeadRecord, engaged: usize) -> Step<Verdict> {
-        self.hold(Some(record))?;
+        let held = self.hold(Some(record))?;
         if record.held_as_draft() {
             return Err(Stop::Pending("request-fallback cause=draft".into()));
+        }
+        if let Some(remaining) = held
+            && self.note.is_none()
+        {
+            return Err(Stop::Pending(self.copilot_pending(remaining)));
         }
         let started =
             clock::epoch_secs(&record.period_started).ok_or_else(|| shape(self.path, "heads"))?;
@@ -1019,17 +1151,21 @@ impl Gate<'_> {
             ));
         }
         if let Some(remaining) = self.hold(record)? {
-            let run = self
-                .reply
-                .copilot
-                .as_ref()
-                .and_then(|c| c.run)
-                .unwrap_or_default();
-            return Err(Stop::Pending(format!(
-                "copilot-pending run={run} remaining={remaining}"
-            )));
+            return Err(Stop::Pending(self.copilot_pending(remaining)));
         }
         Ok(verdict)
+    }
+
+    /// The pending reason of Copilot's work held with `remaining` seconds
+    /// left, its run as the hold wrote it to the reply.
+    fn copilot_pending(&self, remaining: u64) -> String {
+        let run = self
+            .reply
+            .copilot
+            .as_ref()
+            .and_then(|c| c.run)
+            .unwrap_or_default();
+        format!("copilot-pending run={run} remaining={remaining}")
     }
 
     /// Copilot's work in flight against the hold from the head record's
@@ -1113,9 +1249,13 @@ impl Gate<'_> {
         })
     }
 
-    /// Write the head's retry as `f` answers it from the standing one;
-    /// answers whether `f` wrote one.
-    fn set_retry(&self, f: impl Fn(Option<RetryRecord>) -> Option<RetryRecord>) -> Result<bool> {
+    /// Write the head's retry as `f` answers it from the standing one, and
+    /// `owed` with it; answers whether `f` wrote one.
+    fn set_retry(
+        &self,
+        f: impl Fn(Option<RetryRecord>) -> Option<RetryRecord>,
+        owed: Option<&Notice>,
+    ) -> Result<bool> {
         let path = self.path;
         self.update_head(|standing| {
             let mut head = standing.ok_or_else(|| shape(path, "heads"))?;
@@ -1123,8 +1263,173 @@ impl Gate<'_> {
                 return Ok((head, false));
             };
             head.retry = Some(retry);
+            head.owe(owed);
             Ok((head, true))
         })
+    }
+
+    /// The notice a fallback with `cause` owes the lane's overseer, as the
+    /// record holds it: its first line, `owed`. A `draft` fallback is the
+    /// head waiting on its own ready mark and a `refresh` head takes the
+    /// overseer's refresh route, so neither owes one; nor does an item
+    /// with no launch marker, which runs in no lane. A marker that cannot
+    /// be read may be a lane's, so the notice is owed and a later call's
+    /// send reads the marker again.
+    fn notice_for(&mut self, cause: &str, exit: Option<i32>) -> Option<Notice> {
+        if matches!(cause, "draft" | "refresh") {
+            return None;
+        }
+        match self.lane_root() {
+            Reading::Gone => return None,
+            Reading::Live(_) | Reading::Unreadable { .. } => {}
+        }
+        let mut text = format!(
+            "{NOTICE_KEY} PR #{} head {} cause={cause}",
+            self.r.pr, self.view.head
+        );
+        if let Some(exit) = exit {
+            text.push_str(&format!(" exit={exit}"));
+        }
+        Some(Notice {
+            key: NOTICE_KEY.to_owned(),
+            text,
+            to: self.item.clone(),
+            owner: state::NOTICE_OWED.to_owned(),
+        })
+    }
+
+    /// The lane's root, as the launch marker for the item under the call's
+    /// common git directory names it: the turn-end hook's own reading of
+    /// whether the item runs in a lane, from the lane's worktree and the
+    /// main checkout alike.
+    fn lane_root(&mut self) -> Reading<PathBuf> {
+        if let Some(read) = &self.lane {
+            return read.clone();
+        }
+        let read = match self.item.as_deref() {
+            Some(item) if marker::item_name(item).is_ok() => {
+                marker::read_in(&self.git_common, item).map(PathBuf::from)
+            }
+            Some(_) | None => Reading::Gone,
+        };
+        self.lane = Some(read.clone());
+        read
+    }
+
+    /// Send each notice the head's record still owes, whichever call's
+    /// write owed it, and mark it: an `owed` one, and an `unanswered` one
+    /// once more, whose second send with no answer is final as `unsent`.
+    /// The send follows the write that owed it, so a send whose answer or
+    /// mark is lost leaves the notice for the next call; the mailbox reads a
+    /// repeat inside its minute window as the notice that landed, and a
+    /// repeat past it is a second notice. A lane whose marker is gone by
+    /// the send marks the notice unsent; one that cannot be read leaves it
+    /// as it stands.
+    fn deliver_notices(&mut self) -> Result<()> {
+        let snapshot = loaded(self.path)?;
+        let Some(head) = head_record(self.path, &snapshot.doc, &self.view.head)? else {
+            return Ok(());
+        };
+        let mut reports = Vec::with_capacity(head.notices.len());
+        for (index, notice) in head.notices.into_iter().enumerate() {
+            let standing = |sent_now, unmarked| NoticeReport {
+                notice: notice.text.clone(),
+                owner: notice.owner.clone(),
+                sent_now,
+                unmarked,
+            };
+            if !notice.owed() && !notice.unanswered() {
+                reports.push(standing(false, None));
+                continue;
+            }
+            let (mark, sent_now) = match self.lane_root() {
+                Reading::Live(root) => (self.send_fallback_notice(&root, &notice, index), true),
+                Reading::Gone => ("unsent:lane-gone".to_owned(), false),
+                Reading::Unreadable { .. } => {
+                    reports.push(standing(false, None));
+                    continue;
+                }
+            };
+            let mark = if notice.unanswered() && mark.starts_with(state::NOTICE_UNANSWERED) {
+                format!("unsent:{mark}")
+            } else {
+                mark
+            };
+            let path = self.path;
+            let marked = self.update_head(|standing| {
+                let mut head = standing.ok_or_else(|| shape(path, "heads"))?;
+                if let Some(held) = head
+                    .notices
+                    .iter_mut()
+                    .find(|n| n.text == notice.text && n.owner == notice.owner)
+                {
+                    held.owner = mark.clone();
+                }
+                Ok((head, ()))
+            });
+            reports.push(match marked {
+                Ok(()) => NoticeReport {
+                    owner: mark,
+                    ..standing(sent_now, None)
+                },
+                Err(e) => standing(sent_now, Some(e.key().to_owned())),
+            });
+        }
+        self.reply.notices = reports;
+        Ok(())
+    }
+
+    /// Send `notice` into the lane's mailbox at `root`, its second line the
+    /// lane's status file there, and answer the mark the send earns: `sent`
+    /// on the receipt or the program's repeat refusal; `unsent:<cause>`
+    /// where the program never started or refused by its own key before
+    /// the append; `unanswered:<cause>` where it gave no answer, exited
+    /// with no key or printed no receipt, since the append may stand. The
+    /// text file is this call's own, created exclusively and removed after.
+    fn send_fallback_notice(&self, root: &Path, notice: &Notice, index: usize) -> String {
+        use std::io::Write;
+        let item = self.item.as_deref().unwrap_or_default();
+        if let Err(e) = std::fs::create_dir_all(&self.notice_dir) {
+            return format!("unsent:notice-dir:{e}");
+        }
+        let file = self
+            .notice_dir
+            .join(format!("{item}.{}.{index}.notice", self.nonce));
+        let status = root.join("tmp").join(format!("lane-status-{item}.md"));
+        let mut handle = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&file)
+        {
+            Ok(handle) => handle,
+            Err(e) => return format!("unsent:notice-write:{e}"),
+        };
+        let text = format!("{}\n{}\n", notice.text, status.display());
+        if let Err(e) = handle.write_all(text.as_bytes()) {
+            let _ = std::fs::remove_file(&file);
+            return format!("unsent:notice-write:{e}");
+        }
+        drop(handle);
+        let mark = match self.mail.notice(item, root, &file) {
+            Ok(Noticed::Sent { .. } | Noticed::Repeated { .. }) => "sent".to_owned(),
+            Err(
+                refusal @ (Refusal::NotStarted { .. }
+                | Refusal::Exit {
+                    status: Some(_),
+                    keyed: Some(_),
+                    ..
+                }),
+            ) => format!("unsent:{refusal}"),
+            Err(
+                refusal @ (Refusal::Unanswered { .. }
+                | Refusal::Exit { .. }
+                | Refusal::Reply { .. }),
+            ) => {
+                format!("{}{refusal}", state::NOTICE_UNANSWERED)
+            }
+        };
+        let _ = std::fs::remove_file(&file);
+        mark
     }
 
     /// Record the verdict under `pr_review.verdict`; a `timeout` ends the

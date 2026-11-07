@@ -57,7 +57,7 @@ The runtime at `runtime/` is its own Cargo workspace; run `cargo clippy --all-ta
 2. Keyring fallback. That token failing: `env -u GH_TOKEN -u GITHUB_TOKEN gh auth status` once; on success, warn on stderr and unset the stale env token.
 3. Bot token. Keyring not recovering: unset the stale env tokens, then load a `GH_BOT_TOKEN` candidate from process env or project config. `op://` references resolve through `op read` only after the final source is selected. The `github.sh` router separately prefers a resolved `GH_BOT_TOKEN` over a resolved `GITHUB_TOKEN`, so bot access is not blocked by a user token.
 4. No-env keyring. No env token at startup and no bot token: probe keyring auth once.
-5. Hard fail. Nothing works: exit `3` with a diagnostic. Callers never poll against empty output. `oversee-report` runs steps 1 to 3 and refuses as `auth-failed` with exit `2`. `orch-runtime watch run` runs the GitHub skill's `scripts/gh-auth-ladder` once at its start, which takes steps 1 to 3 and prints its selection, then starts itself again under it, so the runtime's `gh` children inherit the selected token; a ladder that selects nothing refuses the start as `auth-failed service=github`, and the runtime's own per-read refusal is the failure path after that.
+5. Hard fail. Nothing works: the caller refuses with a diagnostic. Callers never poll against empty output. `oversee-report` runs steps 1 to 3 and refuses as `auth-failed` with exit `2`. `orch-runtime watch run` runs the GitHub skill's `scripts/gh-auth-ladder` once at its start, which takes steps 1 to 3 and prints its selection, then starts itself again under it, so the runtime's `gh` children inherit the selected token; a ladder that selects nothing refuses the start as `auth-failed service=github`, and the runtime's own per-read refusal is the failure path after that.
 
 `op` CLI service-account setup is outside orch: launchers may inject resolved secrets before starting a harness, and orch preserves those values rather than clobbering them with local `op://` references.
 
@@ -80,8 +80,6 @@ Reruns re-execute the workflow definition and verifier state pinned at the origi
 ## Merge route
 
 A lane merges its own pull request: `merge-pr.md` § 5 step 1 runs `pr-merge` on the exact head, under the lanes app's installation token in a lane sandbox. `pr-merge` merges past the queue with `--admin` where the queue is all that token would bypass on the base and the change is not queue-only; otherwise GitHub queues the PR (exit `75`) and the lane waits in the runtime's `queue-watch` to a terminal verdict, where a finding that lands while the PR is queued takes it back out through `queue-watch`'s late-findings guard. The route and its causes: `pr-merge --help` § Merge route. `merge-pr.md` § 5 step 1 owns the explicit arms for `pr_approval.forced` and unresolved merge state. `submit-pr.md` § 2 step 5 owns ordinary creation arms.
-
-The overseer's owner-credential merge, the `--force` override and the `ORCH_MERGE_BYPASS` fast path are retired; their settings are read by nothing.
 
 ## Launch lanes
 

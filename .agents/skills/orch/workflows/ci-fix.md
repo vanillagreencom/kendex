@@ -44,6 +44,8 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --
 .agents/skills/github/scripts/github.sh ci-logs [PR_NUMBER]
 ```
 
+`ci-logs` reads the pull request head's checks alone; a merge-group run's failed logs are § 4's read.
+
 ## 3. Classify And Route
 
 Formatting, obvious lint, and a missing import are fixed directly; a test failure, a build error, or non-obvious lint is delegated. A failure in a merge-group run takes § 4 first, which names the PR whose commits caused it.
@@ -114,12 +116,13 @@ Report: what was fixed, the validate status, and any unrelated failures.
 
 ## 4. Merge-Group Failures
 
-A merge-group run, the one [merge-pr.md § 5](merge-pr.md#5-execute-the-merge) Recovery cycle step 1 points this workflow at as `[RUN_ID]`, runs on GitHub's temporary queue branch and carries no pull request. Its head carries this PR's commits on top of those of the PRs queued ahead of it. Read that head as `[GROUP_HEAD]`, the PR's base branch as `[BASE_REF]`, then the commits the head carries past that base:
+A merge-group run, the one [merge-pr.md § 5](merge-pr.md#5-execute-the-merge) Recovery cycle step 1 points this workflow at as `[RUN_ID]`, runs on GitHub's temporary queue branch and carries no pull request. Its head carries this PR's commits on top of those of the PRs queued ahead of it. Read that head as `[GROUP_HEAD]`, the PR's base branch as `[BASE_REF]`, the commits the head carries past that base, then the run's failed logs, the error output every route below carries:
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY gh run view [RUN_ID] --json headSha --jq .headSha
 env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json baseRefName --jq .baseRefName
 env -u GH_REPO -u GITHUB_REPOSITORY gh api "repos/{owner}/{repo}/compare/[BASE_REF]...[GROUP_HEAD]" --jq '.commits[] | [.sha, .commit.message] | @tsv'
+env -u GH_REPO -u GITHUB_REPOSITORY gh run view [RUN_ID] --log-failed
 ```
 
 Cross-reference those commits with the original PRs to identify which file failed, which commit introduced it, and which PR that commit belongs to. A failure this PR's own commits cause takes § 3. Another single identifiable PR routes to that PR's agent; a genuine cross-PR integration issue routes to the architecture reviewer for analysis, delegated from this PR's worktree. When the source stays unclear after that analysis, `auto-recommended` records `ci-source-unclear`; `ask` presents the evidence to the user.
@@ -155,7 +158,7 @@ Bind `[REVIEW_BASE_CHECKOUT]` per [Gate-mode routing](../references/gates.md#gat
 env PR_REVIEW_WAIT_SECS=300 .agents/skills/orch/scripts/orch-runtime op --item [STATE_KEY] --request "[WORKTREE_PATH]/tmp/verify-review-request-[STATE_KEY].json"
 ```
 
-Its reply's `mode` is `GATE_MODE`, the item's recorded one. Under `off` the wait ends at its first reply: a `complete` verdict `off`, or a `pending copilot-pending` reply while Copilot's work runs on the head, which merge-pr § 5 step 1's call holds before the merge call, goes to the CI wait. A `blocked` verdict under either mode takes the `blocked` row below. A refusal is no mode, so report it and stop. On `approval` the call has also requested Copilot on a new head Copilot has not reviewed, whatever the verdict: route its `request` by [Copilot requests](../references/gates.md#copilot-requests) before the verdict. Route the verdict:
+Its reply's `mode` is `GATE_MODE`, the item's recorded one. Under `off` the wait ends at its first reply: a `complete` verdict `off`, or a `pending copilot-pending` reply while Copilot's work runs on the head, which merge-pr § 5 step 1's call holds before the merge call, goes to the CI wait. A `blocked` verdict under either mode takes the `blocked` row below. A refusal is no mode, so report it and stop. On `approval` its `request` says what the new head's record holds, whatever the verdict: route it by [Copilot requests](../references/gates.md#copilot-requests) before the verdict. Route the verdict:
 
 - `approved` / `proceeded` → wait for CI. ci-fix writes no `pr_approval.reviewer_down` for `proceeded`; the caller records it. It is a LOCAL verdict — orch posts no status.
 - `comments` / `changes_requested` → new feedback on the fix push. Managed: return it to the caller's review-gate handling. Standalone: run that triage pass, then re-run this step.

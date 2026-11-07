@@ -146,7 +146,7 @@ The runtime's `marks --fleet` judges the overseer's shared context mark, account
 
 Every refusal of a live self-succession, from the mode decision onward, records one fleet-log row and sends one owner notice through `lane-mail notice --to owner`. The keyed line names the mark, or `unknown` before the run judges one. Only `mark=headroom` names the account and reset time. A notice the owner already received within the last 24 hours can be refused as `owner-notice-repeated`; the fleet-log row still lands and the succession's refusal status stands. Check and print modes write neither channel.
 
-A dead or walled overseer takes no turn and calls no succession. The watch judges its recorded identity, session rows, context and pane, then requests recovery through the runtime's `request-transfer`; a record with `succession` instead calls that owner. Dead recovery uses the pending successor or the record's typed launch fields and handoff. Wall recovery walks the overseer preference without the spent account. The events are `overseer-dead` and `overseer-walled` in [overseer-session-events.md](overseer-session-events.md); a full context that prevents another turn reads `overseer-dead source=context`. The successor reads available output from the predecessor's children before repeating their tasks.
+A dead or walled overseer takes no turn and calls no succession. The watch judges its recorded identity, session rows, context and pane. With `ORCH_OVERSEER_SUCCESSION=on`, it then requests recovery through the runtime's `request-transfer`, and a record with `succession` instead calls that owner; under `off` it reports the line and requests nothing. Dead recovery uses the pending successor or the record's typed launch fields and handoff. Wall recovery walks the overseer preference without the spent account. The events are `overseer-dead` and `overseer-walled` in [overseer-session-events.md](overseer-session-events.md); a full context that prevents another turn reads `overseer-dead source=context`. The successor reads available output from the predecessor's children before repeating their tasks.
 
 ### Keep the report's inputs current
 
@@ -441,7 +441,7 @@ Every emitted question is answered: the lane is blocked in `lane-mail wait` on t
 
 ### `lane-notice`
 
-the lane reported something it is not waiting on. Act on it where it needs acting on; it needs no reply. A `copilot-*` notice takes [copilot-head-notices.md](copilot-head-notices.md).
+the lane reported something it is not waiting on. Act on it where it needs acting on; it needs no reply. A `copilot-*` notice takes [copilot-head-notices.md](copilot-head-notices.md). A `copilot-fallback` notice is sent by the lane's review call itself, and the same notice can arrive twice where a send's answer was lost.
 
 ### `directive-read [ITEM] [ID]`
 

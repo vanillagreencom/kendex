@@ -43,10 +43,10 @@ LINEAR_REQUIRE_REACH = "1"
 PR_REVIEW_WAIT_SECS = "900"
 
 # When the review signal never arrives: "block" reports a timeout;
-# "proceed" records a reviewer-down override and moves on, but only with
-# zero unresolved threads — a real comment is never bypassed. Comment-only
-# bots can go silent on a trivial head, so a silent round proceeds rather
-# than stalling the session.
+# "proceed" records a reviewer-down override and moves on, but only where no
+# reviewer engaged and no thread is open — a real comment is never bypassed.
+# Comment-only bots can go silent on a trivial head, so a silent round
+# proceeds rather than stalling the session.
 PR_REVIEW_ON_TIMEOUT = "proceed"
 
 # Max automated ci-fix rounds per PR before a human takes over.
@@ -140,8 +140,9 @@ ORCH_LANE_MAX_PCT = "95"
 ORCH_LANE_CODEX_CREDIT_FLOOR = "0"
 
 # The overseer moves before its account walls when its current binding bucket
-# reaches 5 percent headroom, its projected wall is within 20 minutes, or the
-# qualifying-account trigger fires by the rule oversee-succeed --help states. A
+# reaches 5 percent headroom or its projected wall is within 20 minutes; the
+# qualifying-account trigger, by the rule oversee-succeed --help states, is
+# read by oversee-succeed alone, never by the runtime's mark judge. A
 # seat account (one an overseer or Jarvis session runs on) keeps this headroom
 # for its session: a worker's pick holds it to min(ORCH_LANE_MAX_PCT, 100 - 5)
 # and lanes on it hand off at that line.

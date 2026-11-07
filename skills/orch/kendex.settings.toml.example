@@ -95,19 +95,28 @@ PR_REVIEW_WAIT_SECS = "900"
 PR_REVIEW_ON_TIMEOUT = "proceed"
 
 # Whether orch asks Copilot for a review or re-review. "off" sends no
-# request: the review call records the head's request as fallback cause=off,
-# and the lane asks the overseer for that head's approval instead, once per
-# head. Set it when the Copilot review budget is spent.
+# request: under the approval gate mode the review call records the head's
+# request as fallback cause=off and, where the item runs in a lane, sends
+# the overseer the copilot-fallback notice that asks for that head's
+# approval instead, once per head; under the off gate mode the call
+# requests nothing and records no fallback, and its hold still waits on
+# Copilot work already running on the head. Set it when the Copilot review
+# budget is spent.
 # values: on | off
 PR_COPILOT_REQUESTS = "on"
 
 # Maximum seconds, from the head's record, the review call holds a verdict
-# that permits a merge as pending copilot-pending while Copilot's work runs
+# that permits a merge, and an unapproved head's review-period answer, as
+# pending copilot-pending while Copilot's work runs
 # on the live head, under either gate mode: a Copilot check with no Copilot
 # review of the head submitted since it started, or a pending request. An
 # expired hold answers the verdict as usual. overseer-approve --hold-copilot
-# holds a fallback app approval on the same bound; a finished hold there
-# returns to the review reply check. Positive whole seconds. Requires the
+# holds a fallback app approval on the same bound, counted from its own
+# start; a finished hold there returns to the review reply check. The
+# read-only orch-runtime copilot-wait a triage runs waits on the same work,
+# counted from its own start. Whole seconds above zero, with no sign and no
+# leading zero: any other value refuses the review call and copilot-wait as
+# setting-invalid and overseer-approve as copilot-hold-setting. Requires the
 # overseer token app's repository Checks: read permission.
 ORCH_COPILOT_HOLD_SECS = "600"
 
@@ -193,7 +202,8 @@ ORCH_MERGE_AUTONOMY = "auto"
 # The overseer's status report on what landed, is running, comes next and
 # waits on you, pasted into its chat and saved. "on" writes one on the
 # schedule below; "off" writes none on a schedule. A live overseer's
-# handover writes one either way; a dead or walled overseer's writes none.
+# handover writes one either way, unless its record names its own succession
+# command; a dead or walled overseer's writes none.
 # values: on | off
 ORCH_REPORT = "on"
 
@@ -318,7 +328,8 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 
 # The allowance left on an account at which a running lane is marked for
 # handover. The overseer asks a marked lane to hand over at its next safe
-# point. `lanes --help` (context) states which lanes headroom marks.
+# point. The lane's turn-end hook judges the lane's account at this mark
+# (references/settings.md).
 # ORCH_HANDOFF_HEADROOM_PCT = "3"
 
 # Who relaunches a lane its account walled. "auto" has the watch relaunch
@@ -425,8 +436,10 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # Replace it with a class, such as claude:standard:high, or the harness default.
 # A model name is not checked
 # before launch, so a misspelled codex, copilot or pi model opens the new
-# overseer on that name. Which entries a first launch and a succession skip is in
-# oversee --help and oversee-succeed --help. Classes and harness defaults
+# overseer on that name. The runtime's successor walk names each entry it
+# skips, with the judge's word, in its reply's .result.walk.skipped
+# (workflows/oversee.md § Controller start and adoption); oversee-succeed
+# --help states which entries its own walk skips. Classes and harness defaults
 # need no edit when model versions change. An empty setting names no entries.
 # ORCH_OVERSEER_PREFERENCE = "claude:standard:high,codex:standard:high"
 
@@ -496,7 +509,7 @@ ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 # Repeat schedule: references/oversee-events.md, event lane-long.
 # ORCH_WATCH_LANE_AGE_SECS = "12600"
 
-# Mail cadence and delay contract: orch-runtime watch --help.
+# Seconds between two mail turns of the watch.
 # ORCH_WATCH_MAIL_INTERVAL = "20"
 
 # Age in seconds past which a directive a lane has not read is reported as

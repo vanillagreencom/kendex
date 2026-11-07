@@ -365,22 +365,33 @@ fn remove(path: &Path) -> Result<()> {
 /// The root the marker for `item` under `worktree`'s common git directory
 /// holds, read three-valued: `Gone` where no marker stands, `Unreadable`
 /// where the checkout or the marker could not be read.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the marker read back after a crash, three-valued"
-)]
 pub fn read(worktree: &Path, item: &str) -> Reading<String> {
-    let Ok(item) = item_name(item) else {
+    if item_name(item).is_err() {
         return Reading::Unreadable {
             cause: "marker-item-invalid",
         };
-    };
+    }
     let Ok(checkout) = checkout(worktree) else {
         return Reading::Unreadable {
             cause: "marker-git-failed",
         };
     };
-    match std::fs::read_to_string(marker_path(&checkout.common, item)) {
+    read_in(&checkout.common, item)
+}
+
+/// The root the marker for `item` holds under the common git directory
+/// `common`, read three-valued as [`read`] reads it.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the marker read by its path, three-valued: absent is no launch record"
+)]
+pub fn read_in(common: &Path, item: &str) -> Reading<String> {
+    let Ok(item) = item_name(item) else {
+        return Reading::Unreadable {
+            cause: "marker-item-invalid",
+        };
+    };
+    match std::fs::read_to_string(marker_path(common, item)) {
         Ok(text) => Reading::Live(text.trim_end_matches('\n').to_owned()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Reading::Gone,
         Err(_) => Reading::Unreadable {

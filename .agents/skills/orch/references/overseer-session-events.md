@@ -4,7 +4,7 @@ The events the watch reports on the overseer's own session. [oversee.md](../work
 
 ## Recovery requests
 
-The watch judges the recorded controller's session, account and context before requesting recovery. An open controller intent holds that judgement. A dead controller takes `request-transfer` with `cause: dead`, using its pending successor or its recorded typed launch fields and handoff. A walled controller or a live controller on its reserve takes `cause: walled`, with the spent account excluded from the preference walk. A `succession` command on the record replaces either transfer with that owner's command. Recovery opens a fresh session, not a native resume.
+The watch judges the recorded controller's session, account and context before requesting recovery. An open controller intent holds that judgement. A dead controller takes `request-transfer` with `cause: dead`, using its pending successor or its recorded typed launch fields and handoff. A walled controller or a live controller on its reserve takes `cause: walled`, with the spent account excluded from the preference walk. A `succession` command on the record replaces either transfer with that owner's command. Under `ORCH_OVERSEER_SUCCESSION=off` the watch requests neither and runs no owner command for a dead, walled or reserve controller. Recovery opens a fresh session, not a native resume.
 
 A pane's usage-limit banner alone proves no wall: the overseer's pane also holds banners it relays from lanes. A current login wall needs no usage confirmation. An affirmative `reserve_only` headroom reading leaves the controller live and permits its independent reserve recovery.
 

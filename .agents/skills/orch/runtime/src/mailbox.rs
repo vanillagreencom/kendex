@@ -1,5 +1,5 @@
-//! The mailbox client (decision 121, Q1): the one Rust owner of every
-//! `lane-mail` call the runtime's watch makes, each through agent-runtime's
+//! The mailbox client: the one Rust owner of every
+//! `lane-mail` call the runtime makes, each through agent-runtime's
 //! one runner under the tag `mail` and under one bound, and each reply
 //! decoded into typed records at this boundary. A program that never
 //! started, one that gave no answer, a nonzero exit and a reply the decoder
@@ -152,7 +152,7 @@ pub struct Envelope {
     pub tracker_posted: Option<bool>,
     /// An owner ask alone (`pending --to owner`): the tracker item it was
     /// posted to, the action it asks for, the comment and label it was
-    /// posted under (`oversee-watch:2767-2835`).
+    /// posted under.
     #[serde(default)]
     pub issue: Option<String>,
     #[serde(default, rename = "do")]
@@ -264,9 +264,19 @@ pub enum Sent {
     /// The delivery id already stood in the mailbox: the send is a retry of
     /// one that landed, and `id` names that envelope.
     Repeated { id: String },
-    /// The lane runs in a cloud session: the record the mailbox hands back
-    /// under decision 31, whatever the send's own result.
+    /// The lane runs in a cloud session: the record the mailbox hands back,
+    /// whatever the send's own result.
     Session { send: DirectiveSend },
+}
+
+/// How a lane's `notice` ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Noticed {
+    /// Appended to the lane's `to-overseer.jsonl` under `id`.
+    Sent { id: String },
+    /// The same envelope stood there from less than a minute before (the
+    /// program's `duplicate id=`): a retry of a notice that landed.
+    Repeated { id: String },
 }
 
 /// One run's answer, before a verb reads it.
@@ -421,11 +431,12 @@ impl Mailbox {
 
     /// One run of the program: the verb first, then `args`, under the bound.
     fn call(&self, verb: &'static str, args: &[&str]) -> Result<Answer, Refusal> {
-        self.call_on(verb, args, None)
+        self.call_on(verb, args, None, None)
     }
 
     /// [`Self::call`] with `lane-host`'s host named: a hosted lane's reads
-    /// go to the provider its record names, never the one the settings name.
+    /// go to the provider its record names, never the one the settings name;
+    /// and in `cwd` where the verb is rooted at the checkout it runs in.
     #[allow(
         clippy::disallowed_methods,
         reason = "the mailbox client's every `lane-mail` call, through agent-runtime's one runner under the `mail` tag and one bound; the duty writes nothing of the fleet through it"
@@ -435,6 +446,7 @@ impl Mailbox {
         verb: &'static str,
         args: &[&str],
         lane_host: Option<&str>,
+        cwd: Option<&Path>,
     ) -> Result<Answer, Refusal> {
         let mut argv = Vec::with_capacity(args.len() + 1);
         argv.push(verb);
@@ -443,10 +455,7 @@ impl Mailbox {
             .map(|h| ("ORCH_LANE_HOST", std::ffi::OsStr::new(h)))
             .into_iter()
             .collect();
-        let place = Place {
-            cwd: None,
-            env: &env,
-        };
+        let place = Place { cwd, env: &env };
         let output = host::run_tagged_in(TAG, PROGRAM, &self.cli, verb, &argv, place, self.bound)
             .map_err(|e| {
             let cause = e.to_string();
@@ -558,7 +567,7 @@ impl Mailbox {
         if host.is_some() {
             args.push("--host");
         }
-        let stdout = self.call_on(VERB, &args, host)?.ok(VERB)?;
+        let stdout = self.call_on(VERB, &args, host, None)?.ok(VERB)?;
         let mut lines = stdout.lines().peekable();
         let drained = Drained::parse(VERB, &mut lines)?;
         if let Some(extra) = lines.next() {
@@ -569,7 +578,7 @@ impl Mailbox {
 
     /// `events --item overseer --box to-lane --after N` at the main
     /// checkout `root`: the overseer's box read by logical line, no cursor
-    /// touched (decision 121, Q2).
+    /// touched.
     pub fn box_events(&self, root: &Path, after: u64) -> Result<BoxEvents, Refusal> {
         const VERB: &str = "events";
         let after = after.to_string();
@@ -599,8 +608,8 @@ impl Mailbox {
         })
     }
 
-    /// `pending --item overseer --to owner`: every pending owner ask
-    /// (`oversee-watch:2763`), one row per line.
+    /// `pending --item overseer --to owner`: every pending owner ask, one
+    /// row per line.
     pub fn pending_owner_asks(&self, root: &Path) -> Result<Vec<Envelope>, Refusal> {
         self.owner_asks(root, &[])
     }
@@ -624,8 +633,8 @@ impl Mailbox {
             .collect()
     }
 
-    /// `send --item overseer --re ASK --delivery-id ID --file F`
-    /// (`oversee-watch:2832`): an answer handed back to the overseer under
+    /// `send --item overseer --re ASK --delivery-id ID --file F`: an answer
+    /// handed back to the overseer under
     /// the ask it answers; one that landed before under the same delivery
     /// id is `Replied::Repeated`, no failure.
     pub fn send_answer(
@@ -778,6 +787,35 @@ impl Mailbox {
         }
         sent_line(VERB, &answer.stdout)
     }
+
+    /// The lane's `notice --item ITEM --file F` to its overseer, run in the
+    /// lane's worktree `root`: the program roots a lane verb at the checkout
+    /// it runs in (`git rev-parse --show-toplevel`), so the envelope lands in
+    /// `root`'s `tmp/lane-mail/ITEM/to-overseer.jsonl`, the box the watch
+    /// drains. A lane notice carries no delivery id: only the program's
+    /// minute window reads a replay as `Noticed::Repeated`.
+    pub fn notice(&self, item: &str, root: &Path, file: &Path) -> Result<Noticed, Refusal> {
+        const VERB: &str = "notice";
+        let file = file.display().to_string();
+        let answer = self.call_on(VERB, &["--item", item, "--file", &file], None, Some(root))?;
+        if !answer.success {
+            if let Some(keyed) = answer.keyed()
+                && let Some(id) = keyed.strip_prefix("duplicate id=")
+            {
+                return Ok(Noticed::Repeated { id: id.to_owned() });
+            }
+            return Err(answer.refused(VERB));
+        }
+        // `lane-mail: sent item=<item> id=<id> bytes=<n> to= ref=`.
+        let line = answer
+            .stdout
+            .lines()
+            .find(|l| l.starts_with("lane-mail: sent item="))
+            .ok_or_else(|| reply(VERB, "receipt", &answer.stdout))?;
+        id_field(line)
+            .map(|id| Noticed::Sent { id })
+            .ok_or_else(|| reply(VERB, "receipt", line))
+    }
 }
 
 /// The `lane-mail: sent item=... id=... monitor=...` receipt of a send that
@@ -873,7 +911,7 @@ mod tests {
         }
     }
 
-    /// The session send's hand-back (decision 31) decodes into the record
+    /// The session send's hand-back decodes into the record
     /// orch stamps, with the credit in both its forms.
     #[test]
     fn a_directive_send_receipt_decodes_with_either_credit_form() {

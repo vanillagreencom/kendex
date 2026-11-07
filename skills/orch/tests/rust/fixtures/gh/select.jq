@@ -8,24 +8,39 @@
 #
 # The forms:
 # - one operation, `query` or `mutation`, with an optional name and
-#   optional variable definitions, then its selection set; after it, named
-#   fragments `fragment NAME on TYPE { ... }`, each spread somewhere;
+#   optional variable definitions `($NAME: TYPE ...)`, TYPE a named type,
+#   `[TYPE]` or either with `!`, no default; then its selection set; after
+#   it, named fragments `fragment NAME on TYPE { ... }`, each spread
+#   somewhere;
 # - a field `NAME`, `NAME(ARGUMENTS)` or `ALIAS: NAME(ARGUMENTS)`;
 # - an inline fragment `... on TYPE { ... }` and a spread `...NAME`, TYPE
 #   one of SCHEMA's types;
-# - arguments: names, variables, numbers, enum values, lists, input objects
-#   and double-quoted strings, read whole and not interpreted.
+# - arguments `NAME: VALUE`, a value a variable `$NAME`, an integer, a
+#   double-quoted string, `true`, `false`, `null`, an enum value, a list
+#   `[VALUE ...]` or an input object `{NAME: VALUE ...}`, commas between
+#   any of them ignored.
 # A comment, a directive, an empty selection set, a fragment defined twice
-# or never spread, a type condition directly inside another, and any other
+# or never spread, a type condition directly inside another, an argument or
+# input field given twice, a variable defined twice, and any other
 # character are refused.
 #
-# The validation (GraphQL specification § 5.3.1, § 5.3.3, § 5.5.2.3), from
-# the operation's root type, whatever the plant: a field its type in SCHEMA
-# lacks (an interface or union carries only its own fields, a field of one
-# of its types is selected under that type's condition), a selection set on
-# a scalar or enum, an object with none, and a type condition that can never
-# apply at its position (no type is both the position's and the
-# condition's) are refused. `__typename` is a field of every type.
+# The validation (GraphQL specification § 5.3.1, § 5.3.3, § 5.4.1, § 5.4.2,
+# § 5.5.2.3, § 5.6.1, § 5.6.2, § 5.6.4, § 5.8), from the operation's root
+# type, whatever the plant: a field its type in SCHEMA lacks (an interface
+# or union carries only its own fields, a field of one of its types is
+# selected under that type's condition), a selection set on a scalar or
+# enum, an object with none, a type condition that can never apply at its
+# position (no type is both the position's and the condition's), an
+# argument its field lacks, a required argument or input field missing, a
+# value of another type than its position's (a literal by its kind, an enum
+# value outside its enum, an input object's field outside its type, a
+# variable whose definition its position does not admit), a variable used
+# and never defined or defined and never used, and a variable defined with
+# a type that is no input type are refused. `__typename` is a field of
+# every type. GitHub's own rules on a connection are applied too: a
+# connection field takes `first` or `last`, and a literal one between 1 and
+# 100 (docs.github.com/en/graphql/overview/rate-limits-and-query-limits-
+# for-the-graphql-api, Node limit).
 #
 # The plants: a field is planted under its schema name, never under a
 # response alias, and the answer carries the planted value under the
@@ -45,14 +60,24 @@
 # version number; its changes are dated in docs.github.com/en/graphql/
 # overview/changelog), as it stood in 2026, cut to the types and fields the
 # queries the fixture answers select: each type maps its fields to [TYPE,
-# LIST], TYPE "S" for a scalar or enum, LIST true where GitHub answers a
-# list. POSSIBLE maps each interface and union to its member types, those of
-# SCHEMA's types and the actor types.
+# LIST, ARGUMENTS], TYPE "S" for a scalar or enum, LIST true where GitHub
+# answers a list, ARGUMENTS each argument the field takes and its input type
+# (absent: none). INPUTS maps each input object to its fields' types, ENUMS
+# each enum an argument takes to its values, and SCALARS names the input
+# scalars, each cut, like SCHEMA, to what the queries send. POSSIBLE maps
+# each interface and union to its member types, those of SCHEMA's types and
+# the actor types.
+def PAGE: {"first": "Int", "after": "String", "last": "Int", "before": "String"};
 def SCHEMA: {
-  "Query": {"nodes": ["Node", true], "repository": ["Repository", false]},
+  "Query": {
+    "nodes": ["Node", true, {"ids": "[ID!]!"}],
+    "repository": ["Repository", false, {"owner": "String!", "name": "String!"}]
+  },
   "Mutation": {
-    "dequeuePullRequest": ["DequeuePullRequestPayload", false],
-    "disablePullRequestAutoMerge": ["DisablePullRequestAutoMergePayload", false]
+    "dequeuePullRequest": ["DequeuePullRequestPayload", false, {"input": "DequeuePullRequestInput!"}],
+    "disablePullRequestAutoMerge": [
+      "DisablePullRequestAutoMergePayload", false, {"input": "DisablePullRequestAutoMergeInput!"}
+    ]
   },
   "DequeuePullRequestPayload": {"mergeQueueEntry": ["MergeQueueEntry", false]},
   "DisablePullRequestAutoMergePayload": {"clientMutationId": ["S", false]},
@@ -66,7 +91,8 @@ def SCHEMA: {
   },
   "CheckSuite": {
     "id": ["S", false], "databaseId": ["S", false], "createdAt": ["S", false],
-    "workflowRun": ["WorkflowRun", false], "checkRuns": ["CheckRunConnection", false]
+    "workflowRun": ["WorkflowRun", false],
+    "checkRuns": ["CheckRunConnection", false, (PAGE + {"filterBy": "CheckRunFilter"})]
   },
   "WorkflowRun": {
     "databaseId": ["S", false], "runAttempt": ["S", false], "event": ["S", false],
@@ -78,8 +104,8 @@ def SCHEMA: {
   },
   "Workflow": {"name": ["S", false]},
   "Repository": {
-    "nameWithOwner": ["S", false], "pullRequest": ["PullRequest", false],
-    "vulnerabilityAlerts": ["RepositoryVulnerabilityAlertConnection", false]
+    "nameWithOwner": ["S", false], "pullRequest": ["PullRequest", false, {"number": "Int!"}],
+    "vulnerabilityAlerts": ["RepositoryVulnerabilityAlertConnection", false, PAGE]
   },
   "RepositoryVulnerabilityAlertConnection": {
     "pageInfo": ["PageInfo", false], "nodes": ["RepositoryVulnerabilityAlert", true]
@@ -95,17 +121,20 @@ def SCHEMA: {
     "author": ["Actor", false], "headRepository": ["Repository", false],
     "mergeCommit": ["Commit", false], "mergeQueueEntry": ["MergeQueueEntry", false],
     "autoMergeRequest": ["AutoMergeRequest", false],
-    "reviewThreads": ["PullRequestReviewThreadConnection", false],
-    "commits": ["PullRequestCommitConnection", false],
-    "reviews": ["PullRequestReviewConnection", false],
-    "timelineItems": ["PullRequestTimelineItemsConnection", false]
+    "reviewThreads": ["PullRequestReviewThreadConnection", false, PAGE],
+    "commits": ["PullRequestCommitConnection", false, PAGE],
+    "reviews": ["PullRequestReviewConnection", false, PAGE],
+    "timelineItems": [
+      "PullRequestTimelineItemsConnection", false,
+      (PAGE + {"itemTypes": "[PullRequestTimelineItemsItemType!]"})
+    ]
   },
   "MergeQueueEntry": {
     "id": ["S", false], "state": ["S", false], "position": ["S", false],
     "headCommit": ["Commit", false], "mergeQueue": ["MergeQueue", false],
     "pullRequest": ["PullRequest", false]
   },
-  "MergeQueue": {"entries": ["MergeQueueEntryConnection", false]},
+  "MergeQueue": {"entries": ["MergeQueueEntryConnection", false, PAGE]},
   "MergeQueueEntryConnection": {"nodes": ["MergeQueueEntry", true]},
   "AutoMergeRequest": {"enabledAt": ["S", false]},
   "PullRequestReviewThreadConnection": {
@@ -114,9 +143,9 @@ def SCHEMA: {
   "PullRequestReviewThread": {"isResolved": ["S", false]},
   "Commit": {
     "oid": ["S", false], "authoredDate": ["S", false], "committedDate": ["S", false],
-    "status": ["Status", false], "checkSuites": ["CheckSuiteConnection", false]
+    "status": ["Status", false], "checkSuites": ["CheckSuiteConnection", false, PAGE]
   },
-  "Status": {"context": ["StatusContext", false]},
+  "Status": {"context": ["StatusContext", false, {"name": "String!"}]},
   "StatusContext": {"state": ["S", false], "createdAt": ["S", false]},
   "CheckSuiteConnection": {"pageInfo": ["PageInfo", false], "nodes": ["CheckSuite", true]},
   "CheckRunConnection": {"pageInfo": ["PageInfo", false], "nodes": ["CheckRun", true]},
@@ -130,7 +159,7 @@ def SCHEMA: {
   "PullRequestReview": {
     "state": ["S", false], "body": ["S", false], "submittedAt": ["S", false],
     "author": ["Actor", false], "commit": ["Commit", false],
-    "comments": ["PullRequestReviewCommentConnection", false]
+    "comments": ["PullRequestReviewCommentConnection", false, PAGE]
   },
   "PullRequestReviewCommentConnection": {
     "totalCount": ["S", false], "nodes": ["PullRequestReviewComment", true]
@@ -151,6 +180,20 @@ def SCHEMA: {
     "previousReviewState": ["S", false], "review": ["PullRequestReview", false]
   }
 };
+def INPUTS: {
+  "CheckRunFilter": {"checkType": "CheckRunType"},
+  "DequeuePullRequestInput": {"id": "ID!", "clientMutationId": "String"},
+  "DisablePullRequestAutoMergeInput": {"pullRequestId": "ID!", "clientMutationId": "String"}
+};
+def ENUMS: {
+  "CheckRunType": ["ALL", "LATEST"],
+  "PullRequestTimelineItemsItemType": [
+    "HEAD_REF_FORCE_PUSHED_EVENT", "AUTO_MERGE_ENABLED_EVENT", "AUTO_SQUASH_ENABLED_EVENT",
+    "AUTO_REBASE_ENABLED_EVENT", "ADDED_TO_MERGE_QUEUE_EVENT", "REVIEW_DISMISSED_EVENT",
+    "READY_FOR_REVIEW_EVENT"
+  ]
+};
+def SCALARS: ["Int", "String", "Boolean", "ID"];
 def EVENTS: [
   "HeadRefForcePushedEvent", "AutoMergeEnabledEvent", "AutoSquashEnabledEvent",
   "AutoRebaseEnabledEvent", "AddedToMergeQueueEvent", "ReviewDismissedEvent",
@@ -180,6 +223,106 @@ def tokens:
   | map(if . == "..." or . == "{" or . == "}" or . == ":" or name or startswith("(") and length > 1
         then . else refuse("token \(.)") end);
 def normalize: gsub("\\s+"; " ") | gsub("\\( "; "(") | gsub(" \\)"; ")");
+# The lexemes inside one parenthesized argument or variable list: variables,
+# names, integers, strings and punctuation, commas dropped; any other
+# character refuses.
+def lexemes:
+  [.[1:-1] | scan("\"[^\"\\\\\\n]*\"|\\$[A-Za-z_][A-Za-z0-9_]*|-?[0-9]+|[A-Za-z_][A-Za-z0-9_]*|[\\[\\]{}:!,]|\\S")]
+  | map(if test("^(\"|\\$|-?[0-9]|[A-Za-z_]|[\\[\\]{}:!,])") then . else refuse("argument token \(.)") end)
+  | map(select(. != ","));
+# One value at the head of the lexemes: {v, rest}, v {k: its kind, n: a
+# variable's or enum value's name, an integer's value, items, fields}.
+def value:
+  def items($acc):
+    if length == 0 then refuse("unclosed list")
+    elif .[0] == "]" then {v: {k: "list", items: $acc}, rest: .[1:]}
+    else value as $one | $one.rest | items($acc + [$one.v]) end;
+  def fields($acc):
+    if length == 0 then refuse("unclosed input object")
+    elif .[0] == "}" then {v: {k: "object", fields: $acc}, rest: .[1:]}
+    elif (.[0] | name) and .[1] == ":" then
+      .[0] as $field
+      | if $acc | has($field) then refuse("input field \($field) twice") else . end
+      | (.[2:] | value) as $one | $one.rest | fields($acc + {($field): $one.v})
+    else refuse("input field \(.[0])") end;
+  if length == 0 then refuse("argument value missing")
+  elif .[0] == "[" then .[1:] | items([])
+  elif .[0] == "{" then .[1:] | fields({})
+  elif .[0] | startswith("$") then {v: {k: "var", n: .[0][1:]}, rest: .[1:]}
+  elif .[0] | startswith("\"") then {v: {k: "string"}, rest: .[1:]}
+  elif .[0] | test("^-?[0-9]+$") then {v: {k: "int", n: (.[0] | tonumber)}, rest: .[1:]}
+  elif .[0] == "true" or .[0] == "false" then {v: {k: "boolean"}, rest: .[1:]}
+  elif .[0] == "null" then {v: {k: "null"}, rest: .[1:]}
+  elif .[0] | name then {v: {k: "enum", n: .[0]}, rest: .[1:]}
+  else refuse("argument value \(.[0])") end;
+# A field's arguments: {NAME: value}.
+def arguments:
+  def read($acc):
+    if length == 0 then $acc
+    elif (.[0] | name) and .[1] == ":" then
+      .[0] as $argument
+      | if $acc | has($argument) then refuse("argument \($argument) twice") else . end
+      | (.[2:] | value) as $one | $one.rest | read($acc + {($argument): $one.v})
+    else refuse("argument \(.[0])") end;
+  if . == "" then {} else lexemes | read({}) end;
+# A type reference at the head of the lexemes: {t, rest}, t its text.
+def typeref:
+  if .[0] == "[" then
+    (.[1:] | typeref) as $inner
+    | if $inner.rest[0] != "]" then refuse("list type") else . end
+    | $inner.rest[1:] as $after
+    | if $after[0] == "!" then {t: "[\($inner.t)]!", rest: $after[1:]} else {t: "[\($inner.t)]", rest: $after} end
+  elif (.[0] // "") | name then
+    if .[1] == "!" then {t: (.[0] + "!"), rest: .[2:]} else {t: .[0], rest: .[1:]} end
+  else refuse("type \(.[0] // "")") end;
+# The operation's variable definitions: {NAME: type}.
+def definitions:
+  def read($acc):
+    if length == 0 then $acc
+    elif (.[0] | startswith("$")) and .[1] == ":" then
+      .[0][1:] as $variable
+      | if $acc | has($variable) then refuse("variable $\($variable) twice") else . end
+      | (.[2:] | typeref) as $type | $type.rest | read($acc + {($variable): $type.t})
+    else refuse("variable definition \(.[0])") end;
+  lexemes | read({});
+def required: endswith("!");
+def nullable: if endswith("!") then .[:-1] else . end;
+def listed: nullable | startswith("[");
+def item: nullable | .[1:-1];
+def named: gsub("[\\[\\]!]"; "");
+# Whether a variable defined as $defined may stand at a position of type
+# $at (GraphQL § 5.8.5, no defaults).
+def admits($defined; $at):
+  if $at | required then ($defined | required) and admits($defined | nullable; $at | nullable)
+  elif $defined | required then admits($defined | nullable; $at)
+  elif $at | listed then ($defined | listed) and admits($defined | item; $at | item)
+  elif $defined | listed then false
+  else $defined == $at end;
+# Whether the value is one a position of type $at takes (GraphQL § 3.5,
+# § 3.10, § 5.6.1, § 5.6.4), $variables the operation's definitions.
+def takes($at; $variables):
+  if .k == "var" then admits($variables[.n]; $at)
+  elif .k == "null" then $at | required | not
+  elif $at | listed then
+    if .k == "list" then all(.items[]; takes($at | item; $variables)) else takes($at | item; $variables) end
+  else
+    ($at | nullable) as $kind
+    | . as $value
+    | if $kind == "Int" then .k == "int"
+      elif $kind == "String" then .k == "string"
+      elif $kind == "Boolean" then .k == "boolean"
+      elif $kind == "ID" then .k == "string" or .k == "int"
+      elif ENUMS | has($kind) then .k == "enum" and (ENUMS[$kind] | index([$value.n])) != null
+      elif INPUTS | has($kind) then
+        INPUTS[$kind] as $fields
+        | .k == "object"
+          and (($value.fields | keys) - ($fields | keys)) == []
+          and all($value.fields | to_entries[]; . as $f | $f.value | takes($fields[$f.key]; $variables))
+          and all($fields | to_entries[] | select(.value | required); . as $f | $value.fields | has($f.key))
+      else false end
+  end;
+# The variables a value names.
+def uses: [.. | objects | select(.k == "var") | .n];
 # Two selections at one level merged as GraphQL merges them: one response
 # key names one field with one set of arguments.
 def merge($b):
@@ -243,23 +386,40 @@ def resolve($fragments):
   end;
 # The resolved selection judged against SCHEMA at $kind, each field given
 # its position: t its type ("S" a scalar or enum), l whether it is a list.
-def validate($kind; $path):
+def validate($kind; $path; $variables):
   . as $tree
   | reduce ($tree | keys_unsorted[]) as $key ({};
       if $key | startswith("?on ") then
         $key[4:] as $condition
         | if $condition != $kind and (possible($kind) - (possible($kind) - possible($condition))) == []
           then refuse("condition \($condition) never applies at \($path) (\($kind))")
-          else . + {($key): ($tree[$key] | validate($condition; $path))} end
+          else . + {($key): ($tree[$key] | validate($condition; $path; $variables))} end
       else
         $tree[$key] as $field
         | (if $path == "" then $field.f else $path + "." + $field.f end) as $at
         | (if $field.f == "__typename" then ["S", false]
            else SCHEMA[$kind][$field.f] // refuse("\($field.f) is no field of \($kind) at \($at)") end) as $position
+        | ($position[2] // {}) as $takes
+        | ($field.a | arguments) as $given
+        | (($given | keys) - ($takes | keys)) as $unknown
+        | if $unknown != [] then refuse("argument \($unknown[0]) is no argument of \($field.f) at \($at)") else . end
+        | ([$takes | to_entries[] | select(.value | required) | .key] - ($given | keys)) as $missing
+        | if $missing != [] then refuse("argument \($missing[0]) missing at \($at)") else . end
+        | reduce ($given | keys_unsorted[]) as $argument (.;
+            $given[$argument] as $value
+            | if ($value | uses) - ($variables | keys) != []
+              then refuse("variable $\(($value | uses) - ($variables | keys) | .[0]) undefined at \($at)")
+              elif $value | takes($takes[$argument]; $variables) | not
+              then refuse("argument \($argument) at \($at) takes \($takes[$argument])")
+              elif ($argument == "first" or $argument == "last") and $value.k == "int" and ($value.n < 1 or $value.n > 100)
+              then refuse("argument \($argument) at \($at) outside 1..100")
+              else . end)
+        | if ($position[0] | endswith("Connection")) and ($given | has("first") or has("last") | not)
+          then refuse("a connection with no first or last at \($at)") else . end
         | if $position[0] == "S" and $field.s != true then refuse("selection on a scalar at \($at)")
           elif $position[0] != "S" and $field.s == true then refuse("no selection on \($position[0]) at \($at)")
           elif $field.s == true then . + {($key): ($field + {t: "S", l: $position[1]})}
-          else . + {($key): ($field + {t: $position[0], l: $position[1], s: ($field.s | validate($position[0]; $at))})} end
+          else . + {($key): ($field + {t: $position[0], l: $position[1], s: ($field.s | validate($position[0]; $at; $variables))})} end
       end);
 # An object's GraphQL type: its `__typename`, else its node id's prefix
 # (GitHub's global ids: `CR_` a CheckRun, `CS_` a CheckSuite).
@@ -305,12 +465,19 @@ def project($tree; $kind; $path):
 | if ($tokens[0] == "query" or $tokens[0] == "mutation") and (["N", "NN", "NA", "NNA"] | index([$head])) != null
   then . else refuse("operation") end
 | (if $tokens[0] == "query" then "Query" else "Mutation" end) as $root
+| ($tokens[:$open] | map(select(startswith("("))) | if . == [] then {} else .[0] | definitions end) as $variables
+| ([$variables | to_entries[] | select(.value | named | . as $n | (SCALARS + (ENUMS | keys) + (INPUTS | keys)) | index([$n]) == null)]) as $foreign
+| if $foreign != [] then refuse("variable $\($foreign[0].key) of \($foreign[0].value), no input type") else . end
 | ($tokens[$open + 1:] | if .[0] == "}" then refuse("empty selection") else parse end) as $operation
 | ($operation.rest | fragments) as $fragments
 | ([$operation.tree, $fragments] | [.. | objects | keys_unsorted[] | select(startswith("...")) | .[3:]] | unique) as $spread
 | (($fragments | keys) - $spread) as $unused
 | if ($unused | length) > 0 then refuse("fragment \($unused[0]) never spread") else . end
-| ($operation.tree | resolve($fragments) | validate($root; "")) as $selection
+| ($operation.tree | resolve($fragments)) as $resolved
+| ($resolved | validate($root; ""; $variables)) as $selection
+| ([$resolved | .. | objects | select(has("a")) | .a | arguments | uses[]] | unique) as $used
+| (($variables | keys) - $used) as $unused
+| if $unused != [] then refuse("variable $\($unused[0]) never used") else . end
 | if (.body | type) == "object" and (.body.data | type) == "object"
   then .body.data |= project($selection; $root; "")
   else . end

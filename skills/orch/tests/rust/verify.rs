@@ -3928,6 +3928,11 @@ impl Github {
 
     /// One `verify-review` call with `env` over the isolated environment.
     fn review(&self, mark_ready: bool, env: &[(&str, &str)]) -> Output {
+        self.review_in(self.dir.path(), mark_ready, env)
+    }
+
+    /// One `verify-review` call run from the checkout `cwd`.
+    fn review_in(&self, cwd: &Path, mark_ready: bool, env: &[(&str, &str)]) -> Output {
         let replies = self.dir.path().join("replies.json");
         fs::write(&replies, serde_json::to_vec(&self.replies).unwrap()).unwrap();
         let request = self.dir.path().join("request.json");
@@ -3946,7 +3951,7 @@ impl Github {
             .env("PATH", support::tool_path(&[fixtures().as_path()]))
             .env("GH_FAKE_REPLIES", &replies)
             .env("GH_FAKE_LOG", self.dir.path().join("gh.log"))
-            .current_dir(self.dir.path());
+            .current_dir(cwd);
         for (key, value) in env {
             command.env(key, value);
         }
@@ -4572,9 +4577,10 @@ fn each_verdict_word_is_read_from_the_head() {
 }
 
 /// The period is judged on the head record's own stamp, the caller's clock
-/// against it: a fresh period is `pending`, a stamp older than the budget is
-/// `timeout`, which ends the period and counts it, and the next call runs a
-/// new period.
+/// against it: a fresh period is `pending`, held on the request's own
+/// Copilot work within the hold, a stamp older than the budget and the hold
+/// is `timeout`, which ends the period and counts it, and the next call runs
+/// a new period.
 #[test]
 fn the_timeout_is_judged_on_the_recorded_stamp() {
     let gh = Github::review_world();
@@ -4584,7 +4590,7 @@ fn the_timeout_is_judged_on_the_recorded_stamp() {
         first["reason"]
             .as_str()
             .unwrap()
-            .starts_with("review-pending"),
+            .starts_with("copilot-pending"),
         "{first}"
     );
     assert_eq!(gh.head_record()["timeouts"], 0);
@@ -4592,6 +4598,7 @@ fn the_timeout_is_judged_on_the_recorded_stamp() {
         .as_str()
         .unwrap()
         .to_owned();
+    gh.set_head("at", json!(stamp_ago(901)));
     gh.set_head("period_started", json!(stamp_ago(901)));
     let second = ok_result(&gh.review(false, &[("PR_REVIEW_ON_TIMEOUT", "block")]));
     assert_eq!(second["status"], "complete", "{second}");
@@ -4610,7 +4617,8 @@ fn the_timeout_is_judged_on_the_recorded_stamp() {
 /// the approval then completes the call. A run that stood for the request
 /// and ended so is claimed and sent the same way. The early request is
 /// planted as GitHub recorded it, earlier than the call that reads it, as a
-/// push-first head's request is.
+/// push-first head's request is. Defect held by the last cases: a claim or a
+/// resend sent under `PR_COPILOT_REQUESTS=off` or on a draft kept as one.
 #[test]
 fn a_request_whose_work_ended_with_no_review_is_sent_once_more_then_falls_back() {
     let mut gh = Github::review_world();
@@ -4719,6 +4727,558 @@ fn a_request_whose_work_ended_with_no_review_is_sent_once_more_then_falls_back()
     assert_eq!(fell_back["status"], "complete", "{fell_back}");
     assert_eq!(fell_back["verdict"], "approved", "{fell_back}");
     assert_eq!(gh.requests(), 2, "{:?}", gh.log());
+
+    // The claim and the resend are requests, so each waits on the head's
+    // eligibility as a fresh head's request does: with `PR_COPILOT_REQUESTS`
+    // turned `off`, or on a head the call keeps as a draft, a run that ended
+    // is not claimed and a request whose work ended is not sent once more.
+    // Neither spends the head's request or its resend: the call where the
+    // head is eligible again sends it.
+    let ready = review_view("APPROVED", &[("colleague", "APPROVED")], false);
+    let as_draft = review_view("APPROVED", &[("colleague", "APPROVED")], true);
+    for case in ["off", "draft"] {
+        let (env, view, pull): (&[(&str, &str)], Value, Value) = match case {
+            "off" => (
+                REQUESTS_OFF,
+                ready.clone(),
+                rest_pull(false, "feat", "lane-app[bot]", "Bot"),
+            ),
+            _ => (
+                &[],
+                as_draft.clone(),
+                rest_pull(true, "feat", "lane-app[bot]", "Bot"),
+            ),
+        };
+        let suppressed = |gh: &mut Github| {
+            gh.answer(&format!("pr view {PR}"), view.clone())
+                .answer(&pull_path(), pull.clone());
+            let result = ok_result(&gh.review(false, env));
+            gh.answer(&format!("pr view {PR}"), ready.clone()).answer(
+                &pull_path(),
+                rest_pull(false, "feat", "lane-app[bot]", "Bot"),
+            );
+            result
+        };
+
+        // The claim: the run that stood for the request ended.
+        let mut gh = Github::review_world();
+        gh.answer(&format!("pr view {PR}"), ready.clone()).answer(
+            &check_runs(HEAD, 1),
+            check_runs_page(1, vec![copilot_check(31, "in_progress")]),
+        );
+        let running = ok_result(&gh.review(false, &[]));
+        assert_eq!(
+            running["request"]["reason"], "existing-run",
+            "{case}: {running}"
+        );
+        gh.answer(
+            &check_runs(HEAD, 1),
+            check_runs_page(1, vec![cancelled(31, "2026-01-29T15:10:00Z")]),
+        );
+        let held = suppressed(&mut gh);
+        assert_eq!(gh.requests(), 0, "{case}: claimed: {held}");
+        assert_eq!(held["request"]["reason"], "existing-run", "{case}: {held}");
+        assert_eq!(
+            gh.head_record()["request"]["reason"],
+            "existing-run",
+            "{case}"
+        );
+        let claimed = ok_result(&gh.review(false, &[]));
+        assert_eq!(
+            claimed["request"]["outcome"], "requested",
+            "{case}: {claimed}"
+        );
+        assert_eq!(
+            claimed["request"]["recorded_now"], true,
+            "{case}: {claimed}"
+        );
+        assert_eq!(gh.requests(), 1, "{case}: {:?}", gh.log());
+
+        // The resend: the request's own work ended.
+        let mut gh = Github::review_world();
+        gh.answer(&format!("pr view {PR}"), ready.clone());
+        let first = ok_result(&gh.review(false, &[]));
+        assert_eq!(first["request"]["outcome"], "requested", "{case}: {first}");
+        let acts_path = gh.dir.path().join("replies.acts.json");
+        let mut acts: Value =
+            serde_json::from_str(&fs::read_to_string(&acts_path).unwrap()).unwrap();
+        acts["events"][PR.to_string()][0]["created_at"] = json!("2026-01-29T15:00:00Z");
+        fs::write(&acts_path, acts.to_string()).unwrap();
+        gh.answer(
+            &check_runs(HEAD, 1),
+            check_runs_page(1, vec![cancelled(31, "2026-01-29T15:00:30Z")]),
+        );
+        let held = suppressed(&mut gh);
+        assert_eq!(gh.requests(), 1, "{case}: resent: {held}");
+        assert!(
+            gh.head_record()["request"].get("resent").is_none(),
+            "{case}"
+        );
+        let resent = ok_result(&gh.review(false, &[]));
+        assert_eq!(
+            resent["request"]["outcome"], "requested",
+            "{case}: {resent}"
+        );
+        assert_eq!(gh.requests(), 2, "{case}: {:?}", gh.log());
+        assert_eq!(gh.head_record()["request"]["resent"], true, "{case}");
+    }
+}
+
+/// Defect: an unapproved head's review period answers `review-pending`, or
+/// `timeout` once the period is spent, while Copilot's work in flight on
+/// the head runs, and a micro-entry or forced merge arms on that reply with
+/// Copilot's review still to land. The gate holds the period's answers on
+/// that work within the hold, `pending copilot-pending`; past the hold the
+/// period answers as before, `review-pending` with `copilot=expired`; past
+/// the period, `timeout`. The clock is stepped by the head record's stamps.
+#[test]
+fn copilot_work_in_flight_holds_an_unapproved_heads_period_answers_within_the_hold() {
+    let mut gh = Github::review_world();
+    gh.answer(
+        &check_runs(HEAD, 1),
+        check_runs_page(1, vec![copilot_check(31, "in_progress")]),
+    );
+    let held = ok_result(&gh.review(false, BLOCK));
+    assert_eq!(held["status"], "pending", "{held}");
+    assert_eq!(key(&held), "copilot-pending", "{held}");
+    assert!(
+        held["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("copilot-pending run=31 remaining="),
+        "{held}"
+    );
+    assert_eq!(held["copilot"]["state"], "pending", "{held}");
+    gh.set_head("at", json!(stamp_ago(601)));
+    let expired = ok_result(&gh.review(false, BLOCK));
+    assert_eq!(expired["status"], "pending", "{expired}");
+    assert!(
+        expired["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("review-pending copilot=expired remaining="),
+        "{expired}"
+    );
+    gh.set_head("period_started", json!(stamp_ago(901)));
+    let spent = ok_result(&gh.review(false, BLOCK));
+    assert_eq!(spent["status"], "complete", "{spent}");
+    assert_eq!(spent["verdict"], "timeout", "{spent}");
+    assert_eq!(gh.requests(), 0, "{:?}", gh.log());
+}
+
+/// The item's lane as its launch leaves it: the main checkout and the
+/// item's linked worktree as git makes them, and, where `marked`, the
+/// launch record the shipped `lane-marker` writes; and the real mailbox
+/// program behind a wrapper that keeps the item's record as each run meets
+/// it (`state.N.json`), counts its runs (`calls`), and on a `kill-after`
+/// mark ends itself by a signal once the program has answered, on a
+/// `kill-caller` mark ends its caller before the program starts, each mark
+/// taken by the one run that meets it.
+struct LaneWorld {
+    main: PathBuf,
+    root: PathBuf,
+    dir: PathBuf,
+    cli: PathBuf,
+}
+
+impl LaneWorld {
+    fn new(gh: &Github, marked: bool) -> LaneWorld {
+        let base = fs::canonicalize(gh.dir.path()).unwrap();
+        let main = base.join("main");
+        let root = base.join("lane");
+        let dir = base.join("mail-wrapper");
+        fs::create_dir_all(&dir).unwrap();
+        let git = |args: &[&str]| {
+            let out = support::program("git").args(args).output().unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                support::stderr(&out)
+            );
+        };
+        let main_text = main.display().to_string();
+        git(&["init", "-q", "-b", "main", &main_text]);
+        for (key, value) in [("gc.auto", "0"), ("maintenance.auto", "false")] {
+            git(&["-C", &main_text, "config", key, value]);
+        }
+        git(&[
+            "-C",
+            &main_text,
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "base",
+        ]);
+        let root_text = root.display().to_string();
+        git(&[
+            "-C", &main_text, "worktree", "add", "-q", "-b", "ken-4687", &root_text,
+        ]);
+        if marked {
+            let marker = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../scripts/lane-marker");
+            let out = support::program(&marker)
+                .args([&root_text, "KEN-4687"])
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "lane-marker: {}",
+                support::stderr(&out)
+            );
+        }
+        let real = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../mailbox/scripts/lane-mail")
+            .canonicalize()
+            .unwrap();
+        let cli = dir.join("lane-mail");
+        support::write_executable(
+            &cli,
+            format!(
+                "#!/bin/sh\nd='{dir}'\nn=$(wc -l < \"$d/calls\" 2>/dev/null || echo 0)\ncp '{item}' \"$d/state.$((n + 0)).json\"\necho \"$*\" >> \"$d/calls\"\nif [ -e \"$d/kill-caller\" ]; then rm -f \"$d/kill-caller\"; kill -KILL \"$PPID\"; exit 1; fi\n'{real}' \"$@\"\nrc=$?\nif [ -e \"$d/kill-after\" ]; then rm -f \"$d/kill-after\"; kill -KILL $$; fi\nexit $rc\n",
+                dir = dir.display(),
+                item = gh.item().display(),
+                real = real.display(),
+            ),
+        );
+        LaneWorld {
+            main,
+            root,
+            dir,
+            cli,
+        }
+    }
+
+    /// One call from `cwd` with the wrapper as the mailbox program.
+    fn review(&self, gh: &Github, cwd: &Path, env: &[(&str, &str)]) -> Value {
+        let cli = self.cli.display().to_string();
+        let mut env = env.to_vec();
+        env.push(("LANE_MAIL_CLI", &cli));
+        ok_result(&gh.review_in(cwd, false, &env))
+    }
+
+    fn calls(&self) -> usize {
+        fs::read_to_string(self.dir.join("calls"))
+            .unwrap_or_default()
+            .lines()
+            .count()
+    }
+
+    /// The head's record as the mailbox program's run `n` met it.
+    fn head_at_send(&self, n: usize) -> Value {
+        let text = fs::read_to_string(self.dir.join(format!("state.{n}.json"))).unwrap();
+        serde_json::from_str::<Value>(&text).unwrap()["pr_review"]["heads"][HEAD].clone()
+    }
+
+    /// The notices the lane's own box holds, the box the watch drains.
+    fn box_notices(&self, at: &Path) -> Vec<Value> {
+        fs::read_to_string(at.join("tmp/lane-mail/KEN-4687/to-overseer.jsonl"))
+            .unwrap_or_default()
+            .lines()
+            .map(|l| serde_json::from_str::<Value>(l).unwrap())
+            .filter(|e| e["kind"] == "notice")
+            .collect()
+    }
+
+    /// The notice's text as the overseer reads it: its first line, then the
+    /// lane's status file.
+    fn text(&self, first: &str) -> String {
+        format!(
+            "{first}\n{}",
+            self.root.join("tmp/lane-status-KEN-4687.md").display()
+        )
+    }
+
+    fn mark(&self, name: &str) {
+        fs::write(self.dir.join(name), "").unwrap();
+    }
+}
+
+/// The first line of the fallback notice this head owes, for `cause`.
+fn fallback_line(cause: &str) -> String {
+    format!("copilot-fallback PR #7 head {HEAD} cause={cause}")
+}
+
+const REQUESTS_OFF: &[(&str, &str)] = &[("PR_COPILOT_REQUESTS", "off")];
+
+/// Defect: a fallback recorded in the same reply as an approval is never
+/// noticed, since a caller that routes the verdict alone drops the one
+/// reply that cued the lane's notice, and the head can merge with no
+/// Copilot review while the overseer never learns it. The approved head's
+/// request and its resend both end with no review: the call that records
+/// `fallback cause=unconfirmed` answers `complete approved` and sends the
+/// two-line notice into the lane's own box through the real mailbox
+/// program, the notice already recorded `owed` when the program runs and
+/// `sent` after; a repeat call sends nothing.
+#[test]
+fn a_fallback_recorded_beside_an_approval_sends_its_notice_into_the_lanes_box_once() {
+    let mut gh = Github::review_world();
+    gh.answer(
+        &format!("pr view {PR}"),
+        review_view("APPROVED", &[("colleague", "APPROVED")], false),
+    );
+    let lane = LaneWorld::new(&gh, true);
+    let first = lane.review(&gh, &lane.root, &[]);
+    assert_eq!(first["request"]["outcome"], "requested", "{first}");
+    let acts_path = gh.dir.path().join("replies.acts.json");
+    let mut acts: Value = serde_json::from_str(&fs::read_to_string(&acts_path).unwrap()).unwrap();
+    acts["events"][PR.to_string()][0]["created_at"] = json!("2026-01-29T15:00:00Z");
+    fs::write(&acts_path, acts.to_string()).unwrap();
+    let cancelled = |id: u64, started: &str| {
+        with(
+            with(
+                copilot_check(id, "completed"),
+                "conclusion",
+                json!("cancelled"),
+            ),
+            "started_at",
+            json!(started),
+        )
+    };
+    gh.answer(
+        &check_runs(HEAD, 1),
+        check_runs_page(1, vec![cancelled(31, "2026-01-29T15:00:30Z")]),
+    );
+    let resent = lane.review(&gh, &lane.root, &[]);
+    assert_eq!(gh.head_record()["request"]["resent"], true, "{resent}");
+    let acts: Value = serde_json::from_str(&fs::read_to_string(&acts_path).unwrap()).unwrap();
+    let again = acts["events"][PR.to_string()][1]["created_at"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    gh.answer(
+        &check_runs(HEAD, 1),
+        check_runs_page(
+            2,
+            vec![cancelled(31, "2026-01-29T15:00:30Z"), cancelled(32, &again)],
+        ),
+    );
+    assert_eq!(lane.calls(), 0, "nothing owed before the fallback");
+    let fell_back = lane.review(&gh, &lane.root, &[]);
+    assert_eq!(fell_back["status"], "complete", "{fell_back}");
+    assert_eq!(fell_back["verdict"], "approved", "{fell_back}");
+    assert_eq!(fell_back["request"]["cause"], "unconfirmed", "{fell_back}");
+    assert_eq!(fell_back["request"]["recorded_now"], true, "{fell_back}");
+    let line = fallback_line("unconfirmed");
+    assert_eq!(
+        fell_back["notices"],
+        json!([{"notice": line, "owner": "sent", "sent_now": true}]),
+        "{fell_back}"
+    );
+    assert_eq!(lane.calls(), 1);
+    assert_eq!(
+        lane.head_at_send(0)["notices"],
+        json!([{"key": "copilot-fallback", "text": line, "to": "KEN-4687", "owner": "owed"}]),
+        "the notice is owed before its send"
+    );
+    let notices = lane.box_notices(&lane.root);
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert_eq!(notices[0]["text"], lane.text(&line));
+    assert_eq!(notices[0]["from"], "KEN-4687");
+    assert_eq!(gh.head_record()["notices"][0]["owner"], "sent");
+    let repeat = lane.review(&gh, &lane.root, &[]);
+    assert_eq!(
+        repeat["notices"],
+        json!([{"notice": line, "owner": "sent", "sent_now": false}]),
+        "{repeat}"
+    );
+    assert_eq!(lane.calls(), 1, "a repeat call sends nothing");
+    assert_eq!(lane.box_notices(&lane.root).len(), 1);
+}
+
+/// Defect: a notice owed by a call that ended before its send, or whose
+/// send got no answer, is lost, or sent on every later call. A call killed
+/// after the write that owed the notice and before the program ran leaves
+/// it `owed` and the box empty; the next call sends it once and marks it
+/// `sent`. A send whose program ended by a signal after it answered is
+/// `unanswered`, the notice perhaps landed; the next call sends it once
+/// more, and the program reads that repeat inside its minute window as the
+/// notice that landed, so the box holds it once. A repeat past that window
+/// would be a second notice: no row claims the notice lands exactly once.
+/// After either, a third call sends nothing.
+#[test]
+fn an_owed_or_unanswered_notice_is_sent_once_more_by_the_next_call() {
+    for (case, mark, first_owner) in [
+        ("the call killed before its send", "kill-caller", "owed"),
+        ("the send ended with no answer", "kill-after", "unanswered:"),
+    ] {
+        let mut gh = Github::review_world();
+        gh.answer(
+            &format!("pr view {PR}"),
+            review_view("APPROVED", &[("colleague", "APPROVED")], false),
+        );
+        let lane = LaneWorld::new(&gh, true);
+        lane.mark(mark);
+        let cli = lane.cli.display().to_string();
+        let mut env = REQUESTS_OFF.to_vec();
+        env.push(("LANE_MAIL_CLI", &cli));
+        let first = gh.review_in(&lane.root, false, &env);
+        let owner = gh.head_record()["notices"][0]["owner"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        assert!(owner.starts_with(first_owner), "{case}: {owner}");
+        let landed = match mark {
+            "kill-caller" => {
+                assert!(!first.status.success(), "{case}: the call was killed");
+                0
+            }
+            _ => {
+                let result = ok_result(&first);
+                assert_eq!(result["verdict"], "approved", "{case}: {result}");
+                1
+            }
+        };
+        assert_eq!(lane.box_notices(&lane.root).len(), landed, "{case}");
+        let second = lane.review(&gh, &lane.root, REQUESTS_OFF);
+        let line = fallback_line("off");
+        assert_eq!(
+            second["notices"],
+            json!([{"notice": line, "owner": "sent", "sent_now": true}]),
+            "{case}: {second}"
+        );
+        assert_eq!(lane.calls(), 2, "{case}");
+        assert_eq!(lane.box_notices(&lane.root).len(), 1, "{case}");
+        lane.review(&gh, &lane.root, REQUESTS_OFF);
+        assert_eq!(lane.calls(), 2, "{case}: a third call sends nothing");
+    }
+}
+
+/// Defect: a call outside any lane writes a notice into a mailbox no
+/// overseer reads, making a lane mailbox directory the turn-end hook then
+/// reads as a lane. Where the item has no launch marker, from a checkout
+/// with none and from the review world's directory outside any repository,
+/// the fallback the call records owes no notice: the record holds none,
+/// the reply names none, the mailbox program never runs and no mailbox is
+/// made; the reply's `request` stays the caller's to report.
+#[test]
+fn an_item_with_no_launch_marker_owes_no_notice_and_sends_nothing() {
+    for case in ["a checkout with no marker", "no repository"] {
+        let mut gh = Github::review_world();
+        gh.answer(
+            &format!("pr view {PR}"),
+            review_view("APPROVED", &[("colleague", "APPROVED")], false),
+        );
+        let lane = LaneWorld::new(&gh, false);
+        let cwd = match case {
+            "no repository" => gh.dir.path().to_path_buf(),
+            _ => lane.root.clone(),
+        };
+        let result = lane.review(&gh, &cwd, REQUESTS_OFF);
+        assert_eq!(result["verdict"], "approved", "{case}: {result}");
+        assert_eq!(result["request"]["cause"], "off", "{case}: {result}");
+        assert_eq!(result["request"]["recorded_now"], true, "{case}");
+        assert!(result.get("notices").is_none(), "{case}: {result}");
+        assert!(gh.head_record().get("notices").is_none(), "{case}");
+        assert_eq!(lane.calls(), 0, "{case}");
+        assert!(!cwd.join("tmp/lane-mail/KEN-4687").exists(), "{case}");
+    }
+}
+
+/// Defect: the merge route's calls run from the main checkout, where a
+/// lane verb would root its notice in a box the watch never drains while
+/// the lane runs. A call from the main checkout that finds the item's
+/// launch marker sends the notice into the lane's own box at the root the
+/// marker names, as a call from the lane's worktree does; the lane's
+/// `lane-mail-check` hook counts that outbound notice as the lane's report.
+/// Nothing lands in the main checkout's mailbox.
+#[test]
+fn a_call_from_the_main_checkout_sends_the_notice_into_the_lanes_box() {
+    let mut gh = Github::review_world();
+    gh.answer(
+        &format!("pr view {PR}"),
+        review_view("APPROVED", &[("colleague", "APPROVED")], false),
+    );
+    let lane = LaneWorld::new(&gh, true);
+    let result = lane.review(&gh, &lane.main, REQUESTS_OFF);
+    let line = fallback_line("off");
+    assert_eq!(
+        result["notices"],
+        json!([{"notice": line, "owner": "sent", "sent_now": true}]),
+        "{result}"
+    );
+    let notices = lane.box_notices(&lane.root);
+    assert_eq!(notices.len(), 1, "{notices:?}");
+    assert_eq!(notices[0]["text"], lane.text(&line));
+    assert!(lane.box_notices(&lane.main).is_empty());
+    assert!(!lane.main.join("tmp/lane-mail/KEN-4687").exists());
+}
+
+/// Defect: Copilot's error answer to its retry is a verdict one reply
+/// carries, and a caller that reads only the mode or the request drops it,
+/// so the overseer's fallback approval never starts. The retry claimed with
+/// the request, then a second error answer: that call's `copilot-error
+/// cause=error` sends the notice once, its first line ending in the cause;
+/// the next call answers the period and sends nothing.
+#[test]
+fn a_copilot_error_verdict_sends_its_notice_once() {
+    let mut gh = Github::review_world();
+    gh.answer(
+        &format!("pr view {PR}"),
+        review_view("", &[(COPILOT, "COMMENTED")], false),
+    )
+    .answer(
+        &reviews_path(),
+        json!([copilot_review(
+            11,
+            "COMMENTED",
+            COPILOT_ERROR,
+            "2026-01-01T00:00:00Z"
+        )]),
+    );
+    let lane = LaneWorld::new(&gh, true);
+    let first = lane.review(&gh, &lane.root, &[]);
+    assert_eq!(first["status"], "pending", "{first}");
+    assert_eq!(gh.head_record()["retry"]["outcome"], "requested", "{first}");
+    assert_eq!(lane.calls(), 0);
+    gh.answer(
+        &reviews_path(),
+        json!([
+            copilot_review(11, "COMMENTED", COPILOT_ERROR, "2026-01-01T00:00:00Z"),
+            copilot_review(12, "COMMENTED", COPILOT_ERROR, "2026-01-01T00:05:00Z")
+        ]),
+    );
+    let error = lane.review(&gh, &lane.root, &[]);
+    assert_eq!(error["verdict"], "copilot-error", "{error}");
+    assert_eq!(error["reason"], "copilot-error cause=error", "{error}");
+    let line = fallback_line("error");
+    assert_eq!(
+        error["notices"],
+        json!([{"notice": line, "owner": "sent", "sent_now": true}]),
+        "{error}"
+    );
+    assert_eq!(lane.box_notices(&lane.root).len(), 1);
+    let next = lane.review(&gh, &lane.root, &[]);
+    assert_eq!(next["status"], "pending", "{next}");
+    assert_eq!(lane.calls(), 1, "the verdict's notice goes out once");
+}
+
+/// Defect: a head held as a draft, or a refresh head the overseer's own
+/// route approves, notified as a Copilot fallback the overseer would answer
+/// with an approval. Each records its fallback with no notice owed and the
+/// mailbox program never runs.
+#[test]
+fn a_draft_or_refresh_fallback_owes_no_notice() {
+    for case in ["draft", "refresh"] {
+        let mut gh = Github::review_world();
+        let draft = case == "draft";
+        gh.answer(&format!("pr view {PR}"), review_view("", &[], draft))
+            .answer(
+                &pull_path(),
+                rest_pull(draft, "feat", "lane-app[bot]", "Bot"),
+            );
+        if case == "refresh" {
+            gh.policy(
+                "[env]\nREVIEW_GATE_MODE = \"enforce\"\nREVIEW_GATE_REFRESH_REVIEW = \"overseer\"\nREVIEW_GATE_REFRESH_BRANCH = \"feat\"\nREVIEW_GATE_REFRESH_AUTHOR = \"lane-app[bot]\"\n",
+            );
+        }
+        let lane = LaneWorld::new(&gh, true);
+        let result = lane.review(&gh, &lane.root, &[]);
+        assert_eq!(result["request"]["outcome"], "fallback", "{case}: {result}");
+        assert_eq!(result["request"]["cause"], case, "{case}: {result}");
+        assert!(result.get("notices").is_none(), "{case}: {result}");
+        assert!(gh.head_record().get("notices").is_none(), "{case}");
+        assert_eq!(lane.calls(), 0, "{case}");
+    }
 }
 
 /// An off gate asks Copilot for nothing, yet Copilot's work already running
@@ -4932,7 +5492,9 @@ fn the_copilot_wait_reads_and_writes_nothing() {
 /// every ten seconds of its own clock: work that ends in Copilot's review
 /// of the head is `settled` with that review; work still in flight at the
 /// bound, counted from the wait's own start, is `expired`; a head that
-/// moved drops the work seen on the one before and is read again.
+/// moved drops the work seen on the one before and is read again; work it
+/// saw that ends with no review answering it is `settled`, naming the
+/// head's latest Copilot review or none.
 #[test]
 fn the_copilot_wait_holds_while_work_runs_and_ends_settled_expired_or_on_the_moved_head() {
     let running = |gh: &mut Github| {
@@ -5000,6 +5562,49 @@ fn the_copilot_wait_holds_while_work_runs_and_ends_settled_expired_or_on_the_mov
         ("complete", Some("none"), Some(MOVED), None, 10),
         "{moved:?}"
     );
+
+    // Work the wait saw ends with no review answering it, its check
+    // cancelled: `settled`, naming the head's latest Copilot review where
+    // one stands, and none where none does.
+    let fine = copilot_review(81, "APPROVED", "Fine.", "2026-01-29T15:05:00Z");
+    for (case, reviews, review) in [
+        ("with a review", json!([fine]), Some(81)),
+        ("with none", json!([]), None),
+    ] {
+        let mut gh = Github::review_world();
+        running(&mut gh);
+        let runs = check_runs(HEAD, 1);
+        let path = reviews_path();
+        let cancelled = with(
+            with(
+                copilot_check(31, "completed"),
+                "conclusion",
+                json!("cancelled"),
+            ),
+            "started_at",
+            json!(STARTED),
+        );
+        let ended = gh.copilot_wait_run(600, move |count, replies| {
+            if count == 1 {
+                replies.insert(
+                    runs.clone(),
+                    json!({"body": check_runs_page(1, vec![cancelled.clone()])}),
+                );
+                replies.insert(path.clone(), json!({ "body": reviews.clone() }));
+            }
+        });
+        assert_eq!(
+            (
+                ended.status,
+                ended.state,
+                ended.review,
+                ended.run,
+                ended.waited
+            ),
+            ("complete", Some("settled"), review, Some(31), 10),
+            "{case}: {ended:?}"
+        );
+    }
 }
 
 /// Every read the copilot-wait takes that fails or answers what GitHub
@@ -5573,16 +6178,23 @@ fn an_invalid_review_request_refuses_before_any_read() {
     assert!(gh.state().get("pr_review").is_none());
 }
 
-/// The review settings are read by the review gate alone: a value outside
-/// its form leaves every other verb running and refuses `verify-review`
-/// by key and value, before any read.
+/// The review settings are read by the verbs that act on them: a value
+/// outside its form leaves every other verb running and refuses
+/// `verify-review` by key and value, before any read. The hold,
+/// `ORCH_COPILOT_HOLD_SECS`, is whole seconds above zero with no sign and
+/// no leading zero; the current-head wait refuses it outside that form
+/// too. Defect: a zero hold read as no hold by
+/// the gate, or as a wait that expires at once.
 #[test]
-fn a_review_setting_outside_its_form_refuses_the_review_gate_alone() {
+fn a_review_setting_outside_its_form_refuses_the_verbs_that_read_it() {
     for (key, value) in [
         ("PR_COPILOT_REQUESTS", "junk"),
         ("PR_REVIEW_ON_TIMEOUT", "bogus"),
         ("PR_REVIEW_WAIT_SECS", "soon"),
         ("ORCH_COPILOT_HOLD_SECS", "-1"),
+        ("ORCH_COPILOT_HOLD_SECS", "0"),
+        ("ORCH_COPILOT_HOLD_SECS", "0600"),
+        ("ORCH_COPILOT_HOLD_SECS", "+600"),
     ] {
         let gh = Github::review_world();
         let got = support::isolated()
@@ -5607,6 +6219,24 @@ fn a_review_setting_outside_its_form_refuses_the_review_gate_alone() {
             format!("orch-runtime: setting-invalid key={key} value={value}")
         );
         assert!(gh.log().is_empty(), "{key}: {:?}", gh.log());
+        if key == "ORCH_COPILOT_HOLD_SECS" {
+            let out = support::isolated()
+                .args(["--state-dir", &gh.dir.path().display().to_string()])
+                .args(["copilot-wait", "--repo", REPO, "--pr", &PR.to_string()])
+                .env(key, value)
+                .env("PATH", support::tool_path(&[fixtures().as_path()]))
+                .env("GH_FAKE_LOG", gh.dir.path().join("gh.log"))
+                .current_dir(gh.dir.path())
+                .output()
+                .unwrap();
+            assert_eq!(out.status.code(), Some(1), "the wait: {value}");
+            assert_eq!(
+                reply(&out)["refusal"]["key"],
+                "setting-invalid",
+                "the wait: {value}"
+            );
+            assert!(gh.log().is_empty(), "the wait: {value}: {:?}", gh.log());
+        }
     }
 }
 
@@ -5843,7 +6473,9 @@ fn a_draft_fallback_past_the_budget_takes_no_period_verdict_until_both_reads_rel
         );
         let released = ok_result(&gh.review(false, &env));
         assert_eq!(released["status"], "pending", "{on_timeout}: {released}");
-        assert_eq!(key(&released), "review-pending", "{on_timeout}");
+        // The request it sends is Copilot's work in flight on the head,
+        // which holds the new period's answer within the hold.
+        assert_eq!(key(&released), "copilot-pending", "{on_timeout}");
         assert_eq!(released["request"]["outcome"], "requested", "{on_timeout}");
         assert_eq!(gh.requests(), 1, "{on_timeout}: {:?}", gh.log());
         assert_ne!(gh.head_record()["period_started"], aged, "{on_timeout}");

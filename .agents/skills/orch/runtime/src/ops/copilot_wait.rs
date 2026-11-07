@@ -50,23 +50,31 @@ pub struct CopilotWaited {
     pub detail: Option<String>,
 }
 
-/// The wait's bound, `ORCH_COPILOT_HOLD_SECS` as the settings carry it:
-/// whole seconds, else the setting's refusal.
+/// `ORCH_COPILOT_HOLD_SECS` as the settings carry it, the one reader of
+/// the setting, this wait's bound and the review gate's hold alike: whole
+/// seconds above zero written with no sign and no leading zero, else the
+/// setting's refusal.
 pub fn bound(settings: &ReviewSettings) -> Result<Duration> {
-    settings
-        .copilot_hold
-        .parse::<u64>()
-        .map(Duration::from_secs)
-        .map_err(|_| {
-            settings::value_refusal(settings::COPILOT_HOLD_SECS_KEY, &settings.copilot_hold)
-        })
+    let text = settings.copilot_hold.as_str();
+    let plain = text
+        .as_bytes()
+        .first()
+        .is_some_and(|b| (b'1'..=b'9').contains(b))
+        && text.bytes().all(|b| b.is_ascii_digit());
+    match text.parse::<u64>() {
+        Ok(secs) if plain => Ok(Duration::from_secs(secs)),
+        Ok(_) | Err(_) => Err(settings::value_refusal(
+            settings::COPILOT_HOLD_SECS_KEY,
+            text,
+        )),
+    }
 }
 
 /// One run of the wait over `gh`. The request's forms refuse before any
 /// read. Each pass reads the head, then Copilot's flight on it; a head that
 /// moved drops the work seen on the one before and is read again within the
 /// same bound. A wait that ends on no work reads the head once more, and a
-/// moved head goes on waiting until the bound.
+/// moved head is read again within the bound.
 #[allow(
     clippy::disallowed_methods,
     reason = "the current-head wait reads its own bound and sleeps between its reads on the clock it is given; it reads GitHub through gh and writes nothing"
