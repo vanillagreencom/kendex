@@ -34,10 +34,10 @@ cat >"$note"
 Refusal = watch.DestinationRefusal
 
 
-def send(bash, side, host, root, note):
+def send(bash, side, target, root, note):
     """The send's stdout; a timeout or a refusal of either side is a watch.Failure."""
     if side == "host":
-        return watch.checked(["ssh", host, "bash -c " + shlex.quote(HOST_SEND) + " owner-note " + shlex.quote(root)],
+        return watch.checked(watch.host_args(target, "bash -c " + shlex.quote(HOST_SEND) + " owner-note " + shlex.quote(root)),
                              data=note, operation="host-send")
     mail = Path(root) / LANE_MAIL
     if not mail.is_file():
@@ -53,7 +53,7 @@ def deliver(bash, repo, note, settings, host=None, local=False):
     for target, root, fallback in watch.note_routes(settings, repo, host, local):
         side = "host" if target.host else "local"
         try:
-            sys.stdout.write(send(bash, side, target.host, root, note))
+            sys.stdout.write(send(bash, side, target, root, note))
         except watch.Failure as error:
             if fallback and error.record["key"][1:] == ["refusal", "overseer-absent"]:
                 continue
@@ -67,9 +67,11 @@ def main():
         "Send FILE, then a blank line and the verify footer, as a directive to the overseer of REPO, "
         "the last path segment of a root `kendex project list` prints. JARVIS_REMOTE_HOSTS adds SSH aliases "
         "to local and JARVIS_CONTROL_HOST roots; bare selection must be unique across them. With no additional "
-        "alias, try JARVIS_CONTROL_HOST first, then this machine. "
+        "alias, try JARVIS_CONTROL_HOST first, then this machine. JARVIS_CONTROL_USER names the control host "
+        "account its overseers run as; listing and sending there then run as that account through `sudo -n`. "
         "Read-only consumers use --resolve REPO without FILE. It prints one JSON object: destination "
-        "(local or ssh:ALIAS), host (SSH alias or null), root (registered checkout path), and mailbox "
+        "(local or ssh:ALIAS), host (SSH alias or null), user (the account on that host, JARVIS_CONTROL_USER for "
+        "the control host, or null for the SSH user), root (registered checkout path), and mailbox "
         "(the lane-mail path on that machine). It selects the first registered route without sending, "
         "reading mail or changing read positions. It checks neither mailbox installation nor overseer "
         "liveness and cannot predict a later send's overseer-absent fallback. A satellite resolves only "
@@ -107,7 +109,7 @@ def main():
             if route is None:
                 raise Refusal("no-overseer", args.repo)
             target, root, _ = route
-            print(json.dumps({"destination": target.key, "host": target.host, "root": root,
+            print(json.dumps({"destination": target.key, "host": target.host, "user": target.user, "root": root,
                               "mailbox": str(Path(root) / LANE_MAIL)}))
             return 0
         if watch.role(settings).kind != "main":

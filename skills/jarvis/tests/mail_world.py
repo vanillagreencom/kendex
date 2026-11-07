@@ -32,6 +32,24 @@ def make_project(path, overseer=True):
     return path
 
 
+def control_account(executable, tools, account, roots):
+    """The control host's `overseer` account at ACCOUNT, registering ROOTS and reached only
+    through a sudo shim at EXECUTABLE("sudo"). The shim logs each call as `USER<TAB>COMMAND`
+    to ACCOUNT/sudo.log and, as sudo's secure_path does, drops the caller's PATH, so only the
+    account's login profile puts TOOLS (kendex among them) back on it."""
+    (account / "tmp").mkdir(parents=True)
+    (account / "registry").write_text("".join(str(root) + "\n" for root in roots))
+    (account / ".bash_profile").write_text('PATH=%s:"$PATH"\n' % tools)
+    executable("sudo", '#!/bin/sh\n'
+               '[ "$1 $2 $3 $5" = "-n -H -u --" ] || { echo "sudo: unexpected $*" >&2; exit 97; }\n'
+               '[ "$4" = overseer ] || { echo "sudo: unknown user $4" >&2; exit 1; }\n'
+               'user=$4\nshift 5\n'
+               'printf "%s\\t%s\\n" "$user" "$(printf "%s" "$*" | tr "\\n" " ")" >> "$ACCOUNT/sudo.log"\n'
+               'cd /\n'
+               'PATH=/usr/bin:/bin HOME="$ACCOUNT" REGISTRY="$ACCOUNT/registry" TMPDIR="$ACCOUNT/tmp" exec "$@"\n')
+    return account / "sudo.log"
+
+
 class MailWorld(unittest.TestCase):
     """One scratch root, a PATH of shims, and a `kendex project list` registry."""
 

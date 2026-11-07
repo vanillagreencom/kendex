@@ -1,6 +1,12 @@
 [env]
-# Existing control host; each remote needs kendex on its SSH PATH.
+# Existing control host. Each remote needs kendex on the PATH of the account
+# its commands run as: the SSH user's `ssh HOST` PATH or, on the control host
+# with JARVIS_CONTROL_USER set, that account's login-shell PATH.
 JARVIS_CONTROL_HOST = ""
+# The account the control host's overseers run as, when it is not the SSH
+# user; owner-note lists and sends, and watch-loop reads mail and renews
+# presence, there as it through `sudo -n`.
+JARVIS_CONTROL_USER = ""
 # Additional whitespace-separated SSH aliases. Bare notes must be unique
 # across local and all remote roots; --host ALIAS or --local selects one.
 # Use one stable alias per physical machine. Restart watch-loop after edits.

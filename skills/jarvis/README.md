@@ -77,6 +77,7 @@ Start the event source through the [session workflow](workflows/session.md#contr
 Set the keys shown in [kendex.settings.toml.example](kendex.settings.toml.example) under `[env]` in the assistant home's `kendex.settings.toml`. The process environment takes precedence over the private env file, which takes precedence over shared settings.
 
 - `JARVIS_CONTROL_HOST` keeps the existing control-host route. Empty leaves it off.
+- `JARVIS_CONTROL_USER` names the account whose overseers the control host runs, when it is not the SSH user. `owner-note` lists roots and sends there as that account, and the event source reads mail and renews presence there as it, through passwordless `sudo -n`. Empty uses the SSH user.
 - `JARVIS_REMOTE_HOSTS` adds whitespace-separated SSH aliases. With an additional alias, a bare note must name a unique registered root across all machines; select a duplicate with `--host ALIAS` or `--local`. Use one stable alias per machine and restart the event source after changing hosts.
 - `JARVIS_MAIN_HOST` makes this machine a satellite of the main Jarvis at `DEST:/abs/main/home`. Empty makes it the main. Set it in the machine's private env file, never in shared settings; see [Agent reach: Main and satellites](references/agent-reach.md#main-and-satellites).
 - `JARVIS_LOG_DIR` selects durable logs and batch state. The default is `${XDG_STATE_HOME:-$HOME/.local/state}/jarvis`. Give simultaneous homes separate directories.
