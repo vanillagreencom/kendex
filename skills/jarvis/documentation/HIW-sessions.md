@@ -31,7 +31,7 @@ The package currently manages terminal sessions and local session records. The s
 
 ## Your choices
 
-You choose the supported assistant and account, any model selection, and the trigger for a handover. Your home can set when recovery notes count as stale and which temporary instructions remain in force.
+You choose the supported assistant and account, any model selection, and the trigger for a handover. Your Jarvis home can set when recovery notes count as stale and which temporary instructions remain in force.
 
 ## Related pages
 
