@@ -106,9 +106,9 @@ tags: [assistant, productivity]
 
 ## Setup
 
-Use the [home layout](references/home-layout.md) for the assistant home.
+Use the [home layout](references/home-layout.md) for the Jarvis home. Its starting files come from `jarvis-session init` or a person's first manual Start, under [Initialize](references/home-layout.md#initialize).
 
-The declared agents, `cpa`, `legal`, `operator`, `auditor`, `researcher`, `scout`, `reviewer-arch` and `publicist`, require a kendex installation of Jarvis. Copying only the skill folder, including an app-supplied copy, supplies none of their harness agent files. Use the bundle command in [README: Install](README.md#install) from the assistant home. It installs Jarvis with its required skills, declared agents, their assigned skills and the session hooks. Installing `orch` alone does not install Jarvis or its declared agents.
+The declared agents, `cpa`, `legal`, `operator`, `auditor`, `researcher`, `scout`, `reviewer-arch` and `publicist`, require a kendex installation of Jarvis. Copying only the skill folder, including an app-supplied copy, supplies none of their harness agent files. Use the bundle command in [README: Install](README.md#install) from the Jarvis home. It installs Jarvis with its required skills, declared agents, their assigned skills and the session hooks. Installing `orch` alone does not install Jarvis or its declared agents.
 
 Read the [home contract](references/home-contract.md) when starting a session or finding a memory note.
 
@@ -116,7 +116,7 @@ kendex does not insert package text into `AGENTS.md`. The fixed persona path is 
 
 ### Plain folder
 
-On first load, check the folder's `AGENTS.md`. If it lacks the persona, offer once, in one line, to add the text from [persona.md](persona.md). Add it only after the user agrees. The persona then loads on every turn through the harness's instruction-loading settings. Check that the harness loaded those instructions.
+On first load, check the folder's `AGENTS.md`. If no line in it routes to [persona.md](persona.md), offer once, in one line, to add the route line [Initialize](references/home-layout.md#initialize) writes. Add it only after the user agrees. Never paste the persona text into `AGENTS.md`: the installed file stays its one copy. The route then loads on every turn through the harness's instruction-loading settings. Check that the harness loaded those instructions.
 
 ### App-managed home
 

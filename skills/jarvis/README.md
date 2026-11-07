@@ -33,11 +33,20 @@ The agents listed below require a kendex installation of Jarvis. An app-supplied
 
 ## Install
 
-Run from your assistant home:
+You need kendex, Git, Python 3.8 or newer, Bash, jq, tmux, one supported coding assistant you have signed in to (Claude Code, Codex, Copilot CLI or Pi), and a Linear workspace. The continuing session keeps its open work in Linear.
+
+Your Jarvis home is a new folder of its own, outside any existing project. Running `git init` in a folder inside a project does not separate it from that project. Run these four commands, with your assistant in place of `codex`:
 
 ```sh
-kendex add vanillagreencom/kendex --bundle jarvis --harness claude,codex,copilot,pi --yes
+mkdir ~/jarvis && cd ~/jarvis && git init
+kendex add vanillagreencom/kendex --bundle jarvis --harness codex
+.agents/skills/jarvis/scripts/jarvis-session start --home . --harness codex
+.agents/skills/jarvis/scripts/jarvis-session attach --home .
 ```
+
+- `kendex add` asks whether to install into this folder and whether to set up the commit-guards hooks. Answer yes to both. List each assistant you use in `--harness`, comma-separated.
+- The first `start` writes the starting files, an `AGENTS.md` that loads the [persona](persona.md), the memory index and `state/`, and then starts the session. It uses the account folder your assistant uses, such as `~/.codex` or the folder `CODEX_HOME` names; add `--account DIR` for another one. In a folder that is not a new home of its own, it refuses and names what to do. [Initialize](references/home-layout.md#initialize) has the details.
+- `attach` puts your terminal on the running session. Before the first start with Copilot CLI, follow [Copilot folder trust](references/home-layout.md#copilot-folder-trust).
 
 ## How it works
 
