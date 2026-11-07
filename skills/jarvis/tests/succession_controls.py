@@ -29,7 +29,10 @@ def main():
         # pane does not run. The adoption rows each reject the defect their
         # guarantee names: a starting Start's worker, the consumer's other
         # panes, Start's brief and harness, the home's task session, the
-        # harness detected at the call and nearest PID, and a moved pane.
+        # harness detected at the call and nearest PID, and a moved pane. The
+        # user-config rows each reject a server or pane that the user's tmux
+        # config does not reach or that follows it: no config, the user's
+        # default-shell and the user's remain-on-exit.
         backend, session = "jarvis/scripts/lib/session-backend.sh", "jarvis/scripts/lib/session.py"
         defects = (("known wall exclusion", backend,
                     (('    exclude="${6:-}" mark=context caller="" OL_WALK_REFUSE_ID=""',
@@ -71,9 +74,20 @@ def main():
                    ("retry brief", session,
                     (('                saved_handoff = record["transfer"]["handoff"]\n',
                       '                saved_handoff = record["transfer"]["handoff"]\n                record = dict(record, private_brief=None)\n'),),
-                    "test_adoption_recovery"))
+                    "test_adoption_recovery"),
+                   ("user tmux config", session,
+                    (('        return self.run(["tmux", *target, *map(str, args)], check=check)',
+                      '        return self.run(["tmux", *target, "-f", os.devnull, *map(str, args)], check=check)'),),
+                    "test_user_tmux_config"),
+                   ("pane launch argv", session,
+                    (('            yield [sys.executable, "-B", "-X", "utf8", "-c", receiver, address]',
+                      '            yield [shlex.join([sys.executable, "-B", "-X", "utf8", "-c", receiver, address])]'),),
+                    "test_user_tmux_config"),
+                   ("controller pane exit", session,
+                    (('                    self.tmux("set-option", "-p", "-t", pane, "remain-on-exit", "off")\n', ''),),
+                    "test_user_tmux_config"))
         # The rows the latest change added, which its pre-change revision fails.
-        cases = ("test_succession_contract",)
+        cases = ("test_user_tmux_config",)
         if args.case and args.case not in {case for _, _, _, case in defects}:
             parser.error("no planted defect for case " + args.case)
         env = os.environ | {"JARVIS_TEST_SKILLS": str(skills), "JARVIS_TEST_NATIVE": str(native),

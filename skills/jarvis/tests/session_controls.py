@@ -17,15 +17,15 @@ CONTROLS = (
     ("manager policy", SESSION, 'if policy:', 'if policy and False:',
      "test_manager_policy_reaches_native_and_source_failure_keeps_owner"),
     ("private pane transport", SESSION,
-     'yield shlex.join([sys.executable, "-B", "-X", "utf8", "-c", receiver, address])',
-     'yield shlex.join([sys.executable, "-B", "-X", "utf8", "-c", receiver, address]) + " " + shlex.quote(self.env.get("HTTPS_PROXY", ""))',
+     'yield [sys.executable, "-B", "-X", "utf8", "-c", receiver, address]',
+     'yield [sys.executable, "-B", "-X", "utf8", "-c", receiver, address, self.env.get("HTTPS_PROXY", "")]',
      "test_manager_policy_reaches_native_and_source_failure_keeps_owner"),
     ("native pane terminal", SESSION, "('TERM', 'TMUX', 'TMUX_PANE')", "('TMUX', 'TMUX_PANE')",
      "test_manager_policy_reaches_native_and_source_failure_keeps_owner"),
     # A respawned first-launch pane is a second pane process, not the created one.
     ("launch respawn", SESSION, 'self.tmux("wait-for", "-S", channel)',
      'with self.pane_command([BASH, "--noprofile", "--norc", "-c", prepared["line"]]) as command:\n'
-     '                        self.tmux("respawn-pane", "-k", "-t", pane, "-c", self.home, command)',
+     '                        self.tmux("respawn-pane", "-k", "-t", pane, "-c", self.home, *command)',
      "test_first_launch_runs_in_its_created_pane"),
     # Attach outside tmux execs a client on the recorded socket and session.
     ("attach line", SESSION, '"attach-session", "-t", "=" + terminal["session"]]',

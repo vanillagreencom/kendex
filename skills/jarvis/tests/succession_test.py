@@ -6,6 +6,7 @@ import runpy
 import shutil
 import signal
 import subprocess
+import sys
 import time
 import unittest
 from unittest.mock import patch
@@ -132,6 +133,88 @@ print(json.dumps({"config_dir": row["account"]}))
         self.assertEqual(saved["pending"]["native_session_id"], record["pending"]["native_session_id"])
         saved["process"] = identity
         self.record.write_text(json.dumps(saved))
+
+    # A user's own tmux config: the options KEN-4968 measured on the owner's
+    # server, a changed status line and key, and the options the runtime's
+    # windows and panes could follow: a pane shell that runs no command line,
+    # as one that is no POSIX shell need not, dead panes kept, shifted and
+    # renumbered indexes and a hook on every new window. Each row is the
+    # scope, the option and the value the session's server shows for it.
+    USER_TMUX_CONFIG = """set -g status-style bg=magenta
+set -g status-left "[user-config] "
+bind-key -n F12 display-message user-key
+set -as terminal-overrides ",*:RGB"
+set -g extended-keys on
+set -g allow-passthrough on
+set -g set-clipboard on
+set -g focus-events on
+set -g history-limit 50000
+set -g base-index 1
+setw -g pane-base-index 1
+set -g renumber-windows on
+setw -g remain-on-exit on
+set -g default-shell "{shell}"
+set-hook -g after-new-window "rename-window user-hook"
+"""
+    USER_TMUX_OPTIONS = (("-g", "status-style", "bg=magenta"), ("-g", "status-left", "[user-config] "),
+                         ("-s", "extended-keys", "on"), ("-g", "allow-passthrough", "on"), ("-s", "set-clipboard", "on"),
+                         ("-s", "focus-events", "on"), ("-g", "history-limit", "50000"), ("-g", "base-index", "1"),
+                         ("-g", "pane-base-index", "1"), ("-g", "renumber-windows", "on"), ("-g", "remain-on-exit", "on"))
+
+    def test_user_tmux_config(self):
+        shell = self.root / "user-shell"
+        shell.write_text("#!" + self.env["JARVIS_TEST_BASH"] + "\nexit 97\n")
+        shell.chmod(0o755)
+        Path(self.env["HOME"], ".tmux.conf").write_text(self.USER_TMUX_CONFIG.format(shell=shell))
+        self.handoff()
+        self.call("start")
+        server = self.wait()["terminal"]["server"]
+        client = self.pty_client([str(session_test.SCRIPT), "attach", "--home", str(self.home)], [server])
+        self.assertEqual(self.clients(server, until=bool), [str(client.pid) + " jarvis"])
+        shown = {name: self.tmux_read(server, "show-options", "-v", scope, name).stdout.removesuffix("\n")
+                 for scope, name, _ in self.USER_TMUX_OPTIONS}
+        self.assertEqual(shown, {name: value for _, name, value in self.USER_TMUX_OPTIONS})
+        self.assertEqual(self.tmux_read(server, "show-options", "-gv", "default-shell").stdout.strip(), str(shell))
+        self.assertIn("*:RGB", self.tmux_read(server, "show-options", "-sv", "terminal-overrides").stdout.splitlines())
+        self.assertIn("RGB", self.tmux_read(server, "display-message", "-p", "#{client_termfeatures}").stdout.strip().split(","))
+        self.assertIn(("F12", "display-message user-key"), [(row.split()[3], " ".join(row.split()[4:])) for row in
+                      self.tmux_read(server, "list-keys", "-T", "root").stdout.splitlines()])
+        self.assertIn("user-hook", self.tmux_read(server, "show-hooks", "-g", "after-new-window").stdout)
+        # A task window opens in the controller's session and outlives succession.
+        self.model_classes()
+        (self.home / ".lane-fixture.json").write_text(json.dumps({"calls": str(self.root / "lane-calls"), "harness": "claude",
+                                                                   "account": str(self.account), "read_rc": 0, "headroom": 100}))
+        task_native = self.root / "bin/copilot"
+        task_native.write_text("#!" + sys.executable + "\nimport signal\nwhile True: signal.pause()\n")
+        task_file, result = self.home / "task.md", self.home / "result.md"
+        task_file.write_text("Write the result.\n")
+        task = self.task("launch", "--name", "user config", "--harness", "copilot", "--model", "standard",
+                         "--task-file", str(task_file), "--result-file", str(result), "--account", str(self.account))
+        self.assertEqual(task["state"], "running")
+        self.call("succeed")
+        successor = self.wait()["terminal"]
+        self.assertEqual((successor["server"], successor["session"]), (server, "jarvis"))
+        self.assertEqual(self.windows(server), {successor["window"], task["terminal"]["window"]})
+        self.assertEqual(self.task("status", "--id", task["id"])["state"], "running")
+        result.write_text("done\n")
+        self.task("complete", "--id", task["id"], "--outcome", "succeeded")
+        self.assertEqual(self.task("cleanup", "--id", task["id"])["cleanup"]["state"], "done")
+        self.assertEqual(self.windows(server), {successor["window"]})
+        self.assertEqual(self.clients(server), [str(client.pid) + " jarvis"])
+        # The controller's harness exits: its pane closes and status reads ended.
+        os.kill(self.started()[-1]["pid"], signal.SIGTERM)
+        self.wait("stopped", reason="ended")
+        self.assertNotIn(successor["window"], self.windows(server))
+
+    def task(self, verb, *args):
+        result = subprocess.run([str(self.skills / "jarvis/scripts/task"), verb, "--home", str(self.home), *args],
+                                env=self.env, capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    def windows(self, server):
+        listed = self.tmux_read(server, "list-windows", "-t", "=jarvis", "-F", "#{window_id}")
+        return set(listed.stdout.split()) if listed.returncode == 0 else set()
 
     def test_account_succession(self):
         # The preference walks claude, codex, then copilot, and the recorded
