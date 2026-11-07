@@ -38,7 +38,7 @@ REASONS = {
     "starting": {"launching"}, "handing-over": {"succession"}, "stopping": {"stop-requested"},
     "stopped": {"never-started", "stopped", "ended"}, "off": {"app-off"},
     "blocked": {"app-off", "name-conflict", "record-unreadable", "sign-in-required", "selection-conflict", "tmux-missing", "app-missing",
-                "trust-required"},
+                "trust-required", "home-not-dedicated"},
     "failed": {"launch-failed", "handover-failed"},
 }
 # The full-bypass words each harness's CLI takes for an unattended launch.
@@ -47,7 +47,7 @@ PERMISSION_WORDS = {"claude": {"--dangerously-skip-permissions"}, "codex": {"--d
                     "copilot": {"--allow-all"}, "pi": set()}
 ANY_PERMISSION_WORD = set().union(*PERMISSION_WORDS.values())
 # A blocked answer whose detail tells the person what to do.
-DETAILED = {("blocked", "sign-in-required"), ("blocked", "trust-required")}
+DETAILED = {("blocked", "sign-in-required"), ("blocked", "trust-required"), ("blocked", "home-not-dedicated")}
 
 
 def validate(output, code, verb, duplicate_boot=False, adopt=False):
@@ -224,6 +224,232 @@ class MainHostContract(unittest.TestCase):
         self.assertNotIn("private-secret", result.stderr + result.stdout)
 
 
+class HomeInitContract(unittest.TestCase):
+    """jarvis-session init and the first manual Start write one set of starting files."""
+
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch.cleanup)
+        self.root = Path(self.scratch.name).resolve()
+        # No tmux on this PATH: every Start refuses after its initialization
+        # step, so a row reads that step's effect without a launch.
+        bin_dir = self.root / "bin"
+        bin_dir.mkdir()
+        for tool in ("bash", "git", "cat", "flock", "mkdir", "rmdir", "sleep", "rm"):
+            found = shutil.which(tool)
+            if found:
+                (bin_dir / tool).symlink_to(found)
+        (bin_dir / "python3").symlink_to(sys.executable)
+        login = self.root / "login"
+        login.mkdir()
+        self.account = self.root / "account"
+        self.account.mkdir()
+        # git reads no caller repository: GIT_DIR and its siblings stay unset.
+        self.env = {"PATH": str(bin_dir), "HOME": str(login), "XDG_STATE_HOME": str(self.root / "state"),
+                    "XDG_CONFIG_HOME": str(login / ".config"), "GIT_CONFIG_NOSYSTEM": "1", "LANG": "C.UTF-8"}
+
+    def git_init(self, folder):
+        for words in (("init", "-q"), ("config", "gc.auto", "0"), ("config", "maintenance.auto", "false")):
+            subprocess.run(["git", "-C", str(folder), *words], env=self.env, check=True, capture_output=True)
+
+    def home(self, name, *, git=True):
+        """A folder after git init and kendex add: its harness files beside the layout."""
+        home = self.root / name
+        (home / ".agents/skills").mkdir(parents=True)
+        (home / ".claude").mkdir()
+        (home / ".claude/settings.json").write_text('{\n  "hooks": {\n    "Stop": []\n  }\n}\n')
+        (home / ".codex").mkdir()
+        (home / ".codex/config.toml").write_text("[features]\nhooks = true\n")
+        (home / "kendex.toml").write_text("")
+        (home / ".gitignore").write_text("/tmp/\n")
+        if git:
+            self.git_init(home)
+        return home
+
+    def snapshot(self, home):
+        tree = {}
+        for path in sorted(home.rglob("*")):
+            relative = path.relative_to(home)
+            if relative.parts[0] == ".git":
+                continue
+            tree[str(relative)] = ("link", os.readlink(path)) if path.is_symlink() else (
+                ("dir",) if path.is_dir() else ("file", path.read_bytes()))
+        return tree
+
+    def run_init(self, home):
+        return subprocess.run([str(SCRIPT), "init", "--home", str(home)], env=self.env,
+                              capture_output=True, text=True, timeout=60)
+
+    def start(self, home, *words):
+        result = subprocess.run([str(SCRIPT), "start", "--home", str(home), "--harness", "claude",
+                                 "--account", str(self.account), *words],
+                                env=self.env, capture_output=True, text=True, timeout=60)
+        return validate(result.stdout, result.returncode, "start"), result
+
+    @staticmethod
+    def keyed(line):
+        # The refusal line is a program's read: a leading key, then key=value.
+        return dict(word.split("=", 1) for word in line.split()[1:])
+
+    def record(self, home):
+        key = hashlib.sha256(os.fsencode(str(home))).hexdigest()
+        return self.root / "state/kendex/jarvis" / key / "jarvis-session.json"
+
+    def test_refused_folders_stay_unchanged(self):
+        project = self.root / "project"
+        project.mkdir()
+        self.git_init(project)
+        rows = (
+            ("no-git", lambda: self.home("plain", git=False), "no-git", None),
+            ("inside-project", lambda: self.home("project/jarvis", git=False), "inside-work-tree", None),
+            ("nested-repository", lambda: self.home("project/nested"), "inside-work-tree", None),
+            ("other-entry", lambda: self.home("busy"), "other-entry", '"README.md"'),
+        )
+        for name, make, cause, entry in rows:
+            with self.subTest(name=name):
+                home = make()
+                if entry:
+                    (home / "README.md").write_text("an ordinary project\n")
+                before = self.snapshot(home)
+                result = self.run_init(home)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertEqual(result.stdout, "")
+                refusal = self.keyed(result.stderr.splitlines()[0])
+                self.assertEqual((refusal["init"], refusal["cause"], refusal.get("entry")), ("refused", cause, entry))
+                self.assertEqual(self.snapshot(home), before)
+                answer, started = self.start(home)
+                self.assertEqual((answer["state"], answer["reason"], started.returncode), ("blocked", "home-not-dedicated", 1))
+                self.assertEqual(self.keyed(started.stderr.splitlines()[0])["cause"], cause)
+                self.assertEqual(self.snapshot(home), before)
+                self.assertFalse(self.record(home).exists())
+
+    def test_init_and_first_manual_start_write_the_same_home(self):
+        try:
+            import tomllib
+        except ImportError:
+            tomllib = None
+        homes = {}
+        for caller in ("init", "start"):
+            with self.subTest(caller=caller):
+                home = self.home(caller)
+                settings = json.loads((home / ".claude/settings.json").read_text())
+                if caller == "init":
+                    result = self.run_init(home)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    report = json.loads(result.stdout)
+                    self.assertEqual((report["home"], sorted(report["created"]), report["kept"]),
+                                     (str(home), ["AGENTS.md", "memory/MEMORY.md", "state"], []))
+                    outcomes = {row["path"]: (row["key"], row["outcome"], row.get("cause")) for row in report["settings"]}
+                    self.assertEqual(outcomes, {
+                        ".claude/settings.json": ("autoMemoryEnabled", "merged", None),
+                        ".codex/config.toml": ("features.memories",) + (("merged", None) if tomllib else ("refused", "toml-reader-missing"))})
+                else:
+                    # A person's Start names the harness alone: manual and new.
+                    started = subprocess.run([str(SCRIPT), "start", "--home", str(home), "--harness", "claude"],
+                                             env=self.env, capture_output=True, text=True, timeout=60)
+                    answer = validate(started.stdout, started.returncode, "start")
+                    self.assertEqual((answer["state"], answer["reason"]), ("blocked", "tmux-missing"))
+                self.assertIn(".agents/skills/jarvis/persona.md", (home / "AGENTS.md").read_text())
+                self.assertEqual(json.loads((home / ".claude/settings.json").read_text()),
+                                 dict(settings, autoMemoryEnabled=False))
+                if tomllib:
+                    self.assertEqual(tomllib.loads((home / ".codex/config.toml").read_text()),
+                                     {"features": {"hooks": True, "memories": False}})
+                homes[caller] = self.snapshot(home)
+                # Repeating either caller keeps every file it finds.
+                repeat = self.run_init(home)
+                self.assertEqual(repeat.returncode, 0, repeat.stderr)
+                report = json.loads(repeat.stdout)
+                self.assertEqual((report["created"], sorted(report["kept"])), ([], ["AGENTS.md", "memory/MEMORY.md", "state"]))
+                self.assertTrue(all(row["outcome"] in ("kept", "refused") for row in report["settings"]))
+                self.assertEqual(self.snapshot(home), homes[caller])
+        self.assertEqual(homes["init"], homes["start"])
+
+    def test_boot_and_app_starts_never_initialize(self):
+        origins = ("app-on", "boot") if BootReceiptScenario.applicable else ("app-on",)
+        for origin in origins:
+            with self.subTest(origin=origin):
+                home = self.home(origin)
+                before = self.snapshot(home)
+                answer, _ = self.start(home, "--mode", "resume", "--origin", origin)
+                self.assertEqual(answer["reason"], "tmux-missing")
+                self.assertEqual(self.snapshot(home), before)
+
+    def test_partial_home_keeps_user_content(self):
+        home = self.home("partial")
+        (home / "AGENTS.md").write_text("My own standing instructions.\n")
+        (home / ".claude/settings.json").write_text('{"autoMemoryEnabled": true}')
+        (home / ".codex/config.toml").write_text("[features]\nmemories = true\n")
+        kept = {path: (home / path).read_bytes() for path in ("AGENTS.md", ".claude/settings.json", ".codex/config.toml")}
+        result = self.run_init(home)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        report = json.loads(result.stdout)
+        self.assertEqual((sorted(report["created"]), report["kept"]), (["memory/MEMORY.md", "state"], ["AGENTS.md"]))
+        self.assertEqual({row["path"]: row["outcome"] for row in report["settings"]},
+                         {".claude/settings.json": "kept", ".codex/config.toml": "kept" if self.has_tomllib() else "refused"})
+        self.assertEqual({path: (home / path).read_bytes() for path in kept}, kept)
+
+    @staticmethod
+    def has_tomllib():
+        try:
+            import tomllib  # noqa: F401
+        except ImportError:
+            return False
+        return True
+
+    def test_unmergeable_settings_stay_unchanged(self):
+        outside = self.root / "outside.json"
+        outside.write_text("{}\n")
+        rows = (
+            ("claude-unreadable", ".claude/settings.json", "{", "unreadable"),
+            ("claude-not-object", ".claude/settings.json", "[]\n", "shape"),
+            ("claude-linked", ".claude/settings.json", None, "linked"),
+            ("codex-unreadable", ".codex/config.toml", "[features\n", "unreadable"),
+            ("codex-inline-table", ".codex/config.toml", "features = { hooks = true }\n", "shape"),
+        )
+        for name, relative, text, cause in rows:
+            with self.subTest(name=name):
+                home = self.home(name)
+                path = home / relative
+                if text is None:
+                    path.unlink()
+                    path.symlink_to(outside)
+                else:
+                    path.write_text(text)
+                before = self.snapshot(home)
+                result = self.run_init(home)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                row = next(row for row in json.loads(result.stdout)["settings"] if row["path"] == relative)
+                expected = cause if relative.endswith(".json") or self.has_tomllib() else "toml-reader-missing"
+                self.assertEqual((row["outcome"], row["cause"]), ("refused", expected))
+                refusals = [self.keyed(line) for line in result.stderr.splitlines() if line.startswith("jarvis-session: init-settings=")]
+                self.assertIn({"init-settings": "refused", "path": relative, "cause": expected}, refusals)
+                after = self.snapshot(home)
+                self.assertEqual(after[relative], before[relative])
+                self.assertEqual(outside.read_text(), "{}\n")
+
+    def test_qualification_control(self):
+        # A copy without the enclosing work tree check must fail the nested
+        # repository row: the suite detects a home nested in a project.
+        skills = self.root / "control/skills"
+        scripts = skills / "jarvis/scripts"
+        shutil.copytree(SKILLS / "jarvis/scripts", scripts)
+        for dependency in ("mailbox", "orch"):
+            (skills / dependency).symlink_to(SKILLS / dependency, target_is_directory=True)
+        source = scripts / "lib/home.py"
+        before = source.read_text()
+        match = "if root != home or (home.parent != home and toplevel(home.parent) is not None):"
+        self.assertEqual(before.count(match), 1)
+        source.write_text(before.replace(match, "if root != home:"))
+        result = subprocess.run([str(ROOT / "skills/jarvis/tests/session.test.sh"),
+                                 "HomeInitContract.test_refused_folders_stay_unchanged", "-v"],
+                                env=os.environ | {"JARVIS_TEST_SCRIPT": str(scripts / "jarvis-session")},
+                                capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("name='nested-repository'", result.stderr)
+        self.assertNotIn("name='no-git'", result.stderr)
+
+
 class SessionContract(unittest.TestCase):
     def setUp(self):
         self.owned_workers = []
@@ -231,6 +457,12 @@ class SessionContract(unittest.TestCase):
         self.root = Path(self.scratch.name).resolve()
         self.home = self.root / "home"
         self.home.mkdir()
+        # A home with its starting files: the fixture's own files beside them
+        # would refuse the first manual Start's initialization.
+        (self.home / "AGENTS.md").write_text("fixture standing instructions\n")
+        (self.home / "memory").mkdir()
+        (self.home / "memory/MEMORY.md").write_text("# Memory index\n")
+        (self.home / "state").mkdir()
         self.account = self.root / "account"
         self.account.mkdir()
         self.rows = self.root / "rows.jsonl"
@@ -479,7 +711,6 @@ class SessionContract(unittest.TestCase):
         self.assertFalse(actual_record.is_relative_to(self.home))
         self.assertEqual(json.loads(actual_record.read_text())["home"], str(self.home))
         state = self.home / "state"
-        state.mkdir()
         (state / "jarvis-session.json").write_text("not a runtime record")
         self.assertEqual(before["cwd"], str(self.home))
         self.assertEqual(before["account"], json.loads(self.record.read_text())["effective_home"])
@@ -738,6 +969,21 @@ class SessionContract(unittest.TestCase):
                 self.assertEqual(words, PERMISSION_WORDS[harness] if unattended else set())
                 self.call("stop")
                 self.wait("stopped", persisted_stop=True)
+
+    def test_person_start_defaults(self):
+        # A person's Start names the harness alone: the harness's standard
+        # account directory, a new context and the manual origin.
+        account = Path(self.env["HOME"]) / ".claude"
+        account.mkdir()
+        argv = [str(SCRIPT), "start", "--home", str(self.home), "--harness", "claude"]
+        for expected in ("new-no-record", "new-requested"):
+            with self.subTest(reason=expected):
+                result = subprocess.run(argv, env=self.env, capture_output=True, text=True, timeout=60)
+                validate(result.stdout, result.returncode, "start")
+                answer = self.wait(reason=expected)
+                self.assertEqual((answer["account"], answer["origin"]), (str(account), "manual"))
+                self.call("stop")
+                self.wait("stopped")
 
     def test_first_launch_runs_in_its_created_pane(self):
         # The process tmux creates for a first Start is the one the record

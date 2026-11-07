@@ -28,12 +28,15 @@ BASH = os.environ["JARVIS_BASH"]
 # VGS bounds each call at 60 seconds. Leave time to print its answer.
 CALL_SECONDS = 55
 START_BRIEF = "Read .agents/skills/jarvis/SKILL.md and follow the Start procedure in .agents/skills/jarvis/workflows/session.md."
+# Each harness's own default account directory, which Start takes when the
+# caller names none.
+ACCOUNTS = {"claude": ".claude", "codex": ".codex", "copilot": ".copilot", "pi": ".pi/agent"}
 STATE_REASONS = {
     "running": {"resumed", "new-no-record", "new-history-gone", "new-selection-changed", "new-requested", "existing"},
     "starting": {"launching"}, "handing-over": {"succession"}, "stopping": {"stop-requested"},
     "stopped": {"never-started", "stopped", "ended"}, "off": {"app-off"},
     "blocked": {"app-off", "name-conflict", "record-unreadable", "sign-in-required", "selection-conflict", "tmux-missing", "app-missing",
-                "trust-required"},
+                "trust-required", "home-not-dedicated"},
     "failed": {"launch-failed", "handover-failed"},
 }
 # A dialog row as a harness draws it: inside a box border, padded to the pane.
@@ -115,6 +118,12 @@ def environment(harness=None, *, policy=False):
                            "policy", "\n".join(assignments), *present]).split("\0")
             selected.update(zip(present, values[:-1]))
     return selected
+
+
+def home_module():
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import home
+    return home
 
 
 def home_state(home):
@@ -483,6 +492,8 @@ os.execvpe(argv[0],argv,env)
             boot = Path("/proc/sys/kernel/random/boot_id").read_text().strip() + ":" + os.environ.get("XDG_SESSION_ID", "")
         with self.locked():
             record = self.read()
+            if args.origin == "manual" and record is None:
+                self.initialize()
             if args.adopt_pane and record and (self.terminal(record) or self.worker_live(record)
                                                or self.terminal(record.get("predecessor"))):
                 # An adopted session would be a second controller beside this one.
@@ -604,6 +615,25 @@ os.execvpe(argv[0],argv,env)
             self.write(next_record)
             self.detach("start", next_record)
             return self.answer(next_record), 0
+
+    def initialize(self):
+        # The first manual Start in a home this machine never recorded writes
+        # its missing starting files. Boot and app starts never do: an app
+        # calls init itself.
+        home = home_module()
+        if home.complete(self.home):
+            return
+        try:
+            report = home.init(self.home)
+        except home.Refused as refusal:
+            print(refusal.line(), file=sys.stderr)
+            raise Refusal("home-not-dedicated", home.SEPARATE_FOLDER)
+        except home.Failed as failure:
+            print(failure.line(), file=sys.stderr)
+            raise Refusal("launch-failed", "Jarvis could not write its starting files. Check the init line in the output.", "failed")
+        print("jarvis-session: init=" + json.dumps(report, separators=(",", ":")), file=sys.stderr)
+        for line in home.settings_lines(report):
+            print(line, file=sys.stderr)
 
     def succeed(self, account_walled=False):
         if not (BACKEND.parents[3] / "orch/scripts").is_dir():
@@ -1075,10 +1105,27 @@ exec "$3" -c 'import json, os, sys; print(json.dumps([sys.argv[1], os.environ["J
         return 2
 
 
+def init_home(args):
+    home = home_module()
+    try:
+        report = home.init(args.home)
+    except home.Refused as refusal:
+        print(refusal.line(), file=sys.stderr)
+        print(home.SEPARATE_FOLDER, file=sys.stderr)
+        return 1
+    except home.Failed as failure:
+        print(failure.line(), file=sys.stderr)
+        return 1
+    for line in home.settings_lines(report):
+        print(line, file=sys.stderr)
+    print(json.dumps(report, separators=(",", ":")))
+    return 0
+
+
 def main():
     parser = Arguments()
     verbs = parser.add_subparsers(dest="verb", required=True, parser_class=Arguments)
-    for verb in ("start", "status", "stop", "succeed", "report-due", "attach", "forward", "forward-drain", "main-host"):
+    for verb in ("start", "status", "stop", "succeed", "report-due", "attach", "forward", "forward-drain", "main-host", "init"):
         command = verbs.add_parser(verb)
         command.add_argument("--home", required=True)
         if verb == "status":
@@ -1094,9 +1141,10 @@ def main():
             operation.add_argument("--get", action="store_true")
         if verb == "start":
             command.add_argument("--harness", choices=("claude", "codex", "copilot", "pi"), required=True)
-            command.add_argument("--account", required=True)
-            command.add_argument("--mode", choices=("resume", "new"), required=True)
-            command.add_argument("--origin", choices=("boot", "manual", "app-on"), required=True)
+            # A person's Start names only the harness; an app states every value.
+            command.add_argument("--account")
+            command.add_argument("--mode", choices=("resume", "new"), default="new")
+            command.add_argument("--origin", choices=("boot", "manual", "app-on"), default="manual")
             command.add_argument("--brief-file")
             command.add_argument("--model")
             command.add_argument("--effort")
@@ -1107,6 +1155,8 @@ def main():
         elif verb == "succeed":
             command.add_argument("--account-walled", action="store_true")
     args = parser.parse_args()
+    if args.verb == "start" and args.account is None:
+        args.account = str(Path.home() / ACCOUNTS[args.harness])
     if not clean(args.home) or (args.verb == "start" and not clean(args.account)):
         parser.error("path")
     if args.verb == "start" and ((args.model is None) != (args.effort is None) or not all(
@@ -1123,6 +1173,12 @@ def main():
         parser.error("record")
     if args.verb == "main-host":
         return main_host(args)
+    if args.verb == "init":
+        try:
+            Path(args.home).resolve(strict=True)
+        except OSError:
+            parser.error("home")
+        return init_home(args)
     if args.verb in ("forward", "forward-drain") or (args.verb == "status" and args.main):
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         import forward
