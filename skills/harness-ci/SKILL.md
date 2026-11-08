@@ -29,6 +29,8 @@ Use `--mode render-candidate` only to gate the engine installation and mirror re
 
 Use `--mode docs` for the docs-only path set that `harness-only --help` defines. It prints `docs_only=true|false`.
 
+Declare exact product-text Markdown files through the trusted base's `HARNESS_CI_DOCS_PATHS`. Use the existing lane outputs so every lane claiming declared text still runs. Do not use a blanket docs or trivial waiver for declared text. Eligibility, refusal and ownership rules: [references/wiring.md § Declared product text](references/wiring.md#declared-product-text).
+
 Use `change-class --output FILE` for local lane selection. It appends `lanes` and `lanes_cause` beside `change_class` and `queue_only`. Pass `--lanes-from DIR` with a separate trusted checkout to read its lane declaration. The default declares no lanes. Pass `--queue-only-default true` to answer as the CI template's classify step does. The action and command use `scripts/lib/change-class.sh` for the lane rules in [references/wiring.md § Per-lane verdicts](references/wiring.md#per-lane-verdicts), the queue-only stand-down and the nightly full run included.
 
 A verification refusal carrying the source refresh remedy reads `cause=source-mirror-missing verb=source operation=refresh`. The caller refreshes its sources before retrying the proof.

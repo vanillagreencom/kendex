@@ -280,9 +280,14 @@
 # whole list), HARNESS_CI_QUEUE_SELECTOR (unset, no selector runs) and
 # HARNESS_CI_PER_PUSH_REASON (the reason the repository runs its lanes on
 # each pull-request push; unset, every change is queue-only) and
-# HARNESS_CI_TRIVIAL_SETTINGS come from those
+# HARNESS_CI_TRIVIAL_SETTINGS and HARNESS_CI_DOCS_PATHS come from those
 # tables alone, never from the environment. The private env file
 # is never read.
+# HARNESS_CI_DOCS_PATHS adds exact Markdown files to harness-only's docs set.
+# Declared text retains its owning lane checks, including for a trivial class.
+# Use --output with --lanes-from, or the composite action's lane outputs;
+# a blanket docs_only or trivial waiver does not protect declared text.
+# Grammar and eligibility: harness-only --help and references/wiring.md.
 # A caller that acts on the verdict without review runs the DEFAULT BRANCH's
 # copy of this script against the pull request's tree; the branch can change
 # this file too.
@@ -489,6 +494,7 @@ answer() { # CLASS FIELDS [measured]
     local lane_docs
     lane_docs="$("$HARNESS_ONLY" --mode docs "${harness_args[@]}" \
       --paths-output "$work/paths" --outside-output "$work/outside" \
+      --declared-output "$work/declared" \
       --output /dev/null)" || die "cause=path-reader-failed" "could not read lane inputs"
     # harness-only owns the resolved endpoints; render move checks read them.
     # The two records below are the ones the action's log carries.
@@ -617,81 +623,10 @@ path_class_matches() { # PHASE CLASS
 # tree, so these are dropped from it and the base's alone decide. The load runs in a
 # subshell and hands back these keys alone.
 unset HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS HARNESS_CI_PER_PUSH_REASON
-unset HARNESS_CI_TRIVIAL_SETTINGS
-BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_TRIVIAL_SETTINGS HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS HARNESS_CI_PER_PUSH_REASON'
-BASE_SETTINGS_FILES='kendex.settings.toml .kendex/settings.toml'
+unset HARNESS_CI_TRIVIAL_SETTINGS HARNESS_CI_DOCS_PATHS
+BASE_SETTINGS_KEYS='ORCH_SIZE_RENDER_ROOTS ORCH_SIZE_TEST_PATHS HARNESS_CI_TRIVIAL_MAX_LINES HARNESS_CI_TRIVIAL_PATHS HARNESS_CI_TRIVIAL_SETTINGS HARNESS_CI_QUEUE_PATHS HARNESS_CI_QUEUE_SELECTOR HARNESS_CI_STANDARD_PATHS HARNESS_CI_PER_PUSH_REASON HARNESS_CI_DOCS_PATHS'
 
-# The bytes of PATH as commit REV holds it, written to OUT: status 0, 2 where
-# that commit holds no PATH, 3 where it holds PATH as anything but a regular
-# file, and 1 where the commit or the file could not be read. A symlink is a
-# blob of its target's name, which no reader of a checkout sees: it follows
-# the link.
-rev_file() { # REV PATH OUT
-  local listed kind blob
-  listed="$(git -C "$repo" ls-tree "$1" -- "$2" 2>/dev/null)" || return 1
-  [ -n "$listed" ] || return 2
-  case "${listed%% *}" in
-    100644 | 100755) ;;
-    *) return 3 ;;
-  esac
-  kind="${listed#* }"
-  kind="${kind%% *}"
-  blob="${listed%%"$TAB"*}"
-  blob="${blob##* }"
-  [ "$kind" = blob ] || return 1
-  git -C "$repo" cat-file blob "$blob" >"$3" 2>/dev/null || return 1
-}
-
-# rev_file at the commit --base names. BASE_REV is that commit, resolved once.
 BASE_REV=""
-base_file() { # PATH OUT
-  if [ -z "$BASE_REV" ]; then
-    BASE_REV="$(git -C "$repo" rev-parse --verify --quiet "$base^{commit}" 2>/dev/null)" ||
-      BASE_REV=""
-    [ -n "$BASE_REV" ] || return 1
-  fi
-  rev_file "$BASE_REV" "$1" "$2"
-}
-
-base_settings() {
-  local file files=() n=0 status loaded key value
-  for file in $BASE_SETTINGS_FILES; do
-    status=0
-    base_file "$file" "$work/base-settings-$((n + 1))" || status=$?
-    case "$status" in
-      0) ;;
-      2) continue ;;
-      *)
-        MEASURE_CAUSE="cause=base-settings-unreadable base=${BASE_REV:-$base}${BASE_REV:+ path=$file}"
-        return 1 ;;
-    esac
-    n=$((n + 1))
-    files=("${files[@]+"${files[@]}"}" "$work/base-settings-$n")
-  done
-  [ "$n" -gt 0 ] || return 0
-  if ! loaded="$(
-    exec 3>&1 1>&2
-    # shellcheck disable=SC2086
-    unset $BASE_SETTINGS_KEYS
-    # shellcheck source=../../orch/scripts/lib/kendex-env.sh
-    . "$ORCH_DIR/scripts/lib/kendex-env.sh" || exit 1
-    for file in "${files[@]}"; do
-      kendex_load_settings_file "$file" || exit 1
-    done
-    for key in $BASE_SETTINGS_KEYS; do
-      [ -z "${!key+x}" ] || printf '%s=%s\n' "$key" "${!key}" >&3
-    done
-  )"; then
-    MEASURE_CAUSE="cause=base-settings-unreadable base=$BASE_REV"
-    return 1
-  fi
-  while IFS= read -r value; do
-    [ -n "$value" ] || continue
-    key="${value%%=*}"
-    [ -z "${!key+x}" ] || continue
-    printf -v "$key" '%s' "${value#*=}"
-  done <<<"$loaded"
-}
 
 # The first changed path a lane marked `:queue` claims, in the declaration
 # the base commit holds, as QUEUE_LANE_HIT `lane=<n> path=<p> glob=<g>`;
