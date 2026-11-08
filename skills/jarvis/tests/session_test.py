@@ -146,6 +146,7 @@ class SessionLogContract(unittest.TestCase):
                 if verb == "stop":
                     fixture = SessionContract()
                     fixture.setUp()
+                    self.addCleanup(fixture.doCleanups)
                     self.addCleanup(fixture.tearDown)
                     fixture.call("start", origin=recorded, own_worker=True)
                     fixture.wait()
@@ -702,6 +703,8 @@ class SessionContract(unittest.TestCase):
     def setUp(self):
         self.owned_workers = []
         self.scratch = tempfile.TemporaryDirectory()
+        # unittest releases later acquisitions first, including on failure.
+        self.addCleanup(self.scratch.cleanup)
         self.root = Path(self.scratch.name).resolve()
         self.home = self.root / "home"
         self.home.mkdir()
@@ -762,22 +765,23 @@ class SessionContract(unittest.TestCase):
         self.label = "jarvis-" + key[:32]
 
     def tearDown(self):
-        # Kill only the server this fixture started, then remove its scratch.
         (self.root / "refuse-teardown").unlink(missing_ok=True)
         try:
             if self.record.exists():
-                self.call("stop")
+                self.call("stop", own_worker=True)
                 self.wait("off" if json.loads(self.record.read_text()).get("app_off") else "stopped")
         finally:
             for worker in self.owned_workers:
-                worker.terminate()
                 try:
                     worker.wait(timeout=5)
                 except subprocess.TimeoutExpired:
-                    worker.kill()
-                    worker.wait(timeout=5)
+                    worker.terminate()
+                    try:
+                        worker.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        worker.kill()
+                        worker.wait(timeout=5)
             subprocess.run(["tmux", "-L", self.label, "kill-server"], capture_output=True, env=self.env)
-            self.scratch.cleanup()
 
     def call(self, verb, harness="claude", mode="resume", origin="manual", **kwargs):
         argv = [str(SCRIPT), verb, "--home", str(self.home)]
@@ -2236,8 +2240,7 @@ except RuntimeError as failure:
 
     def pty_client(self, argv, sockets):
         # The drain keeps the client's terminal writes from filling the pty.
-        # Cleanup detaches the client from whichever server holds it, before
-        # tearDown or a stand-in cleanup kills a server, then reaps it.
+        # Cleanup reaps the client before the stand-in and scratch cleanups.
         primary, secondary = os.openpty()
         fcntl.ioctl(secondary, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
         client = subprocess.Popen(argv, stdin=secondary, stdout=secondary, stderr=secondary, env=self.outside_env(),
@@ -2484,6 +2487,131 @@ os.waitpid(pid, 0)
                 self.assertEqual(self.record.read_bytes() if self.record.exists() else None, saved)
                 self.assertNotEqual(subprocess.run(["tmux", "-L", self.label, "list-sessions"], capture_output=True,
                                                    env=self.outside_env()).returncode, 0)
+
+
+class FixtureLifetimeContract(unittest.TestCase):
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch.cleanup)
+        self.root = Path(self.scratch.name).resolve()
+
+    def test_clients_release_before_scratch(self):
+        fixture = SessionContract()
+        fixture.setUp()
+        released = []
+
+        def before_removal():
+            self.assertTrue(fixture.root.is_dir())
+            self.assertIsNotNone(client.poll())
+            self.assertNotEqual(fixture.tmux_read(server, "list-sessions").returncode, 0)
+            released.append(True)
+
+        fixture.addCleanup(before_removal)
+        try:
+            server = fixture.stand_in("keeper")
+            client = fixture.pty_client(["tmux", "-S", server, "attach-session", "-t", "=keeper"], [server])
+            self.assertEqual(fixture.clients(server, until=bool), [str(client.pid) + " keeper"])
+        finally:
+            try:
+                fixture.tearDown()
+            finally:
+                self.assertTrue(fixture.doCleanups())
+        self.assertEqual(released, [True])
+        self.assertFalse(fixture.root.exists())
+
+    def test_stop_writer_exits_before_scratch(self):
+        skills = self.root / "skills"
+        scripts = skills / "jarvis/scripts"
+        shutil.copytree(SKILLS / "jarvis/scripts", scripts)
+        for dependency in ("mailbox", "orch", "github"):
+            (skills / dependency).symlink_to(SKILLS / dependency, target_is_directory=True)
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            listener.settimeout(15)
+            source = scripts / "lib/session.py"
+            self.assertFalse(source.is_symlink())
+            before = source.read_text()
+            match = '                    self.end_owned(record.get("predecessor"))\n'
+            self.assertEqual(before.count(match), 1)
+            barrier = ("                    import socket\n"
+                       "                    with socket.create_connection(" + repr(listener.getsockname()) + ", timeout=15) as peer:\n"
+                       "                        peer.sendall(b'1')\n"
+                       "                        assert peer.recv(1) == b'1'\n")
+            changed = before.replace(match, match + barrier)
+            self.assertNotEqual(changed, before)
+            source.write_text(changed)
+            with patch.dict(globals(), {"SKILLS": skills, "SCRIPT": scripts / "jarvis-session"}):
+                fixture = SessionContract()
+                fixture.setUp()
+                released = False
+                real_wait = subprocess.Popen.wait
+
+                def release_writer():
+                    nonlocal released
+                    with listener.accept()[0] as peer:
+                        peer.settimeout(15)
+                        self.assertEqual(peer.recv(1), b"1")
+                        saved = json.loads(fixture.record.read_text())
+                        self.assertEqual(saved["state"], "stopping")
+                        self.assertTrue(fixture.root.is_dir())
+                        self.assertEqual(fixture.call("status")[0]["state"], "stopped")
+                        peer.sendall(b"1")
+                    released = True
+
+                def wait(child, *args, **kwargs):
+                    if child in fixture.owned_workers and child.poll() is None:
+                        release_writer()
+                    return real_wait(child, *args, **kwargs)
+
+                def before_removal():
+                    worker = fixture.owned_workers[-1]
+                    returncode = worker.poll()
+                    if not released:
+                        # Reap even a rejected control's held writer.
+                        release_writer()
+                        real_wait(worker, timeout=15)
+                    self.assertEqual(returncode, 0)
+                    saved = json.loads(fixture.record.read_text())
+                    self.assertEqual((saved["state"], saved["terminal"]), ("stopped", None))
+
+                fixture.addCleanup(before_removal)
+                try:
+                    fixture.call("start", own_worker=True)
+                    fixture.wait()
+                    self.assertEqual(fixture.owned_workers[-1].wait(timeout=15), 0)
+                finally:
+                    try:
+                        with patch.object(subprocess.Popen, "wait", wait):
+                            fixture.tearDown()
+                    finally:
+                        self.assertTrue(fixture.doCleanups())
+                self.assertFalse(fixture.root.exists())
+
+    def test_lifetime_controls(self):
+        rows = (
+            ("scratch-first", "            subprocess.run([\"tmux\", \"-L\", self.label, \"kill-server\"], capture_output=True, env=self.env)\n",
+             "            self.scratch.cleanup()\n", "test_clients_release_before_scratch"),
+            ("skip-join", "            for worker in self.owned_workers:\n                try:\n                    worker.wait(timeout=5)\n",
+             "            for worker in self.owned_workers:\n                try:\n                    worker.wait(timeout=5) if False else worker.poll()\n", "test_stop_writer_exits_before_scratch"),
+        )
+        for name, match, mutation, contract in rows:
+            with self.subTest(name=name):
+                tests = self.root / name / "skills/jarvis/tests"
+                tests.mkdir(parents=True)
+                (tests / "fixtures").symlink_to(HARNESS_SCRIPT.parent, target_is_directory=True)
+                shutil.copyfile(Path(__file__).with_name("session.test.sh"), tests / "session.test.sh")
+                source = Path(__file__).read_text()
+                self.assertEqual(source.count(match), 1)
+                changed = source.replace(match, match + mutation if name == "scratch-first" else mutation)
+                self.assertNotEqual(changed, source)
+                (tests / "session_test.py").write_text(changed)
+                result = subprocess.run([os.environ["JARVIS_TEST_BASH"], str(tests / "session.test.sh"),
+                                         "FixtureLifetimeContract." + contract],
+                                        env=os.environ | {"JARVIS_TEST_SKILLS": str(SKILLS), "JARVIS_TEST_NATIVE": str(HARNESS)},
+                                        capture_output=True, text=True, timeout=120)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("FAIL: " + contract, result.stderr)
 
 
 if __name__ == "__main__":
