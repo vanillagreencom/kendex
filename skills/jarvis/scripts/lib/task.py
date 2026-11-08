@@ -72,6 +72,16 @@ class Task(Session):
             task_file = str(Path(args.task_file).resolve(strict=True))
             result = Path(args.result_file).resolve()
             inputs = [str(Path(path).resolve(strict=True)) for path in args.input]
+            try:
+                cwd = str(Path(args.cwd).resolve(strict=True)) if args.cwd else self.home
+            except OSError as error:
+                raise Refusal("cwd-unavailable", "resolve cwd " + repr(args.cwd) + ": " + str(error)) from error
+            if args.cwd == "" or not Path(cwd).is_dir() or not os.access(cwd, os.X_OK):
+                raise Refusal("cwd-unavailable", cwd)
+            # tmux(1) expands -c formats and parses trailing semicolons in argv.
+            tmux_cwd = cwd.replace("#", "##")
+            if tmux_cwd.endswith(";"):
+                tmux_cwd = tmux_cwd[:-1] + r"\;"
             # Results outlive scratch cleanup; the caller selects their home.
             scratch_root = Path(self.home) / "tmp/scratch"
             scratch_root.mkdir(parents=True, exist_ok=True)
@@ -81,7 +91,7 @@ class Task(Session):
             scratch = Path(tempfile.mkdtemp(prefix="task-", dir=scratch_root)).resolve()
             profile = scratch / "browser" if args.browser else None
             record = {"v": 1, "id": self.path.stem, "home": self.home, "name": args.name,
-                      "state": "launching", "task_file": task_file,
+                      "state": "launching", "task_file": task_file, "cwd": cwd,
                       "inputs": inputs,
                       "result_path": str(result), "scratch": str(scratch),
                       "browser_profile": str(profile) if profile else None,
@@ -108,13 +118,13 @@ class Task(Session):
                                            "--home", self.home, "--id", self.path.stem,
                                            "--outcome", "succeeded"]) + ".")
                     prepared = json.loads(self.backend("task-prepare", args.harness, args.model, args.effort,
-                                                       args.account or "", self.home, brief).stdout)
+                                                       args.account or "", self.home, brief, cwd).stdout)
                     record.update(harness=prepared["harness"], model=prepared["model"],
                                   account=prepared["account"], effort=prepared["effort"])
                     if not shutil.which(prepared["harness"], path=self.env["PATH"]):
                         raise Refusal("app-missing", prepared["harness"])
                     created = self.tmux("new-window", "-d", "-t", "=jarvis", "-n", args.name,
-                                        "-c", self.home, "-P", "-F", "#{window_id}\t#{pane_id}",
+                                        "-c", tmux_cwd, "-P", "-F", "#{window_id}\t#{pane_id}",
                                         BASH, "--noprofile", "--norc", socket=terminal["server"])
                     window, pane = created.stdout.strip().split("\t")
                     acquired = {"server": terminal["server"], "session": terminal["session"],
@@ -134,8 +144,9 @@ class Task(Session):
                     if profile:
                         child_env.append("JARVIS_BROWSER_PORT=0")
                     receipt = scratch / "startup.json"
-                    self.tmux("respawn-pane", "-k", "-t", pane, "-c", self.home,
-                              *child_env, sys.executable, "-B", "-c",
+                    # The selected project must not supply bootstrap imports.
+                    self.tmux("respawn-pane", "-k", "-t", pane, "-c", tmux_cwd,
+                              *child_env, sys.executable, "-I", "-B", "-c",
                               "import runpy,sys; sys.path.insert(0,sys.argv[1]); sys.exit(runpy.run_path(sys.argv[1]+'/task.py',run_name='task_native')['native'](sys.argv[2],sys.argv[3]))",
                               str(Path(__file__).resolve().parent), prepared["line"], str(receipt),
                               socket=terminal["server"])
@@ -217,6 +228,7 @@ def main():
     launch.add_argument("--task-file", required=True)
     launch.add_argument("--result-file", required=True)
     launch.add_argument("--input", action="append", default=[])
+    launch.add_argument("--cwd", help="Existing task working directory; defaults to Jarvis home")
     launch.add_argument("--harness", choices=("claude", "codex", "copilot", "pi"), required=True)
     launch.add_argument("--model", required=True)
     launch.add_argument("--effort", default="high")

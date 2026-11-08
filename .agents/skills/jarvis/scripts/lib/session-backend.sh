@@ -177,7 +177,7 @@ case "$verb" in
     account="$(jq -er '.config_dir | strings | select(length > 0)' <<<"$picked")" || exit 1
     ol_model_line "$OL_ENTRY_WARNING"
     ol_launch_flags --question-off "$harness" "$model" "$effort" "$model" "" || exit 1
-    ol_command_line --brief "$6" "$harness" "" "$account" "$5" "${OL_FLAGS[@]}" || exit 1
+    ol_command_line --brief "$6" "$harness" "" "$account" "$7" "${OL_FLAGS[@]}" || exit 1
     jq -cn --arg line "$OL_CMD" --arg harness "$harness" --arg model "${model:-native-default}" \
       --arg account "$account" --arg effort "$effort" \
       '{line:$line,harness:$harness,model:$model,account:$account,effort:$effort}' ;;
