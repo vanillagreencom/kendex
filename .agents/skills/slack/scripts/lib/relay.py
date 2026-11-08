@@ -200,15 +200,23 @@ TRIGGER = re.compile(r"[0-9A-Za-z._-]{1,255}")
 COMMAND_KEY = "command:"
 # A forwarded owner directive: a satellite Jarvis's `jarvis-session forward`
 # sends the request under this delivery key, its text ending in one
-# provenance line of these fields in this order. The relay judges this shape,
-# the key and the words string alone: the citation's forms and the word rule
-# are the satellite's `forward` and the main session's to judge.
+# provenance line of these fields in this order. The relay reads this shape,
+# the key, the request time, the words string, and the framing line with its
+# decoded request-text, to show them; it validates no citation and applies
+# no word rule, which are the satellite's `forward` and the main session's to
+# judge.
 FORWARD_KEY = re.compile(r"forward-[0-9a-f]{64}")
 FORWARD_LINE = re.compile(
     r"forwarded-request: satellite=(?P<satellite>\S+) request-ref=(?P<request_ref>\S+)"
-    r" request-at=(?P<request_at>\S+) confirmation-ref=(?P<confirmation_ref>\S+)"
+    r" request-at=(?P<request_at>(?P<asked_second>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2})(?:\.[0-9]{1,9})?Z)"
+    r" confirmation-ref=(?P<confirmation_ref>\S+)"
     r" confirmed-at=(?P<confirmed_at>\S+) key=(?P<key>forward-[0-9a-f]{64})"
     r" confirmation-method=(?P<method>words|voice|physical) confirmation-text=(?P<words>\".*\"|null)")
+# The framing `forward` puts above the provenance line since its caller
+# became explicit: the request as one ASCII-escaped JSON string. A forward
+# without it is legacy, its whole text the request.
+FORWARD_FRAMING = "forwarded-confirmation: caller=unproved"
+FORWARD_REQUEST = re.compile(r"request-text: (\".*\")")
 
 # Slack's answer when the reaction is already as the call would leave it, or
 # its message is gone: nothing is left to mark.
@@ -390,10 +398,11 @@ def jarvis_session_held(root: Path, presence: Presence, now: float) -> bool:
     return presence_fresh(touched_at(presence.jarvis_session_file), presence, now)
 
 
-def forwarded(envelope: Dict) -> Optional[Dict[str, str]]:
-    """The citation of a forwarded owner directive, FORWARD_LINE's fields
-    and `request`, its text without that line; None for any other envelope.
-    `words` stays the JSON string as the line spells it."""
+def forwarded(envelope: Dict) -> Optional[Dict[str, Optional[str]]]:
+    """The citation of a forwarded owner directive, FORWARD_LINE's fields,
+    `request`, the request's words, and `asked_at`, its time cut to the
+    second; None for any other envelope. `words` is the decoded
+    confirmation words, None for a method confirmation."""
     text = str(envelope.get("text", ""))
     head, _, last = text.rstrip("\n").rpartition("\n")
     line = FORWARD_LINE.fullmatch(last)
@@ -401,22 +410,34 @@ def forwarded(envelope: Dict) -> Optional[Dict[str, str]]:
     if (envelope.get("box") != "to-lane" or envelope.get("kind") != "directive"
             or not FORWARD_KEY.fullmatch(delivery_id) or line is None or line["key"] != delivery_id):
         return None
+    request = head.rstrip("\n")
+    framing, _, request_line = request.partition("\n")
+    framed = FORWARD_REQUEST.fullmatch(request_line) if framing == FORWARD_FRAMING else None
+    asked_at = line["asked_second"] + "Z"
     try:
         words = json.loads(line["words"])
+        parse_at(asked_at)
+        if framed is not None:
+            request = json.loads(framed[1])
     except ValueError:
         return None
     if (line["method"] == "words") != isinstance(words, str):
         return None
-    return dict(line.groupdict(), request=head.rstrip("\n"))
+    return dict(line.groupdict(), request=request, words=words, asked_at=asked_at)
 
 
-def forward_root(citation: Dict[str, str]) -> str:
-    """The top-level post a forwarded directive's answers thread under: the
-    request and the confirmation it cites, so the owner can catch a wrong one."""
-    confirmed = {"words": citation["words"], "voice": "by voice", "physical": "physically"}[citation["method"]]
-    return (f"Forwarded from {citation['satellite']}:\n\n{citation['request']}\n\n"
-            f"Confirmed {confirmed} at {citation['confirmed_at']} ({citation['confirmation_ref']}); "
-            f"request {citation['request_ref']} at {citation['request_at']}.")
+def forward_root(citation: Dict[str, Optional[str]]) -> str:
+    """The top-level post a forwarded directive's answers thread under, for
+    a person: the computer, the request time in each reader's zone, how
+    forwarding was confirmed and the request's words, so the owner can catch
+    a wrong one. A confirmation proves no caller, so the post asks the owner to
+    disown a request that is not theirs. References, the unproved-caller
+    framing and exact stamps stay in the directive the main reads."""
+    words = json.dumps(citation["words"], ensure_ascii=True)
+    confirmed = {"words": f"with {words}", "voice": "by voice", "physical": "physically"}
+    quoted = "\n".join(f"> {line}" if line else ">" for line in str(citation["request"]).splitlines())
+    return (f"Forwarded from {citation['satellite']}, {local_time(str(citation['asked_at']))}, "
+            f"confirmed {confirmed[str(citation['method'])]}:\n\n{quoted}\n\nNot your request? Reply in this thread.")
 
 
 def mention(binding: Binding) -> str:

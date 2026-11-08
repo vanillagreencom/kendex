@@ -71,7 +71,7 @@ A tracker-posted question shows an @mention, its first line, item link and deadl
 
 The overseer records its ruling and closes the question. A reserved question waits for your decision; no option stands by default. [Owner asks](../orch/references/communication-modes.md#owner-asks) defines question closure and deadline handling.
 
-A request forwarded by a satellite's Jarvis appears with the request and its cited confirmation in a new channel message; the overseer's notices follow in that thread. The overseer judges the confirmation words. If the root post is refused before sending or its response is lost, notices can appear top-level. The relay does not turn an ambiguous send into a repeated post.
+A request forwarded by a satellite's Jarvis appears as a new channel message naming the computer, with the request time in your time zone, how forwarding was confirmed and the request's words. The overseer's notices follow in that thread. The confirmation does not prove who asked: reply in that thread if the request is not yours. The overseer judges the confirmation words in its mailbox, where the references stay. If the root post is refused before sending or its response is lost, notices can appear top-level. The relay does not turn an ambiguous send into a repeated post.
 
 Send text as standard Markdown and file comments as Slack's mrkdwn. [Message standard](SKILL.md#message-standard) explains the difference. Use `slack thread` for an explicit thread read and `slack post --thread TS` for a reply confined to that thread.
 
