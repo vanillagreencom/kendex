@@ -43,9 +43,9 @@ Process-wide settings use the launch checkout, the first `--root` for an install
 
 Use one Slack app per machine for Socket Mode, the standard mode when you have no hosted receiver. Create it from [this manifest](app-manifest.yaml) and install it to the workspace. Put its bot token in the private env file as `SLACK_BOT_TOKEN`. Under Basic Information, create an app-level token with `connections:write` and save it as `SLACK_APP_TOKEN` in the same file.
 
-For a hosted receiver, use one app per workspace and set `SLACK_INBOUND=queue` before setup and listen. The receiver's worker calls `slack deliver --root ROOT` for each message. Queue mode needs the bot token alone. Configure HTTP delivery on the hosted app; the manifest describes the Socket Mode app. Each mode is explicit and never falls back to the other. Switching modes keeps the existing binding and journal.
+For a hosted receiver, use one app per workspace and set `SLACK_INBOUND=queue` before setup and listen. The receiver's worker calls `slack deliver --root ROOT` for each message. Queue mode needs the bot token alone. Disable Socket Mode on the hosted app and configure HTTP delivery; the manifest describes the Socket Mode app. Each mode is explicit and never falls back to the other. Switching modes keeps the existing binding and journal.
 
-For an existing app, add the manifest's missing OAuth scopes, enable Socket Mode, subscribe to `message.groups` under Event Subscriptions, then reinstall it. The app must join every channel it posts to. Invite it to any separate alert channel. Missing `files:read` prevents owner-file downloads; the delivered message explains that failure.
+For an existing app, add the manifest's missing OAuth scopes, subscribe to `message.groups` under Event Subscriptions, then reinstall it. Enable Socket Mode only for a Socket Mode app. The app must join every channel it posts to. Invite it to any separate alert channel. Missing `files:read` prevents owner-file downloads; the delivered message explains that failure.
 
 ### Token rotation
 
