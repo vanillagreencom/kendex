@@ -18,7 +18,6 @@
 # The adopted caller can lack an inventory entry when adoption preserves its
 # configuration. Candidacy permits proof setup; release comparison owns it.
 HARNESS_CI_REFRESH_CALLER=.github/workflows/kendex-refresh.yml
-CHANGE_CLASS_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BASE_SETTINGS_FILES='kendex.settings.toml .kendex/settings.toml'
 
 # harness-only owns the names-only verdict. Its roots must also belong to
@@ -547,7 +546,7 @@ base_file() { # PATH OUT
 }
 
 base_settings() {
-  local file files=() n=0 status loaded key value
+  local file files=() n=0 status loaded key value parser_dir
   for file in $BASE_SETTINGS_FILES; do
     status=0
     base_file "$file" "$work/base-settings-$((n + 1))" || status=$?
@@ -566,8 +565,9 @@ base_settings() {
     exec 3>&1 1>&2
     # shellcheck disable=SC2086
     unset $BASE_SETTINGS_KEYS
+    parser_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
     # shellcheck source=../../../orch/scripts/lib/kendex-env.sh
-    . "$CHANGE_CLASS_LIB_DIR/../../../orch/scripts/lib/kendex-env.sh" || exit 1
+    . "$parser_dir/../../../orch/scripts/lib/kendex-env.sh" || exit 1
     for file in "${files[@]}"; do
       kendex_load_settings_file "$file" || exit 1
     done
