@@ -82,7 +82,7 @@ echo '=== every open-PR listing page reaches the reduction ==='
 P7P9="$(jq -cn --argjson row "$(pr_row 7)" '[$row, ($row | .number = 9)]')"
 PAGED_LIST="STUB_OPEN_PRS=$P7P9;STUB_LIST_PAGE_SIZE=1;STUB_UNRESOLVED=1"
 table "a finding on each listing page reports both PRs||$PAGED_LIST|rc=1 kinds=threads-open,threads-open subjects=7~aaaaaaaa,9~aaaaaaaa"
-mutant_watch list-first-page 's#\[try inputs catch null\] as $documents#([try inputs catch null] | .[0:1]) as $documents#' '[try inputs catch null] as $documents'
+mutant_watch list-first-page 's#| $raw\[:($run_start // ($raw | length))\] as $documents#| $raw[:1] as $documents#' '| $raw[:($run_start // ($raw | length))] as $documents'
 table "must-fail: dropping later listing pages loses the second PR||$PAGED_LIST|rc=1 kinds=threads-open subjects=7~aaaaaaaa"
 WATCH_BIN="$LIVE_WATCH"
 

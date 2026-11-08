@@ -83,6 +83,79 @@ mutant_watch repository-queue-member 's#elif any($entries.nodes\[\]?; .pullReque
 table "must-fail: ignoring the repository queue loses CI and repeats the false disarm||$QUEUE_RACE;STUB_CI_RAW=$QUEUE_CI_RED|rc=1 kinds=disarmed"
 WATCH_BIN="$LIVE_WATCH"
 
+echo '=== approved unarmed PRs distinguish ejection from a missed arm ==='
+# KEN-4451: PR 5536 run 39259425299 had empty pull_requests and a queue
+# branch carrying the PR number, not its head SHA. The clock is injected.
+EJECTED_RUN_ID=39259425299
+EJECTED_RUN_NAME='Skill Tests'
+EJECTED_RUN_URL="https://github.com/acme/widgets/actions/runs/$EJECTED_RUN_ID"
+MERGE_READ_LOG="$TMP_ROOT/merge-reads"
+EJECTED_ROW="$(pr_row 5536 open unarmed false '2026-10-19T12:00:00Z' | jq -c '.')"
+MERGE_RUN="$(jq -cn --argjson id "$EJECTED_RUN_ID" --arg name "$EJECTED_RUN_NAME" --arg url "$EJECTED_RUN_URL" \
+  '{id:$id,name:$name,html_url:$url,event:"merge_group",head_branch:"gh-readonly-queue/main/pr-5536-a0649b6371457dddf391c7d22ca774cf904ec9b3",created_at:"2026-10-19T13:21:16Z",status:"completed",conclusion:"failure",pull_requests:[]}')"
+MERGE_RED="$(jq -cn --argjson r "$MERGE_RUN" '{total_count:1,workflow_runs:[$r]}')"
+EJECTED_ENV="STUB_OPEN_PRS=[$EJECTED_ROW];STUB_HEAD_DATE=2026-10-19T12:00:00Z"
+for mode in listing named paginated; do
+  flags='' pages=''
+  case "$mode" in named) flags=5536 ;; paginated) pages=';STUB_THREADS_PAGES=2' ;; esac
+  : > "$MERGE_READ_LOG"
+  table "failed queue group: $mode|$flags|$EJECTED_ENV;STUB_MERGE_RUNS=$MERGE_RED;STUB_MERGE_READ_LOG=$MERGE_READ_LOG$pages|rc=1 kinds=ejected subjects=5536~aaaaaaaa ejected_detail=yes merge_reads=1"
+done
+for conclusion in failure timed_out startup_failure success cancelled skipped neutral stale action_required; do
+  runs="$(jq -c --arg c "$conclusion" '.workflow_runs[0].conclusion=$c' <<<"$MERGE_RED")"
+  kind=disarmed
+  case "$conclusion" in failure|timed_out|startup_failure) kind=ejected ;; esac
+  table "queue conclusion $conclusion||$EJECTED_ENV;STUB_MERGE_RUNS=$runs|rc=1 kinds=$kind"
+done
+for alteration in pending newer-group green-sibling before-head equal-head creation ready reopen rerequest force-push other-pr other-base; do
+  env="$EJECTED_ENV" kind=disarmed
+  case "$alteration" in
+    pending) runs="$(jq -c '.workflow_runs[0].status="in_progress"' <<<"$MERGE_RED")" ;;
+    newer-group) runs="$(jq -c '.total_count=2 | .workflow_runs += [(.workflow_runs[0] | .id=39259425300 | .head_branch += "-new" | .created_at="2026-10-19T13:30:00Z" | .status="in_progress" | .conclusion=null)]' <<<"$MERGE_RED")" ;;
+    green-sibling) kind=ejected; runs="$(jq -c '.total_count=2 | .workflow_runs += [(.workflow_runs[0] | .id=39259425300 | .created_at="2026-10-19T13:22:00Z" | .conclusion="success")]' <<<"$MERGE_RED")" ;;
+    before-head) runs="$MERGE_RED"; env+=';STUB_HEAD_DATE=2026-10-19T13:30:00Z' ;;
+    equal-head) runs="$MERGE_RED"; env+=';STUB_HEAD_DATE=2026-10-19T13:21:16Z' ;;
+    creation) runs="$MERGE_RED"; env="STUB_OPEN_PRS=[$(jq -c '.created_at="2026-10-19T13:30:00Z"' <<<"$EJECTED_ROW")]" ;;
+    ready) runs="$MERGE_RED"; env+=';STUB_READY_AT=2026-10-19T13:30:00Z' ;;
+    reopen) runs="$MERGE_RED"; env+=';STUB_REOPENED_AT=2026-10-19T13:30:00Z' ;;
+    rerequest) runs="$MERGE_RED"; env+=';STUB_REREQUEST_AT=2026-10-19T13:30:00Z' ;;
+    force-push) runs="$MERGE_RED"; env+=';STUB_FORCE_PUSH_AT=2026-10-19T13:30:00Z' ;;
+    other-pr) runs="$(jq -c '.workflow_runs[0].head_branch |= sub("pr-5536-"; "pr-55360-")' <<<"$MERGE_RED")" ;;
+    other-base) runs="$(jq -c '.workflow_runs[0].head_branch |= sub("queue/main/"; "queue/release/")' <<<"$MERGE_RED")" ;;
+  esac
+  table "head/group binding: $alteration||$env;STUB_MERGE_RUNS=$runs|rc=1 kinds=$kind"
+done
+for bad in fail malformed missing-field incomplete; do
+  case "$bad" in
+    fail) runs=fail ;;
+    malformed) runs='not-json' ;;
+    missing-field) runs="$(jq -c 'del(.workflow_runs[0].conclusion)' <<<"$MERGE_RED")" ;;
+    incomplete) runs="$(jq -c '.total_count=101' <<<"$MERGE_RED")" ;;
+  esac
+  table "unreadable ejection evidence: $bad||$EJECTED_ENV;STUB_MERGE_RUNS=$runs|rc=2 kinds=error"
+done
+: > "$MERGE_READ_LOG"
+MULTI="[$EJECTED_ROW,$(pr_row 7 open unarmed | jq -c '.')]"
+table "several candidates share one REST read||STUB_OPEN_PRS=$MULTI;STUB_MERGE_RUNS=$MERGE_RED;STUB_MERGE_READ_LOG=$MERGE_READ_LOG|rc=1 kinds=ejected,disarmed merge_reads=1"
+for held in armed queued repository-queued threads draft; do
+  : > "$MERGE_READ_LOG"
+  env="$EJECTED_ENV" kind=none rc=0
+  case "$held" in
+    armed) env="STUB_OPEN_PRS=[$(jq -c '.auto_merge={merge_method:"merge"}' <<<"$EJECTED_ROW")]" ;;
+    queued) env+=';STUB_QUEUED=yes' ;;
+    repository-queued) env+=';STUB_REPO_QUEUE={"entries":{"pageInfo":{"hasNextPage":false},"nodes":[{"pullRequest":{"number":5536}}]}}' ;;
+    threads) env+=';STUB_UNRESOLVED=1'; kind=threads-open; rc=1 ;;
+    draft) env="STUB_OPEN_PRS=[$(jq -c '.draft=true' <<<"$EJECTED_ROW")]" ;;
+  esac
+  table "no candidate, no REST read: $held||$env;STUB_MERGE_RUNS=fail;STUB_MERGE_READ_LOG=$MERGE_READ_LOG|rc=$rc kinds=$kind merge_reads=0"
+done
+mutant_watch ejected-branch 's#if $failed != null then#if false and $failed != null then#' 'if $failed != null then'
+table "must-fail: removing ejection reports the forbidden re-arm||$EJECTED_ENV;STUB_MERGE_RUNS=$MERGE_RED|rc=1 kinds=disarmed"
+WATCH_BIN="$LIVE_WATCH"
+mutant_watch queue-pr-prefix 's#pr-\\($n)-#pr-\\($n)#' 'pr-\($n)-'
+table "must-fail: a short PR prefix mistakes another PR for an ejection||$EJECTED_ENV;STUB_MERGE_RUNS=$(jq -c '.workflow_runs[0].head_branch |= sub("pr-5536-"; "pr-55360-")' <<<"$MERGE_RED")|rc=1 kinds=ejected"
+WATCH_BIN="$LIVE_WATCH"
+
 echo "=== the thread walk is paged, summed and bounded ==="
 # Over 100 threads, a cursor that never advances, or more than 20 advancing
 # pages fail closed as overflow attention; a thread on page two is counted;

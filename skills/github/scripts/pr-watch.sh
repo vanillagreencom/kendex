@@ -64,18 +64,22 @@ Attention kinds:
                      awaiting-stale: answering the thread comes first
   changes-requested  reviewDecision CHANGES_REQUESTED: a standing objection
                      holds the merge. Reported beside threads-open
-  disarmed           reviewDecision APPROVED on an open, un-queued,
-                     non-draft PR with auto-merge NOT armed — nothing will
-                     merge it (the known eviction-disarm failure mode). A
-                     PR orch's merge route takes past the queue with
-                     --admin is unarmed by design until its lane's direct
-                     merge attempt, so for such a PR the line reports that
-                     wait, not an eviction.
+  ejected            an approved, unarmed, unqueued, non-draft PR whose
+                     newest merge group after the head anchor has a failed
+                     run (failure, timed_out or startup_failure). Names the
+                     run, workflow and URL. Push a fix on a new head; an
+                     unchanged head never re-enters the queue
+  disarmed           reviewDecision APPROVED on an open, unqueued,
+                     non-draft PR with auto-merge NOT armed and no failed
+                     newest merge group for this head: nothing will merge
+                     it. A PR orch merges with --admin stays unarmed until
+                     its lane's direct attempt; this is not an ejection.
   awaiting-stale     reviewDecision REVIEW_REQUIRED and the head has sat
                      unapproved longer than the quiet period
                      (PR_REVIEW_WAIT_SECS, default 900), counted from the
                      newest of the head commit, the PR's creation, and a
-                     ready-for-review, reopen or re-review-request event.
+                     ready-for-review, reopen, re-review-request or
+                     force-push event.
                      Drafts are never reported. Time for a re-review trigger
                      or the fallback approval
   refresh-ready      reviewDecision REVIEW_REQUIRED on a non-draft head
@@ -112,7 +116,10 @@ neither a disarmed nor an awaiting-stale line.
 One pass reads every PR in one gh call per repository. The open-PR listing
 may send several GraphQL requests inside that call. Each further thread-page
 depth takes one extra gh call and jq reduction shared by every PR that needs
-it. No subprocess starts per PR or per attention line.
+it. Disarmed candidates share one repository-wide REST merge-group run
+read, bounded to one page of 100 runs since the earliest candidate anchor.
+An incomplete or unreadable run list reports error, never disarmed.
+No subprocess starts per PR or per attention line.
 
 Output: one tab-separated line per finding on stdout:
   <pr-number> <TAB> <head-sha-8> <TAB> <kind> <TAB> <detail>
@@ -225,13 +232,14 @@ fi
 # here starts a process per pull request or per output line.
 # CheckSuiteFilter names suites, not their check runs. Select CI inside each
 # suite so a GitHub Actions aggregate remains visible.
-PR_STATE_FIELDS='number state isDraft headRefOid headRefName createdAt author{login __typename}
+PR_STATE_FIELDS='number state isDraft headRefOid headRefName baseRefName createdAt author{login __typename}
   autoMergeRequest{mergeMethod} isInMergeQueue mergeQueueEntry{position} reviewDecision
   commits(last:1){totalCount nodes{commit{oid committedDate
     checkSuites(first:10){pageInfo{hasNextPage}
       nodes{checkRuns(first:20,filterBy:{checkName:"CI",checkType:LATEST}){pageInfo{hasNextPage} nodes{name status conclusion}}}}}}}
-  timelineItems(last:10,itemTypes:[READY_FOR_REVIEW_EVENT,REOPENED_EVENT,REVIEW_REQUESTED_EVENT]){nodes{
-    ... on ReadyForReviewEvent{createdAt} ... on ReopenedEvent{createdAt} ... on ReviewRequestedEvent{createdAt}}}'
+  timelineItems(last:10,itemTypes:[READY_FOR_REVIEW_EVENT,REOPENED_EVENT,REVIEW_REQUESTED_EVENT,HEAD_REF_FORCE_PUSHED_EVENT]){nodes{
+    ... on ReadyForReviewEvent{createdAt} ... on ReopenedEvent{createdAt} ... on ReviewRequestedEvent{createdAt}
+    ... on HeadRefForcePushedEvent{createdAt}}}'
 PR_FIELDS="$PR_STATE_FIELDS reviewThreads(first:100){pageInfo{hasNextPage endCursor} nodes{isResolved}}"
 # GitHub can clear both PR queue fields while rebuilding merge groups.
 # The repository queue supplies an independent view in the same request.
@@ -344,39 +352,72 @@ def refresh_ci($commit; $n; $head; $queued):
       end
     end;
 
-# Reviewer silence counts from when this head became the head. GitHub exposes
-# no head-transition time, so the clock starts at the newer of the head
-# commit time and the PR creation, which covers an old commit opened in a
-# fresh PR. A ready-for-review, reopen or re-review request restarts it. The
-# commit time is author-controlled: beyond a small skew a future time is an
-# error, never silence. A push of an old commit onto an old PR still reads
-# stale early, which errs toward a nudge, never toward a stall.
-def stale($p; $commit; $n; $head; $queued):
+# Commit dates alone cannot bind a rebased head to a queue run: a force-push
+# can retain an old committer date. Both silence and ejection use the newest
+# head/readiness anchor. Silence need not read the timeline inside its quiet period.
+def head_anchor($p; $commit; $quiet):
   $commit.committedDate as $at
-  | if $at == null or $at == "" then [finding($n; $head; "error"; "head commit has no usable committer date (broken read)")]
-    elif ($at | epoch) == null then [finding($n; $head; "error"; "head committer date unparsable (broken read) — the silence clock never substitutes the creation time for broken head metadata")]
-    elif ($p.createdAt | epoch) == null then [finding($n; $head; "error"; "PR creation timestamp unparsable (broken read) — the silence floor cannot be computed")]
+  | if $at == null or $at == "" then {error: "head commit has no usable committer date (broken read)"}
+    elif ($at | epoch) == null then {error: "head committer date unparsable (broken read) — the silence clock never substitutes the creation time for broken head metadata"}
+    elif ($p.createdAt | epoch) == null then {error: "PR creation timestamp unparsable (broken read) — the silence floor cannot be computed"}
     else ([($at | epoch), ($p.createdAt | epoch)] | max) as $from
     | ($now - $from) as $age
-    | if $age < -300 then [finding($n; $head; "error"; "silence clock is in the future by \(-$age)s (author-controlled committer timestamp) — silence age unprovable")]
-      elif $age <= $wait then []
+    | if $age < -300 then {error: "silence clock is in the future by \(-$age)s (author-controlled committer timestamp) — silence age unprovable"}
+      elif $quiet != null and $age <= $quiet then {from: $from}
       elif ($p.timelineItems | type) != "object" or ($p.timelineItems.nodes | type) != "array"
-        or any($p.timelineItems.nodes[]; type != "object" or (.createdAt | type) != "string")
-      then [finding($n; $head; "error"; "timeline pages malformed while confirming staleness (fail loud, not a stale alert)")]
-      else ([$p.timelineItems.nodes[].createdAt] | sort | last) as $ready
-      | (if $ready == null then {age: $age}
-         elif ($ready | epoch) == null then {error: "readiness/reopen timestamp unparsable while confirming staleness (fail loud, not a stale alert)"}
-         elif ($ready | epoch) > $from then ($now - ($ready | epoch)) as $since
-           | if $since < -300 then {error: "silence clock is in the future by \(-$since)s (timeline event timestamp) — silence age unprovable"}
-             else {age: $since} end
-         else {age: $age} end) as $r
-      | if $r.error then [finding($n; $head; "error"; $r.error)]
-        elif $r.age > $wait then [finding($n; $head; "awaiting-stale"; "no approval for \($r.age)s (reviewDecision REVIEW_REQUIRED, quiet period \($wait)s) — trigger a re-review, or apply the fallback approval\($queued)")]
-        else [] end
+        or any($p.timelineItems.nodes[]; type != "object" or (.createdAt | epoch) == null)
+      then {error: "timeline timestamps malformed while computing the head anchor (broken read)"}
+      else ([ $from, ($p.timelineItems.nodes[].createdAt | epoch) ] | max) as $latest
+      | if $now - $latest < -300 then {error: "silence clock is in the future by \($latest - $now)s (timeline event timestamp) — silence age unprovable"}
+        else {from: $latest} end
+      end
+    end;
+def stale($p; $commit; $n; $head; $queued):
+  head_anchor($p; $commit; $wait) as $anchor
+  | if $anchor.error then [finding($n; $head; "error"; $anchor.error)]
+    elif $now - $anchor.from > $wait then
+      [finding($n; $head; "awaiting-stale"; "no approval for \($now - $anchor.from)s (reviewDecision REVIEW_REQUIRED, quiet period \($wait)s) — trigger a re-review, or apply the fallback approval\($queued)")]
+    else [] end;
+
+# REST merge-group rows have no PR head SHA or pull_requests membership.
+# Bind by the queue branch (KEN-4451 incident) and head anchor, then judge all
+# workflows of the newest group, not an older failed group or its newest green sibling.
+# REST shape: docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-repository.
+def unarmed($p; $commit; $n; $head; $runs):
+  head_anchor($p; $commit; null) as $anchor
+  | if $anchor.error then [finding($n; $head; "error"; $anchor.error)]
+    elif ($p.baseRefName | type) != "string" or $p.baseRefName == ""
+    then [finding($n; $head; "error"; "PR base branch missing while matching merge-group runs")]
+    elif $runs.status == "pending" then [{n: $n, merge_runs: $anchor.from}]
+    elif $runs.status != "ok" then [finding($n; $head; "error"; "merge-group run list read failed")]
+    else $runs.answer as $answer
+    | if ($answer | type) != "object" or ($answer.workflow_runs | type) != "array"
+        or ($answer.total_count | type) != "number" or $answer.total_count < 0
+        or $answer.total_count != ($answer.total_count | floor)
+      then [finding($n; $head; "error"; "merge-group run list malformed")]
+      elif $answer.total_count > ($answer.workflow_runs | length)
+      then [finding($n; $head; "error"; "merge-group run list is past one page; ejection is unconfirmed")]
+      elif $answer.total_count != ($answer.workflow_runs | length)
+        or any($answer.workflow_runs[]; type != "object" or (.id | type) != "number"
+          or (.name | type) != "string" or (.html_url | type) != "string"
+          or (.head_branch | type) != "string" or (.created_at | epoch) == null
+          or .event != "merge_group" or (.status | type) != "string" or (has("conclusion") | not)
+          or ((.conclusion | type) != "null" and (.conclusion | type) != "string"))
+      then [finding($n; $head; "error"; "merge-group run list malformed")]
+      else [$answer.workflow_runs[]
+        | select(.head_branch | startswith("gh-readonly-queue/\($p.baseRefName)/pr-\($n)-"))
+        | select((.created_at | epoch) > $anchor.from)]
+      | group_by(.head_branch) | sort_by(map(.created_at | epoch) | min) | last as $group
+      | ([$group[]? | select(.status == "completed" and (.conclusion | IN("failure", "timed_out", "startup_failure")))]
+         | sort_by(.created_at, .id) | last) as $failed
+      | if $failed != null then
+          [finding($n; $head; "ejected"; "merge-group run \($failed.id) (\($failed.name)) failed: \($failed.html_url) — an unchanged head never re-enters the queue; push a fix on a new head")]
+        else [finding($n; $head; "disarmed"; "approved (reviewDecision APPROVED) but auto-merge is not armed and the PR is not queued — nothing will merge this (re-arm)")]
+        end
       end
     end;
 
-def reduce_pr($n; $initial; $later; $repository):
+def reduce_pr($n; $initial; $later; $repository; $runs):
   # Thread histories can span concurrent pushes, arms and review updates.
   # Keep the first head for binding, but judge the latest state read beside
   # the last thread page before returning silence or a head-sensitive line.
@@ -459,7 +500,7 @@ def reduce_pr($n; $initial; $later; $repository):
             # Approved, unarmed, unqueued and ready: nothing will merge it.
             elif $decision == "APPROVED" and ($p.isDraft | not) and $p.autoMergeRequest == null and $queue.member != true
             then if $queue.error then [finding($n; $head; "error"; $queue.error)]
-              else [finding($n; $head; "disarmed"; "approved (reviewDecision APPROVED) but auto-merge is not armed and the PR is not queued — nothing will merge this (re-arm)")]
+              else unarmed($p; $commit; $n; $head; $runs)
               end
             # Drafts await readiness, not review: the clock skips them.
             elif $decision == "REVIEW_REQUIRED" and ($p.isDraft | not) and ($refresh | not)
@@ -473,7 +514,10 @@ def reduce_pr($n; $initial; $later; $repository):
 
 def page_of($n): try .data.repository["p\($n)"] catch null;
 
-[try inputs catch null] as $documents
+[try inputs catch null] as $raw
+| ([$raw | to_entries[] | select(.value | type == "object" and has("_watch_runs")) | .key] | first) as $run_start
+| {status: ($raw[$run_start]._watch_runs.status // "pending"), answer: $raw[$run_start + 1]} as $runs
+| $raw[:($run_start // ($raw | length))] as $documents
 | [$documents | to_entries[] | select(.value | type == "object" and has("_watch_round")) | .key] as $starts
 | [$starts[] as $i | $documents[$i]._watch_round as $r
    | {status: $r.status,
@@ -495,13 +539,15 @@ def page_of($n): try .data.repository["p\($n)"] catch null;
     | if $e.unread then [finding($e.n; "--------"; "error"; "could not read PR #\($e.n)")]
       else reduce_pr($e.n; $e.p;
         [$rounds[] | select(any(.numbers[]; . == ($e.n | tostring)))
-         | (.answer | page_of($e.n)) as $p | {status, p: $p, page: (try $p.reviewThreads catch null), repository: .answer.data.repository}]; $e.repository)
+         | (.answer | page_of($e.n)) as $p | {status, p: $p, page: (try $p.reviewThreads catch null), repository: .answer.data.repository}]; $e.repository; $runs)
       end | .[]] as $all
   | [$all[] | select(.walk)] as $walks
+  | [$all[] | select(has("merge_runs")) | .merge_runs] as $need_runs
   | if ($walks | length) > 0 then $walks | unique_by(.n)
     # The cursor rides a GraphQL variable, never the query text.
     | "walk\t" + ({query: "query($owner:String!,$name:String!\([.[] | ",$c\(.n):String!"] | join(""))){repository(owner:$owner,name:$name){\([.[] | "p\(.n):pullRequest(number:\(.n)){...PRState reviewThreads(first:100,after:$c\(.n)){pageInfo{hasNextPage endCursor} nodes{isResolved}}}"] | join(" ")) \($queue_fields)}} fragment PRState on PullRequest{\($state_fields)}",
         variables: ({owner: $owner, name: $name} + ([.[] | {key: "c\(.n)", value: .walk}] | from_entries))} | tojson)
+    elif ($need_runs | length) > 0 then "runs\t" + ($need_runs | min | todateiso8601)
     else "exit\t\(if any($all[]; .kind == "error") then 2 elif ($all | length) > 0 then 1 else 0 end)",
       ($all[] | "\(.n)\t\(.head)\t\(.kind)\t\(.detail)")
     end
@@ -511,6 +557,8 @@ def page_of($n): try .data.repository["p\($n)"] catch null;
 # by every such PR, so a pass grows with the deepest thread history, not with
 # the PR count.
 rounds=()
+merge_runs_read=pending
+merge_runs=null
 reduction_input() {
   # gh can return full shared pages larger than the OS argument limit.
   # Native GraphQL documents have no _watch_round field; the marker binds
@@ -521,6 +569,8 @@ reduction_input() {
     printf '{"_watch_round":{"status":"%s","request":%s}}\n' "${rounds[$i]}" "${rounds[$((i + 1))]}"
     printf '%s\n' "${rounds[$((i + 2))]:-null}"
   done
+  printf '{"_watch_runs":{"status":"%s"}}\n' "$merge_runs_read"
+  printf '%s\n' "${merge_runs:-null}"
 }
 while :; do
   reduced="$(reduction_input | jq -nr --arg mode "$mode" --arg numbers "$PR_ARGS" --arg read "$main_read" \
@@ -534,6 +584,11 @@ while :; do
   control="${reduced%%$'\n'*}"
   case "$control" in
     walk$'\t'*) request="${control#walk$'\t'}" ;;
+    runs$'\t'*)
+      merge_runs_read=ok
+      merge_runs="$(gh api "repos/$GH_REPO/actions/runs?event=merge_group&per_page=100&created=%3E%3D${control#runs$'\t'}" 2>/dev/null)" || merge_runs_read=failed
+      continue
+      ;;
     *) break ;;
   esac
   round_read=ok

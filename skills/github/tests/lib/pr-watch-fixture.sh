@@ -67,8 +67,10 @@ chmod +x "$TMP_ROOT/scripts/pr-watch.sh"
 #   STUB_CI_MORE        "yes" -> the CI suites answer another page
 #   STUB_CI_SUITE_FILTER_EMPTY "yes" -> the suite-name filter returns no
 #                       suites, as fleet#1298 did despite its CI check run
-#   STUB_READY_AT, STUB_REOPENED_AT, STUB_REREQUEST_AT  one timeline event
+#   STUB_READY_AT, STUB_REOPENED_AT, STUB_REREQUEST_AT, STUB_FORCE_PUSH_AT  one timeline event
 #   STUB_TIMELINE_RAW   the timeline nodes as given
+#   STUB_MERGE_RUNS     repository merge-group run response ("fail" = unreadable)
+#   STUB_MERGE_READ_LOG append a line per merge-group REST read
 cat > "$TMP_ROOT/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 set -u
@@ -77,6 +79,12 @@ args="$*"
 # reads and unbatched GraphQL reads. Its children are excluded from the
 # watcher's process count, like the batched stub's own jq process.
 case "$*" in
+  api\ *actions/runs?event=merge_group*)
+    [[ -z "${STUB_MERGE_READ_LOG:-}" ]] || printf 'read\n' >> "$STUB_MERGE_READ_LOG"
+    [[ "${STUB_MERGE_RUNS:-}" != fail ]] || exit 1
+    if [[ -n "${STUB_MERGE_RUNS:-}" ]]; then printf '%s\n' "$STUB_MERGE_RUNS"
+    else printf '{"total_count":0,"workflow_runs":[]}\n'; fi
+    exit 0 ;;
   api\ *pulls?state=open*) printf '%s\n' "${STUB_OPEN_PRS:-[]}"; exit 0 ;;
   api\ *issues/*/timeline?*) printf '[]\n'; exit 0 ;;
   api\ *pulls/*)
@@ -162,6 +170,7 @@ answer="$(printf '%s\n' "$ci" | jq -nc --arg kind "$kind" --arg query "$query" -
     else . end;
   def timeline: {nodes: (
     if $ENV.STUB_TIMELINE_RAW then $ENV.STUB_TIMELINE_RAW | fromjson
+    elif $ENV.STUB_FORCE_PUSH_AT and (($query + $request) | contains("HEAD_REF_FORCE_PUSHED_EVENT")) then [{createdAt: $ENV.STUB_FORCE_PUSH_AT}]
     elif $ENV.STUB_REREQUEST_AT then [{createdAt: $ENV.STUB_REREQUEST_AT}]
     elif $ENV.STUB_REOPENED_AT then [{createdAt: $ENV.STUB_REOPENED_AT}]
     elif $ENV.STUB_READY_AT then [{createdAt: $ENV.STUB_READY_AT}]
@@ -177,7 +186,7 @@ answer="$(printf '%s\n' "$ci" | jq -nc --arg kind "$kind" --arg query "$query" -
       + (if has("state") then {state: (.state | if . == "open" then "OPEN" elif . == "closed" then "CLOSED" else . end)} else {} end)
       + (if has("draft") then {isDraft: .draft} else {} end)
       + (if (.head | type) == "object" and (.head | has("sha")) then {headRefOid: .head.sha} else {} end)
-      + {headRefName: (.head.ref? // null)}
+      + {headRefName: (.head.ref? // null), baseRefName: (.base.ref? // "main")}
       + (if has("created_at") then {createdAt: .created_at} else {} end)
       + (if has("user") then {author: (.user | if type == "object"
           then {login: (if .type == "Bot" then .login | sub("\\[bot\\]$"; "") else .login end), __typename: (.type // "User")}
@@ -298,6 +307,14 @@ observe() {
         else value="$(grep -o '[0-9]* unresolved review thread' <<<"$OUT" | head -1 | grep -o '^[0-9]*' || true)"; value="${value:-none}"; fi
         ;;
       queued_notes) value="$(grep -c 'QUEUED: dequeue' <<<"$OUT" || true)" ;;
+      ejected_detail)
+        # The whole-text attention protocol delivers the run and remedy to
+        # oversee-watch and lane-close, not just the kind column.
+        value=no
+        if [[ "$OUT" == *"$EJECTED_RUN_ID"* && "$OUT" == *"$EJECTED_RUN_NAME"* && "$OUT" == *"$EJECTED_RUN_URL"*
+           && "$OUT" == *'new head'* && "$OUT" != *'re-arm'* ]]; then value=yes; fi
+        ;;
+      merge_reads) value="$(wc -l < "$MERGE_READ_LOG" | tr -d ' ')" ;;
       diagnostic)
         value="$(sed -n '/^review-gate-error=/p' <<<"$OUT")"
         value="${value// /+}" ;;

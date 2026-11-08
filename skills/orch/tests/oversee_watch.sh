@@ -188,7 +188,7 @@ assert_eq "$(grep -c 'oversee-watch: reducer-baseline' "$err")" "1" "the ordinar
 
 # Refresh approval and failed CI need attention without an owning lane.
 # Each wakes on the opening pass and again for each replacement head.
-for kind in refresh-ready ci-failed; do
+for kind in refresh-ready ci-failed ejected; do
 for mode in opening replacement repeat; do
   new_case "prwatch_${kind}_$mode"
   printf '12\taaaa0000\t%s\tCI result\n' "$kind" > "$STUB_DIR/prwatch.out.1"
@@ -223,7 +223,7 @@ done
 
 REFRESH_SCRIPTS="$(mutant_scripts refresh-opening-mutant/orch lib/pr-watch-pass.sh)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/refresh-opening-mutant/github"
-mutate_file "$REFRESH_SCRIPTS/lib/pr-watch-pass.sh" '$2 == "error" || $2 ~ /^(refresh-ready|ci-failed):/' '$2 == "error"'
+mutate_file "$REFRESH_SCRIPTS/lib/pr-watch-pass.sh" '$2 == "error" || $2 ~ /^(refresh-ready|ci-failed|ejected):/' '$2 == "error"'
 new_case prwatch_refresh_opening_control
 printf '12\taaaa0000\trefresh-ready\tCI passed\n' > "$STUB_DIR/prwatch.out"
 printf '1' > "$STUB_DIR/prwatch.rc"
@@ -233,7 +233,7 @@ assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none
 
 REFRESH_SCRIPTS="$(mutant_scripts refresh-head-mutant/orch lib/pr-watch-pass.sh)" || exit 1
 ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/refresh-head-mutant/github"
-mutate_file "$REFRESH_SCRIPTS/lib/pr-watch-pass.sh" '($3 == "refresh-ready" || $3 == "ci-failed" ? ":" $2 : "")' '""'
+mutate_file "$REFRESH_SCRIPTS/lib/pr-watch-pass.sh" '($3 == "refresh-ready" || $3 == "ci-failed" || $3 == "ejected" ? ":" $2 : "")' '""'
 new_case prwatch_refresh_head_control
 printf '12\taaaa0000\trefresh-ready\tCI passed\n' > "$STUB_DIR/prwatch.out.1"
 printf '12\tbbbb0000\trefresh-ready\tCI passed\n' > "$STUB_DIR/prwatch.out.2"
@@ -244,11 +244,25 @@ err="$TMP_ROOT/refresh-head-control.err"
 out="$(WATCH_BIN="$REFRESH_SCRIPTS/oversee-watch" run_watch -- 2>"$err")" && rc=0 || rc=$?
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "control: an unbound key loses the replacement refresh head" "$err"
 
+EJECTED_SCRIPTS="$(mutant_scripts ejected-head-mutant/orch lib/pr-watch-pass.sh)" || exit 1
+ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/ejected-head-mutant/github"
+mutate_file "$EJECTED_SCRIPTS/lib/pr-watch-pass.sh" ' || $3 == "ejected"' ''
+new_case prwatch_ejected_head_control
+printf '12\taaaa0000\tejected\tfailed run\n' > "$STUB_DIR/prwatch.out.1"
+printf '12\tbbbb0000\tejected\tfailed run\n' > "$STUB_DIR/prwatch.out.2"
+printf '1' > "$STUB_DIR/prwatch.rc"
+mkdir -p "$STATE_DIR"
+printf '12\tejected\n' > "$STATE_DIR/owner_repo__none"
+err="$TMP_ROOT/ejected-head-control.err"
+out="$(WATCH_BIN="$EJECTED_SCRIPTS/oversee-watch" run_watch -- 2>"$err")" && rc=0 || rc=$?
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=2 interval=0s since=none" "control: an unbound ejection key loses the new-head event" "$err"
+assert_not_contains "$out" "EVENT pr-watch" "control: no new-head ejection event is delivered" "$err"
+
 for mode in opening replacement; do
   CI_SCRIPTS="$(mutant_scripts "ci-$mode-mutant/orch" lib/pr-watch-pass.sh)" || exit 1
   ln -s "$REPO_ROOT/skills/github" "$TMP_ROOT/ci-$mode-mutant/github"
   if [[ "$mode" == opening ]]; then
-    mutate_file "$CI_SCRIPTS/lib/pr-watch-pass.sh" '/^(refresh-ready|ci-failed):/' '/^refresh-ready:/'
+    mutate_file "$CI_SCRIPTS/lib/pr-watch-pass.sh" '/^(refresh-ready|ci-failed|ejected):/' '/^(refresh-ready|ejected):/'
   else
     mutate_file "$CI_SCRIPTS/lib/pr-watch-pass.sh" ' || $3 == "ci-failed"' ''
   fi
