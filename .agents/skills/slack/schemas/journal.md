@@ -1,6 +1,6 @@
 # The relay's record
 
-What one checkout keeps under `tmp/slack/`. The journal holds identifiers and bounded parent excerpts. Full messages stay in Slack and the mailbox.
+What one checkout keeps under `tmp/slack/`. The journal holds identifiers and bounded parent excerpts. Queue requests retain their event text until handled; full messages otherwise stay in Slack and the mailbox.
 
 | File | Writer | Holds |
 |------|--------|-------|
@@ -8,6 +8,8 @@ What one checkout keeps under `tmp/slack/`. The journal holds identifiers and bo
 | `journal.jsonl` | The relay | The transport ledger, one JSON object per line |
 | `status.json` | The relay, every poll | The record `listen --status` reads |
 | `listen.lock` | The relay | The OS lock; its text is the holder's pid |
+| `inbox/<attempt>.json` | `deliver` | A complete queued event, atomically published; the listener removes it after writing its outcome |
+| `outcomes/<attempt>.json` | The queue listener | One terminal outcome per attempt, with `key` and `value` for the keyed CLI line; retained for the worker to inspect |
 | `jarvis-session.lock` | The relay | The per-root OS hold lock for current or retained Jarvis presence. Explicit posts probe its ownership without writing. Release or process exit ends ownership; a file alone holds nothing |
 | `files/<file id>-<name>` | The relay | A file an owner sent, as Slack served it; the directory mode 700, each file 600. Every character of `<file id>-<name>` outside `A-Z a-z 0-9 . _ -` is `_`, and `<file id>-<name>` is cut to its first 200 characters |
 
@@ -22,6 +24,14 @@ What one checkout keeps under `tmp/slack/`. The journal holds identifiers and bo
 | `owner_ids` | Email address to Slack user id, one entry per owner |
 
 A relay whose `SLACK_OWNERS` differs from `owners` re-resolves the ids and rewrites the binding before it delivers anything more.
+
+## Queue delivery
+
+`deliver` reads the inner Slack message event that `on_message` consumes. It accepts no outer callback envelope. The hosted receiver owns signature and workspace checks, challenge responses, `event_id` deduplication and callback unwrapping. The worker calls the verb from the bound checkout as that checkout's user. `slack --help` defines the stdin fields and keyed results.
+
+Each queue attempt has a unique name. The inbox and outcomes directories have mode 700; request and outcome files have mode 600. A caller timeout leaves its request queued, so a timeout is not proof of nondelivery. The receiver retries the same event with its original `channel:ts`. The existing journal and mailbox judge repeated delivery in both inbound modes. The queue listener runs no channel-history catch-up. A threaded event can still read its thread for parent context.
+
+`deliver` requires the root's listener lock to be held and its status to name queue mode. It prints the listener's `delivered` result with `ts`, mailbox `id` and `path=queue`, or exits 2 with the keyed refusal. A nonowner or empty owner message uses the message handler's journaled reason. Bot upload events bind pending outbound files through that same handler.
 
 ## Journal lines
 
@@ -88,15 +98,16 @@ Catch-up can discover a report continuation's root before its final part lands. 
 | `code` | The fingerprint of the code the relay runs: 12 hex characters of one sha256 over `scripts/slack`, sorted `scripts/lib/*.py`, and the mailbox store, projection definitions and common-root resolver from the mailbox package installed beside Slack |
 | `channel` | The bound channel id |
 | `poll_seconds` | The `SLACK_POLL_SECONDS` the relay runs with |
+| `inbound` | The source selected at startup, `socket` or `queue` |
 | `compacted_day` | The UTC day the journal was last compacted, or first seen |
 | `last_poll`, `last_poll_ok` | The clock at the last poll and whether it succeeded |
 | `last_error` | The keyed refusal of the last failed poll, empty after a successful one |
 | `last_delivered_ts`, `seen_ts` | The last stamp delivered and the history position |
 | `open_asks`, `unknown`, `refused` | Envelope ids: asks not yet closed, posts with a lost response, posts refused |
 | `calls_last_minute` | Slack Web API calls made with the bot token in the last minute |
-| `connection`, `connection_since` | `connected` while the Socket Mode connection is open, `reconnecting` while the relay tries to open one, `disconnected` for a `--once` run, which opens none; and the UTC second the state began |
+| `connection`, `connection_since` | `connected` while the Socket Mode connection is open, `reconnecting` while the relay tries to open one, `disconnected` for queue mode or a `--once` run, which open none; and the UTC second the state began |
 | `connection_error` | The keyed refusal of the last refused connect or drop while `reconnecting`; empty once a connection opens |
 | `held_by` | `jarvis` while a hold stands, empty otherwise |
 
 
-`listen --status` prints per root: `state` (`ok` inside two poll intervals plus five seconds of a successful poll, `failing` inside that of a refused one, or of one with a `connection_error` after 120 seconds `reconnecting`, `stale` past it, `never` with no record), `channel`, `code` (`-` for a record without one), `last_poll_age`, `connection` and `connection_since` (for a `stale` record `disconnected` since its `last_poll`, since its relay is gone; for a record an older relay wrote without the connection fields `unknown` since its `last_poll`, its state read from freshness and `last_poll_ok` alone), `last_delivered_ts`, `open_asks`, `oldest_unknown`, `refused`, `calls_last_minute`, `held-by=jarvis` while a hold stands, and `fix=` when the state is not `ok`: `last_error` for a refused poll, else `connection_error` for `failing`, a restart for `stale`, the start command for `never`. A `never` line carries `fix=` alone, with no other field.
+`listen --status` prints per root: `state` (`ok` inside two poll intervals plus five seconds of a successful poll, `failing` inside that of a refused one, or of one with a `connection_error` after 120 seconds `reconnecting`, `stale` past it, `never` with no record), `channel`, `code` (`-` for a record without one), `last_poll_age`, `inbound`, `connection` and `connection_since` (for a `stale` record `disconnected` since its `last_poll`, since its relay is gone; for a record an older relay wrote without the connection fields `unknown` since its `last_poll`, its state read from freshness and `last_poll_ok` alone), `last_delivered_ts`, `open_asks`, `oldest_unknown`, `refused`, `calls_last_minute`, `held-by=jarvis` while a hold stands, and `fix=` when the state is not `ok`: `last_error` for a refused poll, else `connection_error` for `failing`, a restart for `stale`, the start command for `never`. A `never` line carries `fix=` alone, with no other field.

@@ -13,9 +13,18 @@
 # unset too, setup and the relay refuse and name the key.
 SLACK_OWNERS = ""
 
+# Owner-message source: socket opens this machine's Slack app connection;
+# queue receives events from a hosted receiver through `slack deliver`.
+# Read at start; neither mode falls back to the other.
+SLACK_INBOUND = "socket"
+
+# Seconds `slack deliver` waits for the listener's outcome. A timeout leaves
+# the event queued; retrying its channel:ts cannot append a second mailbox entry.
+SLACK_DELIVER_SECONDS = "20"
+
 # How often the relay reads each mailbox for questions, notices and reports
 # to post, in seconds. Owner messages do not wait for it: Slack sends each
-# one over the relay's Socket Mode connection as it is posted.
+# one over Socket Mode as it is posted, or a hosted worker queues it.
 SLACK_POLL_SECONDS = "15"
 
 # How many days a thread stays open for replies. A reply under an older
@@ -68,6 +77,5 @@ SLACK_BOT_TOKEN = ""
 
 # The app-level token of the same Slack app, scope connections:write, which
 # opens the relay's Socket Mode connection. It lives where SLACK_BOT_TOKEN
-# lives. Unset, `slack listen` refuses and names the key; `listen --once` and
-# the other verbs do not read it.
+# lives. Socket Mode listen requires it; queue mode and listen --once do not.
 SLACK_APP_TOKEN = ""

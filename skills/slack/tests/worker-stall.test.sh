@@ -17,7 +17,7 @@ while IFS='|' read -r mode control; do
   elif [ "$control" = public-dispatch ]; then
     sk_mutant public-dispatch main.py '        return listen\(roots, settings, verbs\.api_for\(settings\), args\.once\)' '        from relay import Relay\n        return Relay(roots, settings, verbs.api_for(settings)).run(args.once)'
   elif [ "$control" = poll-no-renewal ]; then
-    sk_mutant poll-no-renewal relay.py '                self\.progress\("poll", True\)' '                self.progress("poll")'
+    sk_mutant poll-no-renewal relay.py '(    def run_connected\([\s\S]*?\n                )self\.progress\("poll", True\)' '\1self.progress("poll")'
   elif [ "$control" = no-api-progress ]; then
     sk_mutant no-api-progress api.py '            self\.progress\("api:" \+ label, True\)' '            self.progress("api:" + label)'
   elif [ "$control" = no-chunk-progress ]; then

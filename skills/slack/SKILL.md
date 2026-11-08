@@ -1,7 +1,7 @@
 ---
 name: slack
 description: "Load to bind an overseer's mailbox to a private Slack channel, run or check the relay, or post an alert or a file to Slack."
-summary: "Relays one checkout's overseer mailbox to one private Slack channel and back, owner messages over Socket Mode, reads through the mailbox store and writes through lane-mail: setup, listen, post, compact and install."
+summary: "Relays one checkout's overseer mailbox to one private Slack channel and back, over Socket Mode or a hosted receiver's queue; reads through the mailbox store and writes through lane-mail."
 license: MIT
 user-invocable: true
 dependencies:
@@ -23,6 +23,7 @@ The relay between one checkout's overseer mailbox and one private Slack channel.
 .agents/skills/slack/scripts/slack setup [--root ROOT] [--name NAME | --take CHANNEL_ID]
 .agents/skills/slack/scripts/slack listen --root ROOT [--root ROOT]... [--once]
 .agents/skills/slack/scripts/slack listen --status --root ROOT [--root ROOT]...
+.agents/skills/slack/scripts/slack deliver --root ROOT < event.json
 .agents/skills/slack/scripts/slack post [--root ROOT] [--channel ID] --text TEXT [--mention] [--file PATH]... [--thread TS] [--update TS]
 .agents/skills/slack/scripts/slack read --channel ID (--ts TS | --latest N)
 .agents/skills/slack/scripts/slack compact [--root ROOT]...
@@ -34,9 +35,10 @@ What each verb does, every setting, and every keyed line: `slack --help`. Python
 ## Rules
 
 - A root is a checkout with the orch skill installed. A relay serves every root it is given, and one relay serves one checkout, held by an OS lock.
-- One relay per Slack app. Slack sends each owner message to one of an app's open Socket Mode connections, so a second relay on the same app takes part of the first one's messages, and each waits for the first relay's next reconnect. Each machine runs its own app and one relay over every root on it.
+- Socket Mode is the standard mode without a hosted receiver: one app per machine and one relay per app over that machine's roots. Slack sends each message to one of an app's open connections.
+- A hosted receiver uses one app per workspace. Set `SLACK_INBOUND=queue` before setup and listen. Queue mode needs no app token, opens no socket and reads no channel history. Its worker calls `slack deliver --root ROOT`. The source is selected once at startup; neither mode falls back to the other. Switching keeps the binding and journal.
 - The mailbox package owns mailbox reads, numbering and cursors. The relay reuses its store. An owner's words land through `lane-mail send --delivery-id`; who judges a repeat is [DEVELOPMENT.md § Constraints](https://github.com/vanillagreencom/kendex/blob/main/skills/slack/DEVELOPMENT.md#constraints).
-- A delivery prints `delivered` with its Slack ts, mailbox id and `path=live|catch-up`. Eyes failures print a keyed cause and retry on the next poll; `already_reacted` settles the mark.
+- A delivery prints `delivered` with its Slack ts, mailbox id and `path=live|catch-up|queue`. Eyes failures print a keyed cause and retry on the next poll; `already_reacted` settles the mark.
 - Owner answers, question closure and ruling notices follow [orch communication-modes.md § Owner asks](../orch/references/communication-modes.md#owner-asks).
 - Every outbound text and file passes the secret-value pattern the orch skill ships at `references/secret-value.ere`. A match is refused, journaled and never sent.
 - Webhooks cannot work through a proxy that swaps headers only. Every message post uses `chat.postMessage`.
@@ -61,4 +63,4 @@ What each verb does, every setting, and every keyed line: `slack --help`. Python
 
 ## Doctor row
 
-`slack listen --status` prints one `slack: slack-relay=ROOT state=ok|failing|stale|never` line per root, with `connection=connected|reconnecting|disconnected|unknown` and `connection_since=`, `unknown` since `last_poll` for a record an older relay wrote without the connection fields; a `never` line carries only `fix=`. A state other than `ok` carries `fix=`. A relay reconnecting past the bound the status record states reads `failing`. The fields of the row: [schemas/journal.md § The status record](schemas/journal.md#the-status-record).
+`slack listen --status` prints one `slack: slack-relay=ROOT state=ok|failing|stale|never` line per root, with `inbound=socket|queue`, `connection=connected|reconnecting|disconnected|unknown` and `connection_since=`, `unknown` since `last_poll` for a record an older relay wrote without the connection fields; a `never` line carries only `fix=`. A state other than `ok` carries `fix=`. A relay reconnecting past the bound the status record states reads `failing`. The fields of the row: [schemas/journal.md § The status record](schemas/journal.md#the-status-record).

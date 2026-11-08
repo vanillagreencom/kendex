@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import List
 
 import verbs
-from refusals import EXPLAIN, Refusal, print_refusal
+from inbound import read_event, submit
+from refusals import EXPLAIN, Refusal, notice, print_refusal
 from relay import listen
 from settings import load
 
@@ -19,6 +20,7 @@ HELP = """\
 Usage: slack setup [--root ROOT] [--name NAME | --take CHANNEL_ID]
        slack listen --root ROOT [--root ROOT]... [--once]
        slack listen --status --root ROOT [--root ROOT]...
+       slack deliver --root ROOT
        slack post [--root ROOT] [--channel ID] --text TEXT [--mention]
                   [--file PATH]... [--thread TS] [--update TS]
        slack read --channel ID (--ts TS | --latest N)
@@ -27,7 +29,7 @@ Usage: slack setup [--root ROOT] [--name NAME | --take CHANNEL_ID]
        slack install --root ROOT [--root ROOT]... [--print]
 
 Relays one checkout's overseer mailbox to one private Slack channel and back,
-owner messages over Slack's Socket Mode. Reads use the mailbox package installed
+owner messages over Socket Mode or a hosted receiver's queue. Reads use the mailbox package installed
 beside Slack. Writes use each bound checkout's lane-mail. A root is a checkout;
 without --root, use the checkout the command runs in.
 
@@ -41,7 +43,10 @@ setup     resolve every SLACK_OWNERS address to a Slack user, create the
           purpose where it is empty, write the binding
           tmp/slack/binding.json, and restart the relay unit `install` wrote
           when one stands
-listen    the relay: one Socket Mode connection opened with SLACK_APP_TOKEN
+listen    the relay: SLACK_INBOUND selects socket (the default) or queue
+          once at startup. Queue mode opens no socket, needs no app token,
+          reads no channel history and checks tmp/slack/inbox/ every second.
+          Neither mode falls back to the other. Socket Mode uses one connection opened with SLACK_APP_TOKEN
           for every root, each envelope acknowledged as soon as the loop
           reads it on a separate reader, before delivery; API and mailbox
           waits do not block acknowledgements or pong replies. Messages route
@@ -59,7 +64,8 @@ listen    the relay: one Socket Mode connection opened with SLACK_APP_TOKEN
           the next one; an envelope post whose response was lost is
           journaled unknown and never repeated. One relay per checkout, held
           by an OS lock; two roots bound to one channel are refused; --once
-          opens no connection, polls each root once, history read included,
+          opens no connection, polls each root once, with history in socket
+          mode or queued events in queue mode,
           and exits 0 when every poll succeeded, 1 for a retryable poll
           failure. A fatal refusal, such as a dead token, exits 2. A
           change to the package's code that holds for two polls re-executes
@@ -67,11 +73,22 @@ listen    the relay: one Socket Mode connection opened with SLACK_APP_TOKEN
           relay is connected and holds no refused live delivery
   --status  one `slack-relay=ROOT state=ok|failing|stale|never` line per
           root from the relay's status record, with the connection state
-          and the fingerprint of the running code as code=;
+          inbound=socket|queue and the fingerprint of the running code as code=;
           failing too while the relay has been reconnecting past twice its
           longest wait; a missing or unreadable tmp/slack/binding.json
           reports state=failing cause=binding-missing|binding-unreadable,
           whatever the connection, with fix=slack setup --take CHANNEL --root DIR
+deliver   read one inner Slack message event from stdin: a JSON object with
+          type=message, channel, ts, user, text and optional files/thread_ts.
+          The hosted receiver authenticates and unwraps callbacks; this verb
+          accepts no callback envelope. Bot events still bind uploaded files.
+          Refuse relay-absent if no listener holds ROOT's lock, and inbound-mode
+          if its source is socket. Wait up to SLACK_DELIVER_SECONDS for the
+          outcome. Print one keyed line: delivered=ts=TS id=ID path=queue,
+          or a refusal on stderr with exit 2. Outcomes include delivery-repeated,
+          not-owner, no-text and event-ignored. A timeout leaves the request
+          queued; delivery can still finish, and retrying the same channel:ts
+          cannot append a second mailbox entry. Fleet owns queue retries
 post      one message to the bound channel, or --channel for another, its
           text sent as standard Markdown of at most 12,000 characters
           after link expansion; larger text is refused;
@@ -104,8 +121,9 @@ install   write the systemd user unit for `listen` over the roots given, then
           new roots; --print writes the unit to stdout only
 
 Process settings, read once from the launch checkout's private env and settings
-files, with caller exports taking precedence: SLACK_BOT_TOKEN, SLACK_APP_TOKEN (listen without
---once), SLACK_OWNERS (default KENDEX_USER_EMAIL), KENDEX_USER_HANDLE (setup's
+files, with caller exports taking precedence: SLACK_BOT_TOKEN, SLACK_APP_TOKEN (socket listen without
+--once), SLACK_INBOUND (socket), SLACK_DELIVER_SECONDS (20),
+SLACK_OWNERS (default KENDEX_USER_EMAIL), KENDEX_USER_HANDLE (setup's
 channel name; default KENDEX_USER_EMAIL's local part), SLACK_POLL_SECONDS (15),
 SLACK_THREAD_DAYS (7) and SLACK_API_URL (default https://slack.com/api).
 The optional slash commands and Home tab, each off while empty:
@@ -210,6 +228,8 @@ def build() -> Parser:
     p.add_argument("--root", action="append")
     p.add_argument("--once", action="store_true")
     p.add_argument("--status", action="store_true")
+    p = verbs.add_parser("deliver", add_help=False)
+    p.add_argument("--root", required=True)
     p = verbs.add_parser("post", add_help=False)
     p.add_argument("--root")
     p.add_argument("--channel")
@@ -260,6 +280,14 @@ def run(argv: List[str]) -> int:
             raise Refusal("usage", "--update edits text and takes no --file")
         root = roots_of([args.root] if args.root else [])[0]
         return verbs.post(root, args.channel, args.text, args.file, args.mention, args.thread, args.update)
+    if args.verb == "deliver":
+        root = roots_of([args.root])[0]
+        settings = load(need_token=False, need_owners=False)
+        result = submit(root, read_event(sys.stdin), settings.deliver_seconds)
+        if result["key"] != "delivered":
+            raise Refusal(result["key"], result["value"])
+        notice("delivered", result["value"])
+        return 0
     if args.verb == "read":
         if args.latest is not None and args.latest < 1:
             raise Refusal("usage", "--latest must be positive")
@@ -281,7 +309,11 @@ def main() -> int:
     try:
         return run(sys.argv[1:])
     except Refusal as err:
-        print_refusal(err)
+        if sys.argv[1:2] == ["deliver"]:
+            # The hosted worker stores keyed results, never explanatory text.
+            notice(err.key, err.value, file=sys.stderr)
+        else:
+            print_refusal(err)
         return 2
     except KeyboardInterrupt:
         return 0

@@ -14,6 +14,16 @@ NAME = "slack"
 
 EXPLAIN = {
     "usage": "Usage: slack --help",
+    "relay-absent": "No listener holds this root's OS lock. Start its queue listener before delivering events.",
+    "inbound-mode": "This listener does not use the queue source. Set SLACK_INBOUND=queue and restart it.",
+    "delivery-repeated": "This owner message already landed in the mailbox. No second mailbox entry was written.",
+    "delivery-timeout": "The listener has not written this attempt's outcome within SLACK_DELIVER_SECONDS. The event stays queued and may still land. Retry the same event; its channel:ts judges repeats.",
+    "not-owner": "The message author is not a bound owner. The relay replied to the message and wrote no mailbox entry.",
+    "no-text": "The owner message has neither text nor a file. The relay replied and wrote no mailbox entry.",
+    "event-ignored": "This message is not routed, such as a bot message without a pending upload binding or an edit.",
+    "event-invalid": "stdin must contain the event format described by slack --help. No request was queued.",
+    "channel-mismatch": "The event channel differs from this root's binding. Deliver it to the root bound to that channel.",
+    "queue-unavailable": "The queue request or outcome could not be read or written. The value names the root and cause; a published request may still land.",
     "setting-missing": (
         "The named setting is not set. SLACK_BOT_TOKEN and SLACK_APP_TOKEN,"
         " which `listen` needs for its Socket Mode connection, live in the"
@@ -24,10 +34,10 @@ EXPLAIN = {
     ),
     "setting-invalid": (
         "The named setting holds a value the package cannot read; the value"
-        " above says which. SLACK_POLL_SECONDS, SLACK_THREAD_DAYS and"
+        " above says which. SLACK_POLL_SECONDS, SLACK_THREAD_DAYS, SLACK_DELIVER_SECONDS and"
         " SLACK_JARVIS_SESSION_MAX_AGE are whole numbers of at least 1; SLACK_OWNERS"
         " is comma-separated email"
-        " addresses."
+        " addresses. SLACK_INBOUND is socket or queue."
     ),
     "orch-missing": (
         "The mailbox or orch skill is not where the value names it: a root with no"

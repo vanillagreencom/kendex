@@ -77,6 +77,8 @@ class Settings:
     asks_command: Tuple[str, ...] = ()
     home_command: Tuple[str, ...] = ()
     report_root: Optional[Path] = None
+    inbound: str = "socket"
+    deliver_seconds: int = 20
 
     def horizon(self, now: float) -> float:
         """SLACK_THREAD_DAYS before `now`: the one age every judge of age reads."""
@@ -177,13 +179,16 @@ def load_presence(root: Path) -> Presence:
 
 
 def load(need_token: bool = True, need_owners: bool = True, need_app_token: bool = False) -> Settings:
+    inbound = os.environ.get("SLACK_INBOUND", "").strip() or "socket"
+    if inbound not in ("socket", "queue"):
+        raise Refusal("setting-invalid", f"SLACK_INBOUND={inbound}")
     token = os.environ.get("SLACK_BOT_TOKEN", "").strip()
     app_token = os.environ.get("SLACK_APP_TOKEN", "").strip()
     owners = owners_from_env()
     missing = []
     if need_token and token == "":
         missing.append("SLACK_BOT_TOKEN")
-    if need_app_token and app_token == "":
+    if need_app_token and inbound == "socket" and app_token == "":
         missing.append("SLACK_APP_TOKEN")
     if need_owners and not owners:
         missing.append("SLACK_OWNERS")
@@ -202,4 +207,6 @@ def load(need_token: bool = True, need_owners: bool = True, need_app_token: bool
         asks_command=_command("SLACK_ASKS_COMMAND"),
         home_command=_command("SLACK_HOME_COMMAND"),
         report_root=_report_root(),
+        inbound=inbound,
+        deliver_seconds=_positive_int("SLACK_DELIVER_SECONDS", 20),
     )

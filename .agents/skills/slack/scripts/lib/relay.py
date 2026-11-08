@@ -1,5 +1,5 @@
-"""The listener: one process, every bound root on one machine, over one
-Socket Mode connection.
+"""The listener: one process, every bound root, with one inbound source.
+Queue mode uses the hosted receiver; Socket Mode owns one connection.
 
 Slack sends each Events API envelope to one of an app's open connections,
 with no pattern to which, so one relay holds its app's one connection for
@@ -497,7 +497,7 @@ class RootRelay:
         self.pending_live: Dict[str, Dict] = {}
         # The threads the due catch-up has read; None once one has read the
         # channel since the last connect or the last refused event delivery.
-        self.due: Optional[Set[str]] = set()
+        self.due: Optional[Set[str]] = set() if settings.inbound == "socket" else None
         self.catch_up_at = 0.0  # Slack's Retry-After, waited across polls
         self.discovered = False
         # The status record carries the compaction day across restarts; the
@@ -742,13 +742,13 @@ class RootRelay:
             self.journal.append(t="resolved", id=thread.envelope, reason="thread_not_found")
         return missing
 
-    def on_message(self, message: Dict, bot_user: str, active: bool = True) -> None:
-        """One live message event, without a thread-age or parent-origin gate."""
+    def on_message(self, message: Dict, bot_user: str, active: bool = True, path: str = "live") -> None:
+        """One message event, without a thread-age or parent-origin gate."""
         ts = str(message["ts"])
         thread_ts = str(message.get("thread_ts") or ts)
         if active and thread_ts == ts:
             self.bind_file_share(message)
-        self.handle(message, bot_user, path="live", active=active)
+        self.handle(message, bot_user, path=path, active=active)
         if active:
             self.pending_live.pop(ts, None)
 
@@ -803,6 +803,7 @@ class RootRelay:
             self.pending_live[ts] = message
             if not active:
                 return
+        if path in ("live", "queue"):
             self.ready()
         user = str(message.get("user", ""))
         if user not in self.binding.owner_ids.values():
@@ -1390,6 +1391,7 @@ class RootRelay:
                 "compacted_day": self.compacted_day,
                 "channel": self.channel,
                 "poll_seconds": self.settings.poll_seconds,
+                "inbound": self.settings.inbound,
                 "last_poll": self.clock(),
                 "last_poll_ok": ok,
                 "last_error": error,
@@ -1572,9 +1574,13 @@ class Relay:
         print(keyed("listening", f"{len(self.paths)} poll_seconds={self.settings.poll_seconds}"), flush=True)
         if once:
             self.progress("poll")
-            result = 0 if self.poll_once() else 1
+            queue_ok = self.poll_queue() if self.settings.inbound == "queue" else True
+            result = 0 if self.poll_once() and queue_ok else 1
             self.progress("poll", True)
             return result
+        if self.settings.inbound == "queue":
+            self.run_queue()
+            self.reexec()
         app_api = Slack(self.settings.app_token, self.settings.api_url, token_name="SLACK_APP_TOKEN", scope="connections:write",
                         progress=self.progress)
         next_poll = retry_at = self.clock()
@@ -1588,6 +1594,34 @@ class Relay:
                 self.reader.join()
         self.progress("reload")
         self.reexec()
+
+    def run_queue(self) -> None:
+        """The queue owns inbound work; no socket or history source exists."""
+        next_poll = self.clock()
+        while True:
+            self.progress("queue")
+            self.poll_queue()
+            self.progress("queue", True)
+            if self.clock() >= next_poll:
+                self.progress("poll")
+                self.poll_once()
+                self.progress("poll", True)
+                if self.settled:
+                    return
+                next_poll = self.clock() + self.settings.poll_seconds
+            self.sleep(1)
+
+    def poll_queue(self) -> bool:
+        from inbound import drain
+
+        clean = True
+        for root in self.roots:
+            try:
+                drain(root, self.bot_user)
+            except Exception as err:
+                self.root_failed(root, err)
+                clean = False
+        return clean
 
     def reexec(self) -> NoReturn:
         """This image replaced by the launcher on the code on disk: the same

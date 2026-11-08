@@ -23,7 +23,7 @@ kendex add vanillagreencom/kendex --skill slack
 
 The relay connects each checkout's overseer to its private channel. Owners write in Slack; the overseer receives their words and files in its mailbox. Questions, replies and reports return to the channel.
 
-The relay reconnects after a dropped connection. Recovery reads saved positions and retained active threads. `SLACK_THREAD_DAYS` bounds reconnect history; live replies have no thread-age limit. A first run starts at the channel's binding time and the newest mailbox message, so it does not replay the past. Open questions within the history limit still post.
+Socket Mode reconnects after a dropped connection. Recovery reads saved positions and retained active threads. `SLACK_THREAD_DAYS` bounds reconnect history; live replies have no thread-age limit. Queue mode receives messages from a hosted receiver and reads no channel history. The hosted receiver owns retries. A first run starts at the newest mailbox message, so it does not replay old posts. Open questions within the history limit still post.
 
 Posts whose response was lost are not repeated. Explicit refusals can retry after their cause is fixed. Use `slack listen --status` for a failed connection, binding or post and its repair. A temporary thread-read failure leaves other threads and posts running. [The relay's record](schemas/journal.md) defines delivery, recovery and status details.
 
@@ -35,15 +35,17 @@ Settings go in the project's `kendex.settings.toml` under `[env]`. Tokens go in 
 
 Set `SLACK_OWNERS` to the owners' comma-separated email addresses, or use `KENDEX_USER_EMAIL` for one owner. Set `KENDEX_USER_HANDLE` for the person in the default channel name; otherwise setup uses that email's local part. Setup keeps an existing channel binding and purpose. Use `--name` to choose a name or `--take` to adopt a private channel the app has joined.
 
-Run `slack setup` for each checkout, then serve the checkouts with one relay for that machine's Slack app. Two checkouts cannot share one bound channel. After changing `SLACK_OWNERS`, run setup for each bound checkout: a plain restart does not invite an added owner. Restart after changing tokens or other process-wide settings. Package updates reload the running relay in place; they do not replace this configuration step.
+Run `slack setup` for each checkout, then serve the checkouts with one relay. Two checkouts cannot share one bound channel. After changing `SLACK_OWNERS`, run setup for each bound checkout: a plain restart does not invite an added owner. Restart after changing tokens or other process-wide settings. Package updates reload the running relay in place; they do not replace this configuration step.
 
 Process-wide settings use the launch checkout, the first `--root` for an installed unit. Caller exports take precedence. The [Jarvis presence settings](#the-jarvis-session-hold) are per checkout and reload without a restart. Run `slack compact` only while the relay is stopped.
 
 ### Slack app
 
-Create one Slack app per machine from [this manifest](app-manifest.yaml) and install it to the workspace. Put its bot token in the private env file as `SLACK_BOT_TOKEN`. Under Basic Information, create an app-level token with `connections:write` and save it as `SLACK_APP_TOKEN` in the same file.
+Use one Slack app per machine for Socket Mode, the standard mode when you have no hosted receiver. Create it from [this manifest](app-manifest.yaml) and install it to the workspace. Put its bot token in the private env file as `SLACK_BOT_TOKEN`. Under Basic Information, create an app-level token with `connections:write` and save it as `SLACK_APP_TOKEN` in the same file.
 
-For an existing app, add the manifest's missing OAuth scopes, enable Socket Mode, subscribe to `message.groups` under Event Subscriptions, then reinstall it. The app must join every channel it posts to. Invite it to any separate alert channel. Missing `files:read` prevents owner-file downloads; the delivered message explains that failure.
+For a hosted receiver, use one app per workspace and set `SLACK_INBOUND=queue` before setup and listen. The receiver's worker calls `slack deliver --root ROOT` for each message. Queue mode needs the bot token alone. Disable Socket Mode on the hosted app and configure HTTP delivery; the manifest describes the Socket Mode app. Each mode is explicit and never falls back to the other. Switching modes keeps the existing binding and journal.
+
+For an existing app, add the manifest's missing OAuth scopes, subscribe to `message.groups` under Event Subscriptions, then reinstall it. Enable Socket Mode only for a Socket Mode app. The app must join every channel it posts to. Invite it to any separate alert channel. Missing `files:read` prevents owner-file downloads; the delivered message explains that failure.
 
 ### Token rotation
 
