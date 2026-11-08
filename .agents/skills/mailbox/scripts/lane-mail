@@ -248,9 +248,10 @@ Owner channel, the overseer's own mailbox from any of its checkouts:
               closes any ask this overseer sent with a separate `resolution` envelope,
               `re=MSGID`, and `by=explicit` when neither option is given.
               --text FILE records the file as the person's own answer with
-              `by=text`, and the relay posts it as theirs. Use it only for
-              an answer they gave elsewhere. The agent's own reply is a
-              notice with --ref.
+              `by=text` and `answer_source=resolve`. The Slack relay posts
+              it as theirs unless this ask already has an answer from Slack.
+              Use it only for an answer they gave elsewhere. The agent's
+              own reply is a notice with --ref.
               --text and --default require an owner ask; a peer ask or an
               ask with no audience refuses either as `option-conflict`.
               --default supplies the recommendation with `by=default` only
@@ -398,6 +399,8 @@ attach, recommend, wait, deadline (UTC, at plus wait minutes), delivery_id,
 re_delivery_id (an ask's or notice's copy of its --ref envelope's
 delivery_id), thread_ts and parent (threaded owner directives only),
 closes (false on new owner answers; absent on legacy closing answers),
+answer_source (`send` or `resolve` on new owner answers; absent on older
+answers whose producing verb cannot be identified),
 draft (a draft ask only: recipient, medium, text and text_hash),
 reserved (true on a reserved ask only), issue (a configured item ask),
 tracker_pending (true on the immutable ask while its tracker outcome is missing),
@@ -1650,7 +1653,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
     --arg from "$FROM" --arg halt "$HALT" --arg options "$OPTIONS" \
     --arg to "$TO" --arg ref "$REF" --arg progress "$PROGRESS" --arg attach "$ATTACH" --arg recommend "$RECOMMEND" \
     --arg reserved "$RESERVED" --arg issue "$ISSUE" --arg action "$OWNER_DO" \
-    --arg wait "$WAIT" --arg delivery "$DELIVERY_ID" --arg re_delivery "$RE_DELIVERY_ID" --arg by "$BY" \
+    --arg wait "$WAIT" --arg delivery "$DELIVERY_ID" --arg re_delivery "$RE_DELIVERY_ID" --arg by "$BY" --arg verb "$VERB" \
     --arg thread "$THREAD_TS" --slurpfile parent "$WORK_DIR/parent.json" \
     --slurpfile draft "$DRAFT_RECORD" --rawfile text "$FILE" '
       $parent[0] as $parent |
@@ -1670,7 +1673,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
       + (if $thread == "" then {} else {thread_ts: $thread, parent: $parent} end)
       + (if $re_delivery == "" then {} else {re_delivery_id: $re_delivery} end)
       + (if $by == "" then {} else {by: $by} end)
-      + (if $kind == "answer" and $by != "" then {closes: false} else {} end)
+      + (if $kind == "answer" and $by != "" then {closes: false, answer_source: $verb} else {} end)
       + (if $draft == [] then {} else {draft: $draft[0]} end)
       + {text: ($text | sub("\n$"; ""))}
       + (if $options == "" then {} else {options: ($options | split(","))} end)' \
