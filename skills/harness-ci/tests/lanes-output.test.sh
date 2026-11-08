@@ -306,4 +306,28 @@ assert_eq "the control still completes with its original trivial class" \
 assert_eq "the control reaches the wrong successful stand-down" \
   false/trivial "$(sed -n 's/^lanes=//p' "$SANDBOX/local-output")/$(sed -n 's/^lanes_cause=//p' "$SANDBOX/local-output")"
 
+# The pre-declaration library contract takes eight arguments and writes no
+# declared file. The control restores the unconditional evidence read.
+legacy_work="$SANDBOX/legacy-work"
+mkdir -p "$legacy_work"
+printf 'docs/guide.md\n' >"$legacy_work/paths"
+: >"$legacy_work/class-log"
+legacy_control="$(mutant legacy-declared lib/change-class.sh \
+  '  if [ -e "${work:?}/declared" ] || [ -L "$work/declared" ]; then' \
+  '  if true; then')"
+for command in "$CHANGE_CLASS" "$legacy_control"; do
+  status=0
+  answer="$(
+    shopt -s extglob
+    . "${command%/*}/lib/change-class.sh"
+    die() { printf '%s\n' "$1"; exit 2; }
+    change_class_lanes trivial docs_only=true merge_group "$repo" HEAD true "$legacy_work" ""
+    printf 'lanes=%s lanes_cause=%s\n' "$lanes" "$lanes_cause"
+  )" || status=$?
+  expected='lanes=false lanes_cause=trivial exit=0'
+  [ "$command" = "$CHANGE_CLASS" ] || expected='cause=declared-paths-unreadable exit=2'
+  assert_eq "an older library caller without declaration evidence: $command" \
+    "$expected" "$answer exit=$status"
+done
+
 report lanes-output
