@@ -1,6 +1,6 @@
 # What belongs in my Jarvis home?
 
-Your Jarvis home keeps your instructions, own skills, memory and recovery notes beside the installed package. The package supplies shared guidance. Your personal records and local secrets remain under your control.
+Your Jarvis home is `~/dev/jarvis`. It keeps your instructions, own skills, memory and recovery notes beside the installed package. The package supplies shared guidance. Your personal records and local secrets remain under your control.
 
 ```mermaid
 flowchart TD
@@ -14,7 +14,7 @@ flowchart TD
 
 A Jarvis home can be a plain folder used with a coding assistant or a folder opened by an assistant app. A private Git repository lets committed instructions, skills, memory and recovery notes travel with its commits. Scratch and secrets stay local.
 
-The [setup instructions](../README.md#customise) explain personal skills and settings. The [home layout reference](../references/home-layout.md) gives the file locations and initial assistant setup.
+The [setup instructions](../README.md#customize) explain personal skills and settings. The [home layout reference](../references/home-layout.md) gives the file locations and initial assistant setup.
 
 ## Shared and personal content
 
@@ -30,7 +30,7 @@ Package updates preserve your standing instructions, own skills, memory and hand
 
 ## Your choices
 
-You choose the Jarvis home, personal rules, own skills and supported connections. Machine-specific settings belong to that machine. If you use [satellites](HIW-messages.md#a-second-machine), the main remains responsible for shared home work.
+You choose the Jarvis home, personal rules, own skills and supported connections. Machine-specific settings belong to that machine. Jarvis main runs Jarvis, the main long-running session. Jarvis Voice is the VGS voice session on any computer. A [Jarvis satellite](HIW-messages.md#a-second-machine) runs Jarvis Voice, not Jarvis, and forwards long work to Jarvis main. Its [local console session](../references/agent-reach.md#satellite) and [forwarding](../references/agent-reach.md#forward) are described separately. Jarvis main remains responsible for shared home work.
 
 ## Related pages
 

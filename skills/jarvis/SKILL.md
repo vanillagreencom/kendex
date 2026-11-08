@@ -104,9 +104,11 @@ tags: [assistant, productivity]
 
 # Jarvis
 
+Jarvis is the main long-running session. Jarvis Voice is the VGS voice session on any computer. Jarvis main is the computer that runs Jarvis. A Jarvis satellite runs Jarvis Voice, not Jarvis, and forwards long work to Jarvis main. Its [local console session](references/agent-reach.md#satellite) and [forwarding](references/agent-reach.md#forward) are described separately.
+
 ## Setup
 
-Use the [home layout](references/home-layout.md) for the Jarvis home. Its starting files come from `jarvis-session init` or a person's first manual Start, under [Initialize](references/home-layout.md#initialize).
+Jarvis home is `~/dev/jarvis`, the folder with Jarvis's instructions, skills and memory. Use the [home layout](references/home-layout.md) for its files. Its starting files come from `jarvis-session init` or a person's first manual Start, under [Initialize](references/home-layout.md#initialize).
 
 The declared agents, `cpa`, `legal`, `operator`, `auditor`, `researcher`, `scout`, `reviewer-arch` and `publicist`, require a kendex installation of Jarvis. Copying only the skill folder, including an app-supplied copy, supplies none of their harness agent files. Use the bundle command in [README: Install](README.md#install) from the Jarvis home. It installs Jarvis with its required skills, declared agents, their assigned skills and the session hooks. Installing `orch` alone does not install Jarvis or its declared agents.
 
@@ -158,4 +160,4 @@ Read the linked workflow or reference for the task before acting.
 | Connect Slack, Linear, GitHub or a fleet machine | [Slack](workflows/setup-slack.md), [Linear](workflows/setup-linear.md), [GitHub](workflows/setup-github.md), [Fleet machine](workflows/setup-fleet-machine.md) |
 | Find sources, check a legal answer or audit work and documentation | [references/research.md](references/research.md) |
 | Report from, answer or instruct the agent in another of the user's repositories | [references/agent-reach.md](references/agent-reach.md) |
-| Run Jarvis on a second machine, or forward a request to the main Jarvis | [Agent reach: Main and satellites](references/agent-reach.md#main-and-satellites) |
+| Use Jarvis Voice on a Jarvis satellite, or forward a request to Jarvis main | [Agent reach: Main and satellites](references/agent-reach.md#main-and-satellites) |

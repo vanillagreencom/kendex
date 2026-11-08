@@ -1,8 +1,8 @@
 """The handoff form: progress-log writes and checks it, owner-unanswered reads it.
 
 A record is one list item whose nested items are the fields of
-references/long-session.md § Progress records. A value's later lines are
-indented four spaces. The README states the id form. The archive INDEX line
+references/long-session.md § Progress records, which also states the id form.
+A value's later lines are indented four spaces. The archive INDEX line
 of references/long-session.md § Handoff dates an archived file by its records.
 A State entry is one line with its indented lines; the ids it names decide
 whether `progress-log --check-state` lists it.

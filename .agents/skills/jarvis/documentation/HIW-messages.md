@@ -24,13 +24,15 @@ A receipt or a delivery reaction cannot prove that Jarvis read or applied the an
 
 ## A second machine
 
-One machine acts as the main Jarvis. A satellite handles local screen, files, apps and sign-in. It asks before forwarding a request that belongs on the main and tells you whether delivery succeeded or remains queued. The request and answer appear in the owner's Slack channel.
+Jarvis main is the computer that runs Jarvis, the main long-running session. Jarvis Voice is the VGS voice session on any computer. A Jarvis satellite runs Jarvis Voice, not Jarvis, and forwards long work to Jarvis main. The satellite's [local console session](../references/agent-reach.md#satellite) and [forwarding](../references/agent-reach.md#forward) are described separately.
 
-Forwarding consent covers forwarding. It does not establish the caller's identity or approve a reserved action on the main. The main applies the action's own decision boundary.
+A Jarvis satellite handles local screen, files, apps and sign-in. It asks before forwarding a request that belongs on Jarvis main and tells you whether delivery succeeded or remains queued. The request and answer appear in the owner's Slack channel.
+
+Forwarding consent covers forwarding. It does not establish the caller's identity or approve a reserved action on Jarvis main. Jarvis applies the action's own decision boundary.
 
 ## Your choices
 
-You choose the channels, declared machines, main Jarvis and report schedule. A connection or reach setting changes where messages can travel; your responsibility map still controls the actions they request.
+You choose the channels, declared machines, Jarvis main and report schedule. A connection or reach setting changes where messages can travel; your responsibility map still controls the actions they request.
 
 ## Related pages
 
