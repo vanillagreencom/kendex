@@ -249,17 +249,28 @@ gh_rest() {
 
     check_gh_auth || return 1
 
+    # Auth may update the caller's environment; isolate only request cleanup.
+    (
+    local rest_errors
+    rest_errors=$(mktemp) || { github_error 'github-rest: category=unknown'; return 1; }
+    trap 'rm -f -- "$rest_errors"' EXIT
+
     while [ $attempt -le $max_retries ]; do
-        local response
+        local response diagnostic
         local exit_code=0
 
-        response=$(gh api "$endpoint" "$@" 2>&1) || exit_code=$?
+        response=$(gh api "$endpoint" "$@" 2>"$rest_errors") || exit_code=$?
 
         if [ $exit_code -eq 0 ]; then
             echo "$response"
             return 0
         fi
 
+        # gh emits successful pages on stdout before a later page can fail.
+        # Its failure diagnostic is on stderr: page bodies are never evidence.
+        # https://github.com/cli/cli/blob/trunk/pkg/cmd/api/api.go
+        diagnostic=$(cat -- "$rest_errors") || { github_error 'github-rest: category=unknown'; return 1; }
+        response="$diagnostic"
         local status="" category=unknown retry=true
         local status_pattern='HTTP(/[0-9.]+)?[[:space:]]+([0-9]{3})'
         local body_status_pattern='"status"[[:space:]]*:[[:space:]]*"?([0-9]{3})'
@@ -300,6 +311,7 @@ gh_rest() {
         github_error "github-rest: category=$category"
         return 1
     done
+    )
 }
 
 # One REST collection, every page merged into one array. `--paginate` prints
