@@ -166,9 +166,12 @@ change_class_lanes() { # CLASS DOCS EVENT REPO HEAD QUEUE_ONLY WORK LANES_FROM Q
   local lane_hits=() lane_changed=() render_hits=()
   local reader_missing queue_reader per_push_reader standdown_missing hit
   local reach reach_kind unclaimed_unproved
-  local declared_paths
-  declared_paths="$(cat -- "${work:?}/declared" 2>/dev/null)" ||
-    die "cause=declared-paths-unreadable" "could not read the docs declaration evidence"
+  local declared_paths=""
+  # Older library callers do not write declaration evidence.
+  if [ -e "${work:?}/declared" ] || [ -L "$work/declared" ]; then
+    declared_paths="$(cat -- "${work:?}/declared" 2>/dev/null)" ||
+      die "cause=declared-paths-unreadable" "could not read the docs declaration evidence"
+  fi
 # Every class but `standard` is reached only after the classifier read a
 # changed path, so an empty list under one of them is a state neither script
 # can produce. Publishing the families empty there would select the lanes a
