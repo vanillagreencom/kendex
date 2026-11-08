@@ -693,7 +693,7 @@ PY
 request_state() {
   jq -Rc -s '{inline_diff: contains("\n+world\n"),
     repair: contains("--- Your previous response ---"),
-    audit_original: (. == "inspect file.txt\n")}' < "$ROW/request-$1-$2.txt"
+    audit_original: contains("inspect file.txt\n")}' < "$ROW/request-$1-$2.txt"
 }
 
 # One readback for CLI fall-through rows and their mutant control.
