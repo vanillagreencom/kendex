@@ -2,10 +2,9 @@
 //! its home and the owner's statements, each measured through its own
 //! credential at the usage endpoint behind the cache, and under a provider
 //! every account the provider holds a credential for, read through its
-//! `accounts` verb. A listing lists an account the owner excluded or
-//! retired with that word as a flag on its row and judges nothing: the
-//! judge refuses by the words. An excluded account is the one directory
-//! nothing here looks inside.
+//! `accounts` verb. A listing measures an account the owner excluded or
+//! retired like any other, with that word as a flag on its row, and judges
+//! nothing: the judge refuses by the words.
 //!
 //! The network layer is the one impure part: `curl` as `PATH` finds it,
 //! the bearer handed over on its stdin and never on its argument vector,
@@ -184,31 +183,19 @@ struct Found {
 /// session store or a backup matches the glob too), an excluded or retired
 /// one listed on its name alone. A set `CODEX_HOME` joins the Codex
 /// inventory as the account it names, a set `COPILOT_HOME` the Copilot
-/// one. An excluded entry's kind is read off its name: nothing inside it is
-/// looked at, the credential probe included.
+/// one.
 fn discover(ctx: &Ctx) -> Result<Vec<Found>, String> {
     let accounts = ctx.accounts;
     let mut configured: Vec<(&'static str, String)> = Vec::new();
     for entry in &accounts.lane_dirs {
-        let base = super::base(entry);
-        let kind = if excluded(accounts, &alias(accounts, entry), entry) {
-            if base.contains("codex") {
-                "codex"
-            } else if base.contains("copilot") {
-                "copilot"
-            } else {
-                "claude"
-            }
+        let holds = |name: &str| usage::exists(&Path::new(entry).join(name));
+        let credentials = holds(".credentials.json")?;
+        let kind = if holds("config.json")? && !credentials {
+            "copilot"
+        } else if holds("auth.json")? && !credentials {
+            "codex"
         } else {
-            let holds = |name: &str| usage::exists(&Path::new(entry).join(name));
-            let credentials = holds(".credentials.json")?;
-            if holds("config.json")? && !credentials {
-                "copilot"
-            } else if holds("auth.json")? && !credentials {
-                "codex"
-            } else {
-                "claude"
-            }
+            "claude"
         };
         configured.push((kind, entry.clone()));
     }
@@ -415,15 +402,6 @@ fn measure(ctx: &mut Ctx, account: &Found) -> Value {
             },
         )
     };
-    if excluded(ctx.accounts, &alias, dir) {
-        return row(
-            ctx,
-            Reading::refused(
-                "excluded",
-                "ORCH_LANE_EXCLUDE names this account; nothing inside it is read".to_owned(),
-            ),
-        );
-    }
     let mut renewed = false;
     let (token, account_id, plan) = match harness {
         "copilot" => match copilot_token(dir) {

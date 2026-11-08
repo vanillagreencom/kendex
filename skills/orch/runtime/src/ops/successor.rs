@@ -234,3 +234,381 @@ pub fn successor(
         "expected": recorded.map(|(_, _, expected)| expected),
     }))
 }
+
+/// The successor a model recovery opens for the recorded controller whose
+/// pane `predecessor` names: the controller's own launch, its model the one
+/// it was launched with, under its own handoff, with the record as the
+/// compare-and-swap set and the record's launch as the recovery's binding,
+/// which the transition holds the acquired model check to. No walk: the
+/// recovery replaces the session, never its account or harness.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the verb's one read of the fleet state, a snapshot the reply is composed from"
+)]
+pub fn recovery(settings: &Settings, path: &Path, predecessor: &str) -> Result<Value> {
+    let snapshot = crate::state::load(path)?
+        .ok_or_else(|| refused("record-missing", &[("path", &path.display().to_string())]))?;
+    let record = <crate::state::FleetState as crate::state::Record>::view(path, &snapshot.doc)
+        .ok()
+        .as_ref()
+        .and_then(Record::read)
+        .ok_or_else(|| refused("record-missing", &[("path", &path.display().to_string())]))?;
+    let mut successor = record
+        .own_successor()
+        .ok_or_else(|| refused("harness-unnamed", &[("pane", predecessor)]))?;
+    successor.handoff.get_or_insert_with(|| HANDOFF.to_owned());
+    posture(&mut successor, settings);
+    let mut expected = record.expected();
+    expected.pane = json!(predecessor);
+    let launch = snapshot.doc.get("overseer").cloned().unwrap_or(Value::Null);
+    let binding: serde_json::Map<String, Value> = crate::ops::controller::MODEL_LAUNCH_KEYS
+        .iter()
+        .map(|key| {
+            (
+                (*key).to_owned(),
+                launch.get(*key).cloned().unwrap_or(Value::Null),
+            )
+        })
+        .collect();
+    Ok(json!({
+        "successor": successor,
+        "expected": expected,
+        "recovery": binding,
+    }))
+}
+
+/// The handoff State line naming the open lane asks; the snapshot writer
+/// owns it, so a body's own spelling of it is replaced.
+const ASKS_LINE: &str = "Open lane asks:";
+
+/// One lane's open asks as its mailbox answered them, or the read that
+/// failed with its cause: an unread mailbox is never a lane with no ask.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "read", rename_all = "kebab-case")]
+pub enum LaneAsks {
+    Read { lane: String, asks: Vec<OpenAsk> },
+    Unread { lane: String, cause: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct OpenAsk {
+    pub id: String,
+    pub text: String,
+}
+
+/// Every running lane's open asks, read from its own mailbox through the one
+/// mailbox client (a hosted lane's through its record's host), never from a
+/// controller's memory. A cloud session lane has no mailbox to read.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the snapshot's one read of the fleet state, the running lanes whose mailboxes it lists"
+)]
+pub fn open_asks(settings: &Settings, path: &Path) -> Result<Vec<LaneAsks>> {
+    let Some(snapshot) = crate::state::load(path)? else {
+        return Err(refused(
+            "record-missing",
+            &[("path", &path.display().to_string())],
+        ));
+    };
+    let lanes = super::lanes(path, &snapshot.doc)?;
+    let mail = crate::mailbox::Mailbox::new(settings.lane_mail_cli.clone());
+    let mut out = Vec::new();
+    for lane in lanes
+        .iter()
+        .filter(|l| l.status == crate::state::LaneStatus::Running && !l.session_channel())
+    {
+        let Some(root) = lane.mail_root.as_deref().filter(|r| !r.is_empty()) else {
+            out.push(LaneAsks::Unread {
+                lane: lane.item.clone(),
+                cause: "mail-root-missing".to_owned(),
+            });
+            continue;
+        };
+        let host = lane.host.as_deref().filter(|h| !h.is_empty());
+        out.push(match mail.pending(&lane.item, Path::new(root), host) {
+            Ok(envelopes) => LaneAsks::Read {
+                lane: lane.item.clone(),
+                asks: envelopes
+                    .iter()
+                    .filter(|e| e.kind() == "ask")
+                    .map(|e| OpenAsk {
+                        id: e.id.clone().unwrap_or_else(|| "unread".to_owned()),
+                        text: e.text.clone().unwrap_or_default(),
+                    })
+                    .collect(),
+            },
+            Err(refusal) => LaneAsks::Unread {
+                lane: lane.item.clone(),
+                cause: refusal.to_string(),
+            },
+        });
+    }
+    Ok(out)
+}
+
+/// The State line the snapshot carries: each open ask by its id and lane,
+/// `none` only where every running lane's mailbox answered with none, and
+/// each mailbox that did not answer named with its cause.
+fn asks_line(asks: &[LaneAsks]) -> String {
+    let mut named = Vec::new();
+    let mut unread = Vec::new();
+    for lane in asks {
+        match lane {
+            LaneAsks::Read { lane, asks } => {
+                named.extend(asks.iter().map(|a| format!("{} ({lane})", a.id)));
+            }
+            LaneAsks::Unread { lane, cause } => unread.push(format!("{lane} ({cause})")),
+        }
+    }
+    let mut line = format!("{ASKS_LINE} ");
+    match (named.is_empty(), unread.is_empty()) {
+        (true, true) => line.push_str("none"),
+        (false, _) => line.push_str(&named.join(", ")),
+        (true, false) => {}
+    }
+    if !unread.is_empty() {
+        if !named.is_empty() {
+            line.push_str("; ");
+        }
+        line.push_str("unread for ");
+        line.push_str(&unread.join(", "));
+    }
+    line
+}
+
+/// Which labeled record a Progress log line is, and the home it belongs
+/// to: rulings and filing history in the fleet log, Verifying readings on
+/// their tracker items. None for any other line.
+fn progress_record(line: &str) -> Option<(&'static str, &'static str)> {
+    let lead = line.trim_start_matches(['-', '*', ' ']);
+    let word_end = |rest: &str| {
+        rest.chars()
+            .next()
+            .is_none_or(|c| !c.is_ascii_alphanumeric() && c != '_')
+    };
+    if lead.starts_with("Ruling:") || lead.starts_with("Rulings:") {
+        return Some(("ruling", "fleet-log"));
+    }
+    let filed_colon = line.match_indices("Filed:").any(|(at, _)| {
+        line[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_ascii_alphanumeric() && c != '_')
+    });
+    let filed_id = line.match_indices(" filed").any(|(at, word)| {
+        let id = line[..at].rsplit(' ').next().unwrap_or("");
+        let tracker = id.split_once('-').is_some_and(|(team, n)| {
+            !team.is_empty()
+                && team.chars().all(|c| c.is_ascii_uppercase())
+                && !n.is_empty()
+                && n.chars().all(|c| c.is_ascii_digit())
+        });
+        let pr = id
+            .strip_prefix('#')
+            .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+        (tracker || pr) && word_end(&line[at + word.len()..])
+    });
+    if filed_colon || filed_id {
+        return Some(("filing", "fleet-log"));
+    }
+    let boxed = line.match_indices("box ").any(|(at, word)| {
+        let rest = &line[at + word.len()..];
+        let digits = rest.chars().take_while(char::is_ascii_digit).count();
+        digits > 0
+            && ["failed", "passed"].iter().any(|v| {
+                rest[digits..]
+                    .strip_prefix(' ')
+                    .and_then(|r| r.strip_prefix(v))
+                    .is_some_and(word_end)
+            })
+    });
+    if lead.starts_with("Verifying read:") || lead.starts_with("Verifying reads:") || boxed {
+        return Some(("verifying", "tracker-item"));
+    }
+    None
+}
+
+/// The snapshot with the State line: any line of the text spelling it is
+/// dropped, and the generated one leads the first `## State` section, or a
+/// new one ahead of the text where it has none.
+fn with_asks_line(text: &str, line: &str) -> String {
+    let mut out = String::new();
+    let mut placed = false;
+    for row in text.lines() {
+        if row.starts_with(ASKS_LINE) {
+            continue;
+        }
+        out.push_str(row);
+        out.push('\n');
+        if !placed && row.trim_end() == "## State" {
+            out.push_str(line);
+            out.push('\n');
+            placed = true;
+        }
+    }
+    if placed {
+        out
+    } else {
+        format!("## State\n{line}\n\n{out}")
+    }
+}
+
+/// The `handoff` verb's write: the overseer handoff at `handoff` replaced by
+/// the `Start here: <UTC> generation=<N>` header, the fleet record's
+/// generation, over the prepared body at `body`, with the State line naming
+/// every open lane ask the running lanes' mailboxes hold. `keep_prior` keeps
+/// the installed snapshot's content, its old header dropped, ahead of the
+/// body, as a recovery that writes no fresh State does. The body is the
+/// caller's session scratch: a link, an empty or irregular file, the
+/// installed handoff itself, a `Start here:` line, and a labeled ruling,
+/// filing or Verifying record under `## Progress log` are refused, since each
+/// belongs elsewhere. The write is a private staged file renamed over the
+/// handoff, so a failure leaves the installed snapshot as it stood.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the overseer handoff's one writer: its own exclusive staged file renamed over the handoff it owns"
+)]
+pub fn write_handoff(
+    settings: &Settings,
+    path: &Path,
+    body: &Path,
+    handoff: &Path,
+    keep_prior: bool,
+    env: &crate::ops::Env,
+) -> Result<Value> {
+    use std::io::Write;
+    let shown = handoff.display().to_string();
+    let invalid = |reason: &str| {
+        refused(
+            "handoff-body-invalid",
+            &[("path", &body.display().to_string()), ("reason", reason)],
+        )
+    };
+    let failed = |step: &str| refused("handoff-write-failed", &[("path", &shown), ("step", step)]);
+    let generation = crate::state::load(path)?
+        .and_then(|s| s.doc.get("overseer")?.get("generation")?.as_u64())
+        .ok_or_else(|| {
+            refused(
+                "handoff-stale",
+                &[("path", &shown), ("expected", "unknown"), ("found", "none")],
+            )
+        })?;
+    let meta = std::fs::symlink_metadata(body).map_err(|_| invalid("not-nonempty-regular"))?;
+    if !meta.is_file() || meta.len() == 0 {
+        return Err(invalid("not-nonempty-regular"));
+    }
+    let body_parent = body
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::canonicalize(body_parent).map_err(|_| invalid("parent"))?;
+    let parent = handoff
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::create_dir_all(parent).map_err(|_| failed("mkdir"))?;
+    let parent = std::fs::canonicalize(parent).map_err(|_| failed("parent"))?;
+    let leaf = handoff.file_name().ok_or_else(|| failed("leaf"))?;
+    let destination = parent.join(leaf);
+    let standing = |destination: &Path| -> Result<bool> {
+        match std::fs::symlink_metadata(destination) {
+            Ok(m) if m.is_file() => Ok(true),
+            Ok(_) => Err(failed("destination-type")),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(_) => Err(failed("destination-type")),
+        }
+    };
+    let stood = standing(&destination)?;
+    if stood && same_file(body, &destination) {
+        return Err(invalid("installed-handoff"));
+    }
+    let payload = std::fs::read_to_string(body).map_err(|_| failed("body-read"))?;
+    if payload.lines().any(|l| l.starts_with("Start here:")) {
+        return Err(invalid("header"));
+    }
+    let mut in_log = false;
+    for (n, line) in payload.lines().enumerate() {
+        if line == "## Progress log" {
+            in_log = true;
+            continue;
+        }
+        if line.starts_with("## ") {
+            in_log = false;
+        }
+        if in_log && let Some((kind, home)) = progress_record(line) {
+            return Err(refused(
+                "handoff-body-invalid",
+                &[
+                    ("path", &body.display().to_string()),
+                    ("reason", &format!("progress-log-{kind}")),
+                    ("line", &(n + 1).to_string()),
+                    ("home", home),
+                ],
+            ));
+        }
+    }
+    let mut text = String::new();
+    if keep_prior && stood {
+        let prior = std::fs::read_to_string(&destination).map_err(|_| failed("prior-read"))?;
+        let mut rows = prior.lines();
+        let first = rows.next().unwrap_or("");
+        if !first.starts_with("Start here:") {
+            text.push_str(first);
+            text.push('\n');
+        }
+        for row in rows {
+            text.push_str(row);
+            text.push('\n');
+        }
+        text.push('\n');
+    }
+    text.push_str(&payload);
+    let asks = open_asks(settings, path)?;
+    let at = env.iso();
+    let complete = format!(
+        "Start here: {at} generation={generation}\n\n{}",
+        with_asks_line(&text, &asks_line(&asks))
+    );
+    static STAGE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let stage = parent.join(format!(
+        ".handoff.{}-{}",
+        std::process::id(),
+        STAGE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&stage)
+        .map_err(|_| failed("mktemp"))?;
+    let written = file
+        .write_all(complete.as_bytes())
+        .and_then(|()| file.sync_all())
+        .map_err(|_| failed("body-write"))
+        .and_then(|()| standing(&destination).map(|_| ()))
+        .and_then(|()| {
+            if same_file(body, &destination) {
+                Err(invalid("installed-handoff"))
+            } else {
+                Ok(())
+            }
+        })
+        .and_then(|()| std::fs::rename(&stage, &destination).map_err(|_| failed("rename")));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&stage);
+    }
+    written?;
+    Ok(json!({
+        "path": destination.display().to_string(),
+        "generation": generation,
+        "written_at": at,
+        "asks": asks,
+    }))
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::metadata(a), std::fs::metadata(b)) {
+        (Ok(x), Ok(y)) => x.dev() == y.dev() && x.ino() == y.ino(),
+        _ => false,
+    }
+}

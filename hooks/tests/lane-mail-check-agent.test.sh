@@ -542,7 +542,7 @@ expect 0 - 'a standing handoff retains its escape'
 # The judged decision crosses the process boundary into the hook's existing
 # workflow-state handoff argument, without a second judge.
 new_overseer agent_native_decision
-judge_says '{"key":"mark-reached","kind":"context","value":"600000","mark":"50","succession":"on","headroom":"unreadable","context_decision":{"tokens":600000,"window":1000000,"cap":400000,"mark_pct":50,"cap_mark":400000,"window_mark":500000,"reserve_applied":false,"reserve_tokens":0}}'
+judge_says "$(marks_reply context-half)"
 write_transcript "$TRANSCRIPT" 600000
 # shellcheck disable=SC2046
 run_payload "$(jq -nc --arg p "$TRANSCRIPT" '{session_id:"s1",transcript_path:$p,stop_hook_active:false}')" $(overseer_env)

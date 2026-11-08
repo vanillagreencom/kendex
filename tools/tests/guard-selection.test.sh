@@ -446,8 +446,7 @@ for input in \
   skills/orch/scripts/lib/lane-model.sh \
   skills/orch/scripts/lib/lane-relaunch.sh \
   skills/orch/scripts/lib/overseer-launch.sh \
-  skills/orch/scripts/oversee \
-  skills/orch/scripts/oversee-succeed; do
+  skills/orch/scripts/oversee; do
   printf '\n# KEN-3966 replay\n' >> "$actual/$input"
   printf '\n# KEN-3966 replay\n' >> "$actual/.agents/$input"
 done

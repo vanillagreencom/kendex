@@ -240,7 +240,8 @@ pub enum Event {
     /// `oversee-watch:4175`.
     OverseerContextUnmeasured { pane: String, gap: String },
     /// `oversee-watch:4576`: `overseer-dead`, `overseer-walled` or
-    /// `overseer-reserve`, with `record=` only on a death judged with no
+    /// `overseer-reserve`, with `cause=` only on a death the watch read the
+    /// cause of (`memory-cap`), and `record=` only on a death judged with no
     /// recorded line (`none`, or `<generation>:<pane>`).
     OverseerSession {
         case: OverseerCase,
@@ -249,6 +250,7 @@ pub enum Event {
         passes: u32,
         succession: Succession,
         source: String,
+        cause: Option<&'static str>,
         record: Option<String>,
     },
     /// `oversee-watch:4751`.
@@ -551,14 +553,16 @@ impl Event {
                 passes,
                 succession,
                 source,
+                cause,
                 record,
             } => {
+                let cause = cause.map(|c| format!(" cause={c}")).unwrap_or_default();
                 let record = record
                     .as_deref()
                     .map(|r| format!(" record={r}"))
                     .unwrap_or_default();
                 format!(
-                    "EVENT overseer-{} {pane} window={window} passes={passes} succession={} source={source}{record}",
+                    "EVENT overseer-{} {pane} window={window} passes={passes} succession={} source={source}{cause}{record}",
                     case.word(),
                     succession.word()
                 )

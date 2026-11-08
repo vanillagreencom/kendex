@@ -186,7 +186,7 @@ control refusal claude:1:high fable "$NUMERIC_GREEN" \
   '    if [[ "$entry" =~ ^(claude|codex|copilot|pi):[1-9][0-9]*:[a-z]+$ ]]; then' \
   '    if false && [[ "$entry" =~ ^(claude|codex|copilot|pi):[1-9][0-9]*:[a-z]+$ ]]; then'
 control model claude:1:high fable "$NUMERIC_GREEN" \
-  '    OL_ENTRY_MODEL="${OL_WALK_CALLER_MODEL:-$OL_PREFERENCE_CALLER_MODEL}"' '  : # caller model is dropped'
+  '    OL_ENTRY_MODEL="$OL_WALK_CALLER_MODEL"' '  : # caller model is dropped'
 control warning claude:1:high fable "$NUMERIC_GREEN" '  (( ! OL_DEPRECATION_WARNED )) || return 0' '  :'
 # A numeric copilot entry keeps the caller's model, so the runtime answer's
 # harness-default line names a model the launch does not run.

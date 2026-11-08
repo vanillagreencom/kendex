@@ -29,6 +29,9 @@
 #               preparation reads its entry back before the launch, the form
 #               never reaches the private home through an account launcher,
 #               and the account reader names the account a home sits under
+#   § choices   the launch choice table: every row's written model and effort
+#               read back, its effort spellings, its permission writer and the
+#               transfer judge, with the misspelt-words control
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -443,7 +446,7 @@ done
 
 # What each launcher DOES with that answer is its own behaviour and is pinned
 # where each launcher's fixtures live: open-terminal-lane-pick.sh has the row for the
-# refused item, and oversee_succeed.sh the row for the refused successor. A grep
+# refused item, and tests/rust/controller.rs the row for the refused successor. A grep
 # of the catalog line here would survive a guard that stopped refusing.
 
 # --- § account --------------------------------------------------------------
@@ -714,6 +717,80 @@ mutate_file "$MUTANT_LITERAL" \
   "',') [[ \"\$braces\" -eq 0 ]] || return 1 ;;" "',') return 1 ;;"
 assert_eq "$(compaction_child "$MUTANT_LITERAL" prefix "codex -c model_auto_compact_token_limit=300000 $QUESTION_OFF_ALL" | jq -c '.evidence')" \
   null 'control: rejecting literal commas loses producer evidence'
+
+# --- § choices --------------------------------------------------------------
+#
+# The launch choice table's two halves, pinned against each other:
+# lib/overseer-launch.sh's ol_launch_flags WRITES a session's flags with
+# launch_choice_write, and open-terminal READS a launch's choices back with
+# launch_choice_value and launch_choice_effort. A word one half writes that
+# the other cannot find is a launch whose model and effort the launch gate
+# never sees. Each row is written and read back here, every harness the
+# table names included; a row with no effort flag
+# writes the model alone and reads back no effort. Plain model ids only: the
+# writer quotes its values for the shell it is building a command in, and the
+# reader is handed argv a shell has already split.
+roundtrip() { # HARNESS MODEL EFFORT — the model and effort read back, `;`-joined
+  local words
+  words="$(launch_choice_write "$1" "$2" "$3")"
+  printf '%s;%s\n' \
+    "$(launch_choice_value "$(launch_choice_model_spellings "$1")" "$words")" \
+    "$(launch_choice_effort "$1" "$words" '')"
+}
+assert_eq "$(roundtrip claude fable high)|$(roundtrip codex gpt-6-astra high)|$(roundtrip opencode grok-5 high)|$(roundtrip pi sonnet high)|$(roundtrip copilot claude-fable-5.1 high)" \
+  "fable;high|gpt-6-astra;high|grok-5;|sonnet;high|claude-fable-5.1;high" \
+  "every row's written words read back as the model and effort they were written from"
+# Claude applies family overrides after receiving the native alias.
+assert_eq "$(roundtrip claude sonnet high)|$(roundtrip claude haiku high)|$(roundtrip pi sonnet high)" \
+  "sonnet;high|haiku;high|sonnet;high" "a claude alias stays native"
+
+# Control: the reader answers from the row's own spellings. The same launches
+# with a character in front of every word read back neither choice, so the row
+# above passes because the reader found what the writer wrote rather than
+# because it hands back whatever value sits beside any word.
+misspelt() { # HARNESS MODEL EFFORT — the same, read back from words no row names
+  local out="" word
+  local -a tokens=()
+  read -r -a tokens <<<"$(launch_choice_write "$1" "$2" "$3")"
+  for word in ${tokens[@]+"${tokens[@]}"}; do out="$out x$word"; done
+  printf '%s;%s\n' \
+    "$(launch_choice_value "$(launch_choice_model_spellings "$1")" "$out")" \
+    "$(launch_choice_effort "$1" "$out" '')"
+}
+assert_eq "$(misspelt claude fable high)|$(misspelt codex gpt-6-astra high)|$(misspelt opencode grok-5 high)|$(misspelt pi sonnet high)|$(misspelt copilot claude-fable-5.1 high)" \
+  ";|;|;|;|;" \
+  "control: those words spelt as ones no row names read back neither choice"
+
+# The same table's effort spellings, which open-terminal prints in its
+# launch-effort-missing refusal and whose EMPTINESS is that launcher's whole
+# answer to "is this launch asked for an effort at all". An accessor that handed
+# back the `-` sentinel would print it in that refusal and ask a harness with no
+# effort flag for one; one that answered for a harness the table does not name
+# would refuse every custom launch. Both are pinned here, beside the row list
+# they are read from.
+assert_eq "$(launch_choice_effort_spellings claude)|$(launch_choice_effort_spellings codex)|$(launch_choice_effort_spellings pi)|$(launch_choice_effort_spellings copilot)|$(launch_choice_effort_spellings opencode)|$(launch_choice_effort_spellings nosuch)|$(launch_choice_effort_spellings '')" \
+  "--effort|model_reasoning_effort=|--thinking|--reasoning-effort|||" \
+  "the effort spellings accessor answers each row's list, and nothing for a flagless or unnamed harness"
+
+permission_write_status() {
+  local rc=0
+  launch_choice_permission_write "$1" >/dev/null 2>&1 || rc=$?
+  printf '%s\n' "$rc"
+}
+assert_eq "$(launch_choice_permission_write claude)|$(launch_choice_permission_write codex)|$(launch_choice_permission_write copilot)|$(permission_write_status opencode)|$(permission_write_status nosuch)" \
+  "--dangerously-skip-permissions|--dangerously-bypass-approvals-and-sandbox|--allow-all|1|1" \
+  "the permission writer answers required rows and refuses sentinel and unknown rows"
+assert_eq "$(launch_choice_transfer_permission_spellings claude)|$(launch_choice_transfer_permission_spellings codex)|$(launch_choice_transfer_permission_spellings copilot)" \
+  "--dangerously-skip-permissions --permission-mode=bypassPermissions|--dangerously-bypass-approvals-and-sandbox|--allow-all --yolo" \
+  "the transfer set excludes restricted unattended modes, and copilot's tools-only word among them"
+transferable_status() { # HARNESS TEXT
+  local rc=0
+  launch_choice_permission_transferable "$1" "$2" || rc=$?
+  printf '%s\n' "$rc"
+}
+assert_eq "$(transferable_status claude '--model fable --dangerously-skip-permissions --verbose')|$(transferable_status claude '--permission-mode bypassPermissions')|$(transferable_status claude '--dangerously-skip-permissions --permission-mode dontAsk')|$(transferable_status claude '--dangerously-skip-permissions --permission-mode plan')|$(transferable_status claude '--permission-mode dontAsk')|$(transferable_status claude '--model fable')|$(transferable_status codex '--dangerously-bypass-approvals-and-sandbox -a never')|$(transferable_status opencode '--model x')|$(transferable_status copilot '--allow-all --context long_context')|$(transferable_status copilot '--yolo')|$(transferable_status copilot '--allow-all-tools')|$(transferable_status copilot '--allow-all --yolo')" \
+  "0|0|1|1|1|1|1|1|0|0|1|1" \
+  "the transfer judge admits one full bypass alone and refuses a mix, a restricted word, and nothing; copilot's tools-only word is restricted"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -186,6 +186,33 @@ enum Verb {
                 .ok_or_else(|| format!("{word}: not context, headroom, rate or memory"))
         })]
         mark: Option<watch::overseer::MarkKind>,
+        /// The model recovery's successor: the predecessor's own launch on
+        /// the model it was launched with, and the recovery's binding; no
+        /// walk.
+        #[arg(long, requires = "predecessor", conflicts_with = "mark")]
+        recover: bool,
+    },
+    /// The overseer handoff: with `--body`, the snapshot written over the
+    /// handoff, its `Start here` header naming the fleet record's
+    /// generation and its State line every open lane ask the running lanes'
+    /// mailboxes hold; with `--asks`, those asks read and printed, nothing
+    /// written.
+    Handoff {
+        #[command(flatten)]
+        target: Target,
+        /// The prepared body below the header, a separate nonempty regular
+        /// file.
+        #[arg(long, required_unless_present = "asks")]
+        body: Option<PathBuf>,
+        /// The handoff the snapshot replaces.
+        #[arg(long, default_value = ops::successor::HANDOFF)]
+        handoff: PathBuf,
+        /// Keep the installed snapshot's content ahead of the body.
+        #[arg(long, requires = "body")]
+        keep_prior: bool,
+        /// Print the open lane asks alone.
+        #[arg(long, conflicts_with = "body")]
+        asks: bool,
     },
     /// Judge the paths a running lane adds, or a launch before its record
     /// stands, against the fleet's holders under the launch lock, and widen
@@ -1409,19 +1436,45 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             cwd,
             handoff,
             mark,
+            recover,
         } => {
             let settings = resolve_settings(&flags)?;
             let path = target_path(&target, &settings);
-            let now = system_env()?.now_secs;
-            ops::successor::successor(
-                &settings,
-                &path,
-                predecessor.as_deref(),
-                mark,
-                &cwd,
-                handoff.as_deref(),
-                now,
-            )?
+            if let (true, Some(pane)) = (recover, predecessor.as_deref()) {
+                ops::successor::recovery(&settings, &path, pane)?
+            } else {
+                let now = system_env()?.now_secs;
+                ops::successor::successor(
+                    &settings,
+                    &path,
+                    predecessor.as_deref(),
+                    mark,
+                    &cwd,
+                    handoff.as_deref(),
+                    now,
+                )?
+            }
+        }
+        Verb::Handoff {
+            target,
+            body,
+            handoff,
+            keep_prior,
+            asks: _,
+        } => {
+            let settings = resolve_settings(&flags)?;
+            let path = target_path(&target, &settings);
+            match body {
+                Some(body) => ops::successor::write_handoff(
+                    &settings,
+                    &path,
+                    &body,
+                    &handoff,
+                    keep_prior,
+                    &system_env()?,
+                )?,
+                None => serde_json::json!({"asks": ops::successor::open_asks(&settings, &path)?}),
+            }
         }
         Verb::Admit { target, request } => {
             let settings = resolve_settings(&flags)?;
@@ -1845,6 +1898,7 @@ fn accounts_verb(op: AccountsOp, flags: &Flags) -> Result<serde_json::Value> {
                 min_headroom_pct,
                 binding_floor,
                 host: None,
+                admit_unread_scope: false,
             };
             let answer = ops::accounts::pick_fleet(&settings, &path, &host, &request, now);
             if env {

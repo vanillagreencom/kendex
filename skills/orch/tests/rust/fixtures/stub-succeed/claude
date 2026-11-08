@@ -3,7 +3,7 @@
 # records the harness's own process name for it. It draws Claude Code's
 # composer marker so the judge reads the pane idle, then reads lines as a
 # harness reads turns: a line `RUN <command>` runs that command in the
-# foreground, as the overseer's shell tool runs `oversee-succeed` from its
+# foreground, as the overseer's shell tool runs `orch-runtime op` from its
 # own pane, so the `orch-runtime op` under test is a child of this process
 # in this pane. Every other line is ignored. It launches no model; it stands
 # until its stdin closes, which a kill-server or a window kill does.

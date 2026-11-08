@@ -745,6 +745,57 @@ control_status=0
 ) > "$TMP_ROOT/seat-verdict.control.log" || control_status=$?
 assert_eq "$control_status" 1 "control: the verdict rows reject an unread seat verdict"
 
+# The judge's refusals of the account itself, whatever its figures: the
+# owner's exclusion, retirement and reserve at exit 3, and at exit 7 a cloud
+# account no repository rule gives this checkout. Each row plants the real
+# judge's reply (pick_reply) and reads the refusal said by its verdict with
+# the turn passed, never an unreadable refusal record.
+# SHAPE|FIRST LINE
+ACCOUNT_REFUSAL_ROWS='excluded|lane-mail-check: account=excluded
+retired|lane-mail-check: account=retired
+reserved|lane-mail-check: account=reserved
+cloud-repo-unset|lane-mail-check: account=cloud-repo-unset'
+account_refusal_rows() { # HOOK [ROWS]
+  local shape first account
+  while IFS='|' read -r shape first; do
+    account="refused${shape//-/}claude"
+    make_lane "$H" "$account" 3600
+    claude_usage 20 0 0 Opus > "$FIXTURE_DIR/.$account.json"
+    new_handoff_lane "account_refusal_${shape}_${1##*/}" KEN-54
+    install_hook "$1" "$LANE/.claude/hooks/lane-mail-check.sh"
+    pick_reply "$shape" "$H/.$account" "$account" > "$LANE/.claude/skills/orch/scripts/orch-runtime.pick"
+    write_transcript "$TRANSCRIPT" 1000
+    # shellcheck disable=SC2046
+    stop_at "$TRANSCRIPT" false $(account_env ".$account") ORCH_HANDOFF_HEADROOM_PCT=3
+    expect 0 "$first" "the account refusal $shape is said by its verdict"
+  done <<< "${2:-$ACCOUNT_REFUSAL_ROWS}"
+}
+account_refusal_rows "$HOOK"
+
+# Each control holes one arm the refusals are read by; the rows that arm
+# reads must fail on the copy.
+wake_mutant refusal-verdicts-unread '        excluded | reserved | retired)' \
+  '        unobserved-refusal)'
+control_status=0
+(
+  FAIL=0
+  account_refusal_rows "$MUTANT_PATH" "$(grep -v '^cloud' <<< "$ACCOUNT_REFUSAL_ROWS")"
+  [ "$FAIL" -eq 0 ]
+) > "$TMP_ROOT/refusal-verdicts.control.log" || control_status=$?
+assert_eq "$control_status" 1 "control: the refusal rows reject an unread refusal verdict"
+assert_eq "$(grep -c '^  FAIL' "$TMP_ROOT/refusal-verdicts.control.log" || true)" 3 \
+  "control: each exit-3 refusal row needs the verdict arm"
+wake_mutant cloud-exit-unread \
+  "    7) message account cloud-repo-unset \"\$(jq -r '.result.record.detail // empty' <<<\"\$PICK\" 2>/dev/null)\" ;;" \
+  '    7-unobserved) ;;'
+control_status=0
+(
+  FAIL=0
+  account_refusal_rows "$MUTANT_PATH" "$(grep '^cloud' <<< "$ACCOUNT_REFUSAL_ROWS")"
+  [ "$FAIL" -eq 0 ]
+) > "$TMP_ROOT/cloud-exit.control.log" || control_status=$?
+assert_eq "$control_status" 1 "control: the cloud row rejects an unread exit 7"
+
 # The judge publishes wall as used percent for binding_bucket. Its exit-3
 # record can carry a different account-wide headroom. The same assertion
 # rejects a copy that restores the account field read. The record is the
@@ -1809,7 +1860,7 @@ context_rule_row() { # ROLE NAME [HOOK]
   local role="$1" text CONTEXT_PCT_ENV=''
   if [ "$role" = overseer ]; then
     new_overseer "$2"
-    judge_says '{"key":"mark-reached","kind":"context","value":"405000","mark":"90","succession":"on","headroom":"80"}'
+    judge_says "$(marks_reply context-cap)"
   else
     new_handoff_lane "$2" KEN-3920
   fi
@@ -1867,7 +1918,7 @@ expect 2 "lane-mail-check: context=612000" \
 assert_eq "record=$(overseer_record_named) named=$(template_record | jq -c '[.session_id,.context.source.session_id]')" \
   'record=1 named=["s1","s1"]' "and the record it is told to write names this session"
 assert_eq "$(template_record | jq -cS .)" \
-  "$(jq -ncS --arg pane "$OVERSEER_SERVER $OVERSEER_PANE" --arg transcript "$TRANSCRIPT" '{handoff_file:"[OVERSEER_HANDOFF_PATH]",pane_key:$pane,session_id:"s1",context:{decision:null,source:{harness:"claude",session_id:"s1",transcript:$transcript,pane_key:$pane,capacity_source:null,compacted:false}}}')" \
+  "$(jq -ncS --arg pane "$OVERSEER_SERVER $OVERSEER_PANE" --arg transcript "$TRANSCRIPT" --argjson decision "$(jq -c .context_decision <<<"$CONTEXT_MARK_LINE")" '{handoff_file:"[OVERSEER_HANDOFF_PATH]",pane_key:$pane,session_id:"s1",context:{decision:$decision,source:{harness:"claude",session_id:"s1",transcript:$transcript,pane_key:$pane,capacity_source:null,compacted:false}}}')" \
   "with the pane key beside it, for a harness that names no session" "$ERR_FILE"
 assert_eq "$(template_record '[OVERSEER_HANDOFF_PATH]' '/fleet/over seer.md' | jq -r .handoff_file)" '/fleet/over seer.md' \
   "and a path the overseer writes over its placeholder in the printed word stays one argument"
@@ -1981,7 +2032,7 @@ install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 # on its marks and heals the record, so the session is never left judged on
 # nothing while it runs into its window. The judge answers the reading this
 # turn end hands it with `mark-reached kind=context`.
-LOST_MARK_LINE='{"key":"mark-reached","kind":"context","value":"'"${OVERSEER_CONTEXT%%:*}"'","mark":"90","succession":"on","headroom":"unreadable"}'
+LOST_MARK_LINE=$(marks_reply context-lost)
 lost_identity() { # NAME [HOOK] [STUB]: STUB is a state_stub mode; LOST_JUDGE the judge's reply
   new_overseer "$1"
   install_hook "${2:-$HOOK}" "$LANE/.claude/hooks/lane-mail-check.sh"
@@ -2176,9 +2227,9 @@ assert_eq "argv=$(judge_argv | tail -n 1)" "argv=marks --fleet --context 600000:
   "control: without the ownership gate a session reads a transcript it does not own"
 install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 
-# The memory mark is judged by the runtime alone, so a refusal that named the
-# shell succession, which judges again without it, would open nothing.
-MEMORY_MARK_LINE='{"key":"mark-reached","kind":"memory","value":"90","mark":"80","succession":"on"}'
+# The memory mark is judged by the runtime alone, and its refusal, as the rate
+# mark's, names the setting and the runtime's succession route.
+MEMORY_MARK_LINE=$(marks_reply memory)
 for mark_row in \
   "rate|$RATE_MARK_LINE|30|ORCH_OVERSEER_WALL_MINUTES" \
   "memory|$MEMORY_MARK_LINE|90|ORCH_OVERSEER_MEMORY_PCT"; do
@@ -2189,20 +2240,20 @@ for mark_row in \
   stop_at "$TRANSCRIPT" false $(overseer_env)
   expect 2 "lane-mail-check: $mark_kind=$mark_value" \
     "an overseer at its $mark_kind mark is refused with the value it read"
-  assert_eq "setting=$(grep -cF -- "$mark_setting" "$ERR_FILE") route=$(overseer_route "$mark_kind") shell=$(grep -cF -- /oversee-succeed "$ERR_FILE")" \
-    "setting=1 route=11 shell=0" "and the $mark_kind refusal names the setting and the runtime's succession route"
+  assert_eq "setting=$(grep -cF -- "$mark_setting" "$ERR_FILE") route=$(overseer_route "$mark_kind")" \
+    "setting=1 route=11" "and the $mark_kind refusal names the setting and the runtime's succession route"
 done
 
 # What the marks cannot judge is reported and passed, never refused: an
 # overseer whose marks nothing could measure must still end a turn, exactly as
 # a lane whose account nothing measured does.
 new_overseer overseer_gaps
-judge_says '{"key":"mark-unmeasured","kind":"headroom","reason":"headroom-unreadable","succession":"on"}'
+judge_says "$(marks_reply unmeasured-headroom)"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env)
 expect 0 "lane-mail-check: marks=unmeasured" \
   "a reading the judgement could not take is reported and the turn ends"
-assert_eq "$(grep -cF -- "headroom-unreadable" "$ERR_FILE")" "1" \
+assert_eq "$(grep -cF -- "headroom-none" "$ERR_FILE")" "1" \
   "with the judge's own reply under it, naming the figure that was missing"
 printf '1\n' > "$JUDGE_DIR/rc"
 printf 'orch-runtime: record-missing path=%s\n' "$LANE/tmp/oversee.json" > "$JUDGE_DIR/err"

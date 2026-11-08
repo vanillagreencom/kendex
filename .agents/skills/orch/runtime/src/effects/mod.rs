@@ -1052,9 +1052,9 @@ fn pane_harness(lane: &Lane, launch: Option<&Intent>) -> Option<Harness> {
         .and_then(Harness::parse)
 }
 
-/// The predecessor's identity the overseer record carries. The shell
-/// `ol_record_start` writes `harness_pid` as the string jq's `--arg` hands
-/// it; the runtime writes the number. Both are read.
+/// The predecessor's identity the overseer record carries: `harness_pid`
+/// is a string where a shell writer wrote it through jq's `--arg`, and a
+/// number where the runtime wrote it. Both are read.
 fn overseer_identity(overseer: &Overseer) -> Option<Identity> {
     let pid = overseer.extra.get("harness_pid").and_then(pid_value)?;
     let start = overseer

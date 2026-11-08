@@ -241,10 +241,14 @@ pub fn identity(pid: u32) -> Reading<Identity> {
 
 /// A capped control group's charge and its cap. The charge counts every
 /// process under the group, so it is the figure the cap is enforced on.
+/// `oom_kill` is the OOM kills the caps on the path have made: the sum of
+/// every capped group's `memory.events` `oom_kill`, `None` where one of
+/// them could not be read, which is no count of zero.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Memory {
     pub current: u64,
     pub max: u64,
+    pub oom_kill: Option<u64>,
 }
 
 impl Memory {
@@ -261,7 +265,8 @@ impl Memory {
 /// nothing; `Gone` where `proc_root` holds no such pid; unreadable where the
 /// group, a cap on the path or a capped group's charge could not be read or
 /// parsed, which is never a reading of zero. A `memory.max` of `max` is no
-/// cap; the root of the tree keeps none.
+/// cap; the root of the tree keeps none. The OOM kill count is read beside
+/// the charge and leaves the charge's reading standing where it is unread.
 pub fn memory_of(proc_root: &Path, cgroup_root: &Path, pid: u32) -> Reading<Option<Memory>> {
     let unreadable = |cause: &'static str| Reading::Unreadable { cause };
     let text = match fs::read_to_string(proc_root.join(pid.to_string()).join("cgroup")) {
@@ -292,7 +297,17 @@ pub fn memory_of(proc_root: &Path, cgroup_root: &Path, pid: u32) -> Reading<Opti
             Err(_) => Err("cgroup-file-unreadable"),
         }
     };
+    let kills = |dir: &Path| -> Option<u64> {
+        fs::read_to_string(dir.join("memory.events"))
+            .ok()?
+            .lines()
+            .find_map(|line| line.strip_prefix("oom_kill "))?
+            .trim()
+            .parse()
+            .ok()
+    };
     let mut fullest: Option<Memory> = None;
+    let mut oom_kill = Some(0u64);
     let mut dir = group.as_path();
     loop {
         match number(&dir.join("memory.max")) {
@@ -302,7 +317,12 @@ pub fn memory_of(proc_root: &Path, cgroup_root: &Path, pid: u32) -> Reading<Opti
                     Ok(None) => return unreadable("memory-current-unreadable"),
                     Err(cause) => return unreadable(cause),
                 };
-                let capped = Memory { current, max };
+                oom_kill = oom_kill.zip(kills(dir)).map(|(sum, n)| sum + n);
+                let capped = Memory {
+                    current,
+                    max,
+                    oom_kill: None,
+                };
                 if fullest.is_none_or(|fullest| capped.fuller_than(fullest)) {
                     fullest = Some(capped);
                 }
@@ -312,7 +332,9 @@ pub fn memory_of(proc_root: &Path, cgroup_root: &Path, pid: u32) -> Reading<Opti
         }
         match dir.parent() {
             Some(parent) if dir != cgroup_root && parent.starts_with(cgroup_root) => dir = parent,
-            Some(_) | None => return Reading::Live(fullest),
+            Some(_) | None => {
+                return Reading::Live(fullest.map(|m| Memory { oom_kill, ..m }));
+            }
         }
     }
 }

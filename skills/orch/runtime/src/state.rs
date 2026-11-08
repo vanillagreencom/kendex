@@ -713,15 +713,11 @@ impl Lane {
 }
 
 /// The successor a succession is about to open, `overseer.pending`: the
-/// identity fields the record carries, the launch line it judged, the typed
-/// launch fields the runtime builds the command from (the permission posture
-/// and the caller's own words) and the native session it continues where it
-/// resumes one. The line is recorded for display and a dead-pane replay's
-/// identity read; the runtime never executes it.
+/// identity fields the record carries, the typed launch fields the runtime
+/// builds the command from (the permission posture and the caller's own
+/// words) and the native session it continues where it resumes one.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Pending {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub launch_line: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub harness: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -773,19 +769,12 @@ pub fn succession_command(value: Option<&Value>) -> Option<Vec<String>> {
 }
 
 /// The keys a confirmed succession writes from `pending` onto the overseer
-/// record, and nulls where the pending names none: the launch's identity
-/// plus the launch line. `class` is not among them: a record carries it
+/// record, and nulls where the pending names none: the launch's identity.
+/// `class` is not among them: a record carries it
 /// only where its launch knew it, so the successor record has the key only
 /// when `pending` does.
-pub const SUCCESSOR_IDENTITY_KEYS: &[&str] = &[
-    "launch_line",
-    "harness",
-    "account",
-    "home",
-    "model",
-    "effort",
-    "cwd",
-];
+pub const SUCCESSOR_IDENTITY_KEYS: &[&str] =
+    &["harness", "account", "home", "model", "effort", "cwd"];
 
 /// The binding `ol_record_write` reads afresh from the session it writes for
 /// and a transfer confirmation does not know: a different session inherits
@@ -799,8 +788,9 @@ pub const SUCCESSOR_BINDING_KEYS: &[&str] = &["window", "session_rows"];
 
 /// The keys of the session that ended, which a different session's record
 /// leaves out: the native session id, the harness process and its model
-/// check, the recorded exit, the pending it just opened, and the succession
-/// command of the owner that recorded it.
+/// check, the recorded exit, the pending it just opened, the succession
+/// command of the owner that recorded it, and the display line a released
+/// launcher wrote for it.
 pub const PREDECESSOR_SESSION_KEYS: &[&str] = &[
     "session_id",
     "harness_pid",
@@ -809,6 +799,7 @@ pub const PREDECESSOR_SESSION_KEYS: &[&str] = &[
     "exit",
     "pending",
     "succession",
+    "launch_line",
 ];
 
 /// The keys the succession compare-and-swap requires equal, less
@@ -1648,8 +1639,8 @@ impl ObligationRecord {
 }
 
 /// The one failure announcement an intent makes: the keyed line the fleet
-/// log holds under `item: overseer`, an `oversee-succeed: <key>
-/// field=value...` row, and how the owner notice went. The outcome's own
+/// log holds under `item: overseer`, an `orch-runtime: <note> op=<op>
+/// intent=<id> outcome=<outcome>` row, and how the owner notice went. The outcome's own
 /// write records the notice `owed`, with its row; the send follows, and a
 /// later write marks it `sent`, `unsent:<cause>` where the mailbox CLI
 /// refused, or `unanswered:<cause>` where it gave no answer. A notice still

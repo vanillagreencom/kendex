@@ -959,12 +959,37 @@ impl Runner {
         serde_json::from_str(&text).unwrap()
     }
 
+    /// The fleet state, and, where its record names a generation, the
+    /// predecessor's handoff snapshot at the default handoff under the state
+    /// directory, written by the real `handoff` verb: the neutral world a
+    /// live succession is admitted in. A row that judges the snapshot
+    /// writes its own.
     pub fn write_fleet(&self, value: &Value) {
         std::fs::write(
             self.state_dir().join("workflow-state-oversee.json"),
             serde_json::to_string_pretty(value).unwrap(),
         )
         .unwrap();
+        if value["overseer"]["generation"].is_u64() {
+            self.snapshot(&self.state_dir().join("tmp/handoffs/OVERSEER-HANDOFF.md"));
+        }
+    }
+
+    /// The overseer's snapshot at `handoff` for the record as it stands,
+    /// through the real `handoff` verb, as the workflow writes it before a
+    /// live succession.
+    pub fn snapshot(&self, handoff: &Path) {
+        let body = self.state_dir().join("snapshot-body.md");
+        std::fs::write(&body, "## State\nSession: live\n").unwrap();
+        let out = self.run(&[
+            "handoff",
+            "--fleet",
+            "--body",
+            &body.display().to_string(),
+            "--handoff",
+            &handoff.display().to_string(),
+        ]);
+        assert_eq!(reply(&out)["ok"], true, "handoff: {}", stderr(&out));
     }
 
     /// The one reconcile report of a fleet with one open intent.
@@ -1118,8 +1143,8 @@ pub fn launch_request(item: &str, mail_root: &Path) -> Value {
 }
 
 /// The overseer record a succession reads: a predecessor whose harness
-/// process is `pid`, on the test's server. `harness_pid` is the string
-/// `ol_record_start` writes through jq's `--arg`.
+/// process is `pid`, on the test's server. `harness_pid` is the string a
+/// shell writer's jq `--arg` writes.
 pub fn overseer_record(pid: u32, start: &str, server: &Server, cwd: &Path) -> Value {
     json!({
         "runtime": "tmux",
@@ -1670,6 +1695,55 @@ pub fn plant_accounts(
         std::fs::write(&path, map.to_string()).unwrap();
     }
     env
+}
+
+/// A judge's reply as the hook suites' fixtures store it
+/// (`hooks/tests/fixtures/pick-replies.json`): the world's home `home`
+/// spelled `/home/me`.
+pub fn spelled_home(reply: &Value, home: &Path) -> Value {
+    let spelled = reply
+        .to_string()
+        .replace(&home.display().to_string(), "/home/me");
+    serde_json::from_str(&spelled).unwrap()
+}
+
+/// A judge's reply as a planted one is compared with it: in
+/// [`spelled_home`]'s spelling, each reset instant, reading instant,
+/// reading age and selection score, figures the world's clock sets, by
+/// presence.
+pub fn planted_form(reply: &Value, home: &Path) -> Value {
+    fn timed(reply: &Value) -> Value {
+        match reply {
+            Value::Object(map) => Value::Object(
+                map.iter()
+                    .map(|(k, v)| {
+                        let at = k == "resets"
+                            || k.ends_with("resets_at")
+                            || k == "measured_at"
+                            || k == "usage_age_s"
+                            || k == "selection_score";
+                        let v = if at && !v.is_null() {
+                            json!("present")
+                        } else {
+                            timed(v)
+                        };
+                        (k.clone(), v)
+                    })
+                    .collect(),
+            ),
+            Value::Array(items) => Value::Array(items.iter().map(timed).collect()),
+            other => other.clone(),
+        }
+    }
+    timed(&spelled_home(reply, home))
+}
+
+/// The reply `hooks/tests/fixtures/pick-replies.json` plants under `shape`.
+pub fn planted_pick(shape: &str) -> Value {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../hooks/tests/fixtures/pick-replies.json");
+    let planted: Value = serde_json::from_str(&std::fs::read_to_string(&fixture).unwrap()).unwrap();
+    planted[shape]["reply"].clone()
 }
 
 /// One `accounts` line for a provider's row: the words and windows the

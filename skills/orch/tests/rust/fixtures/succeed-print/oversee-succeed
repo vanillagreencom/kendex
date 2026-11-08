@@ -1,6 +1,0 @@
-#!/bin/sh
-# The launch-line printer the watch start calls, answering as
-# `oversee-succeed --print-launch-line` answers: one line on stdout, nothing
-# else. The line is the words it was handed, so the record a row reads back
-# says which words reached the print.
-printf 'launch: %s\n' "$*"

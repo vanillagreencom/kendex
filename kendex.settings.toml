@@ -129,15 +129,12 @@ ORCH_LANE_MAX_PCT = "95"
 ORCH_LANE_CODEX_CREDIT_FLOOR = "0"
 
 # The overseer moves before its account walls when its current binding bucket
-# reaches 5 percent headroom or its projected wall is within 20 minutes; the
-# qualifying-account trigger, by the rule oversee-succeed --help states, is
-# read by oversee-succeed alone, never by the runtime's mark judge. A
+# reaches 5 percent headroom or its projected wall is within 20 minutes. A
 # seat account (one an overseer or Jarvis session runs on) keeps this headroom
 # for its session; skills/orch/references/settings.md states how a worker's
 # pick and the lanes on it keep it.
 ORCH_OVERSEER_HEADROOM_PCT = "5"
 ORCH_OVERSEER_WALL_MINUTES = "20"
-ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 
 # A lane whose account reaches 97 percent used is marked for handoff, which
 # follows skills/orch/references/skill-rules.md § Round Closure.

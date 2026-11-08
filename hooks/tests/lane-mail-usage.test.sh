@@ -246,7 +246,7 @@ assert_eq "$(quiet) record=$(record) key=$(jq -r .pane_key "$BOX/context.json" 2
   "the overseer's reading is recorded in its mailbox under its pane key"
 # The judge, handed that reading, finds it due.
 plant_judge
-judge_says '{"key":"mark-reached","kind":"context","value":"199000","mark":"90","succession":"on","headroom":"unreadable","context_decision":{"tokens":199000,"window":217600,"cap":400000,"mark_pct":90,"cap_mark":400000,"window_mark":195840,"reserve_applied":false,"reserve_tokens":0}}'
+judge_says "$(marks_reply context-window)"
 # shellcheck disable=SC2046
 turn_end s1 $(overseer_env) "$MARK90"
 assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision) argv=$(judge_argv | tail -n 1) route=$(stdout_field .reason | grep -cF -- '/orch-runtime op --fleet --effect-exit --request [REQUEST FILE]')" \

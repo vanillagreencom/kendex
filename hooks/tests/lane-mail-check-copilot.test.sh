@@ -630,7 +630,7 @@ COP_NAMED_ENV=("HOME=$COP_HOME" $(overseer_env))
 # native payload id. It must leave every persisted overseer mailbox file alone.
 copilot_child() { # NAME ARM [HOOK] [RECORD_KIND] [NATIVE_LIB]
   new_copilot_named "$1" "${3:-$HOOK}"
-  plant_copilot_install oversee-succeed
+  plant_copilot_install
   plant_judge "$LANE/.github/skills/orch/scripts"
   judge_says "$BELOW_MARK_LINE"
   if [ "${4:-full}" = harness-only ]; then

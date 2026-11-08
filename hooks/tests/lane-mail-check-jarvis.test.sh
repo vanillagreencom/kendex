@@ -148,21 +148,34 @@ while IFS='|' read -r shape label tokens active session agent expected key; do
       [ "$shape" != copilot-absent ] || mv "$RECORD" "$RECORD.saved"
       run_payload "$(jq -nc --arg p "$TRANSCRIPT" '{sessionId:"s1",timestamp:1,transcriptPath:$p}')" "COPILOT_HOME=$ACCOUNT"
       ;;
-    registered)
-      assert_eq "$([ -e "$LANE/tmp" ] && echo written || echo absent)" absent \
+    registered | owned)
+      [ "$shape" = owned ] || assert_eq "$([ -e "$LANE/tmp" ] && echo written || echo absent)" absent \
         'the plain Jarvis role creates no mailbox, fleet or context state in its home'
-      git -C "$LANE" init -q
-      git -C "$LANE" config gc.auto 0
-      git -C "$LANE" config maintenance.auto false
-      git -C "$LANE" checkout -q -b main
-      git -C "$LANE" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
+      if [ ! -d "$LANE/.git" ]; then
+        git -C "$LANE" init -q
+        git -C "$LANE" config gc.auto 0
+        git -C "$LANE" config maintenance.auto false
+        git -C "$LANE" checkout -q -b main
+        git -C "$LANE" -c user.email=t@example.com -c user.name=t commit -q --allow-empty -m base
+      fi
       hole_install orch-runtime
       plant_judge "$LANE/.agents/skills/orch/scripts"
       judge_says "$BELOW_MARK_LINE"
       (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
       record_overseer "$JARVIS_PANE" "$JARVIS_SERVER" "$ACCOUNT" "$JARVIS_START"
       bind_overseer claude "$ACCOUNT" s1
-      CALL_ENV+=("ORCH_WAKE_PROCESS=^jarvis-fixture-wake$" "ORCH_WAKE_START=fixture-wake")
+      if [ "$shape" = owned ]; then
+        # The registration the jarvis workflow makes records its own
+        # succession command, and its wake runs.
+        (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" update oversee \
+          --arg command "$LANE/.agents/skills/jarvis/scripts/jarvis-session" --arg home "$LANE" \
+          '.overseer.succession = [$command, "succeed", "--home", $home]' >/dev/null)
+        judge_says "$CONTEXT_MARK_LINE"
+        wake_process "$TMP_ROOT/wake/jarvis-fixture-wake"
+        CALL_ENV+=("ORCH_WAKE_PROCESS=jarvis-fixture-wake$" "ORCH_WAKE_START=fixture-wake")
+      else
+        CALL_ENV+=("ORCH_WAKE_PROCESS=^jarvis-fixture-wake$" "ORCH_WAKE_START=fixture-wake")
+      fi
       ;;
   esac
   case "$key" in
@@ -199,6 +212,12 @@ while IFS='|' read -r shape label tokens active session agent expected key; do
     transcript)
       run_payload "$(jq -nc --arg p "$TRANSCRIPT" '{session_id:"s1",transcript_path:$p}')"
       expect "$expected" "$key" "$label"
+      ;;
+    owned)
+      jarvis_mark "$tokens" "$active" "$session" "$agent"
+      expect "$expected" "$key" "$label"
+      assert_eq "owner=$(grep -cF -- "'succeed' '--home' '$LANE'" "$ERR_FILE" || :) walk=$(grep -cF -- ' successor --fleet ' "$ERR_FILE" || :) record=$(grep -cF -- ' set oversee handoff ' "$ERR_FILE" || :)" \
+        'owner=1 walk=0 record=0' "$label: the owner's command is the whole route"
       ;;
     *)
       jarvis_mark "$tokens" "$active" "$session" "$agent"
@@ -242,6 +261,7 @@ copilot-sdk|an SDK-only managed Copilot session receives succession|400000|false
 copilot-missing-pane|an SDK-only Jarvis without TMUX_PANE receives succession|400000|false|s1||block|lane-mail-check: context=@TOKENS@
 copilot-absent|the same SDK session with no controller record gets no mark|400000|false|s1||allow|NO_MARK
 registered|a managed registered overseer retains its wake refusal|100000|false|s1||2|lane-mail-check: wake=unarmed
+owned|a registered overseer whose record names its own succession is told that owner's command|400000|false|s1||2|lane-mail-check: context=612000
 ROWS
 
 # Keep the matched implementation text while removing its behavior. The
@@ -255,6 +275,13 @@ if [ -z "${HOOK_UNDER_TEST:-}" ] && [ -z "${1:-}" ]; then
   assert_eq "$control_rc" 1 'control rejects the missing Jarvis identification'
   assert_eq "$(grep -Fxc '  FAIL  past the percentage mark' "$TMP_ROOT/control.log" || :)" 1 \
     'control reaches the succession assertion'
+  assert_eq "$(grep -cF '  SUCCESSION_OWNER=${IDENT#*"$TAB"}' "$HOOK")" 1 'control matches the succession owner read once'
+  mutant succession-unread -e 's/^  SUCCESSION_OWNER=\${IDENT#\*"\$TAB"}$/  SUCCESSION_OWNER=""/'
+  control_rc=0
+  HOOK_UNDER_TEST="$MUTANT_PATH" "$BASH" "${BASH_SOURCE[0]}" owned > "$TMP_ROOT/control-owner.log" 2>&1 || control_rc=$?
+  assert_eq "$control_rc" 1 'control rejects the dropped succession read'
+  assert_eq "$(grep -Fc "FAIL  a registered overseer whose record names its own succession is told that owner's command: the owner's command is the whole route" "$TMP_ROOT/control-owner.log" || :)" 1 \
+    'control reaches the owner assertion'
 fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -262,7 +262,6 @@ pub(super) fn outcome(id: &str, outcome: Outcome) -> Request {
         server_socket: None,
         window: None,
         tmux_session: None,
-        launch_line: None,
         home: None,
         home_implicit: false,
         watch: None,
@@ -291,7 +290,6 @@ pub(super) fn confirmed_with(
         server_socket: None,
         window: None,
         tmux_session: None,
-        launch_line: None,
         home: None,
         home_implicit: false,
         watch: None,
@@ -314,9 +312,7 @@ pub(super) fn alt(record: &Document, key: &str) -> Value {
 }
 
 /// `ol_owns($server; $start; $session)` as `OL_JQ_DEFS` defines it
-/// (`overseer-launch.sh`) and the watch start applies it to the record
-/// it meets (`watch-overseer-record.sh`'s `overseer_command_record`),
-/// member for member, with
+/// (`overseer-launch.sh`), member for member, with
 /// jq's typed equality: `ol_names`, the record naming `$server` as the
 /// string `--arg` hands jq, `$session` as its `pane` (or `session`), and
 /// `$start` as its `server_start`'s `tostring`; or `ol_unstarted`, the
@@ -340,7 +336,6 @@ pub(super) fn ol_owns(record: &Document, server: &str, start: &str, session: &st
 
 pub(super) fn successor() -> Pending {
     Pending {
-        launch_line: Some("cd /r && codex".into()),
         harness: Some("codex".into()),
         account: Some("/a/c2".into()),
         home: Some("/a/c2".into()),
@@ -383,5 +378,6 @@ pub(super) fn transfer(expected: OverseerExpected) -> Request {
         exclude_account: None,
         handoff_session_id: None,
         recovery: None,
+        death: None,
     }))
 }

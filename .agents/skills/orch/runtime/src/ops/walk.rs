@@ -878,6 +878,7 @@ pub fn walk(
                 // binding bucket, never a model's window.
                 binding_floor: overseer && !matches!(harness.as_str(), "claude" | "pi"),
                 host: Some(judge_host.clone().unwrap_or_else(|| LOCAL.to_owned())),
+                admit_unread_scope: overseer,
             }
         };
         let pick = |pr: &PickRequest| accounts::pick_fleet(settings, fleet_path, kernel, pr, now);

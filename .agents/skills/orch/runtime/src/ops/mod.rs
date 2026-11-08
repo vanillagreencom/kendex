@@ -58,7 +58,7 @@ pub use accept::{SummaryPost, accept};
 pub use admission::{AdmitPaths, Clis, ItemRead, PathsAdmitted, ReadFailure, ScopeRange};
 pub(crate) use controller::apply_adoption;
 pub use controller::{
-    AdoptController, AdoptionRead, ClaimIntent, ControllerAdopted, ControllerStarted,
+    AdoptController, AdoptionRead, ClaimIntent, ControllerAdopted, ControllerStarted, DeathCause,
     IntentClaimed, OverseerExpected, Progress, ProgressRecorded, RecordProgress, RequestTransfer,
     StartController, StopController, StopRequested, TransferRequested, admit, overseer_target,
 };
@@ -159,9 +159,6 @@ pub struct RecordOutcome {
     /// the first as `tmux.session`, as the first launch does.
     #[serde(default)]
     pub tmux_session: Option<String>,
-    /// The line a confirmed successor ran, written over the pending one.
-    #[serde(default)]
-    pub launch_line: Option<String>,
     /// The home a confirmed successor or local lane runs its sessions under,
     /// as its launch prepared it: written over the pending's, or as the
     /// lane's `home`.
@@ -1817,7 +1814,6 @@ mod tests {
                     server_socket: None,
                     window: None,
                     tmux_session: None,
-                    launch_line: None,
                     home: None,
                     home_implicit: false,
                     watch: None,

@@ -25,14 +25,14 @@ use agent_runtime::clock;
 use agent_runtime::harness::Harness;
 use agent_runtime::host::tmux::{self, Pane, PaneFields};
 use agent_runtime::observe::{self, ProcessReading};
-use agent_runtime::process::Identity;
+use agent_runtime::process::{Identity, Memory};
 use agent_runtime::reading::Reading;
 use agent_runtime::rows::{self, LaneVerdict};
 use jiff::tz::TimeZone;
 use orch_runtime::ops::accounts::Roster;
 use orch_runtime::ops::walk::{Chosen, WalkAnswer, WalkRequest, Walked};
 use orch_runtime::ops::wall::{self, AccountWall, RecordWallPauses};
-use orch_runtime::ops::{self, RequestTransfer};
+use orch_runtime::ops::{self, DeathCause, RequestTransfer};
 use orch_runtime::settings::{self, Flags as SettingsFlags, Roots, Settings, Succession};
 use orch_runtime::state::{self, FleetState, Locking, Record, TransferCause};
 use orch_runtime::watch::context;
@@ -1509,6 +1509,8 @@ struct OverseerDriver<'a> {
     context_record: Option<PathBuf>,
     /// The owner's alert for a standing gap.
     alert: &'a dyn Fn(&str) -> Result<(), String>,
+    /// `ORCH_OVERSEER_SUCCESSION`, on unless a row turns it off.
+    succession: Succession,
 }
 
 impl OverseerDriver<'_> {
@@ -1525,7 +1527,7 @@ impl OverseerDriver<'_> {
                 judges: &self.judges,
                 baseline: &self.baseline,
                 settings: &self.settings.watch,
-                succession: Succession::On,
+                succession: self.succession,
                 preference: self
                     .settings
                     .overseer_preference_set
@@ -1642,8 +1644,26 @@ fn reached_off(_: &Caller, _: Option<&str>) -> Result<Marks, String> {
     ))
 }
 
+/// The pane's memory reader of a row that plants no control group: no cap
+/// on the path.
+fn no_memory(_: u32) -> Reading<Option<Memory>> {
+    Reading::Live(None)
+}
+
 macro_rules! overseer_driver {
     ($server:expr, $fleet:expr, $marks:expr, $pick:expr, $readers:ident, $transfers:ident, $name:ident) => {
+        overseer_driver!(
+            $server,
+            $fleet,
+            $marks,
+            $pick,
+            memory = no_memory,
+            $readers,
+            $transfers,
+            $name
+        );
+    };
+    ($server:expr, $fleet:expr, $marks:expr, $pick:expr, memory = $memory:expr, $readers:ident, $transfers:ident, $name:ident) => {
         let $readers = TestReaders {
             socket: $server.socket.clone(),
         };
@@ -1669,6 +1689,7 @@ macro_rules! overseer_driver {
                 wall_pick: &no_wall_pick,
                 relaunch: &no_relaunch,
                 succeed: &no_succeed,
+                memory: &$memory,
             },
             settings: settings_in($fleet.runner.state_dir()),
             baseline: Baseline::default(),
@@ -1677,6 +1698,7 @@ macro_rules! overseer_driver {
             transfers: &$transfers,
             context_record: None,
             alert: &no_alert,
+            succession: Succession::On,
         };
     };
 }
@@ -1710,10 +1732,12 @@ fn window_of(server: &Server, pane: &str) -> String {
 
 /// A pane holding nothing but shells is dead on the second consecutive
 /// pass: the line goes out with `source=process`, the record's transfer is
-/// asked for once on the next run with `cause: dead` and the held line as
-/// the successor, and nothing more is asked after. The one verdict of each
+/// asked for once on the next run with `cause: dead` and the record's own
+/// launch fields as the successor, and nothing more is asked after. The one verdict of each
 /// pass is what the slot holds, so the mail gate reads the same source and
 /// closes while it is down. An unreadable pane counts nothing on any pass.
+/// Under `ORCH_OVERSEER_SUCCESSION=off` the line says `succession=off`
+/// and no transfer is asked.
 #[test]
 fn a_dead_overseer_is_counted_on_two_passes_and_transferred_once_with_cause_dead() {
     let dir = tempfile::tempdir().unwrap();
@@ -1763,9 +1787,10 @@ fn a_dead_overseer_is_counted_on_two_passes_and_transferred_once_with_cause_dead
         assert_eq!(asked.len(), 1);
         assert_eq!(asked[0].cause, TransferCause::Dead);
         assert_eq!(asked[0].exclude_account, None);
+        assert_eq!(asked[0].successor.model.as_deref(), Some("opus"));
         assert_eq!(
-            asked[0].successor.launch_line.as_deref(),
-            Some("cd /r && claude")
+            asked[0].successor.account.as_deref(),
+            Some("/home/me/.eclaude")
         );
         assert_eq!(asked[0].expected.pane, json!(pane));
         assert_eq!(asked[0].expected.generation, json!(3));
@@ -1795,6 +1820,174 @@ fn a_dead_overseer_is_counted_on_two_passes_and_transferred_once_with_cause_dead
         driver2.baseline.rows
     );
     assert!(transfers2.borrow().is_empty());
+    let off_pane = server.open_window("overseer-off", dir.path(), "bash --norc --noprofile");
+    let off_window = window_of(&server, &off_pane);
+    fleet.set_overseer(overseer_at(&server, &off_pane, &off_window, dir.path()));
+    let off_state = fleet.read();
+    overseer_driver!(server, fleet, below, no_walk, readers3, transfers3, driver3);
+    driver3.succession = Succession::Off;
+    let off_key = format!("{} {off_pane}", server.pid);
+    let counted = driver3.pass(&off_state);
+    assert!(lines(&counted).is_empty(), "{:?}", lines(&counted));
+    assert_eq!(
+        lines(&driver3.pass(&off_state)),
+        vec![format!(
+            "EVENT overseer-dead {off_pane} window={off_window} passes=2 succession=off source=process"
+        )]
+    );
+    assert_eq!(
+        driver3.baseline.get("overseer-dead", &off_key),
+        Some("reported")
+    );
+    for _ in 0..2 {
+        let after = driver3.pass(&off_state);
+        assert!(lines(&after).is_empty(), "{:?}", lines(&after));
+    }
+    assert!(
+        transfers3.borrow().is_empty(),
+        "succession off asks no transfer"
+    );
+}
+
+/// A death the caps on the controller's control-group path made: the live
+/// controller's OOM kill count is kept each pass (`overseer-oom`, whether
+/// or not the memory mark is set), and a death read with that count risen
+/// says `cause=memory-cap` on its `overseer-dead` line and carries it on
+/// the `request-transfer {dead}` it asks. A count unchanged, a path with
+/// no cap and a count unread at the death say no cause. The reader is the
+/// real one over fixture `/proc` and cgroup files.
+#[test]
+fn a_dead_overseer_whose_caps_oom_kill_count_rose_is_dead_of_the_memory_cap() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let claude = named_sleep(dir.path(), "claude");
+    let proc_root = dir.path().join("proc");
+    let cgroup = dir.path().join("cgroup");
+    let scope = cgroup.join("app.slice/overseer.scope");
+    std::fs::create_dir_all(proc_root.join("4242")).unwrap();
+    std::fs::write(
+        proc_root.join("4242/cgroup"),
+        "0::/app.slice/overseer.scope\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(&scope).unwrap();
+    std::fs::write(scope.join("memory.current"), "600\n").unwrap();
+    // The scope's cap and its OOM kills: `None` leaves the count unread.
+    let plant = |max: &str, kills: Option<u64>| {
+        std::fs::write(scope.join("memory.max"), format!("{max}\n")).unwrap();
+        match kills {
+            Some(n) => std::fs::write(
+                scope.join("memory.events"),
+                format!("low 0\nhigh 0\nmax 9\noom {n}\noom_kill {n}\noom_group_kill 0\n"),
+            )
+            .unwrap(),
+            None => {
+                let _ = std::fs::remove_file(scope.join("memory.events"));
+            }
+        }
+    };
+    let memory = |_: u32| agent_runtime::process::memory_of(&proc_root, &cgroup, 4242);
+    for (case, live, dead, cause) in [
+        (
+            "rose",
+            ("1000", Some(2)),
+            ("1000", Some(3)),
+            " cause=memory-cap",
+        ),
+        ("unchanged", ("1000", Some(2)), ("1000", Some(2)), ""),
+        ("no cap", ("max", Some(0)), ("max", Some(1)), ""),
+        ("unread", ("1000", Some(2)), ("1000", None), ""),
+    ] {
+        let fleet = Fleet::new(&server);
+        let pane = server.open_window(
+            "overseer",
+            dir.path(),
+            &format!(
+                "bash --norc --noprofile -c '{} 600; exec bash --norc --noprofile'",
+                claude.display()
+            ),
+        );
+        let shell = server.pane_pid(&pane);
+        let window = window_of(&server, &pane);
+        fleet.set_overseer(overseer_at(&server, &pane, &window, dir.path()));
+        let state = fleet.read();
+        overseer_driver!(
+            server,
+            fleet,
+            below,
+            no_walk,
+            memory = memory,
+            readers,
+            transfers,
+            driver
+        );
+        let key = format!("{} {pane}", server.pid);
+        plant(live.0, live.1);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let harness = loop {
+            let children = std::fs::read_to_string(format!("/proc/{shell}/task/{shell}/children"))
+                .unwrap_or_default();
+            if let Some(pid) = children.split_whitespace().next() {
+                break pid.to_owned();
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{case}: the harness never ran"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        let first = driver.pass(&state);
+        assert_eq!(
+            driver.slot.read().unwrap().verdict,
+            Verdict::Live,
+            "{case}: {:?}",
+            lines(&first)
+        );
+        let kept = live.1.filter(|_| live.0 != "max").map(|n| n.to_string());
+        assert_eq!(
+            driver.baseline.get("overseer-oom", &key).map(str::to_owned),
+            kept,
+            "{case}: the live count is kept"
+        );
+        let killed = std::process::Command::new("kill")
+            .args(["-KILL", &harness])
+            .status()
+            .unwrap();
+        assert!(killed.success(), "{case}");
+        plant(dead.0, dead.1);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut passes = Vec::new();
+        while !matches!(
+            driver.slot.read().map(|j| j.verdict),
+            Some(Verdict::Exited { .. })
+        ) || passes.is_empty()
+        {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{case}: never read dead"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            passes = vec![driver.pass(&state)];
+        }
+        let second = driver.pass(&state);
+        assert_eq!(
+            lines(&second),
+            vec![format!(
+                "EVENT overseer-dead {pane} window={window} passes=2 succession=on source=process{cause}"
+            )],
+            "{case}"
+        );
+        let third = driver.pass(&state);
+        assert!(lines(&third).is_empty(), "{case}: {:?}", lines(&third));
+        let asked = transfers.borrow();
+        assert_eq!(asked.len(), 1, "{case}");
+        assert_eq!(asked[0].cause, TransferCause::Dead, "{case}");
+        assert_eq!(
+            asked[0].death.map(DeathCause::word),
+            (!cause.is_empty()).then_some("memory-cap"),
+            "{case}"
+        );
+    }
 }
 
 /// The harness's own row states its wall, so a rows wall under a live
@@ -2108,8 +2301,8 @@ fn stopped(at: u64) -> Value {
 
 /// The watch judges the context mark with the reading the hook judges it
 /// with, so an overseer past its mark between turn ends is said: the
-/// session's own record is handed to the judge (`oversee-succeed
-/// --check-marks`) as `--context TOKENS:WINDOW`; its `mark-reached
+/// session's own record is handed to the judge (the `marks` verb's) as
+/// `--context TOKENS:WINDOW`; its `mark-reached
 /// kind=context` is `overseer-mark ... kind=context` once with the
 /// handling under it, then
 /// once every `ORCH_OVERSEER_MARK_REPEAT` passes; a record another pane
@@ -4372,7 +4565,6 @@ fn a_dead_controller_is_replayed_from_its_records_own_fields_with_no_launch_line
     assert_eq!(asked.len(), 1);
     assert_eq!(asked[0].cause, TransferCause::Dead);
     let successor = &asked[0].successor;
-    assert_eq!(successor.launch_line, None);
     assert_eq!(successor.resume, None);
     assert_eq!(successor.harness.as_deref(), Some("claude"));
     assert_eq!(successor.account.as_deref(), Some("/home/me/.eclaude"));

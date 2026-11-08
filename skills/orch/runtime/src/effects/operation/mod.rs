@@ -715,7 +715,6 @@ fn record(outcome: EffectOutcome) -> RecordOutcome {
         server_socket: wire.server_socket,
         window: wire.window,
         tmux_session: wire.tmux_session,
-        launch_line: wire.launch_line,
         home: wire.home,
         home_implicit: wire.home_implicit,
         watch: wire.watch,

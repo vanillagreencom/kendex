@@ -624,14 +624,34 @@ judge_says() { # RESULT
 judge_calls() { [ -f "$JUDGE_DIR/args" ] && wc -l < "$JUDGE_DIR/args" | tr -d ' ' || echo 0; }
 judge_argv() { cat "$JUDGE_DIR/args" 2>/dev/null || true; }
 
-CONTEXT_MARK_LINE='{"key":"mark-reached","kind":"context","value":"612000","mark":"500000","succession":"on","headroom":"80"}'
+# The verb's own replies, each captured for the inputs the fixture records
+# and held to the verb by the controller row
+# the_hook_suites_plant_the_marks_verbs_own_replies.
+MARKS_REPLIES="$TEST_DIR/fixtures/marks-replies.json"
+marks_reply() { # SHAPE
+  jq -ce --arg shape "$1" '.[$shape].reply | objects' "$MARKS_REPLIES"
+}
+
+# The account judge's replies to a lane's turn end, `accounts pick --lane`'s
+# own for the inputs the fixture records, held to the judge by the
+# controller row the_hook_suites_plant_the_account_judges_own_replies and
+# the cloud row of tests/rust/accounts.rs. pick_reply prints SHAPE's in the
+# runtime's envelope, its record naming DIR as ALIAS.
+PICK_REPLIES="$TEST_DIR/fixtures/pick-replies.json"
+pick_reply() { # SHAPE DIR ALIAS
+  jq -ce --arg shape "$1" --arg dir "$2" --arg alias "$3" \
+    '.[$shape].reply | objects
+     | .record.config_dir = $dir | .record.alias = $alias
+     | {protocol: "orch-runtime-v1", ok: true, result: .}' "$PICK_REPLIES"
+}
+CONTEXT_MARK_LINE=$(marks_reply context)
 # The same crossing with the succession the operator turned off, which the
 # judgement reports in its own reply and this hook reads nowhere else.
-OFF_MARK_LINE='{"key":"mark-reached","kind":"context","value":"612000","mark":"500000","succession":"off","headroom":"80"}'
-OFF_HEADROOM_LINE='{"key":"mark-reached","kind":"headroom","value":"4","mark":"10","succession":"off","account":"eclaude","resets":"2026-07-27T06:00:00Z"}'
-HEADROOM_MARK_LINE='{"key":"mark-reached","kind":"headroom","value":"4","mark":"10","succession":"on","account":"eclaude","resets":"2026-07-27T06:00:00Z"}'
-RATE_MARK_LINE='{"key":"mark-reached","kind":"rate","value":"30","mark":"30","succession":"on","account":"eclaude"}'
-BELOW_MARK_LINE='{"key":"below-mark","context":"room","tokens":100000,"window":1000000,"mark":"500000","succession":"on","headroom":"80"}'
+OFF_MARK_LINE=$(marks_reply context-off)
+OFF_HEADROOM_LINE=$(marks_reply headroom-off)
+HEADROOM_MARK_LINE=$(marks_reply headroom)
+RATE_MARK_LINE=$(marks_reply rate)
+BELOW_MARK_LINE=$(marks_reply below)
 
 # An overseer session: a repository on a branch no mailbox is named for, so the
 # lane rules find nothing, with the orch install and the judge beside the hook

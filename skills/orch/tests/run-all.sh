@@ -317,7 +317,7 @@ shard_of() { # BASE
   fi
   case "$1" in
     *open-terminal*) OWNING_SHARD=orch-terminal ;;
-    *oversee_succeed*|*oversee_report*) OWNING_SHARD=orch-oversee-succeed ;;
+    *oversee_report*) OWNING_SHARD=orch-oversee-succeed ;;
     # Merge-group run 39048736979 stopped orch-oversee at its Linux deadline
     # after 831s. The launch family leaves it for the dev pool.
     oversee_launch*) OWNING_SHARD=orch-dev ;;

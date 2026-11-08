@@ -128,6 +128,7 @@ fn the_walk_suites_planted_pick_replies_are_the_verbs_own_over_its_world() {
             min_headroom_pct: Some(trigger),
             binding_floor: true,
             host: None,
+            admit_unread_scope: false,
         };
         let answer = pick_fleet(&settings, &fleet, &host, &request, PICK_NOW);
         let verb = serde_json::to_value(Reply::ok(answer.reply())).unwrap();

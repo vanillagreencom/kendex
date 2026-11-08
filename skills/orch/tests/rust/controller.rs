@@ -475,6 +475,13 @@ fn a_succession_whose_preconditions_fail_never_retires() {
         if let Some(cwd) = row.cwd {
             let mut p = pending(runner.state_dir());
             p["cwd"] = json!(cwd);
+            p["handoff"] = json!(
+                runner
+                    .state_dir()
+                    .join("tmp/handoffs/OVERSEER-HANDOFF.md")
+                    .display()
+                    .to_string()
+            );
             let mut fleet = runner.fleet();
             fleet["overseer"]["pending"] = p.clone();
             runner.write_fleet(&fleet);
@@ -1039,7 +1046,7 @@ fn start_controller_opens_the_first_controller_and_refuses_over_a_live_one() {
     assert_eq!(overseer["server"], server.pid.to_string());
     let pane = overseer["pane"].as_str().unwrap().to_owned();
     assert_eq!(overseer["harness_pid"], server.pane_pid(&pane));
-    assert_eq!(overseer["launch_line"], "cd /r && claude --model opus");
+    assert_eq!(overseer["model"], "opus");
     assert_eq!(
         runner.stub_turns(runner.state_dir(), runner.state_dir()),
         vec!["START HERE".to_owned()],
@@ -1980,8 +1987,9 @@ fn the_successor_is_launched_from_its_typed_fields_with_the_account_routed() {
     let overseer = runner.fleet()["overseer"].clone();
     assert_eq!(overseer["generation"], 4);
     assert_eq!(
-        overseer["launch_line"], "cd /r && claude --model opus",
-        "the pending line is recorded for display"
+        overseer["launch_line"],
+        Value::Null,
+        "a released pending's display line is not published"
     );
 
     // Copilot under the bypass posture: the builder owns the permission
@@ -4349,6 +4357,25 @@ impl Launch {
             format!("{}\n", chosen["result"]["brief"].as_str().unwrap()),
         )
         .unwrap();
+        if self.predecessor.is_some() {
+            let body = intents.join("handoff-body.md");
+            std::fs::write(&body, "## State\nSession: live\n").unwrap();
+            let handoff = successor["handoff"]
+                .as_str()
+                .unwrap_or("tmp/handoffs/OVERSEER-HANDOFF.md");
+            let out = self
+                .runtime(&[
+                    "handoff",
+                    "--fleet",
+                    "--body",
+                    &body.display().to_string(),
+                    "--handoff",
+                    handoff,
+                ])
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "handoff: {}", stderr(&out));
+        }
         let request = if self.predecessor.is_some() {
             json!({
                 "op": op,
@@ -4406,67 +4433,6 @@ impl Launched {
     /// The intent a succession settled under `--effect-exit`.
     fn settled(&self) -> Value {
         reply(self.op())["result"]["settled"].clone()
-    }
-}
-
-/// A record's line as the hook's model-switch recovery reads it, through
-/// the row's checkout: `ol_command_read` gives the model, the handoff and
-/// the flags between the harness's own words and the brief; `env` is the
-/// `VAR=DIR` words ahead of the program.
-#[derive(Debug)]
-struct LineRead {
-    env: Vec<String>,
-    model: String,
-    handoff: String,
-    flags: Vec<String>,
-}
-
-const READ_LINE: &str = r#"set -euo pipefail
-. "$1/lib/lane-launch.sh"
-. "$1/lib/overseer-launch.sh"
-DEP_ERR=/dev/null
-launch_choice_shell_words "$3"
-prefix=()
-for word in "${LAUNCH_CHOICE_ARGV[@]}"; do
-  [[ "$word" == *=* ]] || break
-  prefix+=("$word")
-done
-ol_command_read "$2" "$3"
-IFS=$'\t'
-printf '%s\n' "$OL_COMMAND_MODEL" "$OL_COMMAND_HANDOFF" "${prefix[*]+${prefix[*]}}" "${OL_COMMAND_FLAGS[*]+${OL_COMMAND_FLAGS[*]}}"
-"#;
-
-fn read_line(scripts: &Path, bin: &Path, harness: &str, line: &str) -> LineRead {
-    let out = program("/bin/bash")
-        .args(["-c", READ_LINE, "_"])
-        .arg(scripts)
-        .args([harness, line])
-        .env("PATH", tool_path(&[bin]))
-        .output()
-        .unwrap();
-    assert!(
-        out.status.success(),
-        "ol_command_read {harness} {line}: {}",
-        stderr(&out)
-    );
-    let text = String::from_utf8(out.stdout).unwrap();
-    let mut rows = text.lines().map(str::to_owned);
-    let mut next = || rows.next().unwrap_or_default();
-    let split = |row: String| -> Vec<String> {
-        row.split('\t')
-            .filter(|w| !w.is_empty())
-            .map(str::to_owned)
-            .collect()
-    };
-    let model = next();
-    let handoff = next();
-    let env = split(next());
-    let flags = split(next());
-    LineRead {
-        env,
-        model,
-        handoff,
-        flags,
     }
 }
 
@@ -4932,27 +4898,13 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
     assert_eq!(overseer["generation"], 1, "{overseer}");
     assert_eq!(overseer["harness"], "codex", "{overseer}");
     assert_eq!(overseer["pane"], pane, "{overseer}");
-    let line = read_line(
-        &scripts,
-        &bin,
-        "codex",
-        overseer["launch_line"].as_str().unwrap(),
-    );
+    assert_eq!(overseer["model"], "gpt-6-astra", "{overseer}");
     assert_eq!(
-        line.model, "gpt-6-astra",
-        "the reconcile's publication carries the runtime's line: {overseer}"
-    );
-    assert_eq!(
-        line.env,
-        vec![format!("CODEX_HOME={}", account.display())],
+        overseer["account"],
+        account.display().to_string(),
         "{overseer}"
     );
-    assert!(
-        line.flags
-            .iter()
-            .any(|f| f == "--dangerously-bypass-approvals-and-sandbox"),
-        "{line:?}"
-    );
+    assert_eq!(overseer["permission"], "bypass", "{overseer}");
     assert_eq!(
         codex_turns(&account),
         vec![text.trim_end().to_owned()],
@@ -4969,8 +4921,7 @@ fn a_launchers_brief_outlives_it_for_the_reconcile_that_delivers_a_held_start() 
 /// path: the launch's steps with the Claude stub confirm in their own call,
 /// and the record carries the launch's directory, model, account and pane;
 /// the brief typed into the stub is the file the request named, which the
-/// launch left standing; the display line recorded reads, as the hook reads
-/// it, to the launch's model, account, permission word and handoff.
+/// launch left standing; the record names the launch's posture and handoff.
 #[test]
 fn a_first_launch_confirmed_in_its_call_records_the_launchers_identity() {
     let dir = tempfile::tempdir().unwrap();
@@ -5013,28 +4964,11 @@ fn a_first_launch_confirmed_in_its_call_records_the_launchers_identity() {
     );
     assert_eq!(overseer["model"], "fable", "{overseer}");
     assert_eq!(overseer["pane"], runner_pane(&server), "{overseer}");
-    let line = read_line(
-        &scripts,
-        &bin,
-        "claude",
-        overseer["launch_line"].as_str().unwrap(),
-    );
-    assert_eq!(line.model, "fable", "the launched model: {overseer}");
     assert_eq!(
-        line.handoff, "tmp/handoffs/OVERSEER-HANDOFF.md",
+        overseer["handoff"], "tmp/handoffs/OVERSEER-HANDOFF.md",
         "{overseer}"
     );
-    assert_eq!(
-        line.env,
-        vec![format!("CLAUDE_CONFIG_DIR={}", account.display())],
-        "the account the launch spends: {overseer}"
-    );
-    assert!(
-        line.flags
-            .iter()
-            .any(|f| f == "--dangerously-skip-permissions"),
-        "the posture the launch runs under: {line:?}"
-    );
+    assert_eq!(overseer["permission"], "bypass", "{overseer}");
     let intent = &fleet["intents"][0];
     assert_eq!(intent["outcome"], "confirmed", "{intent}");
     let brief = Path::new(intent["phase"]["brief"].as_str().unwrap());
@@ -5051,23 +4985,11 @@ fn a_first_launch_confirmed_in_its_call_records_the_launchers_identity() {
     stop_live_watch(&runner, &state);
 }
 
-/// The real installed hook's `PostModelSwitch` for the overseer `record`
-/// names, run as the harness runs it from `work` under `home`: the hook
-/// copied into the checkout's hook directory, the orch and mailbox packages
-/// linked under its install, and `oversee-succeed`, the recovery the hook
-/// starts detached once it has read the record's line, replaced by a no-op,
-/// since that succession would outlive the row and is not what the rows
-/// here claim. Returns the hook's output and the check the record carries
-/// after it.
-fn model_switch(
-    runner: &Runner,
-    scripts: &Path,
-    bin: &Path,
-    home: &Path,
-    work: &Path,
-    record: &Value,
-) -> (std::process::Output, Value) {
-    use std::io::Write;
+/// The real hook installed in the checkout `work` as a kendex install has
+/// it: a repository, the hook copied into its hook directory, the orch
+/// checkout `scripts` and the mailbox package linked under its install.
+/// Returns the hook's path.
+fn install_hook(scripts: &Path, work: &Path) -> std::path::PathBuf {
     use std::os::unix::fs::symlink;
     let git = program("git")
         .args(["init", "-q"])
@@ -5092,9 +5014,28 @@ fn model_switch(
         &hook,
     )
     .unwrap();
-    let succeed = scripts.join("oversee-succeed");
-    std::fs::remove_file(&succeed).unwrap();
-    write_executable(&succeed, "#!/bin/sh\nexit 0\n");
+    hook
+}
+
+/// The real installed hook's `PostModelSwitch` for the overseer `record`
+/// names, run as the harness runs it from `work` under `home` and the
+/// fleet's environment `env` ([`install_hook`]'s install, made once per
+/// checkout). Returns the hook's output and the check the record carries
+/// after it.
+fn model_switch(
+    runner: &Runner,
+    scripts: &Path,
+    env: &[(String, String)],
+    home: &Path,
+    work: &Path,
+    record: &Value,
+) -> (std::process::Output, Value) {
+    let installed = work.join(".claude/hooks/lane-mail-check.sh");
+    let hook = if installed.exists() {
+        installed
+    } else {
+        install_hook(scripts, work)
+    };
     let session = record["session_id"].as_str().unwrap();
     let payload = json!({
         "session_id": session,
@@ -5102,14 +5043,34 @@ fn model_switch(
         "to_model": "claude-sonnet-5-5",
         "transcript_path": project_dir(home, work).join(format!("{session}.jsonl")),
     });
-    let mut child = program("/bin/bash")
-        .arg(&hook)
+    let out = run_hook(runner, &hook, env, home, work, record, &payload);
+    (out, runner.fleet()["overseer"]["model_check"].clone())
+}
+
+/// The installed `hook` run as the harness runs it for the overseer
+/// `record` names, from `work` under `home` and `env`, `payload` on its
+/// standard input, inside the record's pane on the runner's server.
+fn run_hook(
+    runner: &Runner,
+    hook: &Path,
+    env: &[(String, String)],
+    home: &Path,
+    work: &Path,
+    record: &Value,
+    payload: &Value,
+) -> std::process::Output {
+    use std::io::Write;
+    let mut child = program("/bin/bash");
+    for (name, value) in env {
+        child.env(name, value);
+    }
+    let mut child = child
+        .arg(hook)
         .current_dir(work)
         .env("ORCH_STATE_DIR", runner.state_dir())
         .env("CLAUDE_CONFIG_DIR", home)
         .env("TMUX", format!("{},0,0", runner.server_socket.display()))
         .env("TMUX_PANE", record["pane"].as_str().unwrap())
-        .env("PATH", tool_path(&[bin]))
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -5121,17 +5082,55 @@ fn model_switch(
         .unwrap()
         .write_all(payload.to_string().as_bytes())
         .unwrap();
-    let out = child.wait_with_output().unwrap();
-    (out, runner.fleet()["overseer"]["model_check"].clone())
+    child.wait_with_output().unwrap()
 }
 
 const MODEL_SWITCHED: &str = "lane-mail-check: model-switched=fable observed=claude-sonnet-5-5";
 
-/// The real `start-controller` publishes the line the runtime composes for
-/// the controller it launched, and the real hook's `PostModelSwitch` reads
-/// the model and the handoff off it.
+/// The recovery the real hook asked after a model switch, followed to its
+/// settled outcome: the transfer of generation `generation` confirmed, the
+/// successor published on the model the predecessor was launched with
+/// (`launched`), not the one it switched to, on the same account, under the
+/// snapshot the handoff verb wrote over the predecessor's: one `Start here`
+/// line at that generation, the recovery's own words below it.
+fn recovered(runner: &Runner, work: &Path, generation: u64, launched: &str, account: &Value) {
+    let intent =
+        runner.wait_intent_settled(&format!("request-transfer:overseer:{generation}:"), SETTLE);
+    assert_eq!(intent["outcome"], "confirmed", "{intent}");
+    let overseer = runner.fleet()["overseer"].clone();
+    assert_eq!(overseer["generation"], generation + 1, "{overseer}");
+    assert_eq!(
+        overseer["model"], launched,
+        "the launched model: {overseer}"
+    );
+    assert_eq!(&overseer["account"], account, "{overseer}");
+    let snapshot = std::fs::read_to_string(work.join("tmp/handoffs/OVERSEER-HANDOFF.md")).unwrap();
+    let headers: Vec<&str> = snapshot
+        .lines()
+        .filter(|l| l.starts_with("Start here:"))
+        .collect();
+    assert_eq!(headers.len(), 1, "{snapshot}");
+    assert!(
+        headers[0].ends_with(&format!(" generation={generation}")),
+        "{snapshot}"
+    );
+    assert!(
+        snapshot.contains(&format!(
+            "The predecessor changed from {launched} to claude-sonnet-5-5."
+        )),
+        "{snapshot}"
+    );
+}
+
+/// A model switch after a first launch through the fence: the real hook's
+/// `PostModelSwitch` acquires the check and recovers the controller through
+/// the runtime, the real `successor --recover`, `handoff` and
+/// `request-transfer`, onto the model the record says it was launched with.
+/// A second switch, on the recovered controller, whose successor exits
+/// before it comes up is said by the transfer's own outcome, failed, never
+/// by its admission, the controller standing.
 #[test]
-fn a_model_switch_after_a_first_launch_through_the_fence_is_read_off_the_records_line() {
+fn a_model_switch_after_a_first_launch_recovers_the_launched_model_through_the_typed_transfer() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let runner = suite_runner(&server, "stub-confirm");
@@ -5143,7 +5142,7 @@ fn a_model_switch_after_a_first_launch_through_the_fence_is_read_off_the_records
     github_skill_under(&work);
     std::fs::create_dir(&account).unwrap();
     let scripts = launcher_checkout(&runner, &bin, &mut env, &account, "claude");
-    let launched = workflow_launch(
+    let launch = workflow_launch(
         &runner,
         &scripts,
         &bin,
@@ -5152,8 +5151,8 @@ fn a_model_switch_after_a_first_launch_through_the_fence_is_read_off_the_records
         "claude",
         "fable",
         &stub("stub-confirm"),
-    )
-    .run();
+    );
+    let launched = launch.run();
     let started = launched.started();
     assert_eq!(
         started["outcome"],
@@ -5162,25 +5161,194 @@ fn a_model_switch_after_a_first_launch_through_the_fence_is_read_off_the_records
         stderr(launched.op())
     );
     let overseer = runner.fleet()["overseer"].clone();
-    let (out, check) = model_switch(&runner, &scripts, &bin, &account, &work, &overseer);
+    let (out, check) = model_switch(&runner, &scripts, &launch.env, &account, &work, &overseer);
     assert_eq!(
         check["outcome"],
         "switched",
-        "the hook read the record's line: {check}\n{}\n{}",
+        "{check}\n{}\n{}",
         String::from_utf8_lossy(&out.stdout),
         stderr(&out)
     );
     assert_eq!(check["launched"], "fable", "{check}");
     assert_eq!(check["observed"], "claude-sonnet-5-5", "{check}");
-    assert_eq!(check["cause"], "", "{check}");
     assert_eq!(
         stderr(&out).lines().next().unwrap_or_default(),
         MODEL_SWITCHED,
-        "the overseer's notice"
+        "the overseer's notice: {}",
+        stderr(&out)
+    );
+    recovered(&runner, &work, 1, "fable", &overseer["account"]);
+    let controller = runner.fleet()["overseer"].clone();
+    let mut failing: Vec<(String, String)> = launch
+        .env
+        .iter()
+        .filter(|(name, _)| name != "ORCH_HARNESS_BINARIES")
+        .cloned()
+        .collect();
+    failing.push((
+        "ORCH_HARNESS_BINARIES".to_owned(),
+        format!("claude={}", stub("stub-fail").display()),
+    ));
+    let home = controller["home"]
+        .as_str()
+        .map_or_else(|| account.clone(), std::path::PathBuf::from);
+    let (out, _) = model_switch(&runner, &scripts, &failing, &home, &work, &controller);
+    let context: Value = serde_json::from_slice(&out.stdout).unwrap_or(Value::Null);
+    assert_eq!(
+        context["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .and_then(|text| text.lines().next())
+            .unwrap_or_default(),
+        "lane-mail-check: model-unavailable=recovery-failed",
+        "the transfer's own outcome, handed to the session: {}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        stderr(&out)
+    );
+    let intent = runner.wait_intent_settled("request-transfer:overseer:2:", SETTLE);
+    assert_eq!(intent["outcome"], "failed", "{intent}");
+    assert_eq!(
+        runner.fleet()["overseer"]["session_id"],
+        controller["session_id"],
+        "the controller stands"
     );
     let state = runner
         .state_dir()
         .join(orch_runtime::state::FLEET_FILE_NAME);
+    stop_live_watch(&runner, &state);
+}
+
+/// The real `marks` verb through the real installed hook: at a launched
+/// controller's turn end the hook asks the runtime's judge on the reading
+/// it took off the session's transcript and acts on the reply's key. A
+/// reading past the context cap is refused with the figure the judge read
+/// and the succession route named; a reading under the cap whose window
+/// the transcript does not name is the judge's `mark-unmeasured
+/// kind=context`, reported with the judge's own line and the turn passed.
+#[test]
+fn the_installed_hook_acts_on_the_real_marks_verbs_reply_at_a_controllers_turn_end() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let (bin, mut env) = watch_world(runner.state_dir());
+    let work = runner.state_dir().join("work");
+    let account = runner.state_dir().join("claude-account");
+    std::fs::create_dir(&work).unwrap();
+    github_skill_under(&work);
+    std::fs::create_dir(&account).unwrap();
+    let scripts = launcher_checkout(&runner, &bin, &mut env, &account, "claude");
+    let launch = workflow_launch(
+        &runner,
+        &scripts,
+        &bin,
+        &env,
+        &work,
+        "claude",
+        "fable",
+        &stub("stub-confirm"),
+    );
+    let launched = launch.run();
+    let started = launched.started();
+    assert_eq!(
+        started["outcome"],
+        "confirmed",
+        "{started}\n{}",
+        stderr(launched.op())
+    );
+    let overseer = runner.fleet()["overseer"].clone();
+    let session = overseer["session_id"].as_str().unwrap().to_owned();
+    let transcript = project_dir(&account, &work).join(format!("{session}.jsonl"));
+    std::fs::create_dir_all(transcript.parent().unwrap()).unwrap();
+    let hook = install_hook(&scripts, &work);
+    let mut hook_env = launch.env.clone();
+    hook_env.push(("ORCH_OVERSEER_WALL_MINUTES".to_owned(), "0".to_owned()));
+    // The controller's wake, armed as the turn-end check asks: a follower
+    // of the live watch's log in a waiter under the claim's checkout, in a
+    // process group of its own the row ends.
+    let state = runner
+        .state_dir()
+        .join(orch_runtime::state::FLEET_FILE_NAME);
+    let claim =
+        orch_runtime::watch::claim::read(&orch_runtime::watch::claim::Paths::of(&state).unwrap())
+            .unwrap()
+            .expect("the launch claimed the fleet state");
+    let waiter = Path::new(&claim.cwd).join("tmp/waiter.fixture");
+    std::fs::create_dir_all(&waiter).unwrap();
+    struct Group(std::process::Child);
+    impl Drop for Group {
+        fn drop(&mut self) {
+            let _ = program("kill")
+                .args(["-KILL", "--", &format!("-{}", self.0.id())])
+                .status();
+            let _ = self.0.wait();
+        }
+    }
+    let _wake = {
+        use std::os::unix::process::CommandExt;
+        Group(
+            program("sh")
+                .args(["-c", "sleep 600; :", "follow.sh"])
+                .arg(waiter.join("watch.log"))
+                .process_group(0)
+                .spawn()
+                .unwrap(),
+        )
+    };
+    let stop = |tokens: u64| {
+        let line = json!({"type": "assistant", "message": {"model": "claude-opus-5-5", "usage": {
+            "input_tokens": 1, "cache_read_input_tokens": tokens - 8,
+            "cache_creation_input_tokens": 0, "output_tokens": 7}}});
+        std::fs::write(&transcript, format!("{line}\n")).unwrap();
+        let payload = json!({
+            "session_id": session,
+            "hook_event_name": "Stop",
+            "stop_hook_active": false,
+            "transcript_path": transcript,
+        });
+        run_hook(
+            &runner, &hook, &hook_env, &account, &work, &overseer, &payload,
+        )
+    };
+    let due = stop(612_000);
+    assert_eq!(
+        (
+            due.status.code(),
+            stderr(&due).lines().next().unwrap_or_default().to_owned()
+        ),
+        (Some(2), "lane-mail-check: context=612000".to_owned()),
+        "{}",
+        stderr(&due)
+    );
+    assert!(
+        stderr(&due).contains("orch-runtime successor --fleet"),
+        "the refusal names the runtime's succession: {}",
+        stderr(&due)
+    );
+    let unnamed = stop(1_000);
+    let said = stderr(&unnamed);
+    assert_eq!(
+        (
+            unnamed.status.code(),
+            said.lines().next().unwrap_or_default()
+        ),
+        (Some(0), "lane-mail-check: marks=unmeasured"),
+        "{said}"
+    );
+    let judged: Value = serde_json::from_str(
+        said.lines()
+            .find(|l| l.starts_with('{'))
+            .unwrap_or_else(|| panic!("the judge's own line: {said}")),
+    )
+    .unwrap();
+    assert_eq!(
+        (&judged["key"], &judged["kind"], &judged["reason"]),
+        (
+            &json!("mark-unmeasured"),
+            &json!("context"),
+            &json!("window-unnamed")
+        ),
+        "{said}"
+    );
     stop_live_watch(&runner, &state);
 }
 
@@ -5609,6 +5777,7 @@ fn an_adopted_controller_with_its_own_succession_command_refuses_request_transfe
     assert_eq!(answer["ok"], true, "{answer}");
     let overseer = runner.fleet()["overseer"].clone();
     assert_eq!(overseer["succession"], command, "{overseer}");
+    runner.snapshot(&runner.state_dir().join("tmp/handoffs/OVERSEER-HANDOFF.md"));
     let before = runner.fleet();
     for cause in ["live", "dead"] {
         let request = json!({
@@ -5809,10 +5978,16 @@ impl MarksWorld {
     /// The fleet state whose controller record names `account` on the
     /// Claude harness in this world's root.
     fn write_fleet(&self, account: &str) {
+        self.write_fleet_on(json!("claude"), account);
+    }
+
+    /// [`MarksWorld::write_fleet`] on `harness`, `null` for a record naming
+    /// none.
+    fn write_fleet_on(&self, harness: Value, account: &str) {
         let fleet = json!({
             "issue_id": "oversee", "triaged": [], "launch_queue": [], "lanes": [], "fleet_log": [],
             "overseer": {
-                "generation": 3, "harness": "claude", "account": account, "home": account,
+                "generation": 3, "harness": harness, "account": account, "home": account,
                 "model": "opus", "effort": "high", "cwd": self.path().display().to_string(),
                 "server": "1", "pane": "%1", "permission": "bypass",
             },
@@ -5850,6 +6025,30 @@ impl MarksWorld {
         let answer = reply(&out);
         assert_eq!(answer["ok"], json!(true), "{}", stderr(&out));
         answer["result"].clone()
+    }
+
+    /// The question a Claude lane's turn end asks the account judge about
+    /// its own home `dir` under `extra`, as the hook spells it: `accounts
+    /// pick --fleet --lane DIR --harness claude --min-headroom-pct 3`. The
+    /// whole reply.
+    fn pick_lane(&self, dir: &str, extra: &[(&str, &str)]) -> Value {
+        let out = self.run(
+            &[
+                "accounts",
+                "pick",
+                "--fleet",
+                "--lane",
+                dir,
+                "--harness",
+                "claude",
+                "--min-headroom-pct",
+                "3",
+            ],
+            extra,
+        );
+        let answer = reply(&out);
+        assert_eq!(answer["ok"], json!(true), "{}", stderr(&out));
+        answer
     }
 }
 
@@ -5928,6 +6127,519 @@ fn the_marks_judge_reads_the_context_mark_before_the_account_and_the_rest_below_
     assert_eq!(alone["headroom"], json!("90"));
 }
 
+/// The shipped mailbox reader, run under an environment of its own rooted
+/// at `root`, so the asks a row plants are the reader's own writes.
+fn real_mail(root: &Path) -> std::path::PathBuf {
+    let path = root.join("real-lane-mail");
+    let actual = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../mailbox/scripts/lane-mail")
+        .canonicalize()
+        .unwrap();
+    write_executable(
+        &path,
+        format!(
+            "#!/bin/sh\nexec env -i HOME='{}' PATH='{}' LANG=C.UTF-8 TMPDIR='{}' GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CEILING_DIRECTORIES='{}' '{}' \"$@\"\n",
+            root.join("home").display(),
+            tool_path(&[]),
+            std::env::temp_dir().display(),
+            root.display(),
+            actual.display()
+        ),
+    );
+    for args in [
+        vec!["init", "--quiet"],
+        vec!["config", "gc.auto", "0"],
+        vec!["config", "maintenance.auto", "false"],
+    ] {
+        let out = program("git")
+            .arg("-C")
+            .arg(root)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", stderr(&out));
+    }
+    path
+}
+
+/// The value a refusal names for `field`; the reply carries its fields as
+/// name and value pairs.
+fn refused_field(answer: &Value, field: &str) -> String {
+    answer["refusal"]["fields"]
+        .as_array()
+        .and_then(|pairs| pairs.iter().find(|p| p[0] == json!(field)))
+        .and_then(|p| p[1].as_str())
+        .unwrap_or("absent")
+        .to_owned()
+}
+
+/// The snapshot carries the fleet record's generation in its `Start here`
+/// header and, in its State section, every open ask a running lane's own
+/// mailbox holds, read through the shipped reader: a parked lane's mailbox
+/// is not read, and a body's own spelling of the line is replaced. The
+/// takeover's read of the same asks answers them. Every body the writer
+/// refuses leaves the installed snapshot as it stood.
+#[test]
+fn the_handoff_snapshot_carries_the_generation_and_every_open_lane_ask_from_the_mailboxes() {
+    let world = MarksWorld::new();
+    let root = world.path().display().to_string();
+    let mail = real_mail(world.path());
+    let fleet = json!({
+        "issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [],
+        "lanes": [
+            {"item": "KEN-6", "status": "running", "mail_root": root},
+            {"item": "KEN-8", "status": "parked", "mail_root": root},
+        ],
+        "overseer": {"generation": 7, "harness": "claude", "server": "1", "pane": "%1"},
+    });
+    std::fs::write(
+        world.path().join(orch_runtime::state::FLEET_FILE_NAME),
+        serde_json::to_string(&fleet).unwrap(),
+    )
+    .unwrap();
+    for (item, text) in [("KEN-6", "Which schema?"), ("KEN-8", "Parked question")] {
+        let file = world.path().join(format!("{item}.txt"));
+        std::fs::write(&file, text).unwrap();
+        let asked = program(&mail)
+            .current_dir(world.path())
+            .args(["ask", "--item", item, "--file"])
+            .arg(&file)
+            .output()
+            .unwrap();
+        assert!(asked.status.success(), "{}", stderr(&asked));
+    }
+    let lane_mail = mail.display().to_string();
+    let extra = [("LANE_MAIL_CLI", lane_mail.as_str())];
+    let listed = world.run(&["handoff", "--fleet", "--asks"], &extra);
+    let listed = reply(&listed)["result"]["asks"].clone();
+    assert_eq!(listed.as_array().map(Vec::len), Some(1), "{listed}");
+    assert_eq!(listed[0]["lane"], json!("KEN-6"), "{listed}");
+    assert_eq!(
+        listed[0]["asks"][0]["text"],
+        json!("Which schema?"),
+        "{listed}"
+    );
+    let id = listed[0]["asks"][0]["id"].as_str().unwrap().to_owned();
+    let body = world.path().join("body.md");
+    std::fs::write(
+        &body,
+        "## State\nSession: live\nOpen lane asks: none\n\n## Workarounds\nnone\n",
+    )
+    .unwrap();
+    let handoff = world.path().join("tmp/handoffs/H.md");
+    let handoff_arg = handoff.display().to_string();
+    let body_arg = body.display().to_string();
+    let write = |body: &str| {
+        world.run(
+            &[
+                "handoff",
+                "--fleet",
+                "--body",
+                body,
+                "--handoff",
+                &handoff_arg,
+            ],
+            &extra,
+        )
+    };
+    let out = write(&body_arg);
+    assert_eq!(reply(&out)["ok"], json!(true), "{}", stderr(&out));
+    let text = std::fs::read_to_string(&handoff).unwrap();
+    let mut lines = text.lines();
+    let header = lines.next().unwrap();
+    assert!(
+        header.starts_with("Start here: ") && header.ends_with(" generation=7"),
+        "{text}"
+    );
+    let line = format!("Open lane asks: {id} (KEN-6)");
+    assert_eq!(
+        text.lines()
+            .filter(|l| l.starts_with("Open lane asks:"))
+            .collect::<Vec<_>>(),
+        vec![line.as_str()],
+        "{text}"
+    );
+    assert!(text.contains("## State\nOpen lane asks:"), "{text}");
+    for (name, content, key, reason) in [
+        (
+            "header",
+            "Start here: x generation=1\n## State\n",
+            "handoff-body-invalid",
+            Some("header"),
+        ),
+        (
+            "ruling",
+            "## Progress log\n- Ruling: merge\n",
+            "handoff-body-invalid",
+            Some("progress-log-ruling"),
+        ),
+        (
+            "filing",
+            "## Progress log\nKEN-12 filed for the gap\n",
+            "handoff-body-invalid",
+            Some("progress-log-filing"),
+        ),
+        (
+            "verifying",
+            "## Progress log\nbox 3 passed\n",
+            "handoff-body-invalid",
+            Some("progress-log-verifying"),
+        ),
+        (
+            "empty",
+            "",
+            "handoff-body-invalid",
+            Some("not-nonempty-regular"),
+        ),
+    ] {
+        let file = world.path().join(format!("{name}.md"));
+        std::fs::write(&file, content).unwrap();
+        let out = write(&file.display().to_string());
+        let answer = reply(&out);
+        assert_eq!(answer["refusal"]["key"], json!(key), "{name}: {answer}");
+        if let Some(reason) = reason {
+            assert_eq!(refused_field(&answer, "reason"), reason, "{name}: {answer}");
+        }
+        assert_eq!(std::fs::read_to_string(&handoff).unwrap(), text, "{name}");
+    }
+    let installed = write(&handoff_arg);
+    assert_eq!(
+        refused_field(&reply(&installed), "reason"),
+        "installed-handoff",
+        "{}",
+        stderr(&installed)
+    );
+    let recovery = world.path().join("recovery.md");
+    std::fs::write(&recovery, "The predecessor changed models.\n").unwrap();
+    let kept = world.run(
+        &[
+            "handoff",
+            "--fleet",
+            "--body",
+            &recovery.display().to_string(),
+            "--handoff",
+            &handoff_arg,
+            "--keep-prior",
+        ],
+        &extra,
+    );
+    assert_eq!(reply(&kept)["ok"], json!(true), "{}", stderr(&kept));
+    let after = std::fs::read_to_string(&handoff).unwrap();
+    assert_eq!(
+        after
+            .lines()
+            .filter(|l| l.starts_with("Start here:"))
+            .count(),
+        1,
+        "{after}"
+    );
+    assert!(
+        after.contains("Session: live") && after.ends_with("The predecessor changed models.\n"),
+        "{after}"
+    );
+    let mut stale = fleet.clone();
+    stale["overseer"]
+        .as_object_mut()
+        .unwrap()
+        .remove("generation");
+    std::fs::write(
+        world.path().join(orch_runtime::state::FLEET_FILE_NAME),
+        serde_json::to_string(&stale).unwrap(),
+    )
+    .unwrap();
+    let unstamped = reply(&write(&body_arg));
+    assert_eq!(
+        unstamped["refusal"]["key"],
+        json!("handoff-stale"),
+        "{unstamped}"
+    );
+    assert_eq!(refused_field(&unstamped, "found"), "none", "{unstamped}");
+}
+
+/// A live succession is admitted only on a snapshot of the generation its
+/// requester saw: one written by the real verb passes the admission to the
+/// transition (whose compare-and-swap then refuses the pane the requester
+/// named), and a handoff with no header, another generation or two headers
+/// refuses `handoff-stale` naming what it found, with nothing written. A
+/// dead recovery asks no snapshot.
+#[test]
+fn a_live_succession_is_admitted_only_on_its_generations_snapshot() {
+    let world = MarksWorld::new();
+    let root = world.path().display().to_string();
+    let fleet = json!({
+        "issue_id": "oversee", "triaged": [], "launch_queue": [], "fleet_log": [], "lanes": [],
+        "overseer": {"generation": 7, "harness": "claude", "server": "1", "pane": "%1", "cwd": root},
+    });
+    let state = world.path().join(orch_runtime::state::FLEET_FILE_NAME);
+    std::fs::write(&state, serde_json::to_string(&fleet).unwrap()).unwrap();
+    let handoff = world.path().join("tmp/handoffs/OVERSEER-HANDOFF.md");
+    let body = world.path().join("body.md");
+    std::fs::write(&body, "## State\nSession: live\n").unwrap();
+    let written = world.run(
+        &[
+            "handoff",
+            "--fleet",
+            "--body",
+            &body.display().to_string(),
+            "--handoff",
+            &handoff.display().to_string(),
+        ],
+        &[],
+    );
+    assert_eq!(reply(&written)["ok"], json!(true), "{}", stderr(&written));
+    let current = std::fs::read_to_string(&handoff).unwrap();
+    let ask = |cause: &str| {
+        let request = json!({
+            "op": "request-transfer",
+            "cause": cause,
+            "expected": {"server": "1", "pane": "%2", "generation": 7, "cwd": root},
+            "successor": {"harness": "claude", "cwd": root},
+        });
+        let file = world.path().join("request.json");
+        std::fs::write(&file, request.to_string()).unwrap();
+        reply(&world.run(
+            &["op", "--fleet", "--request", &file.display().to_string()],
+            &[],
+        ))
+    };
+    let admitted = ask("live");
+    assert_eq!(
+        admitted["refusal"]["key"],
+        json!("overseer-changed"),
+        "{admitted}"
+    );
+    let before = std::fs::read_to_string(&state).unwrap();
+    for (name, text, found) in [
+        ("absent", None, "none"),
+        (
+            "another generation",
+            Some("Start here: 2026-01-29T15:20:00Z generation=6\n"),
+            "6",
+        ),
+        (
+            "two headers",
+            Some("Start here: a generation=7\nStart here: b generation=7\n"),
+            "several",
+        ),
+    ] {
+        std::fs::write(&state, &before).unwrap();
+        match text {
+            Some(text) => std::fs::write(&handoff, text).unwrap(),
+            None => std::fs::remove_file(&handoff).unwrap(),
+        }
+        let refused = ask("live");
+        assert_eq!(
+            refused["refusal"]["key"],
+            json!("handoff-stale"),
+            "{name}: {refused}"
+        );
+        assert_eq!(refused_field(&refused, "expected"), "7", "{name}");
+        assert_eq!(refused_field(&refused, "found"), found, "{name}");
+        assert_eq!(
+            std::fs::read_to_string(&state).unwrap(),
+            before,
+            "{name}: nothing written"
+        );
+        let dead = ask("dead");
+        assert_eq!(
+            dead["refusal"]["key"],
+            json!("overseer-changed"),
+            "{name}: {dead}"
+        );
+    }
+    std::fs::write(&handoff, current).unwrap();
+}
+
+/// The replies the hook suites plant for the judge (`hooks/tests/fixtures/
+/// marks-replies.json`) are the `marks` verb's own, each answered here for
+/// the inputs it records: through the real executable, and the memory mark
+/// through the judge itself over a fixture cgroup reading. Only `resets`, a
+/// time the planted account's reset stands at, is compared by presence.
+#[test]
+fn the_hook_suites_plant_the_marks_verbs_own_replies() {
+    use agent_runtime::process::{Identity, Memory};
+    use agent_runtime::reading::Reading;
+    use orch_runtime::watch::overseer::{Caller, MarksAsk, judge_marks};
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../hooks/tests/fixtures/marks-replies.json");
+    let planted: Value = serde_json::from_str(&std::fs::read_to_string(&fixture).unwrap()).unwrap();
+    let comparable = |reply: &Value| {
+        let mut reply = reply.clone();
+        if let Some(resets) = reply.get_mut("resets") {
+            *resets = json!("present");
+        }
+        reply
+    };
+    let mut wrong = serde_json::Map::new();
+    for (name, case) in planted.as_object().unwrap() {
+        let inputs = &case["inputs"];
+        let mut world = MarksWorld::new();
+        match inputs["used"].as_u64() {
+            Some(used) => {
+                let mut account = measured_account("eclaude", used);
+                if let Some(rate) = inputs["rate"].as_f64() {
+                    account["usage_rate_pct_per_min"] = json!(rate);
+                }
+                world.plant(None, &[account]);
+                world.write_fleet(&world.dir("eclaude"));
+            }
+            None => world.write_fleet("/home/nobody/.claude"),
+        }
+        let env: Vec<(String, String)> = inputs["env"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_owned()))
+            .collect();
+        let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let answered = match inputs["memory"].as_array() {
+            None => {
+                let mut args = Vec::new();
+                if let Some(context) = inputs["context"].as_str() {
+                    args.extend(["--context", context]);
+                }
+                world.marks(&args, &env)
+            }
+            Some(memory) => {
+                let roots = orch_runtime::settings::Roots {
+                    project: world.path().to_path_buf(),
+                    common: world.path().to_path_buf(),
+                };
+                let mut environment = world.environment();
+                environment.extend(env.iter().map(|(k, v)| ((*k).into(), (*v).into())));
+                let settings = orch_runtime::settings::load(
+                    &roots,
+                    &environment,
+                    &orch_runtime::settings::Flags {
+                        state_dir: Some(world.path().to_path_buf()),
+                        private_env: false,
+                    },
+                )
+                .unwrap();
+                let host = orch_runtime::ops::Host::kernel(settings.lane_cap);
+                let reading = Reading::Live(Some(Memory {
+                    current: memory[0].as_u64().unwrap(),
+                    max: memory[1].as_u64().unwrap(),
+                    oom_kill: None,
+                }));
+                let read = |_: &Identity| reading.clone();
+                let caller = Caller {
+                    harness: Some(agent_runtime::harness::Harness::Claude),
+                    account: Some(world.dir("eclaude")),
+                    home: Some(world.dir("eclaude")),
+                    model: Some("opus".to_owned()),
+                    cwd: Some(world.path().display().to_string()),
+                    identity: Some(Identity {
+                        pid: 4242,
+                        start: "ticks:1".to_owned(),
+                    }),
+                    ..Caller::default()
+                };
+                judge_marks(&MarksAsk {
+                    settings: &settings,
+                    fleet_path: &world.path().join(orch_runtime::state::FLEET_FILE_NAME),
+                    host: &host,
+                    caller: &caller,
+                    context: None,
+                    memory: &read,
+                    now: now_secs(),
+                })
+                .unwrap()
+                .reply()
+            }
+        };
+        if comparable(&case["reply"]) != comparable(&answered) {
+            wrong.insert(name.clone(), answered);
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "planted replies the verb does not answer: {}",
+        Value::Object(wrong)
+    );
+}
+
+/// An account the owner's `ORCH_LANE_EXCLUDE` names is kept from every
+/// lane, never from its overseer: the real `marks` verb reads the excluded
+/// home's figures for the controller seated on it, and the real `accounts
+/// pick --lane` refuses the same home to a lane by its word, with the
+/// figures it measured.
+#[test]
+fn an_excluded_home_is_measured_for_its_overseers_marks_and_refused_to_a_lane_pick() {
+    let mut world = MarksWorld::new();
+    world.plant(None, &[measured_account("eclaude", 20)]);
+    let home = world.dir("eclaude");
+    world.write_fleet(&home);
+    let exclude = [("ORCH_LANE_EXCLUDE", "eclaude")];
+    let marks = world.marks(&["--context", "100000:1000000"], &exclude);
+    assert_eq!(marks["key"], json!("below-mark"), "{marks}");
+    assert_eq!(
+        marks["headroom"],
+        json!("80"),
+        "the overseer reads its excluded home's figures: {marks}"
+    );
+    let pick = world.pick_lane(&home, &exclude)["result"].clone();
+    assert_eq!(pick["answer"], json!("excluded"), "{pick}");
+    assert_eq!(pick["exit"], json!(3), "{pick}");
+    assert_eq!(pick["record"]["excluded"], json!(true), "{pick}");
+    assert_eq!(
+        pick["record"]["headroom_pct"],
+        json!(80),
+        "the refused home is measured: {pick}"
+    );
+}
+
+/// The account judge's replies the hook suites plant for a lane's turn end
+/// (`hooks/tests/fixtures/pick-replies.json`) are the real `accounts pick
+/// --lane`'s, each answered here for the inputs it records: a measured
+/// Claude home `used` percent spent, the provider's row where `host` names
+/// one (`reserved` its reserve word), under `env`, compared in
+/// [`planted_form`]. A shape whose inputs name a `row` is that row's to
+/// answer.
+#[test]
+fn the_hook_suites_plant_the_account_judges_own_replies() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../hooks/tests/fixtures/pick-replies.json");
+    let planted: Value = serde_json::from_str(&std::fs::read_to_string(&fixture).unwrap()).unwrap();
+    let mut wrong = serde_json::Map::new();
+    for (name, case) in planted.as_object().unwrap() {
+        let inputs = &case["inputs"];
+        if inputs["row"].is_string() {
+            continue;
+        }
+        let mut world = MarksWorld::new();
+        let mut account = measured_account("eclaude", inputs["used"].as_u64().unwrap());
+        let host = inputs["host"].as_str();
+        let dir = match host {
+            Some(_) => {
+                account["measured_through"] = json!("host");
+                account["reserved"] = inputs["reserved"].clone();
+                account["config_dir"].as_str().unwrap().to_owned()
+            }
+            None => world.dir("eclaude"),
+        };
+        world.plant(host, &[account]);
+        world.write_fleet("/home/nobody/.claude");
+        let env: Vec<(String, String)> = inputs["env"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(k, v)| (k.clone(), v.as_str().unwrap().to_owned()))
+            .collect();
+        let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let answered = world.pick_lane(&dir, &env)["result"].clone();
+        let home = world.path().join("home");
+        if planted_form(&case["reply"], Path::new("/home/me")) != planted_form(&answered, &home) {
+            wrong.insert(name.clone(), spelled_home(&answered, &home));
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "planted replies the judge does not answer: {}",
+        Value::Object(wrong)
+    );
+}
+
 #[test]
 fn a_memory_mark_set_to_zero_is_no_mark_rather_than_one_every_pass_crosses() {
     let dir = tempfile::tempdir().unwrap();
@@ -5986,7 +6698,7 @@ fn a_succession_key_naming_no_command_leaves_the_transfer_unowned_as_the_watch_r
         fleet["overseer"]["succession"] = succession.clone();
         runner.write_fleet(&fleet);
         let mut expected = expected_of(&fleet["overseer"]);
-        expected["generation"] = json!(99);
+        expected["pane"] = json!("%999");
         let out = runner.op_fleet(&json!({
             "op": "request-transfer",
             "cause": "live",
@@ -6033,7 +6745,10 @@ fn a_hosted_caller_reads_its_headroom_off_the_providers_row_and_an_ended_plan_th
 }
 
 /// Sixty points of headroom burning two points a minute reach the wall in
-/// thirty minutes: the rate mark fires at thirty and not at twenty-nine.
+/// thirty minutes: the rate mark fires at thirty and not at twenty-nine. A
+/// rate the reader holds one sample of is `mark-unmeasured kind=rate`,
+/// its reason the rate's state, while the rate mark is set, and no answer
+/// at all with the mark off.
 #[test]
 fn a_fast_burn_reaches_the_rate_mark_at_the_minutes_the_sample_projects() {
     let mut world = MarksWorld::new();
@@ -6056,6 +6771,95 @@ fn a_fast_burn_reaches_the_rate_mark_at_the_minutes_the_sample_projects() {
     );
     assert_eq!(below["key"], json!("below-mark"), "{below}");
     assert_eq!(below["headroom"], json!("60"));
+    let mut sampled = measured_account("eclaude", 40);
+    sampled["usage_rate_state"] = json!("one-sample");
+    sampled["usage_rate_pct_per_min"] = Value::Null;
+    world.plant(None, &[sampled]);
+    let unread = world.marks(
+        &["--context", "100000:1000000"],
+        &[("ORCH_OVERSEER_WALL_MINUTES", "30")],
+    );
+    assert_eq!(unread["key"], json!("mark-unmeasured"), "{unread}");
+    assert_eq!(unread["kind"], json!("rate"));
+    assert_eq!(unread["reason"], json!("one-sample"));
+    let off = world.marks(
+        &["--context", "100000:1000000"],
+        &[("ORCH_OVERSEER_WALL_MINUTES", "0")],
+    );
+    assert_eq!(off["key"], json!("below-mark"), "{off}");
+}
+
+/// A Codex controller whose plan windows are spent at the trigger and
+/// whose credits hold a balance short of the launch floor reaches the
+/// headroom mark `reserve_only`: the watch keeps it working on its reserve
+/// rather than calling it walled. With no balance the mark is an ordinary
+/// wall.
+#[test]
+fn a_codex_controller_at_the_trigger_with_spendable_credits_reaches_the_mark_on_its_reserve() {
+    let spent = |balance: u64| {
+        let resets = agent_runtime::clock::iso_utc(now_secs() + 60 * 3600);
+        json!({
+            "alias": "ecodex",
+            "harness": "codex",
+            "config_dir": "/home/me/.ecodex",
+            "measured_through": "local",
+            "status": "ok",
+            "headroom_pct": 0,
+            "session_5h_pct": 100,
+            "weekly_pct": 100,
+            "resets": {"session": resets, "weekly": resets, "model": null, "monthly": null},
+            "credits": {"has_credits": true, "unlimited": false, "overage_limit_reached": false,
+                        "spend_control_reached": false, "balance": balance},
+        })
+    };
+    let mut world = MarksWorld::new();
+    world.plant(None, &[spent(1000)]);
+    world.write_fleet_on(json!("codex"), &world.dir("ecodex"));
+    let off = [("ORCH_OVERSEER_WALL_MINUTES", "0")];
+    let reserve = world.marks(&[], &off);
+    assert_eq!(reserve["key"], json!("mark-reached"), "{reserve}");
+    assert_eq!(reserve["kind"], json!("headroom"));
+    assert_eq!(reserve["value"], json!("0"));
+    assert_eq!(reserve["reserve_only"], json!(true), "{reserve}");
+    world.plant(None, &[spent(0)]);
+    let walled = world.marks(&[], &off);
+    assert_eq!(walled["key"], json!("mark-reached"), "{walled}");
+    assert_eq!(walled["kind"], json!("headroom"));
+    assert!(walled.get("reserve_only").is_none(), "{walled}");
+}
+
+/// The verb's refusals, each its keyed line and nothing judged: a context
+/// reading that is no `TOKENS:WINDOW`, a record naming no harness with
+/// none named, a harness nobody runs, and a fleet holding no controller
+/// record.
+#[test]
+fn the_marks_verb_refuses_an_unread_context_an_unnamed_or_unknown_harness_and_no_record() {
+    let mut world = MarksWorld::new();
+    world.plant(None, &[measured_account("eclaude", 10)]);
+    let refused = |world: &MarksWorld, args: &[&str]| {
+        refusal_key(&world.run(&[&["marks", "--fleet"][..], args].concat(), &[]))
+    };
+    assert_eq!(refused(&world, &[]), "record-missing");
+    world.write_fleet(&world.dir("eclaude"));
+    assert_eq!(
+        refused(&world, &["--context", "many:tokens"]),
+        "context-invalid"
+    );
+    assert_eq!(refused(&world, &["--harness", "emacs"]), "harness-unknown");
+    world.write_fleet_on(Value::Null, &world.dir("eclaude"));
+    assert_eq!(
+        refused(&world, &["--context", "100000:1000000"]),
+        "harness-unnamed"
+    );
+    let named = world.marks(
+        &["--context", "100000:1000000", "--harness", "claude"],
+        &[("ORCH_OVERSEER_WALL_MINUTES", "0")],
+    );
+    assert_eq!(
+        named["key"],
+        json!("below-mark"),
+        "the named harness judges: {named}"
+    );
 }
 
 #[test]
@@ -6074,8 +6878,9 @@ fn an_unmeasured_caller_answers_mark_unmeasured_headroom() {
 }
 
 /// On fixture cgroup files: a cap on a parent of the group is the nearest
-/// cap and the charge against it reaches the mark; a path with no cap is
-/// inert; a group whose charge cannot be read is `mark-unmeasured
+/// cap and the charge against it reaches the mark, read with the caps' OOM
+/// kill count, each capped group's `memory.events` `oom_kill` summed and
+/// none where one is unread; a path with no cap is inert; a group whose charge cannot be read is `mark-unmeasured
 /// kind=memory`; a pid the proc tree lacks is gone; with no setting the
 /// mark is never judged.
 #[test]
@@ -6098,8 +6903,33 @@ fn the_memory_mark_reads_the_cgroup_three_valued_and_fires_at_the_setting() {
     let parent = Reading::Live(Some(Memory {
         current: 900,
         max: 1000,
+        oom_kill: None,
     }));
     assert_eq!(memory_of(&proc_root, &cgroup, 4242), parent);
+    let kills = |oom_kill: Option<u64>| {
+        Reading::Live(Some(Memory {
+            current: 900,
+            max: 1000,
+            oom_kill,
+        }))
+    };
+    std::fs::write(
+        cgroup.join("a/memory.events"),
+        "low 0\nhigh 0\nmax 4\noom 2\noom_kill 2\noom_group_kill 0\n",
+    )
+    .unwrap();
+    assert_eq!(memory_of(&proc_root, &cgroup, 4242), kills(Some(2)));
+    std::fs::write(cgroup.join("a/b/memory.max"), "2000\n").unwrap();
+    assert_eq!(
+        memory_of(&proc_root, &cgroup, 4242),
+        kills(None),
+        "a capped group whose count is unread leaves the sum unread, the charge standing"
+    );
+    std::fs::write(cgroup.join("a/b/memory.events"), "oom_kill 1\n").unwrap();
+    assert_eq!(memory_of(&proc_root, &cgroup, 4242), kills(Some(3)));
+    std::fs::write(cgroup.join("a/b/memory.max"), "max\n").unwrap();
+    std::fs::remove_file(cgroup.join("a/b/memory.events")).unwrap();
+    std::fs::remove_file(cgroup.join("a/memory.events")).unwrap();
     std::fs::write(cgroup.join("a/b/memory.max"), "2000\n").unwrap();
     assert_eq!(memory_of(&proc_root, &cgroup, 4242), parent);
     std::fs::write(cgroup.join("a/b/memory.max"), "max\n").unwrap();
@@ -6168,6 +6998,7 @@ fn the_memory_mark_reads_the_cgroup_three_valued_and_fires_at_the_setting() {
     let capped = Reading::Live(Some(Memory {
         current: 900,
         max: 1000,
+        oom_kill: None,
     }));
     let reached = judge(&set, capped.clone());
     assert_eq!(reached.key, MarkKey::Reached(MarkKind::Memory));
@@ -6312,6 +7143,21 @@ fn walk_world(
     Vec<(String, String)>,
     std::path::PathBuf,
 ) {
+    walk_world_on(runner, None, rows)
+}
+
+/// [`walk_world`] with the provider `host` named, its rows the ones
+/// measured through `host`.
+fn walk_world_on(
+    runner: &Runner,
+    host: Option<&str>,
+    rows: &[Value],
+) -> (
+    std::path::PathBuf,
+    std::path::PathBuf,
+    Vec<(String, String)>,
+    std::path::PathBuf,
+) {
     let (bin, mut env) = watch_world(runner.state_dir());
     let work = runner.state_dir().join("work");
     std::fs::create_dir(&work).unwrap();
@@ -6322,7 +7168,7 @@ fn walk_world(
     env.extend(plant_accounts(
         &runner.state_dir().join("accounts"),
         &runner.state_dir().join("watch-state"),
-        None,
+        host,
         rows,
         now_secs(),
     ));
@@ -6547,14 +7393,14 @@ fn a_named_predecessor_is_succeeded_on_the_walks_choice_with_its_posture_once_th
 }
 
 /// The hook's model-switch recovery relaunches the model and account the
-/// published line names, so a line naming the predecessor's would relaunch
-/// its model on the account it spent. The predecessor holds its own pane on
-/// the fleet server, its record carrying the line a released launch wrote
-/// for it, planted as `main` wrote it; the successor's record carries the
-/// line the runtime composed from the fields it launched with, which the
-/// real hook reads.
+/// published record names, so a record naming the predecessor's would
+/// relaunch its model on the account it spent. The predecessor holds its
+/// own pane on the fleet server, its record carrying the line a released
+/// launch wrote for it, planted as `main` wrote it; the successor's record
+/// names what it was launched with and no display line, and the real hook's
+/// recovery reopens that.
 #[test]
-fn a_succession_publishes_the_line_of_the_successor_it_launched_never_the_predecessors() {
+fn a_succession_publishes_the_successor_it_launched_and_a_model_switch_recovers_it() {
     let dir = tempfile::tempdir().unwrap();
     let server = Server::start(dir.path(), "fleet");
     let runner = suite_runner(&server, "stub-confirm");
@@ -6591,7 +7437,7 @@ fn a_succession_publishes_the_line_of_the_successor_it_launched_never_the_predec
     let mut fleet = runner.fleet();
     fleet["overseer"] = record;
     runner.write_fleet(&fleet);
-    let out = workflow_launch(
+    let launch = workflow_launch(
         &runner,
         &scripts,
         &bin,
@@ -6601,8 +7447,8 @@ fn a_succession_publishes_the_line_of_the_successor_it_launched_never_the_predec
         "fable",
         &stub("stub-confirm"),
     )
-    .predecessor(&pane)
-    .run();
+    .predecessor(&pane);
+    let out = launch.run();
     let op = out.op();
     assert!(op.status.success(), "{}", stderr(op));
     let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
@@ -6611,43 +7457,37 @@ fn a_succession_publishes_the_line_of_the_successor_it_launched_never_the_predec
     let overseer = runner.fleet()["overseer"].clone();
     let chosen = planted(&runner, "bclaude");
     assert_eq!(overseer["account"], chosen, "{overseer}");
-    let line = overseer["launch_line"].as_str().unwrap();
-    assert_ne!(line, released, "{overseer}");
-    let read = read_line(&scripts, &bin, "claude", line);
     assert_eq!(
-        read.model, "fable",
-        "the successor's model, not the predecessor's: {line}"
+        overseer["model"], "fable",
+        "the successor's model: {overseer}"
     );
     assert_eq!(
-        read.env,
-        vec![format!("CLAUDE_CONFIG_DIR={chosen}")],
-        "the successor's account, not the spent one: {line}"
+        overseer["effort"], "high",
+        "the successor's effort: {overseer}"
     );
-    assert_eq!(read.handoff, "tmp/handoffs/OVERSEER-HANDOFF.md", "{line}");
-    assert!(
-        read.flags.windows(2).any(|w| w == ["--effort", "high"]),
-        "the successor's effort: {line}"
-    );
-    assert!(
-        read.flags
-            .iter()
-            .any(|f| f == "--dangerously-skip-permissions"),
-        "the posture the successor runs under: {line}"
+    assert_eq!(overseer["permission"], "bypass", "{overseer}");
+    assert_eq!(
+        overseer["launch_line"],
+        Value::Null,
+        "the predecessor's released line is dropped with its session: {overseer}"
     );
     let home = Path::new(overseer["home"].as_str().unwrap()).to_owned();
-    let (hook, check) = model_switch(&runner, &scripts, &bin, &home, &work, &overseer);
+    let generation = overseer["generation"].as_u64().unwrap();
+    let (hook, check) = model_switch(&runner, &scripts, &launch.env, &home, &work, &overseer);
     assert_eq!(
         check["outcome"],
         "switched",
-        "the hook read the successor's line: {check}\n{}\n{}",
+        "{check}\n{}\n{}",
         String::from_utf8_lossy(&hook.stdout),
         stderr(&hook)
     );
     assert_eq!(
         stderr(&hook).lines().next().unwrap_or_default(),
         MODEL_SWITCHED,
-        "the successor's notice"
+        "the successor's notice: {}",
+        stderr(&hook)
     );
+    recovered(&runner, &work, generation, "fable", &json!(chosen));
 }
 
 /// Named another pane than the recorded one, the transfer is refused before
@@ -7407,6 +8247,7 @@ fn a_succession_by_hand_through_the_verb_keeps_the_predecessors_own_handoff() {
     let result = answer["result"].clone();
     assert_eq!(result["successor"]["handoff"], handoff, "{answer}");
     assert_eq!(result["brief"], brief.as_str(), "{answer}");
+    runner.snapshot(&work.join(handoff));
     runner.transfer_started(&json!({
         "op": "request-transfer",
         "cause": "live",
@@ -7427,6 +8268,87 @@ fn a_succession_by_hand_through_the_verb_keeps_the_predecessors_own_handoff() {
         vec![brief],
         "the successor opens on the predecessor's own handoff"
     );
+}
+
+/// The overseer walk admits a Claude account whose shared windows the
+/// provider measured and whose window scoped to the model nothing read,
+/// this machine's reading holding none either: the real `successor` verb
+/// chooses it, judged on the shared windows, and names `scope: unread` on
+/// the successor, which the transfer publishes on the controller record.
+/// A lane's pick of the same account stays `unmeasured`.
+#[test]
+fn an_overseer_walk_admits_an_account_whose_model_window_is_unread_and_records_the_scope() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = suite_runner(&server, "stub-confirm");
+    runner.init_fleet();
+    let account = planted(&runner, "bclaude");
+    let mut shared = measured_account("bclaude", 20);
+    shared["measured_through"] = json!("host");
+    shared["config_dir"] = json!(account);
+    let (_, bin, env, work) = walk_world_on(
+        &runner,
+        Some("vm"),
+        &[measured_account("bclaude", 20), shared],
+    );
+    runner.tools = Some(bin);
+    runner.env.extend(env);
+    runner.env.push((
+        "ORCH_OVERSEER_PREFERENCE".to_owned(),
+        "claude:fable:high".to_owned(),
+    ));
+    let report = effect_report(
+        &runner.op_fleet(&json!({"op": "start-controller", "controller": pending(&work)})),
+    );
+    assert_eq!(report["intent"]["outcome"], "confirmed", "{report}");
+    let pane = runner.fleet()["overseer"]["pane"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let answer = reply(&runner.run(&[
+        "successor",
+        "--fleet",
+        "--cwd",
+        &work.display().to_string(),
+        "--predecessor",
+        &pane,
+    ]));
+    let result = answer["result"].clone();
+    assert_eq!(result["walk"]["answer"], "lane", "{answer}");
+    assert_eq!(result["successor"]["account"], account, "{answer}");
+    assert_eq!(result["successor"]["scope"], "unread", "{answer}");
+    let model = result["walk"]["chosen"]["pick_model"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(
+        !model.is_empty(),
+        "the walk judged a model's window: {answer}"
+    );
+    let lane = reply(&runner.run(&[
+        "accounts",
+        "pick",
+        "--fleet",
+        "--harness",
+        "claude",
+        "--native-model",
+        model,
+        "--lane",
+        &account,
+    ]));
+    assert_eq!(lane["result"]["answer"], "unmeasured", "{lane}");
+    assert_eq!(lane["result"]["exit"], 5, "{lane}");
+    runner.snapshot(&work.join("tmp/handoffs/OVERSEER-HANDOFF.md"));
+    runner.transfer_started(&json!({
+        "op": "request-transfer",
+        "cause": "live",
+        "expected": result["expected"],
+        "successor": result["successor"],
+    }));
+    let intent = runner.wait_intent_settled("request-transfer:", SETTLE);
+    assert_eq!(intent["outcome"], "confirmed", "{intent}");
+    let overseer = runner.fleet()["overseer"].clone();
+    assert_eq!(overseer["account"], account, "{overseer}");
+    assert_eq!(overseer["scope"], "unread", "{overseer}");
 }
 
 #[test]
@@ -7723,23 +8645,9 @@ fn a_first_launch_under_the_native_posture_opens_with_no_bypass_word_in_its_argv
         !argv.iter().any(|a| a == "--dangerously-skip-permissions"),
         "no bypass word under the native posture: {argv:?}"
     );
-    let line = read_line(
-        &scripts,
-        &bin,
-        "claude",
-        overseer["launch_line"].as_str().unwrap(),
-    );
-    assert!(
-        line.flags
-            .windows(2)
-            .any(|w| w == ["--permission-mode", "dontAsk"]),
-        "the caller's permission words reach the record's line: {line:?}"
-    );
-    assert!(
-        !line
-            .flags
-            .iter()
-            .any(|f| f == "--dangerously-skip-permissions"),
-        "no bypass word on the line under the native posture: {line:?}"
+    assert_eq!(
+        overseer["extra_args"],
+        json!(["--permission-mode", "dontAsk"]),
+        "the caller's permission words stand on the record: {overseer}"
     );
 }

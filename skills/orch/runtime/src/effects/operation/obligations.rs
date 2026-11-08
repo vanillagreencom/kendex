@@ -1102,7 +1102,6 @@ pub(in crate::effects) struct Wire {
     pub server_socket: Option<String>,
     pub window: Option<String>,
     pub tmux_session: Option<String>,
-    pub launch_line: Option<String>,
     /// The home a confirmed controller or local lane runs its sessions
     /// under, as its launch prepared it.
     pub home: Option<String>,

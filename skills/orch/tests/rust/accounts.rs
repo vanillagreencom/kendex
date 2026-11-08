@@ -1824,6 +1824,14 @@ fn a_cloud_session_host_admits_only_an_account_with_access_to_this_repository() 
     assert_eq!(named["answer"], json!("cloud-repo-unset"), "{named}");
     assert_eq!(named["exit"], json!(7));
     assert_eq!(named["record"]["alias"], json!("bclaude"));
+    // The reply the hook suites plant for a lane's turn end on this refusal.
+    let home = world.path().join("home");
+    assert!(
+        planted_form(&planted_pick("cloud-repo-unset"), Path::new("/home/me"))
+            == planted_form(&named, &home),
+        "planted replies the judge does not answer: {}",
+        json!({"cloud-repo-unset": spelled_home(&named, &home)})
+    );
     // The judge's `git` reads the home the boundary hands it.
     world.canary_home();
     let canary = world.pick(&claude(None));
@@ -3507,13 +3515,19 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             ],
         },
         Arm {
-            name: "the API grant whose root ORCH_LANE_EXCLUDE names is a candidate left out by name, refused by its word where the retained named pick judged no row",
+            name: "the API grant whose root ORCH_LANE_EXCLUDE names is left out of every lane pick by name and refused by its word, where the retained named pick judged no row, and is the overseer walk's to read",
             usage: fresh.clone(),
             provider: Some(grant_row(150)),
             env: vec![("ORCH_LANE_EXCLUDE", "pi1")],
             asks: vec![
                 ask(api_chooser(), "none", 3, Some(3), none(0, 0)),
-                ask(walk_chooser(api_model), "none", 3, Some(3), none(0, 0)),
+                ask(
+                    walk_chooser(api_model),
+                    "lane",
+                    0,
+                    Some(3),
+                    vec![("excluded", json!(true))],
+                ),
                 ask(
                     named_launch(api_model, &pi_dir),
                     "excluded",
@@ -3660,13 +3674,19 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             ],
         },
         Arm {
-            name: "a provider-only Copilot root ORCH_LANE_EXCLUDE names is a candidate left out by name, refused by its word where the retained pick found the pool unstated",
+            name: "a provider-only Copilot root ORCH_LANE_EXCLUDE names is left out of every lane pick by name and refused by its word, where the retained pick found the pool unstated, and is the overseer walk's to read",
             usage: fresh.clone(),
             provider: Some(pi_row("\tmonthly-pct=60")),
             env: vec![("ORCH_LANE_EXCLUDE", "pi1")],
             asks: vec![
                 ask(pi_chooser(), "none", 3, Some(5), none(0, 0)),
-                ask(walk_chooser(pi_model), "none", 3, Some(5), none(0, 0)),
+                ask(
+                    walk_chooser(pi_model),
+                    "lane",
+                    0,
+                    Some(5),
+                    vec![("excluded", json!(true)), ("headroom_pct", json!(40))],
+                ),
                 ask(
                     pi_named(),
                     "excluded",
@@ -3684,7 +3704,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             ],
         },
         Arm {
-            name: "the excluded provider-only Copilot root through the alias overlay, refused by its word where the retained pick found the pool unstated",
+            name: "the excluded provider-only Copilot root through the alias overlay, refused by its word where the retained pick found the pool unstated, and the overseer walk's to read",
             usage: fresh.clone(),
             provider: Some(pi_row("\tmonthly-pct=60")),
             env: vec![
@@ -3693,7 +3713,13 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             ],
             asks: vec![
                 ask(pi_chooser(), "none", 3, Some(5), none(0, 0)),
-                ask(walk_chooser(pi_model), "none", 3, Some(5), none(0, 0)),
+                ask(
+                    walk_chooser(pi_model),
+                    "lane",
+                    0,
+                    Some(5),
+                    vec![("excluded", json!(true)), ("headroom_pct", json!(40))],
+                ),
                 ask(
                     pi_named(),
                     "excluded",
@@ -3711,13 +3737,19 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             ],
         },
         Arm {
-            name: "an excluded provider-only Copilot root whose row read nothing, refused by its word where the retained pick found the pool unstated",
+            name: "an excluded provider-only Copilot root whose row read nothing, refused by its word where the retained pick found the pool unstated, and the pool nobody measured to the overseer walk",
             usage: fresh.clone(),
             provider: Some(pi_row("\tstatus=no_usage_data")),
             env: vec![("ORCH_LANE_EXCLUDE", "pi1")],
             asks: vec![
                 ask(pi_chooser(), "none", 3, Some(5), none(0, 0)),
-                ask(walk_chooser(pi_model), "none", 3, Some(5), none(0, 0)),
+                ask(
+                    walk_chooser(pi_model),
+                    "unmeasured",
+                    5,
+                    Some(5),
+                    provider_unmeasured(),
+                ),
                 ask(
                     pi_named(),
                     "excluded",
@@ -4594,7 +4626,7 @@ fn the_copilot_login_is_read_from_the_config_or_the_keyring_and_the_statement_st
 }
 
 #[test]
-fn an_excluded_and_a_retired_account_are_listed_with_their_flags_and_refused_by_name() {
+fn an_excluded_account_is_measured_and_refused_for_lanes_and_a_retired_one_refused_by_name() {
     let today = accounts::today(now());
     let mut world = World::new(&[
         ("ORCH_LANE_EXCLUDE", "xclaude"),
@@ -4606,15 +4638,14 @@ fn an_excluded_and_a_retired_account_are_listed_with_their_flags_and_refused_by_
         measured("rclaude", 10, 5),
         measured("aclaude", 60, 5),
     ]);
-    std::fs::remove_file(world.record_path("claude", "xclaude")).unwrap();
     let roster = world.roster();
     let lines = roster["lines"].as_array().unwrap();
     assert!(
         lines[0]
             .as_str()
             .unwrap()
-            .contains(" status=excluded verdict=unmeasured "),
-        "the excluded account is listed unread: {lines:?}"
+            .contains(" status=ok verdict=room headroom_pct=100 "),
+        "the excluded account is measured: {lines:?}"
     );
     assert!(
         lines[1]
@@ -4630,11 +4661,6 @@ fn an_excluded_and_a_retired_account_are_listed_with_their_flags_and_refused_by_
             .contains(" status=ok verdict=room headroom_pct=90 "),
         "the retired account is measured: {lines:?}"
     );
-    assert_eq!(
-        world.curl_log(),
-        Vec::<String>::new(),
-        "nothing inside the excluded account is read, and the retired record is served"
-    );
     let chosen_row = world.pick(&claude(None));
     assert_eq!(
         chosen(&chosen_row).as_deref(),
@@ -4645,6 +4671,17 @@ fn an_excluded_and_a_retired_account_are_listed_with_their_flags_and_refused_by_
     assert_eq!(excluded["answer"], json!("excluded"), "{excluded}");
     assert_eq!(excluded["exit"], json!(3));
     assert_eq!(excluded["record"]["excluded"], json!(true));
+    // An overseer on the excluded home reads its figures: its own pick, the
+    // one its marks ask, judges the account and refuses nothing by the
+    // owner's lane exclusion.
+    let own = world.pick(&PickRequest {
+        lane: Some(world.dir("xclaude")),
+        for_overseer: true,
+        ..claude(None)
+    });
+    assert_eq!(own["answer"], json!("lane"), "{own}");
+    assert_eq!(own["record"]["headroom_pct"], json!(100), "{own}");
+    assert_eq!(own["record"]["excluded"], json!(true), "{own}");
     let retired = world.pick(&named(&world.dir("rclaude"), claude(None)));
     assert_eq!(retired["answer"], json!("retired"), "{retired}");
     assert_eq!(retired["record"]["retired"], json!(true));

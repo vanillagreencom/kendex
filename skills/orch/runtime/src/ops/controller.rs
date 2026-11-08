@@ -92,12 +92,32 @@ pub struct RequestTransfer {
     #[serde(default)]
     pub handoff_session_id: Option<String>,
     /// A model recovery's binding: the record the recovery was acquired
-    /// against, as `ol_recovery_bound` reads it. The
-    /// transition refuses `recovery-unbound` and writes nothing unless the
-    /// record still carries that launch, a `model_check` that read
+    /// against (`recovery_bound`). The transition refuses
+    /// `recovery-unbound` and writes nothing unless the record still
+    /// carries that launch, a `model_check` that read
     /// `switched` for the recorded session, and the same launch identity.
     #[serde(default)]
     pub recovery: Option<Recovery>,
+    /// A `dead` succession's cause where the watch read one: `memory-cap`,
+    /// the OOM kill count of a cap on the controller's control-group path
+    /// risen since its last live pass. Absent where nothing was read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub death: Option<DeathCause>,
+}
+
+/// What a dead controller died of, where the watch read it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DeathCause {
+    MemoryCap,
+}
+
+impl DeathCause {
+    pub fn word(self) -> &'static str {
+        match self {
+            DeathCause::MemoryCap => "memory-cap",
+        }
+    }
 }
 
 /// The launch a model recovery was bound to: the seven fields
@@ -146,7 +166,7 @@ impl Recovery {
     }
 }
 
-/// The `ol_recovery_bound` predicate on the record as it stands: the
+/// Whether the record as it stands still binds a recovery: the
 /// record's launch is the request's, its `model_check` read `switched` for
 /// the recorded session, and that check's `launch_identity` is the record's
 /// launch. The cause names the first clause that fails.
@@ -339,10 +359,16 @@ pub enum Progress {
 
 /// What `ORCH_OVERSEER_SUCCESSION` admits before any transition runs: a
 /// `request-transfer` under `off` refuses `succession-off` and persists
-/// nothing. Every other request is admitted.
+/// nothing; a live one also needs its predecessor's current snapshot
+/// ([`handoff_current`]). Every other request is admitted.
 pub fn admit(request: &Request, settings: &Settings) -> Result<()> {
     if let (Request::RequestTransfer(_), Succession::Off) = (request, settings.succession) {
         return Err(Error::SuccessionOff);
+    }
+    if let Request::RequestTransfer(r) = request
+        && r.cause == TransferCause::Live
+    {
+        handoff_current(r)?;
     }
     Ok(())
 }
@@ -427,6 +453,67 @@ fn canonical_account(account: &str) -> String {
             text.to_owned()
         }
     }
+}
+
+/// A live succession hands over on a snapshot its predecessor wrote for
+/// this generation: the handoff the successor's brief names carries
+/// exactly one `Start here:` line and its `generation=` is that of the
+/// record the requester saw, which the transition's compare-and-swap holds
+/// the record to; else `handoff-stale` naming what was found (`several`,
+/// `none` or the generation), and nothing is written. A dead or walled
+/// recovery's caller cannot write a live snapshot, so only `live` asks. A
+/// relative handoff is read under the successor's directory, else the
+/// record's.
+fn handoff_current(r: &RequestTransfer) -> Result<()> {
+    let expected = match &r.expected.generation {
+        Value::Number(n) => n.to_string(),
+        Value::String(s) => s.clone(),
+        _ => "unknown".to_owned(),
+    };
+    let named = r
+        .successor
+        .handoff
+        .clone()
+        .unwrap_or_else(|| super::successor::HANDOFF.to_owned());
+    let dir = r
+        .successor
+        .cwd
+        .clone()
+        .or_else(|| r.expected.cwd.as_str().map(str::to_owned));
+    let file = match dir {
+        Some(dir) if Path::new(&named).is_relative() => Path::new(&dir).join(&named),
+        _ => PathBuf::from(&named),
+    };
+    let headers: Vec<String> = std::fs::read_to_string(&file)
+        .map(|text| {
+            text.lines()
+                .filter(|l| l.starts_with("Start here:"))
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let found = match headers.as_slice() {
+        [] => "none".to_owned(),
+        [header] => header
+            .split_whitespace()
+            .find_map(|w| w.strip_prefix("generation="))
+            .filter(|g| !g.is_empty() && g.chars().all(|c| c.is_ascii_digit()))
+            .unwrap_or("none")
+            .to_owned(),
+        _ => "several".to_owned(),
+    };
+    if found == expected {
+        return Ok(());
+    }
+    Err(agent_runtime::Error::refused(
+        "handoff-stale",
+        &[
+            ("path", &file.display().to_string()),
+            ("expected", &expected),
+            ("found", &found),
+        ],
+    )
+    .into())
 }
 
 /// What a cause requires of the request beyond the compare-and-swap.
@@ -972,9 +1059,6 @@ fn record_transfer_outcome(
                     pending.get(*key).cloned().unwrap_or(Value::Null),
                 );
             }
-            if let Some(line) = &r.launch_line {
-                state::set(record, "launch_line", line.as_str());
-            }
             // The home the successor's launch prepared, which the request
             // never decides.
             if let Some(home) = &r.home {
@@ -994,10 +1078,11 @@ fn record_transfer_outcome(
                 state::set(record, "watch", serde_json::to_value(watch)?);
             }
             // The class and the posture the successor launched under, its
-            // permission and its own words, where the pending names them:
-            // the next succession carries that posture, and a session
-            // inherits none of another's.
-            for key in ["class", "permission", "extra_args"] {
+            // permission and its own words, and the `scope: unread` of an
+            // account admitted with its model's window unread, where the
+            // pending names them: the next succession carries that posture,
+            // and a session inherits none of another's.
+            for key in ["class", "permission", "extra_args", "scope"] {
                 match pending.get(key).filter(|v| !v.is_null()) {
                     Some(value) => state::set(record, key, value.clone()),
                     None => {
@@ -1038,7 +1123,7 @@ fn record_transfer_outcome(
             state::delete(record, "off");
             // The runtime launched the successor and read its process
             // identity, so it writes `harness_pid`/`harness_start` now,
-            // appended as `ol_record_start` appends them. The next
+            // appended after the keys the record holds. The next
             // succession then has a predecessor identity to retire by. A
             // confirmation always carries them, since a launch with no
             // readable identity records `unconfirmed`.
@@ -1396,7 +1481,11 @@ mod tests {
         let on = crate::settings::load(&roots, &[], &flags).unwrap();
         let err = admit(&transfer(expected()), &off).unwrap_err();
         assert_eq!(err.key(), "succession-off");
-        admit(&transfer(expected()), &on).unwrap();
+        let Request::RequestTransfer(mut dead) = transfer(expected()) else {
+            unreachable!("transfer builds a request-transfer")
+        };
+        dead.cause = TransferCause::Dead;
+        admit(&Request::RequestTransfer(dead), &on).unwrap();
         admit(&start(), &off).unwrap();
         admit(&stop(), &off).unwrap();
         admit(&launch("KEN-1"), &off).unwrap();
@@ -1747,7 +1836,6 @@ mod tests {
             server_socket: None,
             window: None,
             tmux_session: None,
-            launch_line: None,
             home: None,
             home_implicit: false,
             watch: None,
@@ -2091,8 +2179,8 @@ mod tests {
     /// `server_start` where the confirmation
     /// carries it and null otherwise, `window` and `session_rows` null for
     /// the successor's watch start to fill, and none of the ended session's
-    /// `session_id`, `harness_pid`, `harness_start`, `model_check`, `exit` or
-    /// `pending`. Keys keep their place; the expected sequence below is the
+    /// `session_id`, `harness_pid`, `harness_start`, `launch_line`,
+    /// `model_check`, `exit` or `pending`. Keys keep their place; the expected sequence below is the
     /// fixture's with the dropped keys gone.
     #[test]
     fn a_confirmed_transfer_publishes_the_successor_identity_bound_to_its_own_pane() {
@@ -2124,7 +2212,6 @@ mod tests {
             "model": "gpt-5.5-codex",
             "effort": "high",
             "cwd": "/r",
-            "launch_line": "cd /r && codex",
             // The handoff the successor's brief named, the default where the
             // pending named none.
             "handoff": "tmp/handoffs/OVERSEER-HANDOFF.md",
@@ -2133,8 +2220,8 @@ mod tests {
             // takes the next place.
             "session_id": "native-1",
             // The runtime launched the successor and read its process
-            // identity, so it writes these now, appended as `ol_record_start`
-            // appends them. `outcome` carries pid 6000.
+            // identity, so it writes these now, appended after the keys the
+            // record holds. `outcome` carries pid 6000.
             "harness_pid": 6000,
             "harness_start": "ticks:6000",
         });
@@ -2179,6 +2266,7 @@ mod tests {
                 exclude_account: None,
                 handoff_session_id: None,
                 recovery: None,
+                death: None,
             })),
         );
         run(&path, &outcome(&id, Outcome::Confirmed)).unwrap();
@@ -2339,7 +2427,7 @@ mod tests {
     }
 
     /// A transfer carrying a recovery binding is admitted only where the
-    /// `ol_recovery_bound` predicate holds on the record as it stands; each
+    /// record as it stands still binds it (`recovery_bound`); each
     /// clause that fails refuses `recovery-unbound` with its cause and writes
     /// nothing, the pending untouched and no intent made.
     #[test]
@@ -2587,6 +2675,7 @@ mod tests {
                 exclude_account: None,
                 handoff_session_id: None,
                 recovery: None,
+                death: None,
             })),
         );
         let pending = fleet(&path).overseer.unwrap().pending.unwrap();

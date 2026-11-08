@@ -22,8 +22,9 @@
 //! `ORCH_LANE_RETIRE` or the provider's `plan-ends`: a stated end that a
 //! live reading contradicts (a credential that answers after its end) is a
 //! reported line, never a silent absence. An account `ORCH_LANE_EXCLUDE`
-//! names is listed unread and refused by that word in every form, from
-//! this machine's listing, a provider's rows or the owner's statement.
+//! names is measured like any other and refused by that word for every
+//! lane pick and launch, from this machine's listing, a provider's rows or
+//! the owner's statement; an overseer's own pick reads its figures.
 //!
 //! A listing that could not be read whole admits nothing: no pick, and a
 //! roster line saying `unread`. A provider's `plan-ends` that names no
@@ -559,9 +560,12 @@ fn provider_reading(row: &AccountRow) -> bool {
 /// Claude row the provider measured with no window scoped to `model` is
 /// judged on this machine's fresh reading of that window where it has one,
 /// and is unmeasured where it has none (the shared windows are not that
-/// model's wall). An account with one reading keeps it. The roster is never
-/// resolved: it reports both readings.
-fn resolve(rows: &[AccountRow], billed: &str, model: &str) -> Vec<AccountRow> {
+/// model's wall), except that `admit` (the overseer walk's
+/// [`PickRequest::admit_unread_scope`]) judges it on the provider's shared
+/// windows, its buckets as read, marked `scope: unread`. An account with
+/// one reading keeps it. The roster is never resolved: it reports both
+/// readings.
+fn resolve(rows: &[AccountRow], billed: &str, model: &str, admit: bool) -> Vec<AccountRow> {
     let mut out: Vec<AccountRow> = Vec::new();
     for row in rows {
         let other = out.iter().position(|r| {
@@ -576,7 +580,7 @@ fn resolve(rows: &[AccountRow], billed: &str, model: &str) -> Vec<AccountRow> {
                 } else {
                     (row.clone(), out[i].clone())
                 };
-                out[i] = prefer(own, provider, billed, model);
+                out[i] = prefer(own, provider, billed, model, admit);
             }
             None => out.push(row.clone()),
         }
@@ -585,7 +589,13 @@ fn resolve(rows: &[AccountRow], billed: &str, model: &str) -> Vec<AccountRow> {
 }
 
 /// The reading of one account's two that stands for a pick.
-fn prefer(own: AccountRow, provider: AccountRow, billed: &str, model: &str) -> AccountRow {
+fn prefer(
+    own: AccountRow,
+    provider: AccountRow,
+    billed: &str,
+    model: &str,
+    admit: bool,
+) -> AccountRow {
     let scoped = billed == "claude" && !model.is_empty();
     let unread = provider.harness == "pi" && provider.headroom_pct.is_none()
         || provider.status == "unreachable"
@@ -604,6 +614,16 @@ fn prefer(own: AccountRow, provider: AccountRow, billed: &str, model: &str) -> A
     }
     if !unscoped {
         return provider;
+    }
+    // The overseer walk's admission: the shared windows the provider
+    // measured judge the account, every bucket as it was read, and the
+    // record says the model's own window went unread.
+    if admit && provider.measured() {
+        let mut admitted = provider;
+        if let Value::Object(raw) = &mut admitted.raw {
+            raw.insert("scope".to_owned(), Value::from("unread"));
+        }
+        return admitted;
     }
     // This machine's reading carries no fresh window scoped to the model:
     // the account is unmeasured for it, with the cause in its detail.
@@ -760,6 +780,12 @@ pub struct PickRequest {
     pub binding_floor: bool,
     /// The provider named (`ORCH_LANE_HOST`), `None` for the local read.
     pub host: Option<String>,
+    /// Admit a Claude account whose shared windows the provider measured
+    /// and whose window scoped to the model nothing read, judged on the
+    /// shared windows with `scope: unread` on its record: the overseer
+    /// walk's question alone, where the account-wall succession covers the
+    /// unread window. Otherwise that account is unmeasured for the model.
+    pub admit_unread_scope: bool,
 }
 
 impl PickRequest {
@@ -1172,7 +1198,7 @@ pub struct Judged {
 /// A figure as the record spells it: an integral value as an integer, a
 /// fraction as it is. The shell callers read the record's `wall`,
 /// `effective_headroom_pct` and `need` by the pattern `^[0-9]{1,3}$`
-/// (`oversee-succeed`'s mark judge, the hook's seat line), the spelling
+/// (the hook's seat line), the spelling
 /// `lanes pick --json` gives an integer percentage; `60.0` is unreadable
 /// to them.
 fn figure(n: f64) -> Value {
@@ -1597,11 +1623,14 @@ pub fn pick(
     // out: the API grant's and the Pi Copilot pool's answer alike. A pool
     // whose every row was left out by name is a pool with no candidate.
     let grant_pool = api_credit || (req.harness == "pi" && pool == "copilot");
-    let rows = &resolve(rows, billed, model);
+    let rows = &resolve(rows, billed, model, req.admit_unread_scope);
     let candidate =
         |r: &AccountRow| r.harness == billed && ((r.pool == "api-credit") == api_credit);
+    // The owner's exclusion keeps an account from every lane, never from
+    // its overseer: an overseer's own marks and walk read its figures.
     let excluded_dirs: Vec<String> = req.exclude.iter().map(|d| wall::canon(d)).collect();
-    let excluded = |r: &AccountRow| excluded_dirs.contains(&r.canon) || r.excluded;
+    let excluded =
+        |r: &AccountRow| excluded_dirs.contains(&r.canon) || (r.excluded && !req.for_overseer);
     if let Some(lane) = &req.lane {
         let canon = wall::canon(lane);
         let mut judged = match rows.iter().find(|r| r.canon == canon && candidate(r)) {

@@ -56,7 +56,7 @@ use super::owner_alert::{self, Word};
 use super::{Body, Produced, Runner, Tick};
 use crate::ops::accounts::{self, PickAnswer, PickRequest};
 use crate::ops::walk::{self, WalkRequest};
-use crate::ops::{OverseerExpected, RequestTransfer};
+use crate::ops::{DeathCause, OverseerExpected, RequestTransfer};
 use crate::settings::{MarkSettings, Settings, Succession, WatchSettings};
 use crate::state::{FleetState, Pending, TransferCause};
 
@@ -492,11 +492,11 @@ impl Caller {
     /// full bypass the walk admitted with none of them. The launch prepares
     /// the home its harness and account run under; the one home named is
     /// this session's own root, kept by a same-harness successor whose
-    /// account is not its home (a Pi seat).
+    /// account is not its home (a Pi seat). An account the walk admitted
+    /// with its model's window unread carries `scope: unread` to the launch.
     pub fn successor_of(&self, chosen: &walk::Chosen) -> Pending {
         let same = self.harness.is_some_and(|h| h.name() == chosen.harness);
         Pending {
-            launch_line: None,
             harness: Some(chosen.harness.clone()),
             account: chosen.account.clone(),
             home: self
@@ -519,7 +519,13 @@ impl Caller {
                 Vec::new()
             },
             handoff: self.handoff.clone(),
-            extra: serde_json::Map::new(),
+            extra: chosen
+                .record
+                .as_ref()
+                .and_then(|r| r.get("scope"))
+                .filter(|scope| scope.as_str() == Some("unread"))
+                .map(|scope| serde_json::Map::from_iter([("scope".to_owned(), scope.clone())]))
+                .unwrap_or_default(),
         }
     }
 }
@@ -854,6 +860,10 @@ pub struct Judges<'a> {
     /// The succession command a controller's own owner recorded, run in
     /// place of a transfer; `Err` is its failure.
     pub succeed: SuccessionRun<'a>,
+    /// The memory reading of the control-group path a pane's process runs
+    /// in, the kernel's under `/proc` and `/sys/fs/cgroup`: the caps' OOM
+    /// kill count a death is judged against.
+    pub memory: PaneMemoryRead<'a>,
 }
 
 pub type MarksRead<'a> = &'a dyn Fn(&Caller, Option<&str>) -> Result<Marks, String>;
@@ -863,6 +873,7 @@ pub type WallPickRead<'a> = &'a dyn Fn(&Path, Harness, &str, &str) -> Pick;
 /// The relaunch started through the job-unit launcher; `Err` its refusal.
 pub type RelaunchStart<'a> = &'a dyn Fn(&Path, &Relaunch) -> Result<(), String>;
 pub type SuccessionRun<'a> = &'a dyn Fn(&[String]) -> Result<SuccessionAnswer, String>;
+pub type PaneMemoryRead<'a> = &'a dyn Fn(u32) -> Reading<Option<Memory>>;
 
 /// What a succession owner's command answered short of a failure: it ran
 /// to its end, or it started and gave no answer within the bound, so
@@ -1107,10 +1118,16 @@ impl Record {
         if let Some(pending) = &self.pending {
             return Some(pending.clone());
         }
+        self.own_successor()
+    }
+
+    /// This record's own launch fields as a fresh session's: the same
+    /// harness, account, model, effort, directory, posture and handoff, on
+    /// the home its launch prepares.
+    pub(crate) fn own_successor(&self) -> Option<Pending> {
         let caller = Caller::of(self);
         let harness = caller.harness?;
         Some(Pending {
-            launch_line: text(self.raw.get("launch_line")),
             harness: Some(harness.name().to_owned()),
             account: caller.account,
             home: caller
@@ -1328,13 +1345,19 @@ fn clear(kind: &str, identity: &str) -> Change {
 }
 
 /// The rows this duty keeps, keyed by the pane key.
-const ROWS: [&str; 5] = [
+const ROWS: [&str; 6] = [
     "overseer-dead",
     "overseer-walled",
     "overseer-mark",
     TRANSFER_ROW,
     context::GAP_ROW,
+    OOM_ROW,
 ];
+
+/// The live controller's last OOM kill count on its control-group path,
+/// the caps' count a death is judged against; `memory-cap` once a death
+/// read it risen, which the death's transfer carries.
+const OOM_ROW: &str = "overseer-oom";
 
 /// The row naming the transfer a `requested` case row asked for,
 /// `<attempt>:<intent>`: the case row is the admission, and the intent's
@@ -1391,33 +1414,37 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
             }
         }
     }
-    let reads = match (pass.readers.pane)(record.server, record.server_start, &record.pane) {
-        Reading::Live(fields) => Reads {
-            process: (pass.readers.foreground)(
+    let (reads, pane_pid) =
+        match (pass.readers.pane)(record.server, record.server_start, &record.pane) {
+            Reading::Live(fields) => (
+                Reads {
+                    process: (pass.readers.foreground)(
+                        fields.pid,
+                        record.harness,
+                        record.identity.as_ref(),
+                    ),
+                    screen: (pass.readers.capture)(&fields.pane),
+                    rows: record.session_rows.as_deref().map(rows::session_verdict),
+                },
                 fields.pid,
-                record.harness,
-                record.identity.as_ref(),
             ),
-            screen: (pass.readers.capture)(&fields.pane),
-            rows: record.session_rows.as_deref().map(rows::session_verdict),
-        },
-        Reading::Gone => {
-            return judged(
-                Verdict::Unreadable {
-                    cause: "pane-gone".to_owned(),
-                },
-                Some(key),
-            );
-        }
-        Reading::Unreadable { cause } => {
-            return judged(
-                Verdict::Unreadable {
-                    cause: cause.to_owned(),
-                },
-                Some(key),
-            );
-        }
-    };
+            Reading::Gone => {
+                return judged(
+                    Verdict::Unreadable {
+                        cause: "pane-gone".to_owned(),
+                    },
+                    Some(key),
+                );
+            }
+            Reading::Unreadable { cause } => {
+                return judged(
+                    Verdict::Unreadable {
+                        cause: cause.to_owned(),
+                    },
+                    Some(key),
+                );
+            }
+        };
     // The overseer's own context record, read once per pass where the
     // fleet has a mailbox root: the reading the judge is handed, the
     // wedge and the stale and gap judgements all read this one record.
@@ -1515,6 +1542,7 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
             }
             mark_check(&record, &key, marks_now.as_ref(), pass, out);
             context_check(&record, &key, context.as_ref(), pass, out);
+            oom_baseline(&key, pane_pid, pass, out);
         }
         return judged(verdict, Some(key));
     };
@@ -1574,6 +1602,14 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
     };
     // A new episode counts its own transfers.
     out.changes.push(clear(TRANSFER_ROW, &key));
+    let cause = match case {
+        OverseerCase::Dead => memory_cap(&key, pane_pid, pass),
+        OverseerCase::Walled | OverseerCase::Reserve => None,
+    };
+    if let Some(cause) = cause {
+        out.changes
+            .push(set(OOM_ROW, &key, cause.word().to_owned()));
+    }
     out.events.push(Event::OverseerSession {
         case,
         pane: record.pane.clone(),
@@ -1581,6 +1617,7 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
         passes: passes_needed,
         succession: pass.succession,
         source: source.word().to_owned(),
+        cause: cause.map(DeathCause::word),
         record: record_field,
     });
     if let Verdict::Walled { source, text, .. } = &verdict {
@@ -1618,6 +1655,41 @@ fn pass_verdict(pass: &Pass, out: &mut Produced) -> Judged {
     ));
     out.next_due = plan_relaunch.then_some(pass_next_due());
     judged(verdict, Some(key))
+}
+
+/// The live controller's OOM kill count kept under [`OOM_ROW`]: the count
+/// where the caps on its path read one, the row cleared where no cap
+/// stands, the last count kept where the count is unread. Kept whether or
+/// not the memory mark is set.
+fn oom_baseline(key: &str, pid: u32, pass: &Pass, out: &mut Produced) {
+    let kept = pass.baseline.get(OOM_ROW, key);
+    match (pass.judges.memory)(pid) {
+        Reading::Live(Some(Memory {
+            oom_kill: Some(count),
+            ..
+        })) => {
+            let count = count.to_string();
+            if kept != Some(count.as_str()) {
+                out.changes.push(set(OOM_ROW, key, count));
+            }
+        }
+        Reading::Live(None) if kept.is_some() => out.changes.push(clear(OOM_ROW, key)),
+        Reading::Live(_) | Reading::Gone | Reading::Unreadable { .. } => {}
+    }
+}
+
+/// A death's cause read off its control-group path: `memory-cap` where the
+/// caps' OOM kill count rose past the last live pass's, nothing where it is
+/// unchanged, no cap stands, or either count is unread.
+fn memory_cap(key: &str, pid: u32, pass: &Pass) -> Option<DeathCause> {
+    let kept: u64 = pass.baseline.get(OOM_ROW, key)?.parse().ok()?;
+    match (pass.judges.memory)(pid) {
+        Reading::Live(Some(Memory {
+            oom_kill: Some(count),
+            ..
+        })) if count > kept => Some(DeathCause::MemoryCap),
+        Reading::Live(_) | Reading::Gone | Reading::Unreadable { .. } => None,
+    }
 }
 
 /// The session's own reading read as wedged: the window full by the
@@ -1928,6 +2000,12 @@ fn transfer(
         out.changes.push(set(row, key, format!("{prefix}reported")));
         return;
     };
+    let death = match case {
+        OverseerCase::Dead => (pass.baseline.get(OOM_ROW, key)
+            == Some(DeathCause::MemoryCap.word()))
+        .then_some(DeathCause::MemoryCap),
+        OverseerCase::Walled | OverseerCase::Reserve => None,
+    };
     let request = RequestTransfer {
         expected: record.expected(),
         successor,
@@ -1936,6 +2014,7 @@ fn transfer(
         exclude_account,
         handoff_session_id: None,
         recovery: None,
+        death,
     };
     match (pass.transfer)(request) {
         Ok(intent) => {
@@ -2452,6 +2531,9 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
                 tick.wall,
             ))
         };
+        let pane_memory = |pid: u32| {
+            agent_runtime::process::memory_of(Path::new("/proc"), Path::new("/sys/fs/cgroup"), pid)
+        };
         let judges = Judges {
             scripts: scripts_dir(&ctx.settings.roots.project),
             marks: &marks,
@@ -2459,6 +2541,7 @@ fn body<'a>(ctx: Observation) -> Body<'a> {
             wall_pick: &wall_pick,
             relaunch: &relaunch_through_launcher,
             succeed: &succeed_through_runner,
+            memory: &pane_memory,
         };
         let context_record = ctx
             .settings
