@@ -42,7 +42,22 @@ while IFS='|' read -r label world command expected prompt; do
   assert_eq "$got" "$expected" "$label"
   case "$prompt" in
     review-fallback) assert_eq "$(request_state claude 1)" '{"inline_diff":true,"repair":false,"audit_original":false}' "$label: replacement receives its own diff and original request" ;;
-    audit-fallback) assert_eq "$(request_state claude 1)" '{"inline_diff":false,"repair":false,"audit_original":true}' "$label: replacement receives the original audit request" ;;
+    audit-fallback)
+      assert_eq "$(request_state claude 1)" '{"inline_diff":false,"repair":false,"audit_original":true}' "$label: replacement receives the original audit request"
+      # Disable caller text only in this row's disposable wrapper. Context
+      # alone, or context with an altered request, must not satisfy the check.
+      while IFS='|' read -r mutation setup; do
+        # shellcheck disable=SC2086 # fixture words are a list
+        build "audit-control-$mutation" $DEFAULTS $world
+        mutate_script "$SO" '  local caller_prompt="$1"' "$setup"
+        got=$(run_fallback "$command")
+        assert_eq "$got" "$expected" "$label ($mutation): control reaches the replacement audit"
+        assert_eq "$(request_state claude 1)" '{"inline_diff":false,"repair":false,"audit_original":false}' "$label ($mutation): original request check turns red"
+      done <<'AUDIT_CONTROLS'
+dropped|  local caller_prompt="$1"; caller_prompt=''
+altered|  local caller_prompt="$1"; caller_prompt=${caller_prompt/file.txt/file.md}
+AUDIT_CONTROLS
+      ;;
     envelope-cause) assert_eq "$(jq -r .cause_source < "$ROW/out/out.json.failed.json")" 'claude result' "$label: the replacement's result envelope is the cause" ;;
   esac
   if [[ "$world" == exit:codex=7* && "$prompt" == review-fallback ]]; then
