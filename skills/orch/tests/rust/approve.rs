@@ -61,6 +61,7 @@ fn request(root: &Path) -> ApproveHead {
         head: HEAD[..8].into(),
         body_file: root.join("body"),
         hold_copilot: false,
+        comment_file: None,
     }
 }
 
@@ -97,7 +98,13 @@ fn child_with(name: &str, extra: &[(&str, &str)]) -> Option<tempfile::TempDir> {
     ] {
         symlink(Path::new("/usr/bin").join(name), tools.join(name)).unwrap();
     }
-    let child_path = if name == "an_unstarted_post_clears_its_claim_and_can_retry" {
+    // Rows that remove the planted gh mid-call run with no host gh behind it.
+    let child_path = if [
+        "an_unstarted_post_clears_its_claim_and_can_retry",
+        COMMENT_ROW,
+    ]
+    .contains(&name)
+    {
         std::env::join_paths([dir.path().join("bin"), tools]).unwrap()
     } else {
         support::tool_path(&[&dir.path().join("bin")]).into()
@@ -285,6 +292,127 @@ fn a_refusal_names_what_it_judged() {
         json!([["file", root.join("token")], ["cause", "mode-640"]])
     );
     assert_eq!(posts(root), 0);
+}
+
+const COMMENT_ROW: &str =
+    "a_named_comment_lands_before_the_approval_and_an_unposted_one_approves_nothing";
+
+/// The comment a request names lands as the app before the approval is
+/// claimed. A comment GitHub refused or that never started approves
+/// nothing and clears its claim; one whose answer was lost approves
+/// nothing until a complete read-back settles it, and no repeat posts it
+/// twice.
+#[test]
+fn a_named_comment_lands_before_the_approval_and_an_unposted_one_approves_nothing() {
+    if child(COMMENT_ROW).is_some() {
+        return;
+    }
+    let root = root();
+    let mut r = request(&root);
+    r.comment_file = Some(root.join("comment"));
+    let count = |name: &str| {
+        fs::read_to_string(root.join(name))
+            .unwrap_or_default()
+            .lines()
+            .count()
+    };
+    let record = || -> Value {
+        serde_json::from_slice::<Value>(&fs::read(root.join("item.json")).unwrap()).unwrap()
+            ["head_approvals"]["o/r#42"][HEAD]
+            .clone()
+    };
+    let fresh = || {
+        let mut doc: Value =
+            serde_json::from_slice(&fs::read(root.join("item.json")).unwrap()).unwrap();
+        doc.as_object_mut().unwrap().remove("head_approvals");
+        fs::write(root.join("item.json"), doc.to_string()).unwrap();
+        for file in ["landed.json", "comments.json"] {
+            if root.join(file).exists() {
+                fs::remove_file(root.join(file)).unwrap();
+            }
+        }
+    };
+    // An absent or blank comment refuses before any GitHub call.
+    assert_eq!(run(&root, &r).unwrap_err().key(), "comment-file");
+    fs::write(root.join("comment"), " \n").unwrap();
+    assert_eq!(run(&root, &r).unwrap_err().key(), "comment-file");
+    assert!(!root.join("gh.log").exists());
+    let text = "Each decline holds at this head.\n";
+    fs::write(root.join("comment"), text).unwrap();
+
+    // Posted as the app, then the approval.
+    assert_eq!(run(&root, &r).unwrap().status, Status::Confirmed);
+    assert_eq!((count("comment_posts"), count("posts")), (1, 1));
+    let acts: Vec<_> = calls(&root)
+        .into_iter()
+        .filter(|(_, args)| args.iter().any(|a| a == "POST"))
+        .collect();
+    assert_eq!(
+        acts.iter()
+            .map(|(token, args)| (token.clone(), args[3].clone()))
+            .collect::<Vec<_>>(),
+        [
+            (json!(TOKEN), "repos/o/r/issues/42/comments".to_owned()),
+            (json!(TOKEN), "repos/o/r/pulls/42/reviews".to_owned()),
+        ]
+    );
+    let landed: Value =
+        serde_json::from_slice(&fs::read(root.join("comments.json")).unwrap()).unwrap();
+    assert_eq!(landed[0]["body"], text);
+
+    // GitHub refuses the comment: nothing is approved, the claim clears and
+    // the repeat posts both.
+    fresh();
+    answer(&root, json!({"comment":"forbidden"}));
+    let refused = run(&root, &r).unwrap();
+    assert!(
+        refused
+            .detail
+            .as_deref()
+            .is_some_and(|d| d.contains("HTTP 403")),
+        "{refused:?}"
+    );
+    assert_eq!(
+        (refused.status, refused.reason.as_str()),
+        (Status::Refused, "comment-failed")
+    );
+    assert_eq!((count("comment_posts"), count("posts")), (2, 1));
+    assert!(record()["comment"].is_null() && record()["attempt"].is_null());
+    answer(&root, json!({}));
+    assert_eq!(run(&root, &r).unwrap().status, Status::Confirmed);
+    assert_eq!((count("comment_posts"), count("posts")), (3, 2));
+
+    // The comment's answer is lost: nothing is approved while the comments
+    // stay unread, and the read-back that finds it posts no second comment.
+    fresh();
+    answer(&root, json!({"comment":"lost"}));
+    let lost = run(&root, &r).unwrap();
+    assert_eq!(
+        (lost.status, lost.reason.as_str()),
+        (Status::Unknown, "comment-unconfirmed")
+    );
+    answer(&root, json!({"comment_read":"fail"}));
+    let unread = run(&root, &r).unwrap();
+    assert_eq!(
+        (unread.status, unread.reason.as_str()),
+        (Status::Unknown, "comment-unconfirmed")
+    );
+    assert_eq!((count("comment_posts"), count("posts")), (4, 2));
+    answer(&root, json!({}));
+    assert_eq!(run(&root, &r).unwrap().status, Status::Confirmed);
+    assert_eq!((count("comment_posts"), count("posts")), (4, 3));
+
+    // The comment's POST never starts: nothing is approved and the claim
+    // clears.
+    fresh();
+    answer(&root, json!({"remove_gh_after_replies":true}));
+    let unstarted = run(&root, &r).unwrap();
+    assert_eq!(
+        (unstarted.status, unstarted.reason.as_str()),
+        (Status::Refused, "comment-not-started")
+    );
+    assert_eq!((count("comment_posts"), count("posts")), (4, 3));
+    assert!(record()["comment"].is_null());
 }
 
 #[test]

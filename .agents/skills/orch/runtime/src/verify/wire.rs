@@ -1198,6 +1198,19 @@ pub struct Review {
     pub submitted_at: Optional<String>,
 }
 
+/// One issue comment (issues/comments, "Create an issue comment" and "List
+/// issue comments"): a pull request's conversation comments are its issue's.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub(crate) struct IssueComment {
+    /// Required (issues/comments, `id`: integer).
+    pub(crate) id: u64,
+    /// Required, nullable (issues/comments, `user`: simple-user or null).
+    pub(crate) user: Nullable<User>,
+    /// Optional (issues/comments, `body`: string, not in the required list).
+    #[serde(default)]
+    pub(crate) body: Optional<String>,
+}
+
 /// One timeline event (issues/timeline). The documented shape differs by
 /// `event`, so every other field is read from the object where the event
 /// kind needs it and refused there when it is not the documented type.
@@ -1548,6 +1561,10 @@ mod tests {
                 ("author_association", Required),
                 ("pull_request", Optional),
             ],
+        );
+        catalogue::<IssueComment>(
+            json!({"id": 9, "user": null, "body": "Each decline holds."}),
+            &[("id", Required), ("user", Nullable), ("body", Optional)],
         );
         catalogue::<Pull>(
             json!({

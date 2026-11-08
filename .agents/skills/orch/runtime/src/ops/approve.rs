@@ -1,7 +1,9 @@
 //! Exact-head approvals as the overseer's GitHub App and their once-per-head
 //! attempt records. With `hold_copilot`, Copilot's work in flight on the
 //! head is waited out through the current-head wait before the review
-//! replies are read and the attempt is claimed.
+//! replies are read and the attempt is claimed. A request's `comment_file`
+//! is posted on the pull request as the app, once per head, before the
+//! attempt is claimed: a comment that did not land approves nothing.
 use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -17,6 +19,7 @@ use crate::schedule::Clock;
 use crate::settings::Settings;
 use crate::state::{self, Document, Locking};
 use crate::verify::review::{self, Flight};
+use crate::verify::wire::{IssueComment, Nullable};
 use crate::verify::{Answer, Gh, Unreadable, Unrun};
 
 const APPROVALS: &str = "head_approvals";
@@ -33,6 +36,8 @@ pub struct ApproveHead {
     pub body_file: PathBuf,
     #[serde(default)]
     pub hold_copilot: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub comment_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,7 +55,8 @@ pub struct ApprovedHead {
     pub head: String,
     pub reason: String,
     pub review: Option<Value>,
-    /// gh's words for a POST GitHub refused or a read-back that failed.
+    /// gh's words for a POST GitHub refused, an answer lost or a read-back
+    /// that failed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
 }
@@ -60,6 +66,8 @@ struct Entry {
     login: String,
     #[serde(default)]
     attempt: Option<Attempt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    comment: Option<Posting>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -69,8 +77,18 @@ enum Attempt {
     Confirmed { review: Value },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "kebab-case")]
+enum Posting {
+    Attempted,
+    Posted { id: u64 },
+}
+
 /// The refusal of an attempt a complete read-back found had not landed.
 const NOT_LANDED: &str = "not-landed";
+
+/// The answer while a comment's POST is unsettled: its claim stands.
+const COMMENT_UNCONFIRMED: &str = "comment-unconfirmed";
 
 fn refuse(key: &'static str, fields: &[(&str, &str)]) -> Error {
     agent_runtime::Error::refused(key, fields).into()
@@ -127,6 +145,7 @@ fn update<T>(
             None => Entry {
                 login: login.into(),
                 attempt: None,
+                comment: None,
             },
         };
         if entry.login != login {
@@ -428,6 +447,16 @@ pub fn run(
         return Err(refuse("approval-request", &[]));
     }
     let body = std::fs::read_to_string(&r.body_file).map_err(|_| refuse("body-file", &[]))?;
+    // An empty comment explains nothing, so it is refused before any call.
+    let comment = match &r.comment_file {
+        None => None,
+        Some(file) => Some(
+            std::fs::read_to_string(file)
+                .ok()
+                .filter(|text| !text.trim().is_empty())
+                .ok_or_else(|| refuse("comment-file", &[]))?,
+        ),
+    };
     // The credential, the app's login and the host must be read values; a
     // reader credential only a shell reads stays the router's.
     if settings
@@ -480,6 +509,12 @@ pub fn run(
         return Ok(finished);
     }
     replies(settings, r, &head, &token)?;
+    if let Some(text) = &comment
+        && let Some(unposted) =
+            post_comment(path, r, &head, login, &token, settings, locking, text)?
+    {
+        return Ok(unposted);
+    }
     let claimed = update(path, r, &head, login, locking, |entry| {
         if entry.attempt.is_some() {
             return Ok(false);
@@ -577,15 +612,165 @@ fn settle(
             })?;
             Ok(reply(Status::Refused, head, refusal, None))
         }
-        Err(e) => {
-            let mut unknown = reply(Status::Unknown, head, "approval-unconfirmed", None);
-            unknown.detail = e
-                .fields()
-                .into_iter()
-                .find_map(|(key, value)| (key == "detail").then_some(value));
-            Ok(unknown)
-        }
+        Err(e) => Ok(unconfirmed(head, "approval-unconfirmed", &e)),
     }
+}
+
+/// An act whose answer is still lost, named by `reason`, with the failed
+/// read's words.
+fn unconfirmed(head: &str, reason: &str, e: &Error) -> ApprovedHead {
+    let mut unknown = reply(Status::Unknown, head, reason, None);
+    unknown.detail = e
+        .fields()
+        .into_iter()
+        .find_map(|(key, value)| (key == "detail").then_some(value));
+    unknown
+}
+
+/// The comment a request names, posted once at the head as the app before
+/// the approval is claimed: `None` once it stands on the pull request, else
+/// the answer that approves nothing. The claim is written before the POST
+/// and stands while its answer is unknown, so a repeat reads the comments
+/// back before it posts again.
+#[allow(clippy::too_many_arguments)]
+fn post_comment(
+    path: &Path,
+    r: &ApproveHead,
+    head: &str,
+    login: &str,
+    token: &str,
+    settings: &Settings,
+    locking: Locking,
+    text: &str,
+) -> Result<Option<ApprovedHead>> {
+    let observed = update(path, r, head, login, locking, |entry| {
+        Ok(entry.comment.clone())
+    })?;
+    match &observed {
+        Some(Posting::Posted { .. }) => return Ok(None),
+        Some(Posting::Attempted) => match comment_landed(settings, r, login, token, text) {
+            Ok(Some(id)) => {
+                mark_comment(path, r, head, login, locking, Some(Posting::Posted { id }))?;
+                return Ok(None);
+            }
+            Ok(None) => {}
+            Err(e) => return Ok(Some(unconfirmed(head, COMMENT_UNCONFIRMED, &e))),
+        },
+        None => {}
+    }
+    let before = update(path, r, head, login, locking, |entry| {
+        let before = entry.comment.clone();
+        if before == observed {
+            entry.comment = Some(Posting::Attempted);
+        }
+        Ok(before)
+    })?;
+    if before != observed {
+        // Another call moved the claim between the two reads: its answer
+        // settles the comment, and this call posts nothing.
+        return Ok(match before {
+            Some(Posting::Posted { .. }) => None,
+            Some(Posting::Attempted) | None => {
+                Some(reply(Status::Unknown, head, COMMENT_UNCONFIRMED, None))
+            }
+        });
+    }
+    let payload = serde_json::to_vec(&json!({ "body": text }))?;
+    let url = format!("repos/{}/issues/{}/comments", r.repo, r.pr);
+    let posted = app(settings, token).run(
+        "api",
+        &["api", "--method", "POST", &url, "--input", "-"],
+        Some(&payload),
+    );
+    let detail = match posted {
+        Ok(Answer::Printed { stdout, stderr }) => {
+            if let Ok(comment) = serde_json::from_slice::<IssueComment>(&stdout) {
+                mark_comment(
+                    path,
+                    r,
+                    head,
+                    login,
+                    locking,
+                    Some(Posting::Posted { id: comment.id }),
+                )?;
+                return Ok(None);
+            }
+            stderr
+        }
+        Ok(Answer::Failed(failed)) => {
+            if http_refusal(failed.exit, &failed.stderr) {
+                mark_comment(path, r, head, login, locking, None)?;
+                let mut refused = reply(Status::Refused, head, "comment-failed", None);
+                refused.detail = Some(failed.stderr);
+                return Ok(Some(refused));
+            }
+            failed.detail()
+        }
+        Err(Unrun::Runner(agent_runtime::Error::NotStarted { .. })) => {
+            mark_comment(path, r, head, login, locking, None)?;
+            return Ok(Some(reply(
+                Status::Refused,
+                head,
+                "comment-not-started",
+                None,
+            )));
+        }
+        Err(unrun) => unrun.detail(),
+    };
+    let mut unknown = reply(Status::Unknown, head, COMMENT_UNCONFIRMED, None);
+    unknown.detail = Some(detail).filter(|text| !text.trim().is_empty());
+    Ok(Some(unknown))
+}
+
+/// Records the comment `posting`; a cleared claim clears only an attempt.
+fn mark_comment(
+    path: &Path,
+    r: &ApproveHead,
+    head: &str,
+    login: &str,
+    locking: Locking,
+    posting: Option<Posting>,
+) -> Result<()> {
+    update(path, r, head, login, locking, |entry| {
+        if posting.is_some() || entry.comment == Some(Posting::Attempted) {
+            entry.comment = posting.clone();
+        }
+        Ok(())
+    })
+}
+
+/// The app's comment with `text` in a complete read of the pull request's
+/// comments: its id, `None` where the read holds none, and the read's
+/// refusal where any page is unread. The bodies are compared trimmed, so
+/// the match does not rest on how GitHub stores a body's surrounding
+/// whitespace.
+fn comment_landed(
+    settings: &Settings,
+    r: &ApproveHead,
+    login: &str,
+    token: &str,
+    text: &str,
+) -> Result<Option<u64>> {
+    let gh = app(settings, token);
+    let comments = crate::verify::list(
+        &format!("repos/{}/issues/{}/comments", r.repo, r.pr),
+        |page| {
+            let (stdout, _) = answered(gh.run("api", &["api", page], None), "comment-read-back")?;
+            serde_json::from_slice::<Vec<IssueComment>>(&stdout)
+                .map_err(|e| refuse("comment-read-back", &[("detail", &e.to_string())]))
+        },
+        || refuse("comment-read-back", &[("detail", "comments-capped")]),
+    )?;
+    Ok(comments
+        .into_iter()
+        .find(|comment| {
+            matches!(&comment.user, Nullable::Present(user) if user.login == login)
+                && comment
+                    .body
+                    .present()
+                    .is_some_and(|body| body.trim() == text.trim())
+        })
+        .map(|comment| comment.id))
 }
 
 fn confirm(

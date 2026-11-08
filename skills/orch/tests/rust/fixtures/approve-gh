@@ -135,10 +135,43 @@ if a == ['api', 'repos/o/r/pulls/42/reviews?per_page=100', '--paginate']:
               'user': {'login':'copilot-pull-request-reviewer[bot]', 'type':'Bot', 'id':3003},
               'author_association':'NONE', 'body':'<!-- ccr-overview-v2 -->\n\n### Changes recommended\n\n**0 open findings**'}])
     out([])
+# The approval's comment: its POST and its paged read-back, in the forms the
+# runtime sends. A comment that landed outlives the answer map, in
+# `comments.json`, and every comments read lists it after any planted one.
+comments = root / 'comments.json'
+landed_comments = json.loads(comments.read_text()) if comments.exists() else []
+if a == ['api', '--method', 'POST', 'repos/o/r/issues/42/comments', '--input', '-']:
+    with (root / 'comment_posts').open('a') as posts:
+        posts.write('post\n')
+    entry = json.loads((root / 'item.json').read_text())['head_approvals']['o/r#42'][head]
+    assert entry['comment']['state'] == 'attempted', 'comment POST without its claim'
+    assert entry.get('attempt') is None, 'comment POST after the approval claim'
+    sent = json.loads(sys.stdin.read())
+    mode = cfg.get('comment', 'ok')
+    if mode == 'forbidden':
+        print('gh: Resource not accessible by integration (HTTP 403)', file=sys.stderr)
+        sys.exit(1)
+    login = 'review-app[bot]' if os.environ.get('GH_TOKEN') == 'ghs_fixtureApprovalFileToken' else 'lane-app[bot]'
+    number = 7001 + len(landed_comments)
+    comment = {'id': number, 'node_id': 'IC_' + str(number),
+               'url': 'https://api.github.com/repos/o/r/issues/comments/' + str(number),
+               'html_url': 'https://github.com/o/r/pull/42#issuecomment-' + str(number),
+               'body': sent['body'], 'user': {'login': login, 'id': 4004, 'type': 'Bot'},
+               'created_at': '2026-01-29T15:20:00Z', 'updated_at': '2026-01-29T15:20:00Z',
+               'issue_url': 'https://api.github.com/repos/o/r/issues/42',
+               'author_association': 'NONE', 'performed_via_github_app': None}
+    comments.write_text(json.dumps(landed_comments + [comment]))
+    if mode == 'lost':
+        os.kill(os.getpid(), signal.SIGTERM)
+    out(comment)
+if a == ['api', 'repos/o/r/issues/42/comments?per_page=100&page=1']:
+    if cfg.get('comment_read') == 'fail':
+        refused()
+    out(landed_comments)
 if a == ['api', 'repos/o/r/issues/42/comments?per_page=100', '--paginate']:
     if cfg.get('reply') == 'lane-disposition':
-        out([{'user': {'login':'lane-app[bot]', 'type':'Bot', 'id':2002}, 'author_association':'CONTRIBUTOR', 'body':'Dispositions at ' + head + '\nreview:5539256602 - Declined: the caller rejects empty values before the read.'}])
-    out([])
+        out([{'user': {'login':'lane-app[bot]', 'type':'Bot', 'id':2002}, 'author_association':'CONTRIBUTOR', 'body':'Dispositions at ' + head + '\nreview:5539256602 - Declined: the caller rejects empty values before the read.'}] + landed_comments)
+    out(landed_comments)
 # Its GraphQL reads: the viewer, and the thread walk with its variables. The
 # planted data is projected onto the query's selection by the shared closed
 # projector, which refuses any query GitHub would not answer.
