@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # bash-runtime: 4
-# Surface: the filing bar on authored descriptions. The quoted opening and the
-# header length are advisory, the post-merge box fields refuse, and an owner
-# action placed on a stored legacy body is judged on its own length.
+# Surface: the filing bar on authored descriptions. Missing quoted openings
+# and invalid post-merge box fields refuse; header length remains advisory.
+# An owner action placed on a stored legacy body is judged on its own length.
 # Inputs: linear scripts, this suite, its assertion library, and the mailbox
 # owner-action producer. Real create/update/bulk-description routes must use
 # the same guard; completion and metadata keep stored legacy text.
@@ -77,6 +77,12 @@ assert_unwritten() { # DESC
     assert_eq "$1 refuses before any API call" "$(api_calls)" "0"
   fi
 }
+assert_opening_refused() { # DESC [LINE]
+  assert_ne "$1 exits nonzero" "$RC" 0
+  assert_unwritten "$1"
+  assert_jq "$1 names the opening refusal" "$ERR" \
+    ".rule == \"issue-header-opening\" and .line == ${2:-1} and (.fix | length) > 0"
+}
 # advisories — each `linear: advisory=` line in ERR as "RULE LINE LENGTH".
 advisories() {
   sed -n 's/^linear: advisory=\([^ ]*\) line=\([0-9]*\) length=\([0-9]*\)\( .*\)\{0,1\}$/\1 \2 \3/p' <<<"$ERR"
@@ -103,6 +109,7 @@ source "$SKILL_DIR/scripts/lib/issue-validation.sh"
 while IFS='|' read -r shape expected; do
   case "$shape" in
     quoted) candidate="$OUTCOME" ;;
+    opening-only) candidate="$STORY"$'\n\n'"$WHY" ;;
     continued) candidate=$'> **Story:**\n> The owner reads an issue.\n> It explains the change.\n\n> **Why this matters:**\n> It saves reading time.\n\n## Done when' ;;
     crlf) candidate="${OUTCOME//$'\n'/$'\r\n'}" ;;
     ordinary-quote) candidate="$OUTCOME"$'\n\n> Quoted source evidence.' ;;
@@ -110,6 +117,7 @@ while IFS='|' read -r shape expected; do
     missing-why) candidate="$STORY"$'\n\n## Done when' ;;
     empty-story) candidate=$'> **Story:**\n\n'"$WHY"$'\n\n## Done when' ;;
     empty-why) candidate="$STORY"$'\n\n> **Why this matters:**\n\n## Done when' ;;
+    whitespace-only) candidate=$'> **Story:** \t\n> \t\n\n'"$WHY"$'\n\n## Done when' ;;
     placeholder) candidate=$'> **Story:** [STORY]\n\n'"$WHY"$'\n\n## Done when' ;;
     template-placeholder) candidate=$'> **Story:** [Who this is about.] [What happens today.]\n\n'"$WHY"$'\n\n## Done when' ;;
     reversed) candidate="$WHY"$'\n\n'"$STORY"$'\n\n## Done when' ;;
@@ -124,31 +132,35 @@ while IFS='|' read -r shape expected; do
   rc=0
   require_issue_header_shape "$candidate" 2>"$ERR_FILE" || rc=$?
   ERR="$(cat "$ERR_FILE")"
-  assert_eq "opening $shape files" "$rc" 0
   if [[ "$expected" == pass ]]; then
-    assert_eq "opening $shape prints no advisory" "$(advisories)" ""
+    assert_eq "opening $shape files" "$rc" 0
+    assert_eq "opening $shape prints no diagnostic" "$ERR" ""
   else
-    assert_eq "opening $shape names the opening advisory" "$(advisories | cut -d' ' -f1)" issue-header-opening
+    assert_ne "opening $shape refuses" "$rc" 0
+    assert_jq "opening $shape names the opening refusal" "$ERR" \
+      '.rule == "issue-header-opening" and (.fix | length) > 0'
   fi
 done <<'ROWS'
 quoted|pass
+opening-only|pass
 continued|pass
 crlf|pass
 ordinary-quote|pass
-missing-story|advise
-missing-why|advise
-empty-story|advise
-empty-why|advise
-placeholder|advise
-template-placeholder|advise
-reversed|advise
-joined|advise
-quoted-separator|advise
-heading-first|advise
-heading-joined|advise
-unquoted-story|advise
-unquoted-continuation|advise
-empty|advise
+missing-story|refuse
+missing-why|refuse
+empty-story|refuse
+empty-why|refuse
+whitespace-only|refuse
+placeholder|refuse
+template-placeholder|refuse
+reversed|refuse
+joined|refuse
+quoted-separator|refuse
+heading-first|refuse
+heading-joined|refuse
+unquoted-story|refuse
+unquoted-continuation|refuse
+empty|refuse
 ROWS
 
 # Why keeps the existing header bound after removing its quote marker.
@@ -167,15 +179,13 @@ done
 # Material invalid openings reach the real command routes with valid reach.
 for operation in create update bulk-update; do
   case "$operation" in
-    create) opening_args=(issues create --title 'Opening shape'); mutation=issueCreate ;;
-    update) opening_args=(issues update CC-1); mutation=issueUpdate ;;
-    bulk-update) opening_args=(issues bulk-update CC-1 CC-2); mutation=issueUpdate ;;
+    create) opening_args=(issues create --title 'Opening shape') ;;
+    update) opening_args=(issues update CC-1) ;;
+    bulk-update) opening_args=(issues bulk-update CC-1 CC-2) ;;
   esac
   candidate="$STORY"$'\n\n## Done when\n\n'"$REACH_LINE"
   run_linear "${opening_args[@]}" --description "$candidate"
-  advisory="issue-header-opening 1 ${#STORY}"
-  [ "$operation" != bulk-update ] || advisory+=$'\n'"$advisory"
-  assert_advised "$operation with a missing quoted Why through its entry point" "$mutation" "$advisory"
+  assert_opening_refused "$operation with a missing quoted Why through its entry point"
 done
 
 # The shape rule leaves the reach and review-born symptom rule independent.
@@ -187,13 +197,14 @@ require_issue_reach "$OUTCOME"$'\n'"$REACH_LINE" 2 1 2>"$ERR_FILE" || rc=$?
 assert_ne 'the symptom rule still refuses review-born priority-2 without symptom' "$rc" 0
 
 echo "=== create: the opening line ==="
-body "$SOURCE_LINE" "$REACH_LINE" '' "$OUTCOME"
+# A refused opening must remain one JSON record even beside a long header.
+body "$SOURCE_LINE" "$REACH_LINE" '' "$OUTCOME" '' "$(pad '**Symptom**: ' 501)"
 run_linear issues create --title "Source first" --description-file "$TMP_ROOT/body.md"
-assert_advised "a create opening with a **Source**: line" issueCreate "issue-header-opening 1 ${#SOURCE_LINE}"
+assert_opening_refused "a create opening with a **Source**: line"
 
 body '' '' 'Reached by: kendex apply' '' "$OUTCOME"
 run_linear issues create --title "Reach first" --description-file "$TMP_ROOT/body.md"
-assert_advised "a create whose first non-empty line is Reached by:" issueCreate "issue-header-opening 3 24"
+assert_opening_refused "a create whose first non-empty line is Reached by:" 3
 
 echo "=== owner action: the next non-empty line opens the body ==="
 REPO_ROOT="$(git rev-parse --show-toplevel)"
@@ -210,9 +221,8 @@ assert "the owner action update writes the exact description" \
 
 for opening in "$ACTION_LINE" '**Brad, what you do**: Run the check.' '**Brad, what you do:**Run the check.'; do
   run_linear issues update CC-1 --description "$(printf '%s\n\n%s' "$opening" "$SOURCE_LINE")"
-  if [ "$opening" = "$ACTION_LINE" ]; then line=3; length="${#SOURCE_LINE}"
-  else line=1; length="${#opening}"; fi
-  assert_advised "an owner-shaped opening $opening followed by a header" issueUpdate "issue-header-opening $line $length"
+  if [ "$opening" = "$ACTION_LINE" ]; then line=3; else line=1; fi
+  assert_opening_refused "an owner-shaped opening $opening followed by a header" "$line"
 done
 body '' "$ACTION_LINE" '' "$OUTCOME"
 run_linear issues update CC-1 --description-file "$TMP_ROOT/body.md"
@@ -253,10 +263,9 @@ assert "the rollback writes the stored body exactly" \
 printf '%s' "$STORED" >"$FILED"
 OTHER_SOURCE='**Source**: y'
 run_linear issues update CC-1 --description "$(printf '%s\n\n%s\n%s' "$ACTION_LINE" "$OTHER_SOURCE" "$OUTCOME")"
-assert_advised "an owner action over a header-first body other than the stored one" issueUpdate \
-  "issue-header-opening 3 ${#OTHER_SOURCE}"
+assert_opening_refused "an owner action over a header-first body other than the stored one" 3
 run_linear issues update CC-1 --description "$(printf '%s\n%s' "$OTHER_SOURCE" "$OUTCOME")"
-assert_advised "a header-first body other than the stored one" issueUpdate "issue-header-opening 1 ${#OTHER_SOURCE}"
+assert_opening_refused "a header-first body other than the stored one"
 LONG_ACTION_LINE="$(pad '**Brad, what you do:** ' 501)"
 LONG_ASK="$(owner_ask_over "$FILED" "${LONG_ACTION_LINE#'**Brad, what you do:** '}")"
 LONG_ASK="${LONG_ASK%.}"
@@ -290,7 +299,7 @@ assert_advised "a template-shaped create" issueCreate
 
 echo "=== update: --description and --description-file ==="
 run_linear issues update CC-1 --description "$(printf '%s\n\n%s\n' "$SOURCE_LINE" "$OUTCOME")"
-assert_advised "an update --description opening with a **Source**: line" issueUpdate "issue-header-opening 1 ${#SOURCE_LINE}"
+assert_opening_refused "an update --description opening with a **Source**: line"
 
 body "$OUTCOME" '' "$LONG"
 run_linear issues update CC-1 --description-file "$TMP_ROOT/body.md"
@@ -300,16 +309,16 @@ body "$OUTCOME" '' "$SOURCE_LINE"
 run_linear issues update CC-1 --description-file "$TMP_ROOT/body.md"
 assert_advised "a template-shaped update --description-file" issueUpdate
 
+printf '%s' "$OUTCOME" >"$FILED"
 run_linear issues update CC-1 --description ""
-assert_advised "an update clearing the description" issueUpdate
+assert_opening_refused "an update clearing a nonempty description"
+: >"$FILED"
 
 echo "=== bulk-update: the shared authored description ==="
-# The header-length rule is the shared owner's, proven on create and update
-# above; these rows prove the option forms and one advisory per issue written.
+# These rows prove the authored-description option forms share the guard.
 while IFS='|' read -r form shape; do
-  advisory=""
   case "$shape" in
-    opening) description="$SOURCE_LINE"; advisory="issue-header-opening 1 ${#SOURCE_LINE}" ;;
+    opening) description="$SOURCE_LINE" ;;
     template) description="$(printf '%s\n\n%s' "$OUTCOME" "$SOURCE_LINE")" ;;
     empty) description="" ;;
   esac
@@ -318,13 +327,16 @@ while IFS='|' read -r form shape; do
     equals) description_args=(--description="$description") ;;
   esac
   run_linear issues bulk-update CC-1 CC-2 "${description_args[@]}"
-  [ -z "$advisory" ] || advisory+=$'\n'"$advisory"
-  assert_advised "a bulk-update $form $shape description" issueUpdate "$advisory"
-  assert_jq "a bulk-update $form $shape description updates every issue" "$OUT" \
-    '.success == true and .updated == 2 and .failed == 0'
-  assert "a bulk-update $form $shape description writes the authored text" \
-    jq -s -e --arg desc "$description" \
-    '[.[] | select(.query | contains("issueUpdate")) | .variables.input.description] == [$desc, $desc]' "$CURL_LOG"
+  if [ "$shape" = template ]; then
+    assert_advised "a bulk-update $form $shape description" issueUpdate
+    assert_jq "a bulk-update $form $shape description updates every issue" "$OUT" \
+      '.success == true and .updated == 2 and .failed == 0'
+    assert "a bulk-update $form $shape description writes the authored text" \
+      jq -s -e --arg desc "$description" \
+      '[.[] | select(.query | contains("issueUpdate")) | .variables.input.description] == [$desc, $desc]' "$CURL_LOG"
+  else
+    assert_opening_refused "a bulk-update $form $shape description"
+  fi
 done <<'ROWS'
 split|opening
 split|template
@@ -335,7 +347,7 @@ ROWS
 run_linear issues bulk-update CC-1 --description "$SOURCE_LINE" --description="$OUTCOME"
 assert_advised "a bulk-update replacing an invalid description option with a valid one" issueUpdate
 run_linear issues bulk-update CC-1 --description="$OUTCOME" --description "$SOURCE_LINE"
-assert_advised "a bulk-update replacing a valid description option with an invalid one" issueUpdate "issue-header-opening 1 ${#SOURCE_LINE}"
+assert_opening_refused "a bulk-update replacing a valid description option with an invalid one"
 
 printf '%s\n' "$SOURCE_LINE" "$LONG" >"$FILED"
 run_linear issues update CC-1 --title "Keep the filed description"
@@ -382,20 +394,20 @@ bulk-update|merge|2026-10-02T00:00:00Z|valid
 create|2026-10-01T00:00:00Z|2026-10-02T00:00:00Z|valid
 ROWS
 
-# A presentation miss beside a refused box leaves the refusal alone on stderr.
+# A missing opening beside a refused box leaves the box refusal alone on stderr.
 run_linear issues create --title "Post-merge check" --description "$(printf '%s\n' "$SOURCE_LINE" "$REACH_LINE" '## Done when' \
   "- [ ] Post-merge: Read health; Where: service; Why after merge: deployment; Trigger: merge; Deadline: set at merge")"
-assert_ne "an advised opening beside an invalid deadline is refused" "$RC" 0
-assert_unwritten "an advised opening beside an invalid deadline"
+assert_ne "a missing opening beside an invalid deadline is refused" "$RC" 0
+assert_unwritten "a missing opening beside an invalid deadline"
 assert_jq "the refusal is the one stderr record" "$ERR" '.rule == "post-merge-deadline" and .box == 1'
 
 echo "=== the reach guard's key holds this guard too ==="
 body "$SOURCE_LINE" "$REACH_LINE"
 REACH=unset
 run_linear issues create --title "Default key" --description-file "$TMP_ROOT/body.md"
-assert_advised "with no LINEAR_REQUIRE_REACH key a create opening with a header" issueCreate "issue-header-opening 1 ${#SOURCE_LINE}"
+assert_opening_refused "with no LINEAR_REQUIRE_REACH key a create opening with a header"
 run_linear issues bulk-update CC-1 --description "$SOURCE_LINE"
-assert_advised "with no LINEAR_REQUIRE_REACH key a bulk-update opening with a header" issueUpdate "issue-header-opening 1 ${#SOURCE_LINE}"
+assert_opening_refused "with no LINEAR_REQUIRE_REACH key a bulk-update opening with a header"
 
 REACH=""
 run_linear issues create --title "Key off" --description-file "$TMP_ROOT/body.md"

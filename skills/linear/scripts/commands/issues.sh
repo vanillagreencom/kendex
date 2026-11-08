@@ -154,13 +154,13 @@ Create Options:
   Under the same key, create, update --description/--description-file,
   and bulk-update --description refuse a Post-merge Done-when box whose
   release trigger names no repository or whose Deadline is invalid. They
-  advise, without refusing, when the body does not open with nonempty quoted
-  blocks starting with `> **Story:**` then `> **Why this matters:**`, after
-  any optional owner action line (`**Name, what you do:** ...`), with an
-  unquoted blank line between the blocks and before the first heading, if
-  any, or when a header line is over 500 characters: one
-  `linear: advisory=RULE line=N length=N` line on stderr per miss, and the
-  write proceeds. Unfilled placeholders count as empty. Authors and reviewers
+  also refuse when the body does not open with nonempty quoted blocks starting
+  with `> **Story:**` then `> **Why this matters:**`, after any optional owner
+  action line (`**Name, what you do:** ...`), with an unquoted blank line
+  between the blocks and before the first heading, if any. A header line over
+  500 characters prints one `linear: advisory=issue-header-length line=N
+  length=N` line on stderr, and the write proceeds.
+  Unfilled placeholders count as empty. Authors and reviewers
   judge the prose. Update judges the body after it reads the issue: a body
   equal to the stored one apart from a leading owner action line, which it
   places, replaces or removes, is judged on that line's length alone.
