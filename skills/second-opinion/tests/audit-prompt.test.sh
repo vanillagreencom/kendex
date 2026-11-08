@@ -13,10 +13,6 @@ AUDIT_RANGE="" EXPECT_ENDPOINT="" EXPECT_DIFF="" EXPECT_PAGED=""
 
 suite_reset() {
   W_SCRIPT="$HERMETIC"
-  # A control may replace only the production entry point in this owned copy.
-  if [[ -n "${SECOND_OPINION_AUDIT_CONTROL:-}" ]]; then
-    cp "$SECOND_OPINION_AUDIT_CONTROL" "$HERMETIC"
-  fi
   AUDIT_RANGE="" EXPECT_ENDPOINT="" EXPECT_DIFF="-" EXPECT_PAGED="-"
   git -C "$WORK" config gc.auto 0
   git -C "$WORK" config maintenance.auto false
@@ -122,8 +118,8 @@ explicit empty audit range still permits existing-code examination|linked empty-
 oversized audit range retains owner-only omitted deleted bytes for read tools|linked large
 format retry carries the complete bound request|linked historical stdout:prose:delivered stdout2:good
 replacement target receives the same caller-bound request|linked historical models:claude+lane_a target:- lane:lane_a env:SECOND_OPINION_LANE_A_MODEL=codex rc:7 rc2:0'
-# The must-fail control scopes its run to the linked historical transport row.
 if [[ "${1:-}" == linked ]]; then ROWS="${ROWS%%$'\n'*}"; fi
+EXPECTED='rc=0 binding=ok packet=ok endpoint=ok diff=ok paged=ok continuity=ok'
 n=0
 while IFS='|' read -r label world; do
   n=$((n + 1))
@@ -131,6 +127,32 @@ while IFS='|' read -r label world; do
   build "row-$n" capture env:SECOND_OPINION_CLAUDE_INLINE_DIFF=0 $world
   rendered="$(run audit)" || exit 1
   rc="${rendered%% *}"
-  assert_eq "$rc $(audit_state)" 'rc=0 binding=ok packet=ok endpoint=ok diff=ok paged=ok continuity=ok' "$label"
+  assert_eq "$rc $(audit_state)" "$EXPECTED" "$label"
 done <<<"$ROWS"
+
+# Keep the audit call text but suppress context delivery in the owned wrapper.
+# The same linked historical row must reject missing binding and diff bytes,
+# not a failed CLI or missing caller packet.
+IFS='|' read -r label world <<<"${ROWS%%$'\n'*}"
+# shellcheck disable=SC2086
+build control capture env:SECOND_OPINION_CLAUDE_INLINE_DIFF=0 $world
+python3 - "$HERMETIC" <<'PY'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+assert not p.is_symlink()
+s = p.read_text()
+old = '  PROMPT=$(build_audit_prompt "$PROMPT")'
+assert s.count(old) == 1
+changed = s.replace(old, "  : '" + old + "'")
+assert changed != s
+p.write_text(changed)
+PY
+rendered="$(run audit)" || exit 1
+rc="${rendered%% *}"
+control="$rc $(audit_state)"
+assert_eq "$control" 'rc=0 binding=invalid packet=ok endpoint=ok diff=invalid paged=ok continuity=ok' 'control reaches the linked historical audit without context delivery'
+control_rc=0
+(FAIL=0; assert_eq "$control" "$EXPECTED" "must-fail: $label"; [[ "$FAIL" -eq 0 ]]) || control_rc=$?
+assert_eq "$control_rc" 1 'linked historical transport assertion rejects the control'
 finish

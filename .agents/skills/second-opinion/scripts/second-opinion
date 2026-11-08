@@ -356,8 +356,9 @@ Exit codes:
   0  success
   1  config failure (bad target, missing jq), no eligible target (same-model review refused),
      challenge/quick CLI failure or timeout, or unrecoverable non-JSON after retry (review/audit)
-  3  review: derived diff scope is empty or invalid — nothing to review — or an
-     inline diff past its cap has no writable file to keep the whole diff in
+  3  review or audit with --range: range/diff derivation failed, or an inline diff
+     past its cap has no writable file to keep the whole diff in;
+     review also rejects an empty diff — nothing to review
   4  review/audit: model self-reported no review was performed
      (qa_metadata.review_performed=false) or omitted the required qa_metadata
      object entirely (response kept as <output>.noreview.json); or the response
