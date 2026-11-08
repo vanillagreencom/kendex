@@ -259,7 +259,9 @@ gh_rest() {
         local response diagnostic
         local exit_code=0
 
-        response=$(gh api "$endpoint" "$@" 2>"$rest_errors") || exit_code=$?
+        # gh's debug modes mix successful HTTP traces into stderr evidence.
+        # https://cli.github.com/manual/gh_help_environment
+        response=$(GH_DEBUG= DEBUG= gh api "$endpoint" "$@" 2>"$rest_errors") || exit_code=$?
 
         if [ $exit_code -eq 0 ]; then
             echo "$response"

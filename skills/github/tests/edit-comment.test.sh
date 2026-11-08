@@ -296,7 +296,7 @@ echo '=== shared REST failures use received evidence and bounded retries ==='
 # https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api
 # https://github.com/cli/cli/blob/trunk/pkg/cmd/api/api.go
 # Fields: name ^ gh exit ^ stderr (printf %b) ^ category ^ calls
-# ^ injected waits ^ successful stdout ^ prior page stdout (optional).
+# ^ injected waits ^ successful stdout ^ prior page stdout ^ trace (optional).
 # Category is the machine-readable key
 # in .error. Error JSON must contain only that key, never raw response text.
 REST_ROWS='integration^1^gh: Resource not accessible by integration (HTTP 403)^permission^1^-^-
@@ -312,10 +312,11 @@ not-found^1^gh: Not Found (HTTP 404)^not-found^1^-^-
 page-status^1^gh: API rate limit exceeded for test. (HTTP 403)^primary-rate-limit^3^1,2,^-^[{"body":"gh: Not Found (HTTP 404)"}]
 page-permission^1^gh: Too Many Requests (HTTP 429)^unknown^3^1,2,^-^[{"body":"Resource not accessible by integration"}]
 page-quota^1^gh: Forbidden (HTTP 403)^unknown^1^-^-^[{"body":"API rate limit exceeded for test."}]
+traced-page^1^gh: Resource not accessible by integration (HTTP 403)^permission^1^-^-^[]^api
 success^0^{"id":403,"message":"rate limit"}^-^1^-^{"id":403,"message":"rate limit"}'
 
 rest_run() {
-  local lib="$1" code="$2" response="$3" page="${4:-}" rc=0 out err waits requests
+  local lib="$1" code="$2" response="$3" page="${4:-}" trace="${5:-}" rc=0 out err waits requests
   gh_stub_reset
   if [[ "$code" == 0 ]]; then
     gh_stub_answer api-rest-contract "$response"
@@ -324,10 +325,18 @@ rest_run() {
   fi
   : >"$TMP_ROOT/rest.waits"
   (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env -u GITHUB_TOKEN -u GH_BOT_TOKEN \
-    GH_TOKEN=dtn_REST "$BASH" -c '
+    GH_TOKEN=dtn_REST GH_DEBUG="$trace" DEBUG="$trace" "$BASH" -c '
       source "$1"
       sleep() { printf "%s," "$1" >>"$REST_WAITS"; }
       export REST_WAITS="$2"
+      # A successful page in gh API tracing precedes its terminal failure.
+      # https://github.com/henvic/httpretty/blob/master/printer.go
+      gh() {
+        if [[ "${GH_DEBUG:-}" == api || "${DEBUG:-}" == api ]]; then
+          printf "< HTTP/2.0 200 OK\n[{\"body\":\"private-trace-marker\"}]\n" >&2
+        fi
+        command gh "$@"
+      }
       gh_rest rest-contract --paginate
     ' rest "$lib" "$TMP_ROOT/rest.waits" >"$TMP_ROOT/rest.out" 2>"$TMP_ROOT/rest.err") || rc=$?
   out="$(cat "$TMP_ROOT/rest.out")"
@@ -341,10 +350,10 @@ rest_run() {
 }
 
 REST_LIB="$REPO_ROOT/skills/github/scripts/lib/github-api.sh"
-while IFS='^' read -r label code response category requests waits out page; do
+while IFS='^' read -r label code response category requests waits out page trace; do
   [[ -n "$label" ]] || continue
   response="$(printf '%b' "$response")"
-  GOT="$(rest_run "$REST_LIB" "$code" "$response" "$page")"
+  GOT="$(rest_run "$REST_LIB" "$code" "$response" "$page" "$trace")"
   assert_eq "$GOT" "rc=$code category=$category calls=$requests waits=$waits out=$out" "REST $label"
 done <<<"$REST_ROWS"
 
@@ -355,7 +364,7 @@ REST_MUTANT="$(mutant_copy_edit "$TMP_ROOT/rest-mutant" \
   '        if [ "$retry" = true ] && [ $attempt -lt $max_retries ]; then' \
   '        if [ "$status" = 403 ]; then category=primary-rate-limit; retry=true; fi; if [ "$retry" = true ] && [ $attempt -lt $max_retries ]; then' \
   lib/github-api.sh)"
-while IFS='^' read -r label code response category requests waits out page; do
+while IFS='^' read -r label code response category requests waits out page trace; do
   [[ "$label" == integration ]] || continue
   GOT="$(rest_run "$REST_MUTANT" "$code" "$response")"
   WANT="rc=$code category=$category calls=$requests waits=$waits out=$out"
@@ -369,12 +378,25 @@ REST_PAGE_MUTANT="$(mutant_copy_edit "$TMP_ROOT/rest-page-mutant" \
   '        response="$diagnostic"' \
   '        response="$response$diagnostic"' \
   lib/github-api.sh)"
-while IFS='^' read -r label code response category requests waits out page; do
+while IFS='^' read -r label code response category requests waits out page trace; do
   [[ "$label" == page-status ]] || continue
   GOT="$(rest_run "$REST_PAGE_MUTANT" "$code" "$response" "$page")"
   WANT="rc=$code category=$category calls=$requests waits=$waits out=$out"
   [[ "$GOT" != "$WANT" ]] || { echo 'REST control accepted page evidence' >&2; exit 1; }
   assert_eq "$GOT" 'rc=1 category=not-found calls=1 waits=- out=-' 'REST control rejects successful-page evidence'
+done <<<"$REST_ROWS"
+
+# Restore producer tracing while keeping both streams and the classifier.
+REST_TRACE_MUTANT="$(mutant_copy_edit "$TMP_ROOT/rest-trace-mutant" \
+  '        response=$(GH_DEBUG= DEBUG= gh api "$endpoint" "$@" 2>"$rest_errors") || exit_code=$?' \
+  '        response=$(gh api "$endpoint" "$@" 2>"$rest_errors") || exit_code=$?' \
+  lib/github-api.sh)"
+while IFS='^' read -r label code response category requests waits out page trace; do
+  [[ "$label" == traced-page ]] || continue
+  GOT="$(rest_run "$REST_TRACE_MUTANT" "$code" "$response" "$page" "$trace")"
+  WANT="rc=$code category=$category calls=$requests waits=$waits out=$out"
+  [[ "$GOT" != "$WANT" ]] || { echo 'REST control accepted trace evidence' >&2; exit 1; }
+  assert_eq "$GOT" 'rc=1 category=unknown calls=3 waits=1,2, out=-' 'REST control rejects successful trace evidence'
 done <<<"$REST_ROWS"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
