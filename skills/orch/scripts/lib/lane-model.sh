@@ -520,7 +520,8 @@ lane_judge() { # RECORD MODEL BINDING_FLOOR BURN MAX_PCT PROJECTED CREDIT_FLOOR 
 # shared windows alone: the plan has no window scoped to MODEL. The record
 # cannot tell that from a response that omitted MODEL's window, and the shared
 # windows are the rule for both. A local result that read nothing or carries
-# no model bucket stays unmeasured, whatever the consultation cause.
+# no model bucket stays unmeasured, except that no local credentials leaves a
+# measured host row standing for a model consultation.
 #
 # `headroom_pct` is emit_lane's one word for a lane that measured a figure: it
 # is null for every status that carries no reading and for a measured status
@@ -584,6 +585,11 @@ host_row_or_local() { # HARNESS DIR HOSTROW MODEL
 		fi
 		printf '%s\n' "$local_record"
 	elif [[ "$trigger" == model ]]; then
+		if jq -e --argjson host "$3" "$LANE_MODEL_JQ"'
+			.status == "no_credentials" and ($host | lane_measured and .headroom_pct != null)' <<<"$local_record" >/dev/null; then
+			printf '%s\n' "$3"
+			return 0
+		fi
 		local_record="$(jq -c --arg model "$4" "$LANE_MODEL_JQ"'
 			. + {status: (if lane_measured then "no_usage_data" else .status end),
 			     headroom_pct: null, detail: (.detail // ("no fresh local model window for " + $model))}
