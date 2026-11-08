@@ -82,7 +82,7 @@ gate_record() {
 }
 DEFAULTS="capture"
 run_table "the response gate" "$DEFAULTS" "\
-audit captures a clean starting tree even with no diff|diff:empty stdout:good|audit|0|<out>|header:audit written|calls=1 files=out=review:external-claude:Clean home=absent tmp=0 dirty=- art=external-claude:pass:Clean:b=:ts=$CLOCK:raw=160:retry=-:head=- scope=-/-/-/- retry=-
+audit captures a clean starting tree even with no diff|diff:empty stdout:good|audit --range=|0|<out>|header:audit written|calls=1 files=out=review:external-claude:Clean home=absent tmp=0 dirty=- art=external-claude:pass:Clean:b=:ts=$CLOCK:raw=160:retry=-:head=- scope=-/-/-/- retry=-
 a review inside a json fence is the review, no retry|stdout:fenced|review|0|<out>|header:review written|calls=1 files=out=review:external-claude:Clean home=absent tmp=0 dirty=- art=external-claude:pass:Clean:b=:ts=$CLOCK:raw=207:retry=-:head=<head> scope=scope-branch/<head>/file.txt/git diff <head> retry=-
 a review inside a bare fence is the review, no retry|stdout:fenced-bare|review|0|<out>|header:review written|calls=1 files=out=review:external-claude:Clean home=absent tmp=0 dirty=- art=external-claude:pass:Clean:b=:ts=$CLOCK:raw=203:retry=-:head=<head> scope=scope-branch/<head>/file.txt/git diff <head> retry=-
 a self-reported review_performed=true is written|stdout:performed|review|0|<out>|header:review written|calls=1 files=out=review:external-claude:Reviewed the diff, no issues home=absent tmp=0 dirty=- art=external-claude:pass:Reviewed the diff, no issues:b=:ts=$CLOCK:raw=206:retry=-:head=<head> scope=scope-branch/<head>/file.txt/git diff <head> retry=-

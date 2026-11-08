@@ -1,6 +1,6 @@
 # Audit
 
-Deep examination of existing code — not changes, but the code as it is. Returns review-finding JSON.
+Examine caller-specified code or a caller-specified diff. Returns review-finding JSON.
 
 ## 1. Build Prompt
 
@@ -26,6 +26,8 @@ Skip: style preferences, naming opinions, documentation gaps.
 </prompt_template>
 
 ## 2. Run Script
+
+For a diff audit, pass the exact range as `--range [BASE...HEAD]` in addition to the prompt. Do not rely on a range named only in prompt text. Scope and caller-prompt transport are defined by `second-opinion --help`.
 
 Run `second-opinion …`; it backgrounds itself and prints when to check.
 
