@@ -163,9 +163,10 @@ ORCH_OVERSEER_SUCCESSOR_ACCOUNTS = "1"
 
 # A seat account (one an overseer or Jarvis session runs on) takes lanes only
 # while its projected room stays above this percent of its window, and lanes on
-# it hand off at that line. Set by the owner's delegate on 2026-10-18 (note
-# 1792366002): 20 keeps a fifth of the window for the seat session.
-ORCH_OVERSEER_SEAT_RESERVE_PCT = "20"
+# it hand off at that line. Set on the owner's order of 2026-11-08 (Slack
+# 1794169726.951719, delegate note 1794169921): one reserve on every machine,
+# 25 keeps a quarter of the window for the seat session.
+ORCH_OVERSEER_SEAT_RESERVE_PCT = "25"
 
 # A lane whose account reaches 97 percent used is marked, and the overseer asks
 # it for a handoff at the next safe point.
