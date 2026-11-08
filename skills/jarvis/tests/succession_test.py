@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import runpy
 import shutil
 import signal
@@ -1141,8 +1142,12 @@ set-hook -g after-new-window "rename-window user-hook"
                     self.assertEqual(self.prompts(successor["pending"]["native_session_id"]), [private])
                     # Operators read the keyed line in session.log.
                     generation = "generation=" + str(successor["generation"])
-                    adopted = [line.split()[1:] for line in self.session_log().splitlines()
-                               if line.startswith("jarvis-session: transfer=adopted ") and generation in line.split()]
+                    adopted = []
+                    for line in self.session_log().splitlines():
+                        match = re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z origin=succession "
+                                             r"jarvis-session: (transfer=adopted .*)", line)
+                        if match and generation in match.group(1).split():
+                            adopted.append(match.group(1).split())
                     self.assertEqual(adopted, [["transfer=adopted", generation, "worker=" + str(identity["pid"]), "cause=SIGTERM"]])
                     self.call("stop")
                     self.wait("stopped", persisted_stop=True)
