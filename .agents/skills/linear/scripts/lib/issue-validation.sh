@@ -272,12 +272,13 @@ require_issue_reach() {
 # require_issue_header_shape DESCRIPTION [STORED] — 0 to proceed, 1 + a JSON
 # error on stderr for the caller to return on. A post-merge Done-when box whose
 # release trigger names no repository, or whose Deadline is outside the window
-# completion enforces, is refused. The template's presentation, the quoted
-# Story and Why blocks first after an optional owner action line and each
-# header within ISSUE_HEADER_MAX characters, is advisory: each miss prints one
-# `linear: advisory=RULE line=N length=N` line on stderr and the write
-# proceeds. A refused body prints the refusal alone. It is held by the reach
-# guard's setting so one key turns the filing bar on or off.
+# completion enforces, is refused. Nonempty quoted Story and Why blocks must
+# open an authored body after an optional owner action line: overseer create
+# calls that capture stdout can miss a stderr advisory and file no explanation.
+# Linear accepts arbitrary text, so this caller holds the opening requirement.
+# A header over ISSUE_HEADER_MAX characters prints one advisory on stderr and
+# the write proceeds. A refused body prints the refusal alone. The reach
+# guard's setting turns the filing bar on or off.
 #
 # STORED is the issue's current description, which `issues update` passes. A
 # body equal to it apart from a leading owner action line only places,
@@ -328,10 +329,12 @@ require_issue_header_shape() {
 			$lines[:1][] | select((.text | owner_action) and .length > $max) | long_header($max)
 		  elif $post != null then
 			$post + {error: ($post.rule + " box=\($post.box)\nfix=" + $post.fix)} | tojson
+		  elif ($lines | map(select($first != null and .line >= $first.line) | .text) | join("\n") | opening | not) then
+			{rule: "issue-header-opening", line: ($first.line // 1),
+			 fix: "Open with nonempty quoted Story and Why this matters blocks, separated by an unquoted blank line, before a blank line and the first heading."}
+			| . + {error: (.rule + " line=\(.line)\nfix=" + .fix)} | tojson
 		  else
-			(if ($lines | map(select($first != null and .line >= $first.line) | .text) | join("\n") | opening) then empty
-			 else "linear: advisory=issue-header-opening line=\($first.line // 1) length=\($first.length // 0) fix=Open with nonempty quoted Story and Why this matters blocks, separated by an unquoted blank line, before a blank line and the first heading." end),
-			($long[] | long_header($max))
+			$long[] | long_header($max)
 		  end') || return 1
 	[[ -n $verdict ]] || return 0
 	printf '%s\n' "$verdict" >&2
