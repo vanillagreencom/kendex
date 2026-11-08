@@ -562,7 +562,7 @@ kendex_github_git_collect_https_rewrites() {
 }
 
 kendex_github_git() {
-  local work_dir rewrite read_https=0 rewrite_ssh=0
+  local work_dir rewrite arg git_command="" skip_value=0 read_https=0 rewrite_ssh=0
   local -a git_args=()
   if kendex_github_git_should_use_read_token "$@"; then
     read_https=1
@@ -578,6 +578,22 @@ kendex_github_git() {
   fi
   if [[ "$rewrite_ssh" -eq 1 || "$read_https" -eq 1 ]]; then
     git_args=(-c credential.helper= -c credential.helper='!gh auth git-credential')
+    for arg in "$@"; do
+      if [[ "$skip_value" -eq 1 ]]; then
+        skip_value=0
+        continue
+      fi
+      case "$arg" in
+        -C|-c|--git-dir|--work-tree|--namespace) skip_value=1 ;;
+        -*) ;;
+        *) git_command="$arg"; break ;;
+      esac
+    done
+    if [[ "$git_command" == push ]]; then
+      # Fleet owns file validation; an empty push selector must refuse there.
+      # Bind only the helper child so hooks and later reads keep read access.
+      git_args=(-c credential.helper= -c credential.helper='!ORCH_GH_READ_TOKEN_FILE="$ORCH_GH_PUSH_TOKEN_FILE" gh auth git-credential')
+    fi
   fi
   if [[ "$rewrite_ssh" -eq 1 ]]; then
     work_dir="$(kendex_github_git_work_dir_from_args "$@")"
