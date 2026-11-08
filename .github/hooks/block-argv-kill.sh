@@ -132,17 +132,22 @@ for level in 0 1 2 3; do
   AT=${AT%/*}
   [ -n "$AT" ] || AT=/
 done
+# Global Pi can relocate its hook root independently of the shared skill
+# tree, which stays under HOME even when PI_CODING_AGENT_DIR is elsewhere.
+if [ -z "$READER" ] && [ -n "${HOME:-}" ] && [ -r "$HOME/.agents/skills/commit-guards/scripts/lib/command-position.sh" ]; then
+  READER="$HOME/.agents/skills/commit-guards/scripts/lib/command-position.sh"
+fi
 [ -n "$READER" ] || refuse support missing-command-reader
 # shellcheck source=../skills/commit-guards/scripts/lib/command-position.sh
 . "$READER"
 
-KILL_RE="^[\"']?([^[:space:]\"']*/)?(pkill|killall)[\"']?([[:space:]]|$)"
+KILL_RE="^([\"']?)([^[:space:]\"']*/)?(pkill|killall)([\"']?)([[:space:]<>]|$)"
 command_segments "$COMMAND"
 while IFS= read -r segment; do
   command_text "$segment"
   while IFS= read -r text; do
-    if [[ $text =~ $KILL_RE ]]; then
-      refuse refused "${BASH_REMATCH[2]}"
+    if [[ $text =~ $KILL_RE ]] && [ "${BASH_REMATCH[1]}" = "${BASH_REMATCH[4]}" ]; then
+      refuse refused "${BASH_REMATCH[3]}"
     fi
   done <<<"$COMMAND_TEXTS"
 done <<<"$SEGMENTS"

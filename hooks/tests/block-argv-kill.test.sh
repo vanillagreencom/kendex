@@ -88,6 +88,19 @@ run_hook '"pkill" -f a';                       assert_eq "$rc" 2 'a quoted verb 
 run_hook "$(printf 'pkill \\\n  -f a')";       assert_eq "$rc" 2 'a verb ending its line is still the verb'
 run_hook '$(which pkill) -f a';                assert_eq "$rc" 2 'a verb closing a substitution is still the verb'
 
+echo "=== block-argv-kill: attached shell redirections keep the refusal ==="
+# Shell tools emit attached operators as well as whitespace-separated ones.
+# A quoted operator inside a data word is not a shell redirection.
+while IFS='|' read -r label want text; do
+  run_hook "$text"
+  assert_eq "rc=$rc first=$(first_line)" "$want" "$label"
+done <<'ROWS'
+an attached output redirect still names pkill|rc=2 first=block-argv-kill: refused=pkill|pkill>/dev/null -f node
+an attached input redirect still names killall|rc=2 first=block-argv-kill: refused=killall|killall</dev/null node
+a quoted executable keeps its attached redirect|rc=2 first=block-argv-kill: refused=pkill|"pkill">/dev/null -f node
+an operator inside quoted data stays data|rc=0 first=-|echo "pkill>note"
+ROWS
+
 echo "=== block-argv-kill: the named forms pass ==="
 run_hook 'kill 1234';                          assert_eq "$rc" 0 'kill on a PID passes'
 run_hook 'kill -TERM 1234 5678';               assert_eq "$rc" 0 'kill with a signal and several PIDs passes'
@@ -169,6 +182,33 @@ outside a tmux session no server is inherited|out|passes|tmux kill-server
 the words inside a quoted string are refused|lane|refused|echo "tmux kill-server"
 a stop chained after another tmux command is not seen|lane|passes|tmux new -d \; kill-server
 ROWS
+
+echo "=== block-argv-kill: installed skill delivery layouts ==="
+# These paths are emitted by Pi::hook_path, Env::global_skills_dir and
+# desired_skill's shared/copy delivery, not paths selected by the payload.
+while IFS='|' read -r label hook_rel reader_rel; do
+  install_root="$TMP_ROOT/install-$label"
+  installed="$install_root/$hook_rel/block-argv-kill.sh"
+  reader_dir="$install_root/$reader_rel/commit-guards/scripts/lib"
+  mkdir -p "${installed%/*}" "$reader_dir" "$install_root/home"
+  cp "$HOOK" "$installed"
+  cp "$TEST_DIR/../../skills/commit-guards/scripts/lib/command-position.sh" "$reader_dir/command-position.sh"
+  while IFS='|' read -r probe want text; do
+    json_for "$text" >"$TMP_ROOT/install-input"
+    rc=0
+    env -i HOME="$install_root/home" PATH="$PATH" TMUX=/fixture/lane,1,0 "$BASH_BIN" "$installed" <"$TMP_ROOT/install-input" > /dev/null 2>"$ERR_FILE" || rc=$?
+    assert_eq "rc=$rc first=$(first_line)" "$want" "$label: $probe"
+  done <<'PROBES'
+a real name kill is refused|rc=2 first=block-argv-kill: refused=pkill|pkill -f node
+an unnamed tmux stop is refused|rc=2 first=block-argv-kill: tmux-socket=kill-server|tmux kill-server
+quoted data passes after loading the reader|rc=0 first=-|echo "never use pkill here"
+PROBES
+done <<'LAYOUTS'
+project-shared|project/.pi/kendex/hooks|project/.agents/skills
+global-shared|home/.pi/agent/kendex/hooks|home/.agents/skills
+relocated-global-shared|relocated/agent/kendex/hooks|home/.agents/skills
+global-copy|home/.pi/agent/kendex/hooks|home/.pi/agent/skills
+LAYOUTS
 
 echo "=== block-argv-kill: the first line of every condition ==="
 first_table "\
