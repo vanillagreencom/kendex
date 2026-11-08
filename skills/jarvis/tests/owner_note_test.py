@@ -1,5 +1,6 @@
 """owner-note resolves registered routes without mail effects and sends directives."""
 import json
+import os
 from pathlib import Path
 import shlex
 import shutil
@@ -24,6 +25,30 @@ class OwnerNote(MailWorld):
         self.home = make_project(self.root / "home", overseer=False)
         self.note = self.root / "note.md"
         self.note.write_text(NOTE)
+        # Synthetic process/pane snapshots at lane-mail's external boundary;
+        # the recorded pid is this still-owned test process, never a guessed id.
+        self.processes = self.root / "processes"
+        self.panes = self.root / "panes"
+        self.processes.write_text("%s tmux\n" % os.getpid())
+        self.panes.write_text("%s 1790000000 %%1\n" % os.getpid())
+        self.other_panes = self.root / "other-panes"
+        self.other_panes.write_text("%s 1790000000 %%1\n" % (os.getpid() + 1))
+        self.env.update(MAIL_TEST_PROCESSES=str(self.processes), MAIL_TEST_PANES=str(self.panes),
+                        MAIL_TEST_OTHER_PANES=str(self.other_panes))
+        real_ps = shlex.quote(shutil.which("ps"))
+        self.executable("ps", '#!/bin/sh\n'
+                        'if [ "$*" = "-A -o pid= -o comm=" ]; then\n'
+                        '  [ -z "${MAIL_TEST_PS_ERROR:-}" ] || { echo process-read-failed >&2; exit 1; }\n'
+                        '  cat "$MAIL_TEST_PROCESSES"\n'
+                        'else exec ' + real_ps + ' "$@"; fi\n')
+        self.executable("tmux", '#!/bin/sh\n[ "$1" = list-panes ] || exit 1\n'
+                        'if [ -n "${MAIL_TEST_READER_SOCKET:-}" ] && '
+                        '[ "${TMUX%%,*}" != "$MAIL_TEST_READER_SOCKET" ]; then\n'
+                        '  cat "$MAIL_TEST_OTHER_PANES"; exit\nfi\n'
+                        '[ -z "${MAIL_TEST_SOCKET_GONE:-}" ] || '
+                        '{ echo "no server running on $MAIL_TEST_READER_SOCKET" >&2; exit 1; }\n'
+                        '[ -z "${MAIL_TEST_PANE_ERROR:-}" ] || { echo pane-list-failed >&2; exit 1; }\n'
+                        'cat "$MAIL_TEST_PANES"\n')
         self.executable("ssh", '#!/bin/sh\nprintf "%s\\n" "$1" >> "$SSH_LOG"\nshift\ncd "$REMOTE_HOME" || exit 1\n'
                         'HOME="$REMOTE_HOME" REGISTRY="$REMOTE_REGISTRY" TMPDIR="$REMOTE_TMP" exec sh -c "$*"\n')
 
@@ -108,6 +133,134 @@ class OwnerNote(MailWorld):
                     self.assertEqual(set(calls), {"host.example"})
                 else:
                     self.assertEqual(calls, [])
+
+    def test_reader_required(self, only=None):
+        # Succession keeps the predecessor's identity while pending, then
+        # publishes the opened successor before either takes another turn.
+        live = {"server": str(os.getpid()), "server_start": 1790000000, "pane": "%1"}
+        socket = str(self.root / "overseer socket")
+        recorded = dict(live, server_socket=socket)
+        # Managed Jarvis supplies its named-server TMUX; SSH can supply none.
+        other = {"TMUX": str(self.root / "jarvis socket") + ",%s,0" % os.getpid(),
+                 "MAIL_TEST_READER_SOCKET": socket}
+        rows = (
+            ("unnamed", {"window": "@1"}, {}, "no-reader", "unnamed"),
+            ("stopped", dict(live, pane="%9"), {}, "no-reader", "pane-gone"),
+            ("reused", dict(recorded, server_start=1780000000), other, "no-reader", "pane-gone"),
+            ("process-unreadable", live, {"MAIL_TEST_PS_ERROR": "1"}, "reader-unjudged", "server"),
+            ("pane-unreadable", recorded, dict(other, MAIL_TEST_PANE_ERROR="1"), "reader-unjudged", "server"),
+            ("pending", dict(live, pending={"launch_line": "next overseer"}), {}, None, None),
+            ("successor", dict(live, generation=2), {}, None, None),
+            ("older", live, {}, "option-unknown", None),
+            ("recorded-caller", recorded, other, None, None),
+            ("recorded-default", recorded, dict(other, TMUX=""), None, None),
+            ("recorded-wrong-server", recorded, dict(other, MAIL_TEST_PANES=str(self.other_panes)),
+             "reader-unjudged", "server"),
+            ("recorded-gone", recorded, dict(other, MAIL_TEST_SOCKET_GONE="1"), "no-reader", "pane-gone"),
+            ("empty-socket", dict(live, server_socket=""), {}, None, None),
+            ("legacy-other-server", live, other, "reader-unjudged", "server"),
+        )
+        for name, record, extra, refusal, cause in rows:
+            if only is not None and name != only:
+                continue
+            for host in (False, True):
+                with self.subTest(row=name, host=host):
+                    base, sides = self.world(name + ("-host" if host else "-local"),
+                                             [("app", True)] if host else [],
+                                             [] if host else [("app", True)])
+                    root = sides["remote" if host else "local"][0]
+                    state = root / ".agents/skills/orch/scripts/workflow-state"
+                    result = self.command([state, "set", "oversee", "overseer", json.dumps(record)], root)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    if name == "older":
+                        installed = root / ".agents/skills/mailbox/scripts"
+                        installed.unlink()
+                        shutil.copytree(REPO / "skills/mailbox/scripts", installed)
+                        path = installed / "lane-mail"
+                        source = path.read_text()
+                        option = "    --require-reader) REQUIRE_READER=1; shift ;;\n"
+                        self.assertEqual(source.count(option), 1)
+                        path.write_text(source.replace(option, ""))
+                    before = self.mailbox_snapshot([root])
+                    original_env = self.env.copy()
+                    self.env.update(extra)
+                    try:
+                        result = self.send(base, host)
+                    finally:
+                        self.env = original_env
+                    if refusal:
+                        self.assertEqual(result.returncode, 2, result.stderr)
+                        self.assertEqual(result.stdout, "")
+                        self.assertIn("lane-mail: " + refusal + "=", result.stderr)
+                        if cause:
+                            self.assertIn("cause=" + cause, result.stderr)
+                        self.assertEqual(self.mailbox_snapshot([root]), before)
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertIn("owner-note: sent ", result.stdout)
+                        self.assertEqual([row["text"] for row in self.box(root, "to-lane")],
+                                         [NOTE.rstrip("\n") + "\n\n" + FOOTER])
+                    self.assertEqual(list((base / "remote-tmp").iterdir()), [])
+
+    def test_reader_instrument_control(self):
+        # Each mutation must fail its named regression row, not a neighbouring
+        # refusal: bypassing the gate delivers without a reader, while dropping
+        # socket selection rejects a live reader on the other server.
+        controls = (
+            ("unnamed", '    [ "$REQUIRE_READER" -eq 0 ] || lm_peer_reader\n',
+             '    [ "$REQUIRE_READER" -eq 0 ] || :\n', 0, ["directive"]),
+            ("recorded-caller", '  [ -z "$socket" ] || export TMUX="$socket,$server,0"\n',
+             '  [ -z "$socket" ] || :\n', 2, []),
+        )
+        for row_name, old, new, code, kinds in controls:
+            with self.subTest(row=row_name), tempfile.TemporaryDirectory() as folder:
+                package = Path(folder) / "mailbox/scripts"
+                shutil.copytree(REPO / "skills/mailbox/scripts", package)
+                Path(folder, "orch").symlink_to(REPO / "skills/orch", target_is_directory=True)
+                path = package / "lane-mail"
+                source = path.read_text()
+                self.assertEqual(source.count(old), 1)
+                mutant = source.replace(old, new)
+                self.assertNotEqual(source, mutant)
+                path.write_text(mutant)
+                case = OwnerNote(methodName="test_reader_required")
+                case.setUp()
+                original_world = case.world
+
+                def mutant_world(*args):
+                    base, sides = original_world(*args)
+                    for roots in sides.values():
+                        for root in roots:
+                            installed = root / ".agents/skills/mailbox/scripts"
+                            installed.unlink()
+                            installed.symlink_to(package, target_is_directory=True)
+                    return base, sides
+
+                case.world = mutant_world
+                sent = []
+                original_send = case.send
+
+                def observe_send(*args):
+                    result = original_send(*args)
+                    sent.append(result)
+                    return result
+
+                case.send = observe_send
+                try:
+                    with self.assertRaises(AssertionError):
+                        case.test_reader_required(only=row_name)
+                    self.assertEqual(len(sent), 1)
+                    self.assertEqual(sent[0].returncode, code, sent[0].stderr)
+                    if code == 0:
+                        self.assertIn("lane-mail: sent ", sent[0].stdout)
+                        self.assertIn("owner-note: sent ", sent[0].stdout)
+                    else:
+                        self.assertEqual(sent[0].stdout, "")
+                        self.assertIn("lane-mail: reader-unjudged=", sent[0].stderr)
+                    root = case.root / (row_name + "-local/local/app")
+                    self.assertEqual([row["kind"] for row in case.box(root, "to-lane")], kinds)
+                finally:
+                    case.doCleanups()
 
     def control_user_world(self):
         """The control host as its SSH user, holding a clone whose recorded overseer
