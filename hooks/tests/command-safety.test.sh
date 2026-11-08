@@ -1699,6 +1699,30 @@ sudo-path|no-lazy-fetch|^$|shell|"sudo -u user /usr/bin/git log --stat"|2|refuse
 shell-source|no-lazy-fetch|^$|shell|"bash -c 'git log -p'"|2|refused=history-policy|missing-no-lazy-fetch
 eval-source|no-lazy-fetch|^$|shell|"eval 'git log -p'"|2|refused=history-policy|missing-no-lazy-fetch
 split-source|no-lazy-fetch|^$|shell|"env -S 'git log -p'"|2|refused=history-policy|missing-no-lazy-fetch
+split-tail|no-lazy-fetch|^$|shell|"env -S 'git' log -p"|2|refused=history-policy|missing-no-lazy-fetch
+split-global|no-lazy-fetch|^$|shell|"env -S 'git -C repo' log --stat"|2|refused=history-policy|missing-no-lazy-fetch
+split-global-boundary|no-lazy-fetch|^$|shell|"env -S 'git -C' repo log -p"|2|refused=history-policy|missing-no-lazy-fetch
+split-fence-prefix|no-lazy-fetch|^$|shell|"env -S 'git --no-lazy-fetch' log -p"|0|silent|-
+split-fence-tail|no-lazy-fetch|^$|shell|"env -S 'git' --no-lazy-fetch log -p"|0|silent|-
+split-fence-operand|no-lazy-fetch|^$|shell|"env -S 'git -C' --no-lazy-fetch log -p"|2|refused=history-policy|missing-no-lazy-fetch
+split-nested|no-lazy-fetch|^$|shell|"env -S \"env -S 'git -C'\" repo log -p"|2|refused=history-policy|missing-no-lazy-fetch
+split-nested-fenced|no-lazy-fetch|^$|shell|"env -S \"env -S 'git -C'\" repo --no-lazy-fetch log -p"|0|silent|-
+split-typed-operand|no-lazy-fetch|^$|argv|["env","-S","git -C","a'b; git log -p","--no-lazy-fetch","log","-p"]|0|silent|-
+split-typed-missing-fence|no-lazy-fetch|^$|argv|["env","-S","git -C","a'b; git --no-lazy-fetch","log","-p"]|2|refused=history-policy|missing-no-lazy-fetch
+split-argv|no-lazy-fetch|^$|argv|["env","-S","git","log","-p"]|2|refused=history-policy|missing-no-lazy-fetch
+split-equals|no-lazy-fetch|^$|shell|"env --split-string=git log -p"|2|refused=history-policy|missing-no-lazy-fetch
+split-expanding-tail|no-lazy-fetch|^$|shell|"env -S 'git -C' \"$@\" --no-lazy-fetch log"|2|refused=history-policy|unresolved-git-argv
+split-off|off|^$|shell|"env -S 'git' log -p"|0|silent|-
+bare-git|no-lazy-fetch|^$|shell|"git"|0|silent|-
+bare-global|no-lazy-fetch|^$|shell|"git -C repo"|0|silent|-
+informational-git|no-lazy-fetch|^$|shell|"git --version"|0|silent|-
+split-non-history|no-lazy-fetch|^$|shell|"env -S 'git' status"|0|silent|-
+shell-positional|no-lazy-fetch|^$|shell|"bash -c 'git' log -p"|0|silent|-
+split-shell-positional|no-lazy-fetch|^$|shell|"env -S \"bash -c 'git'\" log -p"|0|silent|-
+split-environment|no-lazy-fetch|^$|shell|"env -S 'printenv'"|2|refused=environment-dump|-
+split-environment-named|no-lazy-fetch|^$|shell|"env -S 'printenv' PATH"|0|silent|-
+split-environment-forwarded|no-lazy-fetch|^$|shell|"env -S 'bash wrapper.sh' env"|2|refused=environment-dump|-
+split-pattern|no-lazy-fetch|blocked|shell|"env -S 'git' --no-lazy-fetch log blocked"|2|refused=policy|-
 forwarded|no-lazy-fetch|^$|shell|"bash wrapper.sh git log -p"|2|refused=history-policy|missing-no-lazy-fetch
 heredoc|no-lazy-fetch|^$|shell|"bash <<'EOF'\ngit log -p\nEOF"|2|refused=history-policy|missing-no-lazy-fetch
 substitution|no-lazy-fetch|^$|shell|"echo $(git log -p)"|2|refused=history-policy|missing-no-lazy-fetch
@@ -1727,6 +1751,38 @@ HISTORY_ROWS
   settings
 }
 
+# A lost typed tail is the reached defect: the same row assertions must
+# reject it, including safe operands that must not become executable source.
+history_composition_controls() {
+  local mutant="$scratch/history-lost-tail.sh" status=0 row
+  local rows=(split-tail split-global split-global-boundary split-nested split-nested-fenced split-typed-operand split-argv split-equals)
+  awk '
+    /for \(\(j=0; j<\$\{#appended_args\[@\]\}; j\+\+\)\)/ {
+      sub(/j</, "j<0*"); changed++
+    }
+    { print }
+    END { if (changed != 1) exit 1 }
+  ' "$hook_source" >"$mutant" || return 1
+  if cmp -s -- "$hook_source" "$mutant"; then echo 'FAIL history tail control changed no bytes'; return 1; fi
+  HOOK_UNDER_TEST="$mutant" "$BASH" "${BASH_SOURCE[0]}" --history-rows "${rows[@]}" >"$scratch/history-tail-control.log" 2>&1 || status=$?
+  if [ "$status" -ne 1 ]; then
+    echo 'FAIL history tail control expected assertion failure'; cat "$scratch/history-tail-control.log"; return 1
+  fi
+  for row in "${rows[@]}"; do
+    if grep -F -e "FAIL history: $row: exit=" -e "FAIL history: $row reason" "$scratch/history-tail-control.log" >/dev/null; then
+      printf 'PASS history tail control fails %s\n' "$row"; passed=$((passed + 1))
+    else
+      printf 'FAIL history tail control did not falsify %s\n' "$row"; failed=$((failed + 1))
+      cat "$scratch/history-tail-control.log"
+    fi
+  done
+}
+if [ "${1:-}" = --history-controls ]; then
+  history_composition_controls
+  printf '%s passed, %s failed\n' "$passed" "$failed"
+  [ "$failed" -eq 0 ]
+  exit
+fi
 if [ "${1:-}" = --history-rows ]; then
   shift
   history_rows "$@"
@@ -1738,6 +1794,7 @@ if [ "${1:-}" != --environment-rows ]; then
   history_rows
 
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  history_composition_controls
   mutant="$scratch/history-no-check.sh"
   awk '
     /no-lazy-fetch\) \[ -z "\$history_reason" \] \|\| refuse refused history-policy ;;/ {
