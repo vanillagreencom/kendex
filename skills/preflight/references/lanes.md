@@ -36,9 +36,13 @@ The `.jsonc` suffix declares JSON with comments. Some producers keep `.json` ins
 
 The lane has no JSONC parser and leaves these files to the producer that declares the dialect.
 
-## `fail-open` sourced-library trees
+## Sourced-library trees
 
 `PREFLIGHT_SOURCED_LIB_GLOBS` names directories, not files: a path is in a sourced-library tree when one of its parent directories matches a glob, so the tree's whole depth is covered. The shipped set is `**/scripts/lib`. A project that keeps its libraries elsewhere, such as `tools/lib`, lists that directory, and lists `**/scripts/lib` beside it to keep the shipped tree.
+
+For a non-executable file in these trees, `fail-open` omits the strict-mode preamble check and `shellcheck-errors` omits SC2168: a caller can source the file inside a function, where `local` is valid. Other ShellCheck errors still fail. Executable files keep both checks. Staged scope reads the executable bit from the index.
+
+A consumer whose harness sources rows inside a function from `scripts/smoke/rows` adds that directory to `PREFLIGHT_SOURCED_LIB_GLOBS`, beside `**/scripts/lib` if it keeps the shipped tree. A row outside the configured trees keeps standalone checks.
 
 ## `applied-migration-edited` glob set
 

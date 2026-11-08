@@ -1545,6 +1545,9 @@ while IFS= read -r f; do
         [ -n "$raw" ] || continue
         parse_gcc "$raw" "$cpath"
         if [ "$GCC_SEV" = "error" ]; then
+          # A sourced library can run inside its caller's function, where local
+          # is valid. Standalone files keep ShellCheck's top-level-local error.
+          if [ "$sourced_lib" = 1 ] && [ "$GCC_CODE" = SC2168 ]; then continue; fi
           emit "$f" "$GCC_LINE" shellcheck-errors "$GCC_MSG"
         elif [ "$GCC_LINE" != 0 ] && [ "$vendored_mirror" = 0 ] && is_masked_code "$GCC_CODE"; then
           added_lines_of "$IDX" "$f"

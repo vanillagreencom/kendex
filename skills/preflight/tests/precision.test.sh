@@ -649,6 +649,37 @@ fires "an executable file in a lib tree is a program and still fails" "scripts/l
 fires "a swallowed status inside a sourced lib still fails" "scripts/lib/common.sh:6: [fail-open]"
 fires "an unchecked mktemp inside a sourced lib still fails" "scripts/lib/common.sh:7: [fail-open]"
 
+# Function-sourced smoke rows use top-level local (KEN-4990's consumer).
+# The same bytes must remain an error when preflight judges them standalone.
+pf_world() { # NAME PATH GLOBS INDEX-MODE WORKTREE-MODE [OTHER-ERROR]
+  seed "$1"
+  mkdir -p "$R/${2%/*}"
+  printf '#!/usr/bin/env bash\nset -euo pipefail\nlocal row=ready\nprintf "%%s\\n" "$row"\n' >"$R/$2"
+  if [ "${6:-}" = other-error ]; then printf 'exit 999\n' >>"$R/$2"; fi
+  if [ "$3" != - ]; then
+    printf '[env]\nPREFLIGHT_SOURCED_LIB_GLOBS = "%s"\n' "$3" >"$R/kendex.settings.toml"
+  fi
+  chmod "$4" "$R/$2"
+  git -C "$R" add -A
+  chmod "$5" "$R/$2"
+}
+IFS= read -r -d '' rows <<'ROWS' || :
+a default sourced library accepts local|localroot scripts/lib/row.sh - -x -x|-|shellcheck|0|-|preflight: clean=1
+a nested sourced library accepts local|localnested pkg/scripts/lib/row.sh - -x -x|-|shellcheck|0|-|preflight: clean=1
+a configured smoke row accepts local|localconfigured scripts/smoke/rows/row.sh scripts/smoke/rows -x -x|-|shellcheck|0|-|preflight: clean=2
+a sourced library retains other ShellCheck errors|localother scripts/lib/row.sh - -x -x other-error|-|shellcheck|1|scripts/lib/row.sh:5: [shellcheck-errors]|-
+an executable library retains the local error|localexec scripts/lib/row.sh - +x +x|-|shellcheck|1|scripts/lib/row.sh:3: [shellcheck-errors]|-
+a file outside sourced trees retains the local error|localoutside scripts/row.sh - -x -x|-|shellcheck|1|scripts/row.sh:3: [shellcheck-errors]|-
+staged sourced mode accepts local despite an executable worktree|localstaged scripts/lib/row.sh - -x +x|--staged|shellcheck|0|-|preflight: clean=1
+staged executable mode retains the local error despite a sourced worktree|localstagedexec scripts/lib/row.sh - +x -x|--staged|shellcheck|1|scripts/lib/row.sh:3: [shellcheck-errors]|-
+ROWS
+if command -v shellcheck >/dev/null 2>&1; then
+  pf_table 'top-level local follows the sourced-library classification' "$rows"
+else
+  skipped 'top-level local follows the sourced-library classification' 'shellcheck not on PATH'
+fi
+unset -f pf_world
+
 echo "=== a project setting names its own sourced-library trees ==="
 seed sourcedlibsetting
 mkdir -p "$R/tools/lib/sub"
