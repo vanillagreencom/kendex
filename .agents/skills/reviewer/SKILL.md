@@ -59,7 +59,7 @@ Run `scripts/review-depth --base REF --head REF --repo DIR` from the trusted bas
 
 ## Output Contract
 
-Capture the starting fields before reviewing. Findings are a JSON artifact per [`schemas/review-finding.md`](./schemas/review-finding.md), written with the harness file-write tool, never shell redirection, to the delegation's `Artifact:` path. When the delegation carries no `Artifact:` line, mint the path yourself (`[AGENT]` = your full agent name):
+Capture the starting fields before reviewing. Findings are a JSON artifact per [`schemas/review-finding.md`](./schemas/review-finding.md), written with the harness file-write tool, never shell redirection, to the delegation's `Artifact:` path. That path must use the canonical form `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json`, minted by `review-artifact-check --path` and read by `hooks/reviewer-stop-check.sh`. When the delegation carries no `Artifact:` line, mint the path yourself (`[AGENT]` = your full agent name):
 
 ```bash
 .agents/skills/orch/scripts/review-artifact-check --path [WORKTREE_PATH] [AGENT]
