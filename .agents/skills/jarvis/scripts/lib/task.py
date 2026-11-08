@@ -72,7 +72,10 @@ class Task(Session):
             task_file = str(Path(args.task_file).resolve(strict=True))
             result = Path(args.result_file).resolve()
             inputs = [str(Path(path).resolve(strict=True)) for path in args.input]
-            cwd = str(Path(args.cwd).resolve(strict=True)) if args.cwd else self.home
+            try:
+                cwd = str(Path(args.cwd).resolve(strict=True)) if args.cwd else self.home
+            except OSError as error:
+                raise Refusal("cwd-unavailable", "resolve cwd " + repr(args.cwd) + ": " + str(error)) from error
             if args.cwd == "" or not Path(cwd).is_dir() or not os.access(cwd, os.X_OK):
                 raise Refusal("cwd-unavailable", cwd)
             # tmux(1) expands -c formats and parses trailing semicolons in argv.
@@ -141,8 +144,9 @@ class Task(Session):
                     if profile:
                         child_env.append("JARVIS_BROWSER_PORT=0")
                     receipt = scratch / "startup.json"
+                    # The selected project must not supply bootstrap imports.
                     self.tmux("respawn-pane", "-k", "-t", pane, "-c", tmux_cwd,
-                              *child_env, sys.executable, "-B", "-c",
+                              *child_env, sys.executable, "-I", "-B", "-c",
                               "import runpy,sys; sys.path.insert(0,sys.argv[1]); sys.exit(runpy.run_path(sys.argv[1]+'/task.py',run_name='task_native')['native'](sys.argv[2],sys.argv[3]))",
                               str(Path(__file__).resolve().parent), prepared["line"], str(receipt),
                               socket=terminal["server"])

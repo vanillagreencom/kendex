@@ -1,4 +1,5 @@
 """Real tmux and shared launch code; account meter and native CLIs are fixtures."""
+import argparse
 from contextlib import redirect_stderr
 import hashlib
 import io
@@ -185,6 +186,9 @@ class TaskContract(unittest.TestCase):
     def test_launch_directory_contract(self):
         selected = self.root / "project 'quoted' $folder#{pid};"
         selected.mkdir()
+        imported = self.root / "project-module-imported"
+        (selected / "argparse.py").write_text(
+            "from pathlib import Path\nPath(" + repr(str(imported)) + ").touch()\n")
         dangling = self.home / "dangling"
         dangling.symlink_to(self.root / "missing")
         input_file = self.home / "extra input.md"
@@ -195,7 +199,10 @@ class TaskContract(unittest.TestCase):
                   "--result-file", result.relative_to(self.root), "--account", self.account, "--browser")
         for invalid in ("missing", self.task_file.relative_to(self.root), dangling.relative_to(self.root), ""):
             with self.subTest(invalid=invalid):
-                self.call("launch", *launch, "--cwd", invalid, cwd=self.root, success=False)
+                refused = self.call("launch", *launch, "--cwd", invalid, cwd=self.root, success=False)
+                self.assertIn("refused=cwd-unavailable", refused.stderr)
+                if invalid:
+                    self.assertIn(str(invalid), refused.stderr)
                 self.assertEqual(self.saved_tasks(), [])
                 self.assertFalse((self.home / "tmp/scratch").exists())
                 self.assertEqual(self.tmux("list-windows", "-t", "=jarvis", "-F", "#{window_id}").stdout.splitlines(),
@@ -204,7 +211,12 @@ class TaskContract(unittest.TestCase):
             with self.subTest(cwd=expected):
                 record = self.call("launch", *launch, *options, cwd=self.root)
                 observed = self.acknowledgement(record)
+                self.assertFalse(imported.exists())
                 self.assertEqual(observed["cwd"], str(expected))
+                native_options = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+                native_options.add_argument("-C", "--cd")
+                working_root, _ = native_options.parse_known_args(observed["argv"][:-1])
+                self.assertEqual((Path(observed["cwd"]) / (working_root.cd or ".")).resolve(), expected)
                 self.assertEqual(record["cwd"], str(expected))
                 self.assertEqual(record["home"], str(self.home))
                 self.assertEqual(record["task_file"], str(self.task_file))
