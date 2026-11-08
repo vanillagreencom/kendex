@@ -127,11 +127,16 @@ def drain(root, bot_user: str) -> None:
     outcomes = directory(root.path, "outcomes")
     for request in sorted(inbox.glob("*.json")):
         target = outcomes / request.name
+        failure = None
         if not target.exists():
             try:
                 event = json.loads(request.read_text())
                 result = outcome(root, event, bot_user)
             except Refusal as err:
                 result = {"key": err.key, "value": err.value}
+                if err.key == "slack-auth-failed":
+                    failure = err
             write(target, result)
         request.unlink()
+        if failure is not None:
+            raise failure

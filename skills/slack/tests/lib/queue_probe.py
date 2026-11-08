@@ -3,12 +3,13 @@
 import contextlib
 import io
 import json
+import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, sys.argv[1])
 
-from inbound import drain, submit
+from inbound import directory, drain, submit, write
 from refusals import Refusal
 from relay import RootRelay
 from settings import load, load_presence
@@ -17,6 +18,17 @@ from verbs import api_for
 
 root = Path(sys.argv[2])
 mode = sys.argv[3]
+if mode == "auth":
+    channel = json.loads((root / "tmp/slack/binding.json").read_text())["channel"]
+    request = directory(root, "inbox") / "auth.json"
+    write(request, {"type": "message", "channel": channel, "ts": "1794111600.000001",
+                    "user": "U404", "text": "Hosted nonowner message."})
+    result = subprocess.run([str(Path(sys.argv[1]).parent / "slack"), "listen", "--root", str(root), "--once"],
+                            capture_output=True, text=True, timeout=60)
+    outcome = json.loads((directory(root, "outcomes") / request.name).read_text())
+    print(json.dumps({"exit": result.returncode, "outcome": outcome["key"],
+                      "fatal": result.stderr.split("=", 1)[0], "pending": request.exists()}))
+    sys.exit(0)
 settings = load()
 listener = RootRelay(root, settings, load_presence(root), api_for(settings), lambda: 0)
 listener.lock.acquire()

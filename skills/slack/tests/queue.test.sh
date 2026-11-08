@@ -72,6 +72,33 @@ RESULT="$(probe "$CONTROL" dispatch)" || exit 1
 sk_assert_red "$(jq -r '.key' <<<"$RESULT")" delivered 'control: disabling queue dispatch fails the same delivery assertion'
 sk_bin_reset
 
+# A hosted nonowner event needs a Slack reply even on an otherwise idle,
+# seeded root. A revoked token must reach the listener's fatal-error owner
+# after the worker's outcome is published and the request is consumed.
+for mode in normal control; do
+  AUTH_ROOT="$(sk_new_root "auth-$mode")" || exit 1
+  sk_bind "$AUTH_ROOT"
+  sk_poll "$AUTH_ROOT" SLACK_INBOUND=queue
+  assert_eq "$RC" 0 "$mode: the queue root is seeded before token revocation"
+  if [ "$mode" = control ]; then
+    sk_mutant queue-auth inbound.py '                if err.key == "slack-auth-failed":' \
+      '                if False and err.key == "slack-auth-failed":'
+  fi
+  sk_ctl /_test/fault '{"method":"chat.postMessage","error":"token_revoked"}' >/dev/null
+  RESULT="$(probe "$AUTH_ROOT" auth)" || exit 1
+  assert_eq "$(jq -c '[.outcome,.pending]' <<<"$RESULT")" '["slack-auth-failed",false]' \
+    "$mode: the worker keeps its keyed authentication failure and no queued request"
+  GOT="$(jq -c '[.exit,.fatal]' <<<"$RESULT")"
+  if [ "$mode" = control ]; then
+    sk_assert_red "$GOT" '[2,"slack: slack-auth-failed"]' \
+      'control: swallowing authentication failure fails the fatal listener assertion'
+  else
+    assert_eq "$GOT" '[2,"slack: slack-auth-failed"]' \
+      'a queued authentication failure stops the listener through its fatal-error owner'
+  fi
+  sk_bin_reset
+done
+
 # One real listener proves CLI wiring, with no app token and no Socket Mode
 # connection. These waits observe outcomes and an outbound upload, not elapsed
 # time as a substitute for completion.
