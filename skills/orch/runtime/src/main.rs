@@ -58,6 +58,15 @@ enum Verb {
         #[command(subcommand)]
         op: ops::artifact::Round,
     },
+    /// Mint a reviewer's artifact path, or check its artifact for review
+    /// acceptance; `--text` prints the result object alone and exits 0
+    /// accepted, 1 rejected, 2 refused.
+    ReviewArtifact {
+        #[arg(long)]
+        text: bool,
+        #[command(subcommand)]
+        op: ops::review_artifact::ReviewArtifact,
+    },
     /// Read or initialize one state file.
     State {
         #[command(subcommand)]
@@ -1344,6 +1353,31 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 }
             });
             artifact_reply(result, text, entry)
+        }
+        Verb::ReviewArtifact { op, text } => {
+            use ops::review_artifact::{self as review, ReviewArtifact};
+            let result = match op {
+                ReviewArtifact::Path(r) => review::path(&r, &schedule::SystemClock),
+                ReviewArtifact::Check(r) => r
+                    .issue
+                    .as_deref()
+                    .map(|issue| {
+                        let caller = std::env::var("ORCH_STATE_DIR").ok();
+                        review::state_dir(
+                            issue,
+                            &r.worktree,
+                            flags.state_dir.as_deref(),
+                            caller.as_deref(),
+                        )
+                        .map(|dir| (issue, dir))
+                    })
+                    .transpose()
+                    .and_then(|state| {
+                        let state = state.as_ref().map(|(issue, dir)| (*issue, dir.as_path()));
+                        review::check_review(&r, state, &schedule::SystemClock)
+                    }),
+            };
+            artifact_reply(result, text, "review-artifact-check")
         }
         Verb::Lane {
             op: LaneOp::Status { item },

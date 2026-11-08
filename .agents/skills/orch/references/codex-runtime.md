@@ -107,7 +107,7 @@ Read `wait.exit` and `wait.log` once the completion file is nonempty. Apply Roun
 For each incomplete reviewer, launch its single watchdog through [waiter-launch.md § Launch](waiter-launch.md#launch):
 
 ```bash
-sh "[RUN_DIR]/launch.sh" "[RUN_DIR]/wait" .agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT] [REVIEW_DELEGATED_AT] --wait [SECS] --issue [ISSUE_ID]
+sh "[RUN_DIR]/launch.sh" "[RUN_DIR]/wait" .agents/skills/orch/scripts/orch-runtime review-artifact --text check --worktree [WORKTREE_PATH] --agent [AGENT] --delegated-at [REVIEW_DELEGATED_AT] --wait [SECS] --issue [ISSUE_ID]
 ```
 
 Take `[SECS]`, re-arming and the required-measurement allowance from [review-pr.md § 3.2](../workflows/review-pr.md#32-watchdog). This replaces each background watchdog. Start [waiter-launch.md § Completion](waiter-launch.md#completion)'s foreground poll for each run before polling their sessions. Keep all completion waits inside this turn with `exec_command` and empty `write_stdin` polls, as [§ Delegated round wait](#delegated-round-wait) requires. After every tool return, sweep all run directories for nonempty `wait.exit` files and run § 3.2's filesystem sweep and due actions before the next poll. Read each completed run's `wait.exit` and `wait.log`; § 3.2 owns refusal replacement and § 3.1 owns artifact acceptance. Continue the review workflow in this turn; an agent message alone never releases a watchdog wait.
@@ -133,7 +133,7 @@ This is a transparent job launch: [job-units.md](job-units.md) owns the inherite
 For review-pr § 3.1's process collection, run the exact assigned-file check only after a zero runner exit. `[CHECK_BOUNDARY]` is the original batch's evidence boundary, or its stricter rejection boundary under § 3.2. Read the retained log beside this result. A failed exit read or nonzero execution result supplies no artifact verdict and leaves required evidence unread under that workflow's failure route:
 
 ```bash
-sh -c 'code=$(cat "$1/review.exit") || exit 2; case "$code" in 0) ;; *) printf "codex-review: execution-exit=%s\n" "$code" >&2; exit 1 ;; esac; exec .agents/skills/orch/scripts/review-artifact-check --file "$2" "$3" "$4" --issue "$5"' sh "[JOB_DIR]" "[ASSIGNED_ARTIFACT_PATH]" "[WORKTREE_PATH]" "[CHECK_BOUNDARY]" "[ISSUE_ID]"
+sh -c 'code=$(cat "$1/review.exit") || exit 2; case "$code" in 0) ;; *) printf "codex-review: execution-exit=%s\n" "$code" >&2; exit 1 ;; esac; exec .agents/skills/orch/scripts/orch-runtime review-artifact --text check --file "$2" --worktree "$3" --delegated-at "$4" --issue "$5"' sh "[JOB_DIR]" "[ASSIGNED_ARTIFACT_PATH]" "[WORKTREE_PATH]" "[CHECK_BOUNDARY]" "[ISSUE_ID]"
 ```
 
 ## Lane mailbox

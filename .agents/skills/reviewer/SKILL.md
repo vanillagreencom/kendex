@@ -66,13 +66,13 @@ Run `scripts/review-depth --base REF --head REF --repo DIR` from the trusted bas
 Capture the starting fields before reviewing. Findings are a JSON artifact per [`schemas/review-finding.md`](./schemas/review-finding.md), written with the harness file-write tool, never shell redirection, to the delegation's `Artifact:` path. When the delegation carries no `Artifact:` line, mint the path yourself (`[AGENT]` = your full agent name):
 
 ```bash
-.agents/skills/orch/scripts/review-artifact-check --path [WORKTREE_PATH] [AGENT]
+.agents/skills/orch/scripts/orch-runtime review-artifact --text path --worktree [WORKTREE_PATH] --agent [AGENT]
 ```
 
 **Self-validate before returning**, on the file you wrote, never the zero-epoch glob form, which falls through to an older sibling. Fix until this prints `"ok": true`:
 
 ```bash
-.agents/skills/orch/scripts/review-artifact-check --file [ARTIFACT_PATH] [WORKTREE_PATH]
+.agents/skills/orch/scripts/orch-runtime review-artifact --text check --file [ARTIFACT_PATH] --worktree [WORKTREE_PATH]
 ```
 
 Write a control's files under a `mktemp -d` of your own, on the base [§ Ethos](#ethos) gives a copy, the way [`scripts/mutation-stability`](./scripts/mutation-stability) does: stubs, fixtures, mutants, logs. The scratchpad root is shared with the parallel panel, where a sibling overwrites a fixed name mid-review.

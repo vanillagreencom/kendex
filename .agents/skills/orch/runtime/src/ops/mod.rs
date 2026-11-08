@@ -38,6 +38,7 @@ pub mod prune;
 pub mod push;
 pub mod qa;
 pub mod queue_watch;
+pub mod review_artifact;
 pub mod store;
 pub mod successor;
 #[cfg(test)]

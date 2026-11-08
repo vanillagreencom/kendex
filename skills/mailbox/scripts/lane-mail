@@ -980,7 +980,7 @@ lm_store() {
     refuse file-unreadable "$BOX" "$(cat -- "$WORK_DIR/store.err")"
 }
 
-# The template names TMPDIR outright, as lib/review-artifact-gates.sh does: a
+# The template names TMPDIR outright: a
 # bare `mktemp` reads it only on GNU, and BSD mktemp, the one macOS ships,
 # allocates under its own per-user directory instead. The trailing slash macOS
 # sets comes off, and a relative root takes `./` so it cannot read as an option.

@@ -173,7 +173,7 @@ Apply [Record verified findings](../schemas/workflow-state.md#record-verified-fi
 For Codex, prepare each complete `DELEGATION:` message under [Codex thread reuse](../references/skill-rules.md#codex-thread-reuse), including the target reviewer's full instructions and workflow. A reused thread's fixed runtime instructions must permit that review. For attached review, delegate to every reviewer selected for launch in parallel after current native room and overlap admission, including for each continuation spawn or followup. For process-owned review, prepare the same complete role, workflow and unchanged delegation below in the prompt file required by codex-runtime.md, then pass through Process launch admission below before its single domain wave. Do not call a collaboration spawn or followup for this process assignment. Preserve existing attempted/live assignments in the active state rather than replacing their ownership. When `EXTERNAL_REVIEW_REQUESTED=true` on a fresh batch, launch the external review in the same batch — a shell command, not an agent session: it consumes no slot and joins only the cycle's first wave. Mint each reviewer's artifact path immediately before its delegation — one command per reviewer, its output filling `[ARTIFACT_PATH]`:
 
 ```bash
-.agents/skills/orch/scripts/review-artifact-check --path [WORKTREE_PATH] [AGENT]
+.agents/skills/orch/scripts/orch-runtime review-artifact --text path --worktree [WORKTREE_PATH] --agent [AGENT]
 ```
 
 <delegation_format>
@@ -223,7 +223,7 @@ Execute the exact command printed after `wait:` and repeat it per its exit code 
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /review_delegated_at
-.agents/skills/orch/scripts/review-artifact-check --file "$EXTERNAL_OUTPUT" [WORKTREE_PATH] [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND] --issue [ISSUE_ID]
+.agents/skills/orch/scripts/orch-runtime review-artifact --text check --file "$EXTERNAL_OUTPUT" --worktree [WORKTREE_PATH] --delegated-at [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND] --issue [ISSUE_ID]
 ```
 
 `ok == true` → append the path to `json_paths`, carrying its `repeats` to § 4; `reason == "valid_undermeasured"` → report its `measurement_failed` string — and `measurement_suppressed` when present — beside the path; never present the external pass as clean. `ok == false`, including `moving_tree`, or any non-zero exit, → report the `reason` (and `detail` when present) and continue: external review is advisory, never blocking, and never substitutes a pass. A detached run that has already exited non-zero, or an artifact that does not validate, is **resolved** right then as `external: failed — [REASON]` (the script's exit class, or the check's `reason`) and leaves `OUTSTANDING` in § 3.1.
@@ -238,7 +238,7 @@ Execute the exact command printed after `wait:` and repeat it per its exit code 
 
 ```bash
 .agents/skills/orch/scripts/orch-runtime state get --item [ISSUE_ID] /review_delegated_at
-.agents/skills/orch/scripts/review-artifact-check [WORKTREE_PATH] [AGENT] [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND] --issue [ISSUE_ID]
+.agents/skills/orch/scripts/orch-runtime review-artifact --text check --worktree [WORKTREE_PATH] --agent [AGENT] --delegated-at [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND] --issue [ISSUE_ID]
 ```
 
 **Process-owned completion.** Use codex-runtime.md's process collection command for every process return, including the first collection. It checks the recorded job exit before the existing exact assigned-file check. Read the job log beside that result. An empty exit file is unfinished, never a return. A nonzero exit or confirmed interruption supplies no accepted review, even if a JSON file exists. Keep its required evidence unread and apply the incomplete-return/deadline rules below; never substitute an external opinion. A zero exit still needs the exact assigned artifact to validate. The last-message file alone supplies no acceptance.
@@ -246,7 +246,7 @@ Execute the exact command printed after `wait:` and repeat it per its exit code 
 **Continuation exact-file checks.** For a proved original-batch continuation, use the preserved assigned path instead of the glob check above, with the original current token/stage and original evidence boundary still in place:
 
 ```bash
-.agents/skills/orch/scripts/review-artifact-check --file [ASSIGNED_ARTIFACT_PATH] [WORKTREE_PATH] [ORIGINAL_REVIEW_DELEGATED_AT] --issue [ISSUE_ID]
+.agents/skills/orch/scripts/orch-runtime review-artifact --text check --file [ASSIGNED_ARTIFACT_PATH] --worktree [WORKTREE_PATH] --delegated-at [ORIGINAL_REVIEW_DELEGATED_AT] --issue [ISSUE_ID]
 ```
 
 Match `artifact.agent` to the preserved canonical assignment and required panel. Reuse only an `ok == true` result; missing, invalid, stale, `no_review` or `moving_tree` evidence supplies no completion. A failed accepted-file recheck invalidates reuse and takes ordinary fresh review, retaining the rejection and history. Never select a sibling glob, touch an old file, lower/omit the boundary or mint a receipt. For an unfinished assigned return, retain any stricter rejection boundary § 3.2 already requires without changing the original batch boundary. Rechecking an already recorded accepted path appends no duplicate history; carry its findings, repeats and `valid_undermeasured` declarations through the same handling below.
@@ -273,7 +273,7 @@ Still `ok == false` after that, or the § 3.2 deadline reached → mark the agen
 
 ### 3.2 Watchdog
 
-**Keep a wake source armed for every incomplete agent (§ 3.1).** Arm one `review-artifact-check [WORKTREE_PATH] [AGENT] [REVIEW_DELEGATED_AT] --wait [SECS] --issue [ISSUE_ID]` per agent. On Codex, use [codex-runtime.md § Reviewer round wait](../references/codex-runtime.md#reviewer-round-wait) through the existing job runner and hold every completion in the current turn. Other harnesses use the check's `--help` background route. `[SECS]` ends at its earliest pending table row, or its deadline when no earlier row remains. The external lane uses § 2.2's `wait:` command. Arm with the delegation batch and re-arm after every action, including a ping. A promised completion extends nothing without re-arming. After artifact rejection (§ 3.1), set `[REVIEW_DELEGATED_AT]` strictly above the rejected artifact's mtime. In a continuation this is a stricter per-assignment check boundary, never a write to the original batch boundary. The glob watchdog supplies a wake only: § 3.1's exact assigned-file check decides continuation acceptance.
+**Keep a wake source armed for every incomplete agent (§ 3.1).** Arm one `orch-runtime review-artifact --text check --worktree [WORKTREE_PATH] --agent [AGENT] --delegated-at [REVIEW_DELEGATED_AT] --wait [SECS] --issue [ISSUE_ID]` per agent. On Codex, use [codex-runtime.md § Reviewer round wait](../references/codex-runtime.md#reviewer-round-wait) through the existing job runner and hold every completion in the current turn. Other harnesses use the check's `--help` background route. `[SECS]` ends at its earliest pending table row, or its deadline when no earlier row remains. The external lane uses § 2.2's `wait:` command. Arm with the delegation batch and re-arm after every action, including a ping. A promised completion extends nothing without re-arming. After artifact rejection (§ 3.1), set `[REVIEW_DELEGATED_AT]` strictly above the rejected artifact's mtime. In a continuation this is a stricter per-assignment check boundary, never a write to the original batch boundary. The glob watchdog supplies a wake only: § 3.1's exact assigned-file check decides continuation acceptance.
 
 **Process liveness.** Keep the same artifact watchdog and exact-file acceptance for process-owned domains. Inspect their recorded job completion and log on each sweep through the existing runner owners. The ping and post-ping early-end rows apply only to messageable attached agents. A process has no chat or child-wait target; retain its per-domain deadline. On every process wave, a domain proved never launched starts its clock at its actual first delegation. Use that clock for the per-domain and active-measurement deadlines below, while keeping the original batch token and evidence boundary. An attempted domain, retry or continuation keeps its original clock and spent allowance; a fresh process never resets them. Actual job evidence identifying an active required measurement can establish the measurement allowance below; an unverified promise cannot. Stop a process at its terminal deadline through job-units.md's recorded runner stop route before launching any allowed replacement or next wave. Carry all attempts and failures forward.
 

@@ -1450,7 +1450,7 @@ review_stage() {
   local rid
   rid="$("$WS" --state-dir "$REPO/tmp" new-round-id KEN-1 review_round_id)"
   jq -n --arg head "$MERGE" '{verdict:"pass",head:$head,dirty_paths:[]}' > "$REPO/tmp/review-r-live.json"
-  "$LAYOUT/orch/scripts/review-artifact-check" "$REPO" r 0 --issue KEN-1 --state-dir "$REPO/tmp" > "$CASE/check.out"
+  "$ORCH_RUNTIME_CLI" --state-dir "$REPO/tmp" review-artifact --text check --worktree "$REPO" --agent r --delegated-at 0 --issue KEN-1 > "$CASE/check.out"
   assert_eq "$(jq -r '.ok' "$CASE/check.out")" true 'review artifact accepted'
 }
 dev_stage implement

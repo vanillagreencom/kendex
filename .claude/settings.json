@@ -10,7 +10,7 @@
       "Bash(tmux display-message *)",
       "Bash(.agents/skills/orch/scripts/workflow-state *)",
       "Bash(.agents/skills/orch/scripts/dev-artifact-check *)",
-      "Bash(.agents/skills/orch/scripts/review-artifact-check *)",
+      "Bash(.agents/skills/orch/scripts/orch-runtime review-artifact *)",
       "Bash(.agents/skills/orch/scripts/dev-round-write *)",
       "Bash(.agents/skills/orch/scripts/git-context *)",
       "Bash(.agents/skills/orch/scripts/orch-env *)",

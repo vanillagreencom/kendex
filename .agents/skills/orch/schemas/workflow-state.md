@@ -311,7 +311,7 @@ This is the review-batch admission and completion contract for review producers 
 2. **Acceptance.** Check each assigned report through the existing acceptance owner:
 
    ```bash
-   .agents/skills/orch/scripts/review-artifact-check --file [ARTIFACT_PATH] [WORKTREE_PATH] [BOUND_REVIEW_DELEGATED_AT] --issue [ISSUE_ID]
+   .agents/skills/orch/scripts/orch-runtime review-artifact --text check --file [ARTIFACT_PATH] --worktree [WORKTREE_PATH] --delegated-at [BOUND_REVIEW_DELEGATED_AT] --issue [ISSUE_ID]
    ```
 
    Under dry-run, omit the unavailable boundary and `--issue` to avoid recording a stage. The caller keeps its specialized acceptance checks and failure route. Only accepted evidence supplies findings. Retain its original path, batch token, boundary, array and index through disposition, even after another batch starts. A native report's `qa_metadata.review_round_id` must match its assigned token; dry-run reports use `null`. A missing original binding stays unknown, never today's mutable token. A failed or unavailable advisory review supplies no finding or clean pass.

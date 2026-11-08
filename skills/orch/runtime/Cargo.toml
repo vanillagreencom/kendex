@@ -57,6 +57,10 @@ name = "item"
 path = "../tests/rust/item.rs"
 
 [[test]]
+name = "review_artifact"
+path = "../tests/rust/review_artifact.rs"
+
+[[test]]
 name = "verify"
 path = "../tests/rust/verify.rs"
 

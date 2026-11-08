@@ -3073,7 +3073,7 @@ response_reports_no_review() {
 # review), so a response with no qa_metadata key cannot attest that any review
 # happened — non-conforming, structurally detected, no prose parsing. Catches
 # in particular a retried response that dropped the field along with the rest
-# of its context. (orch review-artifact-check stays tolerant of absent
+# of its context. (orch's review-artifact check stays tolerant of absent
 # qa_metadata for internal reviewers; this gate is producer-side only.)
 response_missing_qa_metadata() {
   ! printf '%s' "$1" | jq -e '(.qa_metadata? | type) == "object"' >/dev/null 2>&1

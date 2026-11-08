@@ -428,7 +428,7 @@ SH
   "$ORCH/workflow-state" set-now "$ITEM" review_delegated_at || fail review-delegated-at
   "$ORCH/workflow-state" update "$ITEM" \
     '.review_agents = ["reviewer-correctness"] | .review_agent_ids = {} | .review_agent_runtime_types = {}' || fail review-agents
-  artifact="$("$ORCH/review-artifact-check" --path "$WT" reviewer-correctness)" || fail review-path
+  artifact="$("$ORCH/orch-runtime" review-artifact --text path --worktree "$WT" --agent reviewer-correctness)" || fail review-path
   # The reviewer's artifact, written in place of the reviewer: a pass over
   # the reviewed head with a clean tree, in the shape the content gates read.
   jq -cn --arg head "$SHA" \
@@ -436,7 +436,7 @@ SH
     > "$artifact.tmp" && mv -- "$artifact.tmp" "$artifact" || fail review-write
   step review-accept
   delegated_at="$("$ORCH/workflow-state" get "$ITEM" .review_delegated_at)" || fail review-delegated-read
-  verdict_json="$("$ORCH/review-artifact-check" "$WT" reviewer-correctness "$delegated_at" --issue "$ITEM")" || fail review-check
+  verdict_json="$("$ORCH/orch-runtime" review-artifact --text check --worktree "$WT" --agent reviewer-correctness --delegated-at "$delegated_at" --issue "$ITEM")" || fail review-check
   jq -e '.ok == true and .reason == "valid"' <<<"$verdict_json" >/dev/null || fail review-check-value
   "$ORCH/workflow-state" append "$ITEM" json_paths "$artifact" || fail json-paths
   # skills/orch/workflows/review-pr.md § 3.3: the panel's one required
