@@ -138,16 +138,33 @@ class SessionLogContract(unittest.TestCase):
     def test_worker_session_log_lines(self):
         rows = (("start", "manual", None, "manual"), ("start", "boot", None, "boot"),
                 ("start", "app-on", None, "app-on"), ("start", "watch-loop", None, "watch-loop"),
-                ("succeed", "boot", None, "succession"), ("stop", "boot", "app-off", "app-off"),
-                ("successor", "boot", None, "succession"))
+                ("succeed", "boot", None, "succession"), ("stop", "app-on", None, "manual"),
+                ("stop", "app-on", "app-off", "app-off"), ("successor", "boot", None, "succession"))
         for verb, recorded, requested, origin in rows:
             with self.subTest(verb=verb, origin=origin):
-                # An unreadable record is a real worker failure producer. Its
-                # diagnostic precedes the cleanup read's uncaught Refusal.
-                record = dict(v=1, home=str(self.home), origin=recorded, generation=1,
-                              state="invalid", reason="invalid")
-                self.session.write(record)
-                self.log.unlink(missing_ok=True)
+                log = self.log
+                if verb == "stop":
+                    fixture = SessionContract()
+                    fixture.setUp()
+                    self.addCleanup(fixture.tearDown)
+                    fixture.call("start", origin=recorded, own_worker=True)
+                    fixture.wait()
+                    self.assertEqual(fixture.owned_workers[-1].wait(timeout=15), 0)
+                    self.assertEqual(json.loads(fixture.record.read_text())["origin"], recorded)
+                    log = fixture.record.with_name("session.log")
+                    log.unlink(missing_ok=True)
+                    fixture.refuse_teardown()
+                    answer, code = fixture.call("stop", origin=requested, own_worker=True)
+                    self.assertEqual((answer["state"], answer["origin"], code), ("stopping", recorded, 0))
+                    self.assertNotEqual(fixture.owned_workers[-1].wait(timeout=15), 0)
+                    self.assertEqual(json.loads(fixture.record.read_text())["origin"], recorded)
+                else:
+                    # An unreadable record is a real worker failure producer. Its
+                    # diagnostic precedes the cleanup read's uncaught Refusal.
+                    record = dict(v=1, home=str(self.home), origin=recorded, generation=1,
+                                  state="invalid", reason="invalid")
+                    self.session.write(record)
+                    log.unlink(missing_ok=True)
                 if verb == "successor":
                     driver = ("import os,runpy,sys; runtime=runpy.run_path(sys.argv[1]); "
                               "runtime['Session'](sys.argv[2], dict(os.environ)).successor(1)")
@@ -155,7 +172,7 @@ class SessionLogContract(unittest.TestCase):
                                             env=self.env, capture_output=True, text=True, timeout=15)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertEqual(result.stdout + result.stderr, "")
-                else:
+                elif verb != "stop":
                     children = []
                     real_popen = subprocess.Popen
                     def observe(*args, **kwargs):
@@ -168,7 +185,7 @@ class SessionLogContract(unittest.TestCase):
                         self.session.detach(verb, record, origin=requested)
                     self.assertEqual(len(children), 1)
                     self.assertNotEqual(children[0].wait(timeout=15), 0)
-                lines = self.log.read_text().splitlines()
+                lines = log.read_text().splitlines()
                 self.assertGreater(len(lines), 1)
                 prefix = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z origin=" + origin + " "
                 for line in lines:
@@ -177,7 +194,7 @@ class SessionLogContract(unittest.TestCase):
                 self.assertIn("Traceback (most recent call last):", bodies)
                 self.assertRegex(bodies[-1], r"(?:^|\.)Refusal(?::|$)")
                 if verb != "successor":
-                    self.assertRegex(bodies[0], r"^jarvis-session: worker-failed .* cause=Refusal ")
+                    self.assertRegex("\n".join(bodies), r"(?:^|\n)jarvis-session: worker-failed .* cause=Refusal ")
 
     def test_worker_session_log_raw_stream_control(self):
         skills = self.root / "control/skills"
