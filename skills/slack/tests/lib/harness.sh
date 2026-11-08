@@ -280,7 +280,7 @@ expected = sys.argv[3] + "\n"
 sys.exit(0 if output == expected else 1)
 PY
 }
-sk_lm() { ( cd "$1" && shift && env -u ORCH_ASK_WAIT_MINUTES "$SK_LANE_MAIL" "$@" ); } # ROOT ARGS...
+sk_lm() { ( cd "$1" && shift && env -u ORCH_ASK_WAIT_MINUTES -u ORCH_STATE_DIR "$SK_LANE_MAIL" "$@" ); } # ROOT ARGS...
 sk_text() { printf '%s\n' "$2" > "$SK_TMP/$1.txt"; printf '%s' "$SK_TMP/$1.txt"; }   # NAME CONTENT
 
 # sk_run [VAR=VALUE]... -- ARGS... — the package under an explicit environment

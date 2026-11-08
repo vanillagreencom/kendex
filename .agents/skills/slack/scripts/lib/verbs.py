@@ -138,8 +138,7 @@ def api_for(settings: Settings) -> Slack:
 
 
 def setup(root: Path, name: Optional[str], take: Optional[str]) -> int:
-    # The relay a setup restarts starts with SLACK_APP_TOKEN or exits, so a
-    # setup that would restart one refuses without it before anything runs.
+    # A setup that restarts a Socket Mode listener needs its app token.
     settings = load(need_app_token=unit_stands())
     api = api_for(settings)
     ids = resolve_owner_ids(api, settings.owners)
@@ -402,6 +401,7 @@ def status(roots: List[Path], now: float) -> int:
             keyed(
                 "slack-relay",
                 f"{root} state={state} channel={record['channel']} code={record.get('code') or '-'} last_poll_age={int(age)}s"
+                f" inbound={record.get('inbound', 'socket')}"
                 f" connection={connection} connection_since={since}"
                 f" last_delivered_ts={record.get('last_delivered_ts') or '-'}"
                 f" open_asks={len(record.get('open_asks') or [])} oldest_unknown={unknown[0] if unknown else '-'}"

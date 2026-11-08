@@ -4,7 +4,7 @@
 
 **Date**: 2026-09-29
 
-**Status**: Active
+**Status**: Active (hosted transport and topology → D032)
 
 **Research**: KEN-2082
 

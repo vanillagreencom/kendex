@@ -173,7 +173,7 @@ class State:
     progress: Dict[str, Dict] = field(default_factory=dict)
     pending_files: Dict[str, str] = field(default_factory=dict)
     refused: Dict[str, str] = field(default_factory=dict)
-    ignored: Set[str] = field(default_factory=set)
+    ignored: Dict[str, str] = field(default_factory=dict)
     marks: Dict[str, str] = field(default_factory=dict)
 
     def post_thread(self, envelope_id: str) -> Optional[str]:
@@ -202,7 +202,7 @@ class State:
         elif kind == "in":
             ts = str(line["ts"])
             if line["kind"] == "ignored":
-                self.ignored.add(ts)
+                self.ignored[ts] = str(line["reason"])
                 return
             self.delivered[ts] = str(line["id"])
             self.carried.add(str(line["id"]))
