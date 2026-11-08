@@ -9,6 +9,39 @@ set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$TEST_DIR/lib/guard-world.sh"
+# shellcheck source=../../skills/commit-guards/scripts/lib/command-position.sh
+source "$REPO/skills/commit-guards/scripts/lib/command-position.sh"
+
+# The guard's kendex prefilter omits env invocations. Exercise its reader's
+# candidate contract here without widening that separate selection rule.
+while IFS='|' read -r label present candidate text; do
+  text=$(printf '%b' "$text")
+  command_segments "$text"
+  found=0
+  while IFS= read -r segment; do
+    command_text "$segment"
+    while IFS= read -r command_candidate; do
+      [ "$command_candidate" != "$candidate" ] || found=1
+    done <<<"$COMMAND_TEXTS"
+  done <<<"$SEGMENTS"
+  [ "$found" = "$present" ] && ok "reader: $label" || bad "reader: $label" "expected presence=$present, got=$found"
+done <<'ROWS'
+multiword quoted data|0|pkill here|echo "never use pkill here"
+ordinary heredoc data|0|pkill -f node|cat <<'NOTE'\npkill -f node\nNOTE
+wrapped literal command|1|pkill -f node|sudo pkill -f node
+attached redirect|1|pkill>/dev/null -f node|pkill>/dev/null -f node
+short split-string operand|1|pkill -f node|env -S 'pkill -f node'
+separate long split-string operand|1|killall node|env --split-string 'killall node'
+attached long split-string operand|1|killall node|env --split-string='killall node'
+options before split-string operand|1|pkill -f node|/usr/bin/env -i -S "pkill -f node"
+later quoted data|0|pkill here|env -S 'printf %s' 'never use pkill here'
+quoted env mention|0|pkill -f node|echo "env -S pkill -f node"
+quoted env heredoc data|0|pkill -f node|env -S 'printf bash %s' <<'NOTE'\npkill -f node\nNOTE
+expanding env heredoc data|0|killall node|env --split-string='printf bash %s' <<NOTE\nkillall node\nNOTE
+single-word quoted candidate|1|"pkill"|echo "pkill"
+shell-assembled spelling|0|pkill -f node|p'kill' -f node
+ROWS
+
 git -C "$R" config gc.auto 0
 git -C "$R" config maintenance.auto false
 

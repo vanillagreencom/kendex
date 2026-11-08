@@ -13,7 +13,8 @@
 # pattern and no character inside one starts or ends a segment, and a heredoc
 # body its command reads as data is dropped. A span or a body that a
 # shell, `eval`, `source` or `.` word runs is kept as the command text it is,
-# and a command substitution is kept wherever it stands. A quote or a
+# as is a quoted operand of `env -S` or `--split-string`. A command
+# substitution is kept wherever it stands. A quote or a
 # substitution that cannot be paired leaves the whole text to be cut unmasked,
 # so a command the reader could not take apart is read with its full reach.
 #
@@ -63,6 +64,10 @@ runs_shell_text() { # TEXT -> 0 when a word in it runs shell text
   done
   [[ $bare =~ $SHELL_RE ]]
 }
+# env splits its -S/--split-string operand into executable argv (the option
+# forms also recognized by command-safety's environment_producer). Only the
+# operand at this tail is executable; later quoted arguments remain data.
+ENV_SPLIT_TAIL_RE="(^|[[:space:]])[\"']?([^[:space:]\"']*/)?env[\"']?[[:space:]]+([^[:space:]]+[[:space:]]+)*(-S[[:space:]]*|--split-string([[:space:]]+|=))$"
 # A `<<` or `<<-` with only blanks after it takes the next span as its heredoc
 # delimiter, a word the shell does not run. `<<<` is a here-string, and the
 # word after it is one the shell does run.
@@ -165,14 +170,15 @@ SPAN_MASK='[[:space:]<&;|()`]'
 # Each quoted span keeps its quotes, since a command word may be quoted whole
 # (`"/path/kendex" refresh`), while the characters SPAN_MASK names inside it
 # are masked. A span the shell does run — the argument of a shell, `eval`,
-# `source` or `.` word in the same segment — is opened as its own command
-# position with its whitespace intact. A quote the shell hands on as a
+# `source` or `.` word in the same segment, or an env split-string operand —
+# is opened as its own command position with its whitespace intact. The shell
+# scope keeps env operands masked for heredoc classification. A quote the shell hands on as a
 # literal argument is not a boundary and opens no span, which is what keeps two
 # escaped quotes from pairing around a real command. MASKED holds the result; a
 # quote that still does not pair is a span the reader could not read, and the
 # caller is told.
-mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
-  local rest=$1 head quote span before out=""
+mask_spans() { # TEXT [shell] -> 0 with MASKED set, 1 when a quote does not pair
+  local rest=$1 scope=${2:-command} head quote span before out=""
   while :; do
     upto_unescaped "$rest" "'\"" || { MASKED=$out$rest; return 0; }
     head=$UPTO
@@ -193,7 +199,11 @@ mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
     rest=${rest#"$span$quote"}
     out=$out$head
     before=${out##*$SEP}
-    if [[ $before =~ $DELIM_TAIL_RE ]] || ! runs_shell_text "$before"; then
+    if [[ ! $before =~ $DELIM_TAIL_RE ]] &&
+       { runs_shell_text "$before" ||
+         { [ "$scope" = command ] && [[ $before =~ $ENV_SPLIT_TAIL_RE ]]; }; }; then
+      out=$out$NL$span$NL
+    else
       # A single-quoted span expands nothing, so all of it is masked; a
       # double-quoted one has its substitutions lifted out first.
       if [ "$quote" = "'" ]; then
@@ -202,8 +212,6 @@ mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
         lift_substitutions "$span" || return 1
         out=$out$quote${OUTSIDE//$SPAN_MASK/$MASK}$quote$SUBS
       fi
-    else
-      out=$out$NL$span$NL
     fi
   done
 }
@@ -231,7 +239,9 @@ EOF
     judged=$judged$line$NL
     index=$((index + 1))
     uncommented "$line"
-    if mask_spans "$BARE"; then
+    # An env split-string operand supplies argv, not shell syntax or a reason
+    # to run stdin. Keep it masked while locating and classifying heredocs.
+    if mask_spans "$BARE" shell; then
       BARE=$MASKED
     fi
     [[ $BARE =~ (^|[^<])\<\<-?[[:space:]]*([^[:space:]\<][^[:space:]]*) ]] || continue

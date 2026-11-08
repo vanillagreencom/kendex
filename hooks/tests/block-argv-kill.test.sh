@@ -101,6 +101,27 @@ a quoted executable keeps its attached redirect|rc=2 first=block-argv-kill: refu
 an operator inside quoted data stays data|rc=0 first=-|echo "pkill>note"
 ROWS
 
+echo "=== block-argv-kill: env split-string operands are executable text ==="
+# env's split-string options run their operand as argv; later arguments and
+# heredoc stdin are still data. The harness submits these strings, never runs them.
+assert_split_operand() {
+  run_hook "$1"
+  assert_eq "rc=$rc first=$(first_line)" "$2" "$3"
+}
+while IFS='|' read -r label want text; do
+  text=$(printf '%b' "$text")
+  assert_split_operand "$text" "$want" "$label"
+done <<'ROWS'
+the short split-string operand runs pkill|rc=2 first=block-argv-kill: refused=pkill|env -S 'pkill -f node'
+the separate long operand runs killall|rc=2 first=block-argv-kill: refused=killall|env --split-string 'killall node'
+the attached long operand runs killall|rc=2 first=block-argv-kill: refused=killall|env --split-string='killall node'
+env options before the operand keep its execution|rc=2 first=block-argv-kill: refused=pkill|/usr/bin/env -i -S "pkill -f node"
+data after the split operand stays quoted|rc=0 first=-|env -S 'printf %s' 'never use pkill here'
+an env option mentioned in echo data stays data|rc=0 first=-|echo "env -S pkill -f node"
+a quoted env heredoc remains stdin data|rc=0 first=-|env -S 'printf bash %s' <<'NOTE'\npkill -f node\nNOTE
+an expanding env heredoc remains stdin data|rc=0 first=-|env --split-string='printf bash %s' <<NOTE\nkillall node\nNOTE
+ROWS
+
 echo "=== block-argv-kill: the named forms pass ==="
 run_hook 'kill 1234';                          assert_eq "$rc" 0 'kill on a PID passes'
 run_hook 'kill -TERM 1234 5678';               assert_eq "$rc" 0 'kill with a signal and several PIDs passes'
@@ -142,6 +163,22 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
     [ "$FAIL" -eq 0 ]
   ) >"$TMP_ROOT/control.log" 2>&1 || control_rc=$?
   assert_eq "$control_rc" 1 'control: raw scanning makes the quoted-data assertion fail'
+
+  # The same reader with operand exposure disabled must lose the env refusal.
+  # Retain the executable spelling and run only that assertion in the copy.
+  cp "$HOOK" "$TMP_ROOT/control/hooks/block-argv-kill.sh"
+  matches=$(grep -Fc 'scope=${2:-command}' "$TMP_ROOT/control/skills/commit-guards/scripts/lib/command-position.sh") || exit 1
+  [ "$matches" = 1 ] || { echo 'block-argv-kill.test: control=env-edit-site' >&2; exit 1; }
+  sed 's/scope=${2:-command}/scope=shell/' "$TMP_ROOT/control/skills/commit-guards/scripts/lib/command-position.sh" >"$TMP_ROOT/control-env-reader"
+  cp "$TMP_ROOT/control-env-reader" "$TMP_ROOT/control/skills/commit-guards/scripts/lib/command-position.sh"
+  control_rc=0
+  (
+    HOOK="$TMP_ROOT/control/hooks/block-argv-kill.sh"
+    PASS=0 FAIL=0
+    assert_split_operand "env -S 'pkill -f node'" 'rc=2 first=block-argv-kill: refused=pkill' 'the short split-string operand runs pkill'
+    [ "$FAIL" -eq 0 ]
+  ) >"$TMP_ROOT/control-env.log" 2>&1 || control_rc=$?
+  assert_eq "$control_rc" 1 'control: masking the env operand makes its refusal assertion fail'
 fi
 
 echo "=== block-argv-kill: the stated limits ==="
