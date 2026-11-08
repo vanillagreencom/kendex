@@ -48,9 +48,15 @@ Write the description to a file, then:
 
 `--state "Backlog"` is mandatory, never the team-default Triage.
 
-`[REACH]` is the ask, run, or decision that raised the question.
+`[REACH]` is the ask, run, or decision that raised the question. Fill Story and Why this matters from the topic and caller's questions, following [issue-description-template.md](../templates/issue-description-template.md) § Field Mapping and § Rules.
 
 ```markdown
+> **Story:** [Who needs this research.] [What they cannot decide today.] [What the findings let them decide, and its consequence.]
+
+> **Why this matters:** [The cost of leaving the question unanswered, and the benefit of deciding with evidence.]
+
+## Filing record
+
 **Reached by**: [REACH]
 
 ## Summary
