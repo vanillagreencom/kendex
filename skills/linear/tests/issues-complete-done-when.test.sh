@@ -105,6 +105,28 @@ printf '%s\n' \
 proof="$TMP_ROOT/evidence.txt"
 printf '%s\n' '1: first source read' '2: second source read' '3: third source read' >"$proof"
 
+# Reported Linear callers select boxes under level-three or hyphenated
+# headings. Explicit selections must never turn an unrecognized checklist
+# into permission to complete, even when there is no checklist at all.
+while IFS='|' read -r name description; do
+  printf '%b' "$description" >"$TMP_ROOT/selection.md"
+  for met in all 1; do
+    log="$TMP_ROOT/selection-$name-$met.jsonl"
+    rc=0
+    run_complete "$TMP_ROOT/selection.md" "$log" CC-720 --done-when-met "$met" --evidence-file "$proof" --summary proof \
+      >"$TMP_ROOT/selection.out" 2>"$TMP_ROOT/selection.err" || rc=$?
+    assert_ne "selection $name/$met refuses" "$rc" 0
+    assert_jq "selection $name/$met reports missing checklist" "$(<"$TMP_ROOT/selection.err")" '.error == "done-when-checklist-missing" and .issue == "CC-720"'
+    assert_not "selection $name/$met writes nothing" jq -se 'any(.[]; (.query | contains("commentCreate")) or (.query | contains("issueUpdate")))' "$log"
+  done
+done <<'ROWS'
+absent|No checklist.
+level-three|### Done when\n- [ ] shared outcome\n### Requirements\n- [ ] requirement
+hyphenated|## Done-when\n- [ ] shared outcome
+empty|## Done when
+no-boxes|## Done when\n* a bullet with no box
+ROWS
+
 # Bare completion must read every box before either summary or state write.
 # The final column names the field that must carry the refusal box number.
 while IFS='|' read -r name description expected field; do
@@ -129,6 +151,8 @@ not-direct-proof|## Done when\n- [x] shared outcome\n\n  Evidence: read|refuse|m
 complete|## Done when\n- [x] shared outcome\n  Evidence: source read passed|state-done|-
 post|## Done when\n- [x] branch proof\n  Evidence: branch read\n- [ ] Post-merge: Read health; Where: service; Why after merge: live service; Deadline: 2026-10-04T00:00:00Z|state-in-review|-
 absent|No checklist.|state-done|-
+empty|## Done when|state-done|-
+no-boxes|## Done when\n* a bullet with no box|state-done|-
 ROWS
 
 # A container completes under the ordinary checklist rule: with no checklist
@@ -215,14 +239,6 @@ for value in 0 x 1,,2 "1, 2"; do
   assert_ne "malformed box list refuses" "$rc" 0
   assert_not "malformed box list refuses before any request" test -s "$log"
 done
-
-# A section without checkboxes keeps ordinary completion behavior.
-plain="$TMP_ROOT/plain.md"
-printf '%s\n' '## Done when' '' '* a bullet with no box' >"$plain"
-log="$TMP_ROOT/plain.jsonl"
-out="$(run_complete "$plain" "$log" CC-720 --done-when-met all --evidence-file "$proof" 2>"$TMP_ROOT/plain.err")" || true
-assert_jq "an empty checklist has no new tick" "$out" '.done_when_checked == 0'
-assert_jq "an empty checklist sends no description" "$(updates "$log")" '.variables.input | has("description") | not'
 
 merged=2026-10-01T00:00:00Z
 post='Post-merge: Read deployment health; Where: live service health; Why after merge: the service runs the merged release; Deadline: 2026-10-04T00:00:00Z'
