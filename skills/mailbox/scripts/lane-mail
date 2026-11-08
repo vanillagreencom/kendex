@@ -1541,11 +1541,12 @@ lm_sent() {
 # whatever its start, as the hooks read it, which hand it the mailbox and
 # write the start into the record. Which record carries no start is
 # lib/overseer-launch.sh § OL_JQ_DEFS's ol_unstarted, sourced here alone so
-# no other verb pays for it. A
-# hosted peer's record and tmux server sit on its own host, out of this
+# no other verb pays for it. A saved socket selects the recorded server as
+# overseer-host-tmux inspect does; old records retain the caller's server.
+# A hosted peer's record and tmux server sit on its own host, out of this
 # shell's reach.
 lm_peer_reader() {
-  local record server start pane rc=0
+  local record server start pane socket rc=0 TMUX="${TMUX:-}"
   # shellcheck source=../../orch/scripts/lib/overseer-launch.sh
   . "$ORCH_SCRIPTS/lib/overseer-launch.sh"
   # shellcheck source=../../orch/scripts/lib/tmux-server.sh
@@ -1581,7 +1582,9 @@ lm_peer_reader() {
     lm_reader_report no-reader "$ROOT" cause=unnamed
     return 0
   fi
-  tmux_pane_live "$server" "$start" "$pane" || rc=$?
+  socket="$(jq -r '.server_socket // empty' <<<"$LM_OVERSEER_RECORD")" || refuse overseer-unreadable "$ROOT"
+  [ -z "$socket" ] || export TMUX="$socket,$server,0"
+  tmux_pane_live "$server" "$start" "$pane" "$socket" || rc=$?
   case "$rc" in
     0) ;;
     1) lm_reader_report no-reader "$ROOT" cause=pane-gone ;;
