@@ -260,39 +260,45 @@ gh_rest() {
             return 0
         fi
 
-        # Handle errors
-        case "$response" in
-        *"401"* | *"Unauthorized"*)
-            github_error 'GitHub authentication failed'
-            return 1
-            ;;
-        *"403"* | *"rate limit"*)
-            if [ $attempt -lt $max_retries ]; then
-                sleep $retry_delay
-                retry_delay=$((retry_delay * 2))
-                attempt=$((attempt + 1))
-                continue
+        local status="" category=unknown retry=true
+        local status_pattern='HTTP(/[0-9.]+)?[[:space:]]+([0-9]{3})'
+        local body_status_pattern='"status"[[:space:]]*:[[:space:]]*"?([0-9]{3})'
+        if [[ "$response" =~ $status_pattern ]]; then
+            status="${BASH_REMATCH[2]}"
+        elif [[ "$response" =~ $body_status_pattern ]]; then
+            status="${BASH_REMATCH[1]}"
+        fi
+
+        # GitHub documents these response signals at:
+        # https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api
+        # A 403 alone proves neither quota exhaustion nor missing permission.
+        case "$status" in
+        401) category=authentication; retry=false ;;
+        404) category=not-found; retry=false ;;
+        403 | 429)
+            [ "$status" != 403 ] || retry=false
+            case "$response" in
+            *"API rate limit exceeded"*) category=primary-rate-limit; retry=true ;;
+            *"secondary rate limit"*) category=secondary-rate-limit; retry=true ;;
+            *"Resource not accessible by integration"* | *"Resource not accessible by personal access token"*)
+                category=permission; retry=false
+                ;;
+            esac
+            if grep -Eiq '^x-ratelimit-remaining:[[:space:]]*0[[:space:]]*$' <<<"$response"; then
+                category=primary-rate-limit
+                retry=true
             fi
-            github_error 'GitHub rate limited'
-            return 1
-            ;;
-        *"404"* | *"Not Found"*)
-            github_error 'Resource not found'
-            return 1
-            ;;
-        *)
-            if [ $attempt -lt $max_retries ]; then
-                sleep $retry_delay
-                retry_delay=$((retry_delay * 2))
-                attempt=$((attempt + 1))
-                continue
-            fi
-            local clean_error
-            clean_error=$(echo "$response" | head -c 200 | tr '\n' ' ')
-            github_error "$clean_error"
-            return 1
             ;;
         esac
+        if [ "$retry" = true ] && [ $attempt -lt $max_retries ]; then
+            sleep $retry_delay
+            retry_delay=$((retry_delay * 2))
+            attempt=$((attempt + 1))
+            continue
+        fi
+        # Callers parse the category; arbitrary failure bodies may carry secrets.
+        github_error "github-rest: category=$category"
+        return 1
     done
 }
 
