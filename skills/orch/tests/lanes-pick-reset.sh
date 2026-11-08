@@ -215,5 +215,40 @@ for row in \
     assert_eq "$got" "$want" "$name" "$H/err"
   fi
 done
+# Token-route homes have no local credentials; a measured host weekly window
+# stands, while a credentialed home's local model window still decides.
+TOKEN="$LANES"
+if [[ -z "${LANES_UNDER_TEST:-}" ]]; then
+  CTRL="$(mutant_scripts mutant-token-route lib/lane-model.sh)"
+  mutate_file "$CTRL/lib/lane-model.sh" '.status == "no_credentials" and ($host | lane_measured and .headroom_pct != null)' 'false and .status == "no_credentials" and ($host | lane_measured and .headroom_pct != null)'
+  TOKEN="$CTRL/lanes"
+fi
+# name|local credential|host status|host weekly used|form|script|rc|bucket|room
+for row in \
+  "token-route-pick|no|ok|5|pick|$LANES|0|weekly|95" \
+  "token-route-named|no|ok|5|named|$LANES|0|weekly|95" \
+  "token-route-unread|no|no_usage_data||named|$LANES|5|null|null" \
+  "token-route-local-model|yes|ok|5|named|$LANES|3|model|0" \
+  "control-token-route|no|ok|5|named|$TOKEN|0|weekly|95"; do
+  IFS='|' read -r name credentials status weekly form script want_rc bucket room <<<"$row"
+  new_home "$name"
+  mkdir -p "$H/.8claude"
+  if [[ "$credentials" == yes ]]; then
+    make_lane "$H" 8claude
+    claude_usage 0 5 100 Opus > "$FIXTURE_DIR/.8claude.json"
+  fi
+  printf 'account=%s\tharness=claude\tstatus=%s\tweekly-pct=%s\tdetail=token-route-model-scope-unread\n' "$H/.8claude" "$status" "$weekly" > "$H/accounts"
+  args=(pick --harness claude --model claude-opus-5-5 --json)
+  [[ "$form" == pick ]] || args+=(--lane "$H/.8claude" --projected)
+  rc=0
+  out="$(pick_run "$script" "$FETCHER" "${args[@]}")" || rc=$?
+  got="rc=$rc $(jq -r '"bucket=\(.binding_bucket) room=\(.projected_headroom_pct)"' <<<"$out")"
+  want="rc=$want_rc bucket=$bucket room=$room"
+  if [[ "$name" == control-* && -z "${LANES_UNDER_TEST:-}" ]]; then
+    [[ "$rc" == 5 && "$got" != "$want" ]] && pass "$name turns its assertion red" || fail "$name did not reach the behavior"
+  else
+    assert_eq "$got" "$want" "$name" "$H/err"
+  fi
+done
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
