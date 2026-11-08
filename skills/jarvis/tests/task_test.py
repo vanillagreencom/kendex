@@ -61,8 +61,8 @@ class TaskContract(unittest.TestCase):
         self.bin.joinpath("kendex").chmod(0o755)
         native = ("#!" + sys.executable + "\nimport json,os,signal,sys\nfrom pathlib import Path\n"
                   + "keys={'CLAUDE_CONFIG_DIR','CODEX_HOME','COPILOT_HOME','PI_CODING_AGENT_DIR','JARVIS_BROWSER_PROFILE','JARVIS_BROWSER_PORT','JARVIS_TASK_SCRATCH'}\n"
-                  + "row={'harness':Path(sys.argv[0]).name,'argv':sys.argv[1:],'env_keys':list(os.environ),'env':{k:os.environ[k] for k in keys if k in os.environ}}\n"
-                  + "Path('ack-'+os.environ['JARVIS_TASK_ID']+'.json').write_text(json.dumps(row))\n"
+                  + "row={'harness':Path(sys.argv[0]).name,'cwd':str(Path.cwd()),'argv':sys.argv[1:],'env_keys':list(os.environ),'env':{k:os.environ[k] for k in keys if k in os.environ}}\n"
+                  + "Path(" + repr(str(self.home)) + ",'ack-'+os.environ['JARVIS_TASK_ID']+'.json').write_text(json.dumps(row))\n"
                   + "while True: signal.pause()\n")
         for harness in ("claude", "codex", "copilot", "pi"):
             self.bin.joinpath(harness).write_text(native)
@@ -98,9 +98,9 @@ class TaskContract(unittest.TestCase):
         return subprocess.run(["tmux", "-L", self.label, "-f", os.devnull, *args],
                               env=self.env, capture_output=True, text=True, timeout=10, check=True)
 
-    def call(self, verb, *args, success=True):
+    def call(self, verb, *args, success=True, cwd=None):
         result = subprocess.run([str(self.script), verb, "--home", str(self.home), *map(str, args)],
-                                env=self.env, capture_output=True, text=True, timeout=60)
+                                cwd=cwd, env=self.env, capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0 if success else 1, result.stderr)
         return json.loads(result.stdout) if success else result
 
@@ -181,6 +181,47 @@ class TaskContract(unittest.TestCase):
             self.assertEqual(self.call("cleanup", "--id", record["id"]), cleaned)
         windows = self.tmux("list-windows", "-t", "=jarvis", "-F", "#{window_id}").stdout.splitlines()
         self.assertEqual(windows, [self.terminal["window"]])
+
+    def test_launch_directory_contract(self):
+        selected = self.root / "project 'quoted' $folder#{pid};"
+        selected.mkdir()
+        dangling = self.home / "dangling"
+        dangling.symlink_to(self.root / "missing")
+        input_file = self.home / "extra input.md"
+        input_file.write_text("Additional context.\n")
+        result = self.home / "directory-result.md"
+        launch = ("--name", "directory", "--harness", "codex", "--model", "gpt-5",
+                  "--task-file", self.task_file.relative_to(self.root), "--input", input_file.relative_to(self.root),
+                  "--result-file", result.relative_to(self.root), "--account", self.account, "--browser")
+        for invalid in ("missing", self.task_file.relative_to(self.root), dangling.relative_to(self.root), ""):
+            with self.subTest(invalid=invalid):
+                self.call("launch", *launch, "--cwd", invalid, cwd=self.root, success=False)
+                self.assertEqual(self.saved_tasks(), [])
+                self.assertFalse((self.home / "tmp/scratch").exists())
+                self.assertEqual(self.tmux("list-windows", "-t", "=jarvis", "-F", "#{window_id}").stdout.splitlines(),
+                                 [self.terminal["window"]])
+        for options, expected in (((), self.home), (("--cwd", selected.name), selected)):
+            with self.subTest(cwd=expected):
+                record = self.call("launch", *launch, *options, cwd=self.root)
+                observed = self.acknowledgement(record)
+                self.assertEqual(observed["cwd"], str(expected))
+                self.assertEqual(record["cwd"], str(expected))
+                self.assertEqual(record["home"], str(self.home))
+                self.assertEqual(record["task_file"], str(self.task_file))
+                self.assertEqual(record["inputs"], [str(input_file)])
+                self.assertEqual(record["result_path"], str(result))
+                self.assertEqual(Path(record["scratch"]).parent, self.home / "tmp/scratch")
+                self.assertEqual(observed["env"]["JARVIS_TASK_SCRATCH"], record["scratch"])
+                brief = observed["argv"][-1]
+                for path in (self.task_file, input_file, result, Path(record["scratch"])):
+                    self.assertIn(json.dumps(str(path)), brief)
+                self.assertIn(shlex.join(["--home", str(self.home)]), brief)
+                self.assertIn(record, self.saved_tasks())
+                result.write_text("Output: checked\n")
+                self.call("complete", "--id", record["id"], "--outcome", "succeeded")
+                self.call("cleanup", "--id", record["id"])
+                self.assertFalse(Path(record["scratch"]).exists())
+                self.assertEqual(result.read_text(), "Output: checked\n")
 
     def test_failed_pick_releases_task_scratch(self):
         self.home.joinpath("refuse-pick").touch()
@@ -816,6 +857,12 @@ while True: signal.pause()
                 self.assertEqual(signal_name, "")
                 if suspended:
                     self.assertEqual(status, "23")
+
+    def test_launch_directory_control(self):
+        self.regression_controls((("fixed-home", "task.py", ((
+            '            tmux_cwd = cwd.replace("#", "##")',
+            '            cwd = self.home\n            tmux_cwd = cwd.replace("#", "##")'),),
+            "test_launch_directory_contract"),))
 
     def test_browser_profile_control(self):
         path = self.skills / "jarvis/scripts/lib/task.py"
