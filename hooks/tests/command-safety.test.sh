@@ -1713,6 +1713,31 @@ split-argv|no-lazy-fetch|^$|argv|["env","-S","git","log","-p"]|2|refused=history
 split-equals|no-lazy-fetch|^$|shell|"env --split-string=git log -p"|2|refused=history-policy|missing-no-lazy-fetch
 split-expanding-tail|no-lazy-fetch|^$|shell|"env -S 'git -C' \"$@\" --no-lazy-fetch log"|2|refused=history-policy|unresolved-git-argv
 split-off|off|^$|shell|"env -S 'git' log -p"|0|silent|-
+split-option-unset-dump|off|^$|shell|"env -S '-u OMITTED' printenv"|2|refused=environment-dump|-
+split-option-unset-dump-argv|off|^$|argv|["env","-S","-u OMITTED","printenv"]|2|refused=environment-dump|-
+split-option-ignore|no-lazy-fetch|^$|shell|"env -S '-i git' log -p"|2|refused=history-policy|missing-no-lazy-fetch
+split-option-end|no-lazy-fetch|^$|shell|"env -S '-- git' log -p"|2|refused=history-policy|missing-no-lazy-fetch
+split-option-unset-argv|no-lazy-fetch|^$|argv|["env","-S","-u OMITTED git","log","-p"]|2|refused=history-policy|missing-no-lazy-fetch
+split-option-long|no-lazy-fetch|^$|shell|"env --split-string='--ignore-environment git' log -p"|2|refused=history-policy|missing-no-lazy-fetch
+split-option-boundary|no-lazy-fetch|^$|shell|"env --split-string '-u' OMITTED git log -p"|2|refused=history-policy|missing-no-lazy-fetch
+split-option-assignment|no-lazy-fetch|^$|shell|"env -S '-- NAME=value git' log -p"|2|refused=history-policy|missing-no-lazy-fetch
+split-option-fenced|no-lazy-fetch|^$|shell|"env -S '-i git' --no-lazy-fetch log -p"|0|silent|-
+split-option-named|off|^$|shell|"env -S '-u OMITTED' printenv PATH"|0|silent|-
+split-option-nested|no-lazy-fetch|^$|shell|"env -u BEFORE -S \"-i env -S '-u OMITTED git -C'\" repo log -p"|2|refused=history-policy|missing-no-lazy-fetch
+split-option-typed|no-lazy-fetch|^$|argv|["env","-u","a'b; printenv","-S","-u OMITTED git -C","a'b; git log -p","--no-lazy-fetch","log","-p"]|0|silent|-
+split-option-empty|off|^$|shell|"env -S '' -i"|2|refused=environment-dump|-
+split-newline-tail|no-lazy-fetch|^$|shell|"env -S 'git\n' log -p"|2|refused=history-policy|missing-no-lazy-fetch
+split-newline-argv|no-lazy-fetch|^$|argv|["env","-S","git\n","log","-p"]|2|refused=history-policy|missing-no-lazy-fetch
+split-newline-internal|no-lazy-fetch|^$|shell|"env -S 'git\nlog' -p"|2|refused=history-policy|missing-no-lazy-fetch
+split-newline-equals|no-lazy-fetch|^$|shell|"env --split-string='git\n' log -p"|2|refused=history-policy|missing-no-lazy-fetch
+split-newline-nested|no-lazy-fetch|^$|argv|["env","-S","env -S 'git\n'","log","-p"]|2|refused=history-policy|missing-no-lazy-fetch
+split-newline-fenced|no-lazy-fetch|^$|shell|"env -S 'git\n' --no-lazy-fetch log -p"|0|silent|-
+split-newline-off|off|^$|shell|"env -S 'git\n' log -p"|0|silent|-
+split-newline-quoted|no-lazy-fetch|^$|argv|["env","-S","git 'log\n'","-p"]|0|silent|-
+split-newline-typed-tail|no-lazy-fetch|^$|argv|["env","-S","git -C","repo\nlog","--no-lazy-fetch","log","-p"]|0|silent|-
+split-newline-shell-positional|no-lazy-fetch|^$|argv|["env","-S","bash -c 'git\n'","log","-p"]|0|silent|-
+split-newline-shell-source|no-lazy-fetch|^$|argv|["env","-S","bash -c 'git\nlog -p'"]|0|silent|-
+split-newline-eval-source|no-lazy-fetch|^$|argv|["env","-S","eval 'git\nlog -p'"]|0|silent|-
 bare-git|no-lazy-fetch|^$|shell|"git"|0|silent|-
 bare-global|no-lazy-fetch|^$|shell|"git -C repo"|0|silent|-
 informational-git|no-lazy-fetch|^$|shell|"git --version"|0|silent|-
@@ -1754,28 +1779,43 @@ HISTORY_ROWS
 # A lost typed tail is the reached defect: the same row assertions must
 # reject it, including safe operands that must not become executable source.
 history_composition_controls() {
-  local mutant="$scratch/history-lost-tail.sh" status=0 row
-  local rows=(split-tail split-global split-global-boundary split-nested split-nested-fenced split-typed-operand split-argv split-equals)
-  awk '
-    /for \(\(j=0; j<\$\{#appended_args\[@\]\}; j\+\+\)\)/ {
-      sub(/j</, "j<0*"); changed++
-    }
-    { print }
-    END { if (changed != 1) exit 1 }
-  ' "$hook_source" >"$mutant" || return 1
-  if cmp -s -- "$hook_source" "$mutant"; then echo 'FAIL history tail control changed no bytes'; return 1; fi
-  HOOK_UNDER_TEST="$mutant" "$BASH" "${BASH_SOURCE[0]}" --history-rows "${rows[@]}" >"$scratch/history-tail-control.log" 2>&1 || status=$?
-  if [ "$status" -ne 1 ]; then
-    echo 'FAIL history tail control expected assertion failure'; cat "$scratch/history-tail-control.log"; return 1
-  fi
-  for row in "${rows[@]}"; do
-    if grep -F -e "FAIL history: $row: exit=" -e "FAIL history: $row reason" "$scratch/history-tail-control.log" >/dev/null; then
-      printf 'PASS history tail control fails %s\n' "$row"; passed=$((passed + 1))
-    else
-      printf 'FAIL history tail control did not falsify %s\n' "$row"; failed=$((failed + 1))
-      cat "$scratch/history-tail-control.log"
+  local mutant status row defect row_names log
+  local rows=()
+  while IFS='|' read -r defect row_names; do
+    mutant="$scratch/history-$defect.sh"; log="$scratch/history-$defect-control.log"
+    read -r -a rows <<<"$row_names"
+    awk -v defect="$defect" '
+      defect == "tail" && /for \(\(j=0; j<\$\{#appended_args\[@\]\}; j\+\+\)\)/ {
+        sub(/j</, "j<0*"); changed++
+      }
+      defect == "env-context" && /executable_prefix_counts\[code\]=\$\(\(pos - program_pos\)\)/ {
+        sub(/pos - program_pos/, "0 * (pos - program_pos)"); changed++
+      }
+      defect == "newline-context" && /if \[ "\$c" = .* && \[ -n "\$split_source" \]; then continue; fi/ {
+        sub(/-n "\$split_source"/, "-n \"\""); changed++
+      }
+      { print }
+      END { if (changed != 1) exit 1 }
+    ' "$hook_source" >"$mutant" || return 1
+    if cmp -s -- "$hook_source" "$mutant"; then echo "FAIL history $defect control changed no bytes"; return 1; fi
+    status=0
+    HOOK_UNDER_TEST="$mutant" "$BASH" "${BASH_SOURCE[0]}" --history-rows "${rows[@]}" >"$log" 2>&1 || status=$?
+    if [ "$status" -ne 1 ]; then
+      echo "FAIL history $defect control expected assertion failure"; cat "$log"; return 1
     fi
-  done
+    for row in "${rows[@]}"; do
+      if grep -F -e "FAIL history: $row: exit=" -e "FAIL history: $row reason" "$log" >/dev/null; then
+        printf 'PASS history %s control fails %s\n' "$defect" "$row"; passed=$((passed + 1))
+      else
+        printf 'FAIL history %s control did not falsify %s\n' "$defect" "$row"; failed=$((failed + 1))
+        cat "$log"
+      fi
+    done
+  done <<'COMPOSITION_CONTROLS'
+tail|split-tail split-global split-global-boundary split-nested split-nested-fenced split-typed-operand split-argv split-equals
+env-context|split-option-unset-dump split-option-ignore split-option-end
+newline-context|split-newline-tail split-newline-argv split-newline-internal
+COMPOSITION_CONTROLS
 }
 if [ "${1:-}" = --history-controls ]; then
   history_composition_controls

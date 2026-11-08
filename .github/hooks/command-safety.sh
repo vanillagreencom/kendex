@@ -414,17 +414,22 @@ environment_receiver_evidence() { # language text
   return 1
 }
 
-# Selected shell, eval and env -S source runs later as shell text; queue it
-# for recursive parsing in the context its stage holds. The word kind travels
-# with the text, so the drain judges an ANSI-C escape for every writer.
+# Selected source keeps its decoding context. env -S replaces its option
+# and source word with decoded argv, retaining the env prefix and typed tail.
+# The word kind travels too, so every writer keeps the escape judgment.
 environment_queue() { # source text, word kind, optional split-string tail offset
   local code=${#executable_texts[@]} context=conservative cursor
   [ -z "${forwarded_argument:-}" ] || context=forwarded
   executable_texts[code]=$1; executable_kinds[code]=$2; executable_stages[code]=$stage; executable_contexts[code]=$context
   executable_tail_starts[code]=${#executable_tail_args[@]}
   executable_tail_counts[code]=0
+  executable_source_kinds[code]=shell; executable_prefix_counts[code]=0
   if [ "$#" -eq 3 ]; then
-    for ((cursor=$3; cursor<${#args[@]}; cursor++)); do
+    executable_source_kinds[code]=env-split
+    executable_prefix_counts[code]=$((pos - program_pos))
+    for ((cursor=program_pos; cursor<${#args[@]}; cursor++)); do
+      [ "$cursor" -ne "$pos" ] || cursor=$3
+      [ "$cursor" -lt "${#args[@]}" ] || break
       executable_tail_args[${#executable_tail_args[@]}]=${args[$cursor]}
       executable_tail_kinds[${#executable_tail_kinds[@]}]=${arg_kinds[$cursor]}
       executable_tail_unquoted[${#executable_tail_unquoted[@]}]=${arg_unquoted[$cursor]}
@@ -653,10 +658,16 @@ environment_dump() { # command kind; arguments are already decoded data
   local targeting_eligible="" target_effects=() target_files=() target_operands=() target_redirects=()
   [ "$1" != shell ] || [ -n "${2:-}" ] || targeting_eligible=1
   local executable_tail_starts=() executable_tail_counts=() executable_tail_args=() executable_tail_kinds=() executable_tail_unquoted=()
+  local executable_source_kinds=() executable_prefix_counts=() split_source="" prefix_count=${command_prefix_count:-0}
   local appended_args=(${command_tail_args[@]+"${command_tail_args[@]}"}) appended_kinds=(${command_tail_kinds[@]+"${command_tail_kinds[@]}"}) appended_unquoted=(${command_tail_unquoted[@]+"${command_tail_unquoted[@]}"})
+  tokens=("${appended_args[@]:0:prefix_count}")
+  kinds=("${appended_kinds[@]:0:prefix_count}")
+  unquoted_words=("${appended_unquoted[@]:0:prefix_count}")
+  appended_args=("${appended_args[@]:prefix_count}"); appended_kinds=("${appended_kinds[@]:prefix_count}"); appended_unquoted=("${appended_unquoted[@]:prefix_count}")
+  if [ "$1" = env-split ]; then split_source=1; set -- shell "${@:2}"; fi
   # Only this queued decode consumes the tail. Other recursive sources and
   # input bodies have independent lifetimes and must not inherit it.
-  local command_tail_args=() command_tail_kinds=() command_tail_unquoted=()
+  local command_tail_args=() command_tail_kinds=() command_tail_unquoted=() command_prefix_count=0
   if [ "${2:-}" = forwarded ]; then
     forwarded_argument=1
     set -- "$1" conservative "${@:3}"
@@ -776,6 +787,9 @@ environment_dump() { # command kind; arguments are already decoded data
           fi
           word=""; active=""; kind=literal; bare=1; quoted=""
           case "$c" in ' ' | $'\t' | $'\r') continue ;; esac
+          # GNU env 9.4's recorded printf probes show unquoted split-source
+          # newlines are argv whitespace. Quoted newlines stay in their word.
+          if [ "$c" = $'\n' ] && [ -n "$split_source" ]; then continue; fi
           case "$c" in
             '(') compound=1; n=${#closers[@]}; saved_quotes[n]=""; closers[n]=')'; c=';' ;;
             ')')
@@ -1082,9 +1096,10 @@ environment_dump() { # command kind; arguments are already decoded data
       command_tail_args=("${executable_tail_args[@]:tail_start:tail_count}")
       command_tail_kinds=("${executable_tail_kinds[@]:tail_start:tail_count}")
       command_tail_unquoted=("${executable_tail_unquoted[@]:tail_start:tail_count}")
-      if environment_dump shell "${executable_contexts[$code]:-conservative}" ${input_bodies[@]+"${input_bodies[@]}"}; then return 0; fi
+      command_prefix_count=${executable_prefix_counts[$code]:-0}
+      if environment_dump "${executable_source_kinds[$code]:-shell}" "${executable_contexts[$code]:-conservative}" ${input_bodies[@]+"${input_bodies[@]}"}; then return 0; fi
     done
-    command_tail_args=(); command_tail_kinds=(); command_tail_unquoted=()
+    command_tail_args=(); command_tail_kinds=(); command_tail_unquoted=(); command_prefix_count=0
     # A stdin shell runs every body; an unknown receiver may run the ones
     # no data class admitted. These identifiers come only from the proved
     # registry. Keep bodies independent: quotes in one program cannot hide
