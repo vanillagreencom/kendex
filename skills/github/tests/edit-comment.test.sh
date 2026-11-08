@@ -27,7 +27,9 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 EDIT_COMMENT="$REPO_ROOT/skills/github/scripts/commands/edit-comment.sh"
-TMP_ROOT="$(mktemp -d)"
+TMP_ROOT="$(mktemp -d)" || { echo 'edit-comment: scratch=mktemp-failed' >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo 'edit-comment: scratch=not-a-directory' >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'edit-comment: scratch=resolve-failed' >&2; exit 1; }
 trap 'rm -rf "$TMP_ROOT"' EXIT
 PASS=0
 FAIL=0
@@ -287,39 +289,115 @@ assert_eq "$GOT" \
   "rc=1 out=- err=error detail=issues=$STDERR_404 calls=repo,api:$ISSUE_PATH" \
   "must-fail control: without the fallback a review comment id answers a bare 404"
 
-echo "=== the predicate's own reach ==="
-# The lib holds the judgment once and label-add's repository-label lookup calls
-# it rather than respelling it. label-add's one remaining copy belongs to
-# is_label_write_permission_denial, the wider question this round left alone.
-#
-# The census counts PER FILE, not a set of file names: a file already on the
-# list would otherwise be free to grow further copies unseen. NEEDLE is the
-# fragment of the pattern no prose or neighbouring regex carries, so editing
-# the alternation's other branches does not move this assertion.
-NEEDLE='"status"[[:space:]]*:'
-pattern_census() {
-  local root="$1" file count out=""
-  while IFS= read -r file; do
-    [[ "$file" != "" ]] || continue
-    count="$(grep -cF -- "$NEEDLE" "$file")"
-    out="$out ${file#"$root"/}=$count"
-  done < <(grep -rlF -- "$NEEDLE" "$root" | sort)
-  [[ "$out" != "" ]] && printf '%s' "${out# }" || printf -- '-'
+echo '=== shared REST failures use received evidence and bounded retries ==='
+# Real GitHub error forms: REST troubleshooting documents the two permission
+# messages and the primary/secondary response signals. gh api writes page
+# bodies to stdout and failure diagnostics to stderr, including after a page.
+# https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api
+# https://github.com/cli/cli/blob/trunk/pkg/cmd/api/api.go
+# Fields: name ^ gh exit ^ stderr (printf %b) ^ category ^ calls
+# ^ injected waits ^ successful stdout ^ prior page stdout ^ trace (optional).
+# Category is the machine-readable key
+# in .error. Error JSON must contain only that key, never raw response text.
+REST_ROWS='integration^1^gh: Resource not accessible by integration (HTTP 403)^permission^1^-^-
+personal-token^1^{"message":"Resource not accessible by personal access token","status":403}^permission^1^-^-
+primary-body^1^{"message":"API rate limit exceeded for test.","status":"403"}^primary-rate-limit^3^1,2,^-
+primary-header^1^HTTP/2.0 429 Too Many Requests\r\nX-RateLimit-Remaining: 0\r\n^primary-rate-limit^3^1,2,^-
+secondary^1^gh: You have exceeded a secondary rate limit. (HTTP 403)^secondary-rate-limit^3^1,2,^-
+unknown-forbidden^1^{"message":"private-response-marker", "status" : "403"}^unknown^1^-^-
+unknown-quota-kind^1^gh: Too Many Requests (HTTP 429)^unknown^3^1,2,^-
+incidental-number^1^{"message":"private-response-marker 403 rate limit", "status":"500"}^unknown^3^1,2,^-
+authentication^1^gh: Bad credentials (HTTP 401)^authentication^1^-^-
+not-found^1^gh: Not Found (HTTP 404)^not-found^1^-^-
+page-status^1^gh: API rate limit exceeded for test. (HTTP 403)^primary-rate-limit^3^1,2,^-^[{"body":"gh: Not Found (HTTP 404)"}]
+page-permission^1^gh: Too Many Requests (HTTP 429)^unknown^3^1,2,^-^[{"body":"Resource not accessible by integration"}]
+page-quota^1^gh: Forbidden (HTTP 403)^unknown^1^-^-^[{"body":"API rate limit exceeded for test."}]
+traced-page^1^gh: Resource not accessible by integration (HTTP 403)^permission^1^-^-^[]^api
+success^0^{"id":403,"message":"rate limit"}^-^1^-^{"id":403,"message":"rate limit"}'
+
+rest_run() {
+  local lib="$1" code="$2" response="$3" page="${4:-}" trace="${5:-}" rc=0 out err waits requests
+  gh_stub_reset
+  if [[ "$code" == 0 ]]; then
+    gh_stub_answer api-rest-contract "$response"
+  else
+    gh_stub_fail api-rest-contract "$code" "$response" "$page"
+  fi
+  : >"$TMP_ROOT/rest.waits"
+  (cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" env -u GITHUB_TOKEN -u GH_BOT_TOKEN \
+    GH_TOKEN=dtn_REST GH_DEBUG="$trace" DEBUG="$trace" "$BASH" -c '
+      source "$1"
+      sleep() { printf "%s," "$1" >>"$REST_WAITS"; }
+      export REST_WAITS="$2"
+      # A successful page in gh API tracing precedes its terminal failure.
+      # https://github.com/henvic/httpretty/blob/master/printer.go
+      gh() {
+        if [[ "${GH_DEBUG:-}" == api || "${DEBUG:-}" == api ]]; then
+          printf "< HTTP/2.0 200 OK\n[{\"body\":\"private-trace-marker\"}]\n" >&2
+        fi
+        command gh "$@"
+      }
+      gh_rest rest-contract --paginate
+    ' rest "$lib" "$TMP_ROOT/rest.waits" >"$TMP_ROOT/rest.out" 2>"$TMP_ROOT/rest.err") || rc=$?
+  out="$(cat "$TMP_ROOT/rest.out")"
+  err="$(cat "$TMP_ROOT/rest.err")"
+  waits="$(cat "$TMP_ROOT/rest.waits")"
+  requests="$(gh_stub_calls | wc -l | tr -d ' ')"
+  if [[ -n "$err" ]]; then
+    err="$(jq -er 'if keys == ["error"] and (.error | test("^github-rest: category=[a-z-]+$")) then .error | split("=")[1] else error("unsafe failure") end' <<<"$err" 2>/dev/null || printf invalid)"
+  fi
+  printf 'rc=%s category=%s calls=%s waits=%s out=%s' "$rc" "${err:--}" "$requests" "${waits:--}" "${out:--}"
 }
 
-SCRIPTS="$REPO_ROOT/skills/github/scripts"
-assert_eq "$(pattern_census "$SCRIPTS")" \
-  "commands/label-add.sh=1 lib/github-api.sh=1" \
-  "the 404 pattern is written once in the lib and once in label-add's wider permission question"
+REST_LIB="$REPO_ROOT/skills/github/scripts/lib/github-api.sh"
+while IFS='^' read -r label code response category requests waits out page trace; do
+  [[ -n "$label" ]] || continue
+  response="$(printf '%b' "$response")"
+  GOT="$(rest_run "$REST_LIB" "$code" "$response" "$page" "$trace")"
+  assert_eq "$GOT" "rc=$code category=$category calls=$requests waits=$waits out=$out" "REST $label"
+done <<<"$REST_ROWS"
 
-# The census's must-fail control copies the scripts, plants one further
-# spelling of the pattern in label-add, and asserts the census counts it.
-CENSUS_TREE="$TMP_ROOT/census"
-cp -R "$SCRIPTS" "$CENSUS_TREE"
-printf '%s\n' "    grep -Eq 'HTTP 404|$NEEDLE' <<<\"\$out\" && :" >>"$CENSUS_TREE/commands/label-add.sh"
-assert_eq "$(pattern_census "$CENSUS_TREE")" \
-  "commands/label-add.sh=2 lib/github-api.sh=1" \
-  "must-fail control: the inline spelling back in label-add is counted, not absorbed by its file name"
+# Reuse the permission row and its expectation against the previous blanket
+# decision, with the real retry loop and output writer still present.
+. "$TEST_DIR/lib/mutant-copy.sh"
+REST_MUTANT="$(mutant_copy_edit "$TMP_ROOT/rest-mutant" \
+  '        if [ "$retry" = true ] && [ $attempt -lt $max_retries ]; then' \
+  '        if [ "$status" = 403 ]; then category=primary-rate-limit; retry=true; fi; if [ "$retry" = true ] && [ $attempt -lt $max_retries ]; then' \
+  lib/github-api.sh)"
+while IFS='^' read -r label code response category requests waits out page trace; do
+  [[ "$label" == integration ]] || continue
+  GOT="$(rest_run "$REST_MUTANT" "$code" "$response")"
+  WANT="rc=$code category=$category calls=$requests waits=$waits out=$out"
+  [[ "$GOT" != "$WANT" ]] || { echo 'REST control accepted blanket 403' >&2; exit 1; }
+  assert_eq "$GOT" 'rc=1 category=primary-rate-limit calls=3 waits=1,2, out=-' 'REST control reaches and rejects blanket 403'
+done <<<"$REST_ROWS"
+
+# Restore page evidence at the one classification boundary. The real prior
+# payload, diagnostic, retries and output writer remain in this control.
+REST_PAGE_MUTANT="$(mutant_copy_edit "$TMP_ROOT/rest-page-mutant" \
+  '        response="$diagnostic"' \
+  '        response="$response$diagnostic"' \
+  lib/github-api.sh)"
+while IFS='^' read -r label code response category requests waits out page trace; do
+  [[ "$label" == page-status ]] || continue
+  GOT="$(rest_run "$REST_PAGE_MUTANT" "$code" "$response" "$page")"
+  WANT="rc=$code category=$category calls=$requests waits=$waits out=$out"
+  [[ "$GOT" != "$WANT" ]] || { echo 'REST control accepted page evidence' >&2; exit 1; }
+  assert_eq "$GOT" 'rc=1 category=not-found calls=1 waits=- out=-' 'REST control rejects successful-page evidence'
+done <<<"$REST_ROWS"
+
+# Restore producer tracing while keeping both streams and the classifier.
+REST_TRACE_MUTANT="$(mutant_copy_edit "$TMP_ROOT/rest-trace-mutant" \
+  '        response=$(GH_DEBUG= DEBUG= gh api "$endpoint" "$@" 2>"$rest_errors") || exit_code=$?' \
+  '        response=$(gh api "$endpoint" "$@" 2>"$rest_errors") || exit_code=$?' \
+  lib/github-api.sh)"
+while IFS='^' read -r label code response category requests waits out page trace; do
+  [[ "$label" == traced-page ]] || continue
+  GOT="$(rest_run "$REST_TRACE_MUTANT" "$code" "$response" "$page" "$trace")"
+  WANT="rc=$code category=$category calls=$requests waits=$waits out=$out"
+  [[ "$GOT" != "$WANT" ]] || { echo 'REST control accepted trace evidence' >&2; exit 1; }
+  assert_eq "$GOT" 'rc=1 category=unknown calls=3 waits=1,2, out=-' 'REST control rejects successful trace evidence'
+done <<<"$REST_ROWS"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

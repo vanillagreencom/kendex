@@ -136,11 +136,11 @@ Errors and retries:
   'github.sh pr-view --help' for its status values and exit codes.
   gh_graphql retries only nonzero gh command failures with no GraphQL errors
   object. gh_rest retries rate limits and other command failures except
-  authentication and not-found responses. Both stop after at most 3 attempts
-  with exponential backoff. GraphQL error objects and excluded REST failures
-  return on the first attempt. Other operations keep command-specific failure
-  behavior. An unreadable thread list, comment list, or CI log is an error,
-  never an empty result.
+  authentication, not-found, permission and unknown 403 responses. Both stop
+  after at most 3 attempts with exponential backoff. GraphQL error objects and
+  excluded REST failures return on the first attempt. Other operations keep
+  command-specific failure behavior. An unreadable thread list, comment list,
+  or CI log is an error, never an empty result.
 
 Examples:
   # Get PR data with all threads and comments
