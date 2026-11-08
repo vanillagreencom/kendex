@@ -132,12 +132,12 @@ sk_lm "$ROOT" resolve --item overseer --id "$ASK2" --text "$(sk_text a2 'yes, af
 sk_poll "$ROOT"
 assert_has "$(posts C001)" "$ASK2_TS | Answered in the chat: yes, after lunch" "an answer typed in the chat is shown in the ask's thread"
 
-# Closure stays silent after a Slack answer, even if the closer supplies text.
-# Outside-chat answers still reach the owner's question thread.
+# Slack-thread output distinguishes each send answer from a resolve note,
+# including independent revisions while a Slack-answered ask is still open.
 answer_origins() { # ASSERTION ROOT CHANNEL PREFIX [ROW]
   local assertion="$1" root="$2" channel="$3" prefix="$4" only="${5:-}"
-  local name origin close expected ask ts note
-  while IFS='|' read -r name origin close expected; do
+  local name origin revision close before expected ask ts note sources
+  while IFS='|' read -r name origin revision close before expected sources; do
     [ -z "$only" ] || [ "$name" = "$only" ] || continue
     sk_lm "$root" ask --item overseer --to owner --reserved --file "$(sk_text "$prefix-$name" "Answer origin $prefix-$name?")" --options approve,cancel >"$SK_TMP/$prefix-$name.out" || return 1
     ask="$(sed 's/^id=//' "$SK_TMP/$prefix-$name.out")"
@@ -146,8 +146,28 @@ answer_origins() { # ASSERTION ROOT CHANNEL PREFIX [ROW]
     [ -n "$ts" ] || { bad "[$prefix-$name] posts the question before answering"; return 1; }
     note=approve
     if [ "$origin" = slack ]; then
-      sk_inject "$channel" U001 'approve' "$ts" >/dev/null
+      sk_inject "$channel" U001 'approve' "$ts" >/dev/null || return 1
       sk_poll "$root"
+    elif [ "$origin" = chat ]; then
+      sk_lm "$root" send --item overseer --re "$ask" --file "$(sk_text "$prefix-send-$name" approve)" >/dev/null || return 1
+      sk_poll "$root"
+    fi
+    if [ "$revision" = chat ]; then
+      sk_lm "$root" send --item overseer --re "$ask" --file "$(sk_text "$prefix-revision-$name" cancel)" >/dev/null || return 1
+      sk_poll "$root"
+    elif [ "$revision" = slack ]; then
+      sk_inject "$channel" U001 'cancel' "$ts" >/dev/null || return 1
+      sk_poll "$root"
+    fi
+    [ "$RC" -eq 0 ] || return 1
+    assert_eq "$(jq -c '.open_asks' "$root/tmp/slack/status.json")" "[\"$ask\"]" "[$prefix-$name] leaves the question open for revisions"
+    # Controls target the final thread assertion; normal rows also prove
+    # that a send revision reaches Slack before the close exists.
+    if [ -z "$only" ]; then
+      "$assertion" "$(sk_state ".messages.${channel}[] | select(.user == \"UBOT\" and .thread_ts == \"$ts\") | .text")" \
+        "$before" "[$prefix-$name] posts independent chat answers before closure"
+    fi
+    if [ "$origin" = slack ] || [ "$revision" = slack ]; then
       note="Owner already answered in Slack; closer record for ask $ask."
     fi
     if [ "$close" = explicit ]; then
@@ -157,15 +177,24 @@ answer_origins() { # ASSERTION ROOT CHANNEL PREFIX [ROW]
     fi
     sk_poll "$root"
     assert_eq "$RC=$(jq -c '.open_asks' "$root/tmp/slack/status.json")" "0=[]" "[$prefix-$name] closes the question in relay status"
+    assert_eq "$(jq -sc --arg re "$ask" '[.[] | select(.kind == "answer" and .re == $re) | .answer_source]' "$(sk_box "$root")/to-lane.jsonl")" \
+      "$sources" "[$prefix-$name] mailbox identifies each answer's producing verb"
     "$assertion" "$(sk_state ".messages.${channel}[] | select(.user == \"UBOT\" and .thread_ts == \"$ts\") | .text")" \
       "$expected" "[$prefix-$name] posts only an answer the owner gave outside Slack"
     sk_poll "$root"
     "$assertion" "$(sk_state ".messages.${channel}[] | select(.user == \"UBOT\" and .thread_ts == \"$ts\") | .text")" \
       "$expected" "[$prefix-$name] preserves the thread text across restart"
+    assert_eq "$(jq -s --arg id "$ask" '[.[] | select(.t == "resolved" and .id == $id)] | length' "$(sk_journal "$root")")" \
+      "1" "[$prefix-$name] consumes closure once across restart"
   done <<'ANSWER_ORIGINS'
-slack-explicit|slack|explicit|
-slack-note|slack|text|
-chat-note|chat|text|Answered in the chat: approve
+empty-explicit|none|none|explicit|||[]
+slack-explicit|slack|none|explicit|||["send"]
+slack-note|slack|none|text|||["send","resolve"]
+chat-note|none|none|text||Answered in the chat: approve|["resolve"]
+chat-explicit|chat|none|explicit|Answered in the chat: approve|Answered in the chat: approve|["send"]
+slack-chat-explicit|slack|chat|explicit|Answered in the chat: cancel|Answered in the chat: cancel|["send","send"]
+slack-chat-note|slack|chat|text|Answered in the chat: cancel|Answered in the chat: cancel|["send","send","resolve"]
+chat-slack-note|chat|slack|text|Answered in the chat: approve|Answered in the chat: approve|["send","send","resolve"]
 ANSWER_ORIGINS
 }
 answer_origins assert_eq "$ROOT" C001 origin || exit 1
@@ -817,6 +846,12 @@ sk_mutant answer-origin relay.py 'envelope\.get\("re"\) in slack_answered' 'enve
 ORIGIN_CONTROL="$(sk_new_root origin-control)"
 sk_bind "$ORIGIN_CONTROL"
 answer_origins sk_assert_red "$ORIGIN_CONTROL" "$(sk_channel "$ORIGIN_CONTROL")" control-origin slack-note || exit 1
+sk_bin_reset
+
+sk_mutant answer-revision relay.py 'envelope\.get\("answer_source"\) == "resolve"' 'True'
+REVISION_CONTROL="$(sk_new_root revision-control)"
+sk_bind "$REVISION_CONTROL"
+answer_origins sk_assert_red "$REVISION_CONTROL" "$(sk_channel "$REVISION_CONTROL")" control-revision slack-chat-note || exit 1
 sk_bin_reset
 
 sk_mutant program-answer relay.py '        elif envelope.get\("delivery_id"\):\n[\s\S]*?\n        else:' '        else:'

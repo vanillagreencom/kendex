@@ -44,7 +44,10 @@ MAILBOX_READ_FILES = (
 )
 LANE_MAIL_TIMEOUT_SECONDS = 30
 LANE_MAIL_CLEANUP_SECONDS = 5
-FIELD_CHOICES = {"box": ("to-overseer", "to-lane"), "kind": ("ask", "notice", "answer", "directive", "resolution")}
+FIELD_CHOICES = {
+    "box": ("to-overseer", "to-lane"), "kind": ("ask", "notice", "answer", "directive", "resolution"),
+    "answer_source": ("send", "resolve"),
+}
 
 
 class LaneMail:
@@ -119,7 +122,8 @@ class LaneMail:
             # are checked here before routing or formatting consumes them.
             invalid = False
             for field in (
-                "id", "at", "box", "kind", "text", "from", "to", "ref", "re", "by", "attach", "recommend", "deadline", "mail_class"
+                "id", "at", "box", "kind", "text", "from", "to", "ref", "re", "by", "attach", "recommend", "deadline", "mail_class",
+                "answer_source",
             ):
                 required = field in ("id", "at", "box", "kind", "text") or field == "re" and envelope.get("kind") == "answer"
                 value = envelope.get(field)
