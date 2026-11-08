@@ -2723,8 +2723,9 @@ fn ci_world(w: &World, case: &str) -> (String, String, String) {
         rules = json!([{ "type":"merge_queue" }]);
         protection = json!({"commit":{"sha":"0000000000000000000000000000000000000000","commit":{"committer":null}},"protected":true,"protection":{"required_status_checks":{"contexts":[],"checks":[{"context":"CI","app_id":null}]}}});
     }
+    // GitHub's branch for a caller without push access: no `protection`.
     if case == "protection-unread" {
-        protection = json!({});
+        protection = json!({"commit":{"sha":"0000000000000000000000000000000000000000","commit":{"committer":null}},"protected":true});
     }
     if case == "pr-not-open" {
         view["state"] = json!("MERGED");
@@ -2752,15 +2753,28 @@ fn ci_world(w: &World, case: &str) -> (String, String, String) {
     if case == "stacked" {
         view["baseRefName"] = json!("feature/parent");
     }
-    let mut replies = json!({"pr view --json":{"body":view},"repos/{owner}/{repo}/rules/branches/main":{"body":rules},"repos/{owner}/{repo}/branches/main":{"body":protection}});
+    // The rules as GitHub pages them at the size the reader asks for; a
+    // base with more rules than one page holds requires the context on
+    // its second page.
+    let mut pages = vec![rules];
+    if case == "rules-second-page" {
+        pages.insert(0, json!(vec![json!({"type":"deletion"}); 100]));
+    }
+    let rules_page = |base: &str, n: usize| {
+        format!("repos/{{owner}}/{{repo}}/rules/branches/{base}?per_page=100&page={n}")
+    };
+    let mut replies = json!({"pr view --json":{"body":view},"repos/{owner}/{repo}/branches/main":{"body":protection}});
+    for (n, page) in pages.into_iter().enumerate() {
+        replies[rules_page("main", n + 1)] = json!({ "body": page });
+    }
     if case == "rules-unread" {
-        replies["repos/{owner}/{repo}/rules/branches/main"]["exit"] = json!(1);
+        replies[rules_page("main", 1)]["exit"] = json!(1);
     }
     if case == "pr-unread" {
         replies["pr view --json"] = json!({"exit":1,"stderr":"HTTP 502: Bad Gateway"});
     }
     if case == "stacked" {
-        replies["repos/{owner}/{repo}/rules/branches/feature%2Fparent"] = json!({"body":[]});
+        replies[rules_page("feature%2Fparent", 1)] = json!({"body":[]});
         replies["repos/{owner}/{repo}/branches/feature%2Fparent"] = json!({"body":{"commit":{"sha":"0000000000000000000000000000000000000000","commit":{"committer":null}},"protected":false,"protection":{"required_status_checks":{"contexts":[],"checks":[]}}}});
     }
     // gh's answer for a branch with no pull request, which push-first
@@ -2784,6 +2798,7 @@ fn ci_admission_reads_the_real_pr_reader_and_both_rule_sources_before_skipping_l
         ("required", "ci", ""),
         ("classic-contexts", "ci", ""),
         ("classic-checks", "ci", ""),
+        ("rules-second-page", "ci", ""),
         ("rules-unread", "range", "rules-unread"),
         ("protection-unread", "range", "rules-unread"),
         ("context-unrequired", "range", "context-unrequired"),

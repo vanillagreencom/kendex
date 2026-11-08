@@ -717,8 +717,8 @@ pub(crate) enum RuleKind {
     TagNamePattern,
     Update,
     Workflows,
-    /// A word outside the documented set: the watch and the validation
-    /// read it as no word they judge; the verification refuses it.
+    /// A word outside the documented set, which every reader of a rule set
+    /// refuses.
     #[serde(other)]
     Other,
 }

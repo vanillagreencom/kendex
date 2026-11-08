@@ -330,7 +330,7 @@ case "$2" in
   status) exit 0 ;;
   user) printf '{"login":"fixture"}\n' ;;
   view) printf '{"state":"OPEN","baseRefName":"main"}\n' ;;
-  'repos/{owner}/{repo}/rules/branches/main')
+  'repos/{owner}/{repo}/rules/branches/main?per_page=100&page=1')
     context=CI
     case "${PROOF_CI_WORLD:-required}" in empty|unrequired) context=Lint ;; esac
     printf '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"%s"}]}},{"type":"merge_queue"}]\n' "$context"

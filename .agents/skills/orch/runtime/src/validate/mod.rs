@@ -25,8 +25,7 @@ use crate::state::{
     self, ItemState, Locking, Proof, Reused, Stage, StageKind, StageOutcome, ValidateJob,
     ValidateMode,
 };
-use crate::verify::wire::{Branch, Optional, RequiredStatusChecksParameters, Rule, RuleKind};
-use crate::verify::{Answer, Gh};
+use crate::verify::Gh;
 
 /// The poll interval a start records when the caller names none.
 pub const POLL_DEFAULT: u64 = 30;
@@ -214,36 +213,6 @@ fn run_in(
             cause: e.to_string(),
         }),
     }
-}
-
-/// One `gh api` read through the handle, as `run_in` answers a program:
-/// its stdout on success, `None` on a failed call, its stderr appended to
-/// `log` either way, an error where gh could not run at all.
-fn gh_api(
-    gh: &Gh,
-    operation: &'static str,
-    path: &str,
-    log: &mut String,
-) -> Result<Option<String>> {
-    let (stderr, stdout) = match gh.run(operation, &["api", path], None) {
-        Ok(Answer::Printed { stdout, stderr }) => (stderr, Some(stdout)),
-        Ok(Answer::Failed(failed)) => (failed.stderr, None),
-        Err(unrun) => {
-            return Err(Error::ValidateUnreadable {
-                read: operation,
-                cause: unrun.detail(),
-            });
-        }
-    };
-    if !stderr.is_empty() {
-        log.push_str(&stderr);
-        log.push('\n');
-    }
-    Ok(stdout.map(|bytes| {
-        String::from_utf8_lossy(&bytes)
-            .trim_end_matches('\n')
-            .to_owned()
-    }))
 }
 
 /// Where a read runs: the worktree, with `env` added.
@@ -747,15 +716,16 @@ fn pr_order(settings: &Settings, worktree: &Path, log: &mut String) -> Result<St
 }
 
 /// The contexts the base branch requires and whether a merge queue rule
-/// stands, from its rule set and its classic protection through `gh api`
-/// in the worktree, as `ci_runs_validation` reads them; `None` where
-/// either read failed or the protection payload was withheld.
-fn required_contexts(
+/// stands, from the one reader of that fact (`verify::required_contexts`),
+/// run in the worktree under the credential pair gh-auth-ladder selects;
+/// `None` where the ladder or the read gave no answer, the read's cause in
+/// the log.
+fn required_contexts_under_ladder(
     settings: &Settings,
     worktree: &Path,
     base: &str,
     log: &mut String,
-) -> Result<Option<(Vec<String>, bool)>> {
+) -> Option<(Vec<String>, bool)> {
     let ladder = sibling(settings, "../../github/scripts/gh-auth-ladder");
     let wt = worktree.display().to_string();
     let selected = match run_in(
@@ -768,74 +738,41 @@ fn required_contexts(
         log,
     ) {
         Ok(Some(selected)) => selected,
-        Ok(None) => return Ok(None),
+        Ok(None) => return None,
         Err(error) => {
             log.push_str(&error.to_string());
-            return Ok(None);
+            return None;
         }
     };
     let mut credentials = Vec::<(String, std::ffi::OsString)>::new();
     for line in selected.lines() {
-        let Some((name, value)) = line.split_once('=') else {
-            return Ok(None);
-        };
+        let (name, value) = line.split_once('=')?;
         if !matches!(name, "GH_TOKEN" | "GITHUB_TOKEN")
             || credentials.iter().any(|(key, _)| key == name)
         {
-            return Ok(None);
+            return None;
         }
         credentials.push((name.into(), value.into()));
     }
     if credentials.len() != 2 {
-        return Ok(None);
+        return None;
     }
     let gh = Gh::with_env(Path::new("gh"), credentials)
         .tagged("validate")
         .in_dir(worktree)
         .bounded(READ_TIMEOUT);
-    let seg = crate::verify::segment(base);
-    let rules_path = format!("repos/{{owner}}/{{repo}}/rules/branches/{seg}");
-    let Some(rules) = gh_api(&gh, "rules", &rules_path, log)? else {
-        return Ok(None);
-    };
-    let Ok(rules) = serde_json::from_str::<Vec<Rule>>(&rules) else {
-        return Ok(None);
-    };
-    let mut contexts = Vec::new();
-    let mut queue = false;
-    for rule in rules {
-        if rule.kind == RuleKind::MergeQueue {
-            queue = true;
-        } else if rule.kind == RuleKind::RequiredStatusChecks
-            && let Optional::Present(parameters) = rule.parameters
-            && let Ok(parameters) =
-                serde_json::from_value::<RequiredStatusChecksParameters>(Value::Object(parameters))
-        {
-            contexts.extend(
-                parameters
-                    .required_status_checks
-                    .into_iter()
-                    .map(|check| check.context),
-            );
+    match crate::verify::required_contexts(&gh, "{owner}/{repo}", base) {
+        Ok(read) => Some(read),
+        Err(unread) => {
+            log.push_str(&unread.reason);
+            if let Some(detail) = unread.detail {
+                log.push_str(": ");
+                log.push_str(&detail);
+            }
+            log.push('\n');
+            None
         }
     }
-    let branch_path = format!("repos/{{owner}}/{{repo}}/branches/{seg}");
-    let Some(branch) = gh_api(&gh, "branch", &branch_path, log)? else {
-        return Ok(None);
-    };
-    let Ok(branch) = serde_json::from_str::<Branch>(&branch) else {
-        return Ok(None);
-    };
-    // GitHub omits the protection key from a caller without push access: a
-    // payload with none is an unread protection, never an empty one.
-    let Optional::Present(protection) = branch.protection else {
-        return Ok(None);
-    };
-    if let Optional::Present(checks) = protection.required_status_checks {
-        contexts.extend(checks.contexts);
-        contexts.extend(checks.checks.into_iter().map(|check| check.context));
-    }
-    Ok(Some((contexts, queue)))
 }
 
 /// Whether CI may stand the checks down for the class: standard, or a
@@ -897,7 +834,8 @@ fn ci_admission(
         }
         PrView::Open { base } => base,
     };
-    let Some((contexts, queue)) = required_contexts(settings, worktree, &base, log)? else {
+    let Some((contexts, queue)) = required_contexts_under_ladder(settings, worktree, &base, log)
+    else {
         return Ok(CiAdmission::Fallback("rules-unread".to_owned()));
     };
     if !contexts.iter().any(|c| c == context) {

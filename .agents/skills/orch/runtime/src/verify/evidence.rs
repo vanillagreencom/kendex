@@ -75,7 +75,7 @@ use super::wire::{
     WorkflowsParameters, run_in_url,
 };
 use super::wire::{Review, RunStatus, TimelineEvent};
-use super::{Cause, Endpoint, Gh, Read, Reader, segment};
+use super::{Cause, Endpoint, Gh, Read, Reader, Unreadable, segment};
 
 /// GitHub's bound on a filtered run search: a `head_sha` search answers at
 /// most this many runs, so a set this large is not proven whole.
@@ -883,18 +883,39 @@ fn run_level(url: &str) -> bool {
         .is_some_and(|(_, digits)| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
 }
 
-/// The base's required set from its rule set and classic protection, and
-/// the binding proof of every required definition.
-fn required_set(
-    gh: &Reader<'_>,
-    r: &VerifyHead,
-    runs: &[RunEvidence],
-    active_workflows: usize,
-) -> Read<RequiredEvidence> {
-    let base = segment(&r.base);
+/// The contexts `base` requires, each once, and whether a merge-queue
+/// rule stands, read as the verification reads them (`base_requirement`).
+/// `repo` is `owner/name`, or gh's `{owner}/{repo}` where the handle runs
+/// in a checkout of the repository.
+pub(crate) fn required_contexts(
+    gh: &Gh<'_>,
+    repo: &str,
+    base: &str,
+) -> std::result::Result<(Vec<String>, bool), Unreadable> {
+    let set = base_requirement(&Reader { gh }, repo, base)?;
+    Ok((set.contexts.into_iter().collect(), set.queue))
+}
+
+/// What a base's rule set and classic protection require, before any run
+/// is matched to it.
+struct BaseRequirement {
+    contexts: BTreeSet<String>,
+    /// Sorted and deduplicated, each with no candidate yet.
+    workflows: Vec<RequiredWorkflowEvidence>,
+    gating_rules: usize,
+    queue: bool,
+    protected: bool,
+}
+
+/// The base's requirement from every page of its rules and from its
+/// classic protection. GitHub answers the rules one page per request, so a
+/// requirement on a later page is read only by reading every page; every
+/// rule is validated before any is consumed.
+fn base_requirement(gh: &Reader<'_>, repo: &str, base: &str) -> Read<BaseRequirement> {
+    let base = segment(base);
     let rules: Vec<Rule> = gh.array(
         Endpoint::Rules,
-        &format!("repos/{}/rules/branches/{base}", r.repo),
+        &format!("repos/{repo}/rules/branches/{base}"),
     )?;
     let invalid = || Cause::ResponseInvalid(Endpoint::Rules);
     if rules.iter().any(|rule| rule.kind == RuleKind::Other) {
@@ -907,6 +928,7 @@ fn required_set(
     let mut contexts = BTreeSet::new();
     let mut workflows = Vec::new();
     let mut gating_rules = 0;
+    let mut queue = false;
     for rule in rules {
         match rule.kind {
             RuleKind::RequiredStatusChecks => {
@@ -939,20 +961,12 @@ fn required_set(
                         .ok_or_else(|| Cause::WorkflowSourceUnbound {
                             path: workflow.path.clone(),
                         })?;
-                    let candidates = runs
-                        .iter()
-                        .filter(|run| run.file() == workflow.path)
-                        .map(|run| Candidate {
-                            run: run.id,
-                            proof: None,
-                        })
-                        .collect();
                     workflows.push(RequiredWorkflowEvidence {
                         repository_id: workflow.repository_id,
                         path: workflow.path.clone(),
                         sha: sha.clone(),
                         reference: workflow.reference.present().cloned(),
-                        candidates,
+                        candidates: Vec::new(),
                     });
                 }
             }
@@ -962,6 +976,7 @@ fn required_set(
             | RuleKind::CodeQuality
             | RuleKind::CodeScanning
             | RuleKind::LicenseComplianceScanning => {}
+            RuleKind::MergeQueue => queue = true,
             RuleKind::BranchNamePattern
             | RuleKind::CommitAuthorEmailPattern
             | RuleKind::CommitMessagePattern
@@ -973,7 +988,6 @@ fn required_set(
             | RuleKind::FilePathRestriction
             | RuleKind::MaxFilePathLength
             | RuleKind::MaxFileSize
-            | RuleKind::MergeQueue
             | RuleKind::NonFastForward
             | RuleKind::PullRequest
             | RuleKind::RequiredDeployments
@@ -988,7 +1002,7 @@ fn required_set(
     workflows.dedup_by(|a, b| a.order_key() == b.order_key());
     let branch: Branch = gh.object(
         Endpoint::Protection,
-        &format!("repos/{}/branches/{base}", r.repo),
+        &format!("repos/{repo}/branches/{base}"),
     )?;
     let Optional::Present(protection) = branch.protection else {
         return Err(Cause::ResponseInvalid(Endpoint::Protection));
@@ -1007,6 +1021,40 @@ fn required_set(
                 contexts.insert(context);
             }
         }
+    }
+    Ok(BaseRequirement {
+        contexts,
+        workflows,
+        gating_rules,
+        queue,
+        protected: branch.protected,
+    })
+}
+
+/// The base's required set and the binding proof of every required
+/// definition.
+fn required_set(
+    gh: &Reader<'_>,
+    r: &VerifyHead,
+    runs: &[RunEvidence],
+    active_workflows: usize,
+) -> Read<RequiredEvidence> {
+    let BaseRequirement {
+        contexts,
+        mut workflows,
+        gating_rules,
+        queue: _,
+        protected,
+    } = base_requirement(gh, &r.repo, &r.base)?;
+    for workflow in &mut workflows {
+        workflow.candidates = runs
+            .iter()
+            .filter(|run| run.file() == workflow.path)
+            .map(|run| Candidate {
+                run: run.id,
+                proof: None,
+            })
+            .collect();
     }
     let sources = prove_candidates(gh, runs, &mut workflows)?;
     // Every candidate run's suite, each once: the bound-job list the
@@ -1027,7 +1075,7 @@ fn required_set(
         sources,
         suites,
         gating_rules,
-        protected: branch.protected,
+        protected,
         active_workflows,
     })
 }

@@ -56,6 +56,7 @@ use crate::ops::{self, Applied, Env, RecordVerification, Request, Verdict, Verif
 use crate::schedule::Clock;
 use crate::state::{self, Locking};
 
+pub(crate) use evidence::required_contexts;
 use judge::Judgement;
 
 /// Which operation asked for the verdict: the `source` the record names.
