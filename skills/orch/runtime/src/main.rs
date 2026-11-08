@@ -1514,6 +1514,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 probe_interval: settings.queue_watch.probe_interval,
                 check_probe: !no_check_probe,
                 guard: !no_guard,
+                reach_cmd: settings.queue_watch.reach_cmd.clone(),
             };
             let programs =
                 orch_runtime::ops::queue_watch::Programs::installed(&settings.roots.project);

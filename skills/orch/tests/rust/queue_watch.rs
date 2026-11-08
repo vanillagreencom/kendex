@@ -342,6 +342,7 @@ impl World {
             probe_interval: secs(120),
             check_probe: false,
             guard: true,
+            reach_cmd: None,
         }
     }
 
@@ -1875,4 +1876,303 @@ fn a_hung_probe_read_is_ended_at_what_its_budget_has_left() {
         ("timeout", "armed_awaiting_checks", Some("checks_unread")),
         "{reply:?}"
     );
+}
+
+// --- an ejected group's reach ---
+
+/// The fixture item's open dev round, which a validation start names.
+const ROUND: &str = "1769600000123456789-1837";
+
+/// The orch package's directory: its siblings are the packages the real
+/// validation start runs, and the checkout above them holds the reach
+/// command kendex declares.
+fn orch_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf()
+}
+
+impl World {
+    /// `path` committed in a fixture worktree under the row's root and
+    /// validated there by the real `validate start`, in the foreground,
+    /// over the real classifier: the stage and run directory an
+    /// ejection's reach reads. Answers the validated head.
+    fn validated(&mut self, path: &str) -> String {
+        let root = self.root();
+        let worktree = root.join("wt");
+        fs::create_dir_all(worktree.join(path).parent().unwrap()).unwrap();
+        let git = |args: &[&str]| {
+            let out = support::program("git")
+                .arg("-C")
+                .arg(&worktree)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                support::stderr(&out)
+            );
+            String::from_utf8_lossy(&out.stdout).trim().to_owned()
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "gc.auto", "0"]);
+        git(&["config", "maintenance.auto", "false"]);
+        fs::write(worktree.join(".gitignore"), "tmp\n").unwrap();
+        fs::write(
+            worktree.join("kendex.settings.toml"),
+            "[env]\nHARNESS_CI_PER_PUSH_REASON = \"fixture exercises per-push coverage\"\n",
+        )
+        .unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "base"]);
+        git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        fs::write(worktree.join(path), "x\n").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "change"]);
+        fs::write(
+            &self.item,
+            ITEM.replacen(
+                "\"worktree\": \"/home/u/dev/.worktrees/kendex/ken-4687\"",
+                &format!("\"worktree\": \"{}\"", worktree.display()),
+                1,
+            ),
+        )
+        .unwrap();
+        let orch = orch_dir();
+        let out = support::isolated()
+            .args(["--state-dir", &root.display().to_string()])
+            .args(["validate", "start", "--item", ITEM_ID, "--round", ROUND])
+            .args(["--poll", "1", "--foreground"])
+            .current_dir(&worktree)
+            .env("DEV_VALIDATE_CLI", orch.join("scripts/dev-validate-run"))
+            .env(
+                "CHANGE_SCOPE_PATHS_CLI",
+                orch.join("../change-scope/scripts/harness-only"),
+            )
+            .env("DEV_VALIDATE_CMD", "echo full")
+            .env("DEV_VALIDATE_TIMEOUT_SECS", "20")
+            .env("ORCH_PR_ORDER", "review-first")
+            .env("ORCH_DELIVERY", "push-base")
+            .env("LANE_MAIL_CLI", orch.join("../mailbox/scripts/lane-mail"))
+            .env("LANE_MAIL_DIR", root.join("mail"))
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}\n{}",
+            support::stderr(&out),
+            String::from_utf8_lossy(&out.stdout)
+        );
+        git(&["rev-parse", "HEAD"])
+    }
+
+    /// The `pr view` answer for an open pull request at `head`.
+    fn pull_at(&mut self, head: &str) -> &mut Self {
+        self.replies.insert(
+            format!("pr view {PR}"),
+            json!({"body": {
+                "state": "OPEN", "mergedAt": null, "mergeable": "MERGEABLE",
+                "headRefOid": head, "baseRefName": "main"
+            }}),
+        );
+        self
+    }
+
+    /// The merge-group head's check runs, each completed with its
+    /// conclusion; the run with id N has the page `runs/N`.
+    fn group_checks(&mut self, checks: &[(&str, &str)]) -> &mut Self {
+        let key = format!("repos/{REPO}/commits/{QUEUE_HEAD}/check-runs?per_page=100&page=1");
+        let runs: Vec<Value> = checks
+            .iter()
+            .enumerate()
+            .map(|(i, (name, conclusion))| {
+                json!({"id": i + 1, "node_id": format!("CR_{}", i + 1), "name": name,
+                    "status": "completed", "conclusion": conclusion, "check_suite": {"id": 1},
+                    "started_at": "2026-07-24T10:00:00Z", "completed_at": "2026-07-24T10:05:00Z",
+                    "html_url": format!("https://github.com/{REPO}/runs/{}", i + 1),
+                    "details_url": format!("https://github.com/{REPO}/actions/runs/9/job/{}", i + 1)})
+            })
+            .collect();
+        self.replies.insert(
+            key,
+            json!({"body": {"total_count": runs.len(), "check_runs": runs}}),
+        );
+        self
+    }
+}
+
+/// An ejection carries the red group's reach: the failed checks on the
+/// group head an earlier run recorded, judged by kendex's reach command
+/// through the real `tools/ci-job-set` over the change the item's real
+/// validation recorded for the pull request's head. `within` where any
+/// failed check is a shard the change's paths select, `outside` where the
+/// command answers every one outside them, and `unread` wherever a read
+/// that claim needs fails, a lost run's cancelled checks included: never
+/// `outside` on what was not read.
+#[test]
+fn an_ejected_groups_reach_is_its_failed_checks_judged_by_the_consumers_selector() {
+    /// One case: whether the item's validation recorded the head, the
+    /// group's check runs with their conclusions (`None`: their read
+    /// fails), whether the reach command is declared, and the reach, its
+    /// cause and each failed check's answer the reply carries.
+    struct Case {
+        name: &'static str,
+        validated: bool,
+        checks: Option<Vec<(&'static str, &'static str)>>,
+        declared: bool,
+        reach: &'static str,
+        cause: Option<&'static str>,
+        answers: Vec<(&'static str, &'static str)>,
+    }
+    let command = support::isolated_program(&orch_dir().join("../../tools/ci-reach"))
+        .display()
+        .to_string();
+    // `rest` runs a changed skill no other shard claims; the UI lane runs
+    // only for a path under `ui/`, and the bridge's shard only for the
+    // bridge's package.
+    let within = "Skill suites shard (rest, ubuntu-latest)";
+    let outside = "UI (vitest, tsc, biome)";
+    let bridge = "Skill suites shard (pi-claude-bridge, ubuntu-latest)";
+    let unmapped = "Classify the diff";
+    let cases = [
+        Case {
+            name: "outside",
+            validated: true,
+            checks: Some(vec![
+                (within, "success"),
+                (outside, "failure"),
+                (bridge, "failure"),
+                ("CI", "failure"),
+            ]),
+            declared: true,
+            reach: "outside",
+            cause: None,
+            answers: vec![(outside, "outside"), (bridge, "outside"), ("CI", "outside")],
+        },
+        Case {
+            name: "within",
+            validated: true,
+            checks: Some(vec![
+                (outside, "timed_out"),
+                (within, "failure"),
+                ("CI", "failure"),
+            ]),
+            declared: true,
+            reach: "within",
+            cause: None,
+            answers: vec![(outside, "outside"), (within, "within"), ("CI", "within")],
+        },
+        Case {
+            name: "a check no job maps to",
+            validated: true,
+            checks: Some(vec![(unmapped, "failure"), ("CI", "failure")]),
+            declared: true,
+            reach: "unread",
+            cause: Some("check-unmapped"),
+            answers: vec![(unmapped, "unread"), ("CI", "unread")],
+        },
+        Case {
+            name: "a lost run",
+            validated: true,
+            checks: Some(vec![(outside, "cancelled"), ("CI", "cancelled")]),
+            declared: true,
+            reach: "unread",
+            cause: Some("no-failed-check"),
+            answers: vec![],
+        },
+        Case {
+            name: "the checks unread",
+            validated: true,
+            checks: None,
+            declared: true,
+            reach: "unread",
+            cause: Some("check-runs-unread"),
+            answers: vec![],
+        },
+        Case {
+            name: "no validation of the head",
+            validated: false,
+            checks: Some(vec![(outside, "failure")]),
+            declared: true,
+            reach: "unread",
+            cause: Some("change-unread"),
+            answers: vec![(outside, "unread")],
+        },
+        Case {
+            name: "no reach command",
+            validated: true,
+            checks: Some(vec![(outside, "failure")]),
+            declared: false,
+            reach: "unread",
+            cause: Some("reach-unset"),
+            answers: vec![(outside, "unread")],
+        },
+    ];
+    for case in cases {
+        let name = case.name;
+        let mut world = World::new();
+        if case.validated {
+            let head = world.validated("skills/price-handling/SKILL.md");
+            world.pull_at(&head);
+        }
+        world
+            .queue(in_queue(Some(QUEUE_HEAD)))
+            .check_runs(Some((0, 2)));
+        let first = world.request(10, 10);
+        let reply = world.wait(&first, |_, clock| {
+            clock.await_sleepers(1);
+            clock.release(secs(10));
+        });
+        assert_eq!(reply.verdict, "queued", "{name}: {reply:?}");
+        assert_eq!(
+            world.memory()["group_head"].as_str(),
+            Some(QUEUE_HEAD),
+            "{name}"
+        );
+        world.queue(out());
+        match &case.checks {
+            Some(checks) => world.group_checks(checks),
+            None => world.check_runs(None),
+        };
+        let second = QueueWatch {
+            reach_cmd: case.declared.then(|| command.clone()),
+            ..world.request(10, 30)
+        };
+        let reply = world.wait(&second, |_, clock| {
+            clock.await_sleepers(1);
+            clock.release(secs(10));
+        });
+        assert_eq!(
+            (reply.verdict, reply.cause, reply.reach, reply.reach_cause),
+            (
+                "ejected",
+                Some("merge_group_failed"),
+                Some(case.reach),
+                case.cause
+            ),
+            "{name}: {reply:?}"
+        );
+        let planted = case.checks.unwrap_or_default();
+        let want: Vec<(String, &str, Option<String>)> = case
+            .answers
+            .iter()
+            .map(|(check, answer)| {
+                let id = planted.iter().position(|(n, _)| n == check).unwrap() + 1;
+                (
+                    (*check).to_owned(),
+                    *answer,
+                    Some(format!("https://github.com/{REPO}/runs/{id}")),
+                )
+            })
+            .collect();
+        let got: Vec<(String, &str, Option<String>)> = reply
+            .failed_checks
+            .unwrap_or_default()
+            .into_iter()
+            .map(|c| (c.name, c.reach, c.url))
+            .collect();
+        assert_eq!(got, want, "{name}");
+    }
 }

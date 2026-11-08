@@ -216,6 +216,9 @@ pub const QUEUE_WAIT_CONFIRM_POLLS_KEY: &str = "QUEUE_WAIT_CONFIRM_POLLS";
 /// The least seconds between two of `queue-watch`'s review-thread probes and
 /// between two of its check probes, each on its own clock.
 pub const QUEUE_WAIT_PROBE_INTERVAL_KEY: &str = "QUEUE_WAIT_PROBE_INTERVAL";
+/// The command that answers whether a red merge group's failed checks are
+/// ones the change's paths select; empty is none.
+pub const QUEUE_WAIT_REACH_CMD_KEY: &str = "QUEUE_WAIT_REACH_CMD";
 const DEFAULT_QUEUE_WAIT_ARM_GRACE_SECS: u32 = 120;
 const DEFAULT_QUEUE_WAIT_CONFIRM_POLLS: u32 = 2;
 const DEFAULT_QUEUE_WAIT_PROBE_INTERVAL_SECS: u32 = 120;
@@ -429,6 +432,7 @@ const READ_KEYS: &[&str] = &[
     QUEUE_WAIT_ARM_GRACE_KEY,
     QUEUE_WAIT_CONFIRM_POLLS_KEY,
     QUEUE_WAIT_PROBE_INTERVAL_KEY,
+    QUEUE_WAIT_REACH_CMD_KEY,
     crate::watch::report::ENABLED_KEY,
     crate::watch::report::MINUTES_KEY,
     crate::watch::report::ISSUES_KEY,
@@ -636,12 +640,14 @@ pub struct ValidateSettings {
 
 /// What `queue-watch` reads beside its request: the arming grace, the
 /// confirmation count and the probe interval, each a whole number above
-/// zero, refused by key and value otherwise.
+/// zero, refused by key and value otherwise, and the reach command, a
+/// blank value no declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QueueWatchSettings {
     pub arm_grace: Duration,
     pub confirm_polls: u32,
     pub probe_interval: Duration,
+    pub reach_cmd: Option<String>,
 }
 
 /// One stated retirement, `<name>=<YYYY-MM-DD>`: the account whose
@@ -1249,6 +1255,7 @@ pub fn load(
             QUEUE_WAIT_PROBE_INTERVAL_KEY,
             DEFAULT_QUEUE_WAIT_PROBE_INTERVAL_SECS,
         )?)),
+        reach_cmd: command(QUEUE_WAIT_REACH_CMD_KEY),
     };
     let archive_root = match get(ARCHIVE_ROOT_KEY) {
         Some(text) if Path::new(text).is_absolute() => ArchiveRoot::Configured(PathBuf::from(text)),

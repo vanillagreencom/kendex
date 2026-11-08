@@ -271,6 +271,11 @@ DEV_VALIDATE_SELECTION_CMD = "base=${DEV_VALIDATE_BASE:-}; if test x$base = x; t
 # proof.
 DEV_VALIDATE_CI_CONTEXT = "CI"
 
+# Whether a red merge group's failed checks are ones the change's own paths
+# select, as the queue wait reads them on an ejection: tools/ci-reach maps
+# each check to the tools/ci-job-set lane or shard that runs it.
+QUEUE_WAIT_REACH_CMD = "tools/ci-reach"
+
 # The prefix tools/guard prints each finding with; what a finding-free run
 # lets dev-validate-run answer: skills/orch/scripts/dev-validate-run.
 DEV_VALIDATE_FINDING_PREFIX = "guard: "

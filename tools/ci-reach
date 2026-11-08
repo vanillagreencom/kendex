@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# ci-reach — whether each failed check of a merge group's
+# .github/workflows/skill-tests.yml run is one the change's own paths
+# select: the reach command orch's queue-watch runs on an ejection
+# (QUEUE_WAIT_REACH_CMD in kendex.settings.toml).
+#
+# tools/ci-job-set answers lane keys, and GitHub names a check by its job's
+# `name:`. This script is the one map between the two: each job's `if:` in
+# skill-tests.yml reads the key its check name maps to below.
+#
+# Usage: tools/ci-reach
+#
+# Environment:
+#   QUEUE_REACH_CLASS      the change class the validation recorded
+#   QUEUE_REACH_DOCS_ONLY  true|false, the docs verdict for the same diff
+#   QUEUE_REACH_PATHS      a file holding the change's paths, one per line
+#
+# stdin:  one failed check name per line.
+# stdout: `within NAME` where the change's selection runs that check's job,
+#         `outside NAME` where it does not, and no line for a name no job
+#         maps to, which the caller reads as unread. `CI`, the aggregate
+#         every other job reports into, is `within` where another named
+#         check is and `outside` where every other named check is.
+# Exit 0 with the lines. Every refusal starts `ci-reach: cause=<name>` on
+# stderr and exits 2: a selection tools/ci-job-set refused, its refusal
+# above, among them.
+set -euo pipefail
+
+TOOLS_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+die() { # CAUSE
+  printf 'ci-reach: cause=%s\n' "$1" >&2
+  exit 2
+}
+
+[ -n "${QUEUE_REACH_CLASS:-}" ] || die class-missing
+case "${QUEUE_REACH_DOCS_ONLY:-}" in
+  true | false) ;;
+  *) die "docs-only-invalid value=${QUEUE_REACH_DOCS_ONLY:-}" ;;
+esac
+[ -n "${QUEUE_REACH_PATHS:-}" ] || die paths-missing
+paths="$(cat -- "$QUEUE_REACH_PATHS")" || die paths-unreadable
+names="$(cat)" || die names-unreadable
+
+TMP_ROOT="$(mktemp -d)" || { echo "ci-reach: scratch=mktemp-failed" >&2; exit 2; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "ci-reach: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 2; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "ci-reach: scratch=resolve-failed" >&2; exit 2; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+
+# ci-job-set reads the checkout it runs in, which is this script's.
+status=0
+(cd -- "$TOOLS_DIR/.." && CHANGE_CLASS="$QUEUE_REACH_CLASS" DOCS_ONLY="$QUEUE_REACH_DOCS_ONLY" \
+  CHANGED_PATHS="$paths" EVENT=merge_group GITHUB_OUTPUT="$TMP_ROOT/rows" \
+  "$TOOLS_DIR/ci-job-set" >/dev/null 2>"$TMP_ROOT/err") || status=$?
+if [ "$status" -ne 0 ]; then
+  cat -- "$TMP_ROOT/err" >&2
+  die "selection-refused exit=$status"
+fi
+rows="$(cat -- "$TMP_ROOT/rows")" || die rows-unreadable
+
+selected() { # KEY — the selection's value for KEY
+  local line
+  while IFS= read -r line; do
+    [ "${line%%=*}" != "$1" ] || { printf '%s\n' "${line#*=}"; return 0; }
+  done <<<"$rows"
+  die "lane-unselected lane=$1"
+}
+
+answer() { # NAME — within, outside, or nothing for a name no job maps to
+  local key shard="" value
+  case "$1" in
+    "Skill suites shard ("*", ubuntu-latest)")
+      shard="${1#Skill suites shard (}" shard="${shard%, ubuntu-latest)}" key=shards ;;
+    "Skill suites shard ("*", macos-latest)")
+      shard="${1#Skill suites shard (}" shard="${shard%, macos-latest)}" key=queue_macos_shards ;;
+    "Cargo lints (clippy, fmt, doc)") key=cargo_lint ;;
+    "Cargo "*" (Linux)") key=cargo_linux ;;
+    "macOS cargo "*) key=cargo_macos ;;
+    "Windows cargo (core and CLI targets compile)") key=cargo_windows_check ;;
+    "Windows cargo (workspace tests)") key=cargo_windows ;;
+    "UI (vitest, tsc, biome)") key=ui ;;
+    "Bot instructions") key=bot_instructions ;;
+    "catalog ("*) key=catalog ;;
+    "real-CLI round trip") key=smoke ;;
+    *) return 0 ;;
+  esac
+  value="$(selected "$key")"
+  if [ -n "$shard" ]; then
+    case "$value" in *"\"$shard\""*) echo within ;; *) echo outside ;; esac
+    return 0
+  fi
+  case "$value" in
+    true) echo within ;;
+    false) echo outside ;;
+    *) die "lane-value-invalid lane=$key value=$value" ;;
+  esac
+}
+
+ci=false within=false unmapped=false others=0
+while IFS= read -r name; do
+  [ -n "$name" ] || continue
+  if [ "$name" = CI ]; then
+    ci=true
+    continue
+  fi
+  others=$((others + 1))
+  got="$(answer "$name")" || exit 2
+  case "$got" in
+    within) within=true ;;
+    outside) ;;
+    *) unmapped=true ;;
+  esac
+  [ -z "$got" ] || printf '%s %s\n' "$got" "$name"
+done <<<"$names"
+if [ "$ci" = true ]; then
+  if [ "$within" = true ]; then
+    echo "within CI"
+  elif [ "$others" -gt 0 ] && [ "$unmapped" = false ]; then
+    echo "outside CI"
+  fi
+fi

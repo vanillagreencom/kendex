@@ -4,7 +4,8 @@
 # either suite reads, some by one suite alone.
 # tools/tests/ci-class-job-set.test.sh asserts those lines against the
 # script; tools/tests/ci-aggregate.test.sh evaluates
-# .github/workflows/skill-tests.yml against them. Sourced after the suite's
+# .github/workflows/skill-tests.yml against them; tools/tests/ci-reach.test.sh
+# reads ROOT, TMP and the tally alone. Sourced after the suite's
 # `set -euo pipefail` and git-variable preamble; what a suite reads from here:
 #   ROOT, JOB_SET, TMP       this checkout, the script, the suite's scratch
 #   selection CLASS DOCS PATHS

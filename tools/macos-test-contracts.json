@@ -384,6 +384,7 @@
     "tools/tests/ci-class-job-set-events.test.sh": "linux-duplicate",
     "tools/tests/ci-class-job-set-queue.test.sh": "linux-duplicate",
     "tools/tests/ci-class-job-set.test.sh": "linux-duplicate",
+    "tools/tests/ci-reach.test.sh": "linux-duplicate",
     "tools/tests/guard-full.test.sh": "linux-duplicate",
     "tools/tests/guard-range.test.sh": "linux-duplicate",
     "tools/tests/guard-render.test.sh": "linux-duplicate",

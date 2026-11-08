@@ -16,6 +16,14 @@
 //! and one arm: the first `autoMergeRequest.enabledAt` a poll reads is bound
 //! to it, and a new head, or another `enabledAt` beside the bound one,
 //! starts it afresh.
+//!
+//! An ejection carries the red group's reach: the failed checks on the
+//! group head the memory last saw, each judged by the consumer's reach
+//! command over the change the item's validation recorded for the pull
+//! request's head, since only the consumer's own selector knows which of
+//! its checks a change's paths select.
+use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -26,8 +34,11 @@ use serde_json::Value;
 use super::{Env, Request, Verdict as CiVerdict, VerifyPr, verify_pr};
 use crate::error::{Error, Result};
 use crate::schedule::Clock;
-use crate::state::{self, Document, Locking};
-use crate::verify::wire::{CheckRunsPage, GraphError, GraphReply, Nullable, Optional, RunStatus};
+use crate::state::{self, Document, Locking, Stage, StageKind};
+use crate::validate::files::RunFile;
+use crate::verify::wire::{
+    CheckRunsPage, GraphError, GraphReply, Nullable, Optional, RunConclusion, RunStatus,
+};
 use crate::verify::{self, Answer, Bucket, Budget, Gh, Status};
 
 /// The github package's program under the project's install, whose
@@ -66,6 +77,11 @@ pub struct Memory {
     pub was_queued: bool,
     /// Any poll saw an actual queue entry.
     pub was_in_queue: bool,
+    /// The merge-group head the last poll that saw the entry read: the
+    /// commit whose checks an ejection's reach reads, so a later run that
+    /// confirms the ejection still names the group.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_head: Option<String>,
     /// The late-findings guard's mutations, written owed before each is
     /// sent and settled after.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -142,6 +158,9 @@ pub struct QueueWatch {
     pub probe_interval: Duration,
     pub check_probe: bool,
     pub guard: bool,
+    /// The consumer's reach command (`QUEUE_WAIT_REACH_CMD`); with none,
+    /// every reach is `unread`.
+    pub reach_cmd: Option<String>,
 }
 
 /// The programs the wait runs: `gh` on `PATH` and the github package's
@@ -287,8 +306,56 @@ pub struct Reply {
     pub last_poll_age_seconds: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transient_api_errors: Option<u64>,
+    /// On `ejected` alone: `within` where a failed check of the group is
+    /// one the change's paths select, `outside` where the reach command
+    /// answered every one outside them, `unread` otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reach: Option<&'static str>,
+    /// What could not be read, on an `unread` reach.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reach_cause: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failed_checks: Option<Vec<FailedCheck>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+/// One failed check on the ejected group's head.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FailedCheck {
+    pub name: String,
+    /// The reach command's answer for this check: `outside`, `within`, or
+    /// `unread` where it gave none.
+    pub reach: &'static str,
+    /// The check run's page, which names its workflow run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Reach {
+    Outside,
+    Within,
+    Unread,
+}
+
+impl Reach {
+    fn word(self) -> &'static str {
+        match self {
+            Reach::Outside => "outside",
+            Reach::Within => "within",
+            Reach::Unread => "unread",
+        }
+    }
+}
+
+/// The change a whole-branch validation recorded for a head: what the
+/// reach command reads in place of a classification of its own.
+struct RecordedChange {
+    class: String,
+    docs_only: bool,
+    /// The run directory's `paths`, one changed path per line.
+    paths: PathBuf,
 }
 
 // --- the reads ------------------------------------------------------------------
@@ -730,6 +797,7 @@ impl<'a> Wait<'a> {
             enabled_at: enabled_at.map(str::to_owned),
             was_queued: false,
             was_in_queue: false,
+            group_head: None,
             guard: None,
         }
     }
@@ -826,6 +894,9 @@ impl<'a> Wait<'a> {
             unresolved_count: self.unresolved,
             last_poll_age_seconds: self.last_poll_at.map(|at| self.since(at).as_secs()),
             transient_api_errors: (self.transient_errors > 0).then_some(self.transient_errors),
+            reach: None,
+            reach_cause: None,
+            failed_checks: None,
             error: None,
         }
     }
@@ -1238,6 +1309,181 @@ impl<'a> Wait<'a> {
         }
     }
 
+    // --- the reach ---
+
+    /// The ejected group's reach and its failed checks, with the read that
+    /// failed where the reach is `unread`.
+    fn reach(&self) -> (Reach, Option<&'static str>, Vec<FailedCheck>) {
+        let memory = self.memory_ref();
+        let Some(group) = memory.group_head.as_deref() else {
+            return (Reach::Unread, Some("group-head-unread"), Vec::new());
+        };
+        let mut checks = match self.failed_checks(group) {
+            Ok(checks) => checks,
+            Err(cause) => return (Reach::Unread, Some(cause), Vec::new()),
+        };
+        if checks.is_empty() {
+            return (Reach::Unread, Some("no-failed-check"), checks);
+        }
+        let Some(cmd) = self.r.reach_cmd.as_deref() else {
+            return (Reach::Unread, Some("reach-unset"), checks);
+        };
+        let Some(change) = self.recorded_change(&memory.head) else {
+            return (Reach::Unread, Some("change-unread"), checks);
+        };
+        let Some(answers) = self.ask_reach(cmd, &change, &checks) else {
+            return (Reach::Unread, Some("reach-unanswered"), checks);
+        };
+        for check in &mut checks {
+            check.reach = answers
+                .get(&check.name)
+                .map_or(Reach::Unread, |r| *r)
+                .word();
+        }
+        if answers.values().any(|r| *r == Reach::Within) {
+            (Reach::Within, None, checks)
+        } else if checks.iter().all(|c| answers.contains_key(&c.name)) {
+            (Reach::Outside, None, checks)
+        } else {
+            (Reach::Unread, Some("check-unmapped"), checks)
+        }
+    }
+
+    /// The failed check runs on the group head `sha`, every page read: a
+    /// check still running, or a conclusion outside GitHub's documented
+    /// set, leaves the failed set undecided. A cancelled or stale check is
+    /// a run the group lost, never a failure.
+    fn failed_checks(&self, sha: &str) -> std::result::Result<Vec<FailedCheck>, &'static str> {
+        let path = format!("repos/{}/commits/{sha}/check-runs", self.r.repo);
+        let runs = verify::collection(
+            &path,
+            |page| match self.gh("api", &["api", page]) {
+                Call::Printed(bytes) => {
+                    serde_json::from_slice::<CheckRunsPage>(&bytes).map_err(|_| ())
+                }
+                Call::Failed { .. } => Err(()),
+            },
+            || (),
+        )
+        .map_err(|()| "check-runs-unread")?;
+        let mut failed: Vec<FailedCheck> = Vec::new();
+        for run in &runs {
+            if run.status != RunStatus::Completed {
+                return Err("checks-unfinished");
+            }
+            let conclusion = match run.conclusion {
+                Nullable::Present(conclusion) => conclusion,
+                Nullable::Absent | Nullable::Null => return Err("checks-undocumented"),
+            };
+            let failing = match conclusion {
+                RunConclusion::Failure
+                | RunConclusion::TimedOut
+                | RunConclusion::StartupFailure => true,
+                RunConclusion::Success
+                | RunConclusion::Neutral
+                | RunConclusion::Cancelled
+                | RunConclusion::Skipped
+                | RunConclusion::ActionRequired
+                | RunConclusion::Stale => false,
+                RunConclusion::Other => return Err("checks-undocumented"),
+            };
+            if failing && !failed.iter().any(|c| c.name == run.name) {
+                failed.push(FailedCheck {
+                    name: run.name.clone(),
+                    reach: Reach::Unread.word(),
+                    url: run.page().map(str::to_owned),
+                });
+            }
+        }
+        Ok(failed)
+    }
+
+    /// The change the item's latest whole-branch validation of `head`
+    /// recorded, where its run directory is on this host and its paths are
+    /// the ones the record digested; a range run's class covers only a fix
+    /// round's changes, and a fallen-back class read no paths.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the reach's one read of the item record, after the wait's verdict and before nothing it acts on"
+    )]
+    fn recorded_change(&self, head: &str) -> Option<RecordedChange> {
+        let snapshot = state::load(self.path).ok()??;
+        let stages: Vec<Stage> = state::field(self.path, &snapshot.doc, "stages").ok()??;
+        let (stage, proof) = stages.iter().rev().find_map(|stage| {
+            let proof = stage.proof.as_ref()?;
+            (stage.kind == StageKind::Validate
+                && proof.head == head
+                && proof.class_base.is_none()
+                && proof.class_fallback.is_none())
+            .then_some((stage, proof))
+        })?;
+        let dir = PathBuf::from(stage.run_dir.as_deref()?);
+        let run = RunFile::read(&dir).ok()?;
+        (run.proof().ok()?.paths_hash == proof.paths_hash).then(|| RecordedChange {
+            class: proof.class.clone(),
+            docs_only: proof.docs_only,
+            paths: dir.join("paths"),
+        })
+    }
+
+    /// The reach command's answer per failed check: its standard input the
+    /// check names, one per line; its output one `outside NAME` or `within
+    /// NAME` line per check it maps. A start that failed, an exit other
+    /// than 0, or a line outside that form is no answer at all.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the consumer's declared reach command, run once per ejection over the recorded change; it reads the selection and acts on nothing"
+    )]
+    fn ask_reach(
+        &self,
+        cmd: &str,
+        change: &RecordedChange,
+        checks: &[FailedCheck],
+    ) -> Option<HashMap<String, Reach>> {
+        if checks.iter().any(|c| c.name.contains('\n')) {
+            return None;
+        }
+        let names: String = checks.iter().map(|c| format!("{}\n", c.name)).collect();
+        let docs = if change.docs_only { "true" } else { "false" };
+        let env = [
+            ("QUEUE_REACH_CLASS", OsStr::new(&change.class)),
+            ("QUEUE_REACH_DOCS_ONLY", OsStr::new(docs)),
+            ("QUEUE_REACH_PATHS", change.paths.as_os_str()),
+        ];
+        let output = host::run_tagged_fed(
+            "queue-watch",
+            "bash",
+            Path::new("/bin/bash"),
+            "reach",
+            &["-c", cmd],
+            Place {
+                cwd: Some(self.project),
+                env: &env,
+            },
+            names.as_bytes(),
+            CALL_TIMEOUT,
+        )
+        .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        let mut answers = HashMap::new();
+        for line in host::stdout_text(&output).lines() {
+            let (word, name) = line.split_once(' ')?;
+            let reach = match word {
+                "outside" => Reach::Outside,
+                "within" => Reach::Within,
+                _ => return None,
+            };
+            if !checks.iter().any(|c| c.name == name)
+                || answers.insert(name.to_owned(), reach).is_some()
+            {
+                return None;
+            }
+        }
+        Some(answers)
+    }
+
     // --- the confirmation ---
 
     fn note_candidate(&mut self, candidate: Candidate) {
@@ -1334,6 +1580,9 @@ impl<'a> Wait<'a> {
         let mut memory = self.memory_for(&pull.head, queue.enabled_at.as_deref());
         memory.was_queued |= queue.armed();
         memory.was_in_queue |= queue.in_queue;
+        if let Some(group) = &queue.entry_head {
+            memory.group_head = Some(group.clone());
+        }
         self.write_memory(memory)?;
         self.queue = Some(queue.clone());
         let (armed, in_queue, auto_merge) = (queue.armed(), queue.in_queue, queue.auto_merge);
@@ -1355,11 +1604,18 @@ impl<'a> Wait<'a> {
         if let Some(candidate) = self.candidate
             && self.candidate_count >= self.r.confirm_polls
         {
-            return Ok(end(self.reply(
+            let mut reply = self.reply(
                 Outcome::Complete,
                 candidate.verdict(),
                 Some(candidate.cause()),
-            )));
+            );
+            if candidate == Candidate::Ejected {
+                let (reach, cause, checks) = self.reach();
+                reply.reach = Some(reach.word());
+                reply.reach_cause = cause;
+                reply.failed_checks = Some(checks);
+            }
+            return Ok(end(reply));
         }
         if armed {
             if self.r.guard

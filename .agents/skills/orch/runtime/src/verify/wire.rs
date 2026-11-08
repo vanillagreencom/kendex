@@ -315,11 +315,11 @@ pub(crate) struct CheckRun {
     /// (`evidence::check_run_suites`).
     pub(super) node_id: String,
     /// Required (checks/runs, `name`: string).
-    pub(super) name: String,
+    pub(crate) name: String,
     /// Required, not nullable (checks/runs, `status`: enum).
     pub(crate) status: RunStatus,
     /// Required, nullable (checks/runs, `conclusion`: enum or null).
-    pub(super) conclusion: Nullable<RunConclusion>,
+    pub(crate) conclusion: Nullable<RunConclusion>,
     /// Required, nullable (checks/runs, `check_suite`: object or null).
     pub(super) check_suite: Nullable<CheckSuiteRef>,
     /// Required, nullable (checks/runs, `started_at`: date-time or null).
@@ -382,7 +382,7 @@ impl CheckRun {
 
     /// The check run's page, where GitHub names one: the bound-job link of
     /// the suite read.
-    pub(super) fn page(&self) -> Option<&str> {
+    pub(crate) fn page(&self) -> Option<&str> {
         match &self.html_url {
             Nullable::Absent | Nullable::Null => None,
             Nullable::Present(url) => Some(url),
