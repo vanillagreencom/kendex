@@ -146,7 +146,7 @@ class SessionLogContract(unittest.TestCase):
                 if verb == "stop":
                     fixture = SessionContract()
                     fixture.setUp()
-                    self.addCleanup(fixture.doCleanups)
+                    self.addCleanup(lambda fixture=fixture: self.assertTrue(fixture.doCleanups()))
                     self.addCleanup(fixture.tearDown)
                     fixture.call("start", origin=recorded, own_worker=True)
                     fixture.wait()
@@ -2567,12 +2567,12 @@ class FixtureLifetimeContract(unittest.TestCase):
                 def before_removal():
                     worker = fixture.owned_workers[-1]
                     returncode = worker.poll()
+                    saved = json.loads(fixture.record.read_text())
                     if not released:
                         # Reap even a rejected control's held writer.
                         release_writer()
                         real_wait(worker, timeout=15)
                     self.assertEqual(returncode, 0)
-                    saved = json.loads(fixture.record.read_text())
                     self.assertEqual((saved["state"], saved["terminal"]), ("stopped", None))
 
                 fixture.addCleanup(before_removal)
