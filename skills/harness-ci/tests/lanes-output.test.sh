@@ -216,14 +216,15 @@ git -C "$repo" add -A
 git -C "$repo" commit -qm unreadable
 base_unreadable="$(git -C "$repo" rev-parse HEAD)"
 
-# NAME|BASE|PATHS|LINES|HEAD/ENV EDIT|EVENT|LANE ROOT|STATUS|DOCS|CLASS|LANES/CAUSE|VERDICTS
+# NAME|BASE|PATHS|LINES|HEAD/ENV EDIT|EVENT|LANE ROOT|STATUS|DOCS|CLASS|LANES/CAUSE|VERDICTS|CLASS-ONLY
 # `none` owns no declared lanes, so the aggregate answer must keep checks on.
+# CLASS-ONLY checks the review-depth caller, which requests --output /dev/null.
 declared_rows() {
   cat <<'ROWS'
 no-declaration|default|product/text.md|1|none|merge_group|text|0|false|micro|true/micro|lane_check=false,lane_text=true,lane_also=true,lane_other=false,lane_mac=false
 declared-owner|text|product/text.md|1|none|merge_group|text|0|true|trivial|true/declared-text|lane_check=false,lane_text=true,lane_also=true,lane_other=false,lane_mac=false
 declared-large|text|product/text.md|21|none|merge_group|text|0|true|small|true/declared-text|lane_check=false,lane_text=true,lane_also=true,lane_other=false,lane_mac=false
-mixed-source|text|product/text.md src/main.sh|21|none|merge_group|text|0|false|small|true/small|lane_check=true,lane_text=true,lane_also=true,lane_other=false,lane_mac=false
+mixed-source|text|product/text.md src/main.sh|21|none|merge_group|text|0|false|small|true/small|lane_check=true,lane_text=true,lane_also=true,lane_other=false,lane_mac=false|small
 mixed-unclaimed|text|product/text.md Makefile|21|none|merge_group|text|0|false|small|true/small|lane_check=true,lane_text=true,lane_also=true,lane_other=true,lane_mac=false
 unclaimed-text|text|product/text.md|1|none|merge_group|default|0|true|trivial|true/declared-text|lane_check=true,lane_other=true,lane_mac=false
 no-lane-declaration|text|product/text.md|1|none|merge_group|none|0|true|trivial|true/declared-text|-
@@ -234,7 +235,8 @@ overriding-empty|overlay|product/text.md|1|none|merge_group|text|0|false|micro|t
 invalid-glob|glob|product/text.md|1|none|merge_group|text|2|-|-|-|-
 protected-instruction|instruction|product/AGENTS.md|1|none|merge_group|text|2|-|-|-|-
 protected-standard|standard|product/text.md|1|none|merge_group|text|2|-|-|-|-
-executable-text|text|product/text.md|1|executable|merge_group|text|2|-|-|-|-
+executable-text|text|product/text.md|1|executable|merge_group|text|2|-|-|-|-|micro
+mixed-executable|text|alpha/source.rs product/text.md zeta/source.rs|21|executable|merge_group|text|2|-|-|-|-|standard
 symlink-text|text|product/text.md|1|symlink|merge_group|text|2|-|-|-|-
 invalid-settings|invalid|product/text.md|1|none|merge_group|text|2|-|-|-|-
 unreadable-settings|unreadable|product/text.md|1|none|merge_group|text|2|-|-|-|-
@@ -244,8 +246,8 @@ ROWS
 }
 declared_case() { # COMMAND ROW
   local command="$1" name base_name paths lines edit event declaration expected_status docs class lane_result expected_verdicts
-  local base_var base decl local_status=0 action_status=0
-  IFS='|' read -r name base_name paths lines edit event declaration expected_status docs class lane_result expected_verdicts <<<"$2"
+  local base_var base decl class_only local_status=0 action_status=0
+  IFS='|' read -r name base_name paths lines edit event declaration expected_status docs class lane_result expected_verdicts class_only <<<"$2"
   base_var="base_$base_name"
   base="${!base_var}"
   write_row "$name" "$base" "$paths" "$lines"
@@ -277,6 +279,10 @@ declared_case() { # COMMAND ROW
   else
     assert_eq "$name: command publishes no waiver" "" "$(cat "$SANDBOX/local-output")$(cat "$SANDBOX/local-stdout")"
     assert_eq "$name: action publishes no waiver" "" "$(cat "$SANDBOX/action-output")"
+  fi
+  if [ -n "$class_only" ]; then
+    assert_class "$name: class-only consumer" "$class_only" \
+      --event "$event" --base "$base" --head HEAD --repo "$repo" --output /dev/null
   fi
 }
 rows=0

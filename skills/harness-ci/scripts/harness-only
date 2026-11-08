@@ -34,7 +34,7 @@
 #             classifier, one path per line. Default: do not write a file.
 #   --outside-output  docs mode: overwrite this file with every changed path
 #             outside the docs set, one path per line, empty on a true
-#             verdict, on a false one reached before any path was read,
+#             verdict, when docs discovery did not complete,
 #             and in harness mode, which reads no docs set.
 #             The change-class action reads it to tell an unclaimed path
 #             the docs set holds from one it does not. Default: do not
@@ -238,6 +238,10 @@ write_paths() { # FILE LIST CAUSE — overwrite FILE with LIST, one per line
 }
 
 verdict() { # true|false [FIELDS REASON]
+  # Class-only change-class callers need the complete set for subsystem proof.
+  if [ "$classification" = docs ] && [ "$declared_available" = false ]; then
+    outside=""
+  fi
   [ -z "$paths_output" ] ||
     write_paths "$paths_output" "$changed" paths-output-write-failed
   [ -z "$outside_output" ] ||
