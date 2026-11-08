@@ -673,7 +673,11 @@ a file outside sourced trees retains the local error|localoutside scripts/row.sh
 staged sourced mode accepts local despite an executable worktree|localstaged scripts/lib/row.sh - -x +x|--staged|shellcheck|0|-|preflight: clean=1
 staged executable mode retains the local error despite a sourced worktree|localstagedexec scripts/lib/row.sh - +x -x|--staged|shellcheck|1|scripts/lib/row.sh:3: [shellcheck-errors]|-
 ROWS
-pf_table 'top-level local follows the sourced-library classification' "$rows"
+if command -v shellcheck >/dev/null 2>&1; then
+  pf_table 'top-level local follows the sourced-library classification' "$rows"
+else
+  skipped 'top-level local follows the sourced-library classification' 'shellcheck not on PATH'
+fi
 unset -f pf_world
 
 echo "=== a project setting names its own sourced-library trees ==="
