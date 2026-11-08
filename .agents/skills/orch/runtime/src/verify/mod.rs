@@ -285,12 +285,16 @@ pub(crate) fn validate_repo(repo: &str) -> Result<()> {
         value: repo.to_owned(),
     };
     let (owner, name) = repo.split_once('/').ok_or_else(invalid)?;
-    let repo_word = |s: &str| {
-        !s.is_empty()
-            && s.chars()
-                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
-    };
-    if !repo_word(owner) || !repo_word(name) {
+    // GitHub's own classes: a login is letters, digits and hyphens, never a
+    // dot; a name may carry dots but is never dots alone, since `.` and `..`
+    // are path segments in `repos/<repo>/`.
+    let login = !owner.is_empty() && owner.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    let named = !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        && !name.chars().all(|c| c == '.');
+    if !login || !named {
         return Err(invalid());
     }
     Ok(())

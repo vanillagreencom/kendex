@@ -144,16 +144,29 @@ fn lifecycle_findings_distinguish_parked_containers_from_live_items() {
             None,
         ),
         issue("T-9", "Canceled", "canceled", "", Some("T-8")),
+        // A pending child beside a Done one holds its parent open.
+        issue("T-10", "Done", "completed", "", Some("T-6")),
+        // A closed parent is no container to close.
+        issue("T-11", "Done", "completed", "", None),
+        issue("T-12", "Done", "completed", "", Some("T-11")),
+        // A trashed issue is archived: the list never asks for it.
+        {
+            let mut trashed = issue("T-15", "Done", "completed", "- [ ] two", None);
+            trashed["trashed"] = json!(true);
+            trashed["archivedAt"] = json!("2026-10-01T00:00:00Z");
+            trashed
+        },
     ]);
     let report = world.run();
     let found = kinds(&report);
     assert!(found.contains(&("container-parked", "T-1")));
     assert!(found.contains(&("verifying-empty", "T-1")));
     assert!(found.contains(&("done-unchecked", "T-4")));
-    for id in ["T-5", "T-6", "T-8"] {
+    for id in ["T-5", "T-6", "T-8", "T-11"] {
         assert!(!found.contains(&("container-parked", id)));
         assert!(!found.contains(&("done-unchecked", id)));
     }
+    assert!(!found.iter().any(|(_, id)| *id == "T-15"), "{found:?}");
     let out = world.cli(&["reconcile-items", "--stale-hours", "999999"]);
     assert!(
         out.status.success(),
@@ -175,6 +188,34 @@ fn lifecycle_findings_distinguish_parked_containers_from_live_items() {
 #[test]
 fn an_unread_or_invalid_inventory_never_becomes_clean() {
     let world = World::new(vec![]);
+    let refusal = |out: &std::process::Output| {
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        serde_json::from_slice::<Value>(&out.stdout).unwrap()["refusal"]["key"].clone()
+    };
+    // Outside any checkout nothing is read.
+    let out = support::isolated()
+        .env("OVERSEE_WATCH_TRACKER", world.dir.path().join("linear"))
+        .arg("reconcile-items")
+        .output()
+        .unwrap();
+    assert_eq!(refusal(&out), "not-repository");
+    assert!(!world.dir.path().join("linear.log").exists());
+    // No tracker CLI to run.
+    let out = support::isolated()
+        .current_dir(world.dir.path())
+        .env(
+            "OVERSEE_WATCH_TRACKER",
+            world.dir.path().join("linear-missing"),
+        )
+        .arg("reconcile-items")
+        .output()
+        .unwrap();
+    assert_eq!(refusal(&out), "tracker-list-failed");
     assert!(world.run().findings.is_empty());
     fs::write(world.dir.path().join("read.fail"), "").unwrap();
     let out = world.cli(&["reconcile-items"]);
@@ -240,6 +281,22 @@ fn verification_uses_the_real_parser_for_empty_invalid_and_overdue_boxes() {
     assert!(found.contains(&("verifying-invalid", "T-2")));
     assert!(found.contains(&("verifying-overdue", "T-3")));
     assert!(found.contains(&("verifying-invalid", "T-4")));
+    // An invalid finding carries the parser's own reply: its open branch
+    // box, its refused box.
+    let parser = |id: &str| {
+        report
+            .findings
+            .iter()
+            .find(|f| f.kind == "verifying-invalid" && f.issue == id)
+            .map(|f| f.detail["parser"].as_str().unwrap_or_default().to_owned())
+            .unwrap_or_default()
+    };
+    assert!(
+        parser("T-2").contains("\"unmet_branch_boxes\":[1]"),
+        "{}",
+        parser("T-2")
+    );
+    assert!(parser("T-4").contains("\"box\":1"), "{}", parser("T-4"));
     assert_eq!(report.counts.overdue, 1);
     assert_eq!(report.counts.items, 4);
     assert_eq!(report.lines.len(), 2);
@@ -248,7 +305,17 @@ fn verification_uses_the_real_parser_for_empty_invalid_and_overdue_boxes() {
 
 #[test]
 fn settings_and_private_file_thresholds_scope_the_same_live_read() {
-    let world = World::new(vec![issue("T-1", "In Progress", "started", "", None)]);
+    let mut fresh = issue("T-2", "In Progress", "started", "", None);
+    fresh["updatedAt"] = json!(agent_runtime::clock::iso_utc(NOW - 2 * 3600));
+    let world = World::new(vec![
+        issue("T-1", "In Progress", "started", "", None),
+        fresh,
+    ]);
+    // With no setting the threshold is 24 hours: 72 hours is stale, 2 is not.
+    let report = world.run();
+    let found = kinds(&report);
+    assert!(found.contains(&("started-stale", "T-1")), "{found:?}");
+    assert!(!found.iter().any(|(_, id)| *id == "T-2"), "{found:?}");
     for (file, text) in [
         (
             "kendex.settings.toml",
@@ -288,13 +355,25 @@ fn settings_and_private_file_thresholds_scope_the_same_live_read() {
 
 #[test]
 fn merged_review_is_reported_before_age_and_a_failed_probe_keeps_its_finding() {
-    let world = World::new(vec![issue("T-1", "In Review", "started", "", None)]);
+    let world = World::new(vec![
+        issue("T-1", "In Review", "started", "", None),
+        issue("T-2", "In Progress", "started", "", None),
+    ]);
     let gh = world.dir.path().join("gh");
     support::write_executable(
         &gh,
-        "#!/bin/sh\n[ -z \"$GH_REPO\" ] && [ -z \"$GITHUB_REPOSITORY\" ] || exit 1\ncat \"${0%/*}/pulls.json\"\n",
+        "#!/bin/sh\n[ -z \"$GH_REPO\" ] && [ -z \"$GITHUB_REPOSITORY\" ] || exit 1\n[ ! -f \"${0%/*}/gh.fail\" ] || { echo 'gh-stub: pr-list-unavailable' >&2; exit 1; }\ncat \"${0%/*}/pulls.json\"\n",
     );
+    let detail = |report: &reconcile::Report, kind: &str, id: &str| {
+        report
+            .findings
+            .iter()
+            .find(|f| f.kind == kind && f.issue == id)
+            .map(|f| f.detail.clone())
+            .unwrap_or_default()
+    };
     for (rows, expected) in [
+        (json!([]), false),
         (
             json!([{"state":"MERGED","mergedAt":"2026-10-01T00:00:00.123Z","isCrossRepository":false}]),
             true,
@@ -320,42 +399,377 @@ fn merged_review_is_reported_before_age_and_a_failed_probe_keeps_its_finding() {
             expected
         );
     }
+    // Both items are 72 hours old at the 24-hour default.
+    let pulls =
+        |rows: Value| fs::write(world.dir.path().join("pulls.json"), rows.to_string()).unwrap();
+    let stale = || reconcile::run(&world.settings(&[]), None, Some(&gh), NOW).unwrap();
+    // A merged pull request: the In Review item is merged-in-review, the In
+    // Progress one is stale with its pull request merged, never in review.
+    pulls(json!([{"state":"MERGED","mergedAt":"2026-10-01T00:00:00Z","isCrossRepository":false}]));
+    let report = stale();
+    assert_eq!(
+        kinds(&report),
+        [("merged-in-review", "T-1"), ("started-stale", "T-2")],
+        "{report:?}"
+    );
+    assert_eq!(detail(&report, "started-stale", "T-2")["pr"], "merged");
+    // An open pull request is live work, whatever the clock says.
+    pulls(json!([{"state":"OPEN","isCrossRepository":false}]));
+    assert!(stale().findings.is_empty());
+    // A probe gh refuses: each item names it with gh's words and stays
+    // stale, its pull request unverified.
+    fs::write(world.dir.path().join("gh.fail"), "").unwrap();
+    let report = stale();
+    for id in ["T-1", "T-2"] {
+        let cause = detail(&report, "pr-probe-failed", id)["cause"].clone();
+        assert!(
+            cause
+                .as_str()
+                .unwrap_or_default()
+                .contains("gh-stub: pr-list-unavailable"),
+            "{report:?}"
+        );
+        assert_eq!(
+            detail(&report, "started-stale", id)["pr"],
+            "unverified",
+            "{report:?}"
+        );
+    }
+    fs::remove_file(world.dir.path().join("gh.fail")).unwrap();
+    // A reply that is no JSON fails the probe; a fresh item stays fresh.
+    fs::write(world.dir.path().join("pulls.json"), "not-json\n").unwrap();
+    let report = reconcile::run(&world.settings(&[]), Some(999999), Some(&gh), NOW).unwrap();
+    assert_eq!(kinds(&report), [("pr-probe-failed", "T-1")], "{report:?}");
+    // No gh at all.
     let report = world.run();
     assert!(kinds(&report).contains(&("pr-probe-failed", "T-1")));
+    assert!(
+        !detail(&report, "pr-probe-failed", "T-1")["cause"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty()
+    );
     assert!(kinds(&report).contains(&("started-stale", "T-1")));
 }
 
-#[test]
-fn release_merge_evidence_from_the_real_probe_reaches_the_shared_judge() {
-    let world = World::new(vec![issue(
-        "T-1",
+fn release_item(id: &str) -> Value {
+    issue(
+        id,
         "Verifying",
         "started",
         "## Done when\n- [ ] Post-merge: health; Where: logs; Why after merge: release; Trigger: release owner/repo v*; Deadline: +72h",
         None,
-    )]);
-    let gh = world.dir.path().join("gh");
+    )
+}
+
+/// A `gh pr list --json state,mergedAt,isCrossRepository,url` row.
+fn merged_pull(number: u64, at: &str) -> Value {
+    json!({"state":"MERGED", "mergedAt":at, "isCrossRepository":false,
+        "url":format!("https://github.com/owner/repo/pull/{number}")})
+}
+
+/// GitHub's `GET /repos/owner/repo/pulls/N` reply, the fields of it the judge reads.
+fn rest_pull(number: u64, at: &str, oid: &str) -> Value {
+    json!({"number":number, "state":"closed", "merged":true, "merged_at":at, "merge_commit_sha":oid})
+}
+
+fn release(tag: &str, at: &str) -> Value {
+    json!({"tag_name":tag, "published_at":at, "draft":false})
+}
+
+const OID: &str = "1111111111111111111111111111111111111111";
+
+/// One release world: its items, the files its `gh` answers from
+/// (`pulls.json`, or `pulls-<branch>.json` for one branch; `pull-<number>.json`;
+/// `releases-<page>.json`; `compare-<tag>.json`; a missing file is a failed
+/// call), the verb's answer
+/// and the `gh` calls it made.
+fn release_world(
+    items: Vec<Value>,
+    files: &[(&str, Value)],
+) -> (orch_runtime::Result<reconcile::Report>, Vec<String>) {
+    let world = World::new(items);
+    let dir = world.dir.path();
+    let gh = dir.join("gh");
     support::write_executable(
         &gh,
-        "#!/bin/sh\ncase \"$1 $2\" in\n'pr list') echo '[{\"state\":\"MERGED\",\"mergedAt\":\"2026-10-01T00:00:00.123Z\",\"isCrossRepository\":false,\"url\":\"https://github.com/owner/repo/pull/1\",\"mergeCommit\":{\"oid\":\"1111111111111111111111111111111111111111\"}}]' ;;\n'api repos/owner/repo/releases?'*) echo '[{\"tag_name\":\"v1\",\"published_at\":\"2026-10-02T00:00:00Z\",\"draft\":false}]' ;;\n'api repos/owner/repo/compare/'*) echo '{\"status\":\"ahead\"}' ;;\n*) exit 1 ;;\nesac\n",
+        "#!/bin/sh\nd=\"${0%/*}\"\nprintf '%s\\n' \"$*\" >>\"$d/gh.log\"\ncase \"$1 $2\" in\n'pr list') f=\"$d/pulls-$6.json\"; [ -f \"$f\" ] || f=\"$d/pulls.json\" ;;\n'api repos/owner/repo/pulls/'*) f=\"$d/pull-${2##*/}.json\" ;;\n'api repos/owner/repo/releases?'*) f=\"$d/releases-${2##*page=}.json\" ;;\n'api repos/owner/repo/compare/'*) f=\"$d/compare-${2##*...}.json\" ;;\n*) exit 1 ;;\nesac\n[ -f \"$f\" ] || { echo 'gh-stub: HTTP 502' >&2; exit 1; }\ncat \"$f\"\n",
     );
-    let report = reconcile::run(&world.settings(&[]), None, Some(&gh), NOW).unwrap();
-    assert_eq!(report.counts.items, 1);
-    assert_eq!(report.lines.len(), 1);
-    assert!(report.lines[0].contains("merged=2026-10-01T00:00:00Z"));
-    assert!(report.lines[0].contains("deadline=2026-10-05T00:00:00Z"));
-    assert!(
-        !kinds(&report)
+    for (name, value) in files {
+        fs::write(dir.join(name), value.to_string()).unwrap();
+    }
+    let report = reconcile::run(&world.settings(&[]), None, Some(&gh), NOW);
+    let calls = fs::read_to_string(dir.join("gh.log"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    (report, calls)
+}
+
+/// The released release reads, each through the real probe and the shared
+/// judge: the publication that fires the box, the unfired box, a blocker,
+/// every page of the list, a draft, a publication before the merge, a tag
+/// behind the merge commit, one release history shared by every item, and
+/// each read that cannot answer.
+#[test]
+fn release_merge_evidence_from_the_real_probe_reaches_the_shared_judge() {
+    let pulls = json!([merged_pull(1, "2026-10-01T00:00:00.123Z")]);
+    let rest = rest_pull(1, "2026-10-01T00:00:00Z", OID);
+    let ahead = json!({"status":"ahead"});
+    let line = |report: &reconcile::Report, id: &str| {
+        report
+            .lines
             .iter()
-            .any(|(kind, _)| *kind == "verifying-merge-unread")
+            .find(|l| l.starts_with(&format!("verifying {id} ")))
+            .cloned()
+            .unwrap_or_default()
+    };
+    // A publication after the merge fires the box: its deadline counts from it.
+    let (report, _) = release_world(
+        vec![release_item("T-1")],
+        &[
+            ("pulls.json", pulls.clone()),
+            ("pull-1.json", rest.clone()),
+            (
+                "releases-1.json",
+                json!([release("v1", "2026-10-02T00:00:00Z")]),
+            ),
+            ("compare-v1.json", ahead.clone()),
+        ],
     );
+    let report = report.unwrap();
+    assert_eq!(
+        (report.counts.items, report.counts.due),
+        (1, 1),
+        "{report:?}"
+    );
+    assert!(line(&report, "T-1").contains(
+        "status=due deadline=2026-10-05T00:00:00Z merged=2026-10-01T00:00:00Z blocked_by=-"
+    ));
+    assert!(report.findings.is_empty(), "{report:?}");
+    // No release yet: waiting with no deadline, never overdue, the merge kept.
+    let (report, _) = release_world(
+        vec![release_item("T-1")],
+        &[
+            ("pulls.json", pulls.clone()),
+            ("pull-1.json", rest.clone()),
+            ("releases-1.json", json!([])),
+        ],
+    );
+    let report = report.unwrap();
+    assert_eq!(report.counts.waiting, 1, "{report:?}");
+    assert!(line(&report, "T-1").contains("status=waiting deadline=- merged=2026-10-01T00:00:00Z"));
+    assert!(report.findings.is_empty(), "{report:?}");
+    // A fired box with an open blocker is blocked.
+    let mut blocked = release_item("T-1");
+    blocked["inverseRelations"]["nodes"] = json!([{"id":"r-1", "type":"blocks",
+        "issue":{"id":"uuid-KEN-99", "identifier":"KEN-99", "title":"KEN-99",
+            "state":{"name":"In Progress", "type":"started"}}}]);
+    let (report, _) = release_world(
+        vec![blocked],
+        &[
+            ("pulls.json", pulls.clone()),
+            ("pull-1.json", rest.clone()),
+            (
+                "releases-1.json",
+                json!([release("v1", "2026-10-02T00:00:00Z")]),
+            ),
+            ("compare-v1.json", ahead.clone()),
+        ],
+    );
+    let report = report.unwrap();
+    assert_eq!(report.counts.blocked, 1, "{report:?}");
+    assert!(line(&report, "T-1").contains(
+        "status=blocked deadline=2026-10-05T00:00:00Z merged=2026-10-01T00:00:00Z blocked_by=KEN-99"
+    ));
+    // Every page is read; a match on the second page fires.
+    let full: Vec<Value> = (0..100)
+        .map(|n| release(&format!("build-{n}"), "2026-10-02T00:00:00Z"))
+        .collect();
+    let (report, calls) = release_world(
+        vec![release_item("T-1")],
+        &[
+            ("pulls.json", pulls.clone()),
+            ("pull-1.json", rest.clone()),
+            ("releases-1.json", json!(full)),
+            (
+                "releases-2.json",
+                json!([release("v1", "2026-10-02T12:00:00Z")]),
+            ),
+            ("compare-v1.json", ahead.clone()),
+        ],
+    );
+    assert!(line(&report.unwrap(), "T-1").contains("status=due deadline=2026-10-05T12:00:00Z"));
+    assert_eq!(
+        calls.iter().filter(|c| c.contains("/releases?")).count(),
+        2,
+        "{calls:?}"
+    );
+    // A draft never fires; a publication before the merge never fires; the
+    // earliest publication after it does.
+    let (report, _) = release_world(
+        vec![release_item("T-1")],
+        &[
+            ("pulls.json", pulls.clone()),
+            ("pull-1.json", rest.clone()),
+            (
+                "releases-1.json",
+                json!([
+                    {"tag_name":"v9", "published_at":null, "draft":true},
+                    release("v0", "2026-09-30T00:00:00Z"),
+                    release("v3", "2026-10-03T00:00:00Z"),
+                    release("v2", "2026-10-02T06:00:00Z"),
+                ]),
+            ),
+            ("compare-v0.json", ahead.clone()),
+            ("compare-v2.json", ahead.clone()),
+            ("compare-v3.json", ahead.clone()),
+            ("compare-v9.json", ahead.clone()),
+        ],
+    );
+    assert!(line(&report.unwrap(), "T-1").contains("deadline=2026-10-05T06:00:00Z"));
+    // A tag behind the merge commit is passed over.
+    let (report, _) = release_world(
+        vec![release_item("T-1")],
+        &[
+            ("pulls.json", pulls.clone()),
+            ("pull-1.json", rest.clone()),
+            (
+                "releases-1.json",
+                json!([
+                    release("v1", "2026-10-02T00:00:00Z"),
+                    release("v2", "2026-10-02T12:00:00Z")
+                ]),
+            ),
+            ("compare-v1.json", json!({"status":"behind"})),
+            ("compare-v2.json", ahead.clone()),
+        ],
+    );
+    assert!(line(&report.unwrap(), "T-1").contains("deadline=2026-10-05T12:00:00Z"));
+    // Two items share one release history, each judged from its own merge.
+    let (report, calls) = release_world(
+        vec![release_item("T-1"), release_item("T-2")],
+        &[
+            (
+                "pulls-t-1.json",
+                json!([merged_pull(1, "2026-10-02T00:00:00Z")]),
+            ),
+            ("pull-1.json", rest_pull(1, "2026-10-02T00:00:00Z", OID)),
+            (
+                "pulls-t-2.json",
+                json!([merged_pull(2, "2026-10-01T00:00:00Z")]),
+            ),
+            ("pull-2.json", rest_pull(2, "2026-10-01T00:00:00Z", OID)),
+            (
+                "releases-1.json",
+                json!([
+                    release("v2", "2026-10-02T12:00:00Z"),
+                    release("v1", "2026-10-01T12:00:00Z")
+                ]),
+            ),
+            ("compare-v1.json", ahead.clone()),
+            ("compare-v2.json", ahead.clone()),
+        ],
+    );
+    let report = report.unwrap();
+    assert!(
+        line(&report, "T-1").contains("deadline=2026-10-05T12:00:00Z"),
+        "{report:?}"
+    );
+    assert!(
+        line(&report, "T-2").contains("deadline=2026-10-04T12:00:00Z"),
+        "{report:?}"
+    );
+    assert_eq!(
+        calls.iter().filter(|c| c.contains("/releases?")).count(),
+        1,
+        "{calls:?}"
+    );
+    // Each read that cannot answer refuses the verb, its item named.
+    for (case, key, files) in [
+        (
+            "merged pull",
+            "verifying-merge-unread",
+            vec![("pulls.json", pulls.clone())],
+        ),
+        (
+            "merge commit",
+            "verifying-release-unread",
+            vec![
+                (
+                    "pulls.json",
+                    json!([merged_pull(1, "2026-10-01T00:00:00Z")]),
+                ),
+                ("pull-1.json", rest_pull(1, "2026-10-01T00:00:00Z", "abc")),
+                (
+                    "releases-1.json",
+                    json!([release("v1", "2026-10-02T00:00:00Z")]),
+                ),
+                ("compare-v1.json", ahead.clone()),
+            ],
+        ),
+        (
+            "release page",
+            "verifying-release-unread",
+            vec![("pulls.json", pulls.clone()), ("pull-1.json", rest.clone())],
+        ),
+        (
+            "release fields",
+            "verifying-release-unread",
+            vec![
+                ("pulls.json", pulls.clone()),
+                ("pull-1.json", rest.clone()),
+                (
+                    "releases-1.json",
+                    json!([{"tag_name":"v1", "published_at":"2026-10-02T00:00:00Z"}]),
+                ),
+            ],
+        ),
+        (
+            "comparison",
+            "verifying-release-unread",
+            vec![
+                ("pulls.json", pulls.clone()),
+                ("pull-1.json", rest.clone()),
+                (
+                    "releases-1.json",
+                    json!([release("v1", "2026-10-02T00:00:00Z")]),
+                ),
+            ],
+        ),
+        (
+            "comparison status",
+            "verifying-release-unread",
+            vec![
+                ("pulls.json", pulls.clone()),
+                ("pull-1.json", rest.clone()),
+                (
+                    "releases-1.json",
+                    json!([release("v1", "2026-10-02T00:00:00Z")]),
+                ),
+                ("compare-v1.json", json!({"status":"unknown"})),
+            ],
+        ),
+    ] {
+        let (report, _) = release_world(vec![release_item("T-1")], &files);
+        let err = report.expect_err(case);
+        assert_eq!(err.key(), key, "{case}");
+        assert!(
+            err.fields().iter().any(|(k, v)| k == "issue" && v == "T-1"),
+            "{case}"
+        );
+    }
 }
 
 fn repair_passes(mode: &str) {
     use orch_runtime::schedule::{Clock, Duty, SystemClock};
     use orch_runtime::state::Locking;
     use orch_runtime::watch::{Baseline, Tick, tracker};
-    let landed = mode != "write.drop";
+    // A rate-limited update ends the owner read: no read-back, no comment
+    // read, no answer delivered on that pass.
+    let quota = mode == "write.quota";
+    let landed = mode != "write.drop" && !quota;
     let world = World::new(vec![issue(
         "T-7",
         "In Progress",
@@ -448,14 +862,15 @@ fn repair_passes(mode: &str) {
         );
         assert_eq!(
             calls.contains("issues get T-7 --format=safe"),
-            pass == 1 || !landed,
+            !quota && (pass == 1 || !landed),
             "{mode} pass {pass}: {calls}"
         );
-        assert!(
+        assert_eq!(
             calls.contains("comments bulk-list T-7 --format=safe"),
+            !quota,
             "{mode} pass {pass}: {calls}"
         );
-        assert_eq!(delivered(), 1, "{mode} pass {pass}");
+        assert_eq!(delivered(), usize::from(!quota), "{mode} pass {pass}");
     }
 }
 
@@ -468,7 +883,12 @@ fn an_owner_answer_is_delivered_once_whatever_its_description_repair_did() {
     }
     // The duty says an unconfirmed repair on this process's stderr: the
     // passes run in a child whose stderr the row reads.
-    for (mode, said) in [("write.drop", 2), ("", 0), ("write.lost", 0)] {
+    for (mode, said) in [
+        ("write.drop", 2),
+        ("", 0),
+        ("write.lost", 0),
+        ("write.quota", 0),
+    ] {
         let out = support::program(std::env::current_exe().unwrap())
             .args(["--exact", ROW, "--nocapture"])
             .env("REPAIR_CHILD", mode)
@@ -568,6 +988,11 @@ fn a_missing_merge_stays_a_finding_but_a_failed_verification_read_refuses() {
     )
     .unwrap_err();
     assert_eq!(err.key(), "verifying-merge-unread");
+    assert!(
+        err.fields().iter().any(|(k, v)| k == "issue" && v == "T-1"),
+        "{:?}",
+        err.fields()
+    );
 }
 
 #[test]
@@ -638,62 +1063,116 @@ fn a_checklist_the_parser_could_not_read_refuses_the_verb() {
     assert_eq!(reply["refusal"]["key"], "verifying-checklist-unread");
 }
 
+const WATCH_INVALID: &str = "The Verifying item has invalid post-merge metadata or an open branch-provable box. Correct its checklist before verification.";
+
 fn verification_passes() {
     use orch_runtime::schedule::{Clock, Duty, SystemClock};
     use orch_runtime::watch::tracker::{Latest, TrackerInventory, VerifyingItem};
-    use orch_runtime::watch::{Baseline, Change, Tick, verifying};
+    use orch_runtime::watch::{Baseline, Change, Event, Tick, verifying};
     let world = World::new(vec![]);
-    let item = VerifyingItem {
-        id: "T-1".to_owned(),
+    let item = |id: &str, description: &str| VerifyingItem {
+        id: id.to_owned(),
         created_at: "2026-09-01T00:00:00Z".to_owned(),
-        description: "## Done when\n- [x] proof\n  Evidence: tests".to_owned(),
+        description: description.to_owned(),
         priority: "-".to_owned(),
         container: false,
         blocked_by_open: Vec::new(),
     };
     let shared = std::sync::Arc::new(std::sync::Mutex::new(Latest {
         tracker: Some(TrackerInventory {
-            verifying: vec![item],
+            verifying: vec![item("T-1", "## Done when\n- [x] proof\n  Evidence: tests")],
             ..TrackerInventory::default()
         }),
         ..Latest::default()
     }));
-    let mut duty = verifying::body(verifying::Context {
-        settings: world.settings(&[]),
+    let context = |settings| verifying::Context {
+        settings,
         gh: world.dir.path().join("gh-missing"),
-        shared,
+        shared: shared.clone(),
         lines: verifying::Lines::default(),
-    });
-    let mut baseline = Baseline::default();
-    baseline.apply(Change::Set {
+    };
+    let mut duty = verifying::body(context(world.settings(&[])));
+    let row = |identity: &str, value: &str| Change::Set {
         kind: verifying::DEADLINE_ROW.to_owned(),
-        identity: "T-1".to_owned(),
-        value: "boxes=0".to_owned(),
-    });
+        identity: identity.to_owned(),
+        value: value.to_owned(),
+    };
+    let mut baseline = Baseline::default();
+    baseline.apply(row("T-1", "boxes=0"));
     let clock = SystemClock;
-    let pass = |duty: &mut orch_runtime::watch::Body<'_>| {
+    let pass = |duty: &mut orch_runtime::watch::Body<'_>, baseline: &Baseline| {
         duty(&Tick {
             duty: Duty::Verification,
             now: clock.now(),
             wall: NOW,
-            baseline: &baseline,
+            baseline,
             clock: &clock,
         })
-        .unwrap()
     };
     // Read whole, the item's row stands as it is.
-    let first = pass(&mut duty);
+    let first = pass(&mut duty, &baseline).unwrap();
     assert!(first.changes.is_empty(), "{:?}", first.changes);
     let failing = world.dir.path().join("parser-path");
     fs::create_dir(&failing).unwrap();
     support::write_executable(&failing.join("jq"), "#!/bin/sh\nexit 127\n");
     assert_eq!(
-        pass(&mut duty).changes,
+        pass(&mut duty, &baseline).unwrap().changes,
         [Change::Clear {
             kind: verifying::DEADLINE_ROW.to_owned(),
             identity: "T-1".to_owned(),
         }]
     );
+    fs::remove_dir_all(&failing).unwrap();
+    // An invalid item, then a due one, then one whose merge is unread with
+    // a row from an earlier pass: the due item is judged and its row
+    // written, the unread one keeps its row.
+    shared.lock().unwrap().tracker.as_mut().unwrap().verifying = vec![
+        item("T-0", "## Done when\n- [ ] Post-merge: malformed"),
+        item(
+            "T-1",
+            "## Done when\n- [ ] Post-merge: health; Where: logs; Why after merge: deployment; Deadline: 2026-10-02T00:00:00Z",
+        ),
+        item(
+            "T-2",
+            "## Done when\n- [ ] Post-merge: health; Where: logs; Why after merge: deployment; Deadline: +24h",
+        ),
+    ];
+    baseline.apply(row(
+        "T-2",
+        "box=1 trigger=\"merge\" status=due deadline=2026-10-03T00:00:00Z",
+    ));
+    let produced = pass(&mut duty, &baseline).unwrap();
+    assert!(
+        produced
+            .events
+            .iter()
+            .any(|e| matches!(e, Event::VerifyingDeadline { id, .. } if id == "T-1")),
+        "{:?}",
+        produced.events
+    );
+    let touched: Vec<&Change> = produced
+        .changes
+        .iter()
+        .filter(|c| match c {
+            Change::Set { identity, .. } | Change::Clear { identity, .. } => identity != "T-1",
+            _ => true,
+        })
+        .collect();
+    assert!(touched.is_empty(), "{touched:?}");
+    assert!(
+        produced
+            .changes
+            .iter()
+            .any(|c| matches!(c, Change::Set { identity, .. } if identity == "T-1")),
+        "{:?}",
+        produced.changes
+    );
+    // No parser to run.
+    let mut missing = verifying::body(context(
+        world.settings(&[("OVERSEE_WATCH_TRACKER", "/nonexistent/linear")]),
+    ));
+    let err = pass(&mut missing, &baseline).unwrap_err();
+    assert_eq!(err.key(), "missing-linear", "{err:?}");
 }
 
 #[test]
@@ -717,9 +1196,27 @@ fn the_watch_reads_a_checklist_the_parser_could_not_read_as_invalid_and_keeps_no
         out.status.success() && stdout.contains("1 passed"),
         "{stdout}{stderr}"
     );
+    let said = |words: &str| format!("oversee-watch: verifying-invalid issue={words}");
     assert_eq!(
-        stderr.matches("verifying-invalid issue=T-1\n").count(),
+        stderr
+            .matches(&said(&format!(
+                "T-1\n{WATCH_INVALID}\ndone-when parse exit="
+            )))
+            .count(),
         1,
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains(&said(&format!(
+            "T-0\n{WATCH_INVALID}\nverifying-invalid issue=T-0\n{{"
+        ))),
+        "{stderr}"
+    );
+    assert!(stderr.contains("\"box\":1"), "{stderr}");
+    assert!(
+        stderr.contains(&said(&format!(
+            "T-2\n{WATCH_INVALID}\nverifying-merge-unread issue=T-2\n"
+        ))),
         "{stderr}"
     );
 }

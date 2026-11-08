@@ -33,8 +33,21 @@ if a == view:
          'author': {'login': 'app/lane-app'}})
 if a == ['api', 'repos/o/r/commits/' + cfg.get('view_head', head) + '/check-runs?filter=all&per_page=100&page=1']:
     work = cfg.get('work')
+    if work == 'later-fail':
+        counter = root / 'check_reads'
+        count = int(counter.read_text()) + 1 if counter.exists() else 1
+        counter.write_text(str(count))
+        work = 'in_progress' if count == 1 else 'fail'
     if work == 'fail':
         refused()
+    # Answers GitHub never gives a check-runs read: none, a null member list, no JSON.
+    if work == 'empty':
+        sys.exit(0)
+    if work == 'malformed':
+        out({'total_count': 1, 'check_runs': None})
+    if work == 'invalid':
+        print('invalid JSON')
+        sys.exit(0)
     status = 'in_progress' if work == 'settled' else work
     rows = [] if not work else [{
         'id': 72, 'node_id': 'CR_72', 'name': copilot, 'status': status, 'conclusion': None,
@@ -60,7 +73,10 @@ if a == ['api', 'repos/o/r/pulls/42', '--jq', '.head.sha']:
     count = int(counter.read_text()) + 1 if counter.exists() else 1
     counter.write_text(str(count))
     print('01234567fedcba9876543210fedcba9876543210' if cfg.get('head_move_on') == count else head)
-    sys.exit(cfg.get('head_exit', 0))
+    if cfg.get('head_exit') or cfg.get('head_fail_on') == count:
+        print('gh: Not Found (HTTP 404)', file=sys.stderr)
+        sys.exit(cfg.get('head_exit', 1))
+    sys.exit(0)
 if a == ['api', '--method', 'POST', 'repos/o/r/pulls/42/reviews', '--input', '-']:
     with (root / 'posts').open('a') as posts:
         posts.write('post\n')

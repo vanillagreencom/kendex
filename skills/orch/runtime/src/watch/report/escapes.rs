@@ -10,6 +10,7 @@ use super::Context;
 const REACH: u64 = 1_209_600;
 const WEEK: u64 = 604_800;
 const CAP: u64 = 1_790_553_600;
+const CAP_DATE: &str = "2026-09-28";
 
 fn monday(at: u64) -> u64 {
     at.saturating_sub((at + WEEK - 345600) % WEEK)
@@ -52,18 +53,18 @@ fn epoch(text: &str) -> Result<u64, String> {
     u64::try_from(stamp.as_second()).map_err(|e| e.to_string())
 }
 
-fn weekly(log: &str, issues: &[Value], repo: &str, now: u64) -> Result<BTreeMap<u64, u64>, String> {
+fn weekly(log: &str, issues: &[Value], repo: &str, now: u64) -> Result<BTreeMap<u64, u64>, Unread> {
     let mut merges = BTreeMap::new();
     let mut findings = Vec::new();
     for line in log.lines() {
         let mut fields = line.splitn(3, '\t');
-        let sha = fields.next().ok_or("git-log-sha")?;
+        let sha = fields.next().ok_or(Unread::Count)?;
         let at: u64 = fields
             .next()
-            .ok_or("git-log-time")?
+            .ok_or(Unread::Count)?
             .parse()
-            .map_err(|_| "git-log-time")?;
-        let subject = fields.next().ok_or("git-log-subject")?;
+            .map_err(|_| Unread::Count)?;
+        let subject = fields.next().ok_or(Unread::Count)?;
         let merge = if subject.ends_with(')') {
             subject
                 .rsplit_once("(#")
@@ -85,8 +86,8 @@ fn weekly(log: &str, issues: &[Value], repo: &str, now: u64) -> Result<BTreeMap<
         let stamp = issue
             .get("created_at")
             .and_then(Value::as_str)
-            .ok_or("bug-created-at")?;
-        let at = epoch(stamp)?;
+            .ok_or(Unread::Count)?;
+        let at = epoch(stamp).map_err(|_| Unread::Count)?;
         let description = issue
             .get("description")
             .and_then(Value::as_str)
@@ -110,7 +111,7 @@ fn weekly(log: &str, issues: &[Value], repo: &str, now: u64) -> Result<BTreeMap<
     }
     let week = monday(now);
     if week < CAP {
-        return Err("clock-before-cap-week".to_owned());
+        return Err(Unread::BeforeCap);
     }
     let from = week.saturating_sub(5 * WEEK).min(CAP);
     let mut weeks = BTreeMap::new();
@@ -118,16 +119,73 @@ fn weekly(log: &str, issues: &[Value], repo: &str, now: u64) -> Result<BTreeMap<
         weeks.insert(w, 0);
     }
     for at in first.values().filter(|at| **at >= from && **at < now) {
-        *weeks.get_mut(&monday(*at)).ok_or("finding-week")? += 1;
+        *weeks.get_mut(&monday(*at)).ok_or(Unread::Count)? += 1;
     }
     Ok(weeks)
+}
+
+/// Why the count's sources gave no count. The line's reader is a person, so
+/// each cause prints as the sentence [`Unread::sentence`] gives it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Unread {
+    BeforeCap,
+    Base,
+    FetchFailed(String),
+    FetchTimedOut(String),
+    Log(String),
+    Repository,
+    NoLinearCli,
+    LinearFailed,
+    LinearTimedOut,
+    Labels,
+    NoBugLabel,
+    Bugs,
+    Count,
+}
+
+impl Unread {
+    fn sentence(&self) -> String {
+        match self {
+            Unread::BeforeCap => format!("the clock reads before the cap week {CAP_DATE}"),
+            Unread::Base => "the base branch did not resolve".to_owned(),
+            Unread::FetchFailed(base) => format!("git fetch origin {base} failed"),
+            Unread::FetchTimedOut(base) => format!("git fetch origin {base} timed out"),
+            Unread::Log(base) => format!("git log origin/{base} failed"),
+            Unread::Repository => "the repository's owner/name did not resolve".to_owned(),
+            Unread::NoLinearCli => "no Linear CLI".to_owned(),
+            Unread::LinearFailed => "Linear read failed".to_owned(),
+            Unread::LinearTimedOut => "Linear read timed out".to_owned(),
+            Unread::Labels => "the Linear label list did not parse".to_owned(),
+            Unread::NoBugLabel => "no Linear label named bug".to_owned(),
+            Unread::Bugs => "the bug list did not parse".to_owned(),
+            Unread::Count => "the git log or the bug list did not parse".to_owned(),
+        }
+    }
+}
+
+/// How one source read ended without its answer: the program never
+/// started, gave no answer within its bound, or exited nonzero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Failure {
+    NotStarted,
+    TimedOut,
+    Failed,
+}
+
+/// The runner refuses a program that never started as `NotStarted`; every
+/// other refusal is one that started and gave no answer within the bound.
+fn failure(e: &agent_runtime::Error) -> Failure {
+    match e {
+        agent_runtime::Error::NotStarted { .. } => Failure::NotStarted,
+        _ => Failure::TimedOut,
+    }
 }
 
 #[allow(
     clippy::disallowed_methods,
     reason = "escape evidence reads git and Linear through the bounded report runner; no read failure is a zero"
 )]
-fn command(root: &Path, program: &Path, args: &[&str], seconds: u64) -> Result<String, String> {
+fn command(root: &Path, program: &Path, args: &[&str], seconds: u64) -> Result<String, Failure> {
     let out = host::run_tagged_in(
         "report",
         "escape-source",
@@ -140,20 +198,16 @@ fn command(root: &Path, program: &Path, args: &[&str], seconds: u64) -> Result<S
         },
         Duration::from_secs(seconds),
     )
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| failure(&e))?;
     if !out.status.success() {
-        return Err(format!(
-            "{}: {}",
-            program.display(),
-            host::stderr_text(&out).trim()
-        ));
+        return Err(Failure::Failed);
     }
     Ok(host::stdout_text(&out))
 }
 
-fn read(ctx: &Context, now: u64) -> Result<BTreeMap<u64, u64>, String> {
+fn read(ctx: &Context, now: u64) -> Result<BTreeMap<u64, u64>, Unread> {
     if now < CAP {
-        return Err("clock-before-cap-week".to_owned());
+        return Err(Unread::BeforeCap);
     }
     let root = &ctx.settings.roots.project;
     let scripts = root.join(".agents/skills/orch/scripts");
@@ -162,8 +216,9 @@ fn read(ctx: &Context, now: u64) -> Result<BTreeMap<u64, u64>, String> {
         &scripts.join("resolve-base-branch"),
         &[&root.display().to_string()],
         60,
-    )?;
-    let base = base.trim();
+    )
+    .map_err(|_| Unread::Base)?;
+    let base = base.trim().to_owned();
     command(
         root,
         Path::new("git"),
@@ -173,10 +228,14 @@ fn read(ctx: &Context, now: u64) -> Result<BTreeMap<u64, u64>, String> {
             "fetch",
             "--quiet",
             "origin",
-            base,
+            &base,
         ],
         60,
-    )?;
+    )
+    .map_err(|f| match f {
+        Failure::TimedOut => Unread::FetchTimedOut(base.clone()),
+        Failure::NotStarted | Failure::Failed => Unread::FetchFailed(base.clone()),
+    })?;
     let from = monday(now)
         .saturating_sub(5 * WEEK)
         .min(CAP)
@@ -194,7 +253,8 @@ fn read(ctx: &Context, now: u64) -> Result<BTreeMap<u64, u64>, String> {
             &format!("refs/remotes/origin/{base}"),
         ],
         60,
-    )?;
+    )
+    .map_err(|_| Unread::Log(base.clone()))?;
     let resolver = root.join(".agents/skills/github/scripts/lib/gh-repo.sh");
     let repo = command(
         root,
@@ -207,17 +267,23 @@ fn read(ctx: &Context, now: u64) -> Result<BTreeMap<u64, u64>, String> {
             &root.display().to_string(),
         ],
         60,
-    )?;
+    )
+    .map_err(|_| Unread::Repository)?;
     let repo = repo.trim();
     let tracker = &ctx.settings.reads.tracker_cli;
-    let labels: Value = serde_json::from_str(&command(
+    let labels = command(
         root,
         tracker,
         &["labels", "list", "--max", "--format=safe"],
         120,
-    )?)
-    .map_err(|e| e.to_string())?;
-    let labels = labels.as_array().ok_or("label-list")?;
+    )
+    .map_err(|f| match f {
+        Failure::NotStarted => Unread::NoLinearCli,
+        Failure::TimedOut => Unread::LinearTimedOut,
+        Failure::Failed => Unread::LinearFailed,
+    })?;
+    let labels: Value = serde_json::from_str(&labels).map_err(|_| Unread::Labels)?;
+    let labels = labels.as_array().ok_or(Unread::Labels)?;
     let mut labels: Vec<_> = labels
         .iter()
         .filter_map(|l| l.get("name").and_then(Value::as_str))
@@ -226,7 +292,7 @@ fn read(ctx: &Context, now: u64) -> Result<BTreeMap<u64, u64>, String> {
     labels.sort_unstable();
     labels.dedup();
     if labels.is_empty() {
-        return Err("no Linear label named bug".to_owned());
+        return Err(Unread::NoBugLabel);
     }
     let days = format!("{}d", now.saturating_sub(from) / 86400 + 2);
     let mut issues = Vec::new();
@@ -244,9 +310,12 @@ fn read(ctx: &Context, now: u64) -> Result<BTreeMap<u64, u64>, String> {
         if let Some(team) = ctx.settings.watch.linear_team.as_deref() {
             args.extend(["--team", team]);
         }
-        let value: Value = serde_json::from_str(&command(root, tracker, &args, 120)?)
-            .map_err(|e| e.to_string())?;
-        issues.extend(value.as_array().ok_or("bug-list")?.iter().cloned());
+        let text = command(root, tracker, &args, 120).map_err(|f| match f {
+            Failure::TimedOut => Unread::LinearTimedOut,
+            Failure::NotStarted | Failure::Failed => Unread::LinearFailed,
+        })?;
+        let value: Value = serde_json::from_str(&text).map_err(|_| Unread::Bugs)?;
+        issues.extend(value.as_array().ok_or(Unread::Bugs)?.iter().cloned());
     }
     weekly(&log, &issues, repo, now)
 }
@@ -256,13 +325,13 @@ pub(super) fn line(ctx: &Context, now: u64) -> String {
         Ok(weeks) => {
             let week = monday(now);
             format!(
-                "Escapes: this week {}, last week {}, week of 2026-09-28 {}",
+                "Escapes: this week {}, last week {}, week of {CAP_DATE} {}",
                 weeks.get(&week).unwrap_or(&0),
                 weeks.get(&week.saturating_sub(WEEK)).unwrap_or(&0),
                 weeks.get(&CAP).unwrap_or(&0)
             )
         }
-        Err(cause) => format!("Escapes: unread ({})", super::cell(&cause)),
+        Err(cause) => format!("Escapes: unread ({})", cause.sentence()),
     }
 }
 
@@ -286,7 +355,24 @@ mod tests {
         assert_eq!(weeks[&monday(at)], 1);
         assert_eq!(weeks[&monday(at + REACH)], 1);
         assert_eq!(weeks.values().sum::<u64>(), 2);
-        assert!(weekly("bad", &issues, "owner/repo", at).is_err());
+        assert_eq!(weekly("bad", &issues, "owner/repo", at), Err(Unread::Count));
+        let never = agent_runtime::Error::NotStarted {
+            program: "linear",
+            operation: "read",
+            cause: "No such file or directory".to_owned(),
+        };
+        let silent = agent_runtime::Error::External {
+            program: "git",
+            operation: "read",
+            cause: "no answer within 60s".to_owned(),
+        };
+        assert_eq!(failure(&never), Failure::NotStarted);
+        assert_eq!(failure(&silent), Failure::TimedOut);
+        assert_eq!(
+            Unread::FetchTimedOut("main".to_owned()).sentence(),
+            "git fetch origin main timed out"
+        );
+        assert_eq!(Unread::LinearTimedOut.sentence(), "Linear read timed out");
     }
     #[test]
     fn escapes_keep_the_first_finding_reach_cap_week_and_repository_bounds() {

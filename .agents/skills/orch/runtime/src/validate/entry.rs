@@ -102,6 +102,7 @@ fn request(base: Option<String>) -> StartRequest {
         foreground: false,
         reproduce: false,
         restack: false,
+        prove: false,
     }
 }
 
@@ -119,16 +120,7 @@ pub fn mode(
         });
     }
     let scratch = super::Scratch::new(env)?;
-    Ok(super::resolve(
-        settings,
-        &scratch,
-        worktree,
-        &files::stages(worktree)?,
-        &request(base),
-        env,
-    )?
-    .proof
-    .mode)
+    Ok(super::settle(settings, &scratch, worktree, &request(base))?.mode)
 }
 
 fn arguments(args: &Args) -> Result<()> {
@@ -210,8 +202,8 @@ pub fn dispatch(args: &Args, flags: &settings::Flags, env: &Env, locking: Lockin
             }
             answer.exit
         }
-        Err(error) => {
-            let diagnostic = match &error {
+        Err(Failure { error, exit }) => {
+            let diagnostic = match &*error {
                 Error::OverBound { expected, bound } => {
                     format!("dev-validate-run: over-bound expected-secs={expected} bound={bound}")
                 }
@@ -225,12 +217,30 @@ pub fn dispatch(args: &Args, flags: &settings::Flags, env: &Env, locking: Lockin
                 ),
             };
             let _ = writeln!(std::io::stderr(), "{diagnostic}");
-            if args.stop || args.restack_check {
-                1
-            } else {
-                2
-            }
+            exit
         }
+    }
+}
+
+/// A refusal and the status it exits with: 2 for a refused request, 1
+/// where a stop could not end a run or the restack check could not read a
+/// fact it needs.
+struct Failure {
+    error: Box<Error>,
+    exit: i32,
+}
+impl From<Error> for Failure {
+    fn from(error: Error) -> Self {
+        Failure {
+            error: Box::new(error),
+            exit: 2,
+        }
+    }
+}
+fn unanswered_refusal(error: Error) -> Failure {
+    Failure {
+        error: Box::new(error),
+        exit: 1,
     }
 }
 
@@ -238,7 +248,12 @@ pub fn dispatch(args: &Args, flags: &settings::Flags, env: &Env, locking: Lockin
     clippy::disallowed_methods,
     reason = "the catalog entry owns standalone admission, and publishes the directory before waiting for its executor"
 )]
-fn entry(args: &Args, flags: &settings::Flags, env: &Env, locking: Locking) -> Result<TextReply> {
+fn entry(
+    args: &Args,
+    flags: &settings::Flags,
+    env: &Env,
+    locking: Locking,
+) -> std::result::Result<TextReply, Failure> {
     arguments(args)?;
     let dir = || {
         args.run_dir
@@ -268,7 +283,7 @@ fn entry(args: &Args, flags: &settings::Flags, env: &Env, locking: Locking) -> R
         .ok_or_else(|| files::unreadable("required", "--worktree"))?;
     let worktree = fs::canonicalize(worktree).map_err(|e| files::unreadable("not-directory", e))?;
     if !worktree.is_dir() {
-        return Err(files::unreadable("not-directory", worktree.display()));
+        return Err(files::unreadable("not-directory", worktree.display()).into());
     }
     if args.live {
         return Ok(match files::live(&worktree)? {
@@ -281,19 +296,19 @@ fn entry(args: &Args, flags: &settings::Flags, env: &Env, locking: Locking) -> R
         return Ok(TextReply::new(text, exit));
     }
     if args.restack_check {
-        let (text, exit) = crate::ops::proof::restack(
-            &worktree,
-            args.base
-                .as_deref()
-                .ok_or_else(|| files::unreadable("required", "--base"))?,
-            env,
-        )?;
+        let base = args
+            .base
+            .as_deref()
+            .ok_or_else(|| files::unreadable("required", "--base"))?;
+        let (text, exit) =
+            crate::ops::proof::restack(&worktree, base, env).map_err(unanswered_refusal)?;
         return Ok(TextReply::new(text, exit));
     }
     let settings = resolve_at(&worktree, flags)?;
     if args.stop {
         let run::WorktreeStop { units, groups } =
-            run::stop_worktree(&settings, &worktree, None, env, locking)?;
+            run::stop_worktree(&settings, &worktree, None, env, locking)
+                .map_err(unanswered_refusal)?;
         return Ok(TextReply::new(
             format!("state=stopped units={units} groups={groups}"),
             0,
@@ -301,14 +316,14 @@ fn entry(args: &Args, flags: &settings::Flags, env: &Env, locking: Locking) -> R
     }
     if args.resolve_mode {
         if let Some(head) = &args.require_proof {
-            return require_proof(
+            return Ok(require_proof(
                 &settings,
                 &worktree,
                 head,
                 args.expected_head.as_deref().unwrap(),
                 args.base.as_deref(),
                 env,
-            );
+            )?);
         }
         return Ok(TextReply::new(
             format!(
@@ -325,16 +340,15 @@ fn entry(args: &Args, flags: &settings::Flags, env: &Env, locking: Locking) -> R
         ValidateMode::Full
     });
     if mode == ValidateMode::Docs {
-        return Err(files::unreadable(
-            "invalid-mode",
-            "docs is resolved from classification",
-        ));
+        return Err(
+            files::unreadable("invalid-mode", "docs is resolved from classification").into(),
+        );
     }
     if args.reproduce && mode == ValidateMode::Ci {
-        return Err(files::unreadable("reproduce-ci", "ci"));
+        return Err(files::unreadable("reproduce-ci", "ci").into());
     }
     if args.restack && mode != ValidateMode::Ci {
-        return Err(files::unreadable("option-unused", "--restack"));
+        return Err(files::unreadable("option-unused", "--restack").into());
     }
     let base = if mode == ValidateMode::Full {
         if args.base.is_some() {
@@ -494,26 +508,63 @@ fn require_proof(
         &mut log,
     )?
     .unwrap_or_default();
+    // The proof's base is the merge base of HEAD with `--base`, or with the
+    // origin base branch where none is given: what the snapshot is read
+    // against, the restack check and the range read take. A base that
+    // cannot be read is no answer.
+    let base_ref = match base {
+        Some(base) => base.to_owned(),
+        None => match super::base_branch(settings, worktree, &mut log)? {
+            Some(branch) => format!("origin/{branch}"),
+            None => return Err(files::unreadable("proof-base-unresolved", "base-branch")),
+        },
+    };
+    let proof_base = super::git(
+        worktree,
+        "merge-base",
+        &["merge-base", "HEAD", &base_ref],
+        &mut log,
+    )?
+    .map(|sha| sha.trim().to_owned())
+    .filter(|sha| !sha.is_empty())
+    .ok_or_else(|| files::unreadable("proof-base-unresolved", format!("base={base_ref}")))?;
     let scratch = super::Scratch::new(env)?;
-    let class = super::classify(settings, &scratch, worktree, None, &mut log)?;
+    let class = super::classify(settings, &scratch, worktree, Some(&proof_base), &mut log)?;
     if class.tree != tree.trim() {
         return Ok(TextReply::new(
             format!(
                 "validation-proof=missing cause=tree-mismatch expected-head={expected} expected-tree={} checkout-tree={}",
                 tree.trim(),
-                class.tree
+                if class.tree.is_empty() {
+                    "unreadable"
+                } else {
+                    &class.tree
+                }
             ),
             1,
         ));
     }
+    let mut req = request(Some(proof_base.clone()));
+    req.prove = true;
+    let settled = super::settle(settings, &scratch, worktree, &req)?;
+    let mode_line = format!("validate-mode={}", settled.mode.word());
+    let answer = |proof: String, exit: i32| TextReply::new(format!("{mode_line}\n{proof}"), exit);
     if let files::LastPass::Pass(run) = files::last_pass(worktree)?
         && run.get("head") == head
         && run.outcome() == Some(crate::state::StageOutcome::Pass)
-        && let Some(base) = base
-        && crate::ops::proof::restack(worktree, base, env)?.1 == 0
+        && crate::ops::proof::restack(worktree, &proof_base, env)?.1 == 0
     {
-        return Ok(TextReply::new(
+        return Ok(answer(
             format!("validation-proof=tree-pass run-dir={}", run.dir.display()),
+            0,
+        ));
+    }
+    if settled.mode == ValidateMode::Ci {
+        return Ok(answer(
+            format!(
+                "validation-proof=ci verdict=pending head={expected} ci-event={}",
+                settled.ci_event
+            ),
             0,
         ));
     }
@@ -543,7 +594,7 @@ fn require_proof(
         },
     );
     if result.proof == crate::ops::proof::Verdict::Complete {
-        return Ok(TextReply::new(
+        return Ok(answer(
             format!(
                 "validation-proof=local-pass run-dir={}",
                 result.rows[0].run_dir
@@ -551,21 +602,11 @@ fn require_proof(
             0,
         ));
     }
-    let proof_base = match base {
-        Some(base) => Some(base.to_owned()),
-        None => super::base_branch(settings, worktree, &mut log)?
-            .map(|branch| format!("origin/{branch}")),
-    };
-    if let Some(base) = proof_base
-        && mode(settings, worktree, Some(base), env)? == ValidateMode::Ci
-    {
-        return Ok(TextReply::new(
-            format!("validation-proof=ci verdict=pending head={expected}"),
-            0,
-        ));
-    }
-    Ok(TextReply::new(
-        "validation-proof=missing ci-fallback=class-uncovered".into(),
+    Ok(answer(
+        format!(
+            "validation-proof=missing ci-fallback={}",
+            settled.ci_fallback.as_deref().unwrap_or("class-uncovered")
+        ),
         1,
     ))
 }

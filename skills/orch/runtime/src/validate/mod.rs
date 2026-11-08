@@ -20,7 +20,7 @@ use crate::ops::validate::{
     Launch, RecordEnd, RecordLaunch, RecordStart, Reuse, Validate, Validated, Want,
 };
 use crate::ops::{self, Env, Report, Request};
-use crate::settings::{Delivery, Settings};
+use crate::settings::Settings;
 use crate::state::{
     self, ItemState, Locking, Proof, Reused, Stage, StageKind, StageOutcome, ValidateJob,
     ValidateMode,
@@ -60,6 +60,9 @@ pub struct StartRequest {
     pub foreground: bool,
     pub reproduce: bool,
     pub restack: bool,
+    /// A proof read: it asks the CI admission whatever the publication
+    /// order, so a missing proof names the admission's cause.
+    pub prove: bool,
 }
 
 /// The start's reply: the fields of the `state=started` line, the
@@ -885,7 +888,7 @@ fn ci_admission(
     order: &str,
     log: &mut String,
 ) -> Result<CiAdmission> {
-    if settings.validate.delivery == Delivery::PushBase {
+    if delivery(&settings.validate)? == Delivery::PushBase {
         return Ok(CiAdmission::Fallback("push-base".to_owned()));
     }
     let Some(context) = &settings.validate.ci_context else {
@@ -974,16 +977,75 @@ fn narrowest_declared(settings: &Settings) -> Option<&'static str> {
     }
 }
 
-/// Resolve the run from the declaration and the worktree, reading
-/// everything and recording nothing.
-fn resolve(
+/// What a request's mode resolves to, read before the bound, the reuse and
+/// the launch checks a start adds: what `--resolve-mode` and the proof read
+/// answer from.
+struct Settled {
+    mode: ValidateMode,
+    /// The CI admission's fallback cause, where one was read.
+    ci_fallback: Option<String>,
+    ci_event: String,
+    cause: Option<String>,
+    base_sha: String,
+    orphaned: Option<String>,
+    class: Classified,
+    class_base: String,
+    scoped: bool,
+    cmd: String,
+    preview: Preview,
+    log: String,
+}
+
+/// The bound when `DEV_VALIDATE_TIMEOUT_SECS` is unset.
+const TIMEOUT_DEFAULT_SECS: u64 = 3600;
+
+/// `DEV_VALIDATE_TIMEOUT_SECS` as a start reads it: every byte a digit and
+/// the value above zero, a leading zero admitted.
+fn timeout_secs(settings: &crate::settings::ValidateSettings) -> Result<u64> {
+    let Some(text) = &settings.timeout else {
+        return Ok(TIMEOUT_DEFAULT_SECS);
+    };
+    match text.parse::<u64>() {
+        Ok(n) if n > 0 && text.bytes().all(|b| b.is_ascii_digit()) => Ok(n),
+        Ok(_) | Err(_) => Err(crate::settings::value_refusal(
+            crate::settings::DEV_VALIDATE_TIMEOUT_SECS_KEY,
+            text,
+        )),
+    }
+}
+
+/// How a change is delivered, which decides whether a ci request may defer
+/// to the pull request's required CI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Delivery {
+    Pr,
+    PushBase,
+}
+
+/// `ORCH_DELIVERY` as the CI admission reads it: `pr` where unset.
+fn delivery(settings: &crate::settings::ValidateSettings) -> Result<Delivery> {
+    match settings.delivery.as_deref() {
+        None | Some("pr") => Ok(Delivery::Pr),
+        Some("push-base") => Ok(Delivery::PushBase),
+        Some(other) => Err(crate::settings::value_refusal(
+            crate::settings::DELIVERY_KEY,
+            other,
+        )),
+    }
+}
+
+/// Resolve the request's mode from the declaration and the worktree,
+/// reading everything and recording nothing.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the start's ancestry read of the worktree needs git's exit status itself, which the read helper folds into no answer"
+)]
+fn settle(
     settings: &Settings,
     scratch: &Scratch,
     worktree: &Path,
-    stages: &[Stage],
     req: &StartRequest,
-    env: &Env,
-) -> Result<Resolved> {
+) -> Result<Settled> {
     let mut log = String::new();
     let fix_round = req.base.is_some();
     let requested = match req.mode {
@@ -1061,15 +1123,28 @@ fn resolve(
             Err(e) => return Err(files::unreadable("rebase-map-unreadable", e)),
         }
 
-        if git(
-            worktree,
+        // Exit 1 is git's answer that the base is off the branch; any other
+        // failure is no answer, never an orphaned base.
+        let ancestry = host::run_tagged_in(
+            "validate",
+            "git",
+            Path::new("git"),
             "merge-base",
             &["merge-base", "--is-ancestor", &base_sha, "HEAD"],
-            &mut log,
-        )?
-        .is_none()
-        {
-            orphaned = true;
+            at(worktree, &[]),
+            READ_TIMEOUT,
+        )
+        .map_err(|e| files::unreadable("ancestry-unreadable", e))?;
+        log.push_str(&host::stderr_text(&ancestry));
+        match ancestry.status.code() {
+            Some(0) => {}
+            Some(1) => orphaned = true,
+            _ => {
+                return Err(files::unreadable(
+                    "ancestry-unreadable",
+                    format!("base={base_sha}"),
+                ));
+            }
         }
     }
     let orphaned_sha = orphaned.then(|| base_sha.clone());
@@ -1115,11 +1190,12 @@ fn resolve(
     let paths_file = scratch.0.join("paths");
     // A ci request, and under push-first any fix round, asks whether CI
     // covers the change; so does a fix round the declaration lets defer
-    // (its narrowest mode).
+    // (its narrowest mode), and a proof read, which names the admission's
+    // cause where CI does not take the change.
     let may_defer = fix_round && req.mode.is_none() && settings.validate.ci_context.is_some();
     if !docs_mode
         && !req.reproduce
-        && (mode == ValidateMode::Ci || order == "push-first" || may_defer)
+        && (mode == ValidateMode::Ci || order == "push-first" || may_defer || req.prove)
     {
         ci_attempted = true;
         let branch = read("", &mut log)?;
@@ -1321,7 +1397,47 @@ fn resolve(
         base_sha.clear();
         ci_fallback = None;
     }
-    let timeout_secs = settings.validate.timeout.as_secs();
+    Ok(Settled {
+        mode,
+        ci_fallback,
+        ci_event,
+        cause,
+        base_sha,
+        orphaned: orphaned_sha,
+        class,
+        class_base,
+        scoped,
+        cmd,
+        preview,
+        log,
+    })
+}
+
+/// Resolve the run from the declaration and the worktree, reading
+/// everything and recording nothing.
+fn resolve(
+    settings: &Settings,
+    scratch: &Scratch,
+    worktree: &Path,
+    stages: &[Stage],
+    req: &StartRequest,
+    env: &Env,
+) -> Result<Resolved> {
+    let Settled {
+        mode,
+        ci_fallback,
+        ci_event,
+        cause,
+        base_sha,
+        orphaned,
+        class,
+        class_base,
+        scoped,
+        cmd,
+        preview,
+        mut log,
+    } = settle(settings, scratch, worktree, req)?;
+    let timeout_secs = timeout_secs(&settings.validate)?;
     let finding_prefix = settings.validate.finding_prefix.clone().unwrap_or_default();
     let head = git(
         worktree,
@@ -1402,7 +1518,9 @@ fn resolve(
         (None, ValidateMode::Full | ValidateMode::Range | ValidateMode::Docs, _)
         | (None, ValidateMode::Ci, true) => None,
     };
-    if ran_nothing.is_none() {
+    // A foreground command forks through the github skill's group-leader
+    // prefix, which runs perl; a detached one needs neither.
+    if ran_nothing.is_none() && req.foreground {
         if !fs::metadata(group_leader(settings)).is_ok_and(|m| m.is_file()) {
             return Err(files::unreadable(
                 "group-leader-missing",
@@ -1454,7 +1572,7 @@ fn resolve(
         class_log: log,
         paths: class.paths,
         ran_nothing,
-        orphaned: orphaned_sha,
+        orphaned,
     })
 }
 
@@ -1500,7 +1618,9 @@ fn start_record(worktree: &Path, proof: &Proof, start: u64, orphaned: Option<&st
         Some(Reused::PassRun { run_dir }) => line(format!("pass-run={run_dir}")),
         None => {}
     }
-    if !proof.finding_prefix.is_empty() {
+    // A prefix holding a newline begins no log line: the record names none,
+    // so the run is never reuse evidence.
+    if !proof.finding_prefix.is_empty() && !proof.finding_prefix.contains('\n') {
         line(format!("finding-prefix={}", proof.finding_prefix));
     }
     line(format!("head={}", proof.head));

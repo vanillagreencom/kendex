@@ -200,11 +200,13 @@ fn unpassed_at(tree: &str, s: &Stage) -> bool {
         && (s.end.is_none() || s.outcome != Some(StageOutcome::Pass))
 }
 
+/// A row at the tree that did not pass and started no earlier than the
+/// pass voids it: within one start second the records cannot prove which
+/// came first.
 fn voided(stages: &[Stage], tree: &str, pass: &ProofRow) -> bool {
     stages
         .iter()
-        .enumerate()
-        .any(|(index, s)| unpassed_at(tree, s) && (s.start, index) > (pass.start, pass.index))
+        .any(|s| unpassed_at(tree, s) && s.start >= pass.start)
 }
 
 /// Whether the row is a pass that ran its own command: closed `pass`, not

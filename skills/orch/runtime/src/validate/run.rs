@@ -149,14 +149,23 @@ pub fn execute(
     // classification and base replacing any inherited validation context.
     let stdout = log.try_clone().map_err(|e| fail("log", e.to_string()))?;
     execution_mark(&mut claim, "attempted")?;
-    let child = Command::new("/bin/bash")
-        .args([
+    // A foreground run forks through the github skill's group-leader prefix,
+    // which restores the INT and QUIT a caller's async job leaves ignored. A
+    // detached run takes the dispositions its unit or setsid start gives it,
+    // so it runs no prefix and needs no perl.
+    let mut bash = Command::new("/bin/bash");
+    if runner.get("runner").is_some_and(|r| r == "attached") {
+        bash.args([
             "-c",
             ". \"$1\"; exec \"${KENDEX_GROUP_LEADER[@]}\" /bin/bash -c \"$2\"",
             "_",
             &group_leader.display().to_string(),
             &command,
-        ])
+        ]);
+    } else {
+        bash.args(["-c", &command]);
+    }
+    let child = bash
         .current_dir(field("worktree"))
         .process_group(0)
         .env("DEV_VALIDATE_CLASS", field("class"))
@@ -185,6 +194,7 @@ pub fn execute(
     };
     let mut group = CommandGroup {
         child,
+        reaped: false,
         ended: false,
     };
     let pid = group.child.id();
@@ -217,10 +227,13 @@ pub fn execute(
     if !bounded {
         atomic(run_dir, "own-exit", "")?;
     }
-    let status = group.end()?;
+    // The verdict is written before the command's group is ended: a teardown
+    // the executor cannot confirm is its own error, and never takes back the
+    // verdict the command already gave.
     let status = if bounded {
         124
     } else {
+        let status = group.reap_leader()?;
         status
             .code()
             .unwrap_or_else(|| 128 + status.signal().unwrap_or(0))
@@ -251,7 +264,8 @@ pub fn execute(
         run_dir,
         "exit",
         &format!("guard-exit={status} at={ended_at}{suffix}\n"),
-    )
+    )?;
+    group.end()
 }
 
 #[allow(
@@ -324,14 +338,31 @@ pub(crate) fn command_reading(
 
 struct CommandGroup {
     child: std::process::Child,
+    reaped: bool,
     ended: bool,
 }
 impl CommandGroup {
+    /// The leader's own exit status, once it has exited. Its group's number
+    /// stays its own while a member holds it, so the end below still names
+    /// the group the command left.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the command owner reaps the child it spawned"
+    )]
+    fn reap_leader(&mut self) -> Result<std::process::ExitStatus> {
+        let status = self.child.wait().map_err(|e| Error::ValidateUnreadable {
+            read: "command-reap",
+            cause: e.to_string(),
+        })?;
+        self.reaped = true;
+        Ok(status)
+    }
+
     #[allow(
         clippy::disallowed_methods,
         reason = "the command owner ends every readable identity in its group and reaps its child"
     )]
-    fn end(&mut self) -> Result<std::process::ExitStatus> {
+    fn end(&mut self) -> Result<()> {
         use agent_runtime::{process, reading::Reading};
         let rows = process::table().map_err(|e| Error::ValidateUnreadable {
             read: "command-group",
@@ -359,12 +390,11 @@ impl CommandGroup {
                 });
             }
         }
-        let status = self.child.wait().map_err(|e| Error::ValidateUnreadable {
-            read: "command-reap",
-            cause: e.to_string(),
-        })?;
+        if !self.reaped {
+            self.reap_leader()?;
+        }
         self.ended = true;
-        Ok(status)
+        Ok(())
     }
 }
 impl Drop for CommandGroup {
@@ -375,8 +405,10 @@ impl Drop for CommandGroup {
     fn drop(&mut self) {
         if !self.ended {
             let _ = self.end();
-            let _ = self.child.kill();
-            let _ = self.child.wait();
+            if !self.reaped {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+            }
         }
     }
 }

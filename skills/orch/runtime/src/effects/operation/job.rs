@@ -365,7 +365,23 @@ impl Launcher<'_> {
             }
             Err(e) => e.to_string(),
         };
-        match unit_end(unit) {
+        // A unit the manager has loaded and not ended after the failed call
+        // is the job: the call failed after the manager accepted it.
+        let states = unit_states(unit);
+        if let Some((load, active)) = &states
+            && load == "loaded"
+            && unit_state(load, active).is_none()
+        {
+            return Ok(Launched {
+                unanswered: false,
+                read: SidecarRead::Present(JobHandle::Unit {
+                    unit: unit.to_owned(),
+                }),
+                line,
+                failed: None,
+            });
+        }
+        match states.and_then(|(load, active)| unit_state(&load, &active)) {
             Some(JobEnd::UnitEnded { state }) => {
                 let status = format!("unit-{state}");
                 let ended = ended_record(record, "systemd", &status, None, &line);
@@ -1654,11 +1670,17 @@ fn own_uid() -> Option<String> {
 /// manager (a login session scope, a system service) or the file holds no
 /// cgroup v2 line.
 fn own_cgroup() -> Option<String> {
-    let uid = own_uid()?;
+    manager_cgroup(
+        &std::fs::read_to_string("/proc/self/cgroup").ok()?,
+        &own_uid()?,
+    )
+}
+
+/// The cgroup v2 path a `/proc/PID/cgroup` text names, where that path is
+/// below `user@UID.service`.
+fn manager_cgroup(text: &str, uid: &str) -> Option<String> {
     let marker = format!("/user@{uid}.service/");
-    std::fs::read_to_string("/proc/self/cgroup")
-        .ok()?
-        .lines()
+    text.lines()
         .find_map(|line| line.strip_prefix("0::"))
         .filter(|path| path.contains(&marker))
         .map(str::to_owned)
@@ -1760,6 +1782,13 @@ fn ended_record(
 /// The end of the unit `unit`, read through the user manager: `None` where
 /// the manager did not answer or the unit still runs.
 fn unit_end(unit: &str) -> Option<JobEnd> {
+    let (load, active) = unit_states(unit)?;
+    unit_state(&load, &active)
+}
+
+/// The unit's `LoadState` and `ActiveState` as the user manager answers
+/// them; `None` where it did not answer.
+fn unit_states(unit: &str) -> Option<(String, String)> {
     let service = format!("{unit}.service");
     let out = host::run_tagged(
         "job",
@@ -1783,10 +1812,10 @@ fn unit_end(unit: &str) -> Option<JobEnd> {
     }
     let text = host::stdout_text(&out);
     let mut lines = text.lines();
-    unit_state(
-        lines.next().unwrap_or_default(),
-        lines.next().unwrap_or_default(),
-    )
+    Some((
+        lines.next().unwrap_or_default().to_owned(),
+        lines.next().unwrap_or_default().to_owned(),
+    ))
 }
 
 /// What a unit's `LoadState` and `ActiveState` say of the job: the manager
@@ -2097,6 +2126,66 @@ fn send_owner_notice(run: &Run, intent_id: &str, text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The slice a unit is started in and the caps it copies, from the
+    /// cgroup file the kernel writes and the cgroup's limit files: a pane
+    /// under the agent warden's placement, a nested slice, a tmux service, a
+    /// login session outside the user manager, another user's manager, a
+    /// cgroup v1 line, a hybrid file and no file at all.
+    #[test]
+    fn a_unit_takes_the_slice_and_whole_number_caps_of_its_callers_cgroup() {
+        let manager = "0::/user.slice/user-1000.slice/user@1000.service";
+        for (text, want) in [
+            (
+                format!("{manager}/agents.slice/agent-confine-1-a.scope\n"),
+                Some("agents.slice"),
+            ),
+            (
+                format!("{manager}/agents.slice/agents-lane.slice/x.scope\n"),
+                Some("agents-lane.slice"),
+            ),
+            (
+                format!("{manager}/app.slice/tmux.service\n"),
+                Some("app.slice"),
+            ),
+            (
+                "0::/user.slice/user-1000.slice/session-4.scope\n".to_owned(),
+                None,
+            ),
+            (
+                "0::/user.slice/user-1000.slice/user@91000.service/agents.slice/x.scope\n"
+                    .to_owned(),
+                None,
+            ),
+            (
+                "1:name=systemd:/user.slice/user-1000.slice/user@1000.service/agents.slice/x.scope\n"
+                    .to_owned(),
+                None,
+            ),
+            (
+                format!("12:pids:/user.slice\n{manager}/agents.slice/x.scope\n"),
+                Some("agents.slice"),
+            ),
+            (String::new(), None),
+        ] {
+            let slice = manager_cgroup(&text, "1000").and_then(|path| slice_of(&path));
+            assert_eq!(slice.as_deref(), want, "{text:?}");
+        }
+        let dir = tempfile::tempdir().expect("tempdir");
+        for (file, content, want) in [
+            ("pids.max", Some("8192\n"), Some("8192")),
+            ("memory.high", Some("68719476736\n"), Some("68719476736")),
+            ("pids.max", Some("max\n"), None),
+            ("memory.high", None, None),
+        ] {
+            let path = dir.path().join(file);
+            let _ = std::fs::remove_file(&path);
+            if let Some(content) = content {
+                std::fs::write(&path, content).expect("limit file");
+            }
+            assert_eq!(cgroup_cap(dir.path(), file).as_deref(), want, "{file}");
+        }
+    }
 
     #[test]
     fn two_launches_from_one_process_get_two_unit_names() {

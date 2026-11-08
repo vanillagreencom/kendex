@@ -1,3 +1,8 @@
 #!/bin/bash
 set -euo pipefail
-printf 'yes\n'
+# The manager's Linger answer: `yes` unless VALIDATE_LINGER names another,
+# and `unread` a call that fails with its words on stderr.
+case "${VALIDATE_LINGER:-yes}" in
+  unread) echo 'linger read refused' >&2; exit 1 ;;
+  *) printf '%s\n' "${VALIDATE_LINGER:-yes}" ;;
+esac

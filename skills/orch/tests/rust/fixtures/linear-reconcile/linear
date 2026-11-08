@@ -11,6 +11,15 @@ fi
 source "$real/lib/formatters.sh"
 case "${1:-} ${2:-}" in
   'issues list')
+    # The reconciliation's inventory runs the package's own list over the
+    # planted GraphQL answer the curl stand-in serves.
+    case "$*" in
+      'issues list --max'*)
+        cd -- "$here"
+        export PATH="$here:$PATH" LINEAR_API_KEY_OVERRIDE=test-token LINEAR_RETRY_BASE_DELAY=0
+        exec /bin/bash "$real/linear.sh" "$@"
+        ;;
+    esac
     [[ ! -f "$here/read.fail" ]] || exit 1
     raw="$(cat "$here/issues.json")"
     prev=""

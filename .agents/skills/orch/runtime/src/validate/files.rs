@@ -175,6 +175,9 @@ impl RunFile {
             .get("start")
             .parse::<u64>()
             .map_err(|e| unreadable("start", e))?;
+        self.stage_at(start)
+    }
+    fn stage_at(&self, start: u64) -> Result<Stage> {
         let end = self.sentinel.as_deref().and_then(|s| {
             s.split_whitespace()
                 .find_map(|w| w.strip_prefix("at="))
@@ -268,14 +271,27 @@ pub fn runs(worktree: &Path) -> Result<Vec<RunFile>> {
 }
 
 pub fn stages(worktree: &Path) -> Result<Vec<Stage>> {
-    runs(worktree)?
-        .iter()
-        .filter(|r| {
-            matches!(r.get("validate-mode"), "full" | "range" | "ci" | "docs")
-                && !r.get("tree").is_empty()
-        })
-        .map(RunFile::stage)
-        .collect()
+    let mut stages = Vec::new();
+    for run in runs(worktree)?.iter().filter(|r| {
+        matches!(r.get("validate-mode"), "full" | "range" | "ci" | "docs")
+            && !r.get("tree").is_empty()
+    }) {
+        if run.get("start").parse::<u64>().is_ok() {
+            stages.push(run.stage()?);
+            continue;
+        }
+        // A run whose start second cannot be read has no place in the order:
+        // its pass proves nothing, and any other answer stands after every
+        // pass at its tree.
+        if run.outcome() == Some(StageOutcome::Pass) {
+            continue;
+        }
+        let mut unordered = run.stage_at(u64::MAX)?;
+        unordered.end = None;
+        unordered.outcome = None;
+        stages.push(unordered);
+    }
+    Ok(stages)
 }
 
 pub enum LastPass {

@@ -5800,6 +5800,105 @@ fn the_copilot_wait_holds_while_work_runs_and_ends_settled_expired_or_on_the_mov
             "{case}: {ended:?}"
         );
     }
+
+    // A Copilot run in flight on a later check-runs page holds as one on
+    // the first, past an unrelated active check and an earlier completed
+    // Copilot attempt.
+    let mut gh = Github::review_world();
+    gh.answer(
+        &check_runs(HEAD, 1),
+        check_runs_page(
+            3,
+            vec![
+                check_run_in(None, 70, json!("CI"), "in_progress", Value::Null),
+                copilot_check(71, "completed"),
+            ],
+        ),
+    )
+    .answer(
+        &check_runs(HEAD, 2),
+        check_runs_page(3, vec![copilot_check(72, "in_progress")]),
+    );
+    // Its bound is no whole number of polls: the last sleep is the rest.
+    let later = gh.copilot_wait_run(25, |_, _| {});
+    assert_eq!(
+        (later.state, later.run, later.waited),
+        (Some("expired"), Some(72), 25),
+        "{later:?}"
+    );
+
+    // The timeline's history: a request or Copilot's work start is work
+    // until a Copilot review submitted after it, its removal, or a completed
+    // Copilot check started after it answers it; a newer request after an
+    // answered one is work again.
+    let requested = |id: u64, at: &str| json!({"event": "review_requested", "id": id, "created_at": at, "requested_reviewer": {"login": COPILOT_REST}});
+    let started =
+        |id: u64, at: &str| json!({"event": "copilot_work_started", "id": id, "created_at": at});
+    let reviewed = |at: &str| json!({"event": "reviewed", "id": 81, "user": {"login": COPILOT_REST}, "commit_id": HEAD, "submitted_at": at});
+    let removed = |at: &str| json!({"event": "review_request_removed", "id": 82, "created_at": at, "requested_reviewer": {"login": COPILOT_REST}});
+    for (case, timeline, checks, want) in [
+        (
+            "work started, then reviewed",
+            vec![
+                requested(73, "2026-01-01T00:00:00Z"),
+                started(75, "2026-01-01T00:00:35Z"),
+                reviewed("2026-01-01T00:05:00Z"),
+            ],
+            vec![],
+            (Some("none"), None),
+        ),
+        (
+            "work started alone",
+            vec![started(75, "2026-01-01T00:00:35Z")],
+            vec![],
+            (Some("expired"), Some(75)),
+        ),
+        (
+            "a newer request after a review",
+            vec![
+                requested(73, "2026-01-01T00:00:00Z"),
+                reviewed("2026-01-01T00:05:00Z"),
+                requested(79, "2026-01-01T00:06:00Z"),
+            ],
+            vec![],
+            (Some("expired"), Some(79)),
+        ),
+        (
+            "a removed request",
+            vec![
+                requested(73, "2026-01-01T00:00:00Z"),
+                removed("2026-01-01T00:01:00Z"),
+            ],
+            vec![],
+            (Some("none"), None),
+        ),
+        (
+            "a newer request after a removal",
+            vec![
+                requested(73, "2026-01-01T00:00:00Z"),
+                removed("2026-01-01T00:01:00Z"),
+                requested(74, "2026-01-01T00:02:00Z"),
+            ],
+            vec![],
+            (Some("expired"), Some(74)),
+        ),
+        (
+            "a completed Copilot check started after the request",
+            vec![requested(73, "2026-01-01T00:00:00Z")],
+            vec![copilot_check(31, "completed")],
+            (Some("none"), None),
+        ),
+    ] {
+        let mut gh = Github::review_world();
+        gh.answer(&timeline_path(), json!(timeline))
+            .answer(&check_runs(HEAD, 1), check_runs_page(checks.len(), checks));
+        let waited = gh.copilot_wait_run(30, |_, _| {});
+        assert_eq!(
+            (waited.status, (waited.state, waited.run)),
+            ("complete", want),
+            "{case}: {waited:?}"
+        );
+    }
 }
 
 /// Every read the copilot-wait takes that fails or answers what GitHub
@@ -5817,6 +5916,11 @@ fn the_copilot_wait_answers_each_failed_read_unreadable_with_its_cause() {
         ("timeline-invalid", "timeline-response-invalid", None),
         (
             "timeline-review-time-null",
+            "timeline-response-invalid",
+            None,
+        ),
+        (
+            "timeline-request-id-null",
             "timeline-response-invalid",
             None,
         ),
@@ -5847,6 +5951,12 @@ fn the_copilot_wait_answers_each_failed_read_unreadable_with_its_cause() {
                         {"event": "review_requested", "id": 73, "created_at": "2026-01-01T00:00:00Z", "requested_reviewer": {"login": COPILOT_REST}},
                         {"event": "reviewed", "id": 81, "user": {"login": COPILOT_REST}, "commit_id": HEAD, "submitted_at": null}
                     ]),
+                );
+            }
+            "timeline-request-id-null" => {
+                gh.answer(
+                    &timeline_path(),
+                    json!([{"event": "review_requested", "id": null, "created_at": "2026-01-01T00:00:00Z", "requested_reviewer": {"login": COPILOT_REST}}]),
                 );
             }
             "invalid-head" => {

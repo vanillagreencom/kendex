@@ -12,7 +12,24 @@ variables = payload.get('variables') or {}
 rows = json.loads((root / 'issues.json').read_text())['issues']['nodes']
 identifier = variables.get('id', '').removeprefix('uuid-')
 page = {'hasNextPage': False, 'endCursor': None}
-if 'issueUpdate(id:' in query:
+team = '7d1e4b2a-9c3f-4a68-b5e0-2f8c6d1a9e47'
+if 'issueUpdate(id:' in query and (root / 'write.quota').exists():
+    # Linear's rate refusal of a request it did not run.
+    print(json.dumps({'errors': [{'message': 'Rate limit exceeded for requests',
+        'extensions': {'code': 'RATELIMITED'}}]}), end='___HTTP_CODE___400')
+    sys.exit(0)
+if 'query ListIssues(' in query:
+    if (root / 'read.fail').exists():
+        print(json.dumps({'errors': [{'message': 'the issue read failed'}]}), end='___HTTP_CODE___500')
+        sys.exit(0)
+    # The two filters the reconciliation sends: every team, or its one team.
+    if variables.get('filter') not in ({}, {'team': {'id': {'eq': team}}}):
+        print('unhandled issues filter: ' + json.dumps(variables.get('filter')), file=sys.stderr)
+        sys.exit(2)
+    # Linear lists an archived issue, a trashed one among them, only when asked.
+    nodes = [row for row in rows if variables.get('includeArchived') or row.get('archivedAt') is None]
+    data = {'issues': {'pageInfo': page, 'nodes': nodes}}
+elif 'issueUpdate(id:' in query:
     row = next(row for row in rows if row['identifier'] == identifier)
     if not (root / 'write.drop').exists():
         fields = variables['input']

@@ -1016,10 +1016,23 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                     agent_runtime::Error::refused("report-args", &[("action", &action)]).into(),
                 );
             }
-            if action != "due" && repo.is_empty() {
+            // A session's due names its start alone; every fleet request
+            // names its fleet record and the repositories it reads.
+            let missing = if session_start == Some(0) {
+                Some("session-start")
+            } else if session_start.is_some() {
+                None
+            } else if state.is_none() {
+                Some("missing-state")
+            } else if repo.is_empty() {
+                Some("missing-repo")
+            } else {
+                None
+            };
+            if let Some(cause) = missing {
                 return Err(agent_runtime::Error::refused(
                     "report-args",
-                    &[("action", &action), ("cause", "missing-repo")],
+                    &[("action", &action), ("cause", cause)],
                 )
                 .into());
             }
@@ -1258,6 +1271,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
         }
         Verb::ReconcileItems { stale_hours } => {
             let settings = resolve_settings(&flags)?;
+            watch::tracker::reconcile_items::repository(&settings.roots.project)?;
             serde_json::to_value(watch::tracker::reconcile_items::run(
                 &settings,
                 stale_hours,
@@ -1404,6 +1418,7 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 foreground,
                 reproduce,
                 restack,
+                prove: false,
             };
             let mut started = orch_runtime::validate::start(&settings, &request, &env, locking)?;
             if request.foreground && started.launched {

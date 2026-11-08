@@ -810,6 +810,140 @@ pub(super) fn pass(
 mod tests {
     use super::*;
 
+    /// Every file the fleet's token supplier can leave, with the token the
+    /// reader reads from it or the path it judged and the cause it refuses
+    /// under. Another owner's file and parent are `/etc/passwd` and a
+    /// private file in the sticky `/tmp`, the hostile layout itself; run as
+    /// root, a file and a directory handed to uid 1 stand in for them.
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "the row writes the token files it reads"
+    )]
+    #[test]
+    fn the_token_reader_names_the_cause_of_each_file_it_refuses() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt, chown, symlink};
+        use std::path::PathBuf;
+        const TOKEN: &str = "ghs_fixtureToken";
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::metadata(dir.path()).unwrap().uid() == 0;
+        let at = |name: &str| dir.path().join(name);
+        let plant = |name: &str, bytes: &[u8], mode: u32| {
+            let path = at(name);
+            std::fs::write(&path, bytes).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+            path
+        };
+        let line = format!("{TOKEN}\n");
+        let good = plant("token", line.as_bytes(), 0o600);
+        let fifo = at("fifo");
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        let link = at("link");
+        symlink(&good, &link).unwrap();
+        std::fs::create_dir(at("shared")).unwrap();
+        let shared = plant("shared/token", line.as_bytes(), 0o600);
+        std::fs::set_permissions(at("shared"), std::fs::Permissions::from_mode(0o770)).unwrap();
+        let mut held = None;
+        let (foreign, foreign_parent, in_foreign_parent) = if root {
+            let file = plant("foreign", line.as_bytes(), 0o600);
+            chown(&file, Some(1), None).unwrap();
+            std::fs::create_dir(at("foreign-parent")).unwrap();
+            let inside = plant("foreign-parent/token", line.as_bytes(), 0o600);
+            chown(at("foreign-parent"), Some(1), None).unwrap();
+            (file, at("foreign-parent"), inside)
+        } else {
+            let tmp = tempfile::Builder::new()
+                .prefix("orch-parent-owner.")
+                .tempfile_in("/tmp")
+                .unwrap();
+            std::fs::write(tmp.path(), &line).unwrap();
+            let inside = tmp.path().to_path_buf();
+            held = Some(tmp);
+            (PathBuf::from("/etc/passwd"), PathBuf::from("/tmp"), inside)
+        };
+        let refused =
+            |path: &Path, cause: &str| Err((path.display().to_string(), cause.to_owned()));
+        let accepted: std::result::Result<String, (String, String)> = Ok(TOKEN.to_owned());
+        let mut cases = vec![
+            (
+                "missing",
+                at("missing"),
+                refused(&at("missing"), "not-regular"),
+            ),
+            ("a FIFO", fifo.clone(), refused(&fifo, "not-regular")),
+            (
+                "another owner's file",
+                foreign.clone(),
+                refused(&foreign, "not-owned"),
+            ),
+            (
+                "another owner's parent",
+                in_foreign_parent.clone(),
+                refused(&foreign_parent, "not-owned"),
+            ),
+            (
+                "a group-writable parent",
+                shared,
+                refused(&at("shared"), "mode-770"),
+            ),
+            ("a final newline", good.clone(), accepted.clone()),
+            ("a symlink", link, accepted.clone()),
+        ];
+        for (name, bytes, cause) in [
+            ("empty", b"".as_slice(), "malformed"),
+            (
+                "two lines",
+                b"ghs_fixtureToken\nsecond\n".as_slice(),
+                "malformed",
+            ),
+            ("CRLF", b"ghs_fixtureToken\r\n".as_slice(), "malformed"),
+            ("NUL", b"ghs_fixtureToken\0".as_slice(), "malformed"),
+            ("over the cap", [b'x'; 5000].as_slice(), "too-long"),
+        ] {
+            let path = plant(name, bytes, 0o600);
+            cases.push((name, path.clone(), refused(&path, cause)));
+        }
+        for (name, bytes) in [
+            ("no final newline", b"ghs_fixtureToken".as_slice()),
+            (
+                "repeated final newlines",
+                b"ghs_fixtureToken\n\n".as_slice(),
+            ),
+        ] {
+            cases.push((name, plant(name, bytes, 0o600), accepted.clone()));
+        }
+        for mode in [0o640, 0o604, 0o620, 0o602, 0o610, 0o601] {
+            let path = plant(&format!("mode-{mode:o}"), line.as_bytes(), mode);
+            cases.push((
+                "a mode",
+                path.clone(),
+                refused(&path, &format!("mode-{mode:o}")),
+            ));
+        }
+        // Mode 000 passes the mode check; its open fails, except as root.
+        let closed = plant("mode-0", line.as_bytes(), 0o000);
+        let opened = if root {
+            accepted.clone()
+        } else {
+            refused(&closed, "malformed")
+        };
+        cases.push(("mode 000, the open failing", closed, opened));
+        assert_eq!(read_token(None), Err((String::new(), "unset".to_owned())));
+        assert_eq!(
+            read_token(Some(Path::new(""))),
+            Err((String::new(), "unset".to_owned()))
+        );
+        for (name, path, want) in cases {
+            assert_eq!(read_token(Some(&path)), want, "{name}: {}", path.display());
+        }
+        drop(held);
+    }
+
     #[test]
     fn a_failed_reads_cause_is_githubs_own_words_then_its_status() {
         let rows = [

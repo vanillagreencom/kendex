@@ -32,8 +32,6 @@ struct Pull {
     merged_at: Option<String>,
     #[serde(rename = "isCrossRepository")]
     cross_repository: bool,
-    #[serde(rename = "mergeCommit")]
-    merge_commit: Option<Value>,
     url: Option<String>,
 }
 
@@ -82,12 +80,7 @@ impl Report {
     clippy::disallowed_methods,
     reason = "the reconciliation inventory reads local branch pull requests through the bounded runner without repository redirects"
 )]
-fn pulls(
-    gh: &Path,
-    cwd: &Path,
-    id: &str,
-    read: &mut BTreeMap<String, Value>,
-) -> std::result::Result<Pulls, String> {
+fn pulls(gh: &Path, cwd: &Path, id: &str) -> std::result::Result<Pulls, String> {
     let output = host::run_tagged_in(
         "reconcile-items",
         "gh",
@@ -101,7 +94,7 @@ fn pulls(
             "--head",
             &id.to_ascii_lowercase(),
             "--json",
-            "state,mergedAt,isCrossRepository,mergeCommit,url",
+            "state,mergedAt,isCrossRepository,url",
         ],
         host::Place {
             cwd: Some(cwd),
@@ -150,12 +143,11 @@ fn pulls(
                         repo.split('/').count() == 2 && number.parse::<u64>().is_ok()
                     })
                 {
-                    let repo = repo.to_ascii_lowercase();
-                    found.keys.push(format!("{repo}#{number}"));
-                    read.insert(format!("repos/{repo}/pulls/{number}"), json!({
-                        "merged_at": agent_runtime::clock::iso_utc(epoch),
-                        "merge_commit_sha": row.merge_commit.as_ref().and_then(|c| c.get("oid")),
-                    }));
+                    // The judge reads the pull request's own reply for its
+                    // merge and merge commit.
+                    found
+                        .keys
+                        .push(format!("{}#{number}", repo.to_ascii_lowercase()));
                 }
             }
             "CLOSED" => found.unmerged += 1,
@@ -163,6 +155,30 @@ fn pulls(
         }
     }
     Ok(found)
+}
+
+/// The inventory is the checkout's: a project root no repository holds
+/// refuses `not-repository` before any read, since the pull request probe
+/// answers for the repository it runs in.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the reconciliation verb asks git once whether its project root is a checkout, through the bounded runner"
+)]
+pub fn repository(project: &Path) -> Result<()> {
+    let path = project.display().to_string();
+    let output = host::run_tagged_in(
+        "reconcile-items",
+        "git",
+        Path::new("git"),
+        "toplevel",
+        &["-C", &path, "rev-parse", "--show-toplevel"],
+        host::Place::default(),
+        TRACKER_TIMEOUT,
+    )?;
+    if !output.status.success() {
+        return Err(refused("not-repository", &[("path", &path)]));
+    }
+    Ok(())
 }
 
 pub fn run(
@@ -255,8 +271,7 @@ pub fn run(
         let started = item.state_type == "started"
             && item.state != "Verifying"
             && (item.state == "In Review" || age.is_some_and(|h| h >= i128::from(stale_hours)));
-        let prs =
-            (verifying || started).then(|| pulls(gh, &settings.roots.project, &item.id, &mut read));
+        let prs = (verifying || started).then(|| pulls(gh, &settings.roots.project, &item.id));
         if started {
             let evidence = match prs.as_ref().expect("a probed item") {
                 Ok(prs) => Some(prs),
@@ -298,7 +313,9 @@ pub fn run(
                 blocked_by_open: item.blocked_by_open.clone(),
             };
             match verifying::judge_item(&ctx, &verifying_item, keys, now, &mut read)? {
-                Item::Invalid => report.note("verifying-invalid", item, json!({})),
+                Item::Invalid { evidence } => {
+                    report.note("verifying-invalid", item, json!({"parser": evidence}));
+                }
                 Item::Unparsed { cause } => {
                     return Err(refused(
                         "verifying-checklist-unread",
@@ -306,8 +323,9 @@ pub fn run(
                     ));
                 }
                 Item::Unread { key, cause } => {
-                    if key == "verifying-release-unread" || prs.as_ref().is_some_and(|p| p.is_err())
-                    {
+                    // A read that failed has its cause; a merge no read
+                    // found has none and is a finding.
+                    if !cause.is_empty() || prs.as_ref().is_some_and(|p| p.is_err()) {
                         let cause = prs
                             .as_ref()
                             .and_then(|p| p.as_ref().err())

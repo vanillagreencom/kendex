@@ -111,6 +111,10 @@ main_code() { printf 'echo uno\n' > "$1/code.sh"; }
 main_other() { printf 'other\n' > "$1/other.txt"; }
 main_drop_changelog() { rm -- "$1/pkg/CHANGELOG.md"; }
 main_link() { ln -sfn c.md "${1:?}/changelog.d/fixed/link.md"; }
+main_mode() {
+  printf -- '- main entry\n' >> "$1/pkg/CHANGELOG.md"
+  chmod +x "$1/pkg/CHANGELOG.md"
+}
 
 # Resolutions, one per row, each run with the rebase stopped on its conflict.
 take_version() { skills "$1" 1.1.1 "Body, branch."; }
@@ -125,6 +129,12 @@ take_package_private() { take_package "$1"; package 1.0.6 "echo branch" false > 
 take_package_script() { take_package "$1"; package 1.0.6 "echo third" > "$1/pkg/package.json"; }
 take_package_code() { take_package "$1"; printf 'echo one\necho two\necho three\n' > "$1/code.sh"; }
 take_script() { package 1.0.6 "echo third" > "$1/pkg/package.json"; }
+take_package_new() { take_package "$1"; printf 'new\n' > "$1/new.txt"; }
+take_package_link() { take_package "$1"; ln -sfn d.md "${1:?}/changelog.d/fixed/link.md"; }
+leave_version_markers() {
+  take_package "$1"
+  printf '{\n<<<<<<< main\n  "version": "1.0.5",\n=======\n  "version": "1.0.1",\n>>>>>>> branch\n  "name": "p"\n}\n' > "$1/pkg/package.json"
+}
 leave_markers() {
   take_package "$1"
   printf '# Changelog\n\n### Unreleased\n\n- base entry\n<<<<<<< main\n- main entry\n=======\n- branch entry\n>>>>>>> branch\n' \
@@ -154,9 +164,9 @@ make_row() {
   printf '%s\n' "$wt"
 }
 
-ask() { # SCRIPT WT — the answer line less its run directory, and the exit
+ask() { # SCRIPT WT [BASE] — the answer line less its run directory, and the exit
   local out rc=0
-  out="$(clean_env "$1" --worktree "$2" --base origin/main 2>&1)" || rc=$?
+  out="$(clean_env "$1" --worktree "$2" --base "${3:-origin/main}" 2>&1)" || rc=$?
   printf '%s rc=%s\n' "$(sed -E 's/ run-dir=[^ ]*//' <<<"$out")" "$rc"
 }
 skip_line() { # WT CONDITION PATHS
@@ -191,6 +201,10 @@ ROWS=(
   "a prose conflict retained in a union still requires a retest|prose-union|main_prose|take_package_prose|restack=retest cause=hunk path=pkg/CHANGELOG.md rc=1"
   "a modify/delete conflict over a changelog, resolved by keeping the modified side, re-tests|modify-delete|main_drop_changelog|keep_as_left|restack=retest cause=conflict-kind path=pkg/CHANGELOG.md rc=1"
   "a symlinked fragment both lanes retargeted, kept as git keeps it, re-tests|symlink|main_link|keep_as_left|restack=retest cause=conflict-kind path=changelog.d/fixed/link.md rc=1"
+  "a changelog conflict whose sides hold it in two modes re-tests|mode-change|main_mode|take_package|restack=retest cause=conflict-kind path=pkg/CHANGELOG.md rc=1"
+  "a resolution that adds a file re-tests|added|main_package|take_package_new|restack=retest cause=path-shape path=new.txt rc=1"
+  "a resolution that retargets an unconflicted symlink re-tests|link-edit|main_package|take_package_link|restack=retest cause=path-shape path=changelog.d/fixed/link.md rc=1"
+  "a version file left with conflict markers re-tests|version-markers|main_package|leave_version_markers|restack=retest cause=classifier-failed path=pkg/package.json rc=1"
 )
 for row in "${ROWS[@]}"; do
   IFS='|' read -r label name main resolve want <<<"$row"
@@ -212,6 +226,17 @@ cp -a -- "$TMP_ROOT/package" "$TMP_ROOT/no-classifier"
 rm -- "$TMP_ROOT/no-classifier/.agents/skills/commit-guards"
 assert_eq "$(ask "$SCRIPTS_DIR/restack-skip" "$TMP_ROOT/no-classifier")" "restack=retest cause=classifier-missing rc=1" \
   "a worktree with no commit-guards install re-tests"
+assert_eq "$(ask "$SCRIPTS_DIR/restack-skip" "$TMP_ROOT/package" no-such-ref)" "restack=retest cause=base-unreadable rc=1" \
+  "a base that names no commit re-tests"
+cp -a -- "$TMP_ROOT/package" "$TMP_ROOT/unborn"
+g "$TMP_ROOT/unborn" checkout -q --orphan unborn
+assert_eq "$(ask "$SCRIPTS_DIR/restack-skip" "$TMP_ROOT/unborn")" "restack=retest cause=head-unreadable rc=1" \
+  "a worktree whose HEAD names no commit re-tests"
+cp -a -- "$TMP_ROOT/package" "$TMP_ROOT/classifier-refused"
+sed -i.bak 's|^COMMIT_GUARDS_CHANGELOG_VERSION_PATHS = .*|COMMIT_GUARDS_CHANGELOG_VERSION_PATHS = "/abs/pkg.json ../outside.json"|' \
+  "$TMP_ROOT/classifier-refused/kendex.settings.toml"
+assert_eq "$(ask "$SCRIPTS_DIR/restack-skip" "$TMP_ROOT/classifier-refused")" "restack=retest cause=classifier-failed rc=1" \
+  "a classifier that refuses its settings re-tests"
 cp -a -- "$TMP_ROOT/package" "$TMP_ROOT/no-run"
 rm -rf -- "$TMP_ROOT/no-run/tmp"
 assert_eq "$(ask "$SCRIPTS_DIR/restack-skip" "$TMP_ROOT/no-run")" "restack=retest cause=no-passing-run rc=1" \

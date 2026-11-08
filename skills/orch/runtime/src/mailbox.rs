@@ -633,6 +633,29 @@ impl Mailbox {
         self.owner_asks(root, &["--due"])
     }
 
+    /// `pending --item ITEM --root ROOT`: the lane's open asks and the
+    /// directives it has not read, moving no cursor; a hosted lane's
+    /// through `lane-host` under `host`, its record's host.
+    pub fn pending(
+        &self,
+        item: &str,
+        root: &Path,
+        host: Option<&str>,
+    ) -> Result<Vec<Envelope>, Refusal> {
+        const VERB: &str = "pending";
+        let root = root.display().to_string();
+        let mut args = vec!["--item", item, "--root", &root];
+        if host.is_some() {
+            args.push("--host");
+        }
+        let stdout = self.call_on(VERB, &args, host, None)?.ok(VERB)?;
+        stdout
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| envelope(VERB, l))
+            .collect()
+    }
+
     fn owner_asks(&self, root: &Path, select: &[&str]) -> Result<Vec<Envelope>, Refusal> {
         const VERB: &str = "pending";
         let root = root.display().to_string();

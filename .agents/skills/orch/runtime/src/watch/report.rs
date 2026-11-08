@@ -10,7 +10,7 @@ use agent_runtime::{clock, host};
 use serde_json::{Value, json};
 
 use crate::error::{Error, Result};
-use crate::mailbox::Mailbox;
+use crate::mailbox::{Envelope, Mailbox, Refusal};
 use crate::settings::Settings;
 use crate::state::{self, Document, Lane, LaneStatus};
 use crate::watch::{Body, Change, Event, Produced, Runner, Tick};
@@ -259,14 +259,32 @@ fn window(ctx: &Context, doc: &Document, session_start: Option<u64>) -> Result<W
             owner = Some(owner.unwrap_or(0).max(at));
         }
     }
-    let start = session_start.or_else(|| {
-        doc.get("lanes")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|l| field(l, "launched_at").and_then(clock::epoch_secs))
-            .min()
-    });
+    let start = match session_start {
+        Some(start) => Some(start),
+        None => {
+            let mut start = None;
+            for lane in doc
+                .get("lanes")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let Some(stamp) = field(lane, "launched_at") else {
+                    continue;
+                };
+                // An unread launch is never passed over: the fleet start it
+                // might be would move every window.
+                let at = clock::epoch_secs(stamp).ok_or_else(|| {
+                    unjudged(&[
+                        ("cause", "launched-at"),
+                        ("item", field(lane, "item").unwrap_or("-")),
+                    ])
+                })?;
+                start = Some(start.map_or(at, |s: u64| s.min(at)));
+            }
+            start
+        }
+    };
     Ok(Window {
         latest: latest.or(start),
         owner: owner.or(start),
@@ -527,6 +545,16 @@ fn span_line(github: &Path, lane: &Value, default_repo: Option<&str>) -> String 
     )
 }
 
+/// A `lane-mail` refusal's keyed line naming the lane's own host or mailbox,
+/// `(host-unreachable|mail-read-failed)=ITEM( |$)`: the lane is marked and
+/// the report goes on; any other refusal stops it.
+fn names_lane(keyed: &str, item: &str) -> bool {
+    let Some((key, rest)) = keyed.split_once('=') else {
+        return false;
+    };
+    matches!(key, "host-unreachable" | "mail-read-failed") && rest.split(' ').next() == Some(item)
+}
+
 fn cell(text: &str) -> String {
     text.split_whitespace()
         .collect::<Vec<_>>()
@@ -593,6 +621,10 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
         .unwrap_or_else(|p| p.into_inner())
         .tracker
         .clone();
+    let verifying: BTreeSet<String> = tracker
+        .iter()
+        .flat_map(|inventory| inventory.verifying.iter().map(|item| item.id.clone()))
+        .collect();
     match tracker {
         Some(inventory) => {
             out.push_str(&format!(
@@ -736,11 +768,16 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
                 ..
             } in rows
             {
+                let state = if verifying.contains(&item) {
+                    "; Verifying"
+                } else {
+                    ""
+                };
                 if number == 0 {
-                    out.push_str(&format!("- {}: direct push.\n", cell(&item)));
+                    out.push_str(&format!("- {}: direct push{state}.\n", cell(&item)));
                 } else {
                     out.push_str(&format!(
-                        "- {}: {} ([{repo}#{number}](https://github.com/{repo}/pull/{number})).\n",
+                        "- {}: {} ([{repo}#{number}](https://github.com/{repo}/pull/{number})){state}.\n",
                         cell(&item),
                         cell(&title)
                     ));
@@ -760,7 +797,23 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
             LaneStatus::Running | LaneStatus::Preparing | LaneStatus::Parked
         )
     }) {
-        out.push_str(&format!("- {}: {:?}.\n", cell(&lane.item), lane.status));
+        // The pull request the lane record names: its open one, else the
+        // one its park judged.
+        let pull = ["pending_pr", "parked"]
+            .iter()
+            .find_map(|key| lane.extra.get(*key)?.get("pr")?.as_u64());
+        match pull {
+            Some(number) => out.push_str(&format!(
+                "- {}: {:?}, #{number}.\n",
+                cell(&lane.item),
+                lane.status
+            )),
+            None => out.push_str(&format!(
+                "- {}: {:?}, no pull request.\n",
+                cell(&lane.item),
+                lane.status
+            )),
+        }
     }
     let launched: BTreeSet<_> = lanes.iter().map(|l| l.item.as_str()).collect();
     let queue = doc
@@ -809,13 +862,26 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
         .filter(|e| e.mail_class.as_deref() == Some("resolution"))
         .filter_map(|e| e.re.as_deref())
         .collect();
-    if asks.is_empty() {
-        out.push_str("- Nothing.\n");
+    let mut waiting = Vec::new();
+    let posted: Vec<&Envelope> = asks
+        .iter()
+        .filter(|ask| ask.tracker_posted == Some(true))
+        .collect();
+    if !posted.is_empty() {
+        let issues: Vec<&str> = posted
+            .iter()
+            .filter_map(|ask| ask.issue.as_deref())
+            .collect();
+        waiting.push(format!(
+            "- {} on the tracker: {}.\n",
+            posted.len(),
+            cell(&issues.join(", "))
+        ));
     }
-    for ask in asks {
+    for ask in asks.iter().filter(|ask| ask.tracker_posted != Some(true)) {
         let status = if ask.reserved == Some(true) {
             if answered.contains(ask.id()) {
-                "reserved, answered, awaiting close".to_owned()
+                " (reserved, answered, awaiting close)".to_owned()
             } else {
                 let overdue = ask
                     .deadline
@@ -823,27 +889,68 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
                     .and_then(clock::epoch_secs)
                     .is_some_and(|at| at <= now);
                 format!(
-                    "reserved, no default; {} {}",
+                    " (reserved, no default; {} {})",
                     if overdue { "overdue since" } else { "due" },
                     ask.deadline.as_deref().unwrap_or("unread")
                 )
             }
+        } else if let Some(recommend) = ask.recommend.as_deref() {
+            match ask.deadline.as_deref() {
+                Some(deadline) => {
+                    format!(" (recommended {recommend}; defaults to it after {deadline})")
+                }
+                None => format!(" (recommended {recommend}; no deadline)"),
+            }
         } else {
-            format!(
-                "recommended {}; deadline {}",
-                ask.recommend.as_deref().unwrap_or("none"),
-                ask.deadline.as_deref().unwrap_or("none")
-            )
+            String::new()
         };
         let link = ask
             .issue
             .as_deref()
             .map(|i| format!("{i}: "))
             .unwrap_or_default();
-        out.push_str(&format!(
-            "- {link}{} ({status}).\n",
+        waiting.push(format!(
+            "- {link}{}{status}.\n",
             cell(ask.text.as_deref().unwrap_or("unread"))
         ));
+    }
+    for lane in lanes
+        .iter()
+        .filter(|l| l.status == LaneStatus::Running && !l.session_channel())
+    {
+        let root = lane
+            .mail_root
+            .as_deref()
+            .filter(|r| !r.is_empty())
+            .ok_or_else(|| unjudged(&[("cause", "mail-root-missing"), ("item", &lane.item)]))?;
+        let host = lane.host.as_deref().filter(|h| !h.is_empty());
+        match mail.pending(&lane.item, Path::new(root), host) {
+            Ok(envelopes) => {
+                for ask in envelopes.iter().filter(|e| e.kind() == "ask") {
+                    waiting.push(format!(
+                        "- {} waits on the overseer to answer: {}.\n",
+                        cell(&lane.item),
+                        cell(ask.text.as_deref().unwrap_or(""))
+                    ));
+                }
+            }
+            Err(Refusal::Exit {
+                status: Some(2),
+                keyed: Some(line),
+                ..
+            }) if names_lane(&line, &lane.item) => waiting.push(format!(
+                "- {item} mailbox unreadable (mail-read={item}): lane-mail: {}.\n",
+                cell(&line),
+                item = cell(&lane.item)
+            )),
+            Err(refusal) => return Err(refusal.into()),
+        }
+    }
+    if waiting.is_empty() {
+        out.push_str("- Nothing.\n");
+    }
+    for line in waiting {
+        out.push_str(&line);
     }
     out.push_str("\n```\nHeadroom remaining\n```\n\n");
     match crate::ops::accounts::roster(&ctx.settings, None, now) {
@@ -878,17 +985,18 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
     reason = "report bytes and the delivery attempt are durable before the mailbox start; only its attachment confirms delivery"
 )]
 pub fn write(ctx: &Context, now: u64, summary: &Path, succession: bool) -> Result<Value> {
-    let summary = summary.canonicalize().map_err(|e| {
+    let summary_text = std::fs::read_to_string(summary).map_err(|e| {
         unjudged(&[
             ("summary", &summary.display().to_string()),
             ("cause", &e.to_string()),
         ])
     })?;
-    let summary_text =
-        std::fs::read_to_string(&summary).map_err(|e| unjudged(&[("cause", &e.to_string())]))?;
-    if summary_text.trim().is_empty() {
+    // The notice's text is the summary less its trailing blank lines.
+    let lines: Vec<&str> = summary_text.lines().collect();
+    let Some(last) = lines.iter().rposition(|l| !l.trim().is_empty()) else {
         return Err(unjudged(&[("cause", "summary-empty")]));
-    }
+    };
+    let notice_text = format!("{}\n", lines[..=last].join("\n"));
     let target = crate::ops::store::progress_report_path(
         &ctx.settings.store.progress_report_dir,
         now,
@@ -984,13 +1092,18 @@ pub fn write(ctx: &Context, now: u64, summary: &Path, succession: bool) -> Resul
     let notice = if quiet {
         None
     } else {
-        Some(
-            Mailbox::new(ctx.settings.lane_mail_cli.clone()).report_notice(
-                &ctx.settings.roots.common,
-                &target,
-                &summary,
-            )?,
-        )
+        // The text the notice carries, beside the report and gone with the
+        // send: the mailbox runs in the main checkout, so the file it reads
+        // is named by an absolute path.
+        let text = target.with_extension("notice.txt");
+        std::fs::write(&text, &notice_text).map_err(|e| unjudged(&[("cause", &e.to_string())]))?;
+        let sent = Mailbox::new(ctx.settings.lane_mail_cli.clone()).report_notice(
+            &ctx.settings.roots.common,
+            &target,
+            &text,
+        );
+        let _ = std::fs::remove_file(&text);
+        Some(sent?)
     };
     // Delivered, or quiet with nothing owed: the attempt has served. One left
     // behind is harmless: a retry in this minute reconciles by the box, and a

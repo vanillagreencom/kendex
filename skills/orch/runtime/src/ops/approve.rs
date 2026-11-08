@@ -16,8 +16,8 @@ use crate::error::{Error, Result};
 use crate::schedule::Clock;
 use crate::settings::Settings;
 use crate::state::{self, Document, Locking};
-use crate::verify::Gh;
 use crate::verify::review::{self, Flight};
+use crate::verify::{Gh, Unreadable};
 
 const APPROVALS: &str = "head_approvals";
 const BOUND: Duration = Duration::from_secs(60);
@@ -47,6 +47,9 @@ pub struct ApprovedHead {
     pub head: String,
     pub reason: String,
     pub review: Option<Value>,
+    /// gh's words for a POST GitHub refused or a read-back that failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -66,9 +69,12 @@ enum Attempt {
 /// The refusal of an attempt a complete read-back found had not landed.
 const NOT_LANDED: &str = "not-landed";
 
-fn refuse(key: &'static str) -> Error {
-    agent_runtime::Error::refused(key, &[]).into()
+fn refuse(key: &'static str, fields: &[(&str, &str)]) -> Error {
+    agent_runtime::Error::refused(key, fields).into()
 }
+
+/// The remedy a `review-replies` refusal names.
+const REPLIES_FIX: &str = "Restore the github reader if unavailable; address its findings and retry approval for the current head.";
 
 fn valid_sha(head: &str, min: usize) -> bool {
     (min..=40).contains(&head.len())
@@ -88,11 +94,11 @@ fn entries<'a>(
     let root = doc.entry(APPROVALS).or_insert_with(|| json!({}));
     let root = root
         .as_object_mut()
-        .ok_or_else(|| refuse("approval-record"))?;
+        .ok_or_else(|| refuse("approval-record", &[]))?;
     root.entry(slot(r))
         .or_insert_with(|| json!({}))
         .as_object_mut()
-        .ok_or_else(|| refuse("approval-record"))
+        .ok_or_else(|| refuse("approval-record", &[]))
 }
 
 #[allow(
@@ -113,7 +119,7 @@ fn update<T>(
         let records = entries(&mut doc, r)?;
         let mut entry: Entry = match records.get(head) {
             Some(value) => {
-                serde_json::from_value(value.clone()).map_err(|_| refuse("approval-record"))?
+                serde_json::from_value(value.clone()).map_err(|_| refuse("approval-record", &[]))?
             }
             None => Entry {
                 login: login.into(),
@@ -121,7 +127,7 @@ fn update<T>(
             },
         };
         if entry.login != login {
-            return Err(refuse("approval-login-changed"));
+            return Err(refuse("approval-login-changed", &[]));
         }
         let answer = f(&mut entry)?;
         records.insert(head.into(), serde_json::to_value(entry)?);
@@ -180,10 +186,13 @@ fn gh(
 fn live_head(settings: &Settings, r: &ApproveHead, token: &str) -> Result<String> {
     let url = format!("repos/{}/pulls/{}", r.repo, r.pr);
     let output = gh(settings, token, &["api", &url, "--jq", ".head.sha"], None)
-        .map_err(|_| refuse("head-read-failed"))?;
+        .map_err(|e| refuse("head-read-failed", &[("detail", &e.to_string())]))?;
     let head = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     if !output.status.success() || !valid_sha(&head, 40) {
-        return Err(refuse("head-read-failed"));
+        return Err(refuse(
+            "head-read-failed",
+            &[("detail", &host::stderr_text(&output))],
+        ));
     }
     Ok(head)
 }
@@ -208,14 +217,20 @@ fn read_back(
         &["api", &url, "--paginate", "--slurp"],
         None,
     )
-    .map_err(|_| refuse("approval-read-back"))?;
+    .map_err(|e| refuse("approval-read-back", &[("detail", &e.to_string())]))?;
     if !output.status.success() {
-        return Err(refuse("approval-read-back"));
+        return Err(refuse(
+            "approval-read-back",
+            &[("detail", &host::stderr_text(&output))],
+        ));
     }
-    let pages: Vec<Vec<Value>> =
-        serde_json::from_slice(&output.stdout).map_err(|_| refuse("approval-read-back"))?;
+    let pages: Vec<Vec<Value>> = serde_json::from_slice(&output.stdout)
+        .map_err(|e| refuse("approval-read-back", &[("detail", &e.to_string())]))?;
     if pages.is_empty() {
-        return Err(refuse("approval-read-back"));
+        return Err(refuse(
+            "approval-read-back",
+            &[("detail", "no reviews page")],
+        ));
     }
     Ok(pages
         .into_iter()
@@ -287,10 +302,40 @@ fn replies(settings: &Settings, r: &ApproveHead, head: &str, token: &str) -> Res
         },
         BOUND,
     )
-    .map_err(|_| refuse("review-replies"))?;
+    .map_err(|e| {
+        refuse(
+            "review-replies",
+            &[
+                ("exit", "127"),
+                ("result", "unavailable"),
+                ("detail", &e.to_string()),
+                ("fix", REPLIES_FIX),
+            ],
+        )
+    })?;
     let expected = format!("review-replies: pass head={head}");
-    if !output.status.success() || String::from_utf8_lossy(&output.stdout).trim() != expected {
-        return Err(refuse("review-replies"));
+    let result = host::stdout_text(&output);
+    if !output.status.success() || result != expected {
+        let exit = output
+            .status
+            .code()
+            .map_or_else(|| "signal".to_owned(), |code| code.to_string());
+        // The checker answers on stdout and by its exit; its stderr is the
+        // refusal's detail only beside a failed exit.
+        let detail = if output.status.success() {
+            String::new()
+        } else {
+            host::stderr_text(&output)
+        };
+        return Err(refuse(
+            "review-replies",
+            &[
+                ("exit", &exit),
+                ("result", &result),
+                ("detail", &detail),
+                ("fix", REPLIES_FIX),
+            ],
+        ));
     }
     Ok(())
 }
@@ -309,13 +354,26 @@ fn hold(
     token: &str,
     clock: &dyn Clock,
 ) -> Result<Option<ApprovedHead>> {
-    let bound =
-        copilot_wait::bound(&settings.review).map_err(|_| refuse("copilot-hold-setting"))?;
+    let bound = copilot_wait::bound(&settings.review).map_err(|_| {
+        refuse(
+            "copilot-hold-setting",
+            &[("value", &settings.review.copilot_hold)],
+        )
+    })?;
     let gh = Gh::with_env(Path::new("gh"), credential(settings, token));
     match review::copilot_flight(&gh, &r.repo, r.pr, head) {
         Ok(Flight::Work(_)) => {}
         Ok(Flight::Settled { .. } | Flight::None) => return Ok(None),
-        Err(_) => return Err(refuse("copilot-read-failed")),
+        Err(cause) => {
+            let unread = Unreadable::from(cause);
+            return Err(refuse(
+                "copilot-read-failed",
+                &[
+                    ("reason", &unread.reason),
+                    ("detail", unread.detail.as_deref().unwrap_or_default()),
+                ],
+            ));
+        }
     }
     let request = CopilotWait {
         repo: r.repo.clone(),
@@ -324,10 +382,22 @@ fn hold(
     };
     let waited = copilot_wait::run_with(&request, &gh, clock)?;
     if waited.status != "complete" {
-        return Err(refuse("copilot-read-failed"));
+        return Err(refuse(
+            "copilot-read-failed",
+            &[
+                ("reason", waited.reason.as_deref().unwrap_or_default()),
+                ("detail", waited.detail.as_deref().unwrap_or_default()),
+            ],
+        ));
     }
     if waited.head.as_deref() != Some(head) {
-        return Err(refuse("head-moved"));
+        return Err(refuse(
+            "head-moved",
+            &[
+                ("given", head),
+                ("live", waited.head.as_deref().unwrap_or_default()),
+            ],
+        ));
     }
     if waited.state != Some("expired") {
         return Ok(Some(reply(
@@ -337,8 +407,9 @@ fn hold(
             None,
         )));
     }
-    if live_head(settings, r, token)? != head {
-        return Err(refuse("head-moved"));
+    let live = live_head(settings, r, token)?;
+    if live != head {
+        return Err(refuse("head-moved", &[("given", head), ("live", &live)]));
     }
     Ok(None)
 }
@@ -349,6 +420,7 @@ fn reply(status: Status, head: &str, reason: &str, review: Option<Value>) -> App
         head: head.into(),
         reason: reason.into(),
         review,
+        detail: None,
     }
 }
 
@@ -366,9 +438,9 @@ pub fn run(
     clock: &dyn Clock,
 ) -> Result<ApprovedHead> {
     if r.pr == 0 || !valid_sha(&r.head, 7) || crate::verify::validate_repo(&r.repo).is_err() {
-        return Err(refuse("approval-request"));
+        return Err(refuse("approval-request", &[]));
     }
-    let body = std::fs::read_to_string(&r.body_file).map_err(|_| refuse("body-file"))?;
+    let body = std::fs::read_to_string(&r.body_file).map_err(|_| refuse("body-file", &[]))?;
     // The credential, the app's login and the host must be read values; a
     // reader credential only a shell reads stays the router's.
     if settings
@@ -377,16 +449,16 @@ pub fn run(
         .iter()
         .any(|key| !matches!(key.as_str(), "GH_TOKEN" | "GITHUB_TOKEN" | "GH_BOT_TOKEN"))
     {
-        return Err(refuse("approval-setting-unread"));
+        return Err(refuse("approval-setting-unread", &[]));
     }
     let token = crate::watch::security::read_token(settings.review.approval_token_file.as_deref())
-        .map_err(|_| refuse("credential"))?;
+        .map_err(|(file, cause)| refuse("credential", &[("file", &file), ("cause", &cause)]))?;
     let login = settings
         .review
         .approval_login
         .as_deref()
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| refuse("approval-login"))?;
+        .ok_or_else(|| refuse("approval-login", &[]))?;
     let mut doc = loaded(path)?.doc;
     let matching: Vec<_> = entries(&mut doc, r)?
         .iter()
@@ -394,20 +466,20 @@ pub fn run(
         .map(|(head, value)| {
             serde_json::from_value::<Entry>(value.clone())
                 .map(|entry| (head.clone(), entry))
-                .map_err(|_| refuse("approval-record"))
+                .map_err(|_| refuse("approval-record", &[]))
         })
         .collect::<Result<_>>()?;
     if let [(head, entry)] = matching.as_slice()
         && let Some(attempt) = &entry.attempt
     {
         if entry.login != login {
-            return Err(refuse("approval-login-changed"));
+            return Err(refuse("approval-login-changed", &[]));
         }
         return standing_answer(path, r, head, login, &token, settings, locking, attempt);
     }
     let head = live_head(settings, r, &token)?;
     if !head.starts_with(&r.head) {
-        return Err(refuse("head-moved"));
+        return Err(refuse("head-moved", &[("given", &r.head), ("live", &head)]));
     }
     let attempt = update(path, r, &head, login, locking, |entry| {
         Ok(entry.attempt.clone())
@@ -452,7 +524,12 @@ pub fn run(
                 } else {
                     NOT_LANDED
                 };
-                settle(path, r, &head, login, &token, settings, locking, refusal)
+                let mut settled =
+                    settle(path, r, &head, login, &token, settings, locking, refusal)?;
+                if settled.status == Status::Refused {
+                    settled.detail = Some(host::stderr_text(&output));
+                }
+                Ok(settled)
             }
         }
         Err(agent_runtime::Error::NotStarted { .. }) => {
@@ -515,7 +592,14 @@ fn settle(
             })?;
             Ok(reply(Status::Refused, head, refusal, None))
         }
-        Err(_) => Ok(reply(Status::Unknown, head, "approval-unconfirmed", None)),
+        Err(e) => {
+            let mut unknown = reply(Status::Unknown, head, "approval-unconfirmed", None);
+            unknown.detail = e
+                .fields()
+                .into_iter()
+                .find_map(|(key, value)| (key == "detail").then_some(value));
+            Ok(unknown)
+        }
     }
 }
 

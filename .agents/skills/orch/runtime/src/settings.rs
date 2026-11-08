@@ -117,7 +117,6 @@ pub const DEV_VALIDATE_TIMEOUT_SECS_KEY: &str = "DEV_VALIDATE_TIMEOUT_SECS";
 /// `pr`, the default, or `push-base`: direct delivery keeps every ci
 /// request on local validation.
 pub const DELIVERY_KEY: &str = "ORCH_DELIVERY";
-const DEFAULT_VALIDATE_TIMEOUT_SECS: u64 = 3600;
 /// The program the lane admission reads a diff range's changed paths
 /// through; empty finds the installed change-scope
 /// package's `harness-only`.
@@ -613,19 +612,11 @@ pub struct ReadSettings {
     pub owner_tracker: Option<OwnerTracker>,
 }
 
-/// How a change is delivered, which decides whether a ci request may
-/// defer to the pull request's required CI.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Delivery {
-    Pr,
-    PushBase,
-}
-
 /// The project's validation declaration, the one source `validate
 /// start` resolves a run's mode from: the whole battery,
 /// the range command where declared, the CI context where declared, the
-/// selector, the finding prefix and the bound. A command is its text,
-/// trimmed of nothing; an empty or blank value is no declaration.
+/// selector, the finding prefix, the bound and the delivery. A command is
+/// its text, trimmed of nothing; an empty or blank value is no declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ValidateSettings {
     pub cmd: Option<String>,
@@ -635,9 +626,12 @@ pub struct ValidateSettings {
     /// `DEV_VALIDATE_TEXT_CMD` as written, an empty value kept: the docs
     /// mode, its one reader, judges it.
     pub text_cmd: Option<String>,
+    /// The finding prefix, the bound and the delivery as written: the
+    /// validation start judges each, so a value outside its form refuses no
+    /// verb that never reads it.
     pub finding_prefix: Option<String>,
-    pub timeout: Duration,
-    pub delivery: Delivery,
+    pub timeout: Option<String>,
+    pub delivery: Option<String>,
 }
 
 /// What `queue-watch` reads beside its request: the arming grace, the
@@ -929,7 +923,9 @@ pub type FileRead<'a> = &'a dyn Fn(&Path) -> Result<Option<String>>;
 /// outranking, and under `private` the private env file they name
 /// (`KENDEX_ENV_FILE`, else `.env.local`); `private` carries the caller's
 /// own name for that file and its home, which outrank the files' in naming
-/// it and in expanding its account keys.
+/// it and in expanding its account keys. With `local`, `root` is a checkout
+/// on this host's disk, and the private file's directory is held inside it
+/// before the file is read.
 pub(crate) struct FileRung {
     pub(crate) values: BTreeMap<String, String>,
     pub(crate) private: Option<(PathBuf, PrivateEnv)>,
@@ -939,6 +935,7 @@ pub(crate) fn file_rung(
     root: &Path,
     read: FileRead,
     private: Option<(Option<&str>, Option<&str>)>,
+    local: bool,
 ) -> Result<FileRung> {
     let mut values: BTreeMap<String, String> = BTreeMap::new();
     for name in SETTINGS_FILES {
@@ -959,7 +956,11 @@ pub(crate) fn file_rung(
         .or_else(|| values.get(ENV_FILE_KEY).map(String::as_str))
         .filter(|v| !v.is_empty())
         .map(str::to_owned);
-    let path = root.join(private_env_name(named.as_deref())?);
+    let named = private_env_name(named.as_deref())?;
+    if local {
+        private_env_inside(root, &named)?;
+    }
+    let path = root.join(named);
     let home = home
         .or_else(|| values.get(HOME_KEY).map(String::as_str))
         .map(str::to_owned);
@@ -981,7 +982,7 @@ pub(crate) fn file_rung(
 /// files and private env file, `tmp` where none names one; a relative
 /// directory is under the common root git names for the checkout.
 pub fn state_dir_named(root: &Path, read: FileRead) -> Result<PathBuf> {
-    let rung = file_rung(root, read, Some((None, None)))?;
+    let rung = file_rung(root, read, Some((None, None)), false)?;
     let mut values = rung.values;
     if let Some((_, private)) = rung.private {
         values.extend(private.values);
@@ -1015,6 +1016,7 @@ pub fn load(
                 caller.get(HOME_KEY).map(String::as_str),
             )
         }),
+        true,
     )?;
     let mut values: BTreeMap<String, String> = BTreeMap::new();
     let mut passed_over = Vec::new();
@@ -1212,38 +1214,17 @@ pub fn load(
     let agent_runtime = program(AGENT_RUNTIME_KEY, AGENT_RUNTIME_DEFAULT);
     let dev_validate_cli = program(DEV_VALIDATE_CLI_KEY, DEV_VALIDATE_CLI_DEFAULT);
     // A command whose value is blank is no declaration, as the shell
-    // `${cmd//[[:space:]]/}` reads it; a prefix with a newline inside can
-    // prefix no line, which the shell leaves unrecorded, and is refused.
+    // `${cmd//[[:space:]]/}` reads it.
     let command = |key: &str| get(key).filter(|v| !v.trim().is_empty()).map(str::to_owned);
-    let finding_prefix = match get(DEV_VALIDATE_FINDING_PREFIX_KEY) {
-        Some(text) if text.contains('\n') => {
-            return Err(value_refusal(DEV_VALIDATE_FINDING_PREFIX_KEY, text));
-        }
-        other => other.map(str::to_owned),
-    };
-    // The shell `check_seconds` rule: every byte a digit and the value above
-    // zero, a leading zero admitted.
-    let validate_timeout = match get(DEV_VALIDATE_TIMEOUT_SECS_KEY) {
-        None => Duration::from_secs(DEFAULT_VALIDATE_TIMEOUT_SECS),
-        Some(text) => match text.parse::<u64>() {
-            Ok(n) if n > 0 && text.bytes().all(|b| b.is_ascii_digit()) => Duration::from_secs(n),
-            Ok(_) | Err(_) => return Err(value_refusal(DEV_VALIDATE_TIMEOUT_SECS_KEY, text)),
-        },
-    };
-    let delivery = match get(DELIVERY_KEY) {
-        None | Some("pr") => Delivery::Pr,
-        Some("push-base") => Delivery::PushBase,
-        Some(other) => return Err(value_refusal(DELIVERY_KEY, other)),
-    };
     let validate = ValidateSettings {
         cmd: command(DEV_VALIDATE_CMD_KEY),
         range_cmd: command(DEV_VALIDATE_RANGE_CMD_KEY),
         ci_context: command(DEV_VALIDATE_CI_CONTEXT_KEY),
         selection_cmd: command(DEV_VALIDATE_SELECTION_CMD_KEY),
         text_cmd: get("DEV_VALIDATE_TEXT_CMD").map(str::to_owned),
-        finding_prefix,
-        timeout: validate_timeout,
-        delivery,
+        finding_prefix: get(DEV_VALIDATE_FINDING_PREFIX_KEY).map(str::to_owned),
+        timeout: get(DEV_VALIDATE_TIMEOUT_SECS_KEY).map(str::to_owned),
+        delivery: get(DELIVERY_KEY).map(str::to_owned),
     };
     let scope_paths_cli = program(SCOPE_PATHS_CLI_KEY, SCOPE_PATHS_CLI_DEFAULT);
     // A preference set empty names no entry, which the overseer launch
@@ -1665,17 +1646,78 @@ fn private_env_name(named: Option<&str>) -> Result<PathBuf> {
     Ok(PathBuf::from(named))
 }
 
-pub(crate) fn read_text(path: &Path) -> Result<Option<String>> {
-    match fs::read(path) {
-        Ok(bytes) => {
-            if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
-                return Err(file_refusal(path, "", "byte-order-mark"));
-            }
-            Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
+/// Whether the directory the private env file `named` sits in stays inside
+/// the project once every link on the way is followed, judged as the shell
+/// loader judges it before it reads the file: the deepest existing ancestor
+/// of that directory is resolved, a component that exists as something
+/// other than a directory blocks the path, and a directory this process
+/// cannot enter is unresolved. The file itself may be a link, as a
+/// worktree's `.env.local` linked to its main checkout's is.
+fn private_env_inside(root: &Path, named: &Path) -> Result<()> {
+    // The kernel looks `.` up inside `dir` only where this process may enter
+    // it, as `cd -P` must; the resolution itself drops a trailing `.`
+    // without entering.
+    let enter = |dir: &Path| fs::metadata(dir.join(".")).and_then(|_| fs::canonicalize(dir));
+    let unresolved = |dir: &Path| {
+        refused(
+            "private-env-unresolved",
+            &[("path", &dir.display().to_string())],
+        )
+    };
+    let shown = named.display().to_string();
+    let top = match enter(root) {
+        Ok(top) => top,
+        // A root that does not exist holds no file to read.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(_) => return Err(unresolved(root)),
+    };
+    let path = root.join(named);
+    // The climb passes only components the loader's `-e` reads as absent,
+    // which takes any failed lookup for absence.
+    let mut dir = path.parent();
+    while let Some(d) = dir {
+        if fs::metadata(d).is_ok() {
+            break;
         }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(agent_runtime::Error::io("read", path, e).into()),
+        dir = d.parent();
     }
+    let dir = dir.unwrap_or(Path::new("/"));
+    if !fs::metadata(dir).is_ok_and(|m| m.is_dir()) {
+        return Err(refused("private-env-blocked", &[("path", &shown)]));
+    }
+    let at = enter(dir).map_err(|_| unresolved(dir))?;
+    if !at.starts_with(&top) {
+        return Err(refused("private-env-outside", &[("path", &shown)]));
+    }
+    Ok(())
+}
+
+/// A settings source's text, the source classified as the shell loader
+/// classifies one before reading it: only a path that is absent and no link
+/// reads as no file; a link that resolves to nothing refuses
+/// `unresolved-link`, anything but a regular file refuses `not-file` before
+/// any read (a FIFO would hold the read open), a file this process may not
+/// read refuses `unreadable`, and a leading byte-order mark refuses
+/// `byte-order-mark`.
+pub(crate) fn read_text(path: &Path) -> Result<Option<String>> {
+    let refusal = |reason: &str| file_refusal(path, "", reason);
+    match fs::metadata(path) {
+        Ok(meta) if !meta.is_file() => return Err(refusal("not-file")),
+        Ok(_) => {}
+        Err(_) if fs::symlink_metadata(path).is_ok() => return Err(refusal("unresolved-link")),
+        Err(_) => return Ok(None),
+    }
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            return Err(refusal("unreadable"));
+        }
+        Err(e) => return Err(agent_runtime::Error::io("read", path, e).into()),
+    };
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        return Err(refusal("byte-order-mark"));
+    }
+    Ok(Some(String::from_utf8_lossy(&bytes).into_owned()))
 }
 
 fn is_key(text: &str) -> bool {
@@ -2055,6 +2097,135 @@ mod tests {
         for bad in ["/etc/env", "../x", "a/../b", "c:d", "a\\b"] {
             let err = load(&roots, &env(&[("KENDEX_ENV_FILE", bad)]), &FLAGS).unwrap_err();
             assert_eq!(err.key(), "private-env-path", "{bad}");
+        }
+    }
+
+    /// Each settings source the shell loader refuses before it reads one,
+    /// refused here by the same word, with no read of a FIFO; and the
+    /// private file's directory held inside the project, a link at the file
+    /// itself admitted. Run as root, a closed file or directory is open, so
+    /// those two cases are not asked.
+    #[test]
+    fn a_settings_source_is_judged_before_it_is_read() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
+        let outside = tempfile::tempdir().unwrap();
+        write(outside.path(), "priv.env", "ORCH_TMUX_SESSION=outside\n");
+        let as_root = fs::metadata(outside.path()).unwrap().uid() == 0;
+        let settings = |project: &Path| project.join("kendex.settings.toml");
+        let mode = |path: &Path, mode: u32| {
+            fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
+        };
+        type Plant<'a> = Box<dyn Fn(&Path) + 'a>;
+        type Case<'a> = (&'a str, Plant<'a>, Option<&'a str>, (&'a str, &'a str));
+        let cases: Vec<Case> = vec![
+            (
+                "a dangling link",
+                Box::new(|p| symlink(p.join("nowhere"), settings(p)).unwrap()),
+                None,
+                ("settings-invalid", "unresolved-link"),
+            ),
+            (
+                "a link to itself",
+                Box::new(|p| symlink(settings(p), settings(p)).unwrap()),
+                None,
+                ("settings-invalid", "unresolved-link"),
+            ),
+            (
+                "a directory",
+                Box::new(|p| fs::create_dir(settings(p)).unwrap()),
+                None,
+                ("settings-invalid", "not-file"),
+            ),
+            (
+                "a FIFO",
+                Box::new(|p| {
+                    let made = std::process::Command::new("mkfifo")
+                        .arg(settings(p))
+                        .status()
+                        .unwrap();
+                    assert!(made.success());
+                }),
+                None,
+                ("settings-invalid", "not-file"),
+            ),
+            (
+                "an unreadable file",
+                Box::new(|p| {
+                    write(p, "kendex.settings.toml", "[env]\n");
+                    mode(&settings(p), 0o000);
+                }),
+                None,
+                ("settings-invalid", "unreadable"),
+            ),
+            (
+                "a file where `.kendex` names a directory",
+                Box::new(|p| write(p, ".kendex", "")),
+                None,
+                ("loaded", ""),
+            ),
+            (
+                "a file on the private file's path",
+                Box::new(|p| write(p, "conf", "")),
+                Some("conf/priv.env"),
+                ("private-env-blocked", ""),
+            ),
+            (
+                "a directory link out of the project",
+                Box::new(|p| symlink(outside.path(), p.join("conf")).unwrap()),
+                Some("conf/priv.env"),
+                ("private-env-outside", ""),
+            ),
+            (
+                "a directory this process cannot enter",
+                Box::new(|p| {
+                    fs::create_dir(p.join("locked")).unwrap();
+                    mode(&p.join("locked"), 0o000);
+                }),
+                Some("locked/priv.env"),
+                ("private-env-unresolved", ""),
+            ),
+            (
+                "the file itself a link out",
+                Box::new(|p| {
+                    symlink(outside.path().join("priv.env"), p.join(".env.local")).unwrap()
+                }),
+                None,
+                ("loaded", "outside"),
+            ),
+            (
+                "directories not yet made",
+                Box::new(|_| {}),
+                Some("a/b/priv.env"),
+                ("loaded", ""),
+            ),
+        ];
+        for (case, plant, named, want) in cases {
+            if as_root && (case.contains("unreadable") || case.contains("cannot enter")) {
+                continue;
+            }
+            let dir = tempfile::tempdir().unwrap();
+            let roots = roots_in(dir.path());
+            fs::create_dir_all(&roots.project).unwrap();
+            plant(&roots.project);
+            let caller: Vec<(&str, &str)> =
+                named.map(|n| ("KENDEX_ENV_FILE", n)).into_iter().collect();
+            let got = match load(&roots, &env(&caller), &FLAGS) {
+                Ok(loaded) => ("loaded".to_owned(), loaded.tmux_session.unwrap_or_default()),
+                Err(e) => {
+                    let reason = e
+                        .fields()
+                        .into_iter()
+                        .find_map(|(key, value)| (key == "reason").then_some(value))
+                        .unwrap_or_default();
+                    (e.key().to_owned(), reason)
+                }
+            };
+            for closed in [settings(&roots.project), roots.project.join("locked")] {
+                if fs::symlink_metadata(&closed).is_ok_and(|m| !m.file_type().is_symlink()) {
+                    mode(&closed, 0o700);
+                }
+            }
+            assert_eq!((got.0.as_str(), got.1.as_str()), want, "{case}");
         }
     }
 
@@ -2552,9 +2723,6 @@ mod tests {
         SUCCESSION_KEY,
         LANE_CAP_KEY,
         CLOUD_LANE_CAP_KEY,
-        DEV_VALIDATE_FINDING_PREFIX_KEY,
-        DEV_VALIDATE_TIMEOUT_SECS_KEY,
-        DELIVERY_KEY,
         JOB_CLAIM_SECS_KEY,
         WATCH_MAIL_INTERVAL_KEY,
         OVERSEER_MARK_REPEAT_KEY,

@@ -64,8 +64,16 @@ pub fn register(runner: &mut Runner<'_>, settings: &Settings, shared: Shared) ->
     lines
 }
 
-fn note(key: &str, id: &str, cause: &str) {
-    let _ = writeln!(std::io::stderr(), "{key} issue={id}\n{cause}");
+/// The second line of the watch's `verifying-invalid` message.
+const INVALID_TEXT: &str = "The Verifying item has invalid post-merge metadata or an open branch-provable box. Correct its checklist before verification.";
+
+/// The watch's `verifying-invalid` message for an item it could not judge,
+/// then the judgement's own words, on this process's stderr.
+fn say_invalid(id: &str, words: &str) {
+    let _ = writeln!(
+        std::io::stderr(),
+        "oversee-watch: verifying-invalid issue={id}\n{INVALID_TEXT}\n{words}"
+    );
 }
 
 // --- the parser's reply ----------------------------------------------------------
@@ -283,21 +291,36 @@ fn gh_json(
     Ok(value)
 }
 
-/// The linear CLI's parser on `description`: the parse, the parser's own
-/// refusal (an item that is not Verifying), or the call's failure.
+/// The linear CLI's parser on `description`: the parse with the parser's
+/// own words, or the call's failure. A parser that never starts refuses
+/// `missing-linear`.
 #[allow(
     clippy::disallowed_methods,
     reason = "the verification duty's one call of the linear CLI's own Done-when parser per item through the one runner under its tag; it reads nothing"
 )]
-fn parse(settings: &Settings, description: &str) -> Result<std::result::Result<Parsed, String>> {
-    let out = host::run_tagged(
+fn parse(
+    settings: &Settings,
+    description: &str,
+) -> Result<std::result::Result<(Parsed, String), String>> {
+    let cli = &settings.reads.tracker_cli;
+    let out = match host::run_tagged(
         TAG,
         "linear",
-        &settings.reads.tracker_cli,
+        cli,
         "done-when",
         &["done-when", "parse", "--description", description],
         BOUND,
-    )?;
+    ) {
+        Ok(out) => out,
+        Err(agent_runtime::Error::NotStarted { cause, .. }) => {
+            return Err(agent_runtime::Error::refused(
+                "missing-linear",
+                &[("path", &cli.display().to_string()), ("cause", &cause)],
+            )
+            .into());
+        }
+        Err(e) => return Err(e.into()),
+    };
     if !out.status.success() {
         return Ok(Err(format!(
             "done-when parse exit={}: {}",
@@ -305,7 +328,9 @@ fn parse(settings: &Settings, description: &str) -> Result<std::result::Result<P
             host::stderr_text(&out).trim()
         )));
     }
-    Ok(serde_json::from_str::<Parsed>(&host::stdout_text(&out))
+    let text = host::stdout_text(&out).trim_end().to_owned();
+    Ok(serde_json::from_str::<Parsed>(&text)
+        .map(|parsed| (parsed, text))
         .map_err(|e| format!("done-when parse: {e}")))
 }
 
@@ -594,8 +619,8 @@ pub(super) enum Item {
     },
     /// Unread this pass: the prior row stands.
     Unread { key: &'static str, cause: String },
-    /// Invalid: no row, the pass goes on.
-    Invalid,
+    /// Invalid: no row, the pass goes on; `evidence` is the parser's reply.
+    Invalid { evidence: String },
     /// The parser gave no checklist (it failed, or its reply did not
     /// decode): an invalid item to the watch, whose pass goes on; a
     /// refusal to the reconciliation verb, whose required input is unread.
@@ -609,23 +634,17 @@ pub(super) fn judge_item(
     now: u64,
     read: &mut BTreeMap<String, Value>,
 ) -> Result<Item> {
-    let parsed = match parse(&ctx.settings, &item.description)? {
+    let (parsed, evidence) = match parse(&ctx.settings, &item.description)? {
         Ok(parsed) => parsed,
         Err(cause) => return Ok(Item::Unparsed { cause }),
     };
     let Some(mut boxes) = judged_boxes(&parsed, item.container) else {
-        note(
-            "verifying-invalid",
-            &item.id,
-            "branch work open or a box the parser refused",
-        );
-        return Ok(Item::Invalid);
+        return Ok(Item::Invalid { evidence });
     };
     let merged = if boxes.iter().any(Judged::needs_merge) {
         match merge_of(&ctx.gh, merged_keys.unwrap_or(&[]), read) {
             Ok(merged) => merged,
             Err(cause) => {
-                note("verifying-merge-unread", &item.id, &cause);
                 return Ok(Item::Unread {
                     key: "verifying-merge-unread",
                     cause,
@@ -644,7 +663,6 @@ pub(super) fn judge_item(
         now,
         read,
     ) {
-        note(key, &item.id, &cause);
         return Ok(Item::Unread { key, cause });
     }
     let mut lines: Vec<String> = boxes.iter().map(|b| b.line(&item.id, blocked)).collect();
@@ -710,9 +728,14 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
         )?;
         let prior = tick.baseline.get(DEADLINE_ROW, &item.id);
         match judged {
-            Item::Invalid => {}
-            Item::Unparsed { cause } => note("verifying-invalid", &item.id, &cause),
-            Item::Unread { .. } => {
+            Item::Invalid { evidence } => say_invalid(
+                &item.id,
+                &format!("verifying-invalid issue={}\n{evidence}", item.id),
+            ),
+            Item::Unparsed { cause } => say_invalid(&item.id, &cause),
+            Item::Unread { key, cause } => {
+                let words = format!("{key} issue={} {cause}", item.id);
+                say_invalid(&item.id, words.trim_end());
                 // An unread item cannot clear a previously reported deadline.
                 if prior.is_some() {
                     held.insert(item.id.clone());

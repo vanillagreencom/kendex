@@ -246,6 +246,47 @@ fn a_prefix_approval_persists_before_post_and_replays_once() {
     assert!(log.lines().any(|l| l.contains(TOKEN) && l.contains("POST")));
 }
 
+/// A refusal names what it judged beside its key, in the reply the op
+/// prints: head-moved the given and the live head, credential the token
+/// file and the reader's cause.
+#[test]
+fn a_refusal_names_what_it_judged() {
+    let dir = world();
+    let root = dir.path();
+    fs::write(
+        root.join("request.json"),
+        serde_json::to_vec(&json!({"op":"approve-head","repo":"o/r","pr":42,"head":HEAD,"body_file":root.join("body")})).unwrap(),
+    )
+    .unwrap();
+    let refusal = || -> Value {
+        let output = support::isolated()
+            .current_dir(root)
+            .env("PATH", support::tool_path(&[&root.join("bin")]))
+            .env("ORCH_OVERSEER_REVIEW_TOKEN_FILE", root.join("token"))
+            .env("ORCH_OVERSEER_REVIEW_LOGIN", "review-app[bot]")
+            .args(["op", "--file"])
+            .arg(root.join("item.json"))
+            .arg("--request")
+            .arg(root.join("request.json"))
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()["refusal"].clone()
+    };
+    answer(root, json!({ "head": MOVED }));
+    let moved = refusal();
+    assert_eq!(moved["key"], "head-moved", "{moved}");
+    assert_eq!(moved["fields"], json!([["given", HEAD], ["live", MOVED]]));
+    fs::set_permissions(root.join("token"), fs::Permissions::from_mode(0o640)).unwrap();
+    let credential = refusal();
+    assert_eq!(credential["key"], "credential", "{credential}");
+    assert_eq!(
+        credential["fields"],
+        json!([["file", root.join("token")], ["cause", "mode-640"]])
+    );
+    assert_eq!(posts(root), 0);
+}
+
 #[test]
 fn a_moved_or_unread_head_never_posts() {
     if child("a_moved_or_unread_head_never_posts").is_some() {
@@ -261,7 +302,18 @@ fn a_moved_or_unread_head_never_posts() {
         answer(&root, json!({"head":head,"head_exit":exit}));
         let mut r = r.clone();
         r.head = HEAD.into();
-        assert_eq!(run(&root, &r).unwrap_err().key(), key);
+        let refused = run(&root, &r).unwrap_err();
+        assert_eq!(refused.key(), key);
+        if exit != 0 {
+            // gh's words ride the refusal.
+            assert!(
+                refused
+                    .fields()
+                    .contains(&("detail".to_owned(), "gh: Not Found (HTTP 404)".to_owned())),
+                "{:?}",
+                refused.fields()
+            );
+        }
         assert_eq!(posts(&root), 0);
     }
 }
@@ -342,6 +394,12 @@ fn a_refused_post_clears_its_claim_so_the_next_request_posts_again() {
             (Status::Refused, "post-failed"),
             "{mode}"
         );
+        if mode == "refused" {
+            assert_eq!(
+                refused.detail.as_deref(),
+                Some("gh: Unprocessable Entity (HTTP 422)")
+            );
+        }
         assert_eq!(posts(&root), 2 * n + 1, "{mode}");
         // GitHub now takes the approval: the repeat posts and confirms.
         answer(&root, json!({}));
@@ -393,8 +451,26 @@ fn copilot_work_that_ends_inside_the_hold_approves_nothing_and_the_retry_checks_
         copilot.iter().all(|(token, _)| token == TOKEN),
         "{copilot:?}"
     );
+    // Queued work that ends inside the hold approves nothing either.
+    answer(&root, json!({"work":"queued", "reply":"bad"}));
+    let (queued, _) = run_stepped(&root, &r, &ends);
+    assert_eq!(queued.unwrap().status, Status::Finished);
     assert_eq!(run(&root, &r).unwrap_err().key(), "review-replies");
     assert_eq!(posts(&root), 0);
+    // Without the flag a running review holds nothing: the call reads no
+    // Copilot work and goes on to the reply check.
+    r.hold_copilot = false;
+    answer(&root, json!({"work":"in_progress", "reply":"bad"}));
+    let before = calls(&root).len();
+    assert_eq!(run(&root, &r).unwrap_err().key(), "review-replies");
+    assert!(
+        !calls(&root)[before..]
+            .iter()
+            .any(|(_, args)| args.iter().any(|a| a.contains("/check-runs"))),
+        "{:?}",
+        calls(&root)
+    );
+    r.hold_copilot = true;
     answer(&root, json!({}));
     assert_eq!(run(&root, &r).unwrap().status, Status::Confirmed);
 }
@@ -417,6 +493,12 @@ fn an_expired_hold_approves_only_the_original_full_head() {
     let (moved, sleeps) = run_stepped(&root, &r, &|_| {});
     assert_eq!(moved.unwrap_err().key(), "head-moved");
     assert_eq!(sleeps, 3);
+    assert_eq!(posts(&root), 0);
+    // The re-read after the bound fails: nothing is approved.
+    fs::remove_file(root.join("head_reads")).unwrap();
+    answer(&root, json!({"work":"queued", "head_fail_on":2}));
+    let (unread, _) = run_stepped(&root, &r, &|_| {});
+    assert_eq!(unread.unwrap_err().key(), "head-read-failed");
     assert_eq!(posts(&root), 0);
     // The head moved while the wait ran.
     fs::remove_file(root.join("head_reads")).unwrap();
@@ -464,8 +546,28 @@ fn unread_copilot_work_and_reply_heads_refuse_before_the_claim() {
     let root = root();
     let mut r = request(&root);
     r.hold_copilot = true;
-    answer(&root, json!({"work":"fail"}));
-    assert_eq!(run(&root, &r).unwrap_err().key(), "copilot-read-failed");
+    // A failed first read or a failed read inside the wait, and each answer
+    // GitHub never gives, is unread work, never none.
+    for work in ["fail", "later-fail", "empty", "malformed", "invalid"] {
+        let _ = fs::remove_file(root.join("check_reads"));
+        answer(&root, json!({ "work": work }));
+        let unread = run(&root, &r).unwrap_err();
+        assert_eq!(unread.key(), "copilot-read-failed", "{work}");
+        if work == "fail" {
+            // The read's cause and gh's words ride the refusal.
+            let fields = unread.fields();
+            assert!(
+                fields.contains(&("reason".to_owned(), "check-runs-read-failed".to_owned())),
+                "{fields:?}"
+            );
+            assert!(
+                fields
+                    .iter()
+                    .any(|(key, value)| key == "detail" && value.contains("HTTP 403")),
+                "{fields:?}"
+            );
+        }
+    }
     r.hold_copilot = false;
     answer(&root, json!({"reply_head":MOVED}));
     assert_eq!(run(&root, &r).unwrap_err().key(), "review-replies");
@@ -561,7 +663,23 @@ fn invalid_requests_and_unread_bodies_never_read_github() {
         ("o/r/more", 42, HEAD, "body", "approval-request"),
         ("o/r", 42, "ABCDEF1", "body", "approval-request"),
         ("o/r", 42, "123456", "body", "approval-request"),
+        (
+            "o/r",
+            42,
+            "0123456789abcdef0123456789abcdef012345670",
+            "body",
+            "approval-request",
+        ),
         ("o/r", 42, HEAD, "absent", "body-file"),
+        // GitHub's classes: an owner never takes a dot or an underscore, a
+        // name is never dots alone.
+        ("o.x/r", 42, HEAD, "body", "approval-request"),
+        ("./r", 42, HEAD, "body", "approval-request"),
+        ("o_x/r", 42, HEAD, "body", "approval-request"),
+        ("o/..", 42, HEAD, "body", "approval-request"),
+        ("o/.", 42, HEAD, "body", "approval-request"),
+        ("o/r/", 42, HEAD, "body", "approval-request"),
+        ("not-a-repo", 42, HEAD, "body", "approval-request"),
     ] {
         let mut r = request(&root);
         r.repo = repo.into();
@@ -582,53 +700,110 @@ fn unread_review_evidence_never_claims_an_attempt() {
     let r = request(&root);
     for mode in ["bad", "unavailable", "malformed", "body-findings"] {
         answer(&root, json!({"reply":mode}));
-        assert_eq!(run(&root, &r).unwrap_err().key(), "review-replies");
+        let refused = run(&root, &r).unwrap_err();
+        assert_eq!(refused.key(), "review-replies");
+        // The checker's words and the remedy ride the refusal: its stdout
+        // as `result`, its stderr as `detail` beside a failed exit.
+        let fields = refused.fields();
+        assert!(
+            fields.iter().any(|(key, value)| {
+                matches!(key.as_str(), "result" | "detail")
+                    && (value.starts_with("review-replies: ")
+                        || value.starts_with("check-review-replies: "))
+            }),
+            "{mode}: {fields:?}"
+        );
+        assert!(
+            fields
+                .iter()
+                .any(|(key, value)| key == "fix" && value.starts_with("Restore the github reader")),
+            "{mode}: {fields:?}"
+        );
         assert_eq!(posts(&root), 0);
         let doc: Value =
             serde_json::from_slice(&fs::read(root.join("item.json")).unwrap()).unwrap();
         assert!(doc["head_approvals"]["o/r#42"][HEAD]["attempt"].is_null());
     }
+    // No github skill in the project's install: the checker never starts,
+    // and the refusal names it unavailable.
+    answer(&root, json!({}));
+    fs::remove_file(root.join(".agents/skills/github")).unwrap();
+    let missing = run(&root, &r).unwrap_err();
+    assert_eq!(missing.key(), "review-replies");
+    assert!(
+        missing
+            .fields()
+            .contains(&("result".to_owned(), "unavailable".to_owned())),
+        "{:?}",
+        missing.fields()
+    );
+    assert_eq!(posts(&root), 0);
 }
 
 #[test]
 fn reader_absence_uses_the_file_and_keyring_preserves_the_viewer() {
-    if std::env::var("APPROVE_CHILD").is_ok() {
+    if let Ok(mode) = std::env::var("APPROVE_CHILD") {
         let root = root();
-        assert_eq!(
-            run(&root, &request(&root)).unwrap().status,
-            Status::Confirmed
-        );
+        let answer = run(&root, &request(&root));
+        if mode != "reference" {
+            assert_eq!(answer.unwrap().status, Status::Confirmed);
+        }
         return;
     }
-    for keyring in [false, true] {
+    // A configured reader credential that does not resolve is no absence:
+    // the checker reads under it and never under the file token.
+    for (mode, keyring, reader) in [
+        ("file", false, None),
+        ("keyring", true, None),
+        ("reference", false, Some("op://fixture/refused/token")),
+    ] {
         let dir = world();
         let root = dir.path();
-        answer(root, json!({"keyring":keyring}));
-        let out = support::program(std::env::current_exe().unwrap())
+        answer(root, json!({ "keyring": keyring }));
+        support::write_executable(&root.join("bin/op"), "#!/bin/sh\nexit 1\n");
+        let mut command = support::program(std::env::current_exe().unwrap());
+        command
             .args([
                 "--exact",
                 "reader_absence_uses_the_file_and_keyring_preserves_the_viewer",
                 "--nocapture",
             ])
-            .env("APPROVE_CHILD", "reader")
+            .env("APPROVE_CHILD", mode)
             .env("APPROVE_ROOT", root)
             .env("PATH", support::tool_path(&[&root.join("bin")]))
             .env("ORCH_OVERSEER_REVIEW_TOKEN_FILE", root.join("token"))
             .env("ORCH_OVERSEER_REVIEW_LOGIN", "review-app[bot]")
-            .current_dir(root)
-            .output()
-            .unwrap();
+            .current_dir(root);
+        if let Some(reader) = reader {
+            command.env("GH_BOT_TOKEN", reader);
+        }
+        let out = command.output().unwrap();
         assert!(
             out.status.success(),
-            "{} {}",
+            "{mode}: {} {}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        let (token, _) = calls(root)
+        let reads: Vec<_> = calls(root)
             .into_iter()
+            .filter(|(_, args)| {
+                args.get(1).is_some_and(|a| a == "graphql")
+                    || args == &["api", "user", "--jq", ".login"]
+                    || args == &["api", "repos/o/r/pulls/42"]
+            })
+            .collect();
+        if mode == "reference" {
+            assert!(
+                reads.iter().all(|(token, _)| token != &json!(TOKEN)),
+                "{reads:?}"
+            );
+            continue;
+        }
+        let (token, _) = reads
+            .iter()
             .find(|(_, args)| args.get(1).is_some_and(|a| a == "graphql"))
             .unwrap();
-        assert_eq!(token, if keyring { Value::Null } else { json!(TOKEN) });
+        assert_eq!(token, &if keyring { Value::Null } else { json!(TOKEN) });
     }
 }
 
