@@ -822,6 +822,49 @@ fn end_job(_settings: &Settings, run_dir: &str, _job: &ValidateJob) -> Result<Jo
     })
 }
 
+/// What a worktree stop ended: the units and the process groups.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct WorktreeStop {
+    pub units: usize,
+    pub groups: usize,
+}
+
+/// Every unfinished run in `worktree` ended, but those `keep` admits: a run
+/// an item admits through its stage's stop, and a run no item admits, or
+/// one whose stage is closed, by the identity its own files name.
+pub fn stop_worktree(
+    settings: &Settings,
+    worktree: &Path,
+    keep: Option<&str>,
+    env: &Env,
+    locking: Locking,
+) -> Result<WorktreeStop> {
+    let mut stopped = WorktreeStop::default();
+    let mut count = |runner: Option<&str>| match runner {
+        Some("systemd") => stopped.units += 1,
+        Some(_) => stopped.groups += 1,
+        None => {}
+    };
+    for run in super::files::runs(worktree)?
+        .into_iter()
+        .filter(|r| r.sentinel.is_none())
+    {
+        let rd = run.dir.display().to_string();
+        match item_of_run_dir(&settings.state_dir, &rd) {
+            Ok((item, _)) if Some(item.as_str()) == keep => {}
+            Ok((item, _)) => match stop(settings, Some(&item), &rd, env, locking) {
+                Ok(reply) if reply.ended == JobEnded::Signalled => count(Some(&reply.runner)),
+                Ok(_) => {}
+                Err(Error::RunClosed { .. }) => count(stop_files(&run.dir)?),
+                Err(error) => return Err(error),
+            },
+            Err(Error::RunUnadmitted { .. }) => count(stop_files(&run.dir)?),
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(stopped)
+}
+
 #[allow(
     clippy::disallowed_methods,
     reason = "a validation stop ends its recorded command group before stopping the executor that owns its close"

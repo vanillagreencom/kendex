@@ -637,3 +637,89 @@ fn a_checklist_the_parser_could_not_read_refuses_the_verb() {
     let reply: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(reply["refusal"]["key"], "verifying-checklist-unread");
 }
+
+fn verification_passes() {
+    use orch_runtime::schedule::{Clock, Duty, SystemClock};
+    use orch_runtime::watch::tracker::{Latest, TrackerInventory, VerifyingItem};
+    use orch_runtime::watch::{Baseline, Change, Tick, verifying};
+    let world = World::new(vec![]);
+    let item = VerifyingItem {
+        id: "T-1".to_owned(),
+        created_at: "2026-09-01T00:00:00Z".to_owned(),
+        description: "## Done when\n- [x] proof\n  Evidence: tests".to_owned(),
+        priority: "-".to_owned(),
+        container: false,
+        blocked_by_open: Vec::new(),
+    };
+    let shared = std::sync::Arc::new(std::sync::Mutex::new(Latest {
+        tracker: Some(TrackerInventory {
+            verifying: vec![item],
+            ..TrackerInventory::default()
+        }),
+        ..Latest::default()
+    }));
+    let mut duty = verifying::body(verifying::Context {
+        settings: world.settings(&[]),
+        gh: world.dir.path().join("gh-missing"),
+        shared,
+        lines: verifying::Lines::default(),
+    });
+    let mut baseline = Baseline::default();
+    baseline.apply(Change::Set {
+        kind: verifying::DEADLINE_ROW.to_owned(),
+        identity: "T-1".to_owned(),
+        value: "boxes=0".to_owned(),
+    });
+    let clock = SystemClock;
+    let pass = |duty: &mut orch_runtime::watch::Body<'_>| {
+        duty(&Tick {
+            duty: Duty::Verification,
+            now: clock.now(),
+            wall: NOW,
+            baseline: &baseline,
+            clock: &clock,
+        })
+        .unwrap()
+    };
+    // Read whole, the item's row stands as it is.
+    let first = pass(&mut duty);
+    assert!(first.changes.is_empty(), "{:?}", first.changes);
+    let failing = world.dir.path().join("parser-path");
+    fs::create_dir(&failing).unwrap();
+    support::write_executable(&failing.join("jq"), "#!/bin/sh\nexit 127\n");
+    assert_eq!(
+        pass(&mut duty).changes,
+        [Change::Clear {
+            kind: verifying::DEADLINE_ROW.to_owned(),
+            identity: "T-1".to_owned(),
+        }]
+    );
+}
+
+#[test]
+fn the_watch_reads_a_checklist_the_parser_could_not_read_as_invalid_and_keeps_no_deadline() {
+    const ROW: &str =
+        "the_watch_reads_a_checklist_the_parser_could_not_read_as_invalid_and_keeps_no_deadline";
+    if std::env::var_os("VERIFICATION_CHILD").is_some() {
+        verification_passes();
+        return;
+    }
+    // The duty says the invalid item on this process's stderr: the passes
+    // run in a child whose stderr the row reads.
+    let out = support::program(std::env::current_exe().unwrap())
+        .args(["--exact", ROW, "--nocapture"])
+        .env("VERIFICATION_CHILD", "1")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success() && stdout.contains("1 passed"),
+        "{stdout}{stderr}"
+    );
+    assert_eq!(
+        stderr.matches("verifying-invalid issue=T-1\n").count(),
+        1,
+        "{stderr}"
+    );
+}

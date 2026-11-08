@@ -15,10 +15,9 @@
 //! header or refused, a leading byte-order mark refused. The private env
 //! file is shell to the loader that sources it; here it is read and never
 //! run, one assignment line at a time, `KEY=VALUE` with an optional leading
-//! `export`. An account key's value is read as the sourcing shell assigns
-//! it in the forms [`decode_account_value`] names, and any other form is
-//! passed over with a notice; every other key's value is read as data
-//! under [`decode_shell_value`], and a shape that reader cannot decode
+//! `export`. A key's value is read as the sourcing shell assigns it in the
+//! forms [`decode_account_value`] names. Any other form of a key only some
+//! verbs read is passed over with a notice; of a key of `LOAD_KEYS` it
 //! refuses, since reading past it would take the shell's value for
 //! another. A line of any other shape assigns nothing here.
 use std::collections::BTreeMap;
@@ -1766,21 +1765,6 @@ pub(crate) fn settings_text(path: &Path, text: &str) -> Result<Vec<(String, Stri
     Ok(out)
 }
 
-/// Decode a shell assignment's value as data: single-quoted, double-quoted
-/// under the `[env]` contract, or one bare word. `None` is a shape that
-/// means something to the shell this reader cannot stand in for.
-fn decode_shell_value(raw: &str) -> Option<String> {
-    let raw = raw.trim_end();
-    if raw.starts_with('\'') || raw.starts_with('"') {
-        return decode_toml_value(raw);
-    }
-    let bare = !raw.is_empty()
-        && !raw.contains(|c: char| {
-            c.is_whitespace() || matches!(c, '$' | '#' | '\\' | '\'' | '"' | '`')
-        });
-    bare.then(|| raw.to_owned())
-}
-
 /// Read an account key's value as the sourcing shell assigns it, for the
 /// forms this reader can stand in for: one single-quoted string as it
 /// stands; one double-quoted string or one bare word with `$HOME` and
@@ -1860,9 +1844,8 @@ pub(crate) struct PrivateEnv {
 /// order. A key's value is read as the sourcing shell assigns it, `home`
 /// the shell's `HOME` until the file assigns one, and a form only a shell
 /// reads is passed over, so a value only some verbs read never refuses
-/// every verb; a key of [`LOAD_KEYS`] is read as data and refuses the load
-/// in a shape only a shell reads. A line that assigns nothing this runtime
-/// reads is the shell's alone.
+/// every verb; for a key of [`LOAD_KEYS`] such a form refuses the load. A
+/// line that assigns nothing this runtime reads is the shell's alone.
 pub(crate) fn private_env_file(path: &Path, home: Option<&str>) -> Result<PrivateEnv> {
     match read_text(path)? {
         Some(text) => private_env_text(path, home, &text),
@@ -1892,20 +1875,16 @@ pub(crate) fn private_env_text(path: &Path, home: Option<&str>, text: &str) -> R
         if !ACCOUNT_KEYS.contains(&key) && !READ_KEYS.contains(&key) {
             continue;
         }
-        let load_key = LOAD_KEYS.contains(&key);
-        let decoded = if load_key {
-            decode_shell_value(value)
-        } else {
-            decode_account_value(value, home.as_deref())
-        };
-        match decoded {
+        match decode_account_value(value, home.as_deref()) {
             Some(value) => {
                 if key == HOME_KEY {
                     home = Some(value.clone()).filter(|h| !h.is_empty());
                 }
                 env.values.push((key.to_owned(), value));
             }
-            None if load_key => return Err(file_refusal(path, key, "value-syntax")),
+            None if LOAD_KEYS.contains(&key) => {
+                return Err(file_refusal(path, key, "value-syntax"));
+            }
             None => env.passed_over.push(key.to_owned()),
         }
     }
@@ -2659,5 +2638,58 @@ mod tests {
             load(&roots, &env(&[]), &FLAGS).unwrap_err().key(),
             "settings-invalid"
         );
+    }
+
+    /// The state directory's value reads as the shell loader read it in each
+    /// source: the private file's `$HOME`, `${HOME}` and `~` as the home it
+    /// sources under, a single-quoted value and a trailing comment as the
+    /// shell assigns them; a settings file's and the caller's value as
+    /// written, unexpanded; a form only a shell could evaluate refuses.
+    #[test]
+    fn the_state_directory_reads_its_home_forms_as_the_sourcing_shell_does() {
+        let dir = tempfile::tempdir().unwrap();
+        let roots = roots_in(dir.path());
+        let home = [("HOME", "/h")];
+        for (line, state_dir) in [
+            ("ORCH_STATE_DIR=$HOME/state\n", PathBuf::from("/h/state")),
+            (
+                "ORCH_STATE_DIR=\"${HOME}/state\"\n",
+                PathBuf::from("/h/state"),
+            ),
+            (
+                "export ORCH_STATE_DIR=~/state # mine\n",
+                PathBuf::from("/h/state"),
+            ),
+            (
+                "ORCH_STATE_DIR='$HOME/state'\n",
+                roots.common.join("$HOME/state"),
+            ),
+        ] {
+            write(&roots.project, ".env.local", line);
+            let settings = load(&roots, &env(&home), &FLAGS).unwrap();
+            assert_eq!(settings.state_dir, state_dir, "{line:?}");
+        }
+        for line in [
+            "ORCH_STATE_DIR=$(pwd)/state\n",
+            "ORCH_STATE_DIR=$OTHER/state\n",
+        ] {
+            write(&roots.project, ".env.local", line);
+            assert_eq!(
+                load(&roots, &env(&home), &FLAGS).unwrap_err().key(),
+                "settings-invalid",
+                "{line:?}"
+            );
+        }
+        fs::remove_file(roots.project.join(".env.local")).unwrap();
+        write(
+            &roots.project,
+            "kendex.settings.toml",
+            "[env]\nORCH_STATE_DIR = \"$HOME/state\"\n",
+        );
+        let settings = load(&roots, &env(&home), &FLAGS).unwrap();
+        assert_eq!(settings.state_dir, roots.common.join("$HOME/state"));
+        let caller = [("HOME", "/h"), ("ORCH_STATE_DIR", "$HOME/state")];
+        let settings = load(&roots, &env(&caller), &FLAGS).unwrap();
+        assert_eq!(settings.state_dir, roots.common.join("$HOME/state"));
     }
 }

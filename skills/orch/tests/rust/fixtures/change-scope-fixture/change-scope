@@ -2,11 +2,20 @@
 # The classifier as the validate rows see it: one `change_class=` line on
 # stdout from $CHANGE_SCOPE_CLASS (small when unset) and the `class:` and
 # `queue-only:` records on stderr, the latter from $CHANGE_SCOPE_QUEUE_ONLY
-# (false when unset, no line when `absent`). Every call is appended to
+# (false when unset, no line when `absent`), or, where $CHANGE_SCOPE_QUEUE_BASE
+# is set, true for a range from that base alone. Every call is appended to
 # $CHANGE_SCOPE_LOG when set.
 [ -z "${CHANGE_SCOPE_LOG:-}" ] || printf 'change-scope %s\n' "$*" >> "$CHANGE_SCOPE_LOG"
 class="${CHANGE_SCOPE_CLASS:-small}"
+queue="${CHANGE_SCOPE_QUEUE_ONLY:-false}"
+if [ -n "${CHANGE_SCOPE_QUEUE_BASE:-}" ]; then
+  queue=false
+  previous=""
+  for word in "$@"; do
+    [ "$previous" != --base ] || [ "$word" != "$CHANGE_SCOPE_QUEUE_BASE" ] || queue=true
+    previous="$word"
+  done
+fi
 printf 'class: class=%s measured=%s\n' "$class" "${CHANGE_SCOPE_MEASURED:-true}" >&2
-[ "${CHANGE_SCOPE_QUEUE_ONLY:-false}" = absent ] ||
-  printf 'queue-only: queue_only=%s\n' "${CHANGE_SCOPE_QUEUE_ONLY:-false}" >&2
+[ "$queue" = absent ] || printf 'queue-only: queue_only=%s\n' "$queue" >&2
 printf 'change_class=%s\n' "$class"

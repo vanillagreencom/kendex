@@ -141,7 +141,9 @@ if a[:3] == ['api', 'graphql', '-f'] and len(a) >= 4 and a[3].startswith('query=
         'viewer': viewer,
         'repository': {'pullRequest': {'reviewThreads': {
             'pageInfo': {'hasNextPage': False, 'endCursor': None}, 'nodes': comments}}}}}}
-    projected = subprocess.run(['jq', '-c', '--arg', 'q', a[3][len('query='):], '-f', str(root / 'select.jq')],
+    bindings = [[field.split('=', 1)[0], flag[1:], field.split('=', 1)[1]] for flag, field in zip(a[4::2], a[5::2])]
+    projected = subprocess.run(['jq', '-c', '--arg', 'q', a[3][len('query='):], '--argjson', 'bindings', json.dumps(bindings),
+                                '-f', str(root / 'select.jq')],
                                input=json.dumps(planted), capture_output=True, text=True)
     if projected.returncode != 0:
         print(projected.stderr.strip(), file=sys.stderr)

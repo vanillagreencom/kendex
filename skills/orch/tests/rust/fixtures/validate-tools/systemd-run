@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
-# The client's whole argv, one word per line, is kept as $unit.argv.
+# The client's whole argv, one word per line, is kept as $unit.argv. A call
+# naming no unit is the launcher's probe: it starts, or with
+# VALIDATE_PROBE_ANSWER=no-manager answers as systemd 262's client answers
+# where no user manager listens.
 words=("$@")
 unit=""
 while [ "$#" -gt 0 ]; do
@@ -10,7 +13,13 @@ while [ "$#" -gt 0 ]; do
   esac
   shift
 done
-[ -n "$unit" ] || exit 0
+if [ -z "$unit" ]; then
+  if [ "${VALIDATE_PROBE_ANSWER:-}" = no-manager ]; then
+    echo 'Failed to connect to user scope bus via local transport: No such file or directory' >&2
+    exit 1
+  fi
+  exit 0
+fi
 mkdir -p "${VALIDATE_MANAGER_DIR:?}"
 printf '%s\n' "$unit" >> "$VALIDATE_MANAGER_DIR/launches"
 printf '%s\n' "${words[@]}" > "$VALIDATE_MANAGER_DIR/$unit.argv"
@@ -20,6 +29,13 @@ case "${VALIDATE_START_ANSWER:-success}" in
   unread) printf 'unread\n' > "$VALIDATE_MANAGER_DIR/$unit.state"; exit 1 ;;
   record-only) printf 'loaded\nactive\n' > "$VALIDATE_MANAGER_DIR/$unit.state"; exit 0 ;;
 esac
-setsid "$@" </dev/null >/dev/null 2>&1 &
+# The manager reads `$$` as one literal `$`. The job leads its own process
+# group, as a unit's cgroup holds it, whether or not setsid is installed.
+job=()
+for word in "$@"; do
+  job+=("${word//\$\$/\$}")
+done
+set -m
+"${job[@]}" </dev/null >/dev/null 2>&1 &
 printf '%s\n' "$!" > "$VALIDATE_MANAGER_DIR/$unit.pid"
 [ "${VALIDATE_START_ANSWER:-success}" != lost ] || exit 1

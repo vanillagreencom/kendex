@@ -38,6 +38,16 @@
 # and never defined or defined and never used, and a variable defined with
 # a type that is no input type are refused. `__typename` is a field of
 # every type, and an `Int` literal is a signed 32-bit integer (§ 3.5.1).
+# The request's variable bindings in $bindings, each [NAME, FLAG, TEXT] as
+# gh takes it (`-f NAME=TEXT` a string, `-F NAME=TEXT` typed: an integer,
+# `true`, `false` or `null` as that JSON value, any other text a string;
+# `NAME[]=TEXT` one member of a list), are judged against the operation's
+# variable definitions (GraphQL specification § 6.1.2, CoerceVariableValues):
+# a binding of a variable the operation does not define, a variable bound
+# twice, a list bound as one value or one value as a list, a value of
+# another type than its definition's, null for a non-null type, and a
+# variable whose type is non-null and that is not bound are refused; gh's
+# own `$endCursor` under `--paginate` is nullable and bound by gh.
 # GitHub's own rules on a connection are applied too: a connection field
 # takes `first` or `last`, never both and neither null, and a literal one
 # between 1 and 100 (docs.github.com/en/graphql/overview/rate-limits-and-
@@ -297,6 +307,45 @@ def nullable: if endswith("!") then .[:-1] else . end;
 def listed: nullable | startswith("[");
 def item: nullable | .[1:-1];
 def named: gsub("[\\[\\]!]"; "");
+# A binding's JSON value as gh sends it.
+def bound_value($flag; $text):
+  if $flag == "f" then $text
+  elif $text | test("^-?[0-9]+$") then $text | tonumber
+  elif $text == "true" then true
+  elif $text == "false" then false
+  elif $text == "null" then null
+  else $text end;
+# Whether a bound JSON value is one a variable of type $type takes.
+def binds($declared):
+  if . == null then $declared | required | not
+  else
+    ($declared | nullable) as $kind
+    | . as $value
+    | if $kind == "Int" then type == "number" and . == floor and . >= -2147483648 and . <= 2147483647
+      elif $kind == "String" then type == "string"
+      elif $kind == "ID" then type == "string" or (type == "number" and . == floor)
+      elif $kind == "Boolean" then type == "boolean"
+      elif ENUMS | has($kind) then type == "string" and (ENUMS[$kind] | index([$value])) != null
+      else false end
+  end;
+# The bindings judged against the operation's definitions.
+def check_bindings($variables):
+  ($bindings | map(. as [$name, $flag, $text]
+      | {n: ($name | sub("\\[\\]$"; "")), list: ($name | endswith("[]")), v: bound_value($flag; $text)})) as $given
+  | reduce ($given | group_by(.n))[] as $group (.;
+      $group[0].n as $n
+      | ($variables[$n] // refuse("binding \($n) of no defined variable")) as $type
+      | if ($group | map(.list) | unique | length) > 1 then refuse("variable $\($n) bound as a list and a value")
+        elif $group[0].list then
+          if ($type | listed | not) then refuse("variable $\($n) of \($type) bound as a list")
+          elif all($group[]; .v | binds($type | item)) | not then refuse("variable $\($n) takes \($type)")
+          else . end
+        elif ($group | length) > 1 then refuse("variable $\($n) bound twice")
+        elif $type | listed then refuse("variable $\($n) of \($type) bound as one value")
+        elif $group[0].v | binds($type) | not then refuse("variable $\($n) takes \($type)")
+        else . end)
+  | ([$variables | to_entries[] | select(.value | required) | .key] - ($given | map(.n))) as $unbound
+  | if $unbound != [] then refuse("variable $\($unbound[0]) of \($variables[$unbound[0]]) unbound") else . end;
 # Whether a variable defined as $defined may stand at a position of type
 # $at (GraphQL § 5.8.5, no defaults).
 def admits($defined; $at):
@@ -479,6 +528,7 @@ def project($tree; $kind; $path):
 | ($tokens[:$open] | map(select(startswith("("))) | if . == [] then {} else .[0] | definitions end) as $variables
 | ([$variables | to_entries[] | select(.value | named | . as $n | (SCALARS + (ENUMS | keys) + (INPUTS | keys)) | index([$n]) == null)]) as $foreign
 | if $foreign != [] then refuse("variable $\($foreign[0].key) of \($foreign[0].value), no input type") else . end
+| check_bindings($variables)
 | ($tokens[$open + 1:] | if .[0] == "}" then refuse("empty selection") else parse end) as $operation
 | ($operation.rest | fragments) as $fragments
 | ([$operation.tree, $fragments] | [.. | objects | keys_unsorted[] | select(startswith("...")) | .[3:]] | unique) as $spread

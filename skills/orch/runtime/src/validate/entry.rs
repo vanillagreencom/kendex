@@ -292,38 +292,8 @@ fn entry(args: &Args, flags: &settings::Flags, env: &Env, locking: Locking) -> R
     }
     let settings = resolve_at(&worktree, flags)?;
     if args.stop {
-        let mut units = 0;
-        let mut groups = 0;
-        for run in files::runs(&worktree)?
-            .into_iter()
-            .filter(|r| r.sentinel.is_none())
-        {
-            let rd = run.dir.display().to_string();
-            match super::item_of_run_dir(&settings.state_dir, &rd) {
-                Ok((item, _)) => match run::stop(&settings, Some(&item), &rd, env, locking) {
-                    Ok(reply) if reply.ended == run::JobEnded::Signalled => {
-                        if reply.runner == "systemd" {
-                            units += 1;
-                        } else {
-                            groups += 1;
-                        }
-                    }
-                    Err(Error::RunClosed { .. }) => match run::stop_files(&run.dir)? {
-                        Some("systemd") => units += 1,
-                        Some(_) => groups += 1,
-                        None => {}
-                    },
-                    Ok(_) => {}
-                    Err(error) => return Err(error),
-                },
-                Err(Error::RunUnadmitted { .. }) => match run::stop_files(&run.dir)? {
-                    Some("systemd") => units += 1,
-                    Some(_) => groups += 1,
-                    None => {}
-                },
-                Err(error) => return Err(error),
-            }
-        }
+        let run::WorktreeStop { units, groups } =
+            run::stop_worktree(&settings, &worktree, None, env, locking)?;
         return Ok(TextReply::new(
             format!("state=stopped units={units} groups={groups}"),
             0,

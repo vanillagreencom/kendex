@@ -2034,35 +2034,13 @@ fn released_live_run(r: &RecoverRound) -> Result<Option<PathBuf>> {
         .map(|(dir, _)| dir))
 }
 
-/// The worktree's other unfinished runs ended as the validation entry's
-/// `--stop --worktree` ends them, before a replacement round is minted: a
-/// run another item admits through its stage's stop, and a run no item
-/// admits, or one whose stage is closed, by the identity its own files
-/// name. The item's own admitted runs are its stage loop's.
+/// The worktree's other unfinished runs ended by the validation entry's
+/// `--stop --worktree` stop, before a replacement round is minted. The
+/// item's own admitted runs are its stage loop's.
 fn stop_worktree_runs(settings: &Settings, issue: &str, worktree: &Path, env: &Env) -> Result<()> {
-    let failed = |e: Error| refuse("stop-failed", e);
-    for run in files::runs(worktree).map_err(failed)? {
-        if run.sentinel.is_some() {
-            continue;
-        }
-        let dir = run.dir.display().to_string();
-        let ended = match crate::validate::item_of_run_dir(&settings.state_dir, &dir) {
-            Ok((item, _)) if item == issue => continue,
-            Ok((item, _)) => {
-                crate::validate::run::stop(settings, Some(&item), &dir, env, Locking::FLOCK)
-                    .map(|_| ())
-            }
-            Err(e) => Err(e),
-        };
-        match ended {
-            Ok(()) => {}
-            Err(Error::RunClosed { .. } | Error::RunUnadmitted { .. }) => {
-                crate::validate::run::stop_files(&run.dir).map_err(failed)?;
-            }
-            Err(e) => return Err(failed(e)),
-        }
-    }
-    Ok(())
+    crate::validate::run::stop_worktree(settings, worktree, Some(issue), env, Locking::FLOCK)
+        .map(|_| ())
+        .map_err(|e| refuse("stop-failed", e))
 }
 
 pub fn recover(settings: &Settings, r: &RecoverRound, env: &Env) -> Result<Answer> {

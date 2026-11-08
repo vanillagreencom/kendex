@@ -2082,7 +2082,7 @@ mod dev_artifacts {
         assert_eq!(answer["state"], "redelegate");
         assert_eq!(answer["reason"], "directive-unconfirmed");
         // The run was ended through its stage's stop before the replacement
-        // was minted: the stop recorded, the stage closed.
+        // was minted: the stop recorded, the stage closed `stopped`.
         let doc = w.doc();
         let stage = doc["stages"]
             .as_array()
@@ -2093,7 +2093,7 @@ mod dev_artifacts {
             .clone();
         assert!(stage["stop"].is_object(), "{stage}");
         assert!(stage["end"].is_u64(), "{stage}");
-        assert_ne!(stage["outcome"], "pass", "{stage}");
+        assert_eq!(stage["outcome"], "stopped", "{stage}");
         assert_ne!(doc["dev_round_id"], "r1");
         assert!(doc["recovery_round_id"].is_null());
     }

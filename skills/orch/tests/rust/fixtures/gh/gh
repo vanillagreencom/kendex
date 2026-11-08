@@ -110,12 +110,16 @@ elif [ "${1:-}" != api ]; then
   echo "gh-fake: unexpected-call args=[$*]" >&2
   exit 64
 elif [ "${2:-}" = graphql ]; then
-  ids='[]' owner="" name="" number="" cursor=""
+  ids='[]' owner="" name="" number="" cursor="" bindings='[]'
   shift 2
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --paginate) ;;
-      -f|-F) shift; case "$1" in ids\[\]=*) ids=$(jq -c --arg id "${1#ids[]=}" '. + [$id]' <<<"$ids") ;; owner=*) owner="${1#owner=}" ;; name=*) name="${1#name=}" ;; number=*) number="${1#number=}" ;; cursor=*) cursor="${1#cursor=}" ;; query=*) query="${1#query=}" ;; gate=*) ;; *) echo "gh-fake: unexpected-field field=[$1]" >&2; exit 64 ;; esac ;;
+      -f|-F)
+        flag="${1#-}"
+        shift
+        case "$1" in query=*) ;; *) bindings=$(jq -c --arg n "${1%%=*}" --arg f "$flag" --arg t "${1#*=}" '. + [[$n, $f, $t]]' <<<"$bindings") ;; esac
+        case "$1" in ids\[\]=*) ids=$(jq -c --arg id "${1#ids[]=}" '. + [$id]' <<<"$ids") ;; owner=*) owner="${1#owner=}" ;; name=*) name="${1#name=}" ;; number=*) number="${1#number=}" ;; cursor=*) cursor="${1#cursor=}" ;; query=*) query="${1#query=}" ;; gate=*) ;; *) echo "gh-fake: unexpected-field field=[$1]" >&2; exit 64 ;; esac ;;
       *) echo "gh-fake: unexpected-call args=[$*]" >&2; exit 64 ;;
     esac
     shift
@@ -181,7 +185,7 @@ if [ -z "$reply" ]; then
   exit 1
 fi
 if [ -n "$query" ]; then
-  reply=$(jq -c --arg q "$query" -f "$(dirname "$real")/select.jq" <<<"$reply") || { echo "gh-fake: selection-unsupported" >&2; exit 64; }
+  reply=$(jq -c --arg q "$query" --argjson bindings "$bindings" -f "$(dirname "$real")/select.jq" <<<"$reply") || { echo "gh-fake: selection-unsupported" >&2; exit 64; }
 elif [ -n "$fields" ]; then
   reply=$(jq -c --arg f "$fields" 'if (.body | type) == "object" then .body |= with_entries(select(.key as $k | $f | split(",") | index($k))) else . end' <<<"$reply") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
 fi

@@ -35,11 +35,16 @@ fn git(worktree: &Path, args: &[&str]) -> String {
 
 impl World {
     fn new() -> World {
+        World::at("wt")
+    }
+
+    /// A world whose worktree is the directory `name`.
+    fn at(name: &str) -> World {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         let state = root.join("state");
         fs::create_dir_all(&state).unwrap();
-        let worktree = root.join("wt");
+        let worktree = root.join(name);
         fs::create_dir_all(worktree.join("tmp")).unwrap();
         git(&worktree, &["init", "-q", "-b", "main"]);
         git(&worktree, &["config", "gc.auto", "0"]);
@@ -1447,6 +1452,128 @@ fn a_unit_launch_hands_the_manager_the_callers_variables_and_open_file_limit() {
     assert!(words.contains(&property.as_str()), "{argv}");
 }
 
+/// A `PATH` of every program the row's own `PATH` names but `without`, each
+/// name linked once from the first directory that holds it.
+fn farm_without(w: &World, without: &[&str]) -> String {
+    let farm = w.root.join(format!("farm-{}", without.join("-")));
+    fs::create_dir_all(&farm).unwrap();
+    for dir in std::env::split_paths(&tool_path(&[])) {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let link = farm.join(&name);
+            if without.iter().any(|w| name == **w) || link.symlink_metadata().is_ok() {
+                continue;
+            }
+            std::os::unix::fs::symlink(entry.path(), link).unwrap();
+        }
+    }
+    farm.display().to_string()
+}
+
+#[test]
+fn a_host_without_systemd_run_runs_the_job_under_setsid_beyond_its_starters_group() {
+    use std::os::unix::process::CommandExt;
+    let w = World::new();
+    let path = farm_without(&w, &["systemd-run"]);
+    let mut command = support::isolated();
+    command
+        .arg("--state-dir")
+        .arg(&w.state)
+        .args([
+            "validate", "start", "--item", ITEM_ID, "--round", ROUND, "--poll", "1",
+        ])
+        .current_dir(&w.worktree)
+        .process_group(0)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    for (k, v) in w.env() {
+        command.env(k, v);
+    }
+    command
+        .env("PATH", &path)
+        .env("DEV_VALIDATE_CMD", "sleep 1; echo full");
+    let child = command.spawn().unwrap();
+    let starter = child.id();
+    let started = ok(&child.wait_with_output().unwrap());
+    // A harness reaps a background shell by its process group: the job is
+    // in a session of its own, so it outlives the group that started it.
+    let _ = program("kill")
+        .args(["-KILL", "--", &format!("-{starter}")])
+        .status();
+    let dir = started["run_dir"].as_str().unwrap();
+    assert_eq!(w.wait_closed(dir)["outcome"], "pass");
+    let log = run_file(dir, "log");
+    assert!(
+        log.starts_with("runner=setsid reason=no-systemd-run pid="),
+        "{log}"
+    );
+}
+
+#[test]
+fn a_user_manager_that_does_not_answer_the_probe_leaves_the_job_to_setsid_naming_why() {
+    let w = World::new();
+    let (path, manager) = manager(&w);
+    let started = ok(&w.start(
+        &[],
+        &[
+            ("PATH", &path),
+            ("VALIDATE_MANAGER_DIR", &manager),
+            ("VALIDATE_PROBE_ANSWER", "no-manager"),
+        ],
+    ));
+    let dir = started["run_dir"].as_str().unwrap();
+    assert_eq!(w.wait_closed(dir)["outcome"], "pass");
+    let log = run_file(dir, "log");
+    assert!(
+        log.starts_with(
+            "runner=setsid reason=probe-failed detail=Failed to connect to user scope bus via local transport: No such file or directory pid="
+        ),
+        "{log}"
+    );
+    assert!(!Path::new(&manager).join("launches").exists());
+}
+
+#[test]
+fn a_host_with_a_user_manager_and_no_setsid_runs_the_job_in_a_unit() {
+    let w = World::new();
+    let (_, manager) = manager(&w);
+    let path = format!(
+        "{}:{}",
+        fixtures().join("validate-tools").display(),
+        farm_without(&w, &["setsid"])
+    );
+    let started = ok(&w.start(&[], &[("PATH", &path), ("VALIDATE_MANAGER_DIR", &manager)]));
+    let dir = started["run_dir"].as_str().unwrap();
+    assert_eq!(w.wait_closed(dir)["outcome"], "pass");
+    assert!(
+        run_file(dir, "log").starts_with("runner=systemd unit=orch-validate-"),
+        "{}",
+        run_file(dir, "log")
+    );
+}
+
+#[test]
+fn a_worktree_path_holding_a_dollar_reaches_its_unit_as_written_and_names_none() {
+    let w = World::at("wt-${HOME}");
+    let (path, manager) = manager(&w);
+    let started = ok(&w.start(&[], &[("PATH", &path), ("VALIDATE_MANAGER_DIR", &manager)]));
+    let dir = started["run_dir"].as_str().unwrap();
+    assert_eq!(w.wait_closed(dir)["outcome"], "pass");
+    let launches = fs::read_to_string(Path::new(&manager).join("launches")).unwrap();
+    let unit = launches.lines().next().unwrap();
+    // A unit name carries no `$`; the manager reads `$$` as one `$`.
+    assert!(unit.starts_with("orch-validate-wt-__HOME_-"), "{unit}");
+    let argv = fs::read_to_string(Path::new(&manager).join(format!("{unit}.argv"))).unwrap();
+    assert!(
+        argv.lines()
+            .any(|word| word == dir.replace('$', "$$").as_str()),
+        "{argv}"
+    );
+}
+
 #[test]
 fn the_detached_producer_records_before_launch_and_the_real_executor_closes_and_notifies_once() {
     let w = World::new();
@@ -2074,7 +2201,7 @@ fn ci_world(w: &World, case: &str) -> (String, String, String) {
     }
     if matches!(
         case,
-        "queue-no-merge-queue" | "queue-absent" | "queue-malformed"
+        "queue-no-merge-queue" | "queue-absent" | "queue-malformed" | "push-first-no-pr-no-queue"
     ) {
         rules = json!([{ "type":"required_status_checks", "parameters":{"required_status_checks":[{"context":"CI"}]} }]);
     }
@@ -2094,7 +2221,7 @@ fn ci_world(w: &World, case: &str) -> (String, String, String) {
     }
     // gh's answer for a branch with no pull request, which push-first
     // reads as its resolved base.
-    if case == "push-first-no-pr" {
+    if matches!(case, "push-first-no-pr" | "push-first-no-pr-no-queue") {
         replies["pr view --json"] =
             json!({"exit":1,"stderr":"no pull requests found for branch \"feature\""});
     }
@@ -2219,6 +2346,21 @@ fn ci_admission_reads_the_real_pr_reader_and_both_rule_sources_before_skipping_l
             assert_eq!(last.status.code(), Some(1), "{case}");
             assert_eq!(text(&last).trim(), "last-pass=none", "{case}");
         }
+        // A read-only resolution of the same round reads the base the start
+        // read: the open PR's, or push-first's resolved base before one.
+        if matches!(case, "required" | "stacked" | "push-first-no-pr") {
+            let wt = w.worktree.display().to_string();
+            let resolved = w.entry(
+                &["--resolve-mode", "--worktree", &wt, "--base", &base],
+                &extra,
+            );
+            assert_eq!(
+                text(&resolved).trim(),
+                format!("validate-mode={want_mode}"),
+                "{case}: {}",
+                stderr(&resolved)
+            );
+        }
         // Queue-only work is proved by the merge group's run.
         assert_eq!(
             field(&record, "ci-event"),
@@ -2306,14 +2448,16 @@ fn a_local_start_asks_ci_for_an_all_or_range_subset_selection_and_scopes_a_pre_o
     // The selector previews with $SEL, recording the mode it was asked
     // for; its scoped run passes unless $SEL ends `-red`.
     let selector = "if [ \"$DEV_VALIDATE_SCOPED\" = true ]; then echo 'validate: lanes=scoped selection=subset'; [ \"$SEL\" != all-red ]; else printf '%s\\n' \"$DEV_VALIDATE_MODE\" > \"$MODE_FILE\"; if [ \"$SEL\" = failed ]; then echo 'selector: unavailable' >&2; exit 1; fi; echo \"selection=${SEL%-red}\"; fi";
-    // (requested, selection, world, render class, order) and the record's
-    // (mode, scoped, ci-fallback, verdict).
-    for (requested, sel, world, render, order, want) in [
+    // (requested, selection, world, classifier fixture, order) and the
+    // record's (mode, scoped, ci-fallback, verdict). The fixture `render`
+    // answers that class; `queue` queue-only work; `branch-queue` queue-only
+    // work on the branch whole and not in the round.
+    for (requested, sel, world, fixture, order, want) in [
         (
             "full",
             "all",
             "required",
-            false,
+            "",
             "review-first",
             ("ci", "true", "", "pending"),
         ),
@@ -2321,7 +2465,7 @@ fn a_local_start_asks_ci_for_an_all_or_range_subset_selection_and_scopes_a_pre_o
             "full",
             "subset",
             "required",
-            false,
+            "",
             "review-first",
             ("full", "", "", "pass"),
         ),
@@ -2329,7 +2473,7 @@ fn a_local_start_asks_ci_for_an_all_or_range_subset_selection_and_scopes_a_pre_o
             "range",
             "subset",
             "required",
-            false,
+            "",
             "review-first",
             ("ci", "true", "", "pending"),
         ),
@@ -2337,7 +2481,7 @@ fn a_local_start_asks_ci_for_an_all_or_range_subset_selection_and_scopes_a_pre_o
             "full",
             "all",
             "pr-not-open",
-            false,
+            "",
             "review-first",
             ("full", "true", "pr-not-open", "pass"),
         ),
@@ -2345,7 +2489,7 @@ fn a_local_start_asks_ci_for_an_all_or_range_subset_selection_and_scopes_a_pre_o
             "full",
             "all-red",
             "pr-not-open",
-            false,
+            "",
             "review-first",
             ("full", "true", "pr-not-open", "FAILING"),
         ),
@@ -2353,7 +2497,7 @@ fn a_local_start_asks_ci_for_an_all_or_range_subset_selection_and_scopes_a_pre_o
             "full",
             "all",
             "push-first-no-pr",
-            true,
+            "render",
             "push-first",
             ("full", "true", "class-uncovered", "pass"),
         ),
@@ -2361,7 +2505,7 @@ fn a_local_start_asks_ci_for_an_all_or_range_subset_selection_and_scopes_a_pre_o
             "full",
             "all",
             "required",
-            true,
+            "render",
             "review-first",
             ("full", "", "class-uncovered", "pass"),
         ),
@@ -2369,13 +2513,40 @@ fn a_local_start_asks_ci_for_an_all_or_range_subset_selection_and_scopes_a_pre_o
             "full",
             "failed",
             "required",
-            false,
+            "",
             "review-first",
             ("full", "", "", "pass"),
         ),
+        (
+            "full",
+            "subset",
+            "push-first-no-pr",
+            "",
+            "push-first",
+            ("ci", "true", "", "pending"),
+        ),
+        (
+            "ci",
+            "unknown",
+            "push-first-no-pr",
+            "queue",
+            "push-first",
+            ("range", "", "selection-unread", "pass"),
+        ),
+        (
+            "range",
+            "subset",
+            "push-first-no-pr-no-queue",
+            "branch-queue",
+            "push-first",
+            ("range", "", "class-uncovered", "pass"),
+        ),
     ] {
-        let case = format!("{requested} {sel} {world} {order}");
+        let case = format!("{requested} {sel} {world} {fixture} {order}");
         let w = World::new();
+        if fixture == "branch-queue" {
+            w.commit("early.rs");
+        }
         let base = w.head();
         w.commit("source.rs");
         let (path, replies, log) = ci_world(&w, world);
@@ -2397,15 +2568,26 @@ fn a_local_start_asks_ci_for_an_all_or_range_subset_selection_and_scopes_a_pre_o
             ("SEL", sel),
             ("MODE_FILE", mode_file.as_str()),
         ];
-        if render {
-            extra.extend([
+        match fixture {
+            "render" => extra.extend([
                 ("CHANGE_SCOPE_PATHS_CLI", scope.as_str()),
                 ("CHANGE_SCOPE_CLASS", "render"),
-            ]);
+            ]),
+            "queue" => extra.extend([
+                ("CHANGE_SCOPE_PATHS_CLI", scope.as_str()),
+                ("CHANGE_SCOPE_CLASS", "standard"),
+                ("CHANGE_SCOPE_QUEUE_ONLY", "true"),
+            ]),
+            "branch-queue" => extra.extend([
+                ("CHANGE_SCOPE_PATHS_CLI", scope.as_str()),
+                ("CHANGE_SCOPE_CLASS", "standard"),
+                ("CHANGE_SCOPE_QUEUE_BASE", "origin/main"),
+            ]),
+            _ => {}
         }
         let mut args = vec![];
-        if requested == "range" {
-            args.extend(["--validate-mode", "range", "--base", base.as_str()]);
+        if requested != "full" {
+            args.extend(["--validate-mode", requested, "--base", base.as_str()]);
         }
         let out = w.local(&args, &extra);
         let dir = directory(&out);
@@ -2433,6 +2615,13 @@ fn a_local_start_asks_ci_for_an_all_or_range_subset_selection_and_scopes_a_pre_o
             requested,
             "{case}"
         );
+        // One CI admission per start reads the base's rules once.
+        let reads = fs::read_to_string(&log)
+            .unwrap_or_default()
+            .lines()
+            .filter(|l| l.contains("/rules/branches/"))
+            .count();
+        assert!(reads <= 1, "{case}: {reads} rule reads");
         if sel == "failed" {
             assert!(
                 run_file(&dir, "class.log").contains("selector: unavailable"),

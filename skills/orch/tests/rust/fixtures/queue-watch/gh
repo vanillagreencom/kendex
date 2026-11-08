@@ -22,6 +22,19 @@ real="$(readlink -f "${BASH_SOURCE[0]}")"
 export GH_FAKE_REPLIES GH_FAKE_LOG
 if [ "${1:-}" = api ] && [ "${2:-}" = graphql ] && [ "${3:-}" = -f ]; then
   query="${4#query=}"
+  # Every field after the query is a variable binding the projector judges.
+  bindings='[]' i=5
+  while [ "$i" -le "$#" ]; do
+    flag="${!i}" j=$((i + 1))
+    case "$flag" in
+      -f|-F) ;;
+      *) echo "gh-fake: unexpected-call args=[$*]" >&2; exit 64 ;;
+    esac
+    [ "$j" -le "$#" ] || { echo "gh-fake: unexpected-call args=[$*]" >&2; exit 64; }
+    field="${!j}"
+    bindings=$(jq -c --arg n "${field%%=*}" --arg f "${flag#-}" --arg t "${field#*=}" '. + [[$n, $f, $t]]' <<<"$bindings")
+    i=$((i + 2))
+  done
   case "$query" in
     "mutation"*"disablePullRequestAutoMerge("*) key="mutation disablePullRequestAutoMerge" ;;
     "mutation"*"dequeuePullRequest("*) key="mutation dequeuePullRequest" ;;
@@ -32,7 +45,7 @@ if [ "${1:-}" = api ] && [ "${2:-}" = graphql ] && [ "${3:-}" = -f ]; then
     printf '%s\n' "$*" >> "$GH_FAKE_LOG"
     reply=$(jq -c --arg k "$key" '.[$k] // empty' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
     if [ -n "$reply" ]; then
-      reply=$(jq -c --arg q "$query" -f "$(dirname "$(dirname "$real")")/gh/select.jq" <<<"$reply") || { echo "gh-fake: selection-unsupported" >&2; exit 64; }
+      reply=$(jq -c --arg q "$query" --argjson bindings "$bindings" -f "$(dirname "$(dirname "$real")")/gh/select.jq" <<<"$reply") || { echo "gh-fake: selection-unsupported" >&2; exit 64; }
     fi
     if [ -z "$reply" ]; then
       echo "gh: HTTP 404: Not Found (https://api.github.com/graphql)" >&2
