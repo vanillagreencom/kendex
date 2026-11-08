@@ -5,6 +5,7 @@ from collections import namedtuple
 import errno
 from contextlib import contextmanager
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -43,6 +44,47 @@ DIALOG_FRAME = re.compile(r"^[\s─-╿]+|[\s─-╿]+$")
 # verb's mode, mark the value that verb binds the pane by, and binding the
 # tmux format holding that ownership inside one server command.
 Ownership = namedtuple("Ownership", "kind mark binding")
+
+
+class SessionLog(io.TextIOBase):
+    def __init__(self, stream, origin):
+        self.stream, self.origin = stream, origin
+        self.pending = ""
+
+    @property
+    def encoding(self):
+        return self.stream.encoding
+
+    def writable(self):
+        return True
+
+    def _line(self, text):
+        stamp = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        # Append a whole line at once: workers and successor runners share
+        # this file, and neither may leave an unprefixed fragment for the other.
+        self.stream.write(stamp + " origin=" + self.origin + " " + text + "\n")
+
+    def write(self, text):
+        if self.closed:
+            raise ValueError("write to closed session log")
+        lines = (self.pending + text).split("\n")
+        self.pending = lines.pop()
+        for line in lines:
+            self._line(line)
+        return len(text)
+
+    def flush(self):
+        if self.pending:
+            self._line(self.pending)
+            self.pending = ""
+        self.stream.flush()
+
+    def close(self):
+        if not self.closed:
+            try:
+                super().close()
+            finally:
+                self.stream.close()
 
 
 class Refusal(Exception):
@@ -405,13 +447,20 @@ os.execvpe(argv[0],argv,env)
             print("jarvis-session: worker=cancelled generation=" + str(generation), flush=True)
         return current
 
-    def detach(self, verb, record):
+    def log_output(self, origin):
+        # Keep these streams installed through the interpreter's exception
+        # hook, so an uncaught worker or runner traceback uses the same writer.
+        stream = (self.path.parent / "session.log").open("a", encoding="utf-8", buffering=1)
+        sys.stdout = sys.stderr = SessionLog(stream, origin)
+
+    def detach(self, verb, record, *, origin=None):
         generation = record["generation"]
+        origin = "succession" if verb == "succeed" else origin or record["origin"]
         log = self.path.parent / "session.log"
         with log.open("a") as stream:
             child = subprocess.Popen([sys.executable, "-B", "-c",
-                                      "import os, runpy, sys; runtime = runpy.run_path(sys.argv[1], run_name='jarvis_worker'); runtime['Session'](sys.argv[3], dict(os.environ)).worker(sys.argv[2], int(sys.argv[4]))",
-                                      str(Path(__file__).resolve()), verb, self.home, str(generation)],
+                                      "import os, runpy, sys; runtime = runpy.run_path(sys.argv[1], run_name='jarvis_worker'); session = runtime['Session'](sys.argv[3], dict(os.environ)); session.log_output(sys.argv[5]); session.worker(sys.argv[2], int(sys.argv[4]))",
+                                      str(Path(__file__).resolve()), verb, self.home, str(generation), origin],
                                      stdin=subprocess.DEVNULL, stdout=stream, stderr=stream,
                                      env=dict(self.env, JARVIS_BASH=BASH), start_new_session=True)
         try:
@@ -747,7 +796,7 @@ os.execvpe(argv[0],argv,env)
         # The native session draws this pane, so the runner's diagnostics
         # join the worker's in the session log; the native child keeps the
         # pane's own descriptors.
-        sys.stdout = sys.stderr = (self.path.parent / "session.log").open("a", buffering=1)
+        self.log_output("succession")
         # The pane's own binding is the native session's alone: a runner that
         # takes the transfer writes into this pane as the worker does, from
         # outside it (pane-write refuses its own pane).
@@ -883,7 +932,7 @@ os.execvpe(argv[0],argv,env)
             if self.terminal(record) or self.terminal(record.get("predecessor")) or record.get("state") == "starting":
                 record.update(state="stopping", reason="stop-requested", detail="")
                 self.write(record)
-                self.detach("stop", record)
+                self.detach("stop", record, origin=origin or "manual")
                 answer = self.answer(record, state="stopping", reason="stop-requested")
                 # Publish while teardown still waits on this lock. Off and
                 # the Stopping answer precede the end of the owned session.

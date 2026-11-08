@@ -85,6 +85,122 @@ def validate(output, code, verb, duplicate_boot=False, adopt=False):
     return answer
 
 
+class SessionLogContract(unittest.TestCase):
+    def setUp(self):
+        self.scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch.cleanup)
+        self.root = Path(self.scratch.name).resolve()
+        self.home = self.root / "home"
+        self.home.mkdir()
+        self.env = {"PATH": os.environ["PATH"], "HOME": str(self.root),
+                    "XDG_STATE_HOME": str(self.root / "state"),
+                    "JARVIS_BASH": os.environ["JARVIS_TEST_BASH"]}
+        self.source = SKILLS / "jarvis/scripts/lib/session.py"
+        with patch.dict(os.environ, self.env, clear=True):
+            self.runtime = runpy.run_path(str(self.source))
+            self.session = self.runtime["Session"](self.home, self.env)
+        self.session.path.parent.mkdir(parents=True)
+        self.log = self.session.path.with_name("session.log")
+
+    @staticmethod
+    def reap(child):
+        if child.poll() is None:
+            child.terminate()
+            try:
+                child.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait(timeout=5)
+
+    def test_session_log_stream_lines(self):
+        # print and traceback split a line over writes; a flush may have no NL.
+        stamp = time.struct_time((2026, 11, 8, 3, 40, 0, 6, 312, 0))
+        with patch.object(self.runtime["time"], "gmtime", return_value=stamp) as clock, \
+                self.runtime["SessionLog"](self.log.open("a", encoding="utf-8"), "manual") as stream, \
+                redirect_stdout(stream), redirect_stderr(stream):
+            print("stdout é")
+            self.assertEqual(sys.stderr.write("fragment"), len("fragment"))
+            self.assertEqual(sys.stderr.write("ed\nsecond\n\n"), len("ed\nsecond\n\n"))
+            clock.return_value = time.struct_time((2026, 11, 8, 3, 41, 0, 6, 312, 0))
+            sys.stdout.write("flushed tail")
+            sys.stdout.flush()
+            print("after flush")
+            sys.stderr.write("closed tail")
+        self.assertEqual(self.log.read_text().splitlines(), [
+            "2026-11-08T03:40:00Z origin=manual stdout é",
+            "2026-11-08T03:40:00Z origin=manual fragmented",
+            "2026-11-08T03:40:00Z origin=manual second",
+            "2026-11-08T03:40:00Z origin=manual ",
+            "2026-11-08T03:41:00Z origin=manual flushed tail",
+            "2026-11-08T03:41:00Z origin=manual after flush",
+            "2026-11-08T03:41:00Z origin=manual closed tail"])
+
+    def test_worker_session_log_lines(self):
+        rows = (("start", "manual", None, "manual"), ("start", "boot", None, "boot"),
+                ("start", "app-on", None, "app-on"), ("start", "watch-loop", None, "watch-loop"),
+                ("succeed", "boot", None, "succession"), ("stop", "boot", "app-off", "app-off"),
+                ("successor", "boot", None, "succession"))
+        for verb, recorded, requested, origin in rows:
+            with self.subTest(verb=verb, origin=origin):
+                # An unreadable record is a real worker failure producer. Its
+                # diagnostic precedes the cleanup read's uncaught Refusal.
+                record = dict(v=1, home=str(self.home), origin=recorded, generation=1,
+                              state="invalid", reason="invalid")
+                self.session.write(record)
+                self.log.unlink(missing_ok=True)
+                if verb == "successor":
+                    driver = ("import os,runpy,sys; runtime=runpy.run_path(sys.argv[1]); "
+                              "runtime['Session'](sys.argv[2], dict(os.environ)).successor(1)")
+                    result = subprocess.run([sys.executable, "-B", "-c", driver, str(self.source), str(self.home)],
+                                            env=self.env, capture_output=True, text=True, timeout=15)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(result.stdout + result.stderr, "")
+                else:
+                    children = []
+                    real_popen = subprocess.Popen
+                    def observe(*args, **kwargs):
+                        child = real_popen(*args, **kwargs)
+                        if kwargs.get("start_new_session"):
+                            children.append(child)
+                            self.addCleanup(self.reap, child)
+                        return child
+                    with patch.object(subprocess, "Popen", observe), self.session.locked():
+                        self.session.detach(verb, record, origin=requested)
+                    self.assertEqual(len(children), 1)
+                    self.assertNotEqual(children[0].wait(timeout=15), 0)
+                lines = self.log.read_text().splitlines()
+                self.assertGreater(len(lines), 1)
+                prefix = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z origin=" + origin + " "
+                for line in lines:
+                    self.assertRegex(line, prefix)
+                bodies = [re.sub(prefix, "", line) for line in lines]
+                self.assertIn("Traceback (most recent call last):", bodies)
+                self.assertRegex(bodies[-1], r"(?:^|\.)Refusal(?::|$)")
+                if verb != "successor":
+                    self.assertRegex(bodies[0], r"^jarvis-session: worker-failed .* cause=Refusal ")
+
+    def test_worker_session_log_raw_stream_control(self):
+        skills = self.root / "control/skills"
+        scripts = skills / "jarvis/scripts"
+        shutil.copytree(SKILLS / "jarvis/scripts", scripts)
+        for dependency in ("mailbox", "orch", "github"):
+            (skills / dependency).symlink_to(SKILLS / dependency, target_is_directory=True)
+        source = scripts / "lib/session.py"
+        self.assertFalse(source.is_symlink())
+        before = source.read_text()
+        old = "sys.stdout = sys.stderr = SessionLog(stream, origin)"
+        self.assertEqual(before.count(old), 1)
+        after = before.replace(old, "sys.stdout = sys.stderr = stream")
+        self.assertNotEqual(before, after)
+        source.write_text(after)
+        result = subprocess.run([str(ROOT / "skills/jarvis/tests/session.test.sh"),
+                                 "SessionLogContract.test_worker_session_log_lines", "--failfast"],
+                                env=os.environ | {"JARVIS_TEST_SKILLS": str(skills)},
+                                capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("self.assertRegex(line, prefix)", result.stderr)
+
+
 class BootReceiptScenario:
     # The specified receipt producer owns applicability for its contract rows.
     applicable = Path("/proc/sys/kernel/random/boot_id").is_file()
@@ -2019,9 +2135,11 @@ except RuntimeError as failure:
                 log = self.record.parent / "session.log"
                 deadline = time.monotonic() + 10
                 marker = "jarvis-session: worker=cancelled generation=" + str(generation)
-                while marker not in log.read_text().splitlines() and time.monotonic() < deadline:
+                prefix = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z origin=manual "
+                while not any(re.sub(prefix, "", line) == marker for line in log.read_text().splitlines()) and time.monotonic() < deadline:
                     time.sleep(0.05)
-                self.assertIn(marker, log.read_text().splitlines())
+                self.assertTrue(any(re.match(prefix, line) and re.sub(prefix, "", line) == marker
+                                    for line in log.read_text().splitlines()))
                 if phase == "pending":
                     self.await_launches(launches + 2)
                     current = json.loads(self.record.read_text())
