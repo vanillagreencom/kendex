@@ -5,8 +5,9 @@
 # matcher: Bash
 # description: Refuse a command that kills processes by name or by argv pattern (`pkill`, `killall`), whatever flags follow. On a machine where several agents share one checkout and its worktrees, a pattern that matches a tool's name matches every lane running that tool, the caller's own shell included when its command line holds the pattern. Names the accepted forms: `kill <pid>` on a PID the caller recorded when it launched the process, or one whose `/proc/<pid>/cwd` the caller has read and found inside its own worktree. Inside a tmux session (`TMUX` set), also refuse a `tmux kill-server` or `kill-session` that names no `-S` or `-L` socket: tmux then takes the server `TMUX` names, or under `env -u TMUX` its default socket, and either can be the server the caller's own session runs in, so the stop can end that session or others on it. Names `env -u TMUX tmux -S PATH` before the verb and tells the caller to keep the stop's own arguments after it.
 # summary: Stops a command that kills processes by name, which on a machine running several agents stops every lane using that tool, and, inside tmux, a tmux stop that names no socket, which can act on the server your own session runs in. Names the safe forms: kill a process id you started, or give tmux the socket you started.
-# safety: For the name rule, one regex over the raw command decides: a `pkill` or `killall` word between two word edges, wherever in the command it stands, a path prefix, a quote or a substitution around it included. Reading the word wherever it stands refuses a harmless command that merely spells it, an echo or a heredoc line included, and that is the accepted cost: it fails closed, so it stalls one command rather than ending another lane's run. A word is seen only where the command already spells it: a spelling the shell assembles from quotes or escapes (`p\kill`, `p'kill'`) is not seen here and reaches the shell, the frozen lexical-scanner class every guard in this directory declares. `kill`, `pgrep` and `ps` are not read, so the same hazard spelled as `kill $(pgrep -f …)` or `pgrep -f … | xargs kill` passes; the rule is the two verbs, and the remedy text is what asks for a PID. The tmux rule holds only while `TMUX` is set in the hook's environment, which the harness inherits from its pane. Each simple command, split at `;`, `&`, `|`, parentheses, backquotes and newlines, is read word by word: after a `tmux` word, its flags and the arguments of `-c`, `-f`, `-L`, `-S` and `-T`, then its command word; `kill-server` or `kill-session` there is refused unless a `-L` or `-S` flag came first; an `env -u TMUX` before `tmux` does not lift it, because tmux then takes its default socket. The command word ends the scan of its simple command, so the split is what finds a stop after an earlier tmux command on the same line. The same reading refuses `echo tmux kill-server`, and does not see a stop chained after `\;`, an abbreviated command name, a tmux the shell assembles at run time or one a script file runs. Missing tools or unreadable payload produce one keyed warning and allow the call. Every refusal opens with `block-argv-kill: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: For the name rule, commit-guards' command-position reader supplies candidate command words, masking quoted data and dropping heredoc bodies while retaining shell text and substitutions that run commands. A `pkill` or `killall` at the start of a candidate, with an optional path prefix or whole-word quotes, is refused; the reader also considers argument words as candidates to cover wrappers. A single-word quoted argument such as `echo "pkill"` therefore stays refused, while multiword quoted data such as `echo "never use pkill here"` passes. A word is seen only where the command already spells it: a spelling the shell assembles from quotes or escapes (`p\kill`, `p'kill'`) is not seen here and reaches the shell, the frozen lexical-scanner class every guard in this directory declares. `kill`, `pgrep` and `ps` are not read, so the same hazard spelled as `kill $(pgrep -f …)` or `pgrep -f … | xargs kill` passes; the rule is the two verbs, and the remedy text is what asks for a PID. The tmux rule holds only while `TMUX` is set in the hook's environment, which the harness inherits from its pane. Each simple command, split at `;`, `&`, `|`, parentheses, backquotes and newlines, is read word by word: after a `tmux` word, its flags and the arguments of `-c`, `-f`, `-L`, `-S` and `-T`, then its command word; `kill-server` or `kill-session` there is refused unless a `-L` or `-S` flag came first; an `env -u TMUX` before `tmux` does not lift it, because tmux then takes its default socket. The command word ends the scan of its simple command, so the split is what finds a stop after an earlier tmux command on the same line. The same reading refuses `echo tmux kill-server`, and does not see a stop chained after `\;`, an abbreviated command name, a tmux the shell assembles at run time or one a script file runs. Missing tools, an unavailable command reader or unreadable payload produce one keyed warning and allow the call. Every refusal opens with `block-argv-kill: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 10
+# requires-skills: [commit-guards]
 # ---
 
 set -euo pipefail
@@ -37,6 +38,9 @@ refuse() { # KEY VALUE [CAUSE]
       ;;
     payload=invalid-json)
       echo "the hook payload is not valid JSON, or names a command that is not a string; this check is unavailable" >&2
+      ;;
+    support=*)
+      echo "the installed commit-guards command reader is unavailable; repair the hook's required skill installation" >&2
       ;;
     refused=*)
       echo "refusing a kill by process name or argv pattern:" >&2
@@ -114,18 +118,34 @@ COMMAND=$(printf '%s' "$INPUT" \
            | if type == "string" then . else error end' 2>/dev/null) ||
   refuse payload invalid-json
 
-# The word between two edges: the ends of the command or any character an
-# identifier cannot hold, so `/usr/bin/pkill`, `"pkill"` and `$(which pkill)`
-# are the verb and `unpkill`, `pkill-wrapper` and `killall.log` are not. `=~`
-# runs without REG_NEWLINE, so the edge classes admit a newline and a verb on
-# the second line of a multi-line call is found; `^` alone would not reach it.
-KILL_RE='(^|[^[:alnum:]_.-])(pkill|killall)($|[^[:alnum:]_.-])'
+# Resolve from the hook's install, including Pi's extra kendex directory,
+# rather than from the directory or command selected by the payload.
+AT=$(cd -- "${BASH_SOURCE[0]%/*}" && pwd -P) || refuse support unlocatable
+READER=""
+for level in 0 1 2 3; do
+  for candidate in "$AT/skills/commit-guards/scripts/lib/command-position.sh" "$AT/.agents/skills/commit-guards/scripts/lib/command-position.sh"; do
+    [ -r "$candidate" ] || continue
+    READER=$candidate
+    break
+  done
+  [ -z "$READER" ] || break
+  AT=${AT%/*}
+  [ -n "$AT" ] || AT=/
+done
+[ -n "$READER" ] || refuse support missing-command-reader
+# shellcheck source=../skills/commit-guards/scripts/lib/command-position.sh
+. "$READER"
 
-# The verb the command spelled is the second group of the regex above, the
-# only one that carries it, so the first line names what was matched.
-if [[ $COMMAND =~ $KILL_RE ]]; then
-  refuse refused "${BASH_REMATCH[2]}"
-fi
+KILL_RE="^[\"']?([^[:space:]\"']*/)?(pkill|killall)[\"']?([[:space:]]|$)"
+command_segments "$COMMAND"
+while IFS= read -r segment; do
+  command_text "$segment"
+  while IFS= read -r text; do
+    if [[ $text =~ $KILL_RE ]]; then
+      refuse refused "${BASH_REMATCH[2]}"
+    fi
+  done <<<"$COMMAND_TEXTS"
+done <<<"$SEGMENTS"
 
 # With neither -S nor -L, tmux takes its server from $TMUX before TMUX_TMPDIR
 # (tmux 3.7c, run recorded on KEN-4601), so inside a tmux session a stop that

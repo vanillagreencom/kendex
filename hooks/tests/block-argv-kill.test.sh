@@ -1,18 +1,15 @@
 #!/usr/bin/env bash
 # Tests for the block-argv-kill hook.
 #
-# One regex decides: a `pkill` or `killall` word at a word edge, wherever in
-# the command it stands. The verb, its edge and the rest of the command are
-# each varied below, so a change that dropped one of them reds here rather
-# than scoring on the others. `kill`, `pgrep` and `ps` are the control side:
-# the commands the refusal sends the caller to must pass.
+# The shared command reader separates command candidates from quoted data
+# and heredoc bodies. `kill`, `pgrep` and `ps` are the control side: the
+# commands the refusal sends the caller to must pass.
 #
 # Every refusal opens with `block-argv-kill: <key>=<value>`, and that line is
 # the contract: the first-line table below pins the key and the value of each
 # condition beside its exit status, and the English under it is not asserted.
 #
-# HOOK_UNDER_TEST overrides the script under test so the must-fail controls
-# (a no-op hook, an always-block hook) run against these assertions.
+# HOOK_UNDER_TEST overrides the script under test for a planted copy.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,8 +17,10 @@ HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/block-argv-kill.sh}"
 
 PASS=0
 FAIL=0
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+TMP_ROOT="$(mktemp -d)" || { echo 'block-argv-kill.test: scratch=mktemp-failed' >&2; exit 1; }
+[[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo 'block-argv-kill.test: scratch=not-a-directory' >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'block-argv-kill.test: scratch=resolve-failed' >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 ERR_FILE="$TMP_ROOT/stderr"
 BASH_BIN="$(command -v bash)"
 
@@ -101,12 +100,41 @@ run_hook 'pkill-wrapper --dry-run';            assert_eq "$rc" 0 'the verb glued
 run_hook 'echo unpkill';                       assert_eq "$rc" 0 'the verb glued to a prefix is another word'
 run_hook 'git status';                         assert_eq "$rc" 0 'a command with neither verb passes'
 
+echo "=== block-argv-kill: quoted and heredoc data pass ==="
+assert_data_mention() {
+  run_hook "$1"
+  assert_eq "$rc" 0 "$2"
+}
+while IFS='|' read -r label text; do
+  text=$(printf '%b' "$text")
+  assert_data_mention "$text" "$label"
+done <<'ROWS'
+the verb inside a quoted string passes|echo "never use pkill here"
+the verbs inside a heredoc body pass|cat <<'NOTE'\nnever use pkill or killall here\nNOTE
+ROWS
+
+# One control restores raw scanning in a disposable hook. The same quoted
+# data assertion must turn red while the real command text stays intact.
+if [ -z "${HOOK_UNDER_TEST:-}" ]; then
+  mkdir -p "$TMP_ROOT/control/hooks" "$TMP_ROOT/control/skills/commit-guards/scripts/lib"
+  cp "$TEST_DIR/../../skills/commit-guards/scripts/lib/command-position.sh" "$TMP_ROOT/control/skills/commit-guards/scripts/lib/command-position.sh"
+  matches=$(grep -Fxc 'command_segments "$COMMAND"' "$HOOK") || exit 1
+  [ "$matches" = 1 ] || { echo 'block-argv-kill.test: control=edit-site' >&2; exit 1; }
+  sed 's/^command_segments "$COMMAND"$/SEGMENTS=$COMMAND/' "$HOOK" >"$TMP_ROOT/control/hooks/block-argv-kill.sh"
+  control_rc=0
+  (
+    HOOK="$TMP_ROOT/control/hooks/block-argv-kill.sh"
+    PASS=0 FAIL=0
+    assert_data_mention 'echo "never use pkill here"' 'the verb inside a quoted string passes'
+    [ "$FAIL" -eq 0 ]
+  ) >"$TMP_ROOT/control.log" 2>&1 || control_rc=$?
+  assert_eq "$control_rc" 1 'control: raw scanning makes the quoted-data assertion fail'
+fi
+
 echo "=== block-argv-kill: the stated limits ==="
-# Reading words rather than shell costs in both directions, and both costs are
-# rows so nobody grows a tokenizer to close either: a command that only spells
-# the verb is refused as the kill it is not, and a spelling the shell assembles
-# from quotes or escapes is not seen.
-run_hook 'echo "never use pkill here"';        assert_eq "$rc" 2 'the verb inside a quoted string is refused'
+# A spelling the shell assembles from quotes or escapes stays outside the
+# frozen lexical-scanner class; the shared reader does not assemble words.
+run_hook 'echo "pkill"';                       assert_eq "$rc" 2 'a single-word quoted argument remains a possible command word'
 run_hook "p'kill' -f x";                       assert_eq "$rc" 0 'a verb the shell assembles from quotes is not seen'
 run_hook 'kill\all x';                         assert_eq "$rc" 0 'a verb the shell assembles from an escape is not seen'
 
