@@ -40,13 +40,16 @@ set -euo pipefail
 # GIT_WORK_TREE and GIT_INDEX_FILE, which take precedence over `git -C` and
 # would configure the real repository; the caller's bound would alter every
 # row that sets none.
-unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE KENDEX_GITHUB_AUTH_TIMEOUT KENDEX_GITHUB_GIT_HTTPS_FALLBACK ORCH_GH_READ_TOKEN_FILE
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE KENDEX_GITHUB_AUTH_TIMEOUT KENDEX_GITHUB_GIT_HTTPS_FALLBACK ORCH_GH_READ_TOKEN_FILE ORCH_GH_PUSH_TOKEN_FILE
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 GIT_HELPER="$REPO_ROOT/skills/github/scripts/git-https-auth"
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+mkdir -p "$REPO_ROOT/tmp"
+TMP_ROOT="$(mktemp -d "$REPO_ROOT/tmp/git-https-auth.XXXXXX")" || { echo 'git-https-auth: scratch=mktemp-failed' >&2; exit 1; }
+[[ -d "$TMP_ROOT" && ! -L "$TMP_ROOT" ]] || { echo 'git-https-auth: scratch=not-a-directory' >&2; exit 1; }
+TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo 'git-https-auth: scratch=resolve-failed' >&2; exit 1; }
+trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 PASS=0
 FAIL=0
 
@@ -69,8 +72,21 @@ case "${1:-} ${2:-}" in
   "auth status")
     [[ "${STUB_GH_AUTH_OK:-1}" == 1 ]] || { echo "not logged in" >&2; exit 1; }
     echo "Logged in"; exit 0 ;;
-  "auth git-credential") exit 0 ;;
+  "auth git-credential")
+    [[ -n "${STUB_SELECTOR_LOG:-}" ]] || exit 0
+    # Fleet's confirmed selector contract: credential fill refuses an empty
+    # or unreadable selected file, even when ambient credentials exist.
+    if [[ ! -r "${ORCH_GH_READ_TOKEN_FILE:-}" || ! -s "${ORCH_GH_READ_TOKEN_FILE:-}" ]]; then
+      printf 'refused\n' >>"$STUB_SELECTOR_LOG"
+      exit 71
+    fi
+    printf 'credential:%s\n' "$ORCH_GH_READ_TOKEN_FILE" >>"$STUB_SELECTOR_LOG"
+    printf 'username=fixture\npassword=synthetic-marker\n'
+    exit 0 ;;
   "api user")
+    if [[ "${STUB_SELECTOR_HOOK:-}" == 1 ]]; then
+      printf 'hook:%s\n' "${ORCH_GH_READ_TOKEN_FILE:-}" >>"$STUB_SELECTOR_LOG"
+    fi
     [[ "${STUB_GH_AUTH_OK:-1}" == 1 ]] || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
     echo test-user; exit 0 ;;
 esac
@@ -88,6 +104,8 @@ repo_of() {
   [[ -d "$repo" ]] && { printf '%s' "$repo"; return; }
   mkdir -p "$repo"
   git -C "$repo" init -q -b main
+  git -C "$repo" config gc.auto 0
+  git -C "$repo" config maintenance.auto false
   git -C "$repo" config kendex.probe "$1"
   # An alias, so the probe URL is no argument the wrapper reads.
   git -C "$repo" config alias.probe-header 'config --get-urlmatch http.extraheader https://github.com/owner/repo.git'
@@ -235,6 +253,109 @@ explicit="$(
   if ORCH_GH_READ_TOKEN_FILE="$TMP_ROOT/read-token" kendex_github_git_should_use_read_token -C "$TMP_ROOT" ls-remote https://github.com/owner/repo.git; then printf yes; else printf no; fi
 )"
 assert_eq "$explicit" "yes" "an explicit HTTPS github.com URL in the arguments takes the read token path"
+
+echo "=== push and read credential selection ==="
+REAL_GIT="$(command -v git)"
+mkdir -p "$TMP_ROOT/selector-bin" "$TMP_ROOT/control"
+# A local transport needs no credential. Ask Git's credential machinery with
+# the command's actual config before forwarding to the real local transport,
+# which runs the real pre-push hook. No network or Fleet installation is used.
+# Contracts: https://git-scm.com/docs/git-credential and
+# https://git-scm.com/docs/githooks#_pre_push.
+cat >"$TMP_ROOT/selector-bin/git" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+args=("$@")
+prefix=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -C|-c) prefix+=("$1" "$2"); shift 2 ;;
+    push|fetch)
+      "$REAL_GIT" "${prefix[@]}" credential fill >/dev/null <<'CREDENTIAL'
+protocol=https
+host=github.com
+
+CREDENTIAL
+      break ;;
+    *) break ;;
+  esac
+done
+exec "$REAL_GIT" "${args[@]}"
+EOF
+chmod +x "$TMP_ROOT/selector-bin/git"
+git init -q --bare "$TMP_ROOT/repos/origin.git"
+git -C "$TMP_ROOT/repos/origin.git" config gc.auto 0
+git -C "$TMP_ROOT/repos/origin.git" config maintenance.auto false
+selector_repo="$(repo_of local)"
+git -C "$selector_repo" -c user.name=Fixture -c user.email=fixture@example.invalid commit -q --allow-empty -m fixture
+cat >"$selector_repo/.git/hooks/pre-push" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+STUB_SELECTOR_HOOK=1 gh api user >/dev/null
+EOF
+chmod +x "$selector_repo/.git/hooks/pre-push"
+printf 'push-token\n' >"$TMP_ROOT/push token"
+
+selection_result() { # auth-library push-file-state
+  local library="$1" state="$2" rc=0
+  local -a push_env=()
+  case "$state" in
+    valid) push_env=("ORCH_GH_PUSH_TOKEN_FILE=$TMP_ROOT/push token") ;;
+    absent) ;;
+    empty) push_env=(ORCH_GH_PUSH_TOKEN_FILE=) ;;
+    invalid) push_env=("ORCH_GH_PUSH_TOKEN_FILE=$TMP_ROOT/missing") ;;
+  esac
+  : >"$TMP_ROOT/selector.log"
+  env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_GH_PUSH_TOKEN_FILE \
+    PATH="$TMP_ROOT/selector-bin:$TMP_ROOT/bin:$PATH" REAL_GIT="$REAL_GIT" \
+    GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 \
+    GH_TOKEN=ambient-marker ORCH_GH_READ_TOKEN_FILE="$TMP_ROOT/read-token" \
+    KENDEX_GITHUB_GIT_HTTPS_FALLBACK=always STUB_SELECTOR_LOG="$TMP_ROOT/selector.log" \
+    ${push_env[@]+"${push_env[@]}"} "$BASH" -c '
+      set -euo pipefail
+      source "$1"
+      push_rc=0; fetch_rc=0
+      kendex_github_git -C "$2" -c core.askPass= push origin HEAD:refs/heads/selector >/dev/null 2>&1 || push_rc=$?
+      kendex_github_git -C "$2" fetch origin >/dev/null 2>&1 || fetch_rc=$?
+      printf "push=%s fetch=%s parent=%s\n" "$push_rc" "$fetch_rc" "$ORCH_GH_READ_TOKEN_FILE"
+    ' selector "$library" "$selector_repo" || rc=$?
+  printf 'shell=%s\n' "$rc"
+  cat "$TMP_ROOT/selector.log"
+}
+
+expected_selection="push=0 fetch=0 parent=$TMP_ROOT/read-token
+shell=0
+credential:$TMP_ROOT/push token
+hook:$TMP_ROOT/read-token
+credential:$TMP_ROOT/read-token"
+assert_eq "$(selection_result "$REPO_ROOT/skills/github/scripts/lib/gh-auth.sh" valid)" "$expected_selection" "push selects push file; the real hook, same-shell fetch and parent keep read file"
+for state in absent empty invalid; do
+  assert_eq "$(selection_result "$REPO_ROOT/skills/github/scripts/lib/gh-auth.sh" "$state")" "push=128 fetch=0 parent=$TMP_ROOT/read-token
+shell=0
+refused
+credential:$TMP_ROOT/read-token" "$state push file refuses despite valid read and ambient credentials"
+done
+
+# Keep the helper and its text; remove only the push selection in a disposable
+# source copy. The same assertion must reject that original defect.
+cp "$REPO_ROOT/skills/github/scripts/lib/"{gh-auth.sh,bounded.sh,group-leader.sh} "$TMP_ROOT/control/"
+python3 - "$TMP_ROOT/control/gh-auth.sh" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+assert not path.is_symlink()
+text = path.read_text()
+binding = 'ORCH_GH_READ_TOKEN_FILE="$ORCH_GH_PUSH_TOKEN_FILE" '
+assert text.count(binding) == 1
+changed = text.replace(binding, '')
+assert changed != text
+path.write_text(changed)
+PY
+if control="$(assert_eq "$(selection_result "$TMP_ROOT/control/gh-auth.sh" valid)" "$expected_selection" 'push selector control'; [[ "$FAIL" -eq 0 ]])"; then
+  assert_eq accepted rejected "must-fail control rejects lost push selection"
+else
+  assert_eq "${control%%$'\n'*}" '  FAIL  push selector control' "must-fail control rejects lost push selection"
+fi
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
