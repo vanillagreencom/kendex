@@ -658,13 +658,16 @@ environment_dump() { # command kind; arguments are already decoded data
   local targeting_eligible="" target_effects=() target_files=() target_operands=() target_redirects=()
   [ "$1" != shell ] || [ -n "${2:-}" ] || targeting_eligible=1
   local executable_tail_starts=() executable_tail_counts=() executable_tail_args=() executable_tail_kinds=() executable_tail_unquoted=()
-  local executable_source_kinds=() executable_prefix_counts=() split_source="" prefix_count=${command_prefix_count:-0}
+  local executable_source_kinds=() executable_prefix_counts=() prefix_count=${command_prefix_count:-0}
   local appended_args=(${command_tail_args[@]+"${command_tail_args[@]}"}) appended_kinds=(${command_tail_kinds[@]+"${command_tail_kinds[@]}"}) appended_unquoted=(${command_tail_unquoted[@]+"${command_tail_unquoted[@]}"})
   tokens=("${appended_args[@]:0:prefix_count}")
   kinds=("${appended_kinds[@]:0:prefix_count}")
   unquoted_words=("${appended_unquoted[@]:0:prefix_count}")
   appended_args=("${appended_args[@]:prefix_count}"); appended_kinds=("${appended_kinds[@]:prefix_count}"); appended_unquoted=("${appended_unquoted[@]:prefix_count}")
-  if [ "$1" = env-split ]; then split_source=1; set -- shell "${@:2}"; fi
+  if [ "$1" = env-split ]; then
+    ordinary_span_re=$'^[^\'"\\\\$# \t\r\n\v\f]+'
+    single_span_re="^[^'\\\\]+"
+  fi
   # Only this queued decode consumes the tail. Other recursive sources and
   # input bodies have independent lifetimes and must not inherit it.
   local command_tail_args=() command_tail_kinds=() command_tail_unquoted=() command_prefix_count=0
@@ -696,6 +699,17 @@ environment_dump() { # command kind; arguments are already decoded data
         continue
       fi
       c=${text:$i:1}; i=$((i + 1)); next=${text:$i:1}
+      # GNU env split-string produces argv, not executable shell structure
+      # (the recorded GNU env 9.4 printf probes). Its escapes, expansions and
+      # comments have no decoder here, so they cannot prove selected Git argv.
+      # Keep the fixed environment check's conservative evidence on that input.
+      if [ "$1" = env-split ]; then
+        case "$c" in
+          '\') history_reason=unresolved-git-argv ;;
+          '$') [ "$quote" = "'" ] || history_reason=unresolved-git-argv ;;
+          '#') [ -n "$quote$active" ] || history_reason=unresolved-git-argv ;;
+        esac
+      fi
       if [ "$quote" = ansi ]; then
         case "$c" in
           "'") quote="" ;;
@@ -707,6 +721,15 @@ environment_dump() { # command kind; arguments are already decoded data
       if [ "$quote" = "'" ]; then
         if [ "$c" = "'" ]; then quote=""; else word=$word$c; fi
         continue
+      fi
+      if [ "$1" = env-split ] && [ -z "$quote" ]; then
+        # Only env's word delimiters enter the shared marker handlers. Every
+        # other byte is argv data, including all shell operators and grouping.
+        case "$c" in
+          ' ' | $'\t' | $'\r' | $'\n' | $'\v' | $'\f') c=' ' ;;
+          "'" | '"' | '\' | '$' | '#') ;;
+          *) word=$word$c; active=1; continue ;;
+        esac
       fi
       if [ "$c" = '\' ]; then
         if [ "$i" -ge "$text_length" ]; then kind=unknown; break; fi
@@ -720,7 +743,7 @@ environment_dump() { # command kind; arguments are already decoded data
       fi
       # A substitution's known producer must remain visible inside double
       # quotes. Saving only the enclosing quote grants no inner permission.
-      if { [ "$c" = '$' ] && [ "$next" = '(' ]; } || [ "$c" = '`' ]; then
+      if [ "$1" != env-split ] && { { [ "$c" = '$' ] && [ "$next" = '(' ]; } || [ "$c" = '`' ]; }; then
         if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=$bare; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
         word=""; active=""; kind=literal; bare=1; quoted=""; compound=1; needs_target=""
         n=${#closers[@]}
@@ -787,9 +810,6 @@ environment_dump() { # command kind; arguments are already decoded data
           fi
           word=""; active=""; kind=literal; bare=1; quoted=""
           case "$c" in ' ' | $'\t' | $'\r') continue ;; esac
-          # GNU env 9.4's recorded printf probes show unquoted split-source
-          # newlines are argv whitespace. Quoted newlines stay in their word.
-          if [ "$c" = $'\n' ] && [ -n "$split_source" ]; then continue; fi
           case "$c" in
             '(') compound=1; n=${#closers[@]}; saved_quotes[n]=""; closers[n]=')'; c=';' ;;
             ')')
@@ -840,6 +860,7 @@ environment_dump() { # command kind; arguments are already decoded data
         *) word=$word$c; active=1 ;;
       esac
     done
+    if [ -n "$quote" ] && [ "$1" = env-split ]; then history_reason=unresolved-git-argv; fi
     [ -z "$quote" ] && [ "${#closers[@]}" -eq 0 ] || compound=1
     if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=$bare; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
   fi

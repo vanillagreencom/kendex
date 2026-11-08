@@ -792,7 +792,6 @@ environment_rows() {
 [2,"bash -c 'env | grep NAME'","opaque-shell-filter"]
 [2,"env -S 'printenv'","opaque-env-split"]
 [2,"env --split-string='printenv'","opaque-env-inline-split"]
-[2,"env -S 'printenv | grep NAME'","opaque-env-filter"]
 [2,"env | cat","unfiltered-pipe"]
 [2,"env | grep '.*'","wildcard-filter"]
 [2,"env | grep -v NAME","inverted-filter"]
@@ -1738,6 +1737,38 @@ split-newline-typed-tail|no-lazy-fetch|^$|argv|["env","-S","git -C","repo\nlog",
 split-newline-shell-positional|no-lazy-fetch|^$|argv|["env","-S","bash -c 'git\n'","log","-p"]|0|silent|-
 split-newline-shell-source|no-lazy-fetch|^$|argv|["env","-S","bash -c 'git\nlog -p'"]|0|silent|-
 split-newline-eval-source|no-lazy-fetch|^$|argv|["env","-S","eval 'git\nlog -p'"]|0|silent|-
+split-metachar-semicolon|no-lazy-fetch|^$|shell|"env -S 'git -c core.commentChar=; log -p'"|2|refused=history-policy|missing-no-lazy-fetch
+split-metachar-semicolon-argv|no-lazy-fetch|^$|argv|["env","-S","git -c core.commentChar=; log -p"]|2|refused=history-policy|missing-no-lazy-fetch
+split-metachar-semicolon-equals|no-lazy-fetch|^$|argv|["env","--split-string=git -c core.commentChar=; log -p"]|2|refused=history-policy|missing-no-lazy-fetch
+split-metachar-parentheses|no-lazy-fetch|^$|shell|"env -S 'git -C project(1)' log"|2|refused=history-policy|missing-no-lazy-fetch
+split-metachar-parentheses-argv|no-lazy-fetch|^$|argv|["env","-S","git -C project(1)","log"]|2|refused=history-policy|missing-no-lazy-fetch
+split-metachar-operators|no-lazy-fetch|^$|argv|["env","-S","git -C repo;()<>\u007c& log -p"]|2|refused=history-policy|missing-no-lazy-fetch
+split-metachar-pipe-operand|no-lazy-fetch|^$|argv|["env","-S","git -C \u007c log -p"]|2|refused=history-policy|missing-no-lazy-fetch
+split-metachar-redirect|no-lazy-fetch|^$|argv|["env","-S","git -C > log -p"]|2|refused=history-policy|missing-no-lazy-fetch
+split-metachar-backtick|no-lazy-fetch|^$|argv|["env","-S","git -C repo`marker` log -p"]|2|refused=history-policy|missing-no-lazy-fetch
+split-metachar-double-backtick|no-lazy-fetch|^$|argv|["env","-S","git -C \"repo`marker`\" log -p"]|2|refused=history-policy|missing-no-lazy-fetch
+split-metachar-hash-data|no-lazy-fetch|^$|argv|["env","-S","git -C repo#name log -p"]|2|refused=history-policy|missing-no-lazy-fetch
+split-metachar-whitespace|no-lazy-fetch|^$|argv|["env","-S","git\t-c core.commentChar=;\r\nlog\u000b-p\u000c"]|2|refused=history-policy|missing-no-lazy-fetch
+split-metachar-nested|no-lazy-fetch|^$|argv|["env","-u","BEFORE","-S","-i env -S 'git -C project(1)'","log","-p"]|2|refused=history-policy|missing-no-lazy-fetch
+split-metachar-fence-prefix|no-lazy-fetch|^$|argv|["env","-S","git --no-lazy-fetch -C repo;()<>\u007c&","log","-p"]|0|silent|-
+split-metachar-fence-tail|no-lazy-fetch|^$|argv|["env","-S","git -C project(1)","--no-lazy-fetch","log","-p"]|0|silent|-
+split-metachar-quoted-data|no-lazy-fetch|^$|argv|["env","-S","git -C 'project;()' --no-lazy-fetch log -p"]|0|silent|-
+split-metachar-typed-tail|no-lazy-fetch|^$|argv|["env","-S","git -C project(1) -c","x=';()<>\u007c&'","--no-lazy-fetch","log","-p"]|0|silent|-
+split-metachar-non-history|no-lazy-fetch|^$|argv|["env","-S","git -C project(1)","status"]|0|silent|-
+split-metachar-off|off|^$|shell|"env -S 'git -c core.commentChar=; log -p'"|0|silent|-
+split-metachar-absent|absent|^$|shell|"env -S 'git -C project(1)' log"|0|silent|-
+split-metachar-shell-list|no-lazy-fetch|^$|argv|["env","-S","bash -c 'git -C repo; git log -p'"]|2|refused=history-policy|missing-no-lazy-fetch
+split-metachar-eval-list|no-lazy-fetch|^$|argv|["env","-S","eval 'git -C repo; git log -p'"]|2|refused=history-policy|missing-no-lazy-fetch
+split-metachar-shell-group|no-lazy-fetch|^$|argv|["env","-S","bash -c '(git log -p)'"]|2|refused=history-policy|missing-no-lazy-fetch
+split-metachar-environment|off|^$|argv|["env","-S","printenv >"]|2|refused=environment-dump|-
+split-metachar-environment-data|off|^$|argv|["env","-S","printf ; printenv"]|0|silent|-
+split-metachar-environment-names|off|^$|shell|"env -S 'printenv \u007c grep NAME'"|0|silent|-
+split-metachar-project|no-lazy-fetch|blocked|argv|["env","-S","git --no-lazy-fetch -C project(1)","log","blocked"]|2|refused=policy|-
+split-unsupported-escape|no-lazy-fetch|^$|argv|["env","-S","gi\\x74 log -p"]|2|refused=history-policy|unresolved-git-argv
+split-unsupported-expansion|no-lazy-fetch|^$|argv|["env","-S","${PUBLIC_COMMAND} log -p"]|2|refused=environment-dump|-
+split-unsupported-comment|no-lazy-fetch|^$|argv|["env","-S","# comment\ngit --no-lazy-fetch log -p"]|2|refused=history-policy|unresolved-git-argv
+split-unsupported-quote|no-lazy-fetch|^$|argv|["env","-S","'git log -p"]|2|refused=history-policy|unresolved-git-argv
+split-unsupported-off|off|^$|argv|["env","-S","${PUBLIC_COMMAND} log -p"]|2|refused=environment-dump|-
 bare-git|no-lazy-fetch|^$|shell|"git"|0|silent|-
 bare-global|no-lazy-fetch|^$|shell|"git -C repo"|0|silent|-
 informational-git|no-lazy-fetch|^$|shell|"git --version"|0|silent|-
@@ -1776,8 +1807,8 @@ HISTORY_ROWS
   settings
 }
 
-# A lost typed tail is the reached defect: the same row assertions must
-# reject it, including safe operands that must not become executable source.
+# Queued env source must retain its native argv context and typed tail.
+# The same assertions reject context erasure without a copied classifier.
 history_composition_controls() {
   local mutant status row defect row_names log
   local rows=()
@@ -1791,8 +1822,8 @@ history_composition_controls() {
       defect == "env-context" && /executable_prefix_counts\[code\]=\$\(\(pos - program_pos\)\)/ {
         sub(/pos - program_pos/, "0 * (pos - program_pos)"); changed++
       }
-      defect == "newline-context" && /if \[ "\$c" = .* && \[ -n "\$split_source" \]; then continue; fi/ {
-        sub(/-n "\$split_source"/, "-n \"\""); changed++
+      defect == "source-kind" && /^  appended_args=.*prefix_count/ {
+        print; print "  if [ \"$1\" = env-split ]; then set -- shell \"${@:2}\"; fi"; changed++; next
       }
       { print }
       END { if (changed != 1) exit 1 }
@@ -1814,7 +1845,7 @@ history_composition_controls() {
   done <<'COMPOSITION_CONTROLS'
 tail|split-tail split-global split-global-boundary split-nested split-nested-fenced split-typed-operand split-argv split-equals
 env-context|split-option-unset-dump split-option-ignore split-option-end
-newline-context|split-newline-tail split-newline-argv split-newline-internal
+source-kind|split-newline-tail split-newline-argv split-newline-internal split-metachar-semicolon split-metachar-semicolon-argv split-metachar-semicolon-equals split-metachar-parentheses split-metachar-parentheses-argv split-metachar-operators split-metachar-pipe-operand split-metachar-backtick split-metachar-double-backtick split-metachar-whitespace split-metachar-nested split-metachar-environment-data split-metachar-environment-names split-unsupported-escape split-unsupported-comment split-unsupported-quote
 COMPOSITION_CONTROLS
 }
 if [ "${1:-}" = --history-controls ]; then
