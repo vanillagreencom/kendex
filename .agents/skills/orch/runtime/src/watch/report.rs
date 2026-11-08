@@ -308,7 +308,7 @@ fn completions(
     since: u64,
     now: u64,
 ) -> Result<Vec<super::github::Completion>> {
-    let gh = super::github::Gh { cli: &ctx.gh };
+    let gh = super::github::handle(&ctx.gh);
     let mut rows = super::github::report_merges(&gh, &repos(ctx), &lanes(doc)?, since, now)?;
     for row in doc
         .get("fleet_log")

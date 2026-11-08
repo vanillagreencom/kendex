@@ -228,10 +228,14 @@ impl World {
         match counts {
             Some((completed, running)) => {
                 let runs: Vec<Value> = (0..completed)
-                    .map(|_| json!({"status": "completed", "conclusion": "success"}))
-                    .chain(
-                        (0..running).map(|_| json!({"status": "in_progress", "conclusion": null})),
-                    )
+                    .map(|_| ("completed", json!("success")))
+                    .chain((0..running).map(|_| ("in_progress", Value::Null)))
+                    .enumerate()
+                    .map(|(i, (status, conclusion))| {
+                        json!({"id": i + 1, "node_id": format!("CR_{}", i + 1), "name": format!("check-{}", i + 1),
+                            "status": status, "conclusion": conclusion, "check_suite": {"id": 1},
+                            "started_at": null, "completed_at": null, "html_url": null, "details_url": null})
+                    })
                     .collect();
                 self.replies.insert(
                     key,

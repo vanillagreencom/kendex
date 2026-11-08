@@ -26,8 +26,11 @@
 //! actions/workflows, repos/rules, repos/repos and branches/branches, API
 //! version 2022-11-28, and from docs.github.com/en/graphql/reference for
 //! the source proof's objects; each field's form cites the schema line it
-//! follows. A word outside a documented set refuses the
-//! reply. GitHub adds fields to its objects, so the structs tolerate
+//! follows. A word outside a documented set refuses the reply, except in
+//! a set another reader reads as no word it judges (a run's status and
+//! conclusion, a workflow's state, a rule's type): there it decodes as
+//! `Other`, which the verification's readers refuse. GitHub adds fields to
+//! its objects, so the structs tolerate
 //! unknown fields. The catalogue test at the bottom deserializes every
 //! struct from a probe that sets each field to null and to absent and
 //! asserts the documented answer; a field without a row fails it.
@@ -122,13 +125,17 @@ impl<'de, T: DeserializeOwned> Deserialize<'de> for Nullable<T> {
 /// the same word set (actions/workflow-runs, `status` filter values).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(super) enum RunStatus {
+pub(crate) enum RunStatus {
     Queued,
     InProgress,
     Completed,
     Waiting,
     Requested,
     Pending,
+    /// A word outside the documented set: the watch and the validation
+    /// read it as no word they judge; the verification refuses it.
+    #[serde(other)]
+    Other,
 }
 
 impl RunStatus {
@@ -140,6 +147,7 @@ impl RunStatus {
             RunStatus::Waiting => "waiting",
             RunStatus::Requested => "requested",
             RunStatus::Pending => "pending",
+            RunStatus::Other => "other",
         }
     }
 }
@@ -152,7 +160,7 @@ impl RunStatus {
 /// workflow file cannot be parsed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(super) enum RunConclusion {
+pub(crate) enum RunConclusion {
     Success,
     Failure,
     Neutral,
@@ -162,10 +170,14 @@ pub(super) enum RunConclusion {
     ActionRequired,
     Stale,
     StartupFailure,
+    /// A word outside the documented set: the watch and the validation
+    /// read it as no word they judge; the verification refuses it.
+    #[serde(other)]
+    Other,
 }
 
 impl RunConclusion {
-    pub(super) fn word(self) -> &'static str {
+    pub(crate) fn word(self) -> &'static str {
         match self {
             RunConclusion::Success => "success",
             RunConclusion::Failure => "failure",
@@ -176,6 +188,7 @@ impl RunConclusion {
             RunConclusion::ActionRequired => "action_required",
             RunConclusion::Stale => "stale",
             RunConclusion::StartupFailure => "startup_failure",
+            RunConclusion::Other => "other",
         }
     }
 
@@ -195,7 +208,8 @@ impl RunConclusion {
             | RunConclusion::Cancelled
             | RunConclusion::TimedOut
             | RunConclusion::ActionRequired
-            | RunConclusion::StartupFailure => Bucket::Fail,
+            | RunConclusion::StartupFailure
+            | RunConclusion::Other => Bucket::Fail,
         }
     }
 
@@ -213,7 +227,8 @@ impl RunConclusion {
             | RunConclusion::TimedOut
             | RunConclusion::ActionRequired
             | RunConclusion::Stale
-            | RunConclusion::StartupFailure => Bucket::Fail,
+            | RunConclusion::StartupFailure
+            | RunConclusion::Other => Bucket::Fail,
         }
     }
 }
@@ -267,6 +282,9 @@ fn outcome(
     status: Option<RunStatus>,
     conclusion: Nullable<RunConclusion>,
 ) -> Read<Outcome> {
+    if status == Some(RunStatus::Other) || conclusion == Nullable::Present(RunConclusion::Other) {
+        return Err(Cause::ResponseInvalid(endpoint));
+    }
     match (status, conclusion) {
         (Some(RunStatus::Completed), Nullable::Present(conclusion)) => {
             Ok(Outcome::Concluded(conclusion))
@@ -287,7 +305,7 @@ pub(super) struct CheckSuiteRef {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct CheckRun {
+pub(crate) struct CheckRun {
     /// Required (checks/runs, `id`: integer): the check run's identity,
     /// which orders two check runs started alike in the rollup
     /// (`selection::eliminate_duplicates`).
@@ -299,7 +317,7 @@ pub(super) struct CheckRun {
     /// Required (checks/runs, `name`: string).
     pub(super) name: String,
     /// Required, not nullable (checks/runs, `status`: enum).
-    pub(super) status: RunStatus,
+    pub(crate) status: RunStatus,
     /// Required, nullable (checks/runs, `conclusion`: enum or null).
     pub(super) conclusion: Nullable<RunConclusion>,
     /// Required, nullable (checks/runs, `check_suite`: object or null).
@@ -341,6 +359,12 @@ impl CheckRun {
         outcome(Endpoint::CheckRuns, Some(self.status), self.conclusion)
     }
 
+    /// Whether a word is outside its documented set (`Other`).
+    pub(super) fn undocumented(&self) -> bool {
+        self.status == RunStatus::Other
+            || self.conclusion == Nullable::Present(RunConclusion::Other)
+    }
+
     pub(super) fn suite(&self) -> Option<u64> {
         match &self.check_suite {
             Nullable::Absent | Nullable::Null => None,
@@ -376,7 +400,7 @@ impl CheckRun {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct CheckRunsPage {
+pub(crate) struct CheckRunsPage {
     /// Required (checks/runs, `total_count`: integer).
     total_count: usize,
     /// Required (checks/runs, `check_runs`: array).
@@ -489,31 +513,37 @@ impl Page for CombinedStatusPage {
 /// `run_attempt`, `run_started_at` and `updated_at` select the current
 /// execution (`selection::current_execution`), and `path` with
 /// `check_suite_node_id` identify a required workflow's candidate
-/// execution. The run's own `name`
-/// (string or null, the run's display title, `run-name` where a workflow
-/// sets one) is read by nothing: gh's rollup `workflow` is the
-/// workflow object's name, not the run's.
+/// execution. The watch reads a workflow's latest runs by `created_at`,
+/// and a run's `head_branch` and `event` name the budget scan's producer.
+/// The run's own `name` (string or null, the run's display title,
+/// `run-name` where a workflow sets one) is read by nothing: gh's rollup
+/// `workflow` is the workflow object's name, not the run's.
 #[derive(Debug, Deserialize)]
-pub(super) struct WorkflowRun {
+pub(crate) struct WorkflowRun {
     /// Required (actions/workflow-runs, `id`: integer).
-    pub(super) id: u64,
+    pub(crate) id: u64,
     /// Required (actions/workflow-runs, `path`: string): the workflow file
     /// as it was at the run, with its ref after `@` where GitHub appends
     /// one; a workflow's current `Workflow.path` can differ after a rename.
     pub(super) path: String,
     /// Required (actions/workflow-runs, `head_sha`: string).
     pub(super) head_sha: String,
+    /// Required, nullable (actions/workflow-runs, `head_branch`: string or
+    /// null).
+    pub(crate) head_branch: Nullable<String>,
     /// Required, nullable (actions/workflow-runs, `status`: string or
     /// null).
-    pub(super) status: Nullable<RunStatus>,
+    pub(crate) status: Nullable<RunStatus>,
     /// Required, nullable (actions/workflow-runs, `conclusion`: string or
     /// null).
-    pub(super) conclusion: Nullable<RunConclusion>,
+    pub(crate) conclusion: Nullable<RunConclusion>,
     /// Required (actions/workflow-runs, `workflow_id`: integer).
     pub(super) workflow_id: u64,
     /// Required (actions/workflow-runs, `event`: string). The event names
     /// are GitHub's webhook events, an open set, so the word is kept.
-    pub(super) event: String,
+    pub(crate) event: String,
+    /// Required (actions/workflow-runs, `created_at`: date-time).
+    pub(crate) created_at: String,
     /// Required (actions/workflow-runs, `updated_at`: date-time).
     pub(super) updated_at: String,
     /// Optional, not nullable (actions/workflow-runs, `check_suite_id`:
@@ -528,7 +558,7 @@ pub(super) struct WorkflowRun {
     /// Optional, not nullable (actions/workflow-runs, `run_attempt`:
     /// integer, not in the required list): 1 for a first attempt.
     #[serde(default)]
-    pub(super) run_attempt: Optional<u64>,
+    pub(crate) run_attempt: Optional<u64>,
     /// Optional, not nullable (actions/workflow-runs, `run_started_at`:
     /// date-time, not in the required list): the start of the latest
     /// attempt.
@@ -537,6 +567,12 @@ pub(super) struct WorkflowRun {
 }
 
 impl WorkflowRun {
+    /// Whether a word is outside its documented set (`Other`).
+    pub(super) fn undocumented(&self) -> bool {
+        self.status == Nullable::Present(RunStatus::Other)
+            || self.conclusion == Nullable::Present(RunConclusion::Other)
+    }
+
     pub(super) fn outcome(&self) -> Read<Outcome> {
         let status = match self.status {
             Nullable::Absent => return Err(Cause::ResponseInvalid(Endpoint::ActionsRuns)),
@@ -569,11 +605,11 @@ impl WorkflowRun {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct RunsPage {
+pub(crate) struct RunsPage {
     /// Required (actions/workflow-runs, `total_count`: integer).
     total_count: usize,
     /// Required (actions/workflow-runs, `workflow_runs`: array).
-    workflow_runs: Vec<WorkflowRun>,
+    pub(crate) workflow_runs: Vec<WorkflowRun>,
 }
 
 impl Page for RunsPage {
@@ -597,6 +633,10 @@ pub(super) enum WorkflowState {
     DisabledFork,
     DisabledInactivity,
     DisabledManually,
+    /// A word outside the documented set: the watch and the validation
+    /// read it as no word they judge; the verification refuses it.
+    #[serde(other)]
+    Other,
 }
 
 /// A repository workflow (actions/workflows, "List repository workflows",
@@ -612,17 +652,20 @@ pub(super) enum WorkflowState {
 /// read through the graph and then by id (`evidence::check_run_suites`,
 /// above).
 #[derive(Debug, Deserialize)]
-pub(super) struct Workflow {
+pub(crate) struct Workflow {
     /// Required (actions/workflows, `id`: integer).
     pub(super) id: u64,
     /// Required (actions/workflows, `name`: string).
     pub(super) name: String,
+    /// Required (actions/workflows, `path`: string): the file the watch
+    /// looks for on the default branch.
+    pub(crate) path: String,
     /// Required (actions/workflows, `state`: enum).
     pub(super) state: WorkflowState,
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct WorkflowsPage {
+pub(crate) struct WorkflowsPage {
     /// Required (actions/workflows, `total_count`: integer).
     total_count: usize,
     /// Required (actions/workflows, `workflows`: array).
@@ -648,7 +691,7 @@ impl Page for WorkflowsPage {
 /// check rollup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub(super) enum RuleKind {
+pub(crate) enum RuleKind {
     BranchNamePattern,
     CodeCoverage,
     CodeQuality,
@@ -674,32 +717,36 @@ pub(super) enum RuleKind {
     TagNamePattern,
     Update,
     Workflows,
+    /// A word outside the documented set: the watch and the validation
+    /// read it as no word they judge; the verification refuses it.
+    #[serde(other)]
+    Other,
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct Rule {
+pub(crate) struct Rule {
     /// Required (repos/rules, `type`: enum).
     #[serde(rename = "type")]
-    pub(super) kind: RuleKind,
+    pub(crate) kind: RuleKind,
     /// Optional, not documented nullable (repos/rules, `parameters`:
     /// object, not in the required list; several types take none). An
     /// object for every kind; the consumed kinds decode their shape from
     /// it (`evidence`), the others keep it opaque.
     #[serde(default)]
-    pub(super) parameters: Optional<Object>,
+    pub(crate) parameters: Optional<Object>,
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct RequiredCheck {
+pub(crate) struct RequiredCheck {
     /// Required (repos/rules, status check configuration `context`;
     /// branches/branches, `checks[].context`).
-    pub(super) context: String,
+    pub(crate) context: String,
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct RequiredStatusChecksParameters {
+pub(crate) struct RequiredStatusChecksParameters {
     /// Required (repos/rules, `required_status_checks` parameters).
-    pub(super) required_status_checks: Vec<RequiredCheck>,
+    pub(crate) required_status_checks: Vec<RequiredCheck>,
 }
 
 /// A required workflow: its path in the source repository, that
@@ -742,33 +789,35 @@ pub(super) struct Repository {
     pub(super) full_name: String,
 }
 
-// --- graphql: the nodes queries ----------------------------------------------------
+// --- graphql: the reply envelope ---------------------------------------------------
 
-/// The answer to a `nodes(ids:)` query over nodes of one type `N`: the
-/// check-suite nodes of the source proof and
-/// the check-run nodes of the suite join (`CheckRunNode`). A GraphQL
-/// response carries `data`, null when the request failed as a whole, and
-/// `errors` when anything failed; any error refuses the reply,
-/// and `evidence::nodes_of` keeps the nodes a field error left null
-/// (`GraphError::node_index`).
+/// A GraphQL response (GraphQL specification § 7.1) as `gh api graphql`
+/// prints it, over the data `D` of one query: `data`, null when the request
+/// failed as a whole and absent on a request error, and `errors` when
+/// anything failed. Each reader judges the errors: the nodes queries keep
+/// the nodes a field error left null (`evidence::nodes_of`,
+/// `GraphError::node_index`), the thread walk refuses any, the queue read
+/// reports their messages.
 #[derive(Debug, Deserialize)]
-#[serde(bound(deserialize = "N: DeserializeOwned"))]
-pub(super) struct NodesReply<N> {
+#[serde(bound(deserialize = "D: DeserializeOwned"))]
+pub(crate) struct GraphReply<D> {
     /// Nullable, absent on a request error (graphql, response `data`).
     #[serde(default)]
-    pub(super) data: Nullable<NodesData<N>>,
+    pub(crate) data: Nullable<D>,
     /// Optional (graphql, response `errors`: array).
     #[serde(default)]
-    pub(super) errors: Optional<Vec<GraphError>>,
+    pub(crate) errors: Optional<Vec<GraphError>>,
 }
 
 /// One entry of a GraphQL response's `errors` (GraphQL specification
-/// § 7.1.2 Errors), read for its `path` alone: an error raised while
-/// resolving a field leaves that field null and names it here (§ 6.4.4
-/// Handling Field Errors), so a client can tell a null the viewer could
-/// not resolve from a null the server meant.
+/// § 7.1.2 Errors): its `message`, and its `path`, since an error raised
+/// while resolving a field leaves that field null and names it here
+/// (§ 6.4.4 Handling Field Errors), so a client can tell a null the viewer
+/// could not resolve from a null the server meant.
 #[derive(Debug, Deserialize)]
-pub(super) struct GraphError {
+pub(crate) struct GraphError {
+    /// Required (§ 7.1.2: every error has a `message` string).
+    pub(crate) message: String,
     /// Optional (§ 7.1.2: present when the error can be associated to a
     /// field; its segments are field names as strings and list indices as
     /// integers).
@@ -903,32 +952,63 @@ pub(super) struct WorkflowRunFile {
 
 /// Classic protection's required checks.
 #[derive(Debug, Deserialize)]
-pub(super) struct ProtectionChecks {
+pub(crate) struct ProtectionChecks {
     /// Required (branches/branches, `required_status_checks.contexts`).
-    pub(super) contexts: Vec<String>,
+    pub(crate) contexts: Vec<String>,
     /// Required (branches/branches, `required_status_checks.checks`).
-    pub(super) checks: Vec<RequiredCheck>,
+    pub(crate) checks: Vec<RequiredCheck>,
 }
 
 /// The branch's protection.
 #[derive(Debug, Deserialize)]
-pub(super) struct Protection {
+pub(crate) struct Protection {
+    /// Optional, not nullable (branches/branches, `protection.enabled`:
+    /// boolean, not in the required list).
+    #[serde(default)]
+    pub(super) enabled: Optional<bool>,
     /// Optional, not nullable (branches/branches,
     /// `protection.required_status_checks`: object, not in the required
     /// list). Absent names nothing.
     #[serde(default)]
-    pub(super) required_status_checks: Optional<ProtectionChecks>,
+    pub(crate) required_status_checks: Optional<ProtectionChecks>,
 }
 
-/// The branch object. Without a `protection` object, "nothing required"
-/// cannot be told from "not shown", so a branch with it absent or null
-/// does not decode.
+/// The branch object (branches/branches, "Get a branch"). GitHub omits
+/// `protection` from a caller without push access, so "nothing required"
+/// cannot be told from "not shown" by the type: each reader judges an
+/// absent protection, and a null one does not decode.
 #[derive(Debug, Deserialize)]
-pub(super) struct Branch {
+pub(crate) struct Branch {
+    /// Required (branches/branches, `commit`: commit).
+    pub(crate) commit: BranchCommit,
     /// Required (branches/branches, `protected`: boolean).
     pub(super) protected: bool,
-    /// Required, not nullable (branches/branches, `protection`: object).
-    pub(super) protection: Protection,
+    /// Conditional, not nullable (branches/branches, `protection`: object,
+    /// omitted from a caller without push access).
+    #[serde(default)]
+    pub(crate) protection: Optional<Protection>,
+}
+
+/// The branch's head commit (branches/branches, `commit`: `sha` and
+/// `commit` required).
+#[derive(Debug, Deserialize)]
+pub(crate) struct BranchCommit {
+    pub(crate) sha: String,
+    pub(crate) commit: CommitBody,
+}
+
+/// The git commit (commits/commits, `commit.committer`: required,
+/// nullable git user).
+#[derive(Debug, Deserialize)]
+pub(crate) struct CommitBody {
+    pub(crate) committer: Nullable<Committer>,
+}
+
+/// A git user (commits/commits, `committer.date`: optional date-time).
+#[derive(Debug, Deserialize)]
+pub(crate) struct Committer {
+    #[serde(default)]
+    pub(crate) date: Optional<String>,
 }
 
 // --- gh pr view: the pull request ---------------------------------------------------
@@ -973,17 +1053,15 @@ impl PullRequestState {
 
 /// A pull request as `gh pr view N --repo O/R --json
 /// headRefOid,baseRefName,state,isDraft,reviewDecision,latestReviews,author`
-/// exports it: gh prints every asked field, so each is required here.
+/// exports it: the three fields of `PullRequestView` and four more; gh
+/// prints every asked field, so each is required here.
 /// `reviewDecision` is GitHub's `PullRequestReviewDecision` or null where
 /// the base requires no review (`gh pr view --json reviewDecision` prints
 /// `""` for that null); `latestReviews` is the latest review per reviewer.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ReviewView {
-    #[serde(rename = "headRefOid")]
-    pub head: String,
-    #[serde(rename = "baseRefName")]
-    pub base: String,
-    pub state: PullRequestState,
+    #[serde(flatten)]
+    pub pull: PullRequestView,
     #[serde(rename = "isDraft")]
     pub draft: bool,
     #[serde(rename = "reviewDecision")]
@@ -1007,25 +1085,57 @@ pub struct Actor {
     pub login: String,
 }
 
-/// The pull request object (pulls/pulls, "Get a pull request"): the
-/// fields the refresh route and the draft check compare.
+/// A pull request as REST lists it (pulls/pulls, "List pull requests",
+/// `pull-request-simple`) or gets it by number ("Get a pull request",
+/// `pull-request`): the listed form is the got one less the fields only
+/// the got form documents, of which `changed_files` is read here.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Pull {
+    /// Required (pulls/pulls, `number`: integer).
+    pub number: u64,
     /// Required (pulls/pulls, `state`: `open` or `closed`).
     pub state: String,
-    /// Required (pulls/pulls, `draft`: boolean).
-    pub draft: bool,
+    /// Required (pulls/pulls, `title`: string).
+    pub title: String,
+    /// Required, nullable (pulls/pulls, `body`: string or null).
+    pub body: Nullable<String>,
+    /// Optional (pulls/pulls, `draft`: boolean, not in the required list).
+    #[serde(default)]
+    pub draft: Optional<bool>,
+    /// Required, nullable (pulls/pulls, `merged_at`: date-time, null while
+    /// unmerged).
+    pub merged_at: Nullable<String>,
+    /// Required, nullable (pulls/pulls, `merge_commit_sha`: string or null).
+    pub merge_commit_sha: Nullable<String>,
+    /// Required on the got form alone (pulls/pulls, `changed_files`:
+    /// integer); absent from a listed one.
+    #[serde(default)]
+    pub changed_files: Optional<u64>,
+    /// Required (pulls/pulls, `author_association`: string).
+    pub author_association: String,
     pub head: PullHead,
     pub base: PullBase,
     /// Required, nullable (pulls/pulls, `user`: simple-user or null).
     pub user: Nullable<User>,
 }
 
+/// The head (pulls/pulls, `head`: `sha`, `ref` and `repo` required).
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct PullHead {
     pub sha: String,
     #[serde(rename = "ref")]
     pub branch: String,
+    /// Required, nullable (pulls/pulls, `head.repo`): null for a deleted
+    /// fork.
+    pub repo: Nullable<HeadRepo>,
+}
+
+/// The head's repository (repos/repos, `repository`: `full_name` and
+/// `owner` required).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct HeadRepo {
+    pub full_name: String,
+    pub owner: User,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -1034,13 +1144,37 @@ pub struct PullBase {
     pub branch: String,
 }
 
-/// A simple user (pulls/pulls, `user`): the login REST spells an App as
-/// `<slug>[bot]`, and its `type`, `Bot` for an App.
+/// A simple user (users, `simple-user`: `login` and `type` required): the
+/// login REST spells an App as `<slug>[bot]`, and its `type`, `Bot` for an
+/// App.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct User {
     pub login: String,
     #[serde(rename = "type")]
     pub kind: String,
+}
+
+/// An issue as REST lists it (issues/issues, "List repository issues",
+/// which lists pull requests too, marked with `pull_request`) or gets it by
+/// number ("Get an issue").
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub(crate) struct Issue {
+    /// Required (issues/issues, `number`: integer).
+    pub(crate) number: u64,
+    /// Required (issues/issues, `state`: string).
+    pub(crate) state: String,
+    /// Optional, nullable (issues/issues, `state_reason`: string or null,
+    /// not in the required list).
+    #[serde(default)]
+    pub(crate) state_reason: Nullable<String>,
+    /// Required, nullable (issues/issues, `user`: simple-user or null).
+    pub(crate) user: Nullable<User>,
+    /// Required (issues/issues, `author_association`: string).
+    pub(crate) author_association: String,
+    /// Optional (issues/issues, `pull_request`: object), on a pull request
+    /// alone.
+    #[serde(default)]
+    pub(crate) pull_request: Optional<Object>,
 }
 
 /// One review (pulls/reviews, "List reviews for a pull request").
@@ -1073,16 +1207,6 @@ pub struct TimelineEvent {
     pub event: String,
     #[serde(flatten)]
     pub fields: Object,
-}
-
-/// The `reviewThreads` reply of the thread walk: the envelope `gh api
-/// graphql` prints, `data` nullable and `errors` present only on a
-/// partial reply, which the walk refuses whole.
-#[derive(Debug, Deserialize)]
-pub struct ThreadsReply {
-    pub data: Nullable<ThreadsData>,
-    #[serde(default)]
-    pub errors: Optional<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1140,18 +1264,6 @@ pub(super) struct PullRequestParameters {
 #[derive(Debug, Deserialize)]
 pub(super) struct TeamReviewer {
     pub(super) minimum_approvals: u64,
-}
-
-/// The branch object read for its protection flag alone (branches/branches,
-/// `protection.enabled`: boolean).
-#[derive(Debug, Deserialize)]
-pub(super) struct BranchProtected {
-    pub(super) protection: ProtectionEnabled,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct ProtectionEnabled {
-    pub(super) enabled: bool,
 }
 
 /// Classic branch protection (branches/branch-protection, "Get branch
@@ -1269,8 +1381,9 @@ mod tests {
         catalogue::<WorkflowRun>(
             json!({
                 "id": 700, "path": ".github/workflows/ci.yml", "head_sha": "abc",
-                "status": "completed", "conclusion": "success", "workflow_id": 1,
-                "event": "push", "updated_at": "2026-01-29T15:16:00Z",
+                "head_branch": "main", "status": "completed", "conclusion": "success",
+                "workflow_id": 1, "event": "push", "created_at": "2026-01-29T15:08:00Z",
+                "updated_at": "2026-01-29T15:16:00Z",
                 "check_suite_id": 5, "check_suite_node_id": "MDEwOkNoZWNrU3VpdGU1", "run_attempt": 1,
                 "run_started_at": "2026-01-29T15:09:00Z"
             }),
@@ -1278,10 +1391,12 @@ mod tests {
                 ("id", Required),
                 ("path", Required),
                 ("head_sha", Required),
+                ("head_branch", Nullable),
                 ("status", Nullable),
                 ("conclusion", Nullable),
                 ("workflow_id", Required),
                 ("event", Required),
+                ("created_at", Required),
                 ("updated_at", Required),
                 ("check_suite_id", Optional),
                 ("check_suite_node_id", Optional),
@@ -1294,8 +1409,13 @@ mod tests {
             &[("total_count", Required), ("workflow_runs", Required)],
         );
         catalogue::<Workflow>(
-            json!({"id": 1, "name": "CI", "state": "active"}),
-            &[("id", Required), ("name", Required), ("state", Required)],
+            json!({"id": 1, "name": "CI", "path": ".github/workflows/ci.yml", "state": "active"}),
+            &[
+                ("id", Required),
+                ("name", Required),
+                ("path", Required),
+                ("state", Required),
+            ],
         );
         catalogue::<WorkflowsPage>(
             json!({"total_count": 0, "workflows": []}),
@@ -1324,17 +1444,20 @@ mod tests {
             json!({"id": 7, "full_name": "owner/source"}),
             &[("id", Required), ("full_name", Required)],
         );
-        catalogue::<NodesReply<CheckSuiteNode>>(
+        catalogue::<GraphReply<NodesData<CheckSuiteNode>>>(
             json!({"data": {"nodes": []}, "errors": []}),
             &[("data", OptionalNullable), ("errors", Optional)],
         );
         catalogue::<NodesData<CheckSuiteNode>>(json!({"nodes": [null]}), &[("nodes", Required)]);
-        catalogue::<NodesReply<CheckRunNode>>(
+        catalogue::<GraphReply<NodesData<CheckRunNode>>>(
             json!({"data": {"nodes": []}, "errors": []}),
             &[("data", OptionalNullable), ("errors", Optional)],
         );
         catalogue::<NodesData<CheckRunNode>>(json!({"nodes": [null]}), &[("nodes", Required)]);
-        catalogue::<GraphError>(json!({"path": ["nodes", 0]}), &[("path", Optional)]);
+        catalogue::<GraphError>(
+            json!({"message": "Could not resolve", "path": ["nodes", 0]}),
+            &[("message", Required), ("path", Optional)],
+        );
         catalogue::<CheckRunNode>(
             json!({"id": "CR_4", "checkSuite": {"workflowRun": null}}),
             &[("id", Required), ("checkSuite", Required)],
@@ -1382,12 +1505,71 @@ mod tests {
             &[("contexts", Required), ("checks", Required)],
         );
         catalogue::<Protection>(
-            json!({"required_status_checks": {"contexts": [], "checks": []}}),
-            &[("required_status_checks", Optional)],
+            json!({"enabled": false, "required_status_checks": {"contexts": [], "checks": []}}),
+            &[("enabled", Optional), ("required_status_checks", Optional)],
         );
         catalogue::<Branch>(
-            json!({"protected": false, "protection": {}}),
-            &[("protected", Required), ("protection", Required)],
+            json!({"commit": {"sha": "abc", "commit": {"committer": null}}, "protected": false, "protection": {}}),
+            &[
+                ("commit", Required),
+                ("protected", Required),
+                ("protection", Optional),
+            ],
+        );
+        catalogue::<BranchCommit>(
+            json!({"sha": "abc", "commit": {"committer": null}}),
+            &[("sha", Required), ("commit", Required)],
+        );
+        catalogue::<CommitBody>(json!({"committer": null}), &[("committer", Nullable)]);
+        catalogue::<Committer>(
+            json!({"date": "2026-01-29T15:09:00Z"}),
+            &[("date", Optional)],
+        );
+        catalogue::<User>(
+            json!({"login": "owner", "type": "User"}),
+            &[("login", Required), ("type", Required)],
+        );
+        catalogue::<HeadRepo>(
+            json!({"full_name": "owner/repo", "owner": {"login": "owner", "type": "User"}}),
+            &[("full_name", Required), ("owner", Required)],
+        );
+        catalogue::<PullHead>(
+            json!({"sha": "abc", "ref": "feat", "repo": null}),
+            &[("sha", Required), ("ref", Required), ("repo", Nullable)],
+        );
+        catalogue::<PullBase>(json!({"ref": "main"}), &[("ref", Required)]);
+        catalogue::<Issue>(
+            json!({"number": 7, "state": "open", "state_reason": null, "user": null, "author_association": "NONE", "pull_request": {}}),
+            &[
+                ("number", Required),
+                ("state", Required),
+                ("state_reason", OptionalNullable),
+                ("user", Nullable),
+                ("author_association", Required),
+                ("pull_request", Optional),
+            ],
+        );
+        catalogue::<Pull>(
+            json!({
+                "number": 7, "state": "open", "title": "feat", "body": null, "draft": false,
+                "merged_at": null, "merge_commit_sha": null, "changed_files": 1, "author_association": "NONE",
+                "head": {"sha": "abc", "ref": "feat", "repo": null}, "base": {"ref": "main"},
+                "user": null
+            }),
+            &[
+                ("number", Required),
+                ("state", Required),
+                ("title", Required),
+                ("body", Nullable),
+                ("draft", Optional),
+                ("merged_at", Nullable),
+                ("merge_commit_sha", Nullable),
+                ("changed_files", Optional),
+                ("author_association", Required),
+                ("head", Required),
+                ("base", Required),
+                ("user", Nullable),
+            ],
         );
     }
 

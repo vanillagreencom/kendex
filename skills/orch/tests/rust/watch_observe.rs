@@ -2882,7 +2882,7 @@ fn ok(stdout: &str) -> Value {
 
 /// `gh api repos/O/R/pulls?head=O:B&state=open`'s one open pull request.
 fn open_pull(sha: &str, body: &str, draft: Option<bool>) -> Value {
-    json!({"body": [{"head": {"sha": sha}, "body": body, "draft": draft}]})
+    json!({"body": [{"number": 1, "state": "open", "title": "cloud work", "merged_at": null, "merge_commit_sha": null, "author_association": "NONE", "head": {"sha": sha, "ref": "cloud-work", "repo": null}, "base": {"ref": "main"}, "user": null, "body": body, "draft": draft}]})
 }
 
 /// The body digest as the stall row keeps it (`cksum` over the body and
@@ -3441,7 +3441,7 @@ fn a_cloud_session_with_no_pull_request_is_quiet_once_pushed_and_lane_stalled_wh
     world.plant_host(&[("capabilities", ok(CLOUD_LINE))]);
     world.plant_gh(json!({
         "repos/o/r/pulls?head=o:cc-1&state=open": {"body": []},
-        "repos/o/r/branches/cc-1": {"body": {"commit": {"sha": "bbb222", "commit": {"committer": {"date": clock::iso_utc(now - 100)}}}}},
+        "repos/o/r/branches/cc-1": {"body": {"protected": false, "commit": {"sha": "bbb222", "commit": {"committer": {"date": clock::iso_utc(now - 100)}}}}},
         "repos/o/r/pulls?head=o:cc-2&state=open": {"body": []},
     }));
     lane_driver!(server, fleet, readers, driver);

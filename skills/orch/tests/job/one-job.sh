@@ -91,7 +91,7 @@ repos/owner/repo/commits/SHA/status?per_page=100&page=1|/status?per_page=100&pag
 repos/owner/repo/actions/runs?head_sha=SHA&per_page=100&page=1|/actions/runs?head_sha=|{"total_count":0,"workflow_runs":[]}
 repos/owner/repo/actions/workflows?per_page=100&page=1|-|{"total_count":0,"workflows":[]}
 repos/owner/repo/rules/branches/main?per_page=100&page=1|-|[]
-repos/owner/repo/branches/main|-|{"name":"main","protected":false,"protection":{"enabled":false,"required_status_checks":{"enforcement_level":"off","contexts":[],"checks":[]}}}'
+repos/owner/repo/branches/main|-|{"name":"main","commit":{"sha":"0000000000000000000000000000000000000000","commit":{"committer":{"date":"2026-01-01T00:00:00Z"}}},"protected":false,"protection":{"enabled":false,"required_status_checks":{"enforcement_level":"off","contexts":[],"checks":[]}}}'
 
 # stage_verify_reads — every answer of VERIFY_READS, staged before the lane
 # launches (the head is not known until the job pushes it).

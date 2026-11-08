@@ -42,10 +42,11 @@ use agent_runtime::host::{self, Place};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::verify::wire::{Branch, Nullable, Pull};
+
 use super::Produced;
 use super::baseline::Change;
 use super::events::Event;
-use super::github::Gh;
 use super::lanes::{
     Counters, HandoffReading, Pass, clear, counters_of, doc_of, fail, handoff_places, lane_name,
     set, standing_record, step_of, validation_runs_of, watch_state_dir,
@@ -1162,42 +1163,6 @@ pub enum PullRead {
     Failed(String),
 }
 
-#[derive(Deserialize)]
-struct ListedPull {
-    head: ListedHead,
-    #[serde(default)]
-    body: Option<String>,
-    #[serde(default)]
-    draft: Option<bool>,
-}
-
-#[derive(Deserialize)]
-struct ListedHead {
-    sha: String,
-}
-
-#[derive(Deserialize)]
-struct Branch {
-    commit: BranchCommit,
-}
-
-#[derive(Deserialize)]
-struct BranchCommit {
-    sha: String,
-    commit: CommitBody,
-}
-
-#[derive(Deserialize)]
-struct CommitBody {
-    committer: Committer,
-}
-
-#[derive(Deserialize)]
-struct Committer {
-    #[serde(default)]
-    date: Option<String>,
-}
-
 /// The repositories a lane is read in: the one its record names, else the
 /// fleet's in order.
 fn repos_of<'a>(pass: &'a Pass, lane: &'a Lane) -> Vec<&'a str> {
@@ -1216,44 +1181,54 @@ fn repos_of<'a>(pass: &'a Pass, lane: &'a Lane) -> Vec<&'a str> {
 /// none open, each repository's branch head and committed date. A list or a
 /// branch read that fails is the failure, never "none open".
 pub fn open_pr(pass: &Pass, lane: &Lane) -> PullRead {
-    let gh = Gh {
-        cli: pass.hosted.gh,
-    };
+    let gh = super::github::handle(pass.hosted.gh);
     let branch = lane.item.to_ascii_lowercase();
     let mut branches = Branches::default();
     for repo in repos_of(pass, lane) {
         let owner = repo.split('/').next().unwrap_or(repo);
         let path = format!("repos/{repo}/pulls?head={owner}:{branch}&state=open");
-        let pulls = match gh.object::<Vec<ListedPull>>("lane-pr", &path) {
+        let pulls = match gh.object::<Vec<Pull>>("lane-pr", &path) {
             Ok(Some(pulls)) => pulls,
             Ok(None) => return PullRead::Failed(format!("pr-read-failed repo={repo} cause=404")),
             Err(e) => return PullRead::Failed(format!("pr-read-failed repo={repo} cause={e}")),
         };
         if let Some(pull) = pulls.into_iter().next() {
-            let mut body = pull.body.unwrap_or_default();
+            let mut body = match pull.body {
+                Nullable::Present(body) => body,
+                Nullable::Absent | Nullable::Null => String::new(),
+            };
             body.push('\n');
             return PullRead::Open(OpenPull {
                 head: pull.head.sha,
                 digest: wall::cksum(body.as_bytes()).to_string(),
-                draft: pull.draft,
+                draft: pull.draft.present().copied(),
             });
         }
         let path = format!("repos/{repo}/branches/{branch}");
         match gh.object::<Branch>("lane-branch", &path) {
             Ok(Some(head)) => {
+                // The committer's date is the branch's age; a null
+                // committer is no date the stall reads.
+                let Nullable::Present(committer) = &head.commit.commit.committer else {
+                    return PullRead::Failed(format!(
+                        "branch-read-failed repo={repo} cause={}",
+                        super::github::refused(
+                            "github-response-invalid",
+                            &[
+                                ("read", "lane-branch"),
+                                ("path", &path),
+                                ("field", "committer")
+                            ],
+                        )
+                    ));
+                };
                 if !branches.heads.is_empty() {
                     branches.heads.push(',');
                 }
                 branches
                     .heads
                     .push_str(&format!("{repo}:{}", head.commit.sha));
-                if let Some(date) = head
-                    .commit
-                    .commit
-                    .committer
-                    .date
-                    .as_deref()
-                    .and_then(epoch_of)
+                if let Some(date) = committer.date.present().and_then(|date| epoch_of(date))
                     && branches.newest.is_none_or(|newest| date > newest)
                 {
                     branches.newest = Some(date);

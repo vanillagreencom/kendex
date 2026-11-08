@@ -277,7 +277,8 @@ fn execution(
         "id": id, "name": "CI", "path": ".github/workflows/ci.yml", "head_sha": head,
         "status": status, "conclusion": conclusion, "event": "push",
         "workflow_id": WORKFLOW_ID, "check_suite_id": id, "check_suite_node_id": suite_node_id(id),
-        "run_attempt": attempt, "run_started_at": started, "updated_at": started,
+        "run_attempt": attempt, "run_started_at": started, "created_at": started,
+        "updated_at": started, "head_branch": null,
     })
 }
 
@@ -417,13 +418,13 @@ fn workflows_page_from(total: usize, first_id: u64, states: &[&str]) -> Value {
 }
 
 fn protected(protected: bool, contexts: &[&str]) -> Value {
-    json!({"name": BASE, "protected": protected, "protection": {"enabled": protected, "required_status_checks": {"contexts": contexts, "checks": []}}})
+    json!({"name": BASE, "commit": {"sha": "0000000000000000000000000000000000000000", "commit": {"committer": null}}, "protected": protected, "protection": {"enabled": protected, "required_status_checks": {"contexts": contexts, "checks": []}}})
 }
 
 /// A protected base whose classic `required_status_checks` is `checks`
 /// verbatim.
 fn classic(checks: Value) -> Value {
-    json!({"name": BASE, "protected": true, "protection": {"enabled": true, "required_status_checks": checks}})
+    json!({"name": BASE, "commit": {"sha": "0000000000000000000000000000000000000000", "commit": {"committer": null}}, "protected": true, "protection": {"enabled": true, "required_status_checks": checks}})
 }
 
 fn status_checks_rule(contexts: &[&str]) -> Value {
@@ -2020,6 +2021,31 @@ fn malformed_rows() -> Vec<Malformed> {
             detail: None,
         },
         Malformed {
+            name: "a check-runs page short of the total that a later page would complete",
+            required_only: false,
+            set: |gh| {
+                gh.answer(
+                    &check_runs(HEAD, 1),
+                    check_runs_page(
+                        3,
+                        vec![
+                            check_run(json!("build"), "completed", json!("success")),
+                            check_run(json!("test"), "completed", json!("success")),
+                        ],
+                    ),
+                )
+                .answer(
+                    &check_runs(HEAD, 2),
+                    check_runs_page(
+                        3,
+                        vec![check_run(json!("lint"), "completed", json!("success"))],
+                    ),
+                );
+            },
+            cause: "check-runs-total-mismatch",
+            detail: None,
+        },
+        Malformed {
             name: "a commit status with an undocumented state",
             required_only: false,
             set: |gh| {
@@ -2124,7 +2150,7 @@ fn malformed_rows() -> Vec<Malformed> {
             set: |gh| {
                 gh.answer(
                     &branch(),
-                    json!({"name": "main", "protected": false, "protection": null}),
+                    json!({"name": "main", "commit": {"sha": "0000000000000000000000000000000000000000", "commit": {"committer": null}}, "protected": false, "protection": null}),
                 );
             },
             cause: "protection-response-invalid",
@@ -2134,7 +2160,7 @@ fn malformed_rows() -> Vec<Malformed> {
             name: "a branch answer without a protection object",
             required_only: true,
             set: |gh| {
-                gh.answer(&branch(), json!({"name": "main", "protected": false}));
+                gh.answer(&branch(), json!({"name": "main", "commit": {"sha": "0000000000000000000000000000000000000000", "commit": {"committer": null}}, "protected": false}));
             },
             cause: "protection-response-invalid",
             detail: None,
@@ -3869,7 +3895,7 @@ fn threads_page(unresolved: usize) -> Value {
 }
 
 fn rest_pull(draft: bool, branch: &str, login: &str, kind: &str) -> Value {
-    json!({"state": "open", "draft": draft, "head": {"sha": HEAD, "ref": branch}, "base": {"ref": BASE}, "user": {"login": login, "type": kind}})
+    json!({"number": PR, "state": "open", "title": "the reviewed change", "body": null, "draft": draft, "merged_at": null, "merge_commit_sha": null, "author_association": "NONE", "head": {"sha": HEAD, "ref": branch, "repo": null}, "base": {"ref": BASE}, "user": {"login": login, "type": kind}})
 }
 
 /// One review by Copilot on the head.
@@ -5805,20 +5831,25 @@ fn the_copilot_wait_holds_while_work_runs_and_ends_settled_expired_or_on_the_mov
     // the first, past an unrelated active check and an earlier completed
     // Copilot attempt.
     let mut gh = Github::review_world();
-    gh.answer(
-        &check_runs(HEAD, 1),
-        check_runs_page(
-            3,
-            vec![
-                check_run_in(None, 70, json!("CI"), "in_progress", Value::Null),
-                copilot_check(71, "completed"),
-            ],
-        ),
-    )
-    .answer(
-        &check_runs(HEAD, 2),
-        check_runs_page(3, vec![copilot_check(72, "in_progress")]),
-    );
+    let mut first = vec![
+        check_run_in(None, 70, json!("CI"), "in_progress", Value::Null),
+        copilot_check(71, "completed"),
+    ];
+    // A full first page, as GitHub pages a set past the page size.
+    first.extend((0..98).map(|i| {
+        check_run_in(
+            None,
+            1000 + i,
+            json!(format!("check-{i}")),
+            "completed",
+            json!("success"),
+        )
+    }));
+    gh.answer(&check_runs(HEAD, 1), check_runs_page(101, first))
+        .answer(
+            &check_runs(HEAD, 2),
+            check_runs_page(101, vec![copilot_check(72, "in_progress")]),
+        );
     // Its bound is no whole number of polls: the last sleep is the rest.
     let later = gh.copilot_wait_run(25, |_, _| {});
     assert_eq!(
@@ -6201,7 +6232,7 @@ fn the_gate_mode_is_recorded_once() {
         let mut gh = Github::review_world();
         gh.answer(&rules(1), json!([])).answer(
             &branch(),
-            json!({"protected": enabled, "protection": {"enabled": enabled}}),
+            json!({"commit": {"sha": "0000000000000000000000000000000000000000", "commit": {"committer": null}}, "protected": enabled, "protection": {"enabled": enabled}}),
         );
         if !classic.is_null() {
             gh.answer(&classic_path(), classic);
@@ -6242,7 +6273,7 @@ fn the_gate_mode_is_recorded_once() {
         )
         .answer(
             &branch(),
-            json!({"protected": false, "protection": {"enabled": false}}),
+            json!({"commit": {"sha": "0000000000000000000000000000000000000000", "commit": {"committer": null}}, "protected": false, "protection": {"enabled": false}}),
         );
         let result = ok_result(&gh.review(false, &[]));
         assert_eq!(result["mode"], mode, "{name}: {result}");
@@ -6285,7 +6316,7 @@ fn the_gate_mode_is_recorded_once() {
         gh.answer(&rules(1), json!([]))
             .answer(
                 &branch(),
-                json!({"protected": true, "protection": {"enabled": true}}),
+                json!({"commit": {"sha": "0000000000000000000000000000000000000000", "commit": {"committer": null}}, "protected": true, "protection": {"enabled": true}}),
             )
             .fail(&failing);
         let result = ok_result(&gh.review(false, &[]));
@@ -7339,7 +7370,7 @@ fn a_head_that_moved_between_the_view_and_the_pull_read_is_pending_with_no_reque
     let mut gh = Github::review_world();
     gh.answer(
         &pull_path(),
-        json!({"state": "open", "draft": false, "head": {"sha": NEXT, "ref": "feat"}, "base": {"ref": BASE}, "user": {"login": "lane-app[bot]", "type": "Bot"}}),
+        json!({"number": PR, "state": "open", "title": "the reviewed change", "body": null, "draft": false, "merged_at": null, "merge_commit_sha": null, "author_association": "NONE", "head": {"sha": NEXT, "ref": "feat", "repo": null}, "base": {"ref": BASE}, "user": {"login": "lane-app[bot]", "type": "Bot"}}),
     );
     let result = ok_result(&gh.review(false, &[]));
     assert_eq!(result["status"], "pending", "{result}");

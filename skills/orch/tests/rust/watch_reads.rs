@@ -482,7 +482,7 @@ fn an_auth_failure_a_short_page_and_a_malformed_member_each_refuse_their_invento
                 // A completed run whose conclusion is null: a member the
                 // judgement cannot read.
                 w.gh("repos/owner/repo/actions/workflows/kendex-refresh.yml/runs?status=completed&per_page=2",
-                    json!({"body": {"total_count": 1, "workflow_runs": [{"id": 9, "run_attempt": 1, "conclusion": null, "created_at": "2026-10-01T00:00:00Z", "status": "completed"}]}}));
+                    json!({"body": {"total_count": 1, "workflow_runs": [{"id": 9, "run_attempt": 1, "conclusion": null, "created_at": "2026-10-01T00:00:00Z", "status": "completed", "path": ".github/workflows/kendex-refresh.yml", "head_sha": "0000000000000000000000000000000000000000", "head_branch": "main", "workflow_id": 1, "event": "schedule", "updated_at": "2026-10-01T00:00:00Z"}]}}));
             }),
         ),
     ];
@@ -985,8 +985,9 @@ fn the_merged_index_matches_the_legacys_recorded_lines() {
                 title: &str,
                 body: &str,
                 merged_at: &str| {
-        json!({"number": number, "state": "closed", "title": title, "body": body, "merged_at": merged_at,
-            "head": {"ref": branch, "repo": {"owner": {"login": owner}}}})
+        json!({"number": number, "state": "closed", "title": title, "body": body, "merged_at": merged_at, "merge_commit_sha": null,
+            "author_association": "NONE", "base": {"ref": "main"}, "user": null,
+            "head": {"sha": "0000000000000000000000000000000000000000", "ref": branch, "repo": {"full_name": format!("{owner}/repo"), "owner": {"login": owner, "type": "User"}}}})
     };
     world.gh(
         "repos/owner/repo/pulls?state=closed&head=owner%3Aken-1&per_page=100&page=1",
@@ -1285,8 +1286,9 @@ fn cycle_lane(world: &World, hosted: bool) -> Value {
 /// A merged pull request `number` of `owner/repo` in the shape the merged
 /// index reads it.
 fn merged_pull(number: u64, branch: &str) -> Value {
-    json!({"number": number, "state": "closed", "title": "work", "body": "", "merged_at": "2026-09-20T11:20:00Z",
-        "head": {"ref": branch, "repo": {"owner": {"login": "owner"}}}})
+    json!({"number": number, "state": "closed", "title": "work", "body": "", "merged_at": "2026-09-20T11:20:00Z", "merge_commit_sha": null,
+        "author_association": "NONE", "base": {"ref": "main"}, "user": null,
+        "head": {"sha": "0000000000000000000000000000000000000000", "ref": branch, "repo": {"full_name": "owner/repo", "owner": {"login": "owner", "type": "User"}}}})
 }
 
 /// pr-timeline's one GraphQL read of the merged pull request 7, its three
@@ -1637,7 +1639,7 @@ fn containers_and_github_tracked_items_are_read_in_their_batches() {
     quiet_github(&mut world);
     world.gh(
         "repos/owner/repo/issues/7",
-        json!({"body": {"state": "closed", "state_reason": "not_planned"}}),
+        json!({"body": {"number": 7, "state": "closed", "state_reason": "not_planned", "user": null, "author_association": "NONE"}}),
     );
     world.gh(
         "repos/owner/repo/pulls?state=closed&head=owner%3Aissue-7&per_page=100&page=1",
@@ -1880,8 +1882,9 @@ fn a_refresh_identity_is_kept_until_its_pull_request_merges_once() {
     // Approved: the reducer's line clears, the pull request is still open.
     world.reducer(repo, json!({"exit": 0}));
     let pull = |state: &str, merged_at: Value| {
-        json!({"body": {"number": 1144, "state": state, "title": "refresh", "body": "", "merged_at": merged_at,
-            "head": {"ref": "kendex/refresh", "repo": {"owner": {"login": "vanillagreencom"}}}}})
+        json!({"body": {"number": 1144, "state": state, "title": "refresh", "body": "", "merged_at": merged_at, "merge_commit_sha": null,
+            "author_association": "NONE", "base": {"ref": "main"}, "user": null,
+            "head": {"sha": "0000000000000000000000000000000000000000", "ref": "kendex/refresh", "repo": {"full_name": "vanillagreencom/hyprtrade", "owner": {"login": "vanillagreencom", "type": "Organization"}}}}})
     };
     world.gh(
         "repos/vanillagreencom/hyprtrade/pulls/1144",
@@ -2144,9 +2147,9 @@ fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_ale
 fn outside_contributions_are_reported_once_and_a_pull_request_again_on_a_new_head() {
     let head_a = "a".repeat(40);
     let head_b = "b".repeat(40);
-    let pull = |number: u64, login: &str, kind: &str, association: &str, head: &str| json!({"number": number, "user": {"login": login, "type": kind}, "author_association": association, "head": {"sha": head}});
+    let pull = |number: u64, login: &str, kind: &str, association: &str, head: &str| json!({"number": number, "state": "open", "title": "a contribution", "body": null, "merged_at": null, "merge_commit_sha": null, "user": {"login": login, "type": kind}, "author_association": association, "head": {"sha": head, "ref": "contribution", "repo": null}, "base": {"ref": "main"}});
     let issue = |number: u64, login: &str, kind: &str, association: &str, pr: bool| {
-        let mut v = json!({"number": number, "user": {"login": login, "type": kind}, "author_association": association});
+        let mut v = json!({"number": number, "state": "open", "user": {"login": login, "type": kind}, "author_association": association});
         if pr {
             v["pull_request"] = json!({"url": "x"});
         }
@@ -2171,7 +2174,7 @@ fn outside_contributions_are_reported_once_and_a_pull_request_again_on_a_new_hea
             issue(3129, "teammate", "User", "MEMBER", false),
             issue(3128, "founder", "User", "OWNER", false),
             issue(3127, "private-member", "User", "CONTRIBUTOR", false),
-            {"number": 5, "user": null, "author_association": "NONE"}
+            {"number": 5, "state": "open", "user": null, "author_association": "NONE"}
         ]}),
     );
     world.gh(
@@ -2281,7 +2284,7 @@ fn the_budget_scan_reports_a_completed_producer_run_once_and_keeps_its_row_bytes
         quiet_main(&mut world);
         world.gh(
             "repos/owner/repo/actions/workflows/skill-tests.yml/runs?per_page=100&page=1",
-            json!({"body": {"workflow_runs": [{"id": 202, "created_at": "2026-10-18T00:00:00Z", "status": "completed", "head_branch": branch, "event": event_name}]}}),
+            json!({"body": {"total_count": 1, "workflow_runs": [{"id": 202, "created_at": "2026-10-18T00:00:00Z", "status": "completed", "head_branch": branch, "event": event_name, "path": ".github/workflows/skill-tests.yml", "head_sha": "0000000000000000000000000000000000000000", "conclusion": "success", "workflow_id": 1, "updated_at": "2026-10-18T00:00:00Z"}]}}),
         );
         world.gh(
             "repos/owner/repo/actions/runs/202/jobs?per_page=100&page=1",
@@ -2337,6 +2340,33 @@ fn the_budget_scan_reports_a_completed_producer_run_once_and_keeps_its_row_bytes
     assert_eq!(
         baseline.get("main-push-budget", "owner/repo:skill-tests.yml"),
         Some(r#"{"watermark":"2026-10-18T00:00:00Z","seen":[202],"pending":[]}"#)
+    );
+    // A null status, which GitHub documents, is a run not yet judged: it
+    // reads as unfinished, no record and no evidence read.
+    let mut world = world_for("push", "main");
+    world.gh(
+        "repos/owner/repo/actions/workflows/skill-tests.yml/runs?per_page=100&page=1",
+        json!({"body": {"total_count": 1, "workflow_runs": [{"id": 202, "created_at": "2026-10-18T00:00:00Z", "status": null, "head_branch": "main", "event": "push", "path": ".github/workflows/skill-tests.yml", "head_sha": "0000000000000000000000000000000000000000", "conclusion": null, "workflow_id": 1, "updated_at": "2026-10-18T00:00:00Z"}]}}),
+    );
+    let mut body = github::body(world.github_context(
+        world.settings(&[]),
+        None,
+        &["owner/repo"],
+        Shared::default(),
+    ));
+    let mut baseline = Baseline::default();
+    let unfinished = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1000).unwrap();
+    assert_eq!(
+        rendered(&unfinished),
+        Vec::<String>::new(),
+        "a null status is no completed run: {:?}",
+        baseline.get("main-push-budget", "owner/repo:skill-tests.yml")
+    );
+    assert_eq!(evidence_reads(&world), 0, "{:?}", world.gh_calls());
+    assert_eq!(
+        baseline.get("main-push-budget", "owner/repo:skill-tests.yml"),
+        Some(r#"{"watermark":"2026-10-18T00:00:00Z","seen":[202],"pending":[202]}"#),
+        "the unfinished producer run stays pending"
     );
     for (event_name, branch) in [
         (

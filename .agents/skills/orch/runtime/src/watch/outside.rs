@@ -16,52 +16,14 @@ use serde::Deserialize;
 
 use crate::error::Result;
 use crate::settings::{Audit, Settings};
-use crate::verify::wire::{Nullable, Optional};
+use crate::verify::wire::{Issue, Nullable, Pull, User};
 use crate::watch::{Baseline, Change, Event, Produced};
 
-use super::github::{Gh, refused};
+use super::github::refused;
+use crate::verify::Gh;
 
 /// Baseline row kind: `<repo>#<number>` to `pr <head>` or `issue`.
 pub const ROW: &str = "outside-contribution";
-
-/// A pull request or issue author as GitHub lists it; a deleted account
-/// has no user and reads as `ghost` (`OUTSIDE_PR_JQ`).
-#[derive(Debug, Clone, Deserialize)]
-struct User {
-    login: String,
-    #[serde(default, rename = "type")]
-    kind: Optional<String>,
-}
-
-/// `GET /repos/{owner}/{repo}/pulls?state=open`: the fields the pass reads.
-#[derive(Debug, Clone, Deserialize)]
-struct OpenPull {
-    number: u64,
-    #[serde(default)]
-    user: Nullable<User>,
-    #[serde(default)]
-    author_association: Optional<String>,
-    head: Head,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct Head {
-    #[serde(default)]
-    sha: Optional<String>,
-}
-
-/// `GET /repos/{owner}/{repo}/issues?state=open`, which lists pull requests
-/// too, marked with `pull_request`.
-#[derive(Debug, Clone, Deserialize)]
-struct OpenIssue {
-    number: u64,
-    #[serde(default)]
-    user: Nullable<User>,
-    #[serde(default)]
-    author_association: Optional<String>,
-    #[serde(default)]
-    pull_request: Optional<serde_json::Value>,
-}
 
 /// `GET /repos/{owner}/{repo}/collaborators/{login}/permission`.
 #[derive(Debug, Deserialize)]
@@ -80,15 +42,13 @@ struct Listed {
 
 /// Whether the author's own fields read fleet (`OUTSIDE_AUTHOR_JQ`): a Bot
 /// account, or an OWNER, MEMBER or COLLABORATOR association.
-fn author_fleet(user: &Nullable<User>, association: &Optional<String>) -> bool {
+fn author_fleet(user: &Nullable<User>, association: Option<&str>) -> bool {
     if let Nullable::Present(user) = user
-        && user.kind.present().is_some_and(|k| k == "Bot")
+        && user.kind == "Bot"
     {
         return true;
     }
-    association
-        .present()
-        .is_some_and(|a| matches!(a.as_str(), "OWNER" | "MEMBER" | "COLLABORATOR"))
+    association.is_some_and(|a| matches!(a, "OWNER" | "MEMBER" | "COLLABORATOR"))
 }
 
 fn login_of(user: &Nullable<User>) -> String {
@@ -181,34 +141,34 @@ pub(super) fn pass(
     for (i, repo) in repos.iter().enumerate() {
         let mut listed: Vec<Listed> = Vec::new();
         let pulls_path = format!("repos/{repo}/pulls?state=open");
-        let pulls: Vec<OpenPull> = match gh.list("outside-pulls", &pulls_path) {
+        let pulls: Vec<Pull> = match gh.list("outside-pulls", &pulls_path) {
             Ok(Some(pulls)) => pulls,
             Ok(None) => return Err(list_failed(repo, "pulls", "HTTP 404")),
             Err(cause) => return Err(list_failed(repo, "pulls", &cause.to_string())),
         };
         for pull in pulls {
-            if author_fleet(&pull.user, &pull.author_association) {
+            if author_fleet(&pull.user, Some(&pull.author_association)) {
                 continue;
             }
             listed.push(Listed {
                 number: pull.number,
                 kind: "pr",
                 login: login_of(&pull.user),
-                head: pull.head.sha.present().cloned().unwrap_or_default(),
+                head: pull.head.sha.clone(),
             });
         }
         // Issues are read in the first repository alone: the fleet's other
         // repositories are watched for the pull requests their lanes open.
         if i == 0 {
             let issues_path = format!("repos/{repo}/issues?state=open");
-            let issues: Vec<OpenIssue> = match gh.list("outside-issues", &issues_path) {
+            let issues: Vec<Issue> = match gh.list("outside-issues", &issues_path) {
                 Ok(Some(issues)) => issues,
                 Ok(None) => return Err(list_failed(repo, "issues", "HTTP 404")),
                 Err(cause) => return Err(list_failed(repo, "issues", &cause.to_string())),
             };
             for issue in issues {
                 if issue.pull_request.present().is_some()
-                    || author_fleet(&issue.user, &issue.author_association)
+                    || author_fleet(&issue.user, Some(&issue.author_association))
                 {
                     continue;
                 }
@@ -292,27 +252,27 @@ mod tests {
         let user = |login: &str, kind: &str| {
             Nullable::Present(User {
                 login: login.into(),
-                kind: Optional::Present(kind.into()),
+                kind: kind.into(),
             })
         };
-        let assoc = |a: &str| Optional::Present(a.to_owned());
+        let assoc = Some;
         assert!(author_fleet(
             &user("lanes[bot]", "Bot"),
-            &assoc("CONTRIBUTOR")
+            assoc("CONTRIBUTOR")
         ));
-        assert!(author_fleet(&user("founder", "User"), &assoc("OWNER")));
-        assert!(author_fleet(&user("teammate", "User"), &assoc("MEMBER")));
-        assert!(author_fleet(&user("admin", "User"), &assoc("COLLABORATOR")));
+        assert!(author_fleet(&user("founder", "User"), assoc("OWNER")));
+        assert!(author_fleet(&user("teammate", "User"), assoc("MEMBER")));
+        assert!(author_fleet(&user("admin", "User"), assoc("COLLABORATOR")));
         assert!(!author_fleet(
             &user("visitor", "User"),
-            &assoc("CONTRIBUTOR")
+            assoc("CONTRIBUTOR")
         ));
         assert!(!author_fleet(
             &user("visitor", "User"),
-            &assoc("FIRST_TIME_CONTRIBUTOR")
+            assoc("FIRST_TIME_CONTRIBUTOR")
         ));
-        assert!(!author_fleet(&user("visitor", "User"), &assoc("NONE")));
-        assert!(!author_fleet(&Nullable::Null, &assoc("NONE")));
+        assert!(!author_fleet(&user("visitor", "User"), assoc("NONE")));
+        assert!(!author_fleet(&Nullable::Null, assoc("NONE")));
         assert_eq!(login_of(&Nullable::Null), "ghost");
         let listed = |kind: &'static str, login: &str, head: &str| Listed {
             number: 1,

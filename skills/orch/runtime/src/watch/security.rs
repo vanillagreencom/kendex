@@ -15,7 +15,6 @@
 //! `Event::SecurityAlertsUnread`.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::ffi::OsStr;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;
 
@@ -25,10 +24,10 @@ use serde_json::Value;
 
 use crate::error::Result;
 use crate::settings::{Audit, Settings};
-use crate::verify::wire::Nullable;
+use crate::verify::wire::{GraphReply, Nullable};
 use crate::watch::{Baseline, Change, Event, Produced};
 
-use super::github::{Gh, paged};
+use crate::verify::{self, Answer, Gh};
 
 /// Baseline row kinds.
 pub const ALERT_ROW: &str = "security-alert";
@@ -116,11 +115,6 @@ struct SecretScanningAlert {
 }
 
 /// One GraphQL page of the alert-to-pull-request link.
-#[derive(Debug, Deserialize)]
-struct PrPage {
-    data: PrData,
-}
-
 #[derive(Debug, Deserialize)]
 struct PrData {
     repository: PrRepository,
@@ -241,6 +235,10 @@ fn read_cause(stderr: &str, status: &str) -> String {
     if off.iter().any(|p| stderr.contains(p)) {
         return "feature-off".to_owned();
     }
+    if let Some(code) = verify::http_status(stderr) {
+        return format!("http-{code}");
+    }
+    // No status line gh wrote: a status named anywhere, else the exit.
     if let Some(at) = stderr.find("(HTTP ")
         && let Some(close) = stderr[at..].find(')')
     {
@@ -453,34 +451,31 @@ fn recorded(verdicts: &[Value]) -> Option<BTreeSet<String>> {
     Some(out)
 }
 
-/// One alert list under the token, every page (`gh api --paginate`): the
-/// typed rows, or how the read ended.
+/// One alert list under the token handle, every page (`verify::list`):
+/// the typed rows, or how the read ended.
 fn alert_list<T: DeserializeOwned>(
     gh: &Gh,
     read: &'static str,
     path: &str,
-    token: &str,
 ) -> Result<ReadEnd<Vec<T>>> {
-    let env = [("GH_TOKEN", OsStr::new(token))];
-    let mut members: Vec<T> = Vec::new();
-    for page in 1..=super::github::MAX_PAGES {
-        let raw = gh.raw(read, &["api", &paged(path, page)], &env)?;
-        if !raw.success {
-            return Ok(ReadEnd::Failed {
-                cause: read_cause(&raw.stderr, &raw.status),
-                stderr: raw.stderr,
-            });
-        }
-        let Ok(arrived) = serde_json::from_slice::<Vec<T>>(&raw.stdout) else {
-            return Ok(ReadEnd::Invalid);
-        };
-        let short = arrived.len() < super::github::PER_PAGE;
-        members.extend(arrived);
-        if short {
-            return Ok(ReadEnd::Read(members));
-        }
+    let read_all = verify::list(
+        path,
+        |page| match gh.run(read, &["api", page], None) {
+            Err(unrun) => Err(Err(super::github::unrun(read, &unrun))),
+            Ok(Answer::Failed(failed)) => Err(Ok(ReadEnd::Failed {
+                cause: read_cause(&failed.stderr, &failed.status),
+                stderr: failed.stderr,
+            })),
+            Ok(Answer::Printed { stdout, .. }) => {
+                serde_json::from_slice::<Vec<T>>(&stdout).map_err(|_| Ok(ReadEnd::Invalid))
+            }
+        },
+        || Ok(ReadEnd::Invalid),
+    );
+    match read_all {
+        Ok(members) => Ok(ReadEnd::Read(members)),
+        Err(end) => end,
     }
-    Ok(ReadEnd::Invalid)
 }
 
 fn alert_rows(kind: &str, members: Value) -> Option<Vec<AlertRow>> {
@@ -537,39 +532,48 @@ fn alert_rows(kind: &str, members: Value) -> Option<Vec<AlertRow>> {
 /// The Dependabot alerts in any state that carry an open pull request,
 /// `(alert, alert state, pr)` each, through the GraphQL record paged by
 /// gh.
-fn dependabot_prs(gh: &Gh, repo: &str, token: &str) -> Result<ReadEnd<Vec<(u64, String, u64)>>> {
-    let env = [("GH_TOKEN", OsStr::new(token))];
+fn dependabot_prs(gh: &Gh, repo: &str) -> Result<ReadEnd<Vec<(u64, String, u64)>>> {
     let (owner, name) = repo.split_once('/').unwrap_or((repo, ""));
     let owner = format!("owner={owner}");
     let name = format!("name={name}");
     let query = format!("query={PR_QUERY}");
-    let raw = gh.raw(
-        "dependabot-prs",
-        &[
-            "api",
-            "graphql",
-            "--paginate",
-            "-f",
-            &owner,
-            "-f",
-            &name,
-            "-f",
-            &query,
-        ],
-        &env,
-    )?;
-    if !raw.success {
-        return Ok(ReadEnd::Failed {
-            cause: read_cause(&raw.stderr, &raw.status),
-            stderr: raw.stderr,
-        });
-    }
+    let read = "dependabot-prs";
+    let answer = gh
+        .run(
+            read,
+            &[
+                "api",
+                "graphql",
+                "--paginate",
+                "-f",
+                &owner,
+                "-f",
+                &name,
+                "-f",
+                &query,
+            ],
+            None,
+        )
+        .map_err(|unrun| super::github::unrun(read, &unrun))?;
+    let stdout = match answer {
+        Answer::Printed { stdout, .. } => stdout,
+        Answer::Failed(failed) => {
+            return Ok(ReadEnd::Failed {
+                cause: read_cause(&failed.stderr, &failed.status),
+                stderr: failed.stderr,
+            });
+        }
+    };
     let mut out = Vec::new();
-    for page in serde_json::Deserializer::from_slice(&raw.stdout).into_iter::<PrPage>() {
-        let Ok(page) = page else {
+    for page in serde_json::Deserializer::from_slice(&stdout).into_iter::<GraphReply<PrData>>() {
+        let Ok(GraphReply {
+            data: Nullable::Present(data),
+            ..
+        }) = page
+        else {
             return Ok(ReadEnd::Invalid);
         };
-        for node in page.data.repository.vulnerability_alerts.nodes {
+        for node in data.repository.vulnerability_alerts.nodes {
             let Nullable::Present(update) = node.dependabot_update else {
                 continue;
             };
@@ -630,6 +634,8 @@ pub(super) fn pass(
         commit_unread(&unread, baseline, produced);
         return Ok(standing_bot_fix(baseline));
     };
+    // The token rides on the alert reads' own handle alone.
+    let alerts = gh.adding_env(vec![("GH_TOKEN".to_owned(), token.into())]);
     let reported: BTreeSet<String> = baseline.identities(ALERT_ROW).into_iter().collect();
     let standing_fix = standing_bot_fix(baseline);
     let mut keys: BTreeSet<String> = BTreeSet::new();
@@ -648,7 +654,7 @@ pub(super) fn pass(
                 query.push_str("&hide_secret=true");
             }
             let path = format!("repos/{repo}/{kind}/alerts?{query}");
-            let mut end = match alert_list::<Value>(gh, "alerts", &path, &token)? {
+            let mut end = match alert_list::<Value>(&alerts, "alerts", &path)? {
                 ReadEnd::Read(members) => match alert_rows(kind, Value::Array(members)) {
                     Some(rows) if rows.iter().all(|r| row_valid(kind, r)) => ReadEnd::Read(rows),
                     Some(_) | None => ReadEnd::Invalid,
@@ -659,7 +665,7 @@ pub(super) fn pass(
             let mut prs: Vec<(u64, String, u64)> = Vec::new();
             if matches!(end, ReadEnd::Read(_)) && kind == "dependabot" {
                 source = format!("{repo}/dependabot-prs");
-                match dependabot_prs(gh, repo, &token)? {
+                match dependabot_prs(&alerts, repo)? {
                     ReadEnd::Read(linked) => prs = linked,
                     ReadEnd::Failed { cause, stderr } => end = ReadEnd::Failed { cause, stderr },
                     ReadEnd::Invalid => end = ReadEnd::Invalid,

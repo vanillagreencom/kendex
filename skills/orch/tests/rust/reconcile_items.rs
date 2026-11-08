@@ -470,7 +470,8 @@ fn merged_pull(number: u64, at: &str) -> Value {
 
 /// GitHub's `GET /repos/owner/repo/pulls/N` reply, the fields of it the judge reads.
 fn rest_pull(number: u64, at: &str, oid: &str) -> Value {
-    json!({"number":number, "state":"closed", "merged":true, "merged_at":at, "merge_commit_sha":oid})
+    json!({"number":number, "state":"closed", "title":"merged work", "body":null, "merged":true, "merged_at":at, "merge_commit_sha":oid,
+        "author_association":"NONE", "head":{"sha":"0000000000000000000000000000000000000000", "ref":"merged-work", "repo":null}, "base":{"ref":"main"}, "user":null})
 }
 
 fn release(tag: &str, at: &str) -> Value {

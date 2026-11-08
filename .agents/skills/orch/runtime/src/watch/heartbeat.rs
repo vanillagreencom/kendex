@@ -36,7 +36,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use agent_runtime::clock;
-use serde::Deserialize;
+
+use crate::verify::wire::Pull;
 
 use crate::ops::accounts::{
     self, PickAnswer, PickRequest, Roster, pick_harness, pick_pool, text_or_dash,
@@ -44,7 +45,6 @@ use crate::ops::accounts::{
 use crate::ops::{Env, Host};
 use crate::settings::Settings;
 use crate::state::{Locking, Owner};
-use crate::watch::github::Gh;
 use crate::watch::tracker::{OwedItem, Shared};
 use crate::watch::verifying::Lines;
 use crate::watch::{Body, Change, Event, Produced, Runner, Tick};
@@ -128,29 +128,15 @@ fn note(what: &str, cause: &str) {
 
 // --- the open pull requests ------------------------------------------------------------
 
-/// One open pull request of `GET /repos/{owner}/{repo}/pulls?state=open`.
-#[derive(Debug, Deserialize)]
-struct OpenPull {
-    number: u64,
-    title: String,
-    head: Head,
-}
-
-#[derive(Debug, Deserialize)]
-struct Head {
-    #[serde(rename = "ref")]
-    name: String,
-}
-
 /// The repository's open pull requests: `<repo>\t<n>\t
 /// <head>\t<title>`, or `<repo>\tbot-fix pr=<n> alert=<alerts>` for one the
 /// GitHub duty's `bot-fix` row names. The list is read whole through the
 /// one paging reader; a list that could not be read whole is one `unread`
 /// line, never a shorter list.
 fn open_lines(ctx: &Context, repo: &str, bot_fix: &BTreeMap<String, String>) -> Vec<String> {
-    let gh = Gh { cli: &ctx.gh };
+    let gh = crate::watch::github::handle(&ctx.gh);
     let path = format!("repos/{repo}/pulls?state=open");
-    let pulls: Vec<OpenPull> = match gh.list::<OpenPull>("open-pulls", &path) {
+    let pulls: Vec<Pull> = match gh.list::<Pull>("open-pulls", &path) {
         Ok(Some(pulls)) => pulls,
         Ok(None) => {
             note("open-pulls", &format!("repo={repo} cause=not-found"));
@@ -168,7 +154,7 @@ fn open_lines(ctx: &Context, repo: &str, bot_fix: &BTreeMap<String, String>) -> 
                 Some(alerts) => format!("{repo}\tbot-fix pr={} alert={alerts}", pull.number),
                 None => format!(
                     "{repo}\t{}\t{}\t{}",
-                    pull.number, pull.head.name, pull.title
+                    pull.number, pull.head.branch, pull.title
                 ),
             },
         )

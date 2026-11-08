@@ -12,11 +12,11 @@ pub(crate) use super::Acted;
 use super::evidence;
 pub(crate) use super::evidence::{Flight, Work};
 use super::wire::{
-    BranchProtected, ClassicProtection, LatestReview, Nullable, Optional, Pull,
-    PullRequestParameters, PullRequestState, Review, ReviewView, Rule, RuleKind, ThreadsReply,
+    Branch, ClassicProtection, GraphReply, LatestReview, Nullable, Optional, Protection, Pull,
+    PullRequestParameters, PullRequestState, Review, ReviewView, Rule, RuleKind, ThreadsData,
     TimelineEvent,
 };
-use super::{Cause, Endpoint, Gh, Read, Reader, head_form, segment};
+use super::{Cause, Endpoint, Gh, Read, Reader, head_form, refused_by_github, segment};
 
 /// The GitHub login of the Copilot reviewer, as REST spells it with its
 /// `[bot]` suffix and as GraphQL actors spell it bare.
@@ -91,7 +91,7 @@ pub(crate) fn view(gh: &Gh, repo: &str, pr: u64) -> Read<View> {
         .printed(endpoint)?;
     let view: ReviewView =
         serde_json::from_slice(&bytes).map_err(|_| Cause::ResponseInvalid(endpoint))?;
-    if !head_form(&view.head) || view.base.is_empty() || view.author.login.is_empty() {
+    if !head_form(&view.pull.head) || view.pull.base.is_empty() || view.author.login.is_empty() {
         return Err(Cause::ResponseInvalid(endpoint));
     }
     let decision = match view.decision {
@@ -106,9 +106,9 @@ pub(crate) fn view(gh: &Gh, repo: &str, pr: u64) -> Read<View> {
         .unwrap_or(&view.author.login)
         .to_owned();
     Ok(View {
-        head: view.head,
-        base: view.base,
-        state: view.state,
+        head: view.pull.head,
+        base: view.pull.base,
+        state: view.pull.state,
         draft: view.draft,
         decision,
         latest: view.latest,
@@ -130,6 +130,9 @@ pub(crate) fn gate_mode(gh: &Gh, repo: &str, base: &str) -> Read<GateMode> {
         Endpoint::Rules,
         &format!("repos/{repo}/rules/branches/{segment}"),
     )?;
+    if rules.iter().any(|rule| rule.kind == RuleKind::Other) {
+        return Err(Cause::ResponseInvalid(Endpoint::Rules));
+    }
     for rule in rules {
         if rule.kind != RuleKind::PullRequest {
             continue;
@@ -153,11 +156,20 @@ pub(crate) fn gate_mode(gh: &Gh, repo: &str, base: &str) -> Read<GateMode> {
             return Ok(GateMode::Approval);
         }
     }
-    let branch: BranchProtected = reader.object(
+    let branch: Branch = reader.object(
         Endpoint::Protection,
         &format!("repos/{repo}/branches/{segment}"),
     )?;
-    if !branch.protection.enabled {
+    let enabled = match branch.protection {
+        Optional::Present(Protection {
+            enabled: Optional::Present(enabled),
+            ..
+        }) => enabled,
+        Optional::Present(_) | Optional::Absent => {
+            return Err(Cause::ResponseInvalid(Endpoint::Protection));
+        }
+    };
+    if !enabled {
         return Ok(GateMode::Off);
     }
     let classic: ClassicProtection = reader.object(
@@ -170,10 +182,11 @@ pub(crate) fn gate_mode(gh: &Gh, repo: &str, base: &str) -> Read<GateMode> {
     })
 }
 
-/// The pull request object, for the refresh route and the draft flag.
+/// The pull request object, for the refresh route and the draft flag;
+/// the gate judges the flag, so an object without it is unreadable.
 pub(crate) fn pull(gh: &Gh, repo: &str, pr: u64) -> Read<Pull> {
     let pull: Pull = Reader { gh }.object(Endpoint::Pull, &format!("repos/{repo}/pulls/{pr}"))?;
-    if !head_form(&pull.head.sha) {
+    if !head_form(&pull.head.sha) || pull.draft.present().is_none() {
         return Err(Cause::ResponseInvalid(Endpoint::Pull));
     }
     Ok(pull)
@@ -364,7 +377,8 @@ pub(crate) fn unresolved_threads(gh: &Gh, repo: &str, pr: u64) -> Read<usize> {
             args.extend(["-F", after.as_str()]);
         }
         let bytes = gh.call(endpoint, &args)?.printed(endpoint)?;
-        let reply: ThreadsReply = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+        let reply: GraphReply<ThreadsData> =
+            serde_json::from_slice(&bytes).map_err(|_| invalid())?;
         if matches!(reply.errors, Optional::Present(ref errors) if !errors.is_empty()) {
             return Err(invalid());
         }
@@ -414,26 +428,6 @@ pub(crate) fn request_review(gh: &Gh, repo: &str, pr: u64) -> Read<Acted> {
         }),
         acted => Ok(acted),
     }
-}
-
-/// Whether gh's stderr reports GitHub's 4xx reply: the status gh appends
-/// to the reply's message, `gh: <message> (HTTP 4xx)`, or prints bare,
-/// `gh: HTTP 4xx`, where the reply had none (measured on gh 2.103.3). The
-/// message is the server's and can quote a status or run over lines
-/// (`gh: upstream (HTTP 422) (HTTP 500)`), so the last status gh wrote
-/// decides; the scope hint gh can print after it names none.
-pub(crate) fn refused_by_github(detail: &str) -> bool {
-    let mut status = None;
-    for line in detail.lines() {
-        let code = match line.rsplit_once(" (HTTP ") {
-            Some((_, rest)) => rest.strip_suffix(')'),
-            None => line.strip_prefix("gh: HTTP "),
-        };
-        if let Some(code) = code.filter(|c| c.len() == 3 && c.bytes().all(|b| b.is_ascii_digit())) {
-            status = Some(code);
-        }
-    }
-    status.is_some_and(|code| code.starts_with('4'))
 }
 
 /// Mark an open draft ready for review: GitHub exposes the transition

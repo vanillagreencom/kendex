@@ -95,7 +95,9 @@
             "full_name": "owner/repo"
           },
           "check_suite_id": 29639837074,
-          "check_suite_node_id": "CS_29639837074"
+          "check_suite_node_id": "CS_29639837074",
+          "created_at": "2026-07-18T06:55:23Z",
+          "head_branch": null
         }
       ]
     }
@@ -126,6 +128,12 @@
         "required_status_checks": {
           "contexts": [],
           "checks": []
+        }
+      },
+      "commit": {
+        "sha": "0000000000000000000000000000000000000000",
+        "commit": {
+          "committer": null
         }
       }
     }

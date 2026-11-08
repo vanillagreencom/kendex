@@ -114,7 +114,9 @@
           },
           "check_suite_id": 30206726860,
           "check_suite_node_id": "CS_30206726860",
-          "run_started_at": "2026-07-26T12:22:11Z"
+          "run_started_at": "2026-07-26T12:22:11Z",
+          "created_at": "2026-07-26T12:22:11Z",
+          "head_branch": null
         },
         {
           "id": 30201902682,
@@ -132,7 +134,9 @@
           },
           "check_suite_id": 30206902682,
           "check_suite_node_id": "CS_30206902682",
-          "run_started_at": "2026-07-26T12:21:45Z"
+          "run_started_at": "2026-07-26T12:21:45Z",
+          "created_at": "2026-07-26T12:21:45Z",
+          "head_branch": null
         }
       ]
     }
@@ -163,6 +167,12 @@
         "required_status_checks": {
           "contexts": [],
           "checks": []
+        }
+      },
+      "commit": {
+        "sha": "0000000000000000000000000000000000000000",
+        "commit": {
+          "committer": null
         }
       }
     }

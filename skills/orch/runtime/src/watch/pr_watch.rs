@@ -23,7 +23,9 @@ use serde::Serialize;
 
 use crate::watch::{Baseline, Change, Event, Produced};
 
-use super::github::{Gh, MERGED_ROW, Pull, REFRESH_ITEM, refused};
+use super::github::{MERGED_ROW, REFRESH_ITEM, refused};
+use crate::verify::Gh;
+use crate::verify::wire::Pull;
 
 /// Baseline row kind: one row per repository.
 pub const ROW: &str = "pr-watch";

@@ -25,12 +25,9 @@
 //! (`github-capped`).
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use agent_runtime::clock;
-use agent_runtime::host;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -38,29 +35,21 @@ use serde_json::Value;
 use crate::error::{Error, Result};
 use crate::settings::Settings;
 use crate::state::{self, FleetState, Lane, LaneStatus};
-use crate::verify::wire::{Nullable, Optional};
+use crate::verify::wire::{
+    Issue, Nullable, Optional, Pull, RunStatus, RunsPage, WorkflowRun, WorkflowsPage,
+};
+use crate::verify::{self, Answer, Gh, MAX_PAGES, PER_PAGE, Page, Unrun};
 use crate::watch::{Baseline, Body, Change, Event, Produced, Tick};
 
 use super::tracker::{Shared, TerminalState};
 use super::{outside, pr_watch, security};
 
-/// The bound on one `gh api` call.
-const GH_TIMEOUT: Duration = Duration::from_secs(60);
-
 /// The start-counter tag every GitHub call is counted under.
 const TAG: &str = "github";
 
-/// GitHub's largest page, asked for explicitly so each page's total can be
-/// checked (`verify::PER_PAGE`).
-pub(super) const PER_PAGE: usize = 100;
-
-/// The most pages one collection is read over; past it the collection is
-/// not the documented total and is refused.
-pub(super) const MAX_PAGES: usize = 100;
-
 /// The search endpoint's documented cap on results: a search reaching it
 /// is refused, never read as the whole set.
-const SEARCH_CAP: u64 = 1000;
+const SEARCH_CAP: usize = 1000;
 
 /// The default-branch workflows a red main is read from, beside the
 /// declared ones.
@@ -137,78 +126,35 @@ pub(super) fn refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
     agent_runtime::Error::refused(key, fields).into()
 }
 
-/// What one `gh api` call answered: the bytes of a call that exited zero,
-/// or the one failure that is an answer, a 404.
-enum Answer {
-    Printed(Vec<u8>),
-    NotFound,
+/// The refusal of a read `gh` gave no answer to.
+pub(super) fn unrun(read: &'static str, unrun: &Unrun) -> Error {
+    refused(
+        "github-read-failed",
+        &[("read", read), ("cause", &unrun.detail())],
+    )
 }
 
-/// What one `gh` call printed, before any reading of it: for a read whose
-/// failure text is itself judged (the alert reads' causes).
-pub(super) struct Raw {
-    pub success: bool,
-    /// The exit status's text, `exit status N` or the signal.
-    pub status: String,
-    pub stdout: Vec<u8>,
-    pub stderr: String,
+/// The watch's `gh` handle: `cli` resolved as the caller named it
+/// (production: on `PATH`), its starts counted under the GitHub tag.
+pub(crate) fn handle(cli: &Path) -> Gh<'static> {
+    Gh::new(cli).tagged(TAG)
 }
 
-/// `gh api` through agent-runtime's one runner, `gh` resolved as the
-/// caller named it (production: on `PATH`), its environment the process's
-/// plus what a read adds (the alert reads' installation token), so the
-/// caller's GitHub authentication is the one used everywhere else.
-pub struct Gh<'a> {
-    pub cli: &'a Path,
-}
-
+/// The watch's reads over the one handle: GitHub's 404 is the answer
+/// `None`, every other failure the read's refusal under the duty's keys.
 impl Gh<'_> {
-    /// One `gh` call with `args`, `env` added to the child's environment,
-    /// its whole answer; only a call that could not run or answer within
-    /// the bound is refused here.
-    #[allow(
-        clippy::disallowed_methods,
-        reason = "the GitHub duty reads gh api for the audits' objects by identity, the alert reads under the installation token the setting names, no effect on a lane or a controller"
-    )]
-    pub(super) fn raw(
-        &self,
-        read: &'static str,
-        args: &[&str],
-        env: &[(&str, &OsStr)],
-    ) -> Result<Raw> {
-        let place = host::Place { cwd: None, env };
-        let output = host::run_tagged_in(TAG, "gh", self.cli, read, args, place, GH_TIMEOUT)
-            .map_err(|e| {
-                refused(
-                    "github-read-failed",
-                    &[("read", read), ("cause", &e.to_string())],
-                )
-            })?;
-        Ok(Raw {
-            success: output.status.success(),
-            status: output.status.to_string(),
-            stderr: host::stderr_text(&output),
-            stdout: output.stdout,
-        })
-    }
-
-    fn call(&self, read: &'static str, path: &str) -> Result<Answer> {
-        let raw = self.raw(read, &["api", path], &[])?;
-        if raw.success {
-            return Ok(Answer::Printed(raw.stdout));
+    /// What one `gh api` read answered: the bytes of a call that exited
+    /// zero, or `None` where the last status gh wrote is 404.
+    fn answer(&self, read: &'static str, path: &str) -> Result<Option<Vec<u8>>> {
+        match self.run(read, &["api", path], None) {
+            Err(e) => Err(unrun(read, &e)),
+            Ok(Answer::Printed { stdout, .. }) => Ok(Some(stdout)),
+            Ok(Answer::Failed(failed)) if failed.http() == Some(404) => Ok(None),
+            Ok(Answer::Failed(failed)) => Err(refused(
+                "github-read-failed",
+                &[("read", read), ("path", path), ("cause", &failed.detail())],
+            )),
         }
-        if not_found(&raw.stderr) {
-            return Ok(Answer::NotFound);
-        }
-        let stdout = String::from_utf8_lossy(&raw.stdout).trim().to_owned();
-        let detail = [raw.stderr.trim().to_owned(), stdout]
-            .into_iter()
-            .find(|text| !text.is_empty())
-            .unwrap_or(raw.status);
-        Err(refused(
-            "github-read-failed",
-            &[("read", read), ("path", path), ("cause", &detail)],
-        ))
     }
 
     /// One object, decoded; a 404 is `None`.
@@ -217,9 +163,9 @@ impl Gh<'_> {
         read: &'static str,
         path: &str,
     ) -> Result<Option<T>> {
-        match self.call(read, path)? {
-            Answer::NotFound => Ok(None),
-            Answer::Printed(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|e| {
+        match self.answer(read, path)? {
+            None => Ok(None),
+            Some(bytes) => serde_json::from_slice(&bytes).map(Some).map_err(|e| {
                 refused(
                     "github-response-invalid",
                     &[("read", read), ("path", path), ("cause", &e.to_string())],
@@ -230,151 +176,70 @@ impl Gh<'_> {
 
     /// The raw text an endpoint printed (a job's log); a 404 is `None`.
     fn text(&self, read: &'static str, path: &str) -> Result<Option<String>> {
-        match self.call(read, path)? {
-            Answer::NotFound => Ok(None),
-            Answer::Printed(bytes) => Ok(Some(String::from_utf8_lossy(&bytes).into_owned())),
-        }
+        Ok(self
+            .answer(read, path)?
+            .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()))
     }
 
-    /// Every member of a collection whose pages carry a total: each page
-    /// asked for by number at the largest size, every page's total equal
-    /// and the members adding up to it, else refused; a 404 is `None`.
+    /// Every member of a collection whose pages carry a total
+    /// (`verify::collection`); a 404 on any page is `None`.
     fn collection<P: Page>(
         &self,
         read: &'static str,
         path: &str,
     ) -> Result<Option<Vec<P::Member>>> {
-        let mut members = Vec::new();
-        let mut total = None;
-        for page in 1..=MAX_PAGES {
-            let Some(reply) = self.object::<P>(read, &paged(path, page))? else {
-                return Ok(None);
-            };
-            let count = reply.total();
-            if total.is_some_and(|t| t != count) {
-                return Err(refused(
+        let read_all = verify::collection(
+            path,
+            |page| match self.object::<P>(read, page) {
+                Ok(Some(decoded)) => Ok(decoded),
+                Ok(None) => Err(None),
+                Err(e) => Err(Some(e)),
+            },
+            || {
+                Some(refused(
                     "github-total-mismatch",
                     &[("read", read), ("path", path)],
-                ));
-            }
-            total = Some(count);
-            let arrived = reply.into_members();
-            let short = arrived.len() < PER_PAGE;
-            members.extend(arrived);
-            if members.len() as u64 >= count || short {
-                break;
-            }
-        }
-        match total {
-            Some(count) if members.len() as u64 == count => Ok(Some(members)),
-            Some(_) | None => Err(refused(
-                "github-total-mismatch",
-                &[("read", read), ("path", path)],
-            )),
+                ))
+            },
+        );
+        match read_all {
+            Ok(members) => Ok(Some(members)),
+            Err(None) => Ok(None),
+            Err(Some(e)) => Err(e),
         }
     }
 
-    /// Every member of a list endpoint with no total: pages at the largest
-    /// size until a short one, bounded by `MAX_PAGES`, past which it is
-    /// refused; a 404 is `None`.
+    /// Every member of a list endpoint with no total (`verify::list`),
+    /// past whose last page it is refused; a 404 on any page is `None`.
     pub(crate) fn list<T: DeserializeOwned>(
         &self,
         read: &'static str,
         path: &str,
     ) -> Result<Option<Vec<T>>> {
-        let mut members = Vec::new();
-        for page in 1..=MAX_PAGES {
-            let Some(arrived) = self.object::<Vec<T>>(read, &paged(path, page))? else {
-                return Ok(None);
-            };
-            let short = arrived.len() < PER_PAGE;
-            members.extend(arrived);
-            if short {
-                return Ok(Some(members));
-            }
-        }
-        Err(refused("github-capped", &[("read", read), ("path", path)]))
-    }
-}
-
-/// Whether a failed `gh` call's stderr is GitHub's 404, the one failure
-/// that is an answer. gh 2.103.3 carries two renderings of a failed
-/// request: `gh api`'s own `<message> (HTTP <status>)` line (`gh: Not
-/// Found (HTTP 404)`) and the client's `HTTP <status>: <message> (<url>)`
-/// (`HTTP 404: workflow … not found on the default branch (…)`);
-/// either names the status on its own line.
-fn not_found(stderr: &str) -> bool {
-    stderr.lines().any(|line| {
-        let line = line.strip_prefix("gh: ").unwrap_or(line);
-        line.contains("(HTTP 404)") || line.starts_with("HTTP 404:")
-    })
-}
-
-pub(super) fn paged(path: &str, page: usize) -> String {
-    let join = if path.contains('?') { "&" } else { "?" };
-    format!("{path}{join}per_page={PER_PAGE}&page={page}")
-}
-
-/// Percent-encode a query value for a `gh api` path, keeping the
-/// unreserved characters (RFC 3986 § 2.3).
-pub(super) fn encoded(text: &str) -> String {
-    let mut out = String::new();
-    for byte in text.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
-            out.push(byte as char);
-        } else {
-            out.push_str(&format!("%{byte:02X}"));
+        let read_all = verify::list(
+            path,
+            |page| match self.object::<Vec<T>>(read, page) {
+                Ok(Some(decoded)) => Ok(decoded),
+                Ok(None) => Err(None),
+                Err(e) => Err(Some(e)),
+            },
+            || Some(refused("github-capped", &[("read", read), ("path", path)])),
+        );
+        match read_all {
+            Ok(members) => Ok(Some(members)),
+            Err(None) => Ok(None),
+            Err(Some(e)) => Err(e),
         }
     }
-    out
-}
-
-/// A page that carries its collection's total.
-trait Page: DeserializeOwned {
-    type Member;
-    fn total(&self) -> u64;
-    fn into_members(self) -> Vec<Self::Member>;
 }
 
 // --- the wire shapes ------------------------------------------------------------------
-
-/// `GET /repos/{owner}/{repo}/pulls` and `/pulls/{n}` (REST, pulls): the
-/// fields the lane-own rule reads.
-#[derive(Debug, Clone, serde::Deserialize)]
-pub(super) struct Pull {
-    pub(super) number: u64,
-    pub(super) state: String,
-    title: String,
-    /// Documented nullable.
-    body: Nullable<String>,
-    /// Documented nullable: null while unmerged.
-    pub(super) merged_at: Nullable<String>,
-    head: Head,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct Head {
-    #[serde(rename = "ref")]
-    branch: String,
-    /// Documented nullable: a deleted fork.
-    repo: Nullable<HeadRepo>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct HeadRepo {
-    owner: User,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct User {
-    login: String,
-}
 
 /// `GET /search/issues`: the items' numbers; `pull_request` is present on
 /// a pull request alone.
 #[derive(Debug, serde::Deserialize)]
 struct SearchPage {
-    total_count: u64,
+    total_count: usize,
     incomplete_results: bool,
     items: Vec<SearchItem>,
 }
@@ -388,69 +253,18 @@ struct SearchItem {
 
 impl Page for SearchPage {
     type Member = SearchItem;
-    fn total(&self) -> u64 {
+    fn total(&self) -> usize {
         self.total_count
     }
-    fn into_members(self) -> Vec<SearchItem> {
+    fn members(self) -> Vec<SearchItem> {
         self.items
-    }
-}
-
-/// `GET /repos/{owner}/{repo}/actions/workflows/{file}/runs`.
-#[derive(Debug, serde::Deserialize)]
-struct RunsPage {
-    total_count: u64,
-    workflow_runs: Vec<Run>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize)]
-struct Run {
-    id: u64,
-    /// Documented optional.
-    #[serde(default)]
-    run_attempt: Optional<u64>,
-    /// Documented nullable: null while the run is not completed.
-    conclusion: Nullable<String>,
-    created_at: String,
-    status: String,
-}
-
-impl Page for RunsPage {
-    type Member = Run;
-    fn total(&self) -> u64 {
-        self.total_count
-    }
-    fn into_members(self) -> Vec<Run> {
-        self.workflow_runs
-    }
-}
-
-/// `GET /repos/{owner}/{repo}/actions/workflows`.
-#[derive(Debug, serde::Deserialize)]
-struct WorkflowsPage {
-    total_count: u64,
-    workflows: Vec<Workflow>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct Workflow {
-    path: String,
-}
-
-impl Page for WorkflowsPage {
-    type Member = Workflow;
-    fn total(&self) -> u64 {
-        self.total_count
-    }
-    fn into_members(self) -> Vec<Workflow> {
-        self.workflows
     }
 }
 
 /// `GET /repos/{owner}/{repo}/actions/runs/{id}/jobs`.
 #[derive(Debug, serde::Deserialize)]
 struct JobsPage {
-    total_count: u64,
+    total_count: usize,
     jobs: Vec<Job>,
 }
 
@@ -462,30 +276,6 @@ struct Job {
     conclusion: Nullable<String>,
     /// The check run the job's annotations hang off.
     check_run_url: String,
-}
-
-/// A run of the budget history: every status, with
-/// the head branch GitHub documents nullable.
-#[derive(Debug, Clone, serde::Deserialize)]
-struct BudgetRun {
-    id: u64,
-    created_at: String,
-    status: String,
-    event: String,
-    #[serde(default)]
-    head_branch: Nullable<String>,
-}
-
-#[derive(Debug, serde::Deserialize)]
-struct BudgetRunsPage {
-    workflow_runs: Vec<BudgetRun>,
-}
-
-/// `GET /repos/{owner}/{repo}/actions/runs/{id}`: the status the budget
-/// scan reads for a run its history pages no longer list.
-#[derive(Debug, serde::Deserialize)]
-struct RunStatus {
-    status: String,
 }
 
 /// `GET /repos/{owner}/{repo}/check-runs/{id}/annotations` (no total).
@@ -506,21 +296,12 @@ struct BudgetState {
 
 impl Page for JobsPage {
     type Member = Job;
-    fn total(&self) -> u64 {
+    fn total(&self) -> usize {
         self.total_count
     }
-    fn into_members(self) -> Vec<Job> {
+    fn members(self) -> Vec<Job> {
         self.jobs
     }
-}
-
-/// `GET /repos/{owner}/{repo}/issues/{n}`: the GitHub-tracked item's end.
-#[derive(Debug, serde::Deserialize)]
-struct Issue {
-    state: String,
-    /// Documented nullable.
-    #[serde(default)]
-    state_reason: Nullable<String>,
 }
 
 // --- the lane-own rule ------------------------------------------------------------------
@@ -815,7 +596,7 @@ fn run(ctx: &Context, passes: u32, tick: &Tick) -> Result<Produced> {
         .unwrap_or_else(|p| p.into_inner())
         .terminal
         .clone();
-    let gh = Gh { cli: &ctx.gh };
+    let gh = handle(&ctx.gh);
     let inputs = Inputs {
         repos: &ctx.repos,
         settings: &ctx.settings,
@@ -852,7 +633,7 @@ fn run(ctx: &Context, passes: u32, tick: &Tick) -> Result<Produced> {
 
 /// The lane inventories: the merged index, the refresh incident, the
 /// main-branch incident and its budget scan.
-pub fn read(gh: &Gh, inputs: &Inputs, baseline: &Baseline) -> Result<Read> {
+pub(crate) fn read(gh: &Gh, inputs: &Inputs, baseline: &Baseline) -> Result<Read> {
     let mut produced = Produced::default();
     let mut inventory = Inventory::default();
     let repos = repositories(inputs);
@@ -1141,42 +922,30 @@ fn merged(
 /// documented cap and `incomplete_results`, every page's total equal and
 /// the items adding up to it, else refused.
 fn search(gh: &Gh, path: &str, repo: &str, item: &str) -> Result<Vec<SearchItem>> {
-    let mut items = Vec::new();
-    let mut total = None;
-    for page in 1..=MAX_PAGES {
-        let Some(reply) = gh.object::<SearchPage>("merged-search", &paged(path, page))? else {
-            return Err(refused(
-                "github-read-failed",
-                &[("read", "merged-search"), ("path", path)],
-            ));
-        };
-        if reply.incomplete_results || reply.total_count >= SEARCH_CAP {
-            return Err(refused(
-                "github-capped",
-                &[("read", "merged-search"), ("repo", repo), ("item", item)],
-            ));
-        }
-        if total.is_some_and(|t| t != reply.total_count) {
-            return Err(refused(
+    verify::collection(
+        path,
+        |page| {
+            let Some(reply) = gh.object::<SearchPage>("merged-search", page)? else {
+                return Err(refused(
+                    "github-read-failed",
+                    &[("read", "merged-search"), ("path", path)],
+                ));
+            };
+            if reply.incomplete_results || reply.total_count >= SEARCH_CAP {
+                return Err(refused(
+                    "github-capped",
+                    &[("read", "merged-search"), ("repo", repo), ("item", item)],
+                ));
+            }
+            Ok(reply)
+        },
+        || {
+            refused(
                 "github-total-mismatch",
                 &[("read", "merged-search"), ("path", path)],
-            ));
-        }
-        total = Some(reply.total_count);
-        let short = reply.items.len() < PER_PAGE;
-        items.extend(reply.items);
-        if items.len() as u64 >= reply.total_count || short {
-            break;
-        }
-    }
-    if total.is_some_and(|t| t == items.len() as u64) {
-        Ok(items)
-    } else {
-        Err(refused(
-            "github-total-mismatch",
-            &[("read", "merged-search"), ("path", path)],
-        ))
-    }
+            )
+        },
+    )
 }
 
 /// The closed pull requests of `repo` that may be `item`'s own: those on
@@ -1188,7 +957,7 @@ fn own_pulls(gh: &Gh, repo: &str, item: &str, since_iso: Option<&str>) -> Result
     let branch = item.to_ascii_lowercase();
     let head_path = format!(
         "repos/{repo}/pulls?state=closed&head={}",
-        encoded(&format!("{owner}:{branch}"))
+        verify::segment(&format!("{owner}:{branch}"))
     );
     let Some(mut pulls) = gh.list::<Pull>("merged", &head_path)? else {
         return Err(refused(
@@ -1200,7 +969,7 @@ fn own_pulls(gh: &Gh, repo: &str, item: &str, since_iso: Option<&str>) -> Result
         .map(|s| format!(" merged:>={s}"))
         .unwrap_or_default();
     let query = format!("repo:{repo} is:pr is:merged \"{item}\" in:title,body{floor}");
-    let search_path = format!("search/issues?q={}", encoded(&query));
+    let search_path = format!("search/issues?q={}", verify::segment(&query));
     let hits = search(gh, &search_path, repo, item)?;
     for hit in hits {
         if hit.pull_request.present().is_none() || pulls.iter().any(|p| p.number == hit.number) {
@@ -1245,7 +1014,7 @@ pub(super) fn report_merges(
     for repo in repos {
         let owner = repo.split('/').next().unwrap_or(repo);
         let query = format!("repo:{repo} is:pr is:merged merged:>={floor}");
-        let search_path = format!("search/issues?q={}", encoded(&query));
+        let search_path = format!("search/issues?q={}", verify::segment(&query));
         for hit in search(gh, &search_path, repo, "report")? {
             if hit.pull_request.present().is_none() {
                 continue;
@@ -1312,7 +1081,7 @@ struct RunKey {
 }
 
 impl RunKey {
-    fn of(run: &Run) -> Result<RunKey> {
+    fn of(run: &WorkflowRun) -> Result<RunKey> {
         let valid = run.created_at.len() == 20
             && agent_runtime::clock::epoch_secs(&run.created_at).is_some();
         if !valid {
@@ -1504,9 +1273,9 @@ fn refresh(
                 &[("read", "refresh"), ("path", &path)],
             ));
         };
-        let runs: Vec<&Run> = page.workflow_runs.iter().take(2).collect();
+        let runs: Vec<&WorkflowRun> = page.workflow_runs.iter().take(2).collect();
         for run in &runs {
-            if run.conclusion.present_str().is_none() {
+            if conclusion(run).is_none() {
                 return Err(refused(
                     "github-response-invalid",
                     &[
@@ -1530,11 +1299,7 @@ fn refresh(
             (Some(rec), Some(new)) if new == rec => "same",
             (Some(_), Some(_)) => "older",
         };
-        let since = if runs.len() == 2
-            && runs
-                .iter()
-                .all(|r| r.conclusion.present_str() == Some("failure"))
-        {
+        let since = if runs.len() == 2 && runs.iter().all(|r| conclusion(r) == Some("failure")) {
             Some(runs[1].created_at.clone())
         } else {
             None
@@ -1582,7 +1347,7 @@ fn refresh(
             let completed = recent
                 .workflow_runs
                 .iter()
-                .find(|r| r.status == "completed");
+                .find(|r| r.status == Nullable::Present(RunStatus::Completed));
             let stale = match completed {
                 None => Some(run.clone()),
                 Some(found) => {
@@ -1644,6 +1409,14 @@ fn refresh(
         });
     }
     Ok(())
+}
+
+/// A run's conclusion as its word, `None` before it concluded.
+fn conclusion(run: &WorkflowRun) -> Option<&'static str> {
+    match run.conclusion {
+        Nullable::Present(conclusion) => Some(conclusion.word()),
+        Nullable::Absent | Nullable::Null => None,
+    }
 }
 
 impl Nullable<String> {
@@ -1803,7 +1576,7 @@ fn main_push(
                 let Some(run) = page.workflow_runs.first() else {
                     continue;
                 };
-                let Some(conclusion) = run.conclusion.present_str() else {
+                let Some(conclusion) = conclusion(run) else {
                     return Err(refused(
                         "github-response-invalid",
                         &[
@@ -1873,7 +1646,7 @@ fn main_push(
 /// Whether a run is a budget producer: a merge-group run for main, or a
 /// push, schedule
 /// or manual run on main.
-fn budget_producer(run: &BudgetRun) -> bool {
+fn budget_producer(run: &WorkflowRun) -> bool {
     let branch = run.head_branch.present_str().unwrap_or("");
     if run.event == "merge_group" {
         branch.starts_with("gh-readonly-queue/main/")
@@ -2004,7 +1777,7 @@ fn budget(
             })?,
         };
         let fresh_row = state == BudgetState::default();
-        let mut discovered: Vec<(u64, String)> = Vec::new();
+        let mut discovered: Vec<(u64, Nullable<RunStatus>)> = Vec::new();
         let mut next_watermark = String::new();
         let mut next_boundary: Vec<u64> = Vec::new();
         let mut unread = false;
@@ -2012,7 +1785,7 @@ fn budget(
             let path = format!(
                 "repos/{repo}/actions/workflows/{BUDGET_WORKFLOW}/runs?per_page={PER_PAGE}&page={page}"
             );
-            let reply: Option<BudgetRunsPage> = match gh.object("budget-runs", &path) {
+            let reply = match gh.object::<RunsPage>("budget-runs", &path) {
                 Ok(reply) => reply,
                 Err(cause) => {
                     budget_unread(repo, "budget-runs", None, &cause);
@@ -2053,7 +1826,7 @@ fn budget(
                     && run.created_at >= state.watermark
                     && (run.created_at > state.watermark || !state.seen.contains(&run.id));
                 if producer || state.pending.contains(&run.id) {
-                    discovered.push((run.id, run.status.clone()));
+                    discovered.push((run.id, run.status));
                 }
             }
             if page == 1 {
@@ -2075,7 +1848,7 @@ fn budget(
         if next_watermark.is_empty() && fresh_row {
             continue;
         }
-        let statuses: BTreeMap<u64, String> = discovered.iter().cloned().collect();
+        let statuses: BTreeMap<u64, Nullable<RunStatus>> = discovered.iter().copied().collect();
         let candidates: BTreeSet<u64> = state
             .pending
             .iter()
@@ -2085,10 +1858,10 @@ fn budget(
         let mut consumed: BTreeSet<u64> = BTreeSet::new();
         for run in &candidates {
             let status = match statuses.get(run) {
-                Some(status) => status.clone(),
+                Some(status) => *status,
                 None => {
                     let path = format!("repos/{repo}/actions/runs/{run}");
-                    match gh.object::<RunStatus>("budget-status", &path) {
+                    match gh.object::<WorkflowRun>("budget-status", &path) {
                         Ok(Some(read)) => read.status,
                         Ok(None) => {
                             budget_unread(
@@ -2109,7 +1882,7 @@ fn budget(
                     }
                 }
             };
-            if status != "completed" {
+            if status != Nullable::Present(RunStatus::Completed) {
                 continue;
             }
             let Some(warnings) = budget_warnings(gh, repo, *run)? else {
@@ -2187,23 +1960,35 @@ mod tests {
     use super::*;
 
     fn pull(number: u64, branch: &str, owner: Option<&str>, title: &str, body: &str) -> Pull {
+        use crate::verify::wire::{HeadRepo, PullBase, PullHead, User};
         Pull {
             number,
             state: "closed".into(),
             title: title.into(),
             body: Nullable::Present(body.into()),
+            draft: Optional::Absent,
             merged_at: Nullable::Present("2026-10-01T00:00:00Z".into()),
-            head: Head {
+            merge_commit_sha: Nullable::Null,
+            changed_files: Optional::Absent,
+            author_association: "NONE".into(),
+            head: PullHead {
+                sha: "0".repeat(40),
                 branch: branch.into(),
                 repo: match owner {
                     Some(login) => Nullable::Present(HeadRepo {
+                        full_name: format!("{login}/repo"),
                         owner: User {
                             login: login.into(),
+                            kind: "User".into(),
                         },
                     }),
                     None => Nullable::Null,
                 },
             },
+            base: PullBase {
+                branch: "main".into(),
+            },
+            user: Nullable::Null,
         }
     }
 
@@ -2339,35 +2124,5 @@ mod tests {
         ]);
         assert_eq!(cause, "suite=a fail=2 pass=1");
         assert_eq!(failures, Some(vec!["b".to_owned(), "suite=a".to_owned()]));
-    }
-
-    #[test]
-    fn a_query_is_percent_encoded_for_the_path() {
-        assert_eq!(encoded("a b:\"c\">=d"), "a%20b%3A%22c%22%3E%3Dd");
-        assert_eq!(
-            paged("repos/o/r/pulls?state=closed", 2),
-            "repos/o/r/pulls?state=closed&per_page=100&page=2"
-        );
-    }
-
-    /// A 404 in either of gh's renderings is the answer `not found`; a 403
-    /// or a 404 named only inside a URL is a failed read.
-    #[test]
-    fn a_404_is_read_in_both_of_ghs_renderings_and_nothing_else_is() {
-        for text in [
-            "gh: Not Found (HTTP 404)",
-            "gh: HTTP 404: Not Found (https://api.github.com/repos/o/r)",
-            "HTTP 404: workflow x.yml not found on the default branch (https://api.github.com/repos/o/r/actions/workflows/x.yml)",
-            "{\"message\":\"Not Found\"}\ngh: Not Found (HTTP 404)",
-        ] {
-            assert!(not_found(text), "{text}");
-        }
-        for text in [
-            "gh: Resource not accessible by integration (HTTP 403)",
-            "gh: HTTP 500: Server Error (https://api.github.com/404)",
-            "",
-        ] {
-            assert!(!not_found(text), "{text}");
-        }
     }
 }

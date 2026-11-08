@@ -640,7 +640,7 @@ fn run(ctx: &Context, tick: &Tick) -> Result<Produced> {
     // refused read leaves its item with no verdict, so no close, and is
     // the pass's partial failure, a per-item `lane-close-failed`; the
     // tracker's lines, rows and other closes stand.
-    let gh = github::Gh { cli: &ctx.gh };
+    let gh = github::handle(&ctx.gh);
     let mut failed = Vec::new();
     for (item, read) in github::terminal_github(&gh, &fleet.lanes) {
         match read {
@@ -1415,7 +1415,7 @@ const CYCLE_TIMEOUT: Duration = Duration::from_secs(300);
     reason = "the terminal-lanes step's one recorder run per ended lane with a merge: `oversee-cycle` from the scripts directory through the one runner under the duty's tag, from the project checkout it reads the merge's class in"
 )]
 fn record_cycle(ctx: &Context, tick: &Tick, lane: &Lane, produced: &mut Produced) {
-    let gh = github::Gh { cli: &ctx.gh };
+    let gh = github::handle(&ctx.gh);
     let since_iso = ctx.since.map(clock::iso_utc);
     let merged = match github::merged_keys(
         &gh,

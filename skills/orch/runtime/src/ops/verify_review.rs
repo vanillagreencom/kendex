@@ -31,7 +31,7 @@ use crate::marker;
 use crate::settings::{self, ReviewSettings, Settings};
 use crate::state::{self, Document, Locking, Notice};
 use crate::verify::review::{self, Acted, CopilotReviews, GateMode, View, Work};
-use crate::verify::wire::{Nullable, Pull, PullRequestState};
+use crate::verify::wire::{Nullable, Optional, Pull, PullRequestState};
 use crate::verify::{self, Gh, Status, Unreadable};
 
 const REVIEW_KEY: &str = "pr_review";
@@ -750,7 +750,7 @@ impl Gate<'_> {
         let mut ready = marked;
         if !ready && !self.view.draft && record.as_ref().is_some_and(HeadRecord::held_as_draft) {
             let read = review::pull(&self.gh, &self.r.repo, self.r.pr)?;
-            ready = !read.draft;
+            ready = read.draft != Optional::Present(true);
             self.pull = Some(read);
         }
         let stands = |head: &HeadRecord| head.request.is_some() && !(ready && head.held_as_draft());
@@ -987,7 +987,7 @@ impl Gate<'_> {
             Some("refresh")
         } else if !self.review.copilot_requests {
             Some("off")
-        } else if self.draft || pull.draft {
+        } else if self.draft || pull.draft == Optional::Present(true) {
             Some("draft")
         } else {
             None

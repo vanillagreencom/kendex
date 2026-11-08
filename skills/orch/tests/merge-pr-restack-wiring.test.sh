@@ -335,7 +335,7 @@ case "$2" in
     case "${PROOF_CI_WORLD:-required}" in empty|unrequired) context=Lint ;; esac
     printf '[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"%s"}]}},{"type":"merge_queue"}]\n' "$context"
     [[ "${PROOF_CI_WORLD:-required}" != unreadable ]] || exit 1 ;;
-  'repos/{owner}/{repo}/branches/main') printf '{"name":"main","protected":true,"protection":{"enabled":true,"required_status_checks":{"enforcement_level":"off","contexts":[],"checks":[]}}}\n' ;;
+  'repos/{owner}/{repo}/branches/main') printf '{"name":"main","commit":{"sha":"0000000000000000000000000000000000000000","commit":{"committer":{"date":"2026-01-01T00:00:00Z"}}},"protected":true,"protection":{"enabled":true,"required_status_checks":{"enforcement_level":"off","contexts":[],"checks":[]}}}\n' ;;
   *) exit 9 ;;
 esac
 SH

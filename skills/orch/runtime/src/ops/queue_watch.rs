@@ -27,7 +27,8 @@ use super::{Env, Request, Verdict as CiVerdict, VerifyPr, verify_pr};
 use crate::error::{Error, Result};
 use crate::schedule::Clock;
 use crate::state::{self, Document, Locking};
-use crate::verify::{self, Bucket, Budget, Gh, Status};
+use crate::verify::wire::{CheckRunsPage, GraphError, GraphReply, Nullable, Optional, RunStatus};
+use crate::verify::{self, Answer, Bucket, Budget, Gh, Status};
 
 /// The github package's program under the project's install, whose
 /// `pr-threads` reads the review threads.
@@ -39,9 +40,6 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(120);
 const PROGRESS_WINDOW_POLLS: u64 = 3;
 /// Consecutive unreadable queue bodies before the wait ends on them.
 const MAX_MALFORMED_POLLS: u64 = 3;
-/// Pages of check runs read for the progress signal before the read is
-/// unreadable: a merge-group head carries far fewer check runs than this.
-const MAX_CHECK_RUN_PAGES: usize = 10;
 /// The transient backoff's cap, in poll intervals.
 const RETRY_CAP_POLLS: u32 = 8;
 
@@ -309,11 +307,15 @@ enum Call {
 
 /// A failure the service or the transport caused, which the budget absorbs;
 /// anything else (an HTTP 404, 401 or 403, a malformed argument) ends the
-/// wait.
-fn transient(text: &str) -> bool {
+/// wait. `status` is the reply's HTTP status as gh wrote it last; with none,
+/// a status named in the text is read.
+fn transient(text: &str, status: Option<u16>) -> bool {
     let lower = text.to_ascii_lowercase();
-    text.contains("HTTP 5")
-        || text.contains("HTTP 429")
+    let by_status = match status {
+        Some(code) => (500..600).contains(&code) || code == 429,
+        None => text.contains("HTTP 5") || text.contains("HTTP 429"),
+    };
+    by_status
         || [
             "timeout",
             "timed out",
@@ -335,7 +337,7 @@ fn transient(text: &str) -> bool {
 
 #[allow(
     clippy::disallowed_methods,
-    reason = "the queue wait's reads of GitHub through gh and of the review threads through the github package, no effect on a lane or a controller; the guard's two mutations are recorded owed on the item before they are sent"
+    reason = "the queue wait's reads of the review threads through the github package, no effect on a lane or a controller; the guard's two mutations are recorded owed on the item before they are sent"
 )]
 fn call(
     program: &'static str,
@@ -357,7 +359,7 @@ fn call(
         Err(e) => {
             let detail = e.to_string();
             return Call::Failed {
-                transient: transient(&detail),
+                transient: transient(&detail, None),
                 detail,
                 stdout: Vec::new(),
             };
@@ -372,7 +374,7 @@ fn call(
         .find(|text| !text.is_empty())
         .unwrap_or_else(|| format!("exit status {}", output.status));
     Call::Failed {
-        transient: transient(&detail),
+        transient: transient(&detail, None),
         detail,
         stdout: output.stdout,
     }
@@ -387,14 +389,6 @@ struct PullView {
     mergeable: Option<String>,
     #[serde(rename = "headRefOid")]
     head: String,
-}
-
-#[derive(Deserialize)]
-struct QueueReply {
-    #[serde(default)]
-    data: Option<QueueData>,
-    #[serde(default)]
-    errors: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -469,17 +463,6 @@ struct SiblingPull {
 struct AutoMerge {
     #[serde(default, rename = "enabledAt")]
     enabled_at: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct CheckRunsPage {
-    total_count: usize,
-    check_runs: Vec<CheckRunStatus>,
-}
-
-#[derive(Deserialize)]
-struct CheckRunStatus {
-    status: String,
 }
 
 #[derive(Deserialize)]
@@ -694,16 +677,29 @@ impl<'a> Wait<'a> {
     }
 
     fn gh(&self, operation: &'static str, args: &[&str]) -> Call {
-        call(
-            "gh",
-            &self.programs.gh,
-            operation,
-            args,
-            Place {
-                cwd: None,
-                env: &[],
-            },
-        )
+        let answer = Gh::new(&self.programs.gh)
+            .tagged("queue-watch")
+            .bounded(CALL_TIMEOUT)
+            .run(operation, args, None);
+        match answer {
+            Ok(Answer::Printed { stdout, .. }) => Call::Printed(stdout),
+            Ok(Answer::Failed(failed)) => {
+                let detail = failed.detail();
+                Call::Failed {
+                    transient: transient(&detail, failed.http()),
+                    detail,
+                    stdout: failed.stdout,
+                }
+            }
+            Err(unrun) => {
+                let detail = unrun.detail();
+                Call::Failed {
+                    transient: transient(&detail, None),
+                    detail,
+                    stdout: Vec::new(),
+                }
+            }
+        }
     }
 
     /// The memory for `head` and the arm `enabled_at` this poll read: the
@@ -894,57 +890,53 @@ impl<'a> Wait<'a> {
                 stdout,
                 ..
             } => {
-                return Err(match serde_json::from_slice::<QueueReply>(&stdout) {
-                    Ok(reply) if reply.errors.as_ref().is_some_and(errors_present) => {
-                        ReadEnd::Terminal("queue-rejected", messages(&reply.errors))
-                    }
-                    _ => ReadEnd::Malformed,
-                });
+                return Err(
+                    match serde_json::from_slice::<GraphReply<QueueData>>(&stdout) {
+                        Ok(reply) if errors_present(&reply.errors) => {
+                            ReadEnd::Terminal("queue-rejected", messages(&reply.errors))
+                        }
+                        _ => ReadEnd::Malformed,
+                    },
+                );
             }
         };
-        let Ok(reply) = serde_json::from_slice::<QueueReply>(&bytes) else {
+        let Ok(reply) = serde_json::from_slice::<GraphReply<QueueData>>(&bytes) else {
             return Err(ReadEnd::Malformed);
         };
-        if reply.errors.as_ref().is_some_and(errors_present) {
+        if errors_present(&reply.errors) {
             return Err(ReadEnd::Terminal("queue-rejected", messages(&reply.errors)));
         }
-        reply
-            .data
-            .and_then(|d| d.repository)
+        let data = match reply.data {
+            Nullable::Present(data) => Some(data),
+            Nullable::Absent | Nullable::Null => None,
+        };
+        data.and_then(|d| d.repository)
             .and_then(|r| r.pull_request)
             .map(QueueRead::of)
             .ok_or(ReadEnd::Malformed)
     }
 
     /// The completed and not-completed check-run counts on the merge-group
-    /// head `sha`, or `None` where any page could not be read: an unknown
-    /// count is never zero.
+    /// head `sha`, or `None` where any page could not be read or the pages
+    /// fall short of their total: an unknown count is never zero.
     fn check_run_counts(&self, sha: &str) -> Option<(usize, u64)> {
-        let mut completed = 0usize;
-        let mut running = 0u64;
-        let mut seen = 0usize;
-        for page in 1..=MAX_CHECK_RUN_PAGES {
-            let path = format!(
-                "repos/{}/commits/{sha}/check-runs?per_page=100&page={page}",
-                self.r.repo
-            );
-            let Call::Printed(bytes) = self.gh("api", &["api", &path]) else {
-                return None;
-            };
-            let page: CheckRunsPage = serde_json::from_slice(&bytes).ok()?;
-            seen += page.check_runs.len();
-            for run in &page.check_runs {
-                if run.status == "completed" {
-                    completed += 1;
-                } else {
-                    running += 1;
+        let path = format!("repos/{}/commits/{sha}/check-runs", self.r.repo);
+        let runs = verify::collection(
+            &path,
+            |page| match self.gh("api", &["api", page]) {
+                Call::Printed(bytes) => {
+                    serde_json::from_slice::<CheckRunsPage>(&bytes).map_err(|_| ())
                 }
-            }
-            if seen >= page.total_count || page.check_runs.is_empty() {
-                return Some((completed, running));
-            }
-        }
-        None
+                Call::Failed { .. } => Err(()),
+            },
+            || (),
+        )
+        .ok()?;
+        let completed = runs
+            .iter()
+            .filter(|run| run.status == RunStatus::Completed)
+            .count();
+        Some((completed, (runs.len() - completed) as u64))
     }
 
     fn observe_progress(&mut self, queue: &QueueRead) {
@@ -1469,17 +1461,17 @@ impl<'a> Wait<'a> {
     }
 }
 
-fn errors_present(errors: &Value) -> bool {
-    errors.as_array().is_some_and(|a| !a.is_empty())
+fn errors_present(errors: &Optional<Vec<GraphError>>) -> bool {
+    errors.present().is_some_and(|errors| !errors.is_empty())
 }
 
-fn messages(errors: &Option<Value>) -> String {
+fn messages(errors: &Optional<Vec<GraphError>>) -> String {
     errors
-        .as_ref()
-        .and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                .filter_map(|e| e.get("message").and_then(Value::as_str))
+        .present()
+        .map(|errors| {
+            errors
+                .iter()
+                .map(|e| e.message.as_str())
                 .collect::<Vec<_>>()
                 .join("; ")
         })

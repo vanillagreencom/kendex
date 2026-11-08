@@ -527,6 +527,9 @@ pub(super) fn read(gh: &Gh, r: &VerifyHead) -> Read<Evidence> {
         Endpoint::CheckRuns,
         &format!("{commit}/check-runs?filter=all"),
     )?;
+    if check_runs.iter().any(CheckRun::undocumented) {
+        return Err(Cause::ResponseInvalid(Endpoint::CheckRuns));
+    }
     let suites: CheckSuitesPage = gh.object(
         Endpoint::CheckSuites,
         &super::paged(&format!("{commit}/check-suites"), 1),
@@ -540,6 +543,9 @@ pub(super) fn read(gh: &Gh, r: &VerifyHead) -> Read<Evidence> {
         Endpoint::ActionsRuns,
         &format!("repos/{}/actions/runs?head_sha={}", r.repo, r.head),
     )?;
+    if runs.iter().any(WorkflowRun::undocumented) {
+        return Err(Cause::ResponseInvalid(Endpoint::ActionsRuns));
+    }
     if runs.len() >= ACTIONS_SEARCH_CAP {
         return Err(Cause::Capped(Endpoint::ActionsRuns));
     }
@@ -547,6 +553,9 @@ pub(super) fn read(gh: &Gh, r: &VerifyHead) -> Read<Evidence> {
         Endpoint::Workflows,
         &format!("repos/{}/actions/workflows", r.repo),
     )?;
+    if workflows.iter().any(|w| w.state == WorkflowState::Other) {
+        return Err(Cause::ResponseInvalid(Endpoint::Workflows));
+    }
     let active_workflows = workflows
         .iter()
         .filter(|w| w.state == WorkflowState::Active)
@@ -660,7 +669,7 @@ fn workflow_by_id(
         Endpoint::Workflow,
         &format!("repos/{}/actions/workflows/{id}", r.repo),
     )?;
-    if workflow.id != id {
+    if workflow.id != id || workflow.state == WorkflowState::Other {
         return Err(Cause::ResponseInvalid(Endpoint::Workflow));
     }
     names.insert(id, workflow.name.clone());
@@ -888,6 +897,9 @@ fn required_set(
         &format!("repos/{}/rules/branches/{base}", r.repo),
     )?;
     let invalid = || Cause::ResponseInvalid(Endpoint::Rules);
+    if rules.iter().any(|rule| rule.kind == RuleKind::Other) {
+        return Err(invalid());
+    }
     let parameters = |rule: Rule| match rule.parameters {
         Optional::Absent => Err(invalid()),
         Optional::Present(object) => Ok(serde_json::Value::Object(object)),
@@ -969,6 +981,7 @@ fn required_set(
             | RuleKind::RequiredSignatures
             | RuleKind::TagNamePattern
             | RuleKind::Update => {}
+            RuleKind::Other => return Err(invalid()),
         }
     }
     workflows.sort_by(|a, b| a.order_key().cmp(&b.order_key()));
@@ -977,7 +990,10 @@ fn required_set(
         Endpoint::Protection,
         &format!("repos/{}/branches/{base}", r.repo),
     )?;
-    match branch.protection.required_status_checks {
+    let Optional::Present(protection) = branch.protection else {
+        return Err(Cause::ResponseInvalid(Endpoint::Protection));
+    };
+    match protection.required_status_checks {
         Optional::Absent => {}
         Optional::Present(checks) => {
             let named = checks
@@ -1164,6 +1180,9 @@ pub(super) fn copilot_flight(gh: &Reader<'_>, repo: &str, pr: u64, head: &str) -
         Endpoint::CheckRuns,
         &format!("repos/{repo}/commits/{head}/check-runs?filter=all"),
     )?;
+    if checks.iter().any(CheckRun::undocumented) {
+        return Err(Cause::ResponseInvalid(Endpoint::CheckRuns));
+    }
     let copilot: Vec<&CheckRun> = checks
         .iter()
         .filter(|check| check.name == COPILOT_REVIEWER)

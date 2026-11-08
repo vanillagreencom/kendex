@@ -3,6 +3,7 @@
 use super::{Answered, Linear, TRACKER_TIMEOUT, invalid, is_word, refused, stamp_epoch};
 use crate::error::Result;
 use crate::settings::Settings;
+use crate::verify::{Answer, Gh};
 use crate::watch::tracker::{Shared, VerifyingItem};
 use crate::watch::verifying::{self, Item};
 use agent_runtime::host;
@@ -76,15 +77,20 @@ impl Report {
     }
 }
 
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the reconciliation inventory reads local branch pull requests through the bounded runner without repository redirects"
-)]
+/// The branch's pull requests in the checkout's repository, with no
+/// repository redirect from the environment.
 fn pulls(gh: &Path, cwd: &Path, id: &str) -> std::result::Result<Pulls, String> {
-    let output = host::run_tagged_in(
-        "reconcile-items",
-        "gh",
+    let answer = Gh::with_env(
         gh,
+        vec![
+            ("GH_REPO".to_owned(), "".into()),
+            ("GITHUB_REPOSITORY".to_owned(), "".into()),
+        ],
+    )
+    .tagged("reconcile-items")
+    .in_dir(cwd)
+    .bounded(TRACKER_TIMEOUT)
+    .run(
         "pr-list",
         &[
             "pr",
@@ -96,20 +102,14 @@ fn pulls(gh: &Path, cwd: &Path, id: &str) -> std::result::Result<Pulls, String> 
             "--json",
             "state,mergedAt,isCrossRepository,url",
         ],
-        host::Place {
-            cwd: Some(cwd),
-            env: &[
-                ("GH_REPO", std::ffi::OsStr::new("")),
-                ("GITHUB_REPOSITORY", std::ffi::OsStr::new("")),
-            ],
-        },
-        TRACKER_TIMEOUT,
+        None,
     )
-    .map_err(|e| e.to_string())?;
-    if !output.status.success() {
-        return Err(host::stderr_text(&output));
-    }
-    let rows: Vec<Pull> = serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+    .map_err(|unrun| unrun.detail())?;
+    let stdout = match answer {
+        Answer::Printed { stdout, .. } => stdout,
+        Answer::Failed(failed) => return Err(failed.stderr),
+    };
+    let rows: Vec<Pull> = serde_json::from_slice(&stdout).map_err(|e| e.to_string())?;
     let mut found = Pulls {
         open: 0,
         merged: 0,

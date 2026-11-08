@@ -17,10 +17,13 @@ use crate::schedule::Clock;
 use crate::settings::Settings;
 use crate::state::{self, Document, Locking};
 use crate::verify::review::{self, Flight};
-use crate::verify::{Gh, Unreadable};
+use crate::verify::{Answer, Gh, Unreadable, Unrun};
 
 const APPROVALS: &str = "head_approvals";
 const BOUND: Duration = Duration::from_secs(60);
+
+/// The approval's start-counter tag.
+const TAG: &str = "approve";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApproveHead {
@@ -149,50 +152,51 @@ fn credential(settings: &Settings, token: &str) -> Vec<(String, OsString)> {
         .collect()
 }
 
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the approval reads and POST use gh under the fleet's file credential, never a harness credential"
-)]
-fn gh(
-    settings: &Settings,
-    token: &str,
-    args: &[&str],
-    input: Option<&[u8]>,
-) -> std::result::Result<std::process::Output, agent_runtime::Error> {
-    let credential = credential(settings, token);
-    let env: Vec<_> = credential
-        .iter()
-        .map(|(key, value)| (key.as_str(), value.as_os_str()))
-        .collect();
-    let place = host::Place {
-        cwd: Some(&settings.roots.project),
-        env: &env,
-    };
-    match input {
-        Some(bytes) => host::run_tagged_fed(
-            "approve",
-            "gh",
-            Path::new("gh"),
-            "api",
-            args,
-            place,
-            bytes,
-            BOUND,
-        ),
-        None => host::run_tagged_in("approve", "gh", Path::new("gh"), "api", args, place, BOUND),
+/// The approval reads and POST: gh under the fleet's file credential,
+/// never a harness credential, in the project root.
+fn app(settings: &Settings, token: &str) -> Gh<'static> {
+    Gh::with_env(Path::new("gh"), credential(settings, token))
+        .tagged(TAG)
+        .in_dir(&settings.roots.project)
+        .bounded(BOUND)
+}
+
+/// What a read that exited zero printed, with its stderr; any other answer
+/// is the read's refusal under `key`, gh's words its detail.
+fn answered(
+    answer: std::result::Result<Answer, Unrun>,
+    key: &'static str,
+) -> Result<(Vec<u8>, String)> {
+    match answer {
+        Ok(Answer::Printed { stdout, stderr }) => Ok((stdout, stderr)),
+        Ok(Answer::Failed(failed)) => Err(refuse(key, &[("detail", &failed.stderr)])),
+        Err(unrun) => Err(refuse(key, &[("detail", &unrun.detail())])),
     }
+}
+
+/// What a read that exited zero printed; any other answer is `None`.
+fn printed(answer: std::result::Result<Answer, Unrun>) -> Option<Vec<u8>> {
+    match answer {
+        Ok(Answer::Printed { stdout, .. }) => Some(stdout),
+        Ok(Answer::Failed(_)) | Err(_) => None,
+    }
+}
+
+fn owned(env: &[(&str, &OsStr)]) -> Vec<(String, OsString)> {
+    env.iter()
+        .map(|(key, value)| ((*key).to_owned(), value.to_os_string()))
+        .collect()
 }
 
 fn live_head(settings: &Settings, r: &ApproveHead, token: &str) -> Result<String> {
     let url = format!("repos/{}/pulls/{}", r.repo, r.pr);
-    let output = gh(settings, token, &["api", &url, "--jq", ".head.sha"], None)
-        .map_err(|e| refuse("head-read-failed", &[("detail", &e.to_string())]))?;
-    let head = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    if !output.status.success() || !valid_sha(&head, 40) {
-        return Err(refuse(
-            "head-read-failed",
-            &[("detail", &host::stderr_text(&output))],
-        ));
+    let (stdout, stderr) = answered(
+        app(settings, token).run("api", &["api", &url, "--jq", ".head.sha"], None),
+        "head-read-failed",
+    )?;
+    let head = String::from_utf8_lossy(&stdout).trim().to_owned();
+    if !valid_sha(&head, 40) {
+        return Err(refuse("head-read-failed", &[("detail", &stderr)]));
     }
     Ok(head)
 }
@@ -211,20 +215,11 @@ fn read_back(
     token: &str,
 ) -> Result<Option<Value>> {
     let url = format!("repos/{}/pulls/{}/reviews", r.repo, r.pr);
-    let output = gh(
-        settings,
-        token,
-        &["api", &url, "--paginate", "--slurp"],
-        None,
-    )
-    .map_err(|e| refuse("approval-read-back", &[("detail", &e.to_string())]))?;
-    if !output.status.success() {
-        return Err(refuse(
-            "approval-read-back",
-            &[("detail", &host::stderr_text(&output))],
-        ));
-    }
-    let pages: Vec<Vec<Value>> = serde_json::from_slice(&output.stdout)
+    let (stdout, _) = answered(
+        app(settings, token).run("api", &["api", &url, "--paginate", "--slurp"], None),
+        "approval-read-back",
+    )?;
+    let pages: Vec<Vec<Value>> = serde_json::from_slice(&stdout)
         .map_err(|e| refuse("approval-read-back", &[("detail", &e.to_string())]))?;
     if pages.is_empty() {
         return Err(refuse(
@@ -264,23 +259,15 @@ fn replies(settings: &Settings, r: &ApproveHead, head: &str, token: &str) -> Res
         .iter()
         .map(|(key, value)| (key.as_str(), OsStr::new(value)))
         .collect();
-    let keyring = if has_env {
-        false
-    } else {
-        host::run_tagged_in(
-            "approve",
-            "gh",
-            Path::new("gh"),
-            "auth",
-            &["auth", "status"],
-            host::Place {
-                cwd: Some(&settings.roots.project),
-                env: &env,
-            },
-            BOUND,
+    let keyring = !has_env
+        && printed(
+            Gh::with_env(Path::new("gh"), owned(&env))
+                .tagged(TAG)
+                .in_dir(&settings.roots.project)
+                .bounded(BOUND)
+                .run("auth", &["auth", "status"], None),
         )
-        .is_ok_and(|out| out.status.success())
-    };
+        .is_some();
     env.push(("GH_REPO", OsStr::new(&r.repo)));
     if !has_env && !keyring {
         env.push(("GH_TOKEN", OsStr::new(token)));
@@ -424,10 +411,10 @@ fn reply(status: Status, head: &str, reason: &str, review: Option<Value>) -> App
     }
 }
 
-fn http_refusal(output: &std::process::Output) -> bool {
+fn http_refusal(exit: Option<i32>, stderr: &str) -> bool {
     // gh exits 4 holding no credential; GitHub's 4xx answer exits 1 as a
     // transport failure does, so only gh's own status line tells them apart.
-    output.status.code() == Some(4) || review::refused_by_github(&host::stderr_text(output))
+    exit == Some(4) || crate::verify::refused_by_github(stderr)
 }
 
 pub fn run(
@@ -505,42 +492,40 @@ pub fn run(
     }
     let payload = serde_json::to_vec(&json!({"commit_id":head,"event":"APPROVE","body":body}))?;
     let url = format!("repos/{}/pulls/{}/reviews", r.repo, r.pr);
-    let posted = gh(
-        settings,
-        &token,
+    let posted = app(settings, &token).run(
+        "api",
         &["api", "--method", "POST", &url, "--input", "-"],
         Some(&payload),
     );
-    match posted {
-        Ok(output) => {
-            if output.status.success()
-                && let Ok(value) = serde_json::from_slice::<Value>(&output.stdout)
+    let (exit, stderr) = match posted {
+        Ok(Answer::Printed { stdout, stderr }) => {
+            if let Ok(value) = serde_json::from_slice::<Value>(&stdout)
                 && confirms(&value, login, &head)
             {
-                confirm(path, r, &head, login, locking, value)
-            } else {
-                let refusal = if http_refusal(&output) {
-                    "post-failed"
-                } else {
-                    NOT_LANDED
-                };
-                let mut settled =
-                    settle(path, r, &head, login, &token, settings, locking, refusal)?;
-                if settled.status == Status::Refused {
-                    settled.detail = Some(host::stderr_text(&output));
-                }
-                Ok(settled)
+                return confirm(path, r, &head, login, locking, value);
             }
+            (Some(0), stderr)
         }
-        Err(agent_runtime::Error::NotStarted { .. }) => {
+        Ok(Answer::Failed(failed)) => (failed.exit, failed.stderr),
+        Err(Unrun::Runner(agent_runtime::Error::NotStarted { .. })) => {
             update(path, r, &head, login, locking, |entry| {
                 entry.attempt = None;
                 Ok(())
             })?;
-            Ok(reply(Status::Refused, &head, "not-started", None))
+            return Ok(reply(Status::Refused, &head, "not-started", None));
         }
-        Err(_) => settle(path, r, &head, login, &token, settings, locking, NOT_LANDED),
+        Err(_) => return settle(path, r, &head, login, &token, settings, locking, NOT_LANDED),
+    };
+    let refusal = if http_refusal(exit, &stderr) {
+        "post-failed"
+    } else {
+        NOT_LANDED
+    };
+    let mut settled = settle(path, r, &head, login, &token, settings, locking, refusal)?;
+    if settled.status == Status::Refused {
+        settled.detail = Some(stderr);
     }
+    Ok(settled)
 }
 
 #[allow(clippy::too_many_arguments)]

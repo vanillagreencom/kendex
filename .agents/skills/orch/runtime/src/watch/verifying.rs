@@ -13,7 +13,8 @@ use serde_json::Value;
 
 use crate::error::Result;
 use crate::settings::Settings;
-use crate::verify::wire::Nullable;
+use crate::verify::wire::{Nullable, Pull};
+use crate::verify::{Answer, Gh};
 use crate::watch::tracker::{Shared, VerifyingItem};
 use crate::watch::{Body, Change, Event, Produced, Runner, Tick};
 
@@ -248,13 +249,6 @@ fn judged_boxes(parsed: &Parsed, container: bool) -> Option<Vec<Judged>> {
 
 // --- the reads -------------------------------------------------------------------------
 
-/// `GET /repos/{owner}/{repo}/pulls/{n}`: the merge a box counts from.
-#[derive(Debug, Deserialize)]
-struct MergedPull {
-    merged_at: Nullable<String>,
-    merge_commit_sha: Nullable<String>,
-}
-
 /// One release of `GET /repos/{owner}/{repo}/releases`.
 #[derive(Debug, Deserialize)]
 struct Release {
@@ -265,13 +259,9 @@ struct Release {
     draft: Nullable<bool>,
 }
 
-/// `gh api <path>` through the one runner; the parsed JSON, or the
-/// failure's words. The pass's reads are kept in `read`, so one merge or
-/// release page is read once per pass.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the verification duty's GitHub reads (a merged pull request, a release page, a comparison) through the one runner under its tag"
-)]
+/// `gh api <path>` through the one handle under the duty's tag; the
+/// parsed JSON, or the failure's words. The pass's reads are kept in
+/// `read`, so one merge or release page is read once per pass.
 fn gh_json(
     gh: &Path,
     path: &str,
@@ -280,13 +270,17 @@ fn gh_json(
     if let Some(value) = read.get(path) {
         return Ok(value.clone());
     }
-    let out =
-        host::run_tagged(TAG, "gh", gh, "api", &["api", path], BOUND).map_err(|e| e.to_string())?;
-    if !out.status.success() {
-        return Err(format!("gh api {path}: {}", host::stderr_text(&out).trim()));
-    }
-    let value: Value = serde_json::from_str(&host::stdout_text(&out))
-        .map_err(|e| format!("gh api {path}: {e}"))?;
+    let answer = Gh::new(gh)
+        .tagged(TAG)
+        .bounded(BOUND)
+        .run("api", &["api", path], None)
+        .map_err(|unrun| unrun.detail())?;
+    let stdout = match answer {
+        Answer::Printed { stdout, .. } => stdout,
+        Answer::Failed(failed) => return Err(format!("gh api {path}: {}", failed.stderr.trim())),
+    };
+    let value: Value =
+        serde_json::from_slice(&stdout).map_err(|e| format!("gh api {path}: {e}"))?;
     read.insert(path.to_owned(), value.clone());
     Ok(value)
 }
@@ -359,7 +353,7 @@ fn merge_of(
         };
         let path = format!("repos/{repo}/pulls/{number}");
         let value = gh_json(gh, &path, read)?;
-        let pull: MergedPull = serde_json::from_value(value).map_err(|e| format!("{path}: {e}"))?;
+        let pull: Pull = serde_json::from_value(value).map_err(|e| format!("{path}: {e}"))?;
         let at = match &pull.merged_at {
             Nullable::Present(stamp) => {
                 clock::epoch_secs(stamp).ok_or_else(|| format!("{path}: merged_at {stamp}"))?
@@ -548,7 +542,7 @@ fn judge(
             if let Some(oid) = &oid {
                 let path = format!(
                     "repos/{repo}/compare/{oid}...{}",
-                    crate::watch::github::encoded(&tag)
+                    crate::verify::segment(&tag)
                 );
                 let comparison = gh_json(gh, &path, read).map_err(|cause| {
                     (

@@ -25,6 +25,8 @@ use crate::state::{
     self, ItemState, Locking, Proof, Reused, Stage, StageKind, StageOutcome, ValidateJob,
     ValidateMode,
 };
+use crate::verify::wire::{Branch, Optional, RequiredStatusChecksParameters, Rule, RuleKind};
+use crate::verify::{Answer, Gh};
 
 /// The poll interval a start records when the caller names none.
 pub const POLL_DEFAULT: u64 = 30;
@@ -212,6 +214,36 @@ fn run_in(
             cause: e.to_string(),
         }),
     }
+}
+
+/// One `gh api` read through the handle, as `run_in` answers a program:
+/// its stdout on success, `None` on a failed call, its stderr appended to
+/// `log` either way, an error where gh could not run at all.
+fn gh_api(
+    gh: &Gh,
+    operation: &'static str,
+    path: &str,
+    log: &mut String,
+) -> Result<Option<String>> {
+    let (stderr, stdout) = match gh.run(operation, &["api", path], None) {
+        Ok(Answer::Printed { stdout, stderr }) => (stderr, Some(stdout)),
+        Ok(Answer::Failed(failed)) => (failed.stderr, None),
+        Err(unrun) => {
+            return Err(Error::ValidateUnreadable {
+                read: operation,
+                cause: unrun.detail(),
+            });
+        }
+    };
+    if !stderr.is_empty() {
+        log.push_str(&stderr);
+        log.push('\n');
+    }
+    Ok(stdout.map(|bytes| {
+        String::from_utf8_lossy(&bytes)
+            .trim_end_matches('\n')
+            .to_owned()
+    }))
 }
 
 /// Where a read runs: the worktree, with `env` added.
@@ -714,19 +746,6 @@ fn pr_order(settings: &Settings, worktree: &Path, log: &mut String) -> Result<St
     .unwrap_or_else(|| "review-first".to_owned()))
 }
 
-/// The base as a URL path segment, as `jq @uri` encodes it.
-fn segment(base: &str) -> String {
-    let mut out = String::new();
-    for b in base.bytes() {
-        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
-            out.push(b as char);
-        } else {
-            out.push_str(&format!("%{b:02X}"));
-        }
-    }
-    out
-}
-
 /// The contexts the base branch requires and whether a merge queue rule
 /// stands, from its rule set and its classic protection through `gh api`
 /// in the worktree, as `ci_runs_validation` reads them; `None` where
@@ -770,92 +789,51 @@ fn required_contexts(
     if credentials.len() != 2 {
         return Ok(None);
     }
-    let environment: Vec<_> = credentials
-        .iter()
-        .map(|(name, value)| (name.as_str(), value.as_os_str()))
-        .collect();
-    let seg = segment(base);
+    let gh = Gh::with_env(Path::new("gh"), credentials)
+        .tagged("validate")
+        .in_dir(worktree)
+        .bounded(READ_TIMEOUT);
+    let seg = crate::verify::segment(base);
     let rules_path = format!("repos/{{owner}}/{{repo}}/rules/branches/{seg}");
-    let Some(rules) = run_in(
-        "gh",
-        Path::new("gh"),
-        "rules",
-        &["api", &rules_path],
-        at(worktree, &environment),
-        READ_TIMEOUT,
-        log,
-    )?
-    else {
+    let Some(rules) = gh_api(&gh, "rules", &rules_path, log)? else {
         return Ok(None);
     };
-    let Ok(rules) = serde_json::from_str::<Value>(&rules) else {
-        return Ok(None);
-    };
-    let Some(rules) = rules.as_array() else {
+    let Ok(rules) = serde_json::from_str::<Vec<Rule>>(&rules) else {
         return Ok(None);
     };
     let mut contexts = Vec::new();
     let mut queue = false;
     for rule in rules {
-        match rule.get("type").and_then(Value::as_str) {
-            Some("merge_queue") => queue = true,
-            Some("required_status_checks") => {
-                for check in rule
-                    .pointer("/parameters/required_status_checks")
-                    .and_then(Value::as_array)
+        if rule.kind == RuleKind::MergeQueue {
+            queue = true;
+        } else if rule.kind == RuleKind::RequiredStatusChecks
+            && let Optional::Present(parameters) = rule.parameters
+            && let Ok(parameters) =
+                serde_json::from_value::<RequiredStatusChecksParameters>(Value::Object(parameters))
+        {
+            contexts.extend(
+                parameters
+                    .required_status_checks
                     .into_iter()
-                    .flatten()
-                {
-                    if let Some(context) = check.get("context").and_then(Value::as_str) {
-                        contexts.push(context.to_owned());
-                    }
-                }
-            }
-            _ => {}
+                    .map(|check| check.context),
+            );
         }
     }
     let branch_path = format!("repos/{{owner}}/{{repo}}/branches/{seg}");
-    let Some(branch) = run_in(
-        "gh",
-        Path::new("gh"),
-        "branch",
-        &["api", &branch_path],
-        at(worktree, &environment),
-        READ_TIMEOUT,
-        log,
-    )?
-    else {
+    let Some(branch) = gh_api(&gh, "branch", &branch_path, log)? else {
         return Ok(None);
     };
-    let Ok(branch) = serde_json::from_str::<Value>(&branch) else {
+    let Ok(branch) = serde_json::from_str::<Branch>(&branch) else {
         return Ok(None);
     };
     // GitHub omits the protection key from a caller without push access: a
     // payload with none is an unread protection, never an empty one.
-    let Some(protection) = branch.get("protection") else {
+    let Optional::Present(protection) = branch.protection else {
         return Ok(None);
     };
-    if let Some(checks) = protection.get("required_status_checks") {
-        for context in checks
-            .get("contexts")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            if let Some(c) = context.as_str() {
-                contexts.push(c.to_owned());
-            }
-        }
-        for check in checks
-            .get("checks")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            if let Some(c) = check.get("context").and_then(Value::as_str) {
-                contexts.push(c.to_owned());
-            }
-        }
+    if let Optional::Present(checks) = protection.required_status_checks {
+        contexts.extend(checks.contexts);
+        contexts.extend(checks.checks.into_iter().map(|check| check.context));
     }
     Ok(Some((contexts, queue)))
 }

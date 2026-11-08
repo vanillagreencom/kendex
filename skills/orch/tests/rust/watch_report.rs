@@ -840,7 +840,7 @@ fn the_heartbeat_body_carries_the_capacity_line_and_moves_no_due_time() {
     world.plant(
         "gh.json",
         &json!({"repos/owner/repo/pulls?state=open&per_page=100&page=1": {"body": [
-            {"number": 16, "title": "the review item", "head": {"ref": "ken-6"}}
+            {"number": 16, "state": "open", "title": "the review item", "body": null, "merged_at": null, "merge_commit_sha": null, "author_association": "NONE", "head": {"sha": "0000000000000000000000000000000000000000", "ref": "ken-6", "repo": null}, "base": {"ref": "main"}, "user": null}
         ]}}),
     );
     let shared = Shared::default();
@@ -3853,7 +3853,7 @@ fn report_completed_searches_the_window_and_excludes_unowned_late_and_capped_mer
         {"kind":"use1","at":"2026-10-01T14:00:00Z","outcome":"fallback"},
         {"kind":"cycle","item":"KEN-1","at":"2026-10-01T06:00:00Z","text":"cycle item=KEN-1 commit=abcdef1"}
     ]}));
-    let pull = |number, branch, owner, at| json!({"body":{"number":number,"state":"closed","title":"Report actual completed work","body":"","merged_at":at,"head":{"ref":branch,"repo":{"owner":{"login":owner}}}}});
+    let pull = |number, branch, owner: &str, at| json!({"body":{"number":number,"state":"closed","title":"Report actual completed work","body":"","merged_at":at,"merge_commit_sha":null,"author_association":"NONE","base":{"ref":"main"},"user":null,"head":{"sha":"0000000000000000000000000000000000000000","ref":branch,"repo":{"full_name":format!("{owner}/repo"),"owner":{"login":owner,"type":"User"}}}}});
     let search = "search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20merged%3A%3E%3D2026-10-01T06%3A00%3A00Z&per_page=100&page=1";
     let items: Vec<Value> = (1..=12)
         .chain([14])
@@ -3871,7 +3871,7 @@ fn report_completed_searches_the_window_and_excludes_unowned_late_and_capped_mer
     // A cloud session's branch names no item: its pull request is the
     // item's by the title's conventional-commit scope or a Closes line, and
     // a parked record's by its number in the repository the record names.
-    let titled = |number, branch, title: &str, body: &str, at: &str| json!({"body":{"number":number,"state":"closed","title":title,"body":body,"merged_at":at,"head":{"ref":branch,"repo":{"owner":{"login":"owner"}}}}});
+    let titled = |number, branch, title: &str, body: &str, at: &str| json!({"body":{"number":number,"state":"closed","title":title,"body":body,"merged_at":at,"merge_commit_sha":null,"author_association":"NONE","base":{"ref":"main"},"user":null,"head":{"sha":"0000000000000000000000000000000000000000","ref":branch,"repo":{"full_name":"owner/repo","owner":{"login":"owner","type":"User"}}}}});
     for (n, branch, title, body, at) in [
         (
             5,
@@ -3936,8 +3936,8 @@ fn report_completed_searches_the_window_and_excludes_unowned_late_and_capped_mer
     planted[search] = hits(total);
     let other = "search/issues?q=repo%3Aother%2Frepo%20is%3Apr%20is%3Amerged%20merged%3A%3E%3D2026-10-01T06%3A00%3A00Z&per_page=100&page=1";
     planted[other] = json!({"body":{"total_count":2,"incomplete_results":false,"items":[{"number":31,"pull_request":{}},{"number":14,"pull_request":{}}]}});
-    planted["repos/other/repo/pulls/14"] = json!({"body":{"number":14,"state":"closed","title":"Another repository's 14","body":"","merged_at":"2026-10-01T10:05:00Z","head":{"ref":"claude/x","repo":{"owner":{"login":"other"}}}}});
-    planted["repos/other/repo/pulls/31"] = json!({"body":{"number":31,"state":"closed","title":"Ship the consumer","body":"","merged_at":"2026-10-01T10:00:00Z","head":{"ref":"ken-1","repo":{"owner":{"login":"other"}}}}});
+    planted["repos/other/repo/pulls/14"] = json!({"body":{"number":14,"state":"closed","title":"Another repository's 14","body":"","merged_at":"2026-10-01T10:05:00Z","merge_commit_sha":null,"author_association":"NONE","base":{"ref":"main"},"user":null,"head":{"sha":"0000000000000000000000000000000000000000","ref":"claude/x","repo":{"full_name":"other/repo","owner":{"login":"other","type":"User"}}}}});
+    planted["repos/other/repo/pulls/31"] = json!({"body":{"number":31,"state":"closed","title":"Ship the consumer","body":"","merged_at":"2026-10-01T10:00:00Z","merge_commit_sha":null,"author_association":"NONE","base":{"ref":"main"},"user":null,"head":{"sha":"0000000000000000000000000000000000000000","ref":"ken-1","repo":{"full_name":"other/repo","owner":{"login":"other","type":"User"}}}}});
     world.plant("gh.json", &planted);
     let mut ctx = world.report_context();
     ctx.settings.reads.connected_repos = vec!["Other/Repo".to_owned(), "OWNER/repo".to_owned()];
@@ -4164,7 +4164,7 @@ fn report_render_reads_github_under_the_credential_ladder() {
         "search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20merged%3A%3E%3D{}&per_page=100&page=1",
         launched.replace(':', "%3A")
     );
-    let mut planted = json!({"repos/owner/repo/pulls/1": {"body":{"number":1,"state":"closed","title":"Ship the ladder","body":"","merged_at":clock::iso_utc(now - 60),"head":{"ref":"ken-1","repo":{"owner":{"login":"owner"}}}}}});
+    let mut planted = json!({"repos/owner/repo/pulls/1": {"body":{"number":1,"state":"closed","title":"Ship the ladder","body":"","merged_at":clock::iso_utc(now - 60),"merge_commit_sha":null,"author_association":"NONE","base":{"ref":"main"},"user":null,"head":{"sha":"0000000000000000000000000000000000000000","ref":"ken-1","repo":{"full_name":"owner/repo","owner":{"login":"owner","type":"User"}}}}}});
     planted[search.as_str()] = json!({"body":{"total_count":1,"incomplete_results":false,"items":[{"number":1,"pull_request":{}}]}});
     world.plant("gh.json", &planted);
     let render = |bot: Option<&str>| {
@@ -4318,7 +4318,7 @@ fn report_due_answers_without_a_credential_until_its_count() {
         "search/issues?q=repo%3Aowner%2Frepo%20is%3Apr%20is%3Amerged%20merged%3A%3E%3D{}&per_page=100&page=1",
         launched.replace(':', "%3A")
     );
-    let mut planted = json!({"repos/owner/repo/pulls/1": {"body":{"number":1,"state":"closed","title":"Ship","body":"","merged_at":clock::iso_utc(now - 60),"head":{"ref":"ken-1","repo":{"owner":{"login":"owner"}}}}}});
+    let mut planted = json!({"repos/owner/repo/pulls/1": {"body":{"number":1,"state":"closed","title":"Ship","body":"","merged_at":clock::iso_utc(now - 60),"merge_commit_sha":null,"author_association":"NONE","base":{"ref":"main"},"user":null,"head":{"sha":"0000000000000000000000000000000000000000","ref":"ken-1","repo":{"full_name":"owner/repo","owner":{"login":"owner","type":"User"}}}}}});
     planted[search.as_str()] = json!({"body":{"total_count":1,"incomplete_results":false,"items":[{"number":1,"pull_request":{}}]}});
     world.plant("gh.json", &planted);
     let out = isolated()

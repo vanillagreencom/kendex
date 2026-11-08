@@ -1,6 +1,6 @@
 {
   "name": "main",
-  "commit": { "sha": "e99849b1c72b1c082cf8325f316799e753f99561", "url": "https://api.github.com/repos/owner/repo/commits/e99849b1c72b1c082cf8325f316799e753f99561" },
+  "commit": { "sha": "e99849b1c72b1c082cf8325f316799e753f99561", "url": "https://api.github.com/repos/owner/repo/commits/e99849b1c72b1c082cf8325f316799e753f99561", "commit": { "committer": { "name": "GitHub", "email": "noreply@github.com", "date": "2026-01-29T15:00:00Z" } } },
   "_links": { "self": "https://api.github.com/repos/owner/repo/branches/main", "html": "https://github.com/owner/repo/tree/main" },
   "protected": false,
   "protection": {

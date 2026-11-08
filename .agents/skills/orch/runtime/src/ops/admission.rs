@@ -24,7 +24,7 @@
 //! An open pull request of the item's repository is a holder of the paths
 //! it changes: its liveness is
 //! its state, read from GitHub by number through the one `gh api`
-//! transport (`watch::github::Gh`, the `gh` on `PATH`). Open yields, a
+//! transport (`verify::Gh`, the `gh` on `PATH`). Open yields, a
 //! [`RebaseObligation`] naming `#N` and its head branch; closed, merged, a
 //! fork's or a deleted fork's holds nothing. A list, object or files read
 //! that fails, answers nothing, decodes to no member or falls short of the
@@ -79,8 +79,8 @@ use super::{Env, intents, lane_at, lane_doc_mut, lanes};
 use crate::error::{Error, Result};
 use crate::settings::Settings;
 use crate::state::{self, Document, Intent, Lane, LaneStatus, RebaseObligation};
-use crate::verify::wire::{Nullable, Optional};
-use crate::watch::github::Gh;
+use crate::verify::wire::{Nullable, Optional, Pull};
+use crate::verify::{Answer, Gh};
 
 /// The item as its tracker reports it: the body the Location paths are
 /// read from, and what eligibility is judged on.
@@ -1043,8 +1043,8 @@ struct GithubLabel {
 }
 
 /// The first non-empty stderr line, the cause a failed call names.
-fn first_line(output: &std::process::Output) -> String {
-    host::stderr_text(output)
+fn first_line(stderr: &str) -> String {
+    stderr
         .lines()
         .find(|l| !l.trim().is_empty())
         .map(str::trim)
@@ -1067,7 +1067,11 @@ fn read_stdout(
     let output =
         host::run_tagged(TAG, program, cli, read, args, READ_TIMEOUT).map_err(|e| e.to_string())?;
     if !output.status.success() {
-        return Err(format!("{read} {}: {}", output.status, first_line(&output)));
+        return Err(format!(
+            "{read} {}: {}",
+            output.status,
+            first_line(&host::stderr_text(&output))
+        ));
     }
     Ok(output.stdout)
 }
@@ -1105,20 +1109,33 @@ pub(super) fn read_item(
                 .filter(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
                 .ok_or_else(|| "key-form".to_owned())?;
             let repo = repo.ok_or_else(|| "repo-unnamed".to_owned())?;
-            let stdout = read_stdout(
-                "gh",
-                &clis.gh,
-                "issue-view",
-                &[
-                    "issue",
-                    "view",
-                    number,
-                    "--repo",
-                    repo,
-                    "--json",
-                    "body,labels",
-                ],
-            )?;
+            let read = "issue-view";
+            let answer = Gh::new(&clis.gh)
+                .tagged(TAG)
+                .run(
+                    read,
+                    &[
+                        "issue",
+                        "view",
+                        number,
+                        "--repo",
+                        repo,
+                        "--json",
+                        "body,labels",
+                    ],
+                    None,
+                )
+                .map_err(|unrun| unrun.detail())?;
+            let stdout = match answer {
+                Answer::Printed { stdout, .. } => stdout,
+                Answer::Failed(failed) => {
+                    return Err(format!(
+                        "{read} {}: {}",
+                        failed.status,
+                        first_line(&failed.stderr)
+                    ));
+                }
+            };
             let issue: GithubIssue =
                 serde_json::from_slice(&stdout).map_err(|e| format!("issue-view: {e}"))?;
             Ok(ItemRead {
@@ -1174,35 +1191,6 @@ pub(super) fn read_range_paths(
 
 /// The label the pull-request reads carry in a `gh` refusal.
 const PULLS_READ: &str = "pr-holders";
-
-/// `GET /repos/{owner}/{repo}/pulls` (REST pulls, "Pull Request Simple"):
-/// the number alone; the holder is read by it.
-#[derive(Deserialize)]
-struct PullNumber {
-    number: u64,
-}
-
-/// `GET /repos/{owner}/{repo}/pulls/{n}`: the fields the holder rule reads,
-/// each documented required; `head.repo` documented nullable (a deleted
-/// fork).
-#[derive(Deserialize)]
-struct PullObject {
-    state: String,
-    changed_files: u64,
-    head: PullHead,
-}
-
-#[derive(Deserialize)]
-struct PullHead {
-    #[serde(rename = "ref")]
-    branch: String,
-    repo: Nullable<PullHeadRepo>,
-}
-
-#[derive(Deserialize)]
-struct PullHeadRepo {
-    full_name: String,
-}
 
 /// `GET /repos/{owner}/{repo}/pulls/{n}/files` ("Diff Entry"): `filename`
 /// required; `previous_filename` documented optional, a rename's old path.
@@ -1267,36 +1255,29 @@ pub(crate) fn origin_slug(url: &str) -> Option<String> {
 /// What `gh repo view --json nameWithOwner -q .nameWithOwner` answers in
 /// `dir`; `None` for a call that fails or prints nothing, which the origin
 /// remote then answers.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the admission's one gh read in the checkout, for the repository whose pull requests it reads; no effect on a lane or a controller"
-)]
 fn viewed_repo(clis: &Clis, dir: &Path) -> Option<String> {
-    let place = host::Place {
-        cwd: Some(dir),
-        env: &[],
-    };
-    let output = host::run_tagged_in(
-        TAG,
-        "gh",
-        &clis.gh,
-        "repo-view",
-        &[
-            "repo",
-            "view",
-            "--json",
-            "nameWithOwner",
-            "-q",
-            ".nameWithOwner",
-        ],
-        place,
-        READ_TIMEOUT,
-    )
-    .ok()?;
-    if !output.status.success() {
+    let answer = Gh::new(&clis.gh)
+        .tagged(TAG)
+        .in_dir(dir)
+        .run(
+            "repo-view",
+            &[
+                "repo",
+                "view",
+                "--json",
+                "nameWithOwner",
+                "-q",
+                ".nameWithOwner",
+            ],
+            None,
+        )
+        .ok()?;
+    let Answer::Printed { stdout, .. } = answer else {
         return None;
-    }
-    let text = host::stdout_text(&output);
+    };
+    let text = String::from_utf8_lossy(&stdout)
+        .trim_end_matches('\n')
+        .to_owned();
     (!text.is_empty()).then_some(text)
 }
 
@@ -1368,7 +1349,7 @@ fn read_checkout(dir: &Path) -> std::result::Result<Option<Repository>, ReadFail
         return Err(format!(
             "common-dir {}: {}",
             output.status,
-            first_line(&output)
+            first_line(&host::stderr_text(&output))
         ));
     }
     let common = host::stdout_text(&output);
@@ -1439,18 +1420,23 @@ fn read_open_pulls(
         repo: slug.clone(),
         cause,
     };
-    let gh = Gh { cli: &clis.gh };
+    let gh = crate::watch::github::handle(&clis.gh);
     let repo = slug.to_ascii_lowercase();
-    let listed: Vec<PullNumber> = gh
+    let listed: Vec<Pull> = gh
         .list(PULLS_READ, &format!("repos/{repo}/pulls?state=open"))
         .map_err(|e| failed("pulls", e.to_string()))?
         .ok_or_else(|| failed("pulls", "not-found".to_owned()))?;
     let mut out = Vec::new();
-    for PullNumber { number } in listed {
-        let pull: PullObject = gh
+    for number in listed.iter().map(|pull| pull.number) {
+        let pull: Pull = gh
             .object(PULLS_READ, &format!("repos/{repo}/pulls/{number}"))
             .map_err(|e| failed("pull", format!("#{number}: {e}")))?
             .ok_or_else(|| failed("pull", format!("#{number}: not-found")))?;
+        // The got form documents its file count; a pull without one cannot
+        // prove its files whole.
+        let Optional::Present(changed_files) = pull.changed_files else {
+            return Err(failed("pull", format!("#{number}: changed_files absent")));
+        };
         let same_repo = match &pull.head.repo {
             Nullable::Present(head) => head.full_name.eq_ignore_ascii_case(&repo),
             Nullable::Absent | Nullable::Null => false,
@@ -1464,10 +1450,10 @@ fn read_open_pulls(
             .list(PULLS_READ, &format!("repos/{repo}/pulls/{number}/files"))
             .map_err(|e| failed("files", format!("#{number}: {e}")))?
             .ok_or_else(|| failed("files", format!("#{number}: not-found")))?;
-        if files.len() as u64 != pull.changed_files {
+        if files.len() as u64 != changed_files {
             return Err(failed(
                 "files",
-                format!("#{number}: {} of {} files", files.len(), pull.changed_files),
+                format!("#{number}: {} of {changed_files} files", files.len()),
             ));
         }
         let mut names = Vec::with_capacity(files.len());

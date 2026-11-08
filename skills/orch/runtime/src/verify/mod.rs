@@ -84,11 +84,11 @@ const PULL_REQUEST_FIELDS: &str = "headRefOid,baseRefName,state";
 
 /// GitHub's largest page, requested explicitly so each page's total can be
 /// checked against what arrived; `gh api --paginate` hides the pages.
-const PER_PAGE: usize = 100;
+pub(crate) const PER_PAGE: usize = 100;
 
 /// The most pages one collection is read over; past it the collection is
 /// not the documented total and is refused.
-const MAX_PAGES: usize = 100;
+pub(crate) const MAX_PAGES: usize = 100;
 
 // --- the reply ------------------------------------------------------------
 
@@ -372,7 +372,7 @@ pub(crate) fn pull_request(
 /// The base as a URL path segment: every byte outside the unreserved set is
 /// percent-encoded, so a branch with `/` reaches the rules and branch
 /// endpoints as one segment.
-fn segment(base: &str) -> String {
+pub(crate) fn segment(base: &str) -> String {
     let mut out = String::with_capacity(base.len());
     for b in base.bytes() {
         if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
@@ -466,6 +466,41 @@ impl Endpoint {
             Endpoint::Ready => "ready",
         }
     }
+
+    /// The runner's operation word: the call's first argument.
+    fn operation(self) -> &'static str {
+        match self {
+            Endpoint::PullRequest | Endpoint::Ready => "pr",
+            Endpoint::CheckRuns
+            | Endpoint::CheckSuites
+            | Endpoint::Statuses
+            | Endpoint::ActionsRuns
+            | Endpoint::Rules
+            | Endpoint::Protection
+            | Endpoint::Workflows
+            | Endpoint::Workflow
+            | Endpoint::CheckRunSuites
+            | Endpoint::SuiteCheckRuns
+            | Endpoint::WorkflowFiles
+            | Endpoint::SourceRepository
+            | Endpoint::Pull
+            | Endpoint::Reviews
+            | Endpoint::Timeline
+            | Endpoint::Threads
+            | Endpoint::ClassicProtection
+            | Endpoint::RequestReview => "api",
+        }
+    }
+
+    fn unrun(self, unrun: Unrun) -> Cause {
+        match unrun {
+            Unrun::Runner(e) => Cause::ReadFailed {
+                endpoint: self,
+                detail: e.to_string(),
+            },
+            Unrun::BudgetSpent => Cause::BudgetSpent(self),
+        }
+    }
 }
 
 /// Why evidence is unreadable. `key` is the reply's `reason`.
@@ -518,20 +553,62 @@ impl Cause {
 
 pub(crate) type Read<T> = std::result::Result<T, Cause>;
 
-/// What one `gh` call left: the bytes a call that exited zero printed, or
-/// the failure of one that did not, with the stdout it printed and its
-/// exit status beside it. gh prints a GraphQL reply that carries `errors`
-/// and exits nonzero (v2.103.3 `pkg/cmd/api/api.go:492-556`, `:698`), so a
-/// failed call's stdout travels with its status to the one reader that
-/// may consume it, `nodes_of`, in the one shape that is an answer; every
-/// other read takes the failure as its own (`printed`).
+/// What one `gh` call left: what a call that exited zero printed, or the
+/// failure of one that did not. gh prints a GraphQL reply that carries
+/// `errors` and exits nonzero (v2.103.3 `pkg/cmd/api/api.go:492-556`,
+/// `:698`), so a failed call's stdout travels with its status to the
+/// reader that may consume that shape.
 pub(crate) enum Answer {
-    Printed(Vec<u8>),
-    Failed {
-        stdout: Vec<u8>,
-        detail: String,
-        exit: Option<i32>,
-    },
+    Printed { stdout: Vec<u8>, stderr: String },
+    Failed(Failed),
+}
+
+/// A `gh` call that exited nonzero or was killed.
+pub(crate) struct Failed {
+    pub(crate) stdout: Vec<u8>,
+    pub(crate) stderr: String,
+    pub(crate) exit: Option<i32>,
+    /// The exit status as the process reports it: `exit status: N`, or the
+    /// signal that ended it.
+    pub(crate) status: String,
+}
+
+impl Failed {
+    /// What gh said: its stderr, else its stdout, else the exit status. gh
+    /// writes an HTTP error's message to stderr and its body to stdout.
+    pub(crate) fn detail(&self) -> String {
+        [
+            self.stderr.trim().to_owned(),
+            String::from_utf8_lossy(&self.stdout).trim().to_owned(),
+        ]
+        .into_iter()
+        .find(|text| !text.is_empty())
+        .unwrap_or_else(|| self.status.clone())
+    }
+
+    /// The HTTP status of GitHub's reply, as gh wrote it last on stderr.
+    pub(crate) fn http(&self) -> Option<u16> {
+        http_status(&self.stderr)
+    }
+}
+
+/// Why a `gh` call has no answer.
+pub(crate) enum Unrun {
+    /// The program could not be run (`NotStarted`), or did not answer
+    /// within its bound.
+    Runner(agent_runtime::Error),
+    /// The handle's budget was spent before the call could start, or before
+    /// its answer arrived.
+    BudgetSpent,
+}
+
+impl Unrun {
+    pub(crate) fn detail(&self) -> String {
+        match self {
+            Unrun::Runner(e) => e.to_string(),
+            Unrun::BudgetSpent => "budget-spent".to_owned(),
+        }
+    }
 }
 
 impl Answer {
@@ -539,10 +616,43 @@ impl Answer {
     /// read's failure, its `detail` what gh wrote.
     fn printed(self, endpoint: Endpoint) -> Read<Vec<u8>> {
         match self {
-            Answer::Printed(bytes) => Ok(bytes),
-            Answer::Failed { detail, .. } => Err(Cause::ReadFailed { endpoint, detail }),
+            Answer::Printed { stdout, .. } => Ok(stdout),
+            Answer::Failed(failed) => Err(Cause::ReadFailed {
+                endpoint,
+                detail: failed.detail(),
+            }),
         }
     }
+}
+
+/// The HTTP status of GitHub's reply in what gh wrote: the status gh
+/// appends to the reply's message, `<message> (HTTP NNN)`; the bare
+/// `gh: HTTP NNN` where the reply had none; or its client's
+/// `HTTP NNN: <message> (<url>)` (each measured on gh 2.103.3). The message
+/// is the server's and can quote a status or run over lines
+/// (`gh: upstream (HTTP 422) (HTTP 500)`), so the last status gh wrote
+/// decides; the scope hint gh can print after it names none.
+pub(crate) fn http_status(text: &str) -> Option<u16> {
+    let mut status = None;
+    for line in text.lines() {
+        let code = match line.rsplit_once(" (HTTP ") {
+            Some((_, rest)) => rest.strip_suffix(')'),
+            None => line
+                .strip_prefix("gh: ")
+                .unwrap_or(line)
+                .strip_prefix("HTTP ")
+                .map(|rest| rest.split_once(':').map_or(rest, |(code, _)| code)),
+        };
+        if let Some(code) = code.filter(|c| c.len() == 3 && c.bytes().all(|b| b.is_ascii_digit())) {
+            status = code.parse().ok();
+        }
+    }
+    status
+}
+
+/// Whether gh's words report GitHub's 4xx reply (`http_status`).
+pub(crate) fn refused_by_github(text: &str) -> bool {
+    http_status(text).is_some_and(|code| (400..500).contains(&code))
 }
 
 /// How GitHub answered an act: made, or refused with gh's exit status and
@@ -558,6 +668,7 @@ pub enum Acted {
 /// call starts past it, each call is bounded by what is left, and an
 /// answer that arrives past it is no answer, since the wait has moved on:
 /// a probe never carries its wait past the wait's own deadline.
+#[derive(Clone, Copy)]
 pub(crate) struct Budget<'a> {
     clock: &'a dyn Clock,
     deadline: Instant,
@@ -577,52 +688,93 @@ impl<'a> Budget<'a> {
     }
 }
 
-/// `gh` through agent-runtime's one process runner: `program`, a bare
-/// `gh` resolved on this process's PATH, or the path the caller already
-/// runs `gh` by, with this process's environment, so the caller's GitHub
-/// authentication is the one used; a handle built `with_env` adds its
-/// variables, so a credential the caller loaded is used instead. One call
-/// is the arguments after the program, as `gh api PATH`, the GraphQL form
-/// `gh api graphql -f query=…` or `gh pr view N`, answered with what it
-/// printed and whether it exited zero (`Answer`). The runner's operation
-/// word is the call's first argument, `api` or `pr`. A handle built
-/// `within` a budget refuses a call past it and bounds each call by what
-/// is left.
+/// `gh` through agent-runtime's one process runner, the one way the runtime
+/// reads GitHub: `program`, a bare `gh` resolved on this process's PATH, or
+/// the path the caller already runs `gh` by, with this process's
+/// environment, so the caller's GitHub authentication is the one used; a
+/// handle built `with_env` adds its variables, so a credential the caller
+/// loaded is used instead. The handle never reads the environment itself.
+/// One call is the arguments after the program, as `gh api PATH`, the
+/// GraphQL form `gh api graphql -f query=…` or `gh pr view N`, answered
+/// with what it printed and whether it exited zero (`Answer`). The start is
+/// counted under the handle's tag and the call's operation word. A handle
+/// built `within` a budget refuses a call past it and bounds each call by
+/// what is left.
 pub(crate) struct Gh<'a> {
     program: PathBuf,
+    tag: &'static str,
     budget: Option<Budget<'a>>,
     env: Vec<(String, OsString)>,
+    cwd: Option<PathBuf>,
+    bound: Duration,
 }
 
 impl<'a> Gh<'a> {
     pub(crate) fn new(program: &Path) -> Gh<'a> {
         Gh {
             program: program.to_path_buf(),
+            tag: "verify",
             budget: None,
             env: Vec::new(),
+            cwd: None,
+            bound: GH_TIMEOUT,
         }
     }
 
     pub(crate) fn within(program: &Path, budget: Budget<'a>) -> Gh<'a> {
         Gh {
-            program: program.to_path_buf(),
             budget: Some(budget),
-            env: Vec::new(),
+            ..Gh::new(program)
         }
     }
 
     pub(crate) fn with_env(program: &Path, env: Vec<(String, OsString)>) -> Gh<'a> {
         Gh {
-            program: program.to_path_buf(),
-            budget: None,
             env,
+            ..Gh::new(program)
+        }
+    }
+
+    /// The start-counter tag of the duty or operation that reads.
+    pub(crate) fn tagged(self, tag: &'static str) -> Gh<'a> {
+        Gh { tag, ..self }
+    }
+
+    /// The directory the call runs in, for a read whose repository gh
+    /// resolves from the checkout.
+    pub(crate) fn in_dir(self, cwd: &Path) -> Gh<'a> {
+        Gh {
+            cwd: Some(cwd.to_path_buf()),
+            ..self
+        }
+    }
+
+    pub(crate) fn bounded(self, bound: Duration) -> Gh<'a> {
+        Gh { bound, ..self }
+    }
+
+    /// This handle with `env` added, for the reads of a credential the
+    /// caller loaded beside the handle's own, while every other read keeps
+    /// the handle as it is.
+    pub(crate) fn adding_env(&self, env: Vec<(String, OsString)>) -> Gh<'a> {
+        let mut pairs = self.env.clone();
+        pairs.extend(env);
+        Gh {
+            program: self.program.clone(),
+            tag: self.tag,
+            budget: self.budget,
+            env: pairs,
+            cwd: self.cwd.clone(),
+            bound: self.bound,
         }
     }
 
     fn call(&self, endpoint: Endpoint, args: &[&str]) -> Read<Answer> {
-        let answer = self.run(endpoint, args)?;
-        if let Answer::Printed(bytes) = &answer
-            && bytes.iter().all(u8::is_ascii_whitespace)
+        let answer = self
+            .run(endpoint.operation(), args, None)
+            .map_err(|unrun| endpoint.unrun(unrun))?;
+        if let Answer::Printed { stdout, .. } = &answer
+            && stdout.iter().all(u8::is_ascii_whitespace)
         {
             return Err(Cause::ReadFailed {
                 endpoint,
@@ -638,51 +790,41 @@ impl<'a> Gh<'a> {
     /// exit status, killed by a signal, may or may not have reached
     /// GitHub, so it is the read's failure, never a refusal.
     fn act(&self, endpoint: Endpoint, args: &[&str]) -> Read<Acted> {
-        match self.run(endpoint, args)? {
-            Answer::Printed(_) => Ok(Acted::Made),
-            Answer::Failed {
-                exit: Some(exit),
-                detail,
-                ..
-            } => Ok(Acted::Refused { exit, detail }),
-            Answer::Failed {
-                exit: None, detail, ..
-            } => Err(Cause::ReadFailed { endpoint, detail }),
+        match self
+            .run(endpoint.operation(), args, None)
+            .map_err(|unrun| endpoint.unrun(unrun))?
+        {
+            Answer::Printed { .. } => Ok(Acted::Made),
+            Answer::Failed(failed) => match failed.exit {
+                Some(exit) => Ok(Acted::Refused {
+                    exit,
+                    detail: failed.detail(),
+                }),
+                None => Err(Cause::ReadFailed {
+                    endpoint,
+                    detail: failed.detail(),
+                }),
+            },
         }
     }
 
+    /// One `gh` call with `args`, `stdin` fed where given, counted under
+    /// `operation`.
     #[allow(
         clippy::disallowed_methods,
-        reason = "the verification reads GitHub through gh for one pinned head or one pull request's head, and the review gate asks Copilot for its one review through it; no effect on a lane or a controller"
+        reason = "the runtime's one GitHub transport: the reads of the verification, the review gate, the queue wait, the admission, the approval, the validation start and the watch duties, and the acts the review gate and the approval make, each under its caller's tag; no effect on a lane or a controller"
     )]
-    fn run(&self, endpoint: Endpoint, args: &[&str]) -> Read<Answer> {
-        let failed = |detail: String| Cause::ReadFailed { endpoint, detail };
-        let operation = match endpoint {
-            Endpoint::PullRequest | Endpoint::Ready => "pr",
-            Endpoint::CheckRuns
-            | Endpoint::CheckSuites
-            | Endpoint::Statuses
-            | Endpoint::ActionsRuns
-            | Endpoint::Rules
-            | Endpoint::Protection
-            | Endpoint::Workflows
-            | Endpoint::Workflow
-            | Endpoint::CheckRunSuites
-            | Endpoint::SuiteCheckRuns
-            | Endpoint::WorkflowFiles
-            | Endpoint::SourceRepository
-            | Endpoint::Pull
-            | Endpoint::Reviews
-            | Endpoint::Timeline
-            | Endpoint::Threads
-            | Endpoint::ClassicProtection
-            | Endpoint::RequestReview => "api",
-        };
+    pub(crate) fn run(
+        &self,
+        operation: &'static str,
+        args: &[&str],
+        stdin: Option<&[u8]>,
+    ) -> std::result::Result<Answer, Unrun> {
         let timeout = match &self.budget {
-            None => GH_TIMEOUT,
+            None => self.bound,
             Some(budget) => match budget.remaining() {
-                left if left.is_zero() => return Err(Cause::BudgetSpent(endpoint)),
-                left => GH_TIMEOUT.min(left),
+                left if left.is_zero() => return Err(Unrun::BudgetSpent),
+                left => self.bound.min(left),
             },
         };
         let env: Vec<(&str, &OsStr)> = self
@@ -691,18 +833,30 @@ impl<'a> Gh<'a> {
             .map(|(key, value)| (key.as_str(), value.as_os_str()))
             .collect();
         let place = host::Place {
-            cwd: None,
+            cwd: self.cwd.as_deref(),
             env: &env,
         };
-        let output = host::run_tagged_in(
-            "verify",
-            "gh",
-            &self.program,
-            operation,
-            args,
-            place,
-            timeout,
-        );
+        let output = match stdin {
+            None => host::run_tagged_in(
+                self.tag,
+                "gh",
+                &self.program,
+                operation,
+                args,
+                place,
+                timeout,
+            ),
+            Some(bytes) => host::run_tagged_fed(
+                self.tag,
+                "gh",
+                &self.program,
+                operation,
+                args,
+                place,
+                bytes,
+                timeout,
+            ),
+        };
         // An answer that arrived past the budget is no answer: the wait it
         // served has moved on.
         if self
@@ -710,24 +864,21 @@ impl<'a> Gh<'a> {
             .as_ref()
             .is_some_and(|b| b.remaining().is_zero())
         {
-            return Err(Cause::BudgetSpent(endpoint));
+            return Err(Unrun::BudgetSpent);
         }
-        let output = output.map_err(|e| failed(e.to_string()))?;
+        let output = output.map_err(Unrun::Runner)?;
         if !output.status.success() {
-            // gh writes an HTTP error's message to stderr and its body to
-            // stdout; whichever it wrote is the detail.
-            let detail = [host::stderr_text(&output), host::stdout_text(&output)]
-                .into_iter()
-                .map(|text| text.trim().to_owned())
-                .find(|text| !text.is_empty())
-                .unwrap_or_else(|| format!("exit status {}", output.status));
-            return Ok(Answer::Failed {
-                stdout: output.stdout,
-                detail,
+            return Ok(Answer::Failed(Failed {
+                stderr: host::stderr_text(&output),
                 exit: output.status.code(),
-            });
+                status: output.status.to_string(),
+                stdout: output.stdout,
+            }));
         }
-        Ok(Answer::Printed(output.stdout))
+        Ok(Answer::Printed {
+            stderr: host::stderr_text(&output),
+            stdout: output.stdout,
+        })
     }
 }
 
@@ -783,49 +934,74 @@ impl Reader<'_> {
         nodes_of(endpoint, self.gh.call(endpoint, &args)?)
     }
 
-    /// Every member of a collection whose pages each state the total: read
-    /// page by page until the members add up to it. An empty page before
-    /// that, a page whose total differs, or more members than the total is
-    /// the mismatch; no partial set is returned.
     fn collection<P: Page>(&self, endpoint: Endpoint, path: &str) -> Read<Vec<P::Member>> {
-        let mut members = Vec::new();
-        let mut total: Option<usize> = None;
-        for page in 1..=MAX_PAGES {
-            let decoded: P = self.object(endpoint, &paged(path, page))?;
-            let stated = decoded.total();
-            if total.is_some_and(|known| known != stated) {
-                return Err(Cause::TotalMismatch(endpoint));
-            }
-            total = Some(stated);
-            let got = decoded.members();
-            if got.is_empty() {
-                break;
-            }
-            members.extend(got);
-            if members.len() >= stated {
-                break;
-            }
-        }
-        if total != Some(members.len()) {
-            return Err(Cause::TotalMismatch(endpoint));
-        }
-        Ok(members)
+        collection(
+            path,
+            |page| self.object::<P>(endpoint, page),
+            || Cause::TotalMismatch(endpoint),
+        )
     }
 
-    /// Every member of a collection whose pages are bare arrays with no
-    /// total: read until a page is shorter than the page size.
     fn array<T: for<'de> Deserialize<'de>>(&self, endpoint: Endpoint, path: &str) -> Read<Vec<T>> {
-        let mut members = Vec::new();
-        for page in 1..=MAX_PAGES {
-            let got: Vec<T> = self.object(endpoint, &paged(path, page))?;
-            let last = got.len() < PER_PAGE;
-            members.extend(got);
-            if last {
-                return Ok(members);
-            }
-        }
-        Err(Cause::ResponseInvalid(endpoint))
+        list(
+            path,
+            |page| self.object(endpoint, page),
+            || Cause::ResponseInvalid(endpoint),
+        )
     }
+}
+
+/// Every member of a collection whose pages each state the total, `page`
+/// reading one page's path: page by page at the largest size until the
+/// members add up to the total. A page whose total differs, a page short
+/// of the size before the total, or more members than the total is
+/// `mismatch`: a short page before the total is an incomplete read, never
+/// a complete one, and no partial set is returned.
+pub(crate) fn collection<P: Page, E>(
+    path: &str,
+    mut page: impl FnMut(&str) -> std::result::Result<P, E>,
+    mismatch: impl Fn() -> E,
+) -> std::result::Result<Vec<P::Member>, E> {
+    let mut members = Vec::new();
+    let mut total: Option<usize> = None;
+    for number in 1..=MAX_PAGES {
+        let decoded = page(&paged(path, number))?;
+        let stated = decoded.total();
+        if total.is_some_and(|known| known != stated) {
+            return Err(mismatch());
+        }
+        total = Some(stated);
+        let got = decoded.members();
+        let short = got.len() < PER_PAGE;
+        members.extend(got);
+        if members.len() >= stated || short {
+            break;
+        }
+    }
+    if total != Some(members.len()) {
+        return Err(mismatch());
+    }
+    Ok(members)
+}
+
+/// Every member of a list whose pages are bare arrays with no total, `page`
+/// reading one page's path: pages at the largest size until a short one;
+/// past `MAX_PAGES` the list is `past`, never the pages read.
+pub(crate) fn list<T, E>(
+    path: &str,
+    mut page: impl FnMut(&str) -> std::result::Result<Vec<T>, E>,
+    past: impl Fn() -> E,
+) -> std::result::Result<Vec<T>, E> {
+    let mut members = Vec::new();
+    for number in 1..=MAX_PAGES {
+        let got = page(&paged(path, number))?;
+        let last = got.len() < PER_PAGE;
+        members.extend(got);
+        if last {
+            return Ok(members);
+        }
+    }
+    Err(past())
 }
 
 /// The nodes of a `nodes(ids:)` reply. GraphQL leaves a field it could not
@@ -850,12 +1026,15 @@ fn nodes_of<N: for<'de> Deserialize<'de>>(
     endpoint: Endpoint,
     answer: Answer,
 ) -> Read<Vec<wire::Nullable<N>>> {
-    let failed = matches!(answer, Answer::Failed { .. });
+    let failed = matches!(answer, Answer::Failed(_));
     let (bytes, refused) = match answer {
-        Answer::Printed(bytes) => (bytes, Cause::ResponseInvalid(endpoint)),
-        Answer::Failed { stdout, detail, .. } => (stdout, Cause::ReadFailed { endpoint, detail }),
+        Answer::Printed { stdout, .. } => (stdout, Cause::ResponseInvalid(endpoint)),
+        Answer::Failed(failed) => {
+            let detail = failed.detail();
+            (failed.stdout, Cause::ReadFailed { endpoint, detail })
+        }
     };
-    let Ok(reply) = serde_json::from_slice::<wire::NodesReply<N>>(&bytes) else {
+    let Ok(reply) = serde_json::from_slice::<wire::GraphReply<wire::NodesData<N>>>(&bytes) else {
         return Err(refused);
     };
     let wire::Nullable::Present(data) = reply.data else {
@@ -877,13 +1056,13 @@ fn nodes_of<N: for<'de> Deserialize<'de>>(
     Ok(data.nodes)
 }
 
-fn paged(path: &str, page: usize) -> String {
+pub(crate) fn paged(path: &str, page: usize) -> String {
     let join = if path.contains('?') { '&' } else { '?' };
     format!("{path}{join}per_page={PER_PAGE}&page={page}")
 }
 
 /// One page of a collection that states its total on every page.
-trait Page: for<'de> Deserialize<'de> {
+pub(crate) trait Page: for<'de> Deserialize<'de> {
     type Member;
     fn total(&self) -> usize;
     fn members(self) -> Vec<Self::Member>;
@@ -957,8 +1136,49 @@ mod tests {
         assert_eq!(segment("release/1.x"), "release%2F1.x");
     }
 
+    /// The status gh wrote last is the reply's, in each of gh's three
+    /// renderings; one quoted before it, or named inside a URL, is not.
+    /// A 5xx whose message quotes a 404 is no absence.
+    #[test]
+    fn the_last_status_gh_wrote_is_the_replys() {
+        for (text, status) in [
+            ("gh: Not Found (HTTP 404)", Some(404)),
+            (
+                "gh: HTTP 404: Not Found (https://api.github.com/repos/o/r)",
+                Some(404),
+            ),
+            (
+                "HTTP 404: workflow x.yml not found on the default branch (https://api.github.com/repos/o/r/actions/workflows/x.yml)",
+                Some(404),
+            ),
+            (
+                "{\"message\":\"Not Found\"}\ngh: Not Found (HTTP 404)",
+                Some(404),
+            ),
+            ("gh: HTTP 404", Some(404)),
+            (
+                "gh: Resource not accessible by integration (HTTP 403)",
+                Some(403),
+            ),
+            (
+                "gh: HTTP 500: Server Error (https://api.github.com/404)",
+                Some(500),
+            ),
+            ("gh: upstream (HTTP 404) (HTTP 502)", Some(502)),
+            (
+                "gh: upstream (HTTP 422)\ngh: Server Error (HTTP 500)",
+                Some(500),
+            ),
+            ("error connecting to api.github.com", None),
+            ("", None),
+        ] {
+            assert_eq!(http_status(text), status, "{text}");
+        }
+    }
+
     #[test]
     fn a_page_request_names_its_page() {
+        assert_eq!(segment("a b:\"c\">=d"), "a%20b%3A%22c%22%3E%3Dd");
         assert_eq!(
             paged("repos/o/r/commits/abc/check-runs?filter=all", 2),
             "repos/o/r/commits/abc/check-runs?filter=all&per_page=100&page=2"

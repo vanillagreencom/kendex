@@ -396,6 +396,9 @@ fn fake_pull(number: u64, branch: &'static str, files: &[&str]) -> FakePull {
     }
 }
 
+/// A head commit no row reads.
+const ZERO_SHA: &str = "0000000000000000000000000000000000000000";
+
 /// The open-list path the admission reads for `o/r`.
 const PULLS_LIST: &str = "repos/o/r/pulls?state=open&per_page=100&page=1";
 
@@ -403,7 +406,10 @@ const PULLS_LIST: &str = "repos/o/r/pulls?state=open&per_page=100&page=1";
 /// requests: the open list naming every one, each object, each files page.
 fn gh_map(pulls: &[FakePull]) -> Value {
     let mut map = serde_json::Map::new();
-    let listed: Vec<Value> = pulls.iter().map(|p| json!({"number": p.number})).collect();
+    let listed: Vec<Value> = pulls
+        .iter()
+        .map(|p| json!({"number": p.number, "state": "open", "title": "a holder", "body": null, "merged_at": null, "merge_commit_sha": null, "author_association": "NONE", "head": {"sha": ZERO_SHA, "ref": p.branch, "repo": null}, "base": {"ref": "main"}, "user": null}))
+        .collect();
     map.insert(PULLS_LIST.to_owned(), json!({"body": listed}));
     for p in pulls {
         let merged_at = if p.state == "closed" {
@@ -416,12 +422,19 @@ fn gh_map(pulls: &[FakePull]) -> Value {
             json!({"body": {
                 "number": p.number,
                 "state": p.state,
+                "title": "a holder",
+                "body": null,
                 "merged_at": merged_at,
+                "merge_commit_sha": null,
                 "changed_files": p.changed.unwrap_or(p.files.len() as u64),
+                "author_association": "NONE",
                 "head": {
+                    "sha": ZERO_SHA,
                     "ref": p.branch,
-                    "repo": p.head_repo.map(|name| json!({"full_name": name})),
+                    "repo": p.head_repo.map(|name| json!({"full_name": name, "owner": {"login": "o", "type": "Organization"}})),
                 },
+                "base": {"ref": "main"},
+                "user": null,
             }}),
         );
         map.insert(
@@ -1165,7 +1178,7 @@ fn a_gh_failure_a_short_files_list_and_a_malformed_member_each_refuse_holders_un
         ),
         (
             "a number that is no number",
-            json!({PULLS_LIST: {"body": [{"number": "7"}]}}),
+            json!({PULLS_LIST: {"body": [{"number": "7", "state": "open", "title": "a holder", "body": null, "merged_at": null, "merge_commit_sha": null, "author_association": "NONE", "head": {"sha": ZERO_SHA, "ref": "feat", "repo": null}, "base": {"ref": "main"}, "user": null}]}}),
             "pulls",
         ),
         ("a pull request answering nothing", unanswered, "pull"),

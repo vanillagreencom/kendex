@@ -2708,8 +2708,7 @@ fn ci_world(w: &World, case: &str) -> (String, String, String) {
     git(&w.worktree, &["commit", "-q", "-m", "code"]);
 
     let mut rules = json!([{ "type":"merge_queue" }, { "type":"required_status_checks", "parameters":{"required_status_checks":[{"context":"CI"}]} }]);
-    let mut protection =
-        json!({"protection":{"required_status_checks":{"contexts":[],"checks":[]}}});
+    let mut protection = json!({"commit":{"sha":"0000000000000000000000000000000000000000","commit":{"committer":null}},"protected":false,"protection":{"required_status_checks":{"contexts":[],"checks":[]}}});
     let mut view = json!({"state":"OPEN","baseRefName":"main"});
     if case == "context-unrequired" {
         rules = json!([]);
@@ -2718,12 +2717,11 @@ fn ci_world(w: &World, case: &str) -> (String, String, String) {
     // list, or by its checks.
     if case == "classic-contexts" {
         rules = json!([{ "type":"merge_queue" }]);
-        protection =
-            json!({"protection":{"required_status_checks":{"contexts":["CI"],"checks":[]}}});
+        protection = json!({"commit":{"sha":"0000000000000000000000000000000000000000","commit":{"committer":null}},"protected":true,"protection":{"required_status_checks":{"contexts":["CI"],"checks":[]}}});
     }
     if case == "classic-checks" {
         rules = json!([{ "type":"merge_queue" }]);
-        protection = json!({"protection":{"required_status_checks":{"contexts":[],"checks":[{"context":"CI","app_id":null}]}}});
+        protection = json!({"commit":{"sha":"0000000000000000000000000000000000000000","commit":{"committer":null}},"protected":true,"protection":{"required_status_checks":{"contexts":[],"checks":[{"context":"CI","app_id":null}]}}});
     }
     if case == "protection-unread" {
         protection = json!({});
@@ -2763,8 +2761,7 @@ fn ci_world(w: &World, case: &str) -> (String, String, String) {
     }
     if case == "stacked" {
         replies["repos/{owner}/{repo}/rules/branches/feature%2Fparent"] = json!({"body":[]});
-        replies["repos/{owner}/{repo}/branches/feature%2Fparent"] =
-            json!({"body":{"protection":{"required_status_checks":{"contexts":[],"checks":[]}}}});
+        replies["repos/{owner}/{repo}/branches/feature%2Fparent"] = json!({"body":{"commit":{"sha":"0000000000000000000000000000000000000000","commit":{"committer":null}},"protected":false,"protection":{"required_status_checks":{"contexts":[],"checks":[]}}}});
     }
     // gh's answer for a branch with no pull request, which push-first
     // reads as its resolved base.
