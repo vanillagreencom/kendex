@@ -37,6 +37,7 @@ Set repository options in the default branch's `kendex.settings.toml` under `[en
 | Setting | What to configure |
 |---|---|
 | `HARNESS_CI_STANDARD_PATHS` | High-risk paths that always need full checks. |
+| `HARNESS_CI_DOCS_PATHS` | Exact Markdown files containing text displayed to users outside the built-in docs set. Keep the checks claiming those files through the lane outputs. [Declaration contract](references/wiring.md#declared-product-text). |
 | `HARNESS_CI_PER_PUSH_REASON` | The reason the repository runs its lanes on each pull-request push and may merge outside the queue. Unset, every change is queue-only. A repository with no merge queue sets it to `no merge queue`. What it changes: [references/wiring.md § The CI template](references/wiring.md#the-ci-template). |
 | `HARNESS_CI_QUEUE_PATHS` | Read only with `HARNESS_CI_PER_PUSH_REASON`. The repository's own CI inputs that need the merge queue. Set it empty when the shipped list covers them all. Leaving it unset requires the queue for every change. |
 | `HARNESS_CI_QUEUE_SELECTOR` | Read only with `HARNESS_CI_PER_PUSH_REASON`. The repository command that identifies merge-group jobs. Before you set it: [references/wiring.md § The CI template](references/wiring.md#the-ci-template). |

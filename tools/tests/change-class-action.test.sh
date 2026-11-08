@@ -128,14 +128,20 @@ STUB
 cat >"$STUBS/skills/harness-ci/scripts/harness-only" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+if [ "${1:-}" = --help ]; then
+  [ "${STUB_DECLARED_SUPPORT:-yes}" != yes ] || printf '%s\n' --declared-output
+  exit 0
+fi
 printf 'harness-only %s\n' "$*" >>"$STUB_LOG"
 [ "${STUB_PATHS_EXIT:-0}" -eq 0 ] || exit "$STUB_PATHS_EXIT"
 paths_output=""
 outside_output=""
+declared_output=""
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --paths-output) paths_output="$2"; shift 2 ;;
     --outside-output) outside_output="$2"; shift 2 ;;
+    --declared-output) declared_output="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
@@ -145,6 +151,9 @@ for path in ${STUB_PATHS:-}; do printf '%s\n' "$path" >>"$paths_output"; done
 if [ -n "$outside_output" ] && [ -z "${STUB_NO_OUTSIDE:-}" ]; then
   : >"$outside_output"
   for path in ${STUB_OUTSIDE:-}; do printf '%s\n' "$path" >>"$outside_output"; done
+fi
+if [ -n "$declared_output" ] && [ -z "${STUB_NO_DECLARED:-}" ]; then
+  : >"$declared_output"
 fi
 line="${STUB_DOCS_LINE:-docs_only=$STUB_DOCS}"
 [ -z "${GITHUB_OUTPUT:-}" ] || printf '%s\n' "$line" >>"$GITHUB_OUTPUT"
@@ -382,13 +391,13 @@ check "the step says why the lanes answered as they did" \
 # The wrapped scripts see the step's inputs as flags, and the path list comes
 # from the docs-mode call alone: a harness-mode read here would be a second
 # reader of the same diff.
-run "$CLASSIFY" STUB_CLASS=micro STUB_PATHS=skills/orch/SKILL.md >/dev/null
+run "$CLASSIFY" STUB_CLASS=micro STUB_PATHS=skills/orch/SKILL.md STUB_DECLARED_SUPPORT=no >/dev/null
 check "each wrapped script is called once, with the step's inputs" \
   "change-class --event pull_request --head h1 --repo $TMP/subject --base b0 --output /dev/null
 harness-only --mode docs --event pull_request --head h1 --repo $TMP/subject --base b0 --paths-output PATHS" \
   "$(sed 's/--paths-output [^ ]*$/--paths-output PATHS/' "$LOG")"
 run "$CLASSIFY" STUB_CLASS=micro STUB_PATHS=skills/orch/SKILL.md \
-  LANES_FROM="$TMP/decl/good" >/dev/null
+  LANES_FROM="$TMP/decl/good" STUB_DECLARED_SUPPORT=no >/dev/null
 check "a declared lane asks harness-only for the paths outside the docs set" \
   "harness-only --mode docs --event pull_request --head h1 --repo $TMP/subject --base b0 --paths-output PATHS --outside-output OUTSIDE" \
   "$(sed -n 's/--paths-output [^ ]* --outside-output [^ ]*$/--paths-output PATHS --outside-output OUTSIDE/; s/^harness-only /harness-only /p' "$LOG")"
@@ -396,6 +405,14 @@ run "$CLASSIFY" STUB_CLASS=standard BASE= >/dev/null
 check "an empty base is not passed as a flag" \
   "change-class --event pull_request --head h1 --repo $TMP/subject --output /dev/null" \
   "$(sed -n 's/^change-class /change-class /p' "$LOG")"
+
+# A supporting reader must write the new evidence; an older reader above
+# keeps its previous contract. No declaration decision is stubbed here.
+run "$CLASSIFY" STUB_CLASS=micro STUB_PATHS=skills/orch/SKILL.md >/dev/null
+check "a supporting reader receives the declared output" 1 "$(grep -c -- '--declared-output ' "$LOG")"
+check "missing advertised declaration evidence refuses" 2 \
+  "$(run "$CLASSIFY" STUB_CLASS=micro STUB_PATHS=skills/orch/SKILL.md STUB_NO_DECLARED=1)"
+check "missing declaration evidence publishes nothing" "" "$(cat "$OUT")"
 
 # --- 2. Must-fail: a classify that decides the class itself ------------------
 # The copy keeps every line but the one that reads the wrapped script, and

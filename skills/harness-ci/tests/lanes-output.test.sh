@@ -185,4 +185,125 @@ judged checkout|$repo|lanes-from-judged-tree
 absent checkout|$SANDBOX/missing-checkout|lanes-from-unreadable
 ROWS
 require_rows local-lane-refusals "$rows"
+# One input contract through both real producers. The docs owner supplies the
+# extra membership evidence; the lane owner must retain every text claim.
+text_decl='check src/*
+text product/text.md
+also product/text.md
+other elsewhere/*
+mac:nightly macos/*
+'
+mkdir -p "$SANDBOX/text/.github" "$SANDBOX/text-bad/.github"
+mkdir -p "$SANDBOX/text/$(dirname "$READER")"
+cp "$CHANGE_CLASS" "$SANDBOX/text/$READER"
+printf '%s' "$text_decl" >"$SANDBOX/text/.github/ci-lanes.conf"
+printf 'Bad product/*\n' >"$SANDBOX/text-bad/.github/ci-lanes.conf"
+base_text="$(base_with_settings base-text "$(printf '[env]\nHARNESS_CI_DOCS_PATHS = "product/text.md"')")"
+base_glob="$(base_with_settings base-glob "$(printf '[env]\nHARNESS_CI_DOCS_PATHS = "product/*.md"')")"
+base_instruction="$(base_with_settings base-instruction "$(printf '[env]\nHARNESS_CI_DOCS_PATHS = "product/AGENTS.md"')")"
+base_invalid="$(base_with_settings base-invalid "$(printf '[env]\nHARNESS_CI_DOCS_PATHS = true')")"
+base_standard="$(base_with_settings base-standard "$(printf '[env]\nHARNESS_CI_DOCS_PATHS = "product/text.md"\nHARNESS_CI_STANDARD_PATHS = "elsewhere/* product/*"')")"
+git -C "$repo" checkout -q -B base-overlay "$base_text"
+mkdir -p "$repo/.kendex"
+printf '[env]\nHARNESS_CI_DOCS_PATHS = ""\n' >"$repo/.kendex/settings.toml"
+git -C "$repo" add -A
+git -C "$repo" commit -qm overlay
+base_overlay="$(git -C "$repo" rev-parse HEAD)"
+git -C "$repo" checkout -q -B base-unreadable "$base_default"
+mkdir -p "$repo/kendex.settings.toml"
+printf 'not settings\n' >"$repo/kendex.settings.toml/child"
+git -C "$repo" add -A
+git -C "$repo" commit -qm unreadable
+base_unreadable="$(git -C "$repo" rev-parse HEAD)"
+
+# NAME|BASE|PATHS|LINES|HEAD/ENV EDIT|EVENT|LANE ROOT|STATUS|DOCS|CLASS|LANES/CAUSE|VERDICTS|CLASS-ONLY
+# `none` owns no declared lanes, so the aggregate answer must keep checks on.
+# CLASS-ONLY checks the review-depth caller, which requests --output /dev/null.
+declared_rows() {
+  cat <<'ROWS'
+no-declaration|default|product/text.md|1|none|merge_group|text|0|false|micro|true/micro|lane_check=false,lane_text=true,lane_also=true,lane_other=false,lane_mac=false
+declared-owner|text|product/text.md|1|none|merge_group|text|0|true|trivial|true/declared-text|lane_check=false,lane_text=true,lane_also=true,lane_other=false,lane_mac=false
+declared-large|text|product/text.md|21|none|merge_group|text|0|true|small|true/declared-text|lane_check=false,lane_text=true,lane_also=true,lane_other=false,lane_mac=false
+mixed-source|text|product/text.md src/main.sh|21|none|merge_group|text|0|false|small|true/small|lane_check=true,lane_text=true,lane_also=true,lane_other=false,lane_mac=false|small
+mixed-unclaimed|text|product/text.md Makefile|21|none|merge_group|text|0|false|small|true/small|lane_check=true,lane_text=true,lane_also=true,lane_other=true,lane_mac=false
+unclaimed-text|text|product/text.md|1|none|merge_group|default|0|true|trivial|true/declared-text|lane_check=true,lane_other=true,lane_mac=false
+no-lane-declaration|text|product/text.md|1|none|merge_group|none|0|true|trivial|true/declared-text|-
+malformed-lanes|text|product/text.md|1|none|merge_group|text-bad|0|true|trivial|true/declared-text|-
+head-only-declaration|default|product/text.md|1|setting|merge_group|text|0|false|standard|true/standard|lane_check=true,lane_text=true,lane_also=true,lane_other=true,lane_mac=false
+environment-declaration|default|product/text.md|1|env|merge_group|text|0|false|micro|true/micro|lane_check=false,lane_text=true,lane_also=true,lane_other=false,lane_mac=false
+overriding-empty|overlay|product/text.md|1|none|merge_group|text|0|false|micro|true/micro|lane_check=false,lane_text=true,lane_also=true,lane_other=false,lane_mac=false
+invalid-glob|glob|product/text.md|1|none|merge_group|text|2|-|-|-|-
+protected-instruction|instruction|product/AGENTS.md|1|none|merge_group|text|2|-|-|-|-
+protected-standard|standard|product/text.md|1|none|merge_group|text|2|-|-|-|-
+executable-text|text|product/text.md|1|executable|merge_group|text|2|-|-|-|-|micro
+mixed-executable|text|alpha/source.rs product/text.md zeta/source.rs|21|executable|merge_group|text|2|-|-|-|-|standard
+symlink-text|text|product/text.md|1|symlink|merge_group|text|2|-|-|-|-
+invalid-settings|invalid|product/text.md|1|none|merge_group|text|2|-|-|-|-
+unreadable-settings|unreadable|product/text.md|1|none|merge_group|text|2|-|-|-|-
+queue-default|text|product/text.md|1|none|pull_request|text|0|true|trivial|false/queue-only|lane_check=false,lane_text=false,lane_also=false,lane_other=false,lane_mac=false
+nightly-text|text|product/text.md|1|none|schedule|text|0|false|standard|true/full-run|lane_check=true,lane_text=true,lane_also=true,lane_other=true,lane_mac=true
+ROWS
+}
+declared_case() { # COMMAND ROW
+  local command="$1" name base_name paths lines edit event declaration expected_status docs class lane_result expected_verdicts
+  local base_var base decl class_only local_status=0 action_status=0
+  IFS='|' read -r name base_name paths lines edit event declaration expected_status docs class lane_result expected_verdicts class_only <<<"$2"
+  base_var="base_$base_name"
+  base="${!base_var}"
+  write_row "$name" "$base" "$paths" "$lines"
+  case "$edit" in
+    setting) printf '[env]\nHARNESS_CI_DOCS_PATHS = "product/text.md"\n' >"$repo/kendex.settings.toml" ;;
+    executable) chmod +x "$repo/product/text.md" ;;
+    symlink) ln -sf elsewhere "$repo/product/text.md" ;;
+  esac
+  if [ "$edit" = setting ] || [ "$edit" = executable ] || [ "$edit" = symlink ]; then
+    git -C "$repo" add -A
+    git -C "$repo" commit -qm "$edit"
+  fi
+  decl=""
+  [ "$declaration" = none ] || decl="$SANDBOX/$declaration"
+  if [ "$edit" = env ]; then export HARNESS_CI_DOCS_PATHS=product/text.md; fi
+  run_action "$event" "$base" "$decl" true || action_status=$?
+  run_local "$command" "$event" "$base" "$decl" true || local_status=$?
+  unset HARNESS_CI_DOCS_PATHS
+  assert_eq "$name: command/action status" "$expected_status/$expected_status" "$local_status/$action_status"
+  if [ "$expected_status" = 0 ]; then
+    assert_eq "$name: docs membership and class" "docs_only=$docs change_class=$class" \
+      "$(sed -n '/^docs_only=/p' "$SANDBOX/action-output") $(cat "$SANDBOX/local-stdout")"
+    assert_eq "$name: command/action lanes agree" "$(lane_answer "$SANDBOX/action-output")" "$(lane_answer "$SANDBOX/local-output")"
+    assert_eq "$name: aggregate lanes" "$lane_result" \
+      "$(sed -n 's/^lanes=//p' "$SANDBOX/local-output")/$(sed -n 's/^lanes_cause=//p' "$SANDBOX/local-output")"
+    if [ "$expected_verdicts" != - ]; then
+      assert_eq "$name: owning lanes" "$expected_verdicts" "$(verdicts)"
+    fi
+  else
+    assert_eq "$name: command publishes no waiver" "" "$(cat "$SANDBOX/local-output")$(cat "$SANDBOX/local-stdout")"
+    assert_eq "$name: action publishes no waiver" "" "$(cat "$SANDBOX/action-output")"
+  fi
+  if [ -n "$class_only" ]; then
+    assert_class "$name: class-only consumer" "$class_only" \
+      --event "$event" --base "$base" --head HEAD --repo "$repo" --output /dev/null
+  fi
+}
+rows=0
+while IFS= read -r row; do
+  rows=$((rows + 1))
+  declared_case "$CHANGE_CLASS" "$row"
+done < <(declared_rows)
+require_rows declared-text "$rows"
+
+# One control for the changed guard, using the same real input and assertions.
+# Keep the text and docs verdict, but restore the global trivial/docs waiver.
+claim_guard='if [ -n "$declared_paths" ] && [ "$lanes" = false ] && [ "$class" != render ]; then'
+claim_mutant="$(mutant declared-claim lib/change-class.sh "$claim_guard" 'if false; then')"
+control_row="$(declared_rows | sed -n '/^declared-owner|/p')"
+control_status=0
+(PASS=0; FAIL=0; declared_case "$claim_mutant" "$control_row"; [ "$FAIL" -eq 0 ]) \
+  >"$SANDBOX/declared-control.log" 2>&1 || control_status=$?
+assert_eq "the declared owner row rejects the restored global waiver" 1 "$control_status"
+assert_eq "the control still completes with its original trivial class" \
+  change_class=trivial "$(cat "$SANDBOX/local-stdout")"
+assert_eq "the control reaches the wrong successful stand-down" \
+  false/trivial "$(sed -n 's/^lanes=//p' "$SANDBOX/local-output")/$(sed -n 's/^lanes_cause=//p' "$SANDBOX/local-output")"
+
 report lanes-output

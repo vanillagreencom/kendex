@@ -9,7 +9,7 @@
 # schema step is removed from the path set. A hand edit counts the same as
 # the engine's. The render path still verifies the head. Product paths use
 # the existing size rules without render verification.
-# `--mode docs` instead accepts docs/, changelog.d/, and root Markdown files.
+# `--mode docs` accepts the built-in docs set and trusted exact text declarations.
 # `--mode render-candidate` permits new head-owned paths and the adopted refresh
 # caller and bot-instructions outputs without an inventory entry to gate
 # render-proof prerequisites. It never authorizes a CI skip.
@@ -18,7 +18,7 @@
 # Usage:
 #   harness-only [--mode harness|docs|render-candidate] --event EVENT [--base REF] [--head REF]
 #                [--repo DIR] [--output FILE] [--paths-output FILE]
-#                [--outside-output FILE]
+#                [--outside-output FILE] [--declared-output FILE]
 #
 #   --mode    harness (default) | docs | render-candidate.
 #   --event   pull_request | merge_group | push. Any other event answers false.
@@ -34,11 +34,14 @@
 #             classifier, one path per line. Default: do not write a file.
 #   --outside-output  docs mode: overwrite this file with every changed path
 #             outside the docs set, one path per line, empty on a true
-#             verdict, on a false one reached before any path was read,
+#             verdict, when docs discovery did not complete,
 #             and in harness mode, which reads no docs set.
 #             The change-class action reads it to tell an unclaimed path
 #             the docs set holds from one it does not. Default: do not
 #             write a file.
+#   --declared-output  docs mode: changed paths admitted by the trusted
+#             declaration. Missing where declaration discovery failed.
+#             The shared lane owner refuses missing evidence.
 #
 # stdout carries the selected verdict line and nothing else:
 # harness_only=true|false, docs_only=true|false, or render_candidate=true|false.
@@ -71,6 +74,7 @@
 # on the spot with an explicit `||`; anything left over is a defect in this
 # script, and a red step is the honest report of one.
 set -euo pipefail
+shopt -s extglob
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib/change-class.sh
@@ -83,6 +87,9 @@ repo="."
 output="${GITHUB_OUTPUT:-}"
 paths_output=""
 outside_output=""
+declared_output=""
+declared=""
+declared_available=true
 changed=""
 outside=""
 base_rev=""
@@ -96,10 +103,11 @@ usage() {
   cat <<'USAGE'
 Usage: harness-only [--mode harness|docs|render-candidate] --event EVENT [--base REF] [--head REF]
                     [--repo DIR] [--output FILE] [--paths-output FILE]
-                    [--outside-output FILE]
+                    [--outside-output FILE] [--declared-output FILE]
 
   --mode    harness (default): accept generated harness files.
-            docs: accept docs/, changelog.d/, and root .md or .markdown files.
+            docs: accept docs/, changelog.d/, root .md or .markdown files,
+            and exact text paths declared in trusted base settings.
             render-candidate: permit new head-owned paths and the adopted
             refresh caller and bot-instructions outputs without an inventory
             entry for prerequisites only.
@@ -118,6 +126,15 @@ Usage: harness-only [--mode harness|docs|render-candidate] --event EVENT [--base
             classifier, one path per line.
   --outside-output  docs mode: overwrite this file with the changed paths
             outside the docs set, one path per line.
+  --declared-output  docs mode: write changed paths admitted by
+            HARNESS_CI_DOCS_PATHS, one per line. Missing on an unreadable
+            or invalid declaration; consumers must refuse that evidence.
+
+  HARNESS_CI_DOCS_PATHS adds exact repository-relative .md or .markdown
+  files from the --base commit's [env] settings tables only. No globs,
+  instructions, executable files or loaded templates. Unset/blank adds none.
+  Declared text keeps its owning lane checks; use the lanes interface,
+  never a blanket docs_only waiver. See ../references/wiring.md.
 
 Prints harness_only=true|false, docs_only=true|false, or render_candidate=true|false.
 Exit 2 on a wiring error.
@@ -170,6 +187,7 @@ while [ "$#" -gt 0 ]; do
     --output) need_value "$1" "$#" "${2:-}"; output="$2"; shift 2 ;;
     --paths-output) need_value "$1" "$#" "${2:-}"; paths_output="$2"; shift 2 ;;
     --outside-output) need_value "$1" "$#" "${2:-}"; outside_output="$2"; shift 2 ;;
+    --declared-output) need_value "$1" "$#" "${2:-}"; declared_output="$2"; shift 2 ;;
     --mode)
       need_value "$1" "$#" "${2:-}"
       case "$2" in
@@ -220,10 +238,17 @@ write_paths() { # FILE LIST CAUSE — overwrite FILE with LIST, one per line
 }
 
 verdict() { # true|false [FIELDS REASON]
+  # Class-only change-class callers need the complete set for subsystem proof.
+  if [ "$classification" = docs ] && [ "$declared_available" = false ]; then
+    outside=""
+  fi
   [ -z "$paths_output" ] ||
     write_paths "$paths_output" "$changed" paths-output-write-failed
   [ -z "$outside_output" ] ||
     write_paths "$outside_output" "$outside" outside-output-write-failed
+  if [ -n "$declared_output" ] && [ "$declared_available" = true ]; then
+    write_paths "$declared_output" "$declared" declared-output-write-failed
+  fi
   if [ -n "$output" ]; then
     if ! { printf '%s=%s\n' "$verdict_key" "$1" >>"$output"; } 2>/dev/null; then
       die "cause=output-write-failed" \
@@ -299,6 +324,42 @@ fi
 # Every changed path is read, not only up to the first outside the set, so
 # --outside-output lists them all; the verdict names the first.
 if [ "$classification" = docs ]; then
+  declared_available=false
+  work="$(mktemp -d)" || die "cause=mktemp-failed" "could not create a settings directory"
+  [ -d "$work" ] && [ ! -L "$work" ] || die "cause=mktemp-invalid" "settings directory is not a directory"
+  work="$(cd -- "$work" && pwd -P)" || die "cause=mktemp-unresolved" "could not resolve the settings directory"
+  trap 'rm -rf -- "${work:?}"' EXIT
+  ORCH_DIR="$SCRIPT_DIR/../../orch"
+  BASE_REV=""
+  BASE_SETTINGS_KEYS='HARNESS_CI_DOCS_PATHS HARNESS_CI_STANDARD_PATHS'
+  unset HARNESS_CI_DOCS_PATHS HARNESS_CI_STANDARD_PATHS
+  base_settings || verdict false "$MEASURE_CAUSE" "trusted docs settings could not be read"
+  docs_paths=""
+  if [ -n "${HARNESS_CI_DOCS_PATHS:-}" ]; then
+    change_class_path_load "$ORCH_DIR/references/narrow-change.conf" ||
+      verdict false "cause=$CHANGE_CLASS_PATH_CAUSE" "protected docs paths could not be read"
+    set -f
+    CHANGE_CLASS_STANDARD_PATHS=""
+    for path in ${HARNESS_CI_STANDARD_PATHS:-}; do
+      CHANGE_CLASS_STANDARD_PATHS="$CHANGE_CLASS_STANDARD_PATHS$path"$'\n'
+    done
+    for path in $HARNESS_CI_DOCS_PATHS; do
+      case "$path" in
+        /* | */ | "." | .. | ./* | ../* | */./* | */../* | */. | */.. | *//* | *[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._/-]*)
+          verdict false "cause=invalid-docs-path" "a declared docs path is not a canonical relative file" ;;
+      esac
+      case "$path" in
+        *.md | *.markdown) ;;
+        *) verdict false "cause=invalid-docs-path" "a declared docs path is not Markdown" ;;
+      esac
+      change_class_path "$path" launch
+      [ -z "$CHANGE_CLASS_PATH" ] || verdict false \
+        "cause=protected-docs-path path=$(stable_value "$path")" "a declared docs path is protected"
+      docs_paths="${docs_paths:+$docs_paths
+}$path"
+    done
+    set +f
+  fi
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     case "$path" in
@@ -306,9 +367,31 @@ if [ "$classification" = docs ]; then
       */*) ;;
       *.md | *.markdown) continue ;;
     esac
+    if grep -qxF -- "$path" <<<"$docs_paths"; then
+      seen=false
+      for endpoint in "$base" "$head"; do
+        status=0
+        rev_file "$endpoint" "$path" "$work/docs-file" || status=$?
+        case "$status" in
+          2) continue ;;
+          0)
+            entry="$(git_repo ls-tree "$endpoint" -- "$path")" ||
+              verdict false "cause=unreadable-docs-path" "declared text entry is unreadable"
+            [ "${entry%% *}" = 100644 ] || verdict false \
+              "cause=executable-docs-path" "declared text is executable"
+            seen=true ;;
+          *) verdict false "cause=unreadable-docs-path" "declared text is not a readable regular file" ;;
+        esac
+      done
+      [ "$seen" = true ] || verdict false "cause=unreadable-docs-path" "declared text has no readable entry"
+      declared="${declared:+$declared
+}$path"
+      continue
+    fi
     outside="${outside:+$outside
 }$path"
   done <<<"$changed"
+  declared_available=true
   [ -z "$outside" ] || {
     first="${outside%%
 *}"

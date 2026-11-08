@@ -67,7 +67,8 @@
 #                      § Per-lane verdicts.
 #   lanes_cause        why: render, trivial, docs-only or queue-only where
 #                      lanes=false; full-run on schedule and
-#                      workflow_dispatch; render-claim where a declared lane
+#                      workflow_dispatch; declared-text where declared product
+#                      text keeps its checks; render-claim where a declared lane
 #                      claims a path a render changes;
 #                      queue-only-reader-absent where a render lacks the
 #                      stand-down's reader; queue-only-lanes-from-unset
@@ -239,6 +240,15 @@ printf 'change_class=%s\n' "$class" >>"$GITHUB_OUTPUT"
 # only where a lane is declared: a classifier checkout older than that flag
 # still serves every caller that declares none.
 docs_args=(--mode docs "${args[@]}" --paths-output "${work:?}/paths")
+docs_help="$("$SCRIPTS/harness-only" --help)" ||
+  die "path-reader-help-failed" "could not read the docs reader's supported options"
+declared_supported=false
+case "$docs_help" in
+  *--declared-output*)
+    declared_supported=true
+    docs_args=("${docs_args[@]}" --declared-output "${work:?}/declared") ;;
+  *) : >"${work:?}/declared" ;;
+esac
 [ -z "${LANES_FROM:-}" ] ||
   docs_args=("${docs_args[@]}" --outside-output "${work:?}/outside")
 docs="$("$SCRIPTS/harness-only" "${docs_args[@]}")" || {
@@ -250,6 +260,9 @@ case "$docs" in
   *) die "docs-verdict-unreadable docs-line=$docs" \
     "harness-only printed no docs_only line" ;;
 esac
+if [ "$declared_supported" = true ] && [ ! -f "${work:?}/declared" ]; then
+  die "declared-paths-unreadable" "the docs reader did not complete declaration discovery"
+fi
 
 # One family per directory level a caller gates on: the skill, the workspace
 # member and the workflow file. A path outside all three joins no family, and
@@ -290,7 +303,8 @@ fi
 
 # Whether the lanes run. A `render` diff was proved by re-rendering it, a
 # `trivial` one is inside its allowlist and line ceiling, and a docs-only one
-# changes no path outside the documentation set at any size. Every other diff
+# changes no path outside the documentation set at any size. Declared text
+# keeps its owning checks through the shared producer. Every other diff
 # runs the lanes.
 # A separately checked-out default branch can predate the installed producer
 # while the action already carries it. With no decision, run every lane.
