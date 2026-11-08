@@ -44,10 +44,8 @@ MAILBOX_READ_FILES = (
 )
 LANE_MAIL_TIMEOUT_SECONDS = 30
 LANE_MAIL_CLEANUP_SECONDS = 5
-FIELD_CHOICES = {
-    "box": ("to-overseer", "to-lane"), "kind": ("ask", "notice", "answer", "directive", "resolution"),
-    "answer_source": ("send", "resolve"),
-}
+# Keep this definition on one line for the field-choice mutation control.
+FIELD_CHOICES = {"box": ("to-overseer", "to-lane"), "kind": ("ask", "notice", "answer", "directive", "resolution"), "answer_source": ("send", "resolve")}
 
 
 class LaneMail:
