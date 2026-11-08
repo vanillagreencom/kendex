@@ -92,6 +92,7 @@ Before writing a file, find its type in this table, then read its section and it
 |---|---|---|---|
 | `docs/decisions/*.md` | § Decision records | [decision.md](examples/decision.md) | none |
 | `docs/architecture/*.md` | [architecture.md](references/architecture.md) | [architecture-plugins.md](examples/architecture-plugins.md) | `value-table` |
+| `docs/runbook.md` | § Runbooks | [runbook.md](examples/runbook.md) | none |
 | `AGENTS.md` | [agents.md](references/agents.md) | [root-agents.md](examples/root-agents.md) | none |
 | `*/AGENTS.md` | [agents.md](references/agents.md) | [nested-agents-plugins.md](examples/nested-agents-plugins.md) | none |
 | `SKILL.md`, `*/SKILL.md`, `*/workflows/*.md`, `agents/*.md`, `*/agents/*.md` | [skill-files.md](references/skill-files.md) | [skill-entry.md](examples/skill-entry.md) | none |
@@ -112,6 +113,14 @@ For an internal design claim, ask the questions below in order and stop at the f
 ### Decision records
 
 Read by a reviewer or agent about to reverse a choice. The bar, the format and the workflows are the [decider](../decider/SKILL.md) skill's; this skill ships no second format. A principle doc states the current actionable rule and cites the decision ID. It does not repeat the decision's reasons or alternatives. Example: [examples/decision.md](examples/decision.md).
+
+### Runbooks
+
+Read by an operator maintaining or recovering a running system. A procedure names the task and when to use it, the target environment, required access and tools, and approval for effects that change service or data. Put steps in execution order. Give each step its expected reading and the condition that permits the next step. Name the source of the reading, such as a status page, command result or log. An unavailable reading is unresolved, not success.
+
+State when the operator stops, how to leave or restore the system, and who receives a failure with its evidence. Describe recovery only where the system's current operating contract supports it. Finish with the end-state check and cleanup of temporary access, files or changed settings; preserve evidence until its handoff is checked. Verify instructions against the current tools and operating contract. Link to declarations and tool help instead of copying their inventories or defaults.
+
+Never: build and test instructions for package development, design rationale, incident history or a record of one run. Those facts keep their homes under § Layout and § Plans and research. Example: [examples/runbook.md](examples/runbook.md).
 
 ### Documentation HTML
 
