@@ -101,7 +101,7 @@ a quoted executable keeps its attached redirect|rc=2 first=block-argv-kill: refu
 an operator inside quoted data stays data|rc=0 first=-|echo "pkill>note"
 ROWS
 
-echo "=== block-argv-kill: env split-string operands are executable text ==="
+echo "=== block-argv-kill: env operands and their accepted data limits ==="
 # env's split-string options run their operand as argv; later arguments and
 # heredoc stdin are still data. The harness submits these strings, never runs them.
 assert_split_operand() {
@@ -116,8 +116,11 @@ the short split-string operand runs pkill|rc=2 first=block-argv-kill: refused=pk
 the separate long operand runs killall|rc=2 first=block-argv-kill: refused=killall|env --split-string 'killall node'
 the attached long operand runs killall|rc=2 first=block-argv-kill: refused=killall|env --split-string='killall node'
 env options before the operand keep its execution|rc=2 first=block-argv-kill: refused=pkill|/usr/bin/env -i -S "pkill -f node"
+accepted limit: multiword data inside a short env operand stays refused|rc=2 first=block-argv-kill: refused=pkill|env -S 'printf "%s\\n" "never use pkill here"'
+accepted limit: multiword data inside a long env operand stays refused|rc=2 first=block-argv-kill: refused=killall|env --split-string='printf "%s\\n" "never use killall here"'
+accepted limit: an echo of an env operand stays refused|rc=2 first=block-argv-kill: refused=pkill|echo env -S 'never use pkill here'
 data after the split operand stays quoted|rc=0 first=-|env -S 'printf %s' 'never use pkill here'
-an env option mentioned in echo data stays data|rc=0 first=-|echo "env -S pkill -f node"
+the whole env invocation quoted as echo data stays data|rc=0 first=-|echo "env -S pkill -f node"
 a quoted env heredoc remains stdin data|rc=0 first=-|env -S 'printf bash %s' <<'NOTE'\npkill -f node\nNOTE
 an expanding env heredoc remains stdin data|rc=0 first=-|env --split-string='printf bash %s' <<NOTE\nkillall node\nNOTE
 ROWS
@@ -134,7 +137,7 @@ run_hook 'pkill-wrapper --dry-run';            assert_eq "$rc" 0 'the verb glued
 run_hook 'echo unpkill';                       assert_eq "$rc" 0 'the verb glued to a prefix is another word'
 run_hook 'git status';                         assert_eq "$rc" 0 'a command with neither verb passes'
 
-echo "=== block-argv-kill: quoted and heredoc data pass ==="
+echo "=== block-argv-kill: the named quoted and heredoc data pass ==="
 assert_data_mention() {
   run_hook "$1"
   assert_eq "$rc" 0 "$2"
@@ -143,7 +146,7 @@ while IFS='|' read -r label text; do
   text=$(printf '%b' "$text")
   assert_data_mention "$text" "$label"
 done <<'ROWS'
-the verb inside a quoted string passes|echo "never use pkill here"
+the multiword quoted echo passes|echo "never use pkill here"
 the verbs inside a heredoc body pass|cat <<'NOTE'\nnever use pkill or killall here\nNOTE
 ROWS
 
@@ -159,7 +162,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
   (
     HOOK="$TMP_ROOT/control/hooks/block-argv-kill.sh"
     PASS=0 FAIL=0
-    assert_data_mention 'echo "never use pkill here"' 'the verb inside a quoted string passes'
+    assert_data_mention 'echo "never use pkill here"' 'the multiword quoted echo passes'
     [ "$FAIL" -eq 0 ]
   ) >"$TMP_ROOT/control.log" 2>&1 || control_rc=$?
   assert_eq "$control_rc" 1 'control: raw scanning makes the quoted-data assertion fail'
@@ -184,7 +187,7 @@ fi
 echo "=== block-argv-kill: the stated limits ==="
 # A spelling the shell assembles from quotes or escapes stays outside the
 # frozen lexical-scanner class; the shared reader does not assemble words.
-run_hook 'echo "pkill"';                       assert_eq "$rc" 2 'a single-word quoted argument remains a possible command word'
+run_hook 'echo "pkill"';                       assert_eq "$rc" 2 'accepted limit: a single-word quoted argument remains a possible command word'
 run_hook "p'kill' -f x";                       assert_eq "$rc" 0 'a verb the shell assembles from quotes is not seen'
 run_hook 'kill\all x';                         assert_eq "$rc" 0 'a verb the shell assembles from an escape is not seen'
 
