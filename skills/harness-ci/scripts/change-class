@@ -496,6 +496,8 @@ answer() { # CLASS FIELDS [measured]
       --paths-output "$work/paths" --outside-output "$work/outside" \
       --declared-output "$work/declared" \
       --output /dev/null)" || die "cause=path-reader-failed" "could not read lane inputs"
+    [ -f "$work/declared" ] || die "cause=declared-paths-unreadable" \
+      "the docs reader did not complete declaration discovery"
     # harness-only owns the resolved endpoints; render move checks read them.
     # The two records below are the ones the action's log carries.
     { cat -- "$harness_err"; printf '%s\n%s\n' "$queue_line" "$per_push_line"; } >"$work/class-log"
