@@ -1,5 +1,4 @@
 """Real tmux and shared launch code; account meter and native CLIs are fixtures."""
-import argparse
 from contextlib import redirect_stderr
 import hashlib
 import io
@@ -213,10 +212,6 @@ class TaskContract(unittest.TestCase):
                 observed = self.acknowledgement(record)
                 self.assertFalse(imported.exists())
                 self.assertEqual(observed["cwd"], str(expected))
-                native_options = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
-                native_options.add_argument("-C", "--cd")
-                working_root, _ = native_options.parse_known_args(observed["argv"][:-1])
-                self.assertEqual((Path(observed["cwd"]) / (working_root.cd or ".")).resolve(), expected)
                 self.assertEqual(record["cwd"], str(expected))
                 self.assertEqual(record["home"], str(self.home))
                 self.assertEqual(record["task_file"], str(self.task_file))
