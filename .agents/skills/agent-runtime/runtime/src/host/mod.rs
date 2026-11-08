@@ -261,6 +261,35 @@ pub fn run_tagged_in(
     .map_err(|failed| failed.into_error(caller))
 }
 
+/// `run_tagged_in` with the child leading its own process group, which the
+/// bound ends whole: for a program whose own children (a git hook, a
+/// validation it starts) would otherwise outlive a call that gave no answer.
+pub fn run_tagged_in_own_group(
+    tag: &'static str,
+    program: &'static str,
+    executable: &Path,
+    operation: &'static str,
+    args: &[&str],
+    place: Place,
+    timeout: Duration,
+) -> Result<Output> {
+    let caller = Caller {
+        program,
+        operation,
+        tag: Some(tag),
+    };
+    start(
+        caller,
+        executable.as_os_str(),
+        args,
+        place,
+        None,
+        true,
+        timeout,
+    )
+    .map_err(|failed| failed.into_error(caller))
+}
+
 /// `run_tagged_in` with `stdin` fed to the child: for a program that takes
 /// its subject on its standard input, such as a provider's `put`. The same
 /// spawn site, bound and count as every run.
@@ -564,11 +593,24 @@ fn spawn(
         });
     }
     let started = std::time::Instant::now();
+    // A child leading its own group is ended with the group, so nothing it
+    // started outlives a call that gave no answer.
+    let leader = child.id();
+    let end_group = || {
+        if own_group {
+            let _ = Command::new("kill")
+                .args(["-KILL", "--", &format!("-{leader}")])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+        }
+    };
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) => {
                 if started.elapsed() > timeout {
+                    end_group();
                     let _ = child.kill();
                     let _ = child.wait();
                     return Err(external(format!("no answer within {}s", timeout.as_secs())));
@@ -579,13 +621,17 @@ fn spawn(
         }
     };
     let remaining = || timeout.saturating_sub(started.elapsed());
+    let unanswered = || {
+        end_group();
+        external(format!("no answer within {}s", timeout.as_secs()))
+    };
     let stdout = stdout
         .recv_timeout(remaining())
-        .map_err(|_| external(format!("no answer within {}s", timeout.as_secs())))?
+        .map_err(|_| unanswered())?
         .map_err(|e| external(e.to_string()))?;
     let stderr = stderr
         .recv_timeout(remaining())
-        .map_err(|_| external(format!("no answer within {}s", timeout.as_secs())))?
+        .map_err(|_| unanswered())?
         .map_err(|e| external(e.to_string()))?;
     Ok(Output {
         status,
@@ -911,6 +957,46 @@ mod tests {
         .unwrap_err();
         assert!(matches!(err, Error::External { .. }), "{err:?}");
         assert_eq!(counts().of("u5b2-bounded", Some("row-f")), 1);
+    }
+
+    #[test]
+    fn a_group_leader_past_its_bound_is_ended_with_what_it_started() {
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("grandchild");
+        let exe = stub(
+            dir.path(),
+            "u8ac-group-bound",
+            &format!("sleep 30 &\necho $! > '{}'\nwait\n", pidfile.display()),
+        );
+        let err = run_tagged_in_own_group(
+            "u8ac-group-bound",
+            "u8ac-group-bound",
+            &exe,
+            "bounded",
+            &[],
+            Place::default(),
+            Duration::from_millis(500),
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::External { .. }), "{err:?}");
+        let grandchild = std::fs::read_to_string(&pidfile).unwrap();
+        let alive = |pid: &str| {
+            Command::new("kill")
+                .args(["-0", pid.trim()])
+                .stderr(Stdio::null())
+                .status()
+                .unwrap()
+                .success()
+        };
+        let mut waited = 0;
+        while alive(&grandchild) && waited < 200 {
+            std::thread::sleep(Duration::from_millis(10));
+            waited += 1;
+        }
+        assert!(
+            !alive(&grandchild),
+            "the grandchild outlived its group's bound"
+        );
     }
 
     /// A child started apart leads its own process group, so a signal to

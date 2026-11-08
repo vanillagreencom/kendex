@@ -974,6 +974,20 @@ fn parse_array(text: Option<&str>) -> Result<Option<serde_json::Value>> {
 
 /// The JSON request at `path`, as `T`: an operation request, or the
 /// `admit` verb's.
+/// `value` as the reply, the process exiting `status` once it is printed
+/// where the reply's outcome names a status of its own.
+fn replied(value: serde_json::Value, status: i32) -> Result<serde_json::Value> {
+    if status != 0 {
+        let _ = writeln!(
+            std::io::stdout().lock(),
+            "{}",
+            serde_json::to_string(&Reply::ok(value)).unwrap_or_default()
+        );
+        std::process::exit(status);
+    }
+    Ok(value)
+}
+
 fn read_request<T: serde::de::DeserializeOwned>(path: &PathBuf) -> Result<T> {
     let bytes = std::fs::read(path)
         .map_err(|e| Error::Runtime(agent_runtime::Error::io("read-request", path.clone(), e)))?;
@@ -1095,6 +1109,20 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             // under `ORCH_OVERSEER_SUCCESSION=off`.
             ops::admit(&request, &settings)?;
             let env = system_env()?;
+            // A push, a round's prune and a QA decision run their effects
+            // between their own writes; a push or a prune answers with its
+            // reply and the exit its outcome names.
+            if let Request::RecordPush(r) = &request {
+                let pushed = ops::push::run(&path, r, &settings, &flags, &env, locking)?;
+                return replied(serde_json::to_value(&pushed)?, pushed.exit);
+            }
+            if let Request::PruneRound(r) = &request {
+                let pruned = ops::prune_round(&path, r, &settings, locking)?;
+                return replied(serde_json::to_value(&pruned)?, pruned.exit);
+            }
+            if let Request::RecordQaDecision(r) = &request {
+                return ops::qa::run(&path, r, &settings, locking);
+            }
             // A verification reads GitHub first and makes its one
             // transition through record-verification itself.
             if let Request::VerifyHead(r) = &request {

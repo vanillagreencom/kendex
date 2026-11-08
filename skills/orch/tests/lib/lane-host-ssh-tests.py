@@ -836,7 +836,7 @@ signal.sigwait({signal.SIGTERM})
     def hosted_state_launch(self, harness="claude"):
         """Run delegation and recovery through create's actual hosted prefix."""
         scripts = self.source / ".agents/skills/orch/scripts"
-        for name in ("workflow-state", "git-context", "round-recover", "round-prune", "orch-env"):
+        for name in ("workflow-state", "git-context", "round-recover", "orch-env"):
             self.copy_file(PACKAGE / "scripts" / name, scripts / name)
         self.copy_tree(PACKAGE.parent / "github/scripts/lib",
                         self.source / ".agents/skills/github/scripts/lib", dirs_exist_ok=True)
@@ -845,8 +845,6 @@ signal.sigwait({signal.SIGTERM})
                                     "commit", "--allow-empty", "-qm", "state scripts")):
             subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args],
                            env=self.git_env, check=True, capture_output=True)
-        # The prune's disk decision is independent of this machine's free space.
-        self.executable(self.bin / "df", "#!/bin/sh\nprintf 'Filesystem 1024-blocks Used Available Capacity Mounted\\nfixture 100 1 99 1%% /\\n'\n")
         created = self.create(harness=harness)
         self.assertEqual(created.returncode, 0, created.stderr)
         fields = dict(word.split("=", 1) for word in created.stdout.decode().strip().split("\t"))
@@ -865,7 +863,6 @@ round=$("$state" new-round-id TEST-1 dev_round_id)
 rc=0
 "$scripts/round-recover" --worktree "$PWD" --issue TEST-1 --round-id "$round" || rc=$?
 [[ "$rc" -eq 3 ]]
-"$scripts/round-prune" TEST-1
 "$state" set-now TEST-1 dev_delegated_at >/dev/null
 "$state" get TEST-1
 ''')
@@ -893,17 +890,9 @@ rc=0
             [self.env["REAL_GIT"], "-C", str(path), "rev-parse", "HEAD"],
             env=self.git_env, check=True, capture_output=True).stdout.decode().strip())
         self.assertEqual(state["recovery_round_id"], state["dev_round_id"])
-        self.assertEqual(state["round_prunes"][state["dev_round_id"]],
-                         dict(action="below-mark", used_pct=1, mark_pct=75, bytes=0))
         self.assertIsInstance(state["dev_delegated_at"], int)
         self.assertFalse((Path(self.row["clone"]) / "tmp").exists())
         self.assertFalse((self.root / "control-state").exists())
-        # Without the launch variable the same linked checkout reaches the
-        # state-missing branch, rather than another script or fixture failure.
-        command = "cd " + shlex.quote(str(path)) + " && unset ORCH_STATE_DIR && exec .agents/skills/orch/scripts/round-prune TEST-1"
-        refused = self.hosted_prefix_run(fields, command)
-        self.assertEqual(refused.returncode, 2, refused.stderr)
-        self.assertIn(b"round-prune: state-missing=dev_round_id\n", refused.stderr)
 
     def test_hosted_prefix_carries_state_for_each_harness(self):
         caller_home = self.root / "caller-home"

@@ -162,7 +162,10 @@ fn has_live_effect(request: &Request) -> bool {
         | Request::AdmitPaths(_)
         | Request::PruneRecords(_)
         | Request::Validate(_)
-        | Request::RecordQueueWatch(_) => false,
+        | Request::RecordQueueWatch(_)
+        | Request::RecordPush(_)
+        | Request::PruneRound(_)
+        | Request::RecordQaDecision(_) => false,
     }
 }
 
@@ -364,7 +367,10 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
                     | Request::AdmitPaths(_)
                     | Request::PruneRecords(_)
                     | Request::Validate(_)
-                    | Request::RecordQueueWatch(_) => {
+                    | Request::RecordQueueWatch(_)
+                    | Request::RecordPush(_)
+                    | Request::PruneRound(_)
+                    | Request::RecordQaDecision(_) => {
                         unreachable!("a request without a live effect reports no effect")
                     }
                 };
@@ -419,7 +425,10 @@ fn run_effect(run: &Run, request: &Request, effect: &Effect) -> Result<Effected>
         | Request::AdmitPaths(_)
         | Request::PruneRecords(_)
         | Request::Validate(_)
-        | Request::RecordQueueWatch(_) => {
+        | Request::RecordQueueWatch(_)
+        | Request::RecordPush(_)
+        | Request::PruneRound(_)
+        | Request::RecordQaDecision(_) => {
             unreachable!("a request without a live effect reports no effect")
         }
     }?;

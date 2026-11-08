@@ -57,6 +57,7 @@ Read when a workflow, a reference or a `--help` names a setting and the task nee
 | `ORCH_LANE_HOST_SHORT_MAX_CALLS` / `ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS` | Independent per-home short-call cap and wait; mailbox reads can run while long calls wait on sandbox preparation | `4` / `30` |
 | `ORCH_OVERSEER_HOST` | Host inspection for registration and the plain succession command; `tmux` is the included provider and another runtime refuses `runtime-unsupported`. Runtime controller launches use tmux directly. [Protocol](../schemas/overseer-host.md) | `tmux` |
 | `QA_PERF_PATHS` | Space-separated path globs whose modification adds the `needs-perf-test` QA signal | empty |
+| `QA_PERF_RUNNER` / `QA_PERF_WORKLOAD` / `QA_PERF_BASELINE` | The performance review's documented runner command, the workload it measures and the baseline it compares against. `record-qa-decision` records `needs-perf-test` as gating only when all three are set; otherwise it records the signal under `advisory` with `review-unproducible key=<the first unset key>` | empty |
 | `QA_UI_PATHS` | Space-separated path globs whose modification adds the `needs-ui-review` QA signal | empty |
 | `QA_UI_DESIGN_DOC` | Repository path of the design-system doc a dev round that changes a view builds to and the `needs-ui-review` pass judges against; unset is reported as a gap | empty |
 | `RECONCILE_STALE_HOURS` | Hours before an In Progress or In Review item counts as started-stale in `reconcile-work-items` sweeps | `24` |

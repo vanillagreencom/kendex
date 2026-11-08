@@ -213,7 +213,7 @@ else
     "$ORCH/workflow-state" set-git-head "$ITEM" pre_delegate_sha "$WT" || fail pre-delegate-sha
     begun="$(op --item '{"op": "begin-round", "kind": "dev"}')" || fail begin-round
     RID="$(jq -er '.round_id' <<<"$begun")" || fail begin-round-id
-    "$ORCH/round-prune" "$ITEM" || fail round-prune
+    op_reply --item '{"op": "prune-round", "field": "dev"}' >/dev/null || fail round-prune
     "$ORCH/workflow-state" set-now "$ITEM" dev_delegated_at || fail dev-delegated-at
     "$ORCH/workflow-state" get "$ITEM" '.near_ceiling // []' || fail near-ceiling-read
     "$ORCH/workflow-state" update "$ITEM" \
@@ -465,20 +465,17 @@ jq -e --arg lifecycle managed --arg verdict pass \
   <<<"$BASE_REVIEW_STATE" >/dev/null || fail gate-unaccepted
 step prepare
 BOUND_HEAD="$(git rev-parse --verify HEAD)" || fail bound-head
-prepared="$("$ORCH/worktree-push" --prepare-base --worktree "$WT" --issue "$ITEM")" || fail prepare
-receipt_line="$(sed -n 's/^prepared-base: //p' <<<"$prepared")"
-PREPARED_BASE="${receipt_line#* before=}"
-PREPARED_BASE="${PREPARED_BASE%% *}"
-PREPARED_HEAD="${receipt_line##* commit=}"
+prepared="$(op_reply --item "$(jq -cn --arg wt "$WT" '{op: "record-push", mode: "prepare", worktree: $wt}')")" \
+  || fail prepare
+PREPARED_BASE="$(jq -r '.result.prepared.before // empty' <<<"$prepared")"
+PREPARED_HEAD="$(jq -r '.result.prepared.commit // empty' <<<"$prepared")"
 [ -n "$PREPARED_BASE" ] && [ -n "$PREPARED_HEAD" ] || fail prepare-receipt
 printf 'bound-head=%s\n' "$BOUND_HEAD"
 step publish
-published="$("$ORCH/worktree-push" --publish-base "$PREPARED_BASE" "$PREPARED_HEAD" --worktree "$WT" --issue "$ITEM")" || fail publish
-delivery_line="$(sed -n 's/^delivery: mode=push-base //p' <<<"$published")"
-PUSHED="${delivery_line#* commit=}"
-PUSHED="${PUSHED%% *}"
-PUSHED_BASE="${delivery_line#base=}"
-PUSHED_BASE="${PUSHED_BASE%% *}"
+published="$(op_reply --item "$(jq -cn --arg wt "$WT" --arg base "$PREPARED_BASE" --arg head "$PREPARED_HEAD" \
+  '{op: "record-push", mode: "publish", worktree: $wt, base: $base, head: $head}')")" || fail publish
+PUSHED="$(jq -r '.result.delivery.commit // empty' <<<"$published")"
+PUSHED_BASE="$(jq -r '.result.delivery.base // empty' <<<"$published")"
 [ -n "$PUSHED" ] && [ -n "$PUSHED_BASE" ] || fail delivery-receipt
 
 # --- skills/orch/workflows/submit-pr.md § 2.1: verify the published head where it stands ---

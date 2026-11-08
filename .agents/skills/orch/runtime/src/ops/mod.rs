@@ -35,6 +35,8 @@ pub mod mail;
 mod occupancy;
 pub mod proof;
 pub mod prune;
+pub mod push;
+pub mod qa;
 pub mod queue_watch;
 pub mod store;
 pub mod successor;
@@ -65,6 +67,7 @@ pub use item::{
     ResultAccepted, ResumeHandoff, RoundBegun, RoundKind, RoundReconciled, RunCause, RunReconciled,
     RunState, ValidationAdmitted, Verdict, VerificationRecorded, VerifyHead,
 };
+pub use item::{PruneRound, RoundField, RoundPruned, prune_round};
 // The stop's bounded wait reads the job by the item transitions' one identity
 // reader.
 pub(crate) use admission::origin_slug;
@@ -263,6 +266,16 @@ pub enum Request {
     /// The queue wait's memory, replaced whole on the item before its next
     /// poll.
     RecordQueueWatch(queue_watch::RecordQueueWatch),
+    /// Push the item's worktree and reconcile its recorded commits; the
+    /// `push` module runs it, since the push comes between its writes.
+    RecordPush(push::RecordPush),
+    /// The round's Cargo prune; `item::prune_round` runs it, since the
+    /// cleanup comes between its record's writes.
+    PruneRound(PruneRound),
+    /// The review's QA routing and the reviews that were not performed;
+    /// the `qa` module runs it, since the diff reads and the notice come
+    /// before and between its writes.
+    RecordQaDecision(qa::RecordQaDecision),
 }
 
 impl Request {
@@ -299,6 +312,9 @@ impl Request {
             Request::PruneRecords(_) => "prune-records",
             Request::Validate(_) => "validate",
             Request::RecordQueueWatch(_) => "record-queue-watch",
+            Request::RecordPush(_) => "record-push",
+            Request::PruneRound(_) => "prune-round",
+            Request::RecordQaDecision(_) => "record-qa-decision",
         }
     }
 
@@ -317,7 +333,10 @@ impl Request {
             | Request::RecordHandoff(_)
             | Request::ResumeHandoff(_)
             | Request::Validate(_)
-            | Request::RecordQueueWatch(_) => Kind::Item,
+            | Request::RecordQueueWatch(_)
+            | Request::RecordPush(_)
+            | Request::PruneRound(_)
+            | Request::RecordQaDecision(_) => Kind::Item,
             Request::LaunchLane(_)
             | Request::AdoptSession(_)
             | Request::RequestTransfer(_)
@@ -503,7 +522,10 @@ fn reread_on_record_changed(request: &Request) -> bool {
         | Request::AdmitPaths(_)
         | Request::PruneRecords(_)
         | Request::Validate(_)
-        | Request::RecordQueueWatch(_) => false,
+        | Request::RecordQueueWatch(_)
+        | Request::RecordPush(_)
+        | Request::PruneRound(_)
+        | Request::RecordQaDecision(_) => false,
     }
 }
 
@@ -627,7 +649,10 @@ pub fn item_transition(
         Request::VerifyHead(_)
         | Request::VerifyPr(_)
         | Request::VerifyReview(_)
-        | Request::ApproveHead(_) => Err(Error::OpNotTransition { op: request.name() }),
+        | Request::ApproveHead(_)
+        | Request::RecordPush(_)
+        | Request::PruneRound(_)
+        | Request::RecordQaDecision(_) => Err(Error::OpNotTransition { op: request.name() }),
         Request::LaunchLane(_)
         | Request::AdoptSession(_)
         | Request::RequestTransfer(_)
@@ -737,7 +762,10 @@ pub fn fleet_transition(
         | Request::RecordHandoff(_)
         | Request::ResumeHandoff(_)
         | Request::Validate(_)
-        | Request::RecordQueueWatch(_) => Err(kind_error(request, path, Kind::Fleet)),
+        | Request::RecordQueueWatch(_)
+        | Request::RecordPush(_)
+        | Request::PruneRound(_)
+        | Request::RecordQaDecision(_) => Err(kind_error(request, path, Kind::Fleet)),
     }
 }
 

@@ -34,6 +34,8 @@ clap = { version = "4.6", features = ["derive"] }
 # The reset a usage-limit banner names, resolved in the zone it names or the
 # runner's own, with the fall-back hour's two instants.
 jiff = "0.2"
+# The tracker's issue pattern a branch is matched against, GH_ISSUE_PATTERN.
+regex = "1"
 
 [dev-dependencies]
 tempfile = "3"
@@ -125,6 +127,10 @@ path = "../tests/rust/reconcile_items.rs"
 [[test]]
 name = "state"
 path = "../tests/rust/state.rs"
+
+[[test]]
+name = "push"
+path = "../tests/rust/push.rs"
 
 [lints.rust]
 unsafe_code = "forbid"

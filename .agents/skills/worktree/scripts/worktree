@@ -2,10 +2,10 @@
 # stdout protocol: create/path return a worktree path, exists returns a boolean,
 # merged returns a merge commit, check returns JSON, and push emits
 # rebase-map: <old-sha> <new-sha|dropped> for
-# skills/orch/scripts/worktree-push. A completed restack (create --reuse,
+# orch's record-push. A completed restack (create --reuse,
 # create --restack, restack continue|skip) reports the same map lines on
 # stderr, because create's stdout is the worktree path, and appends them to
-# the worktree-private kendex-rebase-map file that worktree-push consumes.
+# the worktree-private kendex-rebase-map file that record-push consumes.
 # These data records remain separate from worktree-<key>: <value> notices.
 # English explanation is not a parsed protocol.
 # Portable git worktree manager. Run with --help for the command index,
@@ -608,7 +608,7 @@ emit_rebase_map() {
 # rewrite of one restack, and a reader must apply the hops in order and one at
 # a time: a record that moved X -> Y in the first hop moves Y -> Z in the
 # second, and a reconciliation that saw both at once would compare Y against
-# the record's pre-hop value X and stop at Y. `worktree-push` splits the file
+# the record's pre-hop value X and stop at Y. `record-push` splits the file
 # on this line.
 readonly RESTACK_HOP_MARK='rebase-hop:'
 
@@ -674,7 +674,7 @@ refuse_unidentified_worktree() { # TARGET PHYSICAL_PATH
 # The worktree-private file a completed restack leaves its rebase map in. It
 # lives in the worktree's own git dir, so it is untracked, invisible to
 # `git status`, private to this checkout, and outlives the process that wrote
-# it. `skills/orch/scripts/worktree-push` asks git for the same path.
+# it. orch's `record-push` asks git for the same path.
 restack_rebase_map_file() {
   local wt="$1" path=""
   path="$(git -C "$wt" rev-parse --git-path kendex-rebase-map 2>/dev/null)" || return 1
@@ -687,7 +687,7 @@ restack_rebase_map_file() {
 # but could not derive a map for it. The rewrite outlives the process that
 # refused, and a retry finds the base already contained, so it rebases nothing,
 # derives nothing and would publish a rewrite no map ever described. The marker
-# is what carries the refusal across those processes. `worktree-push` reads the
+# is what carries the refusal across those processes. `record-push` reads the
 # same line.
 readonly RESTACK_UNMAPPED_MARK='rebase-unmapped:'
 
@@ -791,7 +791,7 @@ restack_map_refusal() {
 # uses: a map that was only printed lives in its reader's temporary capture,
 # which that reader does not act on until this process has already returned and
 # which its own exit trap then removes, so printing is not recording.
-# `orch/scripts/worktree-push` reconciles from this file.
+# orch's `record-push` reconciles from this file.
 REBASE_HOP_FILE=""
 append_rebase_hop() {
   local wt="$1" map_lines="$2"
@@ -811,7 +811,7 @@ append_rebase_hop() {
 # The map goes to stderr, not stdout: `create --reuse/--restack` hands its
 # caller the worktree path on stdout and a map printed there would be read as
 # part of it. The machine channel for a restack is the appended file, which
-# the separate `worktree-push` process consumes. The append opens its own hop
+# the separate `record-push` process consumes. The append opens its own hop
 # under RESTACK_HOP_MARK, so two restacks before one push stay two hops that
 # the reader applies in order rather than one merged map that would strand
 # every record on the first restack's rewritten SHA. A restack whose map
@@ -3557,7 +3557,7 @@ case "${1:-}" in
     if [[ -n "$REMOVE_MAP_FILE" && -s "$REMOVE_MAP_FILE" ]]; then
       worktree_message remove-rebase-map "$REMOVE_MAP_FILE" "Error: $WT_PATH still holds an unreconciled rebase map, the only record of a rewrite this removal would delete while keeping the branch; refusing to remove it." >&2
       echo "Nothing was released, removed or pruned." >&2
-      echo "Let orch/scripts/worktree-push consume it, or reconcile every recorded SHA against the worktree reflog, then remove it:" >&2
+      echo "Let orch's record-push consume it, or reconcile every recorded SHA against the worktree reflog, then remove it:" >&2
       echo "  rm -f \"$REMOVE_MAP_FILE\"" >&2
       exit 1
     fi
@@ -4162,7 +4162,7 @@ case "${1:-}" in
           if [[ -n "$PUSH_MAP_LINES" ]]; then
             printf '%s\n' "$PUSH_MAP_LINES"
             # Printing is not recording: the hop on disk is what reaches
-            # worktree-push, and the pending record stands until it lands.
+            # record-push, and the pending record stands until it lands.
             if ! append_rebase_hop "$WT_PATH" "$PUSH_MAP_LINES"; then
               worktree_message push-map-unrecorded "${REBASE_HOP_FILE:-$WT_PATH}" "Error: The rebase onto origin/$DEFAULT_BRANCH is done but its map could not be recorded, so SHAs recorded before it cannot be reconciled; refusing to push. The map's only copy is on stdout above." >&2
               exit 1

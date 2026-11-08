@@ -770,59 +770,102 @@ fn merged_side(bytes: &[u8], side: u8) -> Option<Vec<u8>> {
     (region == 0).then(|| out.into_bytes())
 }
 
-pub(crate) fn project_rebase(text: &str, sha: &str) -> crate::error::Result<String> {
-    use std::collections::BTreeMap;
-    let invalid = |cause| crate::validate::files::unreadable("rebase-map-unreadable", cause);
-    if text.lines().any(|l| l.starts_with("rebase-unmapped: ")) {
-        return Err(invalid("rebase-unmapped"));
+/// One hop of a `kendex-rebase-map`: the rewrite's old commits to their new
+/// ones (`dropped` where the patch was already upstream), in the order the
+/// file lists them, a repeated old commit taking its last value in its first
+/// place.
+pub type Hop = Vec<(String, String)>;
+
+/// Why a map cannot be read whole: the key the worktree skill's grammar
+/// names and the line it stopped on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MapUnreadable {
+    pub cause: &'static str,
+    pub line: usize,
+}
+
+/// The hops of a `kendex-rebase-map`, read whole before any is applied: a
+/// `rebase-unmapped:` line anywhere refuses first, since no mapping repairs
+/// that rewrite; then each `rebase-hop:` opens a hop whose `rebase-map: OLD
+/// NEW` lines follow it, and anything else, a mapping before a boundary or a
+/// hop with no mapping refuses.
+pub fn hops(text: &str) -> std::result::Result<Vec<Hop>, MapUnreadable> {
+    let refuse = |cause, line| Err(MapUnreadable { cause, line });
+    if let Some(n) = text
+        .lines()
+        .position(|l| l.starts_with("rebase-unmapped: "))
+    {
+        return refuse("rebase-unmapped", n + 1);
     }
     let valid = |s: &str| {
         s.len() == 40
             && s.bytes()
                 .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
     };
-    let mut hops = Vec::new();
-    let mut hop = None;
-    for line in text.lines() {
+    let mut hops: Vec<Hop> = Vec::new();
+    let mut open: Option<usize> = None;
+    let mut last = 0;
+    for (index, line) in text.lines().enumerate() {
+        let n = index + 1;
+        last = n;
         if line == "rebase-hop:" {
-            if let Some(old) = hop.take() {
-                hops.push(old);
+            if let Some(at) = open
+                && hops.last().is_some_and(Vec::is_empty)
+            {
+                return refuse("restack-map-grammar", at);
             }
-            hop = Some(BTreeMap::<String, String>::new());
-        } else if let Some(line) = line.strip_prefix("rebase-map: ") {
-            let mut words = line.split(' ');
+            hops.push(Vec::new());
+            open = Some(n);
+        } else if let Some(rest) = line.strip_prefix("rebase-map: ") {
+            let Some(hop) = hops.last_mut().filter(|_| open.is_some()) else {
+                return refuse("restack-map-grammar", n);
+            };
+            let mut words = rest.split(' ');
             let old = words.next().unwrap_or("");
-            let new = words.next().unwrap_or("");
-            if !valid(old) || !(valid(new) || new == "dropped") || words.next().is_some() {
-                return Err(invalid("map-sha"));
+            let new = words.collect::<Vec<_>>().join(" ");
+            if !valid(old) || !(valid(&new) || new == "dropped") {
+                return refuse("map-sha", n);
             }
-            hop.as_mut()
-                .ok_or_else(|| invalid("restack-map-grammar"))?
-                .insert(old.into(), new.into());
+            match hop.iter_mut().find(|(o, _)| o == old) {
+                Some(entry) => entry.1 = new,
+                None => hop.push((old.to_owned(), new)),
+            }
         } else {
-            return Err(invalid("restack-map-grammar"));
+            return refuse("restack-map-grammar", n);
         }
     }
-    if let Some(hop) = hop {
-        hops.push(hop);
+    match (open, hops.last()) {
+        (None, _) => refuse("restack-map-grammar", last.max(1)),
+        (Some(at), Some(hop)) if hop.is_empty() => refuse("restack-map-grammar", at),
+        _ => Ok(hops),
     }
-    if hops.is_empty() || hops.iter().any(BTreeMap::is_empty) {
-        return Err(invalid("restack-map-grammar"));
-    }
-    let mut projected = sha.to_owned();
-    for hop in hops {
-        let original = projected.clone();
-        for (old, new) in hop {
-            if old.starts_with(&original) {
-                projected = if new == "dropped" {
-                    format!("dropped:{original}")
-                } else {
-                    new[..original.len()].to_owned()
-                };
-            }
+}
+
+/// A recorded commit through one hop: every mapping whose old commit the
+/// recorded prefix starts is compared against the commit as the hop found
+/// it, never another mapping's output, and the last one wins; a new commit
+/// is cut to the recorded length, and a dropped one marked
+/// `dropped:<recorded>` so no later hop reads it as live.
+pub fn remap(recorded: &str, hop: &Hop) -> String {
+    let mut out = recorded.to_owned();
+    for (old, new) in hop {
+        if old.starts_with(recorded) {
+            out = if new == "dropped" {
+                format!("dropped:{recorded}")
+            } else {
+                new[..recorded.len().min(new.len())].to_owned()
+            };
         }
     }
-    Ok(projected)
+    out
+}
+
+pub(crate) fn project_rebase(text: &str, sha: &str) -> crate::error::Result<String> {
+    let hops = hops(text)
+        .map_err(|e| crate::validate::files::unreadable("rebase-map-unreadable", e.cause))?;
+    Ok(hops
+        .iter()
+        .fold(sha.to_owned(), |sha, hop| remap(&sha, hop)))
 }
 
 #[cfg(test)]

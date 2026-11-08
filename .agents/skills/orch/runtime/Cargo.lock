@@ -367,6 +367,7 @@ dependencies = [
  "agent-runtime",
  "clap",
  "jiff",
+ "regex",
  "serde",
  "serde_json",
  "tempfile",

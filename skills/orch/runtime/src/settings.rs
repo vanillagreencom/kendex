@@ -117,6 +117,18 @@ pub const DEV_VALIDATE_TIMEOUT_SECS_KEY: &str = "DEV_VALIDATE_TIMEOUT_SECS";
 /// `pr`, the default, or `push-base`: direct delivery keeps every ci
 /// request on local validation.
 pub const DELIVERY_KEY: &str = "ORCH_DELIVERY";
+/// The disk use percent at or past which `prune-round` reclaims the lane
+/// worktree's Cargo output; the op judges it.
+pub const ROUND_PRUNE_KEY: &str = "ORCH_ROUND_PRUNE_DISK_PCT";
+/// The QA decision's path globs and the performance review's declaration,
+/// each read as written; `record-qa-decision` judges them.
+pub const QA_KEYS: [&str; 5] = [
+    "QA_UI_PATHS",
+    "QA_PERF_PATHS",
+    "QA_PERF_RUNNER",
+    "QA_PERF_WORKLOAD",
+    "QA_PERF_BASELINE",
+];
 /// The program the lane admission reads a diff range's changed paths
 /// through; empty finds the installed change-scope
 /// package's `harness-only`.
@@ -408,6 +420,12 @@ const READ_KEYS: &[&str] = &[
     DEV_VALIDATE_FINDING_PREFIX_KEY,
     DEV_VALIDATE_TIMEOUT_SECS_KEY,
     DELIVERY_KEY,
+    ROUND_PRUNE_KEY,
+    QA_KEYS[0],
+    QA_KEYS[1],
+    QA_KEYS[2],
+    QA_KEYS[3],
+    QA_KEYS[4],
     SCOPE_PATHS_CLI_KEY,
     JOB_CLAIM_SECS_KEY,
     WATCH_MAIL_INTERVAL_KEY,
@@ -777,6 +795,10 @@ pub struct Settings {
     pub accounts: AccountSettings,
     pub store: StoreSettings,
     pub review: ReviewSettings,
+    /// `ORCH_ROUND_PRUNE_DISK_PCT` as written.
+    pub round_prune_mark: Option<String>,
+    /// The `QA_KEYS` that are set, as written.
+    pub qa: BTreeMap<String, String>,
 }
 
 /// The controller's own marks beyond the headroom trigger: the rate mark
@@ -1535,7 +1557,14 @@ pub fn load(
         on_timeout: text(REVIEW_ON_TIMEOUT_KEY, "proceed"),
         copilot_requests: text(COPILOT_REQUESTS_KEY, "on"),
     };
+    let round_prune_mark = get(ROUND_PRUNE_KEY).map(str::to_owned);
+    let qa = QA_KEYS
+        .iter()
+        .filter_map(|key| get(key).map(|v| ((*key).to_owned(), v.to_owned())))
+        .collect();
     Ok(Settings {
+        round_prune_mark,
+        qa,
         roots: roots.clone(),
         reads,
         reconcile_stale_hours: get("RECONCILE_STALE_HOURS")

@@ -167,7 +167,10 @@ impl Op {
             | Request::AdmitPaths(_)
             | Request::PruneRecords(_)
             | Request::Validate(_)
-            | Request::RecordQueueWatch(_) => None,
+            | Request::RecordQueueWatch(_)
+            | Request::RecordPush(_)
+            | Request::PruneRound(_)
+            | Request::RecordQaDecision(_) => None,
         }
     }
 

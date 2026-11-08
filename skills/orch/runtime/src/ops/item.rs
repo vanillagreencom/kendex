@@ -2,8 +2,9 @@
 //! admitted for a round before any work starts, a stage closed with its
 //! outcome, a round's admitted runs reconciled against the host, the
 //! verification verdict of a published head (recorded, or read from GitHub
-//! and then recorded by the `verify` module), and the handoff record a
-//! session leaves for the one that continues its round.
+//! and then recorded by the `verify` module), the handoff record a
+//! session leaves for the one that continues its round, and the round's
+//! Cargo prune with its record.
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
@@ -1504,4 +1505,419 @@ pub(super) fn resume_handoff(
         resumed_at,
         resumed_now,
     })
+}
+
+/// Which round token a prune records under: the development round's, or
+/// the CI route's, so a CI cleanup never replaces a development round's
+/// record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RoundField {
+    Dev,
+    Ci,
+}
+
+impl RoundField {
+    fn key(self) -> &'static str {
+        match self {
+            RoundField::Dev => "dev_round_id",
+            RoundField::Ci => "ci_round_id",
+        }
+    }
+}
+
+/// Reclaim the lane worktree's Cargo output at a round's start where the
+/// volume holding it is at or past `ORCH_ROUND_PRUNE_DISK_PCT`, and record
+/// what that freed under `round_prunes[<round>]`. The consumer's cleanup
+/// policy decides whether a round runs it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PruneRound {
+    pub field: RoundField,
+}
+
+/// What the prune did, recorded as it is reported.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RoundPruned {
+    pub action: &'static str,
+    pub used_pct: u64,
+    pub mark_pct: u64,
+    pub bytes: u64,
+    pub round: String,
+    pub worktree: String,
+    /// The round's earlier prune whose answer was lost, read as `unknown`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cleanup: Option<Value>,
+    pub exit: i32,
+}
+
+const PRUNE_TAG: &str = "prune";
+const PRUNE_READ: Duration = Duration::from_secs(120);
+const CLEANUP_BOUND: Duration = Duration::from_secs(30 * 60);
+const DEFAULT_MARK: u64 = 75;
+const DEFAULT_ISSUE_PATTERN: &str = "([A-Z]+-[0-9]+|issue-[0-9]+)";
+
+fn prune_refused(key: &'static str, fields: &[(&str, &str)]) -> Error {
+    agent_runtime::Error::refused(key, fields).into()
+}
+
+/// A git read for the prune through the one runner: its raw stdout, or
+/// `Err` with its first stderr line.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the prune's reads of the lane's repository through the one runner; they act on nothing"
+)]
+fn prune_git(
+    dir: &Path,
+    operation: &'static str,
+    args: &[&str],
+) -> std::result::Result<Vec<u8>, String> {
+    let dir = dir.display().to_string();
+    let mut argv = vec!["-C", dir.as_str()];
+    argv.extend_from_slice(args);
+    let out = host::run_tagged(
+        PRUNE_TAG,
+        "git",
+        Path::new("git"),
+        operation,
+        &argv,
+        PRUNE_READ,
+    )
+    .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(host::stderr_text(&out)
+            .lines()
+            .next()
+            .unwrap_or("")
+            .to_owned());
+    }
+    Ok(out.stdout)
+}
+
+fn is_dir(path: &Path) -> bool {
+    fs::metadata(path).is_ok_and(|m| m.is_dir())
+}
+
+/// The linked worktree the record names, never the main checkout:
+/// `recorded` where it is one of the repository's linked worktrees, else the
+/// linked worktree with `branch` checked out, else none. A tree git still
+/// lists whose directory is gone answers for nothing; git is asked only
+/// where there is a candidate, and a listing it cannot give is `Err`.
+fn lane_worktree(
+    project: &Path,
+    recorded: &str,
+    branch: &str,
+) -> std::result::Result<Option<PathBuf>, String> {
+    let want = (!recorded.is_empty() && is_dir(Path::new(recorded)))
+        .then(|| fs::canonicalize(recorded).ok())
+        .flatten();
+    if want.is_none() && branch.is_empty() {
+        return Ok(None);
+    }
+    let listing = prune_git(
+        project,
+        "worktree-list",
+        &["worktree", "list", "--porcelain", "-z"],
+    )?;
+    let mut n = 0;
+    let mut path = PathBuf::new();
+    let mut lane = false;
+    let mut branch_hit = None;
+    let want_branch = format!("branch refs/heads/{branch}");
+    for field in listing.split(|b| *b == 0) {
+        let field = String::from_utf8_lossy(field);
+        if let Some(tree) = field.strip_prefix("worktree ") {
+            path = PathBuf::from(tree);
+            n += 1;
+            lane = n > 1 && is_dir(&path);
+            if lane
+                && let Some(want) = &want
+                && fs::canonicalize(&path).ok().as_ref() == Some(want)
+            {
+                return Ok(Some(path));
+            }
+        } else if lane && !branch.is_empty() && branch_hit.is_none() && field == want_branch {
+            branch_hit = Some(path.clone());
+        }
+    }
+    Ok(branch_hit)
+}
+
+/// The issue id the lease start-worktree claims is keyed by: the one the
+/// worktree's branch names (a paused rebase detaches HEAD, and its
+/// `head-name` keeps the branch), in the tracker's canonical case; `key`
+/// where the branch names none.
+fn lease_owner(tree: &Path, key: &str) -> std::result::Result<String, String> {
+    let mut branch =
+        String::from_utf8_lossy(&prune_git(tree, "branch", &["branch", "--show-current"])?)
+            .trim_end()
+            .to_owned();
+    if branch.is_empty() {
+        let git_dir = String::from_utf8_lossy(&prune_git(
+            tree,
+            "git-dir",
+            &["rev-parse", "--absolute-git-dir"],
+        )?)
+        .trim_end()
+        .to_owned();
+        for state in ["rebase-merge", "rebase-apply"] {
+            if let Ok(name) = fs::read_to_string(Path::new(&git_dir).join(state).join("head-name"))
+            {
+                let name = name.trim_end_matches('\n');
+                branch = name.strip_prefix("refs/heads/").unwrap_or(name).to_owned();
+                break;
+            }
+        }
+    }
+    let pattern = std::env::var("GH_ISSUE_PATTERN")
+        .ok()
+        .filter(|p| !p.is_empty())
+        .unwrap_or_else(|| DEFAULT_ISSUE_PATTERN.to_owned());
+    let pattern = regex::RegexBuilder::new(&pattern)
+        .case_insensitive(true)
+        .build()
+        .map_err(|e| format!("pattern {e}"))?;
+    Ok(match pattern.find(&branch) {
+        Some(m) => {
+            let lower = m.as_str().to_lowercase();
+            if lower.starts_with("issue-") {
+                lower
+            } else {
+                m.as_str().to_uppercase()
+            }
+        }
+        None => key.to_owned(),
+    })
+}
+
+/// The use percent `df -P` reports for the volume holding `probe`.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the prune's one read of the volume's use through the one runner; it acts on nothing"
+)]
+fn volume_use(probe: &Path) -> Option<u64> {
+    let probe = probe.display().to_string();
+    let out = host::run_tagged(
+        PRUNE_TAG,
+        "df",
+        Path::new("df"),
+        "df",
+        &["-P", "--", &probe],
+        PRUNE_READ,
+    )
+    .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = host::stdout_text(&out);
+    let used = text
+        .lines()
+        .nth(1)?
+        .split_whitespace()
+        .nth(4)?
+        .strip_suffix('%')?;
+    (!used.is_empty() && used.len() <= 3 && used.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| used.parse().ok())
+        .flatten()
+}
+
+/// The owner-scoped cleanup of the worktree's own Cargo profiles through
+/// the worktree skill, by the one runner: `pruned` only on exit 0 with its
+/// summary, `failed` on any other answer or none started, `unknown` where it
+/// started and gave no answer.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the prune's one removal through the worktree skill's owner-scoped cleanup, the one runner, its record written `pruning` first"
+)]
+fn cleanup(cli: &Path, tree: &Path, owner: &str) -> (&'static str, u64, Value) {
+    let wt = tree.display().to_string();
+    let argv = [
+        "cleanup",
+        "--targets-only",
+        "--apply",
+        "--worktree",
+        &wt,
+        "--owner",
+        owner,
+    ];
+    let place = host::Place {
+        cwd: Some(tree),
+        env: &[],
+    };
+    match host::run_tagged_in(
+        PRUNE_TAG,
+        "worktree",
+        cli,
+        "cleanup",
+        &argv,
+        place,
+        CLEANUP_BOUND,
+    ) {
+        Ok(out) => {
+            let stdout = host::stdout_text(&out);
+            let bytes = stdout.lines().find_map(|line| {
+                let rest = line.strip_prefix("worktree-output-prune-summary: ")?;
+                rest.contains(" mode=apply ").then_some(())?;
+                let (_, after) = rest.split_once(" bytes=")?;
+                let (digits, _) = after.split_once(' ')?;
+                (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+                    .then(|| digits.parse::<u64>().ok())
+                    .flatten()
+            });
+            let answer = json!({"exit": out.status.code(), "stdout": stdout, "stderr": host::stderr_text(&out)});
+            match (out.status.code(), bytes) {
+                (Some(0), Some(bytes)) => ("pruned", bytes, answer),
+                (_, bytes) => ("failed", bytes.unwrap_or(0), answer),
+            }
+        }
+        Err(e @ agent_runtime::Error::NotStarted { .. }) => {
+            ("failed", 0, json!({"cause": e.to_string()}))
+        }
+        Err(e) => ("unknown", 0, json!({"cause": e.to_string()})),
+    }
+}
+
+/// `round_prunes[round]` written in one transition.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the prune's record committed under the item's write check, before the cleanup and after its answer"
+)]
+fn record_prune(path: &Path, round: &str, record: Value, locking: state::Locking) -> Result<()> {
+    super::reread(|| {
+        let snapshot = super::loaded(path)?;
+        let mut doc = snapshot.doc.clone();
+        let mut prunes = match doc.get("round_prunes") {
+            Some(Value::Object(map)) => map.clone(),
+            _ => serde_json::Map::new(),
+        };
+        prunes.insert(round.to_owned(), record.clone());
+        state::set(&mut doc, "round_prunes", Value::Object(prunes));
+        state::store(path, &snapshot, &doc, locking)
+    })
+}
+
+/// The prune of the round under `r.field`.
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the prune's one read of the item record before its effects"
+)]
+pub fn prune_round(
+    path: &Path,
+    r: &PruneRound,
+    settings: &crate::settings::Settings,
+    locking: state::Locking,
+) -> Result<RoundPruned> {
+    let field = r.field.key();
+    let missing = |what: &str| prune_refused("state-missing", &[("field", what)]);
+    let snapshot = state::load(path)?.ok_or_else(|| missing(field))?;
+    let doc = &snapshot.doc;
+    let text = |key: &str| {
+        doc.get(key)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned()
+    };
+    let round = text(field);
+    if round.is_empty() {
+        return Err(missing(field));
+    }
+    let previous = (doc
+        .get("round_prunes")
+        .and_then(|p| p.get(&round))
+        .and_then(|r| r.get("action"))
+        .and_then(Value::as_str)
+        == Some("pruning"))
+    .then_some("unknown");
+    let branch = text("branch");
+    let tree =
+        lane_worktree(&settings.roots.project, &text("worktree"), &branch).map_err(|cause| {
+            prune_refused("worktree-list", &[("branch", &branch), ("cause", &cause)])
+        })?;
+    let mark = match settings.round_prune_mark.as_deref() {
+        None => DEFAULT_MARK,
+        Some(value) => value
+            .parse::<u64>()
+            .ok()
+            .filter(|m| {
+                value.len() <= 3
+                    && value.bytes().all(|b| b.is_ascii_digit())
+                    && (1..=100).contains(m)
+            })
+            .ok_or_else(|| {
+                crate::settings::value_refusal(crate::settings::ROUND_PRUNE_KEY, value)
+            })?,
+    };
+    let mut answer = RoundPruned {
+        action: "no-worktree",
+        used_pct: 0,
+        mark_pct: mark,
+        bytes: 0,
+        round: round.clone(),
+        worktree: String::new(),
+        previous,
+        cleanup: None,
+        exit: 0,
+    };
+    let record = |a: &RoundPruned| json!({"action": a.action, "used_pct": a.used_pct, "mark_pct": a.mark_pct, "bytes": a.bytes});
+    let Some(tree) = tree else {
+        record_prune(path, &round, record(&answer), locking)?;
+        return Ok(answer);
+    };
+    answer.worktree = tree.display().to_string();
+    let key = state::item_of(path).unwrap_or_default();
+    let owner = lease_owner(&tree, key).map_err(|cause| {
+        prune_refused(
+            "owner",
+            &[("worktree", &answer.worktree), ("cause", &cause)],
+        )
+    })?;
+    // The Cargo target the validation run builds into, as tools/guard
+    // resolves it, and the volume holding it: the target where it stands,
+    // else its nearest existing ancestor.
+    let target = std::env::var("CARGO_TARGET_DIR")
+        .ok()
+        .filter(|t| !t.is_empty())
+        .unwrap_or_else(|| "target".into());
+    let target = if Path::new(&target).is_absolute() {
+        PathBuf::from(target.trim_end_matches('/'))
+    } else {
+        tree.join(target.trim_end_matches('/'))
+    };
+    let own = tree.join("target");
+    let own_target = if is_dir(&target) && is_dir(&own) {
+        fs::canonicalize(&target).ok() == fs::canonicalize(&own).ok()
+    } else {
+        target == own
+    };
+    let mut probe = target.clone();
+    while !is_dir(&probe) && probe.pop() {}
+    if probe.as_os_str().is_empty() {
+        probe = PathBuf::from("/");
+    }
+    let used = volume_use(&probe)
+        .ok_or_else(|| prune_refused("disk", &[("probe", &probe.display().to_string())]))?;
+    answer.used_pct = used;
+    answer.action = "below-mark";
+    if used >= mark {
+        if !own_target {
+            answer.action = "target-elsewhere";
+            answer.exit = 1;
+        } else {
+            answer.action = "pruning";
+            record_prune(path, &round, record(&answer), locking)?;
+            let (action, bytes, report) = cleanup(&settings.worktree_cli, &tree, &owner);
+            answer.action = action;
+            answer.bytes = bytes;
+            answer.cleanup = Some(report);
+            answer.exit = match action {
+                "pruned" => 0,
+                "unknown" => super::push::UNKNOWN_EXIT,
+                _ => 1,
+            };
+        }
+    }
+    record_prune(path, &round, record(&answer), locking)?;
+    Ok(answer)
 }

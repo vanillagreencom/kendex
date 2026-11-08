@@ -366,7 +366,7 @@ Rewritten commits:
   <new-sha|dropped>' line per rewritten commit on stderr (stdout is the
   worktree path) and appends the same lines, under a 'rebase-hop:' line of
   their own, to 'kendex-rebase-map' in the worktree's git dir.
-  'orch/scripts/worktree-push' applies each hop there in order to reconcile
+  orch's 'record-push' applies each hop there in order to reconcile
   SHAs recorded before the restack, so restacking twice before pushing carries
   a recorded SHA through both rewrites (push --help). A base the branch already
   contains rebases nothing and reports no map.
@@ -679,7 +679,7 @@ otherwise by commit subject. A push that skips the rebase, or one run with
 
 Those printed lines are a report, not the record. The same map is appended to
 'kendex-rebase-map' in the worktree's git dir as its own hop, and that file is
-what 'orch/scripts/worktree-push' reconciles from: a map only printed lives in
+what orch's 'record-push' reconciles from: a map only printed lives in
 its reader's temporary capture, which that reader does not act on until this
 process has returned and which its own exit trap then removes. A push whose
 map cannot be recorded there refuses rather than publishing.
@@ -707,7 +707,7 @@ emitter: this auto-rebase, and a completed restack through 'create --reuse',
 stderr, because create's stdout is the worktree path it hands its caller, and
 records them the same way this auto-rebase does. Each rewrite appends its own
 hop to 'kendex-rebase-map', a 'rebase-hop:' line followed by that rewrite's
-map lines, and 'orch/scripts/worktree-push' applies the hops in order, one
+map lines, and orch's 'record-push' applies the hops in order, one
 reconciliation each: those standing before it pushes, then the one its own
 push writes. It deletes the file only once every hop it read is recorded. The
 hops stay separate because each reconciliation compares a record against the

@@ -41,6 +41,7 @@ disallowed-methods = [
     { path = "agent_runtime::host::run_tagged", reason = "a program is run under a duty's tag only by a watch duty for its own work, each call site carrying its reason" },
     { path = "agent_runtime::host::run_tagged_in", reason = "a program is run in a working directory or with added variables only by the operation handle or a watch duty for its own work, each call site carrying its reason" },
     { path = "agent_runtime::host::run_tagged_fed", reason = "a program is fed its stdin only by the operation handle or a watch duty for its own work, each call site carrying its reason" },
+    { path = "agent_runtime::host::run_tagged_in_own_group", reason = "a program is started apart from the runtime process group, its group ended at the bound, only by the item's push, the call site carrying its reason" },
     { path = "agent_runtime::host::run_tagged_fed_own_group", reason = "a program is started apart from the runtime process group only by the account renewal, whose grant must land once the endpoint answered, the call site carrying its reason" },
     { path = "agent_runtime::host::run_tagged_alone", reason = "a program is run in an environment of the caller's making alone only by the operation handle, for a client whose answer it reads by its text" },
     { path = "agent_runtime::host::start_detached", reason = "a detached job is started only by the operation handle, its record written first" },
