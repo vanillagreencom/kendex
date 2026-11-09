@@ -48,9 +48,11 @@ pub enum ProjectCommand {
         /// Print one JSON array on stdout instead of the rows: per project,
         /// `folder` (the registered path), `state` (`ok`, `folder-not-found`,
         /// `not-a-folder` or `unreadable`) and `worktree`, which is null
-        /// unless the folder is in a linked git worktree and then holds
-        /// `main`, the main checkout's path, or null where git could not
-        /// name it
+        /// unless the git repository holding the folder is checked out there
+        /// as a linked worktree, and then holds `main`, the main checkout's
+        /// path, or null where git could not name it. A linked worktree
+        /// around a nested repository, such as a submodule, is not reported.
+        /// Where git cannot say, the command fails naming the folder
         #[arg(long)]
         json: bool,
     },
@@ -353,14 +355,19 @@ fn compare_settings(env: &Env) -> CliResult {
     Ok(())
 }
 
-/// A listed project that is in a linked git worktree: `main` is the main
-/// checkout of its repository, or `None` where git could not name it.
+/// A listed project whose own repository is checked out there as a linked
+/// git worktree: `main` is that repository's main checkout, or `None` where
+/// git could not name it.
 struct Linked {
     main: Option<std::path::PathBuf>,
 }
 
-/// Whether a listed project is in a linked git worktree, `None` where it
-/// is not; an error where git could not answer.
+/// Whether the repository holding a listed project is checked out there as
+/// a linked git worktree, `None` where it is not; an error where git could
+/// not answer. A nested repository, a submodule among them, probes as its
+/// own main checkout even inside a linked worktree: this answers for the
+/// folder's own repository, not one enclosing it, which
+/// `Repo::enclosing_linked` does.
 ///
 /// A linked git worktree carrying declarations of its own is a project in
 /// its own right, and it sits on this list beside the checkout it was

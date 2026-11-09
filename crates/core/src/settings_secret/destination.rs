@@ -561,7 +561,7 @@ fn git_standing(root: &Path, file: &str) -> std::result::Result<Option<GitStandi
     let inside = run(root, &["rev-parse", "--is-inside-work-tree"])?;
     if !inside.status.success() {
         let said = String::from_utf8_lossy(&inside.stderr);
-        if said.contains("not a git repository") || said.contains("not a working tree") {
+        if crate::guard::says_no_repository(&said) {
             return Ok(None);
         }
         return Err(format!("git could not read this project ({})", said.trim()));

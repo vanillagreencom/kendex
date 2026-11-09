@@ -112,3 +112,42 @@ fn each_registered_folder_is_one_exact_entry() {
     expected.sort_by_key(by_folder);
     assert_eq!(entries, expected);
 }
+
+/// Where git cannot say whether a registered folder is in a linked
+/// worktree, the document is refused naming that folder rather than
+/// printed with `worktree: null`, which a consumer would read as "not a
+/// worktree" and route a write to the folder itself. The key leads the
+/// refusal because a program reads it; the cause after it is git's.
+#[test]
+#[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
+fn a_folder_git_cannot_answer_for_refuses_the_document() {
+    type Break = fn(&Path);
+    let cases: [(&str, Break); 2] = [
+        ("malformed config", |folder| {
+            git(folder, &["init", "--quiet"]);
+            let config = folder.join(".git/config");
+            let mut text = fs::read_to_string(&config).unwrap();
+            text.push_str("[\n");
+            fs::write(config, text).unwrap();
+        }),
+        ("worktree whose main checkout is gone", |folder| {
+            let gone = folder.parent().unwrap().join("moved/.git/worktrees/lane");
+            fs::write(folder.join(".git"), format!("gitdir: {}\n", gone.display())).unwrap();
+        }),
+    ];
+    for (case, break_it) in cases {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let folder = home.join("dev/app");
+        fs::create_dir_all(&folder).unwrap();
+        register(&home, &folder);
+        break_it(&folder);
+
+        let listed = kendex(&home, &["project", "list", "--json"]);
+        let stderr = String::from_utf8_lossy(&listed.stderr);
+        assert!(!listed.status.success(), "{case}: {stderr}");
+        assert!(listed.stdout.is_empty(), "{case}: {listed:?}");
+        let key = format!("Error: project-list-unread={}\n", folder.display());
+        assert!(stderr.starts_with(&key), "{case}: {stderr}");
+    }
+}

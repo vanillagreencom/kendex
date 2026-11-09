@@ -17,11 +17,28 @@ use super::guard_err;
 /// Matched as a phrase rather than by exit status: 128 is git's catch-all,
 /// and a dubious-ownership refusal or a broken config carries it too.
 ///
+/// The parenthesis is part of the phrase. git's discovery ends with
+/// `not a git repository (or any of the parent directories): .git`, or
+/// `(or any parent up to mount point …)`, where it found nothing
+/// (setup.c). A `.git` file naming a git directory that is gone, the
+/// linked worktree whose main checkout was moved or deleted, ends with
+/// `not a git repository: <that directory>` instead, recorded under git
+/// 2.43 with `LC_ALL=C`: a repository is there and could not be read.
+///
 /// Which is why the children below are run under `LC_ALL=C`. git translates
 /// its diagnostics, so under another locale these phrases match nothing and
 /// every "there is no repository here" becomes "could not tell" — a report
 /// nobody can act on, in every scope, for anyone not working in English.
-const NOT_A_REPOSITORY: [&str; 2] = ["not a git repository", "not a working tree"];
+const NOT_A_REPOSITORY: [&str; 2] = ["not a git repository (or any ", "not a working tree"];
+
+/// Whether git's complaint, under [`english`], says there is no repository
+/// at the directory it ran in. Anything else it complains of is a check
+/// that could not be taken.
+pub(crate) fn says_no_repository(complaint: &str) -> bool {
+    NOT_A_REPOSITORY
+        .iter()
+        .any(|phrase| complaint.contains(phrase))
+}
 
 /// One repository, resolved: the worktree that invoked us and the common
 /// dir every linked worktree shares. Both canonical, because paths are
@@ -313,10 +330,7 @@ impl Repo {
         // store — and every one of those is a check that could not be
         // taken. Calling them "nothing here" would read as a pass.
         let complaint = String::from_utf8_lossy(&output.stderr);
-        match NOT_A_REPOSITORY
-            .iter()
-            .any(|phrase| complaint.contains(phrase))
-        {
+        match says_no_repository(&complaint) {
             true => Ok(None),
             false => Err(guard_err(
                 "hooks",
