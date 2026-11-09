@@ -5,6 +5,7 @@
 
 mod desktop;
 mod icons;
+mod token;
 
 use crate::installer_message;
 
@@ -212,6 +213,9 @@ fn installer_output(
         .env("PATH", path)
         .envs(test_util::fixture_env(tmp.path()))
         .env("XDG_DATA_HOME", tmp.path().join(data_dir))
+        // A token sends every request to api.github.com, which these stubs
+        // do not serve; installer/token.rs covers that route.
+        .env_remove("KENDEX_GITHUB_TOKEN")
         .output()
         .expect("install.sh runs");
     (tmp, output)

@@ -41,7 +41,8 @@ while [ $# -gt 0 ]; do
     --cli-only)
       cli_only=1; shift ;;
     -h|--help)
-      message usage install.sh "Usage: install.sh [--git | --version vX.Y.Z] [--cli-only]"
+      message usage install.sh "Usage: install.sh [--git | --version vX.Y.Z] [--cli-only]" \
+        "Set KENDEX_GITHUB_TOKEN to a GitHub token to look up and download the release as that token's user."
       exit 0
       ;;
     *) message unknown-option "$1" "The installer does not accept this option." >&2; exit 2 ;;
@@ -52,6 +53,25 @@ done
   message conflicting-options "--git --version" "Choose the rolling main build or a tagged version." >&2
   exit 2
 }
+
+# KENDEX_GITHUB_TOKEN sends the release lookup and every release download
+# through api.github.com as the token's user, so an install keeps working
+# while GitHub sheds anonymous traffic. The API is the route because
+# github.com's release pages answer a request carrying a token exactly as an
+# anonymous one, a refused token included. GH_TOKEN and GITHUB_TOKEN are not
+# read: a caller holding one for something else keeps sending the anonymous
+# requests it always has. Unexported, the token reaches no command this
+# script starts except curl, which reads it from standard input.
+github_token="${KENDEX_GITHUB_TOKEN:-}"
+unset KENDEX_GITHUB_TOKEN
+# The token is written into a curl config line, where a quote or a newline
+# would end the header and begin an option of its own. GitHub's tokens are
+# letters, digits and underscores.
+case "$github_token" in
+  *[![:alnum:]_]*)
+    message github-token-invalid KENDEX_GITHUB_TOKEN "A GitHub token holds only letters, digits and underscores." >&2
+    exit 2 ;;
+esac
 
 for cmd in awk curl install; do
   command -v "$cmd" >/dev/null || { message missing-command "$cmd" "Install this required command before running the installer." >&2; exit 1; }
@@ -72,8 +92,93 @@ case "$os-$arch" in
     exit 1 ;;
 esac
 
+# One directory for everything downloaded, removed however this run ends.
+# `sh` has no per-function cleanup — `trap ... RETURN` is bash's alone — and
+# an installer that leaves a temp directory behind on every failed attempt
+# fills a machine over time.
+work="$(mktemp -d)" || { message temporary-directory-unavailable "${TMPDIR:-/tmp}" "No temporary download directory could be created." >&2; exit 1; }
+trap 'rm -rf "$work"' EXIT
+
+# A GET to api.github.com that carries the token, into $2; the remaining
+# arguments go to curl. curl drops the header on a redirect to another host,
+# which is where an asset download goes next: a signed storage address that
+# carries its own authorization. --location-trusted would send the token
+# there too, and is never passed. -q, which curl honours only as its first
+# argument, skips the caller's .curlrc, where location-trusted or verbose
+# would send the token on or print it. A 401 is the token, not the release,
+# and stops the install by name rather than reading as a missing asset.
+github_api() {
+  local url="$1" out="$2" status rc
+  shift 2
+  status="$(printf 'header = "Authorization: Bearer %s"\n' "$github_token" \
+    | curl -q -K - -fL --proto '=https' -o "$out" -w '%{http_code}' "$@" "$url")" && return 0
+  rc=$?
+  [ "$status" != 401 ] || {
+    message github-token-rejected "$url" "GitHub refused KENDEX_GITHUB_TOKEN." >&2
+    exit 1
+  }
+  return "$rc"
+}
+
+# The api.github.com address of the asset whose github.com download address
+# is $1, read from the release in $work/release.json. Split at commas, the
+# JSON holds one field to a line however it is laid out. An asset lists its
+# "url" and "name" before its "browser_download_url"; a pairing whose name
+# is not the one downloaded is refused, so a field order this does not
+# expect finds nothing rather than another asset.
+release_asset() {
+  tr ',' '\n' < "$work/release.json" | awk -v want="$1" -v file="${1##*/}" \
+      -v assets="https://api.github.com/repos/$repo/releases/assets/" '
+    function field(key,   v) {
+      if (!match($0, "\"" key "\": *\"[^\"]*\"")) return ""
+      v = substr($0, RSTART, RLENGTH)
+      sub("^\"" key "\": *\"", "", v)
+      return substr(v, 1, length(v) - 1)
+    }
+    index(field("url"), assets) == 1 { url = field("url"); name = "" }
+    field("name") != "" { name = field("name") }
+    field("browser_download_url") == want && name == file && url != "" { print url; found = 1; exit }
+    END { exit !found }
+  '
+}
+
+# One release download into $2. Without a token it is the address as given.
+# With one, a github.com release address is fetched as the api.github.com
+# asset it names, from its tag's release, which stays read for the next
+# download under the same tag; any other address gets no token. An asset
+# the release does not hold answers 22, curl's code for the 404 the
+# github.com address would have returned.
+release_tag=""
+download() {
+  local url="$1" out="$2" tag asset
+  tag="${url#"https://github.com/$repo/releases/download/"}"
+  if [ -z "$github_token" ] || [ "$tag" = "$url" ]; then
+    curl -fSL --proto '=https' -o "$out" "$url"
+    return
+  fi
+  tag="${tag%%/*}"
+  if [ "$tag" != "$release_tag" ]; then
+    github_api "https://api.github.com/repos/$repo/releases/tags/$tag" "$work/release.json" \
+      -sS -H 'Accept: application/vnd.github+json' || return
+    release_tag="$tag"
+  fi
+  asset="$(release_asset "$url")" || return 22
+  github_api "$asset" "$out" -S -H 'Accept: application/octet-stream'
+}
+
 if [ "$git_channel" -eq 1 ]; then
   version="rolling-main"
+elif [ "$version" = latest ] && [ -n "$github_token" ]; then
+  # The token's own quota answers here, not the shared anonymous one.
+  latest="https://api.github.com/repos/$repo/releases/latest"
+  if github_api "$latest" "$work/release.json" -sS -H 'Accept: application/vnd.github+json' \
+     && release_tag="$(tr ',' '\n' < "$work/release.json" | sed -n 's/^.*"tag_name": *"\([^"]*\)".*$/\1/p')" \
+     && [ -n "$release_tag" ]; then
+    version="$release_tag"
+  else
+    message release-unavailable "$latest" "The latest release could not be resolved." >&2
+    exit 1
+  fi
 elif [ "$version" = latest ]; then
   # github.com redirects this page to the latest release's tag page. The API
   # would answer the same, but refuses anonymous callers on a shared IP whose
@@ -104,13 +209,6 @@ if [ "$git_channel" -eq 1 ]; then
 fi
 base="https://github.com/$repo/releases/download/$version"
 
-# One directory for everything downloaded, removed however this run ends.
-# `sh` has no per-function cleanup — `trap ... RETURN` is bash's alone — and
-# an installer that leaves a temp directory behind on every failed attempt
-# fills a machine over time.
-work="$(mktemp -d)" || { message temporary-directory-unavailable "${TMPDIR:-/tmp}" "No temporary download directory could be created." >&2; exit 1; }
-trap 'rm -rf "$work"' EXIT
-
 # Extract one URL from a map in the workflow-owned feed format. The producer
 # writes one entry per line and never escapes its HTTPS URLs.
 feed_url() {
@@ -136,7 +234,7 @@ app_url="$base/kendex_${plain}_${appimage_arch:-}.AppImage"
 icon_ref="$version"
 if [ "$main_feed" -eq 1 ]; then
   pointer="$base/feed.json"
-  if ! curl -fSL --proto '=https' -o "$work/feed.json" "$pointer"; then
+  if ! download "$pointer" "$work/feed.json"; then
     message main-pointer-download-failed "$pointer" "The main build pointer could not be downloaded." >&2
     exit 1
   fi
@@ -218,10 +316,10 @@ done
 install_cli() {
   message command-download "$target" "Downloading the kendex command."
   # curl exits 22 on an HTTP error — here a 404 for an asset the release
-  # lacks; any other failure is the network, not the release. Testing curl
-  # in the condition and reading `$?` in the else is what keeps that code:
-  # `if ! curl` would hand back the negation instead.
-  if curl -fSL --proto '=https' -o "$work/kendex" "$command_url"; then
+  # lacks; any other failure is the network, not the release. Testing the
+  # download in the condition and reading `$?` in the else is what keeps that
+  # code: `if ! download` would hand back the negation instead.
+  if download "$command_url" "$work/kendex"; then
     :
   else
     rc=$?
@@ -338,8 +436,7 @@ install_app_linux() {
   data="${XDG_DATA_HOME:-$HOME/.local/share}"
   libdir="$(kendex_data)"
   message app-download "$appimage_arch" "Downloading the desktop app."
-  if ! curl -fSL --proto '=https' -o "$work/kendex.AppImage" \
-      "$app_url"; then
+  if ! download "$app_url" "$work/kendex.AppImage"; then
     message app-download-failed "$appimage_arch" "The desktop app could not be downloaded; the kendex command is installed." >&2
     return 0
   fi
