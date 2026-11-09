@@ -38,26 +38,17 @@ fn register(home: &Path, folder: &Path) {
     );
 }
 
-/// Every registered folder is one entry whose `folder` is the registered
-/// path byte for byte, whatever the human row would make of its name:
-/// a real newline and a backslash followed by `n` are two folders, and a
-/// folder named like a worktree note is a plain folder. The worktree and
-/// each state that is not `ok` are read from the field, not the name.
-#[test]
-#[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
-fn each_registered_folder_is_one_exact_entry() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
-    let dev = home.join("dev");
-    let main = dev.join("app");
-    fs::create_dir_all(&main).unwrap();
-    git(&main, &["init", "--quiet", "-b", "main"]);
+/// A repository with one commit at `main` and a linked worktree of it at
+/// `linked`.
+#[allow(clippy::unwrap_used, reason = "fixture setup")]
+fn repository_with_worktree(main: &Path, linked: &Path) {
+    fs::create_dir_all(main).unwrap();
+    git(main, &["init", "--quiet", "-b", "main"]);
     fs::write(main.join("README.md"), "main\n").unwrap();
-    git(&main, &["add", "-A"]);
-    git(&main, &["commit", "--quiet", "-m", "one"]);
-    let linked = dev.join("lane");
+    git(main, &["add", "-A"]);
+    git(main, &["commit", "--quiet", "-m", "one"]);
     git(
-        &main,
+        main,
         &[
             "worktree",
             "add",
@@ -67,6 +58,28 @@ fn each_registered_folder_is_one_exact_entry() {
             linked.to_str().unwrap(),
         ],
     );
+}
+
+/// Every registered folder is one entry whose `folder` is the registered
+/// path byte for byte, whatever the human row would make of its name:
+/// a real newline and a backslash followed by `n` are two folders, and a
+/// folder named like a worktree note is a plain folder. The worktree and
+/// each state that is not `ok` are read from the field, not the name, and
+/// a main checkout whose name holds a newline is named whole, not as the
+/// folder its first line names.
+#[test]
+#[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
+fn each_registered_folder_is_one_exact_entry() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let dev = home.join("dev");
+    let main = dev.join("app");
+    let linked = dev.join("lane");
+    repository_with_worktree(&main, &linked);
+    let split_main = dev.join("split\nmain");
+    let split_linked = dev.join("split-lane");
+    repository_with_worktree(&split_main, &split_linked);
+    fs::create_dir_all(dev.join("split")).unwrap();
 
     let ok = |folder: PathBuf| (folder, "ok", Value::Null);
     let rows: Vec<(PathBuf, &str, Value)> = vec![
@@ -74,6 +87,11 @@ fn each_registered_folder_is_one_exact_entry() {
         ok(dev.join("line\\nbreak")),
         ok(dev.join("plain  (worktree of app)")),
         (main.clone(), "ok", Value::Null),
+        (
+            split_linked.clone(),
+            "ok",
+            json!({ "main": split_main.to_str().unwrap() }),
+        ),
         (
             linked.clone(),
             "ok",

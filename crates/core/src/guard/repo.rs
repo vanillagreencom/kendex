@@ -263,7 +263,7 @@ impl Repo {
     /// command must not name a directory nobody has.
     pub fn main_checkout(&self) -> Result<PathBuf> {
         let output = english(Hardened::git(
-            &["worktree", "list", "--porcelain"],
+            &["worktree", "list", "--porcelain", "-z"],
             Some(&self.worktree),
         ))
         .run()?;
@@ -277,13 +277,16 @@ impl Repo {
                 ),
             ));
         }
-        // The first record's `worktree` line, as bytes: a checkout whose
+        // The first record's `worktree` field, as bytes: a checkout whose
         // name is not UTF-8 is a name `path_from` keeps and a lossy
-        // conversion would destroy.
+        // conversion would destroy. `-z` (git 2.36) ends each field with
+        // NUL; without it git writes a path holding a newline unquoted, so
+        // `<dir>/app\nsuffix` would read as `<dir>/app`, recorded under git
+        // 2.43 with `LC_ALL=C`.
         let first = output
             .stdout
-            .split(|byte| *byte == b'\n')
-            .find_map(|line| line.strip_prefix(b"worktree "))
+            .split(|byte| *byte == 0)
+            .find_map(|field| field.strip_prefix(b"worktree "))
             .ok_or_else(|| {
                 guard_err(
                     "hooks",
