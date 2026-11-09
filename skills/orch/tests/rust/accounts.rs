@@ -324,8 +324,8 @@ impl World {
 
 /// One measured local row of the listing for a Claude account at
 /// `alias`, `used` percent on its weekly window (the binding, resetting 60
-/// hours on), the session window at `session` percent four hours in and
-/// resetting one hour on.
+/// hours on), and the 5-hour figure the endpoint still sends at `session`
+/// percent, which no judgement reads.
 fn measured(alias: &str, used: u64, session: u64) -> Value {
     let weekly = stamp(now() + 60 * 3600);
     json!({
@@ -467,6 +467,14 @@ fn left_out(reply: &Value) -> Vec<(String, String)> {
             )
         })
         .collect()
+}
+
+/// The room a seat [`measured`] plants keeps for its overseer at the
+/// trigger `trigger` with no rate measured: the trigger and the setting's
+/// default burn of 5 points an hour of five hours, 5/168 of it an hour of
+/// the week, charged for the 60 hours to the weekly reset, rounded up.
+fn seat_need(trigger: u64) -> u64 {
+    trigger + 9
 }
 
 /// The chooser's request for a Claude launch with `model`.
@@ -617,14 +625,15 @@ fn a_retired_account_is_picked_until_its_date_and_measured_after_it_with_the_con
     );
 }
 
-/// A listing that cannot be read is no empty fleet: a home discovery cannot
-/// list is unjudged for the pick and unread for the roster, each with the
-/// cause.
+/// A listing that cannot be read is no empty fleet: a configured account
+/// whose directory cannot be read is unjudged for the pick and unread for
+/// the roster, each with the cause.
 #[test]
 fn an_unreadable_listing_admits_nothing() {
     use std::os::unix::fs::PermissionsExt;
-    let world = World::new(&[]);
+    let mut world = World::new(&[]);
     world.write_fleet(Vec::new(), None);
+    world.plant_listing(&[measured("aclaude", 20, 0)]);
     let home = world.path().join("home");
     std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o000)).unwrap();
     let refused = world.pick(&claude(None));
@@ -636,7 +645,7 @@ fn an_unreadable_listing_admits_nothing() {
         refused["record"]["cause"]
             .as_str()
             .unwrap()
-            .starts_with("listing-unread host=local home-unreadable path="),
+            .starts_with("listing-unread host=local account-dir-unreadable path="),
         "{refused}"
     );
     assert_eq!(roster["read"], json!(false));
@@ -644,7 +653,7 @@ fn an_unreadable_listing_admits_nothing() {
         roster["cause"]
             .as_str()
             .unwrap()
-            .starts_with("host=local home-unreadable path="),
+            .starts_with("host=local account-dir-unreadable path="),
         "{roster}"
     );
 }
@@ -714,7 +723,7 @@ fn a_lane_on_a_model_is_judged_on_that_models_window_not_the_fullest() {
 /// A relaunch replacing lane L on account A is never refused on L's own
 /// charge, and the projection charges the lanes the runtime proves live.
 /// The fleet's one running lane on A holds a live launch identity (the
-/// row's own child); A's session window charged the live lane's observed
+/// row's own child); A's weekly window charged the live lane's measured
 /// rate for it and for the candidate projects past the bound, so a fresh
 /// launch is refused with A walled; the same pick naming L as the lane it
 /// replaces leaves L's charge out, the candidate alone at the setting's
@@ -722,11 +731,16 @@ fn a_lane_on_a_model_is_judged_on_that_models_window_not_the_fullest() {
 #[test]
 fn a_relaunch_replacing_a_lane_adds_no_lane_to_the_projection() {
     let mut world = World::new(&[]);
-    // The session window at 80 percent four hours in: the live lane's
-    // observed 20 points an hour, charged for it and the candidate to the
-    // reset an hour on, projects past 95; the candidate alone at the
-    // setting's 5 leaves room.
-    world.plant_listing(&[measured("aclaude", 20, 80)]);
+    // The week at 80 percent with its reset an hour on: the measured 15
+    // points an hour, charged for the live lane and the candidate,
+    // projects past 95; the candidate alone at the setting's burn leaves
+    // room.
+    let mut row = measured("aclaude", 80, 0);
+    row["binding_resets_at"] = json!(stamp(now() + 3600));
+    row["resets"]["weekly"] = json!(stamp(now() + 3600));
+    row["usage_rate_state"] = json!("measured");
+    row["usage_rate_pct_per_min"] = json!(0.25);
+    world.plant_listing(&[row]);
     let account = world.dir("aclaude");
     let child = Owned::sleep();
     world.write_fleet(
@@ -821,12 +835,13 @@ fn the_binding_window_is_charged_to_its_reset_not_for_one_hour() {
 }
 
 /// The seat's limit, `min(ORCH_LANE_MAX_PCT, 100 -
-/// ORCH_OVERSEER_HEADROOM_PCT)`, and `pick-seat-omitted` naming `need=`;
-/// `lanes --help` § pick's seat rule. The fleet record's `overseer.account`
-/// is a seat: returned last, held to the headroom setting beside the lane
-/// limit (`seat-reserve` under it, the record and the `none` answer's
-/// `seats` carrying `need` as the integer `50`, the room the seat keeps),
-/// and judged as any account when the overseer asks.
+/// ORCH_OVERSEER_HEADROOM_PCT)` over the room left once the overseer's own
+/// spend to the reset is charged, and `pick-seat-omitted` naming `need=`.
+/// The fleet record's `overseer.account` is a seat: returned last, held to
+/// its overseer's need beside the lane limit (`seat-reserve` under it, the
+/// record and the `none` answer's `seats` carrying `need` as the integer
+/// [`seat_need`], the room the seat keeps), and judged as any account when
+/// the overseer asks.
 #[test]
 fn a_seat_is_held_to_the_overseers_headroom_beside_the_lane_limit_and_returned_last() {
     let mut world = World::new(&[("ORCH_OVERSEER_HEADROOM_PCT", "50")]);
@@ -852,13 +867,13 @@ fn a_seat_is_held_to_the_overseers_headroom_beside_the_lane_limit_and_returned_l
     assert_eq!(seats.len(), 1, "{reserved}");
     assert_eq!(
         seats[0]["need"],
-        json!(50),
+        json!(seat_need(50)),
         "the omitted seat names the room it keeps, spelled as the callers read it"
     );
     let named = world.pick(&named(&seat_dir, claude(None)));
     assert_eq!(named["answer"], json!("walled"), "{named}");
     assert_eq!(named["record"]["verdict"], json!("seat-reserve"));
-    assert_eq!(named["record"]["need"], json!(50));
+    assert_eq!(named["record"]["need"], json!(seat_need(50)));
     assert_eq!(named["record"]["seat"], json!(true));
     let overseer = world.pick(&PickRequest {
         for_overseer: true,
@@ -874,6 +889,45 @@ fn a_seat_is_held_to_the_overseers_headroom_beside_the_lane_limit_and_returned_l
         None,
         "no seat, no room kept"
     );
+}
+
+/// A seat keeps what its overseer will spend to the reset, measured in its
+/// own plan's points: the same work reads 0.12 points an hour on a larger
+/// plan and 0.3 on a smaller one, so with the week at 50 percent and 100
+/// hours to its reset the larger seat keeps 17 (the trigger 5 and 12) and
+/// still takes a worker, while the smaller keeps 35 (5 and 30) and is
+/// `seat-reserve`, where a flat reserve would hand its overseer's room to
+/// the worker.
+#[test]
+fn a_seat_keeps_what_its_overseer_spends_to_the_reset_so_a_smaller_plan_keeps_more() {
+    let mut world = World::new(&[]);
+    let reset = stamp(now() + 100 * 3600);
+    let seat = |alias: &str, rate: f64| {
+        let mut row = measured(alias, 50, 0);
+        row["binding_resets_at"] = json!(reset);
+        row["resets"]["weekly"] = json!(reset);
+        row["usage_rate_state"] = json!("measured");
+        row["usage_rate_pct_per_min"] = json!(rate);
+        row
+    };
+    world.plant_listing(&[seat("large", 0.002), seat("small", 0.005)]);
+    for (alias, answer, verdict, need) in [
+        ("large", "lane", "room", 17),
+        ("small", "walled", "seat-reserve", 35),
+    ] {
+        let dir = world.dir(alias);
+        world.write_fleet(Vec::new(), Some(&dir));
+        let judged = world.pick(&named(&dir, claude(None)));
+        assert_eq!(
+            (
+                &judged["answer"],
+                &judged["record"]["verdict"],
+                &judged["record"]["need"]
+            ),
+            (&json!(answer), &json!(verdict), &json!(need)),
+            "{alias}: {judged}"
+        );
+    }
 }
 
 /// The provider's rows under a host are the judge's own, read from the
@@ -915,8 +969,8 @@ fn a_hosted_pick_reads_the_providers_rows_seats_and_words_from_the_roster_under_
     assert_eq!(seat_last["record"]["seat"], json!(true));
     assert_eq!(
         seat_last["record"]["need"],
-        json!(5),
-        "the seat is held to min(95, 100 - 5) under the default headroom, keeping 5"
+        json!(seat_need(5)),
+        "the seat keeps the default headroom and its overseer's spend to the reset"
     );
     assert_eq!(
         left_out(&world.pick(&PickRequest {
@@ -938,7 +992,7 @@ fn a_hosted_pick_reads_the_providers_rows_seats_and_words_from_the_roster_under_
     tight.plant_host_listing("fleet-vm", &[spent_seat]);
     let omitted = tight.pick(&claude(None));
     assert_eq!(omitted["answer"], json!("none"), "{omitted}");
-    assert_eq!(omitted["record"]["seats"][0]["need"], json!(40));
+    assert_eq!(omitted["record"]["seats"][0]["need"], json!(seat_need(40)));
     // A named reserved account under the host is refused by its word.
     let named = world.pick(&PickRequest {
         lane: Some("/home/me/.held".to_owned()),
@@ -1006,7 +1060,7 @@ fn one_reading_per_billed_account_the_providers_eligible_reading_over_this_machi
         left_out(&refused),
         vec![(world.dir("aclaude"), "seat-reserve".to_owned())]
     );
-    assert_eq!(refused["record"]["seats"][0]["need"], json!(5));
+    assert_eq!(refused["record"]["seats"][0]["need"], json!(seat_need(5)));
     let named_seat = world.pick(&named(&world.dir("aclaude"), claude(None)));
     assert_eq!(named_seat["answer"], json!("walled"), "{named_seat}");
     assert_eq!(named_seat["record"]["verdict"], json!("seat-reserve"));
@@ -1090,6 +1144,52 @@ fn one_reading_per_billed_account_the_providers_eligible_reading_over_this_machi
         own["record"]["qualifying_count"],
         json!(2),
         "both accounts judged on this machine's reading: {own}"
+    );
+}
+
+/// A Claude home signed in by a token, its `setup-token` beside it and no
+/// credential file, reads nothing on this machine while the provider
+/// measured its week: a Fable lane named on it is judged on that week, the
+/// provider's reading standing as an account's one reading does. Named
+/// where nothing lists it and nothing reads it, a home is `unmeasured`,
+/// exit 5, never `no-record`.
+#[test]
+fn a_token_signed_home_is_judged_on_the_providers_week_and_an_unlisted_one_is_unmeasured() {
+    let mut world = World::new(&[("ORCH_LANE_HOST", "fleet-vm")]);
+    world.write_fleet(Vec::new(), None);
+    world.plant_capabilities("fleet-vm", SSH_LINE);
+    let dir = world.dir("tclaude");
+    let mut local = measured("tclaude", 0, 0);
+    local["status"] = json!("no_credentials");
+    let mut provider = through_host(measured("tclaude", 20, 0));
+    provider["config_dir"] = json!(dir);
+    world.plant_host_listing("fleet-vm", &[local, provider]);
+    std::fs::write(
+        Path::new(&dir).join("setup-token"),
+        "sk-ant-oat01-fixture\n",
+    )
+    .unwrap();
+    let fable = world.pick(&named(&dir, claude(Some("claude-fable-5-1"))));
+    assert_eq!(
+        (
+            &fable["answer"],
+            &fable["record"]["measured_through"],
+            &fable["record"]["wall"]
+        ),
+        (&json!("lane"), &json!("host"), &json!(20)),
+        "{fable}"
+    );
+    let unlisted = world.path().join("home/.tokenhome");
+    std::fs::create_dir_all(&unlisted).unwrap();
+    std::fs::write(unlisted.join("setup-token"), "sk-ant-oat01-fixture\n").unwrap();
+    let alone = world.pick(&PickRequest {
+        lane: Some(unlisted.display().to_string()),
+        ..claude(None)
+    });
+    assert_eq!(
+        (&alone["answer"], &alone["exit"], &alone["record"]["status"]),
+        (&json!("unmeasured"), &json!(5), &json!("no_credentials")),
+        "{alone}"
     );
 }
 
@@ -1382,20 +1482,16 @@ fn the_candidate_lane_is_charged_and_the_reset_bonus_orders_rooms_without_buying
 
 /// `lane-model.sh`'s fixed sample divisor: the session window's observed
 /// usage is shared among the lanes live at the sample, never among the
-/// lanes live now. One sample held constant, 60 percent of the session four
-/// hours in and taken 240 seconds ago with one lane live, while three more
-/// lanes join after it: the fifth candidate is charged the sample's
-/// per-lane rate, 15 points an hour for five lanes to the reset, and the
-/// room is -35, the shell's answer on the same sample; the same sample
-/// taken now counts every lane live now.
+/// lanes live now. One sample held constant, the week at 70 percent with
+/// its reset under an hour on and its rate measured at 15 points an hour,
+/// taken 240 seconds ago with one lane live, while three more lanes join
+/// after it: the fifth candidate is charged the sample's per-lane rate, 15
+/// an hour for five lanes to the reset, and the room is -45; the same
+/// sample taken now counts every lane live now, a quarter of the rate each.
 #[test]
 fn a_cached_sample_keeps_the_occupancy_held_with_it_as_lanes_join() {
     let mut world = World::new(&[]);
-    let mut row = measured("aclaude", 70, 60);
-    row["resets"]["session"] = json!(stamp(now() + 3360));
-    row["binding_resets_at"] = json!(stamp(now() + 6 * 3600));
-    row["resets"]["weekly"] = json!(stamp(now() + 6 * 3600));
-    row["usage_age_s"] = json!(240);
+    let mut row = sampled_week();
     world.plant_listing(&[row.clone()]);
     let account = world.dir("aclaude");
     let children: Vec<Owned> = (0..4).map(|_| Owned::sleep()).collect();
@@ -1421,11 +1517,11 @@ fn a_cached_sample_keeps_the_occupancy_held_with_it_as_lanes_join() {
     assert_eq!(fifth["answer"], json!("walled"), "{fifth}");
     assert_eq!(
         fifth["record"]["projected_window"]["bucket"],
-        json!("session")
+        json!("weekly")
     );
     let room = fifth["record"]["projected_headroom_pct"].as_f64().unwrap();
     assert!(
-        (room + 35.0).abs() < 0.01,
+        (room + 45.0).abs() < 0.01,
         "the sample's one lane is the divisor, so the five lanes are charged 15 an hour each: {room}"
     );
     assert_eq!(fifth["record"]["claims"], json!(4));
@@ -1433,16 +1529,28 @@ fn a_cached_sample_keeps_the_occupancy_held_with_it_as_lanes_join() {
         (world.pick(&claude(None))["record"]["walled"]).clone(),
         json!(1)
     );
-    // The same sample taken now, four hours into the session: the four
-    // lanes were live at it, so each is charged a quarter of its rate.
+    // The same sample taken now: the four lanes were live at it, so each
+    // is charged a quarter of its rate.
     row["usage_age_s"] = json!(0);
-    row["resets"]["session"] = json!(stamp(now() + 3600));
     world.plant_listing(&[row]);
     let fresh = world.pick(&named(&account, claude(None)));
     assert_eq!(fresh["answer"], json!("lane"), "{fresh}");
     let room = fresh["record"]["projected_headroom_pct"].as_f64().unwrap();
-    assert!((room - 21.25).abs() < 0.01, "{room}");
+    assert!((room - 11.25).abs() < 0.01, "{room}");
     drop(children);
+}
+
+/// The week the two sample rows judge: 70 percent with its reset 3360
+/// seconds on, the reader's rate on it measured at 15 points an hour, the
+/// sample taken 240 seconds ago.
+fn sampled_week() -> Value {
+    let mut row = measured("aclaude", 70, 0);
+    row["binding_resets_at"] = json!(stamp(now() + 3360));
+    row["resets"]["weekly"] = json!(stamp(now() + 3360));
+    row["usage_rate_state"] = json!("measured");
+    row["usage_rate_pct_per_min"] = json!(0.25);
+    row["usage_age_s"] = json!(240);
+    row
 }
 
 /// The instant a lane began spending on its account: `session_since`, which
@@ -1450,16 +1558,11 @@ fn a_cached_sample_keeps_the_occupancy_held_with_it_as_lanes_join() {
 /// else `launched_at`. The sample of the row above, with one lane on the
 /// account since before it and three lanes first launched two hours ago
 /// elsewhere and relaunched onto the account after it: the three are not
-/// counted, the fifth candidate's room is -35, `walled`.
+/// counted, the fifth candidate's room is -45, `walled`.
 #[test]
 fn a_lane_relaunched_onto_the_account_after_the_sample_spent_none_of_it() {
     let mut world = World::new(&[]);
-    let mut row = measured("aclaude", 70, 60);
-    row["resets"]["session"] = json!(stamp(now() + 3360));
-    row["binding_resets_at"] = json!(stamp(now() + 6 * 3600));
-    row["resets"]["weekly"] = json!(stamp(now() + 6 * 3600));
-    row["usage_age_s"] = json!(240);
-    world.plant_listing(&[row]);
+    world.plant_listing(&[sampled_week()]);
     let account = world.dir("aclaude");
     let children: Vec<Owned> = (0..4).map(|_| Owned::sleep()).collect();
     let since = [now() - 3600, now() - 180, now() - 120, now() - 60];
@@ -1488,7 +1591,7 @@ fn a_lane_relaunched_onto_the_account_after_the_sample_spent_none_of_it() {
     assert_eq!(fifth["answer"], json!("walled"), "{fifth}");
     let room = fifth["record"]["projected_headroom_pct"].as_f64().unwrap();
     assert!(
-        (room + 35.0).abs() < 0.01,
+        (room + 45.0).abs() < 0.01,
         "the three relaunched lanes began on the account after the sample: {room}"
     );
     assert_eq!(fifth["record"]["claims"], json!(4));
@@ -2458,8 +2561,9 @@ impl Producer {
     }
 }
 
-/// A Claude usage body as the endpoint answers it: the 5-hour window, the
-/// weekly window and the model-scoped windows, each with its reset.
+/// A Claude usage body as the endpoint answers it: the 5-hour window it
+/// still sends, the weekly window and the model-scoped windows, each with
+/// its reset.
 fn usage_body(session: (u64, u64), weekly: (u64, u64), scoped: &[(&str, u64, u64)]) -> Value {
     json!({
         "five_hour": {"utilization": session.0, "resets_at": stamp(session.1)},
@@ -2755,7 +2859,10 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
                         ("measured_through", json!("host")),
                         ("verdict", json!("seat-reserve")),
                         ("wall", json!(99)),
-                        ("need", json!(5)),
+                        // The default headroom 5 and the overseer's one hour
+                        // at the setting's burn where no reset is stated,
+                        // rounded up; the retained pick kept 5.
+                        ("need", json!(6)),
                     ],
                 ),
                 ask(
@@ -4059,10 +4166,11 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
         }
     }
     // The instant a lane began on its account: the reader's sample, served
-    // from its cache 240 seconds old, was taken with one lane live, and
-    // three lanes first launched two hours ago elsewhere were relaunched
-    // onto the account after it. The fifth candidate's room is -35 (the
-    // relaunch row's figure), `walled`.
+    // from its cache 240 seconds old with the week's rate measured against
+    // the sample twelve minutes before it, was taken with one lane live,
+    // and three lanes first launched two hours ago elsewhere were
+    // relaunched onto the account after it. The fifth candidate's room is
+    // -45 (the relaunch row's figure), `walled`.
     let at = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -4074,14 +4182,12 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
             ("ORCH_LANES_USAGE_MAX_AGE", ""),
         ],
     );
-    producer.plant_usage(&usage_body(
-        (60, at + 3360),
-        (70, at + 6 * 3600),
-        &[("Opus", 0, at + 6 * 3600)],
-    ));
+    let week = |pct: u64| usage_body((0, at + 1800), (pct, at + 3360), &[("Opus", 0, at + 3360)]);
+    producer.plant_usage(&week(70));
     let record = producer.cache_record();
     producer.edit_record(&record, |record| {
         record["fetched_at"] = json!(at - 240);
+        record["prior"] = json!({"fetched_at": at - 960, "usage": week(67)});
     });
     let children: Vec<Owned> = (0..4).map(|_| Owned::sleep()).collect();
     let since = [at - 3600, at - 180, at - 120, at - 60];
@@ -4120,7 +4226,7 @@ fn the_judge_answers_the_shipped_producers_worlds_as_the_retained_pick_does() {
         .as_f64()
         .unwrap();
     assert!(
-        (room + 35.0).abs() < 0.05,
+        (room + 45.0).abs() < 0.05,
         "the sample's one lane is the divisor, the three relaunched after it: {room}"
     );
     drop(children);
@@ -4285,15 +4391,15 @@ fn an_unreadable_percentage_reads_unmeasured_never_zero() {
     world.plant_answer(
         "token-aclaude",
         "usage",
-        &claude_body(json!("12"), json!(20), &[("Opus", json!(30))]),
+        &claude_body(json!(10), json!(20), &[("Opus", json!("30"))]),
         None,
     );
     world.plant_answer(
         "token-acodex",
         "usage",
         &json!({"rate_limit": {
-            "primary_window": {"used_percent": -1, "reset_at": now() + 1800, "limit_window_seconds": 18_000},
-            "secondary_window": {"used_percent": 20, "reset_at": now() + 86_400, "limit_window_seconds": 604_800}}}),
+            "primary_window": {"used_percent": 20, "reset_at": now() + 1800, "limit_window_seconds": 18_000},
+            "secondary_window": {"used_percent": -1, "reset_at": now() + 86_400, "limit_window_seconds": 604_800}}}),
         None,
     );
     world.plant_answer(
@@ -4443,6 +4549,63 @@ fn two_refreshers_under_the_lock_fetch_once() {
     );
 }
 
+/// Room is judged on the plan windows alone: a Claude account whose body
+/// still reports its 5-hour window full is a lane on its week at 20, and a
+/// Codex account whose one window is a 5-hour one has no plan window read,
+/// so it is unmeasured, never room.
+#[test]
+fn a_full_five_hour_window_is_no_wall_and_a_five_hour_figure_alone_is_no_reading() {
+    let mut world = World::new(&[]);
+    world.write_fleet(Vec::new(), None);
+    let mut codex = measured("acodex", 20, 0);
+    codex["harness"] = json!("codex");
+    world.plant_listing(&[measured("aclaude", 20, 0), codex]);
+    for (harness, alias) in [("claude", "aclaude"), ("codex", "acodex")] {
+        std::fs::remove_file(world.record_path(harness, alias)).unwrap();
+    }
+    world.plant_answer(
+        "token-aclaude",
+        "usage",
+        &claude_body(json!(99), json!(20), &[]),
+        None,
+    );
+    world.plant_answer(
+        "token-acodex",
+        "usage",
+        &json!({"rate_limit": {
+            "primary_window": {"used_percent": 99, "reset_at": now() + 1800, "limit_window_seconds": 18_000},
+            "secondary_window": null}}),
+        None,
+    );
+    let lane = world.pick(&claude(Some("claude-fable-5-1")));
+    assert_eq!(
+        chosen(&lane).as_deref(),
+        Some(world.dir("aclaude").as_str()),
+        "{lane}"
+    );
+    assert_eq!(
+        (
+            &lane["record"]["binding_bucket"],
+            &lane["record"]["wall"],
+            &lane["record"]["projected_window"]["bucket"]
+        ),
+        (&json!("weekly"), &json!(20), &json!("weekly")),
+        "{lane}"
+    );
+    let codex = world.pick(&named(
+        &world.dir("acodex"),
+        PickRequest {
+            harness: "codex".to_owned(),
+            ..PickRequest::default()
+        },
+    ));
+    assert_eq!(
+        (&codex["answer"], &codex["exit"], &codex["record"]["status"]),
+        (&json!("unmeasured"), &json!(5), &json!("no_usage_data")),
+        "{codex}"
+    );
+}
+
 #[test]
 fn each_endpoint_shape_is_read_as_its_recorded_body() {
     let mut world = World::new(&[]);
@@ -4498,13 +4661,20 @@ fn each_endpoint_shape_is_read_as_its_recorded_body() {
     let claude = row("aclaude");
     assert_eq!(
         (
-            &claude["session_5h_pct"],
             &claude["weekly_pct"],
             &claude["model_pct"],
             &claude["model_label"]
         ),
-        (&json!(10), &json!(20), &json!(40), &json!("Fable 5.1")),
+        (&json!(20), &json!(40), &json!("Fable 5.1")),
         "{claude}"
+    );
+    assert_eq!(
+        (
+            claude.get("session_5h_pct"),
+            &claude["resets"].get("session")
+        ),
+        (None, &None),
+        "the body's 5-hour window is no plan window: {claude}"
     );
     assert_eq!(claude["headroom_pct"], json!(60));
     assert_eq!(claude["binding_bucket"], json!("model"));
@@ -4516,7 +4686,6 @@ fn each_endpoint_shape_is_read_as_its_recorded_body() {
         json!(44),
         "a 7-day primary window fills the weekly slot: {codex}"
     );
-    assert_eq!(codex["session_5h_pct"], Value::Null);
     assert_eq!(codex["headroom_pct"], json!(56));
     assert_eq!(codex["resets"]["weekly"], json!("2026-07-25T17:20:00Z"));
     assert_eq!(codex["credits"]["balance"], json!(6000));
@@ -5580,12 +5749,12 @@ fn a_private_file_account_key_spelled_through_the_home_reads_the_home_and_a_shel
         ),
         (
             "export CODEX_HOME=$HOME/.codex-work\n",
-            vec![at(".aclaude", "ok"), at(".codex-work", "no_credentials")],
+            vec![at(".codex-work", "no_credentials")],
             None,
         ),
         (
             "ORCH_LANE_DIRS=$(dirname ~/lane-a/x)\n",
-            vec![at(".aclaude", "ok")],
+            vec![],
             Some("ORCH_LANE_DIRS"),
         ),
     ] {
@@ -5625,6 +5794,85 @@ fn a_private_file_account_key_spelled_through_the_home_reads_the_home_and_a_shel
         let state = run(&["state", "path", "--fleet"]);
         assert!(state.status.success(), "{line:?}: {}", stderr(&state));
     }
+}
+
+/// The candidates are the accounts the owner configures, never a login
+/// folder found by looking: an `ORCH_LANE_DIRS` entry relative to the home
+/// lists that home's directory, while the bare `~/.copilot` beside it,
+/// signed in, is no row; named by `COPILOT_HOME` it is measured and a named
+/// pick judges it, while the chooser still leaves it out; with the setting
+/// unset no account is listed and the roster says so.
+#[test]
+fn the_candidates_are_the_configured_accounts_alone_never_a_login_folder_found_in_the_home() {
+    let mut world = World::new(&[]);
+    world.write_fleet(Vec::new(), None);
+    world.plant_listing(&[measured("2claude", 20, 0)]);
+    let copilot = world.path().join("home/.copilot");
+    std::fs::create_dir_all(copilot.join("session-state")).unwrap();
+    std::fs::write(
+        copilot.join("config.json"),
+        json!({"copilotTokens": "token-copilot"}).to_string(),
+    )
+    .unwrap();
+    world.plant_answer(
+        "token-copilot",
+        "copilot",
+        &json!({"quota_snapshots": {"premium_interactions": {"entitlement": 300, "remaining": 270}},
+                "quota_reset_date_utc": "2099-10-01"}),
+        None,
+    );
+    let set = |world: &mut World, key: &str, value: Option<&str>| {
+        world.env.retain(|(k, _)| k != key);
+        if let Some(value) = value {
+            world.env.push((key.to_owned(), value.to_owned()));
+        }
+    };
+    let listed = |world: &World| -> Vec<String> {
+        world.roster()["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["config_dir"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    set(&mut world, "ORCH_LANE_DIRS", Some(".2claude"));
+    assert_eq!(listed(&world), vec![world.dir("2claude")]);
+    let copilot_dir = copilot.display().to_string();
+    set(&mut world, "COPILOT_HOME", Some(&copilot_dir));
+    assert_eq!(
+        listed(&world),
+        vec![world.dir("2claude"), copilot_dir.clone()]
+    );
+    let copilot_pick = |lane: Option<String>| {
+        world.pick(&PickRequest {
+            harness: "copilot".to_owned(),
+            lane,
+            ..PickRequest::default()
+        })
+    };
+    let chooser = copilot_pick(None);
+    assert_eq!(
+        (&chooser["answer"], &chooser["record"]["exclusions"]),
+        (&json!("none"), &json!([])),
+        "{chooser}"
+    );
+    let named = copilot_pick(Some(copilot_dir.clone()));
+    assert_eq!(
+        (&named["answer"], &named["record"]["configured"]),
+        (&json!("lane"), &json!(false)),
+        "{named}"
+    );
+    set(&mut world, "COPILOT_HOME", None);
+    set(&mut world, "ORCH_LANE_DIRS", None);
+    let roster = world.roster();
+    assert_eq!(roster["accounts"], json!(0), "{roster}");
+    assert!(
+        roster["lines"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("accounts-unconfigured key=ORCH_LANE_DIRS")),
+        "{roster}"
+    );
 }
 
 /// A directory of links to every tool the listing and its fixtures run

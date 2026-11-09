@@ -60,18 +60,18 @@ fn planted_pick_replies() -> PathBuf {
 const PICK_NOW: u64 = 1_769_700_000;
 
 /// The walk suite's world as the verb reads it at [`PICK_NOW`]: the
-/// overseer's own Claude account at 57 percent of its session window (the
+/// overseer's own Claude account at 57 percent of its weekly window (the
 /// headroom trigger is 50), a second Claude account whose usage cannot be
-/// read, and three Codex accounts at 22, 20 and 18 percent of their
-/// primary window, every reset far off, no burn, every usage sampled at
-/// that second.
+/// read, and three Codex accounts at 22, 20 and 18 percent of their weekly
+/// window, every reset far off, no burn, every usage sampled at that
+/// second.
 fn walk_suite_world() -> World {
     let mut world = World::new(&[("ORCH_OVERSEER_HEADROOM_PCT", "50")]);
     let far = "2099-08-01T06:00:00Z";
     let codex = |alias: &str, used: u64| {
         json!({"alias": alias, "harness": "codex", "config_dir": format!("/home/me/.{alias}"),
-               "measured_through": "local", "status": "ok", "session_5h_pct": used,
-               "resets": {"session": "2099-01-01T00:00:00Z", "weekly": null, "model": null, "monthly": null},
+               "measured_through": "local", "status": "ok", "weekly_pct": used,
+               "resets": {"weekly": "2099-01-01T00:00:00Z", "model": null, "monthly": null},
                "usage_age_s": 0})
     };
     world.plant_at(
@@ -79,9 +79,9 @@ fn walk_suite_world() -> World {
         &[
             json!({"alias": "claude", "harness": "claude", "config_dir": "/home/me/.claude",
                    "measured_through": "local", "status": "ok", "plan": "max",
-                   "session_5h_pct": 57, "weekly_pct": 30,
+                   "weekly_pct": 57,
                    "model_buckets": [{"label": "Opus", "pct": 5, "resets_at": far}],
-                   "resets": {"session": "2099-01-01T06:00:00Z", "weekly": far, "model": far, "monthly": null},
+                   "resets": {"weekly": far, "model": far, "monthly": null},
                    "usage_age_s": 0}),
             json!({"alias": "unreadclaude", "harness": "claude", "config_dir": "/home/me/.unreadclaude",
                    "measured_through": "local", "status": "unreachable", "plan": "max", "usage_age_s": 0}),
@@ -372,8 +372,8 @@ fn strings(value: &Value) -> Vec<String> {
 }
 
 /// One measured local Claude row at `alias`, `used` percent on its weekly
-/// window (the binding, resetting 60 hours on), the session window at
-/// `session` percent.
+/// window (the binding, resetting 60 hours on), and the 5-hour figure the
+/// endpoint still sends at `session` percent, which no judgement reads.
 fn measured(alias: &str, used: u64, session: u64) -> Value {
     let weekly = stamp(now() + 60 * 3600);
     json!({

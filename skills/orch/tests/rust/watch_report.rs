@@ -1104,6 +1104,7 @@ fn the_heartbeat_body_says_unread_for_every_list_no_duty_has_read() {
             "EVENT heartbeat loops=25 interval=240s since=none".to_owned(),
             "owner/repo\topen-prs unread".to_owned(),
             "account-roster accounts=0".to_owned(),
+            "accounts-unconfigured key=ORCH_LANE_DIRS".to_owned(),
             "owed unread".to_owned(),
             "open-unblocked count=unread items=-".to_owned(),
         ]
@@ -1564,8 +1565,8 @@ fn an_unmeasured_reading_keeps_the_row_and_a_terminal_status_is_news() {
 
 /// A listing that cannot be read is no fleet without accounts and no
 /// change, or the next readable pass would say a change against nothing. A
-/// home discovery cannot list is a counted failure with `account-roster
-/// unread` and the row as it stood; the readable pass after it says the
+/// configured account whose directory cannot be read is a counted failure
+/// with `account-roster unread` and the row as it stood; the readable pass after it says the
 /// change against the reading before it.
 #[test]
 fn an_unreadable_listing_is_a_counted_failure_that_keeps_the_previous_reading() {
@@ -1576,12 +1577,6 @@ fn an_unreadable_listing_is_a_counted_failure_that_keeps_the_previous_reading() 
     let mut baseline = Baseline::default();
     let claude = |reading: &str| vec![account_record("claude", "local", reading)];
     let planted = world.plant_accounts(None, &claude("ok walled 2 2026-10-01T00:00:00Z"), wall);
-    // The planted directory is named to discovery alone: the listing
-    // reads the home for every other account.
-    let planted: Vec<(String, String)> = planted
-        .into_iter()
-        .filter(|(k, _)| k != "ORCH_LANE_DIRS")
-        .collect();
     let mut body = roster_body(&world, &planted);
     let produced = pass(Duty::Heartbeat, &mut body, &mut baseline, &clock, wall).unwrap();
     assert_eq!(produced.failed, None);

@@ -18,9 +18,10 @@ use std::path::Path;
 
 use serde_json::{Map, Value, json};
 
-/// About five hours, with tolerance: Codex reports window durations that
-/// vary by account.
-pub const SESSION_WINDOW_S: u64 = 18_000;
+/// Five hours: a Codex window more than half again as long is its weekly
+/// one, since Codex reports window durations that vary by account, and a
+/// kept figure younger than this answers a usage 429.
+pub const FIVE_HOURS_S: u64 = 18_000;
 
 /// One network answer in the shape both calls answer in: the HTTP status
 /// and any Retry-After on the first line, the body under it.
@@ -131,7 +132,8 @@ fn f64_value(n: Option<f64>) -> Value {
     n.map_or(Value::Null, Value::from)
 }
 
-/// Claude: `.five_hour` and `.seven_day` carry utilization and resets_at;
+/// Claude: `.seven_day` carries utilization and resets_at; the 5-hour
+/// `.five_hour` is no plan window and is not read;
 /// `.iguana_necktie`, the cloud credit in dollars, is kept as `credits`.
 /// The model-scoped weekly windows are the `limits[]` entries of kind
 /// `weekly_scoped`; the older `seven_day_sonnet` and `seven_day_opus`
@@ -141,7 +143,6 @@ fn f64_value(n: Option<f64>) -> Value {
 /// model, and a filler string would be a name matching no model.
 pub fn parse_claude(body: &Value, rounding: Rounding) -> Value {
     let round = |p: f64| p.round();
-    let session = body.get("five_hour").filter(|v| !v.is_null());
     let weekly = body.get("seven_day").filter(|v| !v.is_null());
     let live: Vec<&Value> = body
         .get("limits")
@@ -194,10 +195,9 @@ pub fn parse_claude(body: &Value, rounding: Rounding) -> Value {
             })
         })
         .unwrap_or(Value::Null);
-    let present: Vec<Option<&Value>> = session
-        .map(|s| s.get("utilization"))
+    let present: Vec<Option<&Value>> = weekly
+        .map(|w| w.get("utilization"))
         .into_iter()
-        .chain(weekly.map(|w| w.get("utilization")))
         .chain(scoped.iter().map(|s| s.get("percent")))
         .collect();
     let unread = present.iter().any(|p| pct(*p, rounding, round).is_none());
@@ -210,7 +210,6 @@ pub fn parse_claude(body: &Value, rounding: Rounding) -> Value {
     };
     let label = |scope: &Value| string(scope.pointer("/scope/model/display_name"));
     json!({
-        "session_5h_pct": f64_value(session.and_then(|s| read(s.get("utilization")))),
         "weekly_pct": f64_value(weekly.and_then(|w| read(w.get("utilization")))),
         "model_pct": f64_value(most.as_ref().and_then(|m| read(m.get("percent")))),
         "model_label": most.as_ref().map_or(Value::Null, |m| {
@@ -224,22 +223,21 @@ pub fn parse_claude(body: &Value, rounding: Rounding) -> Value {
         })).collect::<Vec<Value>>(),
         "credits": credit,
         "resets": {
-            "session": session.map_or(Value::Null, |s| s.get("resets_at").cloned().unwrap_or(Value::Null)),
             "weekly": weekly.map_or(Value::Null, |w| w.get("resets_at").cloned().unwrap_or(Value::Null)),
             "model": most.as_ref().map_or(Value::Null, |m| m.get("resets_at").cloned().unwrap_or(Value::Null)),
         },
     })
 }
 
-/// Codex: the primary and secondary windows do not map to session and
-/// weekly by position (a weekly-only account reports its 7-day limit as
-/// the primary window), so each is routed by its own
-/// `limit_window_seconds`: within 150 percent of the session window is the
-/// session bucket, anything longer or unstated the long window. `credits`
+/// Codex: the primary and secondary windows do not map to a window by
+/// position (a weekly-only account reports its 7-day limit as the primary
+/// window), so each is routed by its own `limit_window_seconds`: one longer
+/// than 150 percent of five hours, or unstated, is the weekly window; a
+/// shorter one is no plan window and is not read. `credits`
 /// is the balance spent past the plan windows with the body's
 /// `spend_control.reached` beside it; a flag or balance that does not
 /// parse is null, which the credit rule never reads as room.
-pub fn parse_codex(body: &Value, session_window_s: u64, rounding: Rounding) -> Value {
+pub fn parse_codex(body: &Value, rounding: Rounding) -> Value {
     let round = |p: f64| p.floor();
     let flag = |v: Option<&Value>| v.and_then(Value::as_bool).map_or(Value::Null, Value::from);
     let spent = body
@@ -270,7 +268,8 @@ pub fn parse_codex(body: &Value, session_window_s: u64, rounding: Rounding) -> V
         resets_at: Value,
         window_s: u64,
     }
-    let mut windows: Vec<Window> = ["primary_window", "secondary_window"]
+    let bound = FIVE_HOURS_S * 3 / 2;
+    let long = ["primary_window", "secondary_window"]
         .iter()
         .filter_map(|key| body.pointer(&format!("/rate_limit/{key}")))
         .filter(|w| !w.is_null())
@@ -288,28 +287,14 @@ pub fn parse_codex(body: &Value, session_window_s: u64, rounding: Rounding) -> V
                 .unwrap_or(0.0)
                 .max(0.0) as u64,
         })
-        .collect();
-    if windows.iter().any(|w| w.pct.is_none()) {
-        for w in &mut windows {
-            w.pct = None;
-        }
-    }
-    let bound = session_window_s * 3 / 2;
-    let session = windows
-        .iter()
-        .find(|w| w.window_s > 0 && w.window_s <= bound);
-    let long = windows
-        .iter()
         .find(|w| w.window_s == 0 || w.window_s > bound);
     json!({
-        "session_5h_pct": f64_value(session.and_then(|w| w.pct)),
-        "weekly_pct": f64_value(long.and_then(|w| w.pct)),
+        "weekly_pct": f64_value(long.as_ref().and_then(|w| w.pct)),
         "model_pct": Value::Null,
         "model_label": Value::Null,
         "credits": credits,
         "resets": {
-            "session": session.map_or(Value::Null, |w| w.resets_at.clone()),
-            "weekly": long.map_or(Value::Null, |w| w.resets_at.clone()),
+            "weekly": long.as_ref().map_or(Value::Null, |w| w.resets_at.clone()),
             "model": Value::Null,
         },
     })
@@ -401,7 +386,7 @@ pub fn parse_body(harness: &str, body: &Value, rounding: Rounding) -> Value {
     match harness {
         "claude" => parse_claude(body, rounding),
         "copilot" => parse_copilot(body),
-        _ => parse_codex(body, SESSION_WINDOW_S, rounding),
+        _ => parse_codex(body, rounding),
     }
 }
 
@@ -742,25 +727,41 @@ mod tests {
     }
 
     #[test]
-    fn an_unreadable_percentage_unmeasures_the_whole_reading_and_an_absent_window_leaves_the_rest()
-    {
-        let body = json!({"five_hour": {"utilization": "12"}, "seven_day": {"utilization": 20},
-            "limits": [{"kind": "weekly_scoped", "percent": 30, "scope": {"model": {"display_name": "Opus"}}}]});
+    fn an_unreadable_plan_percentage_unmeasures_the_reading_and_a_five_hour_window_is_never_read() {
+        let body = json!({"seven_day": {"utilization": 20},
+            "limits": [{"kind": "weekly_scoped", "percent": "30", "scope": {"model": {"display_name": "Opus"}}}]});
         let got = parse_claude(&body, Rounding::Rounded);
-        assert_eq!(got["session_5h_pct"], Value::Null);
         assert_eq!(got["weekly_pct"], Value::Null);
         assert_eq!(got["model_buckets"][0]["pct"], Value::Null);
-        let body = json!({"five_hour": null, "seven_day": {"utilization": 20}});
-        let got = parse_claude(&body, Rounding::Rounded);
-        assert_eq!(got["session_5h_pct"], Value::Null);
-        assert_eq!(got["weekly_pct"], json!(20.0));
+        // The 5-hour window, unreadable or full, is no plan window: the
+        // week stands as read.
+        for five_hour in [
+            json!({"utilization": "12"}),
+            json!({"utilization": 100}),
+            Value::Null,
+        ] {
+            let body = json!({"five_hour": five_hour, "seven_day": {"utilization": 20}});
+            let got = parse_claude(&body, Rounding::Rounded);
+            assert_eq!(got["weekly_pct"], json!(20.0), "{five_hour}");
+            assert_eq!(got.get("session_5h_pct"), None, "{five_hour}");
+        }
         let codex = json!({"rate_limit": {"primary_window": {"used_percent": 44, "reset_at": 1_785_000_000, "limit_window_seconds": 604_800}, "secondary_window": null}});
-        let got = parse_codex(&codex, SESSION_WINDOW_S, Rounding::Rounded);
-        assert_eq!(got["weekly_pct"], json!(44.0));
-        assert_eq!(got["session_5h_pct"], Value::Null);
-        let negative = json!({"rate_limit": {"primary_window": {"used_percent": 30, "limit_window_seconds": 18_000}, "secondary_window": {"used_percent": -1, "limit_window_seconds": 604_800}}});
-        let got = parse_codex(&negative, SESSION_WINDOW_S, Rounding::Rounded);
-        assert_eq!(got["session_5h_pct"], Value::Null);
+        assert_eq!(
+            parse_codex(&codex, Rounding::Rounded)["weekly_pct"],
+            json!(44.0)
+        );
+        // A 5-hour Codex window beside the weekly one: the week alone, even
+        // where the short one cannot be read.
+        let split = json!({"rate_limit": {"primary_window": {"used_percent": -1, "limit_window_seconds": 18_000}, "secondary_window": {"used_percent": 30, "limit_window_seconds": 604_800}}});
+        assert_eq!(
+            parse_codex(&split, Rounding::Rounded)["weekly_pct"],
+            json!(30.0)
+        );
+        let short = json!({"rate_limit": {"primary_window": {"used_percent": 30, "limit_window_seconds": 18_000}, "secondary_window": null}});
+        assert_eq!(
+            parse_codex(&short, Rounding::Rounded)["weekly_pct"],
+            Value::Null
+        );
     }
 
     #[test]

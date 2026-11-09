@@ -1,5 +1,5 @@
-//! The account listing: every account this machine knows, discovered from
-//! its home and the owner's statements, each measured through its own
+//! The account listing: every account the owner configures on this
+//! machine and the accounts its caller names, each measured through its own
 //! credential at the usage endpoint behind the cache, and under a provider
 //! every account the provider holds a credential for, read through its
 //! `accounts` verb. A listing measures an account the owner excluded or
@@ -12,8 +12,7 @@
 //! `unreachable`; one an endpoint refused is recorded in the account's
 //! usage record until its window passes, so no caller on the host posts
 //! the refused request again, and a usage 429 is answered from the last
-//! figure the record holds while that figure is younger than the session
-//! window.
+//! figure the record holds while that figure is younger than five hours.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -25,8 +24,8 @@ use serde_json::{Map, Value, json};
 
 use super::cache::{self, FigureRead, REFUSAL_WINDOW_S, Refusal};
 use super::renewal;
-use super::usage::{self, CopilotLogin, Credential, Rounding, SESSION_WINDOW_S};
-use super::{AccountRow, TAG, credit_room, grant, wall_verdict};
+use super::usage::{self, CopilotLogin, Credential, FIVE_HOURS_S, Rounding};
+use super::{AccountRow, TAG, WINDOWS, credit_room, grant, wall_verdict};
 use crate::ops::wall;
 use crate::settings::{AccountSettings, CopilotPool, Settings};
 
@@ -38,12 +37,6 @@ const REQUEST_BOUND: Duration = Duration::from_secs(15);
 const RETRY_WAIT_MAX_S: u64 = 5;
 /// One `secret-tool search` before the Secret Service reads absent.
 const KEYRING_BOUND: Duration = Duration::from_secs(5);
-const WINDOWS: [(&str, &str); 4] = [
-    ("monthly", "monthly_pct"),
-    ("weekly", "weekly_pct"),
-    ("model", "model_pct"),
-    ("session", "session_5h_pct"),
-];
 
 /// The listing: one row per account in the record shape the judge reads,
 /// and the lines a reader prints beside the rows.
@@ -72,9 +65,16 @@ struct Ctx<'a> {
 }
 
 /// The listing under `host` (the provider, or none for this machine
-/// alone) at `now`, or the cause where it could not be read whole: a home
-/// that cannot be listed, a provider whose capability line cannot be read.
-pub fn list(settings: &Settings, host: Option<&str>, now: u64) -> Result<Listing, String> {
+/// alone) at `now`, with `named`, a pick's `(harness, directory)`, measured
+/// as that harness's account where the directory stands and nothing else
+/// lists it; or the cause where it could not be read whole: a home that
+/// cannot be listed, a provider whose capability line cannot be read.
+pub fn list(
+    settings: &Settings,
+    host: Option<&str>,
+    named: Option<(&str, &str)>,
+    now: u64,
+) -> Result<Listing, String> {
     let accounts = &settings.accounts;
     let usage_dir = settings
         .claim_store
@@ -101,10 +101,11 @@ pub fn list(settings: &Settings, host: Option<&str>, now: u64) -> Result<Listing
         None => "plan".to_owned(),
     };
     let mut rows = Vec::new();
-    let found = discover(&ctx)?;
+    let found = discover(&mut ctx, named)?;
     for account in &found {
         let pool = local_pool(account.harness, &host_pool);
         let mut row = measure(&mut ctx, account);
+        row["configured"] = json!(account.configured);
         finish(&ctx, &mut row, &pool);
         rows.push(row);
     }
@@ -170,110 +171,113 @@ pub fn alias(settings: &AccountSettings, config_dir: &str) -> String {
         .unwrap_or_else(|| super::base(config_dir).trim_start_matches('.').to_owned())
 }
 
-// --- discovery ------------------------------------------------------------------------------
+// --- the accounts this machine lists ----------------------------------------------------------
 
 struct Found {
     harness: &'static str,
     dir: String,
+    /// Whether the owner configured the account: the chooser picks among
+    /// configured accounts alone.
+    configured: bool,
 }
 
-/// Which directories hold an account of each harness: the `ORCH_LANE_DIRS`
-/// entries of its kind replace discovery; with none, `~/.<harness>` and
-/// every `~/.*<harness>*` directory holding the harness's marker (a shared
-/// session store or a backup matches the glob too), an excluded or retired
-/// one listed on its name alone. A set `CODEX_HOME` joins the Codex
-/// inventory as the account it names, a set `COPILOT_HOME` the Copilot
-/// one.
-fn discover(ctx: &Ctx) -> Result<Vec<Found>, String> {
+const HARNESSES: [&str; 3] = ["claude", "codex", "copilot"];
+
+/// The accounts this machine lists, the owner's statement and nothing
+/// found by looking: each `ORCH_LANE_DIRS` entry, absolute or relative to
+/// `HOME` (so one tracked line names the same accounts on every machine),
+/// an account of the harness its files name; beside them, measured but no
+/// candidate, the account a set `CODEX_HOME` names, a set `COPILOT_HOME`,
+/// and `named`, the directory a pick names where it stands and nothing
+/// else lists it. With the setting unset no account is configured, and the
+/// listing says so.
+fn discover(ctx: &mut Ctx, named: Option<(&str, &str)>) -> Result<Vec<Found>, String> {
     let accounts = ctx.accounts;
-    let mut configured: Vec<(&'static str, String)> = Vec::new();
-    for entry in &accounts.lane_dirs {
-        let holds = |name: &str| usage::exists(&Path::new(entry).join(name));
-        let credentials = holds(".credentials.json")?;
-        let kind = if holds("config.json")? && !credentials {
-            "copilot"
-        } else if holds("auth.json")? && !credentials {
-            "codex"
-        } else {
-            "claude"
-        };
-        configured.push((kind, entry.clone()));
+    let mut configured: Vec<Found> = Vec::new();
+    if accounts.lane_dirs.is_empty() {
+        ctx.notes.push(format!(
+            "accounts-unconfigured key={}",
+            crate::settings::LANE_DIRS_KEY
+        ));
     }
-    let mut found: Vec<Found> = Vec::new();
-    for harness in ["claude", "codex", "copilot"] {
-        let mut candidates: Vec<String> = configured
-            .iter()
-            .filter(|(kind, _)| *kind == harness)
-            .map(|(_, dir)| dir.clone())
-            .collect();
-        if candidates.is_empty() {
-            candidates = discovered(ctx, harness)?;
-        }
-        if harness == "codex"
-            && let Some(home) = &accounts.codex_home
-        {
-            candidates.push(usage::home_account(home));
-        }
-        if harness == "copilot"
-            && let Some(home) = &accounts.copilot_home
-        {
-            candidates.push(home.clone());
-        }
-        for dir in candidates {
-            if found.iter().any(|f| f.dir == dir) {
+    for entry in &accounts.lane_dirs {
+        let relative = entry.strip_prefix("~/").unwrap_or(entry);
+        let dir = match (entry.starts_with('/'), &accounts.home) {
+            (true, _) => entry.clone(),
+            (false, Some(home)) => Path::new(home).join(relative).display().to_string(),
+            (false, None) => {
+                ctx.notes.push(format!(
+                    "account-dir-unresolved entry={entry} cause=home-unset"
+                ));
                 continue;
             }
-            found.push(Found { harness, dir });
+        };
+        if configured.iter().any(|f| f.dir == dir) {
+            continue;
         }
+        let harness = kind_of(&dir)
+            .map_err(|cause| format!("account-dir-unreadable path={dir} cause={cause}"))?;
+        configured.push(Found {
+            harness,
+            dir,
+            configured: true,
+        });
+    }
+    let mut found: Vec<Found> = Vec::new();
+    for harness in HARNESSES {
+        found.extend(configured.extract_if(.., |f| f.harness == harness));
+    }
+    let homes = [
+        accounts
+            .codex_home
+            .as_deref()
+            .map(|h| ("codex", usage::home_account(h))),
+        accounts
+            .copilot_home
+            .as_deref()
+            .map(|h| ("copilot", h.to_owned())),
+    ];
+    for (harness, dir) in homes.into_iter().flatten() {
+        if !found.iter().any(|f| f.dir == dir) {
+            found.push(Found {
+                harness,
+                dir,
+                configured: false,
+            });
+        }
+    }
+    let named = named.and_then(|(harness, dir)| {
+        let harness = HARNESSES.into_iter().find(|h| *h == harness)?;
+        (!found
+            .iter()
+            .any(|f| wall::canon(&f.dir) == wall::canon(dir)))
+        .then_some((harness, dir))
+    });
+    if let Some((harness, dir)) = named
+        && usage::is_dir(Path::new(dir))?
+    {
+        found.push(Found {
+            harness,
+            dir: dir.to_owned(),
+            configured: false,
+        });
     }
     Ok(found)
 }
 
-/// The glob's answer for one harness, in the order a shell glob lists
-/// it: the harness's own directory first, then every match by name.
-fn discovered(ctx: &Ctx, harness: &str) -> Result<Vec<String>, String> {
-    let Some(home) = &ctx.accounts.home else {
-        return Ok(Vec::new());
-    };
-    let home = Path::new(home);
-    let markers: [&str; 2] = match harness {
-        "codex" => ["auth.json", "config.toml"],
-        "copilot" => ["config.json", "session-state"],
-        _ => [".claude.json", ".credentials.json"],
-    };
-    let mut names: Vec<String> = match std::fs::read_dir(home) {
-        Ok(entries) => entries
-            .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
-            .filter(|n| n.starts_with('.') && n.contains(harness))
-            .collect(),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(e) => {
-            return Err(format!("home-unreadable path={} cause={e}", home.display()));
-        }
-    };
-    names.sort();
-    let own = format!(".{harness}");
-    let mut ordered = vec![own.clone()];
-    ordered.extend(names.into_iter().filter(|n| *n != own));
-    let mut dirs = Vec::new();
-    for name in ordered {
-        let dir = home.join(&name);
-        if !usage::is_dir(&dir)? {
-            continue;
-        }
-        let text = dir.display().to_string();
-        let alias = alias(ctx.accounts, &text);
-        let stated = excluded(ctx.accounts, &alias, &text)
-            || retire_date(ctx.accounts, &alias, &text).is_some_and(|d| d <= ctx.today);
-        if !stated
-            && !usage::exists(&dir.join(markers[0]))?
-            && !usage::exists(&dir.join(markers[1]))?
-        {
-            continue;
-        }
-        dirs.push(text);
-    }
-    Ok(dirs)
+/// The harness whose account a configured directory holds, by its files:
+/// Copilot's `config.json` or Codex's `auth.json` with no Claude
+/// `.credentials.json` beside it, else Claude.
+fn kind_of(dir: &str) -> Result<&'static str, String> {
+    let holds = |name: &str| usage::exists(&Path::new(dir).join(name));
+    let credentials = holds(".credentials.json")?;
+    Ok(if holds("config.json")? && !credentials {
+        "copilot"
+    } else if holds("auth.json")? && !credentials {
+        "codex"
+    } else {
+        "claude"
+    })
 }
 
 fn local_pool(harness: &str, host_pool: &str) -> String {
@@ -740,8 +744,7 @@ fn served(figure: cache::Figure, status: &str, detail: String) -> Reading {
 }
 
 /// A recorded refusal as the account's reading: a 429 answered from the
-/// last figure beside it while that figure is younger than the session
-/// window and no consumed bucket reset arrived; any other refusal, and a
+/// last figure beside it while that figure is younger than five hours and no consumed bucket reset arrived; any other refusal, and a
 /// 429 with no such figure, reported as the record states it with no
 /// windows and the record's own age.
 fn refused_reading(
@@ -752,8 +755,7 @@ fn refused_reading(
     now: u64,
 ) -> Reading {
     if refusal.status == "rate_limited"
-        && let FigureRead::Served(figure) =
-            cache::figure(record, harness, Some(SESSION_WINDOW_S), now)
+        && let FigureRead::Served(figure) = cache::figure(record, harness, Some(FIVE_HOURS_S), now)
     {
         return served(
             figure,
@@ -895,7 +897,7 @@ fn request(harness: &str, url: &str, token: &str, account_id: &str) -> Option<us
 /// An endpoint's refusal as the account's reading, recorded for its
 /// window: a 401 or 403 the profile confirms as an ended plan reads
 /// `plan_ended`, and a 429 is answered from the figure kept beside the
-/// record while that figure is younger than the session window.
+/// record while that figure is younger than five hours.
 fn refused_answer(
     ctx: &mut Ctx,
     harness: &str,
@@ -931,7 +933,7 @@ fn refused_answer(
     if status == "rate_limited"
         && let Some(record) = cache::read(path, harness, dir)
         && let FigureRead::Served(figure) =
-            cache::figure(&record, harness, Some(SESSION_WINDOW_S), ctx.now)
+            cache::figure(&record, harness, Some(FIVE_HOURS_S), ctx.now)
     {
         return served(
             figure,
@@ -1168,8 +1170,7 @@ fn provider_line(line: &str) -> Result<ProviderLine, Unreadable> {
     let account = get("account");
     let harness = get("harness");
     let mut bad: Option<&'static str> = None;
-    let mut pcts: [(&'static str, Option<u64>); 4] = [
-        ("session-5h-pct", None),
+    let mut pcts: [(&'static str, Option<u64>); 3] = [
         ("weekly-pct", None),
         ("model-pct", None),
         ("monthly-pct", None),
@@ -1224,7 +1225,7 @@ fn provider_line(line: &str) -> Result<ProviderLine, Unreadable> {
             Value::from(v)
         }
     };
-    let [session, weekly, model, monthly] = pcts.map(|(_, v)| v);
+    let [weekly, model, monthly] = pcts.map(|(_, v)| v);
     let credits = credit_fields.then(|| {
         json!({
             "unit": "usd",
@@ -1236,7 +1237,6 @@ fn provider_line(line: &str) -> Result<ProviderLine, Unreadable> {
         })
     });
     let buckets = json!({
-        "session_5h_pct": session,
         "weekly_pct": weekly,
         "model_pct": model,
         "monthly_pct": monthly,
@@ -1246,8 +1246,8 @@ fn provider_line(line: &str) -> Result<ProviderLine, Unreadable> {
             None => json!([]),
             Some(pct) => json!([{"label": nz("model-label"), "pct": pct, "resets_at": nz("model-resets")}]),
         },
-        "resets": {"session": nz("session-resets"), "weekly": nz("weekly-resets"),
-                   "model": nz("model-resets"), "monthly": nz("monthly-resets")},
+        "resets": {"weekly": nz("weekly-resets"), "model": nz("model-resets"),
+                   "monthly": nz("monthly-resets")},
     });
     Ok(ProviderLine {
         fields,
@@ -1397,19 +1397,18 @@ fn emit(ctx: &Ctx, e: &Emit) -> Value {
         detail = "wall record unreadable".to_owned();
     }
     let num = |key: &str| buckets.get(key).and_then(Value::as_f64);
-    let known: Vec<f64> = WINDOWS.iter().filter_map(|(_, pct)| num(pct)).collect();
+    let known: Vec<f64> = WINDOWS.iter().filter_map(|w| num(w.field)).collect();
     let credit_unit = buckets.pointer("/credits/unit").and_then(Value::as_str);
     if status == "ok" && known.is_empty() && credit_unit != Some("usd") {
         status = "no_usage_data".to_owned();
     }
     let measured = status == "ok" || status == "rate_limited";
     let largest = known.iter().cloned().fold(f64::MIN, f64::max);
-    // A tie binds the longer window: the first of monthly, weekly, model,
-    // session at the largest figure.
+    // A tie binds the longer window: the first at the largest figure.
     let bind = WINDOWS
         .iter()
-        .find(|(_, pct)| num(pct) == Some(largest))
-        .map(|(bucket, _)| *bucket);
+        .find(|w| num(w.field) == Some(largest))
+        .map(|w| w.bucket);
     let headroom = (measured && !known.is_empty()).then_some(100.0 - largest);
     let resets = buckets.get("resets").cloned().unwrap_or_else(|| json!({}));
     let reset_of = |key: &str| resets.get(key).cloned().unwrap_or(Value::Null);
@@ -1424,7 +1423,7 @@ fn emit(ctx: &Ctx, e: &Emit) -> Value {
         c
     });
     if status == "no_usage_data" && detail.is_empty() {
-        detail = "authenticated, but the usage response carried no session/weekly/monthly window"
+        detail = "authenticated, but the usage response carried no weekly, monthly or model window"
             .to_owned();
     }
     let mut row = json!({
@@ -1436,7 +1435,6 @@ fn emit(ctx: &Ctx, e: &Emit) -> Value {
         "status": status,
         "refreshable": false,
         "plan": if plan.is_empty() { Value::Null } else { Value::from(plan.as_str()) },
-        "session_5h_pct": num("session_5h_pct"),
         "weekly_pct": num("weekly_pct"),
         "model_pct": num("model_pct"),
         "model_label": buckets.get("model_label").cloned().unwrap_or(Value::Null),
@@ -1448,8 +1446,8 @@ fn emit(ctx: &Ctx, e: &Emit) -> Value {
         "binding_bucket": binding_bucket,
         "binding_resets_at": binding_bucket.map_or(Value::Null, reset_of),
         "usage_age_s": age,
-        "resets": {"session": reset_of("session"), "weekly": reset_of("weekly"),
-                   "model": reset_of("model"), "monthly": reset_of("monthly")},
+        "resets": {"weekly": reset_of("weekly"), "model": reset_of("model"),
+                   "monthly": reset_of("monthly")},
         "detail": if detail.is_empty() { Value::Null } else { Value::from(detail.as_str()) },
         "excluded": excluded(ctx.accounts, e.alias, e.dir),
         "retired": retired,
@@ -1580,8 +1578,8 @@ fn binding_and_rate(row: &mut Value, harness: &str, prior: Option<&(Value, u64)>
         } else {
             let key = WINDOWS
                 .iter()
-                .find(|(b, _)| *b == bucket)
-                .map_or("", |(_, pct)| pct);
+                .find(|w| w.bucket == bucket)
+                .map_or("", |w| w.field);
             vec![(
                 None,
                 prior_buckets[key].as_f64(),

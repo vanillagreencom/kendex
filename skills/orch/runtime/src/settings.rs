@@ -276,8 +276,9 @@ pub const LANE_RETIRE_KEY: &str = "ORCH_LANE_RETIRE";
 /// The bound a pick admits an account under, in percent used (`lanes`'
 /// `--max-pct` default).
 pub const LANE_MAX_PCT_KEY: &str = "ORCH_LANE_MAX_PCT";
-/// Points of the 5-hour session window one live lane is expected to spend
-/// an hour where its account measured no rate.
+/// A live lane's hourly spend where its account measured no rate, in
+/// points of five hours' room: a week is charged 5/168 of it an hour, a
+/// month 5/720.
 pub const LANE_BURN_PCT_KEY: &str = "ORCH_LANE_BURN_PCT_PER_HOUR";
 /// The account headroom the overseer hands off at, and so the room a seat
 /// keeps for it: a worker's pick holds a seat to `min(ORCH_LANE_MAX_PCT,
@@ -318,15 +319,14 @@ pub const LANE_ALIASES_KEY: &str = "ORCH_LANE_ALIASES";
 /// The lane host a pick runs under; `local` or unset is this machine's
 /// own reading.
 pub const LANE_HOST_KEY: &str = "ORCH_LANE_HOST";
-/// The home whose `.<harness>` and `.*<harness>*` directories the listing
-/// discovers accounts in.
+/// The home a relative `ORCH_LANE_DIRS` entry is resolved under.
 pub const HOME_KEY: &str = "HOME";
 /// Colon-separated config directories, each an account of the harness
-/// whose credential it holds; the entries of a harness replace its
-/// discovery.
+/// whose credential it holds: the accounts the chooser picks among, an
+/// entry relative to `HOME` resolved under it. Unset, none is.
 pub const LANE_DIRS_KEY: &str = "ORCH_LANE_DIRS";
-/// A Codex home the CLI reads, joined to the Codex inventory as the account
-/// it names; a Copilot home likewise.
+/// A Codex home the CLI reads, measured as the account it names and never
+/// a candidate; a Copilot home likewise.
 pub const CODEX_HOME_KEY: &str = "CODEX_HOME";
 pub const COPILOT_HOME_KEY: &str = "COPILOT_HOME";
 /// Pi's own root, where a Pi launch that names no account of Pi's runs.

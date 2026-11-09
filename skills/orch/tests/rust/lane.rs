@@ -193,16 +193,13 @@ fn epoch_now() -> u64 {
 }
 
 /// [`ACCOUNT`]'s row of `lanes list --json`: a measured Claude account with
-/// its weekly window (the binding) at 20 percent and its session window at
-/// `session` percent, read this instant with three hours to its reset, so
-/// the window opened two hours ago and the judge charges each lane on it,
-/// the live ones and the candidate, the live lane's observed
-/// half of the window's use for each of the three hours left (the session
-/// projection, `ops/accounts.rs` `projection`): at 60 percent one live
-/// lane and the candidate project 140 past the room, and the candidate
-/// alone, at the setting's burn, leaves 25.
-fn listing_row(session: u64, now: u64) -> Value {
-    let weekly = clock::iso_utc(now + 3 * 86_400);
+/// its weekly window, the binding, at `weekly` percent, read this instant
+/// with a week to its reset: each lane on it, the live ones and the
+/// candidate, is charged the setting's burn for the week, about 25 points,
+/// so at 60 percent one live lane and the candidate project 10 past the
+/// room, and the candidate alone leaves 15.
+fn listing_row(weekly_pct: u64, now: u64) -> Value {
+    let weekly = clock::iso_utc(now + 7 * 86_400);
     json!({
         "alias": "aclaude",
         "harness": "claude",
@@ -210,15 +207,14 @@ fn listing_row(session: u64, now: u64) -> Value {
         "measured_through": "local",
         "status": "ok",
         "verdict": "room",
-        "headroom_pct": 80,
+        "headroom_pct": 100 - weekly_pct,
         "binding_bucket": "weekly",
         "binding_resets_at": weekly,
-        "wall": 20,
-        "session_5h_pct": session,
-        "weekly_pct": 20,
+        "wall": weekly_pct,
+        "weekly_pct": weekly_pct,
         "monthly_pct": null,
         "model_buckets": [],
-        "resets": {"session": clock::iso_utc(now + 3 * 3600), "weekly": weekly, "model": null, "monthly": null},
+        "resets": {"weekly": weekly, "model": null, "monthly": null},
         "usage_rate_state": "one-sample",
         "usage_age_s": 0,
         "claims": 0,
@@ -270,7 +266,7 @@ fn refusal_fields(answer: &Value) -> HashMap<String, String> {
 }
 
 /// A relaunch is judged without its own lane's charge, and never admitted
-/// onto an account another lane has filled. The account's session window
+/// onto an account another lane has filled. The account's weekly window
 /// leaves room for no second lane. KEN-1's record stands stopped with a
 /// reservation (a charge) and KEN-2 runs live on the account: KEN-1's
 /// relaunch is refused `account-walled` on KEN-2's charge and its own as
@@ -302,16 +298,16 @@ fn a_relaunch_is_judged_with_its_own_lanes_charge_left_out() {
     let fields = refusal_fields(&answer);
     assert_eq!(fields["account"], ACCOUNT);
     assert_eq!(fields["model"], "opus");
-    assert_eq!(fields["bucket"], "session");
+    assert_eq!(fields["bucket"], "weekly");
     assert_eq!(fields["pct"], "60");
     let headroom: f64 = fields["projected-headroom"].parse().unwrap();
     assert!(
-        (-141.0..-139.0).contains(&headroom),
+        (-10.5..-9.5).contains(&headroom),
         "KEN-2's charge and the candidate's, not KEN-1's own reservation: {headroom}"
     );
     assert!(
         stderr(&out).starts_with(&format!(
-            "orch-runtime: account-walled item=KEN-1 account={ACCOUNT} model=opus pct=60 bucket=session projected-headroom="
+            "orch-runtime: account-walled item=KEN-1 account={ACCOUNT} model=opus pct=60 bucket=weekly projected-headroom="
         )),
         "{}",
         stderr(&out)
@@ -371,7 +367,7 @@ fn a_launch_with_no_record_is_judged_fresh_and_an_unread_listing_admits_nothing(
         .parse()
         .unwrap();
     assert!(
-        (-141.0..-139.0).contains(&headroom),
+        (-10.5..-9.5).contains(&headroom),
         "KEN-1's reservation and the candidate charge a launch that replaces nothing: {headroom}"
     );
     assert_eq!(
@@ -2158,13 +2154,13 @@ fn a_stale_wall_over_an_account_with_room_closes_the_lane() {
         // only once the account has room.
         ("an account walled", DATED_WALL, 100, Some(("walled", None))),
     ];
-    for (case, banner, session, refused) in rows {
+    for (case, banner, weekly, refused) in rows {
         let mut fleet = Fleet::new(4);
         fleet.init_fleet();
         let state = fleet.state_dir().to_path_buf();
         let server = Server::start(&state, "fleet");
         let now = epoch_now();
-        let mut row = listing_row(session, now);
+        let mut row = listing_row(weekly, now);
         let model = case.starts_with("a model's own window");
         if model {
             row["headroom_pct"] = json!(2);
