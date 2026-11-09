@@ -123,9 +123,28 @@ class Task(Session):
                                   account=prepared["account"], effort=prepared["effort"])
                     if not shutil.which(prepared["harness"], path=self.env["PATH"]):
                         raise Refusal("app-missing", prepared["harness"])
+                    child_env = ["env", "JARVIS_TASK_ID=" + record["id"],
+                                 "JARVIS_BASH=" + BASH,
+                                 "JARVIS_TASK_SCRATCH=" + str(scratch),
+                                 "JARVIS_BROWSER_PROFILE=" + (str(profile) if profile else "")]
+                    if profile:
+                        child_env.append("JARVIS_BROWSER_PORT=0")
+                    receipt = scratch / "startup.json"
+                    # The selected project must not supply bootstrap imports.
+                    launch = [*child_env, sys.executable, "-I", "-B", "-c",
+                              "import runpy,sys; sys.path.insert(0,sys.argv[1]); sys.exit(runpy.run_path(sys.argv[1]+'/task.py',run_name='task_native')['native'](sys.argv[2],sys.argv[3]))",
+                              str(Path(__file__).resolve().parent), prepared["line"], str(receipt)]
+                    # The task runs in the pane it creates, held on a tmux
+                    # channel until the record owns that pane: replacing the
+                    # pane would free its pty while opening another, which
+                    # macOS can refuse with ENXIO. A wait that fails or is
+                    # killed runs no launch.
+                    channel = "jarvis-task-" + record["id"]
                     created = self.tmux("new-window", "-d", "-t", "=jarvis", "-n", args.name,
                                         "-c", tmux_cwd, "-P", "-F", "#{window_id}\t#{pane_id}",
-                                        BASH, "--noprofile", "--norc", socket=terminal["server"])
+                                        BASH, "--noprofile", "--norc", "-c",
+                                        "tmux wait-for " + channel + " && exec " + shlex.join(launch),
+                                        socket=terminal["server"])
                     window, pane = created.stdout.strip().split("\t")
                     acquired = {"server": terminal["server"], "session": terminal["session"],
                                 "window": window, "pane": pane, "marked": False}
@@ -137,19 +156,7 @@ class Task(Session):
                     self.write(record)
                     self.tmux("set-option", "-w", "-t", window, "remain-on-exit", "on",
                               socket=terminal["server"])
-                    child_env = ["env", "JARVIS_TASK_ID=" + record["id"],
-                                 "JARVIS_BASH=" + BASH,
-                                 "JARVIS_TASK_SCRATCH=" + str(scratch),
-                                 "JARVIS_BROWSER_PROFILE=" + (str(profile) if profile else "")]
-                    if profile:
-                        child_env.append("JARVIS_BROWSER_PORT=0")
-                    receipt = scratch / "startup.json"
-                    # The selected project must not supply bootstrap imports.
-                    self.tmux("respawn-pane", "-k", "-t", pane, "-c", tmux_cwd,
-                              *child_env, sys.executable, "-I", "-B", "-c",
-                              "import runpy,sys; sys.path.insert(0,sys.argv[1]); sys.exit(runpy.run_path(sys.argv[1]+'/task.py',run_name='task_native')['native'](sys.argv[2],sys.argv[3]))",
-                              str(Path(__file__).resolve().parent), prepared["line"], str(receipt),
-                              socket=terminal["server"])
+                    self.tmux("wait-for", "-S", channel, socket=terminal["server"])
                     while not receipt.exists():
                         if time.monotonic() >= self.deadline:
                             raise subprocess.TimeoutExpired("task-startup", CALL_SECONDS)
