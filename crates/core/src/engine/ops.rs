@@ -481,7 +481,9 @@ fn staying(
 /// does not, nothing can say, so the edge holds the removal up unless the
 /// requirer is named for removal too, as before requirers were followed:
 /// at worst one removal recorded too many, which the next `add` of that
-/// item clears.
+/// item clears. KEN-5017 records in the lock what carries a withheld
+/// requirer on each tool, and deletes this name fallback and its
+/// readability gate.
 fn requirer_stays(
     manifest: &Manifest,
     lock: &Lock,
