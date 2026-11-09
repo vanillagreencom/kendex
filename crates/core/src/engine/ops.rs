@@ -5,7 +5,7 @@ use crate::apply::{Op, PlannedOp};
 use super::{Disowned, DroppedDeclaration, EngineReport, PlanOptions, plan_scope};
 use crate::env::Env;
 use crate::error::Result;
-use crate::lock::{Lock, Reason, entry_key, lock_path};
+use crate::lock::{InstallRef, Lock, Reason, entry_key, lock_path};
 use crate::manifest::{self, Manifest};
 use crate::model::{HarnessId, ItemKind, Scope};
 
@@ -389,28 +389,26 @@ fn kept_removed(
     kept
 }
 
-/// What the record already says holds these installations up. Every one
-/// carries the edges it was installed under, so an edge from something that
-/// is not going away is exactly what would derive the item again — and
-/// reading it costs no catalog, which is what makes a removal stick while a
-/// source is unreadable.
+/// What the record already says holds these installations up: an edge
+/// from a record that stays ([`staying`]), or from a set that is not
+/// uninstalled. Reading it costs no catalog, which is what makes a removal
+/// stick while a source is unreadable.
 fn recorded_edges(
     lock: &Lock,
     names: &[String],
     options: &PlanOptions,
 ) -> BTreeSet<(ItemKind, String)> {
-    let going = going_with(lock, options);
+    let removed = |kind: ItemKind, name: &str| {
+        names.iter().any(|n| n == name) && options.named_for_removal(kind, name)
+    };
+    let stays = staying(lock, options, &removed);
     lock.entries
         .values()
-        .filter(|entry| {
-            names.contains(&entry.name) && options.named_for_removal(entry.kind, &entry.name)
-        })
+        .filter(|entry| removed(entry.kind, &entry.name))
         .filter(|entry| {
             entry.reasons.iter().any(|reason| match reason {
                 Reason::Requested => false,
-                Reason::RequiredBy { by } => {
-                    !going.contains(&entry_key(by.kind, &by.name, by.harness))
-                }
+                Reason::RequiredBy { by } => requirer_stays(lock, &stays, options, by),
                 Reason::MemberOf { bundle } => !options.uninstalled_bundles.contains(&bundle.name),
             })
         })
@@ -418,41 +416,57 @@ fn recorded_edges(
         .collect()
 }
 
-/// The records this removal takes, by entry key: those it names, and every
-/// record whose each reason is an edge from one of them or a set it
-/// uninstalls, until nothing changes. A requirer the removal alone brought
-/// in, such as a hook whose `requires-skills` names the skill going, holds
-/// nothing up. A record with no reason is not taken: nothing says it goes.
-fn going_with(lock: &Lock, options: &PlanOptions) -> BTreeSet<String> {
-    let mut going: BTreeSet<String> = lock
-        .entries
-        .iter()
-        .filter(|(_, entry)| options.named_for_removal(entry.kind, &entry.name))
-        .map(|(key, _)| key.clone())
-        .collect();
+/// The records this removal leaves installed, by entry key: what is reached
+/// over `RequiredBy` edges from the records that are declared, carried by a
+/// set that is not uninstalled, or hold no reason. What the removal names
+/// goes or is kept removed, so it is neither a root nor a step, and a cycle
+/// it alone held up is reached from no root however its members require
+/// each other. A set member the removal takes is a step like any other: it
+/// stays where its own declaration or a requirer that stays keeps it.
+fn staying(
+    lock: &Lock,
+    options: &PlanOptions,
+    removed: &impl Fn(ItemKind, &str) -> bool,
+) -> BTreeSet<String> {
+    let mut stays = BTreeSet::new();
     loop {
         let grew: Vec<String> = lock
             .entries
             .iter()
             .filter(|(key, entry)| {
-                !going.contains(*key)
-                    && !entry.reasons.is_empty()
-                    && entry.reasons.iter().all(|reason| match reason {
-                        Reason::Requested => false,
-                        Reason::RequiredBy { by } => {
-                            going.contains(&entry_key(by.kind, &by.name, by.harness))
-                        }
-                        Reason::MemberOf { bundle } => {
-                            options.uninstalled_bundles.contains(&bundle.name)
-                        }
-                    })
+                !stays.contains(*key)
+                    && !removed(entry.kind, &entry.name)
+                    && (entry.reasons.is_empty()
+                        || entry.reasons.iter().any(|reason| match reason {
+                            Reason::Requested => true,
+                            Reason::RequiredBy { by } => requirer_stays(lock, &stays, options, by),
+                            Reason::MemberOf { bundle } => {
+                                !options.uninstalled_bundles.contains(&bundle.name)
+                            }
+                        }))
             })
             .map(|(key, _)| key.clone())
             .collect();
         if grew.is_empty() {
-            return going;
+            return stays;
         }
-        going.extend(grew);
+        stays.extend(grew);
+    }
+}
+
+/// Whether the requirer an edge names stays. A requirer withheld from this
+/// tool has no record here, though its edge does: it stays unless the
+/// removal names it.
+fn requirer_stays(
+    lock: &Lock,
+    stays: &BTreeSet<String>,
+    options: &PlanOptions,
+    by: &InstallRef,
+) -> bool {
+    let key = entry_key(by.kind, &by.name, by.harness);
+    match lock.entries.contains_key(&key) {
+        true => stays.contains(&key),
+        false => !options.named_for_removal(by.kind, &by.name),
     }
 }
 

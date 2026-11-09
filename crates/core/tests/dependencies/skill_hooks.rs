@@ -113,8 +113,8 @@ fn a_skill_brings_the_hooks_its_frontmatter_names_where_each_hook_runs() {
 /// Removing docs-writing takes the hook it alone brought in and writes no
 /// suppression, though the hook's requires-skills edge names the skill
 /// back: nothing that stays would derive either one again. A hook the
-/// consumer declared is not the removal's to take, so its edge keeps the
-/// skill removed.
+/// consumer declared is not the removal's to take, so its recorded edge
+/// keeps the skill removed with the catalog unreadable.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn removing_a_skill_takes_the_hook_it_alone_brought_and_suppresses_nothing() {
@@ -127,6 +127,9 @@ fn removing_a_skill_takes_the_hook_it_alone_brought_and_suppresses_nothing() {
         let f = world(true, extra);
         let report = audit(&f.env, &f.scope).unwrap();
         apply::execute(&f.env, &report.plan).unwrap();
+        if kept {
+            fs::rename(&f.source, f.source.with_extension("offline")).unwrap();
+        }
         let report =
             ops::remove(&f.env, &f.scope, &["docs-writing".to_owned()], kind, false).unwrap();
         apply::execute(&f.env, &report.plan).unwrap();

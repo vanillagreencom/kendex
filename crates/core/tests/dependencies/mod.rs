@@ -441,6 +441,7 @@ fn a_reference_that_does_not_reach_every_tool_claims_no_co_install() {
 mod agent_skills;
 mod hook_skills;
 mod hooks;
+mod kept_removed;
 mod more;
 mod skill_hooks;
 mod two_catalogs;
