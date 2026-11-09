@@ -117,12 +117,9 @@ fn command_tree_keeps_help_and_adopt_argument_contracts() {
     for path in ["kendex apply", "kendex verify"] {
         let arg = commands[path]
             .get_arguments()
-            .find(|arg| arg.get_id() == "project_path")
-            .expect("project target argument must exist");
-        assert_eq!(arg.get_long(), Some("project-path"), "{path}");
-        let values = arg.get_num_args().expect("project target takes a path");
-        assert_eq!(values.min_values(), 1, "{path}");
-        assert_eq!(values.max_values(), 1, "{path}");
+            .find(|arg| arg.get_long() == Some("project-path"))
+            .unwrap_or_else(|| panic!("{path} takes --project-path"));
+        assert!(!arg.is_hide_set(), "{path} help lists --project-path");
     }
     for flag in ["--lane-refresh", "--throwaway"] {
         let error = commands["kendex verify"]

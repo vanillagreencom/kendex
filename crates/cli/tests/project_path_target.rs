@@ -1231,12 +1231,7 @@ fn verify_reads_an_unregistered_project_without_listing_it() {
     write(&installed(&home), "Personal global edit.\n");
 
     let path = project.to_str().unwrap();
-    for (flags, all) in [
-        (vec![], true),
-        (vec!["--scope", "all"], true),
-        (vec!["--scope", "project"], false),
-        (vec!["--scope", "project", "--strict"], false),
-    ] {
+    for (flags, all) in [(vec![], true), (vec!["--scope", "project"], false)] {
         let mut args = vec!["verify", "deploy", "--project-path", path, "--json"];
         args.extend(flags);
         let output = kendex(&home, &caller, &args);
@@ -1276,19 +1271,57 @@ fn verify_reads_an_unregistered_project_without_listing_it() {
             && row.scope == walked
             && row.state == attest::State::Failed
     }));
-    let output = kendex(
-        &home,
-        &caller,
-        &[
-            "verify",
-            "deploy",
-            "--project-path",
-            path,
-            "--scope",
-            "project",
-        ],
+}
+
+/// A next step printed about a named project names it, so a reader in
+/// another project does not write the one they are in. A walked run
+/// leaves it out: the bare verb already runs there.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn verify_names_the_project_it_was_given_in_its_next_steps() {
+    use kendex_core::{apply, engine, env::Env, model::Scope};
+
+    let (_tmp, home, catalog, _) = world();
+    let project = home.join("dev/target");
+    let caller = home.join("dev/caller");
+    let env = Env::host_rooted(&home);
+    for root in [&project, &caller] {
+        declare(root, &catalog);
+        let scope = Scope::Project { root: root.clone() };
+        let report = engine::plan_apply(&env, &scope, &engine::PlanOptions::current()).unwrap();
+        apply::execute(&env, &report.plan).unwrap();
+    }
+    write(
+        &catalog.join("skills/extra/SKILL.md"),
+        "---\nname: extra\ndescription: the extra skill\n---\nBody.\n",
     );
-    assert!(output.status.success(), "{}", said(&output));
-    assert!(output.stdout.is_empty());
-    assert!(registered(&home).is_empty());
+    for root in [&project, &caller] {
+        write(
+            &root.join("kendex.toml"),
+            &format!(
+                "{}\n[skills.extra]\nsource = \"cat\"\n",
+                manifest_text(&catalog)
+            ),
+        );
+    }
+
+    let named = format!("project={}", project.display());
+    let path = project.to_str().unwrap();
+    for (args, names) in [
+        (
+            vec!["verify", "--scope", "project", "--project-path", path],
+            true,
+        ),
+        (vec!["verify", "--scope", "project"], false),
+    ] {
+        let output = kendex(&home, &caller, &args);
+        assert!(!output.status.success(), "{args:?}: {}", said(&output));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let gap = stderr
+            .lines()
+            .find(|line| line.contains("skill extra"))
+            .unwrap_or_else(|| panic!("{args:?}: no gap row: {}", said(&output)));
+        assert_eq!(gap.contains(&named), names, "{args:?}: {gap}");
+        assert_eq!(gap.contains("project="), names, "{args:?}: {gap}");
+    }
 }

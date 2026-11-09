@@ -219,18 +219,24 @@ pub fn finish_with(finish: Finish, scope: &Scope) -> String {
 /// flag, a project by its root where the run named it, and nothing for
 /// the project the command was typed in, which is `apply`'s default.
 fn push_place(line: &mut String, scope: &Scope, reached: Reached) {
-    match (scope, reached) {
-        (Scope::Global, _) => line.push_str(" global"),
-        (Scope::Project { root }, Reached::Named) => push_project(line, root),
-        (Scope::Project { .. }, Reached::Here) => {}
+    match scope {
+        Scope::Global => line.push_str(" global"),
+        Scope::Project { .. } => line.push_str(&named_project(scope, reached)),
     }
 }
 
 /// The project a run named, as the last field: escaped, and read to the
-/// end of the data, since a path may hold a space.
-fn push_project(line: &mut String, root: &std::path::Path) {
-    line.push_str(" project=");
-    line.push_str(&kendex_core::names::shown(&root.display().to_string()));
+/// end of the data, since a path may hold a space. Empty for the project
+/// the command was typed in and for the personal scope, which every verb
+/// reaches without naming a project.
+pub fn named_project(scope: &Scope, reached: Reached) -> String {
+    match (scope, reached) {
+        (Scope::Project { root }, Reached::Named) => format!(
+            " project={}",
+            kendex_core::names::shown(&root.display().to_string())
+        ),
+        (Scope::Project { .. }, Reached::Here) | (Scope::Global, _) => String::new(),
+    }
 }
 
 /// The declared Pi packages a plan leaves for `update-pi`, read off the
@@ -280,13 +286,10 @@ pub struct PiLeft {
 pub fn update_pi_with(key: &str, scope: &Scope, reached: Reached) -> String {
     match (scope, reached) {
         (Scope::Global, _) => format!("{key}=update-pi scope=global"),
-        (Scope::Project { root }, reached) => {
-            let mut line = format!("{key}=update-pi scope=project");
-            if reached == Reached::Named {
-                push_project(&mut line, root);
-            }
-            line
-        }
+        (Scope::Project { .. }, reached) => format!(
+            "{key}=update-pi scope=project{}",
+            named_project(scope, reached)
+        ),
     }
 }
 
