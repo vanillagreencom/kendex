@@ -155,7 +155,7 @@ A failure, `none`, or empty output sets `EXTERNAL_REVIEW_REQUESTED=false`; anyth
 On V1, a closed reviewer has no session to reuse: recreate it fresh. On V2, retirement keeps the thread allocated: reuse an eligible finished reviewer through `followup_task` with the complete delegation below. Write state for the assigned wave under canonical reviewer names. If a spawn fails with the runtime's thread-limit error, do not retry it and do not tear down the reviewers that did spawn — continue with those, fold the failed reviewer into a later wave, and use that smaller size for the rest of the cycle. Record the demotion in one write, counting assigned reusable threads as well as successful fresh spawns in `[OBSERVED_SPAWN_COUNT]` on V2. On a proved continuation, preserve `review_wave_done` instead of the reset in this fresh-batch write:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.reviewer_slots_observed = [OBSERVED_SPAWN_COUNT] | .review_wave_done = []'
+.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /reviewer_slots_observed [OBSERVED_SPAWN_COUNT] /review_wave_done '[]'
 ```
 
 Then tell the user once: `Runtime capped concurrent agent sessions — set REVIEWER_SLOT_BUDGET = "[OBSERVED_BUDGET]" in kendex.settings.toml [env]`, where `[OBSERVED_BUDGET]` is successful spawns + this session + live dev/QA sessions on other surfaces. On V2, report the `effective_cap` read from `spawn-adapter slots`; the active-only sum omits held finished threads. On V2, an empty fresh-spawn set first takes Codex thread reuse's eligible-thread and held-thread wave routes. Only after those routes cannot run the work, report the cap blocker that rule requires. On other surfaces, if nothing spawned at all, report the misconfiguration and stop.
@@ -163,7 +163,7 @@ Then tell the user once: `Runtime capped concurrent agent sessions — set REVIE
 Store the active set. On a continuation, include retained attempted/live assignments and their IDs/runtime types in these values; do not replace their ownership with the launch subset:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.review_agents = [AGENT_LIST_JSON] | .review_agent_ids = [AGENT_ID_MAP_JSON] | .review_agent_runtime_types = [AGENT_RUNTIME_TYPE_MAP_JSON]'
+.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /review_agents '[AGENT_LIST_JSON]' /review_agent_ids '[AGENT_ID_MAP_JSON]' /review_agent_runtime_types '[AGENT_RUNTIME_TYPE_MAP_JSON]'
 ```
 
 **Both execution paths.** On `alternate-review`, the wave contains one never-launched required domain. Retain the complete required panel and all previous assignments. Record its exact job directory, runner, exit/log/artifact paths, actual first-delegation time, deadline and rejection/re-delegation history in the existing lane status and ownership prose. Keep `review_wave_done`, the original `review_round_id`, `review_delegated_at` and concrete scope across process waves and original-batch continuations; reset them only for an ordinary fresh batch. Store canonical active domains in `review_agents` and preserve genuine attached IDs/runtime entries for retained attached assignments. Mint no process ID or new typed job state. A live assignment never receives a second job.
@@ -260,7 +260,7 @@ Run the applicable check on every return message and every watchdog sweep. `ok =
 Wave mode uses this combined write instead, then shuts that reviewer's session down:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.json_paths += ["[PATH]"] | .review_wave_done += ["[AGENT]"]'
+.agents/skills/orch/scripts/orch-runtime state append --item [ISSUE_ID] /json_paths '[PATH]' /review_wave_done '[AGENT]'
 ```
 
 For a process-owned assignment, a terminal failure or rejected artifact is **incomplete**. Its one allowed re-delegation passes through Process launch admission in § 2.2 and uses a fresh job only after the previous process is terminal, with the same canonical role and complete delegation, exact assigned artifact and § 3.2 rejection boundary. Return there with the existing attempted assignment; do not classify the replacement as a never-launched domain. Retain the original first-delegation/deadline and spent allowance; with no message channel, record that limit instead of inventing a ping. A failed replacement or exhausted deadline marks the domain `unresponsive`.
@@ -364,7 +364,7 @@ Output: [Lane Output](../references/skill-rules.md#lane-output).
 Omit empty categories. Read `patched_causes` and `frozen_causes` first, with the command [finding-disposition.md § Recurrence](../../reviewer/references/finding-disposition.md#recurrence) states. Decline any item that cannot affect real usage with a one-line reason here, per [SKILL.md § The Cycle](../SKILL.md#the-cycle) — it is neither fixed nor filed, and it is reported in § 8. A check result's `repeats` entry is a candidate: a finding at a location where § 4 or § 7 recorded a decline, carrying each recorded description and reason. The same defect stays declined, is no new finding, and takes the write below with the recorded reason; a different defect is dispositioned like any other. Record every decline, from this section or any disposition step, in one write per item, which replaces any entry with the same (location, description), `[SOURCE]` being `pr-review` here and `qa-review` where § 7 follows this pattern:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile art '[ARTIFACT_PATH]' --arg src [SOURCE] --arg reason '[ONE_LINE_REASON]' '$art[0].[ARRAY][[INDEX]] as $item | .declined_items = (((.declined_items // []) | map(select(.location != $item.location or .description != $item.description))) + [{description: $item.description, location: $item.location, reason: $reason, source: $src}])'
+.agents/skills/orch/scripts/orch-runtime state bucket --item [ISSUE_ID] --into /declined_items --drop /declined_items --element /[ARRAY]/[INDEX] --field reason='[ONE_LINE_REASON]' --field source=[SOURCE] '[ARTIFACT_PATH]'
 ```
 
 **Disposition is by rule, not by prompt** — never present a selection menu over the findings. Disposition every finding per [references/finding-disposition.md](../../reviewer/references/finding-disposition.md) § Decision flow, Step 0 first, and only what survives it enters the fix set. Every blocker that survives goes to the fix round below, in EVERY decision mode; `ORCH_DECISION_MODE` does not gate it. The fix round is blockers-only: a `category == "fix"` suggestion enters it only as a blocker, where that flow's Step 1 finds a defect this diff introduces or arms. This same pass dispositions every other `category == "fix"` suggestion: declined with its one-line reason by the write above, or tracked for § 8's filing bar by the At The Cap write below, with `reason` `fix suggestion outside the blockers-only fix round` and `outcome` `skipped` in place of the cap's. The ask set in [communication-modes.md](../references/communication-modes.md) § Ask set still applies.
@@ -386,7 +386,7 @@ Its reply's `verdict` is `below` or `at-cap`, with `count` and `limit`, counting
 **Capped items are escalated, never dropped.** Record every blocker, and every suggestion § 4 made one, that this pass found still outstanding, including one already listed in `fixed_items` whose fix did not hold. Exclude only what is already in `escalated_items`, what § 4 declined, and the `fix set`'s `structural-close`, correction and cut items; a decline is terminal. Match on the RECORDED entry's (location, description), the § 8 key. An item `fixed_items` already lists has a superseded entry there: its fix did not hold, so the same write drops it. One write per item, before Fix Delegation or routing to § 5: the drop and the record land in one command, so the item is never in both buckets and never in neither:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile art '[ARTIFACT_PATH]' --arg src [SOURCE] --arg kind '[KIND]' '$art[0].[ARRAY][[INDEX]] as $item | .fixed_items = ((.fixed_items // []) | map(select(.location != $item.location or .description != $item.description))) | .escalated_items = ((.escalated_items // []) + [{description: $item.description, location: $item.location, reason: "outstanding at the review cycle cap", outcome: "blocked", source: $src} + (if $kind == "" then {} else {kind: $kind} end)])'
+.agents/skills/orch/scripts/orch-runtime state bucket --item [ISSUE_ID] --into /escalated_items --drop /fixed_items --element /[ARRAY]/[INDEX] --field 'reason=outstanding at the review cycle cap' --field outcome=blocked --field source=[SOURCE] --field kind='[KIND]' '[ARTIFACT_PATH]'
 ```
 
 `[ARTIFACT_PATH]` is the `json_paths` entry the item came from, `[ARRAY]` is `blockers` or `suggestions`, and `[INDEX]` is its position there. `[KIND]` is `regression-against-main` for a blocker that breaks behaviour the base branch has, a regression against main, and empty for every other item: the review gate answers `blocked` while such an entry stands with an outcome other than `skipped` ([gates.md](../references/gates.md#which-waiter-answers-which-state)), so a spent cap never merges a break the branch made. Only a path, an array name, an integer and that one word are ever typed.
@@ -433,7 +433,7 @@ A panel holding every `first_panel` reviewer adds `"domain_reasons": {"[AGENT]":
 Shut the review agents down and clear their state (wave mode: sessions are already retired, so this only clears state):
 
 ```bash
-.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.review_agents = [] | .review_agent_ids = {} | .review_wave_done = []'
+.agents/skills/orch/scripts/orch-runtime state set --item [ISSUE_ID] /review_agents '[]' /review_agent_ids '{}' /review_wave_done '[]'
 ```
 
 Then record the QA routing. One command reads the dev round's `qa_labels`, scans the round's full diff for unsafe code and atomics and for paths matching `QA_PERF_PATHS` and `QA_UI_PATHS`, and writes `qa_decision` to workflow state with the agent for each signal; `qa-signals --help` states each input and the agent table:
@@ -496,7 +496,7 @@ This is the one exit predicate for QA, and the only route to § 8: § 6, a QA re
 On the way out, and before § 8, disposition every item still outstanding — every blocker and every `category == "fix"` suggestion this round's QA artifacts report, whether or not `fixed_items` already lists it, excluding only what `escalated_items` carries and what this section declined; an item dev returns as Blocked reaches `escalated_items` through `dev-fix.md` unchanged. One write per item, which drops any superseded `fixed_items` entry and records the item in the same command, its `[ARTIFACT_PATH]` the `json_paths` entry the item came from, `[ARRAY]` either `blockers` or `suggestions`, `[INDEX]` its position there and `[KIND]` as [At The Cap](#at-the-cap) sets it, and the reason is this exit's own, never the cap's:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile art '[ARTIFACT_PATH]' --arg kind '[KIND]' '$art[0].[ARRAY][[INDEX]] as $item | .fixed_items = ((.fixed_items // []) | map(select(.location != $item.location or .description != $item.description))) | .escalated_items = ((.escalated_items // []) + [{description: $item.description, location: $item.location, reason: "QA loop converged with the item unresolved", outcome: "blocked", source: "qa-review"} + (if $kind == "" then {} else {kind: $kind} end)])'
+.agents/skills/orch/scripts/orch-runtime state bucket --item [ISSUE_ID] --into /escalated_items --drop /fixed_items --element /[ARRAY]/[INDEX] --field 'reason=QA loop converged with the item unresolved' --field outcome=blocked --field source=qa-review --field kind='[KIND]' '[ARTIFACT_PATH]'
 ```
 
 ## 8. Summary And Issue Audit

@@ -891,8 +891,8 @@ fn empty(record: &Document, key: &str) -> bool {
 
 /// The record `oversee register` writes, or heals. The same pane on the
 /// same server (`ol_owns`) keeps its record: `server_start` is bound,
-/// `harness`, `home` and `session_id` are filled only where empty
-/// (`ol_record_heal`), and the identity read in the pane is written as the
+/// `harness`, `home` and `session_id` are filled only where empty, as
+/// `state heal` fills them, and the identity read in the pane is written as the
 /// active one, `exit` and `off` dropped. Another session's record, or none,
 /// is replaced by this session's at the next generation, with the fields of
 /// the session that ended left out.

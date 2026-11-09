@@ -1,10 +1,13 @@
 # shellcheck shell=bash
 # An installed reader, a fake SDK event source, and the real hook and mark
 # judge. Callers provide the session's environment and keep their assertions.
-# No extension is copied here: the launcher must have installed it.
+# No extension is copied here: the launcher must have installed it. The hook
+# reads and judges through the built runtime, found in the cache the
+# caller's own HOME resolves whatever HOME the session runs under.
 copilot_context_flow() { # ROOT HOME COPILOT_HOME SCRIPTS [ENV=VALUE...]
-  local root="$1" user_home="$2" cop_home="$3" scripts="$4" sdk payload reading name
+  local root="$1" user_home="$2" cop_home="$3" scripts="$4" sdk payload reading name cache
   shift 4
+  cache="$(bash -c '. "$1"; agent_runtime_cache' _ "$TEST_DIR/../../agent-runtime/scripts/lib/key.sh")" || return 1
   mkdir -p "$root/.agents/skills/orch" "$root/.github/hooks" "$root/tmp" "$user_home"
   rm -f -- "${root:?}/tmp/lane-mail/overseer/context.json" "${root:?}/tmp/lane-mail/CC-1/context.json"
   if [[ ! -e "$root/.git" ]]; then
@@ -47,18 +50,18 @@ SDK
     (cd -- "$root" && ORCH_STATE_DIR="$root/tmp" "$scripts/workflow-state" update oversee \
       'if (.overseer | type) == "object" then .overseer.session_id = "s1" else . end' >/dev/null) || return 1
   fi
-  FLOW_START="$(cd -- "$root" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$user_home" COPILOT_HOME="$cop_home" \
+  FLOW_START="$(cd -- "$root" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$user_home" COPILOT_HOME="$cop_home" AGENT_RUNTIME_CACHE="$cache" \
     ORCH_STATE_DIR="$root/tmp" "$@" bash "$root/.github/hooks/lane-mail-start.sh" <<<"$payload")" || return 1
   : > "$root/tmp/flow.log"
   if [[ -r "$cop_home/extensions/kendex-lane-context/extension.mjs" ]] && \
       jq -e '.enabledFeatureFlags.EXTENSIONS == true' "$cop_home/settings.json" >/dev/null 2>&1; then
-    (cd -- "$root" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$user_home" COPILOT_HOME="$cop_home" \
+    (cd -- "$root" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$user_home" COPILOT_HOME="$cop_home" AGENT_RUNTIME_CACHE="$cache" \
       ORCH_STATE_DIR="$root/tmp" FLOW_LOG="$root/tmp/flow.log" "$@" \
       node "$cop_home/extensions/kendex-lane-context/extension.mjs") || return 1
   fi
   payload="$(jq -nc --arg cwd "$root" --arg transcript "$cop_home/session-state/s1/events.jsonl" \
     '{sessionId:"s1",cwd:$cwd,transcript_path:$transcript}')" || return 1
-  FLOW_STOP="$(cd -- "$root" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$user_home" COPILOT_HOME="$cop_home" \
+  FLOW_STOP="$(cd -- "$root" && env -i GIT_CEILING_DIRECTORIES="$GIT_CEILING_DIRECTORIES" PATH="$PATH" HOME="$user_home" COPILOT_HOME="$cop_home" AGENT_RUNTIME_CACHE="$cache" \
     ORCH_STATE_DIR="$root/tmp" ORCH_LANE_DIRS="" ORCH_OVERSEER_SUCCESSION=on "$@" \
     bash "$root/.github/hooks/lane-mail-check.sh" <<<"$payload")" || return 1
   FLOW_RECORD=none

@@ -414,6 +414,81 @@ pub enum Write {
     FindingsRecord {
         file: PathBuf,
     },
+    /// Several writes in one transition, so a group a caller sets together
+    /// lands together or not at all.
+    Many(Vec<Write>),
+    /// The file's one value appended to the array at `pointer` in place of
+    /// every element whose `key` field equals the value's.
+    Upsert {
+        pointer: String,
+        key: String,
+        file: PathBuf,
+    },
+    /// A finding moved into the bucket `into`, dropped from each of `drop`
+    /// by its (location, description).
+    Bucket(Bucket),
+    /// Every member of the map at `pointer` closed: its `status` `closed`.
+    CloseAll {
+        pointer: String,
+    },
+    ModelSlot {
+        session: String,
+        cause: String,
+        observed: String,
+    },
+    ModelCheck(ModelCheck),
+    ModelReset {
+        lane: String,
+        session: String,
+        expected: PathBuf,
+    },
+    Heal(Heal),
+}
+
+/// A finding's bucket write: the entry is the file's one value, or, at
+/// `element`, the description and location of the element there with the
+/// `fields` beside them, an empty field left out.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Bucket {
+    pub into: String,
+    pub drop: Vec<String>,
+    pub file: PathBuf,
+    pub element: Option<String>,
+    pub fields: Vec<(String, String)>,
+}
+
+/// Where a model check is recorded: the item record's own `model_checks`
+/// slot for the session, or the fleet record's lane or controller entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckPlace {
+    Item,
+    Lane(String),
+    Overseer,
+}
+
+/// A model switch's check: the launch it is bound to is `expected`'s (the
+/// record the hook read), the outcome `switched` or `unavailable`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ModelCheck {
+    pub place: CheckPlace,
+    pub session: String,
+    pub outcome: String,
+    pub cause: String,
+    pub launched: String,
+    pub observed: String,
+    pub expected: PathBuf,
+}
+
+/// The overseer record's heal: the facts the session itself knows, written
+/// where the record names none, for the session the record names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Heal {
+    pub server: String,
+    pub pane: String,
+    pub start: String,
+    pub harness: String,
+    pub home: String,
+    pub session: String,
 }
 
 /// Apply `write` to the record at `path` and report what it wrote. The
@@ -466,6 +541,28 @@ fn transition(
         Write::StandingLift { file } => standing_lift(path, doc, env, one_value(file)?, file),
         Write::LogAppend { file } => log_append(path, doc, store, env, one_value(file)?, file),
         Write::FindingsRecord { file } => findings_record_batch(doc, one_value(file)?, file),
+        Write::Many(writes) => {
+            let mut reports = Vec::with_capacity(writes.len());
+            for write in writes {
+                reports.push(transition(path, doc, store, env, write)?);
+            }
+            Ok(json!({"writes": reports}))
+        }
+        Write::Upsert { pointer, key, file } => upsert(path, doc, pointer, key, one_value(file)?),
+        Write::Bucket(bucket) => bucket_write(path, doc, bucket),
+        Write::CloseAll { pointer } => close_all(path, doc, pointer),
+        Write::ModelSlot {
+            session,
+            cause,
+            observed,
+        } => Ok(model_slot(path, doc, env, session, cause, observed)),
+        Write::ModelCheck(check) => model_check(path, doc, env, check),
+        Write::ModelReset {
+            lane,
+            session,
+            expected,
+        } => model_reset(path, doc, env, lane, session, &one_value(expected)?),
+        Write::Heal(heal) => heal_overseer(doc, heal),
     }
 }
 
@@ -1066,6 +1163,370 @@ pub fn handoff_standing(state_dir: &Path, item: &str, root: Option<&Path>) -> Re
             json!({"standing": "none", "file": text_of(&file)})
         }
     })
+}
+
+// ---------------------------------------------------------------------------
+// The workflows' compound writes and the turn-end hook's own
+// ---------------------------------------------------------------------------
+
+fn same_finding(a: &Value, b: &Value) -> bool {
+    a.get("location") == b.get("location") && a.get("description") == b.get("description")
+}
+
+/// The array at `pointer`, created where absent.
+fn array_at<'a>(path: &Path, doc: &'a mut Document, pointer: &str) -> Result<&'a mut Vec<Value>> {
+    let tokens = tokens(pointer)?;
+    let slot = slot_mut(path, doc, pointer, &tokens)?;
+    if slot.is_null() {
+        *slot = Value::Array(Vec::new());
+    }
+    match slot {
+        Value::Array(items) => Ok(items),
+        other => Err(shape(
+            path,
+            pointer,
+            ShapeReason::NotArray,
+            format!("found {}", json_type(other)),
+        )),
+    }
+}
+
+fn upsert(
+    path: &Path,
+    doc: &mut Document,
+    pointer: &str,
+    key: &str,
+    value: Value,
+) -> Result<Value> {
+    let Some(named) = value.get(key).cloned() else {
+        return Err(refused("upsert-key", &[("pointer", pointer), ("key", key)]));
+    };
+    let items = array_at(path, doc, pointer)?;
+    let before = items.len();
+    items.retain(|item| item.get(key) != Some(&named));
+    let replaced = before - items.len();
+    items.push(value.clone());
+    Ok(json!({"pointer": pointer, "value": value, "replaced": replaced, "length": items.len()}))
+}
+
+fn bucket_write(path: &Path, doc: &mut Document, bucket: &Bucket) -> Result<Value> {
+    let value = one_value(&bucket.file)?;
+    let mut entry = match &bucket.element {
+        None => value,
+        Some(element) => {
+            let Some(found) = value.pointer(element) else {
+                return Err(refused(
+                    "bucket-element",
+                    &[("file", &text_of(&bucket.file)), ("element", element)],
+                ));
+            };
+            json!({
+                "description": found.get("description").cloned().unwrap_or(Value::Null),
+                "location": found.get("location").cloned().unwrap_or(Value::Null),
+            })
+        }
+    };
+    let Value::Object(fields) = &mut entry else {
+        return Err(refused("bucket-entry", &[("file", &text_of(&bucket.file))]));
+    };
+    for (name, value) in &bucket.fields {
+        if !value.is_empty() {
+            fields.insert(name.clone(), Value::String(value.clone()));
+        }
+    }
+    let mut dropped = 0;
+    for pointer in &bucket.drop {
+        let items = array_at(path, doc, pointer)?;
+        let before = items.len();
+        items.retain(|item| !same_finding(item, &entry));
+        dropped += before - items.len();
+    }
+    array_at(path, doc, &bucket.into)?.push(entry.clone());
+    Ok(json!({"into": bucket.into, "entry": entry, "dropped": dropped}))
+}
+
+fn close_all(path: &Path, doc: &mut Document, pointer: &str) -> Result<Value> {
+    let tokens = tokens(pointer)?;
+    let slot = slot_mut(path, doc, pointer, &tokens)?;
+    if slot.is_null() {
+        *slot = Value::Object(Map::new());
+    }
+    let Value::Object(members) = slot else {
+        return Err(shape(
+            path,
+            pointer,
+            ShapeReason::NotObject,
+            format!("found {}", json_type(slot)),
+        ));
+    };
+    for (name, member) in members.iter_mut() {
+        if member.is_null() {
+            *member = Value::Object(Map::new());
+        }
+        let Value::Object(fields) = member else {
+            return Err(shape(
+                path,
+                &format!("{pointer}/{name}"),
+                ShapeReason::NotObject,
+                format!("found {}", json_type(member)),
+            ));
+        };
+        fields.insert("status".to_owned(), json!("closed"));
+    }
+    Ok(json!({"pointer": pointer, "closed": members.len()}))
+}
+
+/// The item's once-only notice slot for a session's unavailable model: kept
+/// where any check of the session stands.
+fn model_slot(
+    path: &Path,
+    doc: &mut Document,
+    env: &Env,
+    session: &str,
+    cause: &str,
+    observed: &str,
+) -> Value {
+    let _ = path;
+    let checks = doc
+        .entry("model_checks")
+        .or_insert_with(|| Value::Object(Map::new()));
+    if checks.is_null() {
+        *checks = Value::Object(Map::new());
+    }
+    if checks.get(session).is_some_and(|c| !c.is_null()) {
+        return json!({"recorded": false});
+    }
+    if let Value::Object(checks) = checks {
+        checks.insert(
+            session.to_owned(),
+            json!({"outcome": "unavailable", "session_id": session, "launched": Value::Null,
+                   "observed": observed, "cause": cause, "at": env.iso()}),
+        );
+    }
+    json!({"recorded": true})
+}
+
+/// The launch a check is bound to: the controller's
+/// `{server, server_start, pane, generation, launch_line, cwd, session_id}`,
+/// a lane's `{launch, launched_at}`.
+fn launch_of(place: &CheckPlace, record: &Value) -> Value {
+    let pick = |keys: &[&str]| {
+        let mut out = Map::new();
+        for key in keys {
+            out.insert(
+                (*key).to_owned(),
+                record.get(*key).cloned().unwrap_or(Value::Null),
+            );
+        }
+        Value::Object(out)
+    };
+    match place {
+        CheckPlace::Overseer => pick(&[
+            "server",
+            "server_start",
+            "pane",
+            "generation",
+            "launch_line",
+            "cwd",
+            "session_id",
+        ]),
+        CheckPlace::Item | CheckPlace::Lane(_) => pick(&["launch", "launched_at"]),
+    }
+}
+
+/// A check standing for the same session and launch answers `duplicate`:
+/// a switch once its recovery started, an unavailable check for another
+/// unavailable one, and an unavailable reading over a switch. A switch whose
+/// recovery never started is acquired again, so a lost answer never
+/// suppresses the recovery.
+fn check_stands(current: &Value, session: &str, identity: &Value, outcome: &str) -> bool {
+    let word = |key: &str| current.get(key).and_then(Value::as_str);
+    if word("session_id") != Some(session) || current.get("launch_identity") != Some(identity) {
+        return false;
+    }
+    match word("outcome") {
+        Some("switched") => {
+            outcome != "switched" || current.get("recovery_started") == Some(&Value::Bool(true))
+        }
+        Some("unavailable") => outcome == "unavailable",
+        _ => false,
+    }
+}
+
+fn check_of(env: &Env, check: &ModelCheck, identity: &Value) -> Value {
+    let mut out = json!({"outcome": check.outcome, "session_id": check.session, "launch_identity": identity,
+                         "launched": check.launched, "observed": check.observed, "at": env.iso(),
+                         "cause": check.cause});
+    if check.outcome == "switched" {
+        out["recovery_started"] = json!(false);
+    }
+    out
+}
+
+fn model_check(path: &Path, doc: &mut Document, env: &Env, check: &ModelCheck) -> Result<Value> {
+    if !matches!(check.outcome.as_str(), "switched" | "unavailable") {
+        return Err(refused("model-outcome", &[("outcome", &check.outcome)]));
+    }
+    let expected = one_value(&check.expected)?;
+    let identity = launch_of(&check.place, &expected);
+    if check.place == CheckPlace::Item {
+        let current = get(
+            doc,
+            &format!("/model_checks/{}", pointer_token(&check.session)),
+        )?;
+        if check_stands(&current, &check.session, &identity, &check.outcome) {
+            return Ok(json!({"result": "duplicate"}));
+        }
+        let record = check_of(env, check, &identity);
+        let slot = format!("/model_checks/{}", pointer_token(&check.session));
+        *slot_mut(path, doc, &slot, &tokens(&slot)?)? = record;
+        return Ok(json!({"result": "acquired"}));
+    }
+    let (pointer, item) = match &check.place {
+        CheckPlace::Overseer => ("/overseer".to_owned(), "oversee".to_owned()),
+        CheckPlace::Lane(lane) => {
+            let index = doc
+                .get("lanes")
+                .and_then(Value::as_array)
+                .and_then(|lanes| {
+                    lanes
+                        .iter()
+                        .position(|l| l.get("item").and_then(Value::as_str) == Some(lane))
+                });
+            match index {
+                Some(index) => (format!("/lanes/{index}"), lane.clone()),
+                None => return Ok(json!({"result": "stale"})),
+            }
+        }
+        CheckPlace::Item => unreachable!("the item check answered above"),
+    };
+    let current = get(doc, &pointer)?;
+    let moved = |key: &str| current.get(key) != expected.get(key);
+    if (check.place == CheckPlace::Overseer && launch_of(&check.place, &current) != identity)
+        || moved("session_id")
+        || moved("model")
+        || moved("launch")
+        || moved("launched_at")
+    {
+        return Ok(json!({"result": "stale"}));
+    }
+    if check_stands(
+        current.get("model_check").unwrap_or(&Value::Null),
+        &check.session,
+        &identity,
+        &check.outcome,
+    ) {
+        return Ok(json!({"result": "duplicate"}));
+    }
+    let record = check_of(env, check, &identity);
+    let mut row = record.clone();
+    row["kind"] = json!(format!("model-{}", check.outcome));
+    row["item"] = json!(item);
+    row["text"] = json!(format!(
+        "launched={} observed={}",
+        check.launched, check.observed
+    ));
+    state::array_mut(path, doc, "fleet_log")?.push(row);
+    let slot = format!("{pointer}/model_check");
+    *slot_mut(path, doc, &slot, &tokens(&slot)?)? = record;
+    Ok(json!({"result": "acquired", "record": get(doc, &pointer)?}))
+}
+
+/// A replacement's first turn end resets the lane's switched check to
+/// `passed`, with its log row, where the lane still runs the launch, the
+/// session and the check `expected` holds.
+fn model_reset(
+    path: &Path,
+    doc: &mut Document,
+    env: &Env,
+    lane: &str,
+    session: &str,
+    expected: &Value,
+) -> Result<Value> {
+    let lanes: Vec<usize> = doc
+        .get("lanes")
+        .and_then(Value::as_array)
+        .map(|lanes| {
+            lanes
+                .iter()
+                .enumerate()
+                .filter(|(_, l)| l.get("item").and_then(Value::as_str) == Some(lane))
+                .map(|(index, _)| index)
+                .collect()
+        })
+        .unwrap_or_default();
+    let Some(first) = lanes.first() else {
+        return Ok(json!({"reset": false}));
+    };
+    let current = get(doc, &format!("/lanes/{first}"))?;
+    let moved = |key: &str| current.get(key) != expected.get(key);
+    if moved("launch") || moved("launched_at") || moved("session_id") || moved("model_check") {
+        return Ok(json!({"reset": false}));
+    }
+    let check = json!({"outcome": "passed", "session_id": session,
+                       "launch_identity": launch_of(&CheckPlace::Lane(lane.to_owned()), &current), "at": env.iso()});
+    for index in &lanes {
+        let slot = format!("/lanes/{index}/model_check");
+        *slot_mut(path, doc, &slot, &tokens(&slot)?)? = check.clone();
+    }
+    let mut row = check;
+    row["kind"] = json!("model-recovery-reset");
+    row["item"] = json!(lane);
+    row["text"] = json!("first-turn-complete");
+    state::array_mut(path, doc, "fleet_log")?.push(row);
+    Ok(json!({"reset": true}))
+}
+
+/// The record names this session where it names its server and pane on the
+/// server's start, or on no start at all, and its harness, home and native
+/// session are this session's or unrecorded.
+fn heal_overseer(doc: &mut Document, heal: &Heal) -> Result<Value> {
+    let text = |v: Option<&Value>| v.and_then(Value::as_str).unwrap_or("").to_owned();
+    let Some(Value::Object(record)) = doc.get_mut("overseer") else {
+        return Err(refused("overseer-native-unbound", &[("pane", &heal.pane)]));
+    };
+    let pane = record
+        .get("pane")
+        .filter(|v| !v.is_null())
+        .or_else(|| record.get("session"));
+    let start = match record.get("server_start") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) => Some(s.clone()),
+        Some(other) => Some(other.to_string()),
+    };
+    let owns = text(record.get("server")) == heal.server
+        && text(pane) == heal.pane
+        && start.as_deref().is_none_or(|s| s == heal.start);
+    let open = |key: &str, given: &str| {
+        let recorded = text(record.get(key));
+        recorded.is_empty() || given.is_empty() && key == "home" || recorded == given
+    };
+    let native = !heal.session.is_empty()
+        && open("harness", &heal.harness)
+        && open("home", &heal.home)
+        && open("session_id", &heal.session);
+    if !(owns && native) {
+        return Err(refused("overseer-native-unbound", &[("pane", &heal.pane)]));
+    }
+    let Ok(server_start) = heal.start.parse::<u64>() else {
+        return Err(refused("server-start-invalid", &[("start", &heal.start)]));
+    };
+    record.insert("server_start".to_owned(), json!(server_start));
+    for (key, given) in [
+        ("harness", &heal.harness),
+        ("home", &heal.home),
+        ("session_id", &heal.session),
+    ] {
+        if text(record.get(key)).is_empty() && !given.is_empty() {
+            record.insert(key.to_owned(), json!(given));
+        }
+    }
+    Ok(json!({"overseer": Value::Object(record.clone())}))
+}
+
+/// A record key as one RFC 6901 token.
+fn pointer_token(key: &str) -> String {
+    key.replace('~', "~0").replace('/', "~1")
 }
 
 // ---------------------------------------------------------------------------

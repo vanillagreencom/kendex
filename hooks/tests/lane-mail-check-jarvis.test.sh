@@ -115,13 +115,12 @@ while IFS='|' read -r shape label tokens active session agent expected key; do
     missing-pane*) CALL_ENV=("${BASE_CALL_ENV[@]}") ;;
     absent) mv "$RECORD" "$RECORD.saved" ;;
     setting-range) CONTEXT_PCT_ENV=ORCH_HANDOFF_CONTEXT_PCT=101 ;;
-    script | setting)
+    setting)
       hole_install orch-env
-      if [ "$shape" = setting ]; then
-        printf '#!/usr/bin/env bash\nexit 1\n' > "$LANE/.agents/skills/orch/scripts/orch-env"
-        chmod +x "$LANE/.agents/skills/orch/scripts/orch-env"
-      fi
+      printf '#!/usr/bin/env bash\nexit 1\n' > "$LANE/.agents/skills/orch/scripts/orch-env"
+      chmod +x "$LANE/.agents/skills/orch/scripts/orch-env"
       ;;
+    script) hole_install orch-runtime ;;
     transcript) TRANSCRIPT="$ACCOUNT/projects/missing/s1.jsonl" ;;
     copilot*)
       [ "$shape" != copilot-missing-pane ] || CALL_ENV=("${BASE_CALL_ENV[@]}")
@@ -179,7 +178,7 @@ while IFS='|' read -r shape label tokens active session agent expected key; do
       ;;
   esac
   case "$key" in
-    SCRIPT_KEY) key="lane-mail-check: script=$LANE/.agents/skills/orch/scripts/orch-env" ;;
+    SCRIPT_KEY) key="lane-mail-check: script=$LANE/.agents/skills/orch/scripts/orch-runtime" ;;
     READING_KEY) key=lane-mail-check:\ reading-unrecorded ;;
   esac
   case "$shape" in
@@ -231,10 +230,11 @@ while IFS='|' read -r shape label tokens active session agent expected key; do
   esac
   case "$shape" in
     absent | copilot-absent) mv "$RECORD.saved" "$RECORD" ;;
-    script | setting)
+    setting)
       rm -f -- "${LANE:?}/.agents/skills/orch/scripts/orch-env"
       ln -s "$REPO_ROOT/skills/orch/scripts/orch-env" "$LANE/.agents/skills/orch/scripts/orch-env"
       ;;
+    script) runtime_stub "$LANE/.agents/skills/orch/scripts" none ;;
   esac
 done <<'ROWS'
 plain|below the context mark|100000|false|s1||0|-
@@ -251,9 +251,9 @@ plain|another native session gets no Jarvis mark|400000|false|s2||0|-
 plain|a subagent gets no Jarvis mark|400000|false|s1|child|0|-
 absent|the same session with no record gets no mark|400000|false|s1||0|NO_MARK
 plain|the restored record restores the Jarvis succession mark|400000|false|s1||2|lane-mail-check: context=@TOKENS@
-setting-range|an invalid setting passes as a named gap|400000|false|s1||0|lane-mail-check: setting-range=ORCH_HANDOFF_CONTEXT_PCT=101
-setting|an unreadable setting passes as a named gap|400000|false|s1||0|lane-mail-check: setting=ORCH_HANDOFF_CONTEXT_PCT
-script|an absent context command passes as a named gap|400000|false|s1||0|SCRIPT_KEY
+setting-range|a setting the runtime judge refuses passes as a named gap|400000|false|s1||0|lane-mail-check: marks=unjudged
+setting|an orch-env that cannot answer leaves the mark the runtime judge's|400000|false|s1||2|lane-mail-check: context=@TOKENS@
+script|an absent runtime passes as a named gap|400000|false|s1||0|SCRIPT_KEY
 transcript|a missing native transcript passes as a named gap|400000|false|s1||0|lane-mail-check: transcript=unreadable
 copilot-empty|an empty Copilot lead marker leaves context unmeasured|100000|false|s1||allow|READING_KEY
 copilot-sdk|an SDK reading below the mark passes|100000|false|s1||allow|-

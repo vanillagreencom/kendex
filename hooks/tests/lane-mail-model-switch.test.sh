@@ -39,18 +39,24 @@ model_world() { # NAME LAUNCHED [broken] [RECORDED FLAGS]
   cp -- "$REPO_ROOT"/skills/github/scripts/lib/*.sh "$LANE/.agents/skills/github/scripts/lib/"
   S="$LANE/.agents/skills/orch/scripts"
   [[ -z "${MODEL_RELAUNCH_UNDER_TEST:-}" ]] || cp -- "$MODEL_RELAUNCH_UNDER_TEST" "$S/lib/lane-relaunch.sh"
-  # Capture the runtime dependency alone: the close that stops the
+  # Capture the runtime's two effects alone: the close that stops the
   # predecessor (its request in MODEL_CLOSE) and the launch-lane request
-  # (MODEL_ARGV), each op appended to MODEL_OPS in the order asked. The
-  # recovery's claim, its composition and its workflow writes remain
-  # production operations; the stop and the launch are the runtime's, held
-  # by its own rows.
-  cat >"$S/orch-runtime" <<'LAUNCH'
-#!/usr/bin/env bash
+  # (MODEL_ARGV), each op appended to MODEL_OPS in the order asked. Every
+  # other verb, the hook's model checks and handoff and the recovery's
+  # claim, runs the real runtime; the stop and the launch are the
+  # runtime's, held by its own rows.
+  {
+    printf '#!/usr/bin/env bash\nreal=%q\nexport AGENT_RUNTIME_CACHE=%q\n' "$ORCH_RUNTIME" "$AGENT_RUNTIME_CACHE"
+    cat <<'LAUNCH'
 set -euo pipefail
 request="" prev=""
 for arg in "$@"; do [[ "$prev" != --request ]] || request="$arg"; prev="$arg"; done
-op="$(jq -r .op "$request")"
+op=""
+[[ -z "$request" ]] || op="$(jq -r '.op // ""' "$request")"
+case "$op" in
+  close-owned-resources | launch-lane) ;;
+  *) exec "$real" "$@" ;;
+esac
 printf '%s\n' "$op" >> "$MODEL_OPS"
 if [[ "$op" == close-owned-resources ]]; then
   cp -- "$request" "$MODEL_CLOSE"
@@ -60,6 +66,7 @@ else
 fi
 printf '{"protocol":"orch-runtime-v1","ok":true,"result":{"effect":{"report":{"intent":{"outcome":"confirmed"}}}}}\n'
 LAUNCH
+  } >"$S/orch-runtime"
   chmod +x "$S/orch-runtime"
   mkdir -p "$TMP_ROOT/bin"
   fixture_named_process "$TMP_ROOT/bin/claude"
@@ -194,7 +201,7 @@ if [[ -z "${MODEL_CONTROL:-}" ]]; then
     if [[ "$delivery" == first ]]; then
       assert_eq "$(jq -r '.model_checks.s1.cause' "$LANE/tmp/workflow-state-KEN-3916.json")" record-unwritten 'a held fleet lock persists unavailable in item state'
       assert_eq "$(jq -r '.hookSpecificOutput.additionalContext|split("\n")[0]' "$TMP_ROOT/stdout")" 'lane-mail-check: model-unavailable=record-unwritten' 'a held fleet lock delivers model context'
-      assert_eq "$(jq -r '.hookSpecificOutput.additionalContext|contains("workflow-state: lock-failed")' "$TMP_ROOT/stdout")" true 'fleet write failure keeps its dependency cause below the key'
+      assert_eq "$(jq -r '.hookSpecificOutput.additionalContext|contains("orch-runtime: lock-timeout")' "$TMP_ROOT/stdout")" true 'fleet write failure keeps its dependency cause below the key'
     else
       assert_eq "$(cat "$TMP_ROOT/stdout")" '' 'a held fleet lock reports once'
     fi
@@ -430,16 +437,17 @@ fi
 
 if model_case replaced-before-write; then
 model_world replaced-before-write claude-fable-5-1
-mv -- "$S/workflow-state" "$S/workflow-state.real"
-cat > "$S/workflow-state" <<'STATE'
+mv -- "$S/orch-runtime" "$S/orch-runtime.stub"
+cat > "$S/orch-runtime" <<'STATE'
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ "$1" == --state-dir && "$3" == update-report ]]; then
-  "$0.real" --state-dir "$2" update oversee '.lanes[0].launched_at="launch-b"' >/dev/null
+# A relaunch lands between the hook's read of the lane and its write.
+if [[ "$1" == --state-dir && "$3 $4 $5" == "state model-check record" && " $* " == *" --lane "* ]]; then
+  "${0%/*}/workflow-state" --state-dir "$2" update oversee '.lanes[0].launched_at="launch-b"' >/dev/null
 fi
-exec "$0.real" "$@"
+exec "$0.stub" "$@"
 STATE
-chmod +x "$S/workflow-state"
+chmod +x "$S/orch-runtime"
 event claude-opus-4-8
 assert_eq "$(switch_count)" 0 'a launch replacement before the locked write records no stale switch'
 assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" 'a stale write cannot dispatch recovery'
@@ -526,24 +534,24 @@ model_world reset-replaced claude-fable-5-1
   | .fleet_log=[{kind:"model-switched",item:"KEN-3916",recovery:"replaced"}]' >/dev/null
 # The lane reports a step, so the idle judge after the marks passes it.
 printf 'wait\n' > "$LANE/tmp/lane-status-KEN-3916.md"
-mv -- "$S/workflow-state" "$S/workflow-state.real"
-cat > "$S/workflow-state" <<'STATE'
+mv -- "$S/orch-runtime" "$S/orch-runtime.stub"
+cat > "$S/orch-runtime" <<'STATE'
 #!/usr/bin/env bash
 set -euo pipefail
 # The first write that would carry the reset row lands after the relaunch.
-if [[ "$1" == --state-dir && "$3 $4" == "update oversee" && "$5" == *model-recovery-reset* && ! -f "$0.relaunched" ]]; then
+if [[ "$1" == --state-dir && "$3 $4 $5" == "state model-check reset" && ! -f "$0.relaunched" ]]; then
   : > "$0.relaunched"
-  "$0.real" --state-dir "$2" update oversee '
+  "${0%/*}/workflow-state" --state-dir "$2" update oversee '
     .lanes[0].launched_at="launch-c"
     | .lanes[0].launch.pane="%replacement"
     | .lanes[0].model_check={outcome:"switched",session_id:"s2",recovery_started:true,
         launch_identity:{launch:{pane:"%replacement"},launched_at:"launch-c"}}' >/dev/null
 fi
-exec "$0.real" "$@"
+exec "$0.stub" "$@"
 STATE
-chmod +x "$S/workflow-state"
+chmod +x "$S/orch-runtime"
 run_payload '{"hook_event_name":"Stop","session_id":"s1","stop_hook_active":false}'
-assert_eq "$([[ -f "$S/workflow-state.relaunched" ]] && echo yes)" yes 'the relaunch lands before the reset write'
+assert_eq "$([[ -f "$S/orch-runtime.relaunched" ]] && echo yes)" yes 'the relaunch lands before the reset write'
 assert_eq "$(jq -r '.lanes[0].model_check.session_id' "$LANE/tmp/workflow-state-oversee.json")" s2 \
   'a reset raced by a relaunch leaves the replacement check'
 assert_eq "$(jq '[.fleet_log[] | select(.kind=="model-recovery-reset")] | length' "$LANE/tmp/workflow-state-oversee.json")" 0 \
@@ -553,9 +561,9 @@ fi
 
 if model_case lock-cause; then
 echo '=== a model switch meeting a held item lock names the lock ==='
-# The item state's init waits on the store's lock for its bound and then
-# gives up. With no cause line, the handoff-unwritten notice would carry
-# nothing under its key where the store's own writer names the lock.
+# The runtime's handoff write waits on the item record's lock for its bound
+# and then gives up. With no cause line, the handoff-unwritten notice would
+# carry nothing under its key where the runtime's own refusal names the lock.
 model_world lock-cause claude-fable-5-1
 lock="$LANE/tmp/workflow-state-KEN-3916.json.lock"
 "$BASH" -c '. "$1"; exec 200>"$2"; orch_take_lock 200 "$2" 10 || exit 1; : > "$3"
@@ -568,16 +576,19 @@ event claude-opus-4-8
 : > "$TMP_ROOT/lock-release"
 wait "$LOCK_HOLDER" || :
 LOCK_HOLDER=""
-assert_eq "$(jq -r '.hookSpecificOutput.additionalContext | split("\n")[0:2] | join("|")' "$TMP_ROOT/stdout")" \
-  "lane-mail-check: model-unavailable=handoff-unwritten|lane-mail-check: lock-failed lock-file=$lock" \
-  'a held item lock is named under the handoff-unwritten key'
+# The lock refuses the handoff write and then the notice slot's: each
+# write's own refusal stands under the key.
+assert_eq "$(jq -r '.hookSpecificOutput.additionalContext | split("\n")
+    | (.[0:2] | join("|")) + "|" + ([.[] | select(startswith("orch-runtime: lock-timeout "))] | length | tostring)' "$TMP_ROOT/stdout")" \
+  "lane-mail-check: model-unavailable=handoff-unwritten|orch-runtime: lock-timeout path=$lock wait_s=10|2" \
+  'a held item lock is named under the handoff-unwritten key, for the handoff write and the notice slot'
 await_recovery || :
 kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
 fi
 
 if model_case reset-warning; then
 echo '=== reset dependency failures preserve Stop and later model notices ==='
-# workflow-state and tmux can fail at a replacement's first Stop. Their
+# The runtime and tmux can fail at a replacement's first Stop. Their
 # warnings must not take the once-only slot for a later PostModelSwitch.
 while IFS='|' read -r fault cause; do
   model_world "reset-warning-$fault" claude-fable-5-1
@@ -589,21 +600,21 @@ while IFS='|' read -r fault cause; do
     | .fleet_log=[{kind:"model-switched",item:"KEN-3916",recovery:"replaced"}]' >/dev/null
   before=$(jq -c . "$LANE/tmp/workflow-state-oversee.json")
   printf 'wait\n' > "$LANE/tmp/lane-status-KEN-3916.md"
-  mv -- "$S/workflow-state" "$S/workflow-state.real"
-  cat > "$S/workflow-state" <<'STATE'
+  mv -- "$S/orch-runtime" "$S/orch-runtime.stub"
+  cat > "$S/orch-runtime" <<'STATE'
 #!/usr/bin/env bash
 set -euo pipefail
 case "${MODEL_RESET_FAULT:-}:$*" in
-  state:'path oversee'|read:'--state-dir '*" get oversee"|write:'--state-dir '*" update oversee "*)
-    printf 'workflow-state: reset-fault=%s\n' "$MODEL_RESET_FAULT" >&2
+  state:'state path --fleet'|read:'--state-dir '*' state get --fleet'|write:'--state-dir '*' state model-check reset '*)
+    printf 'orch-runtime: reset-fault=%s\n' "$MODEL_RESET_FAULT" >&2
     exit 1 ;;
 esac
-if [[ "$1" == handoff-standing ]]; then
+if [[ "$1 $2" == "state handoff-standing" ]]; then
   : > "$0.handoff-read"
 fi
-exec "$0.real" "$@"
+exec "$0.stub" "$@"
 STATE
-  chmod +x "$S/workflow-state"
+  chmod +x "$S/orch-runtime"
   CALL_ENV+=("MODEL_RESET_FAULT=$fault")
   [[ "$fault" != pane ]] || CALL_ENV+=(TMUX_SERVER_ID=)
   run_payload '{"hook_event_name":"Stop","session_id":"s1","stop_hook_active":false}'
@@ -613,7 +624,7 @@ STATE
   assert_eq "$(cat "$TMP_ROOT/stdout")" '' "$fault Stop emits no context event"
   assert_eq "$(jq -c '.model_checks.s1' "$LANE/tmp/workflow-state-KEN-3916.json")" null "$fault keeps the model-switch notice slot"
   assert_eq "$(jq -c . "$LANE/tmp/workflow-state-oversee.json")" "$before" "$fault leaves the recovery count unchanged"
-  assert_eq "$([[ -f "$S/workflow-state.handoff-read" ]] && echo yes)" yes "$fault permits the handoff check"
+  assert_eq "$([[ -f "$S/orch-runtime.handoff-read" ]] && echo yes)" yes "$fault permits the handoff check"
   assert_eq "$([[ -s "$LANE/tmp/lane-mail/KEN-3916/sent-count" ]] && echo yes)" yes "$fault permits the idle check"
   CALL_ENV+=(MODEL_RESET_FAULT= "TMUX_SERVER_ID=$OVERSEER_SERVER")
   rm -- "$S/lib/adapters/claude.sh"
@@ -661,20 +672,15 @@ text = Path(source).read_text()
 old, new = {
     "comparison": ('elif [ "$launch_id" = "$observed_id" ]; then return 0', 'elif false; then return 0'),
     "family": ('observed_id=$(launch_choice_model_id claude "$observed" resolved "$launched")', 'observed_id=$(launch_choice_model_id claude "$observed" resolved)'),
-    "duplicate": ('elif $current.model_check.session_id == $session', 'elif false and $current.model_check.session_id == $session'),
-    "history": ('and $current.model_check.launch_identity == $identity', 'and true'),
     "callback": ('.launch.pane == $pane and (.launch.server | tostring) == $server', 'true'),
     "server": ('(.launch.server | tostring) == $server', '.launch.server == $server'),
     "standing": ('$prior // {merged:', '{merged:'),
     "unbound": ('unbound) model_unavailable_notice launch-unbound "$observed"; return 0 ;;', 'unbound) return 0 ;;'),
     "notice": ('model_unavailable_notice adapter-unread "$observed" "$(cat -- "$WORK_DIR/model.err")"; return 0', 'message model-unavailable adapter-unread; return 0'),
-    "claim": ('or $current.launch != $record.launch or $current.launched_at != $record.launched_at', 'or $current.launch != $record.launch or false'),
     "roster": ('(.child_sessions // {}) as $children', '{} as $children'),
-    "unavailable": ('if .model_checks[$session] != null then', 'if false then'),
     "reset": ('    model_recovery_reset\n', '    : # model_recovery_reset\n'),
     "reset-warning": ('message model-unavailable reset-launch-unread', 'model_unavailable_notice reset-launch-unread ""'),
-    "lock-cause": ('|| { printf "lane-mail-check: lock-failed lock-file=%s\\n" "$3.lock" >&2; exit 1; }', '|| exit 1'),
-    "reset-compare": ('    | if $current.launch != $record.launch or $current.launched_at != $record.launched_at\n        or $current.session_id != $record.session_id or $current.model_check != $record.model_check\n', '    | if false\n'),
+    "lock-cause": ('        model_unavailable_notice handoff-unwritten "$observed" "$(cat -- "$WORK_DIR/model.err")"\n      }\n', '        model_unavailable_notice handoff-unwritten "$observed"\n      }\n'),
 }[rule]
 assert text.count(old) == 1
 changed = text.replace(old, new)
@@ -693,19 +699,14 @@ CONTROL
 baseline|complete
 comparison|matching
 family|family-alias
-duplicate|complete
-history|complete
 callback|retired-callback
-claim|replaced-before-write
 roster|extended
-unavailable|no-fleet-record
 server|complete
 standing|complete
 unbound|gui-session
 notice|adapter
 reset|reset
 reset-warning|reset-warning
-reset-compare|reset-replaced
 lock-cause|lock-cause
 CONTROLS
   while IFS='|' read -r rule control_case; do

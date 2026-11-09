@@ -4,15 +4,14 @@
 # the adapter for its harness (lib/adapters/), which answers the tokens the last
 # response left in the context and its verified compaction point, and records that
 # reading in the session's mailbox directory. Every other reader, the
-# runtime watch (`orch-runtime watch`) and `oversee-succeed`, reads that
+# runtime watch (`orch-runtime watch`) and its `marks` judge, reads that
 # record, so a hosted lane reads the same as a local one and a scrolled or
 # quiet pane changes nothing.
 #
-# One judge: lane_context_handoff_due enforces the absolute token cap and the
-# remaining-capacity mark. ORCH_HANDOFF_CONTEXT_PCT can request an earlier
-# handoff. lane_context_window_full is the one judge of a reading that fills
-# its window. No reader carries its own arithmetic. Missing capacity is
-# unmeasured below the absolute cap, never judged against a guess.
+# The judge of a reading is the runtime's one context judge, asked through
+# `orch-runtime marks --item ITEM --context TOKENS:WINDOW`; nothing here
+# carries its arithmetic. Missing capacity is unmeasured below the absolute
+# cap, never judged against a guess.
 set -euo pipefail
 
 # A launch home reaches this library in CODEX_HOME, and only lane-home.sh says
@@ -135,9 +134,9 @@ lane_context_pane_shape() { # CMD PANE_PID
 # turn-end hook asks it for the account its headroom is judged on
 # (hooks/lane-mail-check.sh); it records no account. A recorded overseer's
 # account is its launch record's (lib/overseer-launch.sh § ol_record_current),
-# which `oversee-succeed` judges it on; the hook reads this function alone, so
-# it judges that overseer's headroom on another account where the session's
-# environment disagrees with its record.
+# which the runtime's `marks --fleet` judges it on; the hook reads this
+# function alone, so it judges that overseer's headroom on another account
+# where the session's environment disagrees with its record.
 #
 # Which variable names the account is decided by the SHAPE, never by which
 # variable happens to be set: every launcher here prefixes one without clearing
@@ -188,7 +187,7 @@ lane_context_caller_cfg() { # SHAPE
 # included, since that home is where its rollouts are written. The home a
 # transcript is bound to (lane_context_transcript_owned) is this one, so the
 # turn-end hook fills a fleet record naming no home from it
-# (lib/overseer-launch.sh § ol_record_heal). Exit 1, printing nothing, for a
+# (`orch-runtime state heal --fleet`). Exit 1, printing nothing, for a
 # harness with no transcript shape.
 lane_context_caller_home() { # HARNESS
   case "${1:-}" in
@@ -281,105 +280,9 @@ lane_context_transcript_owned() { # HARNESS PATH SESSION HOME
   fi
 }
 
-# Normalize the requested handoff percentage for the judge and its reports.
-# A larger setting cannot weaken the mandatory remaining-capacity mark.
-lane_context_handoff_pct() { # PCT
-  case "${1:-}" in '' | *[!0-9]* | 0*) return 2 ;; esac
-  [ "$1" -le 100 ] || return 2
-  if [ "$1" -gt 90 ]; then printf '90\n'; else printf '%s\n' "$1"; fi
-}
-
-# lane_context_handoff_due TOKENS WINDOW PCT [AGENT_RESERVE] — one context
-# reading: `due` at 400000 used tokens or strictly past PCT percent of WINDOW,
-# with PCT capped at 90. WINDOW is the effective capacity before compaction,
-# or the actual window when compaction is disabled. Exit 1 below the token cap
-# where WINDOW is empty or 0, which is unmeasured and never room. Exit 2 where
-# PCT is not a whole number from 1
-# to 100, or a figure is not a whole number or carries a leading zero a shell
-# would read as octal. Every reader of a reading asks here, so a lane, the
-# overseer and the report cannot judge one reading two ways.
-lane_context_handoff_due() { # TOKENS WINDOW PCT [AGENT_RESERVE]
-  local pct cap_mark window_mark
-  lane_context_marks "$@" || return 2
-  if [ "$1" -ge "$cap_mark" ]; then printf 'due\n'; return 0; fi
-  case "$window_mark" in '') return 1 ;; invalid) return 2 ;; esac
-  # A launch must keep its reserve before either mark. Equality refuses a
-  # launch, while the existing handoff percentage remains strictly greater.
-  if [ "$#" -ge 4 ]; then
-    if [ "$1" -ge "$window_mark" ]; then printf 'due\n'; else printf 'room\n'; fi
-  elif [ "$1" -gt "$window_mark" ]; then
-    printf 'due\n'
-  else
-    printf 'room\n'
-  fi
-}
-
-# The marks lane_context_handoff_due and lane_context_handoff_decision judge
-# and record for the same arguments, computed once, into the CALLER's locals
-# pct, cap_mark and window_mark. cap_mark is the token count due at or past.
-# window_mark is the whole token count the window percentage leaves after any
-# reserve: due strictly past it without a reserve and at or past it with one,
-# which is exact for whole token counts. It is empty where WINDOW is empty or
-# 0, `invalid` where WINDOW is malformed, and empty with cap_mark 0 where the
-# reserve leaves no room below the absolute mark. Exit 2 where PCT, TOKENS or
-# the reserve is rejected.
-lane_context_marks() { # TOKENS WINDOW PCT [AGENT_RESERVE]
-  pct=$(lane_context_handoff_pct "${3:-}") || return 2
-  case "${1:-}" in '' | *[!0-9]*) return 2 ;; 0) ;; 0*) return 2 ;; esac
-  cap_mark=400000
-  window_mark=""
-  if [ "$#" -ge 4 ]; then
-    case "$4" in '' | *[!0-9]*) return 2 ;; 0) ;; 0*) return 2 ;; esac
-    # No arithmetic uses an unbounded setting: any reserve this large leaves
-    # no room below the absolute mark, even if the capacity is unknown.
-    if [ "${#4}" -gt 6 ] || [ "$4" -ge 400000 ]; then
-      cap_mark=0
-      return 0
-    fi
-    cap_mark=$((400000 - $4))
-  fi
-  case "${2:-}" in
-    '' | 0) ;;
-    *[!0-9]* | 0*) window_mark=invalid ;;
-    *)
-      if [ "$#" -ge 4 ]; then
-        window_mark=$((($2 * pct + 99) / 100 - $4))
-      else
-        window_mark=$(($2 * pct / 100))
-      fi
-      ;;
-  esac
-}
-
-# lane_context_handoff_decision TOKENS WINDOW PCT [AGENT_RESERVE] — the
-# reading lane_context_handoff_due judges for the same arguments, as the one
-# JSON object a handoff records: tokens, window, the absolute cap, the
-# effective mark_pct, the cap_mark and window_mark it compared against, and
-# whether and how much reserve applied. A window or window mark nothing
-# measured is null. Exit 2, printing nothing, where that judge exits 2. Only
-# a caller that records the decision asks for it.
-lane_context_handoff_decision() { # TOKENS WINDOW PCT [AGENT_RESERVE]
-  local pct cap_mark window_mark window=null applied=false reserve=0
-  lane_context_marks "$@" || return 2
-  case "$window_mark" in
-    '') window_mark=null ;;
-    invalid)
-      [ "$1" -ge "$cap_mark" ] || return 2
-      window_mark=null
-      ;;
-  esac
-  case "${2:-}" in '' | *[!0-9]* | 0?*) ;; *) window=$2 ;; esac
-  if [ "$#" -ge 4 ]; then
-    applied=true
-    reserve=$4
-  fi
-  printf '{"tokens":%s,"window":%s,"cap":400000,"mark_pct":%s,"cap_mark":%s,"window_mark":%s,"reserve_applied":%s,"reserve_tokens":%s}\n' \
-    "$1" "$window" "$pct" "$cap_mark" "$window_mark" "$applied" "$reserve"
-}
-
 # lane_context_handoff_context DECISION HARNESS SESSION TRANSCRIPT PANE_KEY
-# SOURCE COMPACTED — the `context` a handoff record carries: DECISION, a
-# lane_context_handoff_decision object or null, beside the native session it
+# SOURCE COMPACTED — the `context` a handoff record carries: DECISION, the
+# runtime judge's `context_decision` object or null, beside the native session it
 # was read for. An empty field stays null, as does COMPACTED unless it reads
 # true or false. Exit nonzero, printing nothing, where DECISION is not JSON.
 lane_context_handoff_context() { # DECISION HARNESS SESSION TRANSCRIPT PANE_KEY SOURCE COMPACTED
@@ -389,34 +292,6 @@ lane_context_handoff_context() { # DECISION HARNESS SESSION TRANSCRIPT PANE_KEY 
     {decision:$decision, source:{harness:($harness | nul), session_id:($session | nul),
       transcript:($transcript | nul), pane_key:($pane | nul), capacity_source:($source | nul),
       compacted:({"true":true, "false":false}[$compacted])}}'
-}
-
-# lane_context_window_full TOKENS WINDOW HARNESS — whether a reading of a
-# HARNESS session fills the window it names, so that session can take no turn
-# again: exit 0 where it does, 1 where it does not or cannot. Only the window a
-# claude, codex or pi reading names is the hard limit a session stops at, since
-# each adapter names one only where the harness would not compact first
-# (lib/adapters/). A copilot reading's window is the point Copilot starts to
-# compact, which cannot be turned off, so a copilot reading at it is a session
-# about to compact and never full. A reading with no window is never full.
-# Exit 2 where a figure is not a whole number, and 3 for a harness no adapter
-# reads.
-lane_context_window_full() { # TOKENS WINDOW HARNESS
-  case "${3:-}" in
-    claude | codex | pi) ;;
-    copilot) return 1 ;;
-    *) return 3 ;;
-  esac
-  case "${1:-}" in
-    '' | *[!0-9]*) return 2 ;;
-    0) ;;
-    0*) return 2 ;;
-  esac
-  case "${2:-}" in
-    '' | 0) return 1 ;;
-    *[!0-9]* | 0*) return 2 ;;
-  esac
-  [ "$1" -ge "$2" ]
 }
 
 # lane_context_file_write BOX FILE JQ_ARGS... — the document jq prints from
@@ -606,8 +481,8 @@ lane_context_record_fields() { # RECORD
 #
 # Pane ids restart at %0 on every tmux server, so the PAIR is the key and the id
 # alone is not. Every consumer that compares one session's key against another
-# session's record reads it here: `oversee` and `overseer-run` record the
-# overseer's by it, the session rows name it, and the turn-end hook compares
+# session's record reads it here: `oversee register` and the runtime's
+# controller record the overseer's by it, the session rows name it, and the turn-end hook compares
 # its own against that record, so none of them can spell one session
 # differently.
 lane_context_caller_key() {
@@ -677,10 +552,10 @@ TRANSCRIPT_WINDOW=1048576
 # gap the caller reports and passes, never a refusal of the turn.
 lane_context_session_file() { # HARNESS SESSION CWD
   local home reply reading
-  # The Codex rollout is the one session file its harness names by the id
-  # alone, in a dated store no caller can name a path into; the other
-  # harnesses' turn-end payloads name their transcript, and a payload naming
-  # none is their gap.
+  # The reach: the lookup runs only where the payload names no transcript,
+  # and only Codex names its rollout by the id alone, in a dated store no
+  # caller can name a path into; every other harness's payload names its
+  # transcript, and a payload naming none is its gap.
   [ "$1" = codex ] && [ -n "${2:-}" ] || return 1
   home=$(lane_context_caller_home "$1") || return 1
   if ! reply=$("$LANE_CONTEXT_AGENT_RUNTIME" session-file --harness "$1" --home "$home" --cwd "$3" --id "$2" 2>"$WORK_DIR/session-file.err"); then
@@ -968,37 +843,44 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
       message context-unmeasured "${READ_GAP:-reading-unavailable}"
       exit 2
     fi
-    MARK=$("$LANE_CONTEXT_SCRIPTS/orch-env" ORCH_HANDOFF_CONTEXT_PCT 90) || exit 2
-    JUDGE_ARGS=("$TOKENS" "$WINDOW" "$MARK")
+    RESERVE_ARGS=()
     if [ "$CLI_OPERATION" != checkpoint ]; then
       AGENT_RESERVE=$("$LANE_CONTEXT_SCRIPTS/orch-env" ORCH_HANDOFF_AGENT_RESERVE_TOKENS "") || exit 2
-      AGENT_RESERVE=${AGENT_RESERVE:-150000}
-      JUDGE_ARGS+=("$AGENT_RESERVE")
+      RESERVE_ARGS=(--agent-reserve "${AGENT_RESERVE:-150000}")
     fi
+    # The runtime's one judge answers the plain mark and, for a launch, the
+    # reserve's beside it. A window that is no plain count is no window, so
+    # the token cap judges alone.
+    JUDGE_WINDOW=$WINDOW
+    case "$JUDGE_WINDOW" in '' | *[!0-9]* | 0*) JUDGE_WINDOW="" ;; esac
     JUDGE_RC=0
-    VERDICT=$(lane_context_handoff_due "${JUDGE_ARGS[@]}") || JUDGE_RC=$?
-    case "$JUDGE_RC" in
-      0) ;;
-      1) message context-unmeasured window-unavailable; exit 2 ;;
-      *) message context-judge invalid-input; exit 2 ;;
+    JUDGED=$(cd -- "$LANE_DIR" && "$LANE_CONTEXT_SCRIPTS/orch-runtime" marks --item judged \
+      --context "$TOKENS:$JUDGE_WINDOW" ${RESERVE_ARGS[@]+"${RESERVE_ARGS[@]}"} 2>"$WORK_DIR/judge.err") || JUDGE_RC=$?
+    if [ "$JUDGE_RC" -ne 0 ]; then
+      message context-judge "exit=$JUDGE_RC" "$(cat -- "$WORK_DIR/judge.err")"
+      exit 2
+    fi
+    VERDICT=$(jq -er "if \$reserve then .result.reserve.context else .result.context end" \
+      --argjson reserve "$([ "${#RESERVE_ARGS[@]}" -eq 0 ] && echo false || echo true)" <<<"$JUDGED") || {
+      message context-judge unreadable "$JUDGED"; exit 2;
+    }
+    PLAIN_VERDICT=$(jq -er '.result.context' <<<"$JUDGED") || { message context-judge unreadable "$JUDGED"; exit 2; }
+    case "$VERDICT" in
+      due | room) ;;
+      *) message context-unmeasured window-unavailable; exit 2 ;;
     esac
     if [ "$HARNESS" = codex ] && [ "$CLI_OPERATION" = attached-launch ] && [ "$VERDICT" = due ]; then
-      # A reserve-only refusal is not a parent handoff. An unmeasured or invalid
-      # plain reading cannot establish room, even if the reserve proved its cap due.
-      PLAIN_RC=0
-      PLAIN_VERDICT=$(lane_context_handoff_due "$TOKENS" "$WINDOW" "$MARK") || PLAIN_RC=$?
-      case "$PLAIN_RC" in
-        0) [ "$PLAIN_VERDICT" != room ] || VERDICT=alternate-review ;;
-        1 | 2) ;;
-        *) message context-judge invalid-input; exit 2 ;;
-      esac
+      # A reserve-only refusal is not a parent handoff. An unmeasured plain
+      # reading cannot establish room, even if the reserve proved its cap due.
+      [ "$PLAIN_VERDICT" != room ] || VERDICT=alternate-review
     fi
   fi
   if [ "$CLI_OUTPUT_READING" = true ]; then
     # Compaction is due before any judgement, so it records no decision.
     DECISION=null
     if [ "$COMPACTED" != true ]; then
-      DECISION=$(lane_context_handoff_decision "${JUDGE_ARGS[@]}") || exit 2
+      DECISION=$(jq -ec "if \$reserve then .result.reserve.context_decision else .result.context_decision end" \
+        --argjson reserve "$([ "${#RESERVE_ARGS[@]}" -eq 0 ] && echo false || echo true)" <<<"$JUDGED") || exit 2
     fi
     CONTEXT=$(lane_context_handoff_context "$DECISION" "$HARNESS" "$SESSION" "$TRANSCRIPT" "" "$SOURCE" "$COMPACTED") || exit 2
     jq -c --arg verdict "$VERDICT" '{verdict:$verdict} + .' <<<"$CONTEXT"

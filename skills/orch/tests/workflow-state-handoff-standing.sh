@@ -202,7 +202,8 @@ done
 assert_eq "missing=${MISSING#,}" "missing=" \
   "every verdict the verb publishes is spelled in the help its callers read"
 
-# The callers: each reaches the verb rather than restating its jq filter.
+# The callers: each reaches the verb, the runtime's for the hook, rather
+# than restating its jq filter.
 # The watch's own caller is the runtime's lane observation, held by its
 # Rust rows.
 FILTER='select(type == "object" and .resumed_at == null)'
@@ -211,8 +212,8 @@ for caller in hooks/lane-mail-check.sh; do
   [[ "$caller" != scripts/* ]] || path="$TEST_DIR/../$caller"
   assert_eq "$(grep -cF -- "$FILTER" "$path" || true)" "0" \
     "$caller states no second copy of the record test"
-  assert_eq "$(grep -cF -- 'handoff-standing "' "$path" || true)" "1" \
-    "$caller asks the verb instead, once"
+  assert_eq "$(grep -cF -- 'state handoff-standing --item "' "$path" || true)" "1" \
+    "$caller asks the runtime's verb instead, once"
 done
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

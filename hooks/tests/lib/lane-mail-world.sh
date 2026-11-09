@@ -9,13 +9,15 @@
 # here and reports them itself.
 # shellcheck disable=SC2034
 
-# A suite runs with no environment but HOME, PATH and the hook it is told to
-# run, as `env -i` starts it: an orch, harness, mailbox or git variable the
-# caller carries would point the hook, `lane-mail` and `workflow-state` at the
-# caller's own records, and GIT_DIR would configure the real repository. The
-# suite restarts once in that environment, so its own setup runs there too.
+# A suite runs with no environment but HOME, PATH, the runtime cache and the
+# hook it is told to run, as `env -i` starts it: an orch, harness, mailbox or
+# git variable the caller carries would point the hook, `lane-mail` and the
+# runtime at the caller's own records, and GIT_DIR would configure the real
+# repository. The suite restarts once in that environment, so its own setup
+# runs there too.
 if [ "${LANE_MAIL_WORLD:-}" != started ]; then
   exec env -i "HOME=$HOME" "PATH=$PATH" ${HOOK_UNDER_TEST+"HOOK_UNDER_TEST=$HOOK_UNDER_TEST"} \
+    ${AGENT_RUNTIME_CACHE+"AGENT_RUNTIME_CACHE=$AGENT_RUNTIME_CACHE"} \
     ${SESSION_ROWS_LIB_VARIANT+"SESSION_ROWS_LIB_VARIANT=$SESSION_ROWS_LIB_VARIANT"} LANE_MAIL_WORLD=started \
     "$BASH" "${BASH_SOURCE[${#BASH_SOURCE[@]}-1]}" "$@"
 fi
@@ -24,6 +26,13 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/lane-mail-check.sh}"
 REPO_ROOT="$(cd "$TEST_DIR/../.." && pwd -P)"
 LANE_MAIL="$REPO_ROOT/skills/mailbox/scripts/lane-mail"
+# The runtime the hook writes and judges through is the built one, found in
+# the cache scripts/setup fills for this checkout's sources, whatever HOME a
+# row runs the hook under.
+ORCH_RUNTIME="$REPO_ROOT/skills/orch/scripts/orch-runtime"
+AGENT_RUNTIME_CACHE="$(bash -c '. "$1"; agent_runtime_cache' _ "$REPO_ROOT/skills/agent-runtime/scripts/lib/key.sh")" \
+  || { echo "lane-mail-world: runtime-cache=unresolved" >&2; exit 1; }
+export AGENT_RUNTIME_CACHE
 # The overseer's own marks are the runtime's `marks` verb, planted below; kendex classifies its
 # entries' models; the orch fixture answers that read whether or not a kendex
 # is installed.
@@ -39,6 +48,7 @@ TMP_ROOT="$(cd -- "$TMP_ROOT" && pwd -P)" || { echo "lane-mail-world: scratch=re
 # FAKE_WATCH is the stand-in watch process the overseer mailbox rows start.
 trap 'stop_wake_processes; [ -z "${FAKE_WATCH:-}" ] || kill "$FAKE_WATCH" 2>/dev/null || :; chmod -R u+rwx -- "${TMP_ROOT:?}" 2>/dev/null || :; rm -rf -- "${TMP_ROOT:?}"' EXIT
 ERR_FILE="$TMP_ROOT/stderr"
+STATE_LOG="$TMP_ROOT/state-verbs"
 # Whether this world can hold two names differing only in case. On a
 # case-insensitive filesystem, every macOS default one, the second name is the
 # first directory, so the ambiguity the hook refuses cannot be built at all.
@@ -342,18 +352,34 @@ plant_siblings() { # SCRIPTS_DIR [SKIP]
 #                     `setup-required` line naming the install's scripts/setup
 #                     on stderr, exit 69, as skills/orch/scripts/orch-runtime
 #                     answers it
+#   pick-unbuilt      no claim stands, and `accounts pick` alone answers as
+#                     `unbuilt` does
 # The account judge the hook asks at a lane's turn end, `accounts pick`,
 # is answered in every mode but `fails` and `unbuilt`: the reply planted at
 # SCRIPTS_DIR/orch-runtime.pick where a case plants one, else the judge
 # beside the stub, SCRIPTS_DIR/lanes, asked the same question through its
 # `pick` and its answer wrapped as the verb's reply, the exit by number and
 # the record, its stderr passed through.
-# Every other verb is refused, so a case reads only these answers.
+# Every other verb, the store's reads and writes and a lane's `marks`, runs
+# the real runtime in every mode but `unbuilt` (runtime_delegate_arm).
+runtime_delegate_arm() { # SCRIPTS_DIR — the stub's last case arm
+  sed -e "s|@LOG@|$STATE_LOG|g" -e "s|@FAULT@|$1/orch-runtime.fault|g" -e "s|@RUNTIME@|$ORCH_RUNTIME|g" <<'ARM'
+  *)
+    case "${words[0]:-}" in state) word=${words[1]:-} ;; *) word=${words[0]:-} ;; esac
+    printf '%s\n' "$word" >> '@LOG@'
+    case "$(cat -- '@FAULT@' 2>/dev/null || :):$word" in
+      path-fails:path | heal-fails:heal | standing-fails:handoff-standing | set-fails:set)
+        echo 'orch-runtime: lock-timeout path=fixture' >&2; exit 1 ;;
+    esac
+    exec '@RUNTIME@' "$@" ;;
+ARM
+}
 runtime_stub() { # SCRIPTS_DIR MODE [CWD] [ORIGIN]
-  local scripts="$1" mode="$2" state claim reply
-  state=$(cd -- "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" path oversee) || return 1
+  local scripts="$1" mode="$2" state claim reply delegate
+  state=$(cd -- "$LANE" && "$ORCH_RUNTIME" state path --fleet | jq -er '.result.path') || return 1
+  delegate=$(runtime_delegate_arm "$scripts") || return 1
   case "$mode" in
-    none) claim=null ;;
+    none | pick-unbuilt) claim=null ;;
     live) claim=$(jq -nc --arg cwd "${3:-}" --arg origin "${4:-hand}" --argjson pid "$$" \
       '{pid:$pid,start:"ticks:1",pane:"none",origin:$origin,cwd:$cwd,standing:"live"}') || return 1 ;;
     gone) claim=$(jq -nc --arg cwd "$LANE" \
@@ -367,13 +393,16 @@ runtime_stub() { # SCRIPTS_DIR MODE [CWD] [ORIGIN]
     # The claim read refused; the marks still answer from the judge files.
     cat > "$scripts/orch-runtime" <<STUB
 #!/usr/bin/env bash
-case "\$1 \$2" in
+words=("\$@")
+while [ "\${words[0]:-}" = --state-dir ]; do words=("\${words[@]:2}"); done
+case "\${words[0]:-} \${words[1]:-}" in
   "marks --fleet")
     printf '%s\n' "\$*" >> '$JUDGE_DIR/args'
     [ ! -f '$JUDGE_DIR/err' ] || cat '$JUDGE_DIR/err' >&2
     [ ! -f '$JUDGE_DIR/out' ] || cat '$JUDGE_DIR/out'
     exit "\$(cat '$JUDGE_DIR/rc' 2>/dev/null || echo 0)" ;;
-  *) echo "orch-runtime: claim-unreadable path=${state%/*}/oversee-watch.pid cause=record=unreadable" >&2; exit 1 ;;
+  "watch status" | "accounts pick") echo "orch-runtime: claim-unreadable path=${state%/*}/oversee-watch.pid cause=record=unreadable" >&2; exit 1 ;;
+$delegate
 esac
 STUB
   elif [ "$mode" = unbuilt ]; then
@@ -386,7 +415,9 @@ STUB
     rm -f -- "$scripts/orch-runtime.pick"
     cat > "$scripts/orch-runtime" <<STUB
 #!/usr/bin/env bash
-case "\$1 \$2" in
+words=("\$@")
+while [ "\${words[0]:-}" = --state-dir ]; do words=("\${words[@]:2}"); done
+case "\${words[0]:-} \${words[1]:-}" in
   "watch status") cat -- '$scripts/orch-runtime.reply' ;;
   "marks --fleet")
     printf '%s\n' "\$*" >> '$JUDGE_DIR/args'
@@ -398,6 +429,7 @@ case "\$1 \$2" in
     [ ! -f '$JUDGE_DIR/out' ] || cat '$JUDGE_DIR/out'
     exit "\$(cat '$JUDGE_DIR/rc' 2>/dev/null || echo 0)" ;;
   "accounts pick")
+    if [ '$mode' = pick-unbuilt ]; then echo "orch-runtime: setup-required key=fixture run=$scripts/setup" >&2; exit 69; fi
     if [ -f '$scripts/orch-runtime.pick' ]; then cat -- '$scripts/orch-runtime.pick'; exit 0; fi
     shift 2
     args=()
@@ -409,7 +441,7 @@ case "\$1 \$2" in
     jq -cn --argjson rc "\$rc" --arg out "\$out" '{protocol: "orch-runtime-v1", ok: true, result: {
       answer: ({"0": "lane", "3": "walled", "4": "no-record", "5": "unmeasured", "7": "cloud-repo-unset"}[\$rc | tostring] // "unjudged"),
       exit: \$rc, record: (try (\$out | fromjson) catch null)}}' ;;
-  *) echo "orch-runtime: fixture-verb verb=\$*" >&2; exit 2 ;;
+$delegate
 esac
 STUB
   fi
@@ -700,7 +732,7 @@ start_follow() { # [CWD]
 # A repeat watch is the runtime's live claim, read through `watch status`;
 # a single-pass watch is a real process the wake check finds by its argv.
 start_wake_watch() { # repeat|single [CWD] [ORIGIN]
-  WAKE_STATE=$(cd -- "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" path oversee) || return 1
+  WAKE_STATE=$(cd -- "$LANE" && "$ORCH_RUNTIME" state path --fleet | jq -er '.result.path') || return 1
   if [ "$1" = repeat ]; then
     runtime_stub "$LANE/.claude/skills/orch/scripts" live "${2:-$LANE}" "${3:-hand}"
     return
@@ -775,7 +807,8 @@ wake_observation() { # START
 wake_without_pgrep() {
   local cmd executable bin="$TMP_ROOT/no-pgrep"
   mkdir -p "$bin"
-  for cmd in bash jq cat git tr awk mktemp tail dirname sed ps flock date rm mv sleep basename grep realpath readlink mkdir chmod touch find head wc stat; do
+  for cmd in bash jq cat git tr awk mktemp tail dirname sed ps flock date rm mv sleep basename grep realpath readlink mkdir chmod touch find head wc stat \
+    sort cut sha256sum shasum; do
     if executable=$(command -v "$cmd"); then ln -s -f -- "$executable" "$bin/$cmd"; fi
   done
   ln -s -f -- "$TMUX_BIN/tmux" "$bin/tmux"
@@ -798,7 +831,7 @@ wake_row_process_table() {
 wake_control() { # NAME ROW OLD NEW
   local status=0
   wake_mutant "$1" "$3" "$4"
-  env -i "PATH=$PATH" "HOME=$COP_HOME" "HOOK_UNDER_TEST=$MUTANT_PATH" \
+  env -i "PATH=$PATH" "HOME=$COP_HOME" "AGENT_RUNTIME_CACHE=$AGENT_RUNTIME_CACHE" "HOOK_UNDER_TEST=$MUTANT_PATH" \
     bash "$TEST_DIR/lane-mail-check-wake.test.sh" --wake-row "$2" > "$TMP_ROOT/$1.control.log" 2>&1 || status=$?
   assert_eq "$status" 1 "control: $1 makes the $2 assertion red"
 }
@@ -816,38 +849,20 @@ record_overseer_handoff() { # [SESSION_ID] [PANE_KEY]
     "$record" >/dev/null)
 }
 
-# The workflow-state of the install new_overseer planted, or of the one DIR
-# names, replaced by one that runs the real script for every verb but the one
-# MODE fails: `path` for path-fails, `update` for update-fails,
-# `handoff-standing` for standing-fails, none for delegate. Each run appends
-# its verb to STATE_LOG, so a row can count what the hook asked. The real one
-# is run by its own path, so it sources its own libraries whatever the
-# install holds.
-STATE_LOG="$TMP_ROOT/state-verbs"
-state_stub() { # path-fails|update-fails|standing-fails|delegate [DIR]
+# The one store verb the runtime stub of the install new_overseer planted, or
+# of the one DIR names, fails, with the keyed line of a lock the runtime
+# could not take: `path` for path-fails, `heal` for heal-fails,
+# `handoff-standing` for standing-fails, `set` for set-fails, none for
+# delegate. Every verb the stub hands the runtime appends its word to
+# STATE_LOG, so a row can count what the hook asked; the log starts empty.
+state_stub() { # path-fails|heal-fails|standing-fails|set-fails|delegate [DIR]
   local dir="${2:-$LANE/.claude/skills/orch/scripts}"
-  rm -f -- "${dir:?}/workflow-state" "$STATE_LOG"
-  {
-    printf '#!%s\n' "$BASH"
-    printf 'printf "%%s\\n" "$1" >> %q\n' "$STATE_LOG"
-    case "$1" in
-      path-fails) printf '[ "$1" != path ] || { echo "workflow-state: lock-failed lock-file=x" >&2; exit 3; }\n' ;;
-      identify-fails) printf '[ "$1" != get ] || exit 3\n' ;;
-      no-filename)
-        cat <<'NO_FILENAME'
-if [ "$1" = get ]; then
-  replacement='""'
-  filter=${3//input_filename/$replacement}
-  set -- "$1" "$2" "$filter"
-fi
-NO_FILENAME
-        ;;
-      update-fails) printf '[ "$1" != update ] || { echo "workflow-state: lock-failed lock-file=x" >&2; exit 1; }\n' ;;
-      standing-fails) printf '[ "$1" != handoff-standing ] || { echo "workflow-state: lock-failed lock-file=x" >&2; exit 3; }\n' ;;
-    esac
-    printf 'exec %q "$@"\n' "$REPO_ROOT/skills/orch/scripts/workflow-state"
-  } > "$dir/workflow-state"
-  chmod +x "$dir/workflow-state"
+  case "$1" in
+    path-fails | heal-fails | standing-fails | set-fails | delegate) ;;
+    *) echo "state-stub: mode=unknown value=$1" >&2; return 1 ;;
+  esac
+  rm -f -- "$STATE_LOG"
+  printf '%s\n' "$1" > "${dir:?}/orch-runtime.fault"
 }
 
 # A watch claim read the runtime cannot answer: the hook's one watch read

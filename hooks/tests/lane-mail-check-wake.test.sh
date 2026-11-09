@@ -115,8 +115,8 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
     # A claim whose identity reads gone is no live watch.
     gone-claim) runtime_stub "$LANE/.claude/skills/orch/scripts" gone ;;
     # No binary stands for the install's sources (a refresh before its
-    # setup): the wake check is void, says so naming the setup, and holds
-    # nothing.
+    # setup): the record's path is the runtime's answer, so the identity
+    # read is void, says so naming the setup, and holds nothing.
     unbuilt-runtime) runtime_stub "$LANE/.claude/skills/orch/scripts" unbuilt ;;
     # A Codex turn end naming no transcript, on a host where agent-runtime is
     # not built, as no world here builds it: the lookup by the session id
@@ -137,9 +137,10 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
   record_key="wake-record=${WAKE_STATE%/*}/oversee-watch.pid"
   runtime_key="wake-state=$LANE/.claude/skills/orch/scripts/orch-runtime"
   setup_key="setup-required=$LANE/.claude/skills/orch/scripts/setup"
+  store_key="store-unbuilt=$LANE/.claude/skills/orch/scripts/setup"
   process_key="wake-process=follow[.]sh ${LANE//./\\.}/tmp/waiter[.][^/]*/watch[.]log"
   case "$context" in record) context=$record_key ;; runtime) context=$runtime_key ;; process) context=$process_key ;; esac
-  case "$first" in record) first=$record_key ;; runtime) first=$runtime_key ;; setup) first=$setup_key ;; process) first=$process_key ;; esac
+  case "$first" in record) first=$record_key ;; runtime) first=$runtime_key ;; setup) first=$setup_key ;; store) first=$store_key ;; process) first=$process_key ;; esac
   [ "$first" = - ] || first="lane-mail-check: $first"
   [ "$context" = - ] || context="lane-mail-check: $context"
   run_payload "$payload"
@@ -233,7 +234,7 @@ record-armed|claude|0|-|-|-|0
 missing-cwd|claude|0|record|-|-|0
 unreadable-record|claude|0|runtime|-|-|0
 gone-claim|claude|0|-|-|-|0
-unbuilt-runtime|claude|0|setup|-|-|0
+unbuilt-runtime|claude|0|store|-|-|0
 unbuilt-lookup|codex|0|session-lookup-unavailable=codex|-|-|0
 incomplete-jarvis|claude|0|wake-setting=ORCH_WAKE_START|-|-|0
 ROWS
@@ -377,11 +378,11 @@ if [ -z "$SELECTED" ]; then
   wake_control gone-read-as-repeat gone-claim:claude \
     '    none | gone) mode=single ;;' \
     '    none | gone) mode=repeat ;;'
-  # An unbuilt runtime read as the runtime answering nothing: the turn end
-  # still passes, but under the wrong key, naming no setup to run.
+  # An unbuilt runtime read as any unread identity: the turn end still
+  # passes, but in silence, naming no setup to run.
   wake_control unbuilt-unnamed unbuilt-runtime:claude \
-    '    unbuilt) wake_report setup-required "$SCRIPTS/setup" "$WATCH_CAUSE"; return 0 ;;' \
-    '    unbuilt) wake_report wake-state "$SCRIPTS/orch-runtime" "$WATCH_CAUSE"; return 0 ;;'
+    '      message store-unbuilt "$SCRIPTS/setup" "$(cat -- "$WORK_DIR/identify.err" 2>&1)"' \
+    '      :'
 fi
 
 printf '\n=== %s passed, %s failed ===\n' "$PASS" "$FAIL"

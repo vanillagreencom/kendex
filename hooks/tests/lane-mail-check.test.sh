@@ -297,20 +297,35 @@ new_handoff_lane() { # NAME ITEM
 # The record's fields, the durable recovery state a relaunch reads. One list:
 # the refusal's template is checked against it and the record below is built
 # from it, so a field leaving either side reddens. `written_at` is not among
-# them: `workflow-state set` stamps the record's time from its own clock, so a
-# lane cannot hand it one that names a moment the clock has not reached.
+# them: the runtime's `record-handoff` stamps the record's time from its own
+# clock, so a lane cannot hand it one that names a moment the clock has not
+# reached.
 HANDOFF_FIELDS='merged,remaining,branch,worktree,open_pr,traps'
 
-# workflow-state consumes the emitted shell argument, including its escaping.
-# LITERAL and REPLACEMENT make the lane's own edit first: each LITERAL in the
-# raw word as printed becomes REPLACEMENT, the way the lane fills a placeholder.
+# The record the refusal tells the session to write: a lane's request, the
+# one line it prints indented under that instruction, as the runtime's `op`
+# parses it; the overseer's shell word, the one argument `state set --fleet
+# /handoff` takes. LITERAL and REPLACEMENT make the session's own edit first:
+# each LITERAL as printed becomes REPLACEMENT, the way a placeholder is filled.
 template_record() { # [LITERAL REPLACEMENT]
-  local line record=''
+  local line record='' kind=''
   while IFS= read -r line; do
-    case "$line" in *' set '*' handoff '*) record=${line#* handoff }; break ;; esac
+    case "$line" in
+      '  {"op":"record-handoff",'*) record=${line#  }; kind=request; break ;;
+      *' state set --fleet /handoff '*) record=${line#* /handoff }; kind=word; break ;;
+    esac
   done < "$ERR_FILE"
   [ "$#" -eq 0 ] || record=${record//"$1"/"$2"}
-  "$BASH" -c 'eval "set -- $1"; [ "$#" -eq 1 ] && printf "%s\n" "$1"' _ "$record"
+  case "$kind" in
+    request) jq -ec 'objects | del(.op)' <<<"$record" ;;
+    word) "$BASH" -c 'eval "set -- $1"; [ "$#" -eq 1 ] && printf "%s\n" "$1"' _ "$record" ;;
+    *) return 1 ;;
+  esac
+}
+# Whether the refusal names the one command that writes the record, for ITEM,
+# under STATE_DIR where the lane's orch commands pass one.
+record_command_named() { # ITEM [STATE_DIR]
+  grep -cF -- "${2:+ --state-dir $2} op --item $1 --request [REQUEST FILE]" "$ERR_FILE" || :
 }
 
 template_fields() {
@@ -342,15 +357,17 @@ expect 0 "$GAP" "a lane under the context mark ends its turn"
 write_transcript "$TRANSCRIPT" 500000
 stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: context=500000" "a lane at the context mark is refused with the figure it reached"
-assert_eq "$(grep -cF -- " set KEN-50 handoff " "$ERR_FILE")" "1" \
+assert_eq "$(record_command_named KEN-50)" "1" \
   "the refusal names the one command that writes the record"
+assert_eq "$(grep -c '^  {"op":"record-handoff",' "$ERR_FILE")" "1" \
+  "and the one request that command reads, a record-handoff"
 assert_eq "$(template_fields)" "$HANDOFF_FIELDS,context" \
   "the record template it names carries every field a relaunch reads"
 assert_eq "$(template_record | jq -cS .)" \
   "$(jq -ncS --arg transcript "$TRANSCRIPT" '{merged:["[PR]"],remaining:["[STEP]"],branch:"[BRANCH]",worktree:"[WORKTREE_PATH]",open_pr:"[PR_NUMBER_OR_NULL]",traps:["[TRAP]"],context:{decision:{tokens:500000,window:1000000,cap:400000,mark_pct:50,cap_mark:400000,window_mark:500000,reserve_applied:false,reserve_tokens:0},source:{harness:"claude",session_id:"s1",transcript:$transcript,pane_key:null,capacity_source:null,compacted:false}}}')" \
   "the parsed record preserves recovery fields and the actual plain decision and source"
 assert_eq "$(template_record '[STEP]' 'run the tests' | jq -c .remaining)" '["run the tests"]' \
-  "a placeholder the lane replaces in the printed word with free text stays one argument"
+  "a placeholder the lane replaces in the printed request with free text stays one string"
 assert_eq "$(template_omits_written_at && echo yes || echo no)" "yes" \
   "and asks the lane for no written_at, which the set stamps"
 assert_eq "$(grep -cF -- "lane-mail notice --item KEN-50 --file" "$ERR_FILE")" "1" \
@@ -382,9 +399,9 @@ worktree_handoff_lane() { # NAME ITEM [HOOK]
   CALL_DIR="$MAIN"
   write_transcript "$TRANSCRIPT" 500000
 }
-worktree_set_named() { # ITEM — the set line naming the worktree tmp, and any init line
-  printf 'set=%s init=%s' "$(grep -cF -- " --state-dir $LANE/tmp set $1 handoff " "$ERR_FILE")" \
-    "$(grep -cF -- " init $1" "$ERR_FILE")"
+worktree_set_named() { # ITEM — the write naming the worktree tmp, and any init line
+  printf 'set=%s init=%s' "$(record_command_named "$1" "$LANE/tmp")" \
+    "$(grep -cF -- " state init --item $1" "$ERR_FILE")"
 }
 
 worktree_handoff_lane handoff_worktree_state KEN-441
@@ -497,13 +514,18 @@ stop_at "$TRANSCRIPT" false ORCH_HANDOFF_CONTEXT_PCT=90
 expect 2 "lane-mail-check: context=500000" "a raised percentage keeps the independent absolute cap"
 CONTEXT_PCT_ENV='' stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: context=500000" "the package default keeps the independent absolute cap"
-# orch-env falls back to its default only on a NON-numeric value, so a value
-# in a shape no comparison can take reaches the hook and is named here.
-for VALUE in 050 101 0; do
+# The runtime's one settings reader takes the mark: a whole percent of up to
+# three digits is read as its number, so 050 is 50; a value outside 1 to 100
+# refuses every verb the runtime answers, the handoff's own read among them,
+# so the turn end passes with the runtime's words naming the value rather
+# than holding the lane on a refusal no record could clear.
+stop_at "$TRANSCRIPT" false "ORCH_HANDOFF_CONTEXT_PCT=050"
+expect 2 "lane-mail-check: context=500000" "a context mark of 050 is read as 50"
+for VALUE in 101 0; do
   stop_at "$TRANSCRIPT" false "ORCH_HANDOFF_CONTEXT_PCT=$VALUE"
-  assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- " set KEN-51 handoff " "$ERR_FILE")" \
-    "RC=2 first=lane-mail-check: setting-range=ORCH_HANDOFF_CONTEXT_PCT=$VALUE named=1" \
-    "a context mark of $VALUE, outside whole percents 1 to 100, names the value, and the record clears it"
+  assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- "setting-invalid key=ORCH_HANDOFF_CONTEXT_PCT value=$VALUE" "$ERR_FILE")" \
+    "RC=0 first=lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/orch-runtime named=1" \
+    "a context mark of $VALUE, outside whole percents 1 to 100, refuses the runtime, and the turn end passes naming the value"
 done
 
 new_handoff_lane handoff_subagent KEN-52
@@ -516,48 +538,39 @@ new_handoff_lane handoff_no_transcript KEN-53
 stop
 expect 0 "$GAP" "a payload naming no transcript leaves the context unread and passes"
 stop_at "$TMP_ROOT/absent.jsonl" false
-assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- " set KEN-53 handoff " "$ERR_FILE")" \
+assert_eq "RC=$RC first=$(first_line) named=$(record_command_named KEN-53)" \
   "RC=2 first=lane-mail-check: transcript=unreadable named=1" \
   "a transcript the payload names and nothing can read is refused, with the record that clears it"
 
-# The settings loader sources .env.local as shell, and every orch script this
-# hook runs loads it. A file a person has broken therefore stops the state read
-# first, with a status the verb never gives, so the gap is reported with the
-# loader's own words and the turn ends rather than the lane being held on a
-# fault no handoff record clears. The key says the script is THERE and did not
-# answer, never that it is missing: the repair is a settings line, and an
-# operator sent to reinstall an installed skill never finds it.
+# The runtime reads .env.local as data and never runs it: a line of no
+# assignment's shape assigns nothing, so a file bash could not parse stops
+# neither the handoff's read nor the judge, and the mark is judged.
 new_handoff_lane handoff_setting_unreadable KEN-78
 printf 'this is ( not shell\n' > "$LANE/.env.local"
 write_transcript "$TRANSCRIPT" 600000
 stop_at "$TRANSCRIPT" false
-assert_eq "RC=$RC first=$(first_line) cause=$(grep -c 'syntax error' "$ERR_FILE") said=$(grep -c 'is there but did not answer' "$ERR_FILE")" \
-  "RC=0 first=lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/workflow-state cause=1 said=1" \
-  "a settings file that will not load is reported with the loader's words and the turn ends"
+expect 2 "lane-mail-check: context=600000" \
+  "a settings file bash could not parse is read as data, and the mark it does not name is judged"
 assert_eq "$(grep -c 'is not there' "$ERR_FILE")" "0" \
   "and is never reported as an install that is not there"
 
-# The verb's own status 2: a state file it cannot read. Its header and --help
-# publish 2 as attributable, so it is told apart from an install that does not
-# carry the verb at all — the repair for one is a state file, for the other an
-# install — and the reader's own words, which name the file, stand under it.
-# Driven against the real verb, on the file shape a killed write leaves: a
-# truncated document, which is the shape jq reports WITHOUT naming the file it
-# came from. So the key carries the path the `path` verb answers rather than
-# resting on the reader's words, and this row is what holds it to that.
+# The runtime's own word `unreadable`: a state file it cannot read, told
+# apart from a runtime that did not answer, since the repair for one is a
+# state file and for the other an install. Driven against the real verb, on
+# the file shape a killed write leaves, a truncated document: the key carries
+# the file the reply names.
 new_handoff_lane handoff_unreadable_state KEN-86
-STATE_FILE="$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" path KEN-86)"
+STATE_FILE="$(cd "$LANE" && "$ORCH_RUNTIME" state path --item KEN-86 | jq -r '.result.path')"
 printf '{"handoff":' > "$STATE_FILE"
 write_transcript "$TRANSCRIPT" 600000
 stop_at "$TRANSCRIPT" false
-assert_eq "RC=$RC first=$(first_line) cause=$(grep -c 'jq: parse error' "$ERR_FILE")" \
-  "RC=0 first=lane-mail-check: handoff-unreadable=$STATE_FILE cause=1" \
-  "a state file the verb could not read is reported under its own key, naming the file"
-assert_eq "$(grep -F 'jq: parse error' "$ERR_FILE" | grep -cF "$STATE_FILE")" "0" \
-  "and the reader's own words name no file for this shape, which is why the key carries it"
+assert_eq "RC=$RC first=$(first_line)" \
+  "RC=0 first=lane-mail-check: handoff-unreadable=$STATE_FILE" \
+  "a state file the runtime could not read is reported under its own key, naming the file"
 
-# A sibling the marks need that is there and answers non-zero: the record still
-# clears it, so it is refused with the setting named and its words under it.
+# The context mark's setting is the runtime's to read, never orch-env's: an
+# orch-env that answers non-zero leaves a turn end's mark judged, and the
+# refusal names the record that clears it.
 new_handoff_lane handoff_setting_broken KEN-85
 plant_install orch-env
 printf '#!/bin/sh\nprintf "orch-env: broken\\n" >&2\nexit 1\n' \
@@ -565,9 +578,9 @@ printf '#!/bin/sh\nprintf "orch-env: broken\\n" >&2\nexit 1\n' \
 chmod +x "$LANE/.claude/skills/orch/scripts/orch-env"
 write_transcript "$TRANSCRIPT" 600000
 stop_at "$TRANSCRIPT" false
-assert_eq "RC=$RC first=$(first_line) cause=$(grep -cx 'orch-env: broken' "$ERR_FILE") named=$(grep -cF -- " set KEN-85 handoff " "$ERR_FILE")" \
-  "RC=2 first=lane-mail-check: setting=ORCH_HANDOFF_CONTEXT_PCT cause=1 named=1" \
-  "a mark whose setting could not be read is refused with the reader's words and the record that clears it"
+assert_eq "RC=$RC first=$(first_line) named=$(record_command_named KEN-85)" \
+  "RC=2 first=lane-mail-check: context=600000 named=1" \
+  "a turn end's context mark reads no orch-env, so a broken one leaves the mark judged with the record that clears it"
 
 # The read is bounded to the last TRANSCRIPT_WINDOW bytes, and falls back to
 # the whole file where that window carries no usage line — a session whose
@@ -667,7 +680,7 @@ expect 0 - "a lane on an account with room ends its turn"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(account_env .neutralclaude)
 expect 2 "lane-mail-check: headroom=3 bucket=weekly mark=3" "a lane at its account's handoff mark is refused with the headroom left"
-assert_eq "$(grep -cF -- " set KEN-54 handoff " "$ERR_FILE")" "1" \
+assert_eq "$(record_command_named KEN-54)" "1" \
   "the account refusal carries the same instruction as the context refusal"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(account_env .neutralclaude) ORCH_HANDOFF_HEADROOM_PCT=1
@@ -846,25 +859,44 @@ assert_eq "RC=$RC $(model_lines)" "RC=0 lane-mail-check: account=unmeasured|0" \
   "an account with an inventory entry and no usable credential is reported, never read as room, with no model line in its cause"
 
 # A runtime the install has not built for its sources (the wrapper's
-# `setup-required`, exit 69) answers no judgement: the
-# turn end passes with the notice naming the install's setup, the account
-# neither read as room nor held, and no judge is asked. The control is the
-# hook's `69)` arm dropped: the answer then falls to the unmeasured arm, a
-# gap reported under the wrong key with no repair named.
+# `setup-required`, exit 69) reads and writes no record and judges nothing:
+# the turn end passes with the notice naming the install's setup, the lane
+# neither read as handed off nor held on a refusal whose record could not
+# land. The control is the handoff read's `69)` arm dropped: the answer then
+# falls to the arm of a runtime that did not answer, with no repair named.
 new_handoff_lane handoff_unbuilt KEN-56
-write_transcript "$TRANSCRIPT" 1000
+write_transcript "$TRANSCRIPT" 600000
 runtime_stub "$LANE/.claude/skills/orch/scripts" unbuilt
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(account_env .neutralclaude)
 assert_eq "RC=$RC first=$(first_line) names=$(grep -c "run $LANE/.claude/skills/orch/scripts/setup" "$ERR_FILE" || true)" \
+  "RC=0 first=lane-mail-check: store-unbuilt=$LANE/.claude/skills/orch/scripts/setup names=1" \
+  "an unbuilt runtime passes the turn end of a lane past its context mark, with the notice naming the install's setup"
+wake_mutant unbuilt-arm-dropped '    69) HANDOFF_STATE=unbuilt ;;' '    999) HANDOFF_STATE=unbuilt ;;'
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(account_env .neutralclaude)
+assert_eq "RC=$RC first=$(first_line)" "RC=0 first=lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/orch-runtime" \
+  "control: without the arm the unbuilt runtime is reported as one that did not answer"
+install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
+# The account judge alone unbuilt, the store answering: the turn end passes
+# with the same setup named, the account neither read as room nor held. The
+# control is the pick's `69)` arm dropped: the answer then falls to the
+# unmeasured arm, a gap reported under the wrong key with no repair named.
+new_handoff_lane handoff_pick_unbuilt KEN-58
+write_transcript "$TRANSCRIPT" 1000
+runtime_stub "$LANE/.claude/skills/orch/scripts" pick-unbuilt
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(account_env .neutralclaude)
+assert_eq "RC=$RC first=$(first_line) names=$(grep -c "run $LANE/.claude/skills/orch/scripts/setup" "$ERR_FILE" || true)" \
   "RC=0 first=lane-mail-check: setup-required=$LANE/.claude/skills/orch/scripts/setup names=1" \
-  "an unbuilt runtime passes the turn end of a lane at its account mark, with the notice naming the install's setup"
-wake_mutant unbuilt-arm-dropped '    69)' '    999)'
+  "an unbuilt account judge passes the turn end of a lane at its account mark, with the notice naming the install's setup"
+mutant pick-unbuilt-arm-dropped -e '/^  case "\$PICK_RC" in$/,/^  esac$/ s/^    69)$/    999)/'
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(account_env .neutralclaude)
 assert_eq "RC=$RC first=$(first_line)" "RC=0 first=lane-mail-check: account=unmeasured" \
-  "control: without the arm the unbuilt runtime is reported as an account nothing measured"
+  "control: without the arm the unbuilt account judge is reported as an account nothing measured"
 install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 
 # The judge's reply keeps a status-only contract where `handoff-standing`
@@ -975,7 +1007,7 @@ new_handoff_lane handoff_setting_range KEN-70
 write_transcript "$TRANSCRIPT" 1000
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(account_env .claude) ORCH_HANDOFF_HEADROOM_PCT=101
-assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- " set KEN-70 handoff " "$ERR_FILE")" \
+assert_eq "RC=$RC first=$(first_line) named=$(record_command_named KEN-70)" \
   "RC=2 first=lane-mail-check: setting-range=ORCH_HANDOFF_HEADROOM_PCT=101 named=1" \
   "a headroom setting out of range names the setting and its value, never the account"
 
@@ -1048,44 +1080,54 @@ write_transcript "$TRANSCRIPT" 600000
 stop_at "$TRANSCRIPT" false
 expect 0 - "a standing record ends the turn although lanes is missing from the install"
 
-# The same install with no record: the script the marks need is named, and so
-# is the record that ends the refusal.
+# The runtime, the one command that records a handoff and judges the marks,
+# missing: a refusal naming it could never be cleared, so the gap is reported
+# and the turn ends.
 new_handoff_lane handoff_script KEN-67
 plant_install orch-runtime
-write_transcript "$TRANSCRIPT" 1000
+write_transcript "$TRANSCRIPT" 600000
 stop_at "$TRANSCRIPT" false
-assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- " set KEN-67 handoff " "$ERR_FILE")" \
-  "RC=2 first=lane-mail-check: script=$LANE/.claude/skills/orch/scripts/orch-runtime named=1" \
-  "a script the marks need and the install has not got is refused, with the record that clears it"
+assert_eq "RC=$RC first=$(first_line) named=$(record_command_named KEN-67)" \
+  "RC=0 first=lane-mail-check: handoff-skipped=$LANE/.claude/skills/orch/scripts/orch-runtime named=0" \
+  "an install with no runtime leaves the marks unjudged rather than trapping the lane"
+mutant runtime-untested -e 's@^  elif \[ ! -x "\$SCRIPTS/orch-runtime" \]; then$@  elif false; then@'
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+stop_at "$TRANSCRIPT" false
+expect 0 "lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/orch-runtime" \
+  "control: without the runtime test an install with no runtime is reported as one that did not answer"
+install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 
-# The one command that records a handoff, missing: a refusal naming it could
-# never be cleared, so the gap is reported and the turn ends.
+# workflow-state is no script of the marks: an install without it is judged
+# as any other, and the refusal names the runtime's record.
 new_handoff_lane handoff_no_state KEN-72
 plant_install workflow-state
 write_transcript "$TRANSCRIPT" 600000
 stop_at "$TRANSCRIPT" false
-expect 0 "lane-mail-check: handoff-skipped=$LANE/.claude/skills/orch/scripts/workflow-state" \
-  "an install with no workflow-state leaves the marks unjudged rather than trapping the lane"
+assert_eq "RC=$RC first=$(first_line) named=$(record_command_named KEN-72)" \
+  "RC=2 first=lane-mail-check: context=600000 named=1" \
+  "an install with no workflow-state is judged on its marks, the record named its runtime's"
 
 # Hooks and skills refresh on their own schedules, and the reader walk climbs
-# from this hook's install to the home's shared tree, so the orch scripts the
-# marks run can be older than the hook. The verb answers 0 for a record and 3
-# for none; every other status is an install that does not carry it, reported
-# with its own words and passed. Read as "no record" instead, a lane that has
-# already written one would be refused at every turn end for ever.
-old_dispatcher() { # — the unknown-command arm of a workflow-state without the verb
-  plant_install workflow-state
-  printf '#!/bin/sh\ncase "$1" in\n  handoff-standing) printf "workflow-state: unknown-command arg1=%%s\\n" "$1" >&2; exit 1 ;;\nesac\nexit 0\n' \
-    > "$LANE/.claude/skills/orch/scripts/workflow-state"
-  chmod +x "$LANE/.claude/skills/orch/scripts/workflow-state"
+# from this hook's install to the home's shared tree, so the runtime the
+# marks run can be older than the hook. The verb answers a reply naming the
+# record's standing; every other answer is a runtime that does not carry it,
+# reported with its own words and passed. Read as "no record" instead, a lane
+# that has already written one would be refused at every turn end for ever.
+old_dispatcher() { # — the usage refusal of a runtime without the verb
+  local runtime="$LANE/.claude/skills/orch/scripts/orch-runtime"
+  plant_install
+  mv -- "$runtime" "$runtime.stub"
+  printf '#!/bin/sh\ncase "$1 $2" in\n  "state handoff-standing") printf "orch-runtime: usage\\nerror: unrecognized subcommand %%s\\n" "$2" >&2; exit 2 ;;\nesac\nexec %s "$@"\n' \
+    "$runtime.stub" > "$runtime"
+  chmod +x "$runtime"
 }
 
 new_handoff_lane handoff_old_state KEN-80
 old_dispatcher
-UNANSWERED="lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/workflow-state"
+UNANSWERED="lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/orch-runtime"
 write_transcript "$TRANSCRIPT" 600000
 stop_at "$TRANSCRIPT" false
-assert_eq "RC=$RC first=$(first_line) cause=$(grep -c 'workflow-state: unknown-command' "$ERR_FILE") said=$(grep -c 'is there but did not answer' "$ERR_FILE")" \
+assert_eq "RC=$RC first=$(first_line) cause=$(grep -c 'orch-runtime: usage' "$ERR_FILE") said=$(grep -c 'is there but did not answer' "$ERR_FILE")" \
   "RC=0 first=$UNANSWERED cause=1 said=1" \
   "an install that does not carry the verb is reported with its own words and the turn ends"
 record_handoff KEN-80
@@ -1196,12 +1238,12 @@ mkdir -p "$LANE/tmp/lane-mail/KEN-66"
 write_transcript "$TRANSCRIPT" 600000
 stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: context=600000" "a lane with no state file is refused at the mark"
-INIT_CMD="$(grep -F -- " init KEN-66" "$ERR_FILE")"
+INIT_CMD="$(grep -F -- " state init --item KEN-66" "$ERR_FILE")"
 assert_eq "$([ -n "$INIT_CMD" ] && echo named || echo absent)" "named" \
   "the refusal names the init that set needs"
 (cd "$LANE" && eval "$INIT_CMD" > /dev/null)
 stop_at "$TRANSCRIPT" false
-assert_eq "RC=$RC first=$(first_line) init=$(grep -cF -- " init KEN-66" "$ERR_FILE")" \
+assert_eq "RC=$RC first=$(first_line) init=$(grep -cF -- " state init --item KEN-66" "$ERR_FILE")" \
   "RC=2 first=lane-mail-check: context=600000 init=0" \
   "the init it named makes the state, and the next refusal drops that line"
 record_handoff KEN-66
@@ -1218,7 +1260,7 @@ git -C "$LANE" checkout -q --detach
 write_transcript "$TRANSCRIPT" 600000
 stop_at "$TRANSCRIPT" false LANE_MAIL_ITEM=KEN-82
 expect 2 "lane-mail-check: context=600000" "a detached lane the brief named is refused at the mark"
-INIT_CMD="$(grep -F -- " init KEN-82" "$ERR_FILE")"
+INIT_CMD="$(grep -F -- " state init --item KEN-82" "$ERR_FILE")"
 assert_eq "$([ -n "$INIT_CMD" ] && echo named || echo absent) branch=$(grep -cF -- '--branch' "$ERR_FILE")" \
   "named branch=0" "the refusal names an init with no branch where HEAD names none"
 (cd "$LANE" && eval "$INIT_CMD" > /dev/null)
@@ -1853,7 +1895,7 @@ overseer_route() { # MARK
   printf '%s%s' "$(grep -cE -- "/orch-runtime successor --fleet --cwd [^ ]+ --predecessor %[0-9]+ --mark $1$" "$ERR_FILE")" \
     "$(grep -cF -- "/orch-runtime op --fleet --effect-exit --request [REQUEST FILE]" "$ERR_FILE")"
 }
-overseer_record_named() { grep -cF -- " set oversee handoff " "$ERR_FILE"; }
+overseer_record_named() { grep -cF -- " state set --fleet /handoff " "$ERR_FILE"; }
 
 # The refusal must explain the cap even on a window whose percentage leaves room.
 context_rule_row() { # ROLE NAME [HOOK]
@@ -2063,7 +2105,7 @@ assert_eq "$LOST" "RC=0 first=lane-mail-check: transcript-unowned=$TRANSCRIPT re
   "control: a hook that heals nothing leaves the lost overseer's transcript unbound and its context mark judged by nothing"
 # The first native binding is required. A failed writer leaves the session
 # unbound, with no reading or mark judgement.
-lost_identity overseer_lost_unhealed "$HOOK" update-fails
+lost_identity overseer_lost_unhealed "$HOOK" heal-fails
 assert_eq "$LOST unhealed=$(grep -c "^lane-mail-check: record-unhealed=$OVERSEER_SERVER $OVERSEER_PANE\$" "$ERR_FILE") mark=$(grep -c "^lane-mail-check: context=${OVERSEER_CONTEXT%%:*}\$" "$ERR_FILE" || :) judged=$(judge_calls)" \
   "RC=0 first=lane-mail-check: record-unhealed=$OVERSEER_SERVER $OVERSEER_PANE record=none start=none home=none harness=none unhealed=1 mark=0 judged=0" \
   "a failed required heal leaves the native session unbound and judges no mark" "$ERR_FILE"
@@ -2375,10 +2417,8 @@ state_unread() { # NAME
   judge_says "$HEADROOM_MARK_LINE"
   # shellcheck disable=SC2046
   stop_at "$TRANSCRIPT" false $(overseer_env)
-  plant_install workflow-state
-  printf '#!/bin/sh\ncase "$1" in\n  path) echo "%s/tmp/workflow-state-oversee.json" ;;\n  *) echo "workflow-state: lock-failed lock-file=x" >&2; exit 3 ;;\nesac\n' "$LANE" \
-    > "$LANE/.claude/skills/orch/scripts/workflow-state"
-  chmod +x "$LANE/.claude/skills/orch/scripts/workflow-state"
+  # The record a killed write leaves: a truncated document.
+  printf '{"overseer":' > "$(cd "$LANE" && "$ORCH_RUNTIME" state path --fleet | jq -r '.result.path')"
   # shellcheck disable=SC2046
   stop_at "$TRANSCRIPT" false $(overseer_env)
   printf 'RC=%s first=%s record=%s' "$RC" "$(first_line)" "$(gap_record)"
@@ -2429,15 +2469,15 @@ stop_at "$TRANSCRIPT" false $(overseer_env) ORCH_OVERSEER_SUCCESSION=off
 expect 2 "lane-mail-check: headroom=4" \
   "and the setting in the environment decides nothing here: the line does"
 
-# The runtime the marks are judged by has to be in the install, or the
-# refusal names the one it has not got.
+# The runtime names the fleet record's path, so an install without it can
+# establish no session as the overseer: the turn end is judged on nothing.
 new_overseer overseer_script
 plant_install orch-runtime
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env)
 assert_eq "RC=$RC first=$(first_line) record=$(overseer_record_named)" \
-  "RC=2 first=lane-mail-check: script=$LANE/.claude/skills/orch/scripts/orch-runtime record=1" \
-  "an install with no orch-runtime is refused, with the record that still clears it"
+  "RC=0 first=- record=0" \
+  "an install with no orch-runtime identifies no overseer and judges its turn end on nothing"
 
 # A subagent of the overseer runs its own window on its own turn, as a lane's
 # does.
@@ -2578,21 +2618,17 @@ expect 0 - "a halt read by the inbox passes"
 
 # A mailbox refusal carries no handoff instruction and pays for none. The
 # instruction is built at its own site, so nothing below the reader resolves
-# runs `workflow-state` to decide whether the item has a state file yet.
+# asks the runtime whether the item has a state file yet.
 new_lane halt_no_state ken-88
 mkdir -p "$LANE/tmp/lane-mail/KEN-88"
 install_arms
-plant_install workflow-state
-STATE_LOG="$TMP_ROOT/halt-state-calls"
-printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> %s\nexit 3\n' "$STATE_LOG" \
-  > "$LANE/.claude/skills/orch/scripts/workflow-state"
-chmod +x "$LANE/.claude/skills/orch/scripts/workflow-state"
 send KEN-88 'Stop here.' --halt
 HALT_88=$(jq -r 'select(.halt == true) | .id' "$LANE/tmp/lane-mail/KEN-88/to-lane.jsonl")
+state_stub delegate
 tool halt
 assert_eq "RC=$RC first=$(first_line) state=$([ -s "$STATE_LOG" ] && echo ran || echo none)" \
   "RC=2 first=lane-mail-check: halt=$HALT_88 state=none" \
-  "a halt refusal runs no workflow-state: it carries no instruction to build"
+  "a halt refusal asks the runtime nothing: it carries no instruction to build"
 
 # A lane asks its overseer only through lane mail: the harness question tool
 # opens a dialog on a pane the overseer never reads. The halt arm refuses it
@@ -2950,7 +2986,7 @@ assert_eq "$([ "$RC" -eq 2 ] && echo refused || echo passed)" "passed" \
   "control: without its exit the halt hook with no judge beside it does not refuse"
 
 # Each handoff mark's refusal replaced by a pass, its judgement still made.
-mutant no-context-mark -e 's@^    0) \[ "\$DUE" != due \] || refuse_judged_handoff .* context "\$TOKENS" ;;$@    0) : ;;@'
+mutant no-context-mark -e 's@^    due) refuse_judged_handoff "\$JUDGED_DECISION" context "\$TOKENS" ;;$@    due) : ;;@'
 new_handoff_lane control_context KEN-56
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 write_transcript "$TRANSCRIPT" 600000
@@ -2965,20 +3001,20 @@ write_transcript "$TRANSCRIPT" 1000
 stop_at "$TRANSCRIPT" false $(account_env .neutralclaude)
 expect 0 - "control: without its account refusal a lane at its account's mark ends its turn"
 
-# The verb's own status 2 folded back in with the statuses it cannot attribute:
-# an unreadable state file then reads as an install that does not carry the
-# verb, and the operator is sent to refresh an install that is current while
-# the state file that actually stopped the read is never named.
+# The runtime's own word `unreadable` folded back in with the answers it
+# cannot attribute: an unreadable state file then reads as a runtime that did
+# not answer, and the operator is sent to refresh an install that is current
+# while the state file that actually stopped the read is never named.
 mutant fold-unreadable \
-  -e 's@^    "$HANDOFF_VERDICT=unreadable") HANDOFF_STATE=unreadable ;;$@    "$HANDOFF_VERDICT=unreadable") HANDOFF_STATE=unanswered ;;@'
+  -e 's@(.standing | select(. == "stands" or . == "none" or . == "unreadable"))@(.standing | select(. == "stands" or . == "none"))@'
 new_handoff_lane control_unreadable KEN-89
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-CONTROL_STATE="$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" path KEN-89)"
+CONTROL_STATE="$(cd "$LANE" && "$ORCH_RUNTIME" state path --item KEN-89 | jq -r '.result.path')"
 printf '{"handoff":' > "$CONTROL_STATE"
 write_transcript "$TRANSCRIPT" 600000
 stop_at "$TRANSCRIPT" false
-expect 0 "lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/workflow-state" \
-  "control: folded in, an unreadable state file reads as an install that lacks the verb"
+expect 0 "lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/orch-runtime" \
+  "control: folded in, an unreadable state file reads as a runtime that did not answer"
 assert_eq "$(grep -c "$CONTROL_STATE" "$ERR_FILE")" "0" \
   "control: and the file that actually stopped the read is never named"
 
@@ -3022,7 +3058,7 @@ fi
 # The record test answering yes whatever the state holds: the mark then clears
 # itself and no lane ever writes one.
 mutant record-always \
-  -e 's@^    "$HANDOFF_VERDICT=none") HANDOFF_STATE=none; return 0 ;;$@    "$HANDOFF_VERDICT=none") HANDOFF_STATE=stands; return 0 ;;@'
+  -e 's@^  HANDOFF_STATE=\${answer%%"\$TAB"\*}$@&; [ "$HANDOFF_STATE" != none ] || HANDOFF_STATE=stands@'
 new_handoff_lane control_record KEN-58
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 write_transcript "$TRANSCRIPT" 600000
@@ -3093,9 +3129,9 @@ expect 0 "$GAP" \
 
 # The record's time put back in the template: the lane is asked for it again,
 # and the row above that says it is not goes red.
-assert_eq "$(grep -cF -- '{"merged":["[PR]"],"remaining":["[STEP]"],"branch":"[BRANCH]","worktree":"[WORKTREE_PATH]",' "$HOOK")" "1" \
+assert_eq "$(grep -cF -- '{"op":"record-handoff","merged":["[PR]"],"remaining":["[STEP]"],"branch":"[BRANCH]","worktree":"[WORKTREE_PATH]",' "$HOOK")" "1" \
   "control: written_at mutation names one live record constructor"
-mutant asks-written-at -e 's@{"merged":@{"written_at":"[NOW]","merged":@'
+mutant asks-written-at -e 's@{"op":"record-handoff","merged":@{"op":"record-handoff","written_at":"[NOW]","merged":@'
 new_handoff_lane control_written_at KEN-94
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 write_transcript "$TRANSCRIPT" 600000
@@ -3188,7 +3224,7 @@ expect 2 "lane-mail-check: context=" \
 
 # The silence a session that is neither a lane nor the recorded overseer keeps.
 # Two arms hold it, one where the install cannot be resolved and one where that
-# install has no workflow-state, and the candidate flag is what both read.
+# install has no runtime, and the candidate flag is what both read.
 # Without them a plain repository carrying a rendered orch tree, opened from a
 # harness whose own install has no orch skill, writes a keyed line at every
 # turn end of every session in the checkout.
@@ -3535,7 +3571,7 @@ binding_failed() { # NAME ARM [HOOK]
   printf '%s\n' '{"session_id":"s1","tokens":1000}' > "$LANE/tmp/lane-mail/overseer/context.json"
   printf '%s\n' 's1 previous-gap' > "$LANE/tmp/lane-mail/overseer/context-told"
   peer_send 'Wait for the binding.'
-  state_stub update-fails
+  state_stub heal-fails
   local before state_before failed_session
   before=$(overseer_snapshot)
   state_before=$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee .overseer)
@@ -3550,7 +3586,7 @@ binding_failed() { # NAME ARM [HOOK]
       || [ "$state_before" != "$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" get oversee .overseer)" ]; then
       BINDING_RESULT=changed
     fi
-    assert_eq "RC=$RC failed=$(grep -c '^lane-mail-check: record-unhealed=' "$ERR_FILE" || :) cause=$(grep -c 'workflow-state: lock-failed lock-file=x' "$ERR_FILE" || :)" \
+    assert_eq "RC=$RC failed=$(grep -c '^lane-mail-check: record-unhealed=' "$ERR_FILE" || :) cause=$(grep -c 'orch-runtime: lock-timeout path=fixture' "$ERR_FILE" || :)" \
       'RC=0 failed=1 cause=1' "$failed_session: a failed binding retains its writer error"
   done
 }
@@ -3558,7 +3594,7 @@ for failed_arm in deliver stop; do
   binding_failed "native_binding_failed_$failed_arm" "$failed_arm"
   assert_eq "$BINDING_RESULT" unchanged "$failed_arm: failed parent and child bindings change no mail, cursor, context, gaps or marks"
 done
-mutant native-binding-fail-open -e '/^    message record-unhealed /{n;s/^    return 1$/    return 0/;}'
+mutant native-binding-fail-open -e '/^      message record-unhealed /{n;s/^      return 1$/      return 0/;}'
 binding_failed native_binding_control deliver "$MUTANT_PATH"
 assert_eq "$BINDING_RESULT" changed 'control: accepting a failed binding breaks the unchanged-record assertion'
 
@@ -3578,7 +3614,7 @@ for identity_case in home session missing; do
       "the child receives one diagnostic on stderr and no context"
   done
 done
-for identity_case in home session missing; do
+for identity_case in home session; do
   case "$identity_case" in
     home)
       wake_mutant native-home-control '    and ((.home // "") == "" or $home == "" or .home == $home)' '    and true' "$REPO_ROOT/skills/orch/scripts/lib/overseer-launch.sh"
@@ -3586,9 +3622,6 @@ for identity_case in home session missing; do
     session)
       wake_mutant native-session-control "$NATIVE_BIND_RULE" "    and true;'" "$REPO_ROOT/skills/orch/scripts/lib/overseer-launch.sh"
       identity_home=$OVERSEER_HOME_DIR identity_session=child ;;
-    missing)
-      wake_mutant native-missing-control '  def ol_native_match($harness; $home; $session): $session != ""' '  def ol_native_match($harness; $home; $session): true' "$REPO_ROOT/skills/orch/scripts/lib/overseer-launch.sh"
-      identity_home=$OVERSEER_HOME_DIR identity_session="" ;;
   esac
   identity_child "native_control_$identity_case" "$identity_home" "$identity_session" deliver "$HOOK" "$MUTANT_PATH"
   assert_eq "$([ "$IDENTITY_RESULT" = 'RC=0 stdout= unchanged=yes state=same judged=0' ] && echo accepted || echo rejected)" rejected \
@@ -3641,7 +3674,7 @@ successor_transition() { # NAME CALLER ARM [HOOK]
   run_payload "$(jq -nc --arg s "$2" --arg p "$TRANSCRIPT" '{session_id:$s,transcript_path:$p,stop_hook_active:false,tool_name:"Bash",tool_input:{command:"git status"}}')"
   ARM_ARGS=()
   CALL_ENV=()
-  TRANSITION_RESULT="RC=$RC stdout=$(cat "$TMP_ROOT/stdout") stderr=$(first_line) unchanged=$([ "$before" = "$(overseer_snapshot)" ] && echo yes || echo no) state=$([ "$state_before" = "$(cksum < "$state_path")" ] && echo same || echo changed) writes=$(grep -cE '^(update|set|init)$' "$STATE_LOG" || :) judged=$(( $(judge_calls) - judged_before )) unread=$(overseer_unread 'Successor transition only.')"
+  TRANSITION_RESULT="RC=$RC stdout=$(cat "$TMP_ROOT/stdout") stderr=$(first_line) unchanged=$([ "$before" = "$(overseer_snapshot)" ] && echo yes || echo no) state=$([ "$state_before" = "$(cksum < "$state_path")" ] && echo same || echo changed) writes=$(grep -cE '^(heal|set|append|init|model-check|op)$' "$STATE_LOG" || :) judged=$(( $(judge_calls) - judged_before )) unread=$(overseer_unread 'Successor transition only.')"
   # The new pane can bind through the unchanged healer and deliver once.
   CALL_ENV=("${SESSION_ENV[@]}" 'TMUX_PANE=%4')
   ARM_ARGS=(deliver)
@@ -3945,27 +3978,34 @@ stop "${SESSION_ENV[@]}"
 assert_eq "RC=$RC fleet-state=$(grep -c '^lane-mail-check: fleet-state=' "$ERR_FILE" || :)" "RC=0 fleet-state=0" \
   "the named session with no overseer mailbox never judges mail protection, independent of the wake probe"
 
+# The runtime names the fleet record's path, so an install with the reader
+# and no runtime can establish no session as the one the record names: the
+# named session is handed and refused nothing, and the note stays unread.
 named_session peer_library_absent
 peer_send 'No library.'
-state_stub delegate
 hole_runtime
 stop "${SESSION_ENV[@]}"
-expect 2 "lane-mail-check: fleet-state=$LANE/.claude/skills/orch/scripts/orch-runtime" \
-  "an install with the reader and no runtime refuses the named session on the missing runtime"
+expect 0 - "an install with the reader and no runtime identifies no overseer and hands the named session nothing"
 assert_eq "$(overseer_unread 'No library.')" "1" "and the note stays unread"
 
 # A runtime the install has not built for its sources (its wrapper's
 # `setup-required`, exit 69, after a refresh): no refusal, since nothing at
-# the turn end builds it; the setup is named, the turn end passes, and the
-# mailbox is left as a live watch would leave it.
+# the turn end builds it; the record's path cannot be read, so no session is
+# established, the setup is named, the turn end passes, and the mailbox is
+# left as a live watch would leave it.
 named_session peer_runtime_unbuilt
 peer_send 'Until the build.'
 runtime_stub "$LANE/.claude/skills/orch/scripts" unbuilt
 stop "${SESSION_ENV[@]}"
-expect 0 "lane-mail-check: setup-required=$LANE/.claude/skills/orch/scripts/setup" \
+expect 0 "lane-mail-check: store-unbuilt=$LANE/.claude/skills/orch/scripts/setup" \
   "an install whose runtime is not built for its sources passes the named session's turn end naming the setup"
 assert_eq "$(grep -c '^orch-runtime: setup-required' "$ERR_FILE")" "1" "the wrapper's own keyed line is replayed under the hook's"
 assert_eq "$(overseer_unread 'Until the build.')" "1" "and the note stays unread for the watch or the build"
+mutant identify-unbuilt-dropped -e '/^overseer_identify() {$/,/^}$/ s/^    69)$/    999)/'
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+stop "${SESSION_ENV[@]}"
+expect 0 - "control: without the arm an unbuilt runtime leaves the named session's turn end silent"
+install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
 
 mutant no-overseer-arm -e 's@^    MAILBOX_ITEM=overseer$@    return 0@'
 named_session control_peer_named "$MUTANT_PATH"
@@ -4046,21 +4086,14 @@ stop "${OTHER_ENV[@]}"
 expect 2 "lane-mail-check: reader=$LANE/.agents/skills/mailbox/scripts/lane-mail" \
   "control: refusing where no reader resolves holds every session in the checkout on mail none of them reads"
 
-mutant peer-path-passes -e 's@^    refuse fleet-state "\$SCRIPTS/workflow-state" @    return 0 # @' -e 's/input_filename/""/'
-named_session control_peer_state "$MUTANT_PATH"
+# A fleet path the runtime cannot name establishes no session: the named
+# session is handed and refused nothing, and the note stays unread.
+named_session peer_state_path
 peer_send 'Path unread.'
 state_stub path-fails
 stop "${SESSION_ENV[@]}"
 assert_eq "RC=$RC unread=$(overseer_unread 'Path unread.')" "RC=0 unread=1" \
-  "control: without the path refusal a failed state read passes mail protection and leaves the note unread"
-
-mutant peer-library-passes -e 's@^    \*) refuse fleet-state "\$SCRIPTS/orch-runtime" .*$@    *) return 1 ;;@'
-named_session control_peer_library "$MUTANT_PATH"
-peer_send 'Library unread.'
-state_stub delegate
-hole_runtime
-stop "${SESSION_ENV[@]}"
-expect 2 "lane-mail-check: unread=1" "control: without the runtime refusal a runtime that answers nothing reads as no live watch"
+  "a fleet path the runtime cannot name identifies no overseer and leaves the note unread"
 
 mutant peer-ignores-watch -e '/^watch_live() {/,/^}/ s@^    live) return 0 ;;$@    live) return 1 ;;@'
 named_session control_peer_watched "$MUTANT_PATH"

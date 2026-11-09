@@ -953,12 +953,12 @@ ol_command_line() { # [--brief TEXT] HARNESS HANDOFF LANE_DIR LAUNCH_DIR FLAG...
 # record was written for. The lane-mail-check hook's identification and
 # lane-mail's peer reader ask it rather than read an empty start.
 # `ol_owns($server; $start; $session)` is either answer: the record is that
-# session's, bound or unstarted. Its reader is the writer that binds an
-# unstarted record to its session instead of reading it as another
-# session's, ol_record_heal, which the lane-mail-check hook runs from the
-# overseer's turn ends and tool calls; `oversee register` reads it for its
+# session's, bound or unstarted. `oversee register` reads it for its
 # liveness refusal, so a live pane a startless record names blocks a second
-# overseer. `ol_model_launch` is the launch a model check is bound to, which
+# overseer. The runtime's heal (`orch-runtime state heal --fleet`), which the
+# lane-mail-check hook runs from the overseer's turn ends and tool calls,
+# binds an unstarted record to its session by the same rule and
+# ol_native_match's. `ol_model_launch` is the launch a model check is bound to, which
 # the hook's model-switch check compares.
 OL_JQ_DEFS='def ol_identity: {harness, account, home, model, effort, cwd};
   def ol_model_launch: {server,server_start,pane,generation,launch_line,cwd,session_id};
@@ -1200,30 +1200,6 @@ ol_record_current() { # SERVER PANE
       else empty end' <<<"$record" 2>"$DEP_ERR")" || return 2
   [[ -n "$fields" ]] || return 1
   IFS="$sep" read -r OL_CUR_HARNESS OL_CUR_ACCOUNT OL_CUR_HOME OL_CUR_MODEL OL_CUR_EFFORT OL_CUR_CWD <<<"$fields"
-}
-
-# ol_record_heal SERVER PANE START HARNESS HOME SESSION_ID — the record naming the session
-# SERVER PANE on the server started at START, bound or unstarted (ol_owns),
-# given each fact it lacks and the session itself knows: START
-# as `server_start`, HARNESS as `harness`, and HOME, the directory the harness
-# variable of that session carries, as `home`, and its native SESSION_ID.
-# ol_native_match owns the recorded harness, readable home and native id rule.
-# A missing native id or a record that no longer matches refuses the update.
-# A fact the record already names stays. The
-# lane-mail-check hook runs it from the overseer's own turn end and tool calls,
-# so a record that lost the facts the transcript binding reads is filled from
-# the session they describe instead of leaving its context unread. An empty
-# HARNESS or HOME writes nothing for that field. Returns 1 with the writer's
-# words in DEP_ERR.
-ol_record_heal() { # SERVER PANE START HARNESS HOME SESSION_ID
-  "$SCRIPT_DIR/workflow-state" update oversee --arg server "$1" --arg pane "$2" --arg start "$3" \
-    --arg harness "$4" --arg home "$5" --arg session "${6:-}" "$OL_JQ_DEFS"'
-      if (.overseer | ol_owns($server; $start; $pane) and ol_native_match($harness; $home; $session))
-      then .overseer |= (.server_start = ($start | tonumber)
-        | if (.harness // "") == "" and $harness != "" then .harness = $harness else . end
-        | if (.home // "") == "" and $home != "" then .home = $home else . end
-        | if (.session_id // "") == "" and $session != "" then .session_id = $session else . end)
-      else error("overseer-native-unbound") end' >/dev/null 2>"$DEP_ERR"
 }
 
 # ol_caller_known SERVER PANE DIR — what the session SERVER PANE is known to

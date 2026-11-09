@@ -105,7 +105,7 @@ impl ContextRecord {
         ))
     }
 
-    /// `lane_context_window_full`: whether a reading of a `harness` session
+    /// Whether a reading of a `harness` session
     /// fills the window it names, so the session can take no turn again.
     /// Only the window a claude, codex or pi reading names is the hard
     /// limit a session stops at; a copilot reading's window is its
@@ -407,7 +407,7 @@ mod tests {
         }
     }
 
-    /// `lane_context_window_full`'s table: the window a claude, codex or pi
+    /// The full-window table: the window a claude, codex or pi
     /// reading names is the hard limit; a copilot reading is never full; a
     /// reading naming no window takes the declared capacity for its model,
     /// and one naming neither is never full.

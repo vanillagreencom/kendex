@@ -695,12 +695,10 @@ for child_arm in deliver stop usage start; do
     'lane-mail-check: session-unbound=s1 harness=pi home=none remedy=oversee register|1' \
     'the harness-only refusal gives one stderr diagnostic'
 done
-wake_mutant native-harness-control '    and ((.harness // "") == "" or .harness == $harness)' '    and true' "$REPO_ROOT/skills/orch/scripts/lib/overseer-launch.sh"
-for child_arm in deliver stop usage start; do
-  copilot_child "native_harness_control_$child_arm" "$child_arm" "$HOOK" harness-only "$MUTANT_PATH"
-  assert_eq "$([ "$CHILD_RESULT" = 'RC=0 stdout= unchanged=yes state=same judged=0' ] && echo accepted || echo rejected)" rejected \
-    "control: dropping only the harness rule fails the same $child_arm refusal assertion"
-done
+# Before the first session binding the harness rule is also the runtime
+# heal's own: the binding write refuses a caller whose harness the record does
+# not name (tests/rust/state.rs, the heal row), so the library rule alone is
+# no control here.
 
 new_copilot_named native_copilot_reader
 CALL_ENV=("${COP_NAMED_ENV[@]}" "COPILOT_HOME=$COP_HOME/.copilot")

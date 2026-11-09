@@ -179,11 +179,11 @@ expect 0 "lane-mail-check: reading-unrecorded=$BOX/context.json" \
 # An install the gate or the context library cannot use is refused under the
 # key its turn end reports the same gap under.
 new_usage_lane no-state KEN-409
-hole_install workflow-state
+hole_install orch-runtime
 usage 150000 272000
 assert_eq "$(quiet) record=$(record)" \
-  "RC=2 stdout= stderr=lane-mail-check: handoff-skipped=$LANE/.agents/skills/orch/scripts/workflow-state record=none" \
-  "a lane whose install has no workflow-state is refused under handoff-skipped, naming it"
+  "RC=2 stdout= stderr=lane-mail-check: handoff-skipped=$LANE/.agents/skills/orch/scripts/orch-runtime record=none" \
+  "a lane whose install has no runtime is refused under handoff-skipped, naming it"
 new_usage_lane no-lib KEN-410
 hole_install lib/lane-context.sh
 usage 150000 272000

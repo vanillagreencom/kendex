@@ -115,13 +115,17 @@ if command -v timeout >/dev/null 2>&1; then SCAN_AVAILABLE=1; fi
 scan_key() { # KEY
   if [ "$SCAN_AVAILABLE" -eq 1 ]; then printf '%s\n' "$1"; else printf '%s\n' "${1/agent-reserve=/agent-unobserved=}"; fi
 }
-handoffs_named() { grep -c 'set .* handoff ' "$ERR_FILE" || true; }
-# workflow-state consumes the shell argument emitted by handoff_instruction.
-# Decode that argument without running the emitted command, then parse JSON.
+handoffs_named() { grep -cE '^  \{"op":"record-handoff",| state set --fleet /handoff ' "$ERR_FILE" || true; }
+# The record handoff_instruction prints: a lane's `record-handoff` request
+# line, or the shell word the overseer's `state set --fleet /handoff` takes,
+# decoded without running the emitted command; then its context.
 handoff_context() {
   local line record=''
   while IFS= read -r line; do
-    case "$line" in *' set '*' handoff '*) record=${line#* handoff }; break ;; esac
+    case "$line" in
+      '  {"op":"record-handoff",'*) jq -c '.context' <<<"${line#  }"; return ;;
+      *' state set --fleet /handoff '*) record=${line#* /handoff }; break ;;
+    esac
   done < "$ERR_FILE"
   "$BASH" -c 'eval "set -- $1"; printf "%s\n" "$1"' _ "$record" | jq -c '.context'
 }
@@ -374,45 +378,22 @@ assert_eq "$(handoff_context | jq -c '[.decision,.source.session_id,.source.tran
   '[null,"s1",null]' 'an absent reading leaves handoff decision unknown with its actual session binding'
 ARM_ARGS=()
 
-# A retained edited orch install can keep the released three-argument judge
-# while this hook updates. Keep the released function here so this fixture
-# does not change when origin/main advances. Other readers use the real lib.
+# A runtime older than the reserve argument refuses it as usage: the launch
+# is held, never admitted on the plain mark, while Stop keeps its ordinary
+# judgement through the same runtime.
 new_lane agent_legacy AGENT-1
 mkdir -p "$LANE/tmp/lane-mail/AGENT-1"
 plant_install
-LEGACY_LIB="$TMP_ROOT/retained-context-lib"
-cp -R "$REPO_ROOT/skills/orch/scripts/lib" "$LEGACY_LIB"
-cat >> "$LEGACY_LIB/lane-context.sh" <<'RELEASED_CONTEXT_JUDGE'
-lane_context_handoff_due() { # TOKENS WINDOW PCT
-  local pct
-  pct=$(lane_context_handoff_pct "${3:-}") || return 2
-  case "${1:-}" in '' | *[!0-9]*) return 2 ;; 0) ;; 0*) return 2 ;; esac
-  if [ "$1" -ge 400000 ]; then
-    printf 'due\n'
-    return 0
-  fi
-  case "${2:-}" in '' | 0) return 1 ;; *[!0-9]* | 0*) return 2 ;; esac
-  if [ $(($1 * 100)) -gt $(($2 * pct)) ]; then
-    printf 'due\n'
-  else
-    printf 'room\n'
-  fi
-}
-RELEASED_CONTEXT_JUDGE
-rm "$LANE/.claude/skills/orch/scripts/lib"
-ln -s "$LEGACY_LIB" "$LANE/.claude/skills/orch/scripts/lib"
+STUB_RUNTIME="$LANE/.claude/skills/orch/scripts/orch-runtime"
+mv -- "$STUB_RUNTIME" "$STUB_RUNTIME.stub"
+printf '#!/usr/bin/env bash\ncase " $* " in\n  *" --agent-reserve "*) printf "orch-runtime: usage\\nerror: unexpected argument --agent-reserve\\n" >&2; exit 2 ;;\nesac\nexec %q "$@"\n' \
+  "$STUB_RUNTIME.stub" > "$STUB_RUNTIME"
+chmod +x "$STUB_RUNTIME"
 write_transcript "$TRANSCRIPT" 600000
 run_payload "$(jq -nc --arg p "$TRANSCRIPT" '{session_id:"s1",transcript_path:$p,stop_hook_active:false}')"
-expect 2 'lane-mail-check: context=600000' 'the released judge retains ordinary Stop behavior'
+expect 2 'lane-mail-check: context=600000' 'a runtime without the reserve argument retains ordinary Stop behavior'
 launch 250000 Agent
-expect 2 'lane-mail-check: agent-input=reserve-unsupported' 'an installed older judge cannot admit a reserve launch'
-# A retained edit can lower the older judge's cap to the default launch
-# boundary. Two boundary values alone cannot prove that it consumes a
-# changed reserve.
-sed 's/-ge 400000/-ge 250000/' "$LEGACY_LIB/lane-context.sh" > "$TMP_ROOT/lower-legacy-cap"
-mv "$TMP_ROOT/lower-legacy-cap" "$LEGACY_LIB/lane-context.sh"
-launch 249999 Agent ORCH_HANDOFF_AGENT_RESERVE_TOKENS=200000
-expect 2 'lane-mail-check: agent-input=reserve-unsupported' 'a lower legacy cap cannot stand in for reserve support'
+expect 2 'lane-mail-check: agent-input=marks' 'a runtime without the reserve argument cannot admit a reserve launch'
 plant_install
 
 # An ordinary checkout, or a child caller, never inherits the lead's mark.
@@ -539,8 +520,8 @@ record_overseer_handoff
 launch 600000 Agent $(overseer_env)
 expect 0 - 'a standing handoff retains its escape'
 
-# The judged decision crosses the process boundary into the hook's existing
-# workflow-state handoff argument, without a second judge.
+# The judged decision crosses the process boundary into the handoff record
+# the hook prints, without a second judge.
 new_overseer agent_native_decision
 judge_says "$(marks_reply context-half)"
 write_transcript "$TRANSCRIPT" 600000
@@ -720,7 +701,7 @@ if [ -z "${HOOK_UNDER_TEST:-}" ]; then
       children) variant agent-no-children -e 's/^    claude_attached_agents$/    AGENT_ROWS=""/' ;;
       native) variant agent-no-native -e 's/^  if jq -e '\''has("background_tasks")'\'' <<<"\$INPUT" >\/dev\/null; then$/  if false; then/' ;;
       completion) variant agent-no-completion -e 's/if \.agents | has(\$n\[0\]) then/if false then/' ;;
-      capability) variant agent-no-capability -e 's/load_context_lib reserve/load_context_lib/' ;;
+      capability) variant agent-no-capability -e 's/^    \*) refuse_handoff agent-input marks "\$JUDGE_CAUSE" ;;$/    *) return 0 ;;/' ;;
       # Main's rule: the reserve applies whether or not an agent is out.
       reserve) variant agent-reserve-always -e 's/^  attached_agents_out || return 0$/  attached_agents_out || :/' ;;
       unclassified) variant agent-unclassified-none -e 's/else \.unclassified = true end)$/else . end)/' ;;

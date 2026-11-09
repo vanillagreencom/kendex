@@ -69,7 +69,7 @@ host_account_rows() { # HOOK [ROWS]
         "a Pi lane with no native identity is judged by the account judge on its API grant"
     fi
     if [ "$status" = 2 ]; then
-      assert_eq "$(grep -cF ' set KEN-4296 handoff ' "$ERR_FILE" || true)" 1 \
+      assert_eq "$(grep -cF ' op --item KEN-4296 --request [REQUEST FILE]' "$ERR_FILE" || true)" 1 \
         "the hosted context mark still requires a handoff record"
     fi
   done <<< "${2:-$HOST_ACCOUNT_ROWS}"

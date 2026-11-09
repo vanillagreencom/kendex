@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Tests for the harness adapters under lib/adapters/ and the one judge of a
-# context reading, lane_context_handoff_due, both reached through
+# Tests for the harness adapters under lib/adapters/, reached through
 # lib/lane-context.sh. An adapter turns the records its harness writes into
 # one reading, the tokens the last response left in the context and the
-# window the model has; the judge answers whether a reading is at or past a
-# percentage of its own window. Every reader of a reading, the turn-end hook,
-# the review admission and `oversee-succeed`, asks these two, so a row here pins
-# what all of them decide.
+# window the model has. Every reader of a reading, the turn-end hook, the
+# review admission and the runtime watch, reads it through an adapter, so a
+# row here pins what all of them read. The judge of a reading is the
+# runtime's `marks`, whose own rows are the runtime's; the command-line tables
+# here run the built runtime, through AGENT_RUNTIME_CACHE.
 #
 # LIB_UNDER_TEST names another copy of the library, with its adapters beside
 # it, for the must-fail controls at the end; each control runs only the one
@@ -17,6 +17,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 LIB="${LIB_UNDER_TEST:-$SCRIPTS_DIR/lib/lane-context.sh}"
+
+RUNTIME_CACHE="$(bash -c '. "$1"; agent_runtime_cache' _ "$SCRIPTS_DIR/../../agent-runtime/scripts/lib/key.sh")" \
+  || { echo "lane_context_adapters: runtime-cache=unresolved" >&2; exit 1; }
 
 TMP_ROOT="$(mktemp -d)" || { echo "lane_context_adapters: scratch=mktemp-failed" >&2; exit 1; }
 [[ -d $TMP_ROOT && ! -L $TMP_ROOT ]] || { echo "lane_context_adapters: scratch=not-a-directory value=[$TMP_ROOT]" >&2; exit 1; }
@@ -60,13 +63,6 @@ reading() { # LIB HARNESS WINDOW
   local out rc=0
   out="$(bash -c 'set -euo pipefail; source "$1"; lane_context_reading "$2" "$3" "$4"' _ "$1" "$2" "$3" "$PI_READ_PROJECT")" || rc=$?
   printf 'rc=%s%s' "$rc" "${out:+ ${out//$'\t'/|}}"
-}
-
-# due LIB TOKENS WINDOW PCT — the judge's answer and exit status.
-due() { # LIB TOKENS WINDOW PCT
-  local out rc=0
-  out="$(bash -c 'set -euo pipefail; source "$1"; shift; lane_context_handoff_due "$@"' _ "$@")" || rc=$?
-  printf 'rc=%s%s' "$rc" "${out:+ $out}"
 }
 
 # One transcript line per spelling a harness writes, with a model and a figure.
@@ -296,93 +292,26 @@ ROWS
 fi
 
 if section before-point; then
-  # Every harness reaches the common judge through its adapter. Sonnet's mark
-  # must fit a supported 200K session even when its alias selects a larger one.
-  while IFS='|' read -r harness model tokens expected full; do
+  # Every harness names the point its reading is judged against through its
+  # adapter. Sonnet's point must fit a supported 200K session even when its
+  # alias selects a larger one.
+  while IFS='|' read -r harness model point; do
     case "$harness" in
-      claude) claude_line "$model" "$tokens" > "$T/before-point" ;;
-      codex) { codex_context "$model"; codex_count "$tokens" 258400; } > "$T/before-point" ;;
-      pi) pi_line "$model" "$tokens" > "$T/before-point" ;;
+      claude) claude_line "$model" 180000 > "$T/before-point" ;;
+      codex) { codex_context "$model"; codex_count 180000 258400; } > "$T/before-point" ;;
+      pi) pi_line "$model" 180000 > "$T/before-point" ;;
     esac
     answer=$(reading "$LIB" "$harness" 200000 < "$T/before-point")
-    point=${answer#*|}; point=${point%%|*}
-    assert_eq "$(due "$LIB" "$tokens" "$point" 90)" "rc=0 $expected" "$harness $model before-point $tokens is $expected"
-    rc=0
-    "$BASH" -euo pipefail -c 'source "$1"; lane_context_window_full "$2" "$3" "$4"' _ "$LIB" "$tokens" "$point" "$harness" || rc=$?
-    assert_eq "$rc" "$full" "$harness $model full-window status at $tokens"
+    got=${answer#*|}; got=${got%%|*}
+    assert_eq "$got" "$point" "$harness $model before-point is $point"
   done <<'ROWS'
-claude|claude-opus-5-5|399999|room|1
-claude|claude-opus-5-5|400000|due|1
-claude|sonnet|180000|room|1
-claude|sonnet|180001|due|1
-claude|claude-sonnet-4-5-20250929|190000|due|1
-claude|claude-sonnet-4-6|190000|due|1
-claude|claude-sonnet-9-9|190000|due|1
-claude|claude-sonnet-4-5-20250929|200000|due|0
-codex|gpt-6-astra|232560|room|1
-codex|gpt-6-astra|232561|due|1
-pi|m|180000|room|1
-pi|m|180001|due|1
-ROWS
-fi
-
-if section judge; then
-  echo "=== the one judge answers at a share of the reading's own window ==="
-  # `tokens|window|pct|answer`
-  while IFS='|' read -r tokens window pct want; do
-    assert_eq "$(due "$LIB" "$tokens" "$window" "$pct")" "$want" "$tokens of ${window:-no window} at $pct: $want"
-  done <<'ROWS'
-232560|258400|90|rc=0 room
-232561|258400|90|rc=0 due
-232559|258400|90|rc=0 room
-117964|131072|90|rc=0 room
-117965|131072|90|rc=0 due
-399999|1000000|90|rc=0 room
-400000|1000000|90|rc=0 due
-400000||90|rc=0 due
-400000|0|90|rc=0 due
-399999||90|rc=1
-400000|2000000|100|rc=0 due
-180000|200000|100|rc=0 room
-180001|200000|100|rc=0 due
-160000|200000|80|rc=0 room
-160001|200000|80|rc=0 due
-0|258400|90|rc=0 room
-258400|258400|100|rc=0 due
-5||90|rc=1
-5|0|90|rc=1
-5|10|0|rc=2
-5|10|101|rc=2
-5|10|090|rc=2
-05|10|90|rc=2
-x|10|90|rc=2
-5|1x|90|rc=2
-ROWS
-fi
-
-if section window-full; then
-  echo "=== a reading fills its window only where that window is a hard limit ==="
-  # `tokens|window|harness|exit status`: claude, codex and pi name a window only
-  # where the harness would not compact first; copilot's is its compaction point.
-  while IFS='|' read -r tokens window harness want; do
-    rc=0
-    bash -c 'set -euo pipefail; source "$1"; lane_context_window_full "$2" "$3" "$4"' _ "$LIB" "$tokens" "$window" "$harness" || rc=$?
-    assert_eq "rc=$rc" "$want" "window full: $tokens of ${window:-no window} on ${harness:-no harness}: $want"
-  done <<'ROWS'
-1000000|1000000|claude|rc=0
-1000001|1000000|claude|rc=0
-999999|1000000|claude|rc=1
-258400|258400|codex|rc=0
-200000|200000|pi|rc=0
-800000|800000|copilot|rc=1
-900000|800000|copilot|rc=1
-5||claude|rc=1
-5|0|claude|rc=1
-x|10|claude|rc=2
-05|10|claude|rc=2
-5|1x|claude|rc=2
-5|10|opencode|rc=3
-5|10||rc=3
+claude|claude-opus-5-5|1000000
+claude|sonnet|200000
+claude|claude-sonnet-4-5-20250929|200000
+claude|claude-sonnet-4-6|200000
+claude|claude-sonnet-9-9|200000
+codex|gpt-6-astra|258400
+pi|m|200000
 ROWS
 fi
 
@@ -578,30 +507,6 @@ opencode|$CLAUDE_OWNED||$CHOME|3 harness-unlisted
 ROWS
 fi
 
-if section agent-reserve; then
-  while IFS='|' read -r tokens window pct reserve want; do
-    assert_eq "$(due "$LIB" "$tokens" "$window" "$pct" "$reserve")" "$want" \
-      "agent reserve: $tokens of ${window:-unknown} at $pct with $reserve: $want"
-  done <<'ROWS'
-249999|1000000|90|150000|rc=0 room
-250000|1000000|90|150000|rc=0 due
-250001|1000000|90|150000|rc=0 due
-67964|131072|90|50000|rc=0 room
-67965|131072|90|50000|rc=0 due
-49999|200000|50|50000|rc=0 room
-50000|200000|50|50000|rc=0 due
-90000|200000|90|0|rc=0 room
-180000|200000|90|0|rc=0 due
-0|200000|50|150000|rc=0 due
-1||90|150000|rc=1
-250000||90|150000|rc=0 due
-0||90|999999999999999999999|rc=0 due
-1|200000|90|-1|rc=2
-1|200000|90|015|rc=2
-1|200000|90|abc|rc=2
-ROWS
-fi
-
 PANEL_BOX="$TMP_ROOT/panel-box"
 PANEL_HOME="$TMP_ROOT/panel-home"
 mkdir -p "$PANEL_BOX" "$PANEL_HOME"
@@ -611,7 +516,7 @@ if section pre-panel; then
   # context, as lane-marker does for a new session, then refresh mid-turn from
   # the native transcript. Copilot has no status-line file in this home.
   panel_run() { # LIB_ARGUMENT...
-    env -i PATH="$PATH" HOME="$PANEL_HOME" COPILOT_HOME="$PANEL_HOME/copilot" \
+    env -i PATH="$PATH" HOME="$PANEL_HOME" COPILOT_HOME="$PANEL_HOME/copilot" AGENT_RUNTIME_CACHE="$RUNTIME_CACHE" \
       DISABLE_AUTO_COMPACT=1 ORCH_HANDOFF_CONTEXT_PCT=90 ORCH_HANDOFF_AGENT_RESERVE_TOKENS=150000 \
       "$BASH" "$LIB" "$@" 2>"$T/panel.err"
   }
@@ -687,7 +592,7 @@ STUB
     local rc=0
     printf '%s\n' "$1" > "$TMP_ROOT/by-id/reply.json"
     : > "$TMP_ROOT/by-id/argv.log"
-    env -i PATH="$PATH" HOME="$PANEL_HOME" CODEX_HOME="$ID_HOME" \
+    env -i PATH="$PATH" HOME="$PANEL_HOME" CODEX_HOME="$ID_HOME" AGENT_RUNTIME_CACHE="$RUNTIME_CACHE" \
       AGENT_RUNTIME_CLI="$TMP_ROOT/by-id/bin/agent-runtime" AGENT_RUNTIME_REPLY="$TMP_ROOT/by-id/reply.json" \
       AGENT_RUNTIME_LOG="$TMP_ROOT/by-id/argv.log" AGENT_RUNTIME_EXIT="${2:-}" \
       ORCH_COMPACTION_OVERRIDES="$ORCH_COMPACTION_OVERRIDES" ORCH_HANDOFF_CONTEXT_PCT=90 ORCH_HANDOFF_AGENT_RESERVE_TOKENS=150000 \
@@ -738,7 +643,7 @@ if section codex-alternate; then
     args+=(codex s1 "$transcript" "$PANEL_BOX" "$T")
     [[ "$operation" != legacy-six ]] || args+=("")
     rc=0
-    out=$(env -i PATH="$PATH" HOME="$PANEL_HOME" CODEX_HOME="$PANEL_HOME/codex" \
+    out=$(env -i PATH="$PATH" HOME="$PANEL_HOME" CODEX_HOME="$PANEL_HOME/codex" AGENT_RUNTIME_CACHE="$RUNTIME_CACHE" \
       ORCH_COMPACTION_OVERRIDES="$overrides" ORCH_HANDOFF_CONTEXT_PCT=90 ORCH_HANDOFF_AGENT_RESERVE_TOKENS="$reserve" \
       "$BASH" "$LIB" "${args[@]}" 2>"$T/panel.err") || rc=$?
     verdict=''
@@ -810,7 +715,7 @@ ROWS
         expected="$want"
       fi
       rc=0
-      out=$(env -i PATH="$PATH" HOME="$PANEL_HOME" ORCH_COMPACTION_OVERRIDES="$overrides" \
+      out=$(env -i PATH="$PATH" HOME="$PANEL_HOME" AGENT_RUNTIME_CACHE="$RUNTIME_CACHE" ORCH_COMPACTION_OVERRIDES="$overrides" \
         ORCH_HANDOFF_CONTEXT_PCT=90 ORCH_HANDOFF_AGENT_RESERVE_TOKENS=150000 \
         "$BASH" -c "$checkpoint_command" 2>"$T/panel.err") || rc=$?
       verdict=''
@@ -828,7 +733,7 @@ unavailable-usage|gpt-6-luna|258400|232560|232561|unread|2:
 unavailable-capacity|gpt-6-luna|258400|232560|100000|absent|2:
 ROWS
   "$BASH" -c 'source "$1"; lane_context_compaction_flag "$2" copilot auto s1' _ "$LIB" "$PANEL_BOX"
-  out=$(env -i PATH="$PATH" HOME="$PANEL_HOME" COPILOT_HOME="$PANEL_HOME/copilot" \
+  out=$(env -i PATH="$PATH" HOME="$PANEL_HOME" COPILOT_HOME="$PANEL_HOME/copilot" AGENT_RUNTIME_CACHE="$RUNTIME_CACHE" \
     "$BASH" "$LIB" --attached-launch --reading copilot s1 '' "$PANEL_BOX" "$T")
   assert_eq "$(jq -c '[.verdict,.decision,.source.compacted]' <<<"$out")" '["due",null,true]' \
     'automatic compaction keeps the parent handoff'
@@ -844,7 +749,7 @@ if section pi-panel; then
   pi_line claude-opus-5-5 146108 anthropic > "$T/pi-panel"
   pi_panel_read() { # [WINDOW_ARGUMENT]
     local out rc=0
-    out=$(env -i PATH="$PATH" HOME="$PANEL_HOME" PI_CODING_AGENT_DIR="$PI_PANEL_AGENT" \
+    out=$(env -i PATH="$PATH" HOME="$PANEL_HOME" PI_CODING_AGENT_DIR="$PI_PANEL_AGENT" AGENT_RUNTIME_CACHE="$RUNTIME_CACHE" \
       ORCH_HANDOFF_CONTEXT_PCT=90 ORCH_HANDOFF_AGENT_RESERVE_TOKENS=150000 \
       "$BASH" "$LIB" --attached-launch pi s1 "$T/pi-panel" "$PI_PANEL_BOX" "$PI_READ_PROJECT" "$@" 2>"$T/panel.err") || rc=$?
     printf 'rc=%s verdict=%s' "$rc" "$out"
@@ -908,6 +813,8 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     mkdir -p "$copy"
     cp -R "$SCRIPTS_DIR/lib/." "$copy/"
     cp "$SCRIPTS_DIR/orch-env" "$copy/../orch-env"
+    printf '#!/usr/bin/env bash\nexec "%s" "$@"\n' "$SCRIPTS_DIR/orch-runtime" > "$copy/../orch-runtime"
+    chmod 755 "$copy/../orch-runtime"
     assert_eq "$(grep -c -F -e "$3" "$copy/$2" || true)" "1" "control $1 finds exactly one site to mutate"
     perl -i -pe 'BEGIN { ($o, $n) = (shift, shift) } s/\Q$o\E/$n/g' -- "$3" "$4" "$copy/$2"
     out="$(LANE_CONTEXT_SUITE_ONLY="$table" LIB_UNDER_TEST="$copy/lane-context.sh" bash "${BASH_SOURCE[0]}" 2>&1 || true)"
@@ -954,7 +861,7 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
   control codex-evidence adapters/codex.sh 'then $window else "" end;' 'then $window else $window end;' \
     'codex configuration  gives point unresolved'
   control claude-family adapters/claude.sh '*sonnet*=200000' '*sonnet*=1000000' \
-    'claude sonnet before-point 180001 is due'
+    'claude sonnet before-point is 200000'
   control claude-default adapters/claude.sh 'LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW=200000' 'LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW=1000000' \
     'dry launch claude-lyra-9-9 uses its budget'
   control claude-new-model-launch adapters/claude.sh '  printf '\''%s\n'\'' "$LANE_ADAPTER_CLAUDE_DEFAULT_WINDOW"' '  return 0' \
@@ -963,14 +870,6 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'dry launch claude-lyra-9-9 notice count'
   control claude-evidence adapters/claude.sh '[ "${DISABLE_AUTO_COMPACT:-}" = 1 ]' '[ "${DISABLE_AUTO_COMPACT:-}" = 0 ]' \
     'claude configuration 0 gives point unresolved'
-  control strict-mark lane-context.sh 'elif [ "$1" -gt "$window_mark" ]; then' 'elif [ "$1" -ge "$window_mark" ]; then' \
-    '232560 of 258400 at 90: rc=0 room'
-  control agent-reserve lane-context.sh '    cap_mark=$((400000 - $4))' '    cap_mark=400000' \
-    'agent reserve: 250000 of 1000000 at 90 with 150000: rc=0 due'
-  control plain-mark-floor lane-context.sh 'window_mark=$(($2 * pct / 100))' 'window_mark=$((($2 * pct + 99) / 100))' \
-    '117965 of 131072 at 90: rc=0 due'
-  control reserve-mark-ceiling lane-context.sh 'window_mark=$((($2 * pct + 99) / 100 - $4))' 'window_mark=$(($2 * pct / 100 - $4))' \
-    'agent reserve: 67964 of 131072 at 90 with 50000: rc=0 room'
   control rollout-by-id lane-context.sh \
     '    [ -n "$TRANSCRIPT" ] || lane_context_session_file "$HARNESS" "$SESSION" "$LANE_DIR" || return 0' \
     '    [ -n "$TRANSCRIPT" ] || return 0' \
@@ -988,16 +887,6 @@ if [[ -z "${LIB_UNDER_TEST:-}" ]]; then
     'ordinary checkpoint 274811: room'
   control unflagged-reserve lane-context.sh '    if [ "$CLI_OPERATION" != checkpoint ]; then' '    if [ "$CLI_OPERATION" = attached-launch ]; then' \
     'unflagged five-argument pre-panel 300000 of 1000000: due'
-  control absolute-cap lane-context.sh 'if [ "$1" -ge "$cap_mark" ]; then' 'if [ "$1" -gt "$cap_mark" ]; then' \
-    '400000 of no window at 90: rc=0 due'
-  control mandatory-pct lane-context.sh '[ "$1" -gt 90 ]' '[ "$1" -gt 100 ]' \
-    '180001 of 200000 at 100: rc=0 due'
-  control window-read-as-room lane-context.sh "case \"\$window_mark\" in '') return 1 ;;" "case \"\$window_mark\" in '') printf 'room\\n'; return 0 ;;" \
-    '5 of no window at 90: rc=1'
-  control window-full-copilot lane-context.sh '    copilot) return 1 ;;' '    copilot) ;;' \
-    'window full: 800000 of 800000 on copilot: rc=1'
-  control window-full-limit lane-context.sh '  [ "$1" -ge "$2" ]' '  [ "$1" -gt "$2" ]' \
-    'window full: 1000000 of 1000000 on claude: rc=0'
   control pi-record-session adapters/pi.sh '[ "$LANE_CTX_SESSION" = "$2" ] && ' '' \
     'pi pre-panel record-other-session: rc=2 verdict='
   control project-ignored adapters/pi.sh '[ "$LANE_ADAPTER_PI_ENABLED" = true ] && return 0' ':' \

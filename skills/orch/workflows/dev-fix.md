@@ -241,13 +241,13 @@ A nonzero exit or `ok: false` is a failed query. Otherwise save the reply's `res
    Then bind that file into the write for the bucket the item lands in. Fixed:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile item tmp/state-item-[ISSUE_ID].json '$item[0] as $e | .fixed_items = ((.fixed_items // []) | map(select(.location != $e.location or .description != $e.description))) | .escalated_items = ((.escalated_items // []) | map(select(.location != $e.location or .description != $e.description))) | .fixed_items += [$e]'
+   .agents/skills/orch/scripts/orch-runtime state bucket --item [ISSUE_ID] --into /fixed_items --drop /fixed_items --drop /escalated_items tmp/state-item-[ISSUE_ID].json
    ```
 
    Escalated:
 
    ```bash
-   .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] --slurpfile item tmp/state-item-[ISSUE_ID].json '$item[0] as $e | .fixed_items = ((.fixed_items // []) | map(select(.location != $e.location or .description != $e.description))) | .escalated_items = ((.escalated_items // []) | map(select(.location != $e.location or .description != $e.description))) | .escalated_items += [$e]'
+   .agents/skills/orch/scripts/orch-runtime state bucket --item [ISSUE_ID] --into /escalated_items --drop /fixed_items --drop /escalated_items tmp/state-item-[ISSUE_ID].json
    ```
 
    A fixed item's root cause is recorded too, in `pr_comment_review.patched_causes`, the one record [finding-disposition.md § Recurrence](../../reviewer/references/finding-disposition.md#recurrence) reads, whichever loop patched the cause. `pr-review`, `qa-review`, and `review` rounds reach that rule through this step, and a cause missing from it is one the next pass reads as never patched and answers with an ordinary patch round. One entry per fixed item, through a file like the entry above:

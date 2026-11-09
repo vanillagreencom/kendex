@@ -1914,3 +1914,597 @@ fn a_relative_archive_root_refuses_the_archive_write_alone() {
     );
     assert!(store.item_path(ITEM).exists());
 }
+
+/// Several pointer pairs are one write: every pair lands, or a refused
+/// pair or a pointer left without its value writes nothing at all.
+#[test]
+fn set_and_append_write_every_pair_in_one_transition_and_a_refused_pair_writes_none() {
+    let store = Store::new();
+    store.init(ITEM);
+    store.ok(&["state", "set", "--item", ITEM, "/a", "1", "/b", "x"]);
+    store.ok(&[
+        "state",
+        "append",
+        "--item",
+        ITEM,
+        "/l",
+        "1",
+        "/m",
+        r#"{"k":2}"#,
+    ]);
+    let doc = store.doc(&store.item_path(ITEM));
+    assert_eq!(doc["a"], 1);
+    assert_eq!(doc["b"], "x");
+    assert_eq!(doc["l"], json!([1]));
+    assert_eq!(doc["m"], json!([{"k": 2}]));
+    let (key, _) = store.refused(&["state", "set", "--item", ITEM, "/c", "1", "/d"]);
+    assert_eq!(key, "pair-unmatched");
+    let (key, _) = store.refused(&["state", "append", "--item", ITEM, "/c", "1", "/d"]);
+    assert_eq!(key, "pair-unmatched");
+    assert!(store.doc(&store.item_path(ITEM)).get("c").is_none());
+    store.init_fleet();
+    let (key, _) = store.refused(&[
+        "state",
+        "set",
+        "--fleet",
+        "/x",
+        "1",
+        "/handoff",
+        r#""pending""#,
+    ]);
+    assert_eq!(key, "handoff-record");
+    assert!(store.doc(&store.fleet_path()).get("x").is_none());
+}
+
+/// An upsert replaces the element its key names and refuses a value that
+/// lacks the key.
+#[test]
+fn upsert_replaces_the_element_its_key_names_and_refuses_a_value_without_it() {
+    let store = Store::new();
+    store.init(ITEM);
+    let first = store.write_file("a1.json", r#"{"head":"a","n":1}"#);
+    let again = store.write_file("a2.json", r#"{"head":"a","n":2}"#);
+    let other = store.write_file("b.json", r#"{"head":"b"}"#);
+    let keyless = store.write_file("none.json", r#"{"n":3}"#);
+    let up = |file: &str| {
+        store.ok(&[
+            "state", "upsert", "--item", ITEM, "/heads", "--key", "head", file,
+        ])
+    };
+    assert_eq!(up(&first)["replaced"], 0);
+    let replaced = up(&again);
+    assert_eq!(replaced["replaced"], 1);
+    assert_eq!(replaced["length"], 1);
+    assert_eq!(up(&other)["length"], 2);
+    assert_eq!(
+        store.doc(&store.item_path(ITEM))["heads"],
+        json!([{"head": "a", "n": 2}, {"head": "b"}])
+    );
+    let (key, _) = store.refused(&[
+        "state", "upsert", "--item", ITEM, "/heads", "--key", "head", &keyless,
+    ]);
+    assert_eq!(key, "upsert-key");
+}
+
+/// A bucket write moves a finding: out of every `--drop` array by its
+/// location and description, into `--into` with its named fields, an
+/// empty field left out.
+#[test]
+fn bucket_moves_a_finding_out_of_each_drop_array_with_its_named_fields() {
+    let store = Store::new();
+    store.init(ITEM);
+    store.ok(&[
+        "state",
+        "set",
+        "--item",
+        ITEM,
+        "/findings/open",
+        r#"[{"location":"a.rs:1","description":"d","x":1},{"location":"b.rs:2","description":"e"}]"#,
+    ]);
+    let file = store.write_file(
+        "finding.json",
+        r#"{"findings":[{"location":"a.rs:1","description":"d","severity":"high"}]}"#,
+    );
+    let moved = store.ok(&[
+        "state",
+        "bucket",
+        "--item",
+        ITEM,
+        "--into",
+        "/findings/fixed",
+        "--drop",
+        "/findings/open",
+        "--drop",
+        "/findings/deferred",
+        "--element",
+        "/findings/0",
+        "--field",
+        "round=r1",
+        "--field",
+        "note=",
+        &file,
+    ]);
+    assert_eq!(moved["dropped"], 1);
+    let doc = store.doc(&store.item_path(ITEM));
+    assert_eq!(
+        doc["findings"]["fixed"],
+        json!([{"description": "d", "location": "a.rs:1", "round": "r1"}])
+    );
+    assert_eq!(
+        doc["findings"]["open"],
+        json!([{"location": "b.rs:2", "description": "e"}])
+    );
+    assert_eq!(doc["findings"]["deferred"], json!([]));
+    let (key, _) = store.refused(&[
+        "state",
+        "bucket",
+        "--item",
+        ITEM,
+        "--into",
+        "/findings/fixed",
+        "--element",
+        "/findings/9",
+        &file,
+    ]);
+    assert_eq!(key, "bucket-element");
+    let (key, _) = store.refused(&[
+        "state",
+        "bucket",
+        "--item",
+        ITEM,
+        "--into",
+        "/findings/fixed",
+        "--field",
+        "=v",
+        &file,
+    ]);
+    assert_eq!(key, "bucket-field");
+    let whole = store.write_file("whole.json", r#"{"location":"c","description":"f"}"#);
+    store.ok(&[
+        "state",
+        "bucket",
+        "--item",
+        ITEM,
+        "--into",
+        "/findings/fixed",
+        &whole,
+    ]);
+    assert_eq!(
+        store.doc(&store.item_path(ITEM))["findings"]["fixed"][1],
+        json!({"location": "c", "description": "f"})
+    );
+}
+
+/// `close-all` marks every member of the map closed, a null member among
+/// them, and makes an absent map empty.
+#[test]
+fn close_all_closes_every_member_of_the_map() {
+    let store = Store::new();
+    store.init(ITEM);
+    store.ok(&[
+        "state",
+        "set",
+        "--item",
+        ITEM,
+        "/child_sessions",
+        r#"{"a":{"status":"open","pid":1},"b":null}"#,
+    ]);
+    let closed = store.ok(&["state", "close-all", "--item", ITEM, "/child_sessions"]);
+    assert_eq!(closed["closed"], 2);
+    assert_eq!(
+        store.doc(&store.item_path(ITEM))["child_sessions"],
+        json!({"a": {"status": "closed", "pid": 1}, "b": {"status": "closed"}})
+    );
+    assert_eq!(
+        store.ok(&["state", "close-all", "--item", ITEM, "/none"])["closed"],
+        0
+    );
+    assert_eq!(store.doc(&store.item_path(ITEM))["none"], json!({}));
+}
+
+/// The model checks: the item's once-only unavailable slot; a switch
+/// acquired until its recovery starts, then a duplicate; a lane or a
+/// controller that moved is stale; a fleet check logs its row; a
+/// replacement's first turn end resets the lane's check to `passed` once.
+#[test]
+fn a_model_check_is_acquired_once_its_recovery_starts_and_a_moved_launch_is_stale() {
+    let store = Store::new();
+    store.init(ITEM);
+    let slot = |session: &str| {
+        store.ok(&[
+            "state",
+            "model-check",
+            "slot",
+            "--item",
+            ITEM,
+            "--session",
+            session,
+            "--cause",
+            "c",
+            "--observed",
+            "o",
+        ])["recorded"]
+            .clone()
+    };
+    assert_eq!(slot("s2"), true);
+    assert_eq!(slot("s2"), false);
+    let lane = json!({"item": ITEM, "session_id": "s1", "model": "m", "launch": {"pane": "%1"}, "launched_at": 1});
+    let expected = store.write_file("lane.json", &lane.to_string());
+    let record = |place: &[&str], outcome: &str, expected: &str| {
+        let mut args = vec!["state", "model-check", "record"];
+        args.extend_from_slice(place);
+        args.extend_from_slice(&[
+            "--session",
+            "s1",
+            "--outcome",
+            outcome,
+            "--launched",
+            "L",
+            "--observed",
+            "O",
+            "--expected",
+            expected,
+        ]);
+        store.ok(&args)["result"].clone()
+    };
+    let item = ["--item", ITEM];
+    assert_eq!(record(&item, "switched", &expected), "acquired");
+    let check = &store.doc(&store.item_path(ITEM))["model_checks"]["s1"];
+    assert_eq!(check["recovery_started"], false);
+    assert_eq!(
+        check["launch_identity"],
+        json!({"launch": {"pane": "%1"}, "launched_at": 1})
+    );
+    assert_eq!(record(&item, "switched", &expected), "acquired");
+    store.ok(&[
+        "state",
+        "set",
+        "--item",
+        ITEM,
+        "/model_checks/s1/recovery_started",
+        "true",
+    ]);
+    assert_eq!(record(&item, "switched", &expected), "duplicate");
+    assert_eq!(record(&item, "unavailable", &expected), "duplicate");
+    assert_eq!(slot("s1"), false);
+    // Another launch of the same session is its own switch.
+    let relaunched = store.write_file(
+        "relaunched.json",
+        &json!({"item": ITEM, "session_id": "s1", "model": "m", "launch": {"pane": "%1"}, "launched_at": 2})
+            .to_string(),
+    );
+    assert_eq!(record(&item, "switched", &relaunched), "acquired");
+    let started = "/model_checks/s1/recovery_started";
+    store.ok(&["state", "set", "--item", ITEM, started, "true"]);
+    assert_eq!(record(&item, "switched", &relaunched), "duplicate");
+    let (key, _) = store.refused(&[
+        "state",
+        "model-check",
+        "record",
+        "--item",
+        ITEM,
+        "--session",
+        "s1",
+        "--outcome",
+        "passed",
+        "--expected",
+        &expected,
+    ]);
+    assert_eq!(key, "model-outcome");
+
+    store.init_fleet();
+    store.ok(&[
+        "state",
+        "set",
+        "--fleet",
+        "/lanes",
+        &json!([lane]).to_string(),
+    ]);
+    let lane_place = ["--fleet", "--lane", ITEM];
+    assert_eq!(record(&lane_place, "switched", &expected), "acquired");
+    let fleet = store.doc(&store.fleet_path());
+    let row = fleet["fleet_log"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(row["kind"], "model-switched");
+    assert_eq!(row["item"], ITEM);
+    assert_eq!(row["text"], "launched=L observed=O");
+    assert_eq!(fleet["lanes"][0]["model_check"]["outcome"], "switched");
+    for (name, moved) in [
+        (
+            "session",
+            json!({"session_id": "s0", "model": "m", "launch": {"pane": "%1"}, "launched_at": 1}),
+        ),
+        (
+            "model",
+            json!({"session_id": "s1", "model": "m2", "launch": {"pane": "%1"}, "launched_at": 1}),
+        ),
+        (
+            "launch",
+            json!({"session_id": "s1", "model": "m", "launch": {"pane": "%2"}, "launched_at": 1}),
+        ),
+        (
+            "launched",
+            json!({"session_id": "s1", "model": "m", "launch": {"pane": "%1"}, "launched_at": 2}),
+        ),
+    ] {
+        let moved = store.write_file(&format!("moved-{name}.json"), &moved.to_string());
+        assert_eq!(record(&lane_place, "switched", &moved), "stale", "{name}");
+    }
+    // Another session's check standing on the lane is no duplicate of this one.
+    let other = "/lanes/0/model_check/session_id";
+    let started = "/lanes/0/model_check/recovery_started";
+    store.ok(&["state", "set", "--fleet", other, "s9", started, "true"]);
+    assert_eq!(record(&lane_place, "switched", &expected), "acquired");
+    assert_eq!(
+        record(&["--fleet", "--lane", "KEN-1"], "switched", &expected),
+        "stale"
+    );
+
+    let fleet = store.doc(&store.fleet_path());
+    let read = store.write_file("read.json", &fleet["lanes"][0].to_string());
+    let mut away = fleet["lanes"][0].clone();
+    away["launch"] = json!({"pane": "%7"});
+    let away = store.write_file("away.json", &away.to_string());
+    let reset = |expected: &str| {
+        store.ok(&[
+            "state",
+            "model-check",
+            "reset",
+            "--fleet",
+            "--lane",
+            ITEM,
+            "--session",
+            "s1",
+            "--expected",
+            expected,
+        ])["reset"]
+            .clone()
+    };
+    assert_eq!(reset(&away), false);
+    assert_eq!(reset(&read), true);
+    let fleet = store.doc(&store.fleet_path());
+    assert_eq!(fleet["lanes"][0]["model_check"]["outcome"], "passed");
+    let row = fleet["fleet_log"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(row["kind"], "model-recovery-reset");
+    assert_eq!(row["text"], "first-turn-complete");
+    assert_eq!(reset(&read), false);
+
+    let overseer = json!({"server": "7000", "server_start": 1, "pane": "%9", "generation": 2, "cwd": "/w",
+        "session_id": "s1", "model": "m"});
+    store.ok(&[
+        "state",
+        "set",
+        "--fleet",
+        "/overseer",
+        &overseer.to_string(),
+    ]);
+    let bound = store.write_file("overseer.json", &overseer.to_string());
+    assert_eq!(record(&["--fleet"], "switched", &bound), "acquired");
+    let row = store.doc(&store.fleet_path())["fleet_log"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(row["item"], "oversee");
+    let mut next = overseer.clone();
+    next["generation"] = json!(3);
+    let next = store.write_file("next.json", &next.to_string());
+    assert_eq!(record(&["--fleet"], "switched", &next), "stale");
+}
+
+/// The heal fills the controller record's server start and each missing
+/// harness, home and native session only for the session the record
+/// names: a recorded harness, home or session that disagrees, a missing
+/// native session, another server start or another pane refuses
+/// `overseer-native-unbound` and writes nothing.
+#[test]
+fn the_heal_fills_only_the_session_the_record_names_and_refuses_any_other() {
+    let rows = [
+        ("", "", "", "/claude", "s1", true),
+        ("claude", "/claude", "s1", "/claude", "s1", true),
+        ("copilot", "/claude", "s1", "/claude", "s1", false),
+        ("claude", "/other", "s1", "/claude", "s1", false),
+        ("claude", "/claude", "child", "/claude", "s1", false),
+        ("", "", "child", "/claude", "s1", false),
+        ("claude", "/claude", "s1", "", "s1", true),
+        ("", "", "", "/claude", "", false),
+    ];
+    for (harness, home, session, caller_home, caller_session, heals) in rows {
+        let store = Store::new();
+        store.init_fleet();
+        let record = json!({"server": "7000", "pane": "%9", "harness": harness, "home": home, "session_id": session});
+        store.ok(&["state", "set", "--fleet", "/overseer", &record.to_string()]);
+        let args = [
+            "state",
+            "heal",
+            "--fleet",
+            "--server",
+            "7000",
+            "--pane",
+            "%9",
+            "--start",
+            "1790000000",
+            "--harness",
+            "claude",
+            "--home",
+            caller_home,
+            "--session",
+            caller_session,
+        ];
+        let row = format!("{harness}|{home}|{session}|{caller_home}|{caller_session}");
+        if heals {
+            store.ok(&args);
+            let after = &store.doc(&store.fleet_path())["overseer"];
+            let home = if home.is_empty() { caller_home } else { home };
+            assert_eq!(
+                [
+                    &after["server_start"],
+                    &after["harness"],
+                    &after["home"],
+                    &after["session_id"]
+                ],
+                [
+                    &json!(1_790_000_000),
+                    &json!("claude"),
+                    &json!(home),
+                    &json!(caller_session)
+                ],
+                "{row}"
+            );
+        } else {
+            let (key, _) = store.refused(&args);
+            assert_eq!(key, "overseer-native-unbound", "{row}");
+            assert_eq!(store.doc(&store.fleet_path())["overseer"], record, "{row}");
+        }
+    }
+    let store = Store::new();
+    store.init_fleet();
+    let heal = |start: &str, pane: &str| {
+        store
+            .refused(&[
+                "state",
+                "heal",
+                "--fleet",
+                "--server",
+                "7000",
+                "--pane",
+                pane,
+                "--start",
+                start,
+                "--session",
+                "s1",
+            ])
+            .0
+    };
+    assert_eq!(heal("1790000000", "%9"), "overseer-native-unbound");
+    store.ok(&[
+        "state",
+        "set",
+        "--fleet",
+        "/overseer",
+        r#"{"server":"7000","pane":"%9","server_start":1}"#,
+    ]);
+    assert_eq!(heal("1790000000", "%9"), "overseer-native-unbound");
+    assert_eq!(heal("1", "%8"), "overseer-native-unbound");
+    store.ok(&[
+        "state",
+        "set",
+        "--fleet",
+        "/overseer",
+        r#"{"server":"7000","pane":"%9"}"#,
+    ]);
+    assert_eq!(heal("soon", "%9"), "server-start-invalid");
+}
+
+/// The `marks` verb's lane form judges a reading alone: the plain answer
+/// and, with an agent reserve, the reserve's beside it, each with the
+/// decision record a handoff carries. A reading with no window below the
+/// cap is unmeasured; a reserve is a whole count with no leading zero, and
+/// one past every mark leaves no room.
+#[test]
+fn the_lane_marks_judge_a_reading_alone_with_the_reserve_beside_the_plain_answer() {
+    let store = Store::new();
+    let marks = |args: &[&str], env: &[(&str, &str)]| {
+        let mut all = vec!["marks", "--item", "judged"];
+        all.extend_from_slice(args);
+        store.ok_env(&all, env)
+    };
+    let judged = marks(
+        &["--context", "250000:1000000", "--agent-reserve", "150000"],
+        &[],
+    );
+    assert_eq!(judged["context"], "room");
+    assert_eq!(judged["mark"], 90);
+    assert_eq!(judged["reserve"]["context"], "due");
+    assert_eq!(
+        judged["reserve"]["context_decision"],
+        json!({"tokens": 250000, "window": 1000000, "cap": 400000, "mark_pct": 90, "cap_mark": 250000,
+            "window_mark": 750000, "reserve_applied": true, "reserve_tokens": 150000})
+    );
+    assert_eq!(
+        judged["context_decision"],
+        json!({"tokens": 250000, "window": 1000000, "cap": 400000, "mark_pct": 90, "cap_mark": 400000,
+            "window_mark": 900000, "reserve_applied": false, "reserve_tokens": 0})
+    );
+    assert!(judged.get("reserve").is_some());
+    assert!(marks(&["--context", "1:10"], &[]).get("reserve").is_none());
+    assert_eq!(
+        marks(
+            &["--context", "101:200"],
+            &[("ORCH_HANDOFF_CONTEXT_PCT", "50")]
+        )["context"],
+        "due"
+    );
+    assert_eq!(
+        marks(
+            &["--context", "100:200"],
+            &[("ORCH_HANDOFF_CONTEXT_PCT", "50")]
+        )["context"],
+        "room"
+    );
+    assert_eq!(
+        marks(&["--context", "399999:"], &[])["context"],
+        "unmeasured"
+    );
+    assert_eq!(marks(&["--context", "400000:"], &[])["context"], "due");
+    let beyond = marks(
+        &[
+            "--context",
+            "0:",
+            "--agent-reserve",
+            "999999999999999999999",
+        ],
+        &[],
+    );
+    assert_eq!(beyond["reserve"]["context"], "due");
+    let (key, _) = store.refused(&["marks", "--item", "judged", "--context", "x:10"]);
+    assert_eq!(key, "context-invalid");
+    let (key, _) = store.refused(&["marks", "--item", "judged"]);
+    assert_eq!(key, "context-unnamed");
+    for args in [
+        &[
+            "marks",
+            "--item",
+            "judged",
+            "--context",
+            "1:10",
+            "--agent-reserve",
+            "015",
+        ][..],
+        &[
+            "marks",
+            "--item",
+            "judged",
+            "--context",
+            "1:10",
+            "--agent-reserve",
+            "-1",
+        ][..],
+    ] {
+        let out = store.run(args);
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        assert!(
+            String::from_utf8_lossy(&out.stderr).starts_with("orch-runtime: usage"),
+            "{args:?}"
+        );
+    }
+    let (key, _) = store.refused(&[
+        "marks",
+        "--fleet",
+        "--context",
+        "1:10",
+        "--agent-reserve",
+        "1",
+    ]);
+    assert_eq!(key, "reserve-unpaired");
+}

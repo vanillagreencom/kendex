@@ -50,20 +50,15 @@ state_stub delegate
 process_count_reset
 overseer_tool "$TRANSCRIPT" s1 "PATH=$COUNT_BIN" "BASH_ENV=$COUNT_TRACE" "PROCESS_COUNT_LOG=$COUNT_LOG"
 starts=$(wc -l < "$STATE_LOG" | tr -d ' ')
-printf 'cost overseer workflow-state=%s processes=%s\n' "$starts" "$(process_count_total)"
-assert_eq "RC=$RC starts=$starts path=$(grep -cx path "$STATE_LOG" || :) context=$(context_line)" \
-  'RC=0 starts=1 path=0 context=-' 'the identified overseer reuses its state path while a watch holds its mail'
+printf 'cost overseer state-verbs=%s processes=%s\n' "$starts" "$(process_count_total)"
+assert_eq "RC=$RC starts=$starts path=$(grep -cx path "$STATE_LOG" || :) marks=$(grep -cx marks "$STATE_LOG" || :) context=$(context_line)" \
+  'RC=0 starts=2 path=1 marks=1 context=-' 'the identified overseer reads its state path once and asks the judge once while a watch holds its mail'
 assert_eq "$(overseer_unread 'The watch owns this note.')" 1 'the live watch keeps its unread note'
-state_stub no-filename
-process_count_reset
-overseer_tool "$TRANSCRIPT" s1 "PATH=$COUNT_BIN" "BASH_ENV=$COUNT_TRACE" "PROCESS_COUNT_LOG=$COUNT_LOG"
-assert_eq "RC=$RC starts=$(wc -l < "$STATE_LOG" | tr -d ' ') path=$(grep -cx path "$STATE_LOG" || :) context=$(context_line)" \
-  'RC=0 starts=2 path=1 context=-' 'a successful identity read with no filename falls back to the path verb'
-state_stub identify-fails
+state_stub path-fails
 process_count_reset
 overseer_tool "$TRANSCRIPT" s1 "PATH=$COUNT_BIN" "BASH_ENV=$COUNT_TRACE" "PROCESS_COUNT_LOG=$COUNT_LOG"
 assert_eq "RC=$RC starts=$(wc -l < "$STATE_LOG" | tr -d ' ') path=$(grep -cx path "$STATE_LOG" || :) context=$(context_line) unread=$(overseer_unread 'The watch owns this note.')" \
-  'RC=0 starts=1 path=0 context=- unread=1' 'failed identification reads no path and leaves the watch note unread'
+  'RC=0 starts=1 path=1 context=- unread=1' 'a failed identification path read asks no more and leaves the watch note unread'
 stop_wake_processes
 if [ "${1:-}" = --cost-row ]; then
   printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
@@ -71,7 +66,7 @@ if [ "${1:-}" = --cost-row ]; then
   exit
 fi
 if [ -z "${HOOK_UNDER_TEST:-}" ]; then
-  wake_mutant no-state-cache '  if [ -z "$FLEET_STATE" ]; then' '  if true; then'
+  wake_mutant no-state-cache '  [ -n "$FLEET_STATE" ] || fleet_state_path || STATE_RC=$?' '  fleet_state_path || STATE_RC=$?'
   control_rc=0
   env "HOOK_UNDER_TEST=$MUTANT_PATH" "$BASH" "$TEST_DIR/lane-mail-check-overseer-tool.test.sh" --cost-row \
     > "$TMP_ROOT/state-cost.control.log" 2>&1 || control_rc=$?
@@ -148,7 +143,7 @@ standing_unread_rows control_overseer_tool_standing_unread "$VARIANT_PATH"
 assert_eq "${UNREAD% asked=*}" "RC=0 context=PostToolUse lane-mail-check: context=600000" \
   "control: a hook that reads an unread handoff state as none hands the mark over"
 # The handoff is asked only of a call with something to say: a call below the
-# mark runs no workflow-state handoff-standing.
+# mark asks the runtime no handoff-standing.
 asked_rows() { # NAME [JUDGE]
   tool_overseer "$1" "${2:-$HOOK}"
   state_stub delegate
@@ -389,7 +384,7 @@ assert_eq "$LOST_TOOL" "- null pane-unrecorded" \
 once_rows() { # NAME [JUDGE]
   tool_overseer "$1" "${2:-$HOOK}"
   startless_record "{\"server_start\":$OVERSEER_SERVER_START}"
-  state_stub update-fails
+  state_stub heal-fails
   peer_send 'Asked once.'
   overseer_tool "$TRANSCRIPT"
   ONCE="unhealed=$(grep -c '^lane-mail-check: record-unhealed=' "$ERR_FILE") context=$(context_line) note=$(tool_context | grep -cF 'Asked once.' || :)"

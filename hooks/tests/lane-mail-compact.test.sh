@@ -92,7 +92,7 @@ compact auto
 assert_eq "$(quiet) flag=$(flag)" "RC=0 stdout= stderr=- flag=s1 auto" \
   "the lead's automatic compaction is flagged, silently"
 turn_end
-printf -v HANDOFF_SET '%q --state-dir %q set %q handoff' "$LANE/.agents/skills/orch/scripts/workflow-state" "$LANE/tmp" KEN-301
+printf -v HANDOFF_SET '%q --state-dir %q op --item %q --request [REQUEST FILE]' "$LANE/.agents/skills/orch/scripts/orch-runtime" "$LANE/tmp" KEN-301
 assert_eq "RC=$RC first=$(first_line) decision=$(stdout_field .decision) set=$(stdout_field .reason | grep -cF -- "$HANDOFF_SET")" \
   "RC=0 first=lane-mail-check: compacted=auto decision=block set=1" \
   "the lead's next turn end is held with the documented block answer, naming the command that writes the record"
@@ -133,11 +133,11 @@ assert_eq "RC=$RC first=$(first_line) stdout=$(cat "$TMP_ROOT/stdout")" \
   "RC=2 first=lane-mail-check: compaction-unrecorded=$BOX/compaction.json stdout=" \
   "a compaction whose flag cannot be written is refused at exit 2 under its own key"
 new_compact_lane no-state KEN-308
-hole_install workflow-state
+hole_install orch-runtime
 compact auto
 assert_eq "$(quiet) flag=$(flag)" \
-  "RC=2 stdout= stderr=lane-mail-check: compaction-unrecorded=$LANE/.agents/skills/orch/scripts/workflow-state flag=none" \
-  "a lane whose install has no workflow-state is refused at exit 2, naming it"
+  "RC=2 stdout= stderr=lane-mail-check: compaction-unrecorded=$LANE/.agents/skills/orch/scripts/orch-runtime flag=none" \
+  "a lane whose install has no runtime is refused at exit 2, naming it"
 new_compact_lane no-lib KEN-309
 hole_install lib/lane-context.sh
 compact auto

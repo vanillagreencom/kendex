@@ -311,32 +311,93 @@ impl Marks {
 
 /// The handoff marks of one context reading: due at [`CONTEXT_CAP`] tokens,
 /// or strictly past `pct` percent of the window, `pct` held to
-/// [`CONTEXT_PCT_CEILING`]. `None` is a reading with no window below the cap:
-/// unmeasured, never room.
-pub fn handoff_due(tokens: u64, window: Option<u64>, pct: u32) -> Option<bool> {
-    if tokens >= CONTEXT_CAP {
+/// [`CONTEXT_PCT_CEILING`]. An agent `reserve`, the room an attached launch
+/// keeps for the returns still to come, lowers both marks by itself and
+/// makes a reading at a mark due; a reserve as large as the cap leaves no
+/// room. `None` is a reading with no window below the cap: unmeasured,
+/// never room.
+pub fn handoff_due(
+    tokens: u64,
+    window: Option<u64>,
+    pct: u32,
+    reserve: Option<u64>,
+) -> Option<bool> {
+    let (cap_mark, window_mark) = handoff_marks(window, pct, reserve);
+    if tokens >= cap_mark {
         return Some(true);
     }
-    let window = window.filter(|w| *w > 0)?;
+    let mark = window_mark?;
+    let tokens = i128::from(tokens);
+    Some(if reserve.is_some() {
+        tokens >= mark
+    } else {
+        tokens > mark
+    })
+}
+
+/// The token count the cap mark and the window mark stand at: the window
+/// mark rounds the share down, or up and less the reserve where one applies.
+fn handoff_marks(window: Option<u64>, pct: u32, reserve: Option<u64>) -> (u64, Option<i128>) {
     let pct = u64::from(pct.min(CONTEXT_PCT_CEILING));
-    Some(tokens > window * pct / 100)
+    let window = window.filter(|w| *w > 0);
+    match reserve {
+        None => (CONTEXT_CAP, window.map(|w| i128::from(w * pct / 100))),
+        Some(reserve) if reserve >= CONTEXT_CAP => (0, None),
+        Some(reserve) => (
+            CONTEXT_CAP - reserve,
+            window.map(|w| i128::from((w * pct).div_ceil(100)) - i128::from(reserve)),
+        ),
+    }
 }
 
 /// The reading as the handoff record carries it, the marks it was judged
 /// against beside it.
-fn handoff_decision(tokens: u64, window: Option<u64>, pct: u32) -> Value {
-    let pct = pct.min(CONTEXT_PCT_CEILING);
-    let window = window.filter(|w| *w > 0);
+fn handoff_decision(tokens: u64, window: Option<u64>, pct: u32, reserve: Option<u64>) -> Value {
+    let (cap_mark, window_mark) = handoff_marks(window, pct, reserve);
     json!({
         "tokens": tokens,
-        "window": window,
+        "window": window.filter(|w| *w > 0),
         "cap": CONTEXT_CAP,
-        "mark_pct": pct,
-        "cap_mark": CONTEXT_CAP,
-        "window_mark": window.map(|w| w * u64::from(pct) / 100),
-        "reserve_applied": false,
-        "reserve_tokens": 0,
+        "mark_pct": pct.min(CONTEXT_PCT_CEILING),
+        "cap_mark": cap_mark,
+        "window_mark": window_mark,
+        "reserve_applied": reserve.is_some(),
+        "reserve_tokens": reserve.unwrap_or(0),
     })
+}
+
+/// The `marks` verb's lane form: a lane's context reading under the one
+/// context rule, read-only, with nothing read but the reading and the
+/// settings. The reply carries the plain answer and, where an attached
+/// launch names its `reserve`, the reserve's answer beside it.
+pub fn lane_marks(
+    settings: &Settings,
+    context: &str,
+    reserve: Option<u64>,
+) -> crate::error::Result<Value> {
+    let (tokens, window) = parse_context(context).ok_or_else(|| {
+        crate::error::Error::from(agent_runtime::Error::refused(
+            "context-invalid",
+            &[("value", context)],
+        ))
+    })?;
+    let pct = settings.marks.context_pct;
+    let judged = |reserve: Option<u64>| {
+        let context = match handoff_due(tokens, window, pct, reserve) {
+            Some(true) => "due",
+            Some(false) => "room",
+            None => "unmeasured",
+        };
+        json!({"context": context, "context_decision": handoff_decision(tokens, window, pct, reserve)})
+    };
+    let mut reply = judged(None);
+    reply["tokens"] = json!(tokens);
+    reply["window"] = json!(window);
+    reply["mark"] = json!(pct.min(CONTEXT_PCT_CEILING));
+    if let Some(reserve) = reserve {
+        reply["reserve"] = judged(Some(reserve));
+    }
+    Ok(reply)
 }
 
 /// `TOKENS:WINDOW`, the window empty where no adapter named one.
@@ -670,8 +731,8 @@ pub fn judge_marks(ask: &MarksAsk) -> crate::error::Result<Marks> {
     let (context_read, decision) = match context {
         None => (ContextRead::Unjudged, None),
         Some((tokens, window)) => {
-            let decision = handoff_decision(tokens, window, marks.context_pct);
-            let read = match handoff_due(tokens, window, marks.context_pct) {
+            let decision = handoff_decision(tokens, window, marks.context_pct, None);
+            let read = match handoff_due(tokens, window, marks.context_pct, None) {
                 Some(true) => ContextRead::Due { tokens, window },
                 Some(false) => ContextRead::Room {
                     tokens,
@@ -2671,17 +2732,54 @@ mod tests {
     /// under a share the ceiling forbids, or for a reading with no window.
     #[test]
     fn the_context_marks_are_the_token_cap_and_strictly_past_the_window_share() {
-        assert_eq!(handoff_due(400_000, None, 90), Some(true));
-        assert_eq!(handoff_due(399_999, None, 90), None);
-        assert_eq!(handoff_due(399_999, Some(0), 90), None);
-        assert_eq!(handoff_due(900, Some(1000), 90), Some(false));
-        assert_eq!(handoff_due(901, Some(1000), 90), Some(true));
-        assert_eq!(handoff_due(901, Some(1000), 100), Some(true));
-        assert_eq!(handoff_due(500, Some(1000), 50), Some(false));
+        assert_eq!(handoff_due(400_000, None, 90, None), Some(true));
+        assert_eq!(handoff_due(399_999, None, 90, None), None);
+        assert_eq!(handoff_due(399_999, Some(0), 90, None), None);
+        assert_eq!(handoff_due(900, Some(1000), 90, None), Some(false));
+        assert_eq!(handoff_due(901, Some(1000), 90, None), Some(true));
+        assert_eq!(handoff_due(901, Some(1000), 100, None), Some(true));
+        assert_eq!(handoff_due(500, Some(1000), 50, None), Some(false));
         assert_eq!(parse_context("0:"), Some((0, None)));
         assert_eq!(parse_context("12:34"), Some((12, Some(34))));
         assert_eq!(parse_context("012:34"), None);
         assert_eq!(parse_context("12:0"), None);
         assert_eq!(parse_context("12"), None);
+    }
+
+    /// The reserve lowers both marks and is due at a mark itself: the window
+    /// mark rounds up before the reserve comes off, a reserve the cap cannot
+    /// hold leaves no room, and with no window the cap less the reserve is
+    /// the one mark.
+    #[test]
+    fn an_agent_reserve_is_due_at_the_lowered_marks_themselves() {
+        let reserve = Some(150_000);
+        assert_eq!(
+            handoff_due(250_000, Some(1_000_000), 90, reserve),
+            Some(true)
+        );
+        assert_eq!(
+            handoff_due(249_999, Some(1_000_000), 90, reserve),
+            Some(false)
+        );
+        assert_eq!(
+            handoff_due(249_999, Some(1_000_000), 90, Some(200_000)),
+            Some(true)
+        );
+        assert_eq!(handoff_due(232_560, Some(258_400), 90, Some(0)), Some(true));
+        assert_eq!(
+            handoff_due(67_964, Some(131_072), 90, Some(50_000)),
+            Some(false)
+        );
+        assert_eq!(
+            handoff_due(67_965, Some(131_072), 90, Some(50_000)),
+            Some(true)
+        );
+        assert_eq!(handoff_due(1, None, 90, Some(400_000)), Some(true));
+        assert_eq!(handoff_due(249_999, None, 90, reserve), None);
+        assert_eq!(handoff_due(250_000, None, 90, reserve), Some(true));
+        let decision = handoff_decision(67_964, Some(131_072), 90, Some(50_000));
+        assert_eq!(decision["cap_mark"], json!(350_000));
+        assert_eq!(decision["window_mark"], json!(67_965));
+        assert_eq!(decision["reserve_applied"], json!(true));
     }
 }

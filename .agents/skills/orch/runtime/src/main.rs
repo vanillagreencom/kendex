@@ -176,6 +176,12 @@ enum Verb {
         /// The controller's account directory where its record names none.
         #[arg(long)]
         account: Option<String>,
+        /// With `--item`, the tokens an attached launch keeps for the
+        /// returns still to come: the reply carries that reserve's answer
+        /// beside the plain one. Without `--item` it refuses
+        /// `reserve-unpaired`.
+        #[arg(long, value_parser = parse_reserve)]
+        agent_reserve: Option<u64>,
     },
     /// The controller an overseer launch opens: the overseer walk's choice
     /// for the fleet's first controller, or for the successor of the
@@ -333,6 +339,19 @@ enum Verb {
 }
 
 /// The need word a `--need` carries.
+/// `ORCH_HANDOFF_AGENT_RESERVE_TOKENS`'s spelling: a whole count with no
+/// leading zero. A count past `u64` reserves past every mark, so it is held
+/// at `u64::MAX`.
+fn parse_reserve(word: &str) -> std::result::Result<u64, String> {
+    let canonical = !word.is_empty()
+        && word.bytes().all(|b| b.is_ascii_digit())
+        && (word == "0" || !word.starts_with('0'));
+    if !canonical {
+        return Err(format!("{word}: not a whole token count"));
+    }
+    Ok(word.parse::<u64>().unwrap_or(u64::MAX))
+}
+
 fn parse_need(word: &str) -> std::result::Result<orch_runtime::ops::proof::Need, String> {
     use orch_runtime::ops::proof::Need;
     match word {
@@ -689,14 +708,16 @@ enum StateOp {
         #[command(flatten)]
         target: Target,
     },
-    /// Set the value at a JSON pointer. A `{` or `[` prefix, `null`,
-    /// `true`, `false` and an all-digit word are JSON; anything else is
-    /// the string itself, so a quoted word keeps its quotes.
+    /// Set the value at each JSON pointer, every pair in one write. A `{`
+    /// or `[` prefix, `null`, `true`, `false` and an all-digit word are
+    /// JSON; anything else is the string itself, so a quoted word keeps its
+    /// quotes.
     Set {
         #[command(flatten)]
         target: Target,
-        pointer: String,
-        value: String,
+        /// POINTER VALUE, repeated.
+        #[arg(required = true, num_args = 2.., value_names = ["POINTER", "VALUE"])]
+        pairs: Vec<String>,
     },
     /// Set the value at a JSON pointer to the one JSON value a file holds.
     SetFile {
@@ -706,13 +727,76 @@ enum StateOp {
         #[arg(value_name = "FILE")]
         source: PathBuf,
     },
-    /// Append a value, judged as `set` judges it, to the array at a JSON
-    /// pointer, created when absent.
+    /// Append a value, judged as `set` judges it, to the array at each
+    /// JSON pointer, created when absent, every pair in one write.
     Append {
         #[command(flatten)]
         target: Target,
+        /// POINTER VALUE, repeated.
+        #[arg(required = true, num_args = 2.., value_names = ["POINTER", "VALUE"])]
+        pairs: Vec<String>,
+    },
+    /// Append the one JSON value a file holds to the array at a JSON
+    /// pointer in place of every element whose `--key` field equals the
+    /// value's; a value without that field refuses `upsert-key`.
+    Upsert {
+        #[command(flatten)]
+        target: Target,
         pointer: String,
-        value: String,
+        #[arg(long)]
+        key: String,
+        #[arg(value_name = "FILE")]
+        source: PathBuf,
+    },
+    /// Move a finding into the array at `--into`, dropping every entry
+    /// with its location and description from each `--drop` array first.
+    /// The entry is the file's one value, or with `--element` the
+    /// description and location of the element at that pointer in it, each
+    /// `--field NAME=VALUE` beside them and an empty value left out.
+    Bucket {
+        #[arg(long)]
+        item: String,
+        #[arg(long)]
+        into: String,
+        #[arg(long)]
+        drop: Vec<String>,
+        #[arg(long)]
+        element: Option<String>,
+        #[arg(long = "field", value_name = "NAME=VALUE")]
+        fields: Vec<String>,
+        #[arg(value_name = "FILE")]
+        source: PathBuf,
+    },
+    /// Close every member of the map at a JSON pointer: its `status`
+    /// `closed`.
+    CloseAll {
+        #[command(flatten)]
+        target: Target,
+        pointer: String,
+    },
+    /// A model switch's checks, as the turn-end hook records them.
+    ModelCheck {
+        #[command(subcommand)]
+        op: ModelCheckOp,
+    },
+    /// Fill the controller record's server start, and its harness, home and
+    /// native session where it names none, for the session it names;
+    /// another session refuses `overseer-native-unbound`.
+    Heal {
+        #[command(flatten)]
+        target: Target,
+        #[arg(long)]
+        server: String,
+        #[arg(long)]
+        pane: String,
+        #[arg(long)]
+        start: String,
+        #[arg(long, default_value = "")]
+        harness: String,
+        #[arg(long, default_value = "")]
+        home: String,
+        #[arg(long, default_value = "")]
+        session: String,
     },
     /// Append the one JSON value a file holds to the array at a JSON
     /// pointer, created when absent.
@@ -810,6 +894,61 @@ enum StateOp {
     Findings {
         #[command(subcommand)]
         op: FindingsOp,
+    },
+}
+
+#[derive(Args)]
+struct CheckFields {
+    #[arg(long)]
+    session: String,
+    #[arg(long)]
+    outcome: String,
+    #[arg(long, default_value = "")]
+    cause: String,
+    #[arg(long, default_value = "")]
+    launched: String,
+    #[arg(long, default_value = "")]
+    observed: String,
+    /// The record the check is bound to, as the caller read it.
+    #[arg(long)]
+    expected: PathBuf,
+}
+
+#[derive(Subcommand)]
+enum ModelCheckOp {
+    /// The item's once-only notice of an unavailable model for a session:
+    /// `recorded` false where any check of the session stands.
+    Slot {
+        #[arg(long)]
+        item: String,
+        #[arg(long)]
+        session: String,
+        #[arg(long, default_value = "")]
+        cause: String,
+        #[arg(long, default_value = "")]
+        observed: String,
+    },
+    /// The check of a switch on the item's own record (`--item`), or on the
+    /// fleet record's lane (`--fleet --lane ITEM`) or controller
+    /// (`--fleet`): `acquired`, `duplicate` or `stale`.
+    Record {
+        #[command(flatten)]
+        target: Target,
+        #[arg(long)]
+        lane: Option<String>,
+        #[command(flatten)]
+        fields: CheckFields,
+    },
+    /// A replacement's first turn end: the lane's switched check `passed`.
+    Reset {
+        #[command(flatten)]
+        target: Target,
+        #[arg(long)]
+        lane: String,
+        #[arg(long)]
+        session: String,
+        #[arg(long)]
+        expected: PathBuf,
     },
 }
 
@@ -1505,8 +1644,19 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
             context,
             harness,
             account,
+            agent_reserve,
         } => {
+            if agent_reserve.is_some() && target.item.is_none() {
+                return Err(agent_runtime::Error::refused("reserve-unpaired", &[]).into());
+            }
             let settings = resolve_settings(&flags)?;
+            // A lane's reading is judged alone: no record and no account.
+            if target.item.is_some() {
+                let Some(context) = context.as_deref() else {
+                    return Err(agent_runtime::Error::refused("context-unnamed", &[]).into());
+                };
+                return watch::overseer::lane_marks(&settings, context, agent_reserve);
+            }
             let path = target_path(&target, &settings);
             let now = system_env()?.now_secs;
             watch::overseer::marks_verb(
@@ -2335,16 +2485,9 @@ fn state_verb(op: StateOp, flags: &Flags, locking: Locking) -> Result<serde_json
             "issue_id": target_key(&target),
             "path": path_of(&target).display().to_string(),
         })),
-        StateOp::Set {
-            target,
-            pointer,
-            value,
-        } => write(
+        StateOp::Set { target, pairs } => write(
             &target,
-            Write::Set {
-                pointer,
-                value: store::judge(&value)?,
-            },
+            paired(pairs, |pointer, value| Write::Set { pointer, value })?,
         ),
         StateOp::SetFile {
             target,
@@ -2357,16 +2500,123 @@ fn state_verb(op: StateOp, flags: &Flags, locking: Locking) -> Result<serde_json
                 file: source,
             },
         ),
-        StateOp::Append {
+        StateOp::Append { target, pairs } => write(
+            &target,
+            paired(pairs, |pointer, value| Write::Append { pointer, value })?,
+        ),
+        StateOp::Upsert {
             target,
             pointer,
-            value,
+            key,
+            source,
         } => write(
             &target,
-            Write::Append {
+            Write::Upsert {
                 pointer,
-                value: store::judge(&value)?,
+                key,
+                file: source,
             },
+        ),
+        StateOp::Bucket {
+            item,
+            into,
+            drop,
+            element,
+            fields,
+            source,
+        } => {
+            let fields = fields
+                .iter()
+                .map(|field| match field.split_once('=') {
+                    Some((name, value)) if !name.is_empty() => {
+                        Ok((name.to_owned(), value.to_owned()))
+                    }
+                    _ => Err(
+                        agent_runtime::Error::refused("bucket-field", &[("field", field)]).into(),
+                    ),
+                })
+                .collect::<Result<Vec<_>>>()?;
+            write(
+                &item_target(item),
+                Write::Bucket(store::Bucket {
+                    into,
+                    drop,
+                    file: source,
+                    element,
+                    fields,
+                }),
+            )
+        }
+        StateOp::CloseAll { target, pointer } => write(&target, Write::CloseAll { pointer }),
+        StateOp::ModelCheck { op } => match op {
+            ModelCheckOp::Slot {
+                item,
+                session,
+                cause,
+                observed,
+            } => write(
+                &item_target(item),
+                Write::ModelSlot {
+                    session,
+                    cause,
+                    observed,
+                },
+            ),
+            ModelCheckOp::Record {
+                target,
+                lane,
+                fields,
+            } => {
+                let place = match (target.fleet, lane) {
+                    (false, _) => store::CheckPlace::Item,
+                    (true, Some(lane)) => store::CheckPlace::Lane(lane),
+                    (true, None) => store::CheckPlace::Overseer,
+                };
+                write(
+                    &target,
+                    Write::ModelCheck(store::ModelCheck {
+                        place,
+                        session: fields.session,
+                        outcome: fields.outcome,
+                        cause: fields.cause,
+                        launched: fields.launched,
+                        observed: fields.observed,
+                        expected: fields.expected,
+                    }),
+                )
+            }
+            ModelCheckOp::Reset {
+                target,
+                lane,
+                session,
+                expected,
+            } => write(
+                &target,
+                Write::ModelReset {
+                    lane,
+                    session,
+                    expected,
+                },
+            ),
+        },
+        StateOp::Heal {
+            target,
+            server,
+            pane,
+            start,
+            harness,
+            home,
+            session,
+        } => write(
+            &target,
+            Write::Heal(store::Heal {
+                server,
+                pane,
+                start,
+                harness,
+                home,
+                session,
+            }),
         ),
         StateOp::AppendFile {
             target,
@@ -2511,6 +2761,32 @@ fn state_verb(op: StateOp, flags: &Flags, locking: Locking) -> Result<serde_json
             store::findings_record(&path, locking, store_settings, &env, &file)
         }
     }
+}
+
+/// The writes POINTER VALUE pairs name, each value judged as `set` judges
+/// it: one write for one pair, else every pair in one transition.
+fn paired(
+    pairs: Vec<String>,
+    each: impl Fn(String, serde_json::Value) -> orch_runtime::ops::store::Write,
+) -> Result<orch_runtime::ops::store::Write> {
+    use orch_runtime::ops::store::{self, Write};
+    if !pairs.len().is_multiple_of(2) {
+        return Err(agent_runtime::Error::refused(
+            "pair-unmatched",
+            &[("pointer", &pairs[pairs.len() - 1])],
+        )
+        .into());
+    }
+    let mut writes = Vec::with_capacity(pairs.len() / 2);
+    let mut pairs = pairs.into_iter();
+    while let (Some(pointer), Some(value)) = (pairs.next(), pairs.next()) {
+        writes.push(each(pointer, store::judge(&value)?));
+    }
+    Ok(if writes.len() == 1 {
+        writes.remove(0)
+    } else {
+        Write::Many(writes)
+    })
 }
 
 /// The key a target's record is kept under: the item, `oversee` for the
