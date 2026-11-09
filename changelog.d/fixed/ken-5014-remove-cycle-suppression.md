@@ -1,0 +1,1 @@
+- `kendex remove` no longer keeps an item removed when the only thing that requires it is something it brought in, such as a hook whose `requires-skills` names the skill being removed. The removal adds no `[suppressed]` line, so a later `add` of a set that carries the item installs it again.

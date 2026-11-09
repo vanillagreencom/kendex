@@ -5,7 +5,7 @@ use crate::apply::{Op, PlannedOp};
 use super::{Disowned, DroppedDeclaration, EngineReport, PlanOptions, plan_scope};
 use crate::env::Env;
 use crate::error::Result;
-use crate::lock::{Lock, Reason, lock_path};
+use crate::lock::{Lock, Reason, entry_key, lock_path};
 use crate::manifest::{self, Manifest};
 use crate::model::{HarnessId, ItemKind, Scope};
 
@@ -399,6 +399,7 @@ fn recorded_edges(
     names: &[String],
     options: &PlanOptions,
 ) -> BTreeSet<(ItemKind, String)> {
+    let going = going_with(lock, options);
     lock.entries
         .values()
         .filter(|entry| {
@@ -407,12 +408,52 @@ fn recorded_edges(
         .filter(|entry| {
             entry.reasons.iter().any(|reason| match reason {
                 Reason::Requested => false,
-                Reason::RequiredBy { by } => !options.named_for_removal(by.kind, &by.name),
+                Reason::RequiredBy { by } => {
+                    !going.contains(&entry_key(by.kind, &by.name, by.harness))
+                }
                 Reason::MemberOf { bundle } => !options.uninstalled_bundles.contains(&bundle.name),
             })
         })
         .map(|entry| (entry.kind, entry.name.clone()))
         .collect()
+}
+
+/// The records this removal takes, by entry key: those it names, and every
+/// record whose each reason is an edge from one of them or a set it
+/// uninstalls, until nothing changes. A requirer the removal alone brought
+/// in, such as a hook whose `requires-skills` names the skill going, holds
+/// nothing up. A record with no reason is not taken: nothing says it goes.
+fn going_with(lock: &Lock, options: &PlanOptions) -> BTreeSet<String> {
+    let mut going: BTreeSet<String> = lock
+        .entries
+        .iter()
+        .filter(|(_, entry)| options.named_for_removal(entry.kind, &entry.name))
+        .map(|(key, _)| key.clone())
+        .collect();
+    loop {
+        let grew: Vec<String> = lock
+            .entries
+            .iter()
+            .filter(|(key, entry)| {
+                !going.contains(*key)
+                    && !entry.reasons.is_empty()
+                    && entry.reasons.iter().all(|reason| match reason {
+                        Reason::Requested => false,
+                        Reason::RequiredBy { by } => {
+                            going.contains(&entry_key(by.kind, &by.name, by.harness))
+                        }
+                        Reason::MemberOf { bundle } => {
+                            options.uninstalled_bundles.contains(&bundle.name)
+                        }
+                    })
+            })
+            .map(|(key, _)| key.clone())
+            .collect();
+        if grew.is_empty() {
+            return going;
+        }
+        going.extend(grew);
+    }
 }
 
 /// What the catalogs say the manifest still implies, now that the

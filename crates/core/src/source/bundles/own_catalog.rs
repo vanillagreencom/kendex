@@ -30,9 +30,10 @@ const A_MEMBER: [(&str, ItemKind, &str); 3] = [
 /// an unreadable file with nothing rather than an error, so a renamed
 /// frontmatter key would otherwise leave every closure assertion for that
 /// kind unreached and the whole test green.
-const REQUIREMENTS: [(&str, &str); 3] = [
+const REQUIREMENTS: [(&str, &str); 4] = [
     ("orch", "dev"),
     ("lane-mail-deliver", "lane-mail-check"),
+    ("docs-writing-note", "docs-writing"),
     ("docs-writing", "docs-writing-note"),
 ];
 

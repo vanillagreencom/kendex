@@ -110,6 +110,47 @@ fn a_skill_brings_the_hooks_its_frontmatter_names_where_each_hook_runs() {
     }
 }
 
+/// Removing docs-writing takes the hook it alone brought in and writes no
+/// suppression, though the hook's requires-skills edge names the skill
+/// back: nothing that stays would derive either one again. A hook the
+/// consumer declared is not the removal's to take, so its edge keeps the
+/// skill removed.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn removing_a_skill_takes_the_hook_it_alone_brought_and_suppresses_nothing() {
+    let declared = "[hooks.docs-writing-note]\nsource = \"cat\"\n";
+    for (kind, extra, kept) in [
+        (Some(ItemKind::Skill), "", false),
+        (None, "", false),
+        (Some(ItemKind::Skill), declared, true),
+    ] {
+        let f = world(true, extra);
+        let report = audit(&f.env, &f.scope).unwrap();
+        apply::execute(&f.env, &report.plan).unwrap();
+        let report =
+            ops::remove(&f.env, &f.scope, &["docs-writing".to_owned()], kind, false).unwrap();
+        apply::execute(&f.env, &report.plan).unwrap();
+        let manifest = manifest_of(&f);
+        assert_eq!(
+            manifest.is_suppressed(ItemKind::Skill, "docs-writing"),
+            kept,
+            "{kind:?} {extra}"
+        );
+        assert!(!manifest.is_suppressed(ItemKind::Hook, HOOK), "{kind:?}");
+        assert!(!installed(&f, "docs-writing"), "{kind:?} {extra}");
+        if kept {
+            continue;
+        }
+        let hooks: Vec<HarnessId> = lock_of(&f)
+            .entries
+            .values()
+            .filter(|entry| entry.kind == ItemKind::Hook && entry.name == HOOK)
+            .map(|entry| entry.harness)
+            .collect();
+        assert_eq!(hooks, Vec::new(), "{kind:?}");
+    }
+}
+
 /// Every project path, relative, whose name or bytes name the hook,
 /// leaving out kendex's own files: the manifest, the lock and its cache.
 #[allow(clippy::unwrap_used)]
