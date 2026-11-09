@@ -5,7 +5,7 @@ The record the runtime's account listing produces for one Copilot account's mont
 ## Where it is
 
 - `orch-runtime accounts roster` prints one record per account in `result.rows[].record`; `orch-runtime accounts pick --fleet --harness copilot` and `orch-runtime accounts pick --fleet --lane <dir> --harness copilot` reply with the judged one, with `wall` and the pick fields beside it.
-- The endpoint's answer is kept in one usage record per account, `usage/copilot-<cksum of the account dir>-<its length>.json` under `$OVERSEE_WATCH_STATE_DIR`, else `<project root>/tmp/oversee-watch/usage`, beside a refusal and its window where the endpoint refused (`runtime/src/ops/accounts/cache.rs`). Every reader of that directory serves what another wrote while the figure is younger than `ORCH_LANES_USAGE_TTL`, or a caller's longer `ORCH_LANES_USAGE_MAX_AGE`; a TTL of 0 serves none.
+- The endpoint's answer is kept in one usage record per account, `usage/copilot-<cksum of the account dir>-<its length>.json` under `$OVERSEE_WATCH_STATE_DIR`, else `<project root>/tmp/oversee-watch/usage`, beside a refusal and its window where the endpoint refused (`runtime/src/ops/accounts/cache.rs`). Every reader of that directory serves what another wrote while the figure is younger than `ORCH_LANES_USAGE_TTL`, or a caller's longer `ORCH_LANES_USAGE_MAX_AGE`; a TTL of 0 serves none. A record that does not parse as that shape, or names another account, is a miss, and the account is measured again; a field another reader added is dropped when the record is rewritten (`read` and `Record` in `cache.rs`).
 
 ## Fields
 
