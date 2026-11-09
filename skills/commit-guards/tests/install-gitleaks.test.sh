@@ -43,23 +43,27 @@ else
 fi
 FIXTURE_SHA="${FIXTURE_SHA%% *}"
 
-# The fakes: curl logs the URL, then answers each attempt by its virtual
-# second: 504 before OUTAGE_SECS, then CURL_STATUS (200 by default, which
-# copies the fixture archive to its -o path). Each attempt is logged to
-# TRY_LOG as "SECOND STATUS". Its retries follow curl's own, per
-# `curl --manual` (curl 8.5.0) on --retry, --retry-delay and --retry-max-time
-# and a recorded run of that curl against a local 504 server: only 408, 429,
-# 500, 502, 503 and 504 retry; the wait is --retry-delay, else 1 s doubling up
-# to 600; the max time is checked after an attempt, before its wait; -f exits
-# 22 and -w names the last attempt's status. An option it does not model exits
-# 2 before any attempt, so a changed curl call fails the suite rather than
-# going unmodeled. uname answers UNAME_S and UNAME_M.
+# The fakes: curl logs the URL, then answers each attempt by the virtual
+# second it starts: a stalled endpoint before STALL_SECS, 504 before
+# OUTAGE_SECS, then CURL_STATUS (200 by default, which copies the fixture
+# archive to its -o path). Each attempt is logged to TRY_LOG as "START STATUS
+# END". Its retries follow curl's own, per `curl --manual` (curl 8.5.0) on
+# --retry, --retry-delay, --retry-max-time and --max-time, and recorded runs of
+# that curl against a local 504 server and a local server that accepts and
+# never answers: only a timeout (exit 28, status 000) and 408, 429, 500, 502,
+# 503 and 504 retry; a stalled attempt ends at --max-time, or never without
+# one; the wait is --retry-delay, else 1 s doubling up to 600; the max time is
+# checked when an attempt ends, before its wait; -f exits 22 and -w names the
+# last attempt's status. --connect-timeout is accepted and not modeled, since
+# --max-time also bounds the stall it bounds. An option it does not model
+# exits 2 before any attempt, so a changed curl call fails the suite rather
+# than going unmodeled. uname answers UNAME_S and UNAME_M.
 FAKE_BIN="$TMP_ROOT/fake-bin"
 mkdir -p "$FAKE_BIN"
 cat >"$FAKE_BIN/curl" <<'SH'
 #!/usr/bin/env bash
 set -eu
-out="" url="" write="" retries=0 delay=0 max=0
+out="" url="" write="" retries=0 delay=0 max=0 attempt=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -fsSL) ;;
@@ -68,27 +72,39 @@ while [ $# -gt 0 ]; do
     --retry) retries=$2; shift ;;
     --retry-delay) delay=$2; shift ;;
     --retry-max-time) max=$2; shift ;;
+    --connect-timeout) shift ;;
+    --max-time) attempt=$2; shift ;;
     https://*) url=$1 ;;
     *) printf 'fake curl: unmodeled %s\n' "$1" >&2; exit 2 ;;
   esac
   shift
 done
 printf '%s\n' "$url" >>"$CURL_LOG"
+NEVER=999999
 t=0 backoff=1
 while :; do
-  if [ "$t" -lt "${OUTAGE_SECS:-0}" ]; then code=504; else code=${CURL_STATUS:-200}; fi
-  printf '%s %s\n' "$t" "$code" >>"$TRY_LOG"
-  case "$code" in 408 | 429 | 500 | 502 | 503 | 504) ;; *) break ;; esac
-  [ "$retries" -gt 0 ] && { [ "$max" -eq 0 ] || [ "$t" -lt "$max" ]; } || break
+  if [ "$t" -lt "${STALL_SECS:-0}" ]; then
+    code=000 end=$NEVER
+    [ "$attempt" -eq 0 ] || end=$((t + attempt))
+  elif [ "$t" -lt "${OUTAGE_SECS:-0}" ]; then
+    code=504 end=$t
+  else
+    code=${CURL_STATUS:-200} end=$t
+  fi
+  printf '%s %s %s\n' "$t" "$code" "$end" >>"$TRY_LOG"
+  [ "$end" -lt "$NEVER" ] || break
+  case "$code" in 000 | 408 | 429 | 500 | 502 | 503 | 504) ;; *) break ;; esac
+  [ "$retries" -gt 0 ] && { [ "$max" -eq 0 ] || [ "$end" -lt "$max" ]; } || break
   retries=$((retries - 1))
   if [ "$delay" -gt 0 ]; then
-    t=$((t + delay))
+    t=$((end + delay))
   else
-    t=$((t + backoff)) backoff=$((backoff * 2 > 600 ? 600 : backoff * 2))
+    t=$((end + backoff)) backoff=$((backoff * 2 > 600 ? 600 : backoff * 2))
   fi
 done
 var='%{http_code}'
 printf '%s' "${write//"$var"/$code}"
+[ "$code" = 000 ] && exit 28
 [ "$code" = 200 ] || exit 22
 cp -- "$FIXTURE" "$out"
 SH
@@ -133,18 +149,12 @@ run() { # DIR [NAME=VALUE...] — the exit status and the first stable line; the
   env PATH="$FAKE_BIN:$PATH" CURL_LOG="$CURL_LOG" TRY_LOG="$TRY_LOG" FIXTURE="$TMP_ROOT/fixture.tar.gz" UNAME_S=Linux UNAME_M=x86_64 "$@" "$SCRIPT" "$dir" >"$OUT_LOG" 2>&1 || rc=$?
   printf 'rc=%s %s' "$rc" "$(awk '/^install-gitleaks: / && !seen { print; seen=1 }' "$OUT_LOG")"
 }
-# last_try: the virtual second of the last download attempt.
-last_try() { awk 'END { print $1 }' "$TRY_LOG"; }
-# The script's stated window: retries end by RETRY_SECS, and the last attempt
-# starts at most one RETRY_DELAY_SECS later.
-script_value() { # NAME — the NAME=<digits> assignment in the shipped script
-  local v
-  v="$(awk -F= -v k="$1" '$1 == k && $2 ~ /^[0-9]+$/ { print $2; n++ } END { exit n != 1 }' "$SCRIPTS/install-gitleaks")" \
-    || { echo "harness: $1 has no single numeric assignment in install-gitleaks" >&2; exit 2; }
-  printf '%s' "$v"
-}
-WINDOW_END=$(($(script_value RETRY_SECS) + $(script_value RETRY_DELAY_SECS)))
-in_window() { [ "$(last_try)" -le "$WINDOW_END" ] && echo yes || echo no; }
+# The latest second a failing download may end: its CI callers run it in a
+# timeout-minutes: 5 job, and this leaves that job 60 s for checkout, the
+# download= line and its later steps.
+BUDGET_SECS=240
+# in_budget: yes when the last download attempt ended by BUDGET_SECS.
+in_budget() { [ "$(awk 'END { print $3 }' "$TRY_LOG")" -le "$BUDGET_SECS" ] && echo yes || echo no; }
 
 echo "=== a pinned archive installs once ==="
 copy pinned "$LINUX_PIN" "$FIXTURE_SHA" "$DARWIN_ARM_PIN" "$FIXTURE_SHA"
@@ -185,7 +195,7 @@ assert_eq "an architecture with no pin is refused" \
 D="$TMP_ROOT/missing"
 assert_eq "a release answering 404 is refused" \
   "rc=1 install-gitleaks: download=gitleaks_8.30.1_linux_x64.tar.gz" "$(run "$D" CURL_STATUS=404)"
-assert_eq "after one attempt, without waiting out the window" "0 404" "$(cat "$TRY_LOG")"
+assert_eq "after one attempt, without waiting out the window" "0 404 0" "$(cat "$TRY_LOG")"
 assert_eq "an empty directory argument is a usage error" "rc=2 install-gitleaks: usage=1" "$(run "")"
 
 echo "=== a release outage ==="
@@ -201,7 +211,11 @@ assert_eq "an outage past the window is refused" \
 last_status() { awk '!/^install-gitleaks: / && /(^|[^0-9])504([^0-9]|$)/ { print "504"; exit }' "$OUT_LOG"; }
 assert_eq "naming the last status" "504" "$(last_status)"
 assert_eq "and leaves no binary" "absent" "$([ -e "$D/gitleaks" ] && echo present || echo absent)"
-assert_eq "giving up by the window plus one retry wait" "yes" "$(in_window)"
+assert_eq "giving up within the CI job's budget" "yes" "$(in_budget)"
+D="$TMP_ROOT/stalled"
+assert_eq "an endpoint that stops answering is refused" \
+  "rc=1 install-gitleaks: download=gitleaks_8.30.1_linux_x64.tar.gz" "$(run "$D" STALL_SECS=100000)"
+assert_eq "within the CI job's budget" "yes" "$(in_budget)"
 
 echo "=== help and a dash-led DIR touch nothing ==="
 # in_cwd DIR ARG: run ARG from an empty working directory DIR, then report the
@@ -243,10 +257,16 @@ assert_eq "control: the old curl --retry 3 fails a two-minute outage" \
   "rc=1 install-gitleaks: download=gitleaks_8.30.1_linux_x64.tar.gz" "$(run "$TMP_ROOT/old-retry-dir" OUTAGE_SECS=120)"
 copy no-max "$LINUX_PIN" "$FIXTURE_SHA" '--retry-max-time "$RETRY_SECS"' '--retry-max-time 0'
 run "$TMP_ROOT/no-max-dir" OUTAGE_SECS=100000 >/dev/null
-assert_eq "control: without the max time a long outage retries past the window" "no" "$(in_window)"
+assert_eq "control: without the max time a long outage retries past the budget" "no" "$(in_budget)"
 copy backoff "$LINUX_PIN" "$FIXTURE_SHA" '--retry-delay "$RETRY_DELAY_SECS"' '--retry-delay "$RETRY_DELAY_SECS" --retry-delay 0'
 run "$TMP_ROOT/backoff-dir" OUTAGE_SECS=100000 >/dev/null
-assert_eq "control: curl's doubling backoff retries past the window" "no" "$(in_window)"
+assert_eq "control: curl's doubling backoff retries past the budget" "no" "$(in_budget)"
+copy no-attempt-max "$LINUX_PIN" "$FIXTURE_SHA" ' --max-time "$ATTEMPT_SECS"' ''
+run "$TMP_ROOT/no-attempt-max-dir" STALL_SECS=100000 >/dev/null
+assert_eq "control: without a per-attempt max time a stalled endpoint hangs past the budget" "no" "$(in_budget)"
+copy long-window "$LINUX_PIN" "$FIXTURE_SHA" 'RETRY_SECS=150' 'RETRY_SECS=3000'
+run "$TMP_ROOT/long-window-dir" OUTAGE_SECS=100000 >/dev/null
+assert_eq "control: a window of 3000 s retries past the budget" "no" "$(in_budget)"
 copy no-status "$LINUX_PIN" "$FIXTURE_SHA" 'last HTTP status ${code:-000}' 'last HTTP status unread'
 run "$TMP_ROOT/no-status-dir" OUTAGE_SECS=100000 >/dev/null
 assert_eq "control: an explanation without the status does not name 504" "" "$(last_status)"
