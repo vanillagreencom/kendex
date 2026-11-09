@@ -18,9 +18,9 @@ use std::process::{Command, Output};
 use kendex_core::process::Hardened;
 
 /// The fixture package's launcher. `render` writes the review file from the
-/// package's own doctrine, `--dry-run` names it, and `check` passes where
+/// package's own doctrine, `--discover` names it, and `check` passes where
 /// the file matches the doctrine, unless `CHECK` replaces that answer.
-const LAUNCHER: &str = "#!/bin/sh\nhere=\"$(cd \"$(dirname \"$0\")/..\" && pwd)\"\nif [ \"$1\" = check ]; then\nCHECK\n  cmp -s \"$here/doctrine.md\" .github/copilot-instructions.md\n  exit $?\nfi\nfor arg in \"$@\"; do\n  if [ \"$arg\" = --dry-run ]; then\n    echo 'would write .github/copilot-instructions.md'\n    exit 0\n  fi\ndone\nmkdir -p .github\ncp \"$here/doctrine.md\" .github/copilot-instructions.md\necho 'wrote .github/copilot-instructions.md'\n";
+const LAUNCHER: &str = "#!/bin/sh\nhere=\"$(cd \"$(dirname \"$0\")/..\" && pwd)\"\nif [ \"$1\" = check ]; then\nCHECK\n  cmp -s \"$here/doctrine.md\" .github/copilot-instructions.md\n  exit $?\nfi\nfor arg in \"$@\"; do\n  if [ \"$arg\" = --discover ]; then\n    echo 'would write .github/copilot-instructions.md'\n    exit 0\n  fi\ndone\nmkdir -p .github\ncp \"$here/doctrine.md\" .github/copilot-instructions.md\necho 'wrote .github/copilot-instructions.md'\n";
 
 const DECLARATION: &str = "---\nname: bot-instructions\ndescription: fixture review rules\nrepo-effects:\n  summary: \"Renders the fixture review file in this repository.\"\n  writes:\n    - \".github/copilot-instructions.md\"\n  installer: \"scripts/bot-instructions render\"\n  checker: \"scripts/bot-instructions check\"\n---\nFixture.\n";
 

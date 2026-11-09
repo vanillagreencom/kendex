@@ -13,6 +13,12 @@ suites read:
 `kendex verify` reads the owned report after a successful comparison. It lists
 whole files from the render's existing file map and grants no region ownership.
 
+kendex commit-offer discovery reads `render --discover` on stdout, exit 0:
+`would write PATH`, `would write region PATH<TAB>HEADING` and `would remove
+PATH`. It names only the files and region a render may replace, and it writes
+nothing, so a hand-written file at a generated path is left out of the commit
+set rather than refused.
+
 The key names the condition and the value is that condition's subject: the
 repository or spec root for a failure reading them, the argument for a usage
 refusal, the interpreter for a launcher refusal, the count for findings, and
@@ -85,6 +91,8 @@ def parser():
     p.add_argument("--output", choices=("full", "local"), default="full",
                    help="render, check, adopt: full bot files (default), or only the local AGENTS.md region")
     p.add_argument("--dry-run", action="store_true", help="render, adopt: preview and write nothing")
+    p.add_argument("--discover", action="store_true",
+                   help="render: list the paths a render may replace, for kendex discovery, and write nothing")
     p.add_argument("--json", action="store_true", help="check: report verified whole-file paths as JSON")
     p.add_argument("--input", default=None, help=argparse.SUPPRESS)
     return p
@@ -170,6 +178,13 @@ def main(argv=None):
         print(f"--dry-run belongs to render and adopt; {args.verb} does not write a set to preview",
               file=sys.stderr)
         return 2
+    # `adopt --discover` would otherwise adopt, writing the files the flag
+    # promised to leave alone.
+    if args.discover and args.verb != "render":
+        print("bot-instructions: usage=--discover", file=sys.stderr)
+        print(f"--discover belongs to render; {args.verb} has no generated set to list",
+              file=sys.stderr)
+        return 2
     if args.verb == "retire":
         print("automatic bot-instructions rendering retired; generated files are unchanged")
         return 0
@@ -199,7 +214,7 @@ def main(argv=None):
             lines = [f"bot-instructions: {ctx.config.key}={ctx.config.subject}",
                      f"bot-instructions: {ctx.config.attestation}", str(ctx.config)]
         elif args.verb == "render":
-            lines = verbs.render_verb(ctx, repo, dry_run=args.dry_run)
+            lines = verbs.render_verb(ctx, repo, dry_run=args.dry_run or args.discover)
         elif args.verb == "check":
             lines = verbs.check_verb(ctx)
         else:

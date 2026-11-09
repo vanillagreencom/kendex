@@ -43,7 +43,9 @@ repo-effects:
 .agents/skills/bot-instructions/scripts/bot-instructions retire   # revoke kendex automatic rendering on removal
 ```
 
-Flags: `--repo`, `--spec`, `--staged`, `--output full|local`, `--dry-run`; `bot-instructions --help`. Python 3.11+.
+Flags: `--repo`, `--spec`, `--staged`, `--output full|local`, `--dry-run`, `--discover`; `bot-instructions --help`. Python 3.11+.
+
+`render --discover` lists, for kendex's commit-offer discovery, the files and region a render may replace, and writes nothing. A hand-written file or region at a generated path is left out of the list.
 
 `--output local` limits `render`, `check` and `adopt` to the `AGENTS.md` review region. The doctrine loader selects `SKILL.md` or `SKILL.md.disabled`. The pointer uses that filename and the `#doctrine` anchor inside the selected checkout installation. Checkout parent paths resolve through their symlinks. The installation's own symlink keeps its checkout path. Source reads use its canonical target. An external `--spec` needs a matching selected installation inside the checkout. Otherwise local mode refuses: use `--output full` or install the package inside the checkout. Remote files are excluded from validation, adoption, writes, orphan removal and ownership reports. Local review reads the package doctrine directly; repository doctrine overrides remain in the full render. The default `--output full` keeps every enabled bot output. `adopt --dry-run` reports the content to take over and its divergence, writes no marker, and refuses symlinked targets.
 

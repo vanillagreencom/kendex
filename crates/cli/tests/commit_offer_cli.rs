@@ -1016,7 +1016,7 @@ fn unarmed_consumer(tmp: &tempfile::TempDir) -> PathBuf {
     fs::write(package.join("SKILL.md"), declaration("first rules")).unwrap();
     executable(
         &package.join("scripts/bot-instructions"),
-        "#!/bin/sh\nif [ \"$1\" = check ]; then\n  test -f .github/copilot-instructions.md\n  exit\nfi\nif [ \"$2\" = --dry-run ]; then\n  echo 'would write .github/copilot-instructions.md'\n  exit 0\nfi\nmkdir -p .github\necho rules >.github/copilot-instructions.md\necho 'wrote .github/copilot-instructions.md'\n",
+        "#!/bin/sh\nif [ \"$1\" = check ]; then\n  test -f .github/copilot-instructions.md\n  exit\nfi\nif [ \"$2\" = --discover ]; then\n  echo 'would write .github/copilot-instructions.md'\n  exit 0\nfi\nmkdir -p .github\necho rules >.github/copilot-instructions.md\necho 'wrote .github/copilot-instructions.md'\n",
     );
     git(&project, &["init", "-q", "-b", "main"]);
     git(&project, &["config", "user.email", "t@t"]);

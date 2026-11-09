@@ -290,19 +290,27 @@ fn run(env: &Env, scope: &Scope, mode: Mode) -> Result<RenderedPaths> {
     let installer = declared
         .installer()
         .map_err(|error| crate::repo_effects::err(error.to_string()))?;
-    let spec = match mode {
-        Mode::Write => installer.to_owned(),
-        Mode::Discover => format!("{installer} --dry-run"),
-    };
     let command = declared.command(&root, installer);
-    let report =
-        crate::repo_effects::run_script(scope, &declared.root, &spec).map_err(|error| {
+    let launch = |spec: &str| {
+        crate::repo_effects::run_script(scope, &declared.root, spec).map_err(|error| {
             CoreError::BotInstructionsRender {
                 root: root.clone(),
                 command: command.clone(),
                 detail: error.to_string(),
             }
-        })?;
+        })
+    };
+    let report = match mode {
+        Mode::Write => launch(installer)?,
+        Mode::Discover => {
+            let report = launch(&format!("{installer} --discover"))?;
+            if predates_discover(&declared.name, &report) {
+                launch(&format!("{installer} --dry-run"))?
+            } else {
+                report
+            }
+        }
+    };
     if report.code != 0 {
         return Err(CoreError::BotInstructionsRender {
             root,
@@ -351,6 +359,28 @@ fn run(env: &Env, scope: &Scope, mode: Mode) -> Result<RenderedPaths> {
         regions,
         skipped: None,
     })
+}
+
+/// Whether the installed package refused `--discover` as an unknown flag,
+/// so it was installed before the flag existed (KEN-3521) and its
+/// `--dry-run` is still the owned-only listing discovery reads. A project
+/// keeps such a copy until an apply refreshes the package, and without this
+/// its commit offer would fail on every discovery.
+///
+/// The package's documented refusal protocol is a first stderr line
+/// `<name>: usage=<argv>` and exit 2. kendex passes only the declared
+/// installer and the flag, and the installer alone is what a write runs, so
+/// a usage refusal here names the flag. This fallback retires at the next
+/// major release, per the release standard in `changelog.d/README.md`. It
+/// prints no warning: the old copy is the package kendex installed, and the
+/// next apply that reaches a current catalog replaces it with no step of the
+/// consumer's own.
+fn predates_discover(package: &str, report: &crate::guard::GuardReport) -> bool {
+    report.code == 2
+        && report
+            .stderr
+            .first()
+            .is_some_and(|line| line.starts_with(&format!("{package}: usage=")))
 }
 
 fn reported_path(root: &Path, command: &str, line: &str, relative: &str) -> Result<PathBuf> {

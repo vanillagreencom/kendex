@@ -15,7 +15,7 @@ fn package(project: &Path, name: &str) {
     executable(
         &package.join("scripts/effect"),
         &format!(
-            "#!/bin/sh\ncase \"$1\" in\ncheck) test \"$(cat .github/copilot-instructions.md)\" = '{name}' ;;\nretire) rm -f .github/copilot-instructions.md {name}.effect ;;\nrender)\n if [ \"${{2-}}\" = --dry-run ]; then\n  printf 'would write .github/copilot-instructions.md\\nwould write {name}.effect\\n'\n else\n  mkdir -p .github\n  printf '%s' '{name}' > .github/copilot-instructions.md\n  printf '%s' '{name}' > {name}.effect\n  printf 'wrote .github/copilot-instructions.md\\nwrote {name}.effect\\n'\n fi ;;\nesac\n"
+            "#!/bin/sh\ncase \"$1\" in\ncheck) test \"$(cat .github/copilot-instructions.md)\" = '{name}' ;;\nretire) rm -f .github/copilot-instructions.md {name}.effect ;;\nrender)\n if [ \"${{2-}}\" = --discover ]; then\n  printf 'would write .github/copilot-instructions.md\\nwould write {name}.effect\\n'\n else\n  mkdir -p .github\n  printf '%s' '{name}' > .github/copilot-instructions.md\n  printf '%s' '{name}' > {name}.effect\n  printf 'wrote .github/copilot-instructions.md\\nwrote {name}.effect\\n'\n fi ;;\nesac\n"
         ),
     );
 }
