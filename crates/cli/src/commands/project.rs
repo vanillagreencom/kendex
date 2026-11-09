@@ -44,7 +44,16 @@ pub enum ProjectCommand {
         consolidate: bool,
     },
     /// List the projects on Projects
-    List,
+    List {
+        /// Print one JSON array on stdout instead of the rows: per project,
+        /// `folder` (the registered path), `state` (`ok`, `folder-not-found`,
+        /// `not-a-folder` or `unreadable`) and `worktree`, which is null
+        /// unless the folder is in a linked git worktree and then holds
+        /// `main`, the main checkout's path, or null where git could not
+        /// name it
+        #[arg(long)]
+        json: bool,
+    },
     /// Show the saved settings that differ between the projects on Projects
     Settings,
     /// Find projects in a folder
@@ -139,7 +148,7 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
                 }
             ));
         }
-        ProjectCommand::List => list(env)?,
+        ProjectCommand::List { json } => list(env, json)?,
         ProjectCommand::Settings => compare_settings(env)?,
         ProjectCommand::Discover {
             root,
@@ -174,9 +183,24 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
 }
 
 /// The projects this machine tracks, one per line, each with what is
-/// wrong with it or what it is.
-fn list(env: &Env) -> CliResult {
-    for project in settings::load(env)?.projects {
+/// wrong with it or what it is; with `json`, the same answers as one
+/// document whose fields a program reads apart.
+///
+/// The rows cannot carry a folder exactly: the escaping that keeps a line
+/// safe to print spells a newline the way a folder named with a backslash
+/// and an `n` is spelled, and a folder may end in the text of a note. The
+/// document is the form a consumer such as Jarvis routes a write by.
+fn list(env: &Env, json: bool) -> CliResult {
+    let projects = settings::load(env)?.projects;
+    if json {
+        let mut listed = Vec::with_capacity(projects.len());
+        for project in &projects {
+            listed.push(listed_entry(project)?);
+        }
+        super::answer(&serde_json::to_string_pretty(&listed)?);
+        return Ok(());
+    }
+    for project in projects {
         let missing = kendex_core::scan::missing_why(&project);
         out(&format!(
             "{}{}{}",
@@ -192,11 +216,66 @@ fn list(env: &Env) -> CliResult {
                 // A folder nobody could read answers no question about the
                 // repository it might be in.
                 Some(_) => String::new(),
-                None => worktree_note(&project),
+                // A git that cannot answer says nothing rather than
+                // guessing: an entry annotated from a failed read would
+                // claim a repository relationship nobody established.
+                None => match linked_worktree(&project) {
+                    Ok(Some(Linked { main: Some(main) })) => {
+                        format!("  (worktree of {})", main.display())
+                    }
+                    Ok(Some(Linked { main: None })) => "  (worktree)".to_owned(),
+                    Ok(None) | Err(_) => String::new(),
+                },
             }
         ));
     }
     Ok(())
+}
+
+/// One registered folder as `project list --json` prints it.
+///
+/// `worktree` is asked only of a folder that could be read, as the row
+/// asks it. Where git cannot say whether the folder is a linked worktree
+/// the document refuses rather than print null, which a consumer reads as
+/// "not a worktree" and so routes to the folder itself.
+fn listed_entry(project: &std::path::Path) -> Result<serde_json::Value, Lines> {
+    use kendex_core::scan::MissingWhy;
+    let unread = |cause: String| {
+        Lines(format!(
+            "project-list-unread={}\n{}",
+            escaped(&project.display().to_string()),
+            escaped(&cause)
+        ))
+    };
+    let exact = |path: &std::path::Path| {
+        path.to_str().map(str::to_owned).ok_or_else(|| {
+            unread(format!(
+                "{} is not UTF-8 and has no exact JSON form",
+                path.display()
+            ))
+        })
+    };
+    let missing = kendex_core::scan::missing_why(project);
+    let state = match &missing {
+        None => "ok",
+        Some(MissingWhy::Gone) => "folder-not-found",
+        Some(MissingWhy::NotAFolder) => "not-a-folder",
+        Some(MissingWhy::Unreadable { .. }) => "unreadable",
+    };
+    let worktree = match missing {
+        Some(_) => serde_json::Value::Null,
+        None => match linked_worktree(project).map_err(|e| unread(e.to_string()))? {
+            None => serde_json::Value::Null,
+            Some(Linked { main }) => serde_json::json!({
+                "main": main.as_deref().map(exact).transpose()?,
+            }),
+        },
+    };
+    Ok(serde_json::json!({
+        "folder": exact(project)?,
+        "state": state,
+        "worktree": worktree,
+    }))
 }
 
 /// Where the saved settings of the listed projects differ: each value,
@@ -274,28 +353,29 @@ fn compare_settings(env: &Env) -> CliResult {
     Ok(())
 }
 
-/// What a listed project is, where it is one work tree of a repository
-/// whose main checkout is somewhere else.
+/// A listed project that is in a linked git worktree: `main` is the main
+/// checkout of its repository, or `None` where git could not name it.
+struct Linked {
+    main: Option<std::path::PathBuf>,
+}
+
+/// Whether a listed project is in a linked git worktree, `None` where it
+/// is not; an error where git could not answer.
 ///
 /// A linked git worktree carrying declarations of its own is a project in
 /// its own right, and it sits on this list beside the checkout it was
 /// added from — two entries, two manifests, two installs. Which is which
-/// is not readable from the paths, so the line says it.
-///
-/// A git that cannot answer says nothing rather than guessing: this is a
-/// listing, and an entry annotated from a failed read would claim a
-/// repository relationship nobody established.
-fn worktree_note(project: &std::path::Path) -> String {
-    let Ok(Some(repo)) = kendex_core::guard::Repo::probe(project) else {
-        return String::new();
+/// is not readable from the paths, so the list says it.
+fn linked_worktree(project: &std::path::Path) -> Result<Option<Linked>, CoreError> {
+    let Some(repo) = kendex_core::guard::Repo::probe(project)? else {
+        return Ok(None);
     };
     if !repo.is_linked() {
-        return String::new();
+        return Ok(None);
     }
-    match repo.main_checkout() {
-        Ok(main) => format!("  (worktree of {})", main.display()),
-        Err(_) => "  (worktree)".to_owned(),
-    }
+    Ok(Some(Linked {
+        main: repo.main_checkout().ok(),
+    }))
 }
 
 /// Whether a folder may go on the projects list, asked by every

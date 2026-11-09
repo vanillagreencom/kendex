@@ -63,6 +63,7 @@ mod pi_extension_only_lock;
 mod pi_shadow_package;
 mod pi_staleness;
 mod presentation;
+mod project_list_json;
 mod project_path_target;
 mod project_settings_cli;
 mod refresh_agent_cleanup;
