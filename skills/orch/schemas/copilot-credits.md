@@ -1,11 +1,11 @@
 # Copilot credit record
 
-The record `lanes` produces for one Copilot account's monthly AI credit pool, read from GitHub's usage endpoint with the account's stored login by [`scripts/lib/copilot-credits.sh`](../scripts/lib/copilot-credits.sh), which owns the endpoint, the login layout and the rules for zero, overage and unlimited. A Pi root on a `github-copilot/` model yields the same record from the lane host's `harness=pi` accounts row for that root ([lane-host.md](lane-host.md)), or, where no row reads it, from its stated `ORCH_LANE_COPILOT_POOL` override.
+The record the runtime's account listing produces for one Copilot account's monthly AI credit pool, read from GitHub's usage endpoint with the account's stored login. [`runtime/src/ops/accounts/listing.rs`](../runtime/src/ops/accounts/listing.rs) owns the endpoint and the login layout, and `parse_copilot` in [`usage.rs`](../runtime/src/ops/accounts/usage.rs) the rules for zero, overage and unlimited. A Pi root on a `github-copilot/` model yields the same record from the lane host's `harness=pi` accounts row for that root ([lane-host.md](lane-host.md)), or, where no row reads it, from its stated `ORCH_LANE_COPILOT_POOL` override.
 
 ## Where it is
 
-- `lanes list --harness copilot --json` prints one record per account; `orch-runtime accounts pick --fleet --harness copilot` and `orch-runtime accounts pick --fleet --lane <dir> --harness copilot` reply with the judged one, with `wall` and the pick fields beside it.
-- The raw answer and normalized reading share `usage/copilot-<cksum of the account dir>.json` under `$OVERSEE_WATCH_STATE_DIR`, else `<project root>/tmp/oversee-watch/usage`. Fresh normal reads reuse the parsed buckets after age, consumed-reset, stored login-expiry and credentials-file modification checks. A stale, changed or legacy record uses the cold login and raw-response parsers. Parser changes reach an existing reading when its record is refreshed or normalized from a legacy raw record.
+- `orch-runtime accounts roster` prints one record per account in `result.rows[].record`; `orch-runtime accounts pick --fleet --harness copilot` and `orch-runtime accounts pick --fleet --lane <dir> --harness copilot` reply with the judged one, with `wall` and the pick fields beside it.
+- The endpoint's answer is kept in one usage record per account, `usage/copilot-<cksum of the account dir>-<its length>.json` under `$OVERSEE_WATCH_STATE_DIR`, else `<project root>/tmp/oversee-watch/usage`, beside a refusal and its window where the endpoint refused (`runtime/src/ops/accounts/cache.rs`). Every reader of that directory serves what another wrote while the figure is younger than `ORCH_LANES_USAGE_TTL`, or a caller's longer `ORCH_LANES_USAGE_MAX_AGE`; a TTL of 0 serves none.
 
 ## Fields
 

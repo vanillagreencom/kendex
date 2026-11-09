@@ -38,6 +38,29 @@ OVERSEE_WATCH_STATE_DIR = ""
 # and names that path.
 WORKTREE_CLI = ""
 
+# The programs the orch runtime runs, each empty for the installed package's
+# own: the agent-runtime wrapper the wake delivers through; the job-unit
+# launcher the watch's wall relaunch is detached through; the mailbox
+# program; the validation entry a close stops a worktree's runs through; the
+# change-scope path reader the launch admission and the validation start
+# read a range's changed paths through; the tracker program the watch's
+# tracker duties read through; the github skill's reducer the watch's GitHub
+# duty and a park read; and the gh program orch-runtime reconcile-items
+# runs, "gh" when empty.
+# ORCH_AGENT_RUNTIME = ""
+# ORCH_JOB_UNIT = ""
+# LANE_MAIL_CLI = ""
+# DEV_VALIDATE_CLI = ""
+# CHANGE_SCOPE_PATHS_CLI = ""
+# OVERSEE_WATCH_TRACKER = ""
+# OVERSEE_WATCH_PR_WATCH = ""
+# RECONCILE_GH_CLI = ""
+
+# The orch package's lanes script: the account judge runs the lane host
+# from the scripts directory that holds it, and the heartbeat's
+# account-unread line names it. Empty finds the installed orch package's own.
+# OVERSEE_WATCH_LANES = ""
+
 # Where lanes run. "local" runs them on this machine. "claude-cloud" runs
 # them in Claude Code's own cloud sessions. A path to a script runs them
 # wherever that script reaches. Each is a host kind (schemas/lane-host.md
@@ -60,12 +83,12 @@ ORCH_LANE_HOST = "local"
 # absolute, and a harness is named at most once.
 # ORCH_HARNESS_BINARIES = "claude=/opt/claude/bin/claude,pi=/opt/pi/bin/pi"
 
-# Runtime the overseer's own session runs in, which registration and
-# oversee-succeed inspect it through: "tmux", the included provider, or an executable script
-# path speaking schemas/overseer-host.md. It verifies a session's account
-# through its tmux pane, so registration and oversee-succeed refuse any value
-# but "tmux" as runtime-unsupported; schemas/overseer-host.md states what
-# else opens and reads the overseer's session.
+# Runtime the overseer's own session runs in, which `oversee register`
+# inspects it through: "tmux", the included provider, or an executable script
+# path speaking schemas/overseer-host.md. Registration verifies a session's
+# account through its tmux pane, so it refuses any value but "tmux" as
+# runtime-unsupported; schemas/overseer-host.md states what else opens and
+# reads the overseer's session.
 # ORCH_OVERSEER_HOST = "tmux"
 
 # How much a lane prints into its own window. "quiet" prints one line per
@@ -77,8 +100,8 @@ ORCH_LANE_HOST = "local"
 ORCH_LANE_OUTPUT = "quiet"
 
 # Disk use, in percent of the volume holding a lane worktree's target/, at or
-# past which round-prune removes that worktree's Cargo output before a dev
-# round (references/skill-rules.md § Round Closure). Set it where the free
+# past which the prune-round request removes that worktree's Cargo output at a
+# round's start (references/skill-rules.md § Round Closure). Set it where the free
 # space left below it still holds one full validation.
 ORCH_ROUND_PRUNE_DISK_PCT = "75"
 
@@ -103,10 +126,10 @@ PR_REVIEW_ON_TIMEOUT = "proceed"
 # values: on | off
 PR_COPILOT_REQUESTS = "on"
 
-# Maximum seconds the review call, orch-runtime copilot-wait and
-# overseer-approve --hold-copilot hold on Copilot's work on a head, in whole
-# seconds above zero. Each reader's refusal of another value, and where
-# overseer-approve's hold starts: references/settings.md. What the review
+# Maximum seconds the review call, orch-runtime copilot-wait and an
+# approve-head request with hold_copilot hold on Copilot's work on a head, in
+# whole seconds above zero. Each reader's refusal of another value, and where
+# approve-head's hold starts: references/settings.md. What the review
 # call holds and from when: references/gates.md § Copilot requests;
 # copilot-wait's bound: workflows/review-pr-comments.md § 1. Requires the
 # overseer token app's repository Checks: read permission.
@@ -133,6 +156,21 @@ REVIEW_GATE_REFRESH_AUTHOR = ""
 # Set it above the longest required job's run time.
 CI_WAIT_MAX_SECS = "600"
 
+# The merge-queue wait, orch-runtime queue-watch: the seconds it keeps
+# polling a pull request no poll has seen queued or armed before it answers
+# not_queued; the consecutive polls a conflicting, ejected or disarmed reading
+# must hold before it ends on it; and the least seconds between two of its
+# review-thread probes, and between two of its check probes. Each is a whole
+# number above zero.
+# QUEUE_WAIT_ARM_GRACE = "120"
+# QUEUE_WAIT_CONFIRM_POLLS = "2"
+# QUEUE_WAIT_PROBE_INTERVAL = "120"
+
+# The command queue-watch runs on an ejected merge group to read whether its
+# failed checks are ones the change's own paths select, the verdict's reach.
+# Its input, its answer and what an empty value reads: references/settings.md.
+# QUEUE_WAIT_REACH_CMD = ""
+
 # How many times a lane may try to fix a failing build before a person
 # takes over.
 CI_FIX_MAX_CYCLES = "6"
@@ -153,6 +191,48 @@ REVIEW_MAX_EXTERNAL_ROUNDS = "4"
 # On the Codex runtime set the cap the spawn adapter reports.
 REVIEWER_SLOT_BUDGET = "0"
 
+# The overseer's head approval, the approve-head request: the file its app
+# token is read from on every call, and the app's bot login, which each
+# approval records and its read-back matches. Where the token file must sit
+# and each refusal: references/settings.md. The GitHub reader credentials
+# the approval's review-reply check passes on, GH_TOKEN, GITHUB_TOKEN,
+# GH_BOT_TOKEN and GH_HOST, come from the environment or .env.local; keep a
+# token out of every tracked file.
+# ORCH_OVERSEER_REVIEW_TOKEN_FILE = "/run/kendex/overseer-review-token"
+# ORCH_OVERSEER_REVIEW_LOGIN = "example-overseer[bot]"
+
+# --- Validation ---------------------------------------------------------------
+# The project's validation declaration, the one source orch-runtime validate
+# start resolves a run's mode from. A blank command is no declaration. What
+# each mode runs, the bound and the reuse rules:
+# `.agents/skills/orch/scripts/dev-validate-run --help`.
+
+# The whole battery. A start with none refuses.
+# DEV_VALIDATE_CMD = "tools/check --full"
+
+# The command that validates the changes since a base, $DEV_VALIDATE_BASE;
+# empty declares no range mode, so a fix round runs the whole battery.
+# DEV_VALIDATE_RANGE_CMD = "tools/check --range $DEV_VALIDATE_BASE"
+
+# The selector that previews the command's own suite selection; a
+# documentation-only change runs it scoped.
+# DEV_VALIDATE_SELECTION_CMD = ""
+
+# The command a documentation-only change runs where no selector is declared.
+# DEV_VALIDATE_TEXT_CMD = ""
+
+# The required status-check context that runs the project's validation;
+# empty declares no deferral to CI.
+# DEV_VALIDATE_CI_CONTEXT = ""
+
+# The prefix the project's commands print each finding with; empty records
+# none, and such a run is never reuse evidence
+# (references/artifact-checks.md).
+# DEV_VALIDATE_FINDING_PREFIX = ""
+
+# The bound on the command, in whole seconds above zero.
+# DEV_VALIDATE_TIMEOUT_SECS = "3600"
+
 # --- Talking to you -----------------------------------------------------------
 # How a session asks you questions, reports to you and decides without you.
 
@@ -172,6 +252,7 @@ ORCH_ASK_WAIT_MINUTES = "120"
 # route does: references/communication-modes.md § Owner asks.
 # ORCH_OWNER_EMAIL = "owner@example.com"
 # ORCH_OWNER_ASK_LABEL = "owner-gated"
+# KENDEX_USER_EMAIL = "owner@example.com"
 
 # Who the session is talking to: "ceo" or "engineer". What each value
 # means, the questions that reach you and the defaults each value composes:
@@ -202,15 +283,18 @@ ORCH_REPORT_EVERY_MINUTES = "120"
 
 # Finished items that bring the next status report forward, whatever the
 # minutes above say. 0 leaves the report on its minutes alone. When a report
-# falls due: oversee-report --help, due.
+# falls due: references/oversee-events.md, report-due.
 ORCH_REPORT_EVERY_ISSUES = "0"
 
-# How many queued items the report's Next list shows.
+# How many queued items the report's In progress section lists.
 ORCH_REPORT_UPCOMING = "5"
 
-# The columns of the report's lists, in order, separated by commas. The
-# choices are: issue, what it is, why it matters.
-ORCH_REPORT_COLUMNS = "issue,what it is,why it matters"
+# The owner-local hours, start-end, in which a report is written with no
+# owner notice, and the owner's time zone they are read in; empty quiet hours
+# send every notice. The morning brief after them:
+# references/oversee-events.md, report-due.
+# ORCH_REPORT_QUIET_HOURS = "0-7"
+# ORCH_OWNER_TIME_ZONE = "America/Los_Angeles"
 
 # Where and how often an existing scheduler runs /orch verify on the base
 # checkout: a Claude Code routine, a cron line that starts a harness, or the
@@ -225,13 +309,17 @@ ORCH_VERIFY_SCHEDULE = ""
 # composer before recording the launch unconfirmed.
 ORCH_TMUX_VERIFY_SECS = "15"
 
+# Seconds a transfer's or a stop's caller waits for its detached job to claim
+# the intent, in whole seconds above zero.
+# ORCH_JOB_CLAIM_SECS = "15"
+
 # Seconds the orch-runtime stop waits after SIGTERM before SIGKILL when it
 # ends a lane's recorded process tree, applied again after SIGKILL, so a stop
 # can take up to twice this before it gives up, and a Copilot lane once more
 # first, since the stop gives its pane that long to exit on /exit before the
-# signal. lane-close reads the same key as the bound on its pane-exit wait
-# after its stop signals once. Set it to the grace you want each signal to
-# allow.
+# signal. The runtime's close of a hosted lane reads the same key as the bound
+# on its wait for the pane to exit after the provider's stop. Set it to the
+# grace you want each signal to allow.
 # ORCH_LANE_CLOSE_SECS = "15"
 
 # The tmux session every lane window opens in. Which session a launch uses
@@ -261,24 +349,54 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # starting it in its own systemd scope, holds the pane for a moment first.
 # PANE_WRITE_SETTLE_SECS = "2"
 
-# Friendlier names for the lanes found on this machine, as real-name=alias
-# pairs. Lanes are always discovered; this only renames them.
+# The accounts lanes run on, colon-separated config directories, each
+# absolute or relative to HOME, so one line names the same accounts on every
+# machine. The account judge chooses among these alone; unset, no local
+# account is a candidate and the roster says
+# accounts-unconfigured key=ORCH_LANE_DIRS. How an entry's harness is read:
+# references/settings.md.
+# ORCH_LANE_DIRS = ".claude:.codex"
+
+# CODEX_HOME and COPILOT_HOME, where the harness reads them, are measured as
+# accounts and never chosen; PI_CODING_AGENT_DIR is the Pi root a Pi launch
+# naming no account of Pi's runs in. Each is the harness's own environment
+# variable, set where that harness runs.
+
+# Friendlier names for the accounts the listing lists, as name=alias pairs,
+# the name a directory's name. An alias is a label: a launch names the
+# directory.
 # ORCH_LANE_ALIASES = "eclaude=work,mclaude=overflow"
 
-# Lanes excluded, and lanes retired from a date, each named by its own name
-# or its alias, never by a path. The runtime's judge never picks an excluded
-# lane, and picks a retired one until that UTC day and measures it after,
-# saying in the roster where its credential still answers. What `lanes` lists
-# and reads for each, and the API grant a retired plan keeps: `lanes --help`,
-# ORCH_LANE_EXCLUDE and ORCH_LANE_RETIRE.
+# Accounts excluded, and accounts retired from a date, each named by its own
+# name or its alias, never by a path. The runtime's judge never picks an
+# excluded account, and picks a retired one until that UTC day and measures it
+# after, saying in the roster where its credential still answers. What the
+# judge reads and refuses for each: references/settings.md.
 # ORCH_LANE_EXCLUDE = "sclaude"
 # ORCH_LANE_RETIRE = "oldclaude=YYYY-MM-DD"
 
-# The override for each Copilot pool a Pi lane on a github-copilot/ model
-# spends, as account-dir=credits-used/credits-granted pairs, the account dir
-# an absolute path. Where a lane host's reading replaces it, and the launch's
-# refusal with neither: schemas/lane-host.md § Provider protocol.
+# The Copilot pool a Pi root spends on a github-copilot/ model, as
+# pi-root=credits-used/credits-granted pairs, the root an absolute path,
+# read for a root no provider row reads. Its form and the pick's refusal with
+# neither: references/settings.md.
 # ORCH_LANE_COPILOT_POOL = "/home/me/.1pi=250000/1000000"
+
+# The repository each account was given access to, as name=owner/repo
+# pairs: a cloud-session pick admits an account only on its own
+# repository's checkout and refuses any other as cloud-repo-unset.
+# ORCH_LANE_CLOUD_REPOS = "claude=owner/repo"
+
+# Seconds a lane host's accounts verb may take; 0 asks for no bound.
+# ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S = "30"
+
+# The usage endpoints, the Claude token endpoint a renewal posts its
+# refresh-token grant to and the OAuth client id it posts with, for a host
+# that reaches them through another address. With no client id every expired
+# Claude account reads error, naming the key.
+# ORCH_LANES_CLAUDE_USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+# ORCH_LANES_CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
+# ORCH_LANES_CLAUDE_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
+# ORCH_LANES_CLAUDE_CLIENT_ID = ""
 
 # Seconds a lane's usage figure is reused before it is fetched again. 0
 # fetches it every time. Keep it at or above the longest watch interval on
@@ -287,20 +405,24 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 
 # The calling pass's own interval in seconds, which widens the age a cached
 # usage figure is served within and never narrows it. 0 leaves the TTL alone,
-# and a TTL of 0 is never widened. `lanes --max-age` is the same value on argv.
+# and a TTL of 0 is never widened.
 # ORCH_LANES_USAGE_MAX_AGE = "0"
 
-# The usage share at which a lane stops being offered for new work. It is
-# read against the account's own allowance, or against the chosen model's
-# window where one is named. `lanes --help` (pick) states which credit stays
-# offered past it.
+# The usage share at which an account stops being offered for new work, read
+# on the window that binds the lane: the fullest of the account's weekly and
+# monthly plan windows and the window of the model the lane runs. The
+# projection and which credit stays offered past it: references/settings.md.
 # ORCH_LANE_MAX_PCT = "95"
 
-# How much of an account's 5-hour allowance one running lane is expected to
-# use in an hour, charged for each running lane wherever no rate is measured;
-# `lanes --help` (pick, ORCH_LANE_BURN_PCT_PER_HOUR) states which windows and
-# for how long. 0 turns the charge off.
+# A running lane's expected spend in an hour, in points of five hours' room,
+# charged for each live lane wherever the account measured no rate on that
+# window; references/settings.md states which windows and for how long. 0
+# turns the charge off.
 # ORCH_LANE_BURN_PCT_PER_HOUR = "5"
+
+# The dollars a Claude cloud or Pi Anthropic API grant must hold more than to
+# stay offered; how a grant pool is judged: references/settings.md.
+# ORCH_LANE_CLOUD_CREDIT_FLOOR = "10"
 
 # The credits a Codex account past ORCH_LANE_MAX_PCT must hold more than to
 # stay offered on its credit balance; where such an account ranks:
@@ -331,17 +453,23 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # ORCH_HANDOFF_AGENT_RESERVE_TOKENS = "150000"
 
 # The recording policy: the most bytes one fleet log row's text may carry,
-# the fleet log rows a successor overseer reads at takeover, the days before
-# `workflow-state prune` archives and removes a record, and the directory the
-# owner progress reports go to (schemas/workflow-state.md, Recording policy).
+# the fleet log rows a successor overseer reads at takeover, the days past a
+# record's recorded end before the watch's retention duty archives and
+# removes it, and the directory the owner progress reports go to
+# (schemas/workflow-state.md, Recording policy).
 # ORCH_FLEET_LOG_ROW_BYTES = "600"
 # ORCH_TAKEOVER_ROWS = "10"
 # ORCH_RECORD_RETENTION_DAYS = "5"
 # ORCH_PROGRESS_REPORT_DIR = "tmp/progress-reports"
 
 # The files whose change asks for a performance test, as path patterns
-# separated by spaces.
+# separated by spaces, and the performance review's runner command, the
+# workload it measures and the baseline it compares against. The test gates
+# a review only with all three set (references/settings.md).
 # QA_PERF_PATHS = "src/hot/* engine/src/*"
+# QA_PERF_RUNNER = "cargo bench -p engine"
+# QA_PERF_WORKLOAD = "the replay of one recorded session"
+# QA_PERF_BASELINE = "the base branch's run of the same workload"
 
 # The files whose change asks for a UI review, as path patterns separated
 # by spaces, and the design-system doc that review judges screenshots
@@ -358,6 +486,20 @@ ORCH_OVERSEER_LANES = "3"
 # (references/lane-directive.md § Caps).
 ORCH_OVERSEER_CLOUD_LANES = "10"
 
+# The Linear team the watch's tracker duties read: triage, the heartbeat's
+# owed items and the verification pass. Unset, the watch reads no tracker
+# and the heartbeat prints owed unread (workflows/oversee.md § 4).
+# LINEAR_TEAM = "PROJ"
+
+# Repositories the overseer may launch lanes in beside its own, as
+# blank-separated OWNER/REPO; who else reads them: references/settings.md.
+# ORCH_CONNECTED_REPOS = "owner/other-repo"
+
+# Workflow files, as blank-separated OWNER/REPO:FILE, whose red push or
+# nightly run on main the watch reports beside skill-tests.yml and ci.yml
+# (references/settings.md).
+# ORCH_MAIN_WORKFLOWS = "owner/repo:release.yml"
+
 # External triage: whether the watch lists issues and pull requests from
 # outside contributors for the overseer. "off" leaves them unlisted. How the
 # overseer handles each: workflows/oversee.md § Outside contributions.
@@ -370,6 +512,11 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # references/oversee-events.md § Event kinds, security-alert.
 # values: on | off
 # ORCH_SECURITY_ALERTS = "on"
+
+# The file holding the installation token the alert reads run under, an
+# absolute path on the overseer's own host. Unset, the watch makes no alert
+# read and reports the credential gap: references/security-alerts.md.
+# ORCH_SECURITY_ALERT_TOKEN_FILE = "/run/kendex/security-alert-token"
 
 # Whether orch replaces an overseer with a successor itself. "on" permits
 # orch's transfer and the watch's automatic recovery; "off" refuses the
@@ -403,24 +550,25 @@ ORCH_EXTERNAL_TRIAGE = "on"
 # harness default, which a lane launch refuses.
 # The deprecated positive account number first uses
 # the caller's model. With no caller model, the overseer uses the same-harness
-# class from lib/overseer-launch.sh's OL_DEFAULT_PREFERENCE. With neither, it
-# uses the harness's native model default. It warns once per run until the
+# class of the default below, claude:standard:high,codex:standard:high. With
+# neither, it uses the harness's native model default. It warns once per run until the
 # next major release and names the conversion: with a caller model, that
 # model's class, or the model itself where it names no class; for a claude
 # old exact id, the model with no replacement; with no caller model, the
 # same-harness default class, or the harness default where that class runs
 # no model, as on codex; with neither, the harness default.
 # Numeric succession entries can cross harnesses only when the model comes
-# from the target harness's default preference. The permission rules in
-# oversee-succeed --help still apply.
+# from the target harness's default preference. An entry of another harness
+# launches only where the caller's permission words are one full-bypass
+# posture it can take, and a first launch only an entry whose harness has a
+# bypass word.
 # Replace it with a class, such as claude:standard:high, or the harness default.
 # A model name is not checked
 # before launch, so a misspelled codex, copilot or pi model opens the new
 # overseer on that name. The runtime's successor walk names each entry it
 # skips, with the judge's word, in its reply's .result.walk.skipped
-# (workflows/oversee.md § Controller start and adoption); oversee-succeed
-# --help states which entries its own walk skips. Classes and harness defaults
-# need no edit when model versions change. An empty setting names no entries.
+# (workflows/oversee.md § Controller start and adoption). Classes and harness
+# defaults need no edit when model versions change. An empty setting names no entries.
 # ORCH_OVERSEER_PREFERENCE = "claude:standard:high,codex:standard:high"
 
 # Lane defaults use harness[@host]:model:effort. @host names a host kind or
@@ -454,6 +602,10 @@ ORCH_OVERSEER_WALL_MINUTES = "20"
 # and a lane on a seat keep it.
 # ORCH_OVERSEER_HEADROOM_PCT = "5"
 
+# The percent of its cgroup's memory cap at which the overseer's harness
+# process hands over. Unset or 0 sets no memory mark.
+# ORCH_OVERSEER_MEMORY_PCT = "90"
+
 # How many checks pass before a warning nobody has acted on is reported
 # again. The first time it appears is always reported.
 # ORCH_OVERSEER_MARK_REPEAT = "5"
@@ -471,6 +623,11 @@ ORCH_OVERSEER_WALL_MINUTES = "20"
 # counts as a start on each host kind:
 # references/oversee-events.md § Event kinds, start-stalled.
 # ORCH_WATCH_START_STALL_SECS = "600"
+
+# Seconds a Claude cloud lane's pull request head and body, or with none open
+# its branch head, may stand before the watch reports lane-stalled:
+# references/oversee-events.md § Event kinds, lane-stalled.
+# ORCH_WATCH_LANE_STALL_SECS = "3600"
 
 # Minutes a stalled Claude cloud lane may leave its one directive unanswered,
 # nothing pushed, before the watch closes it as cloud-stall-closed; what
@@ -502,7 +659,7 @@ ORCH_OVERSEER_WALL_MINUTES = "20"
 # built-in rule alone.
 # ORCH_SIZE_TEST_PATHS = "scripts/check-*.py"
 
-# Hours an issue may go untouched in progress or in review before a sweep
-# reports it as started-stale; which such issues it reports:
-# scripts/reconcile-work-items.
+# Hours a started issue with no open pull request may go untouched before
+# orch-runtime reconcile-items reports it as started-stale; the verb's
+# --stale-hours wins (references/settings.md).
 # RECONCILE_STALE_HOURS = "24"

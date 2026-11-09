@@ -34,7 +34,7 @@ Use the repository-declared owner for kendex refresh outputs. Kendex uses its lo
 
 ### Validation routing
 
-- Fix rounds keep their delegated round base. Every kendex change is queue-only, per D027: CI holds the full validation record, and the merge waits on the merge-group run. In kendex a red merge-group run is never answered by merge-pr § 5's rerun-in-place: the lane re-arms only a new head. Where ci-fix leaves the head unchanged, for a flake or a fault ci-fix § 4 places in another pull request, the lane hands back to the overseer with the failing run.
+- Fix rounds keep their delegated round base. Every kendex change is queue-only, per D027: CI holds the full validation record, and the merge waits on the merge-group run. In kendex a red merge-group run re-arms only a new head, under merge-pr § 5's re-queue rule. Where ci-fix leaves the head unchanged, for a flake or a fault ci-fix § 4 places in another pull request, the lane hands back to the overseer with the failing run.
 
 ### Owner messages
 
@@ -51,7 +51,7 @@ Use the repository-declared owner for kendex refresh outputs. Kendex uses its lo
 
 ### Cargo round cleanup
 
-At each development round boundary, run the owner-scoped worktree cleanup policy for Cargo output. Use ORCH_ROUND_PRUNE_DISK_PCT as the configured disk threshold. Prune only the owned worktree target directory. If CARGO_TARGET_DIR is elsewhere, report the separate cleanup need and do not delete another owner's output. Use `.agents/skills/orch/scripts/round-prune` between the round-id and delegation-time stamps.
+At each development round boundary, run the owner-scoped worktree cleanup policy for Cargo output. Use ORCH_ROUND_PRUNE_DISK_PCT as the configured disk threshold. Prune only the owned worktree target directory. If CARGO_TARGET_DIR is elsewhere, report the separate cleanup need and do not delete another owner's output. Between the round-id and delegation-time stamps, write the request `{"op": "prune-round", "field": "dev"}` to a file and run `.agents/skills/orch/scripts/orch-runtime op --item [ISSUE_ID] --request [FILE]`; at or past the mark it exits 1 recording `target-elsewhere` where CARGO_TARGET_DIR is not the worktree's own target directory.
 <!-- kendex:project-instructions:end -->
 
 # Orchestration

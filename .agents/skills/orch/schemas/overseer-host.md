@@ -2,9 +2,9 @@
 
 The `scripts/overseer-host` command selects the runtime the overseer's own session runs in from `ORCH_OVERSEER_HOST`, and speaks the protocol below to it. Read this file when opening, reading or stopping an overseer session, or when reading the fleet record's `overseer` object.
 
-`resolve` prints `tmux` for an empty or `tmux` setting, selecting `scripts/overseer-host-tmux`; another value names an executable provider. Registration and the plain succession command refuse another runtime as `runtime-unsupported`. Runtime controller launches use the fleet's tmux session directly.
+`resolve` prints `tmux` for an empty or `tmux` setting, selecting `scripts/overseer-host-tmux`; another value names an executable provider. Registration refuses another runtime as `runtime-unsupported`. Runtime controller launches use the fleet's tmux session directly.
 
-`oversee register` uses `resolve` and `inspect` for the live-holder check. `oversee-succeed` uses inspection to read its caller. The runtime's `start-controller` and `request-transfer` open, retire and publish controllers through their own effects in the fleet's tmux session. [Controller start and adoption](../workflows/oversee.md#controller-start-and-adoption) names their request and outcome route. The host protocol does not choose accounts or own succession.
+`oversee register` uses `resolve` and `inspect` for the live-holder check, through `scripts/lib/overseer-launch.sh`. The runtime's `start-controller` and `request-transfer` open, retire and publish controllers through their own effects in the fleet's tmux session. [Controller start and adoption](../workflows/oversee.md#controller-start-and-adoption) names their request and outcome route. The host protocol does not choose accounts or own succession.
 
 ## Provider protocol
 

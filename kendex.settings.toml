@@ -95,11 +95,12 @@ ORCH_LANE_HOST_SHORT_MAX_CALLS = "4"
 # waits for a slot before it refuses as lane-host-busy with exit 69.
 ORCH_LANE_HOST_SHORT_BUSY_WAIT_SECS = "30"
 
-# The kendex owner program spends the Claude API grants first, as Pi lanes on anthropic/, until they expire on 2026-10-25; then Claude cloud, with Codex on its own accounts as fallback.
+# The kendex owner program spends a live Claude API grant first, as a Pi lane on anthropic/; a grant past its end reads walled, so the walk then takes Claude cloud, with Codex on its own accounts as fallback.
 ORCH_LANE_PREFERENCE = "pi:anthropic/claude-opus-5-5:high,claude@claude-cloud:claude-opus-5-5:high,codex:gpt-6.1-sol:high"
 
-# Accounts a cloud-session pick may hand a kendex lane; what an entry attests:
-# `lanes --help` § pick. The saved setup line is fail-open: it ends with
+# Accounts a cloud-session pick may hand a kendex lane: each entry states the
+# repository the account was given access to, and the pick refuses any other
+# account as cloud-repo-unset. The saved setup line is fail-open: it ends with
 # `|| echo kendex-install-failed`, so a cloud session can start without
 # kendex on PATH.
 ORCH_LANE_CLOUD_REPOS = "2claude=vanillagreencom/kendex,3claude=vanillagreencom/kendex,4claude=vanillagreencom/kendex,10claude=vanillagreencom/kendex,1claude=vanillagreencom/kendex,7claude=vanillagreencom/kendex,claude=vanillagreencom/kendex"
@@ -123,7 +124,8 @@ ORCH_WAKE_PROCESS = ""
 ORCH_WAKE_START = ""
 
 # The orch account judge refuses an account at or above 95 percent used on the
-# window it judges, the binding bucket or with --native-model that model's window.
+# window that binds the lane: with --native-model the fullest of the plan
+# windows and that model's own window, else the account's binding bucket.
 ORCH_LANE_MAX_PCT = "95"
 
 ORCH_LANE_CODEX_CREDIT_FLOOR = "0"
@@ -153,8 +155,8 @@ ORCH_WALL_RELAUNCH = "auto"
 ORCH_LANE_OUTPUT = "quiet"
 
 # Disk use, in percent of the volume holding a lane worktree's target/, at or
-# past which round-prune removes that worktree's Cargo output before a dev
-# round. Below the mark on a 30 GB sandbox more than 7.5 GB is free, above
+# past which the prune-round request removes that worktree's Cargo output at a
+# round's start. Below the mark on a 30 GB sandbox more than 7.5 GB is free, above
 # GUARD_MIN_FREE_GB, so a round the prune skips still passes tools/guard's
 # start floor and validates warm; one full run writes about 3.0 GiB.
 ORCH_ROUND_PRUNE_DISK_PCT = "75"
@@ -258,7 +260,8 @@ GUARD_EXHAUSTED_FREE_MB = "512"
 DEV_VALIDATE_RANGE_CMD = "tools/guard --range $DEV_VALIDATE_BASE"
 
 # Preview the same suite selection before launching validation; how a run
-# uses it: skills/orch/scripts/dev-validate-run. CI holds the full record.
+# uses it: `.agents/skills/orch/scripts/dev-validate-run --help`. CI holds the
+# full record.
 DEV_VALIDATE_SELECTION_CMD = "base=${DEV_VALIDATE_BASE:-}; if test x$base = x; then branch=$(.agents/skills/orch/scripts/resolve-base-branch .) && base=$(git merge-base HEAD origin/$branch) || exit; fi; tools/guard --selection --range $base"
 
 # The required CI context runs the tools/guard lanes through tools/ci-job-set.
@@ -273,12 +276,13 @@ DEV_VALIDATE_CI_CONTEXT = "CI"
 # each check to the tools/ci-job-set lane or shard that runs it.
 QUEUE_WAIT_REACH_CMD = "tools/ci-reach"
 
-# The prefix tools/guard prints each finding with; what a finding-free run
-# lets dev-validate-run answer: skills/orch/scripts/dev-validate-run.
+# The prefix tools/guard prints each finding with; a run whose log holds no
+# line with it is finding-free, and what that run may supply:
+# skills/orch/references/artifact-checks.md.
 DEV_VALIDATE_FINDING_PREFIX = "guard: "
 
 # The bound on either run, in whole seconds; what happens past it, and the
-# wait derived from it: skills/orch/scripts/dev-validate-run.
+# wait derived from it: `.agents/skills/orch/scripts/dev-validate-run --help`.
 DEV_VALIDATE_TIMEOUT_SECS = "3600"
 
 # Whether `tools/guard --full` runs the macOS and Windows cross-target checks

@@ -50,7 +50,7 @@ Before § 4, repeat the § 2 check on the tree the review left. `tier=small` con
 
 `ORCH_DELIVERY=push-base` takes [submit-pr.md § 2.1](submit-pr.md#21-base-publication), which stops an item with an open post-merge box. Keep § 3's local validation and internal review. Report its pushed commit and take the direct-delivery finalize route below.
 
-Run [start-worktree.md](start-worktree.md) § 4. Bot threads get two rounds at most: `orch-runtime state cap REVIEW_MAX_EXTERNAL_ROUNDS --item [ISSUE_ID]` reads a cap of 2 for this item. At that cap [review-pr-comments.md](review-pr-comments.md) answers every standing thread by reply. GitHub's approval and thread-resolution rules still apply.
+Run [start-worktree.md](start-worktree.md) § 4. Bot threads get two rounds at most: `orch-runtime state cap REVIEW_MAX_EXTERNAL_ROUNDS --item [ISSUE_ID]` holds it at 2 for this item even where a project setting raises it, and holds a lower setting as set. At that cap [review-pr-comments.md](review-pr-comments.md) answers every standing thread by reply. GitHub's approval and thread-resolution rules still apply.
 
 Whenever HEAD differs from the head the last § 2 check measured, repeat that check before the lane's next push and before [submit-pr.md](submit-pr.md) § 6.1 Merge Gates; a step that pushes before it returns, such as ci-fix, is checked on its return. `tier=small` continues; anything else escapes.
 
