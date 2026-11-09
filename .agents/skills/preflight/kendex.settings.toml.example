@@ -17,4 +17,4 @@ PREFLIGHT_MIGRATION_GLOBS = "**/migrations/V*__*.sql **/db/migration/V*__*.sql"
 # spaces. A new shell file anywhere below one, without the executable bit,
 # needs no strict-mode preamble, which would change the calling script's
 # mode. A value replaces the list shown here.
-PREFLIGHT_SOURCED_LIB_GLOBS = "**/scripts/lib"
+PREFLIGHT_SOURCED_LIB_GLOBS = "**/lib"
