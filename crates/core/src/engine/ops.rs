@@ -384,16 +384,18 @@ fn kept_removed(
     names: &[String],
     options: &PlanOptions,
 ) -> BTreeSet<(ItemKind, String)> {
-    let mut kept = recorded_edges(lock, names, options);
+    let mut kept = recorded_edges(manifest, lock, names, options);
     kept.extend(still_derived(env, scope, manifest, names, options));
     kept
 }
 
 /// What the record already says holds these installations up: an edge
-/// from a record that stays ([`staying`]), or from a set that is not
-/// uninstalled. Reading it costs no catalog, which is what makes a removal
-/// stick while a source is unreadable.
+/// from a requirer that stays ([`requirer_stays`]), or from a set that is
+/// not uninstalled. Reading it costs no catalog, which is what makes a
+/// removal stick while a source is unreadable. `manifest` is the edited
+/// one, without the declarations this removal drops.
 fn recorded_edges(
+    manifest: &Manifest,
     lock: &Lock,
     names: &[String],
     options: &PlanOptions,
@@ -401,14 +403,14 @@ fn recorded_edges(
     let removed = |kind: ItemKind, name: &str| {
         names.iter().any(|n| n == name) && options.named_for_removal(kind, name)
     };
-    let stays = staying(lock, options, &removed);
+    let stays = staying(manifest, lock, options, &removed);
     lock.entries
         .values()
         .filter(|entry| removed(entry.kind, &entry.name))
         .filter(|entry| {
             entry.reasons.iter().any(|reason| match reason {
                 Reason::Requested => false,
-                Reason::RequiredBy { by } => requirer_stays(lock, &stays, options, by),
+                Reason::RequiredBy { by } => requirer_stays(manifest, lock, &stays, by),
                 Reason::MemberOf { bundle } => !options.uninstalled_bundles.contains(&bundle.name),
             })
         })
@@ -424,6 +426,7 @@ fn recorded_edges(
 /// each other. A set member the removal takes is a step like any other: it
 /// stays where its own declaration or a requirer that stays keeps it.
 fn staying(
+    manifest: &Manifest,
     lock: &Lock,
     options: &PlanOptions,
     removed: &impl Fn(ItemKind, &str) -> bool,
@@ -439,7 +442,7 @@ fn staying(
                     && (entry.reasons.is_empty()
                         || entry.reasons.iter().any(|reason| match reason {
                             Reason::Requested => true,
-                            Reason::RequiredBy { by } => requirer_stays(lock, &stays, options, by),
+                            Reason::RequiredBy { by } => requirer_stays(manifest, lock, &stays, by),
                             Reason::MemberOf { bundle } => {
                                 !options.uninstalled_bundles.contains(&bundle.name)
                             }
@@ -454,20 +457,29 @@ fn staying(
     }
 }
 
-/// Whether the requirer an edge names stays. A requirer withheld from this
-/// tool has no record here, though its edge does: it stays unless the
-/// removal names it.
+/// Whether the requirer an edge names stays. The walk records a hook's
+/// edge before it withholds the hook, so a requirer withheld from this tool
+/// has no record here though its edge does. It stays where the edited
+/// manifest still declares it, whose next walk records that edge again, or
+/// where a record of it on another tool stays. Withheld from every tool and
+/// not declared, it left
+/// no reason on the lock: a set that carries it, or a skill whose
+/// `dependencies.hooks` brings it, is the catalog's to say, which
+/// [`still_derived`] reads.
 fn requirer_stays(
+    manifest: &Manifest,
     lock: &Lock,
     stays: &BTreeSet<String>,
-    options: &PlanOptions,
     by: &InstallRef,
 ) -> bool {
     let key = entry_key(by.kind, &by.name, by.harness);
-    match lock.entries.contains_key(&key) {
-        true => stays.contains(&key),
-        false => !options.named_for_removal(by.kind, &by.name),
+    if lock.entries.contains_key(&key) {
+        return stays.contains(&key);
     }
+    manifest.declared(by.kind).contains_key(&by.name)
+        || HarnessId::ALL
+            .iter()
+            .any(|harness| stays.contains(&entry_key(by.kind, &by.name, *harness)))
 }
 
 /// What the catalogs say the manifest still implies, now that the
