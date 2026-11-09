@@ -236,14 +236,19 @@ Attachment failures on create/update:
   non-image {url, repo_path} pairs), failed_path and remaining_files: images
   uploaded but not yet embedded, then the failed and unattempted suffix, in
   request order. partial is true when pending records or such images exist.
-  A failed create upload creates no issue.
+  A failed upload sends no issueCreate or issueUpdate: create makes no issue
+  and update writes none of its field changes.
   Failed attachmentCreate returns the attempted non-image set as retryable
   pending_attachments, with partial:true and empty confirmed attachments.
   Both failures retain their nonzero status and safe stderr cause, and return
-  JSON even with --format. To resume, extract .pending_attachments into a file
-  and run issues update ID --attach-uploaded FILE with --attach for each of
-  remaining_files; after a failed create upload, first create the issue
-  without --attach and use its ID. Same issue/URL pairs may be retried.
+  JSON even with --format.
+  Resume a failed upload with issues update ID, repeating the original update
+  options, --attach for each of remaining_files, and --attach-uploaded FILE
+  holding .pending_attachments only when that array is nonempty (an empty
+  array is refused). After a failed create upload, first create the issue
+  with its original options and no --attach, then resume on its ID. Resume a
+  failed attachmentCreate with issues update ID --attach-uploaded FILE holding
+  its .pending_attachments; same issue/URL pairs may be retried.
   Caller-retained pairs establish no upload provenance. This does not recover
   failed issueCreate/issueUpdate mutations or historical URLs absent from
   retained output.

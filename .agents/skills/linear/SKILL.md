@@ -102,7 +102,7 @@ Under a declared project map, `issues create`, `issues update --project` and `is
 
 Issue results report `attachments_requested` and ordered `{url, repo_path}` receipts in `attachments` after all bindings succeed. Creates/field updates need default JSON for receipts; successful `--format=ids` creates print only the ID.
 
-A failed `issues create` or `issues update` upload or binding exits nonzero with JSON naming what to resume; a `comments create` upload failure only exits nonzero with its stderr cause. Resume with `issues update ID --attach-uploaded FILE`, the retained `pending_attachments`, plus `--attach` for each of `remaining_files`; retained pairs are not uploaded again. A failed create upload creates no issue: create it without `--attach`, then resume on its ID. `issues --help` defines the failure JSON and input validation.
+A failed `issues create` or `issues update` upload or binding exits nonzero with JSON naming what to resume, and `issues --help` gives the resume route; a failed upload writes no issue fields. A `comments create` upload failure only exits nonzero with its stderr cause.
 
 ### Resolve a cited artifact
 
