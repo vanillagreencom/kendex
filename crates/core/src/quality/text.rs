@@ -316,10 +316,7 @@ fn tree_docs(
     let placed: Vec<Placed> = files
         .into_iter()
         .map(|file| {
-            let location = match root {
-                "" => crate::paths::slashed(&file.path),
-                root => format!("{root}/{}", crate::paths::slashed(&file.path)),
-            };
+            let location = super::tree_file_location(root, &crate::paths::slashed(&file.path));
             let supports = supporting(&file.path);
             let cleaned = file.text.map(|written| {
                 let text = clean(location.clone(), &written, letters(&location, supports));

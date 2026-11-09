@@ -55,13 +55,14 @@ fn accepting(kind: ItemKind, name: &str, path: &str) -> Allowance {
     }
 }
 
-fn skill(script: &str, publisher: Publisher, allowance: &Allowance) -> AuditResult {
+/// The fixture skill, its tree at `root` in its catalog.
+fn skill(root: &str, script: &str, publisher: Publisher, allowance: &Allowance) -> AuditResult {
     audit_with(
         AuditInput {
             kind: ItemKind::Skill,
             name: "launch".to_owned(),
             harness: None,
-            location: "skills/launch".to_owned(),
+            location: root.to_owned(),
             publisher,
             content: observe::tree_content_from_bytes(&[
                 (PathBuf::from("SKILL.md"), SKILL_MD.as_bytes().to_vec()),
@@ -205,7 +206,7 @@ fn rows() -> Vec<Row<'static>> {
 fn a_finding_is_accepted_only_for_kendex_at_the_exact_text_the_table_names() {
     let at = "skills/launch/scripts/launch.sh";
     for (row, script, publisher, allowance, flagged, accepted) in rows() {
-        let result = skill(script, publisher, &allowance);
+        let result = skill("skills/launch", script, publisher, &allowance);
         let lines = |findings: &[kendex_core::quality::Finding]| -> Vec<u32> {
             placed(findings)
                 .into_iter()
@@ -233,6 +234,21 @@ fn a_finding_is_accepted_only_for_kendex_at_the_exact_text_the_table_names() {
         };
         assert_eq!(result.safety.score, score, "{row}");
     }
+}
+
+/// A package at its catalog's root has an empty path, and a row still
+/// names a file of its tree by the file's path inside the package.
+#[test]
+fn a_package_at_the_catalog_root_is_accepted_at_its_file() {
+    let table = accepting(ItemKind::Skill, "launch", "scripts/launch.sh");
+    let result = skill("", SCRIPT, Publisher::Kendex, &table);
+    assert_eq!(placed(&result.findings), vec![], "{:#?}", result.findings);
+    assert_eq!(
+        placed(&result.accepted),
+        vec![("scripts/launch.sh", Some(2))],
+        "{:#?}",
+        result.accepted
+    );
 }
 
 /// A row names a file inside a tree and nothing else: a package that is

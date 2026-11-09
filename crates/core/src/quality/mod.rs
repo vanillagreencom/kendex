@@ -326,6 +326,30 @@ pub fn place_within<'a>(location: &'a str, root: &str) -> Option<&'a str> {
     (rest.is_empty() || rest.starts_with(['/', ' '])).then_some(rest)
 }
 
+/// The location a tree's file is read and cited at: `file`, its slashed
+/// path inside the tree, joined onto the tree's `root`. A tree at the
+/// catalog root has an empty root, so the file's own path is the whole
+/// location: `SKILL.md`, never `/SKILL.md`, which reads as a path from the
+/// filesystem root.
+pub(crate) fn tree_file_location(root: &str, file: &str) -> String {
+    match root {
+        "" => file.to_owned(),
+        root => format!("{root}/{file}"),
+    }
+}
+
+/// The inverse of [`tree_file_location`]: the path inside the tree rooted
+/// at `root` of the file `location` names. `None` where `location` names
+/// no file of that tree: another root, the root itself, or a labelled
+/// document beside a hook's script, whose ` (command)` label opens with a
+/// space even where the root is empty.
+pub(crate) fn tree_file_within<'a>(location: &'a str, root: &str) -> Option<&'a str> {
+    match root {
+        "" => (!location.is_empty() && !location.starts_with(' ')).then_some(location),
+        root => place_within(location, root)?.strip_prefix('/'),
+    }
+}
+
 /// An input after deobfuscation, with its text split into classified lines.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Prepared {

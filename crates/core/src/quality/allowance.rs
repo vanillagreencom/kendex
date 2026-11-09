@@ -30,7 +30,7 @@ use crate::model::ItemKind;
 use crate::source::SourceConfig;
 use crate::source_read::SealedSource;
 
-use super::{Doc, Finding, Prepared, RULESET_VERSION, place_within};
+use super::{Doc, Finding, Prepared, RULESET_VERSION, tree_file_within};
 
 /// The compiled-in table, as text: the cache key reads its digest.
 pub const ALLOWANCE_TEXT: &str = include_str!("allowance.toml");
@@ -343,7 +343,7 @@ impl AcceptedFile {
 /// values, a config entry.
 fn located<'a>(prepared: &'a Prepared, location: &str) -> Option<(&'a str, &'a Doc)> {
     let doc = prepared.docs.iter().find(|doc| doc.location == location)?;
-    let inside = place_within(&doc.location, &prepared.input.location)?.strip_prefix('/')?;
+    let inside = tree_file_within(&doc.location, &prepared.input.location)?;
     Some((inside, doc))
 }
 

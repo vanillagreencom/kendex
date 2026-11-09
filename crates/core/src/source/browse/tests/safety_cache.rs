@@ -36,11 +36,17 @@ pub(super) fn commit(dir: &Path, message: &str) {
 /// An upstream repository whose one skill scores below 100 without any
 /// Critical finding, subscribed as `cat` and already synced into the store.
 pub(super) fn fixture() -> (tempfile::TempDir, Env, Scope) {
+    fixture_at("skills/gh")
+}
+
+/// The same, with the skill at `dir` inside the repository; an empty `dir`
+/// makes the repository one skill, its SKILL.md at the catalog root.
+fn fixture_at(dir: &str) -> (tempfile::TempDir, Env, Scope) {
     let tmp = tempfile::tempdir().unwrap();
     let upstream = tmp.path().join("base/owner/repo");
-    fs::create_dir_all(upstream.join("skills/gh")).unwrap();
+    fs::create_dir_all(upstream.join(dir)).unwrap();
     fs::write(
-        upstream.join("skills/gh/SKILL.md"),
+        upstream.join(dir).join("SKILL.md"),
         "---\nname: gh\n---\nchmod 777 /tmp/x\n",
     )
     .unwrap();
@@ -103,29 +109,34 @@ fn agent_safety(env: &Env, scope: &Scope) -> PackageSafety {
 /// The preview scores the tree a copy installs, whose SKILL.md carries the
 /// installed key set alone, and cites what it finds in the catalog's file:
 /// a body line at the line the catalog holds it at, and nothing in a key
-/// the copy never carries. The same reading the plan's scoring cites by.
+/// the copy never carries. The same reading the plan's scoring cites by,
+/// wherever the skill sits in its catalog: a skill at the catalog root is
+/// cited at `SKILL.md`, with no empty path before it.
 #[test]
 fn a_preview_scores_the_installed_key_set_and_cites_the_catalog_line() {
-    let (tmp, env, scope) = fixture();
-    let upstream = tmp.path().join("base/owner/repo");
-    fs::write(
-        upstream.join("skills/gh/SKILL.md"),
-        "---\nname: gh\ndescription: about gh\nsummary: chmod 777 /tmp/y\ntags: [review]\n---\nIntro.\nchmod 777 /tmp/x\n",
-    )
-    .unwrap();
-    commit(&upstream, "two");
-    crate::remote::sync(&env, REPO, None).unwrap();
+    let rows = [("skills/gh", "skills/gh/SKILL.md"), ("", "SKILL.md")];
+    for (dir, file) in rows {
+        let (tmp, env, scope) = fixture_at(dir);
+        let upstream = tmp.path().join("base/owner/repo");
+        fs::write(
+            upstream.join(file),
+            "---\nname: gh\ndescription: about gh\nsummary: chmod 777 /tmp/y\ntags: [review]\n---\nIntro.\nchmod 777 /tmp/x\n",
+        )
+        .unwrap();
+        commit(&upstream, "two");
+        crate::remote::sync(&env, REPO, None).unwrap();
 
-    let scored = score(&env, &scope);
-    let cited: Vec<(&str, Option<u32>)> = scored
-        .advisory
-        .findings
-        .iter()
-        .chain(&scored.advisory.mentions)
-        .chain(&scored.advisory.accepted)
-        .map(|finding| (finding.location.as_str(), finding.line))
-        .collect();
-    assert_eq!(cited, [("skills/gh/SKILL.md", Some(8))], "{scored:?}");
+        let scored = score(&env, &scope);
+        let cited: Vec<(&str, Option<u32>)> = scored
+            .advisory
+            .findings
+            .iter()
+            .chain(&scored.advisory.mentions)
+            .chain(&scored.advisory.accepted)
+            .map(|finding| (finding.location.as_str(), finding.line))
+            .collect();
+        assert_eq!(cited, [(file, Some(8))], "{dir:?}: {scored:?}");
+    }
 }
 
 #[test]
