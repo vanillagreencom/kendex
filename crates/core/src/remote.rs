@@ -355,7 +355,7 @@ pub fn last_fetched(env: &Env, manifest: &Manifest) -> Option<u64> {
 
 /// The sources some declaration actually names — items, and the bundles
 /// that carry them.
-fn sources_in_use(manifest: &Manifest) -> std::collections::BTreeSet<&str> {
+pub(crate) fn sources_in_use(manifest: &Manifest) -> std::collections::BTreeSet<&str> {
     crate::model::ItemKind::ALL
         .iter()
         .flat_map(|kind| manifest.declared(*kind).values())

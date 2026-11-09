@@ -528,23 +528,31 @@ fn still_derived(
 }
 
 /// The catalogs of the edited manifest this removal could not read: each
-/// enabled subscription that does not resolve, or that [`still_derived`]
-/// found short (`unreadable`). Any of them may hold what keeps a requirer,
-/// so one unread is enough for [`recorded_edges`] to fall back. A reserved
-/// name is no catalog, and a subscription switched off is read by nothing,
-/// so neither is asked: a declaration from either never resolves Ready,
-/// and counting it would put every removal in that scope on the fallback.
+/// one it subscribes to or declares an item or a set from, where that
+/// catalog does not resolve, or [`still_derived`] found it short
+/// (`unreadable`). Any of them may hold what keeps a requirer, so one
+/// unread is enough for [`recorded_edges`] to fall back. The local and
+/// in-place catalogs count like any subscription. `builtin` is no
+/// catalog, and a subscription switched off is read by nothing, so
+/// neither is asked: neither ever resolves Ready, and counting it would
+/// put every removal in that scope on the fallback.
 fn unread_catalogs(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
     unreadable: &BTreeSet<String>,
 ) -> BTreeSet<String> {
-    manifest
-        .sources
-        .iter()
-        .filter(|(name, decl)| decl.enabled && !manifest::is_reserved_source(name))
-        .map(|(name, _)| name.as_str())
+    let mut catalogs = crate::remote::sources_in_use(manifest);
+    catalogs.extend(manifest.sources.keys().map(String::as_str));
+    catalogs
+        .into_iter()
+        .filter(|source| {
+            *source != manifest::BUILTIN_SOURCE_NAME
+                && manifest
+                    .sources
+                    .get(*source)
+                    .is_none_or(|decl| decl.enabled)
+        })
         .filter(|source| {
             unreadable.contains(*source)
                 || !matches!(

@@ -75,6 +75,15 @@ const LONE_JUDGE: &str = "#!/usr/bin/env bash\n# ---\n# name: judge\n# event: Pr
 const LEAD_AND_GUARDS: &str =
     "[skills.guards]\nsource = \"cat\"\n\n[hooks.lead]\nsource = \"cat\"\n";
 
+/// Where other's skills and hooks sit.
+#[derive(Clone, Copy, Debug)]
+enum OtherAt {
+    /// A catalog the manifest subscribes to beside cat.
+    Subscription,
+    /// The scope's local catalog, which adopt declares items from.
+    Local,
+}
+
 /// Which catalog is unreadable in an offline run, and how.
 #[derive(Clone, Copy, Debug)]
 enum Unread {
@@ -94,11 +103,12 @@ struct Row {
     /// The members line of the catalog's set.
     set: &'static str,
     remove: &'static [&'static str],
-    /// Skills a second catalog, other, offers. Where there are any, the
-    /// manifest subscribes to other beside cat.
+    /// Skills a second catalog, other, offers. Where there are any and
+    /// other is a subscription, the manifest subscribes to it beside cat.
     other: &'static [(&'static str, &'static str)],
     /// Hooks other offers.
     other_hooks: &'static [(&'static str, &'static str)],
+    other_at: OtherAt,
     /// The members line of other's set aset, which other offers only where
     /// this is not empty.
     other_set: &'static str,
@@ -137,6 +147,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["judge", "guards"],
             other: &[],
             other_hooks: &[],
+            other_at: OtherAt::Subscription,
             other_set: "",
             edit: "",
             unread: &[Unread::Moved],
@@ -154,6 +165,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["guards"],
             other: &[],
             other_hooks: &[],
+            other_at: OtherAt::Subscription,
             other_set: "",
             edit: "",
             unread: &[Unread::Moved],
@@ -176,6 +188,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["guards"],
             other: &[],
             other_hooks: &[],
+            other_at: OtherAt::Subscription,
             other_set: "",
             edit: "",
             unread: &[Unread::Moved, Unread::Unparsable],
@@ -194,6 +207,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["guards"],
             other: &[],
             other_hooks: &[],
+            other_at: OtherAt::Subscription,
             other_set: "",
             edit: "",
             unread: &[Unread::Moved],
@@ -219,6 +233,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["set", "docs"],
             other: &[],
             other_hooks: &[],
+            other_at: OtherAt::Subscription,
             other_set: "",
             edit: "",
             unread: &[Unread::Moved],
@@ -241,6 +256,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["gate"],
             other: &[],
             other_hooks: &[],
+            other_at: OtherAt::Subscription,
             other_set: "",
             edit: "",
             unread: &[Unread::Moved],
@@ -259,13 +275,16 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["gate"],
             other: &[],
             other_hooks: &[],
+            other_at: OtherAt::Subscription,
             other_set: "",
             edit: "",
-            unread: &[Unread::Moved],
+            // Online only: offline, cat alone puts the removal on the name
+            // answer, as in the row above.
+            unread: &[],
             premise: &[("skill:hub:claude", true), ("skill:lane:claude", true)],
             records: &[],
             suppressed: &[],
-            suppressed_offline: &[(ItemKind::Skill, "gate")],
+            suppressed_offline: &[],
         },
         Row {
             what: "a cycle a declared member holds up",
@@ -277,6 +296,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["gate"],
             other: &[],
             other_hooks: &[],
+            other_at: OtherAt::Subscription,
             other_set: "",
             edit: "",
             unread: &[Unread::Moved],
@@ -294,6 +314,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["set", "docs"],
             other: &[],
             other_hooks: &[],
+            other_at: OtherAt::Subscription,
             other_set: "",
             edit: "",
             unread: &[Unread::Moved],
@@ -311,6 +332,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["set", "docs"],
             other: &[],
             other_hooks: &[],
+            other_at: OtherAt::Subscription,
             other_set: "",
             edit: "",
             unread: &[Unread::Moved],
@@ -329,6 +351,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["deep"],
             other: &[],
             other_hooks: &[],
+            other_at: OtherAt::Subscription,
             other_set: "",
             edit: "",
             unread: &[Unread::Moved],
@@ -346,6 +369,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["guards"],
             other: &[("guards", "")],
             other_hooks: &[],
+            other_at: OtherAt::Subscription,
             other_set: "",
             edit: "",
             unread: &[Unread::Moved],
@@ -368,6 +392,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["lead", "guards"],
             other: &[],
             other_hooks: &[],
+            other_at: OtherAt::Subscription,
             other_set: "",
             edit: "\n[hooks.judge]\nsource = \"cat\"\n",
             unread: &[Unread::Moved],
@@ -392,6 +417,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["lead", "guards"],
             other: &[],
             other_hooks: &[],
+            other_at: OtherAt::Subscription,
             other_set: "",
             edit: "\n[bundles.set]\nsource = \"cat\"\n",
             unread: &[Unread::Moved],
@@ -416,6 +442,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["aset", "x"],
             other: &NEEDS_X,
             other_hooks: &[],
+            other_at: OtherAt::Subscription,
             other_set: "skills = [\"guards\"]",
             edit: "",
             // Offline the removal names guards, aset's recorded member, so
@@ -452,8 +479,34 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["lead", "guards"],
             other: &[("guards", "")],
             other_hooks: &[("judge", LONE_JUDGE)],
+            other_at: OtherAt::Subscription,
             other_set: "",
             edit: "\n[hooks.judge]\nsource = \"other\"\n",
+            unread: &[Unread::OtherMoved],
+            premise: &[("hook:judge:claude", true), ("hook:judge:codex", true)],
+            records: &[
+                ("hook:judge:claude", "cat", &["required-by cat Hook lead"]),
+                (
+                    "skill:guards:claude",
+                    "cat",
+                    &["requested", "required-by cat Hook judge"],
+                ),
+            ],
+            suppressed: &[(ItemKind::Skill, "guards")],
+            suppressed_offline: &[(ItemKind::Skill, "guards")],
+        },
+        Row {
+            what: "a requirer from the local catalog declared since the last apply",
+            skills: &[("guards", "")],
+            hooks: &[("lead", LEAD), ("judge", LONE_JUDGE)],
+            declared: LEAD_AND_GUARDS.to_owned(),
+            set: CARRIES_DEEP,
+            remove: &["lead", "guards"],
+            other: &[("guards", "")],
+            other_hooks: &[("judge", LONE_JUDGE)],
+            other_at: OtherAt::Local,
+            other_set: "",
+            edit: "\n[hooks.judge]\nsource = \"local\"\n",
             unread: &[Unread::OtherMoved],
             premise: &[("hook:judge:claude", true), ("hook:judge:codex", true)],
             records: &[
@@ -476,6 +529,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["lead", "guards"],
             other: &[("guards", "")],
             other_hooks: &[("judge", LONE_JUDGE)],
+            other_at: OtherAt::Subscription,
             other_set: "hooks = [\"judge\"]",
             edit: "\n[bundles.aset]\nsource = \"other\"\n",
             unread: &[Unread::OtherMoved],
@@ -510,7 +564,10 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
                 row.set
             );
             fs::write(&control, &catalog).unwrap();
-            let other = f.source.parent().unwrap().join("other");
+            let other = match row.other_at {
+                OtherAt::Subscription => f.source.parent().unwrap().join("other"),
+                OtherAt::Local => kendex_core::source::local_source_root(&f.env, &f.scope),
+            };
             if !row.other.is_empty() {
                 for (name, dependencies) in row.other {
                     skill(&other, name, dependencies);
@@ -527,7 +584,9 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
                     ));
                 }
                 fs::write(other.join("kendex.toml"), catalog).unwrap();
-                declare_two(&f, &other, &row.declared);
+                if let OtherAt::Subscription = row.other_at {
+                    declare_two(&f, &other, &row.declared);
+                }
             }
             apply_now(&f);
             let lock = lock_of(&f);
