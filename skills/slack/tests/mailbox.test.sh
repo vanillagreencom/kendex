@@ -8,7 +8,7 @@ set -uo pipefail
 # The driver imports the production runner. Its parent bounds even a pump
 # that never yields; the target's completion marker proves excess was drained.
 cat > "$SK_TMP/runner-check.py" <<'PY'
-import json, os, pathlib, signal, socket, subprocess, sys, time, tracemalloc
+import json, os, pathlib, signal, socket, subprocess, sys, threading, time, tracemalloc
 sys.path.insert(0, sys.argv[1])
 from mailbox import LaneMail, RunTimeout, run_bounded
 import mailbox
@@ -94,29 +94,38 @@ if os.fork() == 0:
         listener.bind(('127.0.0.1', 0))
         listener.listen()
         listener.settimeout(max(0, float(sys.argv[4]) - time.monotonic()))
-        original_read, original_clock = mailbox.os.read, time.monotonic
-        started, ready = original_clock(), False
-        # Freeze bootstrap timing, then await the target's readiness before
-        # checking the run budget. The parent's deadline bounds startup.
-        mailbox.time.monotonic = lambda: original_clock() if ready else started
-        def ready_read(fd, n):
-            global hold
-            global ready
-            value = original_read(fd, n)
-            if value[:1] == b'P':
-                ready = True
+        original_clock = time.monotonic
+        started, ready = original_clock(), threading.Event()
+        hold, readiness_error = None, None
+        def receive_ready():
+            global hold, readiness_error
+            try:
                 hold = listener.accept()[0]
                 hold.settimeout(max(0, float(sys.argv[4]) - original_clock()))
                 assert hold.recv(1) == b'R', "descendant readiness"
-            return value
+            except BaseException as error:
+                readiness_error = error
+            finally:
+                ready.set()
+        # The pump must finish writing the request before the target can
+        # acknowledge readiness. Keep that wait outside the pump.
+        mailbox.time.monotonic = lambda: original_clock() if ready.is_set() else started
+        receiver = threading.Thread(target=receive_ready)
+        receiver.start()
         timeout_error = None
-        mailbox.os.read = ready_read
         try:
-            run_bounded([sys.executable,"-c",program,str(listener.getsockname()[1]),sys.argv[5]],root,.2,command_output_limit=C)
+            # Exceed a 64 KiB pipe even with a small inherited environment.
+            env = dict(os.environ, RUNNER_REQUEST_PADDING="z" * 100000)
+            run_bounded([sys.executable,"-c",program,str(listener.getsockname()[1]),sys.argv[5]],root,.2,env=env,command_output_limit=C)
         except RunTimeout as error:
             timeout_error = error
         finally:
-            mailbox.os.read, mailbox.time.monotonic = original_read, original_clock
+            mailbox.time.monotonic = original_clock
+            receiver.join()
+        if readiness_error is not None:
+            if hold is not None:
+                hold.close()
+            raise readiness_error
         with hold:
             hold.settimeout(1)
             ended = False
@@ -186,6 +195,26 @@ PY
 runner_check contracts slow-control 1.1 > "$SK_TMP/slow-control.out" 2>&1
 assert_eq "$?" 1 'control: the fixed accept window rejects a slow descendant'
 assert_has "$(cat "$SK_TMP/slow-control.out")" 'TimeoutError: timed out' 'the slow-start control reaches the accept deadline'
+python3 - "$SK_TMP/runner-check.py" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+old = '        receiver.start()\n'
+assert s.count(old) == 1
+new = '''        original_read = mailbox.os.read
+        def blocking_read(fd, n):
+            value = original_read(fd, n)
+            if value[:1] == b'P':
+                receiver.start()
+                receiver.join()
+            return value
+        mailbox.os.read = blocking_read
+'''
+p.write_text(s.replace(old, new))
+PY
+runner_check contracts backpressure-control > "$SK_TMP/backpressure-control.out" 2>&1
+assert_eq "$?" 1 'control: waiting inside the pump prevents a large request from reaching the target'
+assert_has "$(cat "$SK_TMP/backpressure-control.out")" 'TimeoutError: timed out' 'the backpressure control reaches the readiness deadline'
 mv "$SK_TMP/runner-check-ready.py" "$SK_TMP/runner-check.py"
 runner_check deadline
 assert_eq "$?" 0 'bootstrap setup consumes the original execution deadline'
