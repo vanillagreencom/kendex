@@ -559,8 +559,7 @@ want_package() { # PACKAGE
     skills/linear) want_shard linear linear-controls ;;
     skills/bot-instructions | skills/preflight) want_shard linear ;;
     skills/worktree) want_shard worktree worktree-restack ;;
-    # macOS runs no `jarvis` leg: `rest` keeps the family there.
-    skills/jarvis) want_shard jarvis rest ;;
+    skills/jarvis) want_shard jarvis ;;
     skills/slack) want_shard slack ;;
     skills/mailbox) want_shard mailbox ;;
     skills/deep-research)

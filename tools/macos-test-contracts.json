@@ -6,8 +6,7 @@
     "worktree-restack",
     "guards-scans",
     "guards-tools-tail",
-    "guards-commit-tail",
-    "jarvis"
+    "guards-commit-tail"
   ],
   "native_replacements": {
     "skills/github/tests/pr-merge.test.sh": "skills/github/tests/native-contracts.test.sh",
