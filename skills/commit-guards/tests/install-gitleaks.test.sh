@@ -51,7 +51,9 @@ FIXTURE_SHA="${FIXTURE_SHA%% *}"
 # and a recorded run of that curl against a local 504 server: only 408, 429,
 # 500, 502, 503 and 504 retry; the wait is --retry-delay, else 1 s doubling up
 # to 600; the max time is checked after an attempt, before its wait; -f exits
-# 22 and -w names the last attempt's status. uname answers UNAME_S and UNAME_M.
+# 22 and -w names the last attempt's status. An option it does not model exits
+# 2 before any attempt, so a changed curl call fails the suite rather than
+# going unmodeled. uname answers UNAME_S and UNAME_M.
 FAKE_BIN="$TMP_ROOT/fake-bin"
 mkdir -p "$FAKE_BIN"
 cat >"$FAKE_BIN/curl" <<'SH'
@@ -60,12 +62,14 @@ set -eu
 out="" url="" write="" retries=0 delay=0 max=0
 while [ $# -gt 0 ]; do
   case "$1" in
+    -fsSL) ;;
     -o) out=$2; shift ;;
     -w) write=$2; shift ;;
     --retry) retries=$2; shift ;;
     --retry-delay) delay=$2; shift ;;
     --retry-max-time) max=$2; shift ;;
     https://*) url=$1 ;;
+    *) printf 'fake curl: unmodeled %s\n' "$1" >&2; exit 2 ;;
   esac
   shift
 done
@@ -131,6 +135,16 @@ run() { # DIR [NAME=VALUE...] — the exit status and the first stable line; the
 }
 # last_try: the virtual second of the last download attempt.
 last_try() { awk 'END { print $1 }' "$TRY_LOG"; }
+# The script's stated window: retries end by RETRY_SECS, and the last attempt
+# starts at most one RETRY_DELAY_SECS later.
+script_value() { # NAME — the NAME=<digits> assignment in the shipped script
+  local v
+  v="$(awk -F= -v k="$1" '$1 == k && $2 ~ /^[0-9]+$/ { print $2; n++ } END { exit n != 1 }' "$SCRIPTS/install-gitleaks")" \
+    || { echo "harness: $1 has no single numeric assignment in install-gitleaks" >&2; exit 2; }
+  printf '%s' "$v"
+}
+WINDOW_END=$(($(script_value RETRY_SECS) + $(script_value RETRY_DELAY_SECS)))
+in_window() { [ "$(last_try)" -le "$WINDOW_END" ] && echo yes || echo no; }
 
 echo "=== a pinned archive installs once ==="
 copy pinned "$LINUX_PIN" "$FIXTURE_SHA" "$DARWIN_ARM_PIN" "$FIXTURE_SHA"
@@ -187,7 +201,7 @@ assert_eq "an outage past the window is refused" \
 last_status() { awk '!/^install-gitleaks: / && /(^|[^0-9])504([^0-9]|$)/ { print "504"; exit }' "$OUT_LOG"; }
 assert_eq "naming the last status" "504" "$(last_status)"
 assert_eq "and leaves no binary" "absent" "$([ -e "$D/gitleaks" ] && echo present || echo absent)"
-assert_eq "giving up within ten minutes" "yes" "$([ "$(last_try)" -le 600 ] && echo yes || echo no)"
+assert_eq "giving up by the window plus one retry wait" "yes" "$(in_window)"
 
 echo "=== help and a dash-led DIR touch nothing ==="
 # in_cwd DIR ARG: run ARG from an empty working directory DIR, then report the
@@ -224,13 +238,15 @@ in_cwd "$TMP_ROOT/no-dash-cwd" -gitleaks >/dev/null
 assert_eq "control: without the dash-led refusal the DIR is created and the release fetched" \
   "-gitleaks https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz" \
   "$(ls -A -- "$TMP_ROOT/no-dash-cwd") $(cat -- "$CURL_LOG")"
-copy old-retry "$LINUX_PIN" "$FIXTURE_SHA" '--retry "$RETRY_SECS" --retry-delay 10 --retry-max-time "$RETRY_SECS"' '--retry 3'
+copy old-retry "$LINUX_PIN" "$FIXTURE_SHA" '--retry "$RETRY_SECS" --retry-delay "$RETRY_DELAY_SECS" --retry-max-time "$RETRY_SECS"' '--retry 3'
 assert_eq "control: the old curl --retry 3 fails a two-minute outage" \
   "rc=1 install-gitleaks: download=gitleaks_8.30.1_linux_x64.tar.gz" "$(run "$TMP_ROOT/old-retry-dir" OUTAGE_SECS=120)"
 copy no-max "$LINUX_PIN" "$FIXTURE_SHA" '--retry-max-time "$RETRY_SECS"' '--retry-max-time 0'
 run "$TMP_ROOT/no-max-dir" OUTAGE_SECS=100000 >/dev/null
-assert_eq "control: without the max time a long outage retries past ten minutes" \
-  "no" "$([ "$(last_try)" -le 600 ] && echo yes || echo no)"
+assert_eq "control: without the max time a long outage retries past the window" "no" "$(in_window)"
+copy backoff "$LINUX_PIN" "$FIXTURE_SHA" '--retry-delay "$RETRY_DELAY_SECS"' '--retry-delay "$RETRY_DELAY_SECS" --retry-delay 0'
+run "$TMP_ROOT/backoff-dir" OUTAGE_SECS=100000 >/dev/null
+assert_eq "control: curl's doubling backoff retries past the window" "no" "$(in_window)"
 copy no-status "$LINUX_PIN" "$FIXTURE_SHA" 'last HTTP status ${code:-000}' 'last HTTP status unread'
 run "$TMP_ROOT/no-status-dir" OUTAGE_SECS=100000 >/dev/null
 assert_eq "control: an explanation without the status does not name 504" "" "$(last_status)"

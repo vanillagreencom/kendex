@@ -17,8 +17,14 @@ set -euo pipefail
 VERSION=8.30.1
 # How long the download keeps retrying a transient failure, curl's --retry set
 # (a timeout or an HTTP 408, 429, 500, 502, 503 or 504), before it fails: long
-# enough to ride out a short outage of GitHub's release downloads.
-RETRY_SECS=300
+# enough to ride out a short outage of GitHub's release downloads. Its CI
+# callers, the bot-instructions job of .github/workflows/skill-tests.yml and
+# the ci job of skills/harness-ci/templates/ci.yml, run it inside a
+# timeout-minutes: 5 job, so the last attempt, which starts by RETRY_SECS plus
+# one RETRY_DELAY_SECS, must leave that job time to print this script's own
+# failure and run its later steps.
+RETRY_SECS=150
+RETRY_DELAY_SECS=10
 # The SHA-256 of each release archive, from the release's own checksums file.
 sha_for() { # ASSET — its pinned digest on stdout; 1 for an asset with no pin
   case "$1" in
@@ -79,7 +85,7 @@ trap 'rm -rf -- "$work"' EXIT
 # overshoot the window by minutes. Each retry waits at least a second, so a
 # --retry count of RETRY_SECS never ends the window before --retry-max-time.
 start=$SECONDS
-code="$(curl -fsSL --retry "$RETRY_SECS" --retry-delay 10 --retry-max-time "$RETRY_SECS" -w '%{http_code}' -o "$work/$asset" \
+code="$(curl -fsSL --retry "$RETRY_SECS" --retry-delay "$RETRY_DELAY_SECS" --retry-max-time "$RETRY_SECS" -w '%{http_code}' -o "$work/$asset" \
   "https://github.com/gitleaks/gitleaks/releases/download/v$VERSION/$asset")" \
   || fail download "$asset" "The release archive could not be downloaded: curl exit $?, last HTTP status ${code:-000} (000 is no response), after $((SECONDS - start)) s of retrying transient failures for up to $RETRY_SECS s."
 got="$(digest "$work/$asset")" || fail digest "$asset" "The archive's digest could not be computed."
