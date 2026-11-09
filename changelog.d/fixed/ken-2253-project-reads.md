@@ -1,0 +1,1 @@
+- Avoid repeated project-change scans when startup reads the same project list again.

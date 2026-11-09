@@ -143,6 +143,65 @@ describe("the project registry on window focus", () => {
     await settle();
   }
 
+  it("scans once at startup and only scans changed project lists on settings publication", async () => {
+    vi.mocked(commands.getSettings).mockImplementation(async () =>
+      settingsRead([NEW_PROJECT]),
+    );
+    mount(<Startup />);
+    await settle();
+    expect(commands.projectChangesScan).toHaveBeenCalledExactlyOnceWith([
+      NEW_PROJECT,
+    ]);
+
+    // Editor initialization also loads settings, with a new decoded array.
+    await act(async () => {
+      await useSettingsStore.getState().load();
+    });
+    await settle();
+    expect(commands.projectChangesScan).toHaveBeenCalledTimes(1);
+
+    vi.mocked(commands.getSettings).mockResolvedValue(
+      settingsRead([NEW_PROJECT, MOVED_TO]),
+    );
+    await act(async () => {
+      await useSettingsStore.getState().reload();
+    });
+    await settle();
+    expect(commands.projectChangesScan).toHaveBeenCalledTimes(2);
+    expect(commands.projectChangesScan).toHaveBeenLastCalledWith([
+      NEW_PROJECT,
+      MOVED_TO,
+    ]);
+  });
+
+  it("rescans unchanged projects on focus and after a harness-folder write", async () => {
+    vi.useFakeTimers();
+    vi.mocked(commands.getSettings).mockImplementation(async () =>
+      settingsRead([NEW_PROJECT]),
+    );
+    mount(<Startup />);
+    await settle();
+    expect(commands.projectChangesScan).toHaveBeenCalledTimes(1);
+
+    await refocus();
+    expect(commands.projectChangesScan).toHaveBeenCalledTimes(2);
+
+    vi.mocked(commands.updateSettings).mockImplementation(async (settings) => ({
+      status: "ok",
+      data: {
+        settings: { ...settings, projects: [NEW_PROJECT] },
+        base: { preferences: "written-p", machine: "written-m" },
+      },
+    }));
+    await act(async () => {
+      await useSettingsStore.getState().setHarnessRoot("codex", "/work/codex");
+    });
+    await settle();
+    expect(commands.projectChangesScan).toHaveBeenCalledTimes(3);
+    expect(commands.projectChangesScan).toHaveBeenLastCalledWith([NEW_PROJECT]);
+    vi.useRealTimers();
+  });
+
   // A `kendex add` in a terminal registers the folder it installed into,
   // and the window has to see that without being restarted. The scan reads
   // the registry itself, so the two are re-read together — otherwise the
