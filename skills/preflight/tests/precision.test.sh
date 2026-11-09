@@ -633,10 +633,13 @@ repo_root() {
   git rev-parse --show-toplevel
 }
 EOF
-mkdir -p "$R/pkg/scripts/lib"
+mkdir -p "$R/pkg/scripts/lib" "$R/bin/lib" "$R/lib"
 cp "$R/scripts/lib/common.sh" "$R/pkg/scripts/lib/common.sh"
+# VGS-2082's fragment: bin/lib, sourced by a caller that sets the mode first.
+cp "$R/scripts/lib/common.sh" "$R/bin/lib/review-settings.sh"
+cp "$R/scripts/lib/common.sh" "$R/lib/common.sh"
 run_pf
-clean "a new sourced lib without a strict-mode preamble, at the root or nested, is not a finding" 2
+clean "a new sourced lib without a strict-mode preamble, in any lib directory at the root or nested, is not a finding" 4
 
 echo "=== control: the same bytes executed, and real fail-open shapes inside a lib, still fail ==="
 cp "$R/scripts/lib/common.sh" "$R/scripts/common.sh"
