@@ -51,7 +51,7 @@ Input file for `audit-issues --issues` and `audit-issues --single`, written by t
 |-------|----------|-------------|
 | `source` | Yes | Calling workflow name, one of the values above. Which are review-born, and what that sets, is [tpm-audit](../workflows/tpm-audit.md) § 10 |
 | `parent_issue` | Yes | The issue being worked on, as a hierarchy hint; null for an existing-issue batch |
-| `in_pr_bundle` | No | `true` only where the caller marks `parent_issue` its in-PR bundle root and works the `make_child` items filed under it in that issue's own PR; orch review-pr § 8 on Linear is that caller. Absent is `false`. What it changes is [tpm-audit § 7.1](../workflows/tpm-audit.md#71-identify-candidates) |
+| `in_pr_bundle` | No | `true` only where the caller marks `parent_issue` its in-PR bundle root and works the `make_child` items filed under it in that issue's own PR; orch review-pr § 8 on Linear is one caller, and single mode is another ([tpm-audit § 14](../workflows/tpm-audit.md#14-single-item-mode) step 5). Absent is `false`. What it changes is [tpm-audit § 7.1](../workflows/tpm-audit.md#71-identify-candidates) |
 | `tracker` | No | Execution tracker context — see § Tracker |
 | `worktree` | Yes | Worktree path for code analysis |
 | `blocked_issues` | No | Issue IDs the research unblocks |
