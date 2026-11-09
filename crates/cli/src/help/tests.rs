@@ -114,6 +114,28 @@ fn command_tree_keeps_help_and_adopt_argument_contracts() {
         assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp, "{path}");
     }
 
+    for path in ["kendex apply", "kendex verify"] {
+        let arg = commands[path]
+            .get_arguments()
+            .find(|arg| arg.get_id() == "project_path")
+            .expect("project target argument must exist");
+        assert_eq!(arg.get_long(), Some("project-path"), "{path}");
+        let values = arg.get_num_args().expect("project target takes a path");
+        assert_eq!(values.min_values(), 1, "{path}");
+        assert_eq!(values.max_values(), 1, "{path}");
+    }
+    for flag in ["--lane-refresh", "--throwaway"] {
+        let error = commands["kendex verify"]
+            .clone()
+            .try_get_matches_from(["kendex verify", flag])
+            .expect_err("verify reads and takes no project write flag");
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::UnknownArgument,
+            "{flag}"
+        );
+    }
+
     let adopt = &commands["kendex adopt"];
     for (id, index, long, required, action) in [
         ("kind", Some(1), None, true, clap::ArgAction::Set),
