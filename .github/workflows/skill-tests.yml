@@ -472,9 +472,8 @@ jobs:
   # to shasum). Each of the four is
   # linked in on its own, never through a package's gnubin directory, so
   # nothing else in coreutils or util-linux shadows a BSD tool. What needs one
-  # of the four and has no fallback — the worktree lifecycle suite,
-  # container-close's suite — reds on a host without it rather than skipping
-  # into a green.
+  # of the four and has no fallback, such as the worktree lifecycle suite,
+  # reds on a host without it rather than skipping into a green.
   skill-suites-shard:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
     needs: changes
@@ -757,45 +756,24 @@ jobs:
           exit "$fail"
       # ---- shards: orch-terminal, orch-oversee, orch-oversee-succeed,
       # orch-dev, orch-state, orch-rest ---------------------------------------
-      # Source reductions retained all 72 orch-state suites, but run
-      # 38164401517 still took 1383s on macOS. run-all.sh owns the family
-      # profiles and their complement. Dev/review names enter `orch-dev`,
-      # including names that also carry lane or workflow-state, and so do
-      # the `oversee_launch*` suites of `scripts/oversee register`.
-      # On Linux, the account-reader `lanes*` family joins `orch-dev`;
-      # `orch-state` keeps the other lane/workflow-state names. `orch-rest`
-      # takes the remaining suites after these families. The macOS
-      # profiles spread the hosted open-terminal contracts across these same
-      # jobs. New suites join one family by name. orch-shard-partition.test.sh
+      # run-all.sh's shard_of owns the families and their complement, by
+      # suite name and RUNNER_OS. `open-terminal` names enter `orch-terminal`
+      # and the report suites, `oversee_report*`, enter `orch-oversee-succeed`.
+      # Dev and review names enter `orch-dev`, including names that also
+      # carry lane or workflow-state, and so do the `oversee_launch*` suites
+      # of `scripts/oversee register`; every other oversee name enters
+      # `orch-oversee`, so a new oversee suite lands there and never in
+      # neither. On Linux, the account-reader `lanes*` family joins
+      # `orch-dev`; `orch-state` keeps the other lane and workflow-state
+      # names. `orch-rest` takes the remaining suites after these families.
+      # New suites join one family by name. orch-shard-partition.test.sh
       # reads the actual workflow calls and proves complete, unique ownership
       # on both OSes.
       #
-      # Measured suite by suite, one at a time, on the Linux leg of run
-      # 36195213656. A shard's figure is the sum of its suites' seconds, read
-      # from the log timestamps; the step time the jobs API reports is within
-      # a second of it. orch-terminal 597s over 10 files (open-terminal-lane
-      # 229s, open-terminal-record 124s, open-terminal-claude-handoff 90s,
-      # open-terminal-owned-skip 76s), orch-oversee 516s over 13,
-      # orch-oversee-succeed 462s over 4 (oversee_succeed 191s, oversee_report
-      # 29s), orch-state 702s over 42 (dev_validate_run 206s, lanes 189s,
-      # lane-host-ssh 50s, lane_close 49s) and orch-rest 221s over 37
-      # (approval_wait 51s, round_recover 37s, queue_wait 26s). The macOS
-      # legs of that run spent 781s, 1087s, 597s, 1021s and 339s of step
-      # time on the same five. run-all.sh runs those suites `nproc` at a
-      # time, save the ones on its ALONE list, which run one at a time after
-      # the rest, and prints each one's `suite=<name> seconds=<n>` line, so a
-      # step's wall time is now below its sum and its log carries these
-      # figures fresh. Splitting
-      # orch-terminal in turn would have to name individual suites rather
-      # than a name prefix, since open-terminal-lane alone was 229s of its
-      # 597s on that run, so that is where a name partition stops.
-      #
-      # With the succession and report suites, `orch-oversee` ran 14m37s-14m47s
-      # and was cancelled at its 15m16s ceiling. `orch-oversee-succeed` takes
-      # those suites by name, and `orch-oversee` keeps every other oversee
-      # suite, so a new oversee suite lands in `orch-oversee` and never in
-      # neither. On run 36195213656 both shards finished inside each leg's job
-      # ceiling, by the per-suite paragraph above.
+      # run-all.sh runs a shard's suites `nproc` at a time, save the ones on
+      # its ALONE list, which run one at a time after the rest, and prints
+      # each one's `suite=<name> seconds=<n>` line, so each leg's log carries
+      # its suites' figures.
       - name: tmux for pane delivery tests
         if: matrix.shard == 'orch-terminal' || matrix.shard == 'orch-oversee' || matrix.shard == 'orch-oversee-succeed' || matrix.shard == 'orch-dev' || matrix.shard == 'orch-state' || matrix.shard == 'orch-rest' || matrix.shard == 'guards-hooks-tail' || matrix.shard == 'node' || matrix.shard == 'rest'
         run: |
@@ -826,7 +804,7 @@ jobs:
 
       # run-all.sh prints its own `orch tests: N/M file(s) FAILED:` block
       # naming every red suite, which is this shard's FAILED SUITES report.
-      - name: orch suites — the open-terminal launch path
+      - name: orch suites — the open-terminal wake
         if: matrix.shard == 'orch-terminal'
         run: bash skills/orch/tests/run-all.sh --shard orch-terminal
 
@@ -834,11 +812,11 @@ jobs:
         if: matrix.shard == 'orch-oversee'
         run: bash skills/orch/tests/run-all.sh --shard orch-oversee
 
-      - name: orch suites — the overseer succession and report
+      - name: orch suites — the overseer status report
         if: matrix.shard == 'orch-oversee-succeed'
         run: bash skills/orch/tests/run-all.sh --shard orch-oversee-succeed
 
-      - name: 'orch suites: the dev and review round-artifact suites, oversee register and owed work'
+      - name: 'orch suites: oversee register, the dev and review names and, on Linux, the account readers'
         if: matrix.shard == 'orch-dev'
         run: bash skills/orch/tests/run-all.sh --shard orch-dev
 

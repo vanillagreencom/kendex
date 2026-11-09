@@ -303,28 +303,15 @@ done
 FILTER="$*"
 
 shard_of() { # BASE
-  # Run 38452700793 exhausted a macOS leg's deadline on a few long contracts.
-  # Spread the hosted open-terminal contracts across the existing macOS
-  # worker pools.
-  if [ "${RUNNER_OS:-Linux}" = macOS ]; then
-    case "$1" in
-      open-terminal-lane-hosted-accounts) OWNING_SHARD=orch-dev; return ;;
-      open-terminal-lane-hosted-ssh) OWNING_SHARD=orch-state; return ;;
-      open-terminal-lane-hosted-cap|open-terminal-lane-hosted-pending) OWNING_SHARD=orch-rest; return ;;
-      open-terminal-lane-hosted-pi) OWNING_SHARD=orch-oversee-succeed; return ;;
-      open-terminal-lane-hosted-copilot|open-terminal-lane-hosted-codex) OWNING_SHARD=orch-oversee; return ;;
-    esac
-  fi
   case "$1" in
     *open-terminal*) OWNING_SHARD=orch-terminal ;;
     *oversee_report*) OWNING_SHARD=orch-oversee-succeed ;;
-    # Merge-group run 39048736979 stopped orch-oversee at its Linux deadline
-    # after 831s. The launch family leaves it for the dev pool.
+    # The launch family runs in the dev pool, off orch-oversee's deadline.
     oversee_launch*) OWNING_SHARD=orch-dev ;;
     *oversee*) OWNING_SHARD=orch-oversee ;;
     *dev*|*review*) OWNING_SHARD=orch-dev ;;
-    # The account-reader family exhausted orch-state in merge-group run
-    # 39876878565. Keep it together in Linux's existing dev worker pool.
+    # The account-reader family stays together, in Linux's dev pool off
+    # orch-state's deadline.
     lanes*)
       if [ "${RUNNER_OS:-Linux}" = Linux ]; then OWNING_SHARD=orch-dev
       else OWNING_SHARD=orch-state; fi ;;
