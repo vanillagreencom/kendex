@@ -382,6 +382,20 @@ class MainHostContract(unittest.TestCase):
         self.assertEqual(private.read_bytes(), b"SECRET='keep me'\n")
         self.assertFalse((self.home / ".gitignore").exists())
 
+    def test_main_host_set_refuses_when_ignore_line_has_no_effect(self):
+        # A deeper .gitignore re-includes the file: git is asked again after
+        # the line lands, and the private file is never written.
+        subprocess.run(["git", "init", "-q"], cwd=self.home, env=self.env, check=True)
+        (self.home / "kendex.settings.toml").write_text('[env]\nKENDEX_ENV_FILE = "keys/private.env"\n')
+        (self.home / "keys").mkdir()
+        (self.home / "keys" / ".gitignore").write_text("!private.env\n")
+        result = self.command("main-host", "--set", "host:/main", code=2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("main-host=refused cause=private-file-unignored", result.stderr)
+        self.assertIn("jarvis-session: fix: ", result.stderr)
+        self.assertEqual((self.home / ".gitignore").read_text(), "/keys/private.env\n")
+        self.assertFalse((self.home / "keys" / "private.env").exists())
+
 
 def scratch_base():
     """A scratch base outside every Git work tree: a home fixture there qualifies.

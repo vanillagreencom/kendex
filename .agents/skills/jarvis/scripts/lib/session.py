@@ -1300,12 +1300,13 @@ exec "$3" -c 'import json, os, sys; print(json.dumps([sys.argv[1], os.environ["J
             # destination.rs): git must not carry the private file. A new
             # file gets the exact ignore line first; an existing one refuses.
             named = os.path.relpath(home / private, home)
-            git = {"cwd": home, "capture_output": True, "timeout": CALL_SECONDS, "env": os.environ | {"LC_ALL": "C"}}
+            git = {"cwd": home, "capture_output": True, "timeout": CALL_SECONDS, "env": dict(os.environ, LC_ALL="C")}
+            check = ["git", "check-ignore", "-q", "--", named]
             cause = "git-unreadable"
             inside = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], **git)
             if inside.returncode == 0:
                 listed = subprocess.run(["git", "ls-files", "-z", "--", named], **git)
-                ignored = subprocess.run(["git", "check-ignore", "-q", "--", named], **git).returncode
+                ignored = subprocess.run(check, **git).returncode
                 if listed.returncode or ignored not in (0, 1):
                     raise Refusal(cause)
                 pattern = "/" + re.sub(r"([*?\[\]])", r"\\\1", named)
@@ -1320,6 +1321,16 @@ exec "$3" -c 'import json, os, sys; print(json.dumps([sys.argv[1], os.environ["J
                     text = ignore.read_bytes() if ignore.exists() else b""
                     with open(ignore, "ab") as stream:
                         stream.write((b"\n" if text and not text.endswith(b"\n") else b"") + pattern.encode() + b"\n")
+                    # Asked again before the write, as the credential save
+                    # does: a deeper .gitignore's ! rule, or a .gitignore git
+                    # will not read, leaves the line without effect.
+                    cause = "git-unreadable"
+                    ignored = subprocess.run(check, **git).returncode
+                    if ignored not in (0, 1):
+                        raise Refusal(cause)
+                    if ignored:
+                        raise Refusal("private-file-unignored", "make git ignore " + named
+                                      + " (git check-ignore -v -n -- " + named + " names the rule that decides it)")
             elif b"not a git repository" not in inside.stderr:
                 raise Refusal(cause)
             cause = "private-file-unwritable"
