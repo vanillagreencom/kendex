@@ -98,9 +98,11 @@ Under a declared project map, `issues create`, `issues update --project` and `is
 
 ## Attachments
 
-`issues create`, `issues update`, and `comments create` take a repeatable `--attach <path>`. Images embed as markdown in the description/body. On `issues update` without `--description`, the embed appends to the existing description rather than replacing it. Other files become Linear attachments on issues, or markdown links on comments (comments have no attachment surface). An unreadable path refuses before any API call; an attachment failure after a successful issue write reports `partial: true` and exits non-zero. Existing-issue attachments require a successful live issue lookup with a nonempty canonical ID before upload, including for UUID input.
+`issues create`, `issues update`, and `comments create` take repeatable `--attach PATH`. Unreadable files refuse before API work. Images embed as markdown appended to the description/body being written; an `issues update` without `--description` appends to the stored description. Other files become issue attachments or comment links. Existing-issue uploads need a live ID.
 
-`issues create` and attach-only `issues update` report `attachments_requested`, the number of non-image records requested, and `attachments`, one `{url, repo_path}` object per record in request order once every `attachmentCreate` succeeded. On `issues create` they appear in the default JSON response only, so a create that needs this verification takes the default output: `--format=ids` prints the identifier alone and discards both fields. Those fields are the immediate verification; `attachments list` reads the records live.
+Issue results report `attachments_requested` and ordered `{url, repo_path}` receipts in `attachments` after all bindings succeed. Creates/field updates need default JSON for receipts; successful `--format=ids` creates print only the ID.
+
+A failed `issues create` or `issues update` upload or binding exits nonzero with JSON naming what to resume, and `issues --help` gives the resume route; a failed upload writes no issue fields. A `comments create` upload failure only exits nonzero with its stderr cause.
 
 ### Resolve a cited artifact
 
