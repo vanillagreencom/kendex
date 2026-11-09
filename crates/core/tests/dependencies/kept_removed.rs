@@ -1,10 +1,10 @@
 //! What a removal writes down as kept removed, with the catalog readable
-//! and without it. Offline the catalog cat is gone or will not parse, and
-//! the lock record is its only reading, so each row decides by the recorded
-//! edges alone. An item stays removed where a requirer that stays requires
-//! it or a set that stays carries it, and nowhere else, except offline
-//! where a requirer withheld from a tool left no record of what brought
-//! it: that edge keeps the item removed. Once the catalog is back a refresh
+//! and without it. Online an item stays removed where a requirer that
+//! stays requires it or a set that stays carries it, and nowhere else.
+//! Offline the catalog cat is gone or will not parse, so nothing says what
+//! a requirer from it still has behind it, and every requirer from cat that
+//! the removal does not name keeps the item removed: at worst one removal
+//! too many, which the next add clears. Once the catalog is back a refresh
 //! brings none of the removed items back.
 
 use super::hooks::hook_fixture;
@@ -57,8 +57,21 @@ const CARRIES_DEEP: &str = "skills = [\"deep\"]";
 /// requirer from cat, and holds no record of judge.
 const GUARDS_FROM_OTHER: &str = "[bundles.set]\nsource = \"cat\"\n\n[skills.guards]\nsource = \"other\"\n\n[hooks.recorder]\nsource = \"cat\"\nenabled = false\n";
 
-/// How cat is unreadable in the offline run.
-#[derive(Clone, Copy)]
+/// A skill that requires x, offered by both catalogs.
+const NEEDS_X: [(&str, &str); 2] = [("guards", "dependencies:\n  required: [x]\n"), ("x", "")];
+/// Guards and x taken from other's set aset, while cat's set carries judge,
+/// withheld everywhere for its companion switched off: guards records the
+/// edge of a requirer from cat, and x only guards' edge from other.
+const X_FROM_OTHER: &str = "[bundles.aset]\nsource = \"other\"\n\n[bundles.set]\nsource = \"cat\"\n\n[hooks.recorder]\nsource = \"cat\"\nenabled = false\n";
+
+/// A hook that needs judge, and a judge that needs only guards.
+const LEAD: &str = "#!/usr/bin/env bash\n# ---\n# name: lead\n# event: PreToolUse\n# matcher: Bash\n# requires: [judge]\n# ---\nexit 0\n";
+const LONE_JUDGE: &str = "#!/usr/bin/env bash\n# ---\n# name: judge\n# event: PreToolUse\n# matcher: Bash\n# requires-skills: [guards]\n# ---\nexit 0\n";
+const LEAD_AND_GUARDS: &str =
+    "[skills.guards]\nsource = \"cat\"\n\n[hooks.lead]\nsource = \"cat\"\n";
+
+/// How cat is unreadable in an offline run.
+#[derive(Clone, Copy, Debug)]
 enum Unread {
     /// The catalog's directory is gone, so it does not resolve.
     Moved,
@@ -78,10 +91,20 @@ struct Row {
     /// manifest subscribes to other beside cat, and other stays readable
     /// while cat is not.
     other: &'static [(&'static str, &'static str)],
-    unread: Unread,
+    /// The members line of other's set aset, which other offers only where
+    /// this is not empty.
+    other_set: &'static str,
+    /// Declarations the manifest gains after the install, with no apply
+    /// before the removal.
+    edit: &'static str,
+    /// Each way cat is unreadable in an offline run.
+    unread: &'static [Unread],
     /// Lock keys the install must hold, or must not, for the row to reach
     /// its shape.
     premise: &'static [(&'static str, bool)],
+    /// Records the install must hold, by key, with their source and their
+    /// reasons as [`reason`] spells them.
+    records: &'static [(&'static str, &'static str, &'static [&'static str])],
     suppressed: &'static [(ItemKind, &'static str)],
     /// What the same removal keeps removed while the catalog is unreadable.
     suppressed_offline: &'static [(ItemKind, &'static str)],
@@ -105,8 +128,11 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             set: CARRIES_DEEP,
             remove: &["judge", "guards"],
             other: &[],
-            unread: Unread::Moved,
+            other_set: "",
+            edit: "",
+            unread: &[Unread::Moved],
             premise: withheld,
+            records: &[],
             suppressed: &[],
             suppressed_offline: &[],
         },
@@ -118,13 +144,16 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             set: CARRIES_DEEP,
             remove: &["guards"],
             other: &[],
-            unread: Unread::Moved,
+            other_set: "",
+            edit: "",
+            unread: &[Unread::Moved],
             premise: &[
                 ("hook:judge:claude", false),
                 ("hook:judge:codex", false),
                 ("skill:guards:claude", false),
                 ("skill:guards:codex", true),
             ],
+            records: &[],
             suppressed: &[(ItemKind::Skill, "guards")],
             suppressed_offline: &[(ItemKind::Skill, "guards")],
         },
@@ -136,8 +165,11 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             set: CARRIES_DEEP,
             remove: &["guards"],
             other: &[],
-            unread: Unread::Moved,
+            other_set: "",
+            edit: "",
+            unread: &[Unread::Moved, Unread::Unparsable],
             premise: withheld,
+            records: &[],
             suppressed: &[],
             // The lock cannot tell this apart from the row below.
             suppressed_offline: &[(ItemKind::Skill, "guards")],
@@ -150,13 +182,16 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             set: CARRIES_DEEP,
             remove: &["guards"],
             other: &[],
-            unread: Unread::Moved,
+            other_set: "",
+            edit: "",
+            unread: &[Unread::Moved],
             premise: &[
                 ("hook:judge:claude", true),
                 ("hook:judge:codex", false),
                 ("skill:guards:codex", true),
                 ("skill:keeper:codex", true),
             ],
+            records: &[],
             suppressed: &[(ItemKind::Skill, "guards")],
             suppressed_offline: &[(ItemKind::Skill, "guards")],
         },
@@ -171,13 +206,16 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             set: "hooks = [\"judge\"]",
             remove: &["set", "docs"],
             other: &[],
-            unread: Unread::Moved,
+            other_set: "",
+            edit: "",
+            unread: &[Unread::Moved],
             premise: &[
                 ("hook:judge:claude", true),
                 ("hook:judge:codex", false),
                 ("skill:guards:codex", true),
                 ("skill:docs:codex", true),
             ],
+            records: &[],
             suppressed: &[(ItemKind::Skill, "docs")],
             suppressed_offline: &[(ItemKind::Skill, "docs")],
         },
@@ -189,10 +227,14 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             declared: "[skills.gate]\nsource = \"cat\"\n".to_owned(),
             remove: &["gate"],
             other: &[],
-            unread: Unread::Moved,
+            other_set: "",
+            edit: "",
+            unread: &[Unread::Moved],
             premise: &[("skill:hub:claude", true), ("skill:lane:claude", true)],
+            records: &[],
             suppressed: &[],
-            suppressed_offline: &[],
+            // Offline hub is a requirer from cat the removal does not name.
+            suppressed_offline: &[(ItemKind::Skill, "gate")],
         },
         Row {
             what: "a cycle a declared member holds up",
@@ -203,8 +245,11 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
                 .to_owned(),
             remove: &["gate"],
             other: &[],
-            unread: Unread::Moved,
+            other_set: "",
+            edit: "",
+            unread: &[Unread::Moved],
             premise: &[],
+            records: &[],
             suppressed: &[(ItemKind::Skill, "gate")],
             suppressed_offline: &[(ItemKind::Skill, "gate")],
         },
@@ -216,8 +261,11 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             declared: format!("{SET}\n[skills.deep]\nsource = \"cat\"\n"),
             remove: &["set", "docs"],
             other: &[],
-            unread: Unread::Moved,
+            other_set: "",
+            edit: "",
+            unread: &[Unread::Moved],
             premise: &[("skill:docs:claude", true)],
+            records: &[],
             suppressed: &[(ItemKind::Skill, "docs")],
             suppressed_offline: &[(ItemKind::Skill, "docs")],
         },
@@ -229,10 +277,14 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             declared: SET.to_owned(),
             remove: &["set", "docs"],
             other: &[],
-            unread: Unread::Moved,
+            other_set: "",
+            edit: "",
+            unread: &[Unread::Moved],
             premise: &[("skill:docs:claude", true)],
+            records: &[],
             suppressed: &[],
-            suppressed_offline: &[],
+            // Offline cq is a requirer from cat the removal does not name.
+            suppressed_offline: &[(ItemKind::Skill, "docs")],
         },
         Row {
             what: "a set that stays carries it",
@@ -242,8 +294,11 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             declared: SET.to_owned(),
             remove: &["deep"],
             other: &[],
-            unread: Unread::Moved,
+            other_set: "",
+            edit: "",
+            unread: &[Unread::Moved],
             premise: &[],
+            records: &[],
             suppressed: &[(ItemKind::Skill, "deep")],
             suppressed_offline: &[(ItemKind::Skill, "deep")],
         },
@@ -255,33 +310,103 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             set: "hooks = [\"judge\"]",
             remove: &["guards"],
             other: &[("guards", "")],
-            unread: Unread::Moved,
+            other_set: "",
+            edit: "",
+            unread: &[Unread::Moved],
             premise: &[
                 ("hook:judge:claude", false),
                 ("hook:judge:codex", false),
                 ("skill:guards:claude", true),
                 ("skill:guards:codex", true),
             ],
+            records: &[],
             suppressed: &[(ItemKind::Skill, "guards")],
             suppressed_offline: &[(ItemKind::Skill, "guards")],
         },
         Row {
-            what: "a hook only the removed skill brings, its catalog resolving but unparsable",
-            skills: &[("guards", BRINGS_JUDGE)],
-            hooks,
-            declared: BROUGHT.to_owned(),
+            what: "a requirer declared since the last apply",
+            skills: &[("guards", "")],
+            hooks: &[("lead", LEAD), ("judge", LONE_JUDGE)],
+            declared: LEAD_AND_GUARDS.to_owned(),
             set: CARRIES_DEEP,
-            remove: &["guards"],
+            remove: &["lead", "guards"],
             other: &[],
-            unread: Unread::Unparsable,
-            premise: withheld,
-            suppressed: &[],
+            other_set: "",
+            edit: "\n[hooks.judge]\nsource = \"cat\"\n",
+            unread: &[Unread::Moved],
+            premise: &[("hook:judge:claude", true)],
+            records: &[
+                ("hook:judge:claude", "cat", &["required-by cat Hook lead"]),
+                (
+                    "skill:guards:claude",
+                    "cat",
+                    &["requested", "required-by cat Hook judge"],
+                ),
+            ],
+            suppressed: &[(ItemKind::Skill, "guards")],
             suppressed_offline: &[(ItemKind::Skill, "guards")],
+        },
+        Row {
+            what: "a requirer a set declared since the last apply carries",
+            skills: &[("guards", "")],
+            hooks: &[("lead", LEAD), ("judge", LONE_JUDGE)],
+            declared: LEAD_AND_GUARDS.to_owned(),
+            set: "hooks = [\"judge\"]",
+            remove: &["lead", "guards"],
+            other: &[],
+            other_set: "",
+            edit: "\n[bundles.set]\nsource = \"cat\"\n",
+            unread: &[Unread::Moved],
+            premise: &[("hook:judge:claude", true)],
+            records: &[
+                ("hook:judge:claude", "cat", &["required-by cat Hook lead"]),
+                (
+                    "skill:guards:claude",
+                    "cat",
+                    &["requested", "required-by cat Hook judge"],
+                ),
+            ],
+            suppressed: &[(ItemKind::Skill, "guards")],
+            suppressed_offline: &[(ItemKind::Skill, "guards")],
+        },
+        Row {
+            what: "a withheld requirer from a catalog only the requirer's edges name",
+            skills: &NEEDS_X,
+            hooks,
+            declared: X_FROM_OTHER.to_owned(),
+            set: "hooks = [\"judge\"]",
+            remove: &["aset", "x"],
+            other: &NEEDS_X,
+            other_set: "skills = [\"guards\"]",
+            edit: "",
+            unread: &[Unread::Moved],
+            premise: &[
+                ("hook:judge:claude", false),
+                ("hook:judge:codex", false),
+                ("skill:x:claude", true),
+                ("skill:x:codex", true),
+            ],
+            records: &[
+                (
+                    "skill:x:claude",
+                    "other",
+                    &["required-by other Skill guards"],
+                ),
+                (
+                    "skill:guards:claude",
+                    "other",
+                    &["member-of other aset", "required-by cat Hook judge"],
+                ),
+            ],
+            suppressed: &[(ItemKind::Skill, "x")],
+            suppressed_offline: &[(ItemKind::Skill, "x")],
         },
     ];
     for row in rows {
-        for offline in [false, true] {
-            let what = format!("{} (offline: {offline})", row.what);
+        let modes = std::iter::once(None).chain(row.unread.iter().copied().map(Some));
+        for mode in modes {
+            let offline = mode.is_some();
+            let what = format!("{} (offline: {mode:?})", row.what);
             let f = hook_fixture(&row.declared);
             for (name, dependencies) in row.skills {
                 skill(&f.source, name, dependencies);
@@ -300,7 +425,14 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
                 for (name, dependencies) in row.other {
                     skill(&other, name, dependencies);
                 }
-                fs::write(other.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+                let mut catalog = "is_source_catalog = true\n".to_owned();
+                if !row.other_set.is_empty() {
+                    catalog.push_str(&format!(
+                        "\n[bundles.aset]\ndescription = \"a set\"\n{}\n",
+                        row.other_set
+                    ));
+                }
+                fs::write(other.join("kendex.toml"), catalog).unwrap();
                 declare_two(&f, &other, &row.declared);
             }
             apply_now(&f);
@@ -308,12 +440,25 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             for (key, held) in row.premise {
                 assert_eq!(lock.entries.contains_key(*key), *held, "{what}: {key}");
             }
+            for (key, source, reasons) in row.records {
+                let entry = &lock.entries[*key];
+                assert_eq!(entry.source, *source, "{what}: {key}");
+                let held: BTreeSet<String> = entry.reasons.iter().map(reason).collect();
+                let expected: BTreeSet<String> =
+                    reasons.iter().map(|reason| (*reason).to_owned()).collect();
+                assert_eq!(held, expected, "{what}: {key}");
+            }
+            if !row.edit.is_empty() {
+                let manifest = f.project.join("kendex.toml");
+                let text = fs::read_to_string(&manifest).unwrap();
+                fs::write(&manifest, text + row.edit).unwrap();
+            }
 
             let away = f.source.with_extension("offline");
-            match (offline, row.unread) {
-                (false, _) => {}
-                (true, Unread::Moved) => fs::rename(&f.source, &away).unwrap(),
-                (true, Unread::Unparsable) => {
+            match mode {
+                None => {}
+                Some(Unread::Moved) => fs::rename(&f.source, &away).unwrap(),
+                Some(Unread::Unparsable) => {
                     fs::write(&control, "is_source_catalog = [\n").unwrap();
                 }
             }
@@ -338,10 +483,10 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             .collect();
             assert_eq!(suppressed, expected, "{what}");
 
-            match (offline, row.unread) {
-                (false, _) => {}
-                (true, Unread::Moved) => fs::rename(&away, &f.source).unwrap(),
-                (true, Unread::Unparsable) => fs::write(&control, &catalog).unwrap(),
+            match mode {
+                None => {}
+                Some(Unread::Moved) => fs::rename(&away, &f.source).unwrap(),
+                Some(Unread::Unparsable) => fs::write(&control, &catalog).unwrap(),
             }
             apply_now(&f);
             let back: Vec<String> = lock_of(&f)
@@ -352,5 +497,15 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
                 .collect();
             assert!(back.is_empty(), "{what}: a refresh brought back {back:?}");
         }
+    }
+}
+
+/// One lock reason, spelled for a row: `requested`, `member-of <source>
+/// <set>` or `required-by <source> <kind> <name>`.
+fn reason(reason: &Reason) -> String {
+    match reason {
+        Reason::Requested => "requested".to_owned(),
+        Reason::MemberOf { bundle } => format!("member-of {} {}", bundle.source, bundle.name),
+        Reason::RequiredBy { by } => format!("required-by {} {:?} {}", by.source, by.kind, by.name),
     }
 }

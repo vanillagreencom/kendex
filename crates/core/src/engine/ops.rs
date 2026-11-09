@@ -429,10 +429,11 @@ fn recorded_edges(
 /// The records this removal leaves installed, by entry key: what is reached
 /// over `RequiredBy` edges from the records that are declared, carried by a
 /// set that is not uninstalled, or hold no reason. What the removal names
-/// goes or is kept removed, so it is neither a root nor a step, and a cycle
-/// it alone held up is reached from no root however its members require
-/// each other. A set member the removal takes is a step like any other: it
-/// stays where its own declaration or a requirer that stays keeps it.
+/// goes or is kept removed, so it is neither a root nor a step, and while
+/// their catalog reads, a cycle it alone held up is reached from no root
+/// however its members require each other ([`requirer_stays`]). A set
+/// member the removal takes is a step like any other: it stays where its
+/// own declaration or a requirer that stays keeps it.
 fn staying(
     manifest: &Manifest,
     lock: &Lock,
@@ -468,22 +469,23 @@ fn staying(
     }
 }
 
-/// Whether the requirer an edge names stays. The walk records a hook's
-/// edge before it withholds the hook, so a requirer withheld from this tool
-/// has no record here though its edge does. It stays where the edited
-/// manifest still declares it, whose next walk records that edge again, or
-/// where a record of it on another tool stays.
+/// Whether the requirer an edge names stays. While the edge's catalog
+/// reads, the lock answers and [`still_derived`] covers what the lock
+/// cannot see: a recorded requirer stays where its record stays, and one
+/// with no record on this tool (the walk records a hook's edge before it
+/// withholds the hook) where the edited manifest still declares it, whose
+/// next walk records that edge again, or where a record of it on another
+/// tool stays.
 ///
-/// Past those two, the lock does not say what brought the requirer to this
-/// tool: a set that carries it, or a skill whose `dependencies.hooks` names
-/// it, may stay and bring it back. While the edge's catalog reads,
-/// [`still_derived`] says so, and the edge holds nothing up here. While it
-/// does not, nothing can say, so the edge holds the removal up unless the
-/// requirer is named for removal too, as before requirers were followed:
-/// at worst one removal recorded too many, which the next `add` of that
-/// item clears. KEN-5017 records in the lock what carries a withheld
-/// requirer on each tool, and deletes this name fallback and its
-/// readability gate.
+/// While the edge's catalog does not read, the lock alone cannot say what
+/// keeps a requirer: a declaration or a set the manifest gained since the
+/// last apply, whose contents only the catalog holds, or the set or skill
+/// that brought a withheld requirer to this tool. So any requirer from that
+/// catalog that the removal does not name stays, recorded or not: at worst
+/// one removal recorded too many, which the next `add` of that item
+/// clears, and never fewer than the name alone decides. KEN-5017 records in
+/// the lock what carries a withheld requirer on each tool, and deletes
+/// this name fallback and its readability gate.
 fn requirer_stays(
     manifest: &Manifest,
     lock: &Lock,
@@ -492,18 +494,17 @@ fn requirer_stays(
     stays: &BTreeSet<String>,
     by: &InstallRef,
 ) -> bool {
+    let unread_and_kept =
+        || unread.contains(&by.source) && !options.named_for_removal(by.kind, &by.name);
     let key = entry_key(by.kind, &by.name, by.harness);
     if lock.entries.contains_key(&key) {
-        return stays.contains(&key);
+        return stays.contains(&key) || unread_and_kept();
     }
-    if manifest.declared(by.kind).contains_key(&by.name)
+    manifest.declared(by.kind).contains_key(&by.name)
         || HarnessId::ALL
             .iter()
             .any(|harness| stays.contains(&entry_key(by.kind, &by.name, *harness)))
-    {
-        return true;
-    }
-    unread.contains(&by.source) && !options.named_for_removal(by.kind, &by.name)
+        || unread_and_kept()
 }
 
 /// What the catalogs say the manifest still implies, now that the
