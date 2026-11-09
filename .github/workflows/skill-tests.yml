@@ -786,8 +786,9 @@ jobs:
           [ "${#refresh[@]}" -gt 0 ] || exit 0
           bash skills/orch/tests/run-all.sh --battery refresh/tests "${refresh[@]}" ${MAIN_ONLY_FILTERS:-} || fail=1
           exit "$fail"
+      # The macOS guards-hooks and guards-tools legs run a Jarvis suite each.
       - name: tmux for pane delivery tests
-        if: matrix.shard == 'guards-hooks-tail' || matrix.shard == 'node' || matrix.shard == 'rest' || matrix.shard == 'jarvis'
+        if: matrix.shard == 'guards-hooks-tail' || matrix.shard == 'node' || matrix.shard == 'rest' || matrix.shard == 'jarvis' || (runner.os == 'macOS' && (matrix.shard == 'guards-hooks' || matrix.shard == 'guards-tools'))
         run: |
           if [[ "$RUNNER_OS" == macOS ]]; then
             command -v tmux >/dev/null || brew install tmux
@@ -1171,7 +1172,8 @@ jobs:
       # Jarvis's tmux fixtures and session controls run apart from `rest`'s
       # Linux pool, on a leg that builds the checkout kendex its picker rows
       # need. macOS runs no `jarvis` leg: the rest step below keeps the family
-      # there, as the worktree step keeps restack.
+      # there, as the worktree step keeps restack, less the two suites the
+      # macOS steps after this one take.
       - name: Jarvis suites
         if: matrix.shard == 'jarvis'
         run: |
@@ -1183,6 +1185,31 @@ jobs:
           done
           [ "$#" -gt 0 ] || exit 0
           bash skills/orch/tests/run-all.sh --battery skills/jarvis/tests "$@"
+
+      # With every Jarvis suite, macOS rest reached 1636s of its 1800s ceiling
+      # in run 42581418568 and the deadline in merge group 42578059036, where
+      # session took 938s and succession 968s. On macOS each runs after the
+      # suites of a leg that measured under 200s: session in guards-hooks
+      # (193-194s), succession in guards-tools (155-166s). The rest step skips
+      # each path these steps spell, so a deleted step returns its suite there.
+      # Linux runs both in `jarvis`. The `if:` keeps a Linux leg from marking
+      # itself narrowed for a suite it never runs; the body's native check
+      # repeats it for the routing suites, which run step bodies without `if:`.
+      - name: Jarvis session suite on macOS
+        if: matrix.shard == 'guards-hooks' && runner.os == 'macOS'
+        run: |
+          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/jarvis/tests/session.test.sh)"
+          [ -n "$kept" ] || exit 0
+          [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || exit 0
+          bash skills/orch/tests/run-all.sh --battery skills/jarvis/tests =session.test
+
+      - name: Jarvis succession suite on macOS
+        if: matrix.shard == 'guards-tools' && runner.os == 'macOS'
+        run: |
+          kept="$(SUITE_LIST_DROPS="$GITHUB_ENV" tools/ci-job-set --suite-list skills/jarvis/tests/succession.test.sh)"
+          [ -n "$kept" ] || exit 0
+          [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || exit 0
+          bash skills/orch/tests/run-all.sh --battery skills/jarvis/tests =succession.test
 
       # ---- shard: rest — every shell suite no other shard runs. The skip
       # list below names the packages the shards above claim, and a skip is
@@ -1272,7 +1299,7 @@ jobs:
               orch) continue ;;
               review-gate) needle="skills/$x/tests/*.test.sh" ;;
               github | slack | mailbox) needle="--battery skills/$x/tests" ;;
-              jarvis) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || needle="--battery skills/$x/tests" ;;
+              jarvis) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || needle="skills/$x/tests/*.sh" ;;
               commit-guards | linear | bot-instructions | preflight | worktree)
                 needle="skills/$x/tests/*.sh" ;;
               *) needle="" ;;
@@ -1282,6 +1309,16 @@ jobs:
                 continue
               fi
               echo "no other shard runs $needle: running $dir here"
+            fi
+            # macOS keeps the Jarvis family here less each suite another
+            # step spells by path.
+            if [ "$x" = jarvis ] && [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ]; then
+              unclaimed=()
+              for t in "${suites[@]}"; do
+                grep -qF -- "$t" <<<"$claims" || unclaimed+=("$t")
+              done
+              [ "${#unclaimed[@]}" -gt 0 ] || continue
+              suites=("${unclaimed[@]}")
             fi
             set --
             case "$x" in
