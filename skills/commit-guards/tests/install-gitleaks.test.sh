@@ -153,8 +153,10 @@ run() { # DIR [NAME=VALUE...] — the exit status and the first stable line; the
 # timeout-minutes: 5 job, and this leaves that job 60 s for checkout, the
 # download= line and its later steps.
 BUDGET_SECS=240
-# in_budget: yes when the last download attempt ended by BUDGET_SECS.
-in_budget() { [ "$(awk 'END { print $3 }' "$TRY_LOG")" -le "$BUDGET_SECS" ] && echo yes || echo no; }
+# in_budget: yes when the last download attempt ended by BUDGET_SECS, no when
+# it ended later, no-attempt when none was logged, so a copy that fails before
+# its first attempt satisfies neither a positive row nor a control.
+in_budget() { awk -v b="$BUDGET_SECS" 'END { if (NR == 0) print "no-attempt"; else print ($3 <= b ? "yes" : "no") }' "$TRY_LOG"; }
 
 echo "=== a pinned archive installs once ==="
 copy pinned "$LINUX_PIN" "$FIXTURE_SHA" "$DARWIN_ARM_PIN" "$FIXTURE_SHA"
@@ -207,8 +209,12 @@ assert_eq "an outage of two minutes is ridden out and the binary installed" \
 D="$TMP_ROOT/down"
 assert_eq "an outage past the window is refused" \
   "rc=1 install-gitleaks: download=gitleaks_8.30.1_linux_x64.tar.gz" "$(run "$D" OUTAGE_SECS=100000)"
-# last_status: 504 when the explanation under the first line names that status.
-last_status() { awk '!/^install-gitleaks: / && /(^|[^0-9])504([^0-9]|$)/ { print "504"; exit }' "$OUT_LOG"; }
+# last_status: 504 when the explanation under the first line names that status,
+# no-attempt when no download attempt was logged.
+last_status() {
+  [ -s "$TRY_LOG" ] || { echo no-attempt; return; }
+  awk '!/^install-gitleaks: / && /(^|[^0-9])504([^0-9]|$)/ { print "504"; exit }' "$OUT_LOG"
+}
 assert_eq "naming the last status" "504" "$(last_status)"
 assert_eq "and leaves no binary" "absent" "$([ -e "$D/gitleaks" ] && echo present || echo absent)"
 assert_eq "giving up within the CI job's budget" "yes" "$(in_budget)"
