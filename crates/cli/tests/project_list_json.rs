@@ -66,7 +66,8 @@ fn repository_with_worktree(main: &Path, linked: &Path) {
 /// folder named like a worktree note is a plain folder. The worktree and
 /// each state that is not `ok` are read from the field, not the name, and
 /// a main checkout whose name holds a newline is named whole, not as the
-/// folder its first line names.
+/// folder its first line names. A bare repository is no checkout, so a
+/// worktree added from one has no main to name.
 #[test]
 #[allow(clippy::unwrap_used, reason = "fixture setup and inspection")]
 fn each_registered_folder_is_one_exact_entry() {
@@ -80,6 +81,28 @@ fn each_registered_folder_is_one_exact_entry() {
     let split_linked = dev.join("split-lane");
     repository_with_worktree(&split_main, &split_linked);
     fs::create_dir_all(dev.join("split")).unwrap();
+    let bare = dev.join("bare.git");
+    let bare_linked = dev.join("bare-lane");
+    git(
+        &dev,
+        &[
+            "clone",
+            "--quiet",
+            "--bare",
+            main.to_str().unwrap(),
+            bare.to_str().unwrap(),
+        ],
+    );
+    git(
+        &bare,
+        &[
+            "worktree",
+            "add",
+            "--quiet",
+            bare_linked.to_str().unwrap(),
+            "main",
+        ],
+    );
 
     let ok = |folder: PathBuf| (folder, "ok", Value::Null);
     let rows: Vec<(PathBuf, &str, Value)> = vec![
@@ -97,6 +120,7 @@ fn each_registered_folder_is_one_exact_entry() {
             "ok",
             json!({ "main": main.to_str().unwrap() }),
         ),
+        (bare_linked.clone(), "ok", json!({ "main": null })),
         (dev.join("gone"), "folder-not-found", Value::Null),
         (dev.join("now-a-file"), "not-a-folder", Value::Null),
     ];

@@ -258,9 +258,10 @@ impl Repo {
     /// keeps `common_dir` outside every checkout, so the directory above it
     /// is not the main work tree at all.
     ///
-    /// A `worktree` line git did not write, or a path that will not
-    /// resolve, is an error — a caller telling somebody where to point a
-    /// command must not name a directory nobody has.
+    /// A first record git did not write, a bare repository, which has no
+    /// main work tree, or a path that will not resolve, is an error — a
+    /// caller telling somebody where to point a command must not name a
+    /// directory nobody has, nor one that is not a checkout.
     pub fn main_checkout(&self) -> Result<PathBuf> {
         let output = english(Hardened::git(
             &["worktree", "list", "--porcelain", "-z"],
@@ -277,22 +278,38 @@ impl Repo {
                 ),
             ));
         }
-        // The first record's `worktree` field, as bytes: a checkout whose
-        // name is not UTF-8 is a name `path_from` keeps and a lossy
-        // conversion would destroy. `-z` (git 2.36) ends each field with
-        // NUL; without it git writes a path holding a newline unquoted, so
-        // `<dir>/app\nsuffix` would read as `<dir>/app`, recorded under git
-        // 2.43 with `LC_ALL=C`.
-        let first = output
+        // The first record, read whole. git-worktree(1) § Porcelain Format:
+        // a record is one attribute per field, its first always `worktree
+        // <path>`, a boolean such as `bare` a label alone present only when
+        // true, and an empty field ends it. `-z` (git 2.36) ends each field
+        // with NUL; without it git writes a path holding a newline
+        // unquoted, so `<dir>/app\nsuffix` would read as `<dir>/app`,
+        // recorded under git 2.43 with `LC_ALL=C`. A bare repository's
+        // record names the repository itself and carries `bare`, also
+        // recorded under git 2.43: that is a git directory, not a checkout.
+        let mut record = output
             .stdout
             .split(|byte| *byte == 0)
-            .find_map(|field| field.strip_prefix(b"worktree "))
+            .take_while(|field| !field.is_empty());
+        let first = record
+            .next()
+            .and_then(|field| field.strip_prefix(b"worktree "))
             .ok_or_else(|| {
                 guard_err(
                     "hooks",
                     format!("git listed no work tree for {}", self.worktree.display()),
                 )
             })?;
+        if record.any(|field| field == b"bare") {
+            return Err(guard_err(
+                "hooks",
+                format!(
+                    "{} has no main checkout: its repository is the bare repository {}",
+                    self.worktree.display(),
+                    path_from(first.to_vec(), "worktree list")?.display()
+                ),
+            ));
+        }
         let main = path_from(first.to_vec(), "worktree list")?;
         main.canonicalize().map_err(|e| CoreError::io(&main, e))
     }
