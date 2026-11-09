@@ -688,16 +688,22 @@ mod dev_artifacts {
         ci["validate_time"] = second.clone();
         w.plant_receipt("r1", &ci);
         assert_eq!(w.check("r1")["reason"], "mode_mismatch");
-        let push_first = result(
-            &w.command()
-                .env("ORCH_PR_ORDER", "push-first")
-                .args(["dev-return", "check"])
-                .args(w.identity("r1"))
-                .arg("--expect-items-from-round")
-                .output()
-                .unwrap(),
-        );
+        let ordered = |order: &str| {
+            result(
+                &w.command()
+                    .env("ORCH_PR_ORDER", order)
+                    .args(["dev-return", "check"])
+                    .args(w.identity("r1"))
+                    .arg("--expect-items-from-round")
+                    .output()
+                    .unwrap(),
+            )
+        };
+        let push_first = ordered("push-first");
         assert_eq!(push_first["verdict"], "accept", "{push_first}");
+        // An order `pr-order` refuses is no order: the round runs review-first.
+        let refused = ordered("bogus");
+        assert_eq!(refused["reason"], "mode_mismatch", "{refused}");
         result(&w.call(
             &["round", "stamp"],
             "open",

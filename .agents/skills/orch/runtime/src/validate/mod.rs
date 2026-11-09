@@ -697,10 +697,10 @@ fn pr_view(settings: &Settings, worktree: &Path, log: &mut String) -> Result<Opt
 }
 
 /// The publication order `pr-order` names; review-first on a failed read.
-fn pr_order(settings: &Settings, worktree: &Path, log: &mut String) -> Result<String> {
+pub(crate) fn pr_order(settings: &Settings, worktree: &Path, log: &mut String) -> String {
     let script = sibling(settings, "pr-order");
     let wt = worktree.display().to_string();
-    Ok(run_in(
+    run_in(
         "pr-order",
         &script,
         "pr-order",
@@ -712,7 +712,7 @@ fn pr_order(settings: &Settings, worktree: &Path, log: &mut String) -> Result<St
     .ok()
     .flatten()
     .and_then(|line| line.trim().strip_prefix("pr-order=").map(str::to_owned))
-    .unwrap_or_else(|| "review-first".to_owned()))
+    .unwrap_or_else(|| "review-first".to_owned())
 }
 
 /// The contexts the base branch requires and whether a merge queue rule
@@ -1097,7 +1097,7 @@ fn settle(
         class_base.clear();
         base_sha.clear();
     }
-    let order = pr_order(settings, worktree, &mut log)?;
+    let order = pr_order(settings, worktree, &mut log);
     let mut ci_fallback: Option<String> = None;
     let mut ci_event = String::new();
     let mut ci_attempted = false;

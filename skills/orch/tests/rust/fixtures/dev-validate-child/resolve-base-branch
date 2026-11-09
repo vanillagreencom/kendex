@@ -1,3 +1,0 @@
-#!/bin/bash
-# The base branch the validate rows' project has: main.
-echo main

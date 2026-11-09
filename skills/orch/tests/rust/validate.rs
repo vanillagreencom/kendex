@@ -22,6 +22,42 @@ struct World {
     worktree: PathBuf,
 }
 
+/// A job a row started, and what it runs, outlives the row unless ended
+/// here: it goes on writing its run directory and the item's record after
+/// the scratch is removed, which leaves a part of the scratch behind. Every
+/// process whose argv names the world's root or whose working directory
+/// lies under it is that world's, so each is killed by its own pid, read
+/// again until none stands or the bound passes; a drop never panics.
+impl Drop for World {
+    fn drop(&mut self) {
+        let named = format!("{}/", self.root.display());
+        let deadline = Instant::now() + JOB_BOUND;
+        loop {
+            let standing: Vec<String> = fs::read_dir("/proc")
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter_map(|entry| {
+                    let pid = entry.file_name().into_string().ok()?;
+                    pid.bytes().all(|b| b.is_ascii_digit()).then_some(pid)
+                })
+                .filter(|pid| {
+                    let proc = Path::new("/proc").join(pid);
+                    fs::read(proc.join("cmdline"))
+                        .is_ok_and(|argv| String::from_utf8_lossy(&argv).contains(&named))
+                        || fs::read_link(proc.join("cwd"))
+                            .is_ok_and(|cwd| cwd.starts_with(&self.root))
+                })
+                .collect();
+            if standing.is_empty() || Instant::now() >= deadline {
+                return;
+            }
+            let _ = program("kill").arg("-KILL").args(&standing).status();
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+}
+
 fn git(worktree: &Path, args: &[&str]) -> String {
     let out = program("git")
         .arg("-C")
@@ -2198,7 +2234,7 @@ fn a_declared_selection_over_the_bound_refuses_before_any_run_but_reuse_needs_no
 
 #[test]
 fn reuse_of_the_real_pass_ends_after_a_later_failed_or_unfinished_attempt_on_that_tree() {
-    for missing in ["cmd", "paths"] {
+    for missing in ["cmd", "paths", "start"] {
         let w = World::new();
         w.commit("source.rs");
         let first = w.local(&[], &[]);

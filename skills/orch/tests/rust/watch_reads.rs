@@ -2135,6 +2135,30 @@ fn security_alerts_are_repeated_until_recorded_and_a_failed_read_is_never_no_ale
         ],
         "an alert closed and reopened is a first report again"
     );
+    // The link read pages: a pull request linked on the second page links
+    // its alert as one on the first does.
+    world.gh(
+        "graphql owner=owner name=repo",
+        json!({"pages": {
+            "": {"data": {"repository": {"vulnerabilityAlerts": {"pageInfo": {"hasNextPage": true, "endCursor": "Y3Vyc29yOjE="},
+                "nodes": [{"number": 5, "state": "DISMISSED", "dependabotUpdate": null}]}}}},
+            "Y3Vyc29yOjE=": {"data": {"repository": {"vulnerabilityAlerts": {"pageInfo": {"hasNextPage": false, "endCursor": "Y3Vyc29yOjI="},
+                "nodes": [{"number": 7, "state": "OPEN", "dependabotUpdate": {"pullRequest": {"number": 12, "state": "OPEN"}}}]}}}}
+        }}),
+    );
+    let paged = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 2560).unwrap();
+    assert_eq!(
+        rendered(&paged),
+        vec![
+            format!("{line_dependabot} report=repeat"),
+            format!("{line_code} report=repeat")
+        ],
+        "the Dependabot line names the pull request its second page links"
+    );
+    assert_eq!(
+        shared.lock().unwrap().github.as_ref().unwrap().bot_fix,
+        BTreeMap::from([("owner/repo#12".to_owned(), "7".to_owned())])
+    );
     // A token the reader refuses: the credential source is unread, no
     // alert read runs, and the rows and mapping stand.
     std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o640)).unwrap();

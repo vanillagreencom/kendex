@@ -1,5 +1,5 @@
 #!/bin/bash
-# The validation executor as the validate rows see it: `--child --run-dir D`
+# The validation executor's child as a row plants it: `--child --run-dir D`
 # writes what the real child writes, from a planted verdict, and nothing else
 # runs. It records its pid, logs the `validate-base=` its start record
 # carries (the real child exports it as DEV_VALIDATE_BASE), prints the
@@ -11,8 +11,7 @@
 # $DEV_VALIDATE_CHILD_AT names where set, else the clock's. With
 # $DEV_VALIDATE_CHILD_NO_SENTINEL set it
 # exits without a sentinel: the child the host killed. Every call is appended
-# to $DEV_VALIDATE_LOG when set. The real executor's sibling scripts the
-# start reads stand beside this file.
+# to $DEV_VALIDATE_LOG when set.
 [ -z "${DEV_VALIDATE_LOG:-}" ] || printf '%s\n' "$*" >> "$DEV_VALIDATE_LOG"
 [ "${1:-}" = --child ] && [ "${2:-}" = --run-dir ] && [ -n "${3:-}" ] || { echo "dev-validate-child: verb=$*" >&2; exit 2; }
 run_dir="$3"

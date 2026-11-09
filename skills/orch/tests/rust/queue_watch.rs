@@ -1893,6 +1893,71 @@ fn orch_dir() -> PathBuf {
         .to_path_buf()
 }
 
+/// A checkout of its own under `root` for kendex's reach command, which
+/// selects from the checkout it sits in: copies of the real tools the
+/// selection runs, a crates workspace holding the CLI smoke target
+/// `tools/rust-reads` requires, and the change the row validates, tracked
+/// in a repository of its own, so the answer never depends on the checkout
+/// the tests run in or on whether it is a repository. Answers its
+/// `tools/ci-reach`.
+fn reach_world(root: &std::path::Path) -> PathBuf {
+    let world = root.join("reach-world");
+    let tools = orch_dir().join("../../tools");
+    fs::create_dir_all(world.join("tools")).unwrap();
+    for name in [
+        "ci-reach",
+        "ci-job-set",
+        "macos-test-contracts",
+        "macos-test-contracts.json",
+        "rust-reads",
+    ] {
+        fs::copy(tools.join(name), world.join("tools").join(name)).unwrap();
+    }
+    let copied = support::program("cp")
+        .arg("-R")
+        .arg(tools.join("lib"))
+        .arg(world.join("tools/lib"))
+        .output()
+        .unwrap();
+    assert!(copied.status.success(), "{}", support::stderr(&copied));
+    for (path, text) in [
+        (
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"crates/cli\"]\nresolver = \"2\"\n",
+        ),
+        (
+            "crates/cli/Cargo.toml",
+            "[package]\nname = \"kendex-cli\"\nversion = \"0.1.0\"\n\n[[test]]\nname = \"cli_smoke\"\npath = \"tests/cli_smoke.rs\"\n",
+        ),
+        ("crates/cli/src/lib.rs", ""),
+        ("crates/cli/tests/cli_smoke.rs", "fn smoke() {}\n"),
+        ("skills/price-handling/SKILL.md", "x\n"),
+    ] {
+        let path = world.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    for args in [
+        &["init", "-q"][..],
+        &["config", "gc.auto", "0"],
+        &["config", "maintenance.auto", "false"],
+        &["add", "-A"],
+    ] {
+        let out = support::program("git")
+            .arg("-C")
+            .arg(&world)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            support::stderr(&out)
+        );
+    }
+    world.join("tools/ci-reach")
+}
+
 impl World {
     /// `path` committed in a fixture worktree under the row's root and
     /// validated there by the real `validate start`, in the foreground,
@@ -2026,7 +2091,8 @@ fn an_ejected_groups_reach_is_its_failed_checks_judged_by_the_consumers_selector
         cause: Option<&'static str>,
         answers: Vec<(&'static str, &'static str)>,
     }
-    let command = support::isolated_program(&orch_dir().join("../../tools/ci-reach"))
+    let world = tempfile::tempdir().unwrap();
+    let command = support::isolated_program(&reach_world(world.path()))
         .display()
         .to_string();
     // `rest` runs a changed skill no other shard claims; the UI lane runs

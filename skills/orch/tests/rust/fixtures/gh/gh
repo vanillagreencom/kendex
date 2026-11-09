@@ -24,7 +24,16 @@
 # there, so a row proves which reads carried the installation token. The
 # GraphQL form also takes `--paginate` and the `owner=`/`name=` fields the
 # alert link read passes, answering from `graphql owner=O name=N` where the
-# map has it, else `graphql`. `gh repo view --json nameWithOwner -q
+# map has it, else `graphql`, page by page as gh pages it (v2.103.3
+# `pkg/cmd/api/api.go:134-138`, `:432-466`): the entry's `pages` maps an
+# `endCursor` value to the page answered for it, `""` the first, and a
+# `body` entry is the first page; each page is projected and printed, and
+# the next is the one planted for the projected page's `pageInfo.endCursor`
+# while its `hasNextPage` is true, bound as gh binds `$endCursor`, so a
+# query that selects no `pageInfo` reads its first page alone. The runtime
+# pages one collection per query, so a page holding several `pageInfo`
+# objects refuses; a page carrying `errors` ends the call as a failed
+# GraphQL reply does, and a cursor with no page planted refuses. `gh repo view --json nameWithOwner -q
 # .nameWithOwner`, the admission's read of a checkout's repository, answers
 # from the map's `repo view` entry; with none it fails as gh does in a
 # checkout whose remotes name no GitHub host (exit 1). `gh pr view N --repo
@@ -118,11 +127,11 @@ elif [ "${1:-}" != api ]; then
   echo "gh-fake: unexpected-call args=[$*]" >&2
   exit 64
 elif [ "${2:-}" = graphql ]; then
-  ids='[]' owner="" name="" number="" cursor="" bindings='[]'
+  ids='[]' owner="" name="" number="" cursor="" bindings='[]' paginate=false
   shift 2
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      --paginate) ;;
+      --paginate) paginate=true ;;
       -f|-F)
         flag="${1#-}"
         shift
@@ -132,7 +141,28 @@ elif [ "${2:-}" = graphql ]; then
     esac
     shift
   done
-  if [ -n "$number" ]; then
+  if [ "$paginate" = true ] && [ -z "$number" ]; then
+    entry=$(jq -c --arg keyed "graphql owner=$owner name=$name" '(.[$keyed] // .graphql) // empty | if has("body") then {pages: {"": .body}} else . end' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
+    if [ -n "$entry" ] && jq -e 'has("pages")' <<<"$entry" >/dev/null; then
+      page_cursor=""
+      while :; do
+        page=$(jq -c --arg c "$page_cursor" '.pages | if has($c) then {body: .[$c]} else empty end' <<<"$entry") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
+        [ -n "$page" ] || { echo "gh-fake: no page planted for cursor [$page_cursor]" >&2; exit 64; }
+        page_bindings="$bindings"
+        [ -z "$page_cursor" ] || page_bindings=$(jq -c --arg t "$page_cursor" '. + [["endCursor", "f", $t]]' <<<"$bindings")
+        page=$(jq -c --arg q "$query" --argjson bindings "$page_bindings" -f "$(dirname "$real")/select.jq" <<<"$page") || { echo "gh-fake: selection-unsupported" >&2; exit 64; }
+        jq -c '.body' <<<"$page"
+        if jq -e '(.body.errors // []) | length > 0' <<<"$page" >/dev/null; then
+          jq -r '"gh: " + ([.body.errors[] | .message // ""] | join("\n"))' <<<"$page" >&2
+          exit 1
+        fi
+        jq -e '[.body | .. | objects | select(has("pageInfo"))] | length <= 1' <<<"$page" >/dev/null || { echo "gh-fake: paginate-unsupported pageInfo=several" >&2; exit 64; }
+        page_cursor=$(jq -r 'first(.body | .. | objects | select(has("pageInfo")) | .pageInfo) // {} | if .hasNextPage == true then .endCursor // "" else "" end' <<<"$page") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
+        [ -n "$page_cursor" ] || exit 0
+      done
+    fi
+    reply="$entry"
+  elif [ -n "$number" ]; then
     reply=$(jq -c --arg k "graphql number=$number cursor=$cursor" '.[$k] // empty | if (.body | type) == "object" and ((.body.errors // []) | length) > 0 then .exit = 1 | .stderr = ("gh: " + ([.body.errors[] | .message // ""] | join("\n"))) else . end' -- "$GH_FAKE_REPLIES") || { echo "gh-fake: replies-unreadable" >&2; exit 65; }
   else
   reply=$(jq -c --argjson ids "$ids" --arg keyed "graphql owner=$owner name=$name" '

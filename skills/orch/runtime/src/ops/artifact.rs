@@ -326,26 +326,6 @@ fn base_ref(settings: &Settings, worktree: &Path) -> Result<String> {
     shared_measure(settings, worktree, "branch_growth_base_ref", "")
 }
 
-/// The publication order `pr-order` prints; `None` where it answered none.
-fn publication_order(settings: &Settings, worktree: &Path) -> Option<String> {
-    let wt = worktree.display().to_string();
-    let out = call(
-        worktree,
-        &script(settings, "pr-order"),
-        "pr-order",
-        &[&wt],
-        &[],
-    )
-    .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    host::stdout_text(&out)
-        .trim()
-        .strip_prefix("pr-order=")
-        .map(str::to_owned)
-}
-
 fn round_path(id: &Identity) -> PathBuf {
     id.worktree
         .join(format!("tmp/dev-round-{}-{}.json", id.issue, id.round_id))
@@ -1697,7 +1677,8 @@ fn check_evaluate(settings: &Settings, r: &CheckReturn) -> Result<Answer> {
             None => {
                 recorded != ValidateMode::Ci
                     || round["pr_open"] == true
-                    || publication_order(settings, &id.worktree).as_deref() == Some("push-first")
+                    || crate::validate::pr_order(settings, &id.worktree, &mut String::new())
+                        == "push-first"
             }
         };
         if !admitted {

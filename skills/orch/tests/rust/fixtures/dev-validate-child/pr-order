@@ -1,4 +1,0 @@
-#!/bin/bash
-# The publication order the validate rows' project has: $PR_ORDER_FIXTURE,
-# review-first when unset.
-printf 'pr-order=%s\n' "${PR_ORDER_FIXTURE:-review-first}"

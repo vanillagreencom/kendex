@@ -313,8 +313,10 @@ fn publish(dir: &Path, name: &str, text: &str) -> PathBuf {
 }
 
 /// `program` behind a wrapper that runs it with the scratch home, no global
-/// or system git configuration and none of the repository-local variables
-/// git names (`git rev-parse --local-env-vars`), for a program a row hands
+/// or system git configuration, no `XDG_CONFIG_HOME` (git's attributes file
+/// and cargo's git configuration default under it, so the home's own
+/// `.config` stands in) and none of the repository-local variables git
+/// names (`git rev-parse --local-env-vars`), for a program a row hands
 /// the runtime in-process: the one runner starts it with this test
 /// process's own environment, so a `git` it runs would read the operator's
 /// configuration, or, run inside a git hook, the hook's repository through
@@ -329,7 +331,7 @@ pub fn isolated_program(program: &Path) -> PathBuf {
     std::fs::create_dir_all(&home).expect("the scratch home");
     let quote = |text: &str| format!("'{}'", text.replace('\'', "'\\''"));
     let text = format!(
-        "#!/bin/sh\nexport HOME={} GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null\nunset $(git rev-parse --local-env-vars)\nexec {} \"$@\"\n",
+        "#!/bin/sh\nexport HOME={} GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null\nunset XDG_CONFIG_HOME $(git rev-parse --local-env-vars)\nexec {} \"$@\"\n",
         quote(&home.display().to_string()),
         quote(&program.display().to_string())
     );
