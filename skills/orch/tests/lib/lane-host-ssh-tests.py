@@ -833,8 +833,25 @@ signal.sigwait({signal.SIGTERM})
                           f"lane-host-ssh: identity-record-failed path={identity}\n".encode() in run.stderr),
                          (1, b"", True), run.stderr)
 
+    @classmethod
+    def runtime_binary(cls):
+        """The orch-runtime binary setup built for this checkout's sources, found
+        through agent-runtime's own key library under the suite's environment."""
+        if getattr(cls, "_runtime_binary", None) is None:
+            found = subprocess.run(
+                ["bash", "-c", 'refuse() { printf "%s\\n" "$*" >&2; exit 1; }; . "$1" && cache=$(agent_runtime_cache) '
+                 '&& key=$(agent_runtime_key "$2") && printf "%s/bin/orch-runtime-%s" "$cache" "$key"',
+                 "key", str(PACKAGE.parent / "agent-runtime/scripts/lib/key.sh"), str(PACKAGE / "runtime")],
+                capture_output=True, text=True, check=True)
+            cls._runtime_binary = Path(found.stdout)
+        return cls._runtime_binary
+
     def hosted_state_launch(self, harness="claude"):
         """Run delegation and recovery through create's actual hosted prefix."""
+        # round-recover runs the runtime beside it; the source checkout carries
+        # no built runtime, so the probe names the one setup built here.
+        runtime = self.runtime_binary()
+        self.assertTrue(os.access(runtime, os.X_OK), f"{runtime}: run skills/orch/scripts/setup first")
         scripts = self.source / ".agents/skills/orch/scripts"
         for name in ("workflow-state", "git-context", "round-recover", "orch-env"):
             self.copy_file(PACKAGE / "scripts" / name, scripts / name)
@@ -861,11 +878,11 @@ state="$scripts/workflow-state"
 round=$("$state" new-round-id TEST-1 dev_round_id)
 "$state" set-now TEST-1 dev_delegated_at >/dev/null
 rc=0
-"$scripts/round-recover" --worktree "$PWD" --issue TEST-1 --round-id "$round" || rc=$?
+ORCH_RUNTIME_CLI=@RUNTIME@ "$scripts/round-recover" --worktree "$PWD" --issue TEST-1 --round-id "$round" || rc=$?
 [[ "$rc" -eq 3 ]]
 "$state" set-now TEST-1 dev_delegated_at >/dev/null
 "$state" get TEST-1
-''')
+'''.replace("@RUNTIME@", shlex.quote(str(runtime))))
         bash = shutil.which("bash", path=self.env["PATH"])
         command = "cd " + shlex.quote(str(path)) + " && exec " + shlex.join([bash, str(probe), str(self.bin)])
         run = self.hosted_prefix_run(fields, command)

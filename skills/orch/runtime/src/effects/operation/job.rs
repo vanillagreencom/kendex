@@ -1467,9 +1467,10 @@ fn probe_manager() -> Runner {
     }
 }
 
-/// `orch-NAME-STAMP`, STAMP the intent id's last field, its clock and
-/// nonce, so two jobs one long-lived process launches never share a unit
-/// name; anything a unit name cannot carry is replaced by `_`.
+/// `orch-NAME-STAMP`, STAMP the key's last `:` field (an intent id's clock
+/// and nonce, a run directory's name), so two jobs one long-lived process
+/// launches never share a unit name; anything a unit name cannot carry is
+/// replaced by `_`.
 fn unit_name(name: &str, intent: &str) -> String {
     let stamp = intent.rsplit(':').next().unwrap_or(intent);
     format!("orch-{name}-{stamp}")

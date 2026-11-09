@@ -550,9 +550,8 @@ fn mark(path: &Path, doc: &mut Document, r: &MarkNotice) -> Result<Marked> {
 
 // --- The reuse judge over the stages ---------------------------------------------
 
-/// What a run about to start would run: the key the earlier rows are judged
-/// against (`dev-validate-run --help`, "A start reads the worktree's
-/// earlier runs").
+/// What a run about to start would run: the key [`reuse`] judges the item's
+/// earlier rows against.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Want {
     pub cmd: String,

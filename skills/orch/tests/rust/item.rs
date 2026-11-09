@@ -1257,6 +1257,68 @@ mod dev_artifacts {
             ),
             "run-off-round",
         );
+        // A fix round's two orders: a record written before the round's
+        // commit names that commit's parent and proves no tree of the
+        // receipt's; the workflow commits first and records that HEAD.
+        let w = World::new();
+        w.stamp("r1");
+        let at = |head: &str| {
+            format!(
+                "validate-mode=full\nhead={head}\nstarted-at=2026-01-01T00:00:00Z\nended-at=2026-01-01T00:00:01Z\nexit=0\nselection=unreported\n"
+            )
+        };
+        let receipt = |w: &World| {
+            w.write(
+                "r1",
+                "fix",
+                "pass",
+                &[
+                    "--validate-record",
+                    file.to_str().unwrap(),
+                    "--item",
+                    "1",
+                    "Applied",
+                    "x",
+                ],
+            )
+        };
+        fs::write(&file, at(&w.head())).unwrap();
+        w.commit("app.txt");
+        refused(&receipt(&w), "run-off-round");
+        fs::write(&file, at(&w.head())).unwrap();
+        result(&receipt(&w));
+        fs::remove_file(w.receipt_path("r1")).unwrap();
+        // The clean check reads the user's own excludes file, as the
+        // validation snapshot does: a file only that file ignores is no
+        // part of the tree.
+        let home = w.root.join("home");
+        fs::create_dir(&home).unwrap();
+        fs::write(home.join("excludes"), ".idea/\n").unwrap();
+        fs::write(
+            home.join(".gitconfig"),
+            format!(
+                "[core]\n\texcludesFile = {}\n",
+                home.join("excludes").display()
+            ),
+        )
+        .unwrap();
+        fs::create_dir(w.wt.join(".idea")).unwrap();
+        fs::write(w.wt.join(".idea/workspace.xml"), "x").unwrap();
+        let head = w.head();
+        let excluded = |home: &Path| {
+            w.command()
+                .env("HOME", home)
+                .args(["dev-return", "write"])
+                .args(w.identity("r1"))
+                .args(["--kind", "fix", "--branch", "work", "--commit", &head])
+                .args(["--validate", "pass", "--validate-record"])
+                .arg(&file)
+                .args(["--item", "1", "Applied", "x"])
+                .output()
+                .unwrap()
+        };
+        refused(&excluded(&w.root), "run-off-round");
+        result(&excluded(&home));
     }
 
     #[test]
@@ -3597,6 +3659,11 @@ mod dev_artifacts {
 
     #[test]
     fn a_missing_receipt_wait_ends_at_its_budget_on_the_injected_clock() {
+        if !support::isolated_row(
+            "dev_artifacts::a_missing_receipt_wait_ends_at_its_budget_on_the_injected_clock",
+        ) {
+            return;
+        }
         let w = World::new();
         let flags = Flags {
             state_dir: Some(w.state.clone()),

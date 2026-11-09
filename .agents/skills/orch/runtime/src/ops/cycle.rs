@@ -491,13 +491,16 @@ fn kept_state(
 
 // --- the reads --------------------------------------------------------------------
 
-/// A read's git: the C locale, and no system or global configuration, so a
-/// read answers from the repository alone (the rule `marker.rs`'s test start
-/// states for its own rows).
-const GIT_READ_ENV: [(&str, &str); 3] = [
+/// A read's git: the C locale under the user's own configuration, which
+/// holds the `safe.directory` and URL rewrites a lane's checkout reads under,
+/// with the one setting that changes a read's answer pinned off:
+/// `log.showSignature` prints a signed commit's verification ahead of the
+/// `show --format=%at` line the authored time is parsed from.
+const GIT_READ_ENV: [(&str, &str); 4] = [
     ("LC_ALL", "C"),
-    ("GIT_CONFIG_NOSYSTEM", "1"),
-    ("GIT_CONFIG_GLOBAL", "/dev/null"),
+    ("GIT_CONFIG_COUNT", "1"),
+    ("GIT_CONFIG_KEY_0", "log.showSignature"),
+    ("GIT_CONFIG_VALUE_0", "false"),
 ];
 
 fn git(cwd: &Path, args: &[&str]) -> std::result::Result<String, String> {

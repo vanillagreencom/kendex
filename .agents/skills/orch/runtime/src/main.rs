@@ -366,7 +366,9 @@ fn parse_need(word: &str) -> std::result::Result<orch_runtime::ops::proof::Need,
 /// The validation run's verbs.
 #[derive(Subcommand)]
 enum ValidateOp {
-    /// Run or inspect validation through the catalog command entry.
+    // A doc comment here would replace the arguments' long help, the
+    // entry's contract, with its one line.
+    #[command(about = "Run or inspect validation through the catalog command entry.")]
     Entry(Box<orch_runtime::validate::entry::Args>),
     /// Read the project validation mode without starting a command.
     Mode {

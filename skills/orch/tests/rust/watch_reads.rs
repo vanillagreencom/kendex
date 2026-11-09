@@ -1347,6 +1347,9 @@ fn timeline_seven() -> Value {
 ///   watch's `--repo` names, the repositories the GitHub duty reads.
 #[test]
 fn an_ended_lanes_merge_cycle_is_recorded_before_its_close() {
+    if !isolated_row("an_ended_lanes_merge_cycle_is_recorded_before_its_close") {
+        return;
+    }
     let seven: &[u64] = &[7];
     let both: &[u64] = &[5, 7];
     for (case, hosted, merged_row, pulls, cycle, held) in [

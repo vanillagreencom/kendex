@@ -1363,9 +1363,9 @@ fn resolve(
     )?
     .map(|s| s.trim().to_owned())
     .unwrap_or_default();
-    // An earlier row that answers this run (`dev-validate-run --help`,
-    // "A start reads the worktree's earlier runs"), judged over the item's
-    // own proof rows.
+    // A start reuses the item's earlier run that answers it, a pass over
+    // this tree or a bounded run over no fewer paths; a ci start, a fresh
+    // run, a reproduction and a change left unclassified run anew.
     let mut reused = None;
     if mode != ValidateMode::Ci && !req.fresh && !req.reproduce && class.fallback.is_none() {
         let want = Want {
@@ -1700,9 +1700,13 @@ fn ask_launcher(
         "validate-{}",
         worktree.file_name().unwrap_or_default().to_string_lossy()
     );
+    // The unit name takes the key whole, and a unit name is bounded at 255
+    // characters (`systemd.unit(5)`): the run directory's own name keys it,
+    // never its path.
+    let key = run_dir.file_name().unwrap_or_default().to_string_lossy();
     let answer = effects::launch_recorded(
         &name,
-        &rd,
+        &key,
         &run_dir.join("runner"),
         &args,
         Some(&run_dir.join("job.err")),

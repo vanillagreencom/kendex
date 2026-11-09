@@ -1100,8 +1100,16 @@ fn a_reproduction_runs_its_command_even_when_a_pass_or_selector_would_answer_it(
 }
 
 #[test]
-fn full_start_ignores_a_carried_base_and_refuses_unused_or_repeated_options() {
+fn the_entry_help_states_its_contract_and_a_full_start_ignores_a_base_and_refuses_unused_options() {
     let w = World::new();
+    // The workflows send a reader to the entry's `--help` for its contract:
+    // the long help, not the one-line summary `-h` prints.
+    let help = |flag: &str| {
+        let out = w.entry(&[flag], &[]);
+        assert!(out.status.success(), "{}", stderr(&out));
+        text(&out)
+    };
+    assert_ne!(help("--help"), help("-h"));
     let out = w.local(
         &["--base", "absent-ref"],
         &[("DEV_VALIDATE_RANGE_CMD", "echo range")],
@@ -1697,8 +1705,10 @@ fn a_unit_launch_hands_the_manager_the_callers_variables_and_open_file_limit() {
     assert_eq!(w.wait_closed(dir)["outcome"], "pass");
     let launches = fs::read_to_string(Path::new(&manager).join("launches")).unwrap();
     let unit = launches.lines().next().unwrap();
-    // The unit is named for the worktree it validates.
-    assert!(unit.starts_with("orch-validate-wt-"), "{unit}");
+    // The unit is named for the worktree it validates and its run's own
+    // directory name, never the directory's path: a unit name is bounded.
+    let run = Path::new(dir).file_name().unwrap().to_str().unwrap();
+    assert_eq!(unit, format!("orch-validate-wt-{run}"));
     let argv = fs::read_to_string(Path::new(&manager).join(format!("{unit}.argv"))).unwrap();
     let words: Vec<&str> = argv.lines().collect();
     // A unit inherits the manager's environment and limits, not the

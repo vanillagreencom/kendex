@@ -236,13 +236,13 @@ fn call(
     .map_err(|e| refuse("artifact-read", e))
 }
 
-/// Git answers from the repository alone, in C-locale text, never from the
-/// system's or the user's configuration (`ops/cycle.rs` holds the same list).
-const GIT_ENV: [(&str, &str); 3] = [
-    ("LC_ALL", "C"),
-    ("GIT_CONFIG_NOSYSTEM", "1"),
-    ("GIT_CONFIG_GLOBAL", "/dev/null"),
-];
+/// Git answers in C-locale text under the user's own configuration, as the
+/// worktree's other git reads do: the clean check honours the user's
+/// excludes file, which validation's snapshot honours, and a checkout another
+/// account owns reads only under the user's `safe.directory`. No read here
+/// prints a form that configuration changes: object names, porcelain status
+/// and `-z` path lists.
+const GIT_ENV: [(&str, &str); 1] = [("LC_ALL", "C")];
 
 fn git_call(
     worktree: &Path,

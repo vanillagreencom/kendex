@@ -341,6 +341,32 @@ pub fn isolated_program(program: &Path) -> PathBuf {
     publish(&dir, &format!("{:016x}-{name}", hasher.finish()), &text)
 }
 
+/// Whether the calling row runs here: a row that runs the runtime's code
+/// in its own process calls this first with its whole name and returns
+/// when it answers false. The runtime's git reads keep their caller's
+/// configuration, and a test binary's environment is the operator's, so
+/// the row runs again in a child of this binary under [`isolation_env`],
+/// which answers true there; the parent asserts that the child ran the
+/// row, alone, and passed.
+pub fn isolated_row(name: &str) -> bool {
+    const MARK: &str = "ORCH_TEST_ISOLATED_ROW";
+    if std::env::var_os(MARK).is_some() {
+        return true;
+    }
+    let out = program(std::env::current_exe().expect("the test binary"))
+        .args([name, "--exact", "--test-threads=1"])
+        .env(MARK, name)
+        .output()
+        .expect("the row's isolated child");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success() && stdout.contains("test result: ok. 1 passed;"),
+        "{name} in its isolated child:\n{stdout}{}",
+        stderr(&out)
+    );
+    false
+}
+
 /// A test child's `PATH`: a row's own `prefixes` first, then the isolated
 /// tools directory, then the path this process inherited. Every row that
 /// sets `PATH` composes it here, so a prefix never drops the refusing `gh`.
