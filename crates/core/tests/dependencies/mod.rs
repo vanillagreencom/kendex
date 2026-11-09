@@ -442,4 +442,5 @@ mod agent_skills;
 mod hook_skills;
 mod hooks;
 mod more;
+mod skill_hooks;
 mod two_catalogs;

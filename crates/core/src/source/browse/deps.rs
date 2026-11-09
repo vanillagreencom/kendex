@@ -87,6 +87,12 @@ pub(super) fn dependencies(
                     .iter()
                     .filter_map(|dep| dependency(ItemKind::Agent, dep)),
             )
+            .chain(
+                declared
+                    .required_hooks
+                    .iter()
+                    .filter_map(|dep| dependency(ItemKind::Hook, dep)),
+            )
             .collect(),
         optional: declared
             .optional

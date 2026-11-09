@@ -92,13 +92,14 @@ A skill's catalog `SKILL.md` is its source, and kendex reads every key in it. Th
 
 ## Skill dependencies
 
-`dependencies.required` in `SKILL.md` frontmatter names skills from the same catalog. `dependencies.optional` names skills installed only when a person selects them with `--with`. `dependencies.agents` names required agents from the catalog's `agents/` directory. Each agent uses the same render as `add --agent` for the selected harnesses that support agents at the install scope, and brings the skills this catalog assigns to it ([Agent skills](#agent-skills)). A consumer `[agent-skills]` row for the agent replaces that assignment: the agent brings the row's skills this catalog offers, and a row skill from another catalog warns until it is installed on the agent's tools. An assignment never chooses a skill's revision or prevents its installation. A skill brought only by assignments follows its source. Hard dependencies below an assignment accept an independently held dependency's revision. Locked writes and recorded verification keep an installed skill that no declaration or set brings at its own recorded revision. An assigned skill the scope already holds, declared or brought in by another item, keeps its own declaration and revision. kendex switches on a held skill that another item brought in switched off, while the agent is on. A skill you declared off stays off. An assigned skill that does not install is never a missing-dependency finding; the agent warns when its tools lack the skill's installation coverage ([Agent skills](#agent-skills)). A harness that cannot install the agent gets a warning on the skill. The skill still installs there. Agents have no optional dependency list. Skills cannot declare hook dependencies.
+`dependencies.required` in `SKILL.md` frontmatter names skills from the same catalog. `dependencies.optional` names skills installed only when a person selects them with `--with`. `dependencies.agents` names required agents from the catalog's `agents/` directory. Each agent uses the same render as `add --agent` for the selected harnesses that support agents at the install scope, and brings the skills this catalog assigns to it ([Agent skills](#agent-skills)). A consumer `[agent-skills]` row for the agent replaces that assignment: the agent brings the row's skills this catalog offers, and a row skill from another catalog warns until it is installed on the agent's tools. An assignment never chooses a skill's revision or prevents its installation. A skill brought only by assignments follows its source. Hard dependencies below an assignment accept an independently held dependency's revision. Locked writes and recorded verification keep an installed skill that no declaration or set brings at its own recorded revision. An assigned skill the scope already holds, declared or brought in by another item, keeps its own declaration and revision. kendex switches on a held skill that another item brought in switched off, while the agent is on. A skill you declared off stays off. An assigned skill that does not install is never a missing-dependency finding; the agent warns when its tools lack the skill's installation coverage ([Agent skills](#agent-skills)). A harness that cannot install the agent gets a warning on the skill. The skill still installs there. Agents have no optional dependency list. `dependencies.hooks` names required hooks from the catalog's `hooks/` directory. Each hook installs on the skill's tools that its own `harnesses` line names, with its settings entry. A hook you kept removed or declared off stays that way, and the skill warns that it is missing.
 
 ```yaml
 dependencies:
   required: [shared-skill]
   optional: [extra-skill]
   agents: [helper]
+  hooks: [helper-note]
   commands:
     - command: agent-browser
       purpose: Browser automation
@@ -112,9 +113,9 @@ dependencies:
         brew: 1password-cli
 ```
 
-Refresh reads the dependency lists again. A removed skill's dependencies leave with `remove --sweep` when no other item needs them. An agent also added by name stays. Derived dependencies do not become explicit choices in the consumer manifest. A skill with no `agents` list keeps its existing behavior. Older kendex builds ignore that key.
+Refresh reads the dependency lists again. A removed skill's dependencies leave with `remove --sweep` when no other item needs them. An agent also added by name stays. Derived dependencies do not become explicit choices in the consumer manifest. A skill with no `agents` or `hooks` list keeps its existing behavior. Older kendex builds ignore those keys.
 
-A required skill or agent the catalog does not offer produces a warning with its name and a remedy. The parent skill still installs.
+A required skill, agent or hook the catalog does not offer produces a warning with its name and a remedy. The parent skill still installs.
 
 `dependencies.commands` lists external commands the skill uses. Each row needs a `command` name found on PATH and a `purpose`. `optional` defaults to `false`. `packages` maps package manager names to package names. kendex reports these names and installs no system tools. An invalid row refuses the skill and names its row and field.
 

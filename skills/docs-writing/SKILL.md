@@ -6,6 +6,7 @@ license: MIT
 user-invocable: true
 dependencies:
   required: [decider]
+  hooks: [docs-writing-note]
 metadata:
   author: vanillagreen
   source: kendex

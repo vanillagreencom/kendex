@@ -3,10 +3,10 @@
 # `dependencies.required`, SKILL being the directory that holds the file. The
 # kendex engine reads the same key when it installs a skill
 # (crates/core/src/source/browse/deps.rs). Every SKILL.md here spells it as a
-# two-space `required:`, `optional:` or `agents:` key holding an inline list
-# of bare names. The `commands:` block declares external tools, whose rows
+# two-space `required:`, `optional:`, `agents:` or `hooks:` key holding an
+# inline list of bare names. The `commands:` block declares external tools, whose rows
 # crates/core/src/engine/deps/commands.rs judges. Only required skills add
-# skill edges; optional skills, agents and external commands do not.
+# skill edges; optional skills, agents, hooks and external commands do not.
 # Anything else under `dependencies:` prints `?` and
 # its file, a name that is not bare prints `?` too, and each caller refuses
 # both rather than read them as no dependency. tools/ci-job-set follows the
@@ -27,6 +27,7 @@ commands && (/^    / || /^[ ]*$/) { next }
 { commands = 0 }
 /^  optional:/ { next }
 /^  agents:/ { next }
+/^  hooks:/ { next }
 !/^  required:/ { print "?\t" FILENAME; next }
 {
   list = $0
