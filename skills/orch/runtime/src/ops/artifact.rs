@@ -2,8 +2,10 @@
 //! Validation belongs to the tree it proves, independent of delegation time.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -47,7 +49,7 @@ pub struct Identity {
 pub struct StampRound {
     #[command(flatten)]
     pub id: Identity,
-    #[arg(long, num_args = 3, action = clap::ArgAction::Append, conflicts_with = "items_file")]
+    #[arg(long, num_args = 3, action = clap::ArgAction::Append, conflicts_with = "items_file", allow_hyphen_values = true)]
     pub item: Vec<String>,
     #[arg(long)]
     pub items_file: Option<PathBuf>,
@@ -78,13 +80,13 @@ pub struct WriteReturn {
     pub commit: String,
     #[arg(long)]
     pub validate: String,
-    #[arg(long)]
+    #[arg(long, allow_hyphen_values = true)]
     pub validate_note: Option<String>,
     #[arg(long, conflicts_with = "validate_record")]
     pub validate_run_dir: Option<PathBuf>,
     #[arg(long)]
     pub validate_record: Option<PathBuf>,
-    #[arg(long, conflicts_with_all = ["summary_file", "recovered_text"])]
+    #[arg(long, conflicts_with_all = ["summary_file", "recovered_text"], allow_hyphen_values = true)]
     pub summary: Option<String>,
     #[arg(long, conflicts_with = "recovered_text")]
     pub summary_file: Option<PathBuf>,
@@ -104,7 +106,7 @@ pub struct WriteReturn {
     pub bundled: bool,
     #[arg(long)]
     pub no_summary: bool,
-    #[arg(long, num_args = 3, action = clap::ArgAction::Append)]
+    #[arg(long, num_args = 3, action = clap::ArgAction::Append, allow_hyphen_values = true)]
     pub item: Vec<String>,
 }
 
@@ -118,7 +120,7 @@ pub struct CheckReturn {
     pub issue: Option<String>,
     #[arg(long, required_unless_present = "file")]
     pub round_id: Option<String>,
-    #[arg(long, requires = "file")]
+    #[arg(long)]
     pub expect_items: Option<String>,
     #[arg(long)]
     pub expect_items_from_round: bool,
@@ -217,6 +219,7 @@ fn call(
     program: &Path,
     operation: &'static str,
     args: &[&str],
+    env: &[(&str, &OsStr)],
 ) -> Result<std::process::Output> {
     host::run_tagged_in(
         "artifact",
@@ -226,15 +229,35 @@ fn call(
         args,
         Place {
             cwd: Some(worktree),
-            env: &[],
+            env,
         },
         Duration::from_secs(120),
     )
     .map_err(|e| refuse("artifact-read", e))
 }
 
+/// Git answers from the repository alone, in C-locale text, never from the
+/// system's or the user's configuration (`ops/cycle.rs` holds the same list).
+const GIT_ENV: [(&str, &str); 3] = [
+    ("LC_ALL", "C"),
+    ("GIT_CONFIG_NOSYSTEM", "1"),
+    ("GIT_CONFIG_GLOBAL", "/dev/null"),
+];
+
+fn git_call(
+    worktree: &Path,
+    operation: &'static str,
+    args: &[&str],
+) -> Result<std::process::Output> {
+    let env: Vec<(&str, &OsStr)> = GIT_ENV
+        .iter()
+        .map(|(name, value)| (*name, OsStr::new(*value)))
+        .collect();
+    call(worktree, Path::new("git"), operation, args, &env)
+}
+
 fn git(worktree: &Path, args: &[&str]) -> Result<String> {
-    let out = call(worktree, Path::new("git"), "git", args)?;
+    let out = git_call(worktree, "git", args)?;
     if !out.status.success() {
         return Err(refuse("git-failed", host::stderr_text(&out)));
     }
@@ -242,9 +265,8 @@ fn git(worktree: &Path, args: &[&str]) -> Result<String> {
 }
 
 fn ancestor(worktree: &Path, base: &str, head: &str) -> Result<bool> {
-    let out = call(
+    let out = git_call(
         worktree,
-        Path::new("git"),
         "ancestor",
         &["merge-base", "--is-ancestor", base, head],
     )?;
@@ -292,6 +314,7 @@ fn shared_measure(
         Path::new("/bin/bash"),
         "branch-measure",
         &["-c", &code, "artifact", &lib, &wt, &resolver],
+        &[],
     )?;
     if !out.status.success() {
         return Err(refuse("baseline-read", host::stderr_text(&out)));
@@ -301,6 +324,26 @@ fn shared_measure(
 
 fn base_ref(settings: &Settings, worktree: &Path) -> Result<String> {
     shared_measure(settings, worktree, "branch_growth_base_ref", "")
+}
+
+/// The publication order `pr-order` prints; `None` where it answered none.
+fn publication_order(settings: &Settings, worktree: &Path) -> Option<String> {
+    let wt = worktree.display().to_string();
+    let out = call(
+        worktree,
+        &script(settings, "pr-order"),
+        "pr-order",
+        &[&wt],
+        &[],
+    )
+    .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    host::stdout_text(&out)
+        .trim()
+        .strip_prefix("pr-order=")
+        .map(str::to_owned)
 }
 
 fn round_path(id: &Identity) -> PathBuf {
@@ -382,7 +425,7 @@ fn unique_numbers(items: &Value, round: bool) -> bool {
 
 fn round_record(id: &Identity) -> Result<Value> {
     let path = round_path(id);
-    if fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+    if !fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_file()) {
         return Err(refuse("round-missing", path.display()));
     }
     let r = json_file(&path, "round-json")?;
@@ -428,10 +471,6 @@ fn publish(path: &Path, value: &Value, immutable: bool) -> Result<()> {
     reason = "publication holds the artifact lock and owns its exclusive scratch file"
 )]
 fn publish_locked(path: &Path, value: &Value, immutable: bool) -> Result<()> {
-    let parent = path
-        .parent()
-        .ok_or_else(|| refuse("artifact-write", path.display()))?;
-    fs::create_dir_all(parent).map_err(|e| refuse("artifact-write", e))?;
     static SCRATCH: AtomicU64 = AtomicU64::new(0);
     let scratch = path.with_extension(format!(
         "json.{}-{}.tmp",
@@ -611,17 +650,14 @@ fn run_record(path: &Path) -> Result<Run> {
         selection,
         ..Run::default()
     };
-    if file.sentinel.is_some() {
-        let timing_text = text(&path.join("timing"), "timing-unreadable")?;
-        let timing = fields(&timing_text);
-        let began = timing.get("started-at").copied().unwrap_or_default();
-        let ended = timing.get("ended-at").copied().unwrap_or_default();
-        let seconds = timing.get("seconds").and_then(|s| s.parse::<u64>().ok());
-        if let (Some(b), Some(e), Some(seconds)) =
-            (clock::epoch_secs(began), clock::epoch_secs(ended), seconds)
-            && e.checked_sub(b) == Some(seconds)
+    if let Some(t) = file.timing().map_err(unreadable)? {
+        if let (Some(b), Some(e)) = (
+            clock::epoch_secs(&t.started_at),
+            clock::epoch_secs(&t.ended_at),
+        ) && e.checked_sub(b) == Some(t.seconds)
         {
-            run.time = json!({"started_at": began, "ended_at": ended, "seconds": seconds});
+            run.time =
+                json!({"started_at": t.started_at, "ended_at": t.ended_at, "seconds": t.seconds});
         } else {
             return Err(refuse("timing-unreadable", path.display()));
         }
@@ -780,6 +816,11 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run) -> Result<()> {
             "the run did not validate the receipt's tree",
         ));
     }
+    // A failure is reported over its own tree and asks for no proof of it.
+    if r.validate.starts_with("FAILING:") {
+        return Ok(());
+    }
+    let declared = proof::Declaration::of(&settings.validate);
     let mut rows = stages(settings, &r.id.issue)?;
     let recorded = r
         .validate_run_dir
@@ -787,7 +828,6 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run) -> Result<()> {
         .and_then(|dir| rows.iter().find(|s| s.run_dir.as_deref() == dir.to_str()))
         .is_some_and(|s| s.proof.is_some());
     if !recorded {
-        let declared = proof::Declaration::of(&settings.validate);
         let mut stage = match &r.validate_run_dir {
             // An unrecorded run directory is the proof row its run file
             // reads as, the row the validation entry's own proof reads.
@@ -804,7 +844,7 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run) -> Result<()> {
                 let row = json!({"kind":"validate", "start":run.start, "end":run.start,
                     "outcome": if run.verdict == "pass" { "pass" } else if run.verdict == "no-verdict" { "no-verdict" } else { "fail" },
                     "run_dir":r.validate_record,
-                    "proof":{"tree":"","head":run.head,"base":base,"mode":run.mode,"caller":"dev","cmd":cmd,"class":"standard","docs_only":false,"paths_hash":"","scoped":false,"selection":run.selection,"finding_prefix":"","timeout_secs":0,"poll_secs":1,"cap_secs":0}});
+                    "proof":{"tree":"","head":run.head,"base":base,"mode":run.mode,"caller":"dev","cmd":cmd,"class":"standard","docs_only":false,"paths_hash":"","scoped":false,"selection":run.selection,"finding_prefix":declared.finding_prefix,"timeout_secs":0,"poll_secs":1,"cap_secs":0}});
                 serde_json::from_value::<Stage>(row)?
             }
         };
@@ -822,12 +862,6 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run) -> Result<()> {
         if proof.base.is_empty() {
             proof.base = base.to_owned();
         }
-        if r.validate_record.is_some() && !declared.finding_prefix.is_empty() {
-            return Err(refuse(
-                "run-off-round",
-                "the run carries no declared command proof",
-            ));
-        }
         rows.insert(0, stage);
     }
     let request = proof::ReadProof {
@@ -838,22 +872,23 @@ fn bind_run(settings: &Settings, r: &WriteReturn, run: &Run) -> Result<()> {
         round: None,
     };
     let mut tree_of = |head: &str| committed_tree(&r.id.worktree, head).ok();
-    let answer = proof::read(
-        &rows,
-        &[],
-        &request,
-        &proof::Declaration::of(&settings.validate),
-        &mut tree_of,
-    );
+    let answer = proof::read(&rows, &[], &request, &declared, &mut tree_of);
     match (r.validate.as_str(), answer.proof) {
         ("pass", proof::Verdict::Complete | proof::Verdict::Pending) => Ok(()),
         ("no-verdict", _) if run.verdict == "no-verdict" => Ok(()),
-        (v, _) if v.starts_with("FAILING:") => Ok(()),
         _ => Err(refuse(
             "run-off-round",
             "Need::Round has no applicable proof of the tree",
         )),
     }
+}
+
+/// A project file's lexical token: a quoted string whose escape the reader
+/// cannot decode stays a token, and matters only where a member's name needs it.
+enum Token {
+    Punct(char),
+    Text(String),
+    Undecodable,
 }
 
 fn apple_names(manifest: &str) -> Option<BTreeSet<String>> {
@@ -880,6 +915,7 @@ fn apple_names(manifest: &str) -> Option<BTreeSet<String>> {
             }
         } else if c == '"' {
             let mut s = String::new();
+            let mut decoded = true;
             let mut closed = false;
             while let Some(c) = it.next() {
                 if c == '"' {
@@ -888,9 +924,7 @@ fn apple_names(manifest: &str) -> Option<BTreeSet<String>> {
                 }
                 if c == '\\' {
                     let e = it.next()?;
-                    if e != '"' && e != '\\' {
-                        return None;
-                    }
+                    decoded &= e == '"' || e == '\\';
                     s.push(e);
                 } else {
                     s.push(c);
@@ -899,9 +933,13 @@ fn apple_names(manifest: &str) -> Option<BTreeSet<String>> {
             if !closed {
                 return None;
             }
-            tokens.push(s);
+            tokens.push(if decoded {
+                Token::Text(s)
+            } else {
+                Token::Undecodable
+            });
         } else if "{}=;()".contains(c) {
-            tokens.push(c.to_string());
+            tokens.push(Token::Punct(c));
         } else {
             let mut s = c.to_string();
             while it
@@ -910,27 +948,31 @@ fn apple_names(manifest: &str) -> Option<BTreeSet<String>> {
             {
                 s.push(it.next()?);
             }
-            tokens.push(s);
+            tokens.push(Token::Text(s));
         }
     }
-    let mut stack: Vec<BTreeMap<String, String>> = Vec::new();
-    let mut statement: Vec<String> = Vec::new();
+    // A value is `None` where its quoted text could not be decoded.
+    let mut stack: Vec<BTreeMap<String, Option<String>>> = Vec::new();
+    let mut statement: Vec<Token> = Vec::new();
     let mut names = BTreeSet::new();
     for token in tokens {
-        match token.as_str() {
-            "{" => {
+        match token {
+            Token::Punct('{') => {
                 stack.push(BTreeMap::new());
                 statement.clear();
             }
-            "}" => {
+            Token::Punct('}') => {
                 let object = stack.pop()?;
                 if object.get("isa").is_some_and(|s| {
-                    ["PBXFileReference", "PBXFileSystemSynchronizedRootGroup"].contains(&s.as_str())
+                    s.as_deref().is_some_and(|s| {
+                        ["PBXFileReference", "PBXFileSystemSynchronizedRootGroup"].contains(&s)
+                    })
                 }) {
                     for k in ["path", "name"] {
                         if let Some(value) = object.get(k) {
                             names.extend(
                                 value
+                                    .as_deref()?
                                     .split('/')
                                     .filter(|s| !s.is_empty() && *s != "." && *s != "..")
                                     .map(str::to_owned),
@@ -940,16 +982,20 @@ fn apple_names(manifest: &str) -> Option<BTreeSet<String>> {
                 }
                 statement.clear();
             }
-            ";" => {
-                if statement.len() == 3
-                    && statement[1] == "="
+            Token::Punct(';') => {
+                if let [Token::Text(key), Token::Punct('='), value] = &statement[..]
                     && let Some(object) = stack.last_mut()
                 {
-                    object.insert(statement[0].clone(), statement[2].clone());
+                    let value = match value {
+                        Token::Text(s) => Some(s.clone()),
+                        Token::Punct(c) => Some(c.to_string()),
+                        Token::Undecodable => None,
+                    };
+                    object.insert(key.clone(), value);
                 }
                 statement.clear();
             }
-            _ => statement.push(token),
+            token => statement.push(token),
         }
     }
     stack.is_empty().then_some(names)
@@ -998,9 +1044,8 @@ fn apple_gate(settings: &Settings, r: &WriteReturn) -> Result<()> {
             *p == "ios" || *p == "macos" || p.ends_with(".xcodeproj") || p.ends_with(".xcworkspace")
         });
         if path.ends_with("Package.swift") {
-            let out = call(
+            let out = git_call(
                 &r.id.worktree,
-                Path::new("git"),
                 "apple-manifest",
                 &["cat-file", "blob", &format!("{}:{path}", r.commit)],
             )?;
@@ -1028,11 +1073,12 @@ fn apple_gate(settings: &Settings, r: &WriteReturn) -> Result<()> {
                 .split('\0')
                 .filter(|p| p.ends_with(".xcodeproj/project.pbxproj"))
             {
+                // A listed project that cannot be read cannot rule out Mac work.
                 let manifest = git(
                     &r.id.worktree,
                     &["cat-file", "blob", &format!("{revision}:{project}")],
-                )?;
-                match apple_names(&manifest) {
+                );
+                match manifest.ok().as_deref().and_then(apple_names) {
                     None => triggered = true,
                     Some(names) => {
                         triggered |= paths
@@ -1068,7 +1114,7 @@ fn near_ceiling(r: &WriteReturn) -> (Value, Value) {
     let lane =
         r.id.worktree
             .join(".agents/skills/commit-guards/scripts/byte-ceiling");
-    let mut ancestor = Some(lane.as_path());
+    let mut ancestor = lane.parent();
     while let Some(path) = ancestor.filter(|p| *p != r.id.worktree) {
         if fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
             && fs::metadata(path).is_err()
@@ -1080,10 +1126,20 @@ fn near_ceiling(r: &WriteReturn) -> (Value, Value) {
         }
         ancestor = path.parent();
     }
-    match fs::metadata(&lane) {
+    match fs::symlink_metadata(&lane) {
         Err(e) if e.kind() == ErrorKind::NotFound => (json!([]), Value::Null),
         Err(e) => (Value::Null, json!(e.to_string())),
-        Ok(_) => match call(&r.id.worktree, &lane, "byte-ceiling", &["--base", base]) {
+        Ok(_) if !fs::metadata(&lane).is_ok_and(|m| m.permissions().mode() & 0o111 != 0) => (
+            Value::Null,
+            json!(format!("byte-ceiling not executable: {}", lane.display())),
+        ),
+        Ok(_) => match call(
+            &r.id.worktree,
+            &lane,
+            "byte-ceiling",
+            &["--base", base],
+            &[],
+        ) {
             Ok(out) if matches!(out.status.code(), Some(0 | 1)) => (
                 json!(
                     host::stdout_text(&out)
@@ -1126,12 +1182,16 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
     if r.validate == "no-verdict" && r.validate_note.is_none() {
         return Err(refuse("required", "validate-note"));
     }
+    if r.near_ceiling_base.as_deref() == Some("") {
+        return Err(refuse("required", "near-ceiling-base"));
+    }
     let run = match (&r.validate_run_dir, &r.validate_record) {
         (Some(dir), None) => Some(run_record(dir)?),
         (None, Some(file)) => Some(foreground(file)?),
         (None, None) if r.validate.starts_with("FAILING:") => None,
         _ => return Err(refuse("required", "one validation evidence source")),
     };
+    let mut commit = r.commit.clone();
     if let Some(run) = &run {
         if !r.validate.starts_with("FAILING:")
             && r.validate != run.verdict
@@ -1142,18 +1202,18 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
                 format!("validate={} run={}", r.validate, run.verdict),
             ));
         }
-        if run.mode == "ci"
-            && r.validate == "pass"
-            && run.tree
-                != committed_tree(
-                    &r.id.worktree,
-                    &git(
-                        &r.id.worktree,
-                        &["rev-parse", "--verify", &format!("{}^{{commit}}", r.commit)],
-                    )?,
-                )?
-        {
-            return Err(refuse("ci-contents-mismatch", &r.commit));
+        // A ci receipt is checked against the exact current HEAD, so it
+        // records the full commit its pending contents were compared with.
+        if run.mode == "ci" && r.validate == "pass" {
+            let mismatch = |_| refuse("ci-contents-mismatch", &r.commit);
+            commit = git(
+                &r.id.worktree,
+                &["rev-parse", "--verify", &format!("{}^{{commit}}", r.commit)],
+            )
+            .map_err(mismatch)?;
+            if run.tree != committed_tree(&r.id.worktree, &commit).map_err(mismatch)? {
+                return Err(refuse("ci-contents-mismatch", &r.commit));
+            }
         }
     }
     let items: Value = Value::Array(
@@ -1189,7 +1249,7 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
     }
     apple_gate(settings, r)?;
     let (near, near_error) = near_ceiling(r);
-    let mut record = json!({"schema_version":1,"round_id":r.id.round_id,"kind":r.kind,"issue":r.id.issue,"branch":r.branch,"commit":r.commit,
+    let mut record = json!({"schema_version":1,"round_id":r.id.round_id,"kind":r.kind,"issue":r.id.issue,"branch":r.branch,"commit":commit,
         "validate":r.validate,"validate_mode":run.as_ref().map(|r| &r.mode),"validate_time":run.as_ref().map(|r| &r.time),"validate_note":r.validate_note,
         "qa_labels":r.qa_label,"near_ceiling":near,"near_ceiling_error":near_error,"summary_posted":!r.no_summary,"summary":summary,
         "recovered_from":r.recovered_text.as_ref().map(|_| "transcript"),"bundled":r.bundled,"items":items});
@@ -1206,7 +1266,6 @@ pub fn write(settings: &Settings, r: &WriteReturn) -> Result<Answer> {
         record["screenshots"] = json!(screenshots);
     }
     if r.kind == "implement" {
-        let commit = r.commit.clone();
         let measured = shared_measure(
             settings,
             &r.id.worktree,
@@ -1575,6 +1634,9 @@ fn check_evaluate(settings: &Settings, r: &CheckReturn) -> Result<Answer> {
     if let Some(id) = &id {
         identity(id)?;
     }
+    if r.expect_items.is_some() && r.file.is_none() {
+        return Err(refuse("file-mode-required", "--expect-items"));
+    }
     if let Some(round) = &r.round_id {
         token(round)?;
     }
@@ -1623,15 +1685,24 @@ fn check_evaluate(settings: &Settings, r: &CheckReturn) -> Result<Answer> {
     if id.is_some() && v["kind"] == "fix" && round.is_none() {
         return Err(refuse("expected-round-required", file.display()));
     }
-    if let Some(round) = &round
+    if let (Some(round), Some(id)) = (&round, &id)
         && v["kind"] == "fix"
         && !v["validate_mode"].is_null()
     {
         let recorded = mode(v["validate_mode"].as_str().expect("receipt schema"))?;
-        if stage_mode.is_some_and(|wanted| recorded != wanted) {
+        // A round no stage admitted defers to CI only where the pull request
+        // runs CI: open at the stamp, or published first.
+        let admitted = match stage_mode {
+            Some(wanted) => recorded == wanted,
+            None => {
+                recorded != ValidateMode::Ci
+                    || round["pr_open"] == true
+                    || publication_order(settings, &id.worktree).as_deref() == Some("push-first")
+            }
+        };
+        if !admitted {
             return Ok(emit("mode_mismatch", None, None, &[]));
         }
-        let _ = round;
     }
     let repo = id.as_ref().map(|id| id.worktree.clone()).or_else(|| {
         file.parent()
@@ -1918,6 +1989,7 @@ fn reconcile_recovery(settings: &Settings, r: &RecoverRound, env: &Env) -> Resul
     let path = state::item_path(&settings.state_dir, &r.id.issue);
     let rows = stages(settings, &r.id.issue)?;
     if r.directive_unconfirmed {
+        stop_worktree_runs(settings, &r.id.issue, &r.id.worktree, env)?;
         for row in rows
             .iter()
             .filter(|s| s.kind == StageKind::Validate && s.end.is_none() && s.job.is_some())
@@ -1932,7 +2004,6 @@ fn reconcile_recovery(settings: &Settings, r: &RecoverRound, env: &Env) -> Resul
                 return Err(refuse("stop-failed", dir));
             }
         }
-        stop_worktree_runs(settings, &r.id.issue, &r.id.worktree, env)?;
         return Ok(None);
     }
     if rows
@@ -2014,29 +2085,22 @@ fn recovery_run(settings: &Settings, id: &Identity) -> Result<Option<(PathBuf, R
         .transpose()
 }
 
-/// An unfinished run of the worktree is still running as the validation
-/// entry's `--wait` reads it: a bare pid under the run's own argv or under
-/// another, or a run the runtime started whose records answer live.
-fn released_live_run(r: &RecoverRound) -> Result<Option<PathBuf>> {
-    let unreadable = |e: Error| refuse("run-unreadable", e);
-    for run in files::runs(&r.id.worktree).map_err(unreadable)? {
-        if run.sentinel.is_none()
-            && matches!(
-                files::bare_pid(&run).map_err(unreadable)?,
-                files::BarePid::Live(_) | files::BarePid::Other
-            )
-        {
-            return Ok(Some(run.dir));
-        }
-    }
+/// The round's own run, as the receipt would select it, where the
+/// validation start's liveness reader answers it live. A start refuses to
+/// run beside a live run, so the worktree holds at most one.
+fn released_live_run(settings: &Settings, r: &RecoverRound) -> Result<Option<PathBuf>> {
+    let Some((own, _)) = recovery_run(settings, &r.id)? else {
+        return Ok(None);
+    };
     Ok(files::live(&r.id.worktree)
-        .map_err(unreadable)?
-        .map(|(dir, _)| dir))
+        .map_err(|e| refuse("run-unreadable", e))?
+        .map(|(dir, _)| dir)
+        .filter(|dir| dir.file_name() == own.file_name()))
 }
 
-/// The worktree's other unfinished runs ended by the validation entry's
+/// The worktree's unfinished runs ended by the validation entry's
 /// `--stop --worktree` stop, before a replacement round is minted. The
-/// item's own admitted runs are its stage loop's.
+/// started jobs of the item's own open stages are its stage loop's.
 fn stop_worktree_runs(settings: &Settings, issue: &str, worktree: &Path, env: &Env) -> Result<()> {
     crate::validate::run::stop_worktree(settings, worktree, Some(issue), env, Locking::FLOCK)
         .map(|_| ())
@@ -2054,7 +2118,7 @@ pub fn recover(settings: &Settings, r: &RecoverRound, env: &Env) -> Result<Answe
     if r.directive_unconfirmed {
         return redelegate(settings, r, "directive-unconfirmed", env);
     }
-    if let Some(dir) = released_live_run(r)? {
+    if let Some(dir) = released_live_run(settings, r)? {
         return Ok(Answer {
             value: json!({"state":"round-live","run_dir":dir}),
             text: format!("round-recover: round-live run-dir={}", dir.display()),

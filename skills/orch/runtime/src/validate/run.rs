@@ -861,9 +861,11 @@ pub struct WorktreeStop {
     pub groups: usize,
 }
 
-/// Every unfinished run in `worktree` ended, but those `keep` admits: a run
-/// an item admits through its stage's stop, and a run no item admits, or
-/// one whose stage is closed, by the identity its own files name.
+/// Every unfinished run in `worktree` ended, but the started jobs of the
+/// open stages `keep` admits, which its caller stops through those stages: a
+/// run an item admits through its stage's stop, and a run no item admits, one
+/// whose stage is closed or one `keep` admits with no job, by the identity
+/// its own files name.
 pub fn stop_worktree(
     settings: &Settings,
     worktree: &Path,
@@ -883,7 +885,12 @@ pub fn stop_worktree(
     {
         let rd = run.dir.display().to_string();
         match item_of_run_dir(&settings.state_dir, &rd) {
-            Ok((item, _)) if Some(item.as_str()) == keep => {}
+            Ok((item, _)) if Some(item.as_str()) == keep => {
+                let (stages, index) = stage_of(&state::item_path(&settings.state_dir, &item), &rd)?;
+                if stages[index].end.is_some() || stages[index].job.is_none() {
+                    count(stop_files(&run.dir)?);
+                }
+            }
             Ok((item, _)) => match stop(settings, Some(&item), &rd, env, locking) {
                 Ok(reply) if reply.ended == JobEnded::Signalled => count(Some(&reply.runner)),
                 Ok(_) => {}

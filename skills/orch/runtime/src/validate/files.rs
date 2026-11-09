@@ -35,6 +35,12 @@ pub fn mode(word: &str) -> Result<ValidateMode> {
     }
 }
 
+pub struct Timing {
+    pub seconds: u64,
+    pub started_at: String,
+    pub ended_at: String,
+}
+
 pub struct RunFile {
     pub dir: PathBuf,
     pub start: BTreeMap<String, String>,
@@ -205,23 +211,11 @@ impl RunFile {
         for key in ["validate-base-orphaned", "class-base", "tree"] {
             self.append(&mut line, key);
         }
-        if self.sentinel.is_some() {
-            let timing =
-                fields(&self.dir.join("timing")).map_err(|e| unreadable("timing-unreadable", e))?;
-            for key in ["seconds", "started-at", "ended-at"] {
-                let value = timing
-                    .get(key)
-                    .ok_or_else(|| unreadable("timing-unreadable", key))?;
-                let valid = if key == "seconds" {
-                    value.parse::<u64>().is_ok()
-                } else {
-                    agent_runtime::clock::epoch_secs(value).is_some()
-                };
-                if !valid {
-                    return Err(unreadable("timing-unreadable", key));
-                }
-                line.push_str(&format!(" {key}={value}"));
-            }
+        if let Some(t) = self.timing()? {
+            line.push_str(&format!(
+                " seconds={} started-at={} ended-at={}",
+                t.seconds, t.started_at, t.ended_at
+            ));
         }
         for key in ["scoped", "ci-fallback"] {
             self.append(&mut line, key);
@@ -230,6 +224,30 @@ impl RunFile {
             self.append(&mut line, "ci-event");
         }
         Ok(line)
+    }
+    /// The ended run's timing record; a run with no sentinel has none yet.
+    pub fn timing(&self) -> Result<Option<Timing>> {
+        if self.sentinel.is_none() {
+            return Ok(None);
+        }
+        let timing =
+            fields(&self.dir.join("timing")).map_err(|e| unreadable("timing-unreadable", e))?;
+        let seconds = timing
+            .get("seconds")
+            .and_then(|v| v.parse::<u64>().ok())
+            .ok_or_else(|| unreadable("timing-unreadable", "seconds"))?;
+        let time = |key: &'static str| {
+            timing
+                .get(key)
+                .filter(|v| agent_runtime::clock::epoch_secs(v).is_some())
+                .cloned()
+                .ok_or_else(|| unreadable("timing-unreadable", key))
+        };
+        Ok(Some(Timing {
+            seconds,
+            started_at: time("started-at")?,
+            ended_at: time("ended-at")?,
+        }))
     }
     fn append(&self, line: &mut String, key: &str) {
         if !self.get(key).is_empty() {

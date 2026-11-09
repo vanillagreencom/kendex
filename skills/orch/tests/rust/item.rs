@@ -206,6 +206,7 @@ mod dev_artifacts {
     use orch_runtime::ops::artifact::{self as receipt, CheckReturn};
     use orch_runtime::settings::{self, Flags, Roots};
     use std::sync::Arc;
+    use std::time::SystemTime;
     use support::{fixtures, program, stderr};
 
     struct World {
@@ -392,6 +393,11 @@ mod dev_artifacts {
             fs::write(dir.join("exit"), "guard-exit=0 at=2026-01-01T00:00:01Z\n").unwrap();
             dir
         }
+        fn record_start(&self, run: &Path, line: &str) {
+            let start = run.join("start");
+            let text = fs::read_to_string(&start).unwrap();
+            fs::write(start, format!("{text}{line}\n")).unwrap();
+        }
         fn transcript(&self, round: &str, report: &str, channel: &str) -> PathBuf {
             let mut lines =
                 vec![json!({"message":{"role":"user","content":format!("Round ID: {round}")}})];
@@ -471,6 +477,10 @@ mod dev_artifacts {
             w.plant_receipt(want, &w.released_receipt(internal, "fix"));
             assert_eq!(w.check(want)["reason"], "invalid", "{want}/{internal}");
         }
+        let mut other_issue = w.released_receipt("r1", "fix");
+        other_issue["issue"] = json!("issue-9");
+        w.plant_receipt("r1", &other_issue);
+        assert_eq!(w.check("r1")["reason"], "invalid");
         w.plant_receipt("r1", &w.released_receipt("r1", "fix"));
         assert_eq!(w.check("r1")["reason"], "valid");
     }
@@ -478,11 +488,67 @@ mod dev_artifacts {
     #[test]
     fn round_stamp_is_immutable_and_retries_keep_the_original_delegation() {
         let w = World::new();
+        let before = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         let a = w.stamp("r1");
         let path = PathBuf::from(a["path"].as_str().unwrap());
         let first = fs::read(&path).unwrap();
+        let stamped: Value = serde_json::from_slice(&first).unwrap();
+        assert!(stamped["delegated_at"].as_u64().unwrap() >= before);
         assert_eq!(w.stamp("r1")["path"], a["path"]);
         assert_eq!(fs::read(&path).unwrap(), first);
+        // A retry of the same content keeps the delegation already recorded.
+        let mut earlier = stamped.clone();
+        earlier["delegated_at"] = json!(5);
+        fs::write(&path, earlier.to_string()).unwrap();
+        w.stamp("r1");
+        let kept: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(kept["delegated_at"], 5);
+        std::os::unix::fs::symlink(w.root.join("absent"), w.round_path("link")).unwrap();
+        refused(
+            &w.call(
+                &["round", "stamp"],
+                "link",
+                &["--item", "1", "x", "app CLI"],
+            ),
+            "record-symlink",
+        );
+        let items = w.root.join("items.json");
+        fs::write(
+            &items,
+            json!([{"n":1,"text":"from file","reach":"app CLI","extra":true}]).to_string(),
+        )
+        .unwrap();
+        let findings = w.root.join("findings.json");
+        let occurrences = json!({"prior":"none","classes":["lint"]});
+        fs::write(&findings, occurrences.to_string()).unwrap();
+        let out = w.call(
+            &["round", "stamp"],
+            "file",
+            &[
+                "--items-file",
+                items.to_str().unwrap(),
+                "--finding-occurrences-file",
+                findings.to_str().unwrap(),
+            ],
+        );
+        let v: Value = serde_json::from_str(
+            &fs::read_to_string(result(&out)["path"].as_str().unwrap()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            v["items"],
+            json!([{"n":1,"text":"from file","reach":"app CLI"}])
+        );
+        assert_eq!(v["finding_occurrences"], occurrences);
+        let bad_findings = w.root.join("bad-findings.json");
+        fs::write(
+            &bad_findings,
+            json!({"prior":"many","classes":[]}).to_string(),
+        )
+        .unwrap();
         refused(
             &w.call(
                 &["round", "stamp"],
@@ -494,9 +560,28 @@ mod dev_artifacts {
         for extra in [
             vec!["--item", "1", "x", "prrt_123"],
             vec!["--item", "1", "x", "the finding"],
+            vec!["--item", "1", "x", "Copilot thread"],
+            vec!["--item", "1", "x", " "],
             vec!["--item", "1", "x", "CLI", "--adds", "../outside"],
             vec!["--item", "1", "x", "CLI", "--adds", "tools/a tools/a"],
+            vec!["--item", "1", "x", "CLI", "--adds", " "],
             vec!["--item", "1", "x", "CLI", "--item", "1", "y", "CLI"],
+            vec![
+                "--item",
+                "1",
+                "x",
+                "CLI",
+                "--items-file",
+                items.to_str().unwrap(),
+            ],
+            vec![
+                "--item",
+                "1",
+                "x",
+                "CLI",
+                "--finding-occurrences-file",
+                bad_findings.to_str().unwrap(),
+            ],
         ] {
             let out = w.call(&["round", "stamp"], "bad", &extra);
             assert!(!out.status.success(), "{extra:?}");
@@ -548,6 +633,98 @@ mod dev_artifacts {
             w.plant_receipt("r1", &bad);
             assert_eq!(w.check("r1")["reason"], "invalid", "{key}");
         }
+        let second = json!({"started_at":"2026-01-01T00:00:00Z","ended_at":"2026-01-01T00:00:01Z","seconds":1});
+        let mut five = second.clone();
+        five["seconds"] = json!(5);
+        for patch in [
+            vec![
+                ("validate", json!("pass")),
+                ("validate_mode", json!("full")),
+            ],
+            vec![("validate_mode", json!("full")), ("validate_time", five)],
+            vec![("validate_time", second.clone())],
+            vec![
+                ("validate", json!("no-verdict")),
+                ("validate_mode", json!("full")),
+                ("validate_time", second.clone()),
+            ],
+            vec![("kind", json!("implement")), ("baseline_lines", json!(0))],
+        ] {
+            let mut bad = receipt.clone();
+            for (key, value) in &patch {
+                bad[*key] = value.clone();
+            }
+            w.plant_receipt("r1", &bad);
+            assert_eq!(w.check("r1")["reason"], "invalid", "{patch:?}");
+        }
+        let mut timeless = receipt.clone();
+        timeless.as_object_mut().unwrap().remove("validate_time");
+        w.plant_receipt("r1", &timeless);
+        assert_eq!(w.check("r1")["reason"], "invalid");
+        let mut named = receipt.clone();
+        named["commit"] = json!("HEAD");
+        w.plant_receipt("r1", &named);
+        assert_eq!(w.check("r1")["reason"], "commit_unresolvable");
+        // Read by its own path, the receipt's issue is its token and its
+        // repository the worktree its tmp directory belongs to.
+        let mut loose = receipt.clone();
+        loose["issue"] = json!("a/b");
+        let file = w.wt.join("tmp/loose.json");
+        fs::write(&file, loose.to_string()).unwrap();
+        let by_file = |path: &Path| {
+            result(&w.run(&["dev-return", "check", "--file", path.to_str().unwrap()]))["reason"]
+                .clone()
+        };
+        assert_eq!(by_file(&file), "invalid");
+        fs::create_dir(w.wt.join("other")).unwrap();
+        let outside = w.wt.join("other/receipt.json");
+        fs::write(&outside, receipt.to_string()).unwrap();
+        assert_eq!(by_file(&outside), "commit_unverifiable");
+        // A run-less ci receipt defers to CI only where the pull request runs
+        // it: open at the stamp, or published first.
+        let mut ci = receipt.clone();
+        ci["validate"] = json!("pass");
+        ci["validate_mode"] = json!("ci");
+        ci["validate_time"] = second.clone();
+        w.plant_receipt("r1", &ci);
+        assert_eq!(w.check("r1")["reason"], "mode_mismatch");
+        let push_first = result(
+            &w.command()
+                .env("ORCH_PR_ORDER", "push-first")
+                .args(["dev-return", "check"])
+                .args(w.identity("r1"))
+                .arg("--expect-items-from-round")
+                .output()
+                .unwrap(),
+        );
+        assert_eq!(push_first["verdict"], "accept", "{push_first}");
+        result(&w.call(
+            &["round", "stamp"],
+            "open",
+            &[
+                "--item",
+                "1",
+                "repair parser",
+                "app CLI",
+                "--pr-open",
+                "true",
+            ],
+        ));
+        w.plant_receipt("open", &{
+            let mut v = ci.clone();
+            v["round_id"] = json!("open");
+            v
+        });
+        assert_eq!(w.check("open")["verdict"], "accept");
+        let parent = w.head();
+        w.commit("later.txt");
+        w.plant_receipt("open", &{
+            let mut v = ci.clone();
+            v["round_id"] = json!("open");
+            v["commit"] = json!(parent);
+            v
+        });
+        assert_eq!(w.check("open")["reason"], "ci_head_mismatch");
         let mut bad = receipt.clone();
         bad["commit"] = json!("badbad");
         bad["items"] = json!([]);
@@ -600,6 +777,7 @@ mod dev_artifacts {
             json!([{"n":1,"decision":"Applied","reasoning":"x"},{"n":1,"decision":"Skipped","reasoning":"x"}]),
             json!([{"n":1,"decision":"Done","reasoning":"x"}]),
             json!([{"n":1,"decision":"Applied","reasoning":""}]),
+            json!([{"n":1,"decision":"Applied","reasoning":"x"},{"n":2,"decision":"Applied","reasoning":"x"}]),
         ] {
             let mut bad = good.clone();
             bad["items"] = items;
@@ -621,6 +799,27 @@ mod dev_artifacts {
             ]))["reason"],
             "incomplete"
         );
+        // A count passed as the item numbers reads as incomplete with a hint.
+        let mut counted = good.clone();
+        counted["items"] = json!(
+            [1, 2, 3]
+                .iter()
+                .map(|n| json!({"n":n,"decision":"Applied","reasoning":"x"}))
+                .collect::<Vec<_>>()
+        );
+        let counted_path = w.wt.join("tmp/counted.json");
+        fs::write(&counted_path, counted.to_string()).unwrap();
+        for (expect, hinted) in [("3", true), ("1,2,3", false)] {
+            let answer = result(&w.run(&[
+                "dev-return",
+                "check",
+                "--file",
+                counted_path.to_str().unwrap(),
+                "--expect-items",
+                expect,
+            ]));
+            assert_eq!(answer["hint"].is_string(), hinted, "{answer}");
+        }
         w.plant_receipt("r1", &good);
         assert_eq!(w.check("r1")["verdict"], "retry");
         let orphan = git(&w.wt, &["commit-tree", &w.tree(), "-m", "orphan"]);
@@ -716,6 +915,12 @@ mod dev_artifacts {
             ),
             "receipt-exists",
         );
+        let scratch: Vec<_> = fs::read_dir(w.wt.join("tmp"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(scratch.is_empty(), "{scratch:?}");
         assert_eq!(w.check("r1")["verdict"], "retry");
         let second = w.released_run("two", "full");
         result(&w.write(
@@ -739,6 +944,143 @@ mod dev_artifacts {
             ),
             "receipt-ambiguous",
         );
+        // A ci run's pending pass records the full commit its pending
+        // contents were compared with, which the checker holds to HEAD.
+        result(&w.call(
+            &["round", "stamp"],
+            "ci",
+            &[
+                "--item",
+                "1",
+                "repair parser",
+                "app CLI",
+                "--pr-open",
+                "true",
+            ],
+        ));
+        let ci = w.released_run("ci", "full");
+        fs::write(
+            ci.join("start"),
+            fs::read_to_string(ci.join("start"))
+                .unwrap()
+                .replace("validate-mode=full", "validate-mode=ci"),
+        )
+        .unwrap();
+        w.record_start(&ci, &format!("tree={}", w.tree()));
+        let head = w.head();
+        let ci_args = |commit: &str| {
+            w.call(
+                &["dev-return", "write"],
+                "ci",
+                &[
+                    "--kind",
+                    "fix",
+                    "--branch",
+                    "work",
+                    "--commit",
+                    commit,
+                    "--validate",
+                    "pass",
+                    "--validate-run-dir",
+                    ci.to_str().unwrap(),
+                    "--item",
+                    "1",
+                    "Applied",
+                    "x",
+                ],
+            )
+        };
+        let path = result(&ci_args(&head[..7]))["path"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["commit"], head);
+        assert_eq!(v["validate_mode"], "ci");
+        assert_eq!(w.check("ci")["verdict"], "accept");
+        fs::remove_file(&path).unwrap();
+        w.commit("more.txt");
+        refused(&ci_args(&w.head()), "ci-contents-mismatch");
+        // The record keeps every field the evidence and the arguments name.
+        let shot = w.root.join("shot.png");
+        fs::write(&shot, "png").unwrap();
+        let classed = w.released_run("class", "full");
+        w.record_start(&classed, &format!("class-base={head}"));
+        let answer = result(&w.write(
+            "bundle",
+            "implement",
+            "FAILING: lint",
+            &[
+                "--validate-run-dir",
+                classed.to_str().unwrap(),
+                "--screenshot",
+                shot.to_str().unwrap(),
+                "--validate-note",
+                "a caveat",
+                "--bundled",
+                "--item",
+                "1",
+                "Applied",
+                "x",
+            ],
+        ));
+        let v: Value =
+            serde_json::from_str(&fs::read_to_string(answer["path"].as_str().unwrap()).unwrap())
+                .unwrap();
+        assert_eq!(v["screenshots"], json!([shot.canonicalize().unwrap()]));
+        assert_eq!(v["validate_note"], "a caveat");
+        assert_eq!(v["bundled"], true);
+        assert_eq!(v["validate_class_base"], head);
+        let span = w.released_run("span", "full");
+        fs::write(
+            span.join("timing"),
+            "started-at=2026-01-01T00:00:00Z\nended-at=2026-01-01T00:00:01Z\nseconds=5\n",
+        )
+        .unwrap();
+        refused(
+            &w.write(
+                "span",
+                "implement",
+                "FAILING: lint",
+                &["--validate-run-dir", span.to_str().unwrap()],
+            ),
+            "timing-unreadable",
+        );
+        // An unfinished run has no wall time yet.
+        let open = w.released_run("open", "full");
+        fs::remove_file(open.join("exit")).unwrap();
+        fs::remove_file(open.join("timing")).unwrap();
+        let answer = result(&w.write(
+            "open",
+            "implement",
+            "FAILING: lost",
+            &["--validate-run-dir", open.to_str().unwrap()],
+        ));
+        let v: Value =
+            serde_json::from_str(&fs::read_to_string(answer["path"].as_str().unwrap()).unwrap())
+                .unwrap();
+        assert_eq!(v["validate_mode"], "full");
+        assert!(v["validate_time"].is_null());
+        // The round's receipt is the one keyed by its newest admitted run.
+        let mut doc = w.doc();
+        for (start, name) in [(10, "older"), (20, "newer")] {
+            doc["stages"].as_array_mut().unwrap().push(json!({"kind":"validate","round_id":"pick","start":start,"end":start,"outcome":"pass","run_dir":w.wt.join(format!("tmp/dev-validate-{name}"))}));
+        }
+        fs::write(w.item(), doc.to_string()).unwrap();
+        w.stamp("pick");
+        let mut stale = w.released_receipt("pick", "fix");
+        stale["kind"] = json!("unknown");
+        fs::write(
+            w.wt.join("tmp/dev-return-issue-8-pick-older.json"),
+            stale.to_string(),
+        )
+        .unwrap();
+        fs::write(
+            w.wt.join("tmp/dev-return-issue-8-pick-newer.json"),
+            w.released_receipt("pick", "fix").to_string(),
+        )
+        .unwrap();
+        assert_eq!(w.check("pick")["reason"], "valid");
     }
 
     #[test]
@@ -765,34 +1107,138 @@ mod dev_artifacts {
             ],
         ));
         assert_eq!(w.check("r1")["verdict"], "accept");
-        for record in [
-            record.replace(
-                "ended-at=2026-01-01T00:00:01Z",
-                "ended-at=2025-01-01T00:00:00Z",
+        let foreground = |validate: &str, extra: &[&str]| {
+            let mut args = vec!["--validate-record", file.to_str().unwrap()];
+            args.extend_from_slice(extra);
+            args.extend_from_slice(&["--item", "1", "Applied", "x"]);
+            w.write("r1", "fix", validate, &args)
+        };
+        let subset = record.replace("selection=unreported", "selection=subset\nlanes=lint");
+        for (record, key) in [
+            (
+                record.replace(
+                    "ended-at=2026-01-01T00:00:01Z",
+                    "ended-at=2025-01-01T00:00:00Z",
+                ),
+                "validate-record-time",
             ),
-            record.clone() + "exit=0\n",
-            record.clone() + "unknown=value\n",
-            record.replace("head=", "missing="),
+            (record.clone() + "exit=0\n", "validate-record-line"),
+            (record.clone() + "unknown=value\n", "validate-record-line"),
+            (record.replace("head=", "missing="), "validate-record-line"),
+            (
+                record.replace("selection=unreported\n", ""),
+                "validate-record-missing",
+            ),
+            (
+                record.replace("validate-mode=full", "validate-mode=ci"),
+                "validate-record-value",
+            ),
+            (
+                record.replace(&format!("head={}", w.head()), "head=abc"),
+                "validate-record-value",
+            ),
+            (
+                record.replace("selection=unreported", "selection=everything"),
+                "validate-record-value",
+            ),
+            (
+                record.replace("selection=unreported", "selection=all"),
+                "validate-record-lanes",
+            ),
+            (record.clone() + "lanes=lint\n", "validate-record-lanes"),
+            (
+                subset.replace("lanes=lint", "lanes=lint,"),
+                "validate-record-lanes",
+            ),
+            (
+                record.replace("2026-01-01T00:00:00Z", "2026-13-01T00:00:00Z"),
+                "validate-record-value",
+            ),
+            (
+                record.replace("exit=0", "exit=1000"),
+                "validate-record-value",
+            ),
+            (record.replace("exit=0", "exit=x"), "validate-record-value"),
+            (record.clone() + "verdict=pass\n", "validate-record-value"),
         ] {
-            fs::write(&file, record).unwrap();
-            assert!(
-                !w.write(
-                    "r1",
-                    "fix",
-                    "pass",
-                    &[
-                        "--validate-record",
-                        file.to_str().unwrap(),
-                        "--item",
-                        "1",
-                        "Applied",
-                        "x"
-                    ]
-                )
-                .status
-                .success()
-            );
+            fs::write(&file, &record).unwrap();
+            refused(&foreground("pass", &[]), key);
         }
+        fs::remove_file(&file).unwrap();
+        fs::create_dir(&file).unwrap();
+        refused(&foreground("pass", &[]), "validate-record-unreadable");
+        fs::remove_dir(&file).unwrap();
+        // The exit and the bounded-run marker are the run's verdict.
+        fs::write(&file, record.replace("exit=0", "exit=1")).unwrap();
+        refused(&foreground("pass", &[]), "validate-disagrees");
+        fs::write(&file, record.clone() + "verdict=no-verdict\n").unwrap();
+        refused(&foreground("pass", &[]), "validate-disagrees");
+        fs::remove_file(w.receipt_path("r1")).unwrap();
+        result(&foreground("no-verdict", &["--validate-note", "bounded"]));
+        fs::remove_file(w.receipt_path("r1")).unwrap();
+        fs::write(&file, &subset).unwrap();
+        let path = result(&foreground("pass", &[]))["path"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let v: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(v["validate_lanes"], "lint");
+        fs::remove_file(&path).unwrap();
+        // A project that declares a finding prefix proves a foreground run as
+        // run under it; a failure binds by its tree before any proof.
+        fs::write(&file, &record).unwrap();
+        let prefixed = |validate: &str| {
+            let head = w.head();
+            w.command()
+                .env("DEV_VALIDATE_FINDING_PREFIX", "finding:")
+                .args(["dev-return", "write"])
+                .args(w.identity("r1"))
+                .args(["--kind", "fix", "--branch", "work", "--commit", &head])
+                .args(["--validate", validate, "--validate-record"])
+                .arg(&file)
+                .args(["--item", "1", "Applied", "x"])
+                .output()
+                .unwrap()
+        };
+        result(&prefixed("pass"));
+        fs::remove_file(w.receipt_path("r1")).unwrap();
+        fs::write(
+            &file,
+            record.replace("validate-mode=full", "validate-mode=range"),
+        )
+        .unwrap();
+        result(&prefixed("FAILING: lint"));
+        fs::remove_file(w.receipt_path("r1")).unwrap();
+        // With no declared command a foreground row proves nothing.
+        fs::write(&file, &record).unwrap();
+        let head = w.head();
+        refused(
+            &w.command()
+                .env_remove("DEV_VALIDATE_CMD")
+                .args(["dev-return", "write"])
+                .args(w.identity("r1"))
+                .args(["--kind", "fix", "--branch", "work", "--commit", &head])
+                .args(["--validate", "pass", "--validate-record"])
+                .arg(&file)
+                .args(["--item", "1", "Applied", "x"])
+                .output()
+                .unwrap(),
+            "run-off-round",
+        );
+        // A record without a snapshot proves its own HEAD only: an empty
+        // commit keeps the tree and still leaves the record behind.
+        git(&w.wt, &["commit", "-q", "--allow-empty", "-m", "empty"]);
+        refused(&foreground("pass", &[]), "run-off-round");
+        fs::write(&file, record.replace(&head, &w.head())).unwrap();
+        // An untracked file git would track leaves the tree unknown; an
+        // ignored one is no part of it.
+        fs::write(w.wt.join("tmp/ignored.txt"), "x").unwrap();
+        result(&foreground("pass", &[]));
+        fs::remove_file(w.receipt_path("r1")).unwrap();
+        fs::write(w.wt.join("untracked.txt"), "x").unwrap();
+        refused(&foreground("pass", &[]), "run-off-round");
+        fs::remove_file(w.wt.join("untracked.txt")).unwrap();
+        let record = record.replace(&head, &w.head());
         fs::write(&file, record).unwrap();
         fs::write(w.wt.join("app.txt"), "dirty\n").unwrap();
         refused(
@@ -911,6 +1357,14 @@ mod dev_artifacts {
         let shots = shots.to_str().unwrap();
         let gone = w.root.join("gone");
         let gone = gone.to_str().unwrap();
+        let locked = w.root.join("locked.png");
+        fs::write(&locked, "png").unwrap();
+        fs::set_permissions(
+            &locked,
+            <fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o000),
+        )
+        .unwrap();
+        let locked = locked.to_str().unwrap();
         let wt = w.wt.to_str().unwrap();
         let head = w.head();
         let receipts = || {
@@ -989,6 +1443,34 @@ mod dev_artifacts {
             ),
             (
                 ["issue-8", "r1", wt],
+                [&["--kind", "implement", "--screenshot", locked][..], &pass].concat(),
+                "screenshot-unreadable",
+            ),
+            (
+                ["issue-8", "r1", wt],
+                vec![
+                    "--kind",
+                    "fix",
+                    "--validate",
+                    "FAILING: lint",
+                    "--item",
+                    "x",
+                    "Applied",
+                    "y",
+                ],
+                "missing-items",
+            ),
+            (
+                ["issue-8", "r1", wt],
+                [
+                    &["--kind", "implement", "--near-ceiling-base", ""][..],
+                    &pass,
+                ]
+                .concat(),
+                "required",
+            ),
+            (
+                ["issue-8", "r1", wt],
                 vec!["--kind", "fix", "--validate", "FAILING: lint"],
                 "missing-items",
             ),
@@ -1050,20 +1532,41 @@ mod dev_artifacts {
             assert!(out.stdout.is_empty());
             assert_eq!(receipts(), before, "{rest:?}");
         }
+        for (branch, commit) in [("work", ""), (" ", head.as_str())] {
+            let out = w
+                .command()
+                .args(["dev-return", "--text", "write"])
+                .args(w.identity("r1"))
+                .args([
+                    "--kind",
+                    "implement",
+                    "--branch",
+                    branch,
+                    "--commit",
+                    commit,
+                ])
+                .args(["--validate", "FAILING: lint"])
+                .output()
+                .unwrap();
+            assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+            assert!(
+                stderr(&out).starts_with("dev-return-write: required "),
+                "{}",
+                stderr(&out)
+            );
+            assert_eq!(receipts(), before);
+        }
+        // A kind outside the two is refused at the arguments, before any answer.
         let out = w
             .command()
-            .args(["dev-return", "--text", "write"])
+            .args(["dev-return", "write"])
             .args(w.identity("r1"))
-            .args(["--kind", "implement", "--branch", "work", "--commit", ""])
+            .args(["--kind", "review", "--branch", "work", "--commit", &head])
             .args(["--validate", "FAILING: lint"])
             .output()
             .unwrap();
         assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
-        assert!(
-            stderr(&out).starts_with("dev-return-write: required "),
-            "{}",
-            stderr(&out)
-        );
+        assert!(out.stdout.is_empty());
         assert_eq!(receipts(), before);
     }
 
@@ -1078,7 +1581,21 @@ mod dev_artifacts {
         git(&headless, &["init", "-q"]);
         let headless = headless.to_str().unwrap();
         let item = ["--item", "1", "repair parser", "app CLI"];
+        let object = w.root.join("object.json");
+        fs::write(&object, "{}").unwrap();
+        let object = object.to_str().unwrap();
         for (identity, rest, key) in [
+            (["", "r1", wt], item.to_vec(), "invalid-id"),
+            (
+                ["issue-8", "r1", wt],
+                vec!["--items-file", gone],
+                "invalid-json",
+            ),
+            (
+                ["issue-8", "r1", wt],
+                vec!["--items-file", object],
+                "invalid-items",
+            ),
             (["a/b", "r1", wt], item.to_vec(), "invalid-id"),
             (["issue-8", "..", wt], item.to_vec(), "invalid-id"),
             (
@@ -1148,6 +1665,19 @@ mod dev_artifacts {
                 vec!["--file", receipt, "--expect-items", "1,x"],
                 "invalid-item-numbers",
             ),
+            (
+                vec![
+                    "--worktree",
+                    wt,
+                    "--issue",
+                    "issue-8",
+                    "--round-id",
+                    "r1",
+                    "--expect-items",
+                    "1",
+                ],
+                "file-mode-required",
+            ),
         ] {
             let out = w
                 .command()
@@ -1161,6 +1691,24 @@ mod dev_artifacts {
                 "{args:?} {}",
                 stderr(&out)
             );
+        }
+        // Arguments outside a verb's grammar are refused before any answer.
+        let id = ["--worktree", wt, "--issue", "issue-8", "--round-id", "r1"];
+        for args in [
+            [&["round", "stamp"][..], &id, &item, &["--pr-open", "yes"]].concat(),
+            vec!["dev-return", "check", "--file", receipt, "--interval", "0"],
+            vec![
+                "dev-return",
+                "check",
+                "--file",
+                receipt,
+                "--expect-items-from-round",
+            ],
+        ] {
+            let out = w.run(&args);
+            assert_eq!(out.status.code(), Some(2), "{args:?} {}", stderr(&out));
+            assert!(out.stdout.is_empty(), "{args:?}");
+            assert!(!w.round_path("r1").exists(), "{args:?}");
         }
     }
 
@@ -1245,6 +1793,8 @@ mod dev_artifacts {
             ("tests/test-helper.rs", true),
             ("helpers/build.rs", true),
             ("test-util.rs", true),
+            ("tests/lib/fixture.rs", true),
+            ("tests/check_helper.rs", true),
             ("src/app.rs", false),
             ("tests/feature.rs", false),
             ("fixtures/data.json", false),
@@ -1280,6 +1830,15 @@ mod dev_artifacts {
         w.commit("tools/authorized");
         w.plant_receipt("r1", &w.released_receipt("r1", "fix"));
         assert_eq!(w.check("r1")["reason"], "valid");
+        // A protected path the round's base already held is no addition,
+        // whether the round edits it or moves a file onto a protected path.
+        w.stamp("edits");
+        fs::write(w.wt.join("tools/authorized"), "edited\n").unwrap();
+        git(&w.wt, &["commit", "-qam", "edit"]);
+        git(&w.wt, &["mv", "app.txt", "tools/app.txt"]);
+        git(&w.wt, &["commit", "-qm", "move"]);
+        w.plant_receipt("edits", &w.released_receipt("edits", "fix"));
+        assert_eq!(w.check("edits")["reason"], "valid");
         let linked = w.root.join("linked");
         git(
             &w.wt,
@@ -1397,6 +1956,30 @@ mod dev_artifacts {
             ))["state"],
             "recovered"
         );
+        // The round's admitted run is its run, whatever a later run beside it
+        // answered.
+        let late = w.released_run("late", "full");
+        fs::write(
+            late.join("start"),
+            fs::read_to_string(late.join("start"))
+                .unwrap()
+                .replace("start=1", "start=4000000000"),
+        )
+        .unwrap();
+        fs::write(late.join("exit"), "guard-exit=1 at=2026-01-01T00:00:01Z\n").unwrap();
+        let report = format!(
+            "Branch: work\nCommit: {}\nQA: none\nValidate: pass",
+            w.head()
+        );
+        let transcript = w.transcript("r1", &report, "claude");
+        assert_eq!(
+            result(&w.call(
+                &["round", "recover"],
+                "r1",
+                &["--transcript", transcript.to_str().unwrap()]
+            ))["state"],
+            "recovered"
+        );
         w.commit("app.txt");
         refused(
             &w.write(
@@ -1414,6 +1997,84 @@ mod dev_artifacts {
             ),
             "run-off-round",
         );
+        // A fix run binds to its round's base by ancestry, its orphan record
+        // or an identical tree, and its proof is the declared command's.
+        let w = World::new();
+        w.stamp("r1");
+        let write = |round: &str, run: &Path| {
+            w.write(
+                round,
+                "fix",
+                "pass",
+                &[
+                    "--validate-run-dir",
+                    run.to_str().unwrap(),
+                    "--item",
+                    "1",
+                    "Applied",
+                    "x",
+                ],
+            )
+        };
+        refused(
+            &write("unstamped", &w.released_run("unstamped", "full")),
+            "round-missing",
+        );
+        let other = w.released_run("other-command", "full");
+        fs::write(other.join("cmd"), "another command").unwrap();
+        refused(&write("r1", &other), "run-off-round");
+        let round = w.round_path("r1");
+        let stamped = fs::read_to_string(&round).unwrap();
+        let mut absent: Value = serde_json::from_str(&stamped).unwrap();
+        absent["base_sha"] = json!("1".repeat(40));
+        fs::write(&round, absent.to_string()).unwrap();
+        refused(
+            &write("r1", &w.released_run("absent-base", "full")),
+            "ancestry-unreadable",
+        );
+        fs::write(&round, stamped).unwrap();
+        // The round's base X is rewritten away: HEAD Y does not contain it.
+        w.commit("x.txt");
+        w.stamp("orph");
+        let base = w.head();
+        let base_tree = w.tree();
+        git(&w.wt, &["reset", "-q", "--hard", "main"]);
+        w.commit("y.txt");
+        let snapshot = |name: &str, line: Option<String>| {
+            let run = w.released_run(name, "full");
+            w.record_start(&run, &format!("tree={}", w.tree()));
+            if let Some(line) = line {
+                w.record_start(&run, &line);
+            }
+            run
+        };
+        refused(&write("orph", &snapshot("unbound", None)), "run-off-round");
+        result(&write(
+            "orph",
+            &snapshot("orphaned", Some(format!("validate-base-orphaned={base}"))),
+        ));
+        let main = git(&w.wt, &["rev-parse", "main"]);
+        refused(
+            &write(
+                "orph",
+                &snapshot(
+                    "orphaned-other",
+                    Some(format!("validate-base-orphaned={main}")),
+                ),
+            ),
+            "run-off-round",
+        );
+        // A HEAD whose tree is the base's own proves the base unchanged.
+        let equivalent = git(
+            &w.wt,
+            &["commit-tree", &base_tree, "-p", &main, "-m", "same"],
+        );
+        git(&w.wt, &["reset", "-q", "--hard", &equivalent]);
+        result(&write("orph", &snapshot("equivalent", None)));
+        // A recorded snapshot proves its tree for a later HEAD with it.
+        let held = snapshot("snapshot", None);
+        git(&w.wt, &["commit", "-q", "--allow-empty", "-m", "empty"]);
+        result(&write("orph", &held));
     }
 
     #[test]
@@ -1431,16 +2092,27 @@ mod dev_artifacts {
         let path = w.wt.join("tmp/dev-return-issue-8-r1-recovery.json");
         fs::write(&path, child.to_string()).unwrap();
         assert_eq!(w.check("r1")["verdict"], "accept");
-        child["recovery_of"] = json!("another.json");
-        fs::write(path, child.to_string()).unwrap();
-        refused(
-            &w.call(
+        let companion = |child: &Value| {
+            fs::write(&path, child.to_string()).unwrap();
+            w.call(
                 &["dev-return", "check"],
                 "r1",
                 &["--expect-items-from-round"],
-            ),
-            "recovery-invalid",
-        );
+            )
+        };
+        let mut other_parent = child.clone();
+        other_parent["recovery_of"] = json!("another.json");
+        refused(&companion(&other_parent), "recovery-invalid");
+        let mut other_branch = child.clone();
+        other_branch["branch"] = json!("elsewhere");
+        refused(&companion(&other_branch), "recovery-invalid");
+        fs::remove_file(&path).unwrap();
+        // A run the round admitted with no proof recorded and no receipt of
+        // its own leaves the round's bare receipt the answer.
+        let mut doc = w.doc();
+        doc["stages"].as_array_mut().unwrap().push(json!({"kind":"validate","round_id":"r1","start":5,"end":6,"outcome":"pass","run_dir":w.wt.join("tmp/dev-validate-bare")}));
+        fs::write(w.item(), doc.to_string()).unwrap();
+        assert_eq!(w.check("r1")["reason"], "valid");
     }
 
     #[test]
@@ -1462,6 +2134,7 @@ mod dev_artifacts {
             .unwrap();
             assert_eq!(artifact["recovered_from"], "transcript");
             assert_eq!(artifact["summary_posted"], false);
+            assert_eq!(artifact["commit"], w.head());
             assert!(
                 artifact["summary"]
                     .as_str()
@@ -1470,6 +2143,98 @@ mod dev_artifacts {
             );
             assert_eq!(w.check("r1")["verdict"], "retry");
         }
+        // Codex records the delegation as a user_message; the last field of
+        // a report wins; the text answer names the artifact.
+        let w = World::new();
+        w.stamp("r1");
+        let report = "| 1 | Applied | parser fixed |\nCommits: none\nValidate: pass\nValidate: FAILING: lint";
+        let lines = [
+            json!({"payload":{"type":"user_message","message":"Round ID: r1"}}),
+            json!({"payload":{"type":"function_call","name":"send_input","arguments":json!({"message":report}).to_string()}}),
+        ];
+        let transcript = w.root.join("codex.jsonl");
+        fs::write(
+            &transcript,
+            lines
+                .iter()
+                .map(Value::to_string)
+                .collect::<Vec<_>>()
+                .join("\n"),
+        )
+        .unwrap();
+        let out = w
+            .command()
+            .args(["round", "--text", "recover"])
+            .args(w.identity("r1"))
+            .arg("--transcript")
+            .arg(&transcript)
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).into_owned();
+        let artifact = text
+            .trim()
+            .strip_prefix("round-recover: recovered artifact=")
+            .unwrap_or_else(|| panic!("{text} {}", stderr(&out)));
+        let v: Value = serde_json::from_str(&fs::read_to_string(artifact).unwrap()).unwrap();
+        assert_eq!(v["validate"], "FAILING: lint");
+        // An implement report: its commit may be quoted, its QA labels kept;
+        // the round's run is the newest over the receipt's tree.
+        let implement = |w: &World| {
+            let report = format!(
+                "Branch: work\nCommit: `{}`\nQA: needs-review needs-test\nValidate: pass",
+                w.head()
+            );
+            let file = w.transcript("r1", &report, "claude");
+            result(&w.call(
+                &["round", "recover"],
+                "r1",
+                &["--transcript", file.to_str().unwrap()],
+            ))
+        };
+        let w = World::new();
+        w.released_run("passed", "full");
+        let recovered = implement(&w);
+        let v: Value = serde_json::from_str(
+            &fs::read_to_string(recovered["artifact"].as_str().unwrap()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(v["qa_labels"], json!(["needs-review", "needs-test"]));
+        let w = World::new();
+        let stale = w.released_run("stale", "full");
+        w.record_start(&stale, "tree=0000000000000000000000000000000000000000");
+        assert_eq!(implement(&w)["reason"], "validate-unproven");
+        let w = World::new();
+        w.released_run("older", "full");
+        let newer = w.released_run("newer", "full");
+        fs::write(
+            newer.join("start"),
+            fs::read_to_string(newer.join("start"))
+                .unwrap()
+                .replace("start=1", "start=2"),
+        )
+        .unwrap();
+        fs::write(newer.join("exit"), "guard-exit=1 at=2026-01-01T00:00:01Z\n").unwrap();
+        assert_eq!(implement(&w)["reason"], "validate-unproven");
+        // A worktree with no HEAD refuses on its git read.
+        let w = World::new();
+        let headless = w.root.join("headless");
+        fs::create_dir_all(headless.join("tmp")).unwrap();
+        git(&headless, &["init", "-q"]);
+        let file = w.transcript(
+            "r1",
+            "Branch: work\nCommit: abc\nQA: none\nValidate: pass",
+            "claude",
+        );
+        refused(
+            &w.command()
+                .args(["round", "recover"])
+                .args(["--worktree", headless.to_str().unwrap()])
+                .args(["--issue", "issue-8", "--round-id", "r1", "--transcript"])
+                .arg(&file)
+                .output()
+                .unwrap(),
+            "git-failed",
+        );
     }
 
     #[test]
@@ -1499,6 +2264,34 @@ mod dev_artifacts {
         assert_eq!(out.status.code(), Some(3));
         assert_eq!(result(&out)["reason"], "directive-unconfirmed");
         assert_eq!(w.doc()["recovery_round_id"], next);
+        // A round the item has moved past is not replaced again.
+        refused(
+            &w.call(&["round", "recover"], "r1-old", &[]),
+            "round-superseded",
+        );
+        // The text answer is the line the workflow reads: the new id and the
+        // round it replaces.
+        let w = World::new();
+        let out = w
+            .command()
+            .args(["round", "--text", "recover"])
+            .args(w.identity("r1"))
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(3));
+        let minted = w.doc()["dev_round_id"].as_str().unwrap().to_owned();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            format!("round-recover: redelegate round-id={minted} from=r1 reason=no-transcript")
+        );
+        let out = w
+            .command()
+            .args(["round", "recover"])
+            .args(["--worktree", w.wt.to_str().unwrap()])
+            .args(["--issue", "issue-9", "--round-id", "r1"])
+            .output()
+            .unwrap();
+        refused(&out, "record-missing");
     }
 
     struct Group(PathBuf);
@@ -1522,32 +2315,39 @@ mod dev_artifacts {
 
     #[test]
     fn a_released_bare_pid_run_holds_recovery_and_directive_replacement_stops_its_group_first() {
-        let w = World::new();
         // The shell producer's records: its runner record before the launch,
         // then the child's own pid, written by the child, whose argv ends in
-        // the run directory.
-        let dir = w.released_run("live", "full");
-        fs::remove_file(dir.join("exit")).unwrap();
-        fs::write(
-            dir.join("runner"),
-            "runner=setsid\nline=runner=setsid reason=no-linger\n",
-        )
-        .unwrap();
-        let pid_file = dir.join("pid");
-        let _group = Group(pid_file.clone());
-        let started = program("setsid")
-            .args([
-                "-f",
-                "sh",
-                "-c",
-                "echo $$ > \"$1\"; exec perl -e 'sleep 60' -- planted --child --run-dir \"$2\"",
-                "child",
-                pid_file.to_str().unwrap(),
-                dir.to_str().unwrap(),
-            ])
-            .status()
+        // the run directory. The child outlives `until`'s bound, so within
+        // it only a stop ends the child; the group guard ends it otherwise.
+        let live_run = |w: &World, name: &str| {
+            let dir = w.released_run(name, "full");
+            fs::remove_file(dir.join("exit")).unwrap();
+            fs::write(
+                dir.join("runner"),
+                "runner=setsid\nline=runner=setsid reason=no-linger\n",
+            )
             .unwrap();
-        assert!(started.success());
+            let pid_file = dir.join("pid");
+            let group = Group(pid_file.clone());
+            let started = program("setsid")
+                .args([
+                    "-f",
+                    "sh",
+                    "-c",
+                    "echo $$ > \"$1\"; exec perl -e 'sleep 120' -- planted --child --run-dir \"$2\"",
+                    "child",
+                    pid_file.to_str().unwrap(),
+                    dir.to_str().unwrap(),
+                ])
+                .status()
+                .unwrap();
+            assert!(started.success());
+            until("the child recorded its pid", || {
+                fs::read_to_string(&pid_file).is_ok_and(|p| p.ends_with('\n'))
+            });
+            let pid = fs::read_to_string(&pid_file).unwrap().trim().to_owned();
+            (dir, group, pid)
+        };
         let alive = |pid: &str| {
             program("kill")
                 .args(["-0", pid])
@@ -1555,14 +2355,27 @@ mod dev_artifacts {
                 .unwrap()
                 .success()
         };
-        until("the child recorded its pid", || {
-            fs::read_to_string(&pid_file).is_ok_and(|p| p.ends_with('\n'))
-        });
-        let pid = fs::read_to_string(&pid_file).unwrap().trim().to_owned();
+        let w = World::new();
+        let (dir, _group, pid) = live_run(&w, "live");
         let before = w.doc();
         let out = w.call(&["round", "recover"], "r1", &[]);
         assert_eq!(out.status.code(), Some(4), "{}", stderr(&out));
         assert_eq!(result(&out)["state"], "round-live");
+        assert_eq!(w.doc(), before);
+        let unreadable = w.root.join("transcript-dir");
+        fs::create_dir(&unreadable).unwrap();
+        let unreadable = unreadable.to_str().unwrap();
+        refused(
+            &w.call(&["round", "recover"], "r1", &["--transcript", unreadable]),
+            "transcript-unreadable",
+        );
+        let out = w.call(
+            &["round", "recover"],
+            "r1",
+            &["--transcript", unreadable, "--directive-unconfirmed"],
+        );
+        assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+        assert!(out.stdout.is_empty());
         assert_eq!(w.doc(), before);
         let answer = result(&w.call(&["round", "recover"], "r1", &["--directive-unconfirmed"]));
         assert_eq!(answer["state"], "redelegate");
@@ -1573,7 +2386,7 @@ mod dev_artifacts {
         );
         until("the stop ended the child's group", || !alive(&pid));
         // A process that took the child's number under another argv is not
-        // the run: recovery holds on it and a replacement never signals it.
+        // the run: it holds no recovery and a replacement never signals it.
         let w = World::new();
         let dir = w.released_run("other", "full");
         fs::remove_file(dir.join("exit")).unwrap();
@@ -1585,10 +2398,37 @@ mod dev_artifacts {
         let other = support::Owned::sleep();
         fs::write(dir.join("pid"), format!("{}\n", other.pid())).unwrap();
         let out = w.call(&["round", "recover"], "r1", &[]);
-        assert_eq!(out.status.code(), Some(4), "{}", stderr(&out));
+        assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
+        assert_eq!(result(&out)["reason"], "no-transcript");
         let answer = result(&w.call(&["round", "recover"], "r1", &["--directive-unconfirmed"]));
         assert_eq!(answer["state"], "redelegate");
         assert!(alive(&other.pid().to_string()), "the other process runs on");
+        // A run still going over an earlier tree is not the round's run.
+        let w = World::new();
+        let (_, _group, pid) = live_run(&w, "earlier");
+        w.commit("app.txt");
+        w.released_run("own", "full");
+        let out = w.call(&["round", "recover"], "r1", &[]);
+        assert_eq!(out.status.code(), Some(3), "{}", stderr(&out));
+        assert!(alive(&pid));
+        // The item's own runs its stage loop does not stop, admitted with no
+        // job yet or closed while their files run on, end before the
+        // replacement too.
+        for stage in [
+            json!({"kind":"validate","round_id":"r1","start":1,"end":null}),
+            json!({"kind":"validate","round_id":"r1","start":1,"end":2,"outcome":"fail"}),
+        ] {
+            let w = World::new();
+            let (dir, _group, pid) = live_run(&w, "own-stage");
+            let mut doc = w.doc();
+            let mut stage = stage;
+            stage["run_dir"] = json!(dir);
+            doc["stages"].as_array_mut().unwrap().push(stage.clone());
+            fs::write(w.item(), doc.to_string()).unwrap();
+            let answer = result(&w.call(&["round", "recover"], "r1", &["--directive-unconfirmed"]));
+            assert_eq!(answer["reason"], "directive-unconfirmed", "{stage}");
+            until("the stop ended the item's own run", || !alive(&pid));
+        }
     }
 
     #[test]
@@ -1635,6 +2475,120 @@ mod dev_artifacts {
             );
             assert!(!w.receipt_path("r1").exists());
         }
+        // Each report is the round's first recovery: a replacement already
+        // minted would answer every later call with its own reason.
+        let recover = |w: &World, report: &str| {
+            fs::write(w.item(), json!({"worktree":w.wt,"branch":"work","dev_round_id":"r1","stages":[{"kind":"dev","round_id":"r1","start":1,"end":null}]}).to_string()).unwrap();
+            let file = w.transcript("r1", report, "claude");
+            result(&w.call(
+                &["round", "recover"],
+                "r1",
+                &["--transcript", file.to_str().unwrap()],
+            ))
+        };
+        // An implement report needs its branch, commit, QA labels and a cause
+        // for a bounded run, and its verdict is its round's run's.
+        let w = World::new();
+        let head = w.head();
+        for (report, reason) in [
+            ("Validate: no-verdict:   ".to_owned(), "validate-unproven"),
+            (
+                format!("Commit: {head}\nQA: none\nValidate: FAILING: lint"),
+                "unparsed",
+            ),
+            (
+                format!("Branch: work\nCommit: {head}\nValidate: FAILING: lint"),
+                "unparsed",
+            ),
+        ] {
+            assert_eq!(recover(&w, &report)["reason"], reason, "{report}");
+            assert!(!w.receipt_path("r1").exists());
+        }
+        let pass = |w: &World| {
+            format!(
+                "Branch: work\nCommit: {}\nQA: none\nValidate: pass",
+                w.head()
+            )
+        };
+        let w = World::new();
+        let failed = w.released_run("failed", "full");
+        fs::write(
+            failed.join("exit"),
+            "guard-exit=1 at=2026-01-01T00:00:01Z\n",
+        )
+        .unwrap();
+        assert_eq!(recover(&w, &pass(&w))["reason"], "validate-unproven");
+        let w = World::new();
+        let ci = w.released_run("ci", "full");
+        fs::write(
+            ci.join("start"),
+            fs::read_to_string(ci.join("start"))
+                .unwrap()
+                .replace("validate-mode=full", "validate-mode=ci"),
+        )
+        .unwrap();
+        w.record_start(&ci, &format!("tree={}", w.tree()));
+        assert_eq!(recover(&w, &pass(&w))["state"], "recovered");
+        // A fix report's rows and commits: every named commit after the base
+        // and in HEAD, one of them HEAD, or none for an unmoved HEAD.
+        let rows = "| 1 | Done | x |\n| 1 | Applied | y |";
+        let w = World::new();
+        w.stamp("r1");
+        assert_eq!(
+            recover(
+                &w,
+                &format!("{rows}\nCommits: none\nValidate: FAILING: lint")
+            )["state"],
+            "recovered"
+        );
+        let applied = "| 1 | Applied | y |";
+        let w = World::new();
+        w.commit("p.txt");
+        w.stamp("r1");
+        assert_eq!(
+            recover(&w, &format!("{applied}\nValidate: FAILING: lint"))["reason"],
+            "unparsed"
+        );
+        let base = w.head();
+        assert_eq!(
+            recover(
+                &w,
+                &format!("{applied}\nCommits: {base}\nValidate: FAILING: lint")
+            )["reason"],
+            "commit-mismatch"
+        );
+        let side = git(
+            &w.wt,
+            &["commit-tree", &w.tree(), "-p", &base, "-m", "side"],
+        );
+        w.commit("q1.txt");
+        let first = w.head();
+        w.commit("q2.txt");
+        let head = w.head();
+        for commits in [
+            "none".to_owned(),
+            "HEAD".to_owned(),
+            "abcdef1".to_owned(),
+            git(&w.wt, &["rev-parse", "main^{commit}"]) + " " + &head,
+            format!("{side} {head}"),
+            first.clone(),
+        ] {
+            assert_eq!(
+                recover(
+                    &w,
+                    &format!("{applied}\nCommits: {commits}\nValidate: FAILING: lint")
+                )["reason"],
+                "commit-mismatch",
+                "{commits}"
+            );
+        }
+        assert_eq!(
+            recover(
+                &w,
+                &format!("{applied}\nCommits: {first} {head}\nValidate: FAILING: lint")
+            )["state"],
+            "recovered"
+        );
     }
 
     #[test]
@@ -1662,6 +2616,7 @@ mod dev_artifacts {
                 json!("unreported"),
             ),
             ("validate_class_base", json!("abc"), json!("abc")),
+            ("near_ceiling_error", json!(5), Value::Null),
         ] {
             let mut value = good.clone();
             value[field] = input;
@@ -1684,6 +2639,9 @@ mod dev_artifacts {
             ("base_sha", json!("abc"), "round-schema"),
             ("adds", json!(["../bad"]), "round-schema"),
             ("adds", json!(["x", "x"]), "round-schema"),
+            ("adds", json!(["-x"]), "round-schema"),
+            ("adds", json!(["a b"]), "round-schema"),
+            ("base_sha", json!("a".repeat(41)), "round-schema"),
             ("cut", json!("yes"), "round-schema"),
             ("pr_open", Value::Null, "round-schema"),
             ("items", json!([]), "round-schema"),
@@ -1701,6 +2659,21 @@ mod dev_artifacts {
                 key,
             );
         }
+        let check = || {
+            w.call(
+                &["dev-return", "check"],
+                "r1",
+                &["--expect-items-from-round"],
+            )
+        };
+        fs::write(&path, "not json").unwrap();
+        refused(&check(), "round-json");
+        let copy = w.root.join("round-copy.json");
+        fs::write(&copy, good.to_string()).unwrap();
+        fs::remove_file(&path).unwrap();
+        refused(&check(), "round-missing");
+        std::os::unix::fs::symlink(&copy, &path).unwrap();
+        refused(&check(), "round-missing");
     }
 
     #[test]
@@ -1811,6 +2784,344 @@ mod dev_artifacts {
                 "mac-run-unproven"
             );
         }
+        // Each world is private to its case: its base branch and the work
+        // the receipt's commit adds over it.
+        let world = |base: &[(&str, &str)], work: &[(&str, Option<&str>)]| {
+            let w = World::new();
+            git(&w.wt, &["switch", "-q", "main"]);
+            for (path, text) in base {
+                let file = w.wt.join(path);
+                fs::create_dir_all(file.parent().unwrap()).unwrap();
+                fs::write(&file, text).unwrap();
+                git(&w.wt, &["add", path]);
+            }
+            git(&w.wt, &["commit", "-q", "--allow-empty", "-m", "base"]);
+            git(&w.wt, &["switch", "-q", "work"]);
+            git(&w.wt, &["merge", "-q", "main"]);
+            for (path, text) in work {
+                match text {
+                    Some(text) => {
+                        let file = w.wt.join(path);
+                        fs::create_dir_all(file.parent().unwrap()).unwrap();
+                        fs::write(&file, text).unwrap();
+                        git(&w.wt, &["add", path]);
+                    }
+                    None => {
+                        git(&w.wt, &["rm", "-q", path]);
+                    }
+                }
+            }
+            git(&w.wt, &["commit", "-q", "--allow-empty", "-m", "work"]);
+            w
+        };
+        let wf = (".github/workflows/mac-run.yml", "name: mac\n");
+        let ios = [("ios/App.swift", Some("change\n"))];
+        let notes = [("notes.txt", Some("change\n"))];
+        let project = |text: &'static str| ("App.xcodeproj/project.pbxproj", text);
+        let pass = |w: &World, env: &[(&str, &str)], extra: &[&str]| {
+            let run = w.released_run("apple", "full");
+            let head = w.head();
+            w.command()
+                .envs(env.iter().copied())
+                .args(["dev-return", "write"])
+                .args(w.identity("r1"))
+                .args(["--kind", "implement", "--branch", "work", "--commit", &head])
+                .args(["--validate", "pass", "--validate-run-dir"])
+                .arg(run)
+                .args(extra)
+                .output()
+                .unwrap()
+        };
+        let none: &[(&str, &str)] = &[];
+        let gate = "mac-run-missing";
+        for (label, w, env, extra, expect) in [
+            (
+                "an ios/ path",
+                world(&[wf], &ios),
+                none,
+                vec!["--no-labels"],
+                Some(gate),
+            ),
+            (
+                "the configured workflow",
+                world(&[(".github/workflows/apple.yml", "name: apple\n")], &ios),
+                &[("ORCH_APPLE_WORKFLOW", ".github/workflows/apple.yml")][..],
+                vec!["--no-labels"],
+                Some(gate),
+            ),
+            (
+                "a workflow the base branch lacks",
+                world(
+                    &[],
+                    &[(wf.0, Some(wf.1)), ("ios/App.swift", Some("change\n"))],
+                ),
+                none,
+                vec![],
+                None,
+            ),
+            (
+                "the ios label",
+                world(&[wf], &notes),
+                none,
+                vec!["--label", "ios"],
+                Some(gate),
+            ),
+            (
+                "a configured label",
+                world(&[wf], &notes),
+                &[("ORCH_APPLE_LABELS", "apple-x")][..],
+                vec!["--label", "apple-x"],
+                Some(gate),
+            ),
+            (
+                "a default label outside the configured set",
+                world(&[wf], &notes),
+                &[("ORCH_APPLE_LABELS", "apple-x")][..],
+                vec!["--label", "ios"],
+                None,
+            ),
+            (
+                "an .xcodeproj path",
+                world(&[wf], &[("App.xcodeproj/notes.txt", Some("x\n"))]),
+                none,
+                vec!["--no-labels"],
+                Some(gate),
+            ),
+            (
+                "an .xcworkspace path",
+                world(
+                    &[wf],
+                    &[("App.xcworkspace/contents.xcworkspacedata", Some("x\n"))],
+                ),
+                none,
+                vec!["--no-labels"],
+                Some(gate),
+            ),
+            (
+                "a file named ios",
+                world(&[wf], &[("docs/ios", Some("x\n"))]),
+                none,
+                vec!["--no-labels"],
+                None,
+            ),
+            (
+                "a move out of ios/",
+                world(
+                    &[wf, ("ios/Moved.swift", "moved\n")],
+                    &[
+                        ("ios/Moved.swift", None),
+                        ("src/Moved.swift", Some("moved\n")),
+                    ],
+                ),
+                none,
+                vec!["--no-labels"],
+                Some(gate),
+            ),
+            (
+                "a Package.swift naming .iOS",
+                world(
+                    &[wf],
+                    &[("Package.swift", Some("platforms: [.iOS(.v17)]\n"))],
+                ),
+                none,
+                vec!["--no-labels"],
+                Some(gate),
+            ),
+            (
+                "a Package.swift naming neither platform",
+                world(
+                    &[wf],
+                    &[("Package.swift", Some("platforms: [.watchOS(.v10)]\n"))],
+                ),
+                none,
+                vec!["--no-labels"],
+                None,
+            ),
+            (
+                "a synchronized folder member",
+                world(
+                    &[
+                        wf,
+                        project(
+                            "{ objects = { A = { isa = PBXFileSystemSynchronizedRootGroup; path = Features; }; }; }",
+                        ),
+                    ],
+                    &[("Features/New.swift", Some("x\n"))],
+                ),
+                none,
+                vec!["--no-labels"],
+                Some(gate),
+            ),
+            (
+                "a member by its name",
+                world(
+                    &[
+                        wf,
+                        project(
+                            "{ objects = { A = { isa = PBXFileReference; name = Greeting.swift; }; }; }",
+                        ),
+                    ],
+                    &[("App/Greeting.swift", Some("x\n"))],
+                ),
+                none,
+                vec!["--no-labels"],
+                Some(gate),
+            ),
+            (
+                "a member name with an escape the reader cannot decode",
+                world(
+                    &[
+                        wf,
+                        project(
+                            r#"{ objects = { A = { isa = PBXFileReference; path = "Caf\U00e9.swift"; }; }; }"#,
+                        ),
+                    ],
+                    &[("App/Café.swift", Some("x\n"))],
+                ),
+                none,
+                vec!["--no-labels"],
+                Some(gate),
+            ),
+            (
+                "an undecodable escape in a build script",
+                world(
+                    &[
+                        wf,
+                        project(
+                            r#"{ objects = { B = { isa = PBXShellScriptBuildPhase; shellScript = "printf \"done\n\""; }; }; }"#,
+                        ),
+                    ],
+                    &notes,
+                ),
+                none,
+                vec!["--no-labels"],
+                None,
+            ),
+            (
+                "an undecodable escape in a group",
+                world(
+                    &[
+                        wf,
+                        project(
+                            r#"{ objects = { G = { isa = PBXGroup; path = "Caf\U00e9"; }; }; }"#,
+                        ),
+                    ],
+                    &notes,
+                ),
+                none,
+                vec!["--no-labels"],
+                None,
+            ),
+            (
+                "a group path is no member",
+                world(
+                    &[
+                        wf,
+                        project("{ objects = { G = { isa = PBXGroup; path = Lib; }; }; }"),
+                    ],
+                    &[("Lib/x.swift", Some("x\n"))],
+                ),
+                none,
+                vec!["--no-labels"],
+                None,
+            ),
+            (
+                "a Linux package source",
+                world(&[wf], &[("Sources/App/main.swift", Some("x\n"))]),
+                none,
+                vec!["--no-labels"],
+                None,
+            ),
+            (
+                "text before the pass line",
+                world(&[wf], &ios),
+                none,
+                vec![
+                    "--no-labels",
+                    "--validate-note",
+                    "x mac run test: pass run=1",
+                ],
+                Some(gate),
+            ),
+            (
+                "text after the run id",
+                world(&[wf], &ios),
+                none,
+                vec![
+                    "--no-labels",
+                    "--validate-note",
+                    "mac run test: pass run=1 then",
+                ],
+                Some(gate),
+            ),
+            (
+                "the pass line below a scoped note",
+                world(&[wf], &ios),
+                none,
+                vec![
+                    "--no-labels",
+                    "--validate-note",
+                    "scoped suites green\nmac run test: pass run=4242",
+                ],
+                None,
+            ),
+        ] {
+            let out = pass(&w, env, &extra);
+            let answer: Value = serde_json::from_slice(&out.stdout)
+                .unwrap_or_else(|e| panic!("{label}: {e}: {}", stderr(&out)));
+            assert_eq!(
+                answer["refusal"]["key"].as_str(),
+                expect,
+                "{label}: {answer} {}",
+                stderr(&out)
+            );
+            assert_eq!(out.status.success(), expect.is_none(), "{label}");
+        }
+        // A FAILING return needs no Mac proof; a bounded run needs it as a
+        // pass does; a label beside --no-labels is refused at the arguments.
+        let w = world(&[wf], &ios);
+        result(&w.write("r1", "implement", "FAILING: mac run test", &[]));
+        let w = world(&[wf], &ios);
+        let stopped = w.released_run("stopped", "full");
+        fs::write(
+            stopped.join("exit"),
+            "guard-exit=143 at=2026-01-01T00:00:01Z\n",
+        )
+        .unwrap();
+        fs::write(stopped.join("stop"), "stop-requested\n").unwrap();
+        refused(
+            &w.write(
+                "r1",
+                "implement",
+                "no-verdict",
+                &[
+                    "--validate-run-dir",
+                    stopped.to_str().unwrap(),
+                    "--validate-note",
+                    "host",
+                    "--no-labels",
+                ],
+            ),
+            gate,
+        );
+        let out = pass(&w, none, &["--label", "skills", "--no-labels"]);
+        assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+        assert!(out.stdout.is_empty());
+        // A project listed at the base whose contents git cannot read cannot
+        // rule out Mac work.
+        let w = world(&[wf, project("{ objects = {}; }")], &notes);
+        let blob = git(&w.wt, &["rev-parse", "HEAD:App.xcodeproj/project.pbxproj"]);
+        let objects = PathBuf::from(git(
+            &w.wt,
+            &[
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "objects",
+            ],
+        ));
+        fs::remove_file(objects.join(&blob[..2]).join(&blob[2..])).unwrap();
+        refused(&pass(&w, none, &["--no-labels"]), gate);
     }
 
     #[test]
@@ -1835,10 +3146,52 @@ mod dev_artifacts {
                 "kendex-rebase-map",
             ],
         ));
+        fs::create_dir(&map).unwrap();
+        assert_eq!(w.check("r1")["reason"], "comparison_failed");
+        fs::remove_dir(&map).unwrap();
+        let bound = |name: &str, head: &str| {
+            let run = w.released_run(name, "full");
+            fs::write(
+                run.join("start"),
+                fs::read_to_string(run.join("start"))
+                    .unwrap()
+                    .replace(&format!("head={}", w.head()), &format!("head={head}")),
+            )
+            .unwrap();
+            w.record_start(&run, &format!("tree={}", w.tree()));
+            w.write(
+                "r1",
+                "fix",
+                "pass",
+                &[
+                    "--validate-run-dir",
+                    run.to_str().unwrap(),
+                    "--item",
+                    "1",
+                    "Applied",
+                    "x",
+                ],
+            )
+        };
+        let head = w.head();
+        refused(&bound("unmapped", &head), "run-off-round");
         let content = format!("rebase-hop:\nrebase-map: {old} {new}\n");
         fs::write(&map, &content).unwrap();
         assert_eq!(w.check("r1")["reason"], "unapproved_additions");
-        assert_eq!(fs::read_to_string(map).unwrap(), content);
+        assert_eq!(fs::read_to_string(&map).unwrap(), content);
+        // A mapped base the work no longer contains attributes nothing.
+        let main = git(&w.wt, &["rev-parse", "main"]);
+        let side = git(
+            &w.wt,
+            &["commit-tree", &w.tree(), "-p", &main, "-m", "side"],
+        );
+        fs::write(&map, format!("rebase-hop:\nrebase-map: {old} {side}\n")).unwrap();
+        assert_eq!(w.check("r1")["reason"], "additions_unattributable");
+        fs::write(&map, &content).unwrap();
+        // The receipt's run binds through the mapped base only where its own
+        // head contains it.
+        result(&bound("mapped", &head));
+        refused(&bound("before-map", &main), "run-off-round");
     }
 
     #[test]
@@ -1964,6 +3317,58 @@ mod dev_artifacts {
                 _ => unreachable!(),
             }
         }
+        // A value that begins with a hyphen is prose, not a flag.
+        let delegate = |name: &str, args: &[&str]| {
+            program(scripts().join(name))
+                .current_dir(&w.wt)
+                .args(w.identity("dash"))
+                .args(args)
+                .env("AGENT_RUNTIME_CACHE", &cache)
+                .env("ORCH_STATE_DIR", &w.state)
+                .output()
+                .unwrap()
+        };
+        let out = delegate(
+            "dev-round-write",
+            &["--item", "1", "- the parser drops input", "- CLI input"],
+        );
+        assert!(out.status.success(), "{}", stderr(&out));
+        let round: Value = serde_json::from_str(
+            &fs::read_to_string(String::from_utf8_lossy(&out.stdout).trim()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(round["items"][0]["text"], "- the parser drops input");
+        let head = w.head();
+        let out = delegate(
+            "dev-return-write",
+            &[
+                "--kind",
+                "fix",
+                "--branch",
+                "work",
+                "--commit",
+                &head,
+                "--validate",
+                "FAILING: lint",
+                "--validate-note",
+                "-y caveat",
+                "--summary",
+                "-x summary",
+                "--no-summary",
+                "--item",
+                "1",
+                "Skipped",
+                "-- not reproducible",
+            ],
+        );
+        assert!(out.status.success(), "{}", stderr(&out));
+        let receipt: Value = serde_json::from_str(
+            &fs::read_to_string(String::from_utf8_lossy(&out.stdout).trim()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(receipt["items"][0]["reasoning"], "-- not reproducible");
+        assert_eq!(receipt["summary"], "-x summary");
+        assert_eq!(receipt["validate_note"], "-y caveat");
     }
 
     #[test]
@@ -2031,7 +3436,99 @@ mod dev_artifacts {
             serde_json::from_str(&fs::read_to_string(answer["path"].as_str().unwrap()).unwrap())
                 .unwrap();
         assert!(value["near_ceiling"].is_null());
-        assert!(!value["near_ceiling_error"].as_str().unwrap().is_empty());
+        assert!(
+            value["near_ceiling_error"]
+                .as_str()
+                .unwrap()
+                .starts_with("byte-ceiling exit 2: "),
+            "{value}"
+        );
+        // Each receipt records what the lane answered, or why it has no answer.
+        let probe = |w: &World, round: &str, extra: &[&str], env: &[(&str, &str)]| {
+            let head = w.head();
+            let out = w
+                .command()
+                .env("COMMIT_GUARDS_BYTE_CEILING_KB", "1")
+                .envs(env.iter().copied())
+                .args(["dev-return", "write"])
+                .args(w.identity(round))
+                .args(["--kind", "implement", "--branch", "work", "--commit", &head])
+                .args(["--validate", "FAILING: test"])
+                .args(extra)
+                .output()
+                .unwrap();
+            let answer = result(&out);
+            let value: Value = serde_json::from_str(
+                &fs::read_to_string(answer["path"].as_str().unwrap()).unwrap(),
+            )
+            .unwrap();
+            (
+                value["near_ceiling"].clone(),
+                value["near_ceiling_error"].clone(),
+            )
+        };
+        let base = ["--near-ceiling-base", "main"];
+        let (near, _) = probe(&w, "one", &base, &[]);
+        assert_eq!(near.as_array().unwrap().len(), 1, "{near}");
+        fs::write(w.wt.join("big.bin"), vec![0u8; 2000]).unwrap();
+        git(&w.wt, &["add", "big.bin"]);
+        git(&w.wt, &["commit", "-qm", "big"]);
+        let (near, error) = probe(&w, "over", &base, &[]);
+        assert!(error.is_null(), "{error}");
+        assert!(
+            near[0]
+                .as_str()
+                .unwrap()
+                .starts_with("byte-ceiling: near-ceiling=asset.bin:"),
+            "{near}"
+        );
+        let w = World::new();
+        assert_eq!(
+            probe(&w, "unprobed", &[], &[]),
+            (
+                Value::Null,
+                json!("byte-ceiling not probed: no --near-ceiling-base")
+            )
+        );
+        assert_eq!(probe(&w, "absent", &base, &[]), (json!([]), Value::Null));
+        let skills = w.wt.join(".agents/skills");
+        fs::create_dir_all(&skills).unwrap();
+        std::os::unix::fs::symlink(w.root.join("gone"), skills.join("commit-guards")).unwrap();
+        assert_eq!(
+            probe(&w, "broken", &base, &[]),
+            (
+                Value::Null,
+                json!(format!(
+                    "byte-ceiling broken link: {}",
+                    skills.join("commit-guards").display()
+                ))
+            )
+        );
+        fs::remove_file(skills.join("commit-guards")).unwrap();
+        let lane = skills.join("commit-guards/scripts/byte-ceiling");
+        fs::create_dir_all(lane.parent().unwrap()).unwrap();
+        fs::write(&lane, "#!/bin/sh\n").unwrap();
+        let unexecutable = (
+            Value::Null,
+            json!(format!("byte-ceiling not executable: {}", lane.display())),
+        );
+        assert_eq!(probe(&w, "plain", &base, &[]), unexecutable);
+        fs::remove_file(&lane).unwrap();
+        std::os::unix::fs::symlink(w.root.join("gone"), &lane).unwrap();
+        assert_eq!(probe(&w, "dangling", &base, &[]), unexecutable);
+        // A baseline the shared measurement cannot read refuses the receipt.
+        let head = w.head();
+        refused(
+            &w.command()
+                .env("WORKTREE_DEFAULT_BRANCH", "absent")
+                .args(["dev-return", "write"])
+                .args(w.identity("unmeasured"))
+                .args(["--kind", "implement", "--branch", "work", "--commit", &head])
+                .args(["--validate", "FAILING: test"])
+                .output()
+                .unwrap(),
+            "baseline-read",
+        );
     }
 
     #[test]
@@ -2129,6 +3626,30 @@ mod dev_artifacts {
         let answer = thread.join().unwrap();
         assert_eq!(answer.value["verdict"], "wait");
         assert_eq!(clock.elapsed(), Duration::from_secs(3));
+        // A receipt that is there answers at once, whatever the budget left.
+        w.plant_receipt("r1", &w.released_receipt("r1", "implement"));
+        let settings = settings::load(&roots, &[], &flags).unwrap();
+        let request = CheckReturn {
+            file: None,
+            worktree: Some(w.wt.clone()),
+            issue: Some("issue-8".into()),
+            round_id: Some("r1".into()),
+            expect_items: None,
+            expect_items_from_round: false,
+            wait: 3,
+            interval: 2,
+        };
+        let clock = Arc::new(support::FakeClock::new());
+        let c = clock.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(receipt::check(&settings, &request, &*c).unwrap());
+        });
+        let answer = rx
+            .recv_timeout(Duration::from_secs(30))
+            .expect("a present receipt answers without waiting");
+        assert_eq!(answer.value["reason"], "valid");
+        assert_eq!(clock.elapsed(), Duration::ZERO);
     }
 }
 
