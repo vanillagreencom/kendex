@@ -233,7 +233,7 @@ set-hook -g after-new-window "rename-window user-hook"
         # room since the walk stops at its first entry unjudged. A Copilot
         # account whose owner turned extensions off stays untouched when it is
         # kept, since its session already runs there. The recorded account has
-        # room above the trigger, 5%, and below the work-item reserve, 50%,
+        # room above the trigger, 5%, and below the work-item reserve, 25%,
         # that an overseer reading does not take. unattended is the home's
         # setting: a successor carries its own harness's permission words only
         # when the setting names it, and every successor Start's brief file.
