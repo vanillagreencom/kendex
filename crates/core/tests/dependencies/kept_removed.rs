@@ -42,6 +42,11 @@ const CYCLE: [(&str, &str); 4] = [
     ("lane", "dependencies:\n  required: [hub]\n"),
 ];
 
+/// Gate beside the two declarations a toggle writes: a Copilot built-in
+/// server switched off (`ops::toggle`) and a subscription switched off
+/// (`source_ops::toggle_source`). Neither is a catalog the removal reads.
+const SWITCHED_OFF: &str = "[skills.gate]\nsource = \"cat\"\n\n[mcp-servers.github-mcp-server]\nsource = \"builtin\"\nharnesses = [\"copilot\"]\nenabled = false\n\n[sources.spare]\npath = \"/nonexistent/spare\"\nenabled = false\n";
+
 /// A set whose member requires a chain ending at docs.
 const CHAIN: [(&str, &str); 3] = [
     ("deep", "dependencies:\n  required: [cq]\n"),
@@ -243,6 +248,23 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             records: &[],
             suppressed: &[],
             // Offline the removal does not name hub.
+            suppressed_offline: &[(ItemKind::Skill, "gate")],
+        },
+        Row {
+            what: "a cycle that only the removed item holds up, beside a built-in server and a subscription switched off",
+            skills: &CYCLE,
+            hooks: &[],
+            set: CARRIES_DEEP,
+            declared: SWITCHED_OFF.to_owned(),
+            remove: &["gate"],
+            other: &[],
+            other_hooks: &[],
+            other_set: "",
+            edit: "",
+            unread: &[Unread::Moved],
+            premise: &[("skill:hub:claude", true), ("skill:lane:claude", true)],
+            records: &[],
+            suppressed: &[],
             suppressed_offline: &[(ItemKind::Skill, "gate")],
         },
         Row {
@@ -538,9 +560,12 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             }
             let names: Vec<String> = row.remove.iter().map(|name| (*name).to_owned()).collect();
             let report = ops::remove(&f.env, &f.scope, &names, None, false).unwrap();
-            if offline {
-                assert!(!report.notes.is_empty(), "{what}: the catalog was read");
-            }
+            let unread: Vec<&String> = report
+                .notes
+                .iter()
+                .filter(|note| note.contains("cannot be read"))
+                .collect();
+            assert_eq!(unread.is_empty(), !offline, "{what}: {unread:?}");
             apply::execute(&f.env, &report.plan).unwrap();
 
             let suppressed: BTreeSet<(ItemKind, String)> = manifest_of(&f)
