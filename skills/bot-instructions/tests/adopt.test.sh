@@ -8,7 +8,6 @@
 # TOML.
 
 . "$(dirname "$0")/lib/harness.sh"
-export MSYS=winsymlinks:nativestrict
 
 # Does the file hold these exact bytes? The second argument is a byte string
 # written with `\xNN` escapes, so a control can name a byte no text encoding
@@ -348,15 +347,23 @@ else
 fi
 
 # Render preview uses the same ownership refusal as render, without writing.
+# The mutant restores the old preview filter, which dropped every unowned
+# output: its preview must disagree with its render on each unowned-file row.
 repo="$(bi_rendered_repo render-preview-ownership)" || exit 1
 empty="$(bi_new_repo render-preview-unowned-only)" || exit 1
-if python3 -B - "$BI" "$repo" "$BI_TMP" "$empty" <<'PYTHON'
+filter_mutant="$(bi_mutant preview-filter scripts/lib/verbs.py \
+  "        for path in paths:
+            writer.replace(root, path, ctx.build.files[path], dry_run=True)
+" "        paths = [path for path in paths if writer.inspect(root, path)[1]]
+")" || exit 1
+if python3 -B - "$BI" "$repo" "$BI_TMP" "$empty" "$filter_mutant" "$BI_MIN_HEAD" <<'PYTHON'
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-launcher, fixture, scratch, empty = map(Path, sys.argv[1:])
+launcher, fixture, scratch, empty, mutant = map(Path, sys.argv[1:6])
+min_head = sys.argv[6]
 
 
 def snapshot(root):
@@ -381,16 +388,15 @@ def contract(root, command, state):
         path.unlink()
         path.symlink_to(target)
         assert path.is_symlink()
-    if state in ("disabled-file", "only-unowned"):
-        manifest = root / "kendex.toml"
+    manifest = root / "kendex.toml"
+    if state == "disabled-file":
         text = manifest.read_text()
-        bots = ("copilot",) if state == "disabled-file" else (
-            "codex", "copilot", "coderabbit", "qodo_best_practices", "qodo_review_md", "macroscope")
-        for bot in bots:
-            old = f"{bot} = true"
-            assert text.count(old) == 1, bot
-            text = text.replace(old, f"{bot} = false")
-        manifest.write_text(text)
+        assert text.count("copilot = true") == 1
+        manifest.write_text(text.replace("copilot = true", "copilot = false"))
+    elif state == "only-unowned":
+        # Qodo alone writes one file and no region, so the old filter left
+        # nothing and reported every bot flag false.
+        manifest.write_text(min_head + "\n[bot-instructions.bots]\nqodo = true\n")
     before = snapshot(root)
     preview = subprocess.run([str(command), "render", "--dry-run", "--repo", str(root)],
                              capture_output=True, text=True)
@@ -416,29 +422,16 @@ for state in ("owned", "unowned-file", "unowned-region", "disabled-file", "only-
     contract(scratch / ("render-preview-" + state), launcher, state)
     print(f"  ok   render preview ownership and no-write contract: {state}")
 
-# Restore the old preview filter in a disposable package, then run only the
-# unowned-file row. The old success must fail the ownership-refusal assertion.
-mutant = scratch / "render-preview-filter-mutant"
-shutil.copytree(launcher.parent.parent, mutant)
-verbs = mutant / "scripts/lib/verbs.py"
-text = verbs.read_text()
-old = """        for path in paths:
-            writer.replace(root, path, ctx.build.files[path], dry_run=True)
-"""
-new = "        paths = [path for path in paths if writer.inspect(root, path)[1]]\n"
-assert text.count(old) == 1
-changed = text.replace(old, new)
-assert changed != text
-verbs.write_text(changed)
-try:
-    contract(scratch / "render-preview-filter-control", mutant / "scripts/bot-instructions", "unowned-file")
-except AssertionError as exc:
-    assert exc.args[0][0] == "unowned-file", exc
-    assert exc.args[0][1].returncode == 0, exc
-    assert exc.args[0][2].returncode == 2, exc
-    print("  ok   control: old preview filter fails the unowned-file row")
-else:
-    raise AssertionError("old preview filter passed the unowned-file row")
+for state in ("unowned-file", "only-unowned"):
+    try:
+        contract(scratch / ("render-preview-filter-" + state), mutant, state)
+    except AssertionError as exc:
+        assert exc.args[0][0] == state, exc
+        assert exc.args[0][1].returncode == 0, exc
+        assert exc.args[0][2].returncode == 2, exc
+        print(f"  ok   control: old preview filter fails the {state} row")
+    else:
+        raise AssertionError(f"old preview filter passed the {state} row")
 PYTHON
 then
   ok 'render preview ownership contracts and old-filter control pass'
