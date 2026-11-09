@@ -87,6 +87,19 @@ pub fn add(env: &Env, scope: &Scope, request: &AddRequest) -> Result<EngineRepor
     crate::source_ops::install_project_from_personal(env, root, &name, request)
 }
 
+/// The scope's manifest with the subscription `request` names positionally
+/// declared the way [`add`] declares it, for a caller that downloads what
+/// the add reads before planning it again. A repository named on a fresh
+/// home is declared nowhere on disk until the add lands, so the scope's
+/// manifest alone would leave it undownloaded.
+pub fn manifest_for_request(env: &Env, scope: &Scope, request: &AddRequest) -> Result<Manifest> {
+    let mut manifest = manifest_for_mutation(env, scope)?;
+    if let Some(source) = &request.source {
+        pick::ensure_source(&mut manifest, Some(source))?;
+    }
+    Ok(manifest)
+}
+
 /// The personal scope's default marketplace, by the alias the personal
 /// manifest keys it under, for a project whose manifest file is absent —
 /// the one condition the seed applies under. `None` where the project has

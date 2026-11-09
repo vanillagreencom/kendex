@@ -949,3 +949,73 @@ fn a_pending_positional_repository_never_fetches_a_personal_alias_twin() {
     );
     assert!(!proj.join("kendex.toml").exists());
 }
+
+/// The default catalog's fixture offering its one skill as a bundle.
+#[allow(clippy::unwrap_used)]
+fn offer_bundle(home: &Path) {
+    let upstream = home.join("git/vanillagreencom/kendex");
+    fs::write(
+        upstream.join("kendex.toml"),
+        "[bundles.starter]\ndescription = \"the starter set\"\nskills = [\"gh\"]\n",
+    )
+    .unwrap();
+    git(&upstream, &["add", "."]);
+    git(&upstream, &["commit", "--quiet", "-m", "bundle"]);
+}
+
+/// A first add on a home that never downloaded the repository it names
+/// downloads it: nothing on disk declares that repository until the add
+/// lands, and the personal scope holds no package and no manifest.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_first_add_of_a_bundle_downloads_the_repository_it_names() {
+    let tmp = fixture();
+    let home = test_util::rooted(&tmp);
+    let proj = home.join("proj");
+    offer_bundle(&home);
+    let env = kendex_core::env::Env::host_rooted(&home)
+        .with_var("KENDEX_GIT_BASE", &format!("file://{}/git", home.display()));
+    assert!(!env.global_manifest_file().exists());
+
+    let output = kendex(
+        &home,
+        &proj,
+        &[
+            "add",
+            "vanillagreencom/kendex",
+            "--bundle",
+            "starter",
+            "--harness",
+            "claude",
+            "-y",
+        ],
+    );
+
+    assert!(output.status.success(), "{}", said(&output));
+    assert!(proj.join(".claude/skills/gh/SKILL.md").exists());
+    let manifest = fs::read_to_string(proj.join("kendex.toml")).unwrap();
+    assert!(manifest.contains("[bundles.starter]"), "{manifest}");
+}
+
+/// The personal scope reads as subscribed to the default catalog before
+/// it writes a manifest, so refreshing it downloads that catalog, and
+/// subscribes the scope to nothing on disk.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_personal_refresh_with_no_manifest_downloads_the_default_catalog() {
+    let tmp = fixture();
+    let home = test_util::rooted(&tmp);
+    let env = kendex_core::env::Env::host_rooted(&home)
+        .with_var("KENDEX_GIT_BASE", &format!("file://{}/git", home.display()));
+    assert!(!env.global_manifest_file().exists());
+
+    let output = kendex(&home, &home, &["source", "refresh", "--global"]);
+
+    assert!(output.status.success(), "{}", said(&output));
+    assert!(
+        kendex_core::remote::mirror_commit(&env, "vanillagreencom/kendex", None).is_some(),
+        "{}",
+        said(&output)
+    );
+    assert!(!env.global_manifest_file().exists());
+}

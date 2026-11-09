@@ -1,0 +1,1 @@
+- A first `kendex add` that names a repository this computer never downloaded, such as `kendex add vanillagreencom/kendex --bundle jarvis` on a new computer, downloads it and installs instead of refusing. `kendex source refresh --global` now downloads the default catalog when your personal setup has no manifest yet, and the not-downloaded refusal names the source refresh verb.

@@ -147,12 +147,10 @@ pub fn run(env: &Env, args: SourceArgs) -> CliResult {
                 stale: false,
                 in_use,
             } => {
-                let Some(manifest) = kendex_core::manifest::load_for_mutation(
-                    &kendex_core::manifest::manifest_path(env, &scope),
-                )?
-                else {
-                    continue;
-                };
+                // An absent manifest reads as its seed, as everywhere else:
+                // a personal scope that never wrote one still subscribes to
+                // the default marketplace, which a refresh must download.
+                let manifest = kendex_core::engine::ops::manifest_for_mutation(env, &scope)?;
                 let synced = match in_use {
                     true => remote::sync_record_sources(env, &scope, &manifest)?,
                     false => remote::sync_sources(env, &manifest)?,
