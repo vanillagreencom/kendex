@@ -268,23 +268,14 @@ pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
     } else if let Some(effort) = &intent.effort {
         args.extend(h.effort_words(effort));
     }
-    // The caller's own words may already carry a permission word, in any
-    // supported spelling (a same-harness succession keeps the caller's argv
-    // as given): the canonical word is added only where none stands, so it
-    // is never doubled under an alias such as `--yolo` and never added
-    // beside a narrower grant the caller chose. The prompt switches and the
-    // Copilot trust grant ride a full bypass alone: a narrower grant keeps
-    // its prompts, and the provider gives the switches no effect outside
-    // bypassPermissions mode.
-    let full_bypass = match (intent.permission, h.permission_word_in(&intent.extra_args)) {
-        (Permission::Native, _) => false,
-        (Permission::Bypass, None) => {
-            args.extend(h.bypass_words().into_iter().map(str::to_owned));
-            true
-        }
-        (Permission::Bypass, Some((_, PermissionMeaning::FullBypass))) => true,
-        (Permission::Bypass, Some((_, PermissionMeaning::Narrower))) => false,
-    };
+    // The canonical word is added only where no permission word stands, so
+    // it is never doubled under an alias such as `--yolo`. The prompt
+    // switches and the Copilot trust grant ride a full bypass alone: the
+    // provider gives the switches no effect outside bypassPermissions mode.
+    let full_bypass = full_bypass(h, intent.permission, &intent.extra_args);
+    if full_bypass && h.permission_word_in(&intent.extra_args).is_none() {
+        args.extend(h.bypass_words().into_iter().map(str::to_owned));
+    }
     match h {
         Harness::Claude => {
             if full_bypass {
@@ -405,6 +396,20 @@ pub fn build(intent: &LaunchIntent) -> Result<LaunchCommand> {
         brief_arg,
         brief_path,
     })
+}
+
+/// Whether a launch of `harness` under `permission` with the caller's
+/// `words` runs at full bypass. The caller's own words may already carry a
+/// permission word, in any supported spelling (a same-harness succession
+/// keeps the caller's argv as given): a narrower grant the caller chose
+/// keeps its prompts, and under `bypass` with no word the builder adds the
+/// harness's own.
+pub fn full_bypass(harness: Harness, permission: Permission, words: &[String]) -> bool {
+    match (permission, harness.permission_word_in(words)) {
+        (Permission::Native, _) => false,
+        (Permission::Bypass, None | Some((_, PermissionMeaning::FullBypass))) => true,
+        (Permission::Bypass, Some((_, PermissionMeaning::Narrower))) => false,
+    }
 }
 
 /// The compaction settings a Codex argv carries, in the JSON the hook's

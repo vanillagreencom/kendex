@@ -1,18 +1,22 @@
 #!/bin/bash
-# The ssh client as the hosted launch rows run it: `ssh -t TARGET LINE`
-# runs LINE on this machine through bash, the host's shell, with this
-# directory first on the search path so the harness the line names by its
-# bare name is the stub beside this file. The target is logged beside the
-# fixture (`ssh.log`) and never dialled.
+# The ssh client as the hosted launch rows run it: `ssh -t -o OPTION ... --
+# TARGET LINE` runs LINE on this machine through bash, the host's shell,
+# with this directory first on the search path so the harness the line
+# names by its bare name is the stub beside this file. The argv is logged
+# beside the fixture (`ssh.log`) and the target never dialled. Any other
+# form exits 255, as the client does on a usage error.
 set -u
 here="$(dirname "${BASH_SOURCE[0]}")"
 printf '%s\n' "$*" >> "$here/ssh.log"
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -t) shift ;;
-    *) break ;;
-  esac
+[ "${1:-}" = -t ] || exit 255
+shift
+while [ "${1:-}" = -o ]; do
+  [ $# -ge 2 ] || exit 255
+  shift 2
 done
+[ "${1:-}" = -- ] || exit 255
+shift
+[ $# -ge 2 ] || exit 255
 target="$1"
 shift
 export PATH="$here:$PATH"

@@ -5976,8 +5976,8 @@ fn a_hosted_launch_runs_the_providers_verbs_and_opens_its_window_over_ssh() {
     );
     let ssh = std::fs::read_to_string(world.tools.join("ssh.log")).unwrap();
     assert!(
-        ssh.starts_with("-t lane.example exec bash -c "),
-        "the one typed line runs the provider's prefix over the client: {ssh}"
+        ssh.starts_with("-t -o BatchMode=yes -o ConnectTimeout=5 -- lane.example exec bash -c "),
+        "the one typed line runs the provider's prefix over a client that asks no prompt and dials within the launch bound: {ssh}"
     );
     assert!(
         ssh.contains(&format!(
@@ -6683,6 +6683,161 @@ fn a_copilot_lanes_record_says_whether_its_line_grants_allow_all() {
     );
 }
 
+/// Through the real launch over a harness that waits on Claude Code's
+/// bypass-permissions confirmation until its config dir's settings.json
+/// consents: a bypassed launch on a fresh account home, on one that already
+/// consents, and on one that trusts the directory but never consented,
+/// each opens at the composer with the consent standing and every other
+/// key kept; a launch with a narrower grant writes no consent; a recorded
+/// `false` refuses before any window.
+#[test]
+fn a_bypassed_claude_launch_records_the_accounts_bypass_consent_and_honours_a_refusal() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let runner = Runner::new(&server, "stub-bypass-gated");
+    runner.init_fleet();
+    let cwd = runner.state_dir().display().to_string();
+    let home = |name: &str| {
+        let home = dir.path().join(name);
+        std::fs::create_dir_all(&home).unwrap();
+        home
+    };
+    let settings_of = |home: &Path| -> Option<Value> {
+        std::fs::read_to_string(home.join("settings.json"))
+            .ok()
+            .map(|text| serde_json::from_str(&text).unwrap())
+    };
+    let launch = |item: &str, home: &Path, permission: Option<&str>| {
+        let mut request = launch_request(item, runner.state_dir());
+        request["account"] = json!(home.display().to_string());
+        if let Some(permission) = permission {
+            request["permission"] = json!(permission);
+        }
+        effect_report(&runner.op_fleet(&request))
+    };
+    let confirmed = |item: &str, report: &Value| {
+        assert_eq!(report["intent"]["outcome"], "confirmed", "{item}: {report}");
+        effect_report(&runner.op_fleet(&terminal_close(item)));
+    };
+
+    let fresh = home("fresh");
+    let report = launch("KEN-B1", &fresh, None);
+    confirmed("KEN-B1", &report);
+    assert_eq!(report["intent"]["observation"]["trust"], "account-config");
+    assert_eq!(
+        settings_of(&fresh),
+        Some(json!({"skipDangerousModePermissionPrompt": true}))
+    );
+
+    let prepared = home("prepared");
+    let text = "{\"theme\": \"dark\", \"skipDangerousModePermissionPrompt\": true}\n";
+    std::fs::write(prepared.join("settings.json"), text).unwrap();
+    confirmed("KEN-B2", &launch("KEN-B2", &prepared, None));
+    assert_eq!(
+        std::fs::read_to_string(prepared.join("settings.json")).unwrap(),
+        text,
+        "a consent that stands is not written again"
+    );
+
+    let trusted = home("trusted");
+    let mut projects = serde_json::Map::new();
+    projects.insert(cwd, json!({"hasTrustDialogAccepted": true}));
+    std::fs::write(
+        trusted.join(".claude.json"),
+        json!({"projects": projects}).to_string(),
+    )
+    .unwrap();
+    std::fs::write(trusted.join("settings.json"), r#"{"theme": "dark"}"#).unwrap();
+    let report = launch("KEN-B3", &trusted, None);
+    confirmed("KEN-B3", &report);
+    assert_eq!(report["intent"]["observation"]["trust"], "preapproved");
+    assert_eq!(
+        settings_of(&trusted),
+        Some(json!({"theme": "dark", "skipDangerousModePermissionPrompt": true}))
+    );
+
+    let narrower = home("narrower");
+    confirmed(
+        "KEN-B4",
+        &launch("KEN-B4", &narrower, Some("--permission-mode dontAsk")),
+    );
+    assert_eq!(settings_of(&narrower), None, "no bypass, no consent");
+
+    let refusing = home("refusing");
+    let text = r#"{"skipDangerousModePermissionPrompt": false}"#;
+    std::fs::write(refusing.join("settings.json"), text).unwrap();
+    let panes_before = server.panes().len();
+    let report = launch("KEN-B5", &refusing, None);
+    assert_eq!(report["intent"]["outcome"], "failed", "{report}");
+    assert_eq!(report["intent"]["observation"]["cause"], "bypass-refused");
+    assert_eq!(
+        report["intent"]["observation"]["path"],
+        refusing.join("settings.json").display().to_string()
+    );
+    assert_eq!(server.panes().len(), panes_before, "no window: {report}");
+    assert_eq!(
+        std::fs::read_to_string(refusing.join("settings.json")).unwrap(),
+        text,
+        "a recorded answer is honoured, never overwritten"
+    );
+}
+
+/// Through the real launch: a Codex lane and a Copilot lane whose harness
+/// is up at its composer a second before it writes its session (Codex its
+/// rollout, through the private launch home's link to the account's store;
+/// Copilot its first event) bind that session, never `session-unbound`.
+#[test]
+fn a_launch_binds_the_session_its_harness_writes_after_its_composer_is_up() {
+    let dir = tempfile::tempdir().unwrap();
+    let server = Server::start(dir.path(), "fleet");
+    let mut runner = Runner::new(&server, "stub-confirm");
+    runner.verify = Some(10);
+    runner.init_fleet();
+    let tools = dir.path().join("tools");
+    std::fs::create_dir_all(&tools).unwrap();
+    runner.tools = Some(tools.clone());
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let late = fixtures().join("stub-session-late");
+    runner
+        .env
+        .push(("HOME".to_owned(), home.display().to_string()));
+    runner.env.push((
+        "ORCH_HARNESS_BINARIES".to_owned(),
+        format!(
+            "codex={},copilot={}",
+            late.join("codex").display(),
+            late.join("copilot").display()
+        ),
+    ));
+    let copilot = dir.path().join("copilot-account");
+    plant_copilot_hooks(&copilot.join("hooks"));
+    plant_hooks_off(&tools, json!({"stdout": r#"{"switched_off_by": null}"#}));
+    let codex = dir.path().join("codex-account");
+    std::fs::create_dir_all(&codex).unwrap();
+    let work = runner.state_dir().to_path_buf();
+    for (item, harness, account) in [("KEN-S1", "codex", &codex), ("KEN-S2", "copilot", &copilot)] {
+        let _ = std::fs::remove_file(work.join(".stub-session-id"));
+        let mut request = launch_request(item, &work);
+        request["harness"] = json!(harness);
+        request["account"] = json!(account.display().to_string());
+        let report = effect_report(&runner.op_fleet(&request));
+        assert_eq!(report["intent"]["outcome"], "confirmed", "{item}: {report}");
+        assert_eq!(
+            report["intent"]["observation"].get("note"),
+            None,
+            "{item}: {report}"
+        );
+        let written = std::fs::read_to_string(work.join(".stub-session-id")).unwrap();
+        assert_eq!(
+            report["lane"]["session_id"],
+            written.trim_end(),
+            "{item}: the session its harness wrote: {report}"
+        );
+        effect_report(&runner.op_fleet(&terminal_close(item)));
+    }
+}
+
 #[test]
 fn a_refused_launch_keeps_the_dependencys_cause_as_detail_or_beside_the_refusals_own() {
     let dir = tempfile::tempdir().unwrap();
@@ -6891,7 +7046,8 @@ fn a_hosted_pi_lane_on_the_copilot_pool_hands_its_pane_agents_the_login_environm
     });
     answers[format!("cat --item KEN-H {}/settings.json", root.display())] =
         json!({"stdout": r#"{"compaction":{"enabled":false}}"#});
-    answers[format!("cat --item KEN-H {host}/.pi/settings.json")] = json!({"exit": 2});
+    answers[format!("cat --item KEN-H {host}/.pi/settings.json")] =
+        json!({"stdout": r#"{"packages":["./packages/@vanillagreen/pi-hooks"]}"#});
     answers[format!("cat --item KEN-H {host}/.pi/packages/@vanillagreen/pi-hooks/package.json")] = json!({
         "stdout": r#"{"version":"1","pi":{"extensions":["./extensions/lane-mail-wake.ts"]}}"#
     });
@@ -6962,7 +7118,7 @@ fn a_pi_lane_on_a_claude_seat_keeps_pis_own_root_beside_the_seat() {
     assert_eq!(server.panes().len(), panes_before, "no window opened");
     std::fs::write(
         pi_root.join("settings.json"),
-        r#"{"compaction": {"enabled": false}}"#,
+        r#"{"compaction": {"enabled": false}, "packages": ["./packages/@vanillagreen/pi-hooks"]}"#,
     )
     .unwrap();
     let carrier = pi_root.join("packages/@vanillagreen/pi-hooks");
@@ -7041,7 +7197,7 @@ fn pi_root_ready(root: &Path) {
     std::fs::create_dir_all(carrier.join("extensions")).unwrap();
     std::fs::write(
         root.join("settings.json"),
-        r#"{"compaction": {"enabled": false}}"#,
+        r#"{"compaction": {"enabled": false}, "packages": ["./packages/@vanillagreen/pi-hooks"]}"#,
     )
     .unwrap();
     std::fs::write(

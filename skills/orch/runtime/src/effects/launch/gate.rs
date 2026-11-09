@@ -10,8 +10,8 @@
 //! Claude and Codex need nothing here: every lane launch carries their
 //! compaction-off words, and Claude's capacity table names a window for
 //! every model. Pi needs its compaction off in the settings its session
-//! reads and an installed pi-hooks carrier that puts the window on its
-//! payloads and wakes an idle lane on mail. Copilot needs the three
+//! reads and a pi-hooks carrier those settings load that puts the window
+//! on its payloads and wakes an idle lane on mail. Copilot needs the three
 //! lane-mail hooks registered in its worktree or its home, and no settings
 //! layer switching them off, which `kendex hooks-off` judges; a hosted
 //! Copilot lane's home is on its host, which nothing reads for it.
@@ -128,28 +128,32 @@ fn read_local(path: &str) -> Result<Option<String>, String> {
 }
 
 /// Pi's rules over its user settings under `root` and the worktree's
-/// project settings, then the first pi-hooks carrier installed, the
-/// worktree's before the root's. Compaction is on unless the user file
-/// turns it off; the project file counts only against the switch, since Pi
+/// project settings, then the first pi-hooks carrier those files load, the
+/// project's before the user's. Compaction is on unless the user file turns
+/// it off; the project file counts only against the switch, since Pi
 /// applies it only in a workspace it trusts. The carrier's `vocab.ts` puts
 /// `context_window` on the hook payloads, and its manifest lists the lane
 /// mail wake among the extensions Pi loads.
 fn pi(read: Read, root: &str, worktree: &str, location: Location) -> Result<(), String> {
     let user = format!("{root}/settings.json");
     let project = format!("{worktree}/.pi/settings.json");
-    let enabled = |file: &str| -> Result<Option<bool>, String> {
+    let parsed = |file: &str| -> Result<Option<Value>, String> {
         let unreadable =
             |cause: String| format!("pi-settings-unreadable file={file} cause={cause}");
         let Some(text) = read(file).map_err(unreadable)? else {
             return Ok(None);
         };
-        let doc: Value = serde_json::from_str(&text).map_err(|e| unreadable(e.to_string()))?;
-        Ok(doc
-            .get("compaction")
-            .and_then(|c| c.get("enabled"))
-            .and_then(Value::as_bool))
+        serde_json::from_str(&text)
+            .map(Some)
+            .map_err(|e| unreadable(e.to_string()))
     };
-    match (enabled(&user)?, enabled(&project)?) {
+    let user_doc = parsed(&user)?;
+    let project_doc = parsed(&project)?;
+    let enabled = |doc: &Option<Value>| {
+        doc.as_ref()
+            .and_then(|d| d.get("compaction")?.get("enabled")?.as_bool())
+    };
+    match (enabled(&user_doc), enabled(&project_doc)) {
         (_, Some(true)) => return Err(format!("compaction-on harness=pi file={project}")),
         (Some(false), Some(false) | None) => {}
         (Some(true) | None, Some(false) | None) => {
@@ -157,18 +161,25 @@ fn pi(read: Read, root: &str, worktree: &str, location: Location) -> Result<(), 
         }
     }
     let no_window = "unsupported-for-oversee harness=pi reason=no-window-read".to_owned();
-    for (packages, scope) in [
-        (format!("{worktree}/.pi/packages"), "project"),
-        (format!("{root}/packages"), "global"),
+    for (file, doc, scope) in [
+        (&project, &project_doc, "project"),
+        (&user, &user_doc, "global"),
     ] {
-        let carrier = format!("{packages}/@vanillagreen/pi-hooks");
+        let Some(install) = doc
+            .as_ref()
+            .map(|d| carrier(d, file, scope))
+            .transpose()?
+            .flatten()
+        else {
+            continue;
+        };
         let fetch = |file: String| {
             read(&file).map_err(|cause| format!("pi-carrier-unreadable file={file} cause={cause}"))
         };
-        let Some(manifest) = fetch(format!("{carrier}/package.json"))? else {
+        let Some(manifest) = fetch(format!("{}/package.json", install.path))? else {
             continue;
         };
-        let sends = fetch(format!("{carrier}/extensions/vocab.ts"))?
+        let sends = fetch(format!("{}/extensions/vocab.ts", install.path))?
             .is_some_and(|text| text.contains("context_window"));
         if !sends {
             return Err(no_window);
@@ -193,12 +204,97 @@ fn pi(read: Read, root: &str, worktree: &str, location: Location) -> Result<(), 
             // Once the install is updated, the item's `launch-lane` request sent
             // again retries it; over the record this launch left, a hosted
             // lane's create reuses the worktree its provider holds.
-            "pi-mail-wake-missing harness=pi version={version} root={} scope={scope} location={} update=kendex update-pi --scope {scope} retry=launch-lane",
-            packages.trim_end_matches("/packages"),
+            "pi-mail-wake-missing harness=pi version={version} root={} scope={scope} location={} update={} retry=launch-lane",
+            file.trim_end_matches("/settings.json"),
             location.word(),
+            install.update,
         ));
     }
     Err(no_window)
+}
+
+/// Where a pi-hooks carrier a settings file loads stands, and the command
+/// that updates it there.
+struct Install {
+    path: String,
+    update: String,
+}
+
+/// The pi-hooks carrier the settings document `doc` at `file` loads: the
+/// first entry of its `packages` naming the package, a string or an object
+/// whose `source` is one, and not switched off by an empty `extensions`
+/// filter (Pi's settings grammar, as `docs/adapters/pi.md` cites it from
+/// Pi's packages documentation). An `npm:` entry stands where Pi installs
+/// it, `npm/node_modules/<name>` beside the file; a path, absolute or
+/// relative to the file's directory, where it names, the layout
+/// `kendex update-pi` writes. Any other form names an install whose place
+/// on disk is not read here, refused by name rather than guessed.
+fn carrier(doc: &Value, file: &str, scope: &str) -> Result<Option<Install>, String> {
+    let dir = file.trim_end_matches("/settings.json");
+    for entry in doc
+        .get("packages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let (source, filter) = match entry {
+            Value::String(source) => (source.as_str(), None),
+            Value::Object(object) => match object.get("source").and_then(Value::as_str) {
+                Some(source) => (source, object.get("extensions")),
+                None => continue,
+            },
+            Value::Null | Value::Bool(_) | Value::Number(_) | Value::Array(_) => continue,
+        };
+        if !names_carrier(source) {
+            continue;
+        }
+        if filter.and_then(Value::as_array).is_some_and(Vec::is_empty) {
+            continue;
+        }
+        if let Some(spec) = source.strip_prefix("npm:") {
+            let name = npm_name(spec);
+            return Ok(Some(Install {
+                path: format!("{dir}/npm/node_modules/{name}"),
+                update: format!("pi install npm:{name}"),
+            }));
+        }
+        let path = if source.starts_with('/') {
+            source.trim_end_matches('/').to_owned()
+        } else if let Some(rest) = source.strip_prefix("./") {
+            format!("{dir}/{}", rest.trim_end_matches('/'))
+        } else if source.starts_with("../") {
+            format!("{dir}/{}", source.trim_end_matches('/'))
+        } else {
+            return Err(format!("pi-carrier-unresolved entry={source} file={file}"));
+        };
+        return Ok(Some(Install {
+            path,
+            update: format!("kendex update-pi --scope {scope}"),
+        }));
+    }
+    Ok(None)
+}
+
+/// Whether a package source names pi-hooks: its last path component, less
+/// a version or ref after `@` and a `.git` suffix, is the package's name.
+fn names_carrier(source: &str) -> bool {
+    let last = source
+        .trim_end_matches('/')
+        .rsplit(['/', ':'])
+        .next()
+        .unwrap_or("");
+    let last = last.split('@').next().unwrap_or("");
+    last.trim_end_matches(".git") == "pi-hooks"
+}
+
+/// An npm package spec's name without its version: `@scope/name@1.2.3` is
+/// `@scope/name`, `name@1.2.3` is `name`.
+fn npm_name(spec: &str) -> &str {
+    let from = usize::from(spec.starts_with('@'));
+    match spec[from..].find('@') {
+        Some(at) => &spec[..from + at],
+        None => spec,
+    }
 }
 
 /// The Copilot hooks a lane's session runs: the first of the worktree's
@@ -288,10 +384,16 @@ mod tests {
     /// `Err` text the read's failure, anything else absent. A refusal is
     /// matched up to its cause, whose text is the reader's.
     #[test]
-    fn a_pi_lane_needs_compaction_off_and_a_carrier_that_sends_its_window_and_wakes_on_mail() {
+    fn a_pi_lane_needs_compaction_off_and_a_loaded_carrier_that_sends_its_window_and_wakes_on_mail()
+    {
         let user = "/root/settings.json";
         let project = "/wt/.pi/settings.json";
-        let off = r#"{"compaction": {"enabled": false}}"#;
+        let off = r#"{"compaction": {"enabled": false}, "packages": ["./packages/@vanillagreen/pi-hooks"]}"#;
+        let unregistered = r#"{"compaction": {"enabled": false}}"#;
+        let npm = r#"{"compaction": {"enabled": false}, "packages": ["npm:@vanillagreen/pi-hooks@0.19.2"]}"#;
+        let switched_off = r#"{"compaction": {"enabled": false}, "packages": [{"source": "./packages/@vanillagreen/pi-hooks", "extensions": []}]}"#;
+        let git = r#"{"compaction": {"enabled": false}, "packages": ["npm:pi-tools", "git:github.com/vanillagreencom/pi-hooks"]}"#;
+        let installed = "/root/npm/node_modules/@vanillagreen/pi-hooks";
         let on = r#"{"compaction": {"enabled": true}}"#;
         let global = "/root/packages/@vanillagreen/pi-hooks";
         let local = "/wt/.pi/packages/@vanillagreen/pi-hooks";
@@ -371,9 +473,37 @@ mod tests {
                 Err("pi-mail-wake-missing harness=pi version=1.2.0 root=/root scope=global location=local update=kendex update-pi --scope global retry=launch-lane".to_owned()),
             ),
             (
+                "a-carrier-pi-does-not-load-is-none",
+                with(vec![f(user, Ok(unregistered))], carrier(global, WAKE, SENDS)),
+                Err("unsupported-for-oversee harness=pi reason=no-window-read".to_owned()),
+            ),
+            (
+                "an-entry-switched-off-loads-nothing",
+                with(vec![f(user, Ok(switched_off))], carrier(global, WAKE, SENDS)),
+                Err("unsupported-for-oversee harness=pi reason=no-window-read".to_owned()),
+            ),
+            (
+                "pi-s-own-npm-install",
+                with(vec![f(user, Ok(npm))], carrier(installed, WAKE, SENDS)),
+                Ok(()),
+            ),
+            (
+                "pi-s-own-npm-install-without-the-wake",
+                with(vec![f(user, Ok(npm))], carrier(installed, NO_WAKE, SENDS)),
+                Err("pi-mail-wake-missing harness=pi version=1.2.0 root=/root scope=global location=local update=pi install npm:@vanillagreen/pi-hooks retry=launch-lane".to_owned()),
+            ),
+            (
+                "an-install-whose-place-is-unread-is-refused-by-name",
+                with(vec![f(user, Ok(git))], carrier(global, WAKE, SENDS)),
+                Err(format!("pi-carrier-unresolved entry=git:github.com/vanillagreencom/pi-hooks file={user}")),
+            ),
+            (
                 "the-worktree-s-carrier-decides-first",
                 with(
-                    with(vec![f(user, Ok(off))], carrier(local, NO_WAKE, SENDS)),
+                    with(
+                        vec![f(user, Ok(off)), f(project, Ok(off))],
+                        carrier(local, NO_WAKE, SENDS),
+                    ),
                     carrier(global, WAKE, SENDS),
                 ),
                 Err("pi-mail-wake-missing harness=pi version=1.2.0 root=/wt/.pi scope=project location=local update=kendex update-pi --scope project retry=launch-lane".to_owned()),

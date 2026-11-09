@@ -216,7 +216,7 @@ static RATE_LIMIT_SWITCH: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^\s*Switch to .+ for lower credit usage\?\s*$").unwrap());
 static DIALOG_ROW: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(❯|›) [0-9]+\. ").unwrap());
 static USAGE_LIMIT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"You.(ve|re) (hit|reached) your [a-z ]*limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits|/usage-credits").unwrap()
+    Regex::new(r"You.(ve|re) (hit|reached) your [a-z ]*limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits").unwrap()
 });
 static AUTH_FAILURE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"^[\s\u{a0}]*(⎿[\s\u{a0}]*|■\s*|✗\s*)?(Login expired.*Please run /login|Not logged in.*Please run /login|Your access token could not be refreshed|You must be logged in to send messages\. Please run /login)").unwrap()
@@ -569,6 +569,13 @@ mod tests {
                 &ProcessReading::HarnessUp,
                 Some(true)
             ),
+            State::Idle
+        );
+        // Claude Code's warning footer under its composer names the usage
+        // command and the limit it nears, never a limit reached: no banner.
+        let warned = "❯ work\n❯\u{a0}\nYou've used 92% of your weekly limit · resets Nov 13, 5am · /usage-credits to keep using Claude Code";
+        assert_eq!(
+            judge(warned, Harness::Claude, &ProcessReading::HarnessUp, None),
             State::Idle
         );
     }

@@ -337,6 +337,7 @@ fn prepare_launch(
         Some(_) => accountless_kept(settings, harness, None, None),
         None => accountless_kept(settings, harness, recorded, fleet.served.as_deref()),
     };
+    let permission = r.permission_words();
     let homes = launch_home(
         settings,
         harness,
@@ -344,6 +345,7 @@ fn prepare_launch(
         r.model.as_deref(),
         kept.as_ref(),
         &cwd,
+        agent_runtime::launch::full_bypass(harness, settings.permission, &permission),
     )?;
     let floor = match (route, &homes.sessions) {
         (Route::Resume { session_id, .. }, _) => SessionFloor::Fixed(session_id.clone()),
@@ -353,7 +355,6 @@ fn prepare_launch(
             unreachable!("a refuse route fails before prepare_launch")
         }
     };
-    let permission = r.permission_words();
     let (mut intent, _) = build_launch(
         settings,
         &Spec {
@@ -581,9 +582,10 @@ fn named_home(
 /// fleet server's, or the one a resumed session ran under), named as found
 /// and never prepared, so nothing is written into the operator's config;
 /// on its implicit default, the variable cleared, where `kept` names none
-/// (`accountless_kept` decides which). The harness
-/// gate then judges what the harness needs beyond its trust record under
-/// the home its sessions are read from.
+/// (`accountless_kept` decides which). A launch whose line runs at full
+/// bypass (`bypass`) gets the account's consent to it beside the trust
+/// record. The harness gate then judges what the harness needs beyond its
+/// trust record under the home its sessions are read from.
 pub(super) fn launch_home(
     settings: &Settings,
     harness: Harness,
@@ -591,6 +593,7 @@ pub(super) fn launch_home(
     model: Option<&str>,
     kept: Option<&Kept>,
     cwd: &Path,
+    bypass: bool,
 ) -> std::result::Result<LaunchHome, Unready> {
     let (home, billed) = named_home(
         settings,
@@ -600,7 +603,7 @@ pub(super) fn launch_home(
         kept.map(|k| k.home.as_path()),
     )?;
     let trusted = home
-        .map(|home| prepare_trust(harness, &home, cwd))
+        .map(|home| prepare_trust(harness, &home, cwd, bypass))
         .transpose()?;
     let mut named = trusted.as_ref().map(|t| t.home.clone());
     let mut cleared = false;
@@ -625,8 +628,13 @@ pub(super) fn launch_home(
     clippy::disallowed_methods,
     reason = "the launch's trust record, written before the window it serves opens, its refusal the launch's own"
 )]
-fn prepare_trust(harness: Harness, home: &Path, cwd: &Path) -> Result<trust::Prepared> {
-    Ok(trust::prepare(harness, home, cwd)?)
+fn prepare_trust(
+    harness: Harness,
+    home: &Path,
+    cwd: &Path,
+    bypass: bool,
+) -> Result<trust::Prepared> {
+    Ok(trust::prepare(harness, home, cwd, bypass)?)
 }
 
 /// A lane runs with the harness's own compaction off where it has a word
@@ -1180,9 +1188,14 @@ fn hosted_marker(
 }
 
 /// The ssh client's command for the fleet window: one typed line, `ssh -t
-/// TARGET LINE`, where LINE is the provider's prefix followed by the
-/// harness line the builder spells for the worktree on the host, quoted as
-/// one word. The brief travels inline, since the file is on this machine;
+/// -o BatchMode=yes -o ConnectTimeout=SECS -- TARGET LINE`, where LINE is
+/// the provider's prefix followed by the harness line the builder spells
+/// for the worktree on the host, quoted as one word. Nobody answers a
+/// host-key, password or passphrase prompt in a fleet window, so the client
+/// refuses one instead of asking, and a dial that does not connect within
+/// the launch's own bound ends: either way the pane closes with the client
+/// and the launch fails `pane-gone` rather than waiting out the bound on a
+/// prompt. The brief travels inline, since the file is on this machine;
 /// the harness is the host's own program by name; no account variable
 /// reaches the host, whose prefix carries the credential it placed. A Pi
 /// lane on the Copilot pool runs the session-environment step first, in
@@ -1235,7 +1248,16 @@ fn hosted_command(
         .unwrap_or_else(|| "ssh".to_owned());
     Ok(LaunchCommand {
         program,
-        args: vec!["-t".to_owned(), created.target.clone(), line],
+        args: vec![
+            "-t".to_owned(),
+            "-o".to_owned(),
+            "BatchMode=yes".to_owned(),
+            "-o".to_owned(),
+            format!("ConnectTimeout={}", settings.verify.as_secs()),
+            "--".to_owned(),
+            created.target.clone(),
+            line,
+        ],
         env: Default::default(),
         env_remove: Vec::new(),
         cwd: PathBuf::from(&r.mail_root),

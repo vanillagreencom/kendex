@@ -1,0 +1,18 @@
+#!/bin/bash
+# A Copilot stub named `copilot` that makes its session directory at once
+# and writes the session's first event a second later, as Copilot CLI
+# records a session: `$COPILOT_HOME/session-state/<id>/workspace.yaml` with
+# plain `id:` and `cwd:` lines, then `events.jsonl` beside it, the shape
+# agent-runtime's session module reads. It draws Copilot's composer (the
+# marker line with a rule under it) and stands until its stdin closes.
+id="0199c001-0000-7000-8000-$(printf '%012d' "$$")"
+state="$COPILOT_HOME/session-state/$id"
+mkdir -p "$state"
+printf 'id: %s\ncwd: %s\n' "$id" "$PWD" > "$state/workspace.yaml"
+printf '\xe2\x9d\xaf \n'
+printf '\xe2\x94\x80%.0s' 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
+printf '\n'
+sleep 1
+printf '{"type":"session.start","data":{"sessionId":"%s"}}\n' "$id" > "$state/events.jsonl"
+printf '%s\n' "$id" > .stub-session-id
+while IFS= read -r _line; do :; done

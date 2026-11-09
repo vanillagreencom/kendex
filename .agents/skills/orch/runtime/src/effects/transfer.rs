@@ -321,6 +321,11 @@ impl Successor {
             pending.model.as_deref(),
             kept(settings, pending, harness, served).as_ref(),
             &cwd,
+            agent_runtime::launch::full_bypass(
+                harness,
+                pending.permission.unwrap_or(settings.permission),
+                &pending.extra_args,
+            ),
         )?;
         Ok(Self::of(settings, pending, harness, cwd, homes)?)
     }

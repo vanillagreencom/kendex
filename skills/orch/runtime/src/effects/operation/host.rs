@@ -1695,7 +1695,10 @@ impl Operation<'_> {
     /// The one lead session for `cwd` under `home` that appeared since the
     /// window opened and stood in no baseline before it: a neighbour in the
     /// same home and directory is never a candidate. A set read whole or not
-    /// at all; an unread candidate binds nothing and names its cause.
+    /// at all; an unread candidate binds nothing and names its cause. A
+    /// harness ready at its composer may write its session moments later
+    /// (Codex its rollout, Copilot its first event), so none found is read
+    /// again within the launch bound before it binds nothing.
     pub(in crate::effects) fn appeared_session(
         &self,
         harness: Harness,
@@ -1704,10 +1707,14 @@ impl Operation<'_> {
         opened: &OpenedPane,
     ) -> Binding {
         let since = std::time::UNIX_EPOCH + Duration::from_millis(opened.since_ms);
-        let mut found = match session::new_leads(harness, home, cwd, since, &opened.baseline) {
-            Reading::Live(found) => found,
-            Reading::Gone => Vec::new(),
-            Reading::Unreadable { cause } => return Binding::Unreadable { cause },
+        let deadline = self.now() + self.run.settings.verify;
+        let mut found = loop {
+            match session::new_leads(harness, home, cwd, since, &opened.baseline) {
+                Reading::Live(found) if !found.is_empty() => break found,
+                Reading::Live(_) | Reading::Gone if self.now() < deadline => self.sleep(POLL),
+                Reading::Live(_) | Reading::Gone => break Vec::new(),
+                Reading::Unreadable { cause } => return Binding::Unreadable { cause },
+            }
         };
         match found.len() {
             0 => Binding::Absent,

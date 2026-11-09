@@ -8014,7 +8014,7 @@ fn pi_root_marked(root: &Path) {
     std::fs::create_dir_all(carrier.join("extensions")).unwrap();
     std::fs::write(
         root.join("settings.json"),
-        r#"{"compaction": {"enabled": false}}"#,
+        r#"{"compaction": {"enabled": false}, "packages": ["./packages/@vanillagreen/pi-hooks"]}"#,
     )
     .unwrap();
     std::fs::write(

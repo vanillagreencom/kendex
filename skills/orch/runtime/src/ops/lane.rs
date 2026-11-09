@@ -1101,6 +1101,16 @@ pub(super) fn launch_lane(
             // are written empty until the launch confirms, and the selection
             // (harness, account, model, effort) waits on the intent until
             // then, as the record reads it at `running`.
+            //
+            // A cloud record's session would leave with its fields: its close
+            // row is written first, unless a close already wrote one naming
+            // that session and account.
+            let previous = lane_doc_mut(path, doc, index)?.clone();
+            if let Some(row) = cloud_close_row(&previous, &r.item, &at)
+                && !cloud_close_logged(doc, &r.item, &previous)
+            {
+                state::array_mut(path, doc, "fleet_log")?.push(row);
+            }
             let lane = lane_doc_mut(path, doc, index)?;
             state::set(lane, "mail_root", r.mail_root.as_str());
             for (key, value) in r.prepared() {
@@ -1782,16 +1792,10 @@ fn cloud_close_row(lane: &Document, item: &str, at: &str) -> Option<Value> {
     if lane.get("kind").and_then(Value::as_str) != Some(super::CLOUD_KIND) {
         return None;
     }
-    let word = |key: &str| {
-        lane.get(key)
-            .and_then(Value::as_str)
-            .unwrap_or("none")
-            .to_owned()
-    };
     let mut text = format!(
         "cloud lane closed; session={} account={}",
-        word("session_id"),
-        word("account")
+        cloud_word(lane, "session_id"),
+        cloud_word(lane, "account")
     );
     if let Some(send) = lane.get("directive_send").filter(|v| v.is_object()) {
         let field = |v: Option<&Value>| match v {
@@ -1823,6 +1827,34 @@ fn cloud_close_row(lane: &Document, item: &str, at: &str) -> Option<Value> {
         ));
     }
     Some(json!({"at": at, "kind": "close", "item": item, "text": text}))
+}
+
+/// A cloud record's field as its close row names it, `none` where the
+/// record names none.
+fn cloud_word<'a>(lane: &'a Document, key: &str) -> &'a str {
+    lane.get(key).and_then(Value::as_str).unwrap_or("none")
+}
+
+/// Whether a `close` row for `item` already names the cloud record's
+/// session and account, read from the first `session=S account=A` of its
+/// text as the close rows every launcher and close wrote spell it.
+fn cloud_close_logged(doc: &Document, item: &str, lane: &Document) -> bool {
+    let (session, account) = (cloud_word(lane, "session_id"), cloud_word(lane, "account"));
+    doc.get("fleet_log")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|row| row.get("kind").and_then(Value::as_str) == Some("close"))
+        .filter(|row| row.get("item").and_then(Value::as_str) == Some(item))
+        .filter_map(|row| row.get("text").and_then(Value::as_str))
+        .any(|text| {
+            let Some((_, rest)) = text.split_once("session=") else {
+                return false;
+            };
+            let mut words = rest.split(' ');
+            words.next() == Some(session)
+                && words.next().and_then(|w| w.strip_prefix("account=")) == Some(account)
+        })
 }
 
 /// The close arms of `record-outcome` on the lane at `index`, judged

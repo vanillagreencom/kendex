@@ -17,12 +17,14 @@
 //! account's files by link and one config.toml of its own carrying the
 //! account's config plus the entry. Claude's `.claude.json` is the account's
 //! own state, the file the harness writes its own answer into, so the entry
-//! goes there and the launch runs under the config dir itself.
+//! goes there and the launch runs under the config dir itself. A Claude
+//! launch in bypass-permissions mode also opens on a one-time confirmation
+//! per config dir, answered by `skipDangerousModePermissionPrompt` in that
+//! dir's settings.json, which the launch records the same way.
 //!
-//! An answer already recorded for the directory that is not trust refuses
-//! on both arms: it is a decision somebody gave in the harness's own
-//! spelling, and overwriting it would run the launch at full trust against
-//! that answer.
+//! An answer already recorded that is not trust or consent refuses: it is a
+//! decision somebody gave in the harness's own spelling, and overwriting it
+//! would run the launch at full trust against that answer.
 
 use std::ffi::OsStr;
 use std::fs;
@@ -70,14 +72,17 @@ pub struct Prepared {
 }
 
 /// Make the trust entry for `launch_dir` exist in the config a launch of
-/// `harness` under `home` will read, and say which home that is. A refusal
-/// is the launch-readiness answer: `trust-refused` for a recorded answer
-/// that is not trust, `config-unreadable` for a config that exists and
-/// cannot be read or parsed, and the write's own failure otherwise.
-pub fn prepare(harness: Harness, home: &Path, launch_dir: &Path) -> Result<Prepared> {
+/// `harness` under `home` will read, and say which home that is; a launch
+/// whose line carries the harness's bypass word (`bypass`) also gets the
+/// consent Claude asks for before it runs bypassed. A refusal is the
+/// launch-readiness answer: `trust-refused` or `bypass-refused` for a
+/// recorded answer that is not consent, `config-unreadable` for a config
+/// that exists and cannot be read or parsed, and the write's own failure
+/// otherwise.
+pub fn prepare(harness: Harness, home: &Path, launch_dir: &Path, bypass: bool) -> Result<Prepared> {
     match harness {
         Harness::Codex => codex(home, launch_dir),
-        Harness::Claude => claude(home, launch_dir),
+        Harness::Claude => claude(home, launch_dir, bypass),
         Harness::Copilot => copilot(home, pending_dir().as_deref()),
         Harness::Pi => Ok(Prepared {
             route: Route::None,
@@ -440,7 +445,18 @@ fn without_table(text: &str, section: &str) -> String {
 // Claude
 // ---------------------------------------------------------------------------
 
-fn claude(lane: &Path, dir: &Path) -> Result<Prepared> {
+fn claude(lane: &Path, dir: &Path, bypass: bool) -> Result<Prepared> {
+    let route = claude_trust(lane, dir)?;
+    if bypass {
+        claude_bypass_consent(lane)?;
+    }
+    Ok(Prepared {
+        route,
+        home: lane.to_path_buf(),
+    })
+}
+
+fn claude_trust(lane: &Path, dir: &Path) -> Result<Route> {
     let h = Harness::Claude;
     let config = lane.join(".claude.json");
     let key = dir.display().to_string();
@@ -458,12 +474,7 @@ fn claude(lane: &Path, dir: &Path) -> Result<Prepared> {
         .and_then(|e| e.get("hasTrustDialogAccepted"))
     {
         None | Some(Value::Null) => {}
-        Some(Value::Bool(true)) => {
-            return Ok(Prepared {
-                route: Route::Preapproved,
-                home: lane.to_path_buf(),
-            });
-        }
+        Some(Value::Bool(true)) => return Ok(Route::Preapproved),
         Some(_) => return Err(refused("trust-refused", h, dir, None)),
     }
     // The config dir holds the account's credentials and the file its
@@ -511,10 +522,67 @@ fn claude(lane: &Path, dir: &Path) -> Result<Prepared> {
     if written["projects"][&key]["hasTrustDialogAccepted"] != Value::Bool(true) {
         return Err(refused("entry-unreadable", h, &config, None));
     }
-    Ok(Prepared {
-        route: Route::AccountConfig,
-        home: lane.to_path_buf(),
-    })
+    Ok(Route::AccountConfig)
+}
+
+/// The account's consent to bypass-permissions mode, which Claude asks for
+/// once per config dir before a session launched with its bypass word
+/// starts, and records as `skipDangerousModePermissionPrompt: true` in that
+/// dir's settings.json: written there, every other key kept and the file
+/// written through its links, since a launch with nobody at the pane
+/// cannot answer the confirmation. A recorded `false` is an answer somebody
+/// gave and refuses `bypass-refused`.
+fn claude_bypass_consent(lane: &Path) -> Result<()> {
+    const CONSENT: &str = "skipDangerousModePermissionPrompt";
+    let h = Harness::Claude;
+    let settings = lane.join("settings.json");
+    let target = link_target(&settings).ok_or_else(|| {
+        refused(
+            "config-unreadable",
+            h,
+            &settings,
+            Some("too many links to follow"),
+        )
+    })?;
+    let mut doc = match present(&target) {
+        Present::Absent => Value::Object(Map::new()),
+        Present::Unreadable(cause) => {
+            return Err(refused("config-unreadable", h, &target, Some(&cause)));
+        }
+        Present::File => serde_json::from_str::<Value>(&read(&target, h)?)
+            .map_err(|e| refused("config-unreadable", h, &target, Some(&e.to_string())))?,
+    };
+    let Some(object) = doc.as_object_mut() else {
+        return Err(refused(
+            "config-unreadable",
+            h,
+            &target,
+            Some("the document is not an object"),
+        ));
+    };
+    match object.get(CONSENT) {
+        Some(Value::Bool(true)) => return Ok(()),
+        Some(Value::Bool(false)) => return Err(refused("bypass-refused", h, &target, None)),
+        None | Some(Value::Null) => {}
+        Some(_) => {
+            return Err(refused(
+                "config-unreadable",
+                h,
+                &target,
+                Some("`skipDangerousModePermissionPrompt` is not a boolean"),
+            ));
+        }
+    }
+    object.insert(CONSENT.to_owned(), Value::Bool(true));
+    let text = serde_json::to_string_pretty(&doc)
+        .map_err(|e| refused("config-write", h, &target, Some(&e.to_string())))?;
+    install_config(&target, &format!("{text}\n"), h)?;
+    let written: Value = serde_json::from_str(&read(&target, h)?)
+        .map_err(|e| refused("entry-unreadable", h, &target, Some(&e.to_string())))?;
+    if written[CONSENT] != Value::Bool(true) {
+        return Err(refused("entry-unreadable", h, &target, None));
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -833,7 +901,7 @@ mod tests {
                     .replace("DIR", &dir.display().to_string())
             });
             let lane = account(root.path(), name, body.as_deref(), true);
-            let prepared = prepare(Harness::Codex, &lane, &dir).unwrap();
+            let prepared = prepare(Harness::Codex, &lane, &dir, false).unwrap();
             assert_eq!(prepared.route, route, "{name}");
             assert_eq!(prepared.home != lane, private, "{name}: private");
             let config = prepared.home.join("config.toml");
@@ -873,7 +941,7 @@ mod tests {
         let dir = root.path().join("linked").join("wt");
         fs::create_dir_all(&dir).unwrap();
         let lane = account(root.path(), "linked", None, false);
-        let home = prepare(Harness::Codex, &lane, &dir).unwrap().home;
+        let home = prepare(Harness::Codex, &lane, &dir, false).unwrap().home;
         fs::write(home.join("auth.json"), "renewed\n").unwrap();
         assert_eq!(
             fs::read_to_string(lane.join("auth.json")).unwrap(),
@@ -888,7 +956,7 @@ mod tests {
         // it, links a private file at a name the account has since gained.
         fs::write(home.join("models_cache.json"), "private\n").unwrap();
         fs::write(lane.join("models_cache.json"), "shipped\n").unwrap();
-        let again = prepare(Harness::Codex, &home, &dir).unwrap();
+        let again = prepare(Harness::Codex, &home, &dir, false).unwrap();
         assert_eq!(again.home, home);
         assert_eq!(
             fs::read_to_string(home.join("models_cache.json")).unwrap(),
@@ -912,7 +980,7 @@ mod tests {
             dir.display()
         );
         let lane = account(root.path(), "answered", Some(&body), true);
-        let e = prepare(Harness::Codex, &lane, &dir).unwrap_err();
+        let e = prepare(Harness::Codex, &lane, &dir, false).unwrap_err();
         assert_eq!(key(&e), "trust-refused");
         assert_eq!(
             fs::read_to_string(lane.join("config.toml")).unwrap(),
@@ -921,13 +989,13 @@ mod tests {
         let dir = root.path().join("home-answered").join("wt");
         fs::create_dir_all(&dir).unwrap();
         let lane = account(root.path(), "home-answered", None, true);
-        let home = prepare(Harness::Codex, &lane, &dir).unwrap().home;
+        let home = prepare(Harness::Codex, &lane, &dir, false).unwrap().home;
         let answer = format!(
             "\n[projects.\"{}\"]\ntrust_level = \"untrusted\"\n",
             dir.display()
         );
         fs::write(home.join("config.toml"), &answer).unwrap();
-        let e = prepare(Harness::Codex, &lane, &dir).unwrap_err();
+        let e = prepare(Harness::Codex, &lane, &dir, false).unwrap_err();
         assert_eq!(key(&e), "trust-refused");
         assert_eq!(
             fs::read_to_string(home.join("config.toml")).unwrap(),
@@ -937,7 +1005,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let lane = account(root.path(), "dangling", None, true);
         symlink(lane.join("absent.toml"), lane.join("config.toml")).unwrap();
-        let e = prepare(Harness::Codex, &lane, &dir).unwrap_err();
+        let e = prepare(Harness::Codex, &lane, &dir, false).unwrap_err();
         assert_eq!(key(&e), "config-unreadable");
     }
 
@@ -951,16 +1019,19 @@ mod tests {
             let dir = root.path().join(name).join("wt");
             fs::create_dir_all(&dir).unwrap();
             let lane = account(root.path(), name, None, false);
-            let home = prepare(Harness::Codex, &lane, &dir).unwrap().home;
+            let home = prepare(Harness::Codex, &lane, &dir, false).unwrap().home;
             fs::create_dir_all(home.join(name).join("cache")).unwrap();
             fs::write(home.join(name).join("private"), "unproved private data\n").unwrap();
             fs::create_dir_all(lane.join(name)).unwrap();
             fs::write(lane.join(name).join("account"), "shipped\n").unwrap();
-            let result = prepare(Harness::Codex, &home, &dir);
+            let result = prepare(Harness::Codex, &home, &dir, false);
             if kept {
                 let again = result.unwrap();
                 assert_eq!(again.home, home);
-                assert!(prepare(Harness::Codex, &home, &dir).is_ok(), "repeats");
+                assert!(
+                    prepare(Harness::Codex, &home, &dir, false).is_ok(),
+                    "repeats"
+                );
                 assert_eq!(
                     fs::read_to_string(home.join(name).join("private")).unwrap(),
                     "unproved private data\n"
@@ -1029,7 +1100,7 @@ mod tests {
             if let Some(body) = &body {
                 fs::write(&config, format!("{body}\n")).unwrap();
             }
-            let got = prepare(Harness::Claude, &lane, &dir);
+            let got = prepare(Harness::Claude, &lane, &dir, false);
             match want {
                 Ok((route, user, other_tools, own_tools)) => {
                     let prepared = got.unwrap();
@@ -1080,7 +1151,7 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let dir = root.path().join("wt");
         let lane = root.path().join(".1pi");
-        let prepared = prepare(Harness::Pi, &lane, &dir).unwrap();
+        let prepared = prepare(Harness::Pi, &lane, &dir, false).unwrap();
         assert_eq!(prepared.route, Route::None);
         assert_eq!(prepared.home, lane);
         assert!(fs::symlink_metadata(&lane).is_err(), "nothing written");

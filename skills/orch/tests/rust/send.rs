@@ -1516,7 +1516,9 @@ fn a_close_beside_a_live_cloud_create_is_refused_and_supersedes_it_once_its_op_i
 /// real `launch-lane`: a cloud launch records the cloud host and kind; with
 /// its session ended by the real no-landing close (the record stopped), a
 /// relaunch naming no host records no host and the `local` kind, and its
-/// launch is the local one.
+/// launch is the local one. The cloud session stays named in the fleet log
+/// once: by the close's row, or, over a released record whose close row was
+/// never written, by the relaunch's.
 #[test]
 fn a_cloud_lanes_relaunch_naming_no_host_records_the_local_launch_it_makes() {
     let dir = tempfile::tempdir().unwrap();
@@ -1591,4 +1593,63 @@ fn a_cloud_lanes_relaunch_naming_no_host_records_the_local_launch_it_makes() {
         "tmux-session-unresolved",
         "{answer}"
     );
+    let cloud_rows = |item: &str| -> Vec<Value> {
+        world.fleet()["fleet_log"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|row| row["kind"] == "close" && row["item"] == item)
+            .filter(|row| {
+                row["text"]
+                    .as_str()
+                    .is_some_and(|text| text.starts_with("cloud lane closed;"))
+            })
+            .cloned()
+            .collect()
+    };
+    assert_eq!(
+        cloud_rows("CC-30").len(),
+        1,
+        "the close named the session, so the relaunch names it again nowhere: {}",
+        world.fleet()["fleet_log"]
+    );
+    // A cloud record as the released launcher wrote it, its close row never
+    // written (the released close stamped `done` before appending it): the
+    // relaunch over it names the session before the record's fields move.
+    let account = world.account.display().to_string();
+    let mut fleet = world.fleet();
+    fleet["lanes"].as_array_mut().unwrap().push(json!({
+        "item": "CC-31", "tracker": null, "repo": null, "harness": "claude",
+        "window": null, "account": account, "host": "claude-cloud",
+        "kind": "claude-cloud", "mail_root": world.root.join("wt/CC-31").display().to_string(),
+        "surface": "tmux", "model": "opus", "effort": "high", "session_id": "session_031",
+        "session_since": "2026-11-01T10:00:00Z", "launched_at": "2026-11-01T10:00:00Z",
+        "running_at": "2026-11-01T10:00:05Z", "status": "done", "over_cap": null,
+        "allow_all": null, "touched": null, "in_scope": [], "obligation": null,
+        "recovery": {"cwd": world.root.display().to_string(), "flags": "", "session": "", "refresh": false},
+        "launch": null,
+    }));
+    std::fs::write(
+        world.root.join("workflow-state-oversee.json"),
+        serde_json::to_string(&fleet).unwrap(),
+    )
+    .unwrap();
+    let mut relaunch: Value =
+        serde_json::from_str(&std::fs::read_to_string(&request).unwrap()).unwrap();
+    relaunch["item"] = json!("CC-31");
+    std::fs::write(&request, relaunch.to_string()).unwrap();
+    let out = world.run(
+        &["op", "--fleet", "--request", &request.display().to_string()],
+        &[],
+    );
+    assert_eq!(reply(&out)["ok"], true, "{}", stderr(&out));
+    let rows = cloud_rows("CC-31");
+    assert_eq!(rows.len(), 1, "{}", world.fleet()["fleet_log"]);
+    assert_eq!(
+        rows[0]["text"],
+        format!("cloud lane closed; session=session_031 account={account}"),
+        "{}",
+        rows[0]
+    );
+    assert_eq!(world.lane("CC-31")["kind"], "local");
 }

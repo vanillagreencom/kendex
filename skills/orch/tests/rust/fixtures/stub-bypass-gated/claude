@@ -1,0 +1,23 @@
+#!/bin/bash
+# A stub harness named `claude` that asks what Claude Code asks once per
+# config dir before a bypassed session starts: launched with
+# `--dangerously-skip-permissions` while its CLAUDE_CONFIG_DIR's
+# settings.json holds no `"skipDangerousModePermissionPrompt": true`, it
+# draws the bypass-permissions confirmation and waits on it, as Claude Code
+# does on a fresh config dir. Otherwise it behaves as stub-confirm, whose
+# script it runs, so its pane reads at the composer.
+here="$(dirname "${BASH_SOURCE[0]}")"
+bypass=0
+for arg in "$@"; do
+  [ "$arg" = --dangerously-skip-permissions ] && bypass=1
+done
+settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+if [ "$bypass" = 1 ] && ! grep -Eq '"skipDangerousModePermissionPrompt": *true' "$settings" 2>/dev/null; then
+  printf 'WARNING: Claude Code running in Bypass Permissions mode\n\n'
+  printf '\xe2\x9d\xaf 1. No, exit\n'
+  printf '  2. Yes, I accept\n\n'
+  printf 'Enter to confirm \xc2\xb7 Esc to exit\n'
+  while IFS= read -r _line; do :; done
+  exit 0
+fi
+exec "$here/../stub-confirm/claude" "$@"

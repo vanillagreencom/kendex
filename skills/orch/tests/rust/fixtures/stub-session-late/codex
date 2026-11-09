@@ -1,0 +1,16 @@
+#!/bin/bash
+# A Codex stub named `codex` that draws Codex's composer at once and writes
+# its session a second later, as Codex writes its rollout after its
+# composer is up: the rollout under
+# `$CODEX_HOME/sessions/YYYY/MM/DD/` whose first row is a lead's
+# `session_meta` for this working directory, the shape agent-runtime's
+# session module reads. Then it stands until its stdin closes.
+printf '\xe2\x80\xba Ask Codex to do anything\n'
+id="0199b001-0000-7000-8000-$(printf '%012d' "$$")"
+sleep 1
+day="$CODEX_HOME/sessions/$(date -u +%Y/%m/%d)"
+mkdir -p "$day"
+printf '{"type":"session_meta","payload":{"id":"%s","cwd":"%s","source":"cli","parent_thread_id":null}}\n' \
+  "$id" "$PWD" > "$day/rollout-$(date -u +%Y-%m-%dT%H-%M-%S)-$id.jsonl"
+printf '%s\n' "$id" > .stub-session-id
+while IFS= read -r _line; do :; done
