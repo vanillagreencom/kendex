@@ -72,6 +72,7 @@ import { useAuditStore } from "@/stores/audit";
 import { useEditorStore } from "@/stores/editor";
 import { useNavStore } from "@/stores/nav";
 import type { PackageView } from "@/stores/nav-types";
+import { usePackageReads } from "@/stores/package-reads";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
@@ -282,6 +283,9 @@ beforeEach(() => {
     data: null,
   });
   useScanStore.setState({ generation: 0 });
+  // The page's reads outlive it, so a case would otherwise open on the
+  // answers the case before it read.
+  usePackageReads.setState({ answers: {} });
   useProvenanceStore.setState({ read: READ_LANDED, reading: false });
   useEditorStore.setState({
     scope: { scope: "global" },

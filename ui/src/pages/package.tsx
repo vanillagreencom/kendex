@@ -458,9 +458,7 @@ export function PackagePage() {
         overview={overview}
         files={
           <PackageFiles
-            scope={ref.scope}
-            kind={group.kind}
-            name={group.name}
+            reference={ref}
             files={files}
             read={reads.files}
             retryRunning={reads.reading}

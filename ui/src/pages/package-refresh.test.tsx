@@ -27,10 +27,12 @@ import { FILES_TAB } from "@/lib/copy-files";
 import { PROJECTS_TAB, updateInLabel } from "@/lib/copy-projects";
 import { UPDATES_CHECKING } from "@/lib/copy-updates";
 import { READ_LANDED } from "@/lib/read-state";
+import { rescansSettled, writingRepo } from "@/lib/rescan";
 import { useAuditStore } from "@/stores/audit";
 import { useNavStore } from "@/stores/nav";
+import { usePackageReads } from "@/stores/package-reads";
 import { useScanStore } from "@/stores/scan";
-import { useUpdatesStore } from "@/stores/updates";
+import { holdingBusy, useUpdatesStore } from "@/stores/updates";
 import { mount, settle } from "@/test/dom";
 import { joinAnswered } from "@/test/identity-join";
 import { observed } from "@/test/observed";
@@ -58,6 +60,7 @@ vi.mock("@/bindings", async (importOriginal) => ({
     // it.
     packageUpdate: vi.fn(),
     updatesOverview: vi.fn(),
+    updatesRefresh: vi.fn(),
     scanMachine: vi.fn(),
   },
 }));
@@ -176,6 +179,9 @@ beforeEach(() => {
     data: { applies: true, ...placeRead, skills: [], base: null },
   });
   useAuditStore.setState({ views: [], auditedAt: null, read: READ_LANDED });
+  // The page's reads outlive it, so a case would otherwise open on the
+  // answers the case before it read.
+  usePackageReads.setState({ answers: {} });
   // Reset with the rest: `checking` is what one case below turns on, and a
   // store touch merges, so it would still be on under the other.
   useUpdatesStore.setState({
@@ -507,5 +513,224 @@ describe("the package page after an update started from its Projects tab", () =>
       updateBefore: row.update ? true : null,
       updateAfter: row.update ? false : null,
     });
+  });
+});
+
+// Leaving a package and coming back to its Files tab draws what the first
+// visit read, and asks for none of it again while nothing has changed. Once
+// something may have — the window came back, a write ran, whatever it
+// answered, a fetch moved mirrors, the installed commit moved — the return
+// reads the package and its place again and draws what is there now.
+describe("coming back to the package page", () => {
+  /** The page as the app holds it: mounted while the reader is on it, gone
+   *  while they are anywhere else. */
+  function Shell() {
+    const page = useNavStore((s) => s.page);
+    return page === "package" ? <PackagePage /> : null;
+  }
+
+  const PackageReads = [
+    "packageMeta",
+    "packageFiles",
+    "packageReadme",
+    "packageVersions",
+    "packageFile",
+  ] as const;
+  const PlaceReads = [
+    "getManifest",
+    "getScopeSettings",
+    "editorInventory",
+  ] as const;
+  const asked = (names: readonly (keyof typeof commands)[]) =>
+    names.reduce(
+      (sum, name) =>
+        sum +
+        (vi.mocked(commands[name]) as { mock: { calls: unknown[] } }).mock.calls
+          .length,
+      0,
+    );
+
+  const visit = async (host: HTMLElement) => {
+    await act(async () => {
+      useNavStore.setState({ page: "package" });
+    });
+    await act(async () => {
+      answerJoin();
+    });
+    await openTab(host, FILES_TAB);
+    return host.textContent ?? "";
+  };
+
+  const rows: {
+    name: string;
+    act: (write: { landed: boolean }) => Promise<void>;
+    reads: "none" | "package" | "package and place";
+  }[] = [
+    { name: "nothing changed", act: async () => {}, reads: "none" },
+    {
+      name: "the window came back over an edit",
+      act: async (write) => {
+        write.landed = true;
+        await useScanStore.getState().refresh();
+      },
+      reads: "package and place",
+    },
+    {
+      name: "a write ran",
+      act: async (write) => {
+        await writingRepo(async () => {
+          write.landed = true;
+        });
+        await rescansSettled();
+      },
+      reads: "package and place",
+    },
+    {
+      name: "a write ran and failed",
+      act: async (write) => {
+        await writingRepo(async () => {
+          write.landed = true;
+          throw new Error("the write stopped");
+        }).catch(() => undefined);
+        await rescansSettled();
+      },
+      reads: "package and place",
+    },
+    {
+      name: "an updates-store write ran without a rescan",
+      act: async (write) => {
+        await holdingBusy(async () => {
+          write.landed = true;
+        });
+      },
+      reads: "package and place",
+    },
+    {
+      name: "a mirror fetch ran and failed",
+      act: async (write) => {
+        vi.mocked(commands.updatesRefresh).mockImplementation(() => {
+          write.landed = true;
+          return Promise.resolve({ status: "error", error: "offline" });
+        });
+        await useUpdatesStore.getState().check();
+      },
+      reads: "package and place",
+    },
+    {
+      name: "the installed commit moved",
+      act: async (write) => {
+        write.landed = true;
+        useUpdatesStore.setState({ rows: [rowAt(NEW, false)] });
+      },
+      reads: "package",
+    },
+  ];
+  expect(rows).toHaveLength(7);
+
+  it.each(rows)("$name", async (row) => {
+    const write = engineWrites();
+    vi.mocked(commands.updatesOverview).mockImplementation(() =>
+      Promise.resolve({
+        status: "ok",
+        data: {
+          rows: [rowAt(write.landed ? NEW : OLD, !write.landed)],
+          warnings: [],
+          unreadable: [],
+          lastFetched: null,
+        },
+      }),
+    );
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [INSTALLED],
+        missingProjects: [],
+        readProjects: [],
+        warnings: [],
+      },
+    });
+    useNavStore.setState({
+      page: "library",
+      packageRef: {
+        kind: "skill",
+        name: "gh",
+        scope: VG,
+        identity: "recorded",
+      },
+      packageView: null,
+    });
+    const host = mount(<Shell />);
+    const first = await visit(host);
+    // The pane opens on the README the page already read.
+    expect(first).toContain("READS-BEFORE");
+    expect(vi.mocked(commands.packageReadme)).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      useNavStore.setState({ page: "library" });
+    });
+    await act(async () => {
+      await row.act(write);
+    });
+    vi.clearAllMocks();
+    const back = await visit(host);
+
+    const moved = row.reads !== "none";
+    expect(
+      {
+        files: back.includes(moved ? "AFTER.md" : "BEFORE.md"),
+        readme: back.includes(moved ? "READS-AFTER" : "READS-BEFORE"),
+        // Each of the four once, and no file: the pane's README is the
+        // page's own.
+        package: asked(PackageReads),
+        place: asked(PlaceReads) > 0,
+      },
+      row.name,
+    ).toEqual({
+      files: true,
+      readme: true,
+      package: moved ? 4 : 0,
+      place: row.reads === "package and place",
+    });
+  });
+
+  // A read that failed is that attempt's answer, drawn as it failed, and
+  // the next visit asks again rather than keeping the failure.
+  it("asks again for a read that failed on the last visit", async () => {
+    engineWrites();
+    vi.mocked(commands.packageFiles).mockResolvedValueOnce({
+      status: "error",
+      error: "REFUSED-BY-CORE",
+    });
+    useNavStore.setState({
+      page: "library",
+      packageRef: {
+        kind: "skill",
+        name: "gh",
+        scope: VG,
+        identity: "recorded",
+      },
+      packageView: null,
+    });
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [INSTALLED],
+        missingProjects: [],
+        readProjects: [],
+        warnings: [],
+      },
+    });
+    const host = mount(<Shell />);
+    expect(await visit(host)).toContain("REFUSED-BY-CORE");
+    await act(async () => {
+      useNavStore.setState({ page: "library" });
+    });
+    vi.clearAllMocks();
+
+    const back = await visit(host);
+
+    expect(back).toContain("BEFORE.md");
+    expect(back).not.toContain("REFUSED-BY-CORE");
+    expect(vi.mocked(commands.packageFiles)).toHaveBeenCalledTimes(1);
   });
 });

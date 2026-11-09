@@ -22,6 +22,7 @@ import {
   updatablePlaces,
 } from "@/lib/update-groups";
 import { readUnsettled } from "@/lib/updates-read-state";
+import { retainedReads } from "./editor-cache";
 import { useProblemsStore } from "./problems";
 import {
   type ApplyOutcome,
@@ -89,6 +90,9 @@ export const holdingBusy = async <T>(work: () => Promise<T>): Promise<T> => {
   try {
     return await work();
   } finally {
+    // Not every write here rescans behind it — a mute that took a package
+    // away reads only the rows — so the hold itself declares the change.
+    retainedReads.moved();
     useUpdatesStore.setState({ busy: false });
   }
 };
@@ -189,6 +193,9 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
         if (response.status === "error")
           showError(UPDATE_ERROR_TITLE, response.error);
       } finally {
+        // A fetch moves mirrors, and a package's timeline and files are
+        // read out of them, whether or not the report then landed.
+        retainedReads.moved();
         set({ checking: false });
       }
     },

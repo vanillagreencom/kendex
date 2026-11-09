@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ItemKind, PackageFile, Scope } from "@/bindings";
+import type { PackageFile } from "@/bindings";
 import { FileBrowser } from "@/components/files/file-browser";
 import { packageFileEntries } from "@/components/files/package-file-rows";
 import { DotSpinner } from "@/components/loading";
@@ -13,22 +13,20 @@ import {
   NO_FILES_NOTE,
 } from "@/lib/copy-files";
 import { packageFilesNote, type SourceRead } from "@/lib/package-read-state";
+import type { PackageRef } from "@/stores/nav";
 
 /** The package's Files tab: its tree on the left, the file you picked on
  *  the right, across the width of the page. Opens on the readme, which is
  *  what `FilePreview` shows for a null path. */
 export function PackageFiles({
-  scope,
-  kind,
-  name,
+  reference,
   files,
   read,
   retryRunning,
   onRetry,
 }: {
-  scope: Scope;
-  kind: ItemKind;
-  name: string;
+  /** The page's whole address, which the preview's reads are kept under. */
+  reference: PackageRef;
   files: PackageFile[];
   /** How the read that found these files went. The tab renders off the
    *  read's own state and not off the empty list alone: a first read still
@@ -92,7 +90,7 @@ export function PackageFiles({
       onSelect={setChosen}
       label={FILE_TREE_LABEL}
     >
-      <FilePreview scope={scope} kind={kind} name={name} path={chosen} />
+      <FilePreview reference={reference} path={chosen} />
     </FileBrowser>
   );
 }

@@ -1,76 +1,89 @@
-import { useEffect, useState } from "react";
-import {
-  commands,
-  type ItemKind,
-  type Scope,
-  type SourceReadRefused,
-} from "@/bindings";
+import { useEffect } from "react";
+import type { SourceReadRefused } from "@/bindings";
 import { FilePane } from "@/components/files/file-pane";
 import { StatusNote } from "@/components/status-note";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FILE_READ_FAILED_TITLE, NO_FILES_NOTE } from "@/lib/copy-files";
-import { packageFileRefusalLine } from "@/lib/package-read-state";
+import {
+  packageFileRefusalLine,
+  type SourceRead,
+} from "@/lib/package-read-state";
+import type { PackageRef } from "@/stores/nav";
+import {
+  ensureFile,
+  type PackageAnswer,
+  packageReadKey,
+  usePackageReads,
+} from "@/stores/package-reads";
 
 type PreviewState =
   | { status: "loading" }
   | { status: "error"; error: SourceReadRefused | string }
   | { status: "ok"; path: string; content: string; truncated: boolean };
 
-/** One file of an installed package, read and then drawn in the app's one
- *  file pane. `path` null means the readme, which is what a package opens
- *  on. */
+const LOADING: PreviewState = { status: "loading" };
+
+/** A page read that did not land, as the refusal it came back with. */
+const refusalOf = ({ read, unfetched }: SourceRead) =>
+  unfetched === null
+    ? read.status === "failed"
+      ? read.error
+      : null
+    : ({ kind: "source-pending", source: unfetched } as const);
+
+/** What the pane draws without reading anything itself, or the file it
+ *  has to read: the picked path; else the README the page already read;
+ *  else, with no README, the package's first file, so the pane is never
+ *  empty on open. */
+const shownOf = (
+  held: PackageAnswer | undefined,
+  path: string | null,
+): PreviewState | { file: string } => {
+  if (path !== null) return { file: path };
+  if (!held) return LOADING;
+  const readme = refusalOf(held.reads.readme);
+  if (readme !== null) return { status: "error", error: readme };
+  if (held.reads.readme.read.status === "pending") return LOADING;
+  if (held.readme) return { status: "ok", ...held.readme };
+  const files = refusalOf(held.reads.files);
+  if (files !== null) return { status: "error", error: files };
+  if (held.reads.files.read.status === "pending") return LOADING;
+  const first = held.files[0];
+  return first
+    ? { file: first.path }
+    : { status: "error", error: NO_FILES_NOTE };
+};
+
+/** One file of an installed package, drawn in the app's one file pane.
+ *  `path` null means the readme, which is what a package opens on. Its
+ *  reads are the page's, kept with the package's: the README and the file
+ *  list come from the page's own answers, and a file read here is kept
+ *  beside them until the package is read again. */
 export function FilePreview({
-  scope,
-  kind,
-  name,
+  reference,
   path,
 }: {
-  scope: Scope;
-  kind: ItemKind;
-  name: string;
+  reference: PackageRef;
   path: string | null;
 }) {
-  const [state, setState] = useState<PreviewState>({ status: "loading" });
-
+  const held = usePackageReads((s) => s.answers[packageReadKey(reference)]);
+  const shown = shownOf(held, path);
+  const file = "file" in shown ? shown.file : null;
+  const ticket = held?.ticket;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a new read of the package empties what this file was read under
   useEffect(() => {
-    let cancelled = false;
-    setState({ status: "loading" });
-    const query = path
-      ? commands.packageFile(scope, kind, name, path)
-      : commands.packageReadme(scope, kind, name).then((response) =>
-          response.status === "ok" && response.data === null
-            ? // No readme: fall back to the package's primary file so the
-              // pane is never empty on open.
-              commands
-                .packageFiles(scope, kind, name)
-                .then((files) =>
-                  files.status === "ok" && files.data[0]
-                    ? commands.packageFile(
-                        scope,
-                        kind,
-                        name,
-                        files.data[0].path,
-                      )
-                    : files.status === "ok"
-                      ? ({ status: "error", error: NO_FILES_NOTE } as const)
-                      : files,
-                )
-            : response,
-        );
-    void query.then((response) => {
-      if (cancelled) return;
-      setState(
-        response.status === "ok" && response.data
-          ? { status: "ok", ...response.data }
-          : response.status === "ok"
-            ? { status: "error", error: NO_FILES_NOTE }
-            : { status: "error", error: response.error },
-      );
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [scope, kind, name, path]);
+    if (file !== null) ensureFile(reference, file);
+  }, [reference, file, ticket]);
+
+  const answer = file === null ? null : held?.opened[file]?.answer;
+  const state: PreviewState =
+    "file" in shown
+      ? answer
+        ? answer.status === "ok"
+          ? { status: "ok", ...answer.data }
+          : { status: "error", error: answer.error }
+        : LOADING
+      : shown;
 
   if (state.status === "loading") {
     return (

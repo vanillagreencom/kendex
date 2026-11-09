@@ -2,6 +2,7 @@ import { toast } from "sonner";
 import { create } from "zustand";
 import { commands, type ScanResult } from "@/bindings";
 import { settled } from "@/lib/settled";
+import { retainedReads } from "./editor-cache";
 
 interface ScanState {
   result: ScanResult | null;
@@ -84,6 +85,10 @@ export const useScanStore = create<ScanState>((set, get) => {
     // arrival joining that one rather than stacking identical whole-machine
     // reads.
     refresh: (opts) => {
+      // Asking is the news, not the answer: whoever asks has reason to
+      // think the machine changed — a window coming back, a write behind
+      // it — and a scan that then fails says nothing about whether it did.
+      retainedReads.moved();
       if (!inFlight) return start(opts);
       // A joining caller gets the slot's opts, not its own, so re-arm the
       // flag the toast runs on: a press cannot join a read into silence.

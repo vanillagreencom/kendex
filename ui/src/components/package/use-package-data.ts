@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 import {
   commands,
   type HarnessId,
@@ -10,24 +10,17 @@ import {
 } from "@/bindings";
 import { addressesDeclaration } from "@/lib/package-identity";
 import { installedCommits, landedWrites } from "@/lib/package-places";
-import {
-  type PackageReads,
-  SOURCE_READ_LANDED,
-  SOURCE_READ_PENDING,
-  type SourceRead,
-  sourceReadOf,
-} from "@/lib/package-read-state";
-import {
-  READ_LANDED,
-  READ_PENDING,
-  type ReadState,
-  readOf,
-  readOrder,
-} from "@/lib/read-state";
-import { settled } from "@/lib/settled";
+import type { PackageReads } from "@/lib/package-read-state";
 import { useAuditStore } from "@/stores/audit";
 import { useEditorStore } from "@/stores/editor";
 import type { PackageRef } from "@/stores/nav";
+import {
+  ensurePackage,
+  PACKAGE_UNREAD,
+  packageReadKey,
+  readPackage,
+  usePackageReads,
+} from "@/stores/package-reads";
 import { useProblemsStore } from "@/stores/problems";
 import { useUpdatesStore } from "@/stores/updates";
 
@@ -56,6 +49,10 @@ export const diffHarness = (
 
 /** The package page's reads, refetchable as one unit after a mutation.
  *
+ *  Kept by `stores/package-reads.ts` past the page, so coming back to a
+ *  package nothing has changed draws what was already read; that module
+ *  says what keeps an answer current.
+ *
  *  Read again when the commit installed in the place this page names moves:
  *  an update started from the Projects tab commits through the updates
  *  store and never through `load`, so without that the Overview would go on
@@ -71,36 +68,6 @@ export function usePackageData(ref: PackageRef | null): {
   reads: PackageReads;
   load: () => void;
 } {
-  const [meta, setMeta] = useState<PackageMeta_Serialize | null>(null);
-  const [files, setFiles] = useState<PackageFile[]>([]);
-  // The README the Overview shows. Read here rather than by the component
-  // that draws it: an update or a version switch rewrites the installed
-  // files without moving the address, so a read keyed on the package's
-  // name would go on showing the replaced copy's words.
-  const [readme, setReadme] = useState<ItemSource | null>(null);
-  const [versions, setVersions] = useState<VersionRow[]>([]);
-  // How each of the four went, kept beside the values: a read that failed
-  // leaves the same empty page as one that found nothing, and the reason it
-  // came back with is the only thing that tells them apart. The three that
-  // open the source each carry the source core said no fetch has
-  // downloaded, where that was its answer: a landed read with nothing to
-  // draw, told apart from one that failed because only a refresh, never a
-  // re-read, lifts it.
-  const [record, setRecord] = useState<ReadState>(READ_PENDING);
-  const [timeline, setTimeline] = useState<SourceRead>(SOURCE_READ_PENDING);
-  const [filesRead, setFilesRead] = useState<SourceRead>(SOURCE_READ_PENDING);
-  const [readmeRead, setReadmeRead] = useState<SourceRead>(SOURCE_READ_PENDING);
-  // Whether the newest load is still out. Counted here rather than read off
-  // the order below: one ticket covers four answers, and `outstanding` flips
-  // on the first of them to land, so it is not this order's question to ask.
-  const [reading, setReading] = useState(true);
-  // One ticket per load, asked as each of its three answers arrives. Reads
-  // of this package overlap on every ordinary path — a focus reload moving
-  // the commit under a mount, a move to another package, the read-back
-  // behind a version switch — and only the newest-begun load may write. An
-  // older landing would put one package's files and read state under
-  // another's name, and the header's Update turns on that read state.
-  const order = useRef(readOrder());
   const commit = useUpdatesStore((s) =>
     ref === null
       ? ""
@@ -112,90 +79,33 @@ export function usePackageData(ref: PackageRef | null): {
   const written = useUpdatesStore((s) =>
     ref === null ? "" : landedWrites(s.writes, ref.kind, ref.name, [ref.scope]),
   );
+  const held = usePackageReads((s) =>
+    ref === null ? undefined : s.answers[packageReadKey(ref)],
+  );
 
   const load = useCallback(() => {
-    if (!ref) return;
-    // A page about an installation nothing recorded has no declaration to
-    // read. Its address — this scope, kind and name — may belong to a
-    // package that IS recorded, and asking these three for it would put
-    // that package's record, files and version history under this one's
-    // name. The reads are not merely hidden: they are never issued, so
-    // there is nothing on hand for a later surface to draw from.
-    if (!addressesDeclaration(ref)) {
-      order.current.begin();
-      setMeta(null);
-      setFiles([]);
-      setVersions([]);
-      setRecord(READ_LANDED);
-      setFilesRead(SOURCE_READ_LANDED);
-      setTimeline(SOURCE_READ_LANDED);
-      setReading(false);
-      return;
-    }
-    const ticket = order.current.begin();
-    let left = 4;
-    setReading(true);
-    // Whether this answer is the newest load's to write, and the last of its
-    // four when it is. A superseded load never reaches its own count, so
-    // the load on screen is the only one that can say it has finished.
-    const lands = () => {
-      if (!order.current.lands(ticket)) return false;
-      left -= 1;
-      if (left === 0) setReading(false);
-      return true;
-    };
-    // `settled` on all four: it normalizes a refusal that says nothing,
-    // and it is the last guard behind the wrapper's own fold. A landing that
-    // never ran leaves the read pending for the life of the view, the note
-    // that says a read failed never appears, and the rejection goes out
-    // unhandled.
-    void settled(commands.packageMeta(ref.scope, ref.kind, ref.name)).then(
-      (response) => {
-        if (!lands()) return;
-        setMeta(response.status === "ok" ? response.data : null);
-        setRecord(readOf(response));
-      },
-    );
-    void settled(commands.packageFiles(ref.scope, ref.kind, ref.name)).then(
-      (response) => {
-        if (!lands()) return;
-        setFiles(response.status === "ok" ? response.data : []);
-        setFilesRead(sourceReadOf(response));
-      },
-    );
-    void settled(commands.packageReadme(ref.scope, ref.kind, ref.name)).then(
-      (response) => {
-        if (!lands()) return;
-        setReadme(response.status === "ok" ? response.data : null);
-        setReadmeRead(sourceReadOf(response));
-      },
-    );
-    void settled(commands.packageVersions(ref.scope, ref.kind, ref.name)).then(
-      (response) => {
-        if (!lands()) return;
-        setVersions(response.status === "ok" ? response.data : []);
-        setTimeline(sourceReadOf(response));
-      },
-    );
-  }, [ref]);
+    if (ref) readPackage(ref, { commit, written }, "kept");
+  }, [ref, commit, written]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: what a landed update moves, not values `load` closes over
-  useEffect(load, [load, commit, written]);
+  // Before paint: an answer that stopped being current is replaced before
+  // the page is drawn from it, so for no frame does a kept record or
+  // timeline stand under the Update it would enable.
+  useLayoutEffect(() => {
+    if (ref) ensurePackage(ref, { commit, written });
+  }, [ref, commit, written]);
+
   return {
-    meta,
-    files,
-    readme,
-    versions,
-    reads: {
-      record,
-      timeline,
-      files: filesRead,
-      readme: readmeRead,
-      reading,
-    },
+    meta: held?.meta ?? null,
+    files: held?.files ?? NO_FILES,
+    readme: held?.readme ?? null,
+    versions: held?.versions ?? NO_VERSIONS,
+    reads: held?.reads ?? PACKAGE_UNREAD,
     load,
   };
 }
+
+const NO_FILES: PackageFile[] = [];
+const NO_VERSIONS: VersionRow[] = [];
 
 /** The diff behind the changes panel, fetched when a comparison opens. The
  *  special id "installed" compares against what is on disk. */

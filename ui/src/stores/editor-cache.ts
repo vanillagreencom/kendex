@@ -7,12 +7,28 @@ import {
   type SettingsEdit,
 } from "@/bindings";
 import { type Draft, emptyDraft, toDraft } from "@/lib/editor-draft";
+import { invalidations } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
 
 // The editor's scope-keyed caches: what is read per place, how it is
 // written, and how the open place's answer is found. Split out from the
 // store so there is one module to look at when asking whether a value can
 // belong to the wrong place: the store only calls these.
+
+/** When a read kept past the page that asked for it stops being the answer:
+ *  a place's manifest and settings here, and a package's own reads in
+ *  `package-reads.ts`. Each kept answer is stamped with [since] as its read
+ *  began, and is reused only while nothing has moved this since.
+ *
+ *  Moved wherever something may have changed what those reads answer: every
+ *  request to read the machine again (`scan.ts`, which a window focus and
+ *  every rescan behind a write go through), the end of a write that reaches
+ *  `repo_effects` (`rescan.ts` [`writingRepo`]) or the updates store's write
+ *  hold, and the end of a mirror fetch. A read begun before or during one of
+ *  those is never current after it, so a write's own read-back stays a view
+ *  of the moment and the next demand asks again. No clock: an answer is as
+ *  good after an hour of nothing happening as after a second. */
+export const retainedReads = invalidations();
 
 /** The inventory of the place the editor is open at, and no other. A
  *  lookup rather than a field, so the answer is either this place's or
@@ -138,7 +154,27 @@ interface PlaceCaches {
   saved: Record<string, Draft>;
   inventories: Record<string, EditorInventory>;
   savedSettings: Record<string, ScopeSettings>;
+  /** When the read behind each place's `saved` and `savedSettings` began,
+   *  on [retainedReads]. */
+  placesAt: Record<string, number>;
 }
+
+/** Whether a place's manifest and settings are both held from a read that
+ *  is still the answer. A half that failed is absent, so it is asked for
+ *  again on the next demand rather than standing as a known place. */
+export const placeCurrent = (
+  held: Pick<PlaceCaches, "saved" | "savedSettings" | "placesAt">,
+  scope: Scope,
+): boolean => {
+  const key = scopeKey(scope);
+  const at = held.placesAt[key];
+  return (
+    key in held.saved &&
+    key in held.savedSettings &&
+    at !== undefined &&
+    !retainedReads.stale(at)
+  );
+};
 
 /** What one place's read records: each half under that place's key, and
  *  gone where that half could not be read. Presence is what says a read
@@ -149,6 +185,7 @@ export const recordedRead =
   (
     scope: Scope,
     [manifest, inventory, settings]: Awaited<ReturnType<typeof readPlace>>,
+    at: number,
   ) =>
   (held: PlaceCaches): PlaceCaches => ({
     saved: recorded(held.saved, scope, readDraft(manifest)),
@@ -162,6 +199,7 @@ export const recordedRead =
       scope,
       settings.status === "ok" ? settings.data : null,
     ),
+    placesAt: { ...held.placesAt, [scopeKey(scope)]: at },
   });
 
 /** One read over several places, folded into what is held. Merged per
@@ -171,8 +209,9 @@ export const mergedPlaces =
   (
     scopes: Scope[],
     [manifests, settings]: Awaited<ReturnType<typeof placesOf>>,
+    at: number,
   ) =>
-  (held: Pick<PlaceCaches, "saved" | "savedSettings">) => ({
+  (held: Pick<PlaceCaches, "saved" | "savedSettings" | "placesAt">) => ({
     saved: scopes.reduce(
       (out, scope) => recorded(out, scope, manifests[scopeKey(scope)] ?? null),
       held.saved,
@@ -180,5 +219,9 @@ export const mergedPlaces =
     savedSettings: scopes.reduce(
       (out, scope) => recorded(out, scope, settings[scopeKey(scope)] ?? null),
       held.savedSettings,
+    ),
+    placesAt: scopes.reduce(
+      (out, scope) => ({ ...out, [scopeKey(scope)]: at }),
+      held.placesAt,
     ),
   });
