@@ -51,10 +51,9 @@ impl Preview {
     /// file holds it at, or at none where it sits in the frontmatter the
     /// copy rewrote: the place a reader opening the catalog finds it.
     pub(super) fn audit(self) -> AuditResult {
-        let skill_file = format!(
-            "{}/{}",
-            self.input.location,
-            crate::render::skill::SKILL_FILE
+        let skill_file = crate::quality::tree_file_location(
+            &self.input.location,
+            crate::render::skill::SKILL_FILE,
         );
         let mut result = crate::quality::audit(self.input);
         if let Some(lines) = self.skill_lines {

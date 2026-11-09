@@ -55,13 +55,14 @@ fn accepting(kind: ItemKind, name: &str, path: &str) -> Allowance {
     }
 }
 
-fn skill(script: &str, publisher: Publisher, allowance: &Allowance) -> AuditResult {
+/// The fixture skill, its tree at `root` in its catalog.
+fn skill(root: &str, script: &str, publisher: Publisher, allowance: &Allowance) -> AuditResult {
     audit_with(
         AuditInput {
             kind: ItemKind::Skill,
             name: "launch".to_owned(),
             harness: None,
-            location: "skills/launch".to_owned(),
+            location: root.to_owned(),
             publisher,
             content: observe::tree_content_from_bytes(&[
                 (PathBuf::from("SKILL.md"), SKILL_MD.as_bytes().to_vec()),
@@ -78,9 +79,26 @@ fn skill(script: &str, publisher: Publisher, allowance: &Allowance) -> AuditResu
 /// Where findings stand: location and line.
 type Placed<'a> = Vec<(&'a str, Option<u32>)>;
 
-/// One row of the shape table: its name, the script, whose item it is,
-/// the table, the lines flagged and the lines accepted.
-type Row<'a> = (&'a str, &'a str, Publisher, Allowance, &'a [u32], &'a [u32]);
+/// Where the package's tree sits in its catalog, and the location its
+/// script's findings stand at.
+type Place = (&'static str, &'static str);
+const NESTED: Place = ("skills/launch", "skills/launch/scripts/launch.sh");
+/// A package at the catalog root has an empty path, and a row still names
+/// its file by the path inside the package.
+const ROOT: Place = ("", "scripts/launch.sh");
+
+/// One row of the shape table: its name, where the package sits, the
+/// script, whose item it is, the table, the lines flagged and the lines
+/// accepted.
+type Row<'a> = (
+    &'a str,
+    Place,
+    &'a str,
+    Publisher,
+    Allowance,
+    &'a [u32],
+    &'a [u32],
+);
 
 fn placed(findings: &[kendex_core::quality::Finding]) -> Placed<'_> {
     findings
@@ -102,23 +120,66 @@ fn rows() -> Vec<Row<'static>> {
     use Publisher::{Kendex, Other};
     let base = || accepting(ItemKind::Skill, "launch", "scripts/launch.sh");
     vec![
-        ("as recorded", SCRIPT, Kendex, base(), &[], &[2]),
-        ("a line inserted above", INSERTED, Kendex, base(), &[], &[3]),
-        ("another line edited", SHEBANG, Kendex, base(), &[], &[2]),
+        ("as recorded", NESTED, SCRIPT, Kendex, base(), &[], &[2]),
+        (
+            "at the catalog root",
+            ROOT,
+            SCRIPT,
+            Kendex,
+            base(),
+            &[],
+            &[2],
+        ),
+        (
+            "a line inserted above",
+            NESTED,
+            INSERTED,
+            Kendex,
+            base(),
+            &[],
+            &[3],
+        ),
+        (
+            "another line edited",
+            NESTED,
+            SHEBANG,
+            Kendex,
+            base(),
+            &[],
+            &[2],
+        ),
         (
             "the same bytes from another source",
+            NESTED,
             SCRIPT,
             Other,
             base(),
             &[2],
             &[],
         ),
-        ("the line edited", EDITED, Kendex, base(), &[2], &[]),
-        ("the line edited unseen", UNSEEN, Kendex, base(), &[2], &[]),
-        ("the line twice", TWICE, Kendex, base(), &[3], &[2]),
-        ("a second finding there", TWO, Kendex, base(), &[3], &[2]),
+        ("the line edited", NESTED, EDITED, Kendex, base(), &[2], &[]),
+        (
+            "the line edited unseen",
+            NESTED,
+            UNSEEN,
+            Kendex,
+            base(),
+            &[2],
+            &[],
+        ),
+        ("the line twice", NESTED, TWICE, Kendex, base(), &[3], &[2]),
+        (
+            "a second finding there",
+            NESTED,
+            TWO,
+            Kendex,
+            base(),
+            &[3],
+            &[2],
+        ),
         (
             "another rule set",
+            NESTED,
             SCRIPT,
             Kendex,
             Allowance {
@@ -130,6 +191,7 @@ fn rows() -> Vec<Row<'static>> {
         ),
         (
             "another package name",
+            NESTED,
             SCRIPT,
             Kendex,
             accepting(ItemKind::Skill, "launcher", "scripts/launch.sh"),
@@ -138,6 +200,7 @@ fn rows() -> Vec<Row<'static>> {
         ),
         (
             "another kind",
+            NESTED,
             SCRIPT,
             Kendex,
             accepting(ItemKind::Command, "launch", "scripts/launch.sh"),
@@ -146,6 +209,7 @@ fn rows() -> Vec<Row<'static>> {
         ),
         (
             "another path",
+            NESTED,
             SCRIPT,
             Kendex,
             accepting(ItemKind::Skill, "launch", "launch.sh"),
@@ -154,6 +218,7 @@ fn rows() -> Vec<Row<'static>> {
         ),
         (
             "another rule",
+            NESTED,
             SCRIPT,
             Kendex,
             row_edited(|row| row.rule = "rce".to_owned()),
@@ -162,6 +227,7 @@ fn rows() -> Vec<Row<'static>> {
         ),
         (
             "another line's text",
+            NESTED,
             SCRIPT,
             Kendex,
             row_edited(|row| row.line_hash = hash_bytes(b"#!/usr/bin/env bash")),
@@ -170,15 +236,25 @@ fn rows() -> Vec<Row<'static>> {
         ),
         (
             "another message",
+            NESTED,
             SCRIPT,
             Kendex,
             row_edited(|row| row.message = "`--no-verify` skips".to_owned()),
             &[2],
             &[],
         ),
-        ("no table", SCRIPT, Kendex, Allowance::default(), &[2], &[]),
+        (
+            "no table",
+            NESTED,
+            SCRIPT,
+            Kendex,
+            Allowance::default(),
+            &[2],
+            &[],
+        ),
         (
             "two rules accepted, listed in place order",
+            NESTED,
             TWO_RULES,
             Kendex,
             {
@@ -203,9 +279,8 @@ fn rows() -> Vec<Row<'static>> {
 /// accepted line included, changes nothing.
 #[test]
 fn a_finding_is_accepted_only_for_kendex_at_the_exact_text_the_table_names() {
-    let at = "skills/launch/scripts/launch.sh";
-    for (row, script, publisher, allowance, flagged, accepted) in rows() {
-        let result = skill(script, publisher, &allowance);
+    for (row, (root, at), script, publisher, allowance, flagged, accepted) in rows() {
+        let result = skill(root, script, publisher, &allowance);
         let lines = |findings: &[kendex_core::quality::Finding]| -> Vec<u32> {
             placed(findings)
                 .into_iter()
