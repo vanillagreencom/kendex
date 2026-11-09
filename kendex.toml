@@ -171,7 +171,7 @@ skills = [
 ]
 
 [bundles.command-safety]
-description = "Project-defined shell command restrictions"
+description = "Shell command restrictions with an optional native Git history fetch fence"
 hooks = ["command-safety"]
 skills = ["commit-guards"]
 

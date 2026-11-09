@@ -3,14 +3,43 @@
 # name: command-safety
 # event: PreToolUse
 # matcher: Bash
-# description: On harnesses that execute hooks, refuse supported relative recursive deletes, git init and .git output writes reachable after a failed cd in a flat literal list. Refuse cat reads of the known ~/.fleet/env spellings. Refuse a recognized whole-environment read where the shell runs it, unless a proven direct pipe filters named variables: at a command head, among the forwarded operands of a shell or source script, a shell or env -S command string, exec or builtin, in selected shell, eval or env -S source, in literal input a shell, exec or builtin gets, and in heredoc bodies an unknown receiver gets. Words elsewhere are data. This fixed check runs outside Git and before project policy. Nested dumps can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check.
-# summary: Refuses cat reads of the known private environment file and offers the named non-secret settings reader. Refuses whole-environment reads where the shell would run them and gives a filter that names a variable; the same words as an argument, or in one quoted `<<` cat heredoc whose output goes to the terminal or a file, pass. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow the call; unreadable policy support affects only the pattern check.
-# safety: The targeting check uses existing flat stages, literal executable/operand roles and list separators; a failed cd can reach a relative recursive rm, direct git init or .git output redirect only on an executing path. Earlier cd failures remain possible after later changes. Unknown, nested, forwarded, assignment, glob/brace/tilde and unsupported invocation forms provide no targeting proof; independent environment checks still run. Classify literal command producers at executable positions, with one producer grammar: command heads, each forwarded operand of a shell or source script, a shell or env -S command string, exec or builtin, selected shell, eval and env -S source, each literal body a shell, exec or builtin gets, and each heredoc body an unknown receiver gets, judged alone as shell source. Known interpreters at a stage's own head use language-specific whole-environment evidence, which also judges input to exec, builtin and syntax-only stages, piped input included; literal cat bodies retain their data contract. Text a waiter launcher forwards keeps a conservative word test. Unquoted body expansions are checked independently. Known private-file cat reads cannot be filtered into permission. Only proven direct named-variable filters grant environment-producer dump permission; project-pattern matching remains independent and reads the submitted text. Not reached: unseen programs and runtime-built names; an unknown launcher or non-producer reader inside reserved-word syntax, such as if true; then timeout 5 env; fi; the same command as a quoted forwarded argument when the launcher stage redirects its output; the same command inside a body an unknown receiver gets; here-string input to any stage other than a shell, eval or source and an exec, builtin or syntax-only stage, an unknown program and a Python, Node, Ruby or Perl head alike, such as ssh host <<< env or python3 <<< os.environ; an interpreter body that is forwarded or nested in shell source, such as bash wrapper.sh python3 <<'EOF'; and a trap action word, such as trap 'env' EXIT. An undecoded ANSI-C escape refuses with reason=undecoded-ansi-escape under the keyed line in a command head or a producer argument or input; an ANSI-C escaped word judged as shell source, or redirected as input to a shell, source, eval, exec, builtin, script-operand or compound shell stage, refuses with no producer in it and even where that stage reads it as data, such as while read -r a b; do :; done <<< $'x 1\ny 2' or { cat; } <<< $'a\tb'; piped, it refuses only for a shell, source or eval receiver, and an exec, builtin or compound receiver reads it as data. Unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>.
+# description: On harnesses that execute hooks, refuse supported relative recursive deletes, git init and .git output writes reachable after a failed cd in a flat literal list. Refuse cat reads of the known ~/.fleet/env spellings. Refuse a recognized whole-environment read where the shell runs it, unless a proven direct pipe filters named variables: at a command head, among the forwarded operands of a shell or source script, a shell command string, exec or builtin, and in composed env -S argv, in selected shell, eval or env -S source, in literal input a shell, exec or builtin gets, and in heredoc bodies an unknown receiver gets. Words elsewhere are data. This fixed check runs outside Git and before project policy. Nested dumps can refuse conservatively. It reads submitted text, not unseen programs, aliases or runtime-built commands. COMMAND_SAFETY_HISTORY_POLICY=no-lazy-fetch optionally requires literal global --no-lazy-fetch before reached Git history/diff subcommands, metadata and worktree diff included; off or absent preserves ordinary reads. COMMAND_SAFETY_DENY_PATTERN replaces only the default systemd-run memory-cap pattern; `^$` disables only that project-pattern check.
+# summary: Refuses cat reads of the known private environment file and offers the named non-secret settings reader. Refuses whole-environment reads where the shell would run them and gives a filter that names a variable; the same words as an argument, or in one quoted `<<` cat heredoc whose output goes to the terminal or a file, pass. Also applies the project deny pattern or the default systemd-run memory-cap rule. Unreadable payloads warn and allow the call; unreadable policy support leaves both project checks unavailable. An optional selected Git history policy requires its native fetch fence.
+# safety: The targeting check uses existing flat stages, literal executable/operand roles and list separators; a failed cd can reach a relative recursive rm, direct git init or .git output redirect only on an executing path. Earlier cd failures remain possible after later changes. Unknown, nested, forwarded, assignment, glob/brace/tilde and unsupported invocation forms provide no targeting proof; independent environment checks still run. Classify literal command producers at executable positions, with one producer grammar: command heads, each forwarded operand of a shell or source script, a shell command string, exec or builtin, composed env -S argv, selected shell, eval and env -S source, each literal body a shell, exec or builtin gets, and each heredoc body an unknown receiver gets, judged alone as shell source. Known interpreters at a stage's own head use language-specific whole-environment evidence, which also judges input to exec, builtin and syntax-only stages, piped input included; literal cat bodies retain their data contract. Text a waiter launcher forwards keeps a conservative word test. Unquoted body expansions are checked independently. Known private-file cat reads cannot be filtered into permission. Only proven direct named-variable filters grant environment-producer dump permission; project-pattern matching remains independent and reads the submitted text. Selected Git history admission consumes decoded executable argv through one Git decision; it grants no count, ref, path, format or environment-only exception. Not reached: unseen programs and runtime-built names; an unknown launcher or non-producer reader inside reserved-word syntax, such as if true; then timeout 5 env; fi; the same command as a quoted forwarded argument when the launcher stage redirects its output; the same command inside a body an unknown receiver gets; here-string input to any stage other than a shell, eval or source and an exec, builtin or syntax-only stage, an unknown program and a Python, Node, Ruby or Perl head alike, such as ssh host <<< env or python3 <<< os.environ; an interpreter body that is forwarded or nested in shell source, such as bash wrapper.sh python3 <<'EOF'; and a trap action word, such as trap 'env' EXIT. An undecoded ANSI-C escape refuses with reason=undecoded-ansi-escape under the keyed line in a command head or a producer argument or input; an ANSI-C escaped word judged as shell source, or redirected as input to a shell, source, eval, exec, builtin, script-operand or compound shell stage, refuses with no producer in it and even where that stage reads it as data, such as while read -r a b; do :; done <<< $'x 1\ny 2' or { cat; } <<< $'a\tb'; piped, it refuses only for a shell, source or eval receiver, and an exec, builtin or compound receiver reads it as data. Unreadable payloads or policy support warn and allow their affected check. Every diagnostic starts with command-safety: <key>=<value>.
 # timeout: 10
 # requires-skills: [commit-guards]
 # ---
 
 set -euo pipefail
+
+# Git owns object access. A harness permission pattern cannot distinguish a
+# global native fence from a path or option operand. Consume only the argv
+# the existing producer selected; never search shell text for history words.
+# Native option semantics: Git v2.46.0 Documentation/git.txt and git.c.
+history_git_argv() {
+  local cursor=$pos value fenced=""
+  while [ "$cursor" -lt "${#args[@]}" ]; do
+    value=${args[$cursor]}
+    [ "${arg_kinds[$cursor]}" = literal ] || { history_reason=unresolved-git-argv; return; }
+    case "$value" in
+      --no-lazy-fetch) fenced=1 ;;
+      -C | -c | --git-dir | --work-tree | --namespace | --config-env)
+        cursor=$((cursor + 1))
+        [ "${arg_kinds[$cursor]:-}" = literal ] || { history_reason=unresolved-git-argv; return; } ;;
+      -C?* | -c?* | --git-dir=* | --work-tree=* | --namespace=* | --config-env=* | --exec-path=*) ;;
+      -p | --paginate | -P | --no-pager | --bare | --no-replace-objects | --no-optional-locks | --no-advice | --literal-pathspecs | --glob-pathspecs | --noglob-pathspecs | --icase-pathspecs) ;;
+      --version | -v | --help | -h | --exec-path | --html-path | --man-path | --info-path) return ;;
+      -*) history_reason=unresolved-git-argv; return ;;
+      *)
+        case "$value" in
+          log | show | whatchanged | rev-list | diff | diff-tree | diff-index | diff-files | range-diff | format-patch | cherry)
+            [ -n "$fenced" ] || history_reason=missing-no-lazy-fetch ;;
+        esac
+        return ;;
+    esac
+    cursor=$((cursor + 1))
+  done
+}
 
 # The reported private file is checked as text, without opening it or
 # evaluating submitted expansions. Filtering cannot make that read safe.
@@ -99,6 +128,7 @@ environment_producer() { # command kind
       esac
     done
     producer_end=$pos
+    [ "${program:-}" != git ] || history_git_argv
     # Bash expands ANSI-C escapes after the harness submits command text.
     # These producer operands cannot prove a safe name, flag or input path.
     case "${program:-}" in
@@ -384,13 +414,28 @@ environment_receiver_evidence() { # language text
   return 1
 }
 
-# Selected shell, eval and env -S source runs later as shell text; queue it
-# for recursive parsing in the context its stage holds. The word kind travels
-# with the text, so the drain judges an ANSI-C escape for every writer.
-environment_queue() { # source text, word kind
-  local code=${#executable_texts[@]} context=conservative
+# Selected source keeps its decoding context. env -S replaces its option
+# and source word with decoded argv, retaining the env prefix and typed tail.
+# The word kind travels too, so every writer keeps the escape judgment.
+environment_queue() { # source text, word kind, optional split-string tail offset
+  local code=${#executable_texts[@]} context=conservative cursor
   [ -z "${forwarded_argument:-}" ] || context=forwarded
   executable_texts[code]=$1; executable_kinds[code]=$2; executable_stages[code]=$stage; executable_contexts[code]=$context
+  executable_tail_starts[code]=${#executable_tail_args[@]}
+  executable_tail_counts[code]=0
+  executable_source_kinds[code]=shell; executable_prefix_counts[code]=0
+  if [ "$#" -eq 3 ]; then
+    executable_source_kinds[code]=env-split
+    executable_prefix_counts[code]=$((pos - program_pos))
+    for ((cursor=program_pos; cursor<${#args[@]}; cursor++)); do
+      [ "$cursor" -ne "$pos" ] || cursor=$3
+      [ "$cursor" -lt "${#args[@]}" ] || break
+      executable_tail_args[${#executable_tail_args[@]}]=${args[$cursor]}
+      executable_tail_kinds[${#executable_tail_kinds[@]}]=${arg_kinds[$cursor]}
+      executable_tail_unquoted[${#executable_tail_unquoted[@]}]=${arg_unquoted[$cursor]}
+      executable_tail_counts[code]=$((executable_tail_counts[code] + 1))
+    done
+  fi
 }
 
 # Shell invocation options precede the executable operand, including options
@@ -473,8 +518,12 @@ environment_program_text() {
         -S | --split-string) source_pos=$((pos + 1)); source=${args[$source_pos]:-} ;;
         --split-string=*) source_pos=$pos; source=${args[$pos]#*=} ;;
       esac
-      # The split string's program gets the later words, which it can run.
-      script_operand=$source_pos ;;
+      # The decoded program, not env itself, owns forwarding these operands.
+      # Keep their kinds and boundaries; they are argv, never shell source.
+      if [ -n "$source_pos" ]; then
+        environment_queue "$source" "${arg_kinds[$source_pos]:-literal}" "$((source_pos + 1))"
+      fi
+      return ;;
   esac
   [ -n "$source_pos" ] || return 0
   # An eval join holds an ANSI-C escape when any word it joins does.
@@ -608,6 +657,20 @@ environment_dump() { # command kind; arguments are already decoded data
   local starts=() ends=() separators=() decisions=() literal_inputs=() input_bodies=() executable_contexts=()
   local targeting_eligible="" target_effects=() target_files=() target_operands=() target_redirects=()
   [ "$1" != shell ] || [ -n "${2:-}" ] || targeting_eligible=1
+  local executable_tail_starts=() executable_tail_counts=() executable_tail_args=() executable_tail_kinds=() executable_tail_unquoted=()
+  local executable_source_kinds=() executable_prefix_counts=() prefix_count=${command_prefix_count:-0}
+  local appended_args=(${command_tail_args[@]+"${command_tail_args[@]}"}) appended_kinds=(${command_tail_kinds[@]+"${command_tail_kinds[@]}"}) appended_unquoted=(${command_tail_unquoted[@]+"${command_tail_unquoted[@]}"})
+  tokens=("${appended_args[@]:0:prefix_count}")
+  kinds=("${appended_kinds[@]:0:prefix_count}")
+  unquoted_words=("${appended_unquoted[@]:0:prefix_count}")
+  appended_args=("${appended_args[@]:prefix_count}"); appended_kinds=("${appended_kinds[@]:prefix_count}"); appended_unquoted=("${appended_unquoted[@]:prefix_count}")
+  if [ "$1" = env-split ]; then
+    ordinary_span_re=$'^[^\'"\\\\$# \t\r\n\v\f]+'
+    single_span_re="^[^'\\\\]+"
+  fi
+  # Only this queued decode consumes the tail. Other recursive sources and
+  # input bodies have independent lifetimes and must not inherit it.
+  local command_tail_args=() command_tail_kinds=() command_tail_unquoted=() command_prefix_count=0
   if [ "${2:-}" = forwarded ]; then
     forwarded_argument=1
     set -- "$1" conservative "${@:3}"
@@ -636,6 +699,17 @@ environment_dump() { # command kind; arguments are already decoded data
         continue
       fi
       c=${text:$i:1}; i=$((i + 1)); next=${text:$i:1}
+      # GNU env split-string produces argv, not executable shell structure
+      # (the recorded GNU env 9.4 printf probes). Its escapes, expansions and
+      # comments have no decoder here, so they cannot prove selected Git argv.
+      # Keep the fixed environment check's conservative evidence on that input.
+      if [ "$1" = env-split ]; then
+        case "$c" in
+          '\') history_reason=unresolved-git-argv ;;
+          '$') [ "$quote" = "'" ] || history_reason=unresolved-git-argv ;;
+          '#') [ -n "$quote$active" ] || history_reason=unresolved-git-argv ;;
+        esac
+      fi
       if [ "$quote" = ansi ]; then
         case "$c" in
           "'") quote="" ;;
@@ -647,6 +721,15 @@ environment_dump() { # command kind; arguments are already decoded data
       if [ "$quote" = "'" ]; then
         if [ "$c" = "'" ]; then quote=""; else word=$word$c; fi
         continue
+      fi
+      if [ "$1" = env-split ] && [ -z "$quote" ]; then
+        # Only env's word delimiters enter the shared marker handlers. Every
+        # other byte is argv data, including all shell operators and grouping.
+        case "$c" in
+          ' ' | $'\t' | $'\r' | $'\n' | $'\v' | $'\f') c=' ' ;;
+          "'" | '"' | '\' | '$' | '#') ;;
+          *) word=$word$c; active=1; continue ;;
+        esac
       fi
       if [ "$c" = '\' ]; then
         if [ "$i" -ge "$text_length" ]; then kind=unknown; break; fi
@@ -660,7 +743,7 @@ environment_dump() { # command kind; arguments are already decoded data
       fi
       # A substitution's known producer must remain visible inside double
       # quotes. Saving only the enclosing quote grants no inner permission.
-      if { [ "$c" = '$' ] && [ "$next" = '(' ]; } || [ "$c" = '`' ]; then
+      if [ "$1" != env-split ] && { { [ "$c" = '$' ] && [ "$next" = '(' ]; } || [ "$c" = '`' ]; }; then
         if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=$bare; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
         word=""; active=""; kind=literal; bare=1; quoted=""; compound=1; needs_target=""
         n=${#closers[@]}
@@ -777,9 +860,15 @@ environment_dump() { # command kind; arguments are already decoded data
         *) word=$word$c; active=1 ;;
       esac
     done
+    if [ -n "$quote" ] && [ "$1" = env-split ]; then history_reason=unresolved-git-argv; fi
     [ -z "$quote" ] && [ "${#closers[@]}" -eq 0 ] || compound=1
     if [ -n "$active" ]; then unquoted_words[${#tokens[@]}]=$bare; tokens[${#tokens[@]}]=$word; kinds[${#kinds[@]}]=$kind; fi
   fi
+  for ((j=0; j<${#appended_args[@]}; j++)); do
+    tokens[${#tokens[@]}]=${appended_args[$j]}
+    kinds[${#kinds[@]}]=${appended_kinds[$j]}
+    unquoted_words[${#unquoted_words[@]}]=${appended_unquoted[$j]}
+  done
   # A shell can end a submission before a registered body is read. Evidence
   # must exist before its identifier reaches either expansion or input checks.
   [ -z "$heredoc_op" ] || return 0
@@ -1024,8 +1113,14 @@ environment_dump() { # command kind; arguments are already decoded data
         dump_reason=undecoded-ansi-escape; return 0
       fi
       local command_text=${executable_texts[$code]}
-      if environment_dump shell "${executable_contexts[$code]:-conservative}" ${input_bodies[@]+"${input_bodies[@]}"}; then return 0; fi
+      local tail_start=${executable_tail_starts[$code]:-0} tail_count=${executable_tail_counts[$code]:-0}
+      command_tail_args=("${executable_tail_args[@]:tail_start:tail_count}")
+      command_tail_kinds=("${executable_tail_kinds[@]:tail_start:tail_count}")
+      command_tail_unquoted=("${executable_tail_unquoted[@]:tail_start:tail_count}")
+      command_prefix_count=${executable_prefix_counts[$code]:-0}
+      if environment_dump "${executable_source_kinds[$code]:-shell}" "${executable_contexts[$code]:-conservative}" ${input_bodies[@]+"${input_bodies[@]}"}; then return 0; fi
     done
+    command_tail_args=(); command_tail_kinds=(); command_tail_unquoted=(); command_prefix_count=0
     # A stdin shell runs every body; an unknown receiver may run the ones
     # no data class admitted. These identifiers come only from the proved
     # registry. Keep bodies independent: quotes in one program cannot hide
@@ -1079,7 +1174,8 @@ refuse() { # KEY VALUE [CAUSE]
       hook=unlocatable) echo "this hook's own directory could not be read, so its installed dependencies cannot be found" ;;
       settings=no-loader) echo "the command-safety bundle requires the installed commit-guards settings loader" ;;
       support=unreadable) echo "the installed commit-guards support could not be loaded; repair that installation; its diagnostic follows" ;;
-      settings=unreadable) echo "the project settings could not be read, so COMMAND_SAFETY_DENY_PATTERN is unknown; the loader's line below names what to fix" ;;
+      settings=unreadable) echo "the project settings could not be read, so the project command policies are unknown; the loader's line below names what to fix" ;;
+      settings=invalid-history-policy) echo "COMMAND_SAFETY_HISTORY_POLICY must be off or no-lazy-fetch; the history check is unavailable" ;;
       settings=empty) echo "COMMAND_SAFETY_DENY_PATTERN must be configured" ;;
       settings=invalid-pattern) echo "COMMAND_SAFETY_DENY_PATTERN is not a readable POSIX ERE" ;;
       refused=policy) echo "the command text matches this project's COMMAND_SAFETY_DENY_PATTERN" ;;
@@ -1087,6 +1183,11 @@ refuse() { # KEY VALUE [CAUSE]
         echo "a failed directory change can reach a relative recursive delete, git init or .git write in this literal command list"
         echo "make the target depend on a successful directory change with &&, stop on failure, or use a verified literal absolute target"
         echo "earlier failed directory changes remain possible even after a later cd; nested, dynamic and unsupported forms have no targeting proof" ;;
+      refused=history-policy)
+        printf 'command-safety: reason=%s\n' "$history_reason"
+        echo "COMMAND_SAFETY_HISTORY_POLICY requires the literal global --no-lazy-fetch option before each reached Git history or diff subcommand"
+        echo "submit literal Git global options and put --no-lazy-fetch before the subcommand, for example: git --no-lazy-fetch log -1 --oneline HEAD"
+        echo "use a Git build that supports that native option; counts, refs, paths, formats and GIT_NO_LAZY_FETCH alone grant no exception" ;;
       refused=environment-dump)
         # An undecoded escape is refused as unknown, not as a recognized read,
         # so it gets its own reason and remedy.
@@ -1110,6 +1211,7 @@ refuse() { # KEY VALUE [CAUSE]
     # replayed here: under the keyed line, never ahead of it.
     [ -z "${3:-}" ] || printf '%s\n' "$3"
   } >&2 || :
+  [ "$1=$2" != settings=invalid-history-policy ] || return 0
   case "$1" in
     refused | path) exit 2 ;;
     *)
@@ -1191,6 +1293,7 @@ fields="$(jq -er '
 } <<<"$fields"$'\t'
 # Set by the escape arms, which refuse what they cannot decode.
 dump_reason=""
+history_reason=""
 if environment_dump "$command_kind"; then
   refuse refused environment-dump
 fi
@@ -1281,6 +1384,15 @@ cd -- "$root" || refuse cwd "$root"
 # left a host's root volume read-only. skills/commit-guards'
 # kendex.settings.toml.example declares the same value.
 default_pattern='(^|[^[:alnum:]_-])systemd-run[[:space:]][^&;|]*Memory(Max|High)=[[:punct:]]?[0-9]+[KkMm]([^[:alnum:]]|$)'
+history_policy="$(gg_setting COMMAND_SAFETY_HISTORY_POLICY off 2>&1)" || refuse settings unreadable "$history_policy"
+case "$history_policy" in
+  off) ;;
+  no-lazy-fetch) [ -z "$history_reason" ] || refuse refused history-policy ;;
+  *)
+    # An invalid selection leaves only this advisory check unavailable. The
+    # independently readable project pattern must still get its decision.
+    refuse settings invalid-history-policy ;;
+esac
 pattern="$(gg_setting COMMAND_SAFETY_DENY_PATTERN "$default_pattern" 2>&1)" || refuse settings unreadable "$pattern"
 [ -n "$pattern" ] || refuse settings empty
 [ "$pattern" != '^$' ] || exit 0
