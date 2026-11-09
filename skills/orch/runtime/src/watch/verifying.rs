@@ -73,7 +73,7 @@ const INVALID_TEXT: &str = "The Verifying item has invalid post-merge metadata o
 fn say_invalid(id: &str, words: &str) {
     let _ = writeln!(
         std::io::stderr(),
-        "oversee-watch: verifying-invalid issue={id}\n{INVALID_TEXT}\n{words}"
+        "verifying-invalid issue={id}\n{INVALID_TEXT}\n{words}"
     );
 }
 

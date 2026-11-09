@@ -44,6 +44,7 @@ use super::obligations::{Discharge, JobEnd, JobHandle, SidecarRead};
 use super::{Operation, Reading, Word};
 use crate::effects::{POLL, Run, read_intent, transfer};
 use crate::error::{Error, Result};
+use crate::mailbox::{Mailbox, Refusal};
 use crate::ops::{self, Applied, ClaimIntent, RecordProgress, Request};
 use crate::state::{self, EffectOp, Intent, Notice, Obligation, Owner, Role, WatchJob};
 use crate::watch::claim;
@@ -74,9 +75,6 @@ const JOB_LAUNCH_TIMEOUT: Duration = Duration::from_secs(60);
 /// holds when it stops and for the unwind of a child this launcher forked,
 /// so the two graces are one number.
 const KILL_GRACE: Duration = Duration::from_secs(10);
-
-/// How long the mailbox CLI is given to take an owner notice.
-const NOTICE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// How long the user manager is given to answer for a unit's state, and
 /// a `loginctl` or `kill` to answer.
@@ -2069,14 +2067,12 @@ fn send_notices(run: &Run, due: fn(&Notice) -> bool, last: bool) -> Result<Vec<N
     Ok(unmarked)
 }
 
-/// Send `text` to the owner through the mailbox CLI (`lane-mail notice
-/// --item overseer --to owner --file FILE`). A notice the owner already
-/// received within the mailbox's window
-/// is refused by the CLI as a repeat, which is `sent`; any other refusal is
-/// `unsent:<cause>`, and so is a CLI that never started; one that started
-/// and gave no answer (its bound passed, or a signal ended it) is
-/// `unanswered:<cause>`, since the notice may have gone. Each is recorded,
-/// never a reason to hold the outcome.
+/// Send `text` to the owner through the mailbox's owner notice. A notice
+/// the mailbox took, or refused as a repeat of one that landed, is `sent`;
+/// a program that never started, or refused by its own key before the
+/// append, is `unsent:<cause>`; one that gave no answer or exited with no
+/// key is `unanswered:<cause>`, since the notice may have gone. Each is
+/// recorded, never a reason to hold the outcome.
 fn send_owner_notice(run: &Run, intent_id: &str, text: &str) -> String {
     let path = run
         .settings
@@ -2091,40 +2087,24 @@ fn send_owner_notice(run: &Run, intent_id: &str, text: &str) -> String {
     if let Err(e) = std::fs::write(&path, format!("{text}\n")) {
         return format!("unsent:notice-write:{e}");
     }
-    let file = path.display().to_string();
-    let result = host::run_tagged(
-        "job",
-        "lane-mail",
-        &run.settings.lane_mail_cli,
-        "notice",
-        &[
-            "notice", "--item", "overseer", "--to", "owner", "--file", &file,
-        ],
-        NOTICE_TIMEOUT,
-    );
+    let sent = Mailbox::new(run.settings.lane_mail_cli.clone())
+        .owner_notice(&run.settings.roots.common, &path);
     let _ = std::fs::remove_file(&path);
-    match result {
-        Ok(out) if out.status.success() => "sent".to_owned(),
-        Ok(out) => {
-            let line = host::stderr_text(&out)
-                .lines()
-                .next()
-                .unwrap_or_default()
-                .to_owned();
-            if line.starts_with("lane-mail: duplicate id=")
-                || line.starts_with("lane-mail: owner-notice-repeated=")
-            {
-                "sent".to_owned()
-            } else {
-                match out.status.code() {
-                    Some(code) => format!("unsent:status={code}:{line}"),
-                    None => format!("{}{}", state::NOTICE_UNANSWERED, out.status),
-                }
-            }
+    match sent {
+        Ok(()) => "sent".to_owned(),
+        Err(
+            refusal @ (Refusal::NotStarted { .. }
+            | Refusal::Exit {
+                status: Some(_),
+                keyed: Some(_),
+                ..
+            }),
+        ) => format!("unsent:{refusal}"),
+        Err(
+            refusal @ (Refusal::Unanswered { .. } | Refusal::Exit { .. } | Refusal::Reply { .. }),
+        ) => {
+            format!("{}{refusal}", state::NOTICE_UNANSWERED)
         }
-        // A CLI that never started sent nothing.
-        Err(e @ agent_runtime::Error::NotStarted { .. }) => format!("unsent:{}", e.key()),
-        Err(e) => format!("{}{}", state::NOTICE_UNANSWERED, e.key()),
     }
 }
 

@@ -30,13 +30,14 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use agent_runtime::clock;
 use agent_runtime::host::tmux;
 use agent_runtime::reading::Reading;
-use agent_runtime::{clock, host};
 use serde_json::Value;
 
 use crate::archive::{name_of, read_dir};
 use crate::error::Result;
+use crate::mailbox::Mailbox;
 use crate::ops::prune::{Dropped, PlannedRows, PruneRecords};
 use crate::ops::{Env, Report, Request};
 use crate::settings::Settings;
@@ -891,33 +892,13 @@ fn prune(ctx: &Context, tick: &Tick) -> Result<Pruned> {
 }
 
 /// The overseer mailbox's compaction, rooted at the main checkout where
-/// the mailbox lives whatever the state directory: the refusal's status
-/// and the program's own words where it refused.
-#[allow(
-    clippy::disallowed_methods,
-    reason = "the retention duty's one `lane-mail compact` per pass, through the one runner under the duty's tag; the mailbox skill owns what it removes"
-)]
+/// the mailbox lives whatever the state directory: the refusal where the
+/// mailbox refused.
 fn compact(settings: &Settings) -> Option<String> {
-    let root = settings.roots.common.display().to_string();
-    let out = host::run_tagged(
-        "retention",
-        "lane-mail",
-        &settings.lane_mail_cli,
-        "compact",
-        &["compact", "--item", "overseer", "--root", &root],
-        crate::mailbox::BOUND,
-    );
-    match out {
-        Ok(out) if out.status.success() => None,
-        Ok(out) => Some(format!(
-            "lane-mail compact item=overseer status={}\n{}",
-            out.status
-                .code()
-                .map_or_else(|| "signal".to_owned(), |c| c.to_string()),
-            host::stderr_text(&out)
-        )),
-        Err(e) => Some(format!("lane-mail compact item=overseer {e}")),
-    }
+    Mailbox::new(settings.lane_mail_cli.clone())
+        .compact(&settings.roots.common)
+        .err()
+        .map(|refusal| format!("lane-mail compact item=overseer {refusal}"))
 }
 
 /// One pass of the duty: the overseer mailbox's compaction, then the prune.

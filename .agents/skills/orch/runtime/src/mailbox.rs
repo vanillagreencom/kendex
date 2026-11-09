@@ -1,10 +1,8 @@
 //! The mailbox client: the watch's mailbox reads, the owner asks' answers
-//! and closes, directive sends, lane notices and the report's owner notice,
-//! each a `lane-mail` call through agent-runtime's one runner under the tag
-//! `mail` and under one bound, and each reply decoded into typed records at
-//! this boundary. Four calls run `lane-mail` from their own modules: the job
-//! effect's and the owner alert's owner notices, the retention duty's
-//! `compact` and the close's `pending` read. A program that never
+//! and closes, directive sends, lane notices, the owner notices and the
+//! overseer mailbox's compaction, each a `lane-mail` call through
+//! agent-runtime's one runner under the tag `mail` and under one bound, and
+//! each reply decoded into typed records at this boundary. A program that never
 //! started, one that gave no answer, a nonzero exit and a reply the decoder
 //! cannot read are each a typed [`Refusal`] that stops the one read it
 //! answered; no refusal is ever read as an empty mailbox. A program that
@@ -851,6 +849,50 @@ impl Mailbox {
         id_field(line)
             .map(|id| Noticed::Sent { id })
             .ok_or_else(|| reply(VERB, "receipt", line))
+    }
+
+    /// `notice --item overseer --to owner --file F` at the main checkout
+    /// `root`, run there: a notice the owner relay carries, with no
+    /// attachment. The owner holds the words on a clean exit, and on either
+    /// refusal of a repeat of a notice that landed: the same envelope inside
+    /// the minute (`duplicate id=`) or the same text inside the day
+    /// (`owner-notice-repeated=`). No caller reads the receipt's id.
+    pub fn owner_notice(&self, root: &Path, file: &Path) -> Result<(), Refusal> {
+        const VERB: &str = "notice";
+        let root_text = root.display().to_string();
+        let file = file.display().to_string();
+        let answer = self.call_on(
+            VERB,
+            &[
+                "--item", "overseer", "--to", "owner", "--file", &file, "--root", &root_text,
+            ],
+            None,
+            Some(root),
+        )?;
+        let repeated = answer.keyed().is_some_and(|keyed| {
+            keyed.starts_with("duplicate id=") || keyed.starts_with("owner-notice-repeated=")
+        });
+        if answer.success || repeated {
+            Ok(())
+        } else {
+            Err(answer.refused(VERB))
+        }
+    }
+
+    /// `compact --item overseer --root ROOT`, run in the main checkout
+    /// `root`, whose settings the program reads its retention from: what
+    /// leaves the overseer mailbox is the mailbox skill's rule.
+    pub fn compact(&self, root: &Path) -> Result<(), Refusal> {
+        const VERB: &str = "compact";
+        let root_text = root.display().to_string();
+        self.call_on(
+            VERB,
+            &["--item", "overseer", "--root", &root_text],
+            None,
+            Some(root),
+        )?
+        .ok(VERB)
+        .map(drop)
     }
 
     /// `events --item overseer` at the main checkout `root`: both of the

@@ -79,6 +79,7 @@ impl World {
         reconcile::run(
             &self.settings(&[]),
             None,
+            &[],
             Some(&self.dir.path().join("gh-missing")),
             NOW,
         )
@@ -339,13 +340,13 @@ fn settings_and_private_file_thresholds_scope_the_same_live_read() {
     for value in ["bad", "01", "-1"] {
         let settings = world.settings(&[("RECONCILE_STALE_HOURS", value)]);
         assert_eq!(
-            reconcile::run(&settings, None, None, NOW)
+            reconcile::run(&settings, None, &[], None, NOW)
                 .unwrap_err()
                 .key(),
             "reconcile-threshold-invalid"
         );
         assert!(
-            reconcile::run(&settings, Some(999999), None, NOW)
+            reconcile::run(&settings, Some(999999), &[], None, NOW)
                 .unwrap()
                 .findings
                 .is_empty()
@@ -393,7 +394,8 @@ fn merged_review_is_reported_before_age_and_a_failed_probe_keeps_its_finding() {
         ),
     ] {
         fs::write(world.dir.path().join("pulls.json"), rows.to_string()).unwrap();
-        let report = reconcile::run(&world.settings(&[]), Some(999999), Some(&gh), NOW).unwrap();
+        let report =
+            reconcile::run(&world.settings(&[]), Some(999999), &[], Some(&gh), NOW).unwrap();
         assert_eq!(
             kinds(&report).contains(&("merged-in-review", "T-1")),
             expected
@@ -402,7 +404,7 @@ fn merged_review_is_reported_before_age_and_a_failed_probe_keeps_its_finding() {
     // Both items are 72 hours old at the 24-hour default.
     let pulls =
         |rows: Value| fs::write(world.dir.path().join("pulls.json"), rows.to_string()).unwrap();
-    let stale = || reconcile::run(&world.settings(&[]), None, Some(&gh), NOW).unwrap();
+    let stale = || reconcile::run(&world.settings(&[]), None, &[], Some(&gh), NOW).unwrap();
     // A merged pull request: the In Review item is merged-in-review, the In
     // Progress one is stale with its pull request merged, never in review.
     pulls(json!([{"state":"MERGED","mergedAt":"2026-10-01T00:00:00Z","isCrossRepository":false}]));
@@ -438,7 +440,7 @@ fn merged_review_is_reported_before_age_and_a_failed_probe_keeps_its_finding() {
     fs::remove_file(world.dir.path().join("gh.fail")).unwrap();
     // A reply that is no JSON fails the probe; a fresh item stays fresh.
     fs::write(world.dir.path().join("pulls.json"), "not-json\n").unwrap();
-    let report = reconcile::run(&world.settings(&[]), Some(999999), Some(&gh), NOW).unwrap();
+    let report = reconcile::run(&world.settings(&[]), Some(999999), &[], Some(&gh), NOW).unwrap();
     assert_eq!(kinds(&report), [("pr-probe-failed", "T-1")], "{report:?}");
     // No gh at all.
     let report = world.run();
@@ -489,6 +491,15 @@ fn release_world(
     items: Vec<Value>,
     files: &[(&str, Value)],
 ) -> (orch_runtime::Result<reconcile::Report>, Vec<String>) {
+    release_world_named(items, files, &[])
+}
+
+/// [`release_world`] with the merged pull requests a reader names.
+fn release_world_named(
+    items: Vec<Value>,
+    files: &[(&str, Value)],
+    merged: &[&str],
+) -> (orch_runtime::Result<reconcile::Report>, Vec<String>) {
     let world = World::new(items);
     let dir = world.dir.path();
     let gh = dir.join("gh");
@@ -499,7 +510,8 @@ fn release_world(
     for (name, value) in files {
         fs::write(dir.join(name), value.to_string()).unwrap();
     }
-    let report = reconcile::run(&world.settings(&[]), None, Some(&gh), NOW);
+    let merged: Vec<String> = merged.iter().map(|m| (*m).to_owned()).collect();
+    let report = reconcile::run(&world.settings(&[]), None, &merged, Some(&gh), NOW);
     let calls = fs::read_to_string(dir.join("gh.log"))
         .unwrap_or_default()
         .lines()
@@ -761,6 +773,72 @@ fn release_merge_evidence_from_the_real_probe_reaches_the_shared_judge() {
             "{case}"
         );
     }
+    // A merge on another branch, which the branch probe cannot find, named
+    // by the reader: the boxes count from the latest named merge, read from
+    // GitHub, and the probe is not asked.
+    let releases = (
+        "releases-1.json",
+        json!([release("v1", "2026-10-02T00:00:00Z")]),
+    );
+    let (report, calls) = release_world_named(
+        vec![release_item("T-1")],
+        &[
+            ("pulls.json", json!([])),
+            ("pull-7.json", rest_pull(7, "2026-09-30T00:00:00Z", OID)),
+            ("pull-8.json", rest_pull(8, "2026-10-01T00:00:00Z", OID)),
+            releases.clone(),
+            ("compare-v1.json", ahead.clone()),
+        ],
+        &["T-1=owner/repo#7", "T-1=owner/repo#8"],
+    );
+    let report = report.unwrap();
+    assert!(
+        line(&report, "T-1").contains(
+            "status=due deadline=2026-10-05T00:00:00Z merged=2026-10-01T00:00:00Z blocked_by=-"
+        ),
+        "{report:?}"
+    );
+    assert!(report.findings.is_empty(), "{report:?}");
+    assert!(!calls.iter().any(|c| c.starts_with("pr list")), "{calls:?}");
+    // A named pull request whose read fails refuses, its item named.
+    let (report, _) = release_world_named(
+        vec![release_item("T-1")],
+        &[("pulls.json", pulls.clone())],
+        &["T-1=owner/repo#9"],
+    );
+    let err = report.unwrap_err();
+    assert_eq!(err.key(), "verifying-merge-unread");
+    assert!(err.fields().iter().any(|(k, v)| k == "issue" && v == "T-1"));
+    // A value that names no item and pull request, and an item the
+    // inventory judges no box of, refuse before any GitHub read.
+    let mut started = release_item("T-2");
+    started["state"] = json!({"name":"In Progress","type":"started"});
+    for (merged, key, field) in [
+        ("T-1=owner/repo", "merged-invalid", "T-1=owner/repo"),
+        ("T-1=owner#7", "merged-invalid", "T-1=owner#7"),
+        ("=owner/repo#7", "merged-invalid", "=owner/repo#7"),
+        ("T-1=owner/repo#0", "merged-invalid", "T-1=owner/repo#0"),
+        ("T-9=owner/repo#7", "merged-unjudged", "T-9"),
+        ("T-2=owner/repo#7", "merged-unjudged", "T-2"),
+    ] {
+        let (report, calls) = release_world_named(
+            vec![release_item("T-1"), started.clone()],
+            &[("pulls.json", pulls.clone())],
+            &[merged],
+        );
+        let err = report.expect_err(merged);
+        assert_eq!(err.key(), key, "{merged}");
+        assert_eq!(err.fields()[0].1, field, "{merged}");
+        assert!(calls.is_empty(), "{merged}: {calls:?}");
+    }
+    // The verb's flag reaches the judge.
+    let world = World::new(vec![release_item("T-1")]);
+    let out = world.cli(&["reconcile-items", "--merged", "T-1=owner/repo#0"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        serde_json::from_slice::<Value>(&out.stdout).unwrap()["refusal"]["key"],
+        "merged-invalid"
+    );
 }
 
 fn repair_passes(mode: &str) {
@@ -978,12 +1056,13 @@ fn a_missing_merge_stays_a_finding_but_a_failed_verification_read_refuses() {
     )]);
     let gh = world.dir.path().join("gh");
     support::write_executable(&gh, "#!/bin/sh\nprintf '[]\\n'\n");
-    let report = reconcile::run(&world.settings(&[]), None, Some(&gh), NOW).unwrap();
+    let report = reconcile::run(&world.settings(&[]), None, &[], Some(&gh), NOW).unwrap();
     assert!(kinds(&report).contains(&("verifying-merge-unread", "T-1")));
     assert!(report.lines.is_empty());
     let err = reconcile::run(
         &world.settings(&[]),
         None,
+        &[],
         Some(&world.dir.path().join("missing-gh")),
         NOW,
     )
@@ -1004,6 +1083,7 @@ fn future_tracker_updates_never_become_stale_at_a_zero_hour_threshold() {
     let report = reconcile::run(
         &world.settings(&[]),
         Some(0),
+        &[],
         Some(&world.dir.path().join("missing-gh")),
         NOW,
     )
@@ -1019,7 +1099,7 @@ fn a_stale_started_container_keeps_its_started_findings_beside_container_parked(
     ]);
     let gh = world.dir.path().join("gh");
     support::write_executable(&gh, "#!/bin/sh\nprintf '[]\\n'\n");
-    let report = reconcile::run(&world.settings(&[]), None, Some(&gh), NOW).unwrap();
+    let report = reconcile::run(&world.settings(&[]), None, &[], Some(&gh), NOW).unwrap();
     assert_eq!(
         kinds(&report),
         [
@@ -1197,7 +1277,15 @@ fn the_watch_reads_a_checklist_the_parser_could_not_read_as_invalid_and_keeps_no
         out.status.success() && stdout.contains("1 passed"),
         "{stdout}{stderr}"
     );
-    let said = |words: &str| format!("oversee-watch: verifying-invalid issue={words}");
+    let said = |words: &str| format!("verifying-invalid issue={words}");
+    // A reader of the watch's stderr file keys on each line's first word.
+    assert!(
+        stderr
+            .lines()
+            .filter(|l| l.contains("verifying-invalid issue="))
+            .all(|l| l.starts_with("verifying-invalid issue=")),
+        "{stderr}"
+    );
     assert_eq!(
         stderr
             .matches(&said(&format!(

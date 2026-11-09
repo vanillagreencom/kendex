@@ -69,18 +69,25 @@ fn lines(path: &Path) -> Vec<String> {
 /// The Done-when text the recorded owed world gives its two Verifying items.
 const DEADLINE_BOXES: &str = "## Done when\n- [x] branch proof\n- [ ] Post-merge: Read deployed health; Where: live service; Why after merge: needs deployment; Deadline: 2026-10-02T00:00:00Z\n- [ ] Post-merge: Read consumer refresh; Where: consumer PR; Why after merge: needs rollout; Deadline: 2026-10-03T00:00:00Z";
 
-/// The mailbox program as the retention duty runs it: each call's argv a
-/// line of `lane-mail.argv` beside it; with `lane-mail.refuse` beside it,
-/// a keyed refusal and exit 2.
-const LANE_MAIL_FIXTURE: &str = r#"#!/bin/sh
-here="$(dirname "$0")"
-printf '%s\n' "$*" >> "$here/lane-mail.argv"
-if [ -e "$here/lane-mail.refuse" ]; then
-  echo "lane-mail: write-failed=$here/tmp/lane-mail/overseer" >&2
-  exit 2
-fi
-echo "compacted item=overseer to-lane=0 to-overseer=0"
-"#;
+/// The real mailbox program behind a wrapper under `dir`, run with a
+/// cleared environment, no git configuration and no repository above `dir`.
+fn real_mail(dir: &Path) -> PathBuf {
+    let path = dir.join("real-lane-mail");
+    let actual = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../mailbox/scripts/lane-mail")
+        .canonicalize()
+        .unwrap();
+    let text = format!(
+        "#!/bin/sh\nexec env -i HOME='{}' PATH='{}' LANG=C.UTF-8 TMPDIR='{}' GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CEILING_DIRECTORIES='{}' '{}' \"$@\"\n",
+        dir.display(),
+        tool_path(&[]),
+        std::env::temp_dir().display(),
+        dir.display(),
+        actual.display()
+    );
+    write_executable(&path, text);
+    path
+}
 
 /// One world: a state directory with the fleet record, the fixtures
 /// symlinked under the names the duties run, and the settings naming them.
@@ -104,8 +111,7 @@ impl World {
         ] {
             std::os::unix::fs::symlink(fix.join(fixture), dir.path().join(name)).unwrap();
         }
-        let mail = dir.path().join("lane-mail-fixture");
-        write_executable(&mail, LANE_MAIL_FIXTURE);
+        let mail = real_mail(dir.path());
         let at = |name: &str| dir.path().join(name).display().to_string();
         // The accounts the listing lists are planted under `home` with
         // their records, served for a day of the fake clock; no usage
@@ -261,21 +267,7 @@ impl World {
     }
 
     fn real_report_mail(&self) -> PathBuf {
-        let path = self.path().join("real-lane-mail");
-        let actual = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../mailbox/scripts/lane-mail")
-            .canonicalize()
-            .unwrap();
-        let text = format!(
-            "#!/bin/sh\nexec env -i HOME='{}' PATH='{}' LANG=C.UTF-8 TMPDIR='{}' GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_CEILING_DIRECTORIES='{}' '{}' \"$@\"\n",
-            self.path().display(),
-            tool_path(&[]),
-            std::env::temp_dir().display(),
-            self.path().display(),
-            actual.display()
-        );
-        write_executable(&path, text);
-        path
+        real_mail(self.path())
     }
 
     fn report_context(&self) -> report::Context {
@@ -2300,41 +2292,45 @@ fn retention_keeps_a_receipt_written_after_its_intent_closed() {
     assert!(receipt.exists(), "the late receipt stands");
 }
 
-/// The duty as the runner runs it, the mailbox program refusing: it was
-/// asked to compact the overseer mailbox at the main checkout, the pass
-/// says `watch-step-failed`, and a file past the retention still leaves.
+/// The duty as the runner runs it, over the real mailbox program at the
+/// main checkout: a compaction that answers is a pass that ran, and one the
+/// program refuses, there a second overseer mailbox spelled apart by case,
+/// says `watch-step-failed` while a file past the retention still leaves.
 #[test]
 fn the_retention_duty_compacts_the_overseer_mailbox_and_says_a_refusal() {
     let world = World::new();
     let paths = world.paths();
     let clock = FakeClock::new();
     let wall = clock.wall_secs();
-    let old = world.path().join("workflow-state-KEN-9.json");
-    std::fs::write(&old, "{}\n").unwrap();
-    set_modified(&old, wall - 10 * 86_400);
-    touch(&world.path().join("lane-mail.refuse"));
-    let mut runner = runner(&world, &clock);
-    runner.register(
-        Duty::Retention,
+    let body = || {
         retention::body(retention::Context {
             locking: Locking::FLOCK,
             fleet: world.fleet_path(),
             paths: paths.clone(),
             settings: world.settings.clone(),
-        }),
-    );
+        })
+    };
+    let baseline = Baseline::default();
+    let answered = body()(&Tick {
+        duty: Duty::Retention,
+        now: clock.now(),
+        wall,
+        baseline: &baseline,
+        clock: &clock,
+    })
+    .unwrap();
+    assert_eq!(answered.failed, None, "the compaction answered");
+    let old = world.path().join("workflow-state-KEN-9.json");
+    std::fs::write(&old, "{}\n").unwrap();
+    set_modified(&old, wall - 10 * 86_400);
+    std::fs::create_dir_all(world.path().join("tmp/lane-mail/Overseer")).unwrap();
+    let mut runner = runner(&world, &clock);
+    runner.register(Duty::Retention, body());
     let identity = me();
     let ended = run_driven(runner, &clock, &paths, &identity, || {
         clock.await_sleepers(1);
     });
     assert!(ended.is_ok(), "{ended:?}");
-    assert_eq!(
-        lines(&world.path().join("lane-mail.argv")),
-        vec![format!(
-            "compact --item overseer --root {}",
-            world.path().display()
-        )]
-    );
     assert_eq!(
         lines(&paths.log),
         vec!["EVENT watch-step-failed step=retention count=1".to_owned()]
@@ -3112,6 +3108,66 @@ fn report_owner_notice_waits_for_quiet_end_and_keeps_the_last_sent_window() {
         fields[0],
         ("summary".to_owned(), missing.display().to_string())
     );
+    // A summary naming an owner ask that closed before the write refuses,
+    // writing and sending nothing; one naming the asks still pending writes.
+    let lane_mail = |args: &[&str]| {
+        let out = program(world.real_report_mail())
+            .current_dir(world.path())
+            .args(args)
+            .arg("--root")
+            .arg(world.path())
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let question = world.path().join("question.txt");
+    let ask = |text: &str| {
+        std::fs::write(&question, text).unwrap();
+        let printed = lane_mail(&[
+            "ask",
+            "--item",
+            "overseer",
+            "--to",
+            "owner",
+            "--options",
+            "yes,no",
+            "--recommend",
+            "yes",
+            "--file",
+            question.to_str().unwrap(),
+        ]);
+        printed
+            .lines()
+            .find_map(|l| l.strip_prefix("id="))
+            .unwrap()
+            .to_owned()
+    };
+    let open = ask("Ship it?\n");
+    let closed = ask("Rename it?\n");
+    lane_mail(&["resolve", "--item", "overseer", "--id", &closed]);
+    let named = morning + 180;
+    std::fs::write(
+        &summary,
+        format!("Waiting on you: {open}, then {closed}.\n"),
+    )
+    .unwrap();
+    let sent_before = mail.events(world.path()).unwrap().len();
+    assert_eq!(
+        report::write(&ctx, named, &summary, false)
+            .unwrap_err()
+            .fields(),
+        vec![
+            ("cause".to_owned(), "summary-stale".to_owned()),
+            ("ask".to_owned(), closed.clone()),
+        ]
+    );
+    let dir = &ctx.settings.store.progress_report_dir;
+    assert!(!dir.join("10-01-14-03.md").exists());
+    assert!(!dir.join("10-01-14-03.notice.json").exists());
+    assert_eq!(mail.events(world.path()).unwrap().len(), sent_before);
+    std::fs::write(&summary, format!("Waiting on you: {open}.\n")).unwrap();
+    report::write(&ctx, named, &summary, false).unwrap();
     // ORCH_REPORT=off silences due alone: a handover write still writes,
     // under its succession name, its notice the summary less its trailing
     // blank lines.

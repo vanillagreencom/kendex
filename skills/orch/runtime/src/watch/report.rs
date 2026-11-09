@@ -980,6 +980,34 @@ pub fn render(ctx: &Context, now: u64) -> Result<String> {
     Ok(out)
 }
 
+/// The owner asks the summary names, read at the write: one named by its id
+/// that is no longer pending has closed, so the summary would ask the owner
+/// for a choice that no longer stands, and the caller summarizes again
+/// before the report's one delivery. An id of any other envelope names no
+/// ask.
+fn refuse_stale_ask(ctx: &Context, summary: &str) -> Result<()> {
+    let mail = Mailbox::new(ctx.settings.lane_mail_cli.clone());
+    let root = &ctx.settings.roots.common;
+    let pending: BTreeSet<String> = mail
+        .pending_owner_asks(root)?
+        .iter()
+        .map(|ask| ask.id().to_owned())
+        .collect();
+    let asks: BTreeSet<String> = mail
+        .events(root)?
+        .iter()
+        .filter(|e| e.kind() == "ask" && e.to.as_deref() == Some("owner"))
+        .map(|e| e.id().to_owned())
+        .collect();
+    let named = summary
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+        .find(|word| asks.contains(*word) && !pending.contains(*word));
+    match named {
+        Some(ask) => Err(unjudged(&[("cause", "summary-stale"), ("ask", ask)])),
+        None => Ok(()),
+    }
+}
+
 #[allow(
     clippy::disallowed_methods,
     reason = "report bytes and the delivery attempt are durable before the mailbox start; only its attachment confirms delivery"
@@ -1052,6 +1080,7 @@ pub fn write(ctx: &Context, now: u64, summary: &Path, succession: bool) -> Resul
             {
                 return Err(unjudged(&[("cause", "report-exists")]));
             }
+            refuse_stale_ask(ctx, &summary_text)?;
             let body = render(ctx, now)?;
             let mut record = std::fs::File::create_new(&attempt)
                 .map_err(|e| unjudged(&[("cause", &e.to_string())]))?;

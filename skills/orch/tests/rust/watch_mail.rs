@@ -15,11 +15,14 @@ use std::process::{Command, Output};
 use std::time::{Duration, Instant};
 
 use agent_runtime::process::Identity;
+use orch_runtime::effects;
 use orch_runtime::mailbox::{Drain, Mailbox, Refusal, Sent};
-use orch_runtime::schedule::Duty;
+use orch_runtime::ops::Env;
+use orch_runtime::schedule::{Duty, SystemClock};
 use orch_runtime::settings::{self, Flags as SettingsFlags, Roots, Settings};
-use orch_runtime::state::FLEET_FILE_NAME;
+use orch_runtime::state::{FLEET_FILE_NAME, Locking};
 use orch_runtime::watch::mail::{self, Config, MailDuty};
+use orch_runtime::watch::owner_alert;
 use orch_runtime::watch::wake::{OVERSEER_TARGET, UNREAD_KIND};
 use orch_runtime::watch::{Baseline, Change, Event, Flags, Paths, Recorded, Runner, Tick};
 use serde_json::{Value, json};
@@ -548,6 +551,119 @@ fn a_send_that_dies_before_its_receipt_repeated_under_its_operation_id_lands_one
         Mailbox::new(hold()).send_directive(ITEM, Some(&w.root), false, &text, Some("op-2"), None);
     assert!(matches!(other, Ok(Sent::Mailbox { .. })), "{other:?}");
     assert_eq!(rows(&mailbox).len(), 2);
+}
+
+/// This host's clock: the mailbox stamps and judges its repeats on it.
+fn wall() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+/// The two owner-notice senders through the real mailbox: the owner alert
+/// and a closed intent's notice each land once, and the mailbox's refusal
+/// of a repeat, the same envelope inside the minute or the same text inside
+/// the day, reads as sent to both, so neither sends the owner the same
+/// words again; a refusal by the program's own key reads as unsent.
+#[test]
+fn an_owner_notice_lands_once_and_both_senders_read_its_repeats_as_sent() {
+    let w = world(&isolated_program(&real_lane_mail()), 20);
+    let owner_box = w.root.join("tmp/lane-mail/overseer/to-overseer.jsonl");
+    let notices = |text: &str| -> Vec<Value> {
+        std::fs::read_to_string(&owner_box)
+            .unwrap_or_default()
+            .lines()
+            .map(|l| serde_json::from_str::<Value>(l).unwrap())
+            .filter(|e| e["kind"] == "notice" && e["to"] == "owner" && e["text"] == text.trim_end())
+            .collect()
+    };
+    let alert = |text: &str| owner_alert::send(&w.settings, "alerts/gap.notice", text);
+    let gap = "the overseer context gap stands\n";
+    assert_eq!(alert(gap), Ok(()));
+    assert_eq!(notices(gap).len(), 1, "the alert landed");
+    assert_eq!(alert(gap), Ok(()), "a repeat inside the minute is sent");
+    assert_eq!(notices(gap).len(), 1);
+    // The landed notice an hour old: the same text again is the day's repeat.
+    let aged: Vec<String> = std::fs::read_to_string(&owner_box)
+        .unwrap()
+        .lines()
+        .map(|l| {
+            let mut e: Value = serde_json::from_str(l).unwrap();
+            if e["text"] == gap.trim_end() {
+                e["at"] = json!(agent_runtime::clock::iso_utc(wall() - 3600));
+            }
+            e.to_string()
+        })
+        .collect();
+    std::fs::write(&owner_box, aged.join("\n") + "\n").unwrap();
+    assert_eq!(alert(gap), Ok(()), "a repeat inside the day is sent");
+    assert_eq!(notices(gap).len(), 1);
+
+    // Two closed intents whose owners are gone owe the same words: the
+    // reconcile sends the first, and the second is the minute's repeat.
+    let state = w.root.join(FLEET_FILE_NAME);
+    let failed = "the transfer job failed";
+    let intent = |id: &str| {
+        json!({
+            "id": id, "op": "request-transfer", "target": "overseer:3",
+            "created_at": "2026-01-29T15:20:00Z", "completed_at": "2026-01-29T15:21:00Z",
+            "outcome": "failed",
+            "notice": {"key": "job-launch-failed", "text": failed, "owner": "owed"}
+        })
+    };
+    let plant = |intents: Value| {
+        let mut fleet: Value =
+            serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
+        fleet["lanes"] = json!([]);
+        fleet["intents"] = intents;
+        std::fs::write(&state, serde_json::to_string_pretty(&fleet).unwrap()).unwrap();
+    };
+    let reconcile = || {
+        let now = wall();
+        effects::reconcile(
+            &state,
+            &w.settings,
+            &Env {
+                now_secs: now,
+                now_nanos: u128::from(now) * 1_000_000_000,
+                nonce: 0,
+                owner: None,
+            },
+            Locking::FLOCK,
+            &SystemClock,
+        )
+        .unwrap();
+        let fleet: Value = serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();
+        fleet["intents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["notice"]["owner"].as_str().unwrap_or_default().to_owned())
+            .collect::<Vec<_>>()
+    };
+    plant(json!([
+        intent("request-transfer:overseer:3:1-1"),
+        intent("request-transfer:overseer:3:1-2")
+    ]));
+    assert_eq!(reconcile(), vec!["sent", "sent"]);
+    assert_eq!(notices(failed).len(), 1, "one landed");
+
+    // The overseer mailbox behind a symlink: the program refuses every
+    // write by its own key, before the append.
+    let mailboxes = w.root.join("tmp/lane-mail");
+    std::fs::rename(mailboxes.join("overseer"), mailboxes.join("moved")).unwrap();
+    std::os::unix::fs::symlink("moved", mailboxes.join("overseer")).unwrap();
+    let refused = alert("a new condition\n");
+    assert!(
+        refused
+            .as_ref()
+            .is_err_and(|e| e.contains("mailbox-unsafe")),
+        "{refused:?}"
+    );
+    plant(json!([intent("request-transfer:overseer:3:1-3")]));
+    let marks = reconcile();
+    assert!(marks[0].starts_with("unsent:notice: status=2"), "{marks:?}");
 }
 
 /// A program that exits nonzero, one whose header is not one, one that

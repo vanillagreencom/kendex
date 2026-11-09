@@ -181,12 +181,38 @@ pub fn repository(project: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The merged pull requests a reader names, `ITEM=OWNER/REPO#N` each, by
+/// item: that item's merge evidence in place of the branch probe's, for a
+/// merge the probe cannot find (a pull request on another branch or in
+/// another repository).
+fn named_merges(merged: &[String]) -> Result<BTreeMap<String, Vec<String>>> {
+    let mut named: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for value in merged {
+        let parsed = value.split_once('=').and_then(|(item, key)| {
+            let (repo, number) = key.split_once('#')?;
+            let (owner, name) = repo.split_once('/')?;
+            let digits = !number.is_empty()
+                && !number.starts_with('0')
+                && number.bytes().all(|b| b.is_ascii_digit());
+            (is_word(item) && is_word(owner) && is_word(name) && digits)
+                .then(|| (item.to_owned(), key.to_owned()))
+        });
+        let Some((item, key)) = parsed else {
+            return Err(refused("merged-invalid", &[("value", value)]));
+        };
+        named.entry(item).or_default().push(key);
+    }
+    Ok(named)
+}
+
 pub fn run(
     settings: &Settings,
     stale_hours: Option<u64>,
+    merged: &[String],
     gh: Option<&Path>,
     now: u64,
 ) -> Result<Report> {
+    let named = named_merges(merged)?;
     let configured = &settings.reconcile_stale_hours;
     let stale_hours = match stale_hours {
         Some(hours) => hours,
@@ -241,6 +267,13 @@ pub fn run(
             .iter()
             .map(|i| (i.parent_id.as_str(), i.state_type.as_str())),
     );
+    if let Some(item) = named.keys().find(|id| {
+        !items
+            .iter()
+            .any(|i| &i.id == *id && (containers.contains(&i.id) || i.state == "Verifying"))
+    }) {
+        return Err(refused("merged-unjudged", &[("item", item)]));
+    }
     let ctx = verifying::Context {
         settings: settings.clone(),
         gh: gh.to_owned(),
@@ -271,7 +304,9 @@ pub fn run(
         let started = item.state_type == "started"
             && item.state != "Verifying"
             && (item.state == "In Review" || age.is_some_and(|h| h >= i128::from(stale_hours)));
-        let prs = (verifying || started).then(|| pulls(gh, &settings.roots.project, &item.id));
+        let named_keys = named.get(&item.id);
+        let prs = (started || (verifying && named_keys.is_none()))
+            .then(|| pulls(gh, &settings.roots.project, &item.id));
         if started {
             let evidence = match prs.as_ref().expect("a probed item") {
                 Ok(prs) => Some(prs),
@@ -300,10 +335,13 @@ pub fn run(
         }
         if verifying {
             report.counts.items += 1;
-            let keys = prs
-                .as_ref()
-                .and_then(|p| p.as_ref().ok())
-                .map(|p| p.keys.as_slice());
+            let probe = named_keys.is_none().then_some(prs.as_ref()).flatten();
+            let keys = match named_keys {
+                Some(keys) => Some(keys.as_slice()),
+                None => probe
+                    .and_then(|p| p.as_ref().ok())
+                    .map(|p| p.keys.as_slice()),
+            };
             let verifying_item = VerifyingItem {
                 id: item.id.clone(),
                 created_at: item.created_at.clone(),
@@ -325,11 +363,9 @@ pub fn run(
                 Item::Unread { key, cause } => {
                     // A read that failed has its cause; a merge no read
                     // found has none and is a finding.
-                    if !cause.is_empty() || prs.as_ref().is_some_and(|p| p.is_err()) {
-                        let cause = prs
-                            .as_ref()
-                            .and_then(|p| p.as_ref().err())
-                            .unwrap_or(&cause);
+                    let failed = probe.and_then(|p| p.as_ref().err());
+                    if !cause.is_empty() || failed.is_some() {
+                        let cause = failed.unwrap_or(&cause);
                         return Err(refused(key, &[("issue", &item.id), ("cause", cause)]));
                     }
                     report.note(key, item, json!({"cause":cause}));

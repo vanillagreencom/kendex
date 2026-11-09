@@ -1172,8 +1172,17 @@ fn a_terminal_item_with_no_recorded_close_gets_one_close_request() {
     ]}}}));
     let mut body = tracker::body(world.context(settings, None));
     // The store cannot land the close's write: the state directory admits
-    // no new file, so the request is refused where it would persist.
+    // no new file, so the request is refused where it would persist. The
+    // guard gives the mode back however the row ends, so the temporary
+    // directory stays removable.
+    struct Writable<'a>(&'a Path);
+    impl Drop for Writable<'_> {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(self.0, std::fs::Permissions::from_mode(0o755));
+        }
+    }
     std::fs::set_permissions(world.dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+    let writable = Writable(world.dir.path());
     let third = pass(&mut body, &mut baseline, &clock, SINCE_EPOCH + 1480).unwrap();
     assert_eq!(rendered(&third), vec!["EVENT lane-close-refused KEN-2"]);
     assert_eq!(
@@ -1186,7 +1195,7 @@ fn a_terminal_item_with_no_recorded_close_gets_one_close_request() {
         Vec::<String>::new(),
         "a refused close is not asked again under the same key"
     );
-    std::fs::set_permissions(world.dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    drop(writable);
     assert_eq!(
         world.fleet()["lanes"]
             .as_array()

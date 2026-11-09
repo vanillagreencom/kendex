@@ -93,6 +93,13 @@ enum Verb {
     ReconcileItems {
         #[arg(long)]
         stale_hours: Option<u64>,
+        /// `ITEM=OWNER/REPO#N`, repeatable: a merged pull request the item's
+        /// boxes are judged from in place of its branch's own, read from
+        /// GitHub. A malformed value refuses `merged-invalid`; an item the
+        /// inventory holds no Verifying or container record of refuses
+        /// `merged-unjudged`.
+        #[arg(long, value_name = "ITEM=OWNER/REPO#N")]
+        merged: Vec<String>,
     },
     /// Re-observe every open intent by its recorded identity and complete or
     /// mark each, starting no new effect.
@@ -1523,12 +1530,16 @@ fn run(cli: Cli) -> Result<serde_json::Value> {
                 &schedule::SystemClock,
             )?)?
         }
-        Verb::ReconcileItems { stale_hours } => {
+        Verb::ReconcileItems {
+            stale_hours,
+            merged,
+        } => {
             let settings = resolve_settings(&flags)?;
             watch::tracker::reconcile_items::repository(&settings.roots.project)?;
             serde_json::to_value(watch::tracker::reconcile_items::run(
                 &settings,
                 stale_hours,
+                &merged,
                 None,
                 system_env()?.now_secs,
             )?)?

@@ -1748,16 +1748,12 @@ fn link_fixture(fixture: &str, at: &Path) {
 /// The environment a `watch run` in `dir` runs under, on `command`, with
 /// every duty's program named so the run is quiet on an empty fleet: the
 /// shipped mailbox client over the test directory, the alert pass off (with
-/// no token file it would print its credential line), the report judge as
-/// the fixture that answers "not due" (it reads its reply beside the path
-/// it is invoked as, so the row links it in), `gh` as the fixture that
-/// answers the credential ladder (`bin/gh`, its status from
+/// no token file it would print its credential line), `gh` as the fixture
+/// that answers the credential ladder (`bin/gh`, its status from
 /// `bin/gh.auth-status`, absent for 0, every other call refused) and the
 /// github skill under the directory's install layout, where the ladder is.
 /// `bin` is first on `PATH`, so a row's own fakes go there too.
 fn watch_env(command: &mut Command, dir: &Path) {
-    let report = dir.join("oversee-report");
-    link_fixture("oversee-report-fixture/oversee-report", &report);
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     link_fixture("gh-auth-fixture/gh", &bin.join("gh"));
@@ -1767,7 +1763,6 @@ fn watch_env(command: &mut Command, dir: &Path) {
         .env("PATH", tool_path(&[&bin]))
         .env("LANE_MAIL_CLI", lane_mail())
         .env("ORCH_SECURITY_ALERTS", "off")
-        .env("OVERSEE_WATCH_REPORT", &report)
         .current_dir(dir);
 }
 
@@ -1872,13 +1867,24 @@ fn a_watch_run_that_cannot_authenticate_refuses_before_any_claim() {
 
 /// An open intent the reconcile cannot complete or mark (a close whose lane
 /// record is gone) reaches the log. Through `watch run`, the fixture emits
-/// one `reconcile-refused` line and the intent stands unchanged.
+/// one `reconcile-refused` line and the intent stands unchanged; and the
+/// run registers the report duty, so a progress report written past the
+/// minutes cadence makes the report due.
 #[test]
 fn a_refused_intent_reaches_the_log_once_through_watch_run() {
     let dir = tempfile::tempdir().unwrap();
     let state_dir = std::fs::canonicalize(dir.path()).unwrap();
     let init = watch_cmd(&state_dir, &["state", "init", "--fleet"]);
     assert!(init.status.success(), "init: {}", stderr(&init));
+    let reports = state_dir.join("tmp/progress-reports");
+    std::fs::create_dir_all(&reports).unwrap();
+    let last = reports.join("01-01-00-00.md");
+    std::fs::write(&last, "the last report\n").unwrap();
+    let written = 1_769_700_000;
+    std::fs::File::open(&last)
+        .unwrap()
+        .set_modified(std::time::UNIX_EPOCH + secs(written))
+        .unwrap();
     let state = state_dir.join(FLEET_FILE_NAME);
     let gone = json!({
         "id": "close-owned-resources:KEN-GONE:1-1", "op": "close-owned-resources",
@@ -1893,8 +1899,12 @@ fn a_refused_intent_reaches_the_log_once_through_watch_run() {
     let paths = Paths::of(&state).unwrap();
     await_claim(&mut child, &paths);
     let deadline = Instant::now() + secs(10);
-    while watch::events::line_count(&paths.log).unwrap() == 0 {
-        assert!(Instant::now() < deadline, "the reconcile never reported");
+    while watch::events::line_count(&paths.log).unwrap() < 2 {
+        assert!(
+            Instant::now() < deadline,
+            "the reconcile and the report never reported: {:?}",
+            log_lines(&paths)
+        );
         std::thread::sleep(Duration::from_millis(20));
     }
     let stop = watch_cmd(&state_dir, &["watch", "stop", "--fleet"]);
@@ -1905,10 +1915,17 @@ fn a_refused_intent_reaches_the_log_once_through_watch_run() {
     );
     let out = child.wait_with_output().unwrap();
     assert!(out.status.success(), "{}", stderr(&out));
+    let mut logged = log_lines(&paths);
+    logged.sort();
     assert_eq!(
-        log_lines(&paths),
+        logged,
         vec![
             "EVENT reconcile-refused intent=close-owned-resources:KEN-GONE:1-1 refusal=lane-missing"
+                .to_owned(),
+            format!(
+                "EVENT report-due reason=minutes since={}",
+                agent_runtime::clock::iso_utc(written)
+            ),
         ]
     );
     let after: Value = serde_json::from_str(&std::fs::read_to_string(&state).unwrap()).unwrap();

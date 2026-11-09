@@ -1,9 +1,8 @@
-//! The owner's alert through the overseer mailbox (`overseer_owner_notice`;
-//! decision 130: one route, no new record or verb): a watch duty's one way
+//! The owner's alert through the overseer mailbox: a watch duty's one way
 //! to tell the owner of an overseer condition nobody in the session can act
 //! on. Two duties take it: the overseer duty for a context gap that stands
 //! (`watch::overseer`), the wake duty for an idle overseer holding the
-//! owner's unread mail that no wake reached (`watch::wake`, round 11).
+//! owner's unread mail that no wake reached (`watch::wake`).
 //!
 //! The turn is the same for both: the condition is said on the log on the
 //! pass that reads it, [`Word::Told`]; the owner is alerted on the next
@@ -16,9 +15,9 @@
 
 use std::time::Duration;
 
-use agent_runtime::host;
 use serde::{Deserialize, Serialize};
 
+use crate::mailbox::Mailbox;
 use crate::settings::Settings;
 
 /// The bound on the one send: the mailbox program takes its lock and
@@ -58,13 +57,13 @@ impl Word {
 }
 
 /// Send `text` to the owner: the words written to `file` under the state
-/// directory, the duty's own, and sent as `lane-mail notice --item overseer
-/// --to owner --file` through the one runner. `lane-mail` refusing the text
-/// as `owner-notice-repeated` is the owner already holding those words,
-/// which counts as sent; `Err` carries the channel and the cause.
+/// directory, the duty's own, and sent as the mailbox's owner notice. A
+/// notice the mailbox refuses as a repeat of one that landed is the owner
+/// already holding those words, which counts as sent; `Err` carries the
+/// channel and the cause.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the alert's notice file, the watch's own under its state directory, and the one send through the mailbox program via the one runner (decision 94 (b))"
+    reason = "the alert's notice file, the watch's own under its state directory"
 )]
 pub fn send(settings: &Settings, file: &str, text: &str) -> Result<(), String> {
     let notice = settings.state_dir.join(file);
@@ -72,28 +71,8 @@ pub fn send(settings: &Settings, file: &str, text: &str) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("channel=file {e}"))?;
     }
     std::fs::write(&notice, text).map_err(|e| format!("channel=file {e}"))?;
-    let path = notice.display().to_string();
-    let out = host::run_tagged(
-        "overseer-alert",
-        "lane-mail",
-        &settings.lane_mail_cli,
-        "notice",
-        &[
-            "notice", "--item", "overseer", "--to", "owner", "--file", &path,
-        ],
-        BOUND,
-    )
-    .map_err(|e| e.to_string())?;
-    if out.status.success() {
-        return Ok(());
-    }
-    let refusal = host::stderr_text(&out);
-    if refusal
-        .lines()
-        .next()
-        .is_some_and(|l| l.starts_with("lane-mail: owner-notice-repeated="))
-    {
-        return Ok(());
-    }
-    Err(format!("channel=owner {}", refusal.trim()))
+    Mailbox::new(settings.lane_mail_cli.clone())
+        .bounded(BOUND)
+        .owner_notice(&settings.roots.common, &notice)
+        .map_err(|refusal| format!("channel=owner {refusal}"))
 }
