@@ -19,6 +19,7 @@ import { markFor } from "@/lib/package-mark";
 import { scopeKey } from "@/lib/scope";
 import { placeRead } from "@/test/settings-read";
 import { openInventory, useEditorStore } from "./editor";
+import { retainedReads } from "./retained-reads";
 
 // The real module comes through, with only the commands stubbed: the
 // constants it exports are the numbers the code under test writes into a
@@ -115,6 +116,8 @@ describe("editor store", () => {
       confirming: false,
       manifestFile: null,
       savedSettings: {},
+      placesAt: {},
+      draftAt: null,
       dirty: false,
       manifestDirty: false,
       loading: false,
@@ -968,6 +971,51 @@ describe("editor store", () => {
     expect(commands.getScopeSettings).toHaveBeenCalledTimes(2);
   });
 
+  /// Coming back to the place the editor already holds reads nothing while
+  /// nothing has moved, reads again once a write or a rescan has, and never
+  /// trades edits in hand for that re-read: they keep the bases they were
+  /// made against, which is what lets a save over a moved file be refused.
+  it.each([
+    { name: "nothing moved", moved: false, dirty: false, reads: 0, base: "b1" },
+    { name: "moved, clean", moved: true, dirty: false, reads: 1, base: "b2" },
+    {
+      name: "moved, edits held",
+      moved: true,
+      dirty: true,
+      reads: 0,
+      base: "b1",
+    },
+  ])("reopens the same place: $name", async (row) => {
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b1", file: "kendex.toml" },
+    });
+    await useEditorStore.getState().openScope(VG);
+    if (row.dirty) useEditorStore.getState().editSetting(edit);
+    vi.mocked(commands.getManifest).mockResolvedValue({
+      status: "ok",
+      data: { manifest: null, base: "b2", file: "kendex.toml" },
+    });
+    vi.clearAllMocks();
+    if (row.moved) retainedReads.moved();
+
+    await useEditorStore.getState().openScope(VG);
+
+    const state = useEditorStore.getState();
+    expect(
+      {
+        reads: vi.mocked(commands.getManifest).mock.calls.length,
+        base: state.base,
+        edits: state.settingsEdits.length,
+      },
+      row.name,
+    ).toEqual({
+      reads: row.reads,
+      base: row.base,
+      edits: row.dirty ? 1 : 0,
+    });
+  });
+
   /// Reload is the discard: settings edits are the second draft the one
   /// Save bar carries, so they go with the manifest draft rather than
   /// surviving into a save the person thought they had thrown away.
@@ -1054,7 +1102,7 @@ describe("editor store", () => {
 // said. Left standing, the cached answer keeps the mark claiming a
 // customization nobody can see any more — the one thing the third state
 // ("unknown", never "stock") exists to prevent.
-describe("loadPlaces after a read stops working", () => {
+describe("ensurePlaces after a read stops working", () => {
   const VG: Scope = { scope: "project", root: "/work/vg" };
   const HYPR: Scope = { scope: "project", root: "/work/hyprtrade" };
   const CUSTOMIZED = {
@@ -1096,7 +1144,16 @@ describe("loadPlaces after a read stops working", () => {
       ),
     );
 
-  // Both records come off the store the read filled: loadPlaces reads a
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(commands.getScopeSettings).mockResolvedValue({
+      status: "ok",
+      data: settings(),
+    });
+    useEditorStore.setState({ saved: {}, savedSettings: {}, placesAt: {} });
+  });
+
+  // Both records come off the store the read filled: ensurePlaces reads a
   // place's manifest and its settings together, and a mark drawn from one
   // of them alone would answer unknown for every place either way.
   const mark = () => {
@@ -1106,11 +1163,12 @@ describe("loadPlaces after a read stops working", () => {
 
   it("drops the place it can no longer read instead of keeping its last answer", async () => {
     answer(true);
-    await useEditorStore.getState().loadPlaces([VG, HYPR]);
+    await useEditorStore.getState().ensurePlaces([VG, HYPR]);
     expect(mark()?.label).toBe("Customized in vg");
 
     answer(false);
-    await useEditorStore.getState().loadPlaces([VG, HYPR]);
+    retainedReads.moved();
+    await useEditorStore.getState().ensurePlaces([VG, HYPR]);
     expect(useEditorStore.getState().saved["/work/vg"]).toBeUndefined();
     expect(mark()).toBeNull();
   });
@@ -1118,12 +1176,56 @@ describe("loadPlaces after a read stops working", () => {
   it("leaves the places it was not asked about alone", async () => {
     useEditorStore.setState({ saved: { elsewhere: emptyDraft() } });
     answer(true);
-    await useEditorStore.getState().loadPlaces([VG]);
+    await useEditorStore.getState().ensurePlaces([VG]);
     expect(useEditorStore.getState().saved.elsewhere).toEqual(emptyDraft());
+  });
+
+  // A place read and still current is not asked again; one whose answer a
+  // write or a rescan made void is, and so is a half that failed. A read
+  // that was out when the change landed answers for before it, so it does
+  // not make the place current either.
+  it.each([
+    { name: "nothing moved", act: "none", reads: 0 },
+    { name: "moved since the read", act: "move", reads: 1 },
+    { name: "settings half failed", act: "fail-settings", reads: 1 },
+    { name: "moved while the read was out", act: "move-in-flight", reads: 1 },
+  ])("asks again only where the answer is gone: $name", async (row) => {
+    answer(true);
+    if (row.act === "fail-settings")
+      vi.mocked(commands.getScopeSettings).mockResolvedValueOnce({
+        status: "error",
+        error: "permission denied",
+      });
+    if (row.act === "move-in-flight") {
+      let land: () => void = () => {};
+      vi.mocked(commands.getManifest).mockReturnValueOnce(
+        new Promise((resolve) => {
+          land = () =>
+            resolve({
+              status: "ok",
+              data: { manifest: null, base: null, file: "kendex.toml" },
+            });
+        }),
+      );
+      const out = useEditorStore.getState().ensurePlaces([VG]);
+      retainedReads.moved();
+      land();
+      await out;
+    } else {
+      await useEditorStore.getState().ensurePlaces([VG]);
+    }
+    if (row.act === "move") retainedReads.moved();
+    vi.mocked(commands.getManifest).mockClear();
+
+    await useEditorStore.getState().ensurePlaces([VG]);
+
+    expect(vi.mocked(commands.getManifest).mock.calls.length, row.name).toBe(
+      row.reads,
+    );
   });
 });
 
-// Switching a place chip goes through setScope/load, not loadPlaces. A
+// Switching a place chip goes through setScope/load, not ensurePlaces. A
 // cache that is only written on success keeps the last place's answer,
 // and the mark and the Skills section then read it as this place's.
 describe("a place the editor switches to and cannot read", () => {

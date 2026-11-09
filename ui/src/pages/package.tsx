@@ -154,6 +154,7 @@ export function PackagePage() {
     versions,
     reads,
     load: reload,
+    ensure,
   } = usePackageData(builtin ? null : ref);
   const diff = usePackageDiff(
     ref,
@@ -458,13 +459,14 @@ export function PackagePage() {
         overview={overview}
         files={
           <PackageFiles
-            scope={ref.scope}
-            kind={group.kind}
-            name={group.name}
+            reference={ref}
             files={files}
             read={reads.files}
+            readme={readme}
+            readmeRead={reads.readme}
             retryRunning={reads.reading}
             onRetry={reload}
+            ensure={ensure}
           />
         }
       />
