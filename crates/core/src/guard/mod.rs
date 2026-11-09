@@ -235,9 +235,20 @@ pub fn uninstall(dir: &Path) -> Result<GuardReport> {
     Ok(report)
 }
 
-/// Whether somebody standing at this repository ran the installer.
+/// Local evidence of hook adoption, without reading the package's grammar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalArming {
+    /// Neither the helper nor kendex's local arming record is present.
+    NotAdopted,
+    /// kendex recorded adoption, but the helper is now absent.
+    MissingHelper,
+    /// A local helper licenses asking the package for its verdict.
+    HelperPresent,
+}
+
+/// What local state establishes about adoption and the licence to check.
 ///
-/// The license to run the package's scripts, and the whole of it. git
+/// Only `HelperPresent` licenses the existing unattended hook check. git
 /// clones no hook files and no helper, so anything the installer left in
 /// the hooks directory got there from a local act by whoever owns this
 /// machine — while every byte under the work tree arrived with a fetch and
@@ -258,8 +269,17 @@ pub fn uninstall(dir: &Path) -> Result<GuardReport> {
 /// answered `false` alongside a plain absence here, and the caller turned
 /// that into a positive verdict about a repository whose commits were
 /// gated perfectly well.
-pub fn locally_armed(repo: &Repo) -> Result<bool> {
-    crate::fs::exists(&repo.common_dir.join("hooks").join(HELPER))
+pub fn locally_armed(repo: &Repo) -> Result<LocalArming> {
+    if crate::fs::exists(&repo.common_dir.join("hooks").join(HELPER))? {
+        return Ok(LocalArming::HelperPresent);
+    }
+    // The helper can disappear after adoption. The existing shared arming
+    // record preserves that distinction without licensing a package run
+    // where the helper-based consent check would previously have refused.
+    match crate::repo_effects::armed::recorded(record_dir(repo), SKILL)? {
+        true => Ok(LocalArming::MissingHelper),
+        false => Ok(LocalArming::NotAdopted),
+    }
 }
 
 /// Whether any copy of the package's installer is where this repository
