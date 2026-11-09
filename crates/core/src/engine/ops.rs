@@ -175,6 +175,9 @@ pub struct PreparedRemoval {
     /// The catalogs of the edited manifest that this removal could not
     /// read, as [`kept_removed`] decided on them.
     unread: BTreeSet<String>,
+    /// Whether the removal writes anything to `[suppressed]`, which the
+    /// note on an unread catalog claims only when it does.
+    records: bool,
 }
 
 impl PreparedRemoval {
@@ -209,7 +212,9 @@ impl PreparedRemoval {
         let mut report = plan_scope(env, &self.scope, &self.manifest, &self.lock, options)?;
         match self.disown {
             true => {
-                report.notes.extend(unreadable_origins(&self.unread));
+                report
+                    .notes
+                    .extend(unreadable_origins(&self.unread, self.records));
                 // An unchanged manifest is no removal. Creating one in a
                 // previously absent scope would declare a new install.
                 if self.manifest != self.original {
@@ -312,6 +317,7 @@ fn prepare_removal(
         }
     }
     let (kept, unread) = kept_removed(env, scope, &manifest, &lock, names, &options);
+    let records = !kept.is_empty();
     for (kind, name) in kept {
         manifest.suppress(kind, &name);
     }
@@ -324,6 +330,7 @@ fn prepare_removal(
         options,
         disown,
         unread,
+        records,
     })
 }
 
@@ -529,10 +536,14 @@ fn still_derived(
 
 /// The catalogs of the edited manifest this removal could not read: each
 /// one it declares an item or a set from, and each enabled subscription,
-/// where that catalog does not resolve, or [`still_derived`] found it
-/// short (`unreadable`). Any of them may hold what keeps a requirer, so
-/// one unread is enough for [`recorded_edges`] to fall back. The local and
-/// in-place catalogs count like any subscription. A subscription switched
+/// where that catalog does not resolve, at its own revision or at a `rev`
+/// an item or a set declares, or [`still_derived`] found it short
+/// (`unreadable`). The walk reads a pinned declaration at its `rev` and
+/// passes over one the mirror has not fetched without marking it short,
+/// so a catalog that reads at its own revision is still unread there.
+/// Any of them may hold what keeps a requirer, so one unread is enough for
+/// [`recorded_edges`] to fall back. The local and in-place catalogs count
+/// like any subscription. A subscription switched
 /// off that a declaration or a set still names counts and is unread:
 /// switching it off keeps its records, and switching it back on brings
 /// back what its items require. One that nothing names is read by
@@ -554,14 +565,27 @@ fn unread_catalogs(
             .filter(|(_, decl)| decl.enabled)
             .map(|(name, _)| name.as_str()),
     );
+    let pins: BTreeSet<(&str, &str)> = ItemKind::ALL
+        .iter()
+        .flat_map(|kind| manifest.declared(*kind).values())
+        .chain(manifest.bundles.values())
+        .filter(|decl| decl.source != manifest::BUILTIN_SOURCE_NAME)
+        .filter_map(|decl| Some((decl.source.as_str(), decl.rev.as_deref()?)))
+        .collect();
+    let reads = |source: &str, rev: Option<&str>| {
+        matches!(
+            crate::source::resolve_at(env, scope, source, manifest, rev),
+            Ok(crate::source::SourceState::Ready(_))
+        )
+    };
     catalogs
         .into_iter()
         .filter(|source| {
             unreadable.contains(*source)
-                || !matches!(
-                    crate::source::resolve(env, scope, source, manifest),
-                    Ok(crate::source::SourceState::Ready(_))
-                )
+                || !reads(source, None)
+                || pins
+                    .iter()
+                    .any(|(pinned, rev)| pinned == source && !reads(source, Some(rev)))
         })
         .map(str::to_owned)
         .collect()
@@ -569,15 +593,22 @@ fn unread_catalogs(
 
 /// What else still wants an item can be written in any catalog the
 /// manifest reads, so an unread one means the preview cannot show the
-/// whole consequence of the removal.
-/// The removal itself stands either way — the record already says what has
-/// to stay removed.
-fn unreadable_origins(unread: &BTreeSet<String>) -> Vec<String> {
+/// whole consequence of the removal. Where the record holds an edge for
+/// it, the removal writes what has to stay removed (`records`); where it
+/// holds none, nothing is written, and the note says so rather than claim
+/// a record.
+fn unreadable_origins(unread: &BTreeSet<String>, records: bool) -> Vec<String> {
+    let consequence = match records {
+        true => "the removal stands, and what has to stay removed is recorded",
+        false => {
+            "nothing is recorded to keep it removed, so whatever in that catalog still wants it can bring it back"
+        }
+    };
     unread
         .iter()
         .map(|source| {
             format!(
-                "the catalog '{source}' cannot be read right now, so this preview cannot show everything that still wants what is going — the removal stands, and what has to stay removed is recorded"
+                "the catalog '{source}' cannot be read right now, so this preview cannot show everything that still wants what is going — {consequence}"
             )
         })
         .collect()

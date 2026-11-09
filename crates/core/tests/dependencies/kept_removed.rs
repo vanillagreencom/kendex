@@ -672,6 +672,13 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             .map(|(kind, name)| (*kind, (*name).to_owned()))
             .collect();
             assert_eq!(suppressed, expected, "{what}");
+            for note in &unread {
+                assert_eq!(
+                    note.contains(NOTHING_RECORDED),
+                    suppressed.is_empty(),
+                    "{what}: {note}"
+                );
+            }
 
             match mode {
                 None => {}
@@ -690,6 +697,54 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             assert!(back.is_empty(), "{what}: a refresh brought back {back:?}");
         }
     }
+}
+
+/// What the note on an unread catalog says where the removal writes no
+/// `[suppressed]` line. The note is the preview a person reads before the
+/// removal, and claiming a record there that the removal does not write is
+/// the defect this guards.
+const NOTHING_RECORDED: &str = "nothing is recorded to keep it removed";
+
+/// Cat switched off before a removal, while guards comes from other: the
+/// switch-off apply rewrites guards' record without the edge of judge,
+/// which cat's set carries, so the removal has no edge to keep guards
+/// removed by and writes nothing. The note says nothing was recorded.
+/// What switching cat back on then brings back is KEN-5017's.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_removal_that_records_nothing_while_a_catalog_is_off_says_so() {
+    let f = hook_fixture(GUARDS_FROM_OTHER);
+    skill(&f.source, "guards", "");
+    for (name, body) in [("judge", JUDGE), ("recorder", RECORDER)] {
+        fs::write(f.source.join(format!("hooks/{name}.sh")), body).unwrap();
+    }
+    fs::write(
+        f.source.join("kendex.toml"),
+        "is_source_catalog = true\n\n[bundles.set]\ndescription = \"a set\"\nhooks = [\"judge\"]\n",
+    )
+    .unwrap();
+    let other = f.source.parent().unwrap().join("other");
+    skill(&other, "guards", "");
+    fs::write(other.join("kendex.toml"), "is_source_catalog = true\n").unwrap();
+    declare_two(&f, &other, GUARDS_FROM_OTHER);
+    apply_now(&f);
+    switch(&f, false);
+    let guards: BTreeSet<String> = lock_of(&f).entries["skill:guards:claude"]
+        .reasons
+        .iter()
+        .map(reason)
+        .collect();
+    assert_eq!(guards, BTreeSet::from(["requested".to_owned()]));
+
+    let report = ops::remove(&f.env, &f.scope, &["guards".to_owned()], None, false).unwrap();
+    assert_eq!(report.disowned.as_ref().unwrap().suppressed, []);
+    let unread: Vec<&String> = report
+        .notes
+        .iter()
+        .filter(|note| note.contains("cannot be read"))
+        .collect();
+    assert_eq!(unread.len(), 1, "{:?}", report.notes);
+    assert!(unread[0].contains(NOTHING_RECORDED), "{}", unread[0]);
 }
 
 /// Cat switched on or off the way `kendex source enable` and `disable` do,

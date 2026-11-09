@@ -552,6 +552,7 @@ mod added;
 mod assigned;
 mod batched_update;
 mod hook_requires;
+mod removal;
 mod sets;
 mod single_update;
 mod validate;
