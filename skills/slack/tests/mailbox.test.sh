@@ -8,7 +8,7 @@ set -uo pipefail
 # The driver imports the production runner. Its parent bounds even a pump
 # that never yields; the target's completion marker proves excess was drained.
 cat > "$SK_TMP/runner-check.py" <<'PY'
-import json, os, pathlib, signal, socket, subprocess, sys, tracemalloc
+import json, os, pathlib, signal, socket, subprocess, sys, threading, time, tracemalloc
 sys.path.insert(0, sys.argv[1])
 from mailbox import LaneMail, RunTimeout, run_bounded
 import mailbox
@@ -78,13 +78,14 @@ elif row == "contracts":
     # The configured command's descendant ignores TERM and holds both pipes
     # after its leader exits. Its connection closes only on process exit;
     # a one-byte release lets the test clean up a surviving control safely.
-    program = '''import os, signal, socket, sys
+    program = '''import os, signal, socket, sys, time
 if os.fork() == 0:
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    time.sleep(float(sys.argv[2]))
     hold = socket.create_connection(('127.0.0.1', int(sys.argv[1])))
-    hold.sendall(b'R')
     os.write(1, b'descendant-ready\\n')
     os.write(2, b'descendant-ready\\n')
+    hold.sendall(b'R')
     hold.recv(1)
     os._exit(0)
 '''
@@ -92,17 +93,45 @@ if os.fork() == 0:
     with socket.socket() as listener:
         listener.bind(('127.0.0.1', 0))
         listener.listen()
-        listener.settimeout(1)
+        listener.settimeout(max(0, float(sys.argv[4]) - time.monotonic()))
+        original_clock = time.monotonic
+        started, ready = original_clock(), threading.Event()
+        hold, readiness_error = None, None
+        def receive_ready():
+            global hold, readiness_error
+            try:
+                hold = listener.accept()[0]
+                hold.settimeout(max(0, float(sys.argv[4]) - original_clock()))
+                assert hold.recv(1) == b'R', "descendant readiness"
+            except BaseException as error:
+                readiness_error = error
+            finally:
+                ready.set()
+        # The pump must finish writing the request before the target can
+        # acknowledge readiness. Keep that wait outside the pump.
+        mailbox.time.monotonic = lambda: original_clock() if ready.is_set() else started
+        receiver = threading.Thread(target=receive_ready)
+        receiver.start()
         timeout_error = None
         try:
-            run_bounded([sys.executable,"-c",program,str(listener.getsockname()[1])],root,.2,command_output_limit=C)
+            # Exceed a 64 KiB pipe even with a small inherited environment.
+            env = dict(os.environ, RUNNER_REQUEST_PADDING="z" * 100000)
+            run_bounded([sys.executable,"-c",program,str(listener.getsockname()[1]),sys.argv[5]],root,.2,env=env,command_output_limit=C)
         except RunTimeout as error:
             timeout_error = error
-        with listener.accept()[0] as hold:
+        finally:
+            mailbox.time.monotonic = original_clock
+            receiver.join()
+        if readiness_error is not None:
+            if hold is not None:
+                hold.close()
+            if isinstance(readiness_error, socket.timeout):
+                sys.exit("runner-check: readiness-timeout")
+            raise readiness_error
+        with hold:
             hold.settimeout(1)
             ended = False
             try:
-                assert hold.recv(1) == b'R', "descendant readiness"
                 assert timeout_error is not None, "descendant pipe hold never timed out"
                 assert timeout_error.output == timeout_error.stderr == 'descendant-ready\n'
                 try:
@@ -138,10 +167,10 @@ elif row == "deadline":
     print("contracts: passed")
 PY
 runner_check() {
-  python3 - "$SK_TMP/runner-check.py" "${SK_BIN%/*}/lib" "$SK_TMP/runner-${2:-$1}" "$1" <<'PY'
-import os, pathlib, signal, subprocess, sys
+  python3 - "$SK_TMP/runner-check.py" "${SK_BIN%/*}/lib" "$SK_TMP/runner-${2:-$1}" "$1" "${3:-0}" <<'PY'
+import os, pathlib, signal, subprocess, sys, time
 pathlib.Path(sys.argv[3]).mkdir(exist_ok=True)
-proc = subprocess.Popen([sys.executable, *sys.argv[1:]], start_new_session=True)
+proc = subprocess.Popen([sys.executable, *sys.argv[1:5], str(time.monotonic() + 20), sys.argv[5]], start_new_session=True)
 try:
     sys.exit(proc.wait(timeout=20))
 except subprocess.TimeoutExpired:
@@ -154,6 +183,41 @@ runner_check capture
 assert_eq "$?" 0 'both streams stay within the traced capture envelope while the producer completes'
 runner_check contracts
 assert_eq "$?" 0 'runner preserves target inputs, direct receipts and exit evidence'
+runner_check contracts slow-start 1.1
+assert_eq "$?" 0 'runner cleanup waits for a descendant that starts beyond the old accept window'
+python3 - "$SK_TMP/runner-check.py" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+old = 'listener.settimeout(max(0, float(sys.argv[4]) - time.monotonic()))'
+assert s.count(old) == 1
+p.with_name('runner-check-ready.py').write_text(s)
+p.write_text(s.replace(old, 'listener.settimeout(1)'))
+PY
+runner_check contracts slow-control 1.1 > "$SK_TMP/slow-control.out" 2>&1
+assert_eq "$?" 1 'control: the fixed accept window rejects a slow descendant'
+assert_has "$(cat "$SK_TMP/slow-control.out")" 'runner-check: readiness-timeout' 'the slow-start control reaches the accept deadline'
+python3 - "$SK_TMP/runner-check.py" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+s = p.read_text()
+old = '        receiver.start()\n'
+assert s.count(old) == 1
+new = '''        original_read = mailbox.os.read
+        def blocking_read(fd, n):
+            value = original_read(fd, n)
+            if value[:1] == b'P':
+                receiver.start()
+                receiver.join()
+            return value
+        mailbox.os.read = blocking_read
+'''
+p.write_text(s.replace(old, new))
+PY
+runner_check contracts backpressure-control > "$SK_TMP/backpressure-control.out" 2>&1
+assert_eq "$?" 1 'control: waiting inside the pump prevents a large request from reaching the target'
+assert_has "$(cat "$SK_TMP/backpressure-control.out")" 'runner-check: readiness-timeout' 'the backpressure control reaches the readiness deadline'
+mv "$SK_TMP/runner-check-ready.py" "$SK_TMP/runner-check.py"
 runner_check deadline
 assert_eq "$?" 0 'bootstrap setup consumes the original execution deadline'
 sk_mutant cleanup-no-kill mailbox.py 'os\.killpg\(proc\.pid, sig\)' 'os.killpg(proc.pid, sig) if sig != signal.SIGKILL else None'
