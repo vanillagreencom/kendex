@@ -28,7 +28,7 @@ use input::input_for;
 /// key, beside the rule-set and discovery-table versions and the accepted
 /// findings' digest. Bump it when what the record holds, or how the input
 /// is read into it, changes.
-const CACHE_FORMAT: u32 = 6;
+const CACHE_FORMAT: u32 = 7;
 
 /// What one scoring pass produced, exactly as it is cached. The advisory
 /// payload flattens into the record, so the cached JSON keeps `findings`,
