@@ -306,18 +306,45 @@ else
 fi
 
 # Discovery asks the writer's marker owner before it reports a path. A
-# hand-written file must not enter a caller's commit set merely because the
-# current manifest would generate that pathname.
+# hand-written file or region must not enter a caller's commit set merely
+# because the current manifest would generate that pathname. kendex reads
+# these lines (`crates/core/src/bot_instructions.rs`): released engines from
+# `--dry-run`, later ones from `--discover`. The fixture's `AGENTS.md` region
+# is hand-written.
 repo="$(bi_new_repo discovery-owned)"
 mkdir -p "$repo/.github"
 printf 'the repository owns this\n' > "$repo/.github/copilot-instructions.md"
-bi_run render --dry-run --repo "$repo"
-if [ "$bi_status" -eq 0 ] \
-   && ! printf '%s\n' "$bi_out" | grep -qF 'would write .github/copilot-instructions.md' \
-   && printf '%s\n' "$bi_out" | grep -qF 'would write .coderabbit.yaml'; then
-  ok 'dry-run omits a user-owned output and still reports owned outputs'
+bi_commit "$repo"
+discovery_lists() { # LAUNCHER FLAG
+  local out status
+  out="$("$1" render "$2" --repo "$repo" 2>&1)"
+  status=$?
+  if [ "$status" -ne 0 ]; then printf 'exit %s: %s' "$status" "$out"
+  elif printf '%s\n' "$out" | grep -qF 'would write .github/copilot-instructions.md'; then
+    printf 'listed the unowned file'
+  elif printf '%s\n' "$out" | grep -q '^would write region '; then
+    printf 'listed the unowned region'
+  elif ! printf '%s\n' "$out" | grep -qxF 'would write .coderabbit.yaml'; then
+    printf 'omitted the owned output: %s' "$out"
+  elif [ -n "$(git -C "$repo" status --porcelain)" ]; then
+    printf 'changed the tree: %s' "$(git -C "$repo" status --porcelain | tr '\n' ' ')"
+  fi
+}
+for flag in --dry-run --discover; do
+  why="$(discovery_lists "$BI" "$flag")"
+  if [ -z "$why" ]; then ok "render $flag lists owned outputs only and writes nothing"
+  else bad "render $flag lists owned outputs only and writes nothing" "$why"; fi
+done
+# Control: without the ownership filter the unowned file is listed.
+unfiltered="$(bi_mutant discovery-unfiltered scripts/lib/verbs.py \
+  "        paths = [path for path in paths if writer.inspect(root, path)[1]]
+" "        pass
+")" || exit 1
+why="$(discovery_lists "$unfiltered" --discover)"
+if [ "$why" = 'listed the unowned file' ]; then
+  ok 'control: discovery without the ownership filter lists the unowned file'
 else
-  bad 'dry-run omits a user-owned output and still reports owned outputs' "$bi_out"
+  bad 'control: discovery without the ownership filter lists the unowned file' "${why:-passed}"
 fi
 
 # Git can track a directory symlink as an output ancestor. The canonical
