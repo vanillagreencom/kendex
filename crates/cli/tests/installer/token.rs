@@ -307,7 +307,10 @@ fn token_rows() -> Vec<(Vec<&'static str>, Vec<Sent>)> {
 /// download go to api.github.com, which counts it. Nothing else gets it: not
 /// the icons on raw.githubusercontent.com, and not the signed storage host
 /// an asset redirects to, which curl reaches without the header unless
-/// `--location-trusted` keeps it.
+/// `--location-trusted` keeps it. A request carrying the token opens with
+/// `-q`, which curl reads only as its first argument, so a caller's
+/// `.curlrc` can neither add `location-trusted` nor print the header with
+/// `verbose`.
 #[test]
 fn a_token_goes_to_github_alone() {
     for (args, expected) in token_rows() {
@@ -332,6 +335,10 @@ fn a_token_goes_to_github_alone() {
             if request.auth {
                 assert!(
                     ["github.com", "api.github.com"].contains(&host(&request.url)),
+                    "{args:?}: {request:?}"
+                );
+                assert!(
+                    request.args.starts_with("-q -K - "),
                     "{args:?}: {request:?}"
                 );
             }
@@ -498,23 +505,35 @@ fn a_failing_install_never_prints_the_token() {
     }
 }
 
-/// The controls for the rows above, each a copy of `install.sh` with one
-/// rule taken out. Reading no token is the installer before this option:
-/// the token row sees not one request carry it. A refusal that names the
-/// token turns the leak row red.
+/// Which check a copy of `install.sh` with one rule taken out turns red.
+enum Breaks {
+    /// The token row: not one request carries the token.
+    Carried,
+    /// The leak row: the token reaches stderr.
+    Printed,
+    /// The token row: a request carrying the token reads the caller's
+    /// curl config, because `-q` is not its first argument.
+    Defaults,
+}
+
+/// The controls for the rows above. Reading no token is the installer
+/// before this option.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn each_token_rule_breaks_its_own_check() {
     let source = std::fs::read_to_string(install_sh()).unwrap();
-    for (from, to) in [
+    for (from, to, breaks) in [
         (
             "github_token=\"${KENDEX_GITHUB_TOKEN:-}\"\n",
             "github_token=\"\"\n",
+            Breaks::Carried,
         ),
         (
             "message github-token-rejected \"$url\"",
             "message github-token-rejected \"$url $github_token\"",
+            Breaks::Printed,
         ),
+        ("| curl -q -K - ", "| curl -K - ", Breaks::Defaults),
     ] {
         assert_eq!(
             source.matches(from).count(),
@@ -524,16 +543,32 @@ fn each_token_rule_breaks_its_own_check() {
         let dir = tempfile::tempdir().unwrap();
         let script = rooted(&dir).join("install-mutant.sh");
         std::fs::write(&script, source.replace(from, to)).unwrap();
-        if to.contains("$github_token") {
-            let run = run(&script, &[], Some(TOKEN), Some(401));
-            assert!(run.stderr().contains(TOKEN), "{from:?}: {}", run.report());
-        } else {
-            let run = run(&script, &[], Some(TOKEN), None);
-            assert!(
-                run.requests.iter().all(|request| !request.auth),
-                "{from:?}: {}",
-                run.report()
-            );
+        match breaks {
+            Breaks::Carried => {
+                let run = run(&script, &[], Some(TOKEN), None);
+                assert!(
+                    run.requests.iter().all(|request| !request.auth),
+                    "{from:?}: {}",
+                    run.report()
+                );
+            }
+            Breaks::Printed => {
+                let run = run(&script, &[], Some(TOKEN), Some(401));
+                assert!(run.stderr().contains(TOKEN), "{from:?}: {}", run.report());
+            }
+            Breaks::Defaults => {
+                let run = run(&script, &[], Some(TOKEN), None);
+                let carried: Vec<&Request> =
+                    run.requests.iter().filter(|request| request.auth).collect();
+                assert!(
+                    !carried.is_empty()
+                        && carried
+                            .iter()
+                            .all(|request| !request.args.starts_with("-q ")),
+                    "{from:?}: {}",
+                    run.report()
+                );
+            }
         }
     }
 }

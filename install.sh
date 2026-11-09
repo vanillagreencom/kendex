@@ -103,13 +103,15 @@ trap 'rm -rf "$work"' EXIT
 # arguments go to curl. curl drops the header on a redirect to another host,
 # which is where an asset download goes next: a signed storage address that
 # carries its own authorization. --location-trusted would send the token
-# there too, and is never passed. A 401 is the token, not the release, and
-# stops the install by name rather than reading as a missing asset.
+# there too, and is never passed. -q, which curl honours only as its first
+# argument, skips the caller's .curlrc, where location-trusted or verbose
+# would send the token on or print it. A 401 is the token, not the release,
+# and stops the install by name rather than reading as a missing asset.
 github_api() {
   local url="$1" out="$2" status rc
   shift 2
   status="$(printf 'header = "Authorization: Bearer %s"\n' "$github_token" \
-    | curl -K - -fL --proto '=https' -o "$out" -w '%{http_code}' "$@" "$url")" && return 0
+    | curl -q -K - -fL --proto '=https' -o "$out" -w '%{http_code}' "$@" "$url")" && return 0
   rc=$?
   [ "$status" != 401 ] || {
     message github-token-rejected "$url" "GitHub refused KENDEX_GITHUB_TOKEN." >&2
