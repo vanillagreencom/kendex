@@ -125,6 +125,8 @@ if os.fork() == 0:
         if readiness_error is not None:
             if hold is not None:
                 hold.close()
+            if isinstance(readiness_error, socket.timeout):
+                sys.exit("runner-check: readiness-timeout")
             raise readiness_error
         with hold:
             hold.settimeout(1)
@@ -194,7 +196,7 @@ p.write_text(s.replace(old, 'listener.settimeout(1)'))
 PY
 runner_check contracts slow-control 1.1 > "$SK_TMP/slow-control.out" 2>&1
 assert_eq "$?" 1 'control: the fixed accept window rejects a slow descendant'
-assert_has "$(cat "$SK_TMP/slow-control.out")" 'TimeoutError: timed out' 'the slow-start control reaches the accept deadline'
+assert_has "$(cat "$SK_TMP/slow-control.out")" 'runner-check: readiness-timeout' 'the slow-start control reaches the accept deadline'
 python3 - "$SK_TMP/runner-check.py" <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
@@ -214,7 +216,7 @@ p.write_text(s.replace(old, new))
 PY
 runner_check contracts backpressure-control > "$SK_TMP/backpressure-control.out" 2>&1
 assert_eq "$?" 1 'control: waiting inside the pump prevents a large request from reaching the target'
-assert_has "$(cat "$SK_TMP/backpressure-control.out")" 'TimeoutError: timed out' 'the backpressure control reaches the readiness deadline'
+assert_has "$(cat "$SK_TMP/backpressure-control.out")" 'runner-check: readiness-timeout' 'the backpressure control reaches the readiness deadline'
 mv "$SK_TMP/runner-check-ready.py" "$SK_TMP/runner-check.py"
 runner_check deadline
 assert_eq "$?" 0 'bootstrap setup consumes the original execution deadline'
