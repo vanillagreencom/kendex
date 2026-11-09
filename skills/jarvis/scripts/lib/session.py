@@ -1296,16 +1296,83 @@ exec "$3" -c 'import json, os, sys; print(json.dumps([sys.argv[1], os.environ["J
         if args.get:
             value = current
         else:
+            # A credential save's rule (crates/core/src/settings_secret/
+            # destination.rs): git must not carry the private file. A new
+            # file gets the exact ignore line first; an existing one refuses.
+            cause = "private-file-unwritable"
+            path = (home / private).resolve()
+            destinations = [(home, os.path.relpath(home / private, home))]
+            # Worktree homes share private files through a final file link.
+            # Its target's checkout determines whether the written bytes leak.
+            if path != home / private:
+                destinations.append((path.parent, path.name))
+            redirects = home_module().GIT_REDIRECTS
+            env = {key: value for key, value in os.environ.items() if key not in redirects}
+            env["LC_ALL"] = "C"
+            for directory, named in destinations:
+                git = {"cwd": directory, "capture_output": True, "timeout": CALL_SECONDS, "env": env}
+                check = ["git", "check-ignore", "-q", "--", named]
+                cause = "git-unreadable"
+                inside = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], **git)
+                if inside.returncode == 0:
+                    listed = subprocess.run(["git", "ls-files", "-z", "--", named], **git)
+                    ignored = subprocess.run(check, **git).returncode
+                    if listed.returncode or ignored not in (0, 1):
+                        raise Refusal(cause)
+                    pattern = "/" + re.sub(r"([*?\[\]])", r"\\\1", named)
+                    pattern = pattern[:-1] + "\\ " if pattern.endswith(" ") else pattern
+                    if listed.stdout:
+                        raise Refusal("private-file-tracked", "run git rm --cached -- " + named + " and commit that")
+                    if ignored and (directory / named).exists():
+                        raise Refusal("private-file-unignored", "add " + pattern + " to .gitignore")
+                    if ignored:
+                        cause = "gitignore-unwritable"
+                        ignore = (directory / ".gitignore").resolve()
+                        existed = ignore.exists()
+                        text = ignore.read_bytes() if existed else b""
+                        with open(ignore, "ab") as stream:
+                            stream.write((b"\n" if text and not text.endswith(b"\n") else b"") + pattern.encode() + b"\n")
+                        try:
+                            # Asked again before the write, as the credential save
+                            # does: a deeper .gitignore's ! rule, or a .gitignore
+                            # git will not read, leaves the line without effect.
+                            cause = "git-unreadable"
+                            ignored = subprocess.run(check, **git).returncode
+                            if ignored not in (0, 1):
+                                raise Refusal(cause)
+                            if ignored:
+                                raise Refusal("private-file-unignored", "make git ignore " + named
+                                              + " (git check-ignore -v -n -- " + named + " names the rule that decides it)")
+                        except (Refusal, OSError, subprocess.SubprocessError):
+                            # A failed check must not leave another ignore line
+                            # for each retry, as the credential save rolls back.
+                            try:
+                                if existed:
+                                    os.truncate(ignore, len(text))
+                                else:
+                                    ignore.unlink()
+                            except OSError:
+                                raise Refusal("gitignore-unwritable")
+                            raise
+                # Only Git's normal discovery failures mean there is no repository;
+                # a dangling gitdir instead reports "not a git repository: <dir>".
+                elif not any(phrase in inside.stderr for phrase in
+                             (b"not a git repository (or any ", b"not a working tree")):
+                    raise Refusal(cause)
             cause = "private-file-unwritable"
             # A final assignment preserves arbitrary Bash, including multiline
             # secrets. Follow the loader's supported file symlink layout.
-            path = (home / private).resolve()
             path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
             with os.fdopen(os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600), "ab") as stream:
                 stream.write(("\nJARVIS_MAIN_HOST=" + shlex.quote(value) + "\n").encode("utf-8"))
         print(json.dumps({"JARVIS_MAIN_HOST": value}))
         return 0
-    except (Refusal, OSError, ValueError, subprocess.SubprocessError):
+    except Refusal as refusal:
+        print("jarvis-session: main-host=refused cause=" + refusal.reason, file=sys.stderr)
+        if refusal.detail:
+            print("jarvis-session: fix: " + refusal.detail + ", then run main-host again", file=sys.stderr)
+        return 2
+    except (OSError, ValueError, subprocess.SubprocessError):
         print("jarvis-session: main-host=refused cause=" + cause, file=sys.stderr)
         return 2
 

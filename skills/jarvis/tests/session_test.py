@@ -357,6 +357,135 @@ class MainHostContract(unittest.TestCase):
         result = self.command("main-host", "--get", code=2)
         self.assertNotIn("private-secret", result.stderr + result.stdout)
 
+    def ignored(self):
+        return subprocess.run(["git", "check-ignore", "-q", ".env.local"], cwd=self.home,
+                              env=self.env, capture_output=True).returncode == 0
+
+    def test_main_host_set_ignores_new_private_file(self):
+        # A credential save's rule: a new private file gets its exact ignore line.
+        subprocess.run(["git", "init", "-q"], cwd=self.home, env=self.env, check=True)
+        (self.home / ".gitignore").write_text("/tmp/")
+        self.assertFalse(self.ignored())
+        self.assertEqual(self.value("--set", "host:/main"), "host:/main")
+        self.assertTrue(self.ignored())
+        self.assertEqual((self.home / ".gitignore").read_text(), "/tmp/\n/.env.local\n")
+
+    def test_main_host_set_refuses_unignored_private_file(self):
+        # An existing unignored private file is the person's: refuse, write nothing.
+        subprocess.run(["git", "init", "-q"], cwd=self.home, env=self.env, check=True)
+        private = self.home / ".env.local"
+        private.write_bytes(b"SECRET='keep me'\n")
+        result = self.command("main-host", "--set", "host:/main", code=2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("main-host=refused cause=private-file-unignored", result.stderr)
+        self.assertIn("fix: add /.env.local to .gitignore, then run main-host again", result.stderr)
+        self.assertEqual(private.read_bytes(), b"SECRET='keep me'\n")
+        self.assertFalse((self.home / ".gitignore").exists())
+
+    def test_main_host_set_refuses_when_ignore_line_has_no_effect(self):
+        # A deeper .gitignore re-includes the file: git is asked again after
+        # the line lands, and the private file is never written.
+        subprocess.run(["git", "init", "-q"], cwd=self.home, env=self.env, check=True)
+        (self.home / "kendex.settings.toml").write_text('[env]\nKENDEX_ENV_FILE = "keys/private.env"\n')
+        (self.home / "keys").mkdir()
+        (self.home / "keys" / ".gitignore").write_text("!private.env\n")
+        result = self.command("main-host", "--set", "host:/main", code=2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("main-host=refused cause=private-file-unignored", result.stderr)
+        self.assertIn("jarvis-session: fix: ", result.stderr)
+        self.assertFalse((self.home / ".gitignore").exists())
+        self.assertFalse((self.home / "keys" / "private.env").exists())
+
+
+    def test_main_host_set_refuses_dangling_gitdir(self):
+        (self.home / ".git").write_text("gitdir: " + str(self.root / "gone") + "\n")
+        result = self.command("main-host", "--set", "host:/main", code=2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("main-host=refused cause=git-unreadable\n", result.stderr)
+        self.assertFalse((self.home / ".env.local").exists())
+        self.assertFalse((self.home / ".gitignore").exists())
+
+    def test_main_host_linked_private_git_contract(self):
+        rows = (("tracked", "private-file-tracked"), ("unignored", "private-file-unignored"),
+                ("ignored", None), ("outside-repository", None))
+        for name, cause in rows:
+            with self.subTest(name=name):
+                self.home = self.root / name
+                self.home.mkdir()
+                subprocess.run(["git", "init", "-q"], cwd=self.home, env=self.env, check=True)
+                (self.home / ".gitignore").write_text("/.env.local\n")
+                target = self.root / (name + "-target") / "shared.env"
+                target.parent.mkdir()
+                original = b"SECRET='keep me'\n"
+                target.write_bytes(original)
+                if name != "outside-repository":
+                    subprocess.run(["git", "init", "-q"], cwd=target.parent, env=self.env, check=True)
+                if name == "tracked":
+                    subprocess.run(["git", "add", "shared.env"], cwd=target.parent, env=self.env, check=True)
+                elif name == "ignored":
+                    (target.parent / ".gitignore").write_text("/shared.env\n")
+                private = self.home / ".env.local"
+                private.symlink_to(target)
+                for words, expected in ((("--set", "host:/main"), "host:/main"), (("--clear",), "")):
+                    if cause is None:
+                        self.assertEqual(self.value(*words), expected)
+                        self.assertEqual(self.value("--get"), expected)
+                        self.assertTrue(target.read_bytes().startswith(original))
+                    else:
+                        result = self.command("main-host", *words, code=2)
+                        self.assertEqual(result.stdout, "")
+                        self.assertIn("main-host=refused cause=" + cause + "\n", result.stderr)
+                        self.assertEqual(target.read_bytes(), original)
+                    self.assertTrue(private.is_symlink())
+
+    def test_main_host_git_checks_ignore_inherited_redirects(self):
+        foreign = self.root / "foreign"
+        foreign.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=foreign, env=self.env, check=True)
+        (foreign / ".gitignore").write_text("/.env.local\n")
+        redirects = {"GIT_DIR": str(foreign / ".git"), "GIT_COMMON_DIR": str(foreign / ".git"),
+                     "GIT_WORK_TREE": str(foreign), "GIT_INDEX_FILE": str(foreign / ".git/index")}
+        rows = (("index", {"GIT_INDEX_FILE": redirects["GIT_INDEX_FILE"]}), ("repository", redirects))
+        for name, inherited in rows:
+            with self.subTest(name=name):
+                self.home = self.root / name
+                self.home.mkdir()
+                subprocess.run(["git", "init", "-q"], cwd=self.home, env=self.env, check=True)
+                (self.home / ".gitignore").write_text("/.env.local\n")
+                private = self.home / ".env.local"
+                original = b"SECRET='keep me'\n"
+                private.write_bytes(original)
+                subprocess.run(["git", "add", "-f", ".env.local"], cwd=self.home, env=self.env, check=True)
+                self.env.update(inherited)
+                try:
+                    result = self.command("main-host", "--set", "host:/main", code=2)
+                finally:
+                    for key in inherited:
+                        self.env.pop(key)
+                self.assertEqual(result.stdout, "")
+                self.assertIn("main-host=refused cause=private-file-tracked\n", result.stderr)
+                self.assertEqual(private.read_bytes(), original)
+
+    def test_main_host_set_rolls_back_ineffective_ignore_append(self):
+        rows = (("absent", None), ("existing", b"# existing rules\r\n/tmp/"))
+        for name, original in rows:
+            with self.subTest(name=name):
+                self.home = self.root / name
+                self.home.mkdir()
+                subprocess.run(["git", "init", "-q"], cwd=self.home, env=self.env, check=True)
+                (self.home / "kendex.settings.toml").write_text('[env]\nKENDEX_ENV_FILE = "keys/private.env"\n')
+                (self.home / "keys").mkdir()
+                (self.home / "keys/.gitignore").write_text("!private.env\n")
+                ignore = self.home / ".gitignore"
+                if original is not None:
+                    ignore.write_bytes(original)
+                for _ in range(2):
+                    result = self.command("main-host", "--set", "host:/main", code=2)
+                    self.assertEqual(result.stdout, "")
+                    self.assertIn("main-host=refused cause=private-file-unignored\n", result.stderr)
+                    self.assertEqual(ignore.read_bytes() if ignore.exists() else None, original)
+                    self.assertFalse((self.home / "keys/private.env").exists())
+
 
 def scratch_base():
     """A scratch base outside every Git work tree: a home fixture there qualifies.
