@@ -62,6 +62,11 @@ const CARRIES_DEEP: &str = "skills = [\"deep\"]";
 /// requirer from cat, and holds no record of judge.
 const GUARDS_FROM_OTHER: &str = "[bundles.set]\nsource = \"cat\"\n\n[skills.guards]\nsource = \"other\"\n\n[hooks.recorder]\nsource = \"cat\"\nenabled = false\n";
 
+/// Cat's set carries judge, withheld everywhere for its companion switched
+/// off, beside guards declared on its own: the lock records judge as
+/// guards' requirer, and holds no record of judge.
+const SET_AND_GUARDS: &str = "[bundles.set]\nsource = \"cat\"\n\n[skills.guards]\nsource = \"cat\"\n\n[hooks.recorder]\nsource = \"cat\"\nenabled = false\n";
+
 /// A skill that requires x, offered by both catalogs.
 const NEEDS_X: [(&str, &str); 2] = [("guards", "dependencies:\n  required: [x]\n"), ("x", "")];
 /// Guards and x taken from other's set aset, while cat's set carries judge,
@@ -93,6 +98,9 @@ enum Unread {
     Unparsable,
     /// Other's directory is gone, and cat reads.
     OtherMoved,
+    /// Cat is switched off (`source_ops::toggle_source`) and applied, while
+    /// the manifest still declares a set and a hook from it.
+    SwitchedOff,
 }
 
 struct Row {
@@ -434,6 +442,29 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             suppressed_offline: &[(ItemKind::Skill, "guards")],
         },
         Row {
+            what: "a withheld requirer a set carries, from a catalog switched off",
+            skills: &[("guards", "")],
+            hooks,
+            declared: SET_AND_GUARDS.to_owned(),
+            set: "hooks = [\"judge\"]",
+            remove: &["guards"],
+            other: &[],
+            other_hooks: &[],
+            other_at: OtherAt::Subscription,
+            other_set: "",
+            edit: "",
+            unread: &[Unread::SwitchedOff],
+            premise: &[
+                ("hook:judge:claude", false),
+                ("hook:judge:codex", false),
+                ("skill:guards:claude", true),
+                ("skill:guards:codex", true),
+            ],
+            records: &[],
+            suppressed: &[(ItemKind::Skill, "guards")],
+            suppressed_offline: &[(ItemKind::Skill, "guards")],
+        },
+        Row {
             what: "a withheld requirer from a catalog only the requirer's edges name",
             skills: &NEEDS_X,
             hooks,
@@ -616,6 +647,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
                     fs::write(&control, "is_source_catalog = [\n").unwrap();
                 }
                 Some(Unread::OtherMoved) => fs::rename(&other, &other_away).unwrap(),
+                Some(Unread::SwitchedOff) => switch(&f, false),
             }
             let names: Vec<String> = row.remove.iter().map(|name| (*name).to_owned()).collect();
             let report = ops::remove(&f.env, &f.scope, &names, None, false).unwrap();
@@ -646,6 +678,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
                 Some(Unread::Moved) => fs::rename(&away, &f.source).unwrap(),
                 Some(Unread::Unparsable) => fs::write(&control, &catalog).unwrap(),
                 Some(Unread::OtherMoved) => fs::rename(&other_away, &other).unwrap(),
+                Some(Unread::SwitchedOff) => switch(&f, true),
             }
             apply_now(&f);
             let back: Vec<String> = lock_of(&f)
@@ -657,6 +690,14 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             assert!(back.is_empty(), "{what}: a refresh brought back {back:?}");
         }
     }
+}
+
+/// Cat switched on or off the way `kendex source enable` and `disable` do,
+/// with the apply they run.
+#[allow(clippy::unwrap_used)]
+fn switch(f: &Fixture, enabled: bool) {
+    let report = kendex_core::source_ops::toggle_source(&f.env, &f.scope, "cat", enabled).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
 }
 
 /// One lock reason, spelled for a row: `requested`, `member-of <source>

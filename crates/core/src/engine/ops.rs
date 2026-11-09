@@ -528,14 +528,17 @@ fn still_derived(
 }
 
 /// The catalogs of the edited manifest this removal could not read: each
-/// one it subscribes to or declares an item or a set from, where that
-/// catalog does not resolve, or [`still_derived`] found it short
-/// (`unreadable`). Any of them may hold what keeps a requirer, so one
-/// unread is enough for [`recorded_edges`] to fall back. The local and
-/// in-place catalogs count like any subscription. `builtin` is no
-/// catalog, and a subscription switched off is read by nothing, so
-/// neither is asked: neither ever resolves Ready, and counting it would
-/// put every removal in that scope on the fallback.
+/// one it declares an item or a set from, and each enabled subscription,
+/// where that catalog does not resolve, or [`still_derived`] found it
+/// short (`unreadable`). Any of them may hold what keeps a requirer, so
+/// one unread is enough for [`recorded_edges`] to fall back. The local and
+/// in-place catalogs count like any subscription. A subscription switched
+/// off that a declaration or a set still names counts and is unread:
+/// switching it off keeps its records, and switching it back on brings
+/// back what its items require. One that nothing names is read by
+/// nothing, and `builtin` is no catalog, so neither is asked: neither
+/// ever resolves Ready, and counting it would put every removal in that
+/// scope on the fallback.
 fn unread_catalogs(
     env: &Env,
     scope: &Scope,
@@ -543,16 +546,16 @@ fn unread_catalogs(
     unreadable: &BTreeSet<String>,
 ) -> BTreeSet<String> {
     let mut catalogs = crate::remote::sources_in_use(manifest);
-    catalogs.extend(manifest.sources.keys().map(String::as_str));
+    catalogs.remove(manifest::BUILTIN_SOURCE_NAME);
+    catalogs.extend(
+        manifest
+            .sources
+            .iter()
+            .filter(|(_, decl)| decl.enabled)
+            .map(|(name, _)| name.as_str()),
+    );
     catalogs
         .into_iter()
-        .filter(|source| {
-            *source != manifest::BUILTIN_SOURCE_NAME
-                && manifest
-                    .sources
-                    .get(*source)
-                    .is_none_or(|decl| decl.enabled)
-        })
         .filter(|source| {
             unreadable.contains(*source)
                 || !matches!(
