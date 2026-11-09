@@ -997,12 +997,12 @@ RESULTS="$saved_results"
 saved_results="$RESULTS"
 RESULTS='{"changes":{"result":"success"},"skill-suites-shard":{"result":"skipped"}}'
 expr="$(aggregate_lanes "$WORKFLOW" "$CI_JOB" | awk -F '\t' '$2 == "skill-suites-shard" { print $3 }')"
-# A Jarvis change selects the jarvis leg on both runners and no rest leg,
-# since rest no longer carries the family on macOS.
+# A Jarvis change selects the Linux-only jarvis leg in the shell matrix, and
+# the macOS rest leg that keeps the family there.
 jarvis_change="$(SELECT_EVENT=merge_group selection micro false skills/jarvis/scripts/task)"
 check "a Jarvis change expands the jarvis leg" true \
   "$(legs "$WORKFLOW" "$jarvis_change" success merge_group shard | jq -c 'index("jarvis") != null')"
-check "a Jarvis change runs the macOS jarvis leg and no macOS rest leg" '[false,true]' \
+check "a Jarvis change runs macOS rest and no macOS jarvis leg" '[true,false]' \
   "$(queue_legs "$WORKFLOW" merge_group success "$jarvis_change" | jq -c '[index("rest") != null, index("jarvis") != null]')"
 while IFS='|' read -r row event sel expected_value expected_status; do
   value="$(gh_eval value "$(context_json "$event" success "$sel" "$TMP/published-map")" "$expr")"

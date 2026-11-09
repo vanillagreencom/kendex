@@ -1541,7 +1541,7 @@ skills/commit-guards/tests/pre-push-future.test.sh|guards-commit|guards-commit
 skills/linear/tests/native-future.test.sh|linear|linear
 skills/deep-research/tests/native-future.sh|rest|rest
 skills/slack/tests/worker-stall.test.sh|slack|slack
-skills/jarvis/tests/native-future.test.sh|jarvis|jarvis
+skills/jarvis/tests/native-future.test.sh|jarvis|rest
 UNKNOWN
 sort -o "$TMP/unknown-paths" "$TMP/unknown-paths"
 git -C "$GITHUB_SELECT" add .
@@ -1577,6 +1577,36 @@ os_claims "$TMP/unknown-linear.yml" macos-latest 3 > "$TMP/unknown-linear-claims
 check "must-fail: the old linear roster loses its unresolved suite" \
   skills/linear/tests/native-future.test.sh \
   "$(comm -23 "$TMP/unknown-paths" "$TMP/unknown-linear-claims")"
+
+# Linux rest releases Jarvis to its shard; macOS rest keeps the family, mixed
+# and unresolved suites alike, because macOS runs no jarvis leg. Releasing on
+# both loses every Jarvis suite on macOS; releasing on neither runs each twice
+# on Linux.
+jarvis_arm='              jarvis) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || needle="--battery skills/$x/tests" ;;'
+(cd "$ROOT" && printf '%s\n' skills/jarvis/tests/*.sh) > "$TMP/jarvis-suites"
+grep -qxF skills/jarvis/tests/controls.test.sh "$TMP/jarvis-suites" ||
+  bad "no mixed Jarvis suite was discovered, so the Jarvis retention controls prove nothing"
+while IFS='|' read -r os major fault replacement; do
+  NEEDLE="$jarvis_arm" REPLACEMENT="$replacement" \
+    awk '$0 == ENVIRON["NEEDLE"] { $0 = ENVIRON["REPLACEMENT"]; n++ } {print} END {exit n != 1}' \
+    "$WORKFLOW" > "$TMP/jarvis-$fault.yml" || { bad "jarvis $fault control changed no workflow owner"; continue; }
+  cp "$TMP/jarvis-suites" "$TMP/jarvis-eligible"
+  if [[ "$os" == macos-latest ]]; then
+    "$ROOT/tools/macos-test-contracts" --filter <"$TMP/jarvis-suites" >"$TMP/jarvis-eligible" || exit 1
+  fi
+  sort -u "$TMP/jarvis-eligible" <(grep '^skills/jarvis/' "$TMP/unknown-paths") > "$TMP/os-universe"
+  os_claims "$TMP/jarvis-$fault.yml" "$os" "$major" > "$TMP/jarvis-$fault-claims"
+  case "$fault" in
+    lost) got="$(comm -23 "$TMP/os-universe" "$TMP/jarvis-$fault-claims")" ;;
+    duplicated) got="$(uniq -d "$TMP/jarvis-$fault-claims")" ;;
+  esac
+  check "must-fail: a Jarvis rest arm with its native condition changed leaves every Jarvis suite $fault on $os" \
+    "$(cat "$TMP/os-universe")" "$got"
+done <<'ROWS'
+macos-latest|3|lost|              jarvis) needle="--battery skills/$x/tests" ;;
+ubuntu-latest|4|duplicated|              jarvis) needle="" ;;
+ROWS
+cp "$TMP/unknown-paths" "$TMP/os-universe"
 
 sed 's/want_shard rest; break;/:; break;/' "$JOB_SET" > "$GITHUB_SELECT/tools/ci-job-set"
 edited "$JOB_SET" "$GITHUB_SELECT/tools/ci-job-set" unknown-package-selector

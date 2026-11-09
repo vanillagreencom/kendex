@@ -1169,10 +1169,9 @@ jobs:
             --alone mailbox.test --alone reload.test --alone socket.test "$@"
 
       # Jarvis's tmux fixtures and session controls run apart from `rest`'s
-      # pool on both runners: on macOS its two longest suites run over 800s
-      # each (run 42581418568), and with them rest reached 1636s of its 1800s
-      # ceiling. The Linux leg builds the checkout kendex its picker rows
-      # need; macOS keeps their skips.
+      # Linux pool, on a leg that builds the checkout kendex its picker rows
+      # need. macOS runs no `jarvis` leg: the rest step below keeps the family
+      # there, as the worktree step keeps restack.
       - name: Jarvis suites
         if: matrix.shard == 'jarvis'
         run: |
@@ -1273,7 +1272,7 @@ jobs:
               orch) continue ;;
               review-gate) needle="skills/$x/tests/*.test.sh" ;;
               github | slack | mailbox) needle="--battery skills/$x/tests" ;;
-              jarvis) needle="--battery skills/$x/tests" ;;
+              jarvis) [ -n "${RUN_ALL_NATIVE_CONTRACTS:-}" ] || needle="--battery skills/$x/tests" ;;
               commit-guards | linear | bot-instructions | preflight | worktree)
                 needle="skills/$x/tests/*.sh" ;;
               *) needle="" ;;
@@ -1580,6 +1579,8 @@ jobs:
             shard: guards-tools-tail
           - os: macos-latest
             shard: guards-commit-tail
+          - os: macos-latest
+            shard: jarvis
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout
     env: *skill-suite-env
@@ -1599,7 +1600,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "linear", "worktree", "rest", "jarvis", "slack", "mailbox"]' || needs.changes.outputs.queue_macos_shards) }}
+        shard: ${{ fromJSON(needs.changes.result != 'success' && '["review-gate", "refresh", "guards-commit", "guards-hooks", "guards-hooks-tail", "guards-tools", "linear", "worktree", "rest", "slack", "mailbox"]' || needs.changes.outputs.queue_macos_shards) }}
         os: [macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: *skill-suite-timeout

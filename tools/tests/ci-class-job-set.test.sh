@@ -30,7 +30,7 @@ standard|false|skills/orch/scripts/lanes tools/guard|$SHARD_CODE| +guards-tools 
 micro|false|tools/tests/example.test.sh|$SHARD_CODE|+guards-scans +guards-tools +guards-tools-tail -guards-hooks -guards-hooks-tail $NO_SKILL
 micro|false|hooks/lane-mail-check|$SHARD_CODE|+guards-scans +guards-hooks +guards-hooks-tail +guards-tools-tail
 micro|false|skills/worktree/scripts/worktree|$SHARD_CODE|+worktree  +guards-tools
-micro|false|skills/jarvis/scripts/task|$SHARD_CODE|+jarvis -rest
+micro|false|skills/jarvis/scripts/task|$SHARD_CODE|+jarvis +rest
 micro|false|.agents/skills/worktree/scripts/worktree|$SHARD_CODE|+worktree  -guards-scans
 micro|false|skills/mailbox/scripts/lane-mail|$SHARD_CODE|+mailbox  +slack +guards-tools
 micro|false|skills/linear/scripts/linear.sh|$SHARD_CODE|+linear +linear-controls
