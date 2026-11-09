@@ -776,7 +776,7 @@ os.execvpe(argv[0],argv,env)
     def _hand_over(self, record, choice, predecessor, saved_handoff):
         # Save the handoff, record the transition and detach its worker: the
         # one route succession and adoption take. The caller holds the lock.
-        # Every successor, a retry's included, takes Start's private brief.
+        # Every successor, a retry included, takes the record's stored private brief.
         generation = record["generation"] + 1
         handoff = Path(self.home) / "state/handoff.md"
         contents = handoff.read_bytes()
