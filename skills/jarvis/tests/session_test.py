@@ -791,7 +791,7 @@ class SessionContract(unittest.TestCase):
             argv += ["--origin", origin]
         elif verb == "succeed" and kwargs.get("account_walled"):
             argv += ["--account-walled"]
-        if kwargs.get("brief"):
+        if kwargs.get("brief") is not None:
             argv += ["--brief-file", str(kwargs["brief"])]
         if kwargs.get("adopt"):
             argv += ["--adopt-pane", kwargs["adopt"][0], "--adopt-pid", str(kwargs["adopt"][1])]
@@ -1393,6 +1393,46 @@ class SessionContract(unittest.TestCase):
             self.wait("stopped")
             self.assertEqual(self.call("start", origin="boot", duplicate_boot=True)[0]["state"], "stopped")
             self.assertEqual(len(self.started()), count)
+
+    def test_update_brief(self):
+        brief = self.home / "private.txt"
+        brief.write_text("Continue the original work.")
+        answer, code = self.call("update-brief", brief=brief)
+        self.assertEqual((answer["state"], answer["reason"], code), ("blocked", "record-unreadable", 1))
+        self.assertFalse(self.record.exists())
+        self.model_classes()
+        answer, code = self.call("start", brief=brief, model="sonnet", effort="high")
+        self.assertEqual((answer["state"], code), ("starting", 0), self.stderr)
+        running = self.wait()
+        before = json.loads(self.record.read_text())
+        brief.write_text("Continue the corrected work.")
+        answer, code = self.call("update-brief", brief=brief)
+        self.assertEqual((answer, code), (running, 0))
+        self.assertEqual(json.loads(self.record.read_text()), before | {"private_brief": brief.read_text()})
+        saved = self.record.read_bytes()
+        missing = self.home / "missing.txt"
+        cases = [("missing", missing, None, {}), ("empty-path", "", None, {}), ("directory", self.home, None, {}),
+                 ("empty", brief, b" \n", {}), ("multiline", brief, b"one\ntwo", {}),
+                 ("control", brief, b"one\x00two", {}), ("encoding", brief, b"\xff", {})]
+        for state, reason in (("starting", "launching"), ("handing-over", "succession"),
+                              ("stopping", "stop-requested"), ("failed", "handover-failed"),
+                              ("stopped", "stopped"), ("off", "app-off"), ("blocked", "sign-in-required")):
+            cases.append((state, brief, b"Replacement", {"state": state, "reason": reason}))
+        cases.append(("app-off", brief, b"Replacement", {"app_off": True}))
+        cases.append(("ended", brief, b"Replacement", {"terminal": None}))
+        try:
+            for name, path, contents, changes in cases:
+                with self.subTest(input=name):
+                    if contents is not None:
+                        brief.write_bytes(contents)
+                    record = json.loads(saved) | changes
+                    self.record.write_text(json.dumps(record))
+                    prior = self.record.read_bytes()
+                    answer, code = self.call("update-brief", brief=path)
+                    self.assertEqual((answer["state"], answer["reason"], code), ("blocked", "record-unreadable", 1))
+                    self.assertEqual(self.record.read_bytes(), prior)
+        finally:
+            self.record.write_bytes(saved)
 
     def test_identity_before_private_brief(self):
         events = self.observe_inspection()

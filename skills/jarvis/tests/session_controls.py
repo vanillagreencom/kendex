@@ -56,6 +56,8 @@ CONTROLS = (
      "test_attach_refuses_a_terminal_that_does_not_open"),
     ("no controller", SESSION, 'if not terminal:\n            raise Refusal("no-controller")',
      'if False:\n            raise Refusal("no-controller")', "test_attach_refuses_without_a_controller"),
+    ("brief replacement", SESSION, 'record["private_brief"] = private',
+     'record["private_brief"] = record.get("private_brief")', "test_update_brief"),
 )
 
 

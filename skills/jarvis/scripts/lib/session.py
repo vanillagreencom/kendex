@@ -533,6 +533,22 @@ os.execvpe(argv[0],argv,env)
             raise Refusal("record-unreadable")
         return private
 
+    def update_brief(self, args):
+        private = self.private_brief(args)
+        if private is None:
+            raise Refusal("record-unreadable")
+        with self.locked():
+            record = self.read()
+            # Launch and handover workers already hold their delivery text.
+            if not record or record["state"] != "running" or record.get("app_off"):
+                raise Refusal("record-unreadable")
+            answer = self.answer(record)
+            if answer["state"] != "running":
+                raise Refusal("record-unreadable")
+            record["private_brief"] = private
+            self.write(record)
+            return answer, 0
+
     def _adopt(self, args, record, choice, stated):
         # The unmanaged session takes the predecessor's place in succession's
         # order: its record is this one entry, read once here.
@@ -760,7 +776,7 @@ os.execvpe(argv[0],argv,env)
     def _hand_over(self, record, choice, predecessor, saved_handoff):
         # Save the handoff, record the transition and detach its worker: the
         # one route succession and adoption take. The caller holds the lock.
-        # Every successor, a retry's included, takes Start's private brief.
+        # Every successor, a retry included, takes the record's stored private brief.
         generation = record["generation"] + 1
         handoff = Path(self.home) / "state/handoff.md"
         contents = handoff.read_bytes()
@@ -1314,7 +1330,8 @@ def init_home(args):
 def main():
     parser = Arguments()
     verbs = parser.add_subparsers(dest="verb", required=True, parser_class=Arguments)
-    for verb in ("start", "status", "stop", "succeed", "report-due", "attach", "forward", "forward-drain", "main-host", "init"):
+    for verb in ("start", "status", "stop", "succeed", "update-brief", "report-due", "attach", "forward", "forward-drain",
+                 "main-host", "init"):
         command = verbs.add_parser(verb)
         command.add_argument("--home", required=True)
         if verb == "status":
@@ -1328,6 +1345,8 @@ def main():
             operation.add_argument("--set")
             operation.add_argument("--clear", action="store_true")
             operation.add_argument("--get", action="store_true")
+        elif verb == "update-brief":
+            command.add_argument("--brief-file", required=True)
         if verb == "start":
             command.add_argument("--harness", choices=("claude", "codex", "copilot", "pi"), required=True)
             # A person's Start names only the harness; an app states every value.
@@ -1391,6 +1410,8 @@ def main():
             answer, code = session.stop(args.origin)
         elif args.verb == "succeed":
             answer, code = session.succeed(args.account_walled)
+        elif args.verb == "update-brief":
+            answer, code = session.update_brief(args)
         elif args.verb == "report-due":
             answer, code = session.report_due()
         else:
