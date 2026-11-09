@@ -6,7 +6,7 @@
 name: Request Copilot review
 
 "on":
-  pull_request_target: {}
+  pull_request: {}
   merge_group: {}
 
 permissions:
@@ -19,13 +19,19 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER_2V || 'ubuntu-latest' }}
     timeout-minutes: 5
     steps:
-      # pull_request_target supplies the base repository's token for forks.
+      # GitHub gives a pull_request run from a fork a read-only token, so a
+      # fork head is skipped before a request that would fail. Dependabot
+      # heads keep the request: the permissions key above raises their token.
       # This workflow checks out and executes no pull-request content.
       - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             try {
               const pr = context.payload.pull_request;
+              if (pr.head.repo?.full_name !== pr.base.repo.full_name) {
+                core.info(`copilot-request: skipped=${pr.number} reason=fork-read-only-token`);
+                return;
+              }
               await github.rest.pulls.requestReviewers({
                 ...context.repo,
                 pull_number: pr.number,

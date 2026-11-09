@@ -18,7 +18,7 @@ check_declarations() {
   local events condition
   events="$(triggers "$1")" || return 2
   condition="$(job_ifs "$1")" || return 2
-  [ "$events" = $'merge_group\npull_request_target' ] &&
+  [ "$events" = $'merge_group\npull_request' ] &&
     [ "$condition" = $'request\t'"$EXPECTED_IF" ] &&
     python3 - "$1" <<'PY'
 import pathlib, re, sys
@@ -75,25 +75,29 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const original = fs.readFileSync(process.argv[2], 'utf8');
 async function check(source) {
   const run = new AsyncFunction('context', 'github', 'core', source);
+  // A fork's pull_request token is read-only: GitHub's events reference.
   const cases = [
-    ['lanes product', 'pull_request_target', 'feature', 'vanillagreen-fleet-lanes[bot]', 'Bot', null, 1, 0],
-    ['fork pull request', 'pull_request_target', 'feature', 'contributor', 'User', null, 1, 0],
-    ['request permission failure', 'pull_request_target', 'feature', 'owner', 'User', 403, 1, 1],
-    ['request refused', 'pull_request_target', 'feature', 'owner', 'User', 422, 1, 1],
-    ['request network failure', 'pull_request_target', 'feature', 'owner', 'User', 'network', 1, 1],
+    ['lanes product', 'acme/widgets', 'vanillagreen-fleet-lanes[bot]', 'Bot', null, 1, 0, 0],
+    ['dependabot pull request', 'acme/widgets', 'dependabot[bot]', 'Bot', null, 1, 0, 0],
+    ['fork pull request', 'contributor/widgets', 'contributor', 'User', null, 0, 0, 1],
+    ['request permission failure', 'acme/widgets', 'owner', 'User', 403, 1, 1, 0],
+    ['request refused', 'acme/widgets', 'owner', 'User', 422, 1, 1, 0],
+    ['request network failure', 'acme/widgets', 'owner', 'User', 'network', 1, 1, 0],
   ];
-  for (const [name, eventName, ref, login, type, failure, requests, warnings] of cases) {
+  for (const [name, head, login, type, failure, requests, warnings, skips] of cases) {
     const calls = [];
     const notices = [];
-    const context = {eventName, repo: {owner: 'acme', repo: 'widgets'}, payload: {}};
-    context.payload.pull_request = {number: 42, head: {ref, repo: {full_name: name === 'fork pull request' ? 'contributor/widgets' : 'acme/widgets'}}, user: {login, type}};
+    const infos = [];
+    const context = {eventName: 'pull_request', repo: {owner: 'acme', repo: 'widgets'}, payload: {}};
+    context.payload.pull_request = {number: 42, base: {repo: {full_name: 'acme/widgets'}}, head: {ref: 'feature', repo: {full_name: head}}, user: {login, type}};
     const github = {rest: {pulls: {requestReviewers: async (args) => {
       calls.push(args);
       if (failure) throw Object.assign(new Error('upstream request failed'), typeof failure === 'number' ? {status: failure} : {});
     }}}};
-    await run(context, github, {info() {}, warning(value) {notices.push(value);}});
+    await run(context, github, {info(value) {infos.push(value);}, warning(value) {notices.push(value);}});
     assert.equal(calls.length, requests, name);
     assert.equal(notices.length, warnings, name);
+    assert.equal(infos.filter(line => line === 'copilot-request: skipped=42 reason=fork-read-only-token').length, skips, name);
     if (requests) assert.deepEqual(calls[0], {owner: 'acme', repo: 'widgets', pull_number: 42, reviewers: ['copilot-pull-request-reviewer[bot]']}, name);
   }
 }
@@ -103,6 +107,7 @@ async function check(source) {
   const controls = [
     ['await github.rest.pulls.requestReviewers({', 'await Promise.resolve({'],
     ['core.warning(', 'core.info('],
+    ['return;', 'void 0;'],
   ];
   for (const [needle, replacement] of controls) {
     assert.equal(original.split(needle).length - 1, 1, needle);
