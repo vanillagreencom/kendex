@@ -92,13 +92,11 @@ Under a declared project map, `issues create`, `issues update --project` and `is
 
 ## Attachments
 
-`issues create`, `issues update`, and `comments create` take repeatable `--attach PATH`. Unreadable files refuse before API work. Images append unless replacing the description/body. Other files become issue attachments or comment links. Existing-issue uploads need a live ID.
+`issues create`, `issues update`, and `comments create` take repeatable `--attach PATH`. Unreadable files refuse before API work. Images embed as markdown appended to the description/body being written; an `issues update` without `--description` appends to the stored description. Other files become issue attachments or comment links. Existing-issue uploads need a live ID.
 
 Issue results report `attachments_requested` and ordered `{url, repo_path}` receipts in `attachments` after all bindings succeed. Creates/field updates need default JSON for receipts; successful `--format=ids` creates print only the ID.
 
-Upload failures return completed non-image `pending_attachments`, `failed_path` and failed/unattempted `remaining_files`. Binding failures return attempted pairs for retry with empty receipts. Failures keep nonzero status and safe stderr cause.
-
-Resume with `issues update ID --attach-uploaded FILE`, a pair array captured before API work. `issues --help` defines input validation and failure JSON. Originals need not exist; retained pairs cause no upload/PUT; resume-only sends no issueUpdate. Combine with `--attach` for remaining uploads. Retry the binding set on the same issue/URL key. No recovery covers failed issue writes, unwritten images or missing URLs.
+A failed `issues create` or `issues update` upload or binding exits nonzero with JSON naming what to resume; a `comments create` upload failure only exits nonzero with its stderr cause. Resume with `issues update ID --attach-uploaded FILE`, the retained `pending_attachments`, plus `--attach` for each of `remaining_files`; retained pairs are not uploaded again. A failed create upload creates no issue: create it without `--attach`, then resume on its ID. `issues --help` defines the failure JSON and input validation.
 
 ### Resolve a cited artifact
 

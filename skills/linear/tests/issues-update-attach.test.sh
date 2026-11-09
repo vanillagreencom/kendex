@@ -259,17 +259,15 @@ bind field update|New title|
 bind formatted update|New title|ids
 CASES
 
-for action in update create; do
-  FAIL_UPLOAD_FILE=later.pdf
-  if [[ "$action" == update ]]; then action_args=(TEAM-9); else action_args=(--title fixture --description $'Fixture.\nReached by: fixture'); fi
-  run_linear issues "$action" "${action_args[@]}" --attach "$TMP_ROOT/notes.pdf" \
-    --attach "$TMP_ROOT/later.pdf" --attach "$TMP_ROOT/last.pdf"
-  unset FAIL_UPLOAD_FILE
-  assert_eq "$action: shared upload failure remains failed" "$RC" 1
-  assert_jq "$action: shared upload owner publishes reusable pairs" "$OUT" \
-    '.success == false and .pending_attachments == [{url:"https://uploads.linear.app/asset/notes.pdf",repo_path:"notes.pdf"}]
-      and (.remaining_files | length) == 2'
-done
+FAIL_UPLOAD_FILE=later.pdf
+run_linear issues create --title fixture --description $'Fixture.\nReached by: fixture' --attach "$TMP_ROOT/shot.png" \
+  --attach "$TMP_ROOT/later.pdf" --attach "$TMP_ROOT/last.pdf"
+unset FAIL_UPLOAD_FILE
+assert_eq "create: shared upload failure remains failed" "$RC" 1
+resume_set=$(jq -c --arg shot "$TMP_ROOT/shot.png" --arg failed "$TMP_ROOT/later.pdf" --arg last "$TMP_ROOT/last.pdf" \
+  '.success == false and .partial == true and .pending_attachments == [] and .remaining_files == [$shot,$failed,$last]' <<<"$OUT")
+assert_eq "create: an uploaded image alone is partial and returns to the resume set" "$resume_set" true
+assert_not_log "create: a failed upload creates no issue" 'any(.[]; .query? // "" | contains("issueCreate("))'
 
 echo "=== later upload failures retain completed pairs and exact upload suffix ==="
 
@@ -282,9 +280,9 @@ for failure in graphql put; do
   assert_jq "$failure: completed non-image survives the failed batch" "$OUT" \
     '.success == false and .partial == true and .pending_attachments == [
       {url:"https://uploads.linear.app/asset/notes.pdf",repo_path:"notes.pdf"}]'
-  suffix=$(jq -c --arg failed "$TMP_ROOT/later.pdf" --arg last "$TMP_ROOT/last.pdf" \
-    '.failed_path == $failed and .remaining_files == [$failed,$last]' <<<"$OUT")
-  assert_eq "$failure: exact failed and unattempted upload suffix" "$suffix" true
+  suffix=$(jq -c --arg shot "$TMP_ROOT/shot.png" --arg failed "$TMP_ROOT/later.pdf" --arg last "$TMP_ROOT/last.pdf" \
+    '.failed_path == $failed and .remaining_files == [$shot,$failed,$last]' <<<"$OUT")
+  assert_eq "$failure: unwritten image, then exact failed and unattempted upload suffix" "$suffix" true
   assert_not_log "$failure: failed batch writes no embeds or bindings and skips last upload" \
     'any(.[]; (.query? // "" | test("issueUpdate\\(|attachmentCreate\\(")) or .variables.filename? == "last.pdf")'
   if [[ "$failure" == graphql ]]; then
@@ -340,7 +338,7 @@ while IFS='|' read -r name input; do
   assert_jq "$name: retained input has a typed refusal" "$ERR" '.code == "ATTACH_UPLOADED_INVALID"'
 done <<'CASES'
 invalid JSON|[
-multiple values|[] []
+multiple values|[{"url":"https://uploads.linear.app/a","repo_path":"a"}] [{"url":"https://uploads.linear.app/b","repo_path":"b"}]
 empty array|[]
 non-array|{}
 missing path|[{"url":"https://uploads.linear.app/a"}]
@@ -358,6 +356,13 @@ newline URL|[{"url":"https://uploads.linear.app/a\nb","repo_path":"a"}]
 NUL path|[{"url":"https://uploads.linear.app/a","repo_path":"a\u0000b"}]
 valid then invalid|[{"url":"https://uploads.linear.app/a","repo_path":"a"},{"url":"https://uploads.linear.app/b"}]
 CASES
+
+printf '%s' '[{"url":"https://uploads.linear.app/a","repo_path":"a"}]' >"$RETAINED"
+printf '%s' '[{"url":"https://uploads.linear.app/b","repo_path":"b"}]' >"$TMP_ROOT/retained-b.json"
+run_linear issues update TEAM-9 --attach-uploaded "$RETAINED" --attach-uploaded="$TMP_ROOT/retained-b.json"
+assert_eq "a second retained file refuses" "$RC" 1
+assert_eq "a second retained file sends no API request" "$(api_calls)" 0
+assert_jq "a second retained file has a typed refusal" "$ERR" '.code == "ATTACH_UPLOADED_INVALID"'
 run_linear issues update TEAM-9 --attach-uploaded "$TMP_ROOT/missing.json"
 assert_eq "unreadable retained file sends no API request" "$(api_calls)" 0
 assert_jq "unreadable retained file has a typed refusal" "$ERR" '.code == "ATTACH_UPLOADED_INVALID"'

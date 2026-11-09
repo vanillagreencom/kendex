@@ -221,7 +221,8 @@ Update Options:
                         URLs require https://uploads.linear.app/ and a
                         nonempty path, without query/fragment or private
                         uploadUrl/headers. Queue delimiters are refused.
-                        May combine with --attach for remaining uploads.
+                        Given at most once; may combine with --attach for
+                        remaining uploads.
   --sort-order <float>  Manual sort position (lower = higher; parent/standalone only)
   --format <fmt>        Output format for the updated issue: safe | compact | ids |
                         raw. When omitted, emits the mutation summary
@@ -232,16 +233,20 @@ Update Options:
 
 Attachment failures on create/update:
   A failed upload returns success:false, pending_attachments (completed
-  non-image {url, repo_path} pairs), failed_path and remaining_files (the failed
-  and unattempted upload suffix). partial is true when pending records exist.
+  non-image {url, repo_path} pairs), failed_path and remaining_files: images
+  uploaded but not yet embedded, then the failed and unattempted suffix, in
+  request order. partial is true when pending records or such images exist.
+  A failed create upload creates no issue.
   Failed attachmentCreate returns the attempted non-image set as retryable
   pending_attachments, with partial:true and empty confirmed attachments.
   Both failures retain their nonzero status and safe stderr cause, and return
   JSON even with --format. To resume, extract .pending_attachments into a file
-  and pass it to issues update ID --attach-uploaded FILE. Same issue/URL pairs
-  may be retried. Caller-retained pairs establish no upload provenance.
-  This does not recover failed issueCreate/issueUpdate mutations, image embeds
-  unwritten by a failed batch, or historical URLs absent from retained output.
+  and run issues update ID --attach-uploaded FILE with --attach for each of
+  remaining_files; after a failed create upload, first create the issue
+  without --attach and use its ID. Same issue/URL pairs may be retried.
+  Caller-retained pairs establish no upload provenance. This does not recover
+  failed issueCreate/issueUpdate mutations or historical URLs absent from
+  retained output.
 
 Relation Options (add-relation):
   --blocks <id>         This issue blocks another
@@ -1260,8 +1265,12 @@ issue_project_id() {
 # Create pending non-image attachments on an issue that already exists.
 # Entries are "assetUrl<TAB>title" strings from the upload loop. A failure
 # leaves missing bindings on the existing issue. Keep the first failure's
-# status and diagnostic; the caller publishes retryable pairs separately
-# from confirmed receipts. Usage: apply_pending_attachments <uuid> <identifier> <entry>...
+# status and diagnostic; the caller publishes the whole attempted set as
+# retryable pairs. Replaying a pair that did land is safe because Linear's
+# attachmentCreate "creates a new attachment, or updates existing if the same
+# `url` and `issueId` is used" (Linear SDK schema documentation,
+# github.com/linear/linear packages/sdk/src/_generated_documents.graphql).
+# Usage: apply_pending_attachments <uuid> <identifier> <entry>...
 apply_pending_attachments() {
     local issue_uuid="$1" issue_identifier="$2"
     shift 2
@@ -1304,20 +1313,25 @@ pending_attachments_json() {
 # Caller contract: `description` and `attach_pending` are the CALLER's
 # variables (description grows ![name](assetUrl) embeds; attach_pending grows
 # "assetUrl<TAB>filename" entries). A failed upload returns its status and
-# the reusable non-image queue; images are not written by a failed batch.
+# the reusable non-image queue. An uploaded image lives only in the caller's
+# description until that is written, which a failed batch never does, so its
+# path goes back into remaining_files ahead of the failed suffix.
 upload_attach_paths() {
     local attach_path attach_info upload_status pending_json remaining_json
     local attach_sep=$'\n\n'
+    local unwritten_images=()
     while [ "$#" -gt 0 ]; do
         attach_path="$1"
         upload_status=0
         attach_info=$(attach_upload_file "$attach_path") || upload_status=$?
         if [ "$upload_status" -ne 0 ]; then
-            pending_json=$(pending_attachments_json "${attach_pending[@]}") || return "$upload_status"
-            remaining_json=$(jq -cn --args '$ARGS.positional' -- "$@") || return "$upload_status"
+            # Bash before 4.4 treats an empty "${a[@]}" as unbound under set -u.
+            pending_json=$(pending_attachments_json ${attach_pending[@]+"${attach_pending[@]}"}) || return "$upload_status"
+            remaining_json=$(jq -cn --args '$ARGS.positional' -- \
+                ${unwritten_images[@]+"${unwritten_images[@]}"} "$@") || return "$upload_status"
             jq -cn --argjson pending "$pending_json" --argjson remaining "$remaining_json" \
-                --arg failed_path "$attach_path" \
-                '{success: false, partial: ($pending | length > 0), pending_attachments: $pending,
+                --argjson unwritten "${#unwritten_images[@]}" --arg failed_path "$attach_path" \
+                '{success: false, partial: ($pending | length > 0 or $unwritten > 0), pending_attachments: $pending,
                   remaining_files: $remaining, failed_path: $failed_path}' || return "$upload_status"
             return "$upload_status"
         fi
@@ -1329,6 +1343,7 @@ upload_attach_paths() {
             local attach_label
             attach_label="$(attach_markdown_label "$attach_name")"
             description="${description:+${description}${attach_sep}}![${attach_label}](${attach_url})"
+            unwritten_images+=("$attach_path")
         else
             local attach_title
             attach_title=$(attach_issue_title "$attach_path") || return 1
@@ -1872,19 +1887,23 @@ update_issue() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
-        --attach-uploaded)
-            if [ -z "${2-}" ]; then
-                echo '{"code":"ATTACH_UPLOADED_INVALID","error":"--attach-uploaded requires a JSON array file"}' >&2
+        --attach-uploaded | --attach-uploaded=*)
+            # One retained file per call: a second would silently replace the first.
+            if [ "$attach_uploaded_set" = true ]; then
+                echo '{"code":"ATTACH_UPLOADED_INVALID","error":"--attach-uploaded may be given once; merge retained arrays into one file"}' >&2
                 return 1
             fi
-            attach_uploaded="$2"
+            if [[ "$1" == --attach-uploaded=* ]]; then
+                attach_uploaded="${1#*=}"
+                shift
+            elif [ -z "${2-}" ]; then
+                echo '{"code":"ATTACH_UPLOADED_INVALID","error":"--attach-uploaded requires a JSON array file"}' >&2
+                return 1
+            else
+                attach_uploaded="$2"
+                shift 2
+            fi
             attach_uploaded_set=true
-            shift 2
-            ;;
-        --attach-uploaded=*)
-            attach_uploaded="${1#*=}"
-            attach_uploaded_set=true
-            shift
             ;;
         --attach)
             if [ -z "${2-}" ]; then
