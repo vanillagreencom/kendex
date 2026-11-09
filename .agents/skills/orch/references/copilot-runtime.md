@@ -101,7 +101,7 @@ The runtime's close ([lane-reach.md § Lane close](lane-reach.md#lane-close)) ty
 
 The runtime's `successor --fleet` chooses a live controller's successor; `start-controller` and `request-transfer` prepare its Copilot home, install its context reader and apply the hook gate before opening a pane. [Controller start and adoption](../workflows/oversee.md#controller-start-and-adoption) gives the commands and request fields. The runtime's `marks --fleet` judges the recorded account's monthly pool and the current context reading. A context-mark walk can keep the caller's unmeasured account when no measured account of that harness has room; headroom and rate walks exclude the caller's account. The watch's dead recovery: [overseer-session-events.md § Recovery requests](overseer-session-events.md#recovery-requests).
 
-`oversee register --account [DIR]` records an account the pane cannot reveal. Registration reports missing hook coverage or a context reader that loads only at the next start. The runtime writes the published controller's display line from the successor it launches. A controller with a recorded `succession` command follows that owner's lifecycle.
+`oversee register --account [DIR]` records an account the pane cannot reveal. Registration reports missing hook coverage or a context reader that loads only at the next start. The runtime publishes the successor it launches as the controller's typed launch fields and, where its launch bound one, its native `session_id`. A controller with a recorded `succession` command follows that owner's lifecycle.
 
 ## Pending live proofs
 

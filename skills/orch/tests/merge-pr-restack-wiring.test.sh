@@ -4,8 +4,8 @@
 # flight, reads the base, resolves the mode, asks restack-skip and starts the
 # range run before step 3's record-push; the push records that run as the
 # item's restack stage, a second run recorded after a push-time rewrite takes
-# no second publication, and step 3's proof block prints the reader's reply and
-# holds the merge on a missing answer. restack_skip.sh holds the skip check's
+# no second publication, and step 3's proof block prints the reader's reply,
+# hands back on a refusal and holds the merge on a missing answer. restack_skip.sh holds the skip check's
 # own rows, tests/rust/push.rs the push's and tests/rust/validate.rs the
 # runner's.
 # A live command is a line whose first text is [MAIN_REPO_ROOT]/ or
@@ -31,10 +31,10 @@ INSTALL=(DEV_VALIDATE_CLI="$REPO_ROOT/skills/orch/scripts/dev-validate-run" CHAN
 LIVE_ROUND='orch-runtime op --item [ISSUE] --request [WT_PATH]/tmp/restack-live-round-[ISSUE].json'
 RESTACK='worktree create [ISSUE] --restack'
 BASE_READ='resolve-base-branch [WT_PATH]'
-RESOLVE='orch-runtime validate entry --resolve-mode --worktree [WT_PATH]'
+RESOLVE='dev-validate-run --resolve-mode --worktree [WT_PATH]'
 SKIP='restack-skip --worktree [WT_PATH] --base origin/[BASE_BRANCH]'
-RANGE='orch-runtime validate entry --worktree [WT_PATH] --validate-mode range --base origin/[BASE_BRANCH]'
-RECORD='orch-runtime validate entry --record --run-dir [RUN_DIR]'
+RANGE='dev-validate-run --worktree [WT_PATH] --validate-mode range --base origin/[BASE_BRANCH]'
+RECORD='dev-validate-run --record --run-dir [RUN_DIR]'
 PUSH='orch-runtime op --item [ISSUE] --request [WT_PATH]/tmp/restack-push-[ISSUE].json'
 HEAD_READ='git -C [WT_PATH] rev-parse HEAD'
 LIVE='^[[:space:]]*(\\[MAIN_REPO_ROOT\\]/|git -C \\[WT_PATH\\] )'
@@ -146,7 +146,7 @@ live() {
   [[ -n "$line" ]] || { printf 'live: no live command holds %s\n' "$2" >&2; return 1; }
   line="${line#*$'\t'}"
   if [[ "$2" == "$RESOLVE" ]]; then
-    line="$(awk '/^[[:space:]]*RESTACK_MODE_ARGS=\(\)/ {take=1} take {print} take && /validate entry --resolve-mode/ {exit}' "$1")"
+    line="$(awk '/^[[:space:]]*RESTACK_MODE_ARGS=\(\)/ {take=1} take {print} take && /dev-validate-run --resolve-mode/ {exit}' "$1")"
   fi
   line="${line//\[MAIN_REPO_ROOT\]\/.agents\/skills\/orch\/scripts\//$REPO_ROOT/skills/orch/scripts/}"
   line="${line//\[WT_PATH\]/$3}"
@@ -386,7 +386,7 @@ case "$2" in
 esac
 SH
 chmod +x "$TMP_ROOT/ci-bin/gh"
-CI_COMMAND='orch-runtime validate entry --worktree [WT_PATH] --validate-mode ci --base origin/[BASE_BRANCH] --restack'
+CI_COMMAND='dev-validate-run --worktree [WT_PATH] --validate-mode ci --base origin/[BASE_BRANCH] --restack'
 # A selector that admits the change and marks any scoped run: a restack is no
 # round, so its ci call runs none.
 printf 'DEV_VALIDATE_SELECTION_CMD = "echo selection=all; test $DEV_VALIDATE_SCOPED = false || touch %s"\n' \
@@ -585,6 +585,17 @@ rm -f "$TMP_ROOT/proof-fail"
 proof_rc=0
 OUT="$(merge_proof "$RESTACK_DOC" "$PROOF_WT")" || proof_rc=$?
 assert_eq "$proof_rc $(jq -r '.result.proof' <<<"$OUT")" '1 missing' 'a recorded skip with no recorded pass behind it proves nothing'
+# A record the reader cannot decode: the reader refuses with its reply on
+# stdout, which the block prints before it hands back with the status.
+"$RUNTIME" --state-dir "$PROOF_WT/tmp" state set --item KEN-1 /stages '"unreadable"' >/dev/null || fixture_failed proof-unreadable
+proof_rc=0
+OUT="$(merge_proof "$RESTACK_DOC" "$PROOF_WT")" || proof_rc=$?
+assert_eq "$proof_rc $(jq -r '.ok' <<<"$OUT")" '1 false' 'a refused proof read prints its reply and hands back with its status'
+cp "$RESTACK_DOC" "$TMP_ROOT/proof-refusal-mutant.md"
+mutate_file "$TMP_ROOT/proof-refusal-mutant.md" '|| PROOF_STATUS=$?' '|| exit $?'
+proof_rc=0
+OUT="$(merge_proof "$TMP_ROOT/proof-refusal-mutant.md" "$PROOF_WT")" || proof_rc=$?
+assert_eq "$proof_rc [$OUT]" '1 []' 'control: a block that exits before the print hides the refusal'
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

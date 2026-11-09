@@ -167,7 +167,7 @@ Its reply's `mode` is `GATE_MODE`, the item's recorded one. Under the `off` gate
 - `timeout` → no exact-head evidence yet; a missing or red CI run here is not a fix failure. Re-run this step once. If it repeats, `auto-recommended` records `ci-gate-unconfirmed`; under `ask`, hand back the unconfirmed gate.
 - `unreadable` → re-run the call once. If it repeats, take the `timeout` route's stop.
 
-For a merge-group failure, first run the failing job's command locally on the fix head: `DEV_VALIDATE_CMD` through `.agents/skills/orch/scripts/orch-runtime validate entry --worktree [WORKTREE_PATH] --reproduce`, which never defers the run to CI, or the suite the failing job named. Only a completed local pass lets the caller re-arm; every other outcome stops here and never reaches the wait below:
+For a merge-group failure, first run the failing job's command locally on the fix head: `DEV_VALIDATE_CMD` through `.agents/skills/orch/scripts/dev-validate-run --worktree [WORKTREE_PATH] --reproduce`, which never defers the run to CI, or the suite the failing job named. Only a completed local pass lets the caller re-arm; every other outcome stops here and never reaches the wait below:
 
 - A red local run is the fix's failure; report it and stop.
 - A run that ends `validate=no-verdict`, or a start refused with exit 2, leaves the reproduction unproved. For a `run-live` refusal, take the wait or stop route of [dev-implement.md § 5](../../dev/workflows/dev-implement.md#5-validate), then start the reproduction again. Report any other unproved reproduction and stop.

@@ -38,7 +38,7 @@ For Linear, add the started states `In Review` and `Verifying` in the team setti
 
 Settings: [references/settings.md](references/settings.md).
 
-Every lane merges its own pull request, past the merge queue or through it, as the github skill's `pr-merge --help` § Merge route says. Under harness-ci's queue-only default every change takes the queue: the merge-group run proves the head, a red one returns the change to its lane, and an unchanged head never re-enters the queue, per [workflows/merge-pr.md § 5](workflows/merge-pr.md#5-execute-the-merge) Recovery cycle.
+Every lane merges its own pull request, past the merge queue or through it, as the github skill's `pr-merge --help` § Merge route says. Under harness-ci's queue-only default every change takes the queue: the merge-group run proves the head, and a red one follows the re-queue rule of [workflows/merge-pr.md § 5](workflows/merge-pr.md#5-execute-the-merge).
 
 Maintainer notes and test entry point: [DEVELOPMENT.md](https://github.com/vanillagreencom/kendex/blob/main/skills/orch/DEVELOPMENT.md).
 

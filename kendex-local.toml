@@ -50,7 +50,7 @@ Use the repository-declared owner for kendex refresh outputs. Kendex uses its lo
 
 ### Validation routing
 
-- Fix rounds keep their delegated round base. Every kendex change is queue-only, per D027: CI holds the full validation record, and the merge waits on the merge-group run. In kendex a red merge-group run re-arms only a new head, under merge-pr § 5's re-queue rule. Where ci-fix leaves the head unchanged, for a flake or a fault ci-fix § 4 places in another pull request, the lane hands back to the overseer with the failing run.
+- Fix rounds keep their delegated round base. Every kendex change is queue-only, per D027: CI holds the full validation record, and the merge waits on the merge-group run. In kendex a red merge-group run re-arms only a new head, even where merge-pr § 5's re-queue rule re-arms the same head on `reach: outside`. Where ci-fix leaves the head unchanged, for a flake or a fault ci-fix § 4 places in another pull request, the lane hands back to the overseer with the failing run.
 
 ### Owner messages
 

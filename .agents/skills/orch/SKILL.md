@@ -34,7 +34,7 @@ Use the repository-declared owner for kendex refresh outputs. Kendex uses its lo
 
 ### Validation routing
 
-- Fix rounds keep their delegated round base. Every kendex change is queue-only, per D027: CI holds the full validation record, and the merge waits on the merge-group run. In kendex a red merge-group run re-arms only a new head, under merge-pr § 5's re-queue rule. Where ci-fix leaves the head unchanged, for a flake or a fault ci-fix § 4 places in another pull request, the lane hands back to the overseer with the failing run.
+- Fix rounds keep their delegated round base. Every kendex change is queue-only, per D027: CI holds the full validation record, and the merge waits on the merge-group run. In kendex a red merge-group run re-arms only a new head, even where merge-pr § 5's re-queue rule re-arms the same head on `reach: outside`. Where ci-fix leaves the head unchanged, for a flake or a fault ci-fix § 4 places in another pull request, the lane hands back to the overseer with the failing run.
 
 ### Owner messages
 
@@ -110,7 +110,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 
 | Script | Intent |
 |--------|--------|
-| `orch-runtime` | The orch runtime, `--help`: the verbs below; runs the binary `setup` built for the sources beside it, else prints `orch-runtime: setup-required key=<key> run=<path to setup>` on stderr, exits 69 and builds nothing |
+| `orch-runtime` | The orch runtime; `orch-runtime --help` is its verbs' one contract: `state`, `op` (the typed requests the workflows write), `validate`, `dev-return`, `round`, `review-artifact`, `read-proof`, `reconcile`, `reconcile-items`, `container-close`, `report`, `cycle`, `accounts`, `lane`, `marks`, `successor`, `handoff`, `admit`, `send`, `copilot-wait`, `queue-watch`, `watch`, `job`, the detached job a transfer or a stop runs in, and `version`. It runs the binary `setup` built for the sources beside it, else prints `orch-runtime: setup-required key=<key> run=<path to setup>` on stderr, exits 69 and builds nothing |
 | `setup` | Build `orch-runtime` into the user cache through the agent-runtime skill's `scripts/setup`, keyed on this runtime's sources and agent-runtime's; once per source revision, never on a hook path |
 | `workflow-state` | The frozen shell store, `--help`; its one workflow fence is [dev-start.md](workflows/dev-start.md)'s sorted `unique` (§ State Management) |
 | `git-context` | Git-derived values (branch, head, issue id, roots, timestamps) |
@@ -130,33 +130,24 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `spawn-adapter` | Resolve Codex spawn parameters (`spawn`) and the runtime thread budget (`slots`) |
 | `open-terminal` | `--wake` wakes a Claude or Pi lane on this machine: it hands the lane's session the line that reads its inbox, a Claude lane's as a print-mode resume once no earlier wake's turn runs and the runtime's lane status reads it idle, a Pi lane's through pi-bridge. A lane's launch, relaunch and stop are `orch-runtime op --fleet` requests, `launch-lane` and `close-owned-resources`: [oversee § 3](workflows/oversee.md#3-launch) |
 | `lanes` | A hand read of the harness accounts. Launches and marks ask `orch-runtime accounts pick`, and the roster is `orch-runtime accounts roster` |
-| `lane-host` | Resolve or call the configured host provider; protocol: [lane-host.md](schemas/lane-host.md). Static SSH reference: `lane-host-ssh --help` |
-| `overseer-host` | Resolve or call the runtime the overseer's own session runs in, `ORCH_OVERSEER_HOST`; protocol: [overseer-host.md](schemas/overseer-host.md). tmux provider: `overseer-host-tmux --help` |
+| `lane-host` | Resolve or call the configured host provider; protocol: [lane-host.md](schemas/lane-host.md) |
+| `lane-host-ssh` | The static SSH host provider |
+| `overseer-host` | Resolve or call the runtime the overseer's own session runs in, `ORCH_OVERSEER_HOST`; protocol: [overseer-host.md](schemas/overseer-host.md) |
+| `overseer-host-tmux` | The tmux provider behind `overseer-host` |
 | `oversee` | `register` records a hand-opened controller. A first start, adoption, native resume and succession use the requests in [oversee § 1](workflows/oversee.md#controller-start-and-adoption); the runtime owns their launch and outcome |
 | `lane-marker` | Write a lane's launch record, the marker under the common git directory and the lane's own mailbox; `lane-host create` calls it on the host, the runtime's launch writes the same marker itself, and `lane-mail-check` hands a lane its mail only where it stands |
 | `oversee-watch` | The transition entry for a repeat loop a released install started: that loop's pass hands its claim to `orch-runtime watch run --replace`, and every other call is refused. The fleet watch is `orch-runtime watch run`, started as [oversee § 4](workflows/oversee.md#4-watch-and-advance) states; its duties read every lane, local and hosted, the overseer's own session and the repositories, and append each pass's events to the log |
+| `oversee-cycle` | A retained transition entry over `orch-runtime cycle report` and `cycle stages` |
+| `oversee-report` | A retained transition entry; the overseer's report is `orch-runtime report` |
+| `overseer-approve` | A retained transition entry; an approval is the `approve-head` request through `orch-runtime op`: [Copilot head notices](references/copilot-head-notices.md) |
+| `reconcile-work-items` | A retained transition entry; the tracker sweep is `orch-runtime reconcile-items` |
+| `post-merge` | Run the repository's post-merge steps in its base checkout, stopping at the first failed step |
+| `refresh-ci-proof` | Read the change classifier's CI evidence from GitHub for a refresh pull request or a merged range, writing no approval: [Consumer refresh approval](references/copilot-head-notices.md#consumer-refresh-approval) |
+| `copilot-statusline` | The `statusLine` command a Copilot CLI lane runs: it records the session JSON the CLI hands it on stdin and prints one footer line |
 
 The mailbox skill's `lane-mail` is the lane-to-overseer mailbox and the owner channel. A lane runs `ask`, `notice`, `wait`, `inbox` and its mailbox monitor `watch`; the overseer runs `send`, `drain`, `pending` and `events`, adding `--root` and `--host` for a lane on another host, and on its own mailbox asks and reports to the owner with `--to owner` and closes an owner ask once with `resolve`.
 
-The runtime's verbs a workflow runs, as `.agents/skills/orch/scripts/orch-runtime <verb> [args]`:
-
-| Verb | Intent |
-|------|--------|
-| `state` | A workflow record's reads and writes, one verb each, on `--item [ID]` or `--fleet`: `state --help` |
-| `op` | Apply one typed `--request [FILE]` to an item's or the fleet's record and run the live effect its intent names; `--effect-exit` exits by that effect's outcome |
-| `op`: `record-push` | Push an issue worktree through the worktree skill's `push` and reconcile rebased SHAs in workflow state in one call; the `check-live-round` mode says whether a fix round is in flight and pushes nothing |
-| `op`: `prune-round` | Consumer-selected Cargo cleanup at round start; [Round Closure](references/skill-rules.md#round-closure) owns its policy and contract |
-| `op`: `close-lane` | End one recorded lane by what its record, its host and its tracker say, its sandbox closed, kept or parked and its merge cycle recorded |
-| `op`: `approve-head` | Approve one exact PR head as the overseer's GitHub App from the token file `ORCH_OVERSEER_REVIEW_TOKEN_FILE` names, refusing `head-moved` when the live head does not start with the given one: [Copilot head notices](references/copilot-head-notices.md) |
-| `review-artifact check` | Validate a reviewer's JSON artifact, the sole reviewer completion condition; `review-artifact path` mints its path |
-| `container-close` | Serialize a Linear container close across linked checkouts; prints `closed`, `deferred` or a rate-limit `held`, with the diagnostics on stderr |
-| `reconcile-items` | Read-only tracker sweep (parked containers, items stale past `RECONCILE_STALE_HOURS`, Done items with unchecked boxes, verification boxes), its findings in `result.findings` |
-| `report` | `due`, `render` or `write` the overseer's status report |
-| `cycle` | The fleet's merge cycles: `report` the per-class totals, `rollup` them into the fleet log, or a running lane's `stages` |
-| `accounts`, `lane status` | The account judge's `pick`, `walk` and roster, and one recorded lane's state |
-| `watch` | `run`, `status`, `stop` and `log` of the fleet watch |
-
-Every script and every verb takes `--help` bar `pr-view-json` and `resolve-base-branch`, whose only argument is a path, and `oversee-watch`, which serves a released repeat loop's pass alone. The review gate, CI and merge-queue waits, the runtime's `verify-review`, `verify-pr` and `queue-watch`: [gates.md](references/gates.md). Artifact checks: [artifact-checks.md](references/artifact-checks.md). Schemas: `schemas/workflow-state.md` (state file), `schemas/dev-return.md` (dev completion artifact), `schemas/dev-round.md` (fix-round item set), [review-finding.md](../reviewer/schemas/review-finding.md) (review/QA findings).
+Every script and every verb takes `--help` bar `pr-view-json` and `resolve-base-branch`, whose only argument is a path, `copilot-statusline`, which reads the CLI's JSON on stdin, and `oversee-watch`, which serves a released repeat loop's pass alone. The review gate, CI and merge-queue waits, the runtime's `verify-review`, `verify-pr` and `queue-watch`: [gates.md](references/gates.md). Artifact checks: [artifact-checks.md](references/artifact-checks.md). Schemas: `schemas/workflow-state.md` (state file), `schemas/dev-return.md` (dev completion artifact), `schemas/dev-round.md` (fix-round item set), [review-finding.md](../reviewer/schemas/review-finding.md) (review/QA findings).
 
 **Multi-PR watching.** Never hand-roll a monitor: [gates.md § Multi-PR watching](references/gates.md#multi-pr-watching).
 
