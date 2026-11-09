@@ -9,9 +9,7 @@ set -euo pipefail
 
 PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
 VERIFY_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=gh-repo.sh
-source "$VERIFY_LIB_DIR/gh-repo.sh"
-# Git with gh's credentials for a GitHub SSH remote, which a URL fetch needs.
+# Git with gh's credentials for a GitHub SSH remote or URL.
 GIT_AUTH="$VERIFY_LIB_DIR/../git-https-auth"
 
 # Colors for progress output (stderr)
@@ -69,6 +67,23 @@ add_issue() {
 update_result() {
     local path="$1" value="$2"
     RESULTS_JSON=$(echo "$RESULTS_JSON" | jq "$path = $value")
+}
+
+# Fetch REF until FETCH_HEAD is OID, the commit gh names for it. Each
+# configured remote is tried first, over the transport and host the user
+# already reaches it by (an SSH origin, a GitHub Enterprise remote), then the
+# repository's own URL as gh reported it. Only a fetch that delivers OID
+# counts, so a fork or another host serving the same ref name never does.
+fetch_verified() { # URL REF OID
+    local url="$1" ref="$2" oid="$3" source sources
+    sources=$(git remote) || sources=""
+    for source in $sources "$url"; do
+        if GIT_TERMINAL_PROMPT=0 "$GIT_AUTH" fetch --quiet "$source" "$ref" 2>/dev/null \
+            && [ "$(git rev-parse --verify --quiet 'FETCH_HEAD^{commit}')" = "$oid" ]; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 # Git's own spelling of VERIFY_DIR, printed when Git can name it. Git records
@@ -350,20 +365,31 @@ verify_prs() {
 # Create verification worktree
     progress "Creating verification worktree..."
 
-    # The PR numbers come from the repository gh selects (GH_REPO, then gh's
-    # default, then the origin remote), which a fork's origin is not; the
-    # heads and the baseline are fetched from that same repository.
-    local repo_slug repo_url base_oid
-    if ! repo_slug=$(kendex_github_resolve_gh_repo "$PROJECT_ROOT" 2>/dev/null); then
-        add_issue "high" "repository_unresolved" "Failed to resolve the repository the PRs belong to"
+    # The PR numbers come from the repository `gh pr list` selects, host
+    # included (GH_REPO and GH_HOST, then gh's default, then the remotes),
+    # which a fork's origin is not. `gh pr view` selects the same one; its PR
+    # URL names that host and repository, and gh names every commit fetched.
+    local pr_url host owner name repo_url base_json base_ref base_oid
+    pr_url=$(gh pr view "${pr_nums[0]}" --json url --jq .url 2>/dev/null) || pr_url=""
+    host="${pr_url#https://}"
+    host="${host%%/*}"
+    name="${pr_url#https://"$host"/}"
+    name="${name%/pull/"${pr_nums[0]}"}"
+    owner="${name%%/*}"
+    name="${name#*/}"
+    if [ -z "$host" ] || [ -z "$owner" ] || [ -z "$name" ] \
+        || [ "$pr_url" != "https://$host/$owner/$name/pull/${pr_nums[0]}" ] || [ "$name" != "${name%%/*}" ]; then
+        add_issue "high" "repository_unresolved" "Failed to resolve the repository PR #${pr_nums[0]} belongs to"
         output_results
         exit 1
     fi
-    repo_url="https://github.com/$repo_slug.git"
-    # FETCH_HEAD of a fetch naming HEAD is the repository's default branch tip.
-    if ! "$GIT_AUTH" fetch --quiet "$repo_url" HEAD 2>/dev/null \
-        || ! base_oid=$(git rev-parse --verify --quiet 'FETCH_HEAD^{commit}'); then
-        add_issue "high" "baseline_fetch_failed" "Failed to fetch the default branch of $repo_slug"
+    repo_url="https://$host/$owner/$name.git"
+    if ! base_json=$(gh api --hostname "$host" graphql -f owner="$owner" -f name="$name" \
+            -f query='query($owner:String!,$name:String!){repository(owner:$owner,name:$name){defaultBranchRef{name target{oid}}}}' 2>/dev/null) \
+        || ! base_ref=$(jq -er '.data.repository.defaultBranchRef.name' <<<"$base_json" 2>/dev/null) \
+        || ! base_oid=$(jq -er '.data.repository.defaultBranchRef.target.oid' <<<"$base_json" 2>/dev/null) \
+        || ! fetch_verified "$repo_url" "refs/heads/$base_ref" "$base_oid"; then
+        add_issue "high" "baseline_fetch_failed" "Failed to fetch the default branch of $host/$owner/$name"
         output_results
         exit 1
     fi
@@ -411,17 +437,18 @@ verify_prs() {
 # Merge PRs sequentially
     progress "Merging PRs sequentially..."
 
-    local all_merged=true
+    local all_merged=true head_oid
     for pr_num in "${pr_nums[@]}"; do
         echo -e "  Merging PR #$pr_num..." >&2
 
-        if ! "$GIT_AUTH" fetch --quiet "$repo_url" "refs/pull/$pr_num/head" 2>/dev/null; then
-            add_issue "high" "pr_fetch_failed" "Failed to fetch PR #$pr_num"
+        head_oid=$(gh pr view "$pr_num" --json headRefOid --jq .headRefOid 2>/dev/null) || head_oid=""
+        if [ -z "$head_oid" ] || ! fetch_verified "$repo_url" "refs/pull/$pr_num/head" "$head_oid"; then
+            add_issue "high" "pr_fetch_failed" "Failed to fetch the head gh reports for PR #$pr_num"
             all_merged=false
             break
         fi
 
-        if ! git merge FETCH_HEAD --no-edit -m "Merge PR #$pr_num for verification" >&2; then
+        if ! git merge "$head_oid" --no-edit -m "Merge PR #$pr_num for verification" >&2; then
             # Captured whole, then windowed in-shell, for the reason the two
             # summary branches above carry: `| head -10` closing on
             # git leaves a 141 on an assignment errexit takes the branch down
@@ -554,8 +581,8 @@ verify_prs() {
 # pr-cross-check.sh only ever execs it, so dispatch is unchanged.
 #
 # The sourcing contract: this file sets `errexit`, `nounset` and `pipefail` on
-# the sourcing shell, sources gh-repo.sh beside it, and at source time resolves
-# PROJECT_ROOT through git and assigns VERIFY_LIB_DIR, GIT_AUTH, RESULTS_JSON,
+# the sourcing shell, and at source time resolves PROJECT_ROOT through git and
+# assigns VERIFY_LIB_DIR, GIT_AUTH, RESULTS_JSON,
 # VERIFY_DIR, VERIFY_ROOT, TEMP_BRANCH, BRANCH_OWNED,
 # WORKTREE_ADD_ATTEMPTED, START_TIME, STEP, TOTAL_STEPS
 # and RED/GREEN/YELLOW/BLUE/NC. Beyond those, the functions keep no `local`

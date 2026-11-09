@@ -23,9 +23,12 @@
 #   test     `.tests.rust`, the same
 #   issues   every issue type in order, joined by `,`; `-` for none
 # verify_prs also exercises real Git fetch/merge and owned-resource teardown.
-# Each world's GitHub URLs are rewritten to local bare repositories; GH_REPO
-# selects fixture/base, and the fork-origin world points origin elsewhere.
-# Inputs: skills/github/scripts/lib/verify-lib.sh skills/github/scripts/lib/gh-repo.sh,
+# Each world's remote and PR URLs are rewritten to local bare repositories,
+# and a gh stub answers from the selected repository, fixture/base. origin is
+# an SSH-style remote naming it, with no HTTPS mapping and the HTTPS fallback
+# off; the fork-origin world points origin at a fork and puts the PRs on a
+# GitHub Enterprise host.
+# Inputs: skills/github/scripts/lib/verify-lib.sh,
 # skills/github/scripts/git-https-auth skills/github/tests/lib/mutant-copy.sh
 # The control runs only individually-clean-joint-conflict against a detached-HEAD mutant.
 set -euo pipefail
@@ -205,8 +208,10 @@ make_world() {
   git_configure "$FIXTURE/origin"
   "$REAL_GIT" clone --quiet "$FIXTURE/origin" "$FIXTURE/repo" 2>"$FIXTURE/clone.log"
   git_configure "$FIXTURE/repo"
-  "$REAL_GIT" -C "$FIXTURE/repo" config "url.$FIXTURE/origin.insteadOf" https://github.com/fixture/base.git
-  "$REAL_GIT" -C "$FIXTURE/repo" remote set-url origin https://github.com/fixture/base.git
+  "$REAL_GIT" -C "$FIXTURE/repo" config "url.$FIXTURE/origin.insteadOf" git@github.com:fixture/base.git
+  "$REAL_GIT" -C "$FIXTURE/repo" remote set-url origin git@github.com:fixture/base.git
+  PR_HOST=github.com
+  export PR_HOST
   printf 'base\n' >"$FIXTURE/repo/common"
   printf 'base\n' >"$FIXTURE/repo/left"
   printf 'base\n' >"$FIXTURE/repo/right"
@@ -214,6 +219,7 @@ make_world() {
   "$REAL_GIT" -C "$FIXTURE/repo" commit --quiet -m base
   "$REAL_GIT" -C "$FIXTURE/repo" push --quiet origin main
   BASE_TIP="$("$REAL_GIT" -C "$FIXTURE/repo" rev-parse HEAD)"
+  export BASE_TIP
   for num in 1 2; do
     "$REAL_GIT" -C "$FIXTURE/repo" checkout --quiet -b "pr$num" "$BASE_TIP"
     if [[ "$2" == conflict ]]; then
@@ -290,11 +296,30 @@ printf 'ran\n' >"$FIXTURE/verifier-ran"
 "$REAL_GIT" rev-parse HEAD >"$FIXTURE/verified-head"
 [[ "$(cat left)" == one && "$(cat right)" == two && ! -e fork-only ]]
 VERIFY
-  # Every world sets GH_REPO, so the repository resolver never asks gh.
+  # gh answers for the selected repository, the bare origin: a PR URL on
+  # PR_HOST, the head its refs/pull/N/head holds (the head-mismatch world
+  # reports another commit for PR 2), and its default branch tip for the
+  # graphql query only on PR_HOST about fixture/base.
   cat >"$FIXTURE/bin/gh" <<'GH'
 #!/bin/bash
-printf '%s\n' "$*" >>"$FIXTURE/gh-called"
-exit 97
+set -euo pipefail
+truth() { "$REAL_GIT" --git-dir="$FIXTURE/origin" rev-parse --verify --quiet "$1"; }
+case "${1:-} ${2:-}" in
+  "pr view")
+    oid="$(truth "refs/pull/$3/head")" || { echo "no pull requests found" >&2; exit 1; }
+    [[ "$MODE:$3" != head-mismatch:2 ]] || oid="$BASE_TIP"
+    case "$*" in
+      *"--json url "*) printf 'https://%s/fixture/base/pull/%s\n' "$PR_HOST" "$3" ;;
+      *"--json headRefOid "*) printf '%s\n' "$oid" ;;
+      *) exit 96 ;;
+    esac
+    ;;
+  "api --hostname")
+    [[ "$3" == "$PR_HOST" && "$4" == graphql && "$*" == *" owner=fixture "*" name=base "* ]] || exit 98
+    printf '{"data":{"repository":{"defaultBranchRef":{"name":"main","target":{"oid":"%s"}}}}}\n' "$(truth refs/heads/main)"
+    ;;
+  *) exit 97 ;;
+esac
 GH
   chmod +x "$FIXTURE/bin/git" "$FIXTURE/bin/mktemp" "$FIXTURE/bin/gh"
 }
@@ -305,10 +330,11 @@ verify_world() {
   (
     cd -- "$FIXTURE/repo"
     export MODE="$1" TMPDIR="$FIXTURE/scratch" PATH="$FIXTURE/bin:$PATH"
-    # The child keeps the caller's environment, except for the repository
-    # selection and git-https-auth's credential routing, which its own suite
-    # covers; only test boundaries above replace Git and scratch acquisition.
-    export GH_REPO=fixture/base KENDEX_GITHUB_GIT_HTTPS_FALLBACK=never
+    # The child keeps the caller's environment, except for git-https-auth's
+    # credential routing, which its own suite covers: off, as for a user with
+    # SSH access and no HTTPS credentials. Only test boundaries above replace
+    # gh, Git and scratch acquisition.
+    export KENDEX_GITHUB_GIT_HTTPS_FALLBACK=never
     unset ORCH_GH_READ_TOKEN_FILE
     export GH_VERIFY_CMD='"$BASH" "$FIXTURE/verify.sh"'
     "$BASH" "$LIB" verify_prs 1 "$second"
@@ -329,9 +355,6 @@ assert_preserved() {
   assert_eq "$("$REAL_GIT" -C "$FIXTURE/repo" rev-parse unrelated)" "$BASE_TIP" 'unrelated branch tip preserved'
   assert_eq "$(cat "$FIXTURE/unrelated/sentinel")" keep 'unrelated checkout content preserved'
   assert_eq "$(cat "$FIXTURE/scratch/gh-verify-old/sentinel")" unrelated 'old unrelated directory preserved'
-  local asked=false
-  [[ ! -e "$FIXTURE/gh-called" ]] || asked=true
-  assert_eq "$asked" false 'GH_REPO selects the repository without asking gh'
   local registered=false
   [[ "$inventory" != *"worktree $FIXTURE/unrelated"* ]] || registered=true
   assert_eq "$registered" true 'unrelated checkout stays registered'
@@ -400,9 +423,9 @@ if [[ "$CASE" == all ]]; then
   assert_released
   assert_preserved
 
-  # origin is a fork holding its own default branch and PR refs; the PR numbers
-  # belong to the repository GH_REPO selects, so its heads and baseline are
-  # the ones verified.
+  # origin is a fork holding its own default branch and PR refs, and the PRs
+  # live on a GitHub Enterprise host; the heads and baseline gh names are
+  # fetched from the PR's own repository URL on that host.
   make_world fork-origin success
   "$REAL_GIT" clone --quiet --bare "$FIXTURE/origin" "$FIXTURE/fork"
   "$REAL_GIT" clone --quiet "$FIXTURE/fork" "$FIXTURE/fork-work" 2>>"$FIXTURE/clone.log"
@@ -411,8 +434,10 @@ if [[ "$CASE" == all ]]; then
   "$REAL_GIT" -C "$FIXTURE/fork-work" add fork-only
   "$REAL_GIT" -C "$FIXTURE/fork-work" commit --quiet -m fork
   "$REAL_GIT" -C "$FIXTURE/fork-work" push --quiet origin HEAD:main HEAD:refs/pull/1/head HEAD:refs/pull/2/head
-  "$REAL_GIT" -C "$FIXTURE/repo" config "url.$FIXTURE/fork.insteadOf" https://github.com/fixture/fork.git
-  "$REAL_GIT" -C "$FIXTURE/repo" remote set-url origin https://github.com/fixture/fork.git
+  "$REAL_GIT" -C "$FIXTURE/repo" config "url.$FIXTURE/fork.insteadOf" git@github.com:fixture/fork.git
+  "$REAL_GIT" -C "$FIXTURE/repo" remote set-url origin git@github.com:fixture/fork.git
+  "$REAL_GIT" -C "$FIXTURE/repo" config "url.$FIXTURE/origin.insteadOf" https://ghe.example/fixture/base.git
+  PR_HOST=ghe.example
   "$REAL_GIT" -C "$FIXTURE/repo" fetch --quiet origin
   verify_world normal
   assert_eq "$VERIFY_STATUS" 0 'fork origin exits zero'
@@ -425,6 +450,14 @@ if [[ "$CASE" == all ]]; then
   verify_world spelling
   assert_eq "$VERIFY_STATUS" 0 'differing spelling exits zero'
   assert_json '.can_batch_merge' 'differing spelling verifies the batch'
+  assert_released
+  assert_preserved
+
+  # The fetched ref holds a commit other than the head gh reports.
+  make_world head-mismatch success
+  verify_world head-mismatch
+  assert_eq "$VERIFY_STATUS" 0 'head mismatch preserves JSON exit convention'
+  assert_json '.merge.success == false and .can_batch_merge == false and [.prs[].number] == [1] and [.issues[].type] == ["pr_fetch_failed"] and .builds == {}' 'a fetched head other than the one gh reports is refused'
   assert_released
   assert_preserved
 
@@ -472,8 +505,8 @@ if [[ "$CASE" == all ]]; then
   # scratch. Retain the fetch, then plant the original detachment defect.
   source "$TEST_DIR/lib/mutant-copy.sh"
   mutant="$(mutant_copy_edit "$TMP_ROOT/detach-control" \
-    '        if ! "$GIT_AUTH" fetch --quiet "$repo_url" "refs/pull/$pr_num/head" 2>/dev/null; then' \
-    '        if ! { "$GIT_AUTH" fetch --quiet "$repo_url" "refs/pull/$pr_num/head" && git checkout --detach FETCH_HEAD; } 2>/dev/null; then' \
+    '        if [ -z "$head_oid" ] || ! fetch_verified "$repo_url" "refs/pull/$pr_num/head" "$head_oid"; then' \
+    '        if [ -z "$head_oid" ] || ! { fetch_verified "$repo_url" "refs/pull/$pr_num/head" "$head_oid" && git checkout --quiet --detach FETCH_HEAD; }; then' \
     lib/verify-lib.sh)"
   control_status=0
   "$BASH" "$0" individually-clean-joint-conflict "$mutant" "$TMP_ROOT/control-result" >"$TMP_ROOT/control.log" 2>&1 || control_status=$?
