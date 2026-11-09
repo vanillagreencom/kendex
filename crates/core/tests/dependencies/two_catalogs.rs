@@ -57,7 +57,7 @@ fn two_catalogs(declarations: &str) -> (Fixture, PathBuf) {
 /// The project's manifest rewritten around new declarations, both
 /// catalogs subscribed.
 #[allow(clippy::unwrap_used)]
-fn declare_two(f: &Fixture, other: &Path, declarations: &str) {
+pub(super) fn declare_two(f: &Fixture, other: &Path, declarations: &str) {
     fs::write(
         f.project.join("kendex.toml"),
         format!(

@@ -531,10 +531,15 @@ fn still_derived(
     (derived, state.unreadable_catalogs)
 }
 
-/// The catalogs behind what is going away that this removal could not
-/// read: the ones that do not resolve, and the ones [`still_derived`] found
-/// short (`unreadable`). Dependencies stay inside one catalog, so these are
-/// the catalogs of every edge that can hold up what is going away.
+/// The catalogs this removal's answer rests on that it could not read:
+/// the ones that do not resolve, and the ones [`still_derived`] found short
+/// (`unreadable`). The answer rests on the catalog of what is going away,
+/// which says what else still wants it, and on the catalog every
+/// `RequiredBy` edge names along the records [`staying`] follows back from
+/// it: the entries going away, each requirer's records on any tool, and
+/// theirs in turn. An edge's catalog is its requirer's, not always the
+/// item's: an item the manifest takes from one catalog records the edge of
+/// a requirer that a set from another catalog brings.
 fn unread_catalogs(
     env: &Env,
     scope: &Scope,
@@ -544,26 +549,49 @@ fn unread_catalogs(
     options: &PlanOptions,
     unreadable: &BTreeSet<String>,
 ) -> BTreeSet<String> {
-    lock.entries
-        .values()
-        .filter(|entry| {
-            names.contains(&entry.name) && options.named_for_removal(entry.kind, &entry.name)
-        })
-        .map(|entry| entry.source.clone())
-        .collect::<BTreeSet<String>>()
+    let mut sources = BTreeSet::new();
+    let mut next = Vec::new();
+    for (key, entry) in &lock.entries {
+        if names.contains(&entry.name) && options.named_for_removal(entry.kind, &entry.name) {
+            sources.insert(entry.source.as_str());
+            next.push((key.as_str(), entry));
+        }
+    }
+    let mut followed = BTreeSet::new();
+    while let Some((key, entry)) = next.pop() {
+        if !followed.insert(key) {
+            continue;
+        }
+        for reason in &entry.reasons {
+            match reason {
+                Reason::RequiredBy { by } => {
+                    sources.insert(by.source.as_str());
+                    next.extend(HarnessId::ALL.iter().filter_map(|harness| {
+                        lock.entries
+                            .get_key_value(&entry_key(by.kind, &by.name, *harness))
+                            .map(|(key, requirer)| (key.as_str(), requirer))
+                    }));
+                }
+                Reason::Requested | Reason::MemberOf { .. } => {}
+            }
+        }
+    }
+    sources
         .into_iter()
         .filter(|source| {
-            unreadable.contains(source)
+            unreadable.contains(*source)
                 || !matches!(
                     crate::source::resolve(env, scope, source, manifest),
                     Ok(crate::source::SourceState::Ready(_))
                 )
         })
+        .map(str::to_owned)
         .collect()
 }
 
-/// What else still wants an item is written in its catalog, so an unread
-/// one means the preview cannot show the whole consequence of the removal.
+/// What else still wants an item is written in its catalog and in its
+/// requirers' catalogs, so an unread one of either means the preview cannot
+/// show the whole consequence of the removal.
 /// The removal itself stands either way — the record already says what has
 /// to stay removed.
 fn unreadable_origins(unread: &BTreeSet<String>) -> Vec<String> {
