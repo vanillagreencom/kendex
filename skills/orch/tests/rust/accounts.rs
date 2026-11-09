@@ -897,7 +897,8 @@ fn a_seat_is_held_to_the_overseers_headroom_beside_the_lane_limit_and_returned_l
 /// hours to its reset the larger seat keeps 17 (the trigger 5 and 12) and
 /// still takes a worker, while the smaller keeps 35 (5 and 30) and is
 /// `seat-reserve`, where a flat reserve would hand its overseer's room to
-/// the worker.
+/// the worker. A lane live at the sample spent half the measured rate, so
+/// with one beside it the larger seat keeps 11 (5 and 6).
 #[test]
 fn a_seat_keeps_what_its_overseer_spends_to_the_reset_so_a_smaller_plan_keeps_more() {
     let mut world = World::new(&[]);
@@ -928,6 +929,23 @@ fn a_seat_keeps_what_its_overseer_spends_to_the_reset_so_a_smaller_plan_keeps_mo
             "{alias}: {judged}"
         );
     }
+    let dir = world.dir("large");
+    let child = Owned::sleep();
+    world.write_fleet(
+        vec![lane("KEN-1", &dir, child.pid(), &child.start())],
+        Some(&dir),
+    );
+    let shared = world.pick(&named(&dir, claude(None)));
+    assert_eq!(
+        (
+            &shared["answer"],
+            &shared["record"]["verdict"],
+            &shared["record"]["need"]
+        ),
+        (&json!("lane"), &json!("room"), &json!(11)),
+        "one sampled lane halves the overseer's share: {shared}"
+    );
+    drop(child);
 }
 
 /// The provider's rows under a host are the judge's own, read from the

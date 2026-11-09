@@ -21,7 +21,7 @@ trap cleanup_model_world EXIT
 # repeating unrelated worlds. An ordinary run still exercises every case.
 if [[ -n "${MODEL_CONTROL:-}" ]]; then
   case "${MODEL_CONTROL_CASE:-}" in
-    matching|family-alias|no-fleet-record|gui-session|adapter|fresh-shell|complete|extended|conflicting-selector|retired-callback|replaced-before-write|stale-launch|missing-judge|optional-account|runtime-record|reset|reset-replaced|reset-warning|lock-cause) ;;
+    matching|family-alias|no-fleet-record|gui-session|adapter|fresh-shell|complete|extended|conflicting-selector|retired-callback|replaced-before-write|stale-launch|missing-judge|optional-account|runtime-record|reset|reset-replaced|reset-warning|lock-cause|resumed-handoff|unbuilt-store) ;;
     *) printf 'lane-mail-model-switch.test: control-case=unknown value=%s\n' "${MODEL_CONTROL_CASE:-}" >&2; exit 1 ;;
   esac
 fi
@@ -330,6 +330,10 @@ while IFS='|' read -r preparation launched original override expected_model obse
     '.child_sessions={runtime:{status:"active",agent_id:"a1"},retired:{status:"closed",agent_id:"a2"}}' >/dev/null
   "$S/workflow-state" --state-dir "$LANE/tmp" set KEN-3916 handoff \
     '{"remaining":["old"],"merged":["landed"],"open_pr":42,"traps":["standing trap"]}' >/dev/null
+  # A private-file value the settings load skips writes its notice on stderr
+  # ahead of every runtime answer, the standing item's init refusal included.
+  # shellcheck disable=SC2016
+  [[ "$preparation" != complete ]] || printf 'GH_TOKEN=$(printf example)\n' > "$LANE/.env.local"
   transcript="$LANE/tmp/parent.jsonl"
   mkdir -p "$LANE/tmp/parent/subagents"
   : > "$transcript"
@@ -644,6 +648,43 @@ write|reset-record-unwritten
 ROWS
 fi
 
+if model_case resumed-handoff; then
+echo '=== the emergency handoff over a resumed record stands ==='
+# A relaunch resumed the lane's earlier handoff, so the record carries
+# resumed_at and every standing reader reads none. The model switch's own
+# handoff, a supersede through the real runtime, replaces it whole, so the
+# relaunch it asks for has a record to resume.
+model_world resumed-handoff claude-fable-5-1
+"$S/workflow-state" --state-dir "$LANE/tmp" init KEN-3916 >/dev/null
+"$S/workflow-state" --state-dir "$LANE/tmp" set KEN-3916 handoff \
+  '{"remaining":["old"],"merged":[],"open_pr":null,"traps":[],"resumed_at":"2026-09-18T09:00:00Z"}' >/dev/null
+event claude-opus-4-8
+await_recovery || FAIL=$((FAIL + 1))
+assert_eq "$(cd "$LANE" && "$ORCH_RUNTIME" --state-dir "$LANE/tmp" state handoff-standing --item KEN-3916 \
+    | jq -r '[.result.standing, .result.record.cause] | join(" ")')" \
+  'stands model-switched' 'the emergency handoff over a resumed record stands'
+kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
+fi
+
+if model_case unbuilt-store; then
+echo '=== a model switch on an unbuilt runtime names its setup once ==='
+# The shipped wrapper under an empty cache: no binary stands for the
+# install's sources, so the first store call answers 69 and no other runs.
+model_world unbuilt-store claude-fable-5-1
+mkdir -p "$TMP_ROOT/unbuilt-cache"
+printf '#!/bin/sh\nAGENT_RUNTIME_CACHE=%s exec %s "$@"\n' "$TMP_ROOT/unbuilt-cache" "$ORCH_RUNTIME" > "$S/orch-runtime"
+before=$(cat "$LANE/tmp/workflow-state-oversee.json")
+event claude-opus-4-8
+assert_eq "$(jq -r '.hookSpecificOutput.additionalContext | split("\n")
+    | [.[0], ([.[] | select(startswith("lane-mail-check: "))] | length | tostring),
+       ([.[] | select(startswith("orch-runtime: setup-required "))] | length | tostring)] | join("|")' "$TMP_ROOT/stdout")" \
+  "lane-mail-check: store-unbuilt=${CASE_HOOK%/hooks/*}/skills/orch/scripts/setup|1|1" \
+  'an unbuilt runtime is handed over once under store-unbuilt, naming the setup, with the wrapper line below'
+assert_eq "$(cat "$LANE/tmp/workflow-state-oversee.json")" "$before" 'an unbuilt runtime records nothing'
+assert_eq "$(lane_process_start "$OWNED_CHILD")" "$START" 'an unbuilt runtime leaves the predecessor running'
+kill "$OWNED_CHILD" 2>/dev/null || :; wait "$OWNED_CHILD" 2>/dev/null || :; OWNED_CHILD=""
+fi
+
 if model_case missing-judge; then
 echo '=== missing companion judge ==='
 model_world missing-judge claude-fable-5-1
@@ -681,6 +722,8 @@ old, new = {
     "reset": ('    model_recovery_reset\n', '    : # model_recovery_reset\n'),
     "reset-warning": ('message model-unavailable reset-launch-unread', 'model_unavailable_notice reset-launch-unread ""'),
     "lock-cause": ('        model_unavailable_notice handoff-unwritten "$observed" "$(cat -- "$WORK_DIR/model.err")"\n      }\n', '        model_unavailable_notice handoff-unwritten "$observed"\n      }\n'),
+    "init-key": ('case "$(awk \'/^orch-runtime: / { print; exit }\' "$WORK_DIR/model.err")" in', 'case "$(head -n 1 -- "$WORK_DIR/model.err")" in'),
+    "unbuilt-notice": ('  if [ "$1" -eq 69 ]; then\n    hand_over "$(message store-unbuilt', '  if false; then\n    hand_over "$(message store-unbuilt'),
 }[rule]
 assert text.count(old) == 1
 changed = text.replace(old, new)
@@ -708,6 +751,8 @@ notice|adapter
 reset|reset
 reset-warning|reset-warning
 lock-cause|lock-cause
+init-key|complete
+unbuilt-notice|unbuilt-store
 CONTROLS
   while IFS='|' read -r rule control_case; do
     control="$TMP_ROOT/relaunch-$rule.sh"

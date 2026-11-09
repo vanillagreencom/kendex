@@ -241,8 +241,10 @@ const DEFAULT_QUEUE_WAIT_PROBE_INTERVAL_SECS: u32 = 120;
 pub const ARCHIVE_ROOT_KEY: &str = "ORCH_ARCHIVE_ROOT";
 /// The fleet directory the default archive root sits under.
 pub const FLEET_DIR_KEY: &str = "FLEET_DIR";
-/// The account reader the heartbeat's roster and owed verdicts run;
-/// empty finds the installed orch package's own.
+/// A path in the orch scripts directory: the account judge, its listing and
+/// the walk run `lane-host` from the directory it names, and the heartbeat
+/// names the path in its `account-unread` line. Empty takes the project's
+/// installed orch package.
 pub const LANES_CLI_KEY: &str = "OVERSEE_WATCH_LANES";
 /// The orch package's account reader under the project's install.
 pub const LANES_CLI_DEFAULT: &str = ".agents/skills/orch/scripts/lanes";

@@ -2104,7 +2104,8 @@ fn close_all_closes_every_member_of_the_map() {
 
 /// The model checks: the item's once-only unavailable slot; a switch
 /// acquired until its recovery starts, then a duplicate; a lane or a
-/// controller that moved is stale; a fleet check logs its row; a
+/// controller that moved is stale; a fleet check logs one row however often
+/// it is acquired before its recovery starts; a
 /// replacement's first turn end resets the lane's check to `passed` once.
 #[test]
 fn a_model_check_is_acquired_once_its_recovery_starts_and_a_moved_launch_is_stale() {
@@ -2213,6 +2214,16 @@ fn a_model_check_is_acquired_once_its_recovery_starts_and_a_moved_launch_is_stal
     assert_eq!(row["item"], ITEM);
     assert_eq!(row["text"], "launched=L observed=O");
     assert_eq!(fleet["lanes"][0]["model_check"]["outcome"], "switched");
+    // Acquired again before its recovery starts, the check keeps its one
+    // log row, the row the relaunch's recovery limit counts.
+    assert_eq!(record(&lane_place, "switched", &expected), "acquired");
+    let switched = store.doc(&store.fleet_path())["fleet_log"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["kind"] == "model-switched")
+        .count();
+    assert_eq!(switched, 1, "one row per launch");
     for (name, moved) in [
         (
             "session",

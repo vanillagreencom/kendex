@@ -4571,10 +4571,11 @@ fn record_verification_writes_the_record_once_and_a_later_write_replaces_it() {
 }
 
 /// A handoff names the round it leaves open; the same content recorded again is
-/// the same operation and writes nothing, other content needs `supersede` and
-/// keeps the resume stamp; the continuing session resumes that same round,
-/// stamped once, and reads the admitted run it waits on instead of starting a
-/// new one.
+/// the same operation and writes nothing, other content needs `supersede`; the
+/// continuing session resumes that same round, stamped once, and reads the
+/// admitted run it waits on instead of starting a new one; and that session's
+/// own handoff, the hook's printed request or its model-switch supersede,
+/// replaces the consumed record whole and stands.
 #[test]
 fn a_handoff_is_recorded_once_per_content_and_resumed_once() {
     let dir = tempfile::tempdir().unwrap();
@@ -4703,20 +4704,27 @@ fn a_handoff_is_recorded_once_per_content_and_resumed_once() {
     assert!(!r2.resumed_now);
     assert_eq!(r2.resumed_at, NOW_SECS + 600);
     assert_eq!(object(&path)["handoff"]["resumed_at"], NOW_SECS + 600);
-    // A replay of the record after the resume consumes nothing: the
-    // consumed handoff stays consumed.
-    let replay = run_at(
+    // The relaunch the resume started hands off in turn: its record, here
+    // the same content again, replaces the consumed one whole, with no
+    // resume stamp, so it stands.
+    let relaunched = run_at(
         &path,
         &handoff(Some(ROUND), Some(Relaunch::Fresh), None),
         NOW_SECS + 910,
     )
     .unwrap();
-    let Report::RecordHandoff(k) = replay.report else {
-        panic!("{:?}", replay.report)
+    let Report::RecordHandoff(k) = relaunched.report else {
+        panic!("{:?}", relaunched.report)
     };
-    assert!(!k.recorded_now);
-    assert_eq!(object(&path)["handoff"], Value::Object(record.clone()));
-    // Other content over a standing record refuses, naming the fields, and
+    assert!(k.replaced);
+    assert!(k.recorded_now);
+    assert_eq!(k.written_at, at(NOW_SECS + 910).iso());
+    let record = object(&path)["handoff"].as_object().unwrap().clone();
+    assert!(
+        record.get("resumed_at").is_none(),
+        "the relaunch's own record stands"
+    );
+    // Other content over an unconsumed record refuses, naming the fields, and
     // writes nothing.
     let other = |supersede| {
         handoff_with(
@@ -4737,8 +4745,7 @@ fn a_handoff_is_recorded_once_per_content_and_resumed_once() {
         ]
     );
     assert_eq!(object(&path)["handoff"], Value::Object(record.clone()));
-    // Asked to supersede, the write replaces the content, stamps anew and
-    // keeps the resume stamp.
+    // Asked to supersede, the write replaces the content and stamps anew.
     let superseded = apply(&path, &other(true), &at(NOW_SECS + 930), LOCK).unwrap();
     let Report::RecordHandoff(s) = superseded.report else {
         panic!("{:?}", superseded.report)
@@ -4749,11 +4756,38 @@ fn a_handoff_is_recorded_once_per_content_and_resumed_once() {
     let record = object(&path)["handoff"].as_object().unwrap().clone();
     assert_eq!(record["remaining"], json!(["merge-pr § 5 step 4"]));
     assert_eq!(record["written_at"], at(NOW_SECS + 930).iso());
-    assert_eq!(record["resumed_at"], NOW_SECS + 600);
-    assert_eq!(
-        keys(&record)[9..],
-        ["written_at".to_owned(), "resumed_at".to_owned()]
-    );
+    assert_eq!(keys(&record)[9..], ["written_at".to_owned()]);
+    // Over a consumed record, other content stands with or without
+    // `supersede`: the lane's printed request carries none, the model-switch
+    // handoff asks it.
+    for (supersede, remaining, secs) in [
+        (false, "merge-pr § 5 step 5", NOW_SECS + 940),
+        (true, "merge-pr § 5 step 6", NOW_SECS + 960),
+    ] {
+        run_at(&path, &resume(), secs).unwrap();
+        let next = handoff_with(
+            Some(ROUND),
+            Some(Relaunch::Fresh),
+            None,
+            remaining,
+            supersede,
+        );
+        let written = run_at(&path, &next, secs + 10).unwrap();
+        let Report::RecordHandoff(w) = written.report else {
+            panic!("{:?}", written.report)
+        };
+        assert!(w.replaced && w.recorded_now, "supersede={supersede}");
+        let record = object(&path)["handoff"].as_object().unwrap().clone();
+        assert_eq!(
+            record["remaining"],
+            json!([remaining]),
+            "supersede={supersede}"
+        );
+        assert!(
+            record.get("resumed_at").is_none(),
+            "supersede={supersede}: the new record stands"
+        );
+    }
     // Once the run closed, a resume still names it, now by its recorded
     // outcome: the continuation reuses the run its job ended rather than
     // starting a new one.

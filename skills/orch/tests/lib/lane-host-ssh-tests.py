@@ -547,6 +547,14 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
             self.seed_source(relative, (PACKAGE / "scripts" / name).read_text())
         for library in (PACKAGE.parent / "github/scripts/lib").glob("*.sh"):
             self.seed_source(".agents/skills/github/scripts/lib/" + library.name, library.read_text())
+        # The hook's store reads and writes are the runtime's: the checkout's
+        # entry runs the binary setup built for these sources.
+        runtime = self.runtime_binary()
+        self.assertTrue(os.access(runtime, os.X_OK), f"{runtime}: run skills/orch/scripts/setup first")
+        relative = ".agents/skills/orch/scripts/orch-runtime"
+        entry = f'#!/bin/sh\nexec {shlex.quote(str(runtime))} "$@"\n'
+        self.executable(self.source / relative, entry)
+        self.seed_source(relative, entry)
         if control == "consumer":
             guard = 'if [ "$ROLE" != overseer ] && [ ! -e "$fleet" ]; then'
             self.assertEqual(hook_text.count(guard), 1)
@@ -576,22 +584,27 @@ sys.exit(subprocess.run([os.environ["SSH_TEST_BASH"], "-c", words[-1]], env=chil
             self.assertEqual(json.loads(reading.stdout), {"model": "claude-fable-5-1",
                                                   "identity_file": self.row["clone"] + "/.git/lane-host-pid",
                                                   "runtime": "/cache/bin/orch-runtime-fixture"})
+        if not control and not recovery_fault:
+            # A private-file value the settings load skips writes its notice
+            # on stderr ahead of every runtime answer, the standing item's init
+            # refusal included.
+            (path / ".env.local").write_text("GH_TOKEN=$(printf example)\n")
         stop_done = self.root / "stop-done"
         fault_reached = self.root / "fault-reached"
+        planted = None
         if recovery_fault == "handoff":
-            # The writer's required clock read fails inside this invocation.
-            # Model-check and notice updates retain their real jq dependency.
-            library = path / ".agents/skills/orch/scripts/workflow-state"
-            text = library.read_text()
-            signature = "stamp_judge() {"
-            self.assertEqual(text.count(signature), 1)
-            wrapper = f'''stamp_judge() {{
-  date() {{ printf reached > {shlex.quote(str(fault_reached))}; return 1; }}
-  native_real_stamp_judge "$@"
-}}
-
-'''
-            library.write_text(text.replace(signature, wrapper + "native_real_" + signature))
+            # The runtime's handoff write refuses inside this invocation: the
+            # standing record the switch carries forward, planted as the
+            # released store wrote it, names a round the item never ran, so
+            # record-handoff answers round-unknown. The model check and the
+            # notice slot stay the runtime's real writes.
+            planted = {"round_id": "pruned-round", "merged": [], "remaining": ["old"], "branch": "b",
+                       "worktree": str(path), "open_pr": None, "traps": []}
+            store = path / ".agents/skills/orch/scripts/workflow-state"
+            for args in (("init", "TEST-1"), ("set", "TEST-1", "handoff", json.dumps(planted))):
+                done = subprocess.run([str(store), "--state-dir", str(path / "tmp"), *args],
+                                      cwd=path, env=self.env, capture_output=True)
+                self.assertEqual(done.returncode, 0, done.stderr)
         elif recovery_fault:
             # A private wrapper keeps the real owner and fails its dependency.
             # Its exit receipt proves detached completion before state is read.
@@ -655,9 +668,7 @@ signal.sigwait({signal.SIGTERM})
             reply = json.loads(child.stdout.readline())
             self.assertEqual(reply["exit"], 0, reply)
             self.assertTrue((path / "tmp/workflow-state-TEST-1.json").exists(), reply)
-            if recovery_fault == "handoff":
-                self.assertTrue(fault_reached.exists(), "the required clock fault was not reached")
-            elif recovery_fault:
+            if recovery_fault and recovery_fault != "handoff":
                 deadline = time.monotonic() + 20
                 while not stop_done.exists() and time.monotonic() < deadline:
                     time.sleep(0.01)
@@ -669,7 +680,8 @@ signal.sigwait({signal.SIGTERM})
             self.assertEqual(json.loads(read.stdout), state)
             if recovery_fault == "handoff":
                 self.assert_native_model_check(state)
-                self.assertIsNone(state.get("handoff"))
+                self.assertEqual({key: state["handoff"].get(key) for key in planted}, planted,
+                                 "a refused handoff write leaves the standing record")
                 self.assertIsNone(child.poll(), "a failed handoff write ended its predecessor")
                 self.assertFalse((path / "tmp/model-recovery-TEST-1.log").exists(),
                                  "a failed handoff write dispatched recovery")
@@ -732,7 +744,7 @@ signal.sigwait({signal.SIGTERM})
 
     def assert_native_handoff_failure(self, reply):
         self.assertIn("lane-mail-check: model-unavailable=handoff-unwritten", reply["stdout"])
-        self.assertIn("workflow-state: clock-unreadable", reply["stdout"])
+        self.assertIn("orch-runtime: round-unknown round_id=pruned-round", reply["stdout"])
 
     def test_native_model_recovery_failures(self):
         for fault in ("handoff", "stop", "dispatch"):

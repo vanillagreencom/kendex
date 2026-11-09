@@ -322,6 +322,28 @@ template_record() { # [LITERAL REPLACEMENT]
     *) return 1 ;;
   esac
 }
+# The lane's request line exactly as the refusal prints it.
+printed_request() {
+  local line
+  while IFS= read -r line; do
+    case "$line" in
+      '  {"op":"record-handoff",'*) printf '%s\n' "${line#  }"; return 0 ;;
+    esac
+  done < "$ERR_FILE"
+  return 1
+}
+# The command the refusal prints for ITEM's record, run from the lane with
+# REQUEST_FILE in its placeholder's place; its answer is the command's own.
+run_printed_record() { # ITEM REQUEST_FILE
+  local line command=''
+  while IFS= read -r line; do
+    case "$line" in
+      *" op --item $1 --request [REQUEST FILE]") command=${line%'[REQUEST FILE]'}; break ;;
+    esac
+  done < "$ERR_FILE"
+  [ -n "$command" ] || return 1
+  (cd "$LANE" && "$BASH" -c 'file=$2; eval "set -- $1"; "$@" "$file"' _ "$command" "$2" >/dev/null 2>&1)
+}
 # Whether the refusal names the one command that writes the record, for ITEM,
 # under STATE_DIR where the lane's orch commands pass one.
 record_command_named() { # ITEM [STATE_DIR]
@@ -384,6 +406,16 @@ record_handoff KEN-50 2026-09-18T09:00:00Z
 stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: context=500000" \
   "a record a relaunch resumed belongs to an earlier life and does not clear the mark"
+# The relaunched lane writes the request the refusal prints through the
+# command it names, as printed: the runtime replaces the consumed record
+# whole, so the lane's own record stands and the turn ends.
+printed_request > "$TMP_ROOT/handoff-request.json" || :
+assert_eq "$(run_printed_record KEN-50 "$TMP_ROOT/handoff-request.json" && echo written || echo refused)" \
+  "written" "the printed request over a resumed record is written"
+assert_eq "$(cd "$LANE" && "$ORCH_RUNTIME" state handoff-standing --item KEN-50 | jq -r '.result.standing')" \
+  "stands" "and the record it wrote stands"
+stop_at "$TRANSCRIPT" false
+expect 0 - "a relaunched lane whose own record stands ends its turn past the mark"
 
 # A lane in a worktree whose orch commands all pass `--state-dir <worktree>/tmp`,
 # as a launch forbidding writes to the main checkout makes it, past the context

@@ -210,9 +210,10 @@ pub enum Relaunch {
 /// runtime's clock when absent; a given one must be ISO 8601 UTC and not
 /// later than that clock. The content, every field but `written_at`, is
 /// the operation's identity: a repeat with the same content is a no-op that
-/// reports the standing record's stamp, a standing record with other
-/// content refuses unless `supersede` is set, and a supersede keeps the
-/// record's `resumed_at`, so a consumed handoff stays consumed.
+/// reports the standing record's stamp, and a standing record with other
+/// content refuses unless `supersede` is set. A record a resume stamped
+/// `resumed_at` is an earlier life's, consumed by the session writing now:
+/// the new record replaces it whole, with no `resumed_at`, so it stands.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RecordHandoff {
     #[serde(default)]
@@ -361,10 +362,11 @@ pub struct HandoffRecorded {
     /// The record's stamp: this write's, or the standing record's on a
     /// repeat.
     pub written_at: String,
-    /// True when a record with other content stood and this write replaced
-    /// it.
+    /// True when a record stood, with other content or consumed by a resume,
+    /// and this write replaced it.
     pub replaced: bool,
-    /// False when the same content already stood and nothing was written.
+    /// False when the same content already stood unconsumed and nothing was
+    /// written.
     pub recorded_now: bool,
 }
 
@@ -1400,9 +1402,12 @@ pub(super) fn record_handoff(
         None | Some(Value::Null) => None,
         Some(_) => Some(state::object_mut(path, doc, HANDOFF_KEY)?),
     };
-    let mut replaced = false;
-    let mut resumed_at = None;
-    if let Some(standing) = standing {
+    let replaced = standing.is_some();
+    // Every standing reader reads a record carrying `resumed_at` as none, so
+    // only an unconsumed record is compared; a consumed one is replaced.
+    if let Some(standing) = standing
+        && standing.get("resumed_at").is_none_or(Value::is_null)
+    {
         // The content is the operation's identity: a field the standing
         // record lacks reads as null, as the request's absent field does.
         let differing: Vec<String> = record
@@ -1428,15 +1433,8 @@ pub(super) fn record_handoff(
                 fields: differing,
             });
         }
-        replaced = true;
-        // A consumed handoff stays consumed: the stamp the resume wrote
-        // outlives the content it was written on.
-        resumed_at = standing.get("resumed_at").filter(|v| !v.is_null()).cloned();
     }
     state::set(&mut record, "written_at", written_at.clone());
-    if let Some(resumed_at) = resumed_at {
-        state::set(&mut record, "resumed_at", resumed_at);
-    }
     state::set(doc, HANDOFF_KEY, record);
     Ok(HandoffRecorded {
         round_id: r.round_id.clone(),

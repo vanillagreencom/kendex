@@ -216,6 +216,7 @@ message() { # KEY VALUE [CAUSE]
   case "$ARM" in
     usage) passed="this context reading is not recorded, and this session's next turn end is passed" ;;
     compact) passed="this compaction is not flagged, and this session's next turn end is passed" ;;
+    model-switch) passed="this model switch is neither recorded nor handed off, so the session runs on under the changed model" ;;
     *) passed="this turn end is passed" ;;
   esac
   {
@@ -249,7 +250,7 @@ message() { # KEY VALUE [CAUSE]
         echo "the wake check is unjudged; independent turn-end checks still run"
         ;;
       store-unbuilt=*)
-        echo "the orch runtime beside this install is not built for its current sources, so the workflow record this turn end reads and writes is left as it stands: run $2, after which the record is read again; until then nothing is recorded and $passed"
+        echo "the orch runtime beside this install is not built for its current sources, so the workflow record this hook reads and writes is left as it stands: run $2, after which the record is read again; until then nothing is recorded and $passed"
         ;;
       setup-required=*)
         echo "the orch runtime beside this install is not built for its current sources, so the fleet watch's claim cannot be read: run $2, after which the watch read and the wake check resume; until then the overseer mailbox is left unread for the watch, the wake check is void, and $passed"
@@ -514,6 +515,9 @@ message() { # KEY VALUE [CAUSE]
         ;;
       marks=timeout)
         echo "the overseer mark judgement did not finish inside this hook's ceiling, so none of this session's own triggers is judged; the gap is reported rather than held, because an overseer whose marks nothing can measure must still be able to end a turn. No trigger is read as room:"
+        ;;
+      marks=unbuilt)
+        echo "the orch runtime beside this install is not built for its current sources, so it judges none of this session's marks: run $SCRIPTS/setup, after which they are judged again; until then no mark is read as reached or as room and $passed. The runtime's own words follow:"
         ;;
       marks=unmeasured)
         echo "the orch runtime's marks could not take one reading this session's triggers use, and no other mark fired; the gap is reported rather than held, and a reading nothing took is never read as room. Its own line, naming the figure that was missing, is below:"
@@ -3316,7 +3320,8 @@ pi_account() {
 
 # The item's record in STATE_DIR made where a launch predates it, through the
 # runtime's exclusive create: 0 made or already standing, 69 the runtime
-# unbuilt, 1 any other refusal, its words in model.err.
+# unbuilt, 1 any other refusal, its words in model.err. The refusal is the
+# first `orch-runtime: ` line, since the settings load's notices come first.
 model_item_state() { # STATE_DIR
   local rc=0
   "$SCRIPTS/orch-runtime" --state-dir "$1" state init --item "$ITEM" --worktree "$ROOT" \
@@ -3325,18 +3330,36 @@ model_item_state() { # STATE_DIR
     0) return 0 ;;
     69) return 69 ;;
   esac
-  case "$(head -n 1 -- "$WORK_DIR/model.err")" in
+  case "$(awk '/^orch-runtime: / { print; exit }' "$WORK_DIR/model.err")" in
     "orch-runtime: state-exists "*) return 0 ;;
   esac
   return 1
 }
 
 # A record path the runtime names for `state path` ARGS..., into
-# RECORD_PATH; model.err holds the runtime's words where it names none.
+# RECORD_PATH: 0 named, 69 the runtime unbuilt, 1 any other answer, the
+# runtime's words in model.err.
 record_path() { # ARGS...
-  local answer
-  answer=$(cd -- "$ROOT" && "$SCRIPTS/orch-runtime" state path "$@" 2>"$WORK_DIR/model.err") || return 1
+  local answer rc=0
+  answer=$(cd -- "$ROOT" && "$SCRIPTS/orch-runtime" state path "$@" 2>"$WORK_DIR/model.err") || rc=$?
+  case "$rc" in
+    0) ;;
+    69) return 69 ;;
+    *) return 1 ;;
+  esac
   RECORD_PATH=$(jq -er '.result.path | strings | select(length > 0)' <<<"$answer" 2>"$WORK_DIR/model.err")
+}
+
+# A store call of the model-switch route that answered RC: 69 is the install's
+# unbuilt runtime, handed over once under store-unbuilt with the wrapper's
+# words and no further store call, since every one would meet the same
+# answer; any other status is the state-unread notice.
+model_state_unread() { # RC OBSERVED
+  if [ "$1" -eq 69 ]; then
+    hand_over "$(message store-unbuilt "$SCRIPTS/setup" "$(cat -- "$WORK_DIR/model.err")" 2>&1)"
+    return 0
+  fi
+  model_unavailable_notice state-unread "$2"
 }
 
 # The fleet record as the runtime reads it, the document whole, into
@@ -3470,7 +3493,7 @@ handoff_check() {
     local fleet record launched observed launch_id observed_id outcome cause="" report result handoff sd handoff_sd server="" identity association record_path body recovery native=false file
     observed=$(jq -er '.to_model | strings | select(length > 0)' <<<"$INPUT" 2>/dev/null) || observed=""
     record_path --fleet || {
-      model_unavailable_notice state-unread "$observed"; return 0;
+      model_state_unread "$?" "$observed"; return 0;
     }
     fleet=$RECORD_PATH
     sd=${fleet%/*}
@@ -3480,12 +3503,12 @@ handoff_check() {
         model_unavailable_notice launch-unread "$observed" "$(cat -- "$WORK_DIR/model.err")"; return 0;
       }
       record_path --item "$ITEM" || {
-        model_unavailable_notice state-unread "$observed"; return 0;
+        model_state_unread "$?" "$observed"; return 0;
       }
       file=$RECORD_PATH
       sd=${file%/*}
       model_item_state "$sd" || {
-        model_unavailable_notice state-unread "$observed"; return 0;
+        model_state_unread "$?" "$observed"; return 0;
       }
     else
       fleet_record "$sd" || {

@@ -119,9 +119,17 @@ while IFS='|' read -r scenario harness want_rc first decision context commands w
     # read is void, says so naming the setup, and holds nothing.
     unbuilt-runtime) runtime_stub "$LANE/.claude/skills/orch/scripts" unbuilt ;;
     # A Codex turn end naming no transcript, on a host where agent-runtime is
-    # not built, as no world here builds it: the lookup by the session id
-    # gives no answer, a gap the turn end reports and passes.
-    unbuilt-lookup) payload='{"session_id":"s1","stop_hook_active":false}' ;;
+    # not built: the real wrapper under this case's own empty cache, whatever
+    # the suite's cache holds, so the lookup by the session id gives no
+    # answer, a gap the turn end reports and passes.
+    unbuilt-lookup)
+      payload='{"session_id":"s1","stop_hook_active":false}'
+      mkdir -p "$TMP_ROOT/unbuilt-cache"
+      printf '#!/bin/sh\nAGENT_RUNTIME_CACHE=%s exec %s "$@"\n' "$TMP_ROOT/unbuilt-cache" \
+        "$REPO_ROOT/skills/agent-runtime/scripts/agent-runtime" > "$TMP_ROOT/unbuilt-agent-runtime"
+      chmod +x "$TMP_ROOT/unbuilt-agent-runtime"
+      CALL_ENV+=("AGENT_RUNTIME_CLI=$TMP_ROOT/unbuilt-agent-runtime")
+      ;;
     empty-keys) CALL_ENV+=(ORCH_WAKE_PROCESS= ORCH_WAKE_START=) ;;
     incomplete-jarvis) CALL_ENV+=(ORCH_WAKE_START=); command="" ;;
   esac

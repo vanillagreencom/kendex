@@ -1410,14 +1410,17 @@ fn model_check(path: &Path, doc: &mut Document, env: &Env, check: &ModelCheck) -
     {
         return Ok(json!({"result": "stale"}));
     }
-    if check_stands(
-        current.get("model_check").unwrap_or(&Value::Null),
-        &check.session,
-        &identity,
-        &check.outcome,
-    ) {
+    let standing = current.get("model_check").unwrap_or(&Value::Null);
+    if check_stands(standing, &check.session, &identity, &check.outcome) {
         return Ok(json!({"result": "duplicate"}));
     }
+    // A switch acquired again before its recovery started is the same
+    // check: the relaunch's recovery limit counts the log's rows for a
+    // launch, so its row is replaced, never doubled.
+    let again = check.outcome == "switched"
+        && standing.get("outcome").and_then(Value::as_str) == Some("switched")
+        && standing.get("session_id").and_then(Value::as_str) == Some(check.session.as_str())
+        && standing.get("launch_identity") == Some(&identity);
     let record = check_of(env, check, &identity);
     let mut row = record.clone();
     row["kind"] = json!(format!("model-{}", check.outcome));
@@ -1426,7 +1429,17 @@ fn model_check(path: &Path, doc: &mut Document, env: &Env, check: &ModelCheck) -
         "launched={} observed={}",
         check.launched, check.observed
     ));
-    state::array_mut(path, doc, "fleet_log")?.push(row);
+    let log = state::array_mut(path, doc, "fleet_log")?;
+    let own = log.iter().rposition(|r| {
+        r.get("kind") == Some(&row["kind"])
+            && r.get("item") == Some(&row["item"])
+            && r.get("session_id") == Some(&row["session_id"])
+            && r.get("launch_identity") == Some(&identity)
+    });
+    match own.filter(|_| again) {
+        Some(index) => log[index] = row,
+        None => log.push(row),
+    }
     let slot = format!("{pointer}/model_check");
     *slot_mut(path, doc, &slot, &tokens(&slot)?)? = record;
     Ok(json!({"result": "acquired", "record": get(doc, &pointer)?}))
