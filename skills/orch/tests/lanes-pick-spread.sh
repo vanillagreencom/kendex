@@ -559,13 +559,13 @@ table "$SEAT_UNREAD_READING" "$SEAT_UNREAD_PROJECTED" \
   "a named lane at its mark still hands off with unread seats|$ALL_DIRS|own:broken|a:97:97|pick --lane $H/.aclaude --harness claude --min-headroom-pct 3 --json|rc=3 wall=97 seatnotice=named" \
   "the overseer mark does not read broken seat state|$ALL_DIRS|own:broken||pick --lane $H/.aclaude --harness claude --for-overseer --min-headroom-pct 3 --json|rc=0 wall=20 seatnotice=none keyed.pick-overseer-seats=none"
 
-printf 'account=%s\tharness=claude\tsession-5h-pct=50\tseat=1\n' "$H/.aclaude" > "$TMP_ROOT/unread-seat-host-accounts"
+printf 'account=%s\tharness=claude\tsession-5h-pct=75\tseat=1\n' "$H/.aclaude" > "$TMP_ROOT/unread-seat-host-accounts"
 SEAT_HOST="ORCH_LANE_HOST=$PROVIDER;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/unread-seat-host-accounts;ORCH_LANE_DIRS=$H/.aclaude"
 SEAT_HOST_UNREAD_PROJECTED="a hosted projected pick refuses unread seats before any usage read|$SEAT_HOST|own:broken||pick --lane $H/.aclaude --harness claude --projected --json --no-cache|rc=8 out= seatrefusal=named accounts_calls=0 measurements=0"
-SEAT_HOST_PROJECTED="a hosted projected pick retains provider seats after the fleet read|$SEAT_HOST|||pick --lane $H/.aclaude --harness claude --projected --json --no-cache|rc=3 verdict=seat-reserve measured_through=host projected_headroom_pct=50 accounts_calls=1 measurements=0"
+SEAT_HOST_PROJECTED="a hosted projected pick retains provider seats after the fleet read|$SEAT_HOST|||pick --lane $H/.aclaude --harness claude --projected --json --no-cache|rc=3 verdict=seat-reserve measured_through=host projected_headroom_pct=25 accounts_calls=1 measurements=0"
 table "$SEAT_HOST_UNREAD_PROJECTED" "$SEAT_HOST_PROJECTED" \
-  "a hosted reading still uses provider usage when seats are unread|$SEAT_HOST|own:broken||pick --lane $H/.aclaude --harness claude --min-headroom-pct 3 --json --no-cache|rc=0 wall=50 measured_through=host seatnotice=named accounts_calls=1 measurements=0" \
-  "a hosted overseer projection bypasses the unread fleet seats|$SEAT_HOST|own:broken||pick --lane $H/.aclaude --harness claude --for-overseer --projected --json --no-cache|rc=0 wall=50 measured_through=host seatnotice=none keyed.pick-overseer-seats=none accounts_calls=1 measurements=0"
+  "a hosted reading still uses provider usage when seats are unread|$SEAT_HOST|own:broken||pick --lane $H/.aclaude --harness claude --min-headroom-pct 3 --json --no-cache|rc=0 wall=75 measured_through=host seatnotice=named accounts_calls=1 measurements=0" \
+  "a hosted overseer projection bypasses the unread fleet seats|$SEAT_HOST|own:broken||pick --lane $H/.aclaude --harness claude --for-overseer --projected --json --no-cache|rc=0 wall=75 measured_through=host seatnotice=none keyed.pick-overseer-seats=none accounts_calls=1 measurements=0"
 
 CTRL="$(mutant_scripts mutant-seat-host-read-first lanes)" || exit 1
 # shellcheck disable=SC2016
@@ -635,9 +635,9 @@ for cache in '' '--no-cache'; do
   table "provider-only seat ranks last $cache|$REMOTE|||$PICK $cache|rc=0 config_dir=$H/.bclaude accounts_calls=1"
 done
 table "provider-only seat ranks last with no TTL|$REMOTE;ORCH_LANES_USAGE_TTL=0|||$PICK|rc=0 config_dir=$H/.bclaude accounts_calls=1"
-printf 'account=%s\tharness=claude\tsession-5h-pct=50\tseat=1\n' "$H/.aclaude" > "$TMP_ROOT/remote-seats"
+printf 'account=%s\tharness=claude\tsession-5h-pct=75\tseat=1\n' "$H/.aclaude" > "$TMP_ROOT/remote-seats"
 REMOTE="$REMOTE;ORCH_LANE_DIRS=$H/.aclaude"
-REMOTE_OMISSION="provider-only seat at reserve is omitted|$REMOTE|||$PICK|rc=3 seats=1 keyed.pick-seat-omitted=pick-seat-omitted,lane=$H/.aclaude,projected-headroom=50,reserve=50 accounts_calls=1"
+REMOTE_OMISSION="provider-only seat at reserve is omitted|$REMOTE|||$PICK|rc=3 seats=1 keyed.pick-seat-omitted=pick-seat-omitted,lane=$H/.aclaude,projected-headroom=25,reserve=25 accounts_calls=1"
 table "$REMOTE_OMISSION" \
   "named provider-only seat uses the reserve|$REMOTE|||pick --lane $H/.aclaude --harness claude --json --no-cache|rc=3 verdict=seat-reserve accounts_calls=1" \
   "overseer pick bypasses provider reserve|$REMOTE|||$PICK --for-overseer|rc=0 config_dir=$H/.aclaude keyed.pick-seat-omitted=none accounts_calls=1" \
@@ -670,15 +670,27 @@ LANES_UNDER_TEST="$CTRL/lanes" table \
   "control: ignoring the malformed reserve measures and admits the seat|ORCH_LANE_DIRS=$H/.aclaude;ORCH_OVERSEER_SEAT_RESERVE_PCT=half|own:a||$PICK|rc=0 measurements=1"
 
 # Both windows and the live claim's projection share the judge's one bound.
-for row in "50:10:50:" "51:10:49:" "10:50:50:" "45:10:45:claim:a:1"; do
+for row in "75:10:25:" "76:10:24:" "10:75:25:" "63:10:23:claim:a:1"; do
   IFS=: read -r session weekly room claims <<<"$row"
   claude_usage "$session" "$weekly" 5 Opus > "$FIXTURE_DIR/.aclaude.json"
-  table "session=$session weekly=$weekly claims=$claims refuses at the reserve|ORCH_LANE_DIRS=$H/.aclaude|own:a${claims:+;$claims}||$PICK|rc=3 walled=0 seats=1 walled_resets_at=null keyed.pick-seat-omitted=pick-seat-omitted,lane=$H/.aclaude,projected-headroom=$room,reserve=50" \
+  table "session=$session weekly=$weekly claims=$claims refuses at the reserve|ORCH_LANE_DIRS=$H/.aclaude|own:a${claims:+;$claims}||$PICK|rc=3 walled=0 seats=1 walled_resets_at=null keyed.pick-seat-omitted=pick-seat-omitted,lane=$H/.aclaude,projected-headroom=$room,reserve=25" \
     "named launch session=$session weekly=$weekly claims=$claims uses the projection|ORCH_LANE_DIRS=$H/.aclaude|own:a${claims:+;$claims}||pick --lane $H/.aclaude --harness claude --projected --json|rc=3 verdict=seat-reserve projected_headroom_pct=$room"
 done
+# The built-in reserve keeps a quarter of the window: a seat with 40 room is
+# admitted with the setting unset, which the old half-window default refused.
+claude_usage 60 10 5 Opus > "$FIXTURE_DIR/.aclaude.json"
+DEFAULT_RESERVE="the built-in reserve admits a seat with 40 room|ORCH_LANE_DIRS=$H/.aclaude|own:a||$PICK|rc=0 config_dir=$H/.aclaude projected_headroom_pct=40 keyed.pick-seat-omitted=none"
+table "$DEFAULT_RESERVE"
+CTRL="$(mutant_scripts mutant-reserve-default lanes)" || exit 1
+# shellcheck disable=SC2016
+mutate_file "$CTRL/lanes" '${ORCH_OVERSEER_SEAT_RESERVE_PCT:-25}' '${ORCH_OVERSEER_SEAT_RESERVE_PCT:-50}'
+rc=0
+( FAIL=0; LANES_UNDER_TEST="$CTRL/lanes" table "$DEFAULT_RESERVE"; [[ "$FAIL" == 0 ]] ) > "$TMP_ROOT/reserve-default-control.log" || rc=$?
+RUN_SEQ=$((RUN_SEQ + 1))
+assert_eq "$rc" 1 'control: a default of 50 refuses the seat the built-in reserve admits'
 claude_usage 0 0 0 Opus > "$FIXTURE_DIR/.aclaude.json"
 table "reserve 100 refuses even a full seat|ORCH_LANE_DIRS=$H/.aclaude;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|own:a||$PICK|rc=3 seats=1"
-claude_usage 50 10 5 Opus > "$FIXTURE_DIR/.aclaude.json"
+claude_usage 75 10 5 Opus > "$FIXTURE_DIR/.aclaude.json"
 B_USAGE="$(cat "$FIXTURE_DIR/.bclaude.json")"
 printf '%s\n' '{}' > "$FIXTURE_DIR/.bclaude.json"
 table "a reserve refusal beside an unread account reports both counts|ORCH_LANE_DIRS=$H/.aclaude:$H/.bclaude|own:a||$PICK|rc=3 walled=0 unmeasured=1 seats=1 key=no-candidate,harness=claude,max-pct=95,model=none,walled=0,unmeasured=1,seats=1"
@@ -686,10 +698,10 @@ printf '%s\n' "$B_USAGE" > "$FIXTURE_DIR/.bclaude.json"
 table "reserve 0 leaves the lane limit alone|ORCH_LANE_DIRS=$H/.aclaude;ORCH_OVERSEER_SEAT_RESERVE_PCT=0|own:a||$PICK|rc=0 config_dir=$H/.aclaude"
 
 # The hook's running-lane call judges the reading, not its own claim's charge.
-for used in 49 50 51; do
+for used in 74 75 76; do
   claude_usage "$used" 10 5 Opus > "$FIXTURE_DIR/.aclaude.json"
   expected='rc=0'
-  [[ "$used" -lt 50 ]] || expected='rc=3 verdict=seat-reserve'
+  [[ "$used" -lt 75 ]] || expected='rc=3 verdict=seat-reserve'
   table \
     "running seat lane at $used used|ORCH_LANE_DIRS=$H/.aclaude|own:a;claim:a:1||pick --lane $H/.aclaude --harness claude --min-headroom-pct 3 --json|$expected" \
     "overseer at $used used keeps its own mark|ORCH_LANE_DIRS=$H/.aclaude|own:a;claim:a:1||pick --lane $H/.aclaude --harness claude --for-overseer --min-headroom-pct 5 --json|rc=0" \
@@ -698,7 +710,7 @@ done
 CTRL="$(mutant_scripts mutant-seat-bound lib/lane-model.sh)" || exit 1
 # shellcheck disable=SC2016
 mutate_file "$CTRL/lib/lane-model.sh" '[$max, 100 - $reserve] | min' '$max'
-claude_usage 50 10 5 Opus > "$FIXTURE_DIR/.aclaude.json"
+claude_usage 75 10 5 Opus > "$FIXTURE_DIR/.aclaude.json"
 LANES_UNDER_TEST="$CTRL/lanes" table \
   "control: no seat bound returns the at-reserve seat|ORCH_LANE_DIRS=$H/.aclaude|own:a||$PICK|rc=0 config_dir=$H/.aclaude" \
   "control: no seat bound leaves its running lane unmarked|ORCH_LANE_DIRS=$H/.aclaude|own:a;claim:a:1||pick --lane $H/.aclaude --harness claude --min-headroom-pct 3 --json|rc=0" \

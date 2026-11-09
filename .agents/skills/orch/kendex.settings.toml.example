@@ -281,8 +281,8 @@ ORCH_LANE_HOST_BUSY_WAIT_SECS = "30"
 # while its projected room exceeds this reserve; running lanes on it hand off
 # at or below it. Keep this above ORCH_OVERSEER_HEADROOM_PCT. 100 admits no
 # seat and marks every lane on one; 0 uses ORCH_LANE_MAX_PCT alone, still last.
-# 50 is provisional and keeps half of each window for the overseer.
-# ORCH_OVERSEER_SEAT_RESERVE_PCT = "50"
+# 25 keeps a quarter of each window for the overseer.
+# ORCH_OVERSEER_SEAT_RESERVE_PCT = "25"
 
 # How much of an account's 5-hour allowance one running lane is expected to
 # use in an hour, charged for each running lane wherever no rate is measured;

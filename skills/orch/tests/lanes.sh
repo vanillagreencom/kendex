@@ -3298,7 +3298,7 @@ table \
 lanes_mutant mutant-ended-seat lib/lane-model.sh '(if lane_ended then "walled"' '(if false then "walled"'
 LANES="$TMP_ROOT/mutant-ended-seat/scripts/lanes"
 table \
-  "control: without the ended arm the chooser omits the ended seat|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-ended-seat.tsv|$PICK|rc=3 keyed.no-candidate=no-candidate,harness=claude,max-pct=95,model=none,walled=0,unmeasured=2,seats=1 keyed.pick-seat-omitted=pick-seat-omitted,lane=$H/.tclaude,projected-headroom=0,reserve=50" \
+  "control: without the ended arm the chooser omits the ended seat|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-ended-seat.tsv|$PICK|rc=3 keyed.no-candidate=no-candidate,harness=claude,max-pct=95,model=none,walled=0,unmeasured=2,seats=1 keyed.pick-seat-omitted=pick-seat-omitted,lane=$H/.tclaude,projected-headroom=0,reserve=25" \
   "control: without the ended arm a named ended seat reads seat-reserve|$PICK_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/pick-ended-seat.tsv|$PICK_LANE $H/.tclaude|rc=3 status=plan_ended verdict=seat-reserve"
 LANES="$LANES_PATCHED"
 # Control: a named pick that never matches a host row reads the token-only

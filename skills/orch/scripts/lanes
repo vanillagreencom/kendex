@@ -189,7 +189,7 @@
 #         because claims omit models. So an
 #         account whose room the lanes already on it will spend is dropped the
 #         way a walled one is. An OVERSEER SEAT is returned last, only while
-#         its projected room exceeds ORCH_OVERSEER_SEAT_RESERVE_PCT (default 50).
+#         its projected room exceeds ORCH_OVERSEER_SEAT_RESERVE_PCT (default 25).
 #         A seat is an account `.overseer.account` names in this checkout's fleet
 #         state, and every fleet state a live claim in the store names, which
 #         is each fleet sharing OVERSEE_WATCH_STATE_DIR that runs a lane. The
@@ -644,7 +644,7 @@
 #                      ORCH_HANDOFF_HEADROOM_PCT. Refused, before any lane is
 #                      measured, when it is not an integer 0-100.
 #   ORCH_OVERSEER_SEAT_RESERVE_PCT  Room kept in each plan window for the
-#                      overseer (default 50, provisional). A seat is admitted
+#                      overseer (default 25). A seat is admitted
 #                      only above this reserve, ranked last. Running lanes on
 #                      it hand off at or below it. 100 admits no seat and marks
 #                      every lane on one; 0 uses --max-pct alone, still last.
@@ -4117,7 +4117,7 @@ parse_argv() {
 		pct_valid "$MAX_PCT" || die invalid-lane-max-pct "$MAX_PCT"
 		MAX_PCT=$((10#$MAX_PCT))
 	fi
-	SEAT_RESERVE="${ORCH_OVERSEER_SEAT_RESERVE_PCT:-50}"
+	SEAT_RESERVE="${ORCH_OVERSEER_SEAT_RESERVE_PCT:-25}"
 	pct_valid "$SEAT_RESERVE" || die invalid-overseer-seat-reserve "$SEAT_RESERVE"
 	SEAT_RESERVE=$((10#$SEAT_RESERVE))
 	# The expected burn of one live lane where its account measured no rate,

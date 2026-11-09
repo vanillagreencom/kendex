@@ -70,7 +70,7 @@ for spec in codex:100:62300:true:false:false 1codex:40:0:false:false:false 2code
   3codex:100:5000:true:false:false 4codex:100:4999:true:false:false 5codex:100:90000:false:false:false \
   6codex:100:90000:true:true:false 7codex:100:lots:true:false:false 8codex:30:0:false:false:false \
   scodex:100:90000:true:false:true ncodex:100:90000:true:false:absent ucodex:100:absent:true:false:false \
-  hcodex:95:62300:true:false:false pcodex:94:0:false:false:false:4102444800 seatcodex:60:62300:true:false:false; do
+  hcodex:95:62300:true:false:false pcodex:94:0:false:false:false:4102444800 seatcodex:80:62300:true:false:false; do
   IFS=':' read -r name week balance has over spend reset <<<"$spec"
   make_codex_lane "$H/.$name"
   codex_body "$week" "$balance" "$has" "$over" "$spend" "$reset" > "$FIXTURE_DIR/.$name.json"
@@ -206,10 +206,10 @@ SPENT_SEAT_FLEET="$TMP_ROOT/spent-seat-fleet"
 SPENT_SEAT_ENV="$(dirs codex);ORCH_STATE_DIR=$SPENT_SEAT_FLEET"
 table \
   "a balance cannot admit a seat still spending included allowance|$SEAT_ENV|$PICK|rc=3 seats=1 walled=0" \
-  "the named turn-end check keeps the reserve on the included window|$SEAT_ENV|pick --lane $H/.seatcodex --harness codex --min-headroom-pct 3 --json|rc=3 verdict=seat-reserve binding_bucket=weekly headroom_pct=40" \
-  "named projected admission keeps the same reserve|$SEAT_ENV|pick --lane $H/.seatcodex --harness codex --projected --json|rc=3 verdict=seat-reserve binding_bucket=weekly projected_headroom_pct=40" \
-  "the overseer chooser keeps its ordinary plan judgment|$SEAT_ENV|$PICK --for-overseer|rc=0 binding_bucket=weekly headroom_pct=40" \
-  "the overseer named check keeps its ordinary plan judgment|$SEAT_ENV|pick --lane $H/.seatcodex --harness codex --for-overseer --min-headroom-pct 5 --json|rc=0 binding_bucket=weekly headroom_pct=40" \
+  "the named turn-end check keeps the reserve on the included window|$SEAT_ENV|pick --lane $H/.seatcodex --harness codex --min-headroom-pct 3 --json|rc=3 verdict=seat-reserve binding_bucket=weekly headroom_pct=20" \
+  "named projected admission keeps the same reserve|$SEAT_ENV|pick --lane $H/.seatcodex --harness codex --projected --json|rc=3 verdict=seat-reserve binding_bucket=weekly projected_headroom_pct=20" \
+  "the overseer chooser keeps its ordinary plan judgment|$SEAT_ENV|$PICK --for-overseer|rc=0 binding_bucket=weekly headroom_pct=20" \
+  "the overseer named check keeps its ordinary plan judgment|$SEAT_ENV|pick --lane $H/.seatcodex --harness codex --for-overseer --min-headroom-pct 5 --json|rc=0 binding_bucket=weekly headroom_pct=20" \
   "a seat already judged on ordinary Codex credits stays available|$SPENT_SEAT_ENV|$PICK|rc=0 binding_bucket=credits" \
   "its named check keeps the ordinary credit rule|$SPENT_SEAT_ENV|pick --lane $H/.codex --harness codex --min-headroom-pct 3 --json|rc=0 binding_bucket=credits" \
   "a full reserve excludes a spent window seat despite its usable credits|$SPENT_SEAT_ENV;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|$PICK|rc=3 seats=1 walled=0" \
@@ -217,16 +217,16 @@ table \
   "the full reserve also refuses its named projected launch|$SPENT_SEAT_ENV;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|pick --lane $H/.codex --harness codex --projected --json|rc=3 verdict=seat-reserve binding_bucket=weekly projected_headroom_pct=0" \
   "the full reserve keeps the overseer chooser exempt|$SPENT_SEAT_ENV;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|$PICK --for-overseer|rc=0 binding_bucket=credits" \
   "the full reserve keeps the overseer named check exempt|$SPENT_SEAT_ENV;ORCH_OVERSEER_SEAT_RESERVE_PCT=100|pick --lane $H/.codex --harness codex --for-overseer --min-headroom-pct 5 --json|rc=0 binding_bucket=credits" \
-  "zero reserve keeps ordinary plan room|$SEAT_ENV;ORCH_OVERSEER_SEAT_RESERVE_PCT=0|$PICK|rc=0 binding_bucket=weekly headroom_pct=40" \
+  "zero reserve keeps ordinary plan room|$SEAT_ENV;ORCH_OVERSEER_SEAT_RESERVE_PCT=0|$PICK|rc=0 binding_bucket=weekly headroom_pct=20" \
   "zero reserve keeps ordinary spent-credit room|$SPENT_SEAT_ENV;ORCH_OVERSEER_SEAT_RESERVE_PCT=0|$PICK|rc=0 binding_bucket=credits" \
   "a full reserve never changes a non-seat credit judgment|$(dirs codex);ORCH_OVERSEER_SEAT_RESERVE_PCT=100|$PICK|rc=0 binding_bucket=credits"
 RESERVE_CREDIT_CTRL="$(mutant_scripts mutant-seat-credit-threshold lib/lane-model.sh)" || exit 1
 mutate_file "$RESERVE_CREDIT_CTRL/lib/lane-model.sh" '($wall | wall_verdict($max)) as $ordinary' \
   '(if ._seat == 1 then [$max, 100 - $reserve] | min else $max end) as $credit_limit | ($wall | wall_verdict($credit_limit)) as $ordinary'
 LANES_UNDER_TEST="$RESERVE_CREDIT_CTRL/lanes" table \
-  "control: a lowered credit threshold admits included allowance below the reserve|$SEAT_ENV|$PICK|rc=0 binding_bucket=credits headroom_pct=40" \
-  "control: that threshold also accepts the running seat|$SEAT_ENV|pick --lane $H/.seatcodex --harness codex --min-headroom-pct 3 --json|rc=0 binding_bucket=credits headroom_pct=40" \
-  "control: that threshold also accepts named projected admission|$SEAT_ENV|pick --lane $H/.seatcodex --harness codex --projected --json|rc=0 binding_bucket=credits projected_headroom_pct=40"
+  "control: a lowered credit threshold admits included allowance below the reserve|$SEAT_ENV|$PICK|rc=0 binding_bucket=credits headroom_pct=20" \
+  "control: that threshold also accepts the running seat|$SEAT_ENV|pick --lane $H/.seatcodex --harness codex --min-headroom-pct 3 --json|rc=0 binding_bucket=credits headroom_pct=20" \
+  "control: that threshold also accepts named projected admission|$SEAT_ENV|pick --lane $H/.seatcodex --harness codex --projected --json|rc=0 binding_bucket=credits projected_headroom_pct=20"
 FULL_RESERVE_CTRL="$(mutant_scripts mutant-full-seat-credit lib/lane-model.sh)" || exit 1
 mutate_file "$FULL_RESERVE_CTRL/lib/lane-model.sh" '(._seat == 0 or $reserve < 100)' 'true'
 LANES_UNDER_TEST="$FULL_RESERVE_CTRL/lanes" table \
