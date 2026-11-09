@@ -172,6 +172,9 @@ pub struct PreparedRemoval {
     names: Vec<String>,
     options: PlanOptions,
     disown: bool,
+    /// The catalogs behind what is going away that this removal could not
+    /// read, as [`kept_removed`] decided on them.
+    unread: BTreeSet<String>,
 }
 
 impl PreparedRemoval {
@@ -206,14 +209,7 @@ impl PreparedRemoval {
         let mut report = plan_scope(env, &self.scope, &self.manifest, &self.lock, options)?;
         match self.disown {
             true => {
-                report.notes.extend(unreadable_origins(
-                    env,
-                    &self.scope,
-                    &self.manifest,
-                    &self.lock,
-                    &self.names,
-                    options,
-                ));
+                report.notes.extend(unreadable_origins(&self.unread));
                 // An unchanged manifest is no removal. Creating one in a
                 // previously absent scope would declare a new install.
                 if self.manifest != self.original {
@@ -315,7 +311,8 @@ fn prepare_removal(
             });
         }
     }
-    for (kind, name) in kept_removed(env, scope, &manifest, &lock, names, &options) {
+    let (kept, unread) = kept_removed(env, scope, &manifest, &lock, names, &options);
+    for (kind, name) in kept {
         manifest.suppress(kind, &name);
     }
     Ok(PreparedRemoval {
@@ -326,6 +323,7 @@ fn prepare_removal(
         names: names.to_vec(),
         options,
         disown,
+        unread,
     })
 }
 
@@ -376,6 +374,10 @@ fn disowned(held: &Manifest, manifest: &Manifest, names: &[String]) -> Disowned 
 /// they cannot be read. So both are asked and anything either one names is
 /// written down — over-recording a removal costs a line the next `add`
 /// clears, while missing one puts back something the user took away.
+///
+/// Beside what it keeps removed, it answers which catalogs behind what is
+/// going away it could not read ([`unread_catalogs`]): the record decides
+/// on that set, and the preview's note names it, so the two cannot differ.
 fn kept_removed(
     env: &Env,
     scope: &Scope,
@@ -383,34 +385,40 @@ fn kept_removed(
     lock: &Lock,
     names: &[String],
     options: &PlanOptions,
-) -> BTreeSet<(ItemKind, String)> {
-    let mut kept = recorded_edges(manifest, lock, names, options);
-    kept.extend(still_derived(env, scope, manifest, names, options));
-    kept
+) -> (BTreeSet<(ItemKind, String)>, BTreeSet<String>) {
+    let (derived, unreadable) = still_derived(env, scope, manifest, names, options);
+    let unread = unread_catalogs(env, scope, manifest, lock, names, options, &unreadable);
+    let mut kept = recorded_edges(manifest, lock, names, options, &unread);
+    kept.extend(derived);
+    (kept, unread)
 }
 
 /// What the record already says holds these installations up: an edge
 /// from a requirer that stays ([`requirer_stays`]), or from a set that is
 /// not uninstalled. Reading it costs no catalog, which is what makes a
 /// removal stick while a source is unreadable. `manifest` is the edited
-/// one, without the declarations this removal drops.
+/// one, without the declarations this removal drops, and `unread` the
+/// catalogs [`unread_catalogs`] could not read.
 fn recorded_edges(
     manifest: &Manifest,
     lock: &Lock,
     names: &[String],
     options: &PlanOptions,
+    unread: &BTreeSet<String>,
 ) -> BTreeSet<(ItemKind, String)> {
     let removed = |kind: ItemKind, name: &str| {
         names.iter().any(|n| n == name) && options.named_for_removal(kind, name)
     };
-    let stays = staying(manifest, lock, options, &removed);
+    let stays = staying(manifest, lock, options, unread, &removed);
     lock.entries
         .values()
         .filter(|entry| removed(entry.kind, &entry.name))
         .filter(|entry| {
             entry.reasons.iter().any(|reason| match reason {
                 Reason::Requested => false,
-                Reason::RequiredBy { by } => requirer_stays(manifest, lock, &stays, by),
+                Reason::RequiredBy { by } => {
+                    requirer_stays(manifest, lock, options, unread, &stays, by)
+                }
                 Reason::MemberOf { bundle } => !options.uninstalled_bundles.contains(&bundle.name),
             })
         })
@@ -429,6 +437,7 @@ fn staying(
     manifest: &Manifest,
     lock: &Lock,
     options: &PlanOptions,
+    unread: &BTreeSet<String>,
     removed: &impl Fn(ItemKind, &str) -> bool,
 ) -> BTreeSet<String> {
     let mut stays = BTreeSet::new();
@@ -442,7 +451,9 @@ fn staying(
                     && (entry.reasons.is_empty()
                         || entry.reasons.iter().any(|reason| match reason {
                             Reason::Requested => true,
-                            Reason::RequiredBy { by } => requirer_stays(manifest, lock, &stays, by),
+                            Reason::RequiredBy { by } => {
+                                requirer_stays(manifest, lock, options, unread, &stays, by)
+                            }
                             Reason::MemberOf { bundle } => {
                                 !options.uninstalled_bundles.contains(&bundle.name)
                             }
@@ -461,14 +472,21 @@ fn staying(
 /// edge before it withholds the hook, so a requirer withheld from this tool
 /// has no record here though its edge does. It stays where the edited
 /// manifest still declares it, whose next walk records that edge again, or
-/// where a record of it on another tool stays. Withheld from every tool and
-/// not declared, it left
-/// no reason on the lock: a set that carries it, or a skill whose
-/// `dependencies.hooks` brings it, is the catalog's to say, which
-/// [`still_derived`] reads.
+/// where a record of it on another tool stays.
+///
+/// Past those two, the lock does not say what brought the requirer to this
+/// tool: a set that carries it, or a skill whose `dependencies.hooks` names
+/// it, may stay and bring it back. While the edge's catalog reads,
+/// [`still_derived`] says so, and the edge holds nothing up here. While it
+/// does not, nothing can say, so the edge holds the removal up unless the
+/// requirer is named for removal too, as before requirers were followed:
+/// at worst one removal recorded too many, which the next `add` of that
+/// item clears.
 fn requirer_stays(
     manifest: &Manifest,
     lock: &Lock,
+    options: &PlanOptions,
+    unread: &BTreeSet<String>,
     stays: &BTreeSet<String>,
     by: &InstallRef,
 ) -> bool {
@@ -476,23 +494,28 @@ fn requirer_stays(
     if lock.entries.contains_key(&key) {
         return stays.contains(&key);
     }
-    manifest.declared(by.kind).contains_key(&by.name)
+    if manifest.declared(by.kind).contains_key(&by.name)
         || HarnessId::ALL
             .iter()
             .any(|harness| stays.contains(&entry_key(by.kind, &by.name, *harness)))
+    {
+        return true;
+    }
+    unread.contains(&by.source) && !options.named_for_removal(by.kind, &by.name)
 }
 
 /// What the catalogs say the manifest still implies, now that the
 /// declarations are gone. This is the reading that survives a deleted
 /// record, and the one that sees an edge the catalog gained since the last
-/// install.
+/// install. Beside it, the catalogs that resolved and still answered with
+/// less than they offer, whose part of that reading is short.
 fn still_derived(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
     names: &[String],
     options: &PlanOptions,
-) -> BTreeSet<(ItemKind, String)> {
+) -> (BTreeSet<(ItemKind, String)>, BTreeSet<String>) {
     let mut state = crate::engine::desired::DesiredState::default();
     let expansion = super::expansion::expand(env, scope, manifest, None, &mut state);
     let mut derived = BTreeSet::new();
@@ -503,40 +526,47 @@ fn still_derived(
             }
         }
     }
-    derived
+    (derived, state.unreadable_catalogs)
 }
 
-/// The catalogs behind what is going away that cannot be read right now.
-/// What else still wants an item is written in its catalog, so an unreadable
-/// one means the preview cannot show the whole consequence of the removal.
-/// The removal itself stands either way — the record already says what has
-/// to stay removed.
-fn unreadable_origins(
+/// The catalogs behind what is going away that this removal could not
+/// read: the ones that do not resolve, and the ones [`still_derived`] found
+/// short (`unreadable`). Dependencies stay inside one catalog, so these are
+/// the catalogs of every edge that can hold up what is going away.
+fn unread_catalogs(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
     lock: &Lock,
     names: &[String],
     options: &PlanOptions,
-) -> Vec<String> {
-    let mut sources: Vec<String> = lock
-        .entries
+    unreadable: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    lock.entries
         .values()
         .filter(|entry| {
             names.contains(&entry.name) && options.named_for_removal(entry.kind, &entry.name)
         })
         .map(|entry| entry.source.clone())
-        .collect();
-    sources.sort();
-    sources.dedup();
-    sources
+        .collect::<BTreeSet<String>>()
         .into_iter()
         .filter(|source| {
-            !matches!(
-                crate::source::resolve(env, scope, source, manifest),
-                Ok(crate::source::SourceState::Ready(_))
-            )
+            unreadable.contains(source)
+                || !matches!(
+                    crate::source::resolve(env, scope, source, manifest),
+                    Ok(crate::source::SourceState::Ready(_))
+                )
         })
+        .collect()
+}
+
+/// What else still wants an item is written in its catalog, so an unread
+/// one means the preview cannot show the whole consequence of the removal.
+/// The removal itself stands either way — the record already says what has
+/// to stay removed.
+fn unreadable_origins(unread: &BTreeSet<String>) -> Vec<String> {
+    unread
+        .iter()
         .map(|source| {
             format!(
                 "the catalog '{source}' cannot be read right now, so this preview cannot show everything that still wants what is going — the removal stands, and what has to stay removed is recorded"

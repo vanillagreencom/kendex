@@ -2,8 +2,9 @@
 //! and without it. Offline the lock record is the only reading, so each row
 //! decides by the recorded edges alone. An item stays removed where a
 //! requirer that stays requires it or a set that stays carries it, and
-//! nowhere else, and once the catalog is back a refresh brings none of the
-//! removed items back.
+//! nowhere else, except offline where a requirer withheld from a tool left
+//! no record of what brought it: that edge keeps the item removed. Once the
+//! catalog is back a refresh brings none of the removed items back.
 
 use super::hooks::hook_fixture;
 use super::*;
@@ -21,6 +22,11 @@ const WITHHELD: &str = "[hooks.judge]\nsource = \"cat\"\n\n[hooks.recorder]\nsou
 const WITHHELD_EVERYWHERE: &str = "[hooks.judge]\nsource = \"cat\"\nharnesses = [\"codex\"]\n\n[hooks.recorder]\nsource = \"cat\"\nharnesses = [\"claude\"]\n";
 /// Judge brought by the guards skill alone, beside the same companion pin.
 const BROUGHT: &str = "[skills.guards]\nsource = \"cat\"\n\n[hooks.recorder]\nsource = \"cat\"\nharnesses = [\"claude\"]\n";
+/// Judge brought by guards and, on Codex alone, by keeper: on Codex the
+/// lock holds the same records as with guards alone, since judge is
+/// withheld there.
+const BROUGHT_TWICE: &str = "[skills.guards]\nsource = \"cat\"\n\n[skills.keeper]\nsource = \"cat\"\nharnesses = [\"codex\"]\n\n[hooks.recorder]\nsource = \"cat\"\nharnesses = [\"claude\"]\n";
+const BRINGS_JUDGE: &str = "dependencies:\n  hooks: [judge]\n";
 /// Judge carried by the set and declared on its own, docs declared for
 /// Codex alone.
 const SET_JUDGE: &str = "[bundles.set]\nsource = \"cat\"\n\n[hooks.judge]\nsource = \"cat\"\n\n[hooks.recorder]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[skills.docs]\nsource = \"cat\"\nharnesses = [\"codex\"]\n";
@@ -55,6 +61,8 @@ struct Row {
     /// its shape.
     premise: &'static [(&'static str, bool)],
     suppressed: &'static [(ItemKind, &'static str)],
+    /// What the same removal keeps removed while the catalog is unreadable.
+    suppressed_offline: &'static [(ItemKind, &'static str)],
 }
 
 #[test]
@@ -76,6 +84,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["judge", "guards"],
             premise: withheld,
             suppressed: &[],
+            suppressed_offline: &[],
         },
         Row {
             what: "a declared requirer withheld from every tool",
@@ -91,16 +100,35 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
                 ("skill:guards:codex", true),
             ],
             suppressed: &[(ItemKind::Skill, "guards")],
+            suppressed_offline: &[(ItemKind::Skill, "guards")],
         },
         Row {
             what: "a hook only the removed skill brings, withheld from one tool",
-            skills: &[("guards", "dependencies:\n  hooks: [judge]\n")],
+            skills: &[("guards", BRINGS_JUDGE)],
             hooks,
             declared: BROUGHT.to_owned(),
             set: CARRIES_DEEP,
             remove: &["guards"],
             premise: withheld,
             suppressed: &[],
+            // The lock cannot tell this apart from the row below.
+            suppressed_offline: &[(ItemKind::Skill, "guards")],
+        },
+        Row {
+            what: "a hook a staying skill brings to the tool it is withheld from",
+            skills: &[("guards", BRINGS_JUDGE), ("keeper", BRINGS_JUDGE)],
+            hooks,
+            declared: BROUGHT_TWICE.to_owned(),
+            set: CARRIES_DEEP,
+            remove: &["guards"],
+            premise: &[
+                ("hook:judge:claude", true),
+                ("hook:judge:codex", false),
+                ("skill:guards:codex", true),
+                ("skill:keeper:codex", true),
+            ],
+            suppressed: &[(ItemKind::Skill, "guards")],
+            suppressed_offline: &[(ItemKind::Skill, "guards")],
         },
         Row {
             what: "a declared set member withheld from one tool",
@@ -119,6 +147,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
                 ("skill:docs:codex", true),
             ],
             suppressed: &[(ItemKind::Skill, "docs")],
+            suppressed_offline: &[(ItemKind::Skill, "docs")],
         },
         Row {
             what: "a cycle that only the removed item holds up",
@@ -129,6 +158,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["gate"],
             premise: &[("skill:hub:claude", true), ("skill:lane:claude", true)],
             suppressed: &[],
+            suppressed_offline: &[],
         },
         Row {
             what: "a cycle a declared member holds up",
@@ -140,6 +170,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["gate"],
             premise: &[],
             suppressed: &[(ItemKind::Skill, "gate")],
+            suppressed_offline: &[(ItemKind::Skill, "gate")],
         },
         Row {
             what: "a set member declared on its own requires it",
@@ -150,6 +181,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["set", "docs"],
             premise: &[("skill:docs:claude", true)],
             suppressed: &[(ItemKind::Skill, "docs")],
+            suppressed_offline: &[(ItemKind::Skill, "docs")],
         },
         Row {
             what: "only a member of the set going requires it",
@@ -160,6 +192,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["set", "docs"],
             premise: &[("skill:docs:claude", true)],
             suppressed: &[],
+            suppressed_offline: &[],
         },
         Row {
             what: "a set that stays carries it",
@@ -170,6 +203,7 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
             remove: &["deep"],
             premise: &[],
             suppressed: &[(ItemKind::Skill, "deep")],
+            suppressed_offline: &[(ItemKind::Skill, "deep")],
         },
     ];
     for row in rows {
@@ -212,11 +246,13 @@ fn a_removal_keeps_removed_only_what_a_staying_requirer_requires() {
                 .into_iter()
                 .flat_map(|(kind, names)| names.into_iter().map(move |name| (kind, name)))
                 .collect();
-            let expected: BTreeSet<(ItemKind, String)> = row
-                .suppressed
-                .iter()
-                .map(|(kind, name)| (*kind, (*name).to_owned()))
-                .collect();
+            let expected: BTreeSet<(ItemKind, String)> = match offline {
+                false => row.suppressed,
+                true => row.suppressed_offline,
+            }
+            .iter()
+            .map(|(kind, name)| (*kind, (*name).to_owned()))
+            .collect();
             assert_eq!(suppressed, expected, "{what}");
 
             if offline {
