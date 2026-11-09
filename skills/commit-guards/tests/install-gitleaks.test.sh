@@ -259,8 +259,9 @@ assert_eq "control: without the dash-led refusal the DIR is created and the rele
   "-gitleaks https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz" \
   "$(ls -A -- "$TMP_ROOT/no-dash-cwd") $(cat -- "$CURL_LOG")"
 copy old-retry "$LINUX_PIN" "$FIXTURE_SHA" '--retry "$RETRY_SECS" --retry-delay "$RETRY_DELAY_SECS" --retry-max-time "$RETRY_SECS"' '--retry 3'
-assert_eq "control: the old curl --retry 3 fails a two-minute outage" \
-  "rc=1 install-gitleaks: download=gitleaks_8.30.1_linux_x64.tar.gz" "$(run "$TMP_ROOT/old-retry-dir" OUTAGE_SECS=120)"
+res="$(run "$TMP_ROOT/old-retry-dir" OUTAGE_SECS=120)"
+assert_eq "control: the old curl --retry 3 fails a two-minute outage after attempts answered 504" \
+  "rc=1 install-gitleaks: download=gitleaks_8.30.1_linux_x64.tar.gz last=504" "$res last=$(last_status)"
 copy no-max "$LINUX_PIN" "$FIXTURE_SHA" '--retry-max-time "$RETRY_SECS"' '--retry-max-time 0'
 run "$TMP_ROOT/no-max-dir" OUTAGE_SECS=100000 >/dev/null
 assert_eq "control: without the max time a long outage retries past the budget" "no" "$(in_budget)"
