@@ -1296,6 +1296,32 @@ exec "$3" -c 'import json, os, sys; print(json.dumps([sys.argv[1], os.environ["J
         if args.get:
             value = current
         else:
+            # A credential save's rule (crates/core/src/settings_secret/
+            # destination.rs): git must not carry the private file. A new
+            # file gets the exact ignore line first; an existing one refuses.
+            named = os.path.relpath(home / private, home)
+            git = {"cwd": home, "capture_output": True, "timeout": CALL_SECONDS, "env": os.environ | {"LC_ALL": "C"}}
+            cause = "git-unreadable"
+            inside = subprocess.run(["git", "rev-parse", "--is-inside-work-tree"], **git)
+            if inside.returncode == 0:
+                listed = subprocess.run(["git", "ls-files", "-z", "--", named], **git)
+                ignored = subprocess.run(["git", "check-ignore", "-q", "--", named], **git).returncode
+                if listed.returncode or ignored not in (0, 1):
+                    raise Refusal(cause)
+                pattern = "/" + re.sub(r"([*?\[\]])", r"\\\1", named)
+                pattern = pattern[:-1] + "\\ " if pattern.endswith(" ") else pattern
+                if listed.stdout:
+                    raise Refusal("private-file-tracked", "run git rm --cached -- " + named + " and commit that")
+                if ignored and (home / named).exists():
+                    raise Refusal("private-file-unignored", "add " + pattern + " to .gitignore")
+                if ignored:
+                    cause = "gitignore-unwritable"
+                    ignore = home / ".gitignore"
+                    text = ignore.read_bytes() if ignore.exists() else b""
+                    with open(ignore, "ab") as stream:
+                        stream.write((b"\n" if text and not text.endswith(b"\n") else b"") + pattern.encode() + b"\n")
+            elif b"not a git repository" not in inside.stderr:
+                raise Refusal(cause)
             cause = "private-file-unwritable"
             # A final assignment preserves arbitrary Bash, including multiline
             # secrets. Follow the loader's supported file symlink layout.
@@ -1305,7 +1331,12 @@ exec "$3" -c 'import json, os, sys; print(json.dumps([sys.argv[1], os.environ["J
                 stream.write(("\nJARVIS_MAIN_HOST=" + shlex.quote(value) + "\n").encode("utf-8"))
         print(json.dumps({"JARVIS_MAIN_HOST": value}))
         return 0
-    except (Refusal, OSError, ValueError, subprocess.SubprocessError):
+    except Refusal as refusal:
+        print("jarvis-session: main-host=refused cause=" + refusal.reason, file=sys.stderr)
+        if refusal.detail:
+            print("jarvis-session: fix: " + refusal.detail + ", then run main-host again", file=sys.stderr)
+        return 2
+    except (OSError, ValueError, subprocess.SubprocessError):
         print("jarvis-session: main-host=refused cause=" + cause, file=sys.stderr)
         return 2
 

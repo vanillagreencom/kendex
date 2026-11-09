@@ -357,6 +357,31 @@ class MainHostContract(unittest.TestCase):
         result = self.command("main-host", "--get", code=2)
         self.assertNotIn("private-secret", result.stderr + result.stdout)
 
+    def ignored(self):
+        return subprocess.run(["git", "check-ignore", "-q", ".env.local"], cwd=self.home,
+                              env=self.env, capture_output=True).returncode == 0
+
+    def test_main_host_set_ignores_new_private_file(self):
+        # A credential save's rule: a new private file gets its exact ignore line.
+        subprocess.run(["git", "init", "-q"], cwd=self.home, env=self.env, check=True)
+        (self.home / ".gitignore").write_text("/tmp/")
+        self.assertFalse(self.ignored())
+        self.assertEqual(self.value("--set", "host:/main"), "host:/main")
+        self.assertTrue(self.ignored())
+        self.assertEqual((self.home / ".gitignore").read_text(), "/tmp/\n/.env.local\n")
+
+    def test_main_host_set_refuses_unignored_private_file(self):
+        # An existing unignored private file is the person's: refuse, write nothing.
+        subprocess.run(["git", "init", "-q"], cwd=self.home, env=self.env, check=True)
+        private = self.home / ".env.local"
+        private.write_bytes(b"SECRET='keep me'\n")
+        result = self.command("main-host", "--set", "host:/main", code=2)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("main-host=refused cause=private-file-unignored", result.stderr)
+        self.assertIn("fix: add /.env.local to .gitignore, then run main-host again", result.stderr)
+        self.assertEqual(private.read_bytes(), b"SECRET='keep me'\n")
+        self.assertFalse((self.home / ".gitignore").exists())
+
 
 def scratch_base():
     """A scratch base outside every Git work tree: a home fixture there qualifies.
