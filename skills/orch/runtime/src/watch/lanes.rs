@@ -1090,24 +1090,24 @@ pub fn handoff_standing(state_dir: &Path, lane: &Lane) -> HandoffReading {
 /// news standing. Rows of items no record names go.
 fn handoffs(pass: &Pass, hosts: &Hosts, out: &mut Produced) {
     let recorded: BTreeSet<&str> = pass.fleet.lanes.iter().map(|l| l.item.as_str()).collect();
-    for item in pass.baseline.identities("handoff") {
-        if !recorded.contains(item.as_str()) {
-            out.changes.push(clear("handoff", &item));
+    for kind in ["handoff", hosted::CLONE_ROW] {
+        for item in pass.baseline.identities(kind) {
+            if !recorded.contains(item.as_str()) {
+                out.changes.push(clear(kind, &item));
+            }
         }
     }
     for lane in &pass.fleet.lanes {
         let item = lane.item.as_str();
         let reading = match hosts.of(lane).map(|caps| caps.files) {
             Ok(Files::Local) => handoff_standing(pass.state_dir, lane),
-            Ok(Files::Verb) if lane.status.in_flight() => {
-                match hosted::handoff(pass.scripts, lane) {
-                    Ok(reading) => reading,
-                    Err(fields) => {
-                        fail(out, format!("handoff-read-failed item={item} {fields}"));
-                        continue;
-                    }
+            Ok(Files::Verb) if lane.status.in_flight() => match hosted::handoff(pass, lane, out) {
+                Ok(reading) => reading,
+                Err(fields) => {
+                    fail(out, format!("handoff-read-failed item={item} {fields}"));
+                    continue;
                 }
-            }
+            },
             // A lane out of flight is not asked of its host, whose sandbox
             // a park may have stopped; a kind with no files keeps no record
             // here; a host whose line could not be read is the pass's

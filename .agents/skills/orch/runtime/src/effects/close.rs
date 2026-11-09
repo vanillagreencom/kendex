@@ -996,11 +996,7 @@ impl Close<'_> {
                 (true, _) => Word::Unconfirmed,
                 (false, agent_runtime::protocol::Outcome::Confirmed) => match closed.status {
                     Some(LaneStatus::Stopped) => Word::Stopped,
-                    Some(LaneStatus::Done) | None => Word::Closed,
-                    Some(status) => {
-                        closed.status = Some(status);
-                        Word::Closed
-                    }
+                    Some(_) | None => Word::Closed,
                 },
                 (false, _) => Word::Failed,
             };

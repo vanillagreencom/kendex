@@ -1442,12 +1442,7 @@ impl Operation<'_> {
         Ok(())
     }
 
-    /// The oldest unanswered ask the lane's mailbox holds, read through the
-    /// mailbox CLI (`lane-mail pending --item ITEM --root ROOT [--host]`),
-    /// whose lines are JSON rows; only a row of kind `ask` counts. `Err` is a read that did not answer: a
-    /// mailbox program that is absent, failed or printed a row that is not
-    /// JSON, or a lane with no recorded root. A required gate refuses on it
-    /// rather than reading nothing.
+    /// [`pending_ask`] through this operation's mailbox CLI.
     pub(in crate::effects) fn unanswered_ask(
         &self,
         lane: &Lane,

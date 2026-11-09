@@ -292,8 +292,10 @@ fn rounds_of(doc: &Map<String, Value>) -> Value {
 /// `pr-N` for the merged pull request; after the live state's removal, the
 /// copy the merge saved for that pull request alone
 /// (`<clone>/tmp/cycle-state/workflow-state-pr-N.json`); for a hosted lane,
-/// on its host in the state directory its own settings name, then the
-/// archive the fleet log's last `kept=` row since its session began names.
+/// on its host in the state directory its own settings name, the copy in
+/// the clone its `.git` names or, the worktree gone, in the clone the watch
+/// kept ([`hosted::retained_clone`]), then the archive the fleet log's last
+/// `kept=` row since its session began names ([`kept_state`]).
 /// `Ok(None)` is a kind whose files nothing reads (a cloud session); `Err`
 /// names the paths tried.
 fn item_state(
@@ -319,39 +321,48 @@ fn item_state(
     if hosted {
         let scripts = crate::watch::overseer::scripts_dir(&settings.roots.project);
         let root = lane.mail_root.as_deref().unwrap_or("");
-        match hosted::state_dir_on_host(&scripts, lane, root) {
+        let fetch = |path: &Path| match hosted::fetch(
+            &scripts,
+            hosted::host_of(lane),
+            item,
+            &path.display().to_string(),
+        ) {
+            HostAnswer::Live(text) => parse(&text),
+            HostAnswer::Gone | HostAnswer::Unreadable { .. } => None,
+        };
+        let clone = match hosted::configured_state_dir(&scripts, lane, root) {
             Ok(Some((dir, clone))) => {
                 for key in &keys {
                     let path = state::item_path(&dir, key);
                     tried.push(path.display().to_string());
-                    if let HostAnswer::Live(text) = hosted::fetch(
-                        &scripts,
-                        hosted::host_of(lane),
-                        item,
-                        &path.display().to_string(),
-                    ) && let Some(doc) = parse(&text)
-                    {
+                    if let Some(doc) = fetch(&path) {
                         return Ok(Some(doc));
                     }
                 }
-                if let Some(pr) = pr {
-                    let saved = clone.join(format!("tmp/cycle-state/workflow-state-pr-{pr}.json"));
-                    tried.push(saved.display().to_string());
-                    if let HostAnswer::Live(text) = hosted::fetch(
-                        &scripts,
-                        hosted::host_of(lane),
-                        item,
-                        &saved.display().to_string(),
-                    ) && let Some(doc) = parse(&text)
-                    {
-                        return Ok(Some(doc));
-                    }
-                }
+                Some(clone)
             }
-            Ok(None) => tried.push(format!("{root}/.git")),
-            Err(cause) => tried.push(format!("{root}/.git cause={cause}")),
+            // The merge's close-out removes the worktree after it saves the
+            // state in the clone, so the clone a pass read stands for it.
+            Ok(None) => {
+                tried.push(format!("{root}/.git"));
+                hosted::retained_clone(fleet, item).unwrap_or_else(|cause| {
+                    tried.push(format!("{} cause={cause}", hosted::CLONE_ROW));
+                    None
+                })
+            }
+            Err(cause) => {
+                tried.push(format!("{root}/.git cause={cause}"));
+                None
+            }
+        };
+        if let (Some(pr), Some(clone)) = (pr, clone) {
+            let saved = clone.join(format!("tmp/cycle-state/workflow-state-pr-{pr}.json"));
+            tried.push(saved.display().to_string());
+            if let Some(doc) = fetch(&saved) {
+                return Ok(Some(doc));
+            }
         }
-        if let Some(doc) = kept_state(fleet, lane, &mut tried) {
+        if let Some(doc) = kept_state(fleet, lane, pr, &mut tried) {
             return Ok(Some(doc));
         }
         return Err(tried_line(item, &tried));
@@ -410,13 +421,20 @@ fn read_text(path: &Path) -> std::io::Result<String> {
 }
 
 /// The state member of the archive the fleet log's last `kept=PATH` row for
-/// the item since its session began names: its `lane-host-state` member
-/// names the state's member, an empty line where no live state remained.
+/// the item since its session began names: the member its `lane-host-state`
+/// member names, or, where that is the empty line a close writes once no
+/// live state remained, the copy the merge `pr` saved, the clone's before
+/// the worktree's, never another merge's.
 #[allow(
     clippy::disallowed_methods,
-    reason = "the cycle record's two reads of a kept archive through tar and the one runner, streamed"
+    reason = "the cycle record's reads of a kept archive through tar and the one runner, streamed"
 )]
-fn kept_state(fleet: &Path, lane: &Lane, tried: &mut Vec<String>) -> Option<Map<String, Value>> {
+fn kept_state(
+    fleet: &Path,
+    lane: &Lane,
+    pr: Option<u64>,
+    tried: &mut Vec<String>,
+) -> Option<Map<String, Value>> {
     let since = lane
         .session_since
         .clone()
@@ -438,26 +456,34 @@ fn kept_state(fleet: &Path, lane: &Lane, tried: &mut Vec<String>) -> Option<Map<
         })
         .next_back()?;
     tried.push(kept.clone());
-    let member = |name: &str| -> Option<String> {
-        let out = host::run_tagged(
-            TAG,
-            "tar",
-            Path::new("tar"),
-            "kept",
-            &["-xzOf", &kept, name],
-            BOUND,
-        )
-        .ok()?;
+    let tar = |args: &[&str]| -> Option<String> {
+        let out = host::run_tagged(TAG, "tar", Path::new("tar"), "kept", args, BOUND).ok()?;
         out.status
             .success()
             .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
     };
-    let name = member("lane-host-state")?;
-    let name = name.trim();
-    if name.is_empty() {
-        return None;
-    }
-    match serde_json::from_str::<Value>(&member(name)?) {
+    let member = |name: &str| tar(&["-xzOf", &kept, name]);
+    let marker = member("lane-host-state")?;
+    let name = match marker.trim() {
+        "" => {
+            let suffix = format!("/tmp/cycle-state/workflow-state-pr-{}.json", pr?);
+            let worktree = format!(
+                "{}/",
+                lane.mail_root
+                    .as_deref()
+                    .unwrap_or("")
+                    .trim_start_matches('/')
+            );
+            let listing = tar(&["-tzf", &kept])?;
+            listing
+                .lines()
+                .filter(|name| name.ends_with(&suffix))
+                .min_by_key(|name| (name.starts_with(&worktree), *name))?
+                .to_owned()
+        }
+        name => name.to_owned(),
+    };
+    match serde_json::from_str::<Value>(&member(&name)?) {
         Ok(Value::Object(doc)) => Some(doc),
         Ok(_) | Err(_) => None,
     }

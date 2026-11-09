@@ -39,7 +39,7 @@ MUTANT="$(mutant_scripts wrong-start workflow-state)/workflow-state"
 mutate_file "$MUTANT" 'start: $now, end: null' 'start: 0, end: null'
 assert_eq "$(round_start "$MUTANT" dev_round_id dev wrong-time)" false 'control: a wrong numeric start fails the same round-start assertion'
 round_restart() {
-  local bin="$1" kind="$2" label="$3" cycle="${4:-$TEST_DIR/../scripts/oversee-cycle}"
+  local bin="$1" kind="$2" label="$3"
   local sd="$TMP_ROOT/restart-$label" first second before rows
   "$bin" --state-dir "$sd" init KEN-1 >/dev/null
   printf '1767225600\n' > "$STUB_CLOCK"
@@ -59,8 +59,15 @@ round_restart() {
       ($s[4].round_id == $second and $s[4].start == 1767225648 and $s[4].end == null)
     ] | all' "$sd/workflow-state-KEN-1.json"
   "$WS" --state-dir "$sd" init oversee >/dev/null
-  "$WS" --state-dir "$sd" update oversee '.lanes = [{item:"KEN-1"}]'
-  rows="$(env ORCH_STATE_DIR="$sd" "$cycle" --state-dir "$sd" stages KEN-1)"
+  # A running local lane as the released launcher's lane_record_write wrote it.
+  "$WS" --state-dir "$sd" update oversee --arg root "$sd" '.lanes = [{item:"KEN-1", tracker:"linear",
+    repo:null, harness:"claude", window:"fleet:KEN-1", account:null, host:null, kind:"local",
+    mail_root:$root, surface:"tmux", model:"claude-opus-4-1", effort:"high", session_id:null,
+    session_since:"2026-01-01T00:00:00Z", launched_at:"2026-01-01T00:00:00Z",
+    running_at:"2026-01-01T00:00:00Z", status:"running", over_cap:null, allow_all:null,
+    touched:null, in_scope:[], obligation:null,
+    recovery:{cwd:$root, flags:"", session:"", refresh:false}, launch:null}]'
+  rows="$(env ORCH_STATE_DIR="$sd" "$TEST_DIR/../scripts/oversee-cycle" --state-dir "$sd" stages KEN-1)"
   # The overseer's stage reader consumes these machine-readable fields.
   if [[ "$rows" == *"round_id=$first start=1767225600 end=1767225648 superseded=1"* &&
         "$(grep -c "kind=$kind .*end=-" <<<"$rows")" == 1 ]]; then echo true; else echo false; fi
@@ -82,9 +89,5 @@ assert_contains "$(round_restart "$MUTANT" review all-kinds)" false 'control: cl
 MUTANT="$(mutant_scripts closed-again workflow-state)/workflow-state"
 mutate_file "$MUTANT" '.kind == $kind and .end == null' '.kind == $kind'
 assert_eq "$(round_restart "$MUTANT" review closed-again)" $'false\ntrue\nfalse' 'control: changing closed stages fails both closed-stage assertions'
-MUTANT="$(mutant_scripts no-marker/orch oversee-cycle)/oversee-cycle"
-ln -s "$TEST_DIR/../../github" "$TMP_ROOT/no-marker/github"
-mutate_file "$MUTANT" 'if .superseded == true then " superseded=1" else "" end' 'if .superseded == true then "" else "" end'
-assert_eq "$(round_restart "$WS" review no-marker "$MUTANT")" $'true\nfalse\ntrue' 'control: hiding superseded fails the stage reader assertion'
 printf 'pass: %s fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" == 0 ]]

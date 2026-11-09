@@ -458,6 +458,21 @@ fn a_lost_answer_is_read_back_and_posts_again_only_where_nothing_landed() {
             assert_eq!(posts(&root), 1);
             return;
         }
+        // A login set without the app's `[bot]` suffix: the POST's own
+        // answer confirms, naming both logins, and nothing posts again.
+        if mode == "login-differs" {
+            let first = run(&root, &r).unwrap();
+            assert_eq!(
+                (first.status, first.detail.as_deref()),
+                (
+                    Status::Confirmed,
+                    Some("login-differs configured=review-app review=review-app[bot]")
+                )
+            );
+            assert_eq!(run(&root, &r).unwrap().status, Status::Confirmed);
+            assert_eq!(posts(&root), 1);
+            return;
+        }
         let first = run(&root, &r).unwrap();
         assert_eq!(
             (first.status, first.reason.as_str()),
@@ -479,10 +494,15 @@ fn a_lost_answer_is_read_back_and_posts_again_only_where_nothing_landed() {
         "unread",
         "lost-landed",
         "refused-landed",
+        "login-differs",
     ] {
         let dir = world();
         let root = dir.path();
-        answer(root, json!({"post":mode}));
+        let (post, login) = match mode {
+            "login-differs" => ("ok", "review-app"),
+            _ => (mode, "review-app[bot]"),
+        };
+        answer(root, json!({"post":post}));
         let output = support::program(std::env::current_exe().unwrap())
             .args([
                 "--exact",
@@ -493,7 +513,7 @@ fn a_lost_answer_is_read_back_and_posts_again_only_where_nothing_landed() {
             .env("APPROVE_ROOT", root)
             .env("PATH", support::tool_path(&[&root.join("bin")]))
             .env("ORCH_OVERSEER_REVIEW_TOKEN_FILE", root.join("token"))
-            .env("ORCH_OVERSEER_REVIEW_LOGIN", "review-app[bot]")
+            .env("ORCH_OVERSEER_REVIEW_LOGIN", login)
             .env("GH_TOKEN", LANE_TOKEN)
             .current_dir(root)
             .output()
@@ -539,6 +559,14 @@ fn a_refused_post_clears_its_claim_so_the_next_request_posts_again() {
         record.as_object_mut().unwrap().remove("head_approvals");
         fs::write(root.join("item.json"), record.to_string()).unwrap();
     }
+    // The entry a refused POST left under the login's earlier spelling holds
+    // no act, so the corrected login takes it and the request posts.
+    let mut record: Value =
+        serde_json::from_slice(&fs::read(root.join("item.json")).unwrap()).unwrap();
+    record["head_approvals"] = json!({"o/r#42": {HEAD: {"login": "review-app", "attempt": null}}});
+    fs::write(root.join("item.json"), record.to_string()).unwrap();
+    assert_eq!(run(&root, &r).unwrap().status, Status::Confirmed);
+    assert_eq!(posts(&root), 7);
 }
 
 #[test]

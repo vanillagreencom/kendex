@@ -3932,16 +3932,20 @@ fn rounds_state(fix: u64) -> Value {
 /// A merged hosted lane's close records its cycle through the real
 /// pr-timeline over the `gh` fixture, its rounds read where its host kept
 /// its state, through the real dispatcher: the clone its worktree's `.git`
-/// names, else the copy its merge saved there, else, the worktree gone,
-/// the archive the fleet log's last `kept=` row names; with none, the
-/// rounds are null and the close's notes name the paths tried. The class
-/// stays unread with its cause, the checkout no repository.
+/// names, else the copy its merge saved there, which the clone the watch
+/// kept still names once the merge's close-out removed the worktree, else
+/// the archive the fleet log's last `kept=` row names, whose empty state
+/// marker selects this merge's saved copy and never another's; with none,
+/// the rounds are null and the close's notes name the paths tried. The
+/// class stays unread with its cause, the checkout no repository.
 #[test]
 fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
     for (case, fix) in [
         ("the clone's state", Some(2)),
         ("the merge's saved copy", Some(4)),
+        ("the saved copy after the worktree's removal", Some(4)),
         ("the archive its close kept", Some(6)),
+        ("the archive's saved copy alone", Some(6)),
         ("no state anywhere", None),
     ] {
         let mut fleet = Fleet::hosted(4);
@@ -3969,6 +3973,41 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
             std::fs::write(at, text).unwrap();
         };
         let gitfile = "gitdir: /w/clone/.git/worktrees/ken-1\n";
+        let saved = |pr: u64| format!("/w/clone/tmp/cycle-state/workflow-state-pr-{pr}.json");
+        // The clone a watch pass read from the worktree's `.git`, kept in
+        // the baseline beside the fleet state.
+        let retained = || {
+            std::fs::write(
+                fleet.state_dir().join("oversee-watch.baseline.json"),
+                json!({"rows": [{"kind": "clone-root", "identity": "KEN-1", "value": "/w/clone"}]})
+                    .to_string(),
+            )
+            .unwrap();
+        };
+        // The archive a close kept, `marker` its `lane-host-state` member,
+        // and the fleet log's row naming it.
+        let archive = |marker: &str, members: &[(&str, Value)]| {
+            let kept = fleet.state_dir().join("kept");
+            for (member, state) in members {
+                let at = kept.join(member);
+                std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+                std::fs::write(at, state.to_string()).unwrap();
+            }
+            std::fs::write(kept.join("lane-host-state"), marker).unwrap();
+            let archive = fleet.state_dir().join("kept.tgz");
+            let out = program("tar")
+                .arg("-czf")
+                .arg(&archive)
+                .arg("-C")
+                .arg(&kept)
+                .arg("lane-host-state")
+                .args(members.iter().map(|(member, _)| member))
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "tar: {}", stderr(&out));
+            json!({"at": "2026-01-29T16:30:00Z", "kind": "close", "item": "KEN-1",
+                "text": format!("lane-host close kept={}", archive.display())})
+        };
         let mut log = Vec::new();
         match (case, fix) {
             ("the clone's state", Some(fix)) => {
@@ -3980,40 +4019,25 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
             }
             ("the merge's saved copy", Some(fix)) => {
                 put(&format!("{REMOTE_ROOT}/.git"), gitfile);
-                put(
-                    "/w/clone/tmp/cycle-state/workflow-state-pr-7.json",
-                    &rounds_state(fix).to_string(),
-                );
+                put(&saved(7), &rounds_state(fix).to_string());
             }
-            ("the archive its close kept", Some(fix)) => {
-                let kept = fleet.state_dir().join("kept");
-                std::fs::create_dir_all(kept.join("clone/tmp")).unwrap();
-                std::fs::write(
-                    kept.join("lane-host-state"),
-                    "clone/tmp/workflow-state-KEN-1.json\n",
-                )
-                .unwrap();
-                std::fs::write(
-                    kept.join("clone/tmp/workflow-state-KEN-1.json"),
-                    rounds_state(fix).to_string(),
-                )
-                .unwrap();
-                let archive = fleet.state_dir().join("kept.tgz");
-                let out = program("tar")
-                    .arg("-czf")
-                    .arg(&archive)
-                    .arg("-C")
-                    .arg(&kept)
-                    .args(["lane-host-state", "clone/tmp/workflow-state-KEN-1.json"])
-                    .output()
-                    .unwrap();
-                assert!(out.status.success(), "tar: {}", stderr(&out));
-                log.push(
-                    json!({"at": "2026-01-29T16:30:00Z", "kind": "close", "item": "KEN-1",
-                    "text": format!("lane-host close kept={}", archive.display())}),
-                );
+            ("the saved copy after the worktree's removal", Some(fix)) => {
+                retained();
+                put(&saved(6), &rounds_state(9).to_string());
+                put(&saved(7), &rounds_state(fix).to_string());
             }
-            _ => {}
+            ("the archive its close kept", Some(fix)) => log.push(archive(
+                "clone/tmp/workflow-state-KEN-1.json\n",
+                &[("clone/tmp/workflow-state-KEN-1.json", rounds_state(fix))],
+            )),
+            ("the archive's saved copy alone", Some(fix)) => log.push(archive(
+                "\n",
+                &[
+                    (&saved(6)[1..], rounds_state(9)),
+                    (&saved(7)[1..], rounds_state(fix)),
+                ],
+            )),
+            _ => retained(),
         }
         fleet.write_lanes(vec![hosted_lane("KEN-1")]);
         let mut doc = fleet.fleet();
@@ -4051,12 +4075,13 @@ fn a_closed_lanes_cycle_reads_its_rounds_where_its_host_kept_them() {
                         .any(|n| n == "oversee-cycle: rounds-unread item=KEN-1"),
                     "{case}: {notes:?}"
                 );
-                assert!(
-                    notes.iter().any(|n| n.contains(&format!(
-                        "lane-gitfile: state-tried item=KEN-1 path={REMOTE_ROOT}/.git"
-                    ))),
-                    "{case}: {notes:?}"
-                );
+                for path in [format!("{REMOTE_ROOT}/.git"), saved(7)] {
+                    let tried = format!("lane-gitfile: state-tried item=KEN-1 path={path}");
+                    assert!(
+                        notes.iter().flat_map(|n| n.lines()).any(|l| l == tried),
+                        "{case}: {notes:?}"
+                    );
+                }
             }
         }
     }

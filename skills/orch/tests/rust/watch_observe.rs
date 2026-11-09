@@ -3398,6 +3398,39 @@ fn a_stalled_cloud_lane_whose_directive_went_unanswered_is_closed_once_with_the_
         5,
         "no second close after no answer"
     );
+    // With no reply, the parser's usage refusal acted on nothing and takes
+    // its marker; a panic's 101 may follow the close's act, so its marker
+    // stands.
+    std::fs::remove_file(&marker).unwrap();
+    world.plant_close(json!({"exit": 2, "stderr": "error: unexpected argument\n"}));
+    let usage = driver.pass(&state);
+    assert!(
+        usage
+            .failed
+            .as_deref()
+            .is_some_and(|f| f.starts_with("lane-close-failed item=CC-1 exit=2 ")),
+        "{:?}",
+        usage.failed
+    );
+    assert!(
+        std::fs::metadata(&marker).is_err(),
+        "a usage refusal's marker goes"
+    );
+    world.plant_close(json!({"exit": 101, "stderr": "thread 'main' panicked\n"}));
+    let panicked = driver.pass(&state);
+    assert!(
+        panicked
+            .failed
+            .as_deref()
+            .is_some_and(|f| f.starts_with("lane-close-unanswered item=CC-1 ")),
+        "{:?}",
+        panicked.failed
+    );
+    assert_eq!(world.close_log().len(), 7);
+    assert!(
+        std::fs::metadata(&marker).is_ok(),
+        "the panicked close's marker stands"
+    );
     // A close that never started (its program not executable) closed
     // nothing: no marker stands, and once it can run the next pass closes.
     use std::os::unix::fs::PermissionsExt;
@@ -3432,10 +3465,10 @@ fn a_stalled_cloud_lane_whose_directive_went_unanswered_is_closed_once_with_the_
         event_lines(&closed),
         vec![
             "EVENT lane-closed CC-1",
-            "EVENT cloud-stall-closed CC-1 directive_age=4540"
+            "EVENT cloud-stall-closed CC-1 directive_age=5020"
         ]
     );
-    assert_eq!(world.close_log().len(), 6);
+    assert_eq!(world.close_log().len(), 8);
 }
 
 /// A hosted lane's status file is on its host, not this disk: it is read
@@ -5153,6 +5186,20 @@ fn a_hosted_lanes_handoff_is_read_through_its_provider() {
                     .any(|l| l.starts_with("EVENT handoff")),
                 "{case}: {:?}",
                 lines(&second)
+            );
+            // The clone the `.git` named is kept past the merge's close-out,
+            // which removes the worktree after saving its state there.
+            assert_eq!(
+                driver.baseline.get("clone-root", "KEN-4"),
+                Some("/remote/clone"),
+                "{case}"
+            );
+            std::fs::remove_file(disk.join("remote/KEN-4/.git")).unwrap();
+            driver.pass(&state);
+            assert_eq!(
+                driver.baseline.get("clone-root", "KEN-4"),
+                Some("/remote/clone"),
+                "{case}: the worktree gone"
             );
         } else {
             assert_eq!(

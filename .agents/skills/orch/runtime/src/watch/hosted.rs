@@ -84,6 +84,10 @@ pub const PREPARE_ROW: &str = "lane-prepare";
 /// tracker's quota hold deferred, retried while the notification row still
 /// reads `<key>|reported`.
 pub const CLOSE_PENDING_ROW: &str = "close-pending";
+/// `clone-root<TAB><item><TAB><clone>`: the clone a hosted lane's worktree
+/// `.git` named on the last pass that read it, kept once the worktree is
+/// gone, since the merge's saved state stays in that clone.
+pub const CLONE_ROW: &str = "clone-root";
 /// The row the GitHub duty writes for an item's merged pull requests, which
 /// admits the finished-hosted close.
 const MERGED_ROW: &str = super::github::MERGED_ROW;
@@ -926,14 +930,13 @@ pub enum Closed {
     /// The tracker's quota hold refused the verdict the close needs:
     /// nothing closed, asked again once the hold ends.
     Deferred,
-    /// The verb refused, its effect failed or stood open with a cause, or
-    /// it never started or printed no answer it could be read by: its key
-    /// or cause.
+    /// The verb refused, its effect failed or stood open with a cause, it
+    /// never started, or it exited 1 or 2 with no reply: its key or cause.
     Failed { cause: String },
-    /// No answer: the verb started and its bound passed, or a signal ended
-    /// it, or the provider's close gave none, so it may have happened. Its
-    /// marker stands for the next pass, which leaves the lane to the
-    /// operator.
+    /// No answer: the verb started and its bound passed, a signal ended
+    /// it, it exited another status with no reply, or the provider's close
+    /// gave none, so it may have happened. Its marker stands for the next
+    /// pass, which leaves the lane to the operator.
     Unanswered { cause: String },
 }
 
@@ -994,16 +997,16 @@ fn run_close(scripts: &Path, state_dir: &Path, request: &Path) -> Closed {
     };
     let stderr = String::from_utf8_lossy(&out.stderr);
     let Ok(reply) = serde_json::from_slice::<Value>(&out.stdout) else {
+        let line = first_line(&stderr);
+        // The verb answers 0 or 1 with its reply, and its argument parser
+        // 2 before it acts; any other end without a reply, a panic's 101 or
+        // a signal, may follow its act.
         return match out.status.code() {
-            Some(rc) => Closed::Failed {
-                cause: format!("exit={rc} {}", first_line(&stderr))
-                    .trim_end()
-                    .to_owned(),
+            Some(rc @ (1 | 2)) => Closed::Failed {
+                cause: format!("exit={rc} {line}").trim_end().to_owned(),
             },
-            None => Closed::Unanswered {
-                cause: format!("{} {}", out.status, first_line(&stderr))
-                    .trim_end()
-                    .to_owned(),
+            Some(_) | None => Closed::Unanswered {
+                cause: format!("{} {line}", out.status).trim_end().to_owned(),
             },
         };
     };
@@ -2014,7 +2017,7 @@ pub fn counters(scripts: &Path, lane: &Lane, out: &mut Produced) -> Counters {
 /// file the host could not read, or one this reader cannot parse.
 fn configured_state(scripts: &Path, lane: &Lane, root: &str) -> Result<Answer<String>, String> {
     Ok(match configured_state_dir(scripts, lane, root)? {
-        Some(dir) => fetch(
+        Some((dir, _)) => fetch(
             scripts,
             host_of(lane),
             &lane.item,
@@ -2024,37 +2027,17 @@ fn configured_state(scripts: &Path, lane: &Lane, root: &str) -> Result<Answer<St
     })
 }
 
-/// The state directory a hosted checkout's own files name and the clone
-/// its `.git` names, on its host ([`configured_state_dir`]); `None` is a
-/// worktree the host no longer has.
-pub(crate) fn state_dir_on_host(
+/// The host path of the state directory a hosted checkout's settings files
+/// and private env file name (`settings::state_dir_named`), relative to the
+/// clone its `.git` names, as the checkout's own `workflow-state` resolves
+/// it, with that clone. A `.git` the host cannot `cat` is a clone's own
+/// directory, confirmed by its `HEAD`, and the clone is the root. `None` is
+/// a worktree the host no longer has, whose clone [`retained_clone`] keeps.
+pub(crate) fn configured_state_dir(
     scripts: &Path,
     lane: &Lane,
     root: &str,
 ) -> Result<Option<(PathBuf, PathBuf)>, String> {
-    let Some(dir) = configured_state_dir(scripts, lane, root)? else {
-        return Ok(None);
-    };
-    let clone = match fetch(scripts, host_of(lane), &lane.item, &format!("{root}/.git")) {
-        Answer::Live(gitfile) => marker::git_dirs_of(&gitfile)
-            .and_then(|(_, common)| common.parent().map(Path::to_path_buf))
-            .unwrap_or_else(|| PathBuf::from(root)),
-        Answer::Gone | Answer::Unreadable { .. } => PathBuf::from(root),
-    };
-    Ok(Some((dir, clone)))
-}
-
-/// The host path of the state directory a hosted checkout's settings files
-/// and private env file name (`settings::state_dir_named`), relative to the
-/// clone its `.git` names, as the checkout's own `workflow-state` resolves
-/// it. A `.git` the host cannot `cat` is a clone's own directory, confirmed
-/// by its `HEAD`, and the clone is the root. `None` is a worktree the host
-/// no longer has.
-fn configured_state_dir(
-    scripts: &Path,
-    lane: &Lane,
-    root: &str,
-) -> Result<Option<PathBuf>, String> {
     let host = host_of(lane);
     let clone = match fetch(scripts, host, &lane.item, &format!("{root}/.git")) {
         Answer::Live(gitfile) => match marker::git_dirs_of(&gitfile)
@@ -2084,11 +2067,24 @@ fn configured_state_dir(
         }
     };
     let dir = settings::state_dir_named(Path::new(root), &read).map_err(|e| e.to_string())?;
-    Ok(Some(if dir.is_absolute() {
+    let dir = if dir.is_absolute() {
         dir
     } else {
         clone.join(dir)
-    }))
+    };
+    Ok(Some((dir, clone)))
+}
+
+/// The clone [`CLONE_ROW`] keeps for `item` in the watch's baseline beside
+/// the fleet state at `fleet`. `None` is a lane no pass read standing; `Err`
+/// a baseline that does not read.
+pub fn retained_clone(fleet: &Path, item: &str) -> Result<Option<PathBuf>, String> {
+    let paths = super::Paths::of(fleet).map_err(|e| e.to_string())?;
+    let baseline = super::Baseline::load(&paths.baseline).map_err(|e| e.to_string())?;
+    Ok(baseline
+        .get(CLONE_ROW, item)
+        .map(PathBuf::from)
+        .filter(|clone| clone.is_absolute()))
 }
 
 /// A hosted lane's standing handoff through the provider, read in the
@@ -2097,14 +2093,22 @@ fn configured_state_dir(
 /// lane root's `tmp`, the root's alone for a worktree the host no longer
 /// has. The first standing record wins, else a place that could not be read
 /// or holds no JSON object, else none. `Err` is the read that failed, as the
-/// fields after `item=`.
-pub fn handoff(scripts: &Path, lane: &Lane) -> Result<HandoffReading, String> {
+/// fields after `item=`. The clone the worktree's `.git` names is kept in
+/// [`CLONE_ROW`] where it moved.
+pub fn handoff(pass: &Pass, lane: &Lane, out: &mut Produced) -> Result<HandoffReading, String> {
+    let scripts = pass.scripts;
     let Some(root) = root_of(lane) else {
         return Ok(HandoffReading::None);
     };
     let places =
         match configured_state_dir(scripts, lane, root).map_err(|c| format!("cause={c}"))? {
-            Some(dir) => handoff_places(&dir, &lane.item, Some(Path::new(root))),
+            Some((dir, clone)) => {
+                let clone = clone.display().to_string();
+                if pass.baseline.get(CLONE_ROW, &lane.item) != Some(clone.as_str()) {
+                    out.changes.push(set(CLONE_ROW, &lane.item, clone));
+                }
+                handoff_places(&dir, &lane.item, Some(Path::new(root)))
+            }
             None => vec![state::item_path(&Path::new(root).join("tmp"), &lane.item)],
         };
     let mut unread = None;

@@ -56,7 +56,8 @@ pub struct ApprovedHead {
     pub reason: String,
     pub review: Option<Value>,
     /// gh's words for a POST GitHub refused, an answer lost or a read-back
-    /// that failed.
+    /// that failed; on the POST's own confirmation, the review's login where
+    /// the configured one differs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
 }
@@ -148,8 +149,13 @@ fn update<T>(
                 comment: None,
             },
         };
+        // An entry that holds no act binds no login: the configured one
+        // replaces it, so a login corrected after a refused POST approves.
         if entry.login != login {
-            return Err(refuse("approval-login-changed", &[]));
+            if entry.attempt.is_some() || entry.comment.is_some() {
+                return Err(refuse("approval-login-changed", &[]));
+            }
+            entry.login = login.into();
         }
         let answer = f(&mut entry)?;
         records.insert(head.into(), serde_json::to_value(entry)?);
@@ -220,10 +226,17 @@ fn live_head(settings: &Settings, r: &ApproveHead, token: &str) -> Result<String
     Ok(head)
 }
 
-fn confirms(value: &Value, login: &str, head: &str) -> bool {
+fn approves(value: &Value, head: &str) -> bool {
     value.get("state").and_then(Value::as_str) == Some("APPROVED")
-        && value.pointer("/user/login").and_then(Value::as_str) == Some(login)
         && value.get("commit_id").and_then(Value::as_str) == Some(head)
+}
+
+fn reviewer(value: &Value) -> Option<&str> {
+    value.pointer("/user/login").and_then(Value::as_str)
+}
+
+fn confirms(value: &Value, login: &str, head: &str) -> bool {
+    approves(value, head) && reviewer(value) == Some(login)
 }
 
 fn read_back(
@@ -366,7 +379,7 @@ fn hold(
             &[("value", &settings.review.copilot_hold)],
         )
     })?;
-    let gh = Gh::with_env(Path::new("gh"), credential(settings, token));
+    let gh = app(settings, token);
     match review::copilot_flight(&gh, &r.repo, r.pr, head) {
         Ok(Flight::Work(_)) => {}
         Ok(Flight::Settled { .. } | Flight::None) => return Ok(None),
@@ -533,11 +546,18 @@ pub fn run(
         Some(&payload),
     );
     let (exit, stderr) = match posted {
+        // The token chose the reviewer, so the POST's own answer confirms on
+        // its state and head; a login the setting spells otherwise is named.
         Ok(Answer::Printed { stdout, stderr }) => {
             if let Ok(value) = serde_json::from_slice::<Value>(&stdout)
-                && confirms(&value, login, &head)
+                && approves(&value, &head)
             {
-                return confirm(path, r, &head, login, locking, value);
+                let differs = reviewer(&value)
+                    .filter(|review| *review != login)
+                    .map(|review| format!("login-differs configured={login} review={review}"));
+                let mut confirmed = confirm(path, r, &head, login, locking, value)?;
+                confirmed.detail = differs;
+                return Ok(confirmed);
             }
             (Some(0), stderr)
         }
